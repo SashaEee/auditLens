@@ -92,25 +92,27 @@ PDF-экспорт через Playwright Chromium — A4, embedded шрифты,
 
 ### Что нужно
 
-| | Версия | Где взять |
-|---|---|---|
-| **Python** | 3.11+ | [python.org](https://www.python.org/downloads/) |
-| **Docker Desktop** | любая | [docker.com](https://www.docker.com/products/docker-desktop/) |
-| **Fireworks AI ключ** | — | [fireworks.ai](https://fireworks.ai/) (бесплатные $15) |
+| | Где взять |
+|---|---|
+| **Python 3.11+** | `brew install python@3.12` (mac) · `sudo apt install python3.12` (Linux/WSL) |
+| **Docker Desktop** | [Mac (Apple Silicon)](https://desktop.docker.com/mac/main/arm64/Docker.dmg) · [Mac (Intel)](https://desktop.docker.com/mac/main/amd64/Docker.dmg) · [Windows](https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe) · [Linux](https://docs.docker.com/engine/install/) |
+| **Git** | `brew install git` (mac) · `sudo apt install git` (Linux/WSL) |
+| **Fireworks AI ключ** | [fireworks.ai](https://fireworks.ai/) → Sign Up (бесплатные $15) |
 
-### Шаги
+### Шаги (TL;DR)
 
 ```bash
-# 1. Клон репо
+# 1. Скачать
 git clone https://github.com/SashaEee/auditLens.git
 cd auditLens
 
-# 2. Один скрипт = всё установлено
+# 2. Один скрипт = всё установлено (Docker, БД, Python deps, миграции)
 bash scripts/setup.sh
 
-# 3. Получи Fireworks ключ (см. docs/API_KEYS.md) и впиши в .env
-nano .env   # или открой в любом редакторе
-# LLM_API_KEY=fw_твой_ключ
+# 3. Впиши Fireworks-ключ в .env
+open -e .env       # mac (откроет TextEdit)
+# или: nano .env   # любая ОС (Ctrl+X для выхода)
+# Замени fw_REPLACE_WITH_YOUR_KEY на свой ключ
 
 # 4. Запусти сервер
 source .venv/bin/activate
@@ -119,8 +121,8 @@ uvicorn bank_audit.web.app:app --host 127.0.0.1 --port 8000
 
 Открой [http://127.0.0.1:8000](http://127.0.0.1:8000) → введи вопрос → готово.
 
-> 📖 Подробная установка с альтернативами Docker → [docs/SETUP.md](docs/SETUP.md)
-> 🔑 Все API-ключи и где их брать → [docs/API_KEYS.md](docs/API_KEYS.md)
+> 📖 **Не уверен в командах?** → [docs/SETUP.md](docs/SETUP.md) — пошаговый гайд для новичков с разделением по mac/Windows/Linux и чек-листом
+> 🔑 **Где взять API-ключ Fireworks?** → [docs/API_KEYS.md](docs/API_KEYS.md)
 
 ---
 
