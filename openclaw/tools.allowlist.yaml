@@ -1,0 +1,6 @@
+# Минимальные права на каждый job. Принцип наименьших привилегий.
+ingest_sravni_aggregator: [browser, shell, read, write]
+ingest_sravni_reviews:    [browser, shell, read, write]
+ingest_banki_reviews:     [browser, shell, read, write]
+quality:                  [shell, read, write]
+discovery:                [web_search, web_fetch, browser, read, edit, apply_patch]

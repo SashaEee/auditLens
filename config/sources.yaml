@@ -1,0 +1,180 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Источники данных bank_audit_platform.
+#
+# Реалистичные ограничения sravni.ru без браузера:
+#   • POST /proxy-deposits/deposits — отдаёт top-15 по ставке. pageIndex/pageSize
+#     игнорируются. Регион/сумма/срок РАБОТАЮТ — другой набор банков на регион.
+#   • SSR /kredity/, /karty/, /avtokredity/, /ipoteka/ — top-7..15. ?page=N
+#     НЕ работает (одни и те же items). Глубокое покрытие → только browser.
+#   • /zaimy/ — отдаёт ~32 МФО за один запрос (микрозаймы — единственная
+#     SSR-категория с относительно полной выдачей).
+#
+# Стратегия покрытия:
+#   1. HTTP — быстрый top-N по нескольким регионам (вклады по 4-5 регионам).
+#   2. Browser (sravni_browser) — глубокое покрытие через scroll + OpenClaw-профиль.
+#   3. CBR registry — ground-truth список действующих банков для coverage.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── ЦБ РФ: реестр БИК действующих банков ──────────────────────────────────────
+cbr_registry:
+  adapter: bank_audit.sources.cbr_registry:CBRRegistryAdapter
+  collector: http
+  targets:
+    - name: cbr_bic_full
+      url: "https://www.cbr.ru/scripts/XML_bic.asp"
+
+
+# ── Sravni.ru HTTP (top-N по категориям + регион-ротация) ─────────────────────
+sravni_api:
+  adapter: bank_audit.sources.sravni_api:SravniApiAdapter
+  collector: http
+  targets:
+    # ─── ВКЛАДЫ — POST API top-15 на (amount,region). Меняем регион ────────
+    - { name: deposits_msk,  category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 12, region: msk } }
+    - { name: deposits_spb,  category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 12, region: sankt-peterburg } }
+    - { name: deposits_ekb,  category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 12, region: ekaterinburg } }
+    - { name: deposits_nsk,  category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 12, region: novosibirsk } }
+    - { name: deposits_kzn,  category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 12, region: kazan } }
+    # Дополнительные суммы — иногда дают другой набор
+    - { name: deposits_1m_msk, category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 1000000, period_months: 12, region: msk } }
+    - { name: deposits_500k_24m_msk, category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 500000, period_months: 24, region: msk } }
+
+    # ─── ПОТРЕБКРЕДИТЫ — SSR top-10 (page=N не работает) ──────────────────
+    - { name: credits_msk, category: credit, max_pages: 1,
+        filter_context: { amount: 500000, period_months: 36, region: msk } }
+    - { name: credits_spb, category: credit, max_pages: 1,
+        filter_context: { amount: 500000, period_months: 36, region: sankt-peterburg } }
+
+    # ─── ИПОТЕКА — SSR top-7 (deep coverage только через browser) ─────────
+    - { name: mortgage_msk, category: mortgage, max_pages: 1,
+        filter_context: { amount: 6000000, period_months: 240, region: msk } }
+    - { name: mortgage_spb, category: mortgage, max_pages: 1,
+        filter_context: { amount: 6000000, period_months: 240, region: sankt-peterburg } }
+
+    # ─── КАРТЫ — общая витрина /karty/, фильтр по type в парсере ──────────
+    - { name: cards_credit_msk, category: card_credit, max_pages: 1,
+        filter_context: { region: msk } }
+    - { name: cards_debit_msk,  category: card_debit, max_pages: 1,
+        filter_context: { region: msk } }
+
+    # ─── АВТОКРЕДИТЫ — top-15 ─────────────────────────────────────────────
+    - { name: auto_msk, category: auto_loan, max_pages: 1,
+        filter_context: { amount: 500000, period_months: 60, region: msk } }
+    - { name: auto_2m_msk, category: auto_loan, max_pages: 1,
+        filter_context: { amount: 2000000, period_months: 60, region: msk } }
+
+    # ─── МИКРОЗАЙМЫ — единственная категория с полной выдачей (~32) ───────
+    - { name: microloans_msk, category: microloan, max_pages: 1,
+        filter_context: { region: msk } }
+
+    # ─── ИНВЕСТИЦИИ ──────────────────────────────────────────────────────
+    - { name: brokers_msk, category: invest_broker, max_pages: 1,
+        filter_context: { region: msk } }
+    - { name: npf_msk, category: npf, max_pages: 1,
+        filter_context: { region: msk } }
+
+
+# ── Sravni через браузер (OpenClaw) — глубокое покрытие категорий с lazy-load
+# Запускать при подключённом OPENCLAW_BROWSER_PROFILE; решать капчу из UI.
+sravni_browser:
+  adapter: bank_audit.sources.sravni_browser:SravniBrowserAdapter
+  collector: browser
+  targets:
+    - { name: mortgage_browser, category: mortgage,
+        filter_context: { amount: 6000000, period_months: 240, region: msk } }
+    - { name: credits_browser, category: credit,
+        filter_context: { amount: 500000, period_months: 36, region: msk } }
+    - { name: cards_credit_browser, category: card_credit,
+        filter_context: { region: msk } }
+    - { name: cards_debit_browser, category: card_debit,
+        filter_context: { region: msk } }
+    - { name: auto_browser, category: auto_loan,
+        filter_context: { amount: 500000, period_months: 60, region: msk } }
+    - { name: brokers_browser, category: invest_broker,
+        filter_context: { region: msk } }
+    - { name: npf_browser, category: npf,
+        filter_context: { region: msk } }
+
+
+# ── Banki.ru: рейтинги банков (HTTP, без браузера) ────────────────────────────
+banki_ratings:
+  adapter: bank_audit.sources.banki_ratings:BankiRatingsAdapter
+  collector: http
+  targets:
+    - name: all_banks_ratings
+      url: "https://www.banki.ru/services/responses/ajax/?count=300&page=1"
+
+
+# ── Отзывы: browser-collector с OPENCLAW_BROWSER_PROFILE ──────────────────────
+banki_reviews:
+  adapter: bank_audit.sources.banki_reviews:BankiReviewsAdapter
+  collector: http
+  targets:
+    # max_pages: 10 даёт ~80 отзывов/банк, банки.ру не блокирует IP при таком темпе
+    - { name: sber_reviews, url: "https://www.banki.ru/services/responses/bank/sberbank/", bank_slug: sberbank, max_pages: 10 }
+    - { name: vtb_reviews,  url: "https://www.banki.ru/services/responses/bank/vtb/",      bank_slug: vtb,       max_pages: 10 }
+
+sravni_reviews:
+  adapter: bank_audit.sources.sravni_reviews:SravniReviewsAdapter
+  collector: browser
+  targets:
+    - { name: sber_reviews, url: "https://www.sravni.ru/bank/sberbank/otzyvy/", bank_slug: sberbank }
+    - { name: vtb_reviews,  url: "https://www.sravni.ru/bank/vtb/otzyvy/",      bank_slug: vtb }
+
+
+# ── Bankiros.ru reviews — JSON-LD парсинг (HTTP, очень стабильно) ─────────────
+# Дополняет banki/sravni — другая аудитория, ~10 свежих отзывов на банк.
+bankiros_reviews:
+  adapter: bank_audit.sources.bankiros_reviews:BankirosReviewsAdapter
+  collector: http
+  targets:
+    - name: sber_reviews
+      url: "https://bankiros.ru/bank/sberbank/otzyvy"
+      bank_slug: sberbank
+    - name: vtb_reviews
+      url: "https://bankiros.ru/bank/vtb/otzyvy"
+      bank_slug: vtb
+    - name: tinkoff_reviews
+      url: "https://bankiros.ru/bank/tcs/otzyvy"             # bankiros: tcs (не tinkoff)
+      bank_slug: tinkoff
+    - name: alfabank_reviews
+      url: "https://bankiros.ru/bank/alfabank/otzyvy"
+      bank_slug: alfabank
+    - name: sovcombank_reviews
+      url: "https://bankiros.ru/bank/sovcombank/otzyvy"
+      bank_slug: sovcombank
+    - name: rshb_reviews
+      url: "https://bankiros.ru/bank/rshb/otzyvy"
+      bank_slug: rshb
+    - name: gazprombank_reviews
+      url: "https://bankiros.ru/bank/gazprombank/otzyvy"
+      bank_slug: gazprombank
+    - name: pochtabank_reviews
+      url: "https://bankiros.ru/bank/pochtabank/otzyvy"
+      bank_slug: pochtabank
+    - name: raiffeisen_reviews
+      url: "https://bankiros.ru/bank/raiffeisen/otzyvy"
+      bank_slug: raiffeisen
+    - name: mkb_reviews
+      url: "https://bankiros.ru/bank/mkb/otzyvy"
+      bank_slug: mkb
+    - name: yandexbank_reviews
+      url: "https://bankiros.ru/bank/yandex/otzyvy"
+      bank_slug: yandexbank
+    - name: ozonbank_reviews
+      url: "https://bankiros.ru/bank/ozon/otzyvy"
+      bank_slug: ozonbank
+    - name: mtsbank_reviews
+      url: "https://bankiros.ru/bank/mts-bank/otzyvy"
+      bank_slug: mtsbank
+    - name: rsb_reviews
+      url: "https://bankiros.ru/bank/rsb/otzyvy"
+      bank_slug: rsb

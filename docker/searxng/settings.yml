@@ -1,0 +1,39 @@
+# SearXNG settings — минимальный конфиг для нашего use-case.
+# Главное: включён JSON output для API.
+use_default_settings: true
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  secret_key: "auditlens-dev-key-change-me"
+  limiter: false                # отключаем rate-limit для локального использования
+  image_proxy: false
+
+ui:
+  default_locale: "ru"
+  query_in_title: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "ru"
+  formats:
+    - html
+    - json                       # ВАЖНО: для нашего API
+
+# Engines: оставляем большинство, отключаем заведомо ломающиеся
+engines:
+  - name: google
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: yandex
+    disabled: false

@@ -1,0 +1,58 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  AuditLens — инфраструктура для локальной разработки/тестов
+#
+#  Запуск:
+#      docker compose up -d        # стартует postgres + searxng
+#      docker compose ps           # проверить статус
+#      docker compose logs -f      # смотреть логи
+#      docker compose down         # остановить (данные сохранятся)
+#      docker compose down -v      # ⚠ остановить и УДАЛИТЬ данные БД
+#
+#  После старта применить миграции:
+#      bash scripts/setup.sh init-db
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  # ── PostgreSQL 16 + pgvector ─────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: auditlens-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: audit
+      POSTGRES_PASSWORD: audit
+      POSTGRES_DB: bank_audit
+      # Ускоряем индексацию (для dev — для prod подкрутить под железо)
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=ru_RU.UTF-8 --lc-collate=ru_RU.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audit -d bank_audit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── SearXNG (мета-поисковик: Google/Bing/DDG/Brave/Qwant/Mojeek/Yandex) ─
+  # Используется как primary web-search backend (приоритет, безлимит).
+  # Если не запускать — pipeline автоматически fallback'нется на Brave/DDG.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: auditlens-searxng
+    restart: unless-stopped
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      BASE_URL: "http://localhost:8888/"
+      INSTANCE_NAME: "auditlens-searxng"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    name: auditlens_postgres_data

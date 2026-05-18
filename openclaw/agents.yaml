@@ -1,0 +1,38 @@
+# Sub-agents OpenClaw. Каждый агент изолирован, имеет свой allowlist инструментов.
+# Имя агента ссылается на jobs/*.yaml.
+
+agents:
+  collector_sravni_aggregator:
+    description: |
+      Сбор страниц-агрегаторов sravni.ru с предзаданными фильтрами.
+      Использует OpenClaw browser, сохраняет HTML в workspace/raw, пишет
+      source_snapshot и source_page в БД.
+    tools: [browser, read, write, apply_patch, shell]
+    workdir: bank_audit_platform
+    entrypoint: "python -m bank_audit.cli ingest --source sravni_aggregator"
+
+  collector_sravni_reviews:
+    description: "Сбор отзывов sravni.ru по банкам."
+    tools: [browser, read, write, apply_patch, shell]
+    workdir: bank_audit_platform
+    entrypoint: "python -m bank_audit.cli ingest --source sravni_reviews"
+
+  collector_banki_reviews:
+    description: "Сбор отзывов banki.ru по банкам."
+    tools: [browser, read, write, apply_patch, shell]
+    workdir: bank_audit_platform
+    entrypoint: "python -m bank_audit.cli ingest --source banki_reviews"
+
+  quality_runner:
+    description: "Прогон data-quality чеков и публикация отчёта."
+    tools: [shell, read, write]
+    workdir: bank_audit_platform
+    entrypoint: "python -m bank_audit.cli quality"
+
+  discovery:
+    description: |
+      Discovery новых источников/страниц банков. Использует web_search и web_fetch
+      OpenClaw, при необходимости открывает browser. На выходе — patch к
+      config/sources.yaml через apply_patch.
+    tools: [web_search, web_fetch, browser, read, edit, apply_patch]
+    workdir: bank_audit_platform

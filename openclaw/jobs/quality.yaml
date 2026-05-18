@@ -1,0 +1,5 @@
+id: quality
+agent: quality_runner
+env: { OPENCLAW_JOB: quality }
+command: python -m bank_audit.cli quality
+artifacts: [workspace/reports/quality_*.json]

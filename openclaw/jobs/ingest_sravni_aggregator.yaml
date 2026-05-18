@@ -1,0 +1,14 @@
+id: ingest_sravni_aggregator
+agent: collector_sravni_aggregator
+description: "Ingest агрегатора sravni.ru по всем target-ам категории deposit"
+env:
+  OPENCLAW_JOB: ingest_sravni_aggregator
+  LOG_LEVEL: INFO
+command: |
+  python -m bank_audit.cli ingest --source sravni_aggregator
+artifacts:
+  - workspace/raw/sravni_aggregator/**
+  - workspace/logs/ingest_sravni_aggregator_*.json
+on_failure:
+  retries: 2
+  backoff: exponential

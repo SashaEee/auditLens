@@ -1,0 +1,6 @@
+id: ingest_sravni_reviews
+agent: collector_sravni_reviews
+env: { OPENCLAW_JOB: ingest_sravni_reviews }
+command: python -m bank_audit.cli ingest --source sravni_reviews
+artifacts: [workspace/raw/sravni_reviews/**]
+on_failure: { retries: 2, backoff: exponential }

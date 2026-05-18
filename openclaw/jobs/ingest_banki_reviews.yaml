@@ -1,0 +1,6 @@
+id: ingest_banki_reviews
+agent: collector_banki_reviews
+env: { OPENCLAW_JOB: ingest_banki_reviews }
+command: python -m bank_audit.cli ingest --source banki_reviews
+artifacts: [workspace/raw/banki_reviews/**]
+on_failure: { retries: 2, backoff: exponential }

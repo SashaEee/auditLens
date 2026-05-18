@@ -1,0 +1,13 @@
+id: discovery
+agent: discovery
+description: |
+  Раз в неделю sub-agent ищет новые публичные витрины и продуктовые карточки
+  банков (web_search), проверяет валидность (web_fetch), при необходимости
+  открывает browser. Найденные таргеты предлагает как patch к
+  config/sources.yaml через apply_patch (без авто-применения).
+inputs:
+  search_queries:
+    - "site:sravni.ru вклады"
+    - "site:sravni.ru кредитные карты"
+    - "site:banki.ru отзывы [bank]"
+artifacts: [workspace/reports/discovery_*.md]

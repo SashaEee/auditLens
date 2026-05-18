@@ -1,0 +1,21 @@
+# OpenClaw cron. Времена МСК.
+schedules:
+  - id: ingest_sravni_aggregator_hourly
+    cron: "15 * * * *"
+    job: ingest_sravni_aggregator
+
+  - id: ingest_sravni_reviews_4h
+    cron: "5 */4 * * *"
+    job: ingest_sravni_reviews
+
+  - id: ingest_banki_reviews_4h
+    cron: "25 */4 * * *"
+    job: ingest_banki_reviews
+
+  - id: normalize_quality_daily
+    cron: "30 3 * * *"
+    job: quality
+
+  - id: discovery_weekly
+    cron: "0 6 * * 1"
+    job: discovery

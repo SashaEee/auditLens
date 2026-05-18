@@ -1,0 +1,25 @@
+workspace_dir: ./workspace
+raw_dir: ./workspace/raw
+reports_dir: ./workspace/reports
+logs_dir: ./workspace/logs
+
+http:
+  request_delay_ms: 1500
+  timeout_s: 30
+  max_retries: 3
+  user_agent: "BankAuditBot/0.1 (+internal-audit)"
+
+browser:
+  headless: true
+  nav_timeout_s: 45
+  scroll_pause_ms: 800
+  max_scrolls: 40
+
+normalizer:
+  amount_currency_default: RUB
+  fuzzy_bank_match_threshold: 88
+
+quality:
+  freshness_days_warning: 14
+  freshness_days_error: 45
+  rate_jump_pct_warning: 25

@@ -1,0 +1,76 @@
+# ── Секреты — НИКОГДА не коммитить ─────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+!config/ca_bundle_combined.pem
+!config/russian_trusted_root.pem
+secrets/
+*.key
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# ── Virtual envs ───────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── IDE ────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*.bak
+.DS_Store
+
+# ── Workspace (runtime artifacts) ──────────────────────────────────────────
+workspace/raw/
+workspace/reports/
+workspace/logs/
+workspace/uvicorn.log
+workspace/captcha_pending.json
+workspace/*.db
+workspace/*.sqlite
+workspace/tmp/
+
+# ── PDF / reports ──────────────────────────────────────────────────────────
+*.pdf
+!docs/**/*.pdf
+
+# ── ML models cache ────────────────────────────────────────────────────────
+.cache/
+.huggingface/
+~/.cache/huggingface/
+models/
+
+# ── Docker volumes ─────────────────────────────────────────────────────────
+docker/postgres/data/
+docker/searxng/data/
+
+# ── OS junk ────────────────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+
+# ── Local-only configs ─────────────────────────────────────────────────────
+settings.json
+settings.local.json
+docker-compose.override.yml
