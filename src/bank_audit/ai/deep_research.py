@@ -703,8 +703,8 @@ _RATING_RE = re.compile(r"оценка:\s*(\d)\s*/\s*5", re.IGNORECASE)
 # диапазоны, miscellaneous numbers. Используется чтобы убедиться что КАЖДОЕ
 # число из fact-extraction присутствует в excerpts цитированного source'а.
 _NUM_TOKEN_RE = re.compile(
-    r"\d+(?:[.,]\d+)?\s*(?:%|процент|руб|₽|млн|млрд|тыс|долл|\$|€|год|мес|"
-    r"дней|days|years|months|pp|п\.п\.|базисн)?",
+    r"\d+(?:[.,]\d+)?\s*(?:%|процент|руб|₽|млн|млрд|тыс|долл|\$|€|год|лет|"
+    r"мес|дн|дней|days|years|months|pp|п\.п\.|базисн|раз|шт|кв\.?\s*м|кг|т)?",
     re.IGNORECASE,
 )
 _CITE_RE = re.compile(r"\[(\d{1,3})\]")
@@ -738,12 +738,23 @@ def _verify_fact_line(line: str, sources_by_n: dict[int, dict]) -> tuple[bool, s
     cites = [int(m) for m in _CITE_RE.findall(line)]
     if not cites:
         return False, "no citation"
-    # Числа в строке
+    # КРИТИЧНО: убрать [N]-цитаты ДО извлечения чисел, иначе номера ссылок
+    # (например [14]) попадут в raw_numbers и regex будет искать «14» в
+    # excerpts источников — а там этого числа нет, и ВСЯ строка дропается
+    # как «галлюцинированная». Эта баг отбрасывал 60-90% валидных фактов.
+    line_no_cites = _CITE_RE.sub(" ", line)
+    # Числа в строке. Min-длина зависит от наличия единицы измерения:
+    #   • «5%», «3 года», «12 мес» → значимо даже при 1-значном числе
+    #   • «5» в свободном тексте → слишком частое, шумит → требуем 2+ цифры
     raw_numbers = []
-    for m in _NUM_TOKEN_RE.finditer(line):
+    for m in _NUM_TOKEN_RE.finditer(line_no_cites):
         token = m.group(0).strip()
         digits = _normalize_number(token)
-        if len(digits) >= 2:   # минимум 2 цифры — иначе мусор вроде «1»/«2»
+        if not digits:
+            continue
+        # Есть ли единица измерения (захвачена тем же regex'ом после цифр)?
+        has_unit = bool(re.search(r"[^\d\s.,]", token))
+        if has_unit or len(digits) >= 2:
             raw_numbers.append(digits)
     if not raw_numbers:
         return True, "no numbers (qualitative)"

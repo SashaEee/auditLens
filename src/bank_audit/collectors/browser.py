@@ -162,21 +162,32 @@ class BrowserCollector:
             return status, html
 
     def fetch_redux_state_resilient(self, landing_url: str, **kwargs) -> tuple[int, dict | None]:
-        """Обёртка над fetch_redux_state с anti-captcha стратегией:
+        """Обёртка над fetch_redux_state с anti-captcha стратегией.
 
-        1. Попытка №1: headless. Если CaptchaRequired → ждём 60-90s (jitter)
-        2. Попытка №2: headless. Если CaptchaRequired → ждём 90-150s
-        3. Попытка №3: HEADED (видимый браузер). С прогретым OpenClaw-профилем
-           капча обычно не появляется или проходит за секунды. Если и здесь
-           captcha — пробрасываем дальше (UI «Решить капчу» подхватит)
+        Стратегия (умышленно короткая — раньше блокировала pipeline на 6-8 мин):
+          1. Попытка headless. Если CaptchaRequired → короткий sleep (5-15s)
+          2. Сразу HEADED (видимый браузер с прогретым profile'м). Если и тут
+             captcha — пробрасываем выше, pipeline пойдёт дальше без sravni.
 
-        Sravni ловит **headless** агрессивно, но с persistent profile в
-        headed-режиме часто всё работает с первой попытки.
+        Раньше было: 3 attempt'а с sleep'ами 60-150s каждый = до 5+ минут
+        блокировки event-loop'а. Sravni либо отдаёт сразу либо банит на час —
+        длинные sleep'ы помогают редко, а deep-research зависает гарантированно.
+
+        Все параметры можно переопределить через env:
+          • SRAVNI_RETRY_ATTEMPTS (default 2)
+          • SRAVNI_RETRY_SLEEP_MIN (default 5)
+          • SRAVNI_RETRY_SLEEP_MAX (default 15)
+          • SRAVNI_TOTAL_BUDGET_S  (default 45) — общий cap на ВСЁ время
+            ожидания в этой функции; при превышении прекращаем.
         """
-        import random
-        max_attempts = int(os.getenv("SRAVNI_RETRY_ATTEMPTS", "3"))
+        import random, time as _t
+        max_attempts = int(os.getenv("SRAVNI_RETRY_ATTEMPTS", "2"))
+        sleep_min    = float(os.getenv("SRAVNI_RETRY_SLEEP_MIN", "5"))
+        sleep_max    = float(os.getenv("SRAVNI_RETRY_SLEEP_MAX", "15"))
+        total_budget = float(os.getenv("SRAVNI_TOTAL_BUDGET_S",  "45"))
+
+        started = _t.time()
         for attempt in range(1, max_attempts + 1):
-            # На последней попытке переключаемся на headed
             force_headed = (attempt == max_attempts)
             try:
                 if force_headed:
@@ -187,9 +198,14 @@ class BrowserCollector:
             except CaptchaRequired:
                 if attempt >= max_attempts:
                     raise
-                wait_s = random.uniform(60, 90 + attempt * 30)
-                log.warning("fetch_redux_state captcha (attempt %s/%s) — sleeping %.0fs before retry",
-                            attempt, max_attempts, wait_s)
+                # Cap suffix: остаток бюджета или хотя бы 1s
+                remaining = total_budget - (_t.time() - started)
+                if remaining <= 1:
+                    log.warning("fetch_redux_state: исчерпан total budget %.0fs — fail-fast", total_budget)
+                    raise
+                wait_s = min(random.uniform(sleep_min, sleep_max), remaining)
+                log.warning("fetch_redux_state captcha (attempt %s/%s) — sleeping %.1fs before retry (budget left %.0fs)",
+                            attempt, max_attempts, wait_s, remaining)
                 time.sleep(wait_s)
         # unreachable
         raise CaptchaRequired(landing_url)
