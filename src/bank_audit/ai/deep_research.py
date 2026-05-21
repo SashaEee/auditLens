@@ -968,12 +968,32 @@ def _parse_rating_from_chunk(text: str) -> int | None:
     return None
 
 
+# Юникодные дефисы/тире, которые встречаются при копипасте из систем с
+# автозаменой: non-breaking hyphen (U+2011), figure dash (U+2012), en-dash
+# (U+2013), em-dash (U+2014), horizontal bar (U+2015), minus (U+2212).
+# Без нормализации «Т‑банк» (с U+2011) не матчился под триггер «т-банк».
+_DASH_TRANSLATE = str.maketrans({
+    "‐": "-", "‑": "-", "‒": "-", "–": "-",
+    "—": "-", "―": "-", "−": "-",
+    " ": " ",   # non-breaking space → обычный пробел
+    " ": " ",   # narrow no-break space
+})
+
+
+def normalize_question(q: str) -> str:
+    """Чистка юникодных артефактов копипаста. Сохраняет смысл, делает
+    keyword matching надёжным."""
+    if not q:
+        return q
+    return q.translate(_DASH_TRANSLATE)
+
+
 def detect_bank_slugs(question: str) -> list[str]:
     """По вопросу извлекает банковские slug'и через словарь триггеров.
     Возвращает уникальный список в порядке появления."""
     if not question:
         return []
-    low = question.lower()
+    low = normalize_question(question).lower()
     out: list[str] = []
     seen = set()
     for slug, kws in BANK_SLUG_TRIGGERS.items():
@@ -1878,9 +1898,15 @@ def _is_topical_url(url: str, topic: str | None) -> bool:
 
 
 def _matches_topic(text: str, topic: str | None,
-                    url: str | None = None) -> bool:
+                    url: str | None = None,
+                    extra_synonyms: list[str] | None = None) -> bool:
     """True если text содержит ключевое слово topic'а ИЛИ синонимы.
-    + проверка URL на negative-pattern (если URL передан)."""
+    + проверка URL на negative-pattern (если URL передан).
+
+    extra_synonyms — список морф-форм от resolver-LLM (ветеран/ветерана/...),
+    приоритетнее hardcoded _TOPIC_SYNONYMS. Без него «доверенность» не
+    матчилась с «доверенностью / доверенностей» в excerpts.
+    """
     if not topic:
         return True   # без topic — релевантно всё
     # URL negative-check
@@ -1889,7 +1915,11 @@ def _matches_topic(text: str, topic: str | None,
     if not text:
         return False
     low = text.lower()
-    keywords = _TOPIC_SYNONYMS.get(topic, [topic.lower()])
+    # Приоритет: resolver-synonyms (морф-формы) → hardcoded → topic как есть
+    keywords = (extra_synonyms or []) + _TOPIC_SYNONYMS.get(topic, [topic.lower()])
+    # Также автоматически добавляем topic-stem (5-7 chars без окончания) —
+    # ловит склонения типа «доверенностью» когда synonym только «доверенность»
+    keywords = list({k.lower() for k in keywords if k and len(k) >= 4})
     # Считаем количество вхождений: одного упоминания мало (может быть в footer/menu).
     # Минимум 2 хита ИЛИ topic-слово в первой трети текста (где обычно
     # суть страницы/документа).
@@ -1903,7 +1933,8 @@ def _matches_topic(text: str, topic: str | None,
 def _format_research_for_synthesis(steps_results: list[dict],
                                     sources: list[dict],
                                     entities: list[dict] | None = None,
-                                    topic: str | None = None) -> str:
+                                    topic: str | None = None,
+                                    topic_synonyms: list[str] | None = None) -> str:
     """Формирует context для synthesizer'а:
       1. Результаты 12+ шагов плана
       2. ▸ COMPREHENSIVE CONTEXT — top chunks из БД
@@ -1950,7 +1981,8 @@ def _format_research_for_synthesis(steps_results: list[dict],
                 excerpts = s.get("excerpts") or []
                 joined = " ".join(excerpts)
                 url = s.get("url")
-                is_relevant = _matches_topic(joined, topic, url=url)
+                is_relevant = _matches_topic(joined, topic, url=url,
+                                              extra_synonyms=topic_synonyms)
                 if is_relevant:
                     relevant_ns.append(s["n"])
                 else:
@@ -2232,6 +2264,10 @@ async def stream_deep_analysis(question: str,
                                 history: list[dict]) -> AsyncIterator[str]:
     """Многошаговый research+synthesis.
     Стримит SSE-события (см. модульный docstring)."""
+    # Юникод-нормализация: убираем non-breaking hyphen / en-dash / em-dash
+    # из вопроса. Без этого «Т‑банк» (U+2011) не распознаётся как «Т-банк»
+    # и Т-банк выпадает из plan_bank_slugs → fact-extract / отзывы / отчёт.
+    question = normalize_question(question)
     # max_retries=4 — Fireworks бывает шлёт 5xx или ConnectionTimeout,
     # SDK сам делает exp-backoff и повторяет. Без этого первая транзиентная
     # ошибка ломает весь deep-research (≥9 LLM-вызовов в цепочке).
@@ -3100,7 +3136,31 @@ async def stream_deep_analysis(question: str,
                     log.info("fact-extract SQL %s: %s", slug, e)
                     return slug, None
                 if not rows:
-                    return slug, None
+                    # FALLBACK: SQL по synonyms 0 rows — берём топ-N свежих
+                    # chunks банка БЕЗ topic-filter. Хоть какой-то контекст
+                    # для LLM, иначе банк выпадает из отчёта целиком (Альфа
+                    # на тему доверенностей не имела ингестированных страниц
+                    # → fact-extract возвращал None → synth писал «Не раскрыто»).
+                    try:
+                        with db.session() as s:
+                            rows = s.execute(_t("""
+                                SELECT dc.text, d.url, d.doc_type::text doc_type
+                                  FROM document_chunk dc
+                                  JOIN document d ON d.document_id = dc.document_id
+                                  JOIN bank b ON b.bank_id = d.bank_id
+                                 WHERE b.slug = :slug
+                                   AND d.trust_score >= 0.6
+                                 ORDER BY d.fetched_at DESC, d.trust_score DESC
+                                 LIMIT 15
+                            """), {"slug": slug}).mappings().all()
+                        log.warning("[fact-extract] %s SQL fallback (no topic match): %s chunks",
+                                     slug, len(rows))
+                    except Exception as e:
+                        log.info("fact-extract SQL fallback %s: %s", slug, e)
+                        return slug, None
+                    if not rows:
+                        log.warning("[fact-extract] %s: НЕТ документов в БД вообще", slug)
+                        return slug, f"⚠ В БД нет проиндексированных документов банка {slug.upper()} по теме «{_q_topic}». Рекомендуется ручной сбор данных."
                 src_block = "\n\n".join(
                     f"[доступная цитата: {url_to_n.get(r['url'], '?')}] {r['url'][:80]}\n"
                     f"«{(r['text'] or '')[:1200]}»"
@@ -3169,7 +3229,8 @@ async def stream_deep_analysis(question: str,
     except Exception:
         ents_for_synth = []
     research_context = _format_research_for_synthesis(
-        steps_results, sources, ents_for_synth, topic=_q_topic)
+        steps_results, sources, ents_for_synth, topic=_q_topic,
+        topic_synonyms=_topic_synonyms)
 
     # P0.2: Claim-level verification ДО synthesizer'а. Каждая extracted-строка
     # с числом проверяется regex'ом на наличие числа в excerpts цитированного
@@ -3574,7 +3635,8 @@ async def stream_deep_analysis(question: str,
             # Перекомпилируем research_context
             try:
                 research_context = _format_research_for_synthesis(
-                    steps_results, sources, ents_for_synth, topic=_q_topic)
+                    steps_results, sources, ents_for_synth, topic=_q_topic,
+        topic_synonyms=_topic_synonyms)
             except Exception as e:
                 log.info("recompile context failed: %s", e)
 
@@ -3779,7 +3841,8 @@ async def stream_deep_analysis(question: str,
             if True:
                 # Перегенерируем context с обновлёнными sources, делаем addendum
                 new_context = _format_research_for_synthesis(
-                    steps_results, sources, ents_for_synth, topic=_q_topic)
+                    steps_results, sources, ents_for_synth, topic=_q_topic,
+        topic_synonyms=_topic_synonyms)
                 addendum_messages = [
                     {"role": "system", "content": SYNTHESIZER_SYSTEM + ANSWER_TAG_INSTRUCTION},
                     {"role": "user", "content":
