@@ -3189,12 +3189,70 @@ async def stream_deep_analysis(question: str,
                 except Exception as e:
                     log.info("fact-extract SQL %s: %s", slug, e)
                     return slug, None
+                if len(rows) < 3:
+                    # LIVE FALLBACK: <3 chunks по теме в БД → срочный
+                    # web-search + ingest 3-5 страниц по «{бренд} {тема}»,
+                    # затем повторный SQL. Это критично для свежих/нишевых тем
+                    # и малых банков, где в БД ничего нет.
+                    log.warning("[fact-extract] %s: only %s chunks → live web fallback",
+                                 slug, len(rows))
+                    try:
+                        from ..rag.web_search import search as web_search
+                        from ..rag.indexer import ingest_document_from_url
+                        from concurrent.futures import ThreadPoolExecutor as _TPE
+                        # Получаем bank-name из БД для качественного query
+                        bank_name = slug
+                        try:
+                            with db.session() as _s:
+                                _row = _s.execute(_t(
+                                    "SELECT name FROM bank WHERE slug=:s LIMIT 1"
+                                ), {"s": slug}).first()
+                                if _row and _row[0]:
+                                    bank_name = _row[0]
+                        except Exception: pass
+                        q = f"{bank_name} {_q_topic} условия тарифы"
+                        try:
+                            results = web_search(q, max_results=5)
+                        except Exception as e:
+                            log.info("[fact-extract] %s web_search failed: %s", slug, e)
+                            results = []
+                        new_urls = [r.get("url") for r in (results or [])
+                                     if r.get("url") and ".pdf" not in r["url"].lower()][:5]
+                        if new_urls:
+                            log.warning("[fact-extract] %s: live-ingesting %s URLs",
+                                         slug, len(new_urls))
+                            with _TPE(max_workers=3) as ex:
+                                def _do_ingest(u):
+                                    try: return ingest_document_from_url(
+                                        u, prefer_browser=False, bank_slug_hint=slug)
+                                    except Exception as e:
+                                        log.info("live ingest fail %s: %s", u, e)
+                                        return None
+                                list(ex.map(_do_ingest, new_urls))
+                            # Re-query SQL после ingest
+                            try:
+                                with db.session() as s:
+                                    rows = s.execute(_t(f"""
+                                        SELECT dc.text, d.url, d.doc_type::text doc_type
+                                          FROM document_chunk dc
+                                          JOIN document d ON d.document_id = dc.document_id
+                                          JOIN bank b ON b.bank_id = d.bank_id
+                                         WHERE b.slug = :slug
+                                           AND d.trust_score >= 0.4
+                                           AND ({where_kws})
+                                         ORDER BY d.trust_score DESC, d.fetched_at DESC
+                                         LIMIT 50
+                                    """), params).mappings().all()
+                                log.warning("[fact-extract] %s after live-ingest: %s chunks",
+                                             slug, len(rows))
+                            except Exception as e:
+                                log.info("[fact-extract] %s SQL re-query failed: %s", slug, e)
+                    except Exception as e:
+                        log.info("[fact-extract] %s live-fallback overall failed: %s", slug, e)
+
                 if not rows:
-                    # FALLBACK: SQL по synonyms 0 rows — берём топ-N свежих
-                    # chunks банка БЕЗ topic-filter. Хоть какой-то контекст
-                    # для LLM, иначе банк выпадает из отчёта целиком (Альфа
-                    # на тему доверенностей не имела ингестированных страниц
-                    # → fact-extract возвращал None → synth писал «Не раскрыто»).
+                    # Final fallback: даже после live-ingest 0 rows — берём
+                    # generic chunks банка для общего контекста
                     try:
                         with db.session() as s:
                             rows = s.execute(_t("""
@@ -3207,13 +3265,13 @@ async def stream_deep_analysis(question: str,
                                  ORDER BY d.fetched_at DESC, d.trust_score DESC
                                  LIMIT 15
                             """), {"slug": slug}).mappings().all()
-                        log.warning("[fact-extract] %s SQL fallback (no topic match): %s chunks",
+                        log.warning("[fact-extract] %s generic-chunks fallback: %s chunks",
                                      slug, len(rows))
                     except Exception as e:
-                        log.info("fact-extract SQL fallback %s: %s", slug, e)
+                        log.info("fact-extract generic fallback %s: %s", slug, e)
                         return slug, None
                     if not rows:
-                        log.warning("[fact-extract] %s: НЕТ документов в БД вообще", slug)
+                        log.warning("[fact-extract] %s: НЕТ документов в БД ВООБЩЕ", slug)
                         return slug, f"⚠ В БД нет проиндексированных документов банка {slug.upper()} по теме «{_q_topic}». Рекомендуется ручной сбор данных."
                 src_block = "\n\n".join(
                     f"[доступная цитата: {url_to_n.get(r['url'], '?')}] {r['url'][:80]}\n"
@@ -3367,18 +3425,23 @@ async def stream_deep_analysis(question: str,
     ]
     full_report = ""
     # valid_n: только источники, отмеченные как RELEVANT для текущей темы.
-    # Если темы нет — считаем все источники валидными.
+    # Используем resolver.topic_synonyms для расширенного матчинга морф-форм
+    # (доверенностью / доверенностей и т.п. — без них matches_topic слишком строг).
+    # Post-фильтр валидных [N] автоматически выкидывает off-topic-цитаты из
+    # потокового вывода LLM — даже если synth-LLM проигнорировал инструкции.
     if _q_topic:
         relevant_set = set()
         for s in sources:
             ex_joined = " ".join(s.get("excerpts") or [])
-            if _matches_topic(ex_joined, _q_topic, url=s.get("url")):
+            if _matches_topic(ex_joined, _q_topic, url=s.get("url"),
+                                extra_synonyms=_topic_synonyms):
                 relevant_set.add(s["n"])
         # Если по теме нет ни одного релевантного — оставляем общий список
         # (synthesizer всё равно увидит OFF-TOPIC-метки и должен писать «не раскрыто»)
         valid_n = relevant_set if relevant_set else {s["n"] for s in sources}
-        log.info("topical filter: %s/%s sources are RELEVANT to '%s'",
-                 len(relevant_set), len(sources), _q_topic)
+        log.warning("[topical filter] %s/%s sources RELEVANT to '%s' (synonyms=%s)",
+                     len(relevant_set), len(sources), _q_topic,
+                     len(_topic_synonyms or []))
     else:
         valid_n = {s["n"] for s in sources}
     try:
@@ -3439,7 +3502,9 @@ async def stream_deep_analysis(question: str,
         used_cites = set(re.findall(r"\[(\d+)\]", full_report))
         recall = len(used_cites) / max(len(sources), 1)
         import os as _os
-        _min_recall = float(_os.getenv("CRITIC_RECALL_THRESHOLD", "0.35"))
+        # 0.5 — критик включается когда synth использовал <50% источников.
+        # Это значит он что-то упустил, попросим LLM явно найти пропуски.
+        _min_recall = float(_os.getenv("CRITIC_RECALL_THRESHOLD", "0.5"))
         _min_len    = int(_os.getenv("CRITIC_MIN_REPORT_LEN",    "2500"))
         if (len(full_report) < _min_len or recall < _min_recall) and len(sources) >= 4:
             log.warning("[critic-pass] triggered: len=%s recall=%.0f%% sources=%s",
@@ -3608,7 +3673,14 @@ async def stream_deep_analysis(question: str,
     # synth addendum). По умолчанию 0 — pipeline укладывается в 60-90s.
     # Юзер может включить через AGENT_LOOP_MAX=2 для длинного quality-mode.
     import os as _os
-    AGENT_LOOP_MAX = int(_os.getenv("AGENT_LOOP_MAX", "0"))
+    # AGENT_LOOP_MAX=1 — главный driver качества. Каждая итерация:
+    # 1) gap-detect (LLM находит «не раскрыто»/пробелы в draft)
+    # 2) targeted web-search для каждого пробела
+    # 3) ingest новых документов в БД
+    # 4) addendum к отчёту с новыми фактами
+    # Дорого (+30-60s) но критично — без него pipeline пишет «не раскрыто»
+    # вместо того чтобы пойти в web и найти данные. Тюнится через AGENT_LOOP_MAX.
+    AGENT_LOOP_MAX = int(_os.getenv("AGENT_LOOP_MAX", "1"))
     for _iter in range(1, AGENT_LOOP_MAX + 1):
         try:
             yield json.dumps({"type": "phase",
@@ -3694,15 +3766,35 @@ async def stream_deep_analysis(question: str,
             except Exception as e:
                 log.info("recompile context failed: %s", e)
 
-            # Дописываем addendum от обновлённого контекста
+            # Дописываем addendum. КЛЮЧЕВАЯ ПРАВКА: addendum пишется когда
+            # synth в первом draft писал «Не раскрыто» по конкретному банку.
+            # После web-ingest у нас есть НОВЫЕ данные → нужно подробно
+            # заполнить пропуски. Промпт явно требует адресности по банку.
             ADDENDUM_SYS = (
                 "Ты дополняешь аудит-отчёт новыми фактами, найденными после "
-                "первого drафта. Получаешь оригинальный отчёт + новые данные "
-                "из research_context. Выдай ТОЛЬКО ADDENDUM-блок markdown'а:\n"
-                "## 🔄 Дополнение по итогам уточнения (итерация {})\n"
-                "Сгруппируй новые факты по разделам оригинала. Каждый факт = "
-                "одна строка с [N]. ТОЛЬКО факты которых не было в исходном "
-                "отчёте. БЕЗ преамбулы."
+                "live web-search (исходный draft писал «не раскрыто» — теперь "
+                "у тебя есть реальные данные).\n\n"
+                "ЗАДАЧА: для КАЖДОГО банка где в исходном отчёте была пометка "
+                "«⚠ Не раскрыто» — заполни поля КОНКРЕТНЫМИ фактами из НОВЫЕ "
+                "ДАННЫЕ. Поля: ставка/тариф, срок, документы, ограничения, "
+                "способы оформления, требования.\n\n"
+                "ФОРМАТ ВЫХОДА:\n"
+                "## 🔄 Дополнение по итогам уточнения (итерация {})\n\n"
+                "### Имя банка №1\n"
+                "- Конкретный факт 1 с числом/деталью [N]\n"
+                "- Конкретный факт 2 [N]\n"
+                "- ...\n\n"
+                "### Имя банка №2\n"
+                "- ...\n\n"
+                "ПРАВИЛА:\n"
+                "  • Минимум 4-8 фактов на банк где в драфте было «не раскрыто»\n"
+                "  • КАЖДЫЙ факт с [N] ссылкой\n"
+                "  • Не пиши общими фразами «банк предлагает услуги» — только\n"
+                "    конкретика: сумма ₽, срок дней, ставка %, документы\n"
+                "  • НЕ повторяй то что уже было в исходном отчёте\n"
+                "  • Если по банку всё равно нет данных в НОВЫЕ ДАННЫЕ —\n"
+                "    «⚠ Дополнительные источники не найдены, повтор поиска»\n"
+                "  • Объём: 1500-3500 chars (раньше было 200-400 — этого мало)"
             ).format(_iter) + ANSWER_TAG_INSTRUCTION
             try:
                 add_resp = await asyncio.wait_for(
@@ -3711,11 +3803,12 @@ async def stream_deep_analysis(question: str,
                         messages=[
                             {"role": "system", "content": ADDENDUM_SYS},
                             {"role": "user",
-                             "content": f"# ИСХОДНЫЙ ОТЧЁТ\n{full_report[:5000]}\n\n"
-                                        f"# НОВЫЕ ДАННЫЕ\n{research_context[:14000]}"},
+                             "content": f"# ИСХОДНЫЙ ОТЧЁТ\n{full_report[:6000]}\n\n"
+                                        f"# НОВЫЕ ДАННЫЕ из web-search\n{research_context[:20000]}"},
                         ],
-                        max_tokens=1500, temperature=0.1,
-                    ), timeout=30)
+                        # 4000 для существенного addendum (было 1500 — обрезалось)
+                        max_tokens=4000, temperature=0.1,
+                    ), timeout=60)
                 add_text = _strip_reasoning(
                     (add_resp.choices[0].message.content or "").strip())
                 add_text = _filter_invalid_citations(add_text, valid_n)
