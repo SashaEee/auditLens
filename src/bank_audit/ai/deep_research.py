@@ -636,6 +636,14 @@ BANK_SLUG_TRIGGERS = {
     "mtsbank":    ["мтс банк", "мтсбанк"],
     "ozonbank":   ["озон банк", "ozonbank"],
     "yandexbank": ["яндекс банк"],
+    # Малые/новые банки которых может не быть в bank-таблице, но их часто
+    # спрашивают аудиторы. Резолвер их распознаёт; pipeline сам сделает
+    # web-search для документов если в БД пусто.
+    "tochka":     ["точка банк", "точка", "tochka"],
+    "modulbank":  ["модульбанк", "модуль банк", "modulbank", "modul bank"],
+    "blanc":      ["бланк банк", "blanc"],
+    "qiwi":       ["киви", "qiwi"],
+    "rencredit":  ["ренессанс", "ren-credit", "rencredit"],
 }
 
 # Триггеры «вопрос про отзывы / клиентский опыт»
@@ -988,15 +996,61 @@ def normalize_question(q: str) -> str:
     return q.translate(_DASH_TRANSLATE)
 
 
+_DYN_BANK_TRIGGERS_CACHE: dict | None = None
+_DYN_BANK_TRIGGERS_TS: float = 0.0
+
+
+def _get_dynamic_bank_triggers() -> dict[str, list[str]]:
+    """Дополняет статический BANK_SLUG_TRIGGERS банками из БД (всеми).
+    Кеш 5 минут — не ходим в БД на каждый вопрос. Гарантирует что любой
+    банк в `bank` таблице будет распознан без правки хардкода.
+
+    Логика: для каждого банка берём slug + name + первое слово name'а
+    (если оно >3 chars) как триггеры. Сравнение substring case-insensitive.
+    """
+    import time as _t
+    global _DYN_BANK_TRIGGERS_CACHE, _DYN_BANK_TRIGGERS_TS
+    if _DYN_BANK_TRIGGERS_CACHE is not None and (_t.time() - _DYN_BANK_TRIGGERS_TS) < 300:
+        return _DYN_BANK_TRIGGERS_CACHE
+    out: dict[str, list[str]] = {k: list(v) for k, v in BANK_SLUG_TRIGGERS.items()}
+    try:
+        from sqlalchemy import text as _t_sql
+        with db.session() as s:
+            rows = s.execute(_t_sql(
+                "SELECT slug, name FROM bank WHERE slug IS NOT NULL "
+                "AND slug NOT LIKE 'unknown_%' LIMIT 500"
+            )).all()
+        for slug, name in rows:
+            if not slug: continue
+            existing = out.setdefault(slug, [])
+            # Добавляем ТОЛЬКО полные тождества: slug и полное name.
+            # Раньше брали first_word — но «финам», «оренбург» и т.п. ловили
+            # «Точка», «Открытие» и другие false-positive.
+            if slug.lower() not in existing and len(slug) >= 4:
+                existing.append(slug.lower())
+            if name:
+                nlow = name.lower().strip()
+                if nlow and nlow not in existing and len(nlow) >= 5:
+                    existing.append(nlow)
+    except Exception as e:
+        log.warning("dynamic bank triggers load failed: %s", e)
+    _DYN_BANK_TRIGGERS_CACHE = out
+    _DYN_BANK_TRIGGERS_TS = _t.time()
+    log.info("dynamic bank triggers: %s банков", len(out))
+    return out
+
+
 def detect_bank_slugs(question: str) -> list[str]:
-    """По вопросу извлекает банковские slug'и через словарь триггеров.
-    Возвращает уникальный список в порядке появления."""
+    """По вопросу извлекает банковские slug'и через словарь триггеров
+    + динамический список из БД. Возвращает уникальный список в порядке появления.
+    Распознаёт ЛЮБОЙ банк присутствующий в таблице `bank`."""
     if not question:
         return []
     low = normalize_question(question).lower()
     out: list[str] = []
     seen = set()
-    for slug, kws in BANK_SLUG_TRIGGERS.items():
+    triggers = _get_dynamic_bank_triggers()
+    for slug, kws in triggers.items():
         if any(k in low for k in kws):
             if slug not in seen:
                 out.append(slug); seen.add(slug)
