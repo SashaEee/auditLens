@@ -891,12 +891,22 @@ async def stream_analysis(question: str, history: list[dict],
     Автоматически выбирает режим: quick (single-shot tool-use)
     либо deep (planner → multi-step → synthesize → verify → charts).
     force_deep — явный override (через UI toggle)."""
-    # Routing: deep mode для исследовательских вопросов
-    from .deep_research import is_deep_question, stream_deep_analysis
+    # Routing: deep mode для исследовательских вопросов.
+    # EAV_PIPELINE=1 — новая Knowledge-Graph архитектура (entity → sources →
+    # triples → matrix → render). По умолчанию ВКЛ для качества.
+    from .deep_research import is_deep_question
     if force_deep is True or (force_deep is None and is_deep_question(question)):
-        async for ev in stream_deep_analysis(question, history):
-            yield ev
-        return
+        use_eav = os.getenv("EAV_PIPELINE", "1").lower() in ("1", "true", "yes")
+        if use_eav:
+            from ..research.orchestrator import stream_eav_research
+            async for ev in stream_eav_research(question, history):
+                yield ev
+            return
+        else:
+            from .deep_research import stream_deep_analysis
+            async for ev in stream_deep_analysis(question, history):
+                yield ev
+            return
 
     # Quick path (текущий single-shot)
     yield json.dumps({"type": "mode", "value": "quick"})
