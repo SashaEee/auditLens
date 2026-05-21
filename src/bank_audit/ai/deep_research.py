@@ -1941,6 +1941,29 @@ _TOPIC_URL_BLACKLIST = {
 }
 
 
+# Universal negative-patterns для PRODUCT-вопросов (тарифы/условия/комиссии):
+# страницы про маркетинговые промо-акции, бонусные раздачи, события не
+# содержат БАЗОВЫХ условий продукта, а описывают разовые акции. Если они
+# попадают в fact-extract, synth подменяет ими настоящие условия продукта
+# (видели CityDrive promo вместо условий пенсионной карты).
+_PRODUCT_NEGATIVE_URL_PATTERNS = [
+    "/promo/", "/akcii/", "/akciya/", "/sale/", "/event/",
+    "/citydrive", "/sber-spasibo/", "/spasibo/", "/bonus-", "/giveaway/",
+    "/contest/", "/news/", "/press/", "/blog/", "/article/", "/articles/",
+    "/stories/", "/help/", "/help-",   # FAQ-страницы редко содержат тарифы
+    "promo-", "campaign", "/quiz/",
+]
+# Negative-keywords для promo/news detection. Используются с word-boundary
+# чтобы избежать ложных матчей («стат» матчил бы «оста-стат-ок»).
+_PRODUCT_NEGATIVE_TITLE_KW_RE = re.compile(
+    r"\b(?:акция|акции|розыгрыш|конкурс|выигра[йт]|разыгра[йт]|"
+    r"блог|новост[ьи]|стать[ия]|интервью|истори[яи]|"
+    r"citydrive|сити[\s\-]?драйв|sber[\s\-]?spasibo|"
+    r"спасибо\s+бонус|акция\s+\w|promo|campaign)\b",
+    re.IGNORECASE,
+)
+
+
 def _is_topical_url(url: str, topic: str | None) -> bool:
     """True если URL не противоречит теме (negative-pattern check).
     Используется как DOPOLNITELЬNAYA проверка поверх excerpt-match."""
@@ -1948,7 +1971,20 @@ def _is_topical_url(url: str, topic: str | None) -> bool:
         return True
     low = url.lower()
     blacklist = _TOPIC_URL_BLACKLIST.get(topic, [])
-    return not any(p in low for p in blacklist)
+    if any(p in low for p in blacklist):
+        return False
+    # Universal: promo/news/blog не относятся к описанию продукта
+    if any(p in low for p in _PRODUCT_NEGATIVE_URL_PATTERNS):
+        return False
+    return True
+
+
+def _is_promo_content(text: str | None, title: str | None = None,
+                      url: str | None = None) -> bool:
+    """True если text/title явно похож на промо-акцию, а не описание продукта.
+    Word-boundary regex чтобы избежать ложных матчей."""
+    haystack = " ".join([(text or "")[:500], (title or ""), (url or "")])
+    return bool(_PRODUCT_NEGATIVE_TITLE_KW_RE.search(haystack))
 
 
 def _matches_topic(text: str, topic: str | None,
@@ -1963,25 +1999,43 @@ def _matches_topic(text: str, topic: str | None,
     """
     if not topic:
         return True   # без topic — релевантно всё
-    # URL negative-check
+    # URL negative-check (включая universal promo/news/blog patterns)
     if url and not _is_topical_url(url, topic):
         return False
     if not text:
         return False
+    # Promo-content check: страницы про акции/розыгрыши/новости НЕ описывают
+    # базовые условия продукта, даже если упоминают topic-слово
+    if _is_promo_content(text, url=url):
+        return False
     low = text.lower()
     # Приоритет: resolver-synonyms (морф-формы) → hardcoded → topic как есть
     keywords = (extra_synonyms or []) + _TOPIC_SYNONYMS.get(topic, [topic.lower()])
-    # Также автоматически добавляем topic-stem (5-7 chars без окончания) —
-    # ловит склонения типа «доверенностью» когда synonym только «доверенность»
     keywords = list({k.lower() for k in keywords if k and len(k) >= 4})
-    # Считаем количество вхождений: одного упоминания мало (может быть в footer/menu).
-    # Минимум 2 хита ИЛИ topic-слово в первой трети текста (где обычно
-    # суть страницы/документа).
+    # Минимум 2 хита для product-вопросов. Раньше 1 хит в первой трети
+    # засчитывался — но header/breadcrumbs тоже там, ловили false-positive
+    # (страница про акцию упоминает «пенсионная карта» в крошках → matched).
     hit_count = sum(low.count(kw) for kw in keywords)
     if hit_count >= 2:
         return True
+    # Fallback: topic-слово в первой трети + НЕ promo-keyword рядом.
+    # Раньше принимали любое упоминание в первой трети — слишком мягко.
     head = low[:max(800, len(low) // 3)]
-    return any(kw in head for kw in keywords)
+    hits_in_head = sum(1 for kw in keywords if kw in head)
+    # Минимум 1 в head, но проверим что это не header/breadcrumb (тогда
+    # обычно стоит в первых 200 chars, без контекстных слов вроде «условия/тариф»)
+    if hits_in_head >= 1:
+        # Если topic упоминается в первых 200 chars (header/title) И нет
+        # контекстных маркеров продуктовых страниц — это похоже на промо
+        early = low[:200]
+        if any(kw in early for kw in keywords):
+            context_markers = ["услови", "тариф", "комисси", "лимит", "ставк",
+                                "процент", "оформ", "выпуск", "обслужив",
+                                "программа", "доку мент"]
+            if not any(m in low[:2000] for m in context_markers):
+                return False  # Скорее всего акция/новость
+        return True
+    return False
 
 
 def _format_research_for_synthesis(steps_results: list[dict],
