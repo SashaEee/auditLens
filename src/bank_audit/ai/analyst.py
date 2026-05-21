@@ -904,6 +904,8 @@ async def stream_analysis(question: str, history: list[dict],
     client = AsyncOpenAI(
         base_url=LLM_BASE_URL,
         api_key=LLM_API_KEY,
+        max_retries=4,         # default 2; повышаем т.к. Fireworks 5xx бывают
+        timeout=120.0,         # safety cap на одну операцию
     )
 
     messages = [

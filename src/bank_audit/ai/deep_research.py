@@ -2104,7 +2104,11 @@ async def stream_deep_analysis(question: str,
                                 history: list[dict]) -> AsyncIterator[str]:
     """Многошаговый research+synthesis.
     Стримит SSE-события (см. модульный docstring)."""
-    client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
+    # max_retries=4 — Fireworks бывает шлёт 5xx или ConnectionTimeout,
+    # SDK сам делает exp-backoff и повторяет. Без этого первая транзиентная
+    # ошибка ломает весь deep-research (≥9 LLM-вызовов в цепочке).
+    client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY,
+                          max_retries=4, timeout=180.0)
 
     # 1. mode переключение
     yield json.dumps({"type": "mode", "value": "deep"})
