@@ -265,6 +265,10 @@ tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
   border-left:2px solid var(--ink);background:var(--paper-2);
   font-style:italic;color:var(--ink-2);
 }
+/* Markdown-ссылки в отчёте (отдельно от [N]-цитат) */
+.dr-doc-main .md-link{color:var(--accent);text-decoration:underline;
+  text-underline-offset:2px;word-break:break-word}
+.dr-doc-main .md-link:hover{opacity:.82}
 
 /* Citations — academic footnote-style superscript.
    Trust tier через типографику: weight + dotted underline + warn-tint */

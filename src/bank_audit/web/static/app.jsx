@@ -345,8 +345,16 @@ function renderMD(text, sources, charts){
          + `class="cite cite-t${tier}" data-cite="${n}">${n}</a></sup>`;
   };
   const inlineHTML=(s)=>s
+    // markdown-ссылки [текст](url) → <a>. ДО citation-замены и emphasis.
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+             '<a href="$2" target="_blank" rel="noopener noreferrer" class="md-link">$1</a>')
     .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
+    // __жирный__ (подчёркивания) — только на границах слова. NB: JS \w НЕ включает
+    // кириллицу, поэтому класс слова задаём явно (иначе ломается имя_атрибута).
+    .replace(/(^|[^A-Za-zА-Яа-яЁё0-9_])__([^_]+?)__(?![A-Za-zА-Яа-яЁё0-9])/g,'$1<strong>$2</strong>')
     .replace(/\*(.+?)\*/g,"<em>$1</em>")
+    // _курсив_ (подчёркивания) — только на границах слова (с кириллицей)
+    .replace(/(^|[^A-Za-zА-Яа-яЁё0-9_])_([^_]+?)_(?![A-Za-zА-Яа-яЁё0-9])/g,'$1<em>$2</em>')
     .replace(/`([^`]+)`/g,"<code class=\"md-code\">$1</code>")
     .replace(/~~(.+?)~~/g,"<s>$1</s>")
     .replace(/\[(\d{1,2})\]/g,(_,n)=>renderCitation(parseInt(n,10)))
@@ -359,7 +367,7 @@ function renderMD(text, sources, charts){
              '<span class="dr-conflict">$1$2</span>');
 
   const lines=text.split("\n");
-  let out=[],inTable=false,tableHead=[],tableRows=[],listBuf=[],listOrdered=false;
+  let out=[],inTable=false,tableHead=[],tableRows=[],listBuf=[],listOrdered=false,bqBuf=[];
   // Slugify для anchor id заголовков (используется TOC)
   const slug=(s)=>String(s).toLowerCase()
     .replace(/[^а-яёa-z0-9\s]/gu,"").trim().replace(/\s+/g,"-").slice(0,50);
@@ -377,6 +385,12 @@ function renderMD(text, sources, charts){
     out.push(<Tag key={"l"+out.length}>{listBuf.map((it,i)=><li key={i} dangerouslySetInnerHTML={{__html:inlineHTML(it)}}/>)}</Tag>);
     listBuf=[];
   };
+  const flushQuote=()=>{
+    if(!bqBuf.length)return;
+    out.push(<blockquote key={"q"+out.length} className="dr-quote"
+      dangerouslySetInnerHTML={{__html:bqBuf.map(inlineHTML).join("<br/>")}}/>);
+    bqBuf=[];
+  };
   lines.forEach((ln,idx)=>{
     // Inline-chart marker: [[CHART:N]] вставляет ChartCanvas прямо в поток
     // markdown'а. Используется в demo и backend-generated отчётах когда
@@ -393,6 +407,10 @@ function renderMD(text, sources, charts){
       }
       return;
     }
+    // Цитата (> ...) — рендерим как blockquote (напр. «Источник дословно»).
+    const bqm=/^>\s?(.*)$/.exec(ln);
+    if(bqm){flushList();flushTable();bqBuf.push(bqm[1]);return;}
+    flushQuote();   // любая не-цитатная строка завершает blockquote
     if(ln.startsWith("|")){
       const cells=ln.split("|").map(c=>c.trim()).filter((_,i,a)=>i>0&&i<a.length-1);
       if(/^[-:\s|]+$/.test(ln.replace(/\|/g,"")))return;
@@ -430,7 +448,7 @@ function renderMD(text, sources, charts){
     if(!ln.trim())return;
     out.push(<p key={idx} dangerouslySetInnerHTML={{__html:inlineHTML(ln)}}/>);
   });
-  flushTable();flushList();
+  flushTable();flushList();flushQuote();
   return out;
 }
 

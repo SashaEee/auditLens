@@ -45,8 +45,15 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict]) -> str:
         s = _esc(s)
         s = re.sub(r"&\#039;|'", "'", s)  # restore some chars
         s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+        # __жирный__ / _курсив_ (подчёркивания) — на границах слова
+        # (Python \w в py3 Unicode-aware, кириллица не ломается).
+        s = re.sub(r"(^|[^\w_])__([^_]+?)__(?!\w)", r"\1<strong>\2</strong>", s)
         s = re.sub(r"\*([^*]+?)\*", r"<em>\1</em>", s)
+        s = re.sub(r"(^|[^\w_])_([^_]+?)_(?!\w)", r"\1<em>\2</em>", s)
         s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+        # markdown-ссылки [текст](url) → <a> (ДО citation [N])
+        s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+                    r'<a href="\2">\1</a>', s)
         # Citation [N] → пометить inline-ссылкой на anchor #src-N
         def _cite(m: re.Match) -> str:
             n = int(m.group(1))
