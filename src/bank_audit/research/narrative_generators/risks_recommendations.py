@@ -117,12 +117,15 @@ async def generate(ctx: NarrativeContext,
             c_lines.append(f"  • {bank} {attr}: {vals}")
         conflicts_str = "\n".join(c_lines)
 
+    brief_block = ctx.brief_block("risks_recommendations")
     user_msg = (
-        f"# Вопрос аудитора\n{ctx.question}\n\n"
+        (brief_block + "\n\n" if brief_block else "")
+        + f"# Вопрос аудитора\n{ctx.question}\n\n"
         f"# Главные факты ({len(high_facts or ctx.facts)})\n{facts_str}\n\n"
         f"# Пробелы (не раскрыто)\n{gaps_str}\n\n"
         f"# Конфликты в источниках\n{conflicts_str}\n\n"
-        f"Напиши risk_scenarios + recommendations + open_questions. JSON."
+        f"Опираясь на меморандум (критичные пробелы и ловушки), напиши "
+        f"risk_scenarios + recommendations + open_questions. JSON."
     )
 
     raw = await _llm_call(ctx, user_msg)

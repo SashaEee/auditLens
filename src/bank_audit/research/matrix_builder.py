@@ -29,6 +29,71 @@ def _norm_val(s: str) -> str:
     return s
 
 
+def _norm_time(n: float, unit: str) -> tuple[float, str]:
+    """Нормализует срок к годам: 60 мес → (5.0, 'лет'). Иначе возвращает как есть."""
+    u = (unit or "").lower()
+    if "мес" in u:
+        return n / 12.0, "лет"
+    if any(x in u for x in ("год", "лет", "года")):
+        return n, "лет"
+    return n, (unit or "")
+
+
+def _fmt_num(n: float, unit: str) -> str:
+    """Число → строка: целые с разделением тысяч (для ₽), дроби — с запятой."""
+    if abs(n - round(n)) < 1e-9:
+        n = int(round(n))
+        if unit == "₽" or n >= 10000:
+            return f"{n:,}".replace(",", " ")
+        return str(n)
+    return f"{n:.3f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def _aggregate_cell(base: Triple, group: list[Triple]) -> tuple[Triple, bool]:
+    """Если у клетки несколько числовых фактов одного (нормализованного) типа —
+    отображаем ДИАПАЗОН «min–max» вместо одного group[0] (чинит врущую таблицу:
+    сумма 300к→100к–8млн, срок 8мес→1–5 лет, ставка 20,9→20,9–34,6).
+
+    Возвращает (display_triple, is_range). is_range=True → клетку НЕ помечать
+    конфликтом (диапазон честно показывает разброс)."""
+    norm = []
+    for g in group:
+        if g.value_numeric is None:
+            continue
+        v, u = _norm_time(g.value_numeric, g.unit or "")
+        norm.append((v, u))
+    if len(norm) < 2:
+        # Единичный срок в месяцах, кратный 12 → показываем в годах (96 мес → 8 лет)
+        u = (base.unit or "").lower()
+        if base.value_numeric is not None and "мес" in u:
+            m = base.value_numeric
+            if m >= 12 and abs(m / 12 - round(m / 12)) < 1e-9:
+                yrs = int(round(m / 12))
+                return Triple(
+                    entity_bank_slug=base.entity_bank_slug, attribute=base.attribute,
+                    value=str(yrs), unit="лет", value_numeric=float(yrs),
+                    source_idx=base.source_idx, source_url=base.source_url,
+                    excerpt=base.excerpt, confidence=base.confidence,
+                ), False
+        return base, False
+    units = {u for _, u in norm}
+    if len(units) != 1:                 # несовместимые единицы — не диапазон
+        return base, False
+    unit = next(iter(units))
+    vals = [v for v, _ in norm]
+    lo, hi = min(vals), max(vals)
+    if hi - lo < 1e-9:                   # все значения равны (напр. 5 лет == 60 мес)
+        return base, False
+    rng = f"{_fmt_num(lo, unit)}–{_fmt_num(hi, unit)}"
+    disp = Triple(
+        entity_bank_slug=base.entity_bank_slug, attribute=base.attribute,
+        value=rng, unit=unit, value_numeric=(lo + hi) / 2,
+        source_idx=base.source_idx, source_url=base.source_url,
+        excerpt=base.excerpt, confidence=base.confidence,
+    )
+    return disp, True
+
+
 def _is_material_conflict(group) -> bool:
     """True только если значения РЕАЛЬНО противоречат друг другу.
 
@@ -39,8 +104,14 @@ def _is_material_conflict(group) -> bool:
       • «да»/«есть»/«true» — синонимы наличия.
     Конфликт: разные числа (4% ↔ 13.5%) или противоположные тексты.
     """
-    # 1) Числовое сравнение, если у всех есть value_numeric
-    nums = [g.value_numeric for g in group if g.value_numeric is not None]
+    # 1) Числовое сравнение, если у всех есть value_numeric.
+    #    Время нормализуем к годам (5 лет и 60 мес — НЕ конфликт).
+    nums = []
+    for g in group:
+        if g.value_numeric is None:
+            continue
+        v, _u = _norm_time(g.value_numeric, g.unit or "")
+        nums.append(v)
     if len(nums) >= 2 and len(nums) == len([g for g in group if g.value is not None]):
         lo, hi = min(nums), max(nums)
         if lo == 0:
@@ -194,11 +265,14 @@ def build_matrix(entities: list[Entity],
         if not group:
             continue
         group.sort(key=lambda x: -_CONF_RANK.get(x.confidence, 1))
-        cells[key] = group[0]
-        if len(group) > 1:
+        # Multi-value: несколько числовых фактов → ДИАПАЗОН вместо одного значения.
+        display, is_range = _aggregate_cell(group[0], group)
+        cells[key] = display
+        if len(group) > 1 and not is_range:
             # Конфликт ТОЛЬКО если значения МАТЕРИАЛЬНО различаются и из РАЗНЫХ
-            # источников. Отсекаем шум: «до 12.5%»↔«12.5%» (то же число),
-            # «ежемесячно»↔«ежемесячно в последний день» (уточнение, не противоречие).
+            # источников. Диапазон (is_range) — НЕ конфликт: он честно показывает
+            # разброс (ставка 6,5–12,5 %), а не противоречие источников.
+            # Отсекаем шум: «до 12.5%»↔«12.5%», «5 лет»↔«60 мес» (то же число).
             distinct_urls = {g.source_url for g in group}
             if len(distinct_urls) > 1 and _is_material_conflict(group):
                 conflicts[key] = group

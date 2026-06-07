@@ -251,6 +251,76 @@ def _conflicts_md(matrix: Matrix) -> str:
     return "\n".join(lines)
 
 
+_CRITIC_SYSTEM = """Ты — придирчивый рецензент аудиторских отчётов. Тебе дают
+ВОПРОС аудитора и ЧЕРНОВИК аналитических секций. Оцени КАЧЕСТВО АНАЛИЗА (не стиль):
+  1) отвечает ли отчёт на вопрос;
+  2) есть ли НАСТОЯЩАЯ аналитика (почему, что это значит, сравнение банков
+     относительно друг друга, витрина↔реальность) — или это просто пересказ фактов;
+  3) есть ли голословные сильные выводы без опоры;
+  4) есть ли пустые/водянистые места и повторы.
+
+ВЫХОД строго JSON без преамбулы:
+{"ok": true|false,
+ "issues": ["короткие конкретные претензии"],
+ "key_findings_fix": "если ключевые выводы слабы/поверхностны — короткая инструкция, что усилить; иначе пустая строка"}"""
+
+
+async def _critique_and_repair(ctx, results, question: str):
+    """Критик черновика + одна перегенерация key_findings при слабости (#5)."""
+    import os as _os
+    from .narrative_generators import key_findings as _kf
+    # Собираем черновик только из LLM-секций (детерминированные пропускаем)
+    skip = {"comparison_table"}
+    draft = "\n\n".join(md for sec, md in results
+                          if md and md.strip() and sec.kind not in skip)
+    if len(draft) < 400:
+        return results
+    model = _os.getenv("LLM_MODEL_REASONING") or _os.getenv("LLM_MODEL_SMART") or \
+              _os.getenv("LLM_MODEL_NAME", "gpt-4o-mini")
+    user = (f"# ВОПРОС\n{question}\n\n# ЧЕРНОВИК ОТЧЁТА\n{draft[:14000]}\n\n"
+            f"Оцени качество анализа. JSON.")
+    try:
+        resp = await asyncio.wait_for(
+            ctx.client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": _CRITIC_SYSTEM},
+                          {"role": "user", "content": user}],
+                max_tokens=1500, temperature=0.0,  # дефолтный effort: чистый JSON
+            ), timeout=90)
+    except Exception as e:
+        log.warning("[critic] failed: %s", e)
+        return results
+    from .narrative_generators.base import parse_json_object
+    data = parse_json_object(resp.choices[0].message.content or "") or {}
+    issues = data.get("issues") or []
+    fix = str(data.get("key_findings_fix") or "").strip()
+    log.warning("[critic] ok=%s, issues=%d, kf_fix=%s",
+                 data.get("ok"), len(issues) if isinstance(issues, list) else 0,
+                 bool(fix))
+    if data.get("ok") is True or not fix:
+        return results
+    # есть ли секция key_findings для починки
+    if not any(sec.kind == "key_findings" for sec, _ in results):
+        return results
+    # Инъекция критики в директиву меморандума и перегенерация key_findings
+    try:
+        from .research_brief import ResearchBrief
+        if ctx.brief is None:
+            ctx.brief = ResearchBrief()
+        prev = ctx.brief.section_directives.get("key_findings", "")
+        ctx.brief.section_directives["key_findings"] = (
+            prev + " | ИСПРАВЬ ПО ЗАМЕЧАНИЯМ КРИТИКА: " + fix
+            + (" Проблемы: " + "; ".join(map(str, issues[:5])) if issues else ""))
+        new_md = await _kf.generate(ctx)
+        if new_md and len(new_md) > 200:
+            results = [((sec, new_md) if sec.kind == "key_findings" else (sec, md))
+                        for sec, md in results]
+            log.warning("[critic] key_findings перегенерирован по критике")
+    except Exception as e:
+        log.warning("[critic] repair failed: %s", e)
+    return results
+
+
 async def render_narrative_report(
     client: AsyncOpenAI,
     model: str,
@@ -262,19 +332,21 @@ async def render_narrative_report(
     core_schema: list[CoreAttr] | None = None,
     has_regulatory: bool = False,
     topic_profile = None,
+    brief = None,
 ) -> tuple[list[Section], str]:
     """Главная функция: возвращает (sections_used, final_markdown).
 
     Пайплайн:
       1. plan_sections() — LLM выбирает структуру
-      2. Параллельно генерируем тексты для каждой секции
-      3. Собираем в финальный markdown
+      2. Параллельно генерируем тексты для каждой секции (с research_brief)
+      3. Критик/repair, сборка финального markdown
     """
     ctx = NarrativeContext(
         client=client, model=model,
         question=question,
         entities=entities, facts=facts, sources_index=sources_index,
         has_regulatory=has_regulatory,
+        brief=brief,
     )
 
     # 1) Outline planning
@@ -344,6 +416,14 @@ async def render_narrative_report(
 
     results = await asyncio.gather(*[_run_section(s, g) for s, g in gen_tasks],
                                        return_exceptions=False)
+
+    # 2.5) КРИТИК/REPAIR (#5): reasoning-вызов проверяет черновик секций —
+    # отвечает ли на вопрос, есть ли «почему/что значит», нет ли голословных
+    # выводов и повторов. При проблемах — перегенерация key_findings с критикой.
+    try:
+        results = await _critique_and_repair(ctx, results, question)
+    except Exception as e:
+        log.warning("[narrative_renderer] critic/repair failed: %s", e)
 
     # 3) Сборка финального markdown
     parts = [f"# Аудит-отчёт: {question}", ""]

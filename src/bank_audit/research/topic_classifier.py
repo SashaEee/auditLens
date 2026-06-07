@@ -55,7 +55,48 @@ REGULATORY_DOMAIN_CATALOG = {
     "domrf.ru":           0.95,   # ДОМ.РФ
     # АСВ — для вкладов
     "asv.org.ru":         1.0,    # Агентство по страхованию вкладов
+    # Госпрограммы / субсидирование (льготное авто-/кредитование)
+    "minpromtorg.gov.ru": 1.0,    # Минпромторг — льготное автокредитование
+    "government.ru":      1.0,    # Правительство РФ (постановления о субсидиях)
 }
+
+
+# Ключевые слова госпрограмм/субсидий — детерминированный триггер regulatory.
+# LLM иногда не распознаёт «субсидирование» как regulatory-тему; этот override
+# гарантирует подгрузку НПА/господдержки.
+_SUBSIDY_KW = (
+    "субсид", "льготн", "господдержк", "госпрограмм", "государственн програм",
+    "минпромторг", "маткапитал", "материнск", "военн ипотек", "семейн ипотек",
+)
+
+
+def _has_subsidy_topic(q: str) -> bool:
+    ql = (q or "").lower()
+    return any(k in ql for k in _SUBSIDY_KW)
+
+
+def _apply_subsidy_override(profile: "TopicProfile", question: str) -> "TopicProfile":
+    """Детерминированно включает regulatory+госпрограммы для тем субсидий/льгот.
+    Применяется на ВСЕХ путях (и при успехе LLM, и в fallback) — иначе при пустом
+    ответе LLM субсидирование терялось."""
+    if not _has_subsidy_topic(question):
+        return profile
+    profile.needs_regulatory = True
+    profile.needs_government_programs = True
+    for d in ("minpromtorg.gov.ru", "government.ru", "consultant.ru", "pravo.gov.ru"):
+        if d not in profile.regulatory_domains:
+            profile.regulatory_domains.append(d)
+    extra_hints = ["льготная программа господдержки условия 2026",
+                    "постановление правительства субсидирование ставки кредита"]
+    profile.regulatory_query_hints = (
+        profile.regulatory_query_hints
+        + [h for h in extra_hints if h not in profile.regulatory_query_hints]
+    )[:6]
+    for s in ("government_programs", "regulatory_box"):
+        if s not in profile.applicable_section_kinds:
+            profile.applicable_section_kinds.append(s)
+    log.warning("[topic_classifier] subsidy-override → reg=True, gov=True")
+    return profile
 
 
 @dataclass
@@ -238,6 +279,10 @@ async def classify_topic(client: AsyncOpenAI, question: str,
         applicable_section_kinds=section_kinds,
         summary=summary or f"Тема: {topic_kind}",
     )
+
+    # Детерминированный override субсидий/льгот — на всех путях (см. helper).
+    profile = _apply_subsidy_override(profile, question)
+
     log.warning("[topic_classifier] kind=%s reg=%s gov=%s domains=%s hints=%d sections=%d",
                  profile.topic_kind, profile.needs_regulatory,
                  profile.needs_government_programs,
@@ -248,7 +293,7 @@ async def classify_topic(client: AsyncOpenAI, question: str,
 
 def _default_profile(question: str) -> TopicProfile:
     """Безопасный дефолт для случая когда LLM упал."""
-    return TopicProfile(
+    profile = TopicProfile(
         topic_kind="retail",
         needs_regulatory=False,
         needs_government_programs=False,
@@ -260,6 +305,8 @@ def _default_profile(question: str) -> TopicProfile:
                                     "risks_recommendations"],
         summary=f"Fallback: {question[:100]}",
     )
+    # Даже в fallback: тема субсидий/льгот → грузим НПА и госпрограммы.
+    return _apply_subsidy_override(profile, question)
 
 
 def _parse_json_object(raw: str) -> dict | None:

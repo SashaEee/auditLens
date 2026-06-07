@@ -121,13 +121,26 @@ async def _generate_for_one(ctx: NarrativeContext, entity: Entity,
     if core_attrs:
         core_hint = f"\n# Приоритетные атрибуты для упоминания\n{', '.join(core_attrs[:12])}\n"
 
+    # #1 директива из меморандума + архетип банка (если синтез его выделил)
+    brief_block = ctx.brief_block("per_entity_breakdown")
+    archetype = ""
+    try:
+        if ctx.brief and getattr(ctx.brief, "bank_archetypes", None):
+            archetype = ctx.brief.bank_archetypes.get(entity.bank_slug, "")
+    except Exception:
+        archetype = ""
+
     user_msg = (
-        f"# Банк: {entity.bank_name} ({entity.bank_slug})\n"
+        (brief_block + "\n\n" if brief_block else "")
+        + f"# Банк: {entity.bank_name} ({entity.bank_slug})\n"
         f"# Продукт: {entity.product}\n"
         + (f"# Аудитория: {entity.audience}\n" if entity.audience else "")
+        + (f"# Архетип этого банка (из общего разбора): {archetype}\n" if archetype else "")
         + core_hint +
         f"\n# Факты ({len(facts)})\n{facts_str}\n\n"
-        f"Напиши связный narrative 5-10 предложений. Верни JSON."
+        f"Напиши связный аналитический narrative 5-10 предложений: не пересказ, а "
+        f"разбор стратегии банка по продукту, условий и подвохов (витрина↔реальность). "
+        f"Верни JSON."
     )
 
     raw = await _llm_call(ctx, user_msg)

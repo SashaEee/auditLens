@@ -356,6 +356,7 @@ async def find_gold_sources(client: AsyncOpenAI, entity: Entity,
         seen_urls.add(s.url)
         unique.append(s)
 
+    unique = _filter_by_product(unique, entity)
     top = unique[:top_n]
     log.warning("[source_finder] %s gold sources for %s: %s",
                 len(top), entity.bank_slug,
@@ -511,12 +512,63 @@ async def find_gold_sources_extended(client: AsyncOpenAI,
             seen_fingerprints.add(fp)
         all_sources.append(s)
 
+    # Продуктовая дисциплина: убрать источники про чужой продукт
+    all_sources = _filter_by_product(all_sources, entity)
+
     top = all_sources[:top_n]
     log.warning("[extended_finder] %s: %s sources final (%s PDF, %s HTML/DB)",
                  entity.bank_slug, len(top),
                  sum(1 for s in top if is_pdf_url(s.url)),
                  sum(1 for s in top if not is_pdf_url(s.url)))
     return top
+
+
+# Сигнатуры продуктовых категорий (по URL + заголовку) — для отсева источников
+# про ДРУГОЙ продукт (в авто-отчёт попадали вклады/ипотека/карты из общей БД).
+_PRODUCT_CATEGORIES = {
+    "auto":      ("автокред", "авток", "avtokredit", "autocredit", "auto-loan",
+                   "auto_loan", "car-loan", "/auto/"),
+    "deposit":   ("вклад", "депозит", "накопит", "сберсчёт", "deposit", "vklad",
+                   "nakopit", "savings"),
+    "mortgage":  ("ипотек", "ipotek", "ipoteka", "mortgage", "hypothec", "жилищн"),
+    "card":      ("дебетов", "кредитн карт", "кредитка", "cashback", "кэшбэк",
+                   "creditcard", "credit-card", "debit", "/cards/", "/karty/"),
+    "consumer":  ("потребит", "наличными", "cash-loan", "kredit-nalich", "потребкредит"),
+    "business":  ("эквайринг", "acquiring", "/rko", "расчётно-кассов", "малый бизнес"),
+    "insurance": ("осаго", "каско", "kasko", "osago", "страхование жизни"),
+    "investment":("брокер", "иис", "пиф", "broker", "invest"),
+}
+
+
+def _detect_categories(blob: str) -> set[str]:
+    blob = (blob or "").lower()
+    return {cat for cat, kws in _PRODUCT_CATEGORIES.items()
+            if any(k in blob for k in kws)}
+
+
+def _filter_by_product(sources: list[GoldSource], entity: Entity) -> list[GoldSource]:
+    """Отсев источников, которые ЯВНО про другую продуктовую категорию.
+
+    Детектит категорию запрошенного продукта; убирает источники, чья категория
+    непуста и НЕ пересекается с запрошенной (вклад/ипотека/карта в авто-отчёте).
+    Источники без явной категории НЕ трогаем (не over-фильтруем)."""
+    req_blob = (entity.product + " " + " ".join(entity.product_synonyms or "")).lower()
+    req_cats = _detect_categories(req_blob)
+    if not req_cats:
+        return sources                      # не можем определить — оставляем всё
+    kept, dropped = [], []
+    for s in sources:
+        cats = _detect_categories(f"{s.url} {s.title or ''}")
+        if cats and not (cats & req_cats):
+            dropped.append(s)
+            continue
+        kept.append(s)
+    if dropped:
+        log.warning("[source_finder] %s: отсеяно %d источников не по теме (%s): %s",
+                     entity.bank_slug, len(dropped), "/".join(sorted(req_cats)),
+                     [d.url[-40:] for d in dropped[:5]])
+    # safety: если фильтр выкосил всё — возвращаем исходное
+    return kept or sources
 
 
 def _content_fingerprint(text: str, sample_len: int = 200) -> str:

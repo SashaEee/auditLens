@@ -46,6 +46,36 @@ class NarrativeContext:
     facts: list[Fact]
     sources_index: list[dict]
     has_regulatory: bool = False
+    # Аналитический меморандум (research_brief) — единый «мозг» отчёта.
+    # type: ResearchBrief | None (без импорта во избежание цикла)
+    brief: object = None
+
+    def brief_block(self, kind: str = "") -> str:
+        """Блок меморандума + директива секции для подмешивания в промпт."""
+        if not self.brief:
+            return ""
+        try:
+            ctx = self.brief.brief_context()
+            d = self.brief.directive(kind) if kind else ""
+            parts = []
+            if ctx:
+                parts.append("# АНАЛИТИЧЕСКИЙ МЕМОРАНДУМ (опирайся на него)\n" + ctx)
+            if d:
+                parts.append(f"# ЗАДАЧА ЭТОЙ СЕКЦИИ\n{d}")
+            return "\n\n".join(parts)
+        except Exception:
+            return ""
+
+    def excerpts_block(self, max_n: int = 6, per: int = 500) -> str:
+        """Сырые выдержки источников — живой язык тарифов для глубины (#3)."""
+        ranked = sorted(self.sources_index or [],
+                         key=lambda s: -(s.get("trust_score") or 0))
+        out = []
+        for s in ranked[:max_n]:
+            exc = " ".join(s.get("excerpts") or [])[:per].strip()
+            if exc:
+                out.append(f"[{s.get('n')}] {s.get('domain','')}: {exc}")
+        return "\n".join(out)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -254,9 +284,46 @@ def verify_numbers_in_text(text: str, facts: list[Fact],
                 if 990 < ratio < 1010 or 0.00099 < ratio < 0.00101:
                     rel_ok = True
                     break
+        # ПРОИЗВОДНЫЕ сравнения (claim-level): «в 2 раза дороже», «разница 1290 ₽»,
+        # «на 30% выше» — число вычислено из пары фактов, это аналитика, не выдумка.
+        if not rel_ok and _is_derived_number(n, fact_nums, tolerance):
+            rel_ok = True
         if not rel_ok:
             hallucinated.append(n)
     return (len(hallucinated) == 0), hallucinated
+
+
+def _is_derived_number(n: float, fact_nums: set[float], tol: float = 0.02) -> bool:
+    """True, если n — правдоподобный РЕЗУЛЬТАТ сравнения пары чисел-фактов:
+    разность |a-b|, отношение a/b (кратность), процентная разница (a-b)/b*100.
+    Позволяет нарративу делать сравнительные выводы («в 2 раза», «на 30%»,
+    «на 1290 ₽ дороже»), не помечая их галлюцинацией.
+
+    ВАЖНО: большие АБСОЛЮТНЫЕ значения (>100 000) НЕ считаем производными — при
+    десятках фактов почти любое 6-7-значное число случайно попадает в diff/ratio
+    какой-то пары (ложные «переплаты ~1 200 000 ₽»). Такие суммы обязаны быть
+    реальными фактами, а не вычислением модели."""
+    if abs(n) > 100_000:
+        return False
+    nums = [x for x in fact_nums if x]
+    nums = sorted(nums, key=lambda x: -abs(x))[:60]   # ограничим O(n^2)
+
+    def _close(a: float, b: float) -> bool:
+        if b == 0:
+            return abs(a) < 0.001
+        return abs(a - b) < 0.05 or abs(a - b) / abs(b) < tol
+
+    for a in nums:
+        for b in nums:
+            if a == b:
+                continue
+            if _close(n, abs(a - b)):           # разность
+                return True
+            if b and _close(n, a / b):          # кратность (в N раз)
+                return True
+            if b and _close(n, abs(a - b) / abs(b) * 100):  # процентная разница
+                return True
+    return False
 
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[А-ЯA-Z])")
@@ -319,6 +386,59 @@ def format_facts_for_prompt(facts: list[Fact], with_source: bool = True,
             line += f"\n    цитата: «{q}»"
         lines.append(line)
     return "\n".join(lines)
+
+
+_SECTION_CAT_BOOST = {
+    "pricing_breakdown":   {"fee", "rate", "limit"},
+    "regulatory_box":      {"regulation"},
+    "requirements_box":    {"requirement"},
+    "government_programs":  {"requirement", "regulation", "rate"},
+    "digital_channels":    {"feature"},
+    "cant_do_box":         {"limit", "requirement", "regulation"},
+}
+
+
+def select_facts_for_section(facts: list[Fact], section_kind: str = "",
+                              k: int = 60) -> list[Fact]:
+    """Section-aware отбор фактов вместо «первые N» (#3).
+
+    Ранжирует по: audit_priority, релевантности категории секции, наличию
+    условий/исключений (глубина), числовому значению; затем диверсифицирует по
+    банкам (round-robin), чтобы ни один банк не вытеснил остальных из топа.
+    """
+    if not facts:
+        return []
+    prio = {"high": 2.0, "medium": 1.0, "low": 0.0}
+    boost = _SECTION_CAT_BOOST.get(section_kind, set())
+
+    def _score(f: Fact) -> float:
+        s = prio.get(f.audit_priority, 1.0)
+        if f.category in boost:
+            s += 2.0
+        if f.conditions:
+            s += 1.0
+        if f.exceptions:
+            s += 1.0
+        if f.value_numeric is not None:
+            s += 0.5
+        if f.attribute == "продукт_доступен":
+            s -= 5.0
+        return s
+
+    by_bank: dict[str, list[Fact]] = {}
+    for f in sorted(facts, key=_score, reverse=True):
+        by_bank.setdefault(f.entity_bank_slug, []).append(f)
+    # round-robin по банкам
+    out: list[Fact] = []
+    idx = 0
+    while len(out) < k and any(idx < len(v) for v in by_bank.values()):
+        for v in by_bank.values():
+            if idx < len(v):
+                out.append(v[idx])
+                if len(out) >= k:
+                    break
+        idx += 1
+    return out
 
 
 def facts_for_entity(facts: list[Fact], bank_slug: str) -> list[Fact]:

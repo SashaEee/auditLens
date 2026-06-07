@@ -86,10 +86,13 @@ async def generate(ctx: NarrativeContext) -> str:
     facts_str = format_facts_for_prompt(pricing_facts, max_facts=60)
     entities_str = ", ".join(e.bank_name for e in ctx.entities)
 
+    brief_block = ctx.brief_block("pricing_breakdown")
     user_msg = (
-        f"# Сравниваемые банки\n{entities_str}\n\n"
+        (brief_block + "\n\n" if brief_block else "")
+        + f"# Сравниваемые банки\n{entities_str}\n\n"
         f"# Все ценовые/тарифные факты ({len(pricing_facts)})\n{facts_str}\n\n"
-        f"Напиши pricing-breakdown с narrative и 3-5 key_pricing_diffs. JSON."
+        f"Напиши pricing-breakdown: narrative со сравнением относительных величин "
+        f"(во сколько раз/на сколько ₽ дороже) и 3-5 key_pricing_diffs. JSON."
     )
 
     raw = await _llm_call(ctx, user_msg)

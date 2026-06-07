@@ -33,6 +33,7 @@ from .fact_extractor import extract_facts
 from .schema_normalizer import normalize_schema, apply_normalization
 from .matrix_builder import Matrix, build_matrix
 from .narrative_renderer import render_narrative_report, extract_chart_specs
+from .research_brief import synthesize_brief
 from .core_schema import CoreAttr, discover_core_schema, build_extract_hint
 from .narrative_generators.regulatory_box import REGULATORY_DOMAINS
 from .topic_classifier import classify_topic, TopicProfile
@@ -567,16 +568,36 @@ async def stream_eav_research(question: str,
                      s.get("domain", "") in REGULATORY_DOMAINS
                      for s in sources_index))
 
+    # ── Stage 6.0: ГЛОБАЛЬНЫЙ СИНТЕЗ (research_brief) ────────────────────
+    # Единый «мозг» отчёта: один reasoning-вызов смотрит на ВСЮ картину и строит
+    # аналитический меморандум (тезис, инсайты, архетипы, директивы секциям).
+    # Без него секции были изолированными summary («generic ChatGPT»).
+    yield evt({"type": "stage_status", "stage": "synthesis_brief",
+                "label": "Глобальный аналитический синтез",
+                "detail": "Единый разбор всей картины перед секциями",
+                "estimate_s": 25})
+    brief = None
+    try:
+        brief = await synthesize_brief(
+            client, question, entities, normalized_facts, matrix,
+            sources_index, core_schema=core_schema)
+    except Exception as e:
+        log.warning("[orchestrator] research_brief failed: %s", e)
+    if brief:
+        yield evt({"type": "stage_status", "stage": "synthesis_brief_done",
+                    "label": "Синтез готов",
+                    "detail": f"{len(brief.insights)} инсайтов, тезис сформирован",
+                    "estimate_s": 0})
+
     # Narrative-генерация
     yield evt({"type": "stage_status", "stage": "narrative_render",
-                "label": "Генерация narrative-секций (параллельно)",
+                "label": "Генерация narrative-секций (под меморандум)",
                 "detail": "key_findings, per_bank, pricing, risks…",
                 "estimate_s": 30})
 
-    # Применяем audit focus filter: low-priority «дизайн карты» НЕ должны
-    # попадать в narrative и разбавлять текст. В матрице они остаются.
-    narrative_facts = filter_for_narrative(normalized_facts, mode="auditor")
-
+    # NB: НЕ фильтруем факты до brief/секций (низкоприоритетные «фичи» иногда
+    # объясняют механику продукта). Релевантность даёт section-aware отбор внутри
+    # генераторов (select_facts_for_section), а не предварительная отсечка.
     try:
         used_sections, report_md = await render_narrative_report(
             client=client,
@@ -584,12 +605,13 @@ async def stream_eav_research(question: str,
                                                               "gpt-4o-mini"),
             question=question,
             entities=entities,
-            facts=narrative_facts,
+            facts=normalized_facts,
             matrix=matrix,
             sources_index=sources_index,
             core_schema=core_schema,
             has_regulatory=has_reg,
             topic_profile=topic_profile,
+            brief=brief,
         )
     except Exception as e:
         log.exception("[orchestrator] narrative_render failed: %s", e)

@@ -78,3 +78,6 @@ docker-compose.override.yml
 # Runtime artifacts (логи, сырьё, сгенерированные отчёты, captcha-стейт)
 workspace/
 *.bak
+
+# Локальный конфиг Claude Code (не для репо)
+.claude/
