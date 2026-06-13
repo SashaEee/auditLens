@@ -1,299 +1,336 @@
-# AuditLens
+<div align="center">
 
-> Deep-research LLM agent + RAG platform for internal audit of Russian retail-banking products — cited reports, charts, and PDF export over a pgvector knowledge base.
+# 🔍 AuditLens
 
-**AuditLens** — платформа глубокого исследования (deep research) для внутреннего аудита банковских продуктов. Аудитор задаёт вопрос на естественном языке, а система собирает данные из официальных источников, проверяет факты против цитат и выдаёт структурированный сравнительный отчёт со ссылками `[N]`, графиками и экспортом в PDF.
+**Deep-Research платформа для внутреннего аудита банковских продуктов**
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.111%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![pgvector](https://img.shields.io/badge/pgvector-0.3%2B-2C3E50)](https://github.com/pgvector/pgvector)
-[![React](https://img.shields.io/badge/React-Babel--standalone-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Playwright](https://img.shields.io/badge/Playwright-Chromium-2EAD33?logo=playwright&logoColor=white)](https://playwright.dev/)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+LLM-агент + RAG + structured БД. Задаёшь вопрос на русском — получаешь аналитический отчёт со ссылками на первоисточники, графиками и PDF-экспортом за 1-3 минуты.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Postgres 16 + pgvector](https://img.shields.io/badge/postgres-16+pgvector-336791.svg)](https://github.com/pgvector/pgvector)
+
+[Быстрый старт](#-быстрый-старт-5-минут) · [Документация](docs/) · [Архитектура](docs/ARCHITECTURE.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+
+![AuditLens — главный экран](docs/img/01_dashboard.png)
+
+</div>
 
 ---
 
-## 📖 Что это
+## 🎯 Для кого
 
-AuditLens помогает аналитику банковского сектора получить ответ на сравнительный вопрос вида «Семейная ипотека: ставки, первый взнос, требования в Сбер, ВТБ, Альфа-банк, ДомРФ» — без ручного обхода десятков сайтов.
-
-Под капотом — единый pipeline с двумя точками входа (веб-интерфейс и CLI) и многопроходным LLM-агентом, который:
-
-- разбирает вопрос, планирует исследование и собирает данные из БД (pgvector) и из веба в реальном времени;
-- извлекает факты по каждому банку и **проверяет каждое число против текста цитируемого источника** (анти-галлюцинация);
-- синтезирует отчёт в Markdown с цитатами, дорисовывает недостающее в agent-loop и отдаёт результат стримингом;
-- строит графики по числовым сравнениям и экспортирует итог в PDF формата A4.
-
-Целевая аудитория — внутренние аудиторы и аналитики, которым нужны отчёты со ссылками на первоисточники, а не «уверенный» текст без подтверждений.
-
-> ⚠️ Проект помечен как **Beta**. Описанное ниже — это то, что реально есть в репозитории; ничего не приукрашено.
+**Аналитики и аудиторы банковского сектора**, которым нужно регулярно сравнивать продукты разных банков, искать данные по ставкам/тарифам/жалобам клиентов, и готовить отчёты для руководства. AuditLens заменяет ручной обзвон 5-10 сайтов банков, копирование цифр в Excel и склеивание в Word — на один запрос на русском языке.
 
 ---
 
-## ✨ Возможности
+## ⚡ Что умеет
 
-- **🔬 Deep Research** — многопроходный pipeline (resolver → planner → executor → fact-extract → claim-verify → synth → critic → agent-loop → merge) для сложных сравнительных вопросов (~1–3 мин).
-- **⚡ Quick Mode** — быстрый chat-ответ без deep-research для простых вопросов.
-- **🧠 RAG на pgvector** — мультиязычные эмбеддинги BGE-M3 (1024d), markdown-aware чанкинг, семантический поиск по проиндексированным документам.
-- **🌐 Web-search с каскадом fallback** — SearXNG (self-hosted) → Brave Search API → DuckDuckGo → Yandex; дедупликация по URL.
-- **🛡️ Анти-галлюцинация в 3 слоя** — топикальный фильтр off-topic документов, построчная проверка чисел против цитат, удаление невалидных ссылок `[N]`.
-- **⚖️ Trust scoring источников** — взвешивание доменов по классам (регуляторы / госорганы / правовые базы / официальные сайты банков / агрегаторы / блоги); sponsored- и captcha-страницы исключаются из RAG.
-- **🏛️ Авто-подтягивание регуляторики** — для социально-регулируемых продуктов (карта ветерана СВО, маткапитал, военная ипотека и т.п.) добавляются шаги по cbr.ru / pravo.gov.ru / mil.ru / gosuslugi.ru.
-- **🤖 Сбор данных** — официальные сайты банков через Playwright + httpx (с российским CA-bundle), отзывы и рейтинги с banki.ru / sravni.ru / bankiros.ru, реестр ЦБ.
-- **📊 Графики и витрины** — автоматическая визуализация (Chart.js) и SQL-витрины (`v_offer_current`, `v_sber_vs_market`) для структурированных маркет-офферов.
-- **📄 PDF-экспорт** — генерация редакционного отчёта A4 через Playwright Chromium.
-- **🖥️ Веб-UI + HTTP API** — React-интерфейс (через Babel-standalone) и FastAPI-эндпоинты с SSE-стримингом.
-- **🗄️ SCD2-история** — изменения тарифов хранятся версионно (slowly changing dimension).
-- **⏰ Оркестрация** — cron-джобы (OpenClaw) для ингеста отзывов и контроля качества данных; опциональные email-алерты.
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🔬 Deep Research
+Многоступенчатый pipeline: planner → executor → fact-extract → claim-verify → synth → critic → agent-loop → merge.
+
+12-16 параллельных шагов сбора, 9 LLM-проходов, типичное время **1-3 мин** на отчёт.
+
+</td>
+<td width="50%" valign="top">
+
+### 📚 Цитаты и trust scoring
+Каждое утверждение в отчёте имеет ссылку `[N]` на источник.
+
+Trust-классы: 🟢 регуляторы (cbr.ru, pravo.gov.ru — 0.98), 🟡 банки (0.95), 🟠 агрегаторы (0.65), 🔴 блоги (исключаются).
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🛡 Anti-hallucination
+3 уровня защиты:
+- topical filter (off-topic документы исключаются)
+- **claim-verify** — regex проверяет что каждое число РЕАЛЬНО есть в источнике
+- citation-filter (удаление невалидных `[N]`)
+
+</td>
+<td width="50%" valign="top">
+
+### 📊 Графики и PDF
+Автоматическая визуализация числовых сравнений через Chart.js (sequential editorial-palette).
+
+PDF-экспорт через Playwright Chromium — A4, embedded шрифты, графики, источники.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🌐 Универсальный поиск
+4 backend'а с автоматическим fallback:
+**SearXNG** (7 движков, безлимит) → **Brave** API → **DDG** → **Yandex**.
+
+Поддержка Russian Trusted Root CA для Сбера / ЦБ / госсайтов.
+
+</td>
+<td width="50%" valign="top">
+
+### 🧠 Universal product support
+Работает с **любым** банковским продуктом без хардкода. Resolver-LLM сам определяет:
+- тему / синонимы / морф-формы
+- URL-paths для landing-страниц
+- нужны ли govt-источники (НПА, ЦБ)
+
+</td>
+</tr>
+</table>
 
 ---
 
-## 🏗️ Архитектура
+## 🚀 Быстрый старт (5 минут)
 
-Один pipeline, две точки входа, несколько слоёв данных. Аудитор задаёт вопрос → FastAPI запускает deep-research → ответ стримится обратно через SSE.
+### Что нужно
 
-```
-👤 Аудитор → React UI → POST /api/ai/analyze (SSE) → FastAPI
-                                                         │
-        ┌────────────────────────────────────────────────┘
-        ▼
-  0. Resolver        свободный вопрос → structured JSON (тема, банки, пути, флаги)
-  1. Planner         8–16 atomic-шагов; программная инжекция govt/market/review-шагов
-  2. Executor        батчи по 4 параллельно; кэш по hash(query+tool); web_search fallback
-        │
-        ├─ semantic_search  → pgvector (PostgreSQL)
-        ├─ web_search       → SearXNG → Brave → DDG → Yandex
-        ├─ fetch_official   → Playwright / httpx → Indexer → БД
-        ├─ get_market_offers→ SQL-витрины
-        └─ topical_reviews  → SQL + JSON-LD
-        │
-  3. Fact-extract    per-bank параллельно (asyncio.gather), факты с цитатами [N]
-  4. Claim-verify    regex-проверка чисел против excerpts источников; не прошедшее отброшено
-  5–8. Synth → Critic → Agent-loop (×2) → Final merge   стриминговый markdown
-        │
-        ├─ Charts gen (Chart.js)
-        └─ → UI  ──Download PDF──→  Playwright Chromium → A4 PDF
-```
-
-### Слои данных
-
-| Слой | Технология | Что хранит |
-|---|---|---|
-| **Raw** | файлы `workspace/raw/` | сырые HTML/PDF/JSON-ответы, sha256-индексированы |
-| **Document** | таблица `document` | мета: URL, trust_score, fetched_at |
-| **Chunks** | `document_chunk` + pgvector | чанки ~512 токенов + эмбеддинги BGE-M3 (1024d) |
-| **Структурированный** | `product_offer`, `review`, `bank` | нормализованные офферы/отзывы (SCD2) |
-| **Витрины** | `v_offer_current`, `v_sber_vs_market` | SQL-views для быстрых сравнений |
-
-### Trust scoring
-
-Каждому домену присваивается базовый вес с корректировками: регуляторы (cbr.ru, pravo.gov.ru, government.ru, mil.ru) — `0.92–0.98`; госорганы (gosuslugi.ru, fns.gov.ru, rosreestr.ru) — `0.85–0.90`; правовые базы (consultant.ru, garant.ru) — `0.82–0.85`; официальные сайты банков — `~0.95`; агрегаторы (banki.ru, sravni.ru) — `0.65`; неизвестные блоги — `0.30` (cap `0.10` после корректировок). Sponsored / captcha → `0.0` и исключаются из RAG.
-
-Подробнее — в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-
----
-
-## 🧰 Стек
-
-| Слой | Технологии |
+| | Где взять |
 |---|---|
-| **Язык** | Python 3.11+ |
-| **Веб / стриминг** | FastAPI, Uvicorn, SSE (sse-starlette) |
-| **БД / RAG** | PostgreSQL 16, pgvector, SQLAlchemy 2.0, psycopg 3, Alembic |
-| **Эмбеддинги** | sentence-transformers (BGE-M3, 1024d), PyTorch |
-| **LLM-клиенты** | OpenAI-совместимый endpoint (по умолчанию Fireworks AI), Anthropic |
-| **Сбор данных** | Playwright (Chromium), httpx, selectolax, tenacity |
-| **Web-search** | SearXNG, Brave Search API, ddgs (DuckDuckGo), Yandex |
-| **Документы** | парсеры HTML / PDF / XLSX (openpyxl) / PPTX (python-pptx) / JSON-LD |
-| **Фронтенд** | React (Babel-standalone), Chart.js, inline-CSS |
-| **Утилиты** | Pydantic 2, PyYAML, rapidfuzz, structlog, click, python-dotenv |
-| **Инфраструктура** | Docker Compose (PostgreSQL + SearXNG) |
+| **Python 3.11+** | `brew install python@3.12` (mac) · `sudo apt install python3.12` (Linux/WSL) |
+| **Docker Desktop** | [Mac (Apple Silicon)](https://desktop.docker.com/mac/main/arm64/Docker.dmg) · [Mac (Intel)](https://desktop.docker.com/mac/main/amd64/Docker.dmg) · [Windows](https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe) · [Linux](https://docs.docker.com/engine/install/) |
+| **Git** | `brew install git` (mac) · `sudo apt install git` (Linux/WSL) |
+| **Fireworks AI ключ** | [fireworks.ai](https://fireworks.ai/) → Sign Up (бесплатные $15) |
 
----
-
-## 🚀 Запуск
-
-Нужен **API-ключ LLM** (по умолчанию [Fireworks AI](https://fireworks.ai/), OpenAI-совместимый endpoint) и **Docker** для PostgreSQL + pgvector. Подробный гайд для новичков — [`docs/SETUP.md`](docs/SETUP.md).
-
-### Вариант 1 — автоустановщик (рекомендуется)
+### Шаги (TL;DR)
 
 ```bash
+# 1. Скачать
 git clone https://github.com/SashaEee/auditLens.git
 cd auditLens
 
-# Поднимет Postgres+SearXNG в Docker, создаст .venv, поставит зависимости,
-# скачает Playwright Chromium, применит миграции, создаст .env из шаблона.
+# 2. Один скрипт = всё установлено (Docker, БД, Python deps, миграции)
 bash scripts/setup.sh
 
-# Впиши свой LLM_API_KEY в .env (строка LLM_API_KEY=fw_REPLACE_WITH_YOUR_KEY)
-nano .env
+# 3. Впиши Fireworks-ключ в .env
+open -e .env       # mac (откроет TextEdit)
+# или: nano .env   # любая ОС (Ctrl+X для выхода)
+# Замени fw_REPLACE_WITH_YOUR_KEY на свой ключ
 
-# Старт сервера
+# 4. Запусти сервер
 source .venv/bin/activate
 uvicorn bank_audit.web.app:app --host 127.0.0.1 --port 8000
 ```
 
-Открой **http://127.0.0.1:8000**, перейди в раздел «ИИ-аналитик», включи **🔬 Deep Research** и задай вопрос.
+Открой [http://127.0.0.1:8000](http://127.0.0.1:8000) → введи вопрос → готово.
 
-Полезные подкоманды установщика:
-
-```bash
-bash scripts/setup.sh check      # проверить готовность окружения
-bash scripts/setup.sh init-db    # только применить миграции
-```
-
-### Вариант 2 — вручную (Docker + pip)
-
-```bash
-# 1. Инфраструктура: PostgreSQL 16 + pgvector + SearXNG
-docker compose up -d
-docker compose ps
-
-# 2. Окружение и зависимости
-cp .env.example .env              # затем впиши LLM_API_KEY и проверь DATABASE_URL
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip wheel
-pip install -e .
-playwright install chromium       # нужен для PDF-экспорта и fetch'а
-
-# 3. Миграции и витрины
-bash scripts/setup.sh init-db
-# (или вручную: psql "$DSN" -f migrations/*.sql; psql "$DSN" -f src/bank_audit/analytics/views.sql)
-
-# 4. Запуск
-uvicorn bank_audit.web.app:app --host 127.0.0.1 --port 8000
-```
-
-Альтернатива — CLI-команда `serve` (то же самое через click-обёртку):
-
-```bash
-python -m bank_audit.cli serve --host 127.0.0.1 --port 8000
-# либо после установки пакета:
-auditlens serve
-```
-
-### CLI
-
-```bash
-python -m bank_audit.cli --help          # список команд
-python -m bank_audit.cli list-sources    # доступные источники из config/sources.yaml
-python -m bank_audit.cli ingest --source <key>   # запустить ингест источника
-python -m bank_audit.cli quality         # прогнать data-quality чеки
-
-python scripts/demo_seed.py              # загрузить демо-данные
-```
-
-### HTTP API
-
-FastAPI-приложение (`title="Bank Audit Platform"`) отдаёт UI на `/` и набор JSON/SSE-эндпоинтов. Основные:
-
-| Endpoint | Метод | Назначение |
-|---|---|---|
-| `/api/ai/analyze` | POST (SSE) | стриминг deep-research / quick-ответа |
-| `/api/ai/export-pdf` | POST | сгенерировать PDF из markdown + sources |
-| `/api/rag/ingest-url` | POST | ингест произвольного URL в БД |
-| `/api/rag/semantic-search` | POST | семантический поиск по pgvector |
-| `/api/rag/bootstrap-bank/{slug}` | POST | первичный seed данных по банку |
-| `/api/banks` | GET | список банков в БД |
-| `/api/market` | GET | маркет-офферы (витрины) |
-| `/api/reviews/list` | GET | отзывы клиентов |
-| `/api/quality` | GET | результаты data-quality чеков |
-
-Пример SSE-запроса:
-
-```bash
-curl -N -X POST http://127.0.0.1:8000/api/ai/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"question":"Сравни вклады Сбера и ВТБ","deep":true}'
-```
-
-> Примечание: в коде Swagger UI отключён (`docs_url=None`), поэтому `/docs` недоступен — список роутов смотри в `src/bank_audit/web/app.py`.
+> 📖 **Не уверен в командах?** → [docs/SETUP.md](docs/SETUP.md) — пошаговый гайд для новичков с разделением по mac/Windows/Linux и чек-листом
+> 🔑 **Где взять API-ключ Fireworks?** → [docs/API_KEYS.md](docs/API_KEYS.md)
 
 ---
 
-## 📁 Структура проекта
+## 💬 Примеры вопросов
+
+> Полный гайд с десятками примеров → [docs/USAGE.md](docs/USAGE.md)
+
+**Сравнительные исследования (включи 🔬 Deep Research):**
 
 ```
-auditLens/
-├── src/bank_audit/
-│   ├── ai/
-│   │   ├── deep_research.py      # главный multi-pass pipeline
-│   │   ├── query_resolver.py     # Stage 0: вопрос → structured JSON
-│   │   ├── analyst.py            # быстрый chat-режим
-│   │   └── outline_planner.py    # структура отчёта
-│   ├── rag/
-│   │   ├── embedder.py           # BGE-M3 singleton
-│   │   ├── chunker.py            # markdown-aware чанкинг
-│   │   ├── indexer.py            # URL → document_chunk
-│   │   ├── retriever.py          # pgvector search
-│   │   ├── fetcher.py            # httpx + российский CA-bundle
-│   │   ├── web_search.py         # SearXNG / Brave / DDG / Yandex
-│   │   ├── trust.py              # trust scoring доменов
-│   │   ├── cache.py              # кэш результатов tool'ов (TTL=1ч)
-│   │   └── parsers/              # HTML / PDF / XLSX / PPTX парсеры
-│   ├── research/                 # planner, fact-extractor, matrix/narrative-генераторы
-│   ├── collectors/               # Playwright browser-коллекторы
-│   ├── sources/                  # banki.ru, sravni.ru, bankiros, реестр ЦБ
-│   ├── normalizer/               # классификация отзывов → темы, нормализация офферов
-│   ├── notifier/                 # email-алерты
-│   ├── orchestrator/             # запуск ingest-источников / cron
-│   ├── quality/                  # data-quality чеки
-│   ├── analytics/views.sql       # SQL-витрины
-│   ├── web/
-│   │   ├── app.py                # FastAPI-сервер
-│   │   ├── pdf_export.py         # Playwright → A4 PDF
-│   │   ├── demo_stream.py        # демо-стриминг
-│   │   └── static/               # index.html + app.jsx (React)
-│   ├── cli.py                    # click-CLI (ingest / quality / serve / list-sources)
-│   ├── config.py                 # загрузка settings + auto-expand review-targets
-│   ├── db.py · models.py         # доступ к БД и модели
-├── migrations/                   # 001–009 SQL-миграции (схема + RAG + whitelist)
-├── config/                       # settings.yaml, sources.yaml, CA-bundles
-├── docker/                       # postgres init + searxng config
-├── openclaw/                     # cron-джобы, агенты, allowlist инструментов
-├── scripts/                      # setup.sh, demo_seed.py, тесты компонентов
-├── docs/                         # SETUP / USAGE / ARCHITECTURE / API_KEYS / TROUBLESHOOTING
-├── demo/responses/               # сохранённые примеры отчётов
-├── docker-compose.yml
-├── pyproject.toml
-└── .env.example
+Семейная ипотека: ставки, первый взнос, требования к доходу
+в Сбер, ВТБ, Альфа-банк, ДомРФ
+```
+
+```
+Сравни премиальные дебетовые карты Сбер Прайм, Тинькофф Premium,
+Альфа Wealth по комиссиям, кешбэку, привилегиям
+```
+
+```
+РКО для ИП с оборотом до 10 млн/год: тарифы, эквайринг, бесплатные
+операции — Сбер, Тинькофф, Точка, Модульбанк
+```
+
+```
+Карта ветерана СВО: условия, привилегии, льготы в банках-участниках
+проекта (Сбер, ВТБ, ПСБ, Газпромбанк)
+```
+
+**Быстрые запросы (без Deep Research):**
+
+```
+Топ-10 жалоб клиентов Тинькофф за последний месяц
+```
+
+```
+Покажи актуальные ставки по вкладам от 1 млн руб на 12 мес
 ```
 
 ---
 
-## ⚙️ Конфигурация
+## 🖼 Скриншоты
 
-Все настройки — через `.env` (шаблон в [`.env.example`](.env.example)). Ключевые переменные:
+### Аналитический dashboard
 
-| Переменная | Назначение |
-|---|---|
-| `DATABASE_URL` | DSN PostgreSQL с pgvector (обязательно) |
-| `LLM_MODE`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL_NAME` | OpenAI-совместимый LLM (обязательно) |
-| `LLM_MODEL_FAST`, `LLM_MODEL_SMART` | гибридная схема: быстрая модель для рутины, «умная» для синтеза |
-| `SEARXNG_URL`, `BRAVE_SEARCH_API_KEY` | web-search backends (опционально, есть fallback) |
-| `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `EMBEDDING_MAX_TOKENS` | модель эмбеддингов (по умолчанию BGE-M3, 1024d) |
-| `OPENCLAW_BROWSER_PROFILE` | профиль браузера для обхода Cloudflare/captcha (опционально) |
-| `SMTP_*`, `ALERTS_*` | email-алерты (опционально; без настройки — тихий пропуск) |
+![Дашборд позиции Сбера vs медианы рынка](docs/img/01_dashboard.png)
+*Главный экран — еженедельная сводка по позиции банка в рынке: где сильнее/слабее, динамика, изменения условий, флаги качества.*
 
-Параметры HTTP/браузера/нормализатора/качества — в [`config/settings.yaml`](config/settings.yaml); описание источников — в [`config/sources.yaml`](config/sources.yaml).
+### ИИ-аналитик (чат)
 
-Подробно о ключах и LLM-провайдерах — [`docs/API_KEYS.md`](docs/API_KEYS.md).
+![AI welcome](docs/img/02_chat_welcome.png)
+*Чат-интерфейс с быстрыми запросами справа и подсказками по подключённым источникам.*
+
+![Вопрос с Deep Research](docs/img/03_question_with_deep.png)
+*Длинный вопрос введён, режим Deep Research включён (кнопка слева от поля ввода).*
+
+### Deep Research в работе
+
+![Pipeline в процессе](docs/img/08_deep_research_in_progress.png)
+*Стадия Discovery: planner раскладывает вопрос на шаги, сбор источников через semantic_search + fetch_official.*
+
+![План отчёта и счётчики](docs/img/09_report_done.png)
+*15/15 шагов выполнено, 27 источников (24 high-trust, 3 mid). План отчёта (4 раздела) сгенерирован outline-planner'ом. 56 фактов прошли claim-verify, 4 отфильтровано (защита от галлюцинаций).*
+
+### Боковые секции
+
+<table>
+<tr>
+<td width="50%">
+
+![Источники](docs/img/04_sources.png)
+*Источники: карточки документов с trust-индикаторами и фильтрами.*
+
+</td>
+<td width="50%">
+
+![База знаний](docs/img/05_knowledge_base.png)
+*База знаний — семантический поиск по проиндексированным документам.*
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+![Отзывы](docs/img/06_reviews.png)
+*Отзывы клиентов с группировкой по темам и тональности.*
+
+</td>
+<td width="50%">
+
+![Рынок](docs/img/07_market.png)
+*Рынок: маркет-офферы из v_offer_current с фильтрами по банку/категории.*
+
+</td>
+</tr>
+</table>
 
 ---
 
-## 📚 Документация
+## 🏗 Архитектура
 
-- [`docs/SETUP.md`](docs/SETUP.md) — пошаговая установка (в т.ч. для пользователей без опыта разработки и без Docker)
-- [`docs/USAGE.md`](docs/USAGE.md) — примеры вопросов, режимы работы, что входит в отчёт
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — устройство pipeline, слои данных, trust scoring
-- [`docs/API_KEYS.md`](docs/API_KEYS.md) — получение и настройка ключей LLM
-- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — типовые проблемы и решения
+```mermaid
+flowchart LR
+    Q[Вопрос] --> R[Resolver<br/>понимает тему]
+    R --> P[Planner<br/>12-16 шагов]
+    P --> E[Executor<br/>parallel batches]
+    E --> T{Tools}
+    T --> S[semantic_search<br/>pgvector]
+    T --> W[web_search<br/>SearXNG→Brave→DDG]
+    T --> F[fetch_official<br/>Playwright]
+    E --> FE[Fact-extract<br/>per-bank parallel]
+    FE --> V[Claim-verify<br/>anti-hallucination]
+    V --> SY[Synthesizer<br/>streaming]
+    SY --> CR[Critic-pass]
+    CR --> AG[Agent-loop ×2]
+    AG --> M[Final merge]
+    M --> CH[Charts]
+    M --> PDF[PDF export]
+```
+
+> Полное описание pipeline'а → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+**Стек:**
+- **Python 3.11+**, FastAPI, SQLAlchemy 2, asyncio
+- **PostgreSQL 16 + pgvector** для семантического поиска (1024d embeddings, BGE-M3)
+- **React** (через Babel-standalone, без bundler'а — простое развёртывание)
+- **Playwright Chromium** для real-time fetch и PDF-экспорта
+- **LLM** — Fireworks AI (OpenAI-compatible), поддержка Claude/локальных vLLM
+- **Web search** — SearXNG / Brave / DuckDuckGo / Yandex с automatic fallback
 
 ---
 
-## 📄 Лицензия
+## 📦 Структура репозитория
 
-Распространяется под лицензией **MIT** — см. [`LICENSE`](LICENSE).
+```
+auditlens/
+├── README.md                        ← ты здесь
+├── LICENSE                          ← MIT
+├── pyproject.toml                   ← зависимости
+├── .env.example                     ← шаблон конфига
+├── docker-compose.yml               ← Postgres + SearXNG
+├── docs/
+│   ├── SETUP.md                     ← детальная установка
+│   ├── API_KEYS.md                  ← где брать ключи (Fireworks $15)
+│   ├── USAGE.md                     ← примеры вопросов
+│   ├── ARCHITECTURE.md              ← как устроен pipeline
+│   ├── TROUBLESHOOTING.md           ← типовые проблемы
+│   └── img/                         ← скриншоты для README
+├── docker/
+│   ├── postgres/init/               ← init pgvector
+│   └── searxng/                     ← конфиг SearXNG
+├── migrations/                      ← SQL миграции (001-009)
+├── scripts/
+│   ├── setup.sh                     ← автоустановщик
+│   └── demo_seed.py                 ← демо-данные
+├── config/
+│   ├── ca_bundle_combined.pem       ← certifi + Russian Trusted Root
+│   └── russian_trusted_root.pem     ← сертификат Минцифры
+└── src/bank_audit/
+    ├── ai/                          ← LLM-логика (resolver, planner, deep_research)
+    ├── rag/                         ← embedder, retriever, fetcher, web_search, trust
+    ├── collectors/                  ← Playwright browser collectors
+    ├── normalizer/                  ← rule-based классификация отзывов
+    └── web/                         ← FastAPI + React UI + PDF export
+```
+
+---
+
+## 🛣 Roadmap
+
+- [x] Deep Research pipeline с agent-loop
+- [x] Claim-level verification (anti-hallucination)
+- [x] Universal product support (любой банковский продукт без хардкода)
+- [x] Govt trust whitelist (cbr.ru / pravo.gov.ru / mil.ru / gosuslugi)
+- [x] PDF export с графиками
+- [ ] Авторизация (single-user → multi-user)
+- [ ] Загрузка собственных PDF из UI
+- [ ] Excel-экспорт сравнительных таблиц
+- [ ] Snapshot-based diff («что изменилось в условиях по вкладам за месяц»)
+- [ ] Telegram/Slack бот-интерфейс
+- [ ] Поддержка локальных LLM (vLLM/Ollama) из коробки
+
+---
+
+## 🤝 Контрибьюции
+
+PR'ы welcome. Перед отправкой:
+1. `pip install -e ".[dev]"` — поставит pytest + ruff
+2. `ruff check src/` — линтер
+3. `pytest tests/` — тесты (если есть для твоей области)
+4. Опиши **зачем** изменение, не только **что** сделано
+
+---
+
+## 📜 Лицензия
+
+[MIT](LICENSE) — свободное использование с указанием авторства.
+
+## 🙏 Acknowledgments
+
+- [pgvector](https://github.com/pgvector/pgvector) — векторный поиск в Postgres
+- [SearXNG](https://github.com/searxng/searxng) — open-source мета-поисковик
+- [BGE-M3](https://huggingface.co/BAAI/bge-m3) — multilingual embeddings
+- [Fireworks AI](https://fireworks.ai/) — fast inference для open-weights моделей
+- [Chart.js](https://www.chartjs.org/) — графики в UI и PDF
+
+---
+
+<div align="center">
+Сделано для аудиторов, которые хотят тратить время на анализ, а не на сбор данных.
+</div>
