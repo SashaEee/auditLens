@@ -70,6 +70,63 @@ def _extract_urls_from_search_result(tool_result: str) -> list[str]:
     return out
 
 
+def _salvage_json(raw: str) -> str | None:
+    """Из ОБРЕЗАННОГО/fenced JSON-объекта собрать парсящийся: снять ```fences,
+    отрезать по последней завершённой записи (закрывающая скобка / запятая на
+    глубине ≥1), добалансировать незакрытые [ и {. Лечит обрыв facts-массива при
+    усечении финального извлечения по max_tokens → сохраняет ПОЛНЫЕ факты,
+    отбрасывает лишь последний неполный."""
+    import re as _re
+    if not raw:
+        return None
+    t = raw.strip()
+    t = _re.sub(r"^```(?:json)?\s*", "", t, flags=_re.IGNORECASE).strip()
+    if t.endswith("```"):
+        t = t[:-3].rstrip()
+    start = t.find("{")
+    if start < 0:
+        return None
+    depth = 0; in_str = False; esc = False; cut = -1
+    for i in range(start, len(t)):
+        ch = t[i]
+        if esc:
+            esc = False; continue
+        if ch == "\\" and in_str:
+            esc = True; continue
+        if ch == '"':
+            in_str = not in_str; continue
+        if in_str:
+            continue
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1; cut = i + 1
+        elif ch == "," and depth >= 1:
+            cut = i
+    if cut < 0:
+        return None
+    body = t[start:cut].rstrip().rstrip(",")
+    closers: list[str] = []
+    in_str = False; esc = False
+    for ch in body:
+        if esc:
+            esc = False; continue
+        if ch == "\\" and in_str:
+            esc = True; continue
+        if ch == '"':
+            in_str = not in_str; continue
+        if in_str:
+            continue
+        if ch == "{":
+            closers.append("}")
+        elif ch == "[":
+            closers.append("]")
+        elif ch in "}]" and closers:
+            closers.pop()
+    tail = '"' if in_str else ""
+    return body + tail + "".join(reversed(closers))
+
+
 # Тип tool-функции: (args_dict, bundle) -> json_string
 ToolFn = Callable[[dict, KnowledgeBundle], str]
 
@@ -354,11 +411,17 @@ class BaseAgent:
             else:
                 kwargs["tool_choice"] = "auto"
         else:
-            kwargs["max_tokens"] = 4000
+            # force_final = извлечение фактов из ВСЕХ прочитанных страниц → JSON
+            # может быть большим. 4000 обрезало его на середине → fence не закрыт →
+            # parse fail → 0 фактов. Даём запас (эндпоинт не поддерживает
+            # response_format=json_object, поэтому надёжность — через объём + salvage).
+            kwargs["max_tokens"] = 8000 if force_final else 4000
             if force_final:
                 kwargs["messages"] = messages + [{
                     "role": "user",
-                    "content": "Верни ТОЛЬКО финальный JSON-результат. Больше не вызывай инструменты."
+                    "content": "Верни ТОЛЬКО валидный JSON-объект по схеме из задания "
+                               "(БЕЗ markdown-преамбулы, можно в ```json блоке). "
+                               "Все собранные факты — в массиве facts. Не вызывай инструменты."
                 }]
         try:
             return await self.client.chat.completions.create(**kwargs)
@@ -441,7 +504,21 @@ class BaseAgent:
                 return data
         except Exception:
             pass
+        # Salvage обрезанного JSON (финал извлечения из 8 страниц мог упереться в
+        # max_tokens и оборваться) — восстанавливаем полные факты, дропая неполный.
+        salv = _salvage_json(content)
+        if salv:
+            try:
+                data = json.loads(salv)
+                if isinstance(data, dict):
+                    log.warning("[agent:%s] финал восстановлен salvage (обрезанный JSON, %d ключей)",
+                                 self.mission.agent_id, len(data))
+                    return data
+            except Exception:
+                pass
         # Возможно LLM дала markdown с объяснением без JSON — сохраняем как summary
+        log.warning("[agent:%s] финал НЕ распознан как JSON (%d симв) — summary-фоллбэк",
+                     self.mission.agent_id, len(content))
         return {"summary": content.strip()[:1000],
                 "_note": "agent did not return JSON, raw content captured"}
 
