@@ -81,3 +81,6 @@ workspace/
 
 # Локальный конфиг Claude Code (не для репо)
 .claude/
+
+# Ad-hoc A/B и timing харнессы (локальные, не часть продукта)
+ab_*.py
