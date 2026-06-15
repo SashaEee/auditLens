@@ -54,6 +54,32 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return False
 
 
+_TRANSIENT_PATTERNS = (
+    "connection termination", "upstream connect error", "disconnect/reset",
+    "before headers", "connection reset", "connection error", "connection aborted",
+    "server disconnected", "remoteprotocolerror", "read timeout", "timed out",
+    "timeout", "502", "503", "504", "bad gateway", "service unavailable",
+    "gateway timeout", "internal server error", "overloaded", "temporarily",
+)
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    """Транзиентные сбои сети/шлюза (обрыв соединения, 5xx, таймаут) — их НУЖНО
+    ретраить (баг: эндпоинт cloud.ru роняет соединения под нагрузкой агентского
+    v2, а throttle раньше ретраил только rate-limit → каскадные потери)."""
+    msg = str(exc).lower()
+    if any(p in msg for p in _TRANSIENT_PATTERNS):
+        return True
+    code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if code in (408, 500, 502, 503, 504, 520, 522, 524):
+        return True
+    # httpx/openai сетевые классы по имени типа (без жёсткого импорта)
+    tname = type(exc).__name__.lower()
+    if any(x in tname for x in ("connect", "timeout", "protocol", "apiconnection")):
+        return True
+    return False
+
+
 def _extract_retry_after(exc: Exception) -> float | None:
     """Если provider говорит retry-after — выдернуть."""
     # Many providers put 'retry-after: N' in error message
@@ -103,10 +129,10 @@ async def call_with_throttle(coro_fn, *args, max_retries: int = 5,
                 return await coro_fn(*args, **kwargs)
             except Exception as e:
                 last_exc = e
-                if not _is_rate_limit_error(e):
-                    # Не rate-limit — пробрасываем сразу (caller обработает)
+                if not (_is_rate_limit_error(e) or _is_transient_error(e)):
+                    # Не rate-limit и не транзиент — пробрасываем сразу (caller обработает)
                     raise
-                # Rate limit: backoff outside semaphore
+                # Rate-limit / транзиентный обрыв: backoff outside semaphore
         # Backoff (за пределами sem чтобы другие могли работать)
         retry_after = _extract_retry_after(last_exc)
         if retry_after is None:
@@ -114,8 +140,9 @@ async def call_with_throttle(coro_fn, *args, max_retries: int = 5,
         else:
             delay = retry_after + random.uniform(0, 0.5)
         delay = min(delay, 30.0)   # cap 30s
-        log.warning("[llm_throttle] rate-limit on attempt %s/%s, sleep %.1fs",
-                     attempt + 1, max_retries, delay)
+        _kind = "rate-limit" if _is_rate_limit_error(last_exc) else "транзиент"
+        log.warning("[llm_throttle] %s on attempt %s/%s (%s), sleep %.1fs",
+                     _kind, attempt + 1, max_retries, str(last_exc)[:80], delay)
         await asyncio.sleep(delay)
 
     log.warning("[llm_throttle] all retries exhausted, raising")
