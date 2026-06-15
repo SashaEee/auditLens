@@ -118,20 +118,9 @@ def fetch(url: str, *, prefer_browser: bool = False,
         _cache_result(url, prefer_browser, result, cache_ttl_seconds)
         return result
 
-    # 4. Если playwright поймал капчу и есть TWOCAPTCHA_KEY — пробуем авто-решить
-    if result and result.captcha and os.getenv("TWOCAPTCHA_KEY"):
-        log.warning("fetch %s: captcha detected, attempting 2captcha auto-solve", url[:80])
-        try:
-            from .captcha_solver import solve_via_2captcha
-            solved_result = solve_via_2captcha(url, browser=browser)
-            if solved_result and _looks_valid(solved_result.content, solved_result.content_type):
-                solved_result.via = "playwright_solved"
-                _cache_result(url, prefer_browser, solved_result, cache_ttl_seconds)
-                return solved_result
-        except Exception as e:
-            log.warning("2captcha solve failed: %s", e)
-
-    # 5. Возвращаем что есть (может быть captcha=True)
+    # 4. Возвращаем что есть (может быть captcha=True)
+    #    (2captcha-авторешение удалено: требовало Playwright + платный ключ,
+    #     на сервере без браузера не работало)
     return result or FetchResult(url=url, final_url=url, status=0,
                                   content=b"", content_type=None, via="failed")
 

@@ -90,21 +90,3 @@ def semantic_search(
         d["relevance"] = max(0.0, 1.0 - float(d["distance"]) / 2.0)
         out.append(d)
     return out
-
-
-def get_document_context(document_id: int, around_chunk_idx: int,
-                          window: int = 1) -> list[dict]:
-    """Возвращает соседние chunks вокруг найденного — для расширения контекста
-    при синтезе ответа. window=1 → ±1 chunk = 3 в сумме.
-    """
-    with db.session() as s:
-        rows = s.execute(text("""
-            SELECT chunk_id, idx, text, headings_path
-              FROM document_chunk
-             WHERE document_id = :d
-               AND idx BETWEEN :lo AND :hi
-             ORDER BY idx
-        """), {"d": document_id,
-               "lo": max(0, around_chunk_idx - window),
-               "hi": around_chunk_idx + window}).mappings().all()
-    return [dict(r) for r in rows]

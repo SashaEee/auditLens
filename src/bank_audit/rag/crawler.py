@@ -126,17 +126,3 @@ def crawl_all_profiles(bank_slugs: Iterable[str] | None = None) -> dict:
     total_chunks = sum(s.get("chunks_added", 0) for s in summary)
     return {"banks": len(slugs), "total_chunks_added": total_chunks,
             "details": summary}
-
-
-async def crawl_background_loop(initial_delay_s: int = 600,
-                                 interval_h: int = 24 * 7):
-    """Cron-style: раз в неделю crawl всех профилей. Запуск с задержкой
-    initial_delay_s после старта сервера (чтобы embedder загрузился)."""
-    await asyncio.sleep(initial_delay_s)
-    while True:
-        try:
-            log.info("crawl_background_loop: starting weekly crawl")
-            await asyncio.get_event_loop().run_in_executor(None, crawl_all_profiles, None)
-        except Exception as e:
-            log.warning("crawl_background_loop failed: %s", e)
-        await asyncio.sleep(interval_h * 3600)

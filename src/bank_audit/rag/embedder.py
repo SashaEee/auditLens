@@ -26,6 +26,45 @@ _model_lock = threading.Lock()
 _text_cache: dict[str, list[float]] = {}
 _CACHE_LIMIT = 5000
 
+# ── API-режим (Cloud.ru Foundation Models / любой OpenAI-совместимый) ────────
+# Активируется при EMBEDDING_MODE=api. Тогда torch/sentence-transformers НЕ
+# загружаются (удобно на машинах без GPU / с ограниченным диском).
+EMBEDDING_MODE      = os.getenv("EMBEDDING_MODE", "local").lower()
+EMBEDDING_BASE_URL  = os.getenv("EMBEDDING_BASE_URL")  or os.getenv("LLM_BASE_URL")
+EMBEDDING_API_KEY   = os.getenv("EMBEDDING_API_KEY")   or os.getenv("LLM_API_KEY")
+EMBEDDING_API_MODEL = os.getenv("EMBEDDING_API_MODEL", DEFAULT_MODEL)
+_api_client = None
+
+
+def _get_api_client():
+    global _api_client
+    if _api_client is None:
+        from openai import OpenAI
+        _api_client = OpenAI(base_url=EMBEDDING_BASE_URL, api_key=EMBEDDING_API_KEY)
+        log.info("embedder: API mode, model=%s base=%s", EMBEDDING_API_MODEL, EMBEDDING_BASE_URL)
+    return _api_client
+
+
+def _l2(v: list[float]) -> list[float]:
+    import math
+    n = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / n for x in v]
+
+
+def _encode(texts: list[str], batch_size: int = 32, show_progress: bool = False) -> list[list[float]]:
+    """Возвращает нормализованные векторы (mode-aware: API или локальный torch)."""
+    if EMBEDDING_MODE == "api":
+        cli = _get_api_client()
+        out: list[list[float]] = []
+        for i in range(0, len(texts), 64):
+            resp = cli.embeddings.create(model=EMBEDDING_API_MODEL, input=texts[i:i + 64])
+            out.extend(_l2(list(d.embedding)) for d in resp.data)
+        return out
+    model = _get_model()
+    enc = model.encode(texts, batch_size=batch_size,
+                       normalize_embeddings=True, show_progress_bar=show_progress)
+    return [v.tolist() for v in enc]
+
 
 def _get_model():
     """Lazy load. Только один раз, потокобезопасно."""
@@ -60,7 +99,7 @@ def embed_one(text: str) -> list[float]:
     cached = _text_cache.get(h)
     if cached is not None:
         return cached
-    vec = _get_model().encode(text, normalize_embeddings=True).tolist()
+    vec = _encode([text])[0]
     if len(_text_cache) < _CACHE_LIMIT:
         _text_cache[h] = vec
     return vec
@@ -89,14 +128,9 @@ def embed_batch(texts: list[str], batch_size: int = 32,
             miss_text.append(t)
 
     if miss_text:
-        model = _get_model()
-        encoded = model.encode(
-            miss_text, batch_size=batch_size,
-            normalize_embeddings=True,
-            show_progress_bar=show_progress,
-        )
+        encoded = _encode(miss_text, batch_size=batch_size, show_progress=show_progress)
         for j, vec in enumerate(encoded):
-            v = vec.tolist()
+            v = vec
             i = miss_idx[j]
             out[i] = v
             if len(_text_cache) < _CACHE_LIMIT:
