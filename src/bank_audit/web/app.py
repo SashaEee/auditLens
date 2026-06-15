@@ -18,7 +18,6 @@ from .demo_stream import is_demo_mode_active, find_demo_response, stream_demo_re
 from ..notifier.email import EmailNotifier
 from ..notifier.alerts import alerts_background_loop, run_once as alerts_run_once
 from ..rag import cache as rag_cache
-from ..rag.cookie_warming import warm_background_loop, warm_all, needs_warming
 from ..rag.indexer import ingest_document_from_url
 from ..rag.url_discovery import bootstrap_bank_profile, TOP_BANK_SITES
 from ..rag.crawler import crawl_one_bank, crawl_all_profiles
@@ -34,11 +33,9 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Фоновые циклы:
     #  • alerts_background_loop — раз в 30 мин quality_flag → email
-    #  • warm_background_loop — раз в 12 ч прогрев cookies на ключевых доменах
-    #    (снижает вероятность капчи при автоматизированных fetch'ах)
+    # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
     tasks = [
         asyncio.create_task(alerts_background_loop()),
-        asyncio.create_task(warm_background_loop()),
     ]
     try:
         yield
@@ -595,13 +592,6 @@ def rag_semantic_search(req: SemanticSearchRequest):
         ],
         "count": len(results),
     }
-
-
-@app.post("/api/rag/warm-cookies")
-def rag_warm_cookies(background_tasks: BackgroundTasks, headless: bool = True):
-    """Принудительный прогрев cookies. headless=False покажет окно браузера."""
-    background_tasks.add_task(warm_all, headless=headless)
-    return {"started": True, "headless": headless}
 
 
 @app.post("/api/rag/crawl-bank/{bank_slug}")

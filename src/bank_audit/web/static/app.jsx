@@ -357,7 +357,7 @@ function renderMD(text, sources, charts){
     .replace(/(^|[^A-Za-zА-Яа-яЁё0-9_])_([^_]+?)_(?![A-Za-zА-Яа-яЁё0-9])/g,'$1<em>$2</em>')
     .replace(/`([^`]+)`/g,"<code class=\"md-code\">$1</code>")
     .replace(/~~(.+?)~~/g,"<s>$1</s>")
-    .replace(/\[(\d{1,2})\]/g,(_,n)=>renderCitation(parseInt(n,10)))
+    .replace(/\[(\d{1,3})\]/g,(_,n)=>renderCitation(parseInt(n,10)))
     // Тонкий пробел между подряд идущими [N] чтобы они не сливались визуально
     // ([6][10][5] вместо «61015»)
     .replace(/<\/sup><sup>/g,"</sup> <sup>")
@@ -373,10 +373,13 @@ function renderMD(text, sources, charts){
     .replace(/[^а-яёa-z0-9\s]/gu,"").trim().replace(/\s+/g,"-").slice(0,50);
   const flushTable=()=>{
     if(!inTable)return;
-    out.push(<table key={"t"+out.length}>
+    // Обёртка с горизонтальным скроллом: на сравнении 4+ банков (колонки=банки)
+    // таблица раньше сплющивалась/обрезалась. Теперь контейнер скроллится.
+    out.push(<div key={"tw"+out.length} className="dr-table-wrap" style={{overflowX:"auto",maxWidth:"100%"}}>
+      <table style={{minWidth: tableHead.length>3 ? 640 : undefined}}>
       <thead><tr>{tableHead.map((h,i)=><th key={i} dangerouslySetInnerHTML={{__html:inlineHTML(h)}}/>)}</tr></thead>
       <tbody>{tableRows.map((row,i)=><tr key={i}>{row.map((c,j)=><td key={j} dangerouslySetInnerHTML={{__html:inlineHTML(c)}}/>)}</tr>)}</tbody>
-    </table>);
+    </table></div>);
     inTable=false;tableHead=[];tableRows=[];
   };
   const flushList=()=>{
@@ -1114,6 +1117,52 @@ const LONG_STAGE_HINT = {
 // ─── PDF export button — premium A4 PDF через server-side Chromium.
 //     Показывается только когда отчёт готов (>500 chars). Использует
 //     меньшее визуальное вес чтобы не отвлекать от чтения, но всегда виден.
+// Экспорт ПОЛНОЙ матрицы (CSV + JSON) — машиночитаемый артефакт со всем
+// контекстом каждой клетки (значение/условия/сегмент/цитата/ступени/конфликт).
+// «Полная картина без воды» для самостоятельной сверки аудитором (item 58).
+function MatrixExportButton({matrix, question, streaming}){
+  if(!matrix || !matrix.rows || !matrix.rows.length) return null;
+  const csvCell = (c)=>{
+    if(!c) return "";
+    if(c.state==="no_data") return "нет данных (источник не прочитан)";
+    if(c.state==="not_disclosed") return "не раскрыто";
+    let s = `${c.value||""} ${c.unit||""}`.trim();
+    const q = [];
+    if(c.conditions&&c.conditions.length) q.push("условия: "+c.conditions.join("; "));
+    if(c.qualifications) q.push(c.qualifications);
+    if(c.exceptions&&c.exceptions.length) q.push("исключения: "+c.exceptions.join("; "));
+    if(q.length) s += " ["+q.join(" — ")+"]";
+    if(c.ladder&&c.ladder.length) s += " {ступени: "+c.ladder.map(m=>`${m.value}${m.unit||""}${m.conditions&&m.conditions.length?"("+m.conditions.join(";")+")":""}`).join(" / ")+"}";
+    if(c.source_idx) s += ` [${c.source_idx}]`;
+    if(c.conflict) s += " ⚠конфликт";
+    return s;
+  };
+  const dl = (content, mime, ext)=>{
+    const blob = new Blob([content], {type:mime});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit-matrix-${Date.now().toString(36)}.${ext}`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+  const toCSV = ()=>{
+    const esc = (v)=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
+    const head = ["Параметр","core", ...matrix.banks.map(b=>b.name)];
+    const lines = [head.map(esc).join(",")];
+    for(const r of matrix.rows){
+      const byBank = {}; (r.cells||[]).forEach(c=>byBank[c.bank]=c);
+      lines.push([r.attribute, r.is_core?"да":"", ...matrix.banks.map(b=>csvCell(byBank[b.slug]))].map(esc).join(","));
+    }
+    dl("﻿"+lines.join("\n"), "text/csv;charset=utf-8", "csv");
+  };
+  const toJSON = ()=> dl(JSON.stringify({question, ...matrix}, null, 2), "application/json", "json");
+  return <span className="dr-matrix-export" style={{display:"inline-flex",gap:6}}>
+    <button className="btn-ghost" disabled={streaming} onClick={toCSV} title="Полная матрица в CSV (со всеми условиями и цитатами)">⬇ Матрица CSV</button>
+    <button className="btn-ghost" disabled={streaming} onClick={toJSON} title="Полная матрица в JSON">JSON</button>
+  </span>;
+}
+
 function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
@@ -1128,9 +1177,12 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           question: question,
           report_md: report,
           sources: (sources || []).map(s => ({
-            n: s.n, url: s.url, bank_name: s.bank_name,
+            n: s.n, url: s.url, bank_name: s.bank_name, title: s.title,
             source_kind: s.source_kind, trust_score: s.trust_score,
             fetched_at: s.fetched_at, headings_path: s.headings_path,
+            // Передаём дословную выдержку — чтобы в PDF под источником была
+            // та же цитата-доказательство, что в тултипе UI (item 62).
+            excerpts: s.excerpts,
           })),
           meta: {
             audit_id: auditId,
@@ -1382,6 +1434,57 @@ function VerificationBanner({verification}){
     <div className="dr-verify-head">{u.length} утверждений требуют ручной проверки</div>
     <ul className="dr-verify-list">
       {u.map((it,i)=><li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>)}
+    </ul>
+  </div>;
+}
+
+// ─── Ranking widget — v2 §5c: рейтинг субъектов как first-class артефакт ──
+function RankingWidget({ranking}){
+  if(!ranking || !ranking.entries || ranking.entries.length===0) return null;
+  const entries = [...ranking.entries].sort((a,b)=>(a.rank||99)-(b.rank||99));
+  return <div className="dr-ranking">
+    <div className="dr-ranking-head">
+      <span className="dr-ranking-title">🏆 Рейтинг</span>
+      {ranking.criterion && <span className="dr-ranking-criterion">{ranking.criterion}</span>}
+    </div>
+    <ol className="dr-ranking-list">
+      {entries.map((e,i)=>{
+        const cites = (e.evidence_ns||[]).map(n=>`[${n}]`).join("");
+        return <li key={i} className={`dr-ranking-row${e.data_gap?" dr-ranking-gap":""}`}>
+          <span className="dr-ranking-rank">{e.rank || i+1}</span>
+          <span className="dr-ranking-body">
+            <span className="dr-ranking-subject">
+              {e.subject_label || e.subject}
+              {typeof e.score==="number" &&
+                <span className="dr-ranking-score">{e.score.toLocaleString("ru")} /10</span>}
+              {e.data_gap && <span className="dr-ranking-dg">недостаточно данных</span>}
+            </span>
+            {e.rationale && <span className="dr-ranking-rationale">{e.rationale} {cites}</span>}
+          </span>
+        </li>;
+      })}
+    </ol>
+  </div>;
+}
+
+// ─── Insights widget — v2 §5c: аналитические инсайты как first-class ──────
+function InsightsWidget({insights}){
+  if(!insights || insights.length===0) return null;
+  return <div className="dr-insights">
+    <div className="dr-insights-head">
+      <span className="dr-insights-title">💡 Ключевые инсайты</span>
+    </div>
+    <ul className="dr-insights-list">
+      {insights.map((it,i)=>{
+        const cites = (it.evidence_ns||[]).map(n=>`[${n}]`).join("");
+        return <li key={i} className="dr-insight">
+          <span className="dr-insight-headline">{it.headline} {cites}</span>
+          {it.explanation && <span className="dr-insight-explain">{it.explanation}</span>}
+          {it.impact && <span className="dr-insight-impact">
+            <span className="dr-insight-impact-label">Влияние:</span> {it.impact}
+          </span>}
+        </li>;
+      })}
     </ul>
   </div>;
 }
@@ -1872,6 +1975,11 @@ function AIPage(){
                 }));
               }else if(data.type==="coverage"){
                 updateLast(()=>({coverage:data}));
+              }else if(data.type==="matrix"&&data.data){
+                // Полная матрица для машиночитаемого экспорта (CSV/JSON).
+                updateLast(()=>({matrix:data.data}));
+              }else if(data.type==="gaps"){
+                updateLast(()=>({gaps:data}));
               }else if(data.type==="verification"){
                 updateLast(()=>({verification:data}));
               }else if(data.type==="stage_status"){
@@ -1913,6 +2021,12 @@ function AIPage(){
                 });
               }else if(data.type==="chart"&&data.spec){
                 updateLast(last=>({charts:[...(last.charts||[]),data.spec]}));
+              }else if(data.type==="ranking"&&data.entries){
+                // v2 §5c: рейтинг субъектов — first-class артефакт (replace,
+                // как coverage/verification). Рендерится отдельным виджетом.
+                updateLast(()=>({ranking:data}));
+              }else if(data.type==="insights"&&Array.isArray(data.items)){
+                updateLast(()=>({insights:data.items}));
               }else if(data.type==="done"){
                 break outer;
               }
@@ -1966,6 +2080,7 @@ function AIPage(){
                                    sources={m.sources||[]} verification={m.verification}
                                    claimCheck={m.claimCheck} streaming={streaming}
                                    charts={m.charts||[]}/>}
+                {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
               </div>
               <div className="chat-bubble chat-bubble-deep">
                 <ProcessTrace plan={m.plan} stepStates={m.stepStates} phase={m.phase}
@@ -2008,6 +2123,8 @@ function AIPage(){
                         {rest.map((c,ci)=><ChartCanvas key={ci} spec={c}/>)}
                       </div>;
                     })()}
+                    {m.ranking && <RankingWidget ranking={m.ranking}/>}
+                    {m.insights && m.insights.length>0 && <InsightsWidget insights={m.insights}/>}
                     {m.verification&&<VerificationBanner verification={m.verification}/>}
                     {/* Дублирующая кнопка PDF — в конце документа, после всех
                         разделов и графиков. Нужна для длинных отчётов где

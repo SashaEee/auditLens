@@ -689,6 +689,58 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 .dr-verify-list li{margin-bottom:3px}
 .dr-verify-list strong{font-family:'Source Serif 4',serif;font-weight:500}
 
+/* Ranking — v2 first-class артефакт */
+.dr-ranking{
+  margin:14px 0;padding:12px 16px;border-radius:4px;
+  border:1px solid var(--hair);
+  background:color-mix(in oklab,var(--accent),transparent 96%);
+  font-family:'Geist','Inter',sans-serif;font-size:13px;
+}
+.dr-ranking-head{display:flex;align-items:baseline;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.dr-ranking-title{font-weight:600}
+.dr-ranking-criterion{color:var(--ink-3);font-size:12px}
+.dr-ranking-list{margin:0;padding:0;list-style:none}
+.dr-ranking-row{
+  display:flex;gap:12px;align-items:flex-start;
+  padding:8px 0;border-top:1px solid var(--hair);
+}
+.dr-ranking-row:first-child{border-top:0}
+.dr-ranking-rank{
+  flex:0 0 auto;min-width:22px;height:22px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:600;font-size:12px;color:var(--ink-2);
+  background:color-mix(in oklab,var(--accent),transparent 88%);
+}
+.dr-ranking-row:first-child .dr-ranking-rank{
+  background:var(--accent);color:#fff;
+}
+.dr-ranking-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dr-ranking-subject{font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dr-ranking-score{font-weight:400;color:var(--ink-3);font-size:12px}
+.dr-ranking-dg{font-size:11px;color:var(--warn);font-style:italic}
+.dr-ranking-gap .dr-ranking-subject{color:var(--ink-3)}
+.dr-ranking-rationale{font-family:'Source Serif 4',serif;font-size:13px;color:var(--ink)}
+
+/* Insights — v2 first-class артефакт */
+.dr-insights{
+  margin:14px 0;padding:12px 16px;border-radius:4px;
+  border:1px solid var(--hair);
+  background:color-mix(in oklab,var(--accent),transparent 96%);
+  font-family:'Geist','Inter',sans-serif;font-size:13px;
+}
+.dr-insights-head{margin-bottom:8px}
+.dr-insights-title{font-weight:600}
+.dr-insights-list{margin:0;padding:0;list-style:none}
+.dr-insight{
+  padding:8px 0;border-top:1px solid var(--hair);
+  display:flex;flex-direction:column;gap:3px;
+}
+.dr-insight:first-child{border-top:0}
+.dr-insight-headline{font-weight:600;font-family:'Source Serif 4',serif}
+.dr-insight-explain{font-family:'Source Serif 4',serif;color:var(--ink);font-size:13px}
+.dr-insight-impact{font-size:12px;color:var(--ink-3)}
+.dr-insight-impact-label{font-weight:600;color:var(--ink-2)}
+
 /* Charts — editorial, без shadow / borders cards */
 .dr-charts-wrap{
   margin:24px 0;display:grid;

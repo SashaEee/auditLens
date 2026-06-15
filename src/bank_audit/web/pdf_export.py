@@ -97,7 +97,10 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict]) -> str:
         nonlocal in_table, table_head, table_rows
         if not in_table:
             return
-        out.append("<table><thead><tr>" +
+        # Широкие таблицы (много банков-колонок) сжимаем, чтобы не обрезались за
+        # край A4 (item 61): класс .wide уменьшает шрифт и переносит слова.
+        cls = ' class="wide"' if len(table_head) > 4 else ""
+        out.append(f"<table{cls}><thead><tr>" +
                    "".join(f"<th>{_inline(h)}</th>" for h in table_head) +
                    "</tr></thead><tbody>" +
                    "".join("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in row) + "</tr>"
@@ -178,13 +181,25 @@ def _render_sources_section(sources: list[dict]) -> str:
         head = s.get("headings_path") or ""
         date = s.get("fetched_at") or ""
         if date and "T" in str(date): date = str(date).split("T")[0]
+        # Дословная выдержка-доказательство (item 62): чтобы статичный PDF нёс ту
+        # же цитату, на которую опирался синтез, а не только URL.
+        excerpts = s.get("excerpts") or []
+        best = ""
+        if isinstance(excerpts, list) and excerpts:
+            best = max((str(e) for e in excerpts if e), key=len, default="")
+        excerpt_html = (f'<div class="src-excerpt">«{_esc(best[:400])}»</div>'
+                        if best else "")
+        title = s.get("title") or ""
+        title_html = f'<div class="src-title">{_esc(title)}</div>' if title else ""
         rows.append(
             f'<li id="src-{n}" class="src-row">'
             f'<div class="src-num">[{n}]</div>'
             f'<div class="src-meta">'
               f'<div class="src-bank">{_esc(bank)}</div>'
+              f'{title_html}'
               f'<div class="src-url"><a href="{_esc(url)}">{_esc(url)}</a></div>'
               f'{f"<div class=\"src-head\">{_esc(head)}</div>" if head else ""}'
+              f'{excerpt_html}'
               f'<div class="src-foot">'
                 f'<span class="src-kind">{_esc(kind)}</span>'
                 f'<span class="src-trust">{marks}</span>'
@@ -521,6 +536,13 @@ body {{
   vertical-align: top;
 }}
 .body tbody tr:last-child td {{ border-bottom: 1.5px solid #16181d; }}
+/* Широкие сравнительные таблицы (5+ колонок): сжать, переносить, не обрезать */
+.body table.wide {{ font-size: 7.5pt; table-layout: fixed; word-break: break-word; }}
+.body table.wide thead th {{ font-size: 7pt; padding: 1.5mm 1.5mm; }}
+.body table.wide tbody td {{ padding: 1.5mm 1.5mm; word-break: break-word; overflow-wrap: anywhere; }}
+/* Выдержка-доказательство под источником в PDF */
+.body .src-excerpt {{ font-size: 8pt; color: #54555a; font-style: italic; margin: 1mm 0; line-height: 1.4; }}
+.body .src-title {{ font-size: 8.5pt; color: #2a2b30; margin-bottom: 0.5mm; }}
 /* Citations */
 .body sup.cite {{
   font-family: 'JetBrains Mono', monospace;
