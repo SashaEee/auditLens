@@ -323,11 +323,17 @@ class BaseAgent:
                     f"Финал: {final_artifacts.get('summary', 'готово')[:80]}")
                 break
 
-            # Выполняем tool calls
-            for tc in tool_calls:
-                tool_name = tc.function.name
+            # Выполняем tool calls ПАРАЛЛЕЛЬНО. Раньше шли строго последовательно
+            # (for tc: await _exec_tool) → read_url на 3-6 URL (которые форсирует
+            # сам forced-read) исполнялись по одному = утечка. Теперь gather; порядок
+            # tool-сообщений в истории сохраняем по позиции (требование OpenAI-протокола).
+            async def _run_tc(tc):
                 args = self._safe_json(tc.function.arguments)
-                result = await self._exec_tool(tool_name, args)
+                return await self._exec_tool(tc.function.name, args)
+            results = await asyncio.gather(*[_run_tc(tc) for tc in tool_calls],
+                                           return_exceptions=False)
+            for tc, result in zip(tool_calls, results):
+                tool_name = tc.function.name
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,

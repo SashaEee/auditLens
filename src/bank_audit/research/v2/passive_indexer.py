@@ -26,37 +26,51 @@ def index_and_get_text(url: str, *,
                         bank_slug_hint: str | None = None,
                         query_hint: str = "",
                         budget: int = _RETURN_BUDGET) -> dict:
-    """Индексирует URL в БД + возвращает релевантный текст для промпта.
+    """Возвращает релевантный текст URL для промпта; тяжёлую индексацию
+    (chunk+embed+insert) выполняет В ФОНЕ.
 
-    Возвращает {title, text, document_id?, indexed}. text уже укорочен до
-    budget и (если есть query_hint) содержит наиболее релевантные окна.
-    """
-    # 1. Полная индексация (пишет document + chunks)
-    doc_id = None
-    indexed = False
+    КЛЮЧЕВОЕ (перф): раньше функция ЖДАЛА полную индексацию (fetch→parse→chunk→
+    embed_batch→bulk insert) ПЕРЕД возвратом текста — а embed_batch это десятки
+    эмбеддингов на страницу (CPU/или вызовы к тому же деградирующему эндпоинту),
+    которые текущему запросу НЕ нужны (текст агенту берётся из content_text,
+    который пишется ДО эмбеддинга; эмбеддинги нужны только будущему
+    semantic_search). Это сериализовало агента на горячем пути.
+
+    Теперь: fetch+parse → текст СРАЗУ; индексация — daemon-thread fire-and-forget
+    (как extract-факты в indexer.py). Возврат {title, text, document_id, indexed}
+    (document_id=None — на горячем пути его никто не использует)."""
+    # 1. Быстрый путь: fetch + parse → текст немедленно (без ожидания эмбеддинга).
+    text, title = "", ""
     try:
-        from ...rag.indexer import ingest_document_from_url
-        result = ingest_document_from_url(url, bank_slug_hint=bank_slug_hint,
-                                           prefer_browser=False)
-        doc_id = getattr(result, "document_id", None)
-        indexed = bool(doc_id)
+        from ...rag import fetcher
+        from ...rag.parsers import parse_auto
+        fr = fetcher.fetch(url, prefer_browser=False)
+        if fr.content:
+            parsed = parse_auto(fr.content, url=fr.final_url,
+                                content_type=fr.content_type)
+            full = parsed.text or ""
+            title = parsed.title or ""
+            text = (_relevant_excerpt(full, query_hint, budget)
+                    if query_hint and len(full) > budget else full[:budget])
     except Exception as e:
-        log.info("passive index failed for %s: %s", url[:80], e)
+        log.info("fetch+parse failed for %s: %s", url[:80], e)
 
-    # 2. Получаем текст для возврата — либо из свежего document, либо raw fetch
-    text = ""
-    title = ""
-    if doc_id:
-        text, title = _load_from_db(doc_id, query_hint, budget)
-    if not text:
-        # fallback: raw fetch без индексации
+    # 2. Тяжёлая индексация (chunk+embed+insert) — В ФОН: нужна только будущему
+    #    semantic_search, не этому запросу. Агент не ждёт.
+    def _bg_index():
         try:
-            text, title = _raw_fetch_full(url, budget)
+            from ...rag.indexer import ingest_document_from_url
+            ingest_document_from_url(url, bank_slug_hint=bank_slug_hint,
+                                     prefer_browser=False)
         except Exception as e:
-            log.warning("raw fetch fallback failed for %s: %s", url[:80], e)
+            log.info("background index failed for %s: %s", url[:80], e)
+    try:
+        import threading
+        threading.Thread(target=_bg_index, daemon=True).start()
+    except Exception:
+        pass
 
-    return {"title": title, "text": text, "document_id": doc_id,
-            "indexed": indexed}
+    return {"title": title, "text": text, "document_id": None, "indexed": False}
 
 
 def _load_from_db(document_id: int, query_hint: str, budget: int) -> tuple[str, str]:
