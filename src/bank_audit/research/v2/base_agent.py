@@ -339,10 +339,8 @@ class BaseAgent:
                              if self.progress.n_tool_calls else "")
                 if self.progress.n_tool_calls > 0 and not final_artifacts:
                     try:
-                        fresp = await self._call_llm(messages, [], force_final=True,
-                                                     model=self.final_model)
-                        final_artifacts = self._safe_parse(
-                            fresp.choices[0].message.content or "")
+                        final_artifacts = await self._extract_final(
+                            messages, self.final_model)
                     except Exception as e2:
                         log.warning("[agent:%s] грейсфул-финал тоже упал: %s",
                                      self.mission.agent_id, e2)
@@ -376,16 +374,18 @@ class BaseAgent:
                 # видит прочитанные страницы в истории). Иначе берём контент как есть.
                 if self.final_model != self.loop_model:
                     try:
-                        fresp = await self._call_llm(messages, [], force_final=True,
-                                                     model=self.final_model)
-                        final_artifacts = self._safe_parse(
-                            fresp.choices[0].message.content or "")
+                        final_artifacts = await self._extract_final(
+                            messages, self.final_model)
                     except Exception as e:
                         log.warning("[agent:%s] final-extract на %s упал: %s — беру loop-финал",
                                      self.mission.agent_id, self.final_model, e)
-                        final_artifacts = self._safe_parse(msg.content or "")
+                        final_artifacts = await self._extract_final(
+                            messages, self.loop_model, seed_content=msg.content)
                 else:
-                    final_artifacts = self._safe_parse(msg.content or "")
+                    # final==loop (напр. reviews/regulatory на Haiku): парсим финал
+                    # loop-модели, а при не-JSON — строгий перезапрос (фикс reviews).
+                    final_artifacts = await self._extract_final(
+                        messages, self.loop_model, seed_content=msg.content)
                 self.progress.notes.append(
                     f"Финал: {final_artifacts.get('summary', 'готово')[:80]}")
                 break
@@ -419,12 +419,29 @@ class BaseAgent:
                          self.mission.agent_id, self.max_iterations)
             # Последняя попытка: попросить финал без tools (на СИЛЬНОЙ модели).
             try:
-                resp = await self._call_llm(messages, [], force_final=True,
-                                            model=self.final_model)
-                final_artifacts = self._safe_parse(
-                    resp.choices[0].message.content or "")
+                final_artifacts = await self._extract_final(messages, self.final_model)
             except Exception:
                 pass
+
+        # ── Фикс #3: extraction-gap ≠ data-absence ───────────────────────────
+        # Если структурные данные НЕ извлечены, но источники прочитаны — это сбой
+        # ИЗВЛЕЧЕНИЯ, а не отсутствие данных у банка. Помечаем честно отдельной
+        # coverage-заметкой, чтобы отчёт не выдавал «банк не раскрыл» за факт.
+        n_read_final = sum(1 for t in self.progress.tools_used if t == "read_url")
+        _data_keys = ("facts", "complaints", "praise", "regulations",
+                      "sentiment_profiles", "insights")
+        _got_data = any(isinstance(final_artifacts.get(k), list)
+                        and final_artifacts.get(k) for k in _data_keys)
+        if not _got_data and n_read_final > 0:
+            from .knowledge_bundle import CoverageNote
+            self.bundle.coverage_notes.append(CoverageNote(
+                what=f"извлечение не удалось: прочитано {n_read_final} источн., "
+                     "структурные данные не извлечены",
+                subjects=list(self.mission.subjects),
+                reason="extraction_gap (сбой парсинга/формата, НЕ отсутствие данных у банка)",
+                recommendation="перезапросить извлечение строгим JSON / проверить первоисточник вручную"))
+            log.warning("[agent:%s] extraction-gap: %d источн. прочитано, 0 данных",
+                         self.mission.agent_id, n_read_final)
 
         # Подклассы могут постпроцессить артефакты → bundle
         await self._integrate(final_artifacts)
@@ -597,6 +614,37 @@ class BaseAgent:
                      self.mission.agent_id, len(content))
         return {"summary": content.strip()[:1000],
                 "_note": "agent did not return JSON, raw content captured"}
+
+    async def _extract_final(self, messages, model, seed_content: str | None = None) -> dict:
+        """Финальное извлечение с РЕТРАЕМ при парс-фейле.
+
+        seed_content задан (final==loop) → парсим уже готовый финальный текст
+        loop-модели; иначе делаем force_final-вызов на model. Если парс дал
+        summary-фоллбэк (ответ не-JSON, помечен '_note') — ОДИН строгий
+        перезапрос «верни строго JSON». Баг, который чиним: reviews выдал
+        10397 симв не-JSON → 0 структурных жалоб (данные были, потерялись)."""
+        if seed_content is not None:
+            arts = self._safe_parse(seed_content)
+        else:
+            fresp = await self._call_llm(messages, [], force_final=True, model=model)
+            arts = self._safe_parse(fresp.choices[0].message.content or "")
+        if not arts.get("_note"):
+            return arts
+        log.warning("[agent:%s] финал не-JSON → строгий перезапрос (model=%s)",
+                     self.mission.agent_id, str(model).split("/")[-1])
+        strict = messages + [{"role": "user", "content":
+            "Прошлый ответ НЕ был валидным JSON — данные потеряны. Верни СТРОГО "
+            "валидный JSON-объект ПО СХЕМЕ ЗАДАНИЯ и БОЛЬШЕ НИЧЕГО: начни с '{', "
+            "закончи '}', без markdown, без пояснений до или после."}]
+        try:
+            r2 = await self._call_llm(strict, [], force_final=True, model=model)
+            arts2 = self._safe_parse(r2.choices[0].message.content or "")
+            if not arts2.get("_note"):
+                return arts2
+        except Exception as e:
+            log.warning("[agent:%s] строгий перезапрос финала упал: %s",
+                         self.mission.agent_id, e)
+        return arts
 
     async def _integrate(self, artifacts: dict) -> None:
         """Хук для подклассов: преобразовать артефакты → bundle.
