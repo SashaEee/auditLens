@@ -236,6 +236,9 @@ async def stream_deep_research_v2(question: str,
                 "verified": max(0, verified_count),
                 "unverified": unverified_items,
                 "unverified_count": len(unverified_set),
+                # grounding цитат: утверждения, противоречащие своим источникам [N]
+                # (после repair они должны быть исправлены — это что нашёл критик).
+                "citation_errors": (critique.citation_errors or [])[:8],
                 "checked": True})
     yield _evt({"type": "claim_check",
                 "verified": max(0, verified_count),

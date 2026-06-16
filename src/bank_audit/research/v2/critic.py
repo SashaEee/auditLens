@@ -33,6 +33,7 @@ class Critique:
     weak_claims: list[str] = field(default_factory=list)
     missing_aspects: list[str] = field(default_factory=list)  # части вопроса без ответа
     numeric_hallucinations: list[float] = field(default_factory=list)
+    citation_errors: list[dict] = field(default_factory=list)  # claim ↔ источник [N] не бьются
     repair_directive: str = ""  # инструкция для переписывания
 
 
@@ -55,6 +56,13 @@ SYSTEM_PROMPT = """Ты — критик аудиторских отчётов. 
 4. ПУСТОТЫ/ВОДА: абзацы без фактической опоры, повторы, маркетинговый тон.
    → weak_claims.
 
+5. GROUNDING ЦИТАТ (КРИТИЧНО для аудита!): для каждого утверждения со ссылкой [N]
+   найди источник N в разделе ИСТОЧНИКИ и сверь. Если утверждение ПРОТИВОРЕЧИТ
+   тексту источника или НЕ подтверждается им — это citation_error: грубейшая ошибка,
+   отчёт уверенно врёт со ссылкой. Пример: отчёт пишет «остаётся в SWIFT [42]», а
+   источник 42 говорит об ОТКЛЮЧЕНИИ банка от SWIFT → citation_error. Проверяй
+   только то, что реально процитировано; если источника N нет в разделе — не штрафуй.
+
 ВЫХОД (строгий JSON):
 {
   "ok": false,                      // true только если серьёзных проблем нет
@@ -62,7 +70,10 @@ SYSTEM_PROMPT = """Ты — критик аудиторских отчётов. 
   "weak_claims": ["«Сбер надёжнее» — голословно, нет опоры"],
   "missing_aspects": ["рейтинг"],
   "numeric_hallucinations": [],
-  "repair_directive": "Добавь рейтинг-таблицу (он есть в bundle). Замени голословное утверждение на «Сбер дороже на 1,5% [3]». Убери маркетинговый абзац про «удобство»."
+  "citation_errors": [
+    {"claim":"Сбербанк остаётся в SWIFT","source_n":42,"issue":"источник 42 говорит об ОТКЛЮЧЕНИИ Сбера от SWIFT (6-й пакет) — утверждение противоречит источнику"}
+  ],
+  "repair_directive": "Добавь рейтинг-таблицу (он есть в bundle). Замени голословное утверждение на «Сбер дороже на 1,5% [3]». ИСПРАВЬ/УБЕРИ утверждение про SWIFT [42] — оно противоречит источнику."
 }
 
 Если отчёт хороший — верни {"ok":true,"blocking_issues":[],...} с пустым repair_directive.
@@ -83,11 +94,17 @@ async def critique_report(client: AsyncOpenAI, report_md: str,
     halluc_nums = _check_numbers(report_md, bundle)
 
     context = bundle.to_prompt_context(max_chars=14000)
+    # Grounding цитат: даём критику excerpt'ы ТОЛЬКО реально процитированных в
+    # отчёте источников [N] (фокус + лимит контекста), чтобы он сверил утверждения
+    # с первоисточником и поймал «враньё со ссылкой» (claim ↔ источник расходятся).
+    src_block = _cited_sources_block(report_md, bundle)
     user_msg = (
         f"# ВОПРОС АУДИТОРА\n{question}\n\n"
         f"# ЧЕРНОВИК ОТЧЁТА\n{report_md[:12000]}\n\n"
         f"# KNOWLEDGE BUNDLE\n{context}\n\n"
-        f"Проверь отчёт. JSON."
+        + (f"# ИСТОЧНИКИ (excerpt'ы для проверки цитат [N])\n{src_block}\n\n"
+           if src_block else "")
+        + "Проверь отчёт, ВКЛЮЧАЯ grounding цитат [N] по разделу ИСТОЧНИКИ. JSON."
     )
     try:
         resp = await client.chat.completions.create(
@@ -112,14 +129,68 @@ async def critique_report(client: AsyncOpenAI, report_md: str,
                     if _is_number(x)]
     all_halluc = list(set(halluc_nums + llm_halluc))
 
+    # Citation-grounding ошибки: утверждение противоречит/не подтверждается своим [N]
+    cit_errs: list[dict] = []
+    for ce in (data.get("citation_errors") or []):
+        if not isinstance(ce, dict) or not str(ce.get("claim") or "").strip():
+            continue
+        sn = ce.get("source_n")
+        cit_errs.append({
+            "claim": str(ce.get("claim"))[:200],
+            "source_n": int(sn) if str(sn).isdigit() else 0,
+            "issue": str(ce.get("issue") or "")[:300],
+        })
+    cit_errs = cit_errs[:8]
+
+    # Citation-ошибки — серьёзные: ok=False и обязательно в repair_directive,
+    # чтобы Analyst переписал/убрал утверждения, противоречащие источникам.
+    repair = str(data.get("repair_directive") or "")
+    if cit_errs:
+        ce_txt = "; ".join(
+            f"«{c['claim']}»" + (f" [{c['source_n']}]" if c['source_n'] else "")
+            + f" — {c['issue']}" for c in cit_errs[:5])
+        repair = ((repair + " ") if repair else "") + (
+            "КРИТИЧНО (grounding): исправь по фактам или УБЕРИ утверждения, "
+            f"противоречащие своим источникам: {ce_txt}.")
+
     return Critique(
-        ok=bool(data.get("ok")) and len(all_halluc) == 0,
+        ok=bool(data.get("ok")) and len(all_halluc) == 0 and not cit_errs,
         blocking_issues=[str(x) for x in (data.get("blocking_issues") or [])][:6],
         weak_claims=[str(x) for x in (data.get("weak_claims") or [])][:8],
         missing_aspects=[str(x) for x in (data.get("missing_aspects") or [])][:5],
         numeric_hallucinations=all_halluc[:10],
-        repair_directive=str(data.get("repair_directive") or ""),
+        citation_errors=cit_errs,
+        repair_directive=repair,
     )
+
+
+def _cited_sources_block(report_md: str, bundle: KnowledgeBundle,
+                          max_chars: int = 11000) -> str:
+    """Excerpt'ы источников [N], РЕАЛЬНО процитированных в отчёте — для grounding.
+    Фокус на цитируемом (а не на всех 40+ источниках) → меньше контекста, точнее.
+    """
+    cited = []
+    seen = set()
+    for m in re.findall(r"\[(\d{1,3})\]", report_md):
+        n = int(m)
+        if n not in seen:
+            seen.add(n); cited.append(n)
+    if not cited:
+        return ""
+    try:
+        by_n = {s["n"]: s for s in bundle.sources.to_ui()}
+    except Exception:
+        return ""
+    lines = []
+    for n in sorted(cited)[:40]:
+        s = by_n.get(n)
+        if not s:
+            continue
+        exc = (s.get("excerpt") or "").strip()
+        if not exc:
+            continue
+        lines.append(f"[{n}] {s.get('domain','')} ({s.get('source_kind','')}): {exc[:350]}")
+    return "\n".join(lines)[:max_chars]
 
 
 # ════════════════════════════════════════════════════════════════════════
