@@ -460,8 +460,10 @@ async def _rewrite_with_critique(client: AsyncOpenAI, draft: str,
         f"Перепиши отчёт, исправив ВСЕ замечания критика. "
         f"Структура и стиль — из системного промпта."
     )
-    model = (os.getenv("LLM_MODEL_SMART") or os.getenv("LLM_MODEL_NAME",
-                                                          "gpt-4o-mini"))
+    # Repair = переписывание отчёта (работа аналитика) → та же сильная модель,
+    # что и analyst (LLM_MODEL_ANALYST), а не быстрый SMART.
+    model = (os.getenv("LLM_MODEL_ANALYST") or os.getenv("LLM_MODEL_SMART")
+             or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
     try:
         resp = await client.chat.completions.create(
             model=model,

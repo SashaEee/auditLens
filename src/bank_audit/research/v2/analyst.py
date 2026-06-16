@@ -100,8 +100,12 @@ async def write_report(client: AsyncOpenAI, bundle: KnowledgeBundle,
     if not bundle.facts and not bundle.complaints and not bundle.insights:
         return _empty_report(bundle)
 
-    model = model or os.getenv("LLM_MODEL_SMART") or os.getenv("LLM_MODEL_NAME",
-                                                                 "gpt-4o-mini")
+    # Аналитик (нарратив) — reasoning-стадия: держим на сильной модели
+    # (LLM_MODEL_ANALYST), даже когда извлечение/critic переведены на быструю
+    # (LLM_MODEL_SMART). Приоритет: явный аргумент → ANALYST → SMART → NAME.
+    model = (model or os.getenv("LLM_MODEL_ANALYST")
+             or os.getenv("LLM_MODEL_SMART")
+             or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
     # Bundle → текстовый контекст для промпта
     context = bundle.to_prompt_context(max_chars=28000)
 
