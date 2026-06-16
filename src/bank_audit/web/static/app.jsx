@@ -1286,18 +1286,31 @@ function AgentPanel({iterations}){
 function StageStatusBanner({stage, currentPhase, mode}){
   // currentPhase — текущая phase из event'а; stage — последний stage_status
   // event если он был. Объединяем чтобы показать максимум данных.
-  if(!stage && !currentPhase) return null;
-  if(mode!=="deep") return null;
-  // Если currentPhase не «длинный этап» — не показываем баннер (обычные
-  // фазы и так отрисованы в ProcessTrace).
   const longHint = LONG_STAGE_HINT[currentPhase] || LONG_STAGE_HINT[stage?.stage];
-  if(!longHint && !stage) return null;
   const label   = stage?.label || PHASE_LABELS[currentPhase] || currentPhase;
   const detail  = stage?.detail || longHint?.note || "";
   const est     = stage?.estimate_s || longHint?.estimate || 30;
-  const elapsed = stage?.progress_elapsed;
-  // Прогресс-bar: elapsed / est (cap 100%)
-  const pct = elapsed != null ? Math.min(100, Math.round((elapsed/est)*100)) : null;
+  const srvElapsed = stage?.progress_elapsed;
+  // Локальный таймер: тикаем раз в секунду, чтобы счётчик ШЁЛ плавно между
+  // серверными апдейтами (~2s). Сбрасываем при смене стадии; если сервер
+  // прислал большее elapsed — подтягиваемся к нему (источник правды — сервер).
+  const [localEl,setLocalEl]=useState(0);
+  const stageKey=(stage?.stage||currentPhase||"")+"";
+  const keyRef=useRef(stageKey);
+  useEffect(()=>{ if(keyRef.current!==stageKey){ keyRef.current=stageKey; setLocalEl(srvElapsed||0); } },[stageKey]);
+  useEffect(()=>{ if(srvElapsed!=null) setLocalEl(e=>Math.max(e,srvElapsed)); },[srvElapsed]);
+  useEffect(()=>{ const id=setInterval(()=>setLocalEl(e=>e+1),1000); return ()=>clearInterval(id); },[]);
+  // Хуки вызваны безусловно (правило hooks) — ранний выход уже после них.
+  if(!stage && !currentPhase) return null;
+  if(mode!=="deep") return null;
+  // Если currentPhase не «длинный этап» и нет stage — не показываем баннер.
+  if(!longHint && !stage) return null;
+  // Таймер показываем для любой стадии с оценкой времени (estimate_s>0) либо
+  // если сервер уже прислал elapsed. Иначе — «идёт» без чисел.
+  const timed   = (stage?.estimate_s||0) > 0 || srvElapsed != null;
+  const elapsed = timed ? localEl : null;
+  // Прогресс-bar: elapsed / est (cap 100%), только при est>0.
+  const pct = (elapsed != null && est > 0) ? Math.min(100, Math.round((elapsed/est)*100)) : null;
   return <div className="dr-stage-banner">
     <div className="dr-stage-line">
       <span className="dr-stage-pulse"/>
