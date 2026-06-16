@@ -1187,14 +1187,19 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           meta: {
             audit_id: auditId,
             verified: claimCheck?.verified || 0,
-            unverified: (verification?.unverified||[]).length,
+            // unverified может прийти массивом ({claim,issue}) ИЛИ числом (старый
+            // формат) — считаем количество устойчиво в обоих случаях.
+            unverified: Array.isArray(verification?.unverified)
+              ? verification.unverified.length
+              : (verification?.unverified || 0),
           },
           // Передаём verification отдельно — PDF рендерит его как styled-секцию
           // (то же что VerificationBanner в UI), а не как сырой markdown.
           verification: verification ? {
-            unverified: (verification.unverified || []).map(u => ({
-              claim: u.claim, issue: u.issue
-            })),
+            unverified: (Array.isArray(verification.unverified)
+              ? verification.unverified : []).map(u => ({
+                claim: u.claim, issue: u.issue
+              })),
           } : null,
           // Графики — передаём specs как они пришли через SSE, бэкенд
           // отрендерит их в PDF тем же Chart.js через offscreen Chromium.

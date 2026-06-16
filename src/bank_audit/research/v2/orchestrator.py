@@ -225,11 +225,17 @@ async def stream_deep_research_v2(question: str,
     for h in critique.numeric_hallucinations:
         unverified_set.add(round(float(h), 3))
     verified_count = len(report_nums) - len(unverified_set)
+    # unverified — СПИСОК {claim, issue} (фронт/PDF делают .map и .length по нему;
+    # раньше слалось числом → PDF-экспорт падал `unverified.map is not a function`).
+    unverified_items = [{"claim": (f"{n:g}" if isinstance(n, float) else str(n)),
+                         "issue": "число не сопоставлено с собранными фактами"}
+                        for n in sorted(unverified_set)][:50]
     yield _evt({"type": "verification",
                 "method": "agent_bundle_grounding",
                 "numeric_checked": len(report_nums),
                 "verified": max(0, verified_count),
-                "unverified": len(unverified_set),
+                "unverified": unverified_items,
+                "unverified_count": len(unverified_set),
                 "checked": True})
     yield _evt({"type": "claim_check",
                 "verified": max(0, verified_count),
