@@ -97,6 +97,15 @@ async def stream_deep_research_v2(question: str,
 
     # ── Stage 2: EXPERT AGENTS ───────────────────────────────────────────
     yield _evt({"type": "phase", "value": "research"})
+    # stage_status для самой долгой фазы. Раньше последним stage_status тут был
+    # plan_ready (estimate_s=0) → баннер в UI замерзал на «идёт / ~30s» на всю
+    # волну агентов (минуты). Даём таймеру опору; _with_heartbeat тикает
+    # progress_elapsed по этой оценке, а step_done агентов идут по мере готовности.
+    _n_missions = max(1, len(plan.missions))
+    yield _evt({"type": "stage_status", "stage": "research",
+                "label": "Сбор данных агентами",
+                "detail": f"{_n_missions} агент(ов) ищут и читают источники параллельно",
+                "estimate_s": min(180, 40 + 22 * _n_missions)})
     bundle = KnowledgeBundle(
         question=question,
         intent=plan.intent_summary or plan.intent,
@@ -338,11 +347,20 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
                         "tool": m.agent_id,
                         "entity": m.subjects[0] if m.subjects else None})
 
-        # Параллельный запуск волны
-        tasks = [_run_one_agent(client, model, m, bundle) for m in ready]
-        wave_results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Параллельный запуск волны. step_done эмитим ПО МЕРЕ завершения каждого
+        # агента (as_completed), а не разом после всей волны (gather). Иначе вся
+        # волна — один глухой await на минуты: панель агентов стоит мёртвой, потом
+        # всё «доделывается» мгновенно. Теперь агенты гаснут по одному в реальном
+        # времени — пользователь видит актуальную картину.
+        async def _tagged(mission: AgentMission):
+            try:
+                return mission, await _run_one_agent(client, model, mission, bundle)
+            except Exception as exc:  # belt-and-suspenders: _run_one_agent сам ловит
+                return mission, exc
 
-        for m, res in zip(ready, wave_results):
+        tasks = [asyncio.ensure_future(_tagged(m)) for m in ready]
+        for fut in asyncio.as_completed(tasks):
+            m, res = await fut
             n = plan.missions.index(m) + 1
             if isinstance(res, Exception):
                 log.warning("[v2] agent %s failed: %s", m.agent_id, res)

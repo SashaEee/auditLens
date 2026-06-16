@@ -7,7 +7,7 @@
      LLM_MODEL_NAME — напр. accounts/fireworks/models/llama-v3p3-70b-instruct
 """
 from __future__ import annotations
-import json, os, logging
+import asyncio, json, os, logging, time
 from typing import AsyncIterator
 from openai import AsyncOpenAI
 from sqlalchemy import text
@@ -885,6 +885,56 @@ def _extract_sources_from_tool_result(tool_name: str, result_json: str,
     return result_json
 
 
+async def _with_heartbeat(agen: AsyncIterator[str],
+                            interval: float = 2.0) -> AsyncIterator[str]:
+    """Прокидывает события из `agen`, но во время «тишины» (когда pipeline
+    висит в длинном await — gather агентов, написание отчёта аналитиком,
+    критик) периодически до-эмитит ПОСЛЕДНИЙ stage_status с обновлённым
+    progress_elapsed. Без этого таймер в UI стоит на месте всю стадию, хотя
+    работа идёт — жалоба «идёт / ~30s, а прошло уже 5 минут».
+
+    Важно: НЕ отменяем __anext__ по таймауту — отмена async-генератора в
+    середине await рвёт весь pipeline (CancelledError влетает внутрь).
+    Держим один pending-таск и переиспользуем его между тиками; отменяем
+    только при финальной очистке.
+    """
+    last_stage: dict | None = None
+    stage_start = 0.0
+    ait = agen.__aiter__()
+    pending = asyncio.ensure_future(ait.__anext__())
+    try:
+        while True:
+            done, _ = await asyncio.wait({pending}, timeout=interval)
+            if not done:
+                # тишина дольше interval — тикаем таймер текущей стадии
+                if last_stage is not None and (last_stage.get("estimate_s") or 0) > 0:
+                    tick = dict(last_stage)
+                    tick["progress_elapsed"] = int(time.monotonic() - stage_start)
+                    yield json.dumps(tick, ensure_ascii=False)
+                continue
+            try:
+                ev = pending.result()
+            except StopAsyncIteration:
+                return
+            # сразу планируем следующий вызов — pending всегда «в работе»
+            pending = asyncio.ensure_future(ait.__anext__())
+            try:
+                d = json.loads(ev)
+                if isinstance(d, dict) and d.get("type") == "stage_status":
+                    last_stage = d
+                    stage_start = time.monotonic()
+            except Exception:
+                pass
+            yield ev
+    finally:
+        if not pending.done():
+            pending.cancel()
+        try:
+            await agen.aclose()
+        except Exception:
+            pass
+
+
 async def stream_analysis(question: str, history: list[dict],
                            force_deep: bool | None = None) -> AsyncIterator[str]:
     """Главный entry-point AI-чата.
@@ -903,7 +953,10 @@ async def stream_analysis(question: str, history: list[dict],
             # вместо этого честно завершаем с ошибкой.
             try:
                 from ..research.v2.orchestrator import stream_deep_research_v2
-                async for ev in stream_deep_research_v2(question, history):
+                # _with_heartbeat тикает progress_elapsed во время длинных
+                # await'ов pipeline — таймер в UI идёт, а не «висит на ~30s».
+                async for ev in _with_heartbeat(
+                        stream_deep_research_v2(question, history)):
                     yield ev
                     yielded = True
                 return
