@@ -54,19 +54,26 @@ def _format_llm_error(e: Exception, stage: str = "LLM-вызов") -> str:
 
 # ── reasoning_effort patch ───────────────────────────────────────────────────
 def _patch_client_reasoning_effort(client):
-    """Глобально проставляет reasoning_effort ко всем chat.completions.create.
-    Тюнится через LLM_REASONING_EFFORT env: low (default)/medium/high/off."""
+    """Глобально проставляет reasoning_effort ко всем chat.completions.create
+    (тюнится LLM_REASONING_EFFORT: low (default)/medium/high/off) И снимает
+    несовместимость температуры для семейства GPT-5.
+
+    GPT-5 (gpt-5*) поддерживает ТОЛЬКО temperature=1 (дефолт) — любое иное
+    значение даёт 400. Пайплайн ставит temperature=0.0 для детерминизма; для
+    gpt-5* убираем её (используется дефолт). Патч всегда оборачивает клиент,
+    даже при reasoning_effort=off, чтобы этот фикс работал."""
     effort = os.getenv("LLM_REASONING_EFFORT", "low").lower()
-    if effort in ("off", "none", ""):
-        return client
+    add_reasoning = effort not in ("off", "none", "")
     orig = client.chat.completions.create
 
     async def patched(*args, **kwargs):
-        if "reasoning_effort" not in kwargs:
+        if add_reasoning and "reasoning_effort" not in kwargs:
             extra = kwargs.get("extra_body") or {}
             if "reasoning_effort" not in extra:
-                extra = {**extra, "reasoning_effort": effort}
-                kwargs["extra_body"] = extra
+                kwargs["extra_body"] = {**extra, "reasoning_effort": effort}
+        model = str(kwargs.get("model") or (args[0] if args else ""))
+        if "gpt-5" in model and kwargs.get("temperature") not in (None, 1):
+            kwargs.pop("temperature", None)   # gpt-5* → только дефолтная temperature
         return await orig(*args, **kwargs)
 
     client.chat.completions.create = patched
