@@ -697,6 +697,12 @@ class PdfExportRequest(BaseModel):
     # — будут отрендерены Chart.js'ом в Playwright Chromium и снапшотнуты
     # в PDF как самостоятельная секция перед источниками.
     charts: list[dict] = []
+    # Богатые виджеты UI, которых раньше не было в PDF — рендерятся как
+    # styled-секции (рейтинг-карточки, инсайты, пробелы, claim-check).
+    ranking: Optional[dict] = None
+    insights: list[dict] = []
+    gaps: Optional[dict] = None
+    claim_check: Optional[dict] = None
 
 @app.post("/api/ai/export-pdf")
 async def ai_export_pdf(req: PdfExportRequest):
@@ -713,7 +719,9 @@ async def ai_export_pdf(req: PdfExportRequest):
                 question=req.question, report_md=req.report_md,
                 sources=req.sources or [], meta=req.meta or {},
                 verification=req.verification,
-                charts=req.charts or []),
+                charts=req.charts or [],
+                ranking=req.ranking, insights=req.insights or [],
+                gaps=req.gaps, claim_check=req.claim_check),
         )
     except Exception as e:
         logging.getLogger(__name__).warning("PDF export failed: %s", e)

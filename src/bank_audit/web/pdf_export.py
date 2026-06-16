@@ -33,6 +33,10 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict]) -> str:
     """
     if not md:
         return ""
+    # Inline-маркеры графиков [[CHART:N]] — в UI заменяются на сам график; графики
+    # в PDF выводятся отдельной секцией, поэтому здесь просто убираем сырой маркер
+    # (иначе он остаётся уродливым текстом «[[CHART:2]]» в теле).
+    md = re.sub(r"\[\[CHART:\d+\]\]", "", md)
     lines = md.split("\n")
     out: list[str] = []
     in_table = False
@@ -248,6 +252,111 @@ def _render_verification_section(unverified: list[dict]) -> str:
     </section>'''
 
 
+def _render_ranking_section(ranking: dict | None) -> str:
+    """🏆 Рейтинг — нумерованные карточки субъектов со score/обоснованием.
+    Тот же артефакт что RankingWidget в UI, адаптировано под PDF."""
+    if not ranking or not isinstance(ranking, dict):
+        return ""
+    entries = ranking.get("entries") or []
+    if not entries:
+        return ""
+    crit = _esc(ranking.get("criterion", ""))
+    entries = sorted(entries, key=lambda e: (e.get("rank") or 99))
+    cards = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        rank = _esc(e.get("rank", ""))
+        label = _esc(e.get("subject_label") or e.get("subject", ""))
+        sc = e.get("score")
+        score = f"{sc:g}" if isinstance(sc, (int, float)) else _esc(sc or "")
+        rationale = _esc(e.get("rationale", ""))
+        gap = ('<span class="rank-gap">недостаточно данных</span>'
+               if e.get("data_gap") else "")
+        cards.append(
+            f'<li class="rank-card">'
+            f'<div class="rank-num">{rank}</div>'
+            f'<div class="rank-body">'
+            f'<div class="rank-head"><span class="rank-name">{label}</span>'
+            f'<span class="rank-score">{score}<span class="rank-max">/10</span></span>{gap}</div>'
+            f'<div class="rank-rationale">{rationale}</div>'
+            f'</div></li>')
+    return f'''
+    <section class="block-page ranking-page">
+      <h2>🏆 Рейтинг</h2>
+      {f'<div class="lede">{crit}</div>' if crit else ''}
+      <ol class="rank-list">{"".join(cards)}</ol>
+    </section>'''
+
+
+def _render_insights_section(insights: list[dict] | None) -> str:
+    """💡 Ключевые инсайты — headline + explanation (+ impact)."""
+    if not insights:
+        return ""
+    items = []
+    for ins in insights:
+        if not isinstance(ins, dict):
+            continue
+        hl = _esc(ins.get("headline", ""))
+        if not hl:
+            continue
+        expl = _esc(ins.get("explanation", ""))
+        impact = _esc(ins.get("impact", ""))
+        items.append(
+            f'<li class="insight-item">'
+            f'<div class="insight-hl">{hl}</div>'
+            f'{f"<div class=&#39;insight-expl&#39;>{expl}</div>" if expl else ""}'
+            f'{f"<div class=&#39;insight-impact&#39;>Влияние: {impact}</div>" if impact else ""}'
+            f'</li>')
+    if not items:
+        return ""
+    return f'''
+    <section class="block-page insights-page">
+      <h2>💡 Ключевые инсайты</h2>
+      <ul class="insight-list">{"".join(items)}</ul>
+    </section>'''
+
+
+def _render_gaps_section(gaps: dict | None) -> str:
+    """⚠ Пробелы покрытия — что не удалось собрать (честность для аудита)."""
+    if not gaps or not isinstance(gaps, dict):
+        return ""
+    missing = gaps.get("missing") or []
+    items = []
+    for m in missing:
+        if not isinstance(m, dict):
+            continue
+        what = _esc(m.get("attribute", ""))
+        if not what:
+            continue
+        banks = ", ".join(_esc(b) for b in (m.get("missing_banks") or []))
+        items.append(f'<li class="gap-item"><span class="gap-what">{what}</span>'
+                     f'{f" — {banks}" if banks else ""}</li>')
+    if not items:
+        return ""
+    return f'''
+    <section class="block-page gaps-page">
+      <h2>⚠ Пробелы покрытия</h2>
+      <div class="lede">Данные, которые не удалось собрать в открытых источниках — для честной оценки полноты.</div>
+      <ul class="gap-list">{"".join(items)}</ul>
+    </section>'''
+
+
+def _render_claimcheck_section(cc: dict | None) -> str:
+    """Компактный trust-баннер: N верифицировано · X отфильтровано."""
+    if not cc or not isinstance(cc, dict):
+        return ""
+    verified = cc.get("verified") or 0
+    dropped = cc.get("dropped") or 0
+    if not verified and not dropped:
+        return ""
+    pills = [f'<span class="cc-pill ok">✓ {verified} фактов верифицировано</span>']
+    if dropped:
+        pills.append(f'<span class="cc-pill warn">{dropped} отфильтровано '
+                     f'(защита от галлюцинаций)</span>')
+    return f'<section class="cc-section"><div class="cc-box">{"".join(pills)}</div></section>'
+
+
 def _render_charts_section(charts: list[dict]) -> tuple[str, str]:
     """Возвращает (html_block, js_block) для отрисовки графиков в PDF.
     Каждый chart = canvas + Chart.js script. Playwright ждёт networkidle
@@ -373,7 +482,11 @@ def build_pdf_html(*, question: str, report_md: str,
                    sources: list[dict] | None = None,
                    meta: dict | None = None,
                    verification: dict | None = None,
-                   charts: list[dict] | None = None) -> str:
+                   charts: list[dict] | None = None,
+                   ranking: dict | None = None,
+                   insights: list[dict] | None = None,
+                   gaps: dict | None = None,
+                   claim_check: dict | None = None) -> str:
     """Собирает HTML-документ для последующего рендера в PDF Chromium'ом."""
     sources = sources or []
     sources_by_n = {s["n"]: s for s in sources if s.get("n") is not None}
@@ -383,6 +496,11 @@ def build_pdf_html(*, question: str, report_md: str,
     unverified = (verification or {}).get("unverified") or []
     verification_html = _render_verification_section(unverified)
     charts_html, charts_js = _render_charts_section(charts or [])
+    # Богатые виджеты UI, которых раньше не было в PDF (рейтинг/инсайты/gaps/claim-check)
+    ranking_html = _render_ranking_section(ranking)
+    insights_html = _render_insights_section(insights)
+    gaps_html = _render_gaps_section(gaps)
+    claimcheck_html = _render_claimcheck_section(claim_check)
     now_iso = datetime.now().strftime("%Y-%m-%d · %H:%M")
     n_cites = len(set(re.findall(r"\[(\d{1,3})\]", report_md or "")))
     audit_id = meta.get("audit_id") or now_iso.replace(" ", "")[:14]
@@ -784,6 +902,30 @@ body {{
 .src-kind {{ text-transform: uppercase; }}
 .src-trust {{ color: #16181d; letter-spacing: 0; }}
 .src-date {{ color: #909094; }}
+/* ── Богатые секции (рейтинг / инсайты / gaps / claim-check) ── */
+.block-page {{ page-break-inside: avoid; margin-top: 9mm; }}
+.rank-list, .insight-list {{ list-style: none; padding: 0; margin: 0; }}
+.rank-card {{ display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid #ededed; page-break-inside: avoid; }}
+.rank-num {{ flex: 0 0 auto; width: 21px; height: 21px; border-radius: 50%; background: #b3261e; color: #fff; font-family: 'Geist', sans-serif; font-weight: 700; font-size: 10.5pt; line-height: 21px; text-align: center; }}
+.rank-body {{ flex: 1; }}
+.rank-head {{ display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }}
+.rank-name {{ font-family: 'Geist', sans-serif; font-weight: 600; font-size: 11.5pt; color: #16181d; }}
+.rank-score {{ font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #b3261e; font-size: 11pt; }}
+.rank-max {{ color: #b0b0b4; font-size: 8.5pt; }}
+.rank-gap {{ font-family: 'Geist', sans-serif; font-size: 8pt; color: #9a6a00; background: #fdf3e0; padding: 1px 7px; border-radius: 8px; }}
+.rank-rationale {{ font-size: 10pt; color: #3a3d44; line-height: 1.5; }}
+.insight-item {{ padding: 7px 0 7px 12px; border-left: 3px solid #1f4e79; margin-bottom: 9px; page-break-inside: avoid; }}
+.insight-hl {{ font-family: 'Geist', sans-serif; font-weight: 600; font-size: 11pt; color: #16181d; margin-bottom: 2px; }}
+.insight-expl {{ font-size: 10pt; color: #3a3d44; line-height: 1.5; }}
+.insight-impact {{ font-size: 9pt; color: #6b7280; margin-top: 3px; font-style: italic; }}
+.gap-list {{ margin: 0; padding-left: 18px; }}
+.gap-item {{ font-size: 10pt; color: #3a3d44; margin-bottom: 4px; }}
+.gap-what {{ font-weight: 600; color: #16181d; }}
+.cc-section {{ margin: 7mm 0 0; }}
+.cc-box {{ display: flex; gap: 10px; flex-wrap: wrap; }}
+.cc-pill {{ font-family: 'Geist', sans-serif; font-size: 9pt; padding: 4px 11px; border-radius: 12px; }}
+.cc-pill.ok {{ background: #e7f4ec; color: #1a7f4b; }}
+.cc-pill.warn {{ background: #fdf3e0; color: #9a6a00; }}
 </style>
 </head>
 <body>
@@ -806,9 +948,17 @@ body {{
     {body_html}
   </section>
 
+  {ranking_html}
+
+  {insights_html}
+
   {charts_html}
 
+  {claimcheck_html}
+
   {verification_html}
+
+  {gaps_html}
 
   <section class="sources-page">
     <h2>Источники</h2>
@@ -870,10 +1020,16 @@ def export_report_to_pdf(*, question: str, report_md: str,
                           sources: list[dict] | None = None,
                           meta: dict | None = None,
                           verification: dict | None = None,
-                          charts: list[dict] | None = None) -> bytes:
+                          charts: list[dict] | None = None,
+                          ranking: dict | None = None,
+                          insights: list[dict] | None = None,
+                          gaps: dict | None = None,
+                          claim_check: dict | None = None) -> bytes:
     """Главный API. Возвращает bytes PDF'а."""
     html_str = build_pdf_html(question=question, report_md=report_md,
                                 sources=sources, meta=meta,
                                 verification=verification,
-                                charts=charts)
+                                charts=charts, ranking=ranking,
+                                insights=insights, gaps=gaps,
+                                claim_check=claim_check)
     return render_pdf(html_str)

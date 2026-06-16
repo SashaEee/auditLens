@@ -1163,7 +1163,7 @@ function MatrixExportButton({matrix, question, streaming}){
   </span>;
 }
 
-function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts}){
+function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, ranking, insights, gaps}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
     if(busy || streaming) return;
@@ -1204,6 +1204,15 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           // Графики — передаём specs как они пришли через SSE, бэкенд
           // отрендерит их в PDF тем же Chart.js через offscreen Chromium.
           charts: charts || [],
+          // Богатые виджеты UI — раньше терялись при экспорте. Теперь шлём их
+          // в PDF (рейтинг-карточки, инсайты, пробелы, claim-check).
+          ranking: ranking || null,
+          insights: insights || [],
+          gaps: gaps || null,
+          claim_check: claimCheck ? {
+            verified: claimCheck.verified || 0,
+            dropped: claimCheck.dropped || 0,
+          } : null,
         }),
       });
       if(!resp.ok) {
@@ -2097,7 +2106,8 @@ function AIPage(){
                   <PdfExportButton question={userQ} report={m.text}
                                    sources={m.sources||[]} verification={m.verification}
                                    claimCheck={m.claimCheck} streaming={streaming}
-                                   charts={m.charts||[]}/>}
+                                   charts={m.charts||[]} ranking={m.ranking}
+                                   insights={m.insights} gaps={m.gaps}/>}
                 {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
               </div>
               <div className="chat-bubble chat-bubble-deep">
@@ -2152,7 +2162,8 @@ function AIPage(){
                         <PdfExportButton question={userQ} report={m.text}
                                          sources={m.sources||[]} verification={m.verification}
                                          claimCheck={m.claimCheck} streaming={false}
-                                         charts={m.charts||[]}/>
+                                         charts={m.charts||[]} ranking={m.ranking}
+                                         insights={m.insights} gaps={m.gaps}/>
                         <span className="dr-doc-footer-hint">
                           Готовый отчёт для аудита · нумерация страниц, источники, A4
                         </span>
