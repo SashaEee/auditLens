@@ -69,6 +69,22 @@ class BrowserCollector:
         "--disable-blink-features=AutomationControlled",
         "--ignore-certificate-errors",
     ]
+    # Реалистичный User-Agent. По умолчанию headless-playwright шлёт UA с меткой
+    # «HeadlessChrome» → sberbank.ru (и др.) ловит это анти-ботом и отдаёт заглушку
+    # «установите сертификаты НУЦ». Это НЕ про TLS (серт Сбера — публичный HARICA):
+    # с обычным Chrome-UA сайт отдаёт реальный SPA, который chromium рендерит.
+    _UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    # Гарантированный stealth (НЕ зависит от внешней playwright-stealth, которой
+    # на сервере может не быть → _apply_stealth там no-op). Скрывает headless-
+    # признаки: ровно этот набор эмпирически пробил F5-antibot Сбера (challenge
+    # «Your support ID» проходит за ~2с, рендерится реальный контент).
+    _STEALTH_JS = (
+        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+        "window.chrome={runtime:{}};"
+        "Object.defineProperty(navigator,'languages',{get:()=>['ru-RU','ru']});"
+        "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
+    )
 
     def __init__(self, headless: bool = True, profile_dir: str | None = None,
                  nav_timeout_s: float = 45.0, scroll_pause_ms: int = 800,
@@ -92,6 +108,7 @@ class BrowserCollector:
                     viewport={"width": 1440, "height": 900},
                     locale="ru-RU",
                     timezone_id="Europe/Moscow",
+                    user_agent=self._UA,
                     ignore_https_errors=True,
                 )
                 browser = None
@@ -101,8 +118,15 @@ class BrowserCollector:
                     viewport={"width": 1440, "height": 900},
                     locale="ru-RU",
                     timezone_id="Europe/Moscow",
+                    user_agent=self._UA,
                     ignore_https_errors=True,
                 )
+            # Stealth на уровне контекста — применяется ко всем страницам, не
+            # зависит от наличия playwright-stealth (пробивает F5-antibot Сбера).
+            try:
+                ctx.add_init_script(self._STEALTH_JS)
+            except Exception:
+                pass
             try:
                 yield ctx
             finally:
@@ -143,12 +167,25 @@ class BrowserCollector:
             if scroll_to_bottom:
                 self._infinite_scroll(page)
 
-            # Дополнительная пауза, чтобы lazy-XHR успели прилететь
-            if capture_xhr_pattern:
+            # JS-challenge (F5-antibot Сбера) + SPA-рендер: после domcontentloaded
+            # в DOM ещё challenge-shell «enable JavaScript / Your support ID». F5
+            # вычисляет токен и ПЕРЕЗАГРУЖАЕТ страницу (~2-5с). Поэтому ждём не
+            # фикс-паузу, а ИСЧЕЗНОВЕНИЯ маркера challenge — пока появится реальный
+            # контент. Если за 15с не пробилось — берём что есть (fallback).
+            if not wait_selector:
                 try:
-                    page.wait_for_load_state("networkidle", timeout=8000)
+                    page.wait_for_function(
+                        "() => { const t = document.body ? document.body.innerText : '';"
+                        " return t.length > 600 && !t.includes('enable JavaScript')"
+                        " && !t.includes('support ID') && !t.includes('Минцифры'); }",
+                        timeout=15000)
                 except Exception:
                     pass
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+            page.wait_for_timeout(600)
 
             html = page.content().encode("utf-8")
             status = resp.status if resp else 200
