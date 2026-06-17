@@ -79,12 +79,38 @@ class BrowserCollector:
     # на сервере может не быть → _apply_stealth там no-op). Скрывает headless-
     # признаки: ровно этот набор эмпирически пробил F5-antibot Сбера (challenge
     # «Your support ID» проходит за ~2с, рендерится реальный контент).
-    _STEALTH_JS = (
-        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-        "window.chrome={runtime:{}};"
-        "Object.defineProperty(navigator,'languages',{get:()=>['ru-RU','ru']});"
-        "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
-    )
+    _STEALTH_JS = r"""
+(() => {
+  Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
+  window.chrome={runtime:{},loadTimes:function(){},csi:function(){},app:{isInstalled:false}};
+  Object.defineProperty(navigator,'languages',{get:()=>['ru-RU','ru','en-US','en']});
+  Object.defineProperty(navigator,'plugins',{get:()=>[
+    {name:'Chrome PDF Plugin'},{name:'Chrome PDF Viewer'},{name:'Native Client'},
+    {name:'PDF Viewer'},{name:'WebKit built-in PDF'}]});
+  Object.defineProperty(navigator,'hardwareConcurrency',{get:()=>8});
+  Object.defineProperty(navigator,'deviceMemory',{get:()=>8});
+  Object.defineProperty(navigator,'platform',{get:()=>'Linux x86_64'});
+  try {
+    const q = navigator.permissions && navigator.permissions.query;
+    if (q) navigator.permissions.query = (p) =>
+      (p && p.name === 'notifications')
+        ? Promise.resolve({state: Notification.permission})
+        : q(p);
+  } catch(e){}
+  // WebGL vendor/renderer — главный headless-tell (по умолчанию SwiftShader/Google).
+  const spoof = function(getParam){
+    return function(p){
+      if (p === 37445) return 'Intel Inc.';
+      if (p === 37446) return 'Intel Iris OpenGL Engine';
+      return getParam.call(this, p);
+    };
+  };
+  try { WebGLRenderingContext.prototype.getParameter =
+        spoof(WebGLRenderingContext.prototype.getParameter); } catch(e){}
+  try { if (window.WebGL2RenderingContext) WebGL2RenderingContext.prototype.getParameter =
+        spoof(WebGL2RenderingContext.prototype.getParameter); } catch(e){}
+})();
+"""
 
     def __init__(self, headless: bool = True, profile_dir: str | None = None,
                  nav_timeout_s: float = 45.0, scroll_pause_ms: int = 800,
