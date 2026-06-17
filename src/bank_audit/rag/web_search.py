@@ -205,32 +205,49 @@ def _search_ddgs(query: str, *, max_results: int = 8,
 def _search_searxng(query: str, *, max_results: int = 8,
                      site_filter: list[str] | None = None,
                      region: str = "ru-ru") -> list[dict]:
-    """SearXNG self-hosted JSON API. Агрегирует Google/Bing/Brave/Qwant/Yandex.
+    """SearXNG self-hosted JSON API.
+    Движки задаются в settings.yml на сервере (НЕ пиннятся здесь). Эмпирически
+    с IP дата-центра cloud.ru живы только bing + dogpile (остальные под
+    капчей/access-denied — google/yandex/brave/qwant/startpage/baidu/ddg…).
+    dogpile = метапоиск, проксирует Google/Yandex со своих серверов → даёт
+    релевантную выдачу по узким запросам, не упираясь в капчу нашего IP.
     SEARXNG_URL должен указывать на инстанс с включённым JSON output:
       `formats: [html, json]` в settings.yml."""
     base = _searxng_url()
     if not base:
         return []
-    full_query = query
-    if site_filter:
-        sites = " OR ".join(f"site:{d}" for d in site_filter[:25])
-        full_query = f"({query}) ({sites})"
+    # Живые движки (bing/dogpile) ПЛОХО отрабатывают оператор site: в запросе
+    # → 0 результатов. Поэтому извлекаем домены из site:... и из site_filter,
+    # шлём ЧИСТЫЙ запрос, а результаты фильтруем по домену сами.
+    import re as _re
+    sites_in_q = _re.findall(r"site:(\S+)", query, flags=_re.IGNORECASE)
+    clean = _re.sub(r"site:\S+", " ", query, flags=_re.IGNORECASE)
+    clean = _re.sub(r"\s+", " ", clean).strip().strip("()").strip()
+    domains: list[str] = []
+    for d in list(sites_in_q) + list(site_filter or []):
+        host = d.split("/")[0].lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if host:
+            domains.append(host)
+    q_send = clean or query
     try:
         with httpx.Client(timeout=httpx.Timeout(connect=5, read=20,
                                                   write=5, pool=5)) as c:
             resp = c.get(f"{base.rstrip('/')}/search",
-                         params={"q": full_query, "format": "json",
+                         params={"q": q_send, "format": "json",
                                  "language": "ru", "safesearch": "0"})
         if resp.status_code != 200:
-            log.warning("searxng %s: HTTP %s", query[:50], resp.status_code)
+            log.warning("searxng %s: HTTP %s", q_send[:50], resp.status_code)
             return []
         data = resp.json()
     except Exception as e:
-        log.info("searxng %s: %s", query[:50], type(e).__name__)
+        log.info("searxng %s: %s", q_send[:50], type(e).__name__)
         return []
 
-    out: list[dict] = []
-    for r in (data.get("results") or [])[:max_results * 2]:
+    matched: list[dict] = []
+    extra: list[dict] = []
+    for r in (data.get("results") or [])[:max_results * 5]:
         url = r.get("url") or ""
         if not url.startswith("http"):
             continue
@@ -238,12 +255,21 @@ def _search_searxng(query: str, *, max_results: int = 8,
             domain = (urlparse(url).hostname or "").replace("www.", "")
         except Exception:
             domain = ""
-        out.append({
+        item = {
             "title":   (r.get("title") or "")[:200],
             "url":     url,
             "snippet": (r.get("content") or "")[:400],
             "domain":  domain,
-        })
+        }
+        if domains and any(domain == dd or domain.endswith("." + dd)
+                            for dd in domains):
+            matched.append(item)
+        else:
+            extra.append(item)
+    # Домен-совпадения первыми; если их мало (Bing не всегда поднимает узкий
+    # site:-домен) — добиваем широкими результатами, чтобы НЕ отдавать 0 и не
+    # уходить в ddgs-fallback. Без site: — просто широкая выдача.
+    out = (matched + extra) if domains else extra
     return out[:max_results]
 
 
