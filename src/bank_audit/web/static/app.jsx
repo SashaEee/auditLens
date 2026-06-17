@@ -2262,7 +2262,9 @@ function AIPage(){
     if(!t||loading)return;
     setQ("");
     const forceDeep = deepMode ? true : null;     // null = auto-detect на бэке
-    setMsgs(m=>[...m,{role:"user",text:t}]);
+    // Снимаем незакрытую clarify-карточку (если пользователь начал новый запрос,
+    // не ответив на прошлую) — иначе сосуществуют две воронки.
+    setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"user",text:t}]);
     setLoading(true);
     let data=null;
     try{ data=await apiPost("/api/ai/clarify",{question:t,deep:!!deepMode}); }catch(e){ data=null; }

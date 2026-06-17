@@ -94,6 +94,7 @@ def _validate(data: dict) -> dict:
     if not isinstance(qs_in, list) or not qs_in:
         return {"complete": True, "questions": [], "reason": "no_questions"}
     out = []
+    seen_ids = set()
     for q in qs_in[:_MAX_QUESTIONS]:
         if not isinstance(q, dict) or not q.get("question"):
             continue
@@ -107,7 +108,13 @@ def _validate(data: dict) -> dict:
                              "recommended": bool(o.get("recommended"))})
         if qtype != "text" and not opts:
             continue  # вариативный вопрос без опций бесполезен
-        out.append({"id": str(q.get("id") or f"q{len(out)}"),
+        # Уникальный id — иначе на фронте состояние выбора двух вопросов схлопнется
+        # (sel хранится по id). LLM обычно даёт уникальные, но контракт не гарантирует.
+        base = str(q.get("id") or f"q{len(out)}"); qid = base; n = 1
+        while qid in seen_ids:
+            qid = f"{base}_{n}"; n += 1
+        seen_ids.add(qid)
+        out.append({"id": qid,
                     "question": str(q["question"])[:200], "type": qtype,
                     "allow_other": bool(q.get("allow_other", True)),
                     "options": opts[:6]})
@@ -138,15 +145,19 @@ async def generate_clarifications(question: str, history: list | None = None) ->
     except Exception as e:
         log.warning("[clarify] LLM failed: %s — fail-open (complete)", e)
         return {"complete": True, "questions": [], "reason": "llm_error"}
-    data = _loose_json_loads(raw)
-    if data is None:
+    # ВАЖНО: _loose_json_loads БРОСАЕТ при невалидном JSON (не возвращает None) —
+    # без try/except это уронило бы эндпоинт в 500, сломав контракт fail-open.
+    data = None
+    try:
+        data = _loose_json_loads(raw)
+    except Exception:
         try:
             from ..research.v2.conductor import _salvage_truncated_json
             salv = _salvage_truncated_json(raw)
             if salv:
                 data = _loose_json_loads(salv)
         except Exception:
-            pass
+            data = None
     if data is None:
         log.warning("[clarify] no JSON parse, raw200=%r — fail-open", raw[:200])
         return {"complete": True, "questions": [], "reason": "parse_fail"}
