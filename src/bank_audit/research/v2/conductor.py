@@ -60,7 +60,7 @@ class ResearchPlan:
         for i, m in enumerate(self.missions, 1):
             steps.append({
                 "n": i,
-                "title": f"{_AGENT_LABELS.get(m.agent_id, m.agent_id)}: {m.goal[:60]}",
+                "title": f"{_AGENT_LABELS.get(m.agent_id, m.agent_id)}: {m.goal}",
                 "tool": m.agent_id,
                 "entity": m.subjects[0] if m.subjects else None,
             })

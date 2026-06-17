@@ -422,8 +422,10 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
         for m in ready:
             n = plan.missions.index(m) + 1
             yield _evt({"type": "step_start", "n": n,
+                        # Полный заголовок — фронт аккуратно обрежет CSS-ellipsis;
+                        # жёсткий goal[:50] давал «обрыв на полуслове».
                         "title": f"{_AGENT_LABELS_UI.get(m.agent_id, m.agent_id)}: "
-                                  f"{m.goal[:50]}",
+                                  f"{m.goal}",
                         "tool": m.agent_id,
                         "entity": m.subjects[0] if m.subjects else None})
 
