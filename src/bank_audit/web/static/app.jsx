@@ -1293,6 +1293,34 @@ function AgentPanel({iterations}){
 
 // ─── Claim-check meta-row: «12 фактов верифицировано · 7 отфильтровано».
 //     Trust-сигнал — pipeline защитил аудитора от N галлюцинаций. ─────────
+// ─── Ход размышления — живой стрим reasoning_content модели. Заполняет тихие
+//     окна (planning/synthesizing/critic): reasoning приходит на 2-4с раньше
+//     ответа и течёт инкрементально. text — СЫРОЙ ход мысли (на англ.), выводим
+//     plain pre-wrap (НЕ markdown: XSS + мусорная разметка). Когда стадия
+//     «додумала» (active=false) — сворачиваем в «Ход мысли · Nс». ───────────
+function ThinkingPanel({text, stage, active}){
+  const [open,setOpen]=useState(true);
+  const ref=useRef(null), startRef=useRef(null), endRef=useRef(null);
+  if(text && startRef.current==null) startRef.current=Date.now();
+  useEffect(()=>{ if(ref.current) ref.current.scrollTop=ref.current.scrollHeight; },[text,open]);
+  useEffect(()=>{ if(!active){ if(startRef.current&&!endRef.current) endRef.current=Date.now(); setOpen(false); } },[active]);
+  if(!text) return null;
+  const secs=startRef.current?Math.max(1,Math.round(((endRef.current||Date.now())-startRef.current)/1000)):0;
+  const L={conductor:"Дирижёр размышляет",analyst:"Аналитик размышляет",critic:"Критик проверяет",repair:"Дорабатываю отчёт"};
+  const head=active?(L[stage]||"Размышляю"):("Ход мысли · "+secs+"с");
+  return (
+    <div className={"dr-think"+(active?" dr-think-active":"")}>
+      <div className="dr-think-head" onClick={()=>setOpen(o=>!o)}>
+        {active&&<span className="dr-stage-pulse"/>}
+        <span className="dr-think-label">{head}</span>
+        <span className="dr-think-badge">EN · технический ход мысли</span>
+        <span className="dr-think-toggle">{open?"▾":"▸"}</span>
+      </div>
+      {open&&<div className="dr-think-body" ref={ref}>{text}{active&&<span className="dr-think-caret"/>}</div>}
+    </div>
+  );
+}
+
 // ─── Stage status — prominent banner для долгих LLM-этапов.
 //     Показывает что pipeline жив, что именно делает прямо сейчас и
 //     примерно сколько ждать. Прогресс-индикатор по времени (для merging
@@ -1319,6 +1347,11 @@ function StageStatusBanner({stage, currentPhase, mode}){
   if(mode!=="deep") return null;
   // Если currentPhase не «длинный этап» и нет stage — не показываем баннер.
   if(!longHint && !stage) return null;
+  // Окно написания отчёта (analyst / фаза synthesizing) — баннер-заглушку
+  // скрываем: сюда скоро пойдёт живой стриминг ответа LLM (раннюю preview-
+  // таблицу уже убрали). Остальные стадии (planning/research/critic/repair)
+  // показываем как прежде.
+  if(stage?.stage==="analyst" || (currentPhase==="synthesizing" && !stage?.stage)) return null;
   // Таймер показываем для любой стадии с оценкой времени (estimate_s>0) либо
   // если сервер уже прислал elapsed. Иначе — «идёт» без чисел.
   const timed   = (stage?.estimate_s||0) > 0 || srvElapsed != null;
@@ -1974,6 +2007,11 @@ function AIPage(){
               const data=JSON.parse(line.slice(6));
               if(data.type==="text"&&data.chunk){
                 updateLast(last=>({text:(last.text||"")+data.chunk}));
+              }else if(data.type==="reasoning"&&data.chunk){
+                // Живой ход мысли LLM (delta.reasoning_content). Накапливаем как
+                // plain-текст (НЕ markdown — это сырой thinking модели), помним стадию.
+                updateLast(last=>({reasoning:(last.reasoning||"")+data.chunk,
+                                   reasoningStage:data.stage||last.reasoningStage}));
               }else if(data.type==="report_replace"&&typeof data.text==="string"){
                 // Final merge-pass — синтезатор объединил draft + addendum'ы в
                 // один чистый отчёт. Заменяем весь body, отчёт перерендерится.
@@ -2122,6 +2160,12 @@ function AIPage(){
                     система сама находит пробелы и ингестит для них контент. */}
                 {m.agentIters && m.agentIters.length>0 &&
                   <AgentPanel iterations={m.agentIters}/>}
+                {/* Ход размышления — живой reasoning-стрим. Заполняет тишину
+                    стадий до прихода буферизованного отчёта. Сворачивается сам,
+                    когда текст отчёта пошёл (active=false). */}
+                {m.reasoning &&
+                  <ThinkingPanel text={m.reasoning} stage={m.reasoningStage}
+                                  active={loading && i===msgs.length-1 && !(m.text&&m.text.length>40)}/>}
                 {/* Stage banner — показывает текущий долгий LLM-этап с прогрессом.
                     Без него merge-pass на 60s выглядит как «зависло». */}
                 {loading && i===msgs.length-1 &&
