@@ -14,6 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from .. import db
 from ..config import Settings
 from ..ai.analyst import stream_analysis
+from ..ai.clarify import generate_clarifications, build_enriched_question
 from .demo_stream import is_demo_mode_active, find_demo_response, stream_demo_response
 from ..notifier.email import EmailNotifier
 from ..notifier.alerts import alerts_background_loop, run_once as alerts_run_once
@@ -681,6 +682,27 @@ async def ai_analyze(req: ChatRequest):
             "Content-Encoding": "identity",
         },
     )
+
+
+# ── Clarify (модуль «asking») — уточняющая воронка ПЕРЕД research ─────────────
+class ClarifyRequest(BaseModel):
+    question: str
+    history: list = []
+    answers: Optional[list] = None    # None → генерим вопросы; задан → собираем enriched
+    deep: bool = False
+
+@app.post("/api/ai/clarify")
+async def ai_clarify(req: ClarifyRequest):
+    """Синхронный JSON (НЕ SSE). Два режима:
+      answers is None → {complete, reason, questions} — нужна ли воронка и какие вопросы;
+      answers задан    → {enriched_question, original} — обогащённый промпт для research."""
+    # Demo-режим: воронку пропускаем — переписанный промпт сломал бы trigger_keywords.
+    if is_demo_mode_active() and find_demo_response(req.question) is not None:
+        return {"complete": True, "questions": [], "reason": "demo"}
+    if req.answers is not None:
+        enriched = await build_enriched_question(req.question, req.answers)
+        return {"enriched_question": enriched, "original": req.question}
+    return await generate_clarifications(req.question, req.history)
 
 
 # ── PDF export ───────────────────────────────────────────────────────────────
