@@ -24,8 +24,9 @@ from openai import AsyncOpenAI
 
 from ...ai.analyst import LLM_BASE_URL, LLM_API_KEY
 from ...ai.llm_utils import (_patch_client_reasoning_effort, _format_llm_error,
-                              normalize_question)
-from .conductor import plan_research, ResearchPlan
+                              normalize_question, deep_reasoning_extra)
+from .conductor import plan_research, ResearchPlan, fan_out_researcher
+from ._streaming import stream_reasoning_enabled
 from .knowledge_bundle import KnowledgeBundle
 from .base_agent import AgentMission
 from .agents import AGENT_REGISTRY
@@ -38,6 +39,49 @@ log = logging.getLogger(__name__)
 
 def _evt(d: dict) -> str:
     return json.dumps(d, ensure_ascii=False, default=str)
+
+
+async def _drain_while(coro, queue: "asyncio.Queue"):
+    """Гоняет coro и ПАРАЛЛЕЛЬНО yield'ит ('evt', item) из queue по мере прихода.
+    Когда coro завершилась — сливает остаток очереди и yield'ит ('result', res).
+    Мост из await-мира стадии (write_report/critique/…) в yield-мир SSE."""
+    task = asyncio.ensure_future(coro)
+    try:
+        while True:
+            getter = asyncio.ensure_future(queue.get())
+            done, _pending = await asyncio.wait({task, getter},
+                                                 return_when=asyncio.FIRST_COMPLETED)
+            if getter in done:
+                yield ("evt", getter.result())
+            else:
+                getter.cancel()
+            if task in done:
+                while not queue.empty():
+                    yield ("evt", queue.get_nowait())
+                yield ("result", task.result())
+                return
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+async def _emit_stage(stage: str, coro_factory, stream_on: bool):
+    """Обёртка стадии: если stream_on — стримит reasoning-дельты как
+    {type:'reasoning', stage, chunk} (yield ('evt', …)) пока стадия работает,
+    в конце yield ('result', result). Иначе — просто ('result', await coro)."""
+    if not stream_on:
+        yield ("result", await coro_factory(None))
+        return
+    q: asyncio.Queue = asyncio.Queue()
+
+    def on_r(chunk: str):
+        try:
+            q.put_nowait({"type": "reasoning", "stage": stage, "chunk": chunk})
+        except Exception:
+            pass
+
+    async for kind, val in _drain_while(coro_factory(on_r), q):
+        yield (kind, val)
 
 
 _AGENT_LABELS_UI = {
@@ -80,8 +124,19 @@ async def stream_deep_research_v2(question: str,
                 "label": "Анализ вопроса и построение плана",
                 "detail": "Кондуктор определяет интент, субъектов и агентов",
                 "estimate_s": 8})
+    _stream_on = stream_reasoning_enabled()  # env V2_STREAM_REASONING, дефолт выкл
     try:
-        plan = await plan_research(client, conductor_model, question, history)
+        plan = None
+        async for _k, _v in _emit_stage("conductor",
+                lambda onr: plan_research(client, conductor_model, question,
+                                          history, on_reasoning=onr), _stream_on):
+            if _k == "evt":
+                yield _evt(_v)
+            else:
+                plan = _v
+        # Раскладываем единого researcher'а на по-банковые миссии (глубина: каждый
+        # банк получает отдельного агента с полным бюджетом чтений, а не ~1 стр/банк).
+        plan = fan_out_researcher(plan)
     except Exception as e:
         log.exception("[v2] conductor failed: %s", e)
         yield _evt({"type": "text", "chunk": _format_llm_error(e, "планирование")})
@@ -133,39 +188,21 @@ async def stream_deep_research_v2(question: str,
                     "sources_per_bank": {}, "parity_warning": None,
                     "warning": None})
 
-    # ── Stage 2.5: РАННЯЯ ОТДАЧА таблицы (perceived latency) — §5a/§5b ────
-    # Контракт ранней отдачи (коммит a1e5631) перенесён из EAV-orchestrator:
-    # самый ценный артефакт — сравнительная таблица + графики — готов сразу
-    # после сбора данных (детерминированно, без LLM). Отдаём его ДО analyst/
-    # critic (~40-60с раньше) — пользователь видит «мясо», нарратив идёт следом.
-    # write_report(preview_emitted=True) потом НЕ дублирует заголовок/таблицу.
+    # ── Stage 2.5: графики (детерминированные) ───────────────────────────
+    # Раннюю отдачу таблицы УБРАЛИ. Сравнительную таблицу теперь строит САМ
+    # аналитик в финальном отчёте: per-bank агенты называют один и тот же
+    # параметр по-разному («автоперевод: комиссия» / «комиссия за перевод с
+    # кредитки» / «комиссия автоперевода (C2C)»), а LLM семантически сводит их
+    # в общие строки — детерминированный to_comparison_table() этого не умел
+    # (матч по точному совпадению имени атрибута у ≥2 субъектов) → таблица
+    # выходила почти пустой. Превью (заголовок/статистику/таблицу) больше НЕ
+    # шлём: лучше один цельный красивый отчёт, чем кривое превью + дубль.
+    # Графики (числовые, детерминированные) считаем тут, но эмитим ПОСЛЕ отчёта.
     preview_emitted = False
     try:
-        n_subjects = len(bundle.subjects)
-        n_facts = len(bundle.facts)
-        n_complaints = len(bundle.complaints)
-        cov_pct = round(_coverage_pct(bundle))
-        yield _evt({"type": "text", "chunk": f"# Аудит-отчёт: {question}\n\n"})
-        summary_bits = [f"**{n_subjects}** субъектов",
-                          f"**{n_facts}** фактов"]
-        if n_complaints:
-            summary_bits.append(f"**{n_complaints}** кластеров жалоб")
-        summary_bits.append(f"покрытие **{cov_pct:.0f}%**")
-        yield _evt({"type": "text", "chunk":
-            f"_Сравнение {', '.join(summary_bits)}._\n\n"})
-        table_md = bundle.to_comparison_table()
-        if table_md:
-            yield _evt({"type": "text", "chunk": table_md + "\n\n"})
         early_charts = bundle.extract_chart_specs()
-        for ch in early_charts:
-            yield _evt({"type": "chart", "spec": ch})
-            await asyncio.sleep(0.05)
-        preview_emitted = True
-        yield _evt({"type": "stage_status", "stage": "preview_ready",
-                    "label": "Сравнительная таблица готова",
-                    "detail": "Выводы и нарратив формируются…", "estimate_s": 0})
     except Exception as e:
-        log.warning("[v2] ранняя отдача таблицы не удалась: %s", e)
+        log.warning("[v2] extract_chart_specs упал: %s", e)
         early_charts = []
 
     # ── Stage 3: ANALYST ─────────────────────────────────────────────────
@@ -177,8 +214,15 @@ async def stream_deep_research_v2(question: str,
                             f"{len(bundle.insights)} инсайтов",
                 "estimate_s": 20})
     try:
-        report_md = await write_report(client, bundle, plan,
-                                         preview_emitted=preview_emitted)
+        report_md = None
+        async for _k, _v in _emit_stage("analyst",
+                lambda onr: write_report(client, bundle, plan,
+                                         preview_emitted=preview_emitted,
+                                         on_reasoning=onr), _stream_on):
+            if _k == "evt":
+                yield _evt(_v)
+            else:
+                report_md = _v
     except Exception as e:
         log.exception("[v2] analyst failed: %s", e)
         report_md = (f"# Аудит-отчёт: {question}\n\n"
@@ -191,7 +235,14 @@ async def stream_deep_research_v2(question: str,
                 "detail": "Проверка чисел, обоснованности выводов, покрытия",
                 "estimate_s": 12})
     try:
-        critique = await critique_report(client, report_md, bundle, question)
+        critique = None
+        async for _k, _v in _emit_stage("critic",
+                lambda onr: critique_report(client, report_md, bundle, question,
+                                            on_reasoning=onr), _stream_on):
+            if _k == "evt":
+                yield _evt(_v)
+            else:
+                critique = _v
     except Exception as e:
         log.warning("[v2] critic failed: %s — skip repair", e)
         critique = Critique(ok=True)
@@ -205,9 +256,15 @@ async def stream_deep_research_v2(question: str,
                     "detail": critique.repair_directive[:120],
                     "estimate_s": 15})
         try:
-            report_md = await _rewrite_with_critique(
-                client, report_md, critique, bundle, plan,
-                preview_emitted=preview_emitted)
+            async for _k, _v in _emit_stage("repair",
+                    lambda onr: _rewrite_with_critique(
+                        client, report_md, critique, bundle, plan,
+                        preview_emitted=preview_emitted, on_reasoning=onr),
+                    _stream_on):
+                if _k == "evt":
+                    yield _evt(_v)
+                else:
+                    report_md = _v
         except Exception as e:
             log.warning("[v2] repair failed: %s", e)
 
@@ -252,6 +309,12 @@ async def stream_deep_research_v2(question: str,
         if not p.strip():
             continue
         yield _evt({"type": "text", "chunk": p + "\n\n"})
+        await asyncio.sleep(0.03)
+
+    # Графики (детерминированные из фактов, без LLM — числа не галлюцинируются).
+    # Эмитим после текста отчёта (раньше шли ранним preview, который убрали).
+    for ch in early_charts:
+        yield _evt({"type": "chart", "spec": ch})
         await asyncio.sleep(0.03)
 
     # Артефакты для UI
@@ -410,9 +473,17 @@ async def _run_one_agent(client: AsyncOpenAI, model: str,
     final_tier = getattr(agent_cls, "FINAL_MODEL_TIER", None) or tier
     loop_model = fast if tier == "fast" else smart
     final_model = fast if final_tier == "fast" else smart
-    log.warning("[v2] agent %s: loop=%s, final=%s", mission.agent_id,
-                 loop_model.split("/")[-1], final_model.split("/")[-1])
+    # Бюджет итераций ∝ числу субъектов: многосубъектным агентам (reviews/
+    # regulatory/market держат все банки) нужно больше ходов на чтение, чем
+    # развёрнутому по-банковому researcher'у (1 субъект). Тюнится V2_MAX_ITER.
+    n_subj = max(1, len(mission.subjects))
+    base_iter = int(os.getenv("V2_MAX_ITER", "8"))
+    max_iter = (base_iter if n_subj <= 1
+                else min(int(os.getenv("V2_MAX_ITER_CAP", "14")), base_iter + n_subj))
+    log.warning("[v2] agent %s: loop=%s, final=%s, iter=%s", mission.agent_id,
+                 loop_model.split("/")[-1], final_model.split("/")[-1], max_iter)
     agent = agent_cls(client=client, model=smart, mission=mission, bundle=bundle,
+                       max_iterations=max_iter,
                        loop_model=loop_model, final_model=final_model,
                        smart_model=smart)
     try:
@@ -435,7 +506,8 @@ async def _run_one_agent(client: AsyncOpenAI, model: str,
 async def _rewrite_with_critique(client: AsyncOpenAI, draft: str,
                                    critique: Critique, bundle: KnowledgeBundle,
                                    plan: ResearchPlan,
-                                   preview_emitted: bool = False) -> str:
+                                   preview_emitted: bool = False,
+                                   on_reasoning=None) -> str:
     """Просит Analyst переписать отчёт с учётом замечаний критика.
 
     preview_emitted — таблица уже отдана ранним preview; просим НЕ вставлять её
@@ -473,14 +545,23 @@ async def _rewrite_with_critique(client: AsyncOpenAI, draft: str,
     # что и analyst (LLM_MODEL_ANALYST), а не быстрый SMART.
     model = (os.getenv("LLM_MODEL_ANALYST") or os.getenv("LLM_MODEL_SMART")
              or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
+    _msgs = [{"role": "system", "content": SYSTEM_PROMPT},
+             {"role": "user", "content": user_msg}]
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                      {"role": "user", "content": user_msg}],
-            temperature=0.0, max_tokens=6000,
-        )
-        md = (resp.choices[0].message.content or "").strip()
+        if on_reasoning is not None:
+            from ._streaming import stream_completion
+            md, _r, _t = await stream_completion(
+                client, on_reasoning=on_reasoning,
+                model=model, messages=_msgs, temperature=0.2,
+                max_tokens=10000, extra_body=deep_reasoning_extra())
+            md = (md or "").strip()
+        else:
+            resp = await client.chat.completions.create(
+                model=model, messages=_msgs,
+                temperature=0.2, max_tokens=10000,
+                extra_body=deep_reasoning_extra(),  # переписывание — работа аналитика: effort=high
+            )
+            md = (resp.choices[0].message.content or "").strip()
         allowed = {i + 1 for i in range(len(bundle.sources.all()))}
         return _clean_citations(md, allowed) or draft
     except Exception as e:

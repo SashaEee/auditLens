@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from openai import AsyncOpenAI
 
+from ...ai.llm_utils import deep_reasoning_extra
 from .knowledge_bundle import KnowledgeBundle, Fact
 
 log = logging.getLogger(__name__)
@@ -82,7 +83,8 @@ SYSTEM_PROMPT = """Ты — критик аудиторских отчётов. 
 
 async def critique_report(client: AsyncOpenAI, report_md: str,
                             bundle: KnowledgeBundle, question: str,
-                            model: str | None = None) -> Critique:
+                            model: str | None = None,
+                            on_reasoning=None) -> Critique:
     """Верифицирует отчёт. Возвращает Critique с замечаниями."""
     if len(report_md) < 200:
         return Critique(ok=False, blocking_issues=["Отчёт слишком короткий / пустой"])
@@ -106,14 +108,23 @@ async def critique_report(client: AsyncOpenAI, report_md: str,
            if src_block else "")
         + "Проверь отчёт, ВКЛЮЧАЯ grounding цитат [N] по разделу ИСТОЧНИКИ. JSON."
     )
+    _msgs = [{"role": "system", "content": SYSTEM_PROMPT},
+             {"role": "user", "content": user_msg}]
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                      {"role": "user", "content": user_msg}],
-            temperature=0.0, max_tokens=1500,
-        )
-        raw = (resp.choices[0].message.content or "").strip()
+        if on_reasoning is not None:
+            from ._streaming import stream_completion
+            raw, _r, _t = await stream_completion(
+                client, on_reasoning=on_reasoning,
+                model=model, messages=_msgs, temperature=0.0,
+                max_tokens=1500, extra_body=deep_reasoning_extra())
+            raw = (raw or "").strip()
+        else:
+            resp = await client.chat.completions.create(
+                model=model, messages=_msgs,
+                temperature=0.0, max_tokens=1500,
+                extra_body=deep_reasoning_extra(),  # верификация/grounding — reasoning: effort=high
+            )
+            raw = (resp.choices[0].message.content or "").strip()
     except Exception as e:
         log.warning("[critic] LLM failed: %s — only deterministic check", e)
         return Critique(ok=len(halluc_nums) == 0,
