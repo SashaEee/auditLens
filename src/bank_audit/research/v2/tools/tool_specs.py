@@ -54,7 +54,7 @@ READ_URL = ToolSpec(
             "url": {"type": "string", "description": "URL страницы или PDF"},
             "query": {"type": "string",
                       "description": "Подсказка для релевантной выборки фрагментов больших страниц"},
-            "budget_chars": {"type": "integer", "default": 6000},
+            "budget_chars": {"type": "integer", "default": 12000},
             "bank_slug": {"type": "string", "description": "опционально — для индексации"},
         },
         "required": ["url"],

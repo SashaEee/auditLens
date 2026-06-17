@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -226,6 +227,10 @@ class BaseAgent:
         self._forced_read_done = False
         self._search_capped_notified = False
         self._read_capped_notified = False
+        # Успешные чтения (вернули непустой текст). Потолок чтений считаем по НИМ,
+        # а не по всем попыткам: SPA/404/captcha-страницы офиц.сайтов отдают пусто,
+        # и раньше каждая такая попытка жгла слот из ~5 → банк оставался без данных.
+        self._successful_reads = 0
 
     # ── main loop ──────────────────────────────────────────────────────
     async def run(self) -> dict:
@@ -245,10 +250,31 @@ class BaseAgent:
         ]
 
         final_artifacts: dict = {}
+        # Общий дедлайн агента: даже если эндпоинт попал в «медленное окно» и
+        # вызовы упираются в wall-стену + ретраи, один агент НЕ должен держать всю
+        # волну сбора минутами. По истечении — мягкий финал из уже собранного
+        # (данные не теряются). Тюнится V2_AGENT_BUDGET_S.
+        agent_started = time.time()
+        agent_budget = float(os.getenv("V2_AGENT_BUDGET_S", "220"))
         for iteration in range(self.max_iterations):
+            if time.time() - agent_started > agent_budget:
+                log.warning("[agent:%s] бюджет времени %.0fs исчерпан (iter %s, "
+                             "%s tool-вызовов) — мягкий финал из собранного",
+                             self.mission.agent_id, agent_budget, iteration,
+                             self.progress.n_tool_calls)
+                if self.progress.n_tool_calls > 0 and not final_artifacts:
+                    try:
+                        final_artifacts = await self._extract_final(
+                            messages, self.final_model)
+                    except Exception as e:
+                        log.warning("[agent:%s] финал по дедлайну упал: %s",
+                                     self.mission.agent_id, e)
+                break
             used = self.progress.tools_used
             n_search = sum(1 for t in used if t in ("web_search", "semantic_search"))
-            n_read = sum(1 for t in used if t == "read_url")
+            n_read = self._successful_reads   # потолок — по УСПЕШНЫМ чтениям
+            n_read_attempts = sum(1 for t in used if t == "read_url")
+            n_subj = max(1, len(self.mission.subjects))
 
             # ── Жёсткий потолок web_search ───────────────────────────────────
             # Агенты игнорят «1-2 поиска» в промпте и наматывают 5-6 web_search до
@@ -259,7 +285,7 @@ class BaseAgent:
             # + 1 кросс-источник (env V2_WEB_SEARCH_CAP_MIN — нижняя граница).
             n_websearch = sum(1 for t in used if t == "web_search")
             search_cap = max(int(os.getenv("V2_WEB_SEARCH_CAP_MIN", "3")),
-                              len(self.mission.subjects) + 1)
+                              int(os.getenv("V2_WEB_SEARCH_PER_SUBJECT", "2")) * n_subj)
             iter_tools = tools_schema
             if n_websearch >= search_cap:
                 iter_tools = [t for t in tools_schema
@@ -281,9 +307,13 @@ class BaseAgent:
             # чтений убираем read_url+web_search → модель ОБЯЗАНА финалить из уже
             # прочитанного. Полезных чтений в селективном режиме ~3-5 (SPA-страницы
             # офиц.сайтов всё равно пустые) → качество-нейтрально.
-            read_cap = max(int(os.getenv("V2_READ_URL_CAP", "5")),
-                           len(self.mission.subjects) + 1)
-            if n_read >= read_cap:
+            read_cap = min(int(os.getenv("V2_READ_URL_CAP_MAX", "12")),
+                           max(int(os.getenv("V2_READ_URL_CAP", "5")),
+                               int(os.getenv("V2_READ_PER_SUBJECT", "4")) * n_subj))
+            # Жёсткий потолок ПОПЫТОК (вкл. пустые) — чтобы не зациклиться на пустых
+            # SPA, если успешных чтений всё не набирается.
+            read_attempt_ceiling = read_cap * 2 + 2
+            if n_read >= read_cap or n_read_attempts >= read_attempt_ceiling:
                 iter_tools = [t for t in iter_tools
                               if t["function"]["name"] not in ("read_url", "web_search")]
                 if not self._read_capped_notified:
@@ -409,6 +439,10 @@ class BaseAgent:
                 })
                 self.progress.n_tool_calls += 1
                 self.progress.tools_used.append(tool_name)
+                # Успешное чтение = read_url без "error" и с непустым text.
+                if (tool_name == "read_url" and '"error"' not in result[:120]
+                        and '"text"' in result):
+                    self._successful_reads += 1
                 # Копим URL'ы из результативных web_search — для forced-read.
                 if tool_name == "web_search":
                     for u in _extract_urls_from_search_result(result):
@@ -451,6 +485,7 @@ class BaseAgent:
 
     # ── helpers ────────────────────────────────────────────────────────
     def _build_messages(self) -> list[dict]:
+        _year = datetime.now().year
         user = (
             f"# ЗАДАНИЕ\n{self.mission.goal}\n\n"
             f"# ОБЪЕКТЫ\n{', '.join(self.mission.subjects) or '(не заданы)'}\n"
@@ -473,7 +508,12 @@ class BaseAgent:
             "4. Числа/факты бери ТОЛЬКО из прочитанного (read_url), с номером [N].\n"
             "5. Если по объекту данных нет в открытых источниках — честно скажи,\n"
             "   не ищи бесконечно.\n"
-            "6. Когда прочитал релевантные страницы и собрал факты — верни JSON."
+            "6. Когда прочитал релевантные страницы и собрал факты — верни JSON.\n"
+            f"7. СВЕЖЕСТЬ (критично для аудита): добавляй текущий год в запросы "
+            f"(напр. «тарифы {_year}», «условия {_year}»), предпочитай свежие "
+            f"страницы. Для КАЖДОГО факта ОБЯЗАТЕЛЬНО заполни as_of (год/период из "
+            f"источника). Данные старше {_year - 2} — слабый источник: ищи актуальнее "
+            f"или явно помечай как устаревшие."
         )
         return [{"role": "system", "content": self.SYSTEM_PROMPT},
                 {"role": "user", "content": user}]

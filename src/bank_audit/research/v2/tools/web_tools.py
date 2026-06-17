@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from urllib.parse import urlparse
 
 from .source_registry_helper import register_source
@@ -118,7 +119,12 @@ def tool_read_url(args: dict, bundle) -> str:
     if not url:
         return json.dumps({"error": "url пустой"}, ensure_ascii=False)
     query_hint = (args.get("query") or "").strip()  # для релевантной выборки
-    budget = int(args.get("budget_chars", 6000))
+    # Раньше 6000 симв/страница: индексатор парсил страницу целиком, а модель
+    # видела лишь ~1500 токенов (фрагмент по ключевику) — тариф-PDF/длинная
+    # страница отзывов теряли основное содержимое. Поднято (контекст модели
+    # огромный, страница уже скачана — отдавать больше почти бесплатно).
+    budget = int(args.get("budget_chars",
+                          int(os.getenv("V2_READ_BUDGET_CHARS", "12000"))))
     bank_slug_hint = args.get("bank_slug")
 
     dom = _domain(url)
@@ -183,7 +189,8 @@ def _kind_for(domain: str, url: str) -> str:
 def _raw_fetch_text(url: str, budget: int) -> str:
     """Простой fallback-fetch без индексации (когда indexer не справился)."""
     from ....rag import fetcher
-    fr = fetcher.fetch(url, prefer_browser=False)
+    from ..passive_indexer import _should_render
+    fr = fetcher.fetch(url, prefer_browser=_should_render(url))
     if not fr.content:
         return ""
     from ....rag.parsers import parse_auto

@@ -13,13 +13,40 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
 
-# Бюджет на возвращаемый текст (не на индексацию — она полная)
-_RETURN_BUDGET = 8000
+# Бюджет на возвращаемый текст (не на индексацию — она полная). Согласован с
+# read_url (V2_READ_BUDGET_CHARS): отдаём модели больше содержимого страницы.
+_RETURN_BUDGET = 16000
+
+# Официальные сайты банков — SPA на JS: по HTTP отдают пустой каркас (без тарифов).
+# Для них read_url рендерит страницу через Playwright (браузер на сервере есть).
+# Агрегаторы (banki.ru/sravni.ru) НЕ включаем — они читаются по httpx, а браузер
+# медленный (агент их читает много). Тюнится V2_BROWSER_RENDER (1=вкл, 0=выкл).
+_SPA_RENDER_DOMAINS = (
+    "sberbank.ru", "vtb.ru", "alfabank.ru", "tbank.ru", "tinkoff.ru",
+    "gazprombank.ru", "sovcombank.ru", "rshb.ru", "open.ru", "raiffeisen.ru",
+    "pochtabank.ru", "mkb.ru", "psbank.ru", "rosbank.ru", "mtsbank.ru",
+    "domrfbank.ru", "uralsib.ru", "akbars.ru",
+)
+
+
+def _should_render(url: str) -> bool:
+    """SPA офиц. сайта банка → рендерим браузером (httpx отдаёт пустой каркас)."""
+    if os.getenv("V2_BROWSER_RENDER", "1") == "0":
+        return False
+    try:
+        d = urlparse(url).netloc.lower()
+        if d.startswith("www."):
+            d = d[4:]
+        return any(d == x or d.endswith("." + x) for x in _SPA_RENDER_DOMAINS)
+    except Exception:
+        return False
 
 
 def index_and_get_text(url: str, *,
@@ -44,7 +71,7 @@ def index_and_get_text(url: str, *,
     try:
         from ...rag import fetcher
         from ...rag.parsers import parse_auto
-        fr = fetcher.fetch(url, prefer_browser=False)
+        fr = fetcher.fetch(url, prefer_browser=_should_render(url))
         if fr.content:
             parsed = parse_auto(fr.content, url=fr.final_url,
                                 content_type=fr.content_type)

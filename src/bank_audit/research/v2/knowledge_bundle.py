@@ -14,8 +14,27 @@ Critic верифицирует против bundle. Никаких «кажды
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any
+
+
+def _fact_year(f) -> int | None:
+    """Год факта из as_of (или verbatim) — для пометки устаревших данных в отчёте."""
+    for txt in (getattr(f, "as_of", "") or "", getattr(f, "verbatim", "") or ""):
+        m = re.search(r"\b(20[0-2]\d)\b", txt)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _stale_age_years() -> int:
+    """Старше скольких лет факт считается устаревшим (тюнится V2_STALE_YEARS)."""
+    import os
+    try:
+        return int(os.getenv("V2_STALE_YEARS", "2"))
+    except ValueError:
+        return 2
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -321,9 +340,15 @@ class KnowledgeBundle:
         self.complaints.append(c)
 
     # ── сериализация для промпта Analyst ───────────────────────────────
-    def to_prompt_context(self, max_chars: int = 24000) -> str:
+    def to_prompt_context(self, max_chars: int = 24000, *,
+                          rich: bool = False) -> str:
         """Собирает bundle в текстовый блок для промпта писателя.
-        Группирует по субъектам — Analyst видит полную картину по каждому."""
+        Группирует по субъектам — Analyst видит полную картину по каждому.
+
+        rich=True (для аналитика): добавляет дословные цитаты под фактами и блок
+        «ВЫДЕРЖКИ ИЗ ИСТОЧНИКОВ» — чтобы писатель РАССУЖДАЛ по тексту источника, а
+        не пересказывал голые «атрибут: значение». Это ключевой рычаг глубины.
+        Для критика/ranking/repair rich=False (у них свой контекст-бюджет)."""
         parts: list[str] = []
         parts.append(f"# ВОПРОС АУДИТОРА\n{self.question}")
         parts.append(f"# ИНТЕНТ\n{self.intent}")
@@ -354,6 +379,9 @@ class KnowledgeBundle:
                 parts.append(f"{e.rank}. {label} ({e.score:g}/10){gap} — {e.rationale} {cite}")
 
         # По субъектам — факты + жалобы
+        _cur_year = datetime.now().year
+        _stale_before = _cur_year - _stale_age_years()
+        _stale_facts: list[str] = []   # консолидируем для блока «Актуальность данных»
         for subj in self.subjects:
             label = self.subject_labels.get(subj, subj)
             fs = self.facts_for(subj)
@@ -367,29 +395,109 @@ class KnowledgeBundle:
                 for f in fs:
                     cite = f"[{f.source_n}]"
                     cond = f" (при: {', '.join(f.conditions)})" if f.conditions else ""
-                    asof = f" [{f.as_of}]" if f.as_of else ""
+                    fy = _fact_year(f)
+                    asof = f" [{f.as_of}]" if f.as_of else (f" [{fy}]" if fy else "")
+                    # ⚠ НЕ ставим инлайн (шум в тексте) — копим в _stale_facts.
                     lines.append(f"  • {f.attribute}: {f.value}{cond}{asof} {cite}")
+                    if fy and fy < _stale_before:
+                        _stale_facts.append(
+                            f"{label} — {f.attribute}: данные за {fy} [{f.source_n}]")
+                    if rich and f.verbatim:
+                        vb = re.sub(r"\s+", " ", f.verbatim).strip()
+                        if vb:
+                            lines.append(f"      └ цитата из источника: «{vb[:300]}»")
             if cs:
                 lines.append("**Жалобы/отзывы:**")
+                qn, qlen = (3, 280) if rich else (2, 180)
                 for c in cs:
                     cite = "".join(f"[{n}]" for n in c.source_ns[:3])
                     stale = " (устаревшие)" if c.is_stale else ""
-                    lines.append(f"  • {c.theme} — {c.n_reviews} отзыв{stale} {cite}")
-                    for q in c.sample_quotes[:2]:
-                        lines.append(f'      «{q[:180]}»')
+                    meta = []
+                    if c.sentiment and c.sentiment != "neg":
+                        meta.append(c.sentiment)
+                    if c.period:
+                        meta.append(c.period)
+                    if c.rating_avg is not None:
+                        meta.append(f"ср.рейтинг {c.rating_avg:g}")
+                    meta_s = f" ({'; '.join(meta)})" if meta else ""
+                    lines.append(f"  • {c.theme} — {c.n_reviews} отзыв{stale}{meta_s} {cite}")
+                    for q in c.sample_quotes[:qn]:
+                        lines.append(f'      «{q[:qlen]}»')
             parts.append("\n".join(lines))
 
+        # Выдержки реально использованных источников — заземление нарратива.
+        if rich:
+            ex = self._used_source_excerpts()
+            if ex:
+                parts.append(
+                    "# ВЫДЕРЖКИ ИЗ ИСТОЧНИКОВ (опирайся на ТЕКСТ, не только на «атрибут: значение»)\n"
+                    + ex)
+
+        # Честные пробелы — отдельным «хвостом», который НЕ срезается усечением:
+        # это first-class сигнал для аудитора и теряться при truncation не должен.
+        tail = ""
         if self.coverage_notes:
-            parts.append("# ЧЕСТНЫЕ ПРОБЕЛЫ (что НЕ удалось найти)")
+            cov = ["# ЧЕСТНЫЕ ПРОБЕЛЫ (что НЕ удалось найти)"]
             for n in self.coverage_notes:
                 subs = ", ".join(n.subjects) if n.subjects else "—"
-                parts.append(f"• {n.what} ({subs}): {n.reason}"
-                             + (f" → {n.recommendation}" if n.recommendation else ""))
+                cov.append(f"• {n.what} ({subs}): {n.reason}"
+                           + (f" → {n.recommendation}" if n.recommendation else ""))
+            tail = "\n\n" + "\n".join(cov)
+        if _stale_facts:
+            st = ["# АКТУАЛЬНОСТЬ ДАННЫХ (устаревшие факты — оформи ОДНИМ списком в "
+                  "«Честных оговорках», НЕ помечай ⚠ в основном тексте и таблице):"]
+            st.extend("• " + s for s in _stale_facts[:20])
+            tail += "\n\n" + "\n".join(st)
 
         text = "\n\n".join(parts)
-        if len(text) > max_chars:
-            text = text[:max_chars] + "\n\n[…контекст сокращён из-за объёма…]"
-        return text
+        budget = max(0, max_chars - len(tail))
+        if len(text) > budget:
+            text = text[:budget] + "\n\n[…контекст сокращён из-за объёма…]"
+        return text + tail
+
+    def _used_source_excerpts(self, max_sources: int = 24,
+                              per_excerpt: int = 450,
+                              max_chars: int = 14000) -> str:
+        """Выдержки источников, РЕАЛЬНО использованных в фактах/жалобах/
+        регуляторике/инсайтах/рейтинге — по убыванию доверия. Заземление для
+        нарратива (аналог _cited_sources_block у критика, но по bundle: отчёта
+        ещё нет, цитировать не из чего)."""
+        used: set[int] = set()
+        for f in self.facts:
+            if f.source_n:
+                used.add(f.source_n)
+        for c in self.complaints:
+            used.update(n for n in c.source_ns if n)
+        for r in self.regulations:
+            if r.source_n:
+                used.add(r.source_n)
+        for ins in self.insights:
+            used.update(n for n in ins.evidence_ns if n)
+        if self.ranking:
+            for e in self.ranking.entries:
+                used.update(n for n in e.evidence_ns if n)
+        if not used:
+            return ""
+        try:
+            ui = {s["n"]: s for s in self.sources.to_ui()}
+        except Exception:
+            return ""
+        items = sorted((ui[n] for n in used if n in ui),
+                       key=lambda s: (-(s.get("trust_score") or 0), s.get("n", 0)))
+        lines: list[str] = []
+        total = 0
+        for s in items[:max_sources]:
+            exc = (s.get("excerpt") or "").strip()
+            if not exc:
+                continue
+            exc = re.sub(r"\s+", " ", exc)[:per_excerpt]
+            line = (f"[{s['n']}] {s.get('domain','')} "
+                    f"({s.get('source_kind','')}, доверие {s.get('trust_score',0):.2f}): {exc}")
+            if total + len(line) > max_chars:
+                break
+            lines.append(line)
+            total += len(line)
+        return "\n".join(lines)
 
     def sources_block_for_critic(self) -> str:
         """Только источники с выдержками — для верификации чисел."""
@@ -442,6 +550,8 @@ class KnowledgeBundle:
             val = f.value.strip()
             cite = f"[{f.source_n}]"
             cond = f" ({'; '.join(f.conditions)})" if f.conditions else ""
+            # Несвежесть в таблицу НЕ выводим (визуальный шум, рушит доверие) —
+            # устаревшие факты собираются отдельным блоком «Актуальность данных».
             return f"{val}{cond} {cite}".replace("|", "/").replace("\n", " ")
 
         # Шапка

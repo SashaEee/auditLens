@@ -80,6 +80,23 @@ def _patch_client_reasoning_effort(client):
     return client
 
 
+def deep_reasoning_extra(base: dict | None = None) -> dict:
+    """extra_body с ПОВЫШЕННЫМ reasoning_effort для «думающих» вызовов
+    (conductor / analyst / critic / repair).
+
+    Глобальный патч держит дешёвый default (LLM_REASONING_EFFORT=low) для частых
+    nav-итераций агентов — там высокий effort не нужен и только жжёт время. Но
+    немногочисленные reasoning-вызовы (план, нарратив, верификация) от этого
+    становятся плоскими. Здесь явно поднимаем effort именно для них (патч уважает
+    уже проставленный в extra_body reasoning_effort и не перетирает его).
+    Тюнится LLM_REASONING_EFFORT_DEEP (default high; off/none — отключить)."""
+    effort = os.getenv("LLM_REASONING_EFFORT_DEEP", "high").lower()
+    out = dict(base or {})
+    if effort not in ("off", "none", "") and "reasoning_effort" not in out:
+        out["reasoning_effort"] = effort
+    return out
+
+
 # ── Роутинг quick/deep ───────────────────────────────────────────────────────
 _DEEP_TRIGGERS = (
     "сравни", "сравнение", "сопоставь", "vs ", " vs.", " против ",
