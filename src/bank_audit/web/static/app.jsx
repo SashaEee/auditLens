@@ -1398,6 +1398,36 @@ function ClaimCheckRow({claimCheck, verification, sourcesCount}){
   </div>;
 }
 
+// ─── Панель параллельных агентов — живые карточки во время волны сбора.
+//     Статус каждого (ждёт/ищет/читает/обдумывает/готов) движется по РЕАЛЬНЫМ
+//     событиям agent_tool_call (не самоползущий бар). Показывается только в фазе
+//     research; после неё итог берёт на себя ProcessTrace. ────────────────────
+function _agentStatus(st){
+  if(!st || !st.status || st.status==="pending") return {t:"ждёт", c:"var(--ink-4)", run:false};
+  if(st.status==="done")  return {t:"готов", c:"var(--pos,#3fb950)", run:false};
+  if(st.status==="error") return {t:"ошибка", c:"var(--warn)", run:false};
+  const lt=st.live_tool;
+  if(lt==="web_search"||lt==="semantic_search") return {t:"ищет", c:"var(--accent)", run:true};
+  if(lt==="read_url") return {t:`читает · ${st.n_reads||0} стр`, c:"var(--accent)", run:true};
+  if(st.live_phase==="think") return {t:"обдумывает", c:"var(--accent)", run:true};
+  return {t:"работает", c:"var(--accent)", run:true};
+}
+function AgentsPanel({plan, stepStates, phase}){
+  if(!plan || !plan.length || phase!=="research") return null;
+  return <div className="dr-agents">
+    <div className="dr-agents-head"><span className="eyebrow">Агенты · {plan.length} параллельно</span></div>
+    {plan.map((step,i)=>{
+      const st=stepStates?.[step.n];
+      const s=_agentStatus(st);
+      return <div key={i} className={"dr-agent-card"+(s.run?" dr-agent-card-run":"")}>
+        <span className="dr-agent-dot" style={{background:s.c}}/>
+        <span className="dr-agent-name">{step.title}</span>
+        <span className="dr-agent-status mono" style={{color:s.c}}>{s.t}</span>
+      </div>;
+    })}
+  </div>;
+}
+
 function ProcessTrace({plan, stepStates, phase, mode, sources, verification}){
   const[expanded,setExpanded]=useState(false);
   if(!plan || !plan.length){
@@ -2034,7 +2064,17 @@ function AIPage(){
                 updateLast(()=>({plan:data.steps,stepStates:{}}));
               }else if(data.type==="step_start"){
                 updateLast(last=>({
-                  stepStates:{...(last.stepStates||{}),[data.n]:{status:"running",title:data.title,tool:data.tool}}
+                  stepStates:{...(last.stepStates||{}),[data.n]:{status:"running",title:data.title,tool:data.tool,entity:data.entity}}
+                }));
+              }else if(data.type==="agent_tool_call"){
+                // Живой статус агента: какой инструмент сейчас, сколько прочитано.
+                updateLast(last=>({
+                  stepStates:{...(last.stepStates||{}),[data.n]:{
+                    ...(last.stepStates?.[data.n]||{}),
+                    live_tool:data.tool, live_phase:data.phase,
+                    n_reads:data.n_reads, calls:data.calls,
+                    entity:data.entity ?? last.stepStates?.[data.n]?.entity,
+                  }}
                 }));
               }else if(data.type==="step_done"){
                 updateLast(last=>({
@@ -2157,6 +2197,9 @@ function AIPage(){
               <div className="chat-bubble chat-bubble-deep">
                 <ProcessTrace plan={m.plan} stepStates={m.stepStates} phase={m.phase}
                               mode={m.mode} sources={m.sources} verification={m.verification}/>
+                {/* Живые карточки параллельных агентов (во время волны сбора). */}
+                {loading && i===msgs.length-1 &&
+                  <AgentsPanel plan={m.plan} stepStates={m.stepStates} phase={m.phase}/>}
                 {m.coverage && <CoverageBanner coverage={m.coverage}/>}
                 {/* Outline preview — TOC до текста, чтобы пользователь сразу
                     видел структуру отчёта */}
