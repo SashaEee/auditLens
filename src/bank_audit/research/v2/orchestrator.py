@@ -171,7 +171,8 @@ async def stream_deep_research_v2(question: str,
         subject_labels=dict(plan.subject_labels),
     )
 
-    async for progress_evt in _run_missions_streaming(client, agents_model, plan, bundle):
+    async for progress_evt in _run_missions_streaming(client, agents_model, plan,
+                                                        bundle, stream_on=_stream_on):
         yield progress_evt
 
     # Эмитим источники когда все агенты отработали (полный индекс)
@@ -373,11 +374,15 @@ async def stream_deep_research_v2(question: str,
 
 async def _run_missions_streaming(client: AsyncOpenAI, model: str,
                                      plan: ResearchPlan,
-                                     bundle: KnowledgeBundle) -> AsyncIterator[str]:
+                                     bundle: KnowledgeBundle,
+                                     stream_on: bool = False) -> AsyncIterator[str]:
     """Запускает миссии агентов с эмитом SSE-прогресса.
 
     Независимые миссии — параллельно, зависимые — после завершения зависимостей.
     Эмитит step_start/step_done события (совместимо со старым фронтом).
+    stream_on=True — дополнительно стримит живой статус каждого агента
+    (agent_tool_call: текущий инструмент, прочитано, итерация) из очереди волны,
+    параллельно работе агентов — оживляет минуты тишины внутри волны.
     """
     completed: set[str] = set()
     results: dict[str, dict] = {}
@@ -427,27 +432,68 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
         # волна — один глухой await на минуты: панель агентов стоит мёртвой, потом
         # всё «доделывается» мгновенно. Теперь агенты гаснут по одному в реальном
         # времени — пользователь видит актуальную картину.
-        async def _tagged(mission: AgentMission):
+        # Очередь живых статусов волны (только при stream_on). Каждый агент
+        # кладёт в неё agent_tool_call со своим n; дренируем параллельно работе.
+        wave_q: "asyncio.Queue | None" = asyncio.Queue() if stream_on else None
+
+        def _make_emit(n: int, m: AgentMission):
+            if wave_q is None:
+                return None
+            ent = m.subjects[0] if m.subjects else None
+            def _emit(payload: dict):
+                try:
+                    wave_q.put_nowait({"type": "agent_tool_call", "n": n,
+                                       "agent_id": m.agent_id, "entity": ent,
+                                       **payload})
+                except Exception:
+                    pass
+            return _emit
+
+        async def _tagged(mission: AgentMission, emit):
             try:
-                return mission, await _run_one_agent(client, model, mission, bundle)
+                return mission, await _run_one_agent(client, model, mission,
+                                                      bundle, emit=emit)
             except Exception as exc:  # belt-and-suspenders: _run_one_agent сам ловит
                 return mission, exc
 
-        tasks = [asyncio.ensure_future(_tagged(m)) for m in ready]
-        for fut in asyncio.as_completed(tasks):
-            m, res = await fut
+        pending = set()
+        for m in ready:
             n = plan.missions.index(m) + 1
-            if isinstance(res, Exception):
-                log.warning("[v2] agent %s failed: %s", m.agent_id, res)
-                results[m.agent_id] = {"error": str(res), "summary": ""}
-                found = 0
-            else:
-                results[m.agent_id] = res
-                found = res.get("n_tool_calls", 0)
-            completed.add(m.agent_id)
-            yield _evt({"type": "step_done", "n": n,
-                        "found": found, "used": found,
-                        "detail": results[m.agent_id].get("summary", "")[:120]})
+            pending.add(asyncio.ensure_future(_tagged(m, _make_emit(n, m))))
+
+        # Единый цикл для обоих режимов: ждём (агенты ∪ getter очереди). step_done
+        # эмитим по мере завершения каждого агента; при stream_on в паузах отдаём
+        # живые agent_tool_call. Без stream_on getter=None → обычный as_completed.
+        while pending or (wave_q is not None and not wave_q.empty()):
+            waitset = set(pending)
+            getter = asyncio.ensure_future(wave_q.get()) if wave_q is not None else None
+            if getter is not None:
+                waitset.add(getter)
+            done, _pend = await asyncio.wait(waitset, return_when=asyncio.FIRST_COMPLETED)
+            if getter is not None:
+                if getter in done:
+                    yield _evt(getter.result())
+                else:
+                    getter.cancel()
+            for t in (done & pending):
+                pending.discard(t)
+                m, res = t.result()
+                n = plan.missions.index(m) + 1
+                if isinstance(res, Exception):
+                    log.warning("[v2] agent %s failed: %s", m.agent_id, res)
+                    results[m.agent_id] = {"error": str(res), "summary": ""}
+                    found = 0
+                else:
+                    results[m.agent_id] = res
+                    found = res.get("n_tool_calls", 0)
+                completed.add(m.agent_id)
+                yield _evt({"type": "step_done", "n": n,
+                            "found": found, "used": found,
+                            "detail": results[m.agent_id].get("summary", "")[:120]})
+        # Слить остаток статусов, пришедших после завершения последнего агента.
+        if wave_q is not None:
+            while not wave_q.empty():
+                yield _evt(wave_q.get_nowait())
 
 
 def _tier_models() -> tuple[str, str]:
@@ -459,7 +505,8 @@ def _tier_models() -> tuple[str, str]:
 
 
 async def _run_one_agent(client: AsyncOpenAI, model: str,
-                           mission: AgentMission, bundle: KnowledgeBundle) -> dict:
+                           mission: AgentMission, bundle: KnowledgeBundle,
+                           emit=None) -> dict:
     """Запускает один агент. Возвращает {agent_id, summary, progress}.
 
     Модель выбирается по тиру агента (ускорение v2): механические агенты
@@ -488,7 +535,7 @@ async def _run_one_agent(client: AsyncOpenAI, model: str,
     agent = agent_cls(client=client, model=smart, mission=mission, bundle=bundle,
                        max_iterations=max_iter,
                        loop_model=loop_model, final_model=final_model,
-                       smart_model=smart)
+                       smart_model=smart, emit=emit)
     try:
         result = await agent.run()
     except Exception as e:

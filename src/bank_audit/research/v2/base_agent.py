@@ -203,9 +203,13 @@ class BaseAgent:
                   max_iterations: int = 8,
                   loop_model: str | None = None,
                   final_model: str | None = None,
-                  smart_model: str | None = None) -> None:
+                  smart_model: str | None = None,
+                  emit=None) -> None:
         self.client = client
         self.model = model
+        # emit(dict) — опциональный sync-callback живого статуса агента наружу
+        # (оркестратор кладёт в очередь → SSE agent_tool_call). None = молчим.
+        self._emit = emit
         # loop_model — для итераций (по умолчанию = model); final_model — для
         # финального извлечения (по умолчанию = loop_model). Оркестратор задаёт
         # их по тиру агента; при отсутствии — обратная совместимость (всё = model).
@@ -231,6 +235,17 @@ class BaseAgent:
         # а не по всем попыткам: SPA/404/captcha-страницы офиц.сайтов отдают пусто,
         # и раньше каждая такая попытка жгла слот из ~5 → банк оставался без данных.
         self._successful_reads = 0
+
+    def _emit_status(self, **kw):
+        """Живой статус агента наружу (если подключён emit). Никогда не роняет
+        агента — телеметрия не должна влиять на сбор данных."""
+        if not self._emit:
+            return
+        try:
+            self._emit({"n_reads": self._successful_reads,
+                        "calls": self.progress.n_tool_calls, **kw})
+        except Exception:
+            pass
 
     # ── main loop ──────────────────────────────────────────────────────
     async def run(self) -> dict:
@@ -270,6 +285,7 @@ class BaseAgent:
                         log.warning("[agent:%s] финал по дедлайну упал: %s",
                                      self.mission.agent_id, e)
                 break
+            self._emit_status(phase="think", iter=iteration)  # «обдумывает ход»
             used = self.progress.tools_used
             n_search = sum(1 for t in used if t in ("web_search", "semantic_search"))
             n_read = self._successful_reads   # потолок — по УСПЕШНЫМ чтениям
@@ -443,6 +459,8 @@ class BaseAgent:
                 if (tool_name == "read_url" and '"error"' not in result[:120]
                         and '"text"' in result):
                     self._successful_reads += 1
+                # Живой статус наружу: какой инструмент только что отработал.
+                self._emit_status(tool=tool_name)
                 # Копим URL'ы из результативных web_search — для forced-read.
                 if tool_name == "web_search":
                     for u in _extract_urls_from_search_result(result):
