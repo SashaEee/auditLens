@@ -456,16 +456,20 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
             except Exception as exc:  # belt-and-suspenders: _run_one_agent сам ловит
                 return mission, exc
 
-        pending = set()
+        # ВАЖНО: фьючерсы волны держим в ОТДЕЛЬНОЙ переменной `running`, НЕ в
+        # `pending` — `pending` это backlog МИССИЙ следующих волн (строки выше),
+        # и его нельзя затирать, иначе `if not pending: break` оборвёт цикл волн
+        # до запуска зависимых волн (ranking depends on researcher+reviews).
+        running = set()
         for m in ready:
             n = plan.missions.index(m) + 1
-            pending.add(asyncio.ensure_future(_tagged(m, _make_emit(n, m))))
+            running.add(asyncio.ensure_future(_tagged(m, _make_emit(n, m))))
 
         # Единый цикл для обоих режимов: ждём (агенты ∪ getter очереди). step_done
         # эмитим по мере завершения каждого агента; при stream_on в паузах отдаём
         # живые agent_tool_call. Без stream_on getter=None → обычный as_completed.
-        while pending or (wave_q is not None and not wave_q.empty()):
-            waitset = set(pending)
+        while running or (wave_q is not None and not wave_q.empty()):
+            waitset = set(running)
             getter = asyncio.ensure_future(wave_q.get()) if wave_q is not None else None
             if getter is not None:
                 waitset.add(getter)
@@ -475,8 +479,8 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
                     yield _evt(getter.result())
                 else:
                     getter.cancel()
-            for t in (done & pending):
-                pending.discard(t)
+            for t in (done & running):
+                running.discard(t)
                 m, res = t.result()
                 n = plan.missions.index(m) + 1
                 if isinstance(res, Exception):
