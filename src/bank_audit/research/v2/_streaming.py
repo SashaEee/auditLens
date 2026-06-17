@@ -26,23 +26,39 @@ def stream_reasoning_enabled() -> bool:
 async def stream_completion(client, *, on_reasoning=None, **create_kwargs):
     """stream=True вызов LLM. Возвращает (content, reasoning, tool_calls).
 
-    on_reasoning(chunk:str) — sync-callback, зовётся по мере прихода reasoning-
-    дельт (обычно кладёт SSE-событие в asyncio.Queue оркестратора). content и
+    on_reasoning(chunk) — sync-callback: chunk:str для reasoning-дельты по мере
+    прихода; chunk=None — сигнал RESET (стрим ретраится, ранее утёкшее наружу
+    невалидно). Обычно кладёт SSE-событие в asyncio.Queue оркестратора. content и
     reasoning собираются целиком; tool_calls аккумулируются по index (на случай
     использования со стрим-tool-calling, хотя Этап 1 этим не пользуется).
     """
     create_kwargs["stream"] = True
     orig = getattr(client.chat.completions, "_orig_create", None)
+    if orig is None:
+        # Контракт: throttle-патч ДОЛЖЕН быть применён (он сохраняет _orig_create).
+        # Тихий fallback на throttled .create дал бы вложенный throttle (asyncio.
+        # Semaphore не реентрантна) → self-deadlock + двойной wall. Лучше явно упасть.
+        raise RuntimeError("stream_completion: client не пропатчен "
+                           "patch_client_throttle (нет _orig_create)")
     content: list[str] = []
     reasoning: list[str] = []
     tcs: dict = {}
+    _attempt = {"n": 0}
 
     async def _consume(**kw):
-        # Чистим аккумуляторы на каждой попытке — call_with_throttle может
-        # ретраить _consume на транзиенте, иначе данные задвоятся.
+        # call_with_throttle может ретраить _consume на транзиенте/таймауте.
+        _attempt["n"] += 1
+        if _attempt["n"] > 1 and on_reasoning:
+            # Часть reasoning уже утекла наружу до обрыва — просим потребителя
+            # сбросить накопленное (on_reasoning(None) = reset), иначе во фронт-
+            # панели задвоится ход мысли.
+            try:
+                on_reasoning(None)
+            except Exception:
+                pass
+        # Чистим аккумуляторы на каждой попытке, иначе данные задвоятся.
         content.clear(); reasoning.clear(); tcs.clear()
-        create_fn = orig or client.chat.completions.create
-        stream = await create_fn(**kw)
+        stream = await orig(**kw)
         async for ch in stream:
             if not getattr(ch, "choices", None):
                 continue

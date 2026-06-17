@@ -74,9 +74,12 @@ async def _emit_stage(stage: str, coro_factory, stream_on: bool):
         return
     q: asyncio.Queue = asyncio.Queue()
 
-    def on_r(chunk: str):
+    def on_r(chunk):
         try:
-            q.put_nowait({"type": "reasoning", "stage": stage, "chunk": chunk})
+            if chunk is None:   # сигнал reset при ретрае стадии — фронт чистит панель
+                q.put_nowait({"type": "reasoning", "stage": stage, "reset": True})
+            else:
+                q.put_nowait({"type": "reasoning", "stage": stage, "chunk": chunk})
         except Exception:
             pass
 

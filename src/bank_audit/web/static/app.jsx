@@ -2007,11 +2007,17 @@ function AIPage(){
               const data=JSON.parse(line.slice(6));
               if(data.type==="text"&&data.chunk){
                 updateLast(last=>({text:(last.text||"")+data.chunk}));
-              }else if(data.type==="reasoning"&&data.chunk){
+              }else if(data.type==="reasoning"){
                 // Живой ход мысли LLM (delta.reasoning_content). Накапливаем как
                 // plain-текст (НЕ markdown — это сырой thinking модели), помним стадию.
-                updateLast(last=>({reasoning:(last.reasoning||"")+data.chunk,
-                                   reasoningStage:data.stage||last.reasoningStage}));
+                if(data.reset){
+                  // Стадия ретраится (транзиент) — сбрасываем накопленное, чтобы
+                  // не задвоить ход мысли в панели.
+                  updateLast(()=>({reasoning:""}));
+                }else if(data.chunk){
+                  updateLast(last=>({reasoning:(last.reasoning||"")+data.chunk,
+                                     reasoningStage:data.stage||last.reasoningStage}));
+                }
               }else if(data.type==="report_replace"&&typeof data.text==="string"){
                 // Final merge-pass — синтезатор объединил draft + addendum'ы в
                 // один чистый отчёт. Заменяем весь body, отчёт перерендерится.
