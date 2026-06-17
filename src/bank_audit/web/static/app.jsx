@@ -1409,6 +1409,7 @@ function _agentStatus(st){
   const lt=st.live_tool;
   if(lt==="web_search"||lt==="semantic_search") return {t:"ищет", c:"var(--accent)", run:true};
   if(lt==="read_url") return {t:`читает · ${st.n_reads||0} стр`, c:"var(--accent)", run:true};
+  if(lt==="run_sql") return {t:"запрос к БД", c:"var(--accent)", run:true};
   if(st.live_phase==="think") return {t:"обдумывает", c:"var(--accent)", run:true};
   return {t:"работает", c:"var(--accent)", run:true};
 }
@@ -1422,6 +1423,7 @@ function AgentsPanel({plan, stepStates, phase}){
       return <div key={i} className={"dr-agent-card"+(s.run?" dr-agent-card-run":"")}>
         <span className="dr-agent-dot" style={{background:s.c}}/>
         <span className="dr-agent-name">{step.title}</span>
+        {st?.model && <span className="dr-agent-model mono">{st.model}</span>}
         <span className="dr-agent-status mono" style={{color:s.c}}>{s.t}</span>
       </div>;
     })}
@@ -2038,15 +2040,22 @@ function AIPage(){
               if(data.type==="text"&&data.chunk){
                 updateLast(last=>({text:(last.text||"")+data.chunk}));
               }else if(data.type==="reasoning"){
-                // Живой ход мысли LLM (delta.reasoning_content). Накапливаем как
-                // plain-текст (НЕ markdown — это сырой thinking модели), помним стадию.
+                // Живой ход мысли LLM (delta.reasoning_content). Копим ПО СТАДИЯМ
+                // (reasoningStages[stage]) — иначе таймер «Ход мысли · Nс» суммирует
+                // время всех стадий. Текст — plain (НЕ markdown: сырой thinking).
                 if(data.reset){
-                  // Стадия ретраится (транзиент) — сбрасываем накопленное, чтобы
-                  // не задвоить ход мысли в панели.
-                  updateLast(()=>({reasoning:""}));
+                  // Стадия ретраится (транзиент) — чистим её буфер, не задваиваем.
+                  updateLast(last=>{
+                    const st=data.stage||last.reasoningStage||"?";
+                    return {reasoningStages:{...(last.reasoningStages||{}),[st]:""}};
+                  });
                 }else if(data.chunk){
-                  updateLast(last=>({reasoning:(last.reasoning||"")+data.chunk,
-                                     reasoningStage:data.stage||last.reasoningStage}));
+                  updateLast(last=>{
+                    const st=data.stage||last.reasoningStage||"?";
+                    const stages={...(last.reasoningStages||{})};
+                    stages[st]=(stages[st]||"")+data.chunk;
+                    return {reasoningStages:stages, reasoningStage:st};
+                  });
                 }
               }else if(data.type==="report_replace"&&typeof data.text==="string"){
                 // Final merge-pass — синтезатор объединил draft + addendum'ы в
@@ -2072,7 +2081,7 @@ function AIPage(){
                   stepStates:{...(last.stepStates||{}),[data.n]:{
                     ...(last.stepStates?.[data.n]||{}),
                     live_tool:data.tool, live_phase:data.phase,
-                    n_reads:data.n_reads, calls:data.calls,
+                    n_reads:data.n_reads, calls:data.calls, model:data.model,
                     entity:data.entity ?? last.stepStates?.[data.n]?.entity,
                   }}
                 }));
@@ -2212,8 +2221,10 @@ function AIPage(){
                 {/* Ход размышления — живой reasoning-стрим. Заполняет тишину
                     стадий до прихода буферизованного отчёта. Сворачивается сам,
                     когда текст отчёта пошёл (active=false). */}
-                {m.reasoning &&
-                  <ThinkingPanel text={m.reasoning} stage={m.reasoningStage}
+                {m.reasoningStage && m.reasoningStages?.[m.reasoningStage] &&
+                  <ThinkingPanel key={m.reasoningStage}
+                                  text={m.reasoningStages[m.reasoningStage]}
+                                  stage={m.reasoningStage}
                                   active={loading && i===msgs.length-1 && !(m.text&&m.text.length>40)}/>}
                 {/* Stage banner — показывает текущий долгий LLM-этап с прогрессом.
                     Без него merge-pass на 60s выглядит как «зависло». */}
@@ -2230,7 +2241,8 @@ function AIPage(){
                                       sourcesCount={(m.sources||[]).length}/>}
                     {m.role==="ai"&&!m.text&&loading?
                       <div className="typing"><i/><i/><i/></div>:
-                      renderMD(m.text, m.sources, m.charts)
+                      <>{renderMD(m.text, m.sources, m.charts)}
+                        {streaming && m.text && <span className="dr-type-caret"/>}</>
                     }
                     {/* Charts-wrap внизу: только те графики, что НЕ были встроены
                         через [[CHART:N]] маркер. Если все встроены — пустой блок
@@ -2244,8 +2256,8 @@ function AIPage(){
                         {rest.map((c,ci)=><ChartCanvas key={ci} spec={c}/>)}
                       </div>;
                     })()}
-                    {m.ranking && <RankingWidget ranking={m.ranking}/>}
-                    {m.insights && m.insights.length>0 && <InsightsWidget insights={m.insights}/>}
+                    {m.ranking && <div className="dr-fade-in"><RankingWidget ranking={m.ranking}/></div>}
+                    {m.insights && m.insights.length>0 && <div className="dr-fade-in"><InsightsWidget insights={m.insights}/></div>}
                     {m.verification&&<VerificationBanner verification={m.verification}/>}
                     {/* Дублирующая кнопка PDF — в конце документа, после всех
                         разделов и графиков. Нужна для длинных отчётов где

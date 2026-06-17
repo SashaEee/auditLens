@@ -680,7 +680,15 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 .dr-agent-name{flex:1;font-size:13px;color:var(--ink);font-weight:450;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dr-agent-status{font-size:11px;letter-spacing:.02em;flex:none}
-@media (prefers-reduced-motion:reduce){ .dr-agent-card-run .dr-agent-dot{animation:none} }
+.dr-agent-model{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);flex:none}
+.dr-type-caret{display:inline-block;width:7px;height:14px;background:var(--accent);
+  vertical-align:-2px;margin-left:2px;animation:drcaret 1s step-end infinite}
+@keyframes drfadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.dr-fade-in{animation:drfadein .4s ease both}
+@media (prefers-reduced-motion:reduce){
+  .dr-agent-card-run .dr-agent-dot,.dr-type-caret{animation:none}
+  .dr-fade-in{animation:none}
+}
 .dr-stage-bar{
   margin-top:8px;height:2px;background:var(--hair);border-radius:1px;
   overflow:hidden;
