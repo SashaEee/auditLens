@@ -39,7 +39,11 @@ _WALL_S = float(os.getenv("LLM_CALL_WALL_S", "75"))
 #     САМО превысить 75с. Даём БОЛЬШЕ времени, чтобы дошли, а не убивались на 75с и
 #     рестартовали с нуля (повторный стрим 8k токенов — хуже, чем дождаться).
 _WALL_LOOP_S  = float(os.getenv("LLM_CALL_WALL_LOOP_S",  "60"))
-_WALL_HEAVY_S = float(os.getenv("LLM_CALL_WALL_HEAVY_S", "120"))
+# 120→180: reasoning_effort=high (план/нарратив/критик) + больший контекст/вывод
+# (отчёт до 10k токенов, контекст до 44k) стримятся дольше; на 120с аналитик
+# срывался в детерминированный фоллбэк — а это ровно та «мелкая» выдача, против
+# которой вся правка. Даём дойти. Тюнится LLM_CALL_WALL_HEAVY_S.
+_WALL_HEAVY_S = float(os.getenv("LLM_CALL_WALL_HEAVY_S", "180"))
 
 # Пер-таймаутный лимит ретраев. Транзиент (обрыв соединения) флапает быстро — его
 # ретраим щедро. А чистый wall-таймаут стоит ЦЕЛУЮ стену: после 3 таймаутов окно
@@ -151,6 +155,11 @@ def patch_client_throttle(client, max_concurrent: int = DEFAULT_MAX_CONCURRENT):
         return await call_with_throttle(original_create, *args, **kwargs)
 
     client.chat.completions.create = throttled_create
+    # Сохраняем оригинал, чтобы стрим-хелпер (research/v2/_streaming.py) мог
+    # звать .create(stream=True) НАПРЯМУЮ, минуя throttled_create: иначе wall/
+    # semaphore обернут лишь СОЗДАНИЕ стрима, а не его потребление. Хелпер сам
+    # оборачивает всё потребление в call_with_throttle.
+    client.chat.completions._orig_create = original_create
     log.warning("[llm_throttle] client patched: max_concurrent=%s", max_concurrent)
     return client
 
