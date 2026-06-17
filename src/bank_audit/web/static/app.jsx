@@ -1327,6 +1327,17 @@ function ThinkingPanel({text, stage, active}){
   );
 }
 
+// ─── Премиальный индикатор ожидания: пульс + подпись стадии + бегущие точки.
+//     Закрывает «тихие окна» (генерация вопросов, сборка запроса, старт
+//     research) — пользователь всегда видит, что система жива. ──────────────
+function PendingDots({label}){
+  return <div className="pending-row">
+    <span className="dr-stage-pulse"/>
+    <span className="pending-label">{label||"Думаю"}</span>
+    <span className="pending-dots"><i/><i/><i/></span>
+  </div>;
+}
+
 // ─── Модуль «asking» — clarification-воронка. Кликабельные варианты (single/
 //     multi) + «другое» + free-text. Один экран, скип всегда доступен. ───────
 function ClarifyCard({msg, onSubmit, onSkip}){
@@ -2252,7 +2263,7 @@ function AIPage(){
       .filter(m=>m.role==="user"||m.role==="ai")
       .map(m=>({role:m.role==="user"?"user":"assistant",content:m.text||""}));
     setLoading(true);
-    setMsgs(m=>[...m,{role:"ai",text:"",tools:[]}]);
+    setMsgs(m=>[...m.filter(x=>x.role!=="pending"),{role:"ai",text:"",tools:[]}]);
     streamChat(t,history,forceDeep);
   };
   // Точка входа: модуль «asking» — сначала clarify-воронка (если запрос неполный),
@@ -2262,9 +2273,10 @@ function AIPage(){
     if(!t||loading)return;
     setQ("");
     const forceDeep = deepMode ? true : null;     // null = auto-detect на бэке
-    // Снимаем незакрытую clarify-карточку (если пользователь начал новый запрос,
-    // не ответив на прошлую) — иначе сосуществуют две воронки.
-    setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"user",text:t}]);
+    // Снимаем незакрытую clarify-карточку; сразу показываем индикатор «анализирую»
+    // (генерация вопросов идёт ~5с — без него экран пустой = «тишина»).
+    setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"user",text:t},
+                {role:"pending",label:"Анализирую запрос…"}]);
     setLoading(true);
     let data=null;
     try{ data=await apiPost("/api/ai/clarify",{question:t,deep:!!deepMode}); }catch(e){ data=null; }
@@ -2273,13 +2285,16 @@ function AIPage(){
       return;
     }
     setLoading(false);                            // интерактивная карточка вопросов
-    setMsgs(m=>[...m,{role:"clarify",question:t,forceDeep,questions:data.questions}]);
+    setMsgs(m=>[...m.filter(x=>x.role!=="pending"),
+                {role:"clarify",question:t,forceDeep,questions:data.questions}]);
   };
   // Submit воронки: собрать обогащённый промпт (сервер) → пометить запрос → research.
   const clarifySubmit=async(srcQuestion,forceDeep,answers)=>{
     if(loading)return;
     setLoading(true);
-    setMsgs(m=>m.filter(x=>x.role!=="clarify"));
+    // Индикатор на время сборки обогащённого запроса (~5с rewrite) — без него
+    // после ответа на воронку экран молчит ~15с до старта research.
+    setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"pending",label:"Собираю уточнённый запрос…"}]);
     let enriched=srcQuestion;
     if(answers&&answers.length){
       try{ const r=await apiPost("/api/ai/clarify",{question:srcQuestion,answers});
@@ -2304,6 +2319,11 @@ function AIPage(){
           if(m.role==="clarify"){
             return <div key={i} className="chat-msg ai"><div className="chat-bubble chat-bubble-deep">
               <ClarifyCard msg={m} onSubmit={clarifySubmit} onSkip={clarifySkip}/>
+            </div></div>;
+          }
+          if(m.role==="pending"){
+            return <div key={i} className="chat-msg ai"><div className="chat-bubble chat-bubble-deep">
+              <PendingDots label={m.label}/>
             </div></div>;
           }
           if(m.mode==="deep"){
@@ -2359,7 +2379,7 @@ function AIPage(){
                                       verification={m.verification}
                                       sourcesCount={(m.sources||[]).length}/>}
                     {m.role==="ai"&&!m.text&&loading?
-                      <div className="typing"><i/><i/><i/></div>:
+                      <PendingDots label="Запускаю исследование…"/>:
                       <>{renderMD(m.text, m.sources, m.charts)}
                         {streaming && m.text && <span className="dr-type-caret"/>}</>
                     }
@@ -2407,7 +2427,7 @@ function AIPage(){
             <div className="chat-bubble">
               {m.tools&&m.tools.length>0&&<ToolsTimeline tools={m.tools} active={m.role==="ai"&&!m.text&&loading}/>}
               {m.role==="ai"&&!m.text&&loading?
-                <div className="typing"><i/><i/><i/></div>:
+                <PendingDots label="Думаю над ответом…"/>:
                 renderMD(m.text, m.sources)
               }
               {m.sources&&m.sources.length>0&&<SourcesPanel sources={m.sources}/>}

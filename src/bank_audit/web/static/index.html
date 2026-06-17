@@ -192,6 +192,13 @@ tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
 .typing i:nth-child(2){animation-delay:.15s}
 .typing i:nth-child(3){animation-delay:.3s}
 @keyframes blink{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
+.pending-row{display:flex;align-items:center;gap:10px;padding:10px 0}
+.pending-label{font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.04em;color:var(--ink-3)}
+.pending-dots{display:inline-flex;gap:4px}
+.pending-dots i{width:5px;height:5px;border-radius:50%;background:var(--ink-4);animation:blink 1.2s infinite ease-in-out}
+.pending-dots i:nth-child(2){animation-delay:.15s}
+.pending-dots i:nth-child(3){animation-delay:.3s}
+@media (prefers-reduced-motion:reduce){.pending-dots i{animation:none}}
 
 /* ─── Deep Research mode — Editorial document layout ────────────────
    Senior design rule: документ — primary artefact, всё остальное служебное.
