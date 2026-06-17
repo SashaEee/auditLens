@@ -249,7 +249,8 @@ class BaseAgent:
             return
         try:
             self._emit({"n_reads": self._successful_reads,
-                        "calls": self.progress.n_tool_calls, **kw})
+                        "calls": self.progress.n_tool_calls,
+                        "model": (self.loop_model or "").split("/")[-1], **kw})
         except Exception:
             pass
 
