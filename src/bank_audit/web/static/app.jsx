@@ -2335,6 +2335,12 @@ function AIPage(){
             // чтобы пользователь не экспортнул half-baked draft.
             const showPdfBtn = m.role==="ai" && m.text && m.text.length>200;
             const streaming  = m.role==="ai" && loading && i===msgs.length-1;
+            // «Запускаю исследование…» — только в зазоре ДО первых живых событий.
+            // Как только пришли phase/план/ход мысли/карточки агентов — индикатор
+            // убираем, прогресс показывают StageStatusBanner/ThinkingPanel/AgentsPanel.
+            const hasLive = !!(m.phase || m.plan || m.reasoningStages ||
+              (m.stepStates && Object.keys(m.stepStates).length) || m.stageStatus);
+            const showStartDots = m.role==="ai" && !m.text && loading && !hasLive;
             return <div key={i} className={`chat-msg ${m.role}`}>
               <div className="dr-doc-toolbar">
                 <span className="who">{m.role==="user"?"Вы · аудитор":"AuditLens · аналитический отчёт"}</span>
@@ -2378,7 +2384,7 @@ function AIPage(){
                       <ClaimCheckRow claimCheck={m.claimCheck}
                                       verification={m.verification}
                                       sourcesCount={(m.sources||[]).length}/>}
-                    {m.role==="ai"&&!m.text&&loading?
+                    {showStartDots?
                       <PendingDots label="Запускаю исследование…"/>:
                       <>{renderMD(m.text, m.sources, m.charts)}
                         {streaming && m.text && <span className="dr-type-caret"/>}</>

@@ -679,7 +679,8 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 @media (prefers-reduced-motion:reduce){
   .dr-stage-pulse,.dr-think-caret{animation:none}
 }
-.dr-agents{margin:12px 0 14px;display:flex;flex-direction:column;gap:6px}
+.dr-agents{margin:12px 0 14px;display:flex;flex-direction:column;gap:6px;
+  max-width:1264px;width:100%}
 .dr-agents-head{margin-bottom:2px}
 .dr-agent-card{
   display:flex;align-items:center;gap:10px;padding:8px 12px;
@@ -690,7 +691,7 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 .dr-agent-card-run .dr-agent-dot{animation:pulse 1.4s ease-in-out infinite}
 .dr-agent-name{flex:1;min-width:0;font-size:13px;color:var(--ink);font-weight:450;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dr-agent-card{max-width:100%}
+.dr-agent-card{max-width:100%;width:100%;box-sizing:border-box}
 .dr-agent-status{font-size:11px;letter-spacing:.02em;flex:none;white-space:nowrap}
 .dr-agent-model{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);
   flex:none;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
