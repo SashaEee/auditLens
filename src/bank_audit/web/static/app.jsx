@@ -1088,6 +1088,12 @@ function CitationTooltip({source, anchor}){
 }
 
 // ─── Process trace (collapsed by default) ─────────────────────────────────
+// Какой фазе принадлежит reasoning-стадия — панель «Ход мысли» активна ТОЛЬКО
+// пока её стадия == текущей фазе (иначе conductor «вечно размышляет», а analyst
+// не виден). Единый источник правды для ThinkingPanel.
+const STAGE_PHASE = {conductor:"planning", analyst:"synthesizing",
+                     critic:"synthesizing", repair:"synthesizing"};
+const STAGE_ORDER = ["conductor", "analyst", "critic", "repair"];
 const PHASE_LABELS = {
   planning:        "Планирование",
   discovery:       "Discovery источников",
@@ -1302,7 +1308,7 @@ function ThinkingPanel({text, stage, active}){
   const [open,setOpen]=useState(true);
   const ref=useRef(null), startRef=useRef(null), endRef=useRef(null);
   if(text && startRef.current==null) startRef.current=Date.now();
-  useEffect(()=>{ if(ref.current) ref.current.scrollTop=ref.current.scrollHeight; },[text,open]);
+  useEffect(()=>{ const b=ref.current; if(b && (b.scrollHeight-b.scrollTop-b.clientHeight)<40) b.scrollTop=b.scrollHeight; },[text,open]);
   useEffect(()=>{ if(!active){ if(startRef.current&&!endRef.current) endRef.current=Date.now(); setOpen(false); } },[active]);
   if(!text) return null;
   const secs=startRef.current?Math.max(1,Math.round(((endRef.current||Date.now())-startRef.current)/1000)):0;
@@ -1347,11 +1353,11 @@ function StageStatusBanner({stage, currentPhase, mode}){
   if(mode!=="deep") return null;
   // Если currentPhase не «длинный этап» и нет stage — не показываем баннер.
   if(!longHint && !stage) return null;
-  // Окно написания отчёта (analyst / фаза synthesizing) — баннер-заглушку
-  // скрываем: сюда скоро пойдёт живой стриминг ответа LLM (раннюю preview-
-  // таблицу уже убрали). Остальные стадии (planning/research/critic/repair)
-  // показываем как прежде.
-  if(stage?.stage==="analyst" || (currentPhase==="synthesizing" && !stage?.stage)) return null;
+  // Фазы с собственными живыми панелями НЕ дублируем баннером:
+  //   planning/synthesizing → ThinkingPanel (ход мысли), research → AgentsPanel.
+  // Баннер остаётся только для тихих стадий без live-UI (merging/post_processing/
+  // agent_iter и т.п.), где иначе «висит».
+  if(["planning", "research", "synthesizing"].includes(currentPhase)) return null;
   // Таймер показываем для любой стадии с оценкой времени (estimate_s>0) либо
   // если сервер уже прислал elapsed. Иначе — «идёт» без чисел.
   const timed   = (stage?.estimate_s||0) > 0 || srvElapsed != null;
@@ -1945,7 +1951,19 @@ function AIPage(){
   const inputRef=useRef();
   const msgsRef=useRef(msgs);
   useEffect(()=>{msgsRef.current=msgs;},[msgs]);
-  useEffect(()=>{feedRef.current?.scrollTo({top:1e9,behavior:"smooth"});},[msgs,loading]);
+  // Автоскролл «прилипает к низу» ТОЛЬКО если пользователь уже внизу. Листаешь
+  // вверх — не перебиваем (раньше каждый чанк/источник утаскивал вьюпорт вниз).
+  const stickRef=useRef(true);
+  useEffect(()=>{
+    const el=feedRef.current; if(!el) return;
+    if(stickRef.current) el.scrollTop=el.scrollHeight;  // мгновенно, без рывка smooth
+  },[msgs,loading]);
+  useEffect(()=>{
+    const el=feedRef.current; if(!el) return;
+    const onScroll=()=>{ stickRef.current=(el.scrollHeight-el.scrollTop-el.clientHeight)<120; };
+    el.addEventListener("scroll",onScroll,{passive:true});
+    return ()=>el.removeEventListener("scroll",onScroll);
+  },[]);
 
   // ── Citation hover tooltip + bidirectional binding ──
   useEffect(()=>{
@@ -2204,33 +2222,29 @@ function AIPage(){
                 {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
               </div>
               <div className="chat-bubble chat-bubble-deep">
-                <ProcessTrace plan={m.plan} stepStates={m.stepStates} phase={m.phase}
-                              mode={m.mode} sources={m.sources} verification={m.verification}/>
                 {/* Живые карточки параллельных агентов (во время волны сбора). */}
                 {loading && i===msgs.length-1 &&
                   <AgentsPanel plan={m.plan} stepStates={m.stepStates} phase={m.phase}/>}
-                {m.coverage && <CoverageBanner coverage={m.coverage}/>}
-                {/* Outline preview — TOC до текста, чтобы пользователь сразу
-                    видел структуру отчёта */}
-                {m.outline && (!m.text || m.text.length<200) &&
-                  <OutlinePreview sections={m.outline}/>}
-                {/* Agent loop progress — самая впечатляющая фича DeepResearch:
-                    система сама находит пробелы и ингестит для них контент. */}
-                {m.agentIters && m.agentIters.length>0 &&
+                {/* Ход размышления — ОТДЕЛЬНАЯ панель на каждую стадию. Активна та,
+                    чья стадия совпадает с текущей фазой; прочие свёрнуты «· Nс».
+                    Так дирижёр не «вечно размышляет», а аналитик/критик видны. */}
+                {m.reasoningStages && STAGE_ORDER.filter(s=>m.reasoningStages[s]).map(s=>
+                  <ThinkingPanel key={s} stage={s} text={m.reasoningStages[s]}
+                                  active={loading && i===msgs.length-1 && m.phase===STAGE_PHASE[s]}/>)}
+                {/* Доисследование пробелов (gap-loop) — только во время прогона. */}
+                {loading && i===msgs.length-1 && m.agentIters && m.agentIters.length>0 &&
                   <AgentPanel iterations={m.agentIters}/>}
-                {/* Ход размышления — живой reasoning-стрим. Заполняет тишину
-                    стадий до прихода буферизованного отчёта. Сворачивается сам,
-                    когда текст отчёта пошёл (active=false). */}
-                {m.reasoningStage && m.reasoningStages?.[m.reasoningStage] &&
-                  <ThinkingPanel key={m.reasoningStage}
-                                  text={m.reasoningStages[m.reasoningStage]}
-                                  stage={m.reasoningStage}
-                                  active={loading && i===msgs.length-1 && !(m.text&&m.text.length>40)}/>}
-                {/* Stage banner — показывает текущий долгий LLM-этап с прогрессом.
-                    Без него merge-pass на 60s выглядит как «зависло». */}
+                {/* Stage banner — только для тихих стадий без своей живой панели
+                    (research→AgentsPanel, planning/synthesizing→ThinkingPanel). */}
                 {loading && i===msgs.length-1 &&
                   <StageStatusBanner stage={m.stageStatus} currentPhase={m.phase}
                                       mode={m.mode}/>}
+                {/* Coverage — только как предупреждение о слабом покрытии. */}
+                {m.coverage?.warning && <CoverageBanner coverage={m.coverage}/>}
+                {/* Process trace — пост-фактум сводка процесса под готовым отчётом. */}
+                {m.plan && m.plan.length>0 && m.phase==="done" &&
+                  <ProcessTrace plan={m.plan} stepStates={m.stepStates} phase={m.phase}
+                                mode={m.mode} sources={m.sources} verification={m.verification}/>}
                 <div className="dr-doc">
                   {!hideToc && <DocTocSlot/>}
                   <article className="dr-doc-main" ref={(el)=>{ m._mainEl=el; }}>
