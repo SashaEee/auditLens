@@ -1078,8 +1078,29 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 ::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:5px;border:2px solid var(--paper)}
 ::-webkit-scrollbar-thumb:hover{background:var(--ink-4)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
-@media(max-width:960px){:root{--rail:0px}#app{grid-template-columns:1fr}.rail{display:none}.content{padding:20px 16px 56px}.topbar{padding:0 16px}.hero-metric .num{font-size:64px}.chat-shell{grid-template-columns:1fr;height:auto}.chat-side{display:none}.desk-only{display:none !important}}
-@media(max-width:720px){.mobile-nav{display:flex !important}.topbar .crumb-idx{display:none}.hero-metric .num{font-size:52px}}
+/* ── Адаптив: рейл → выезжающий drawer + гамбургер, стек-сетки, скролл-таблицы ── */
+.rail-backdrop{position:fixed;inset:0;background:oklch(0% 0 0 / .42);z-index:55;animation:fade .18s ease both}
+@media(min-width:961px){.rail-backdrop{display:none}}
+@media(max-width:960px){
+  #app{grid-template-columns:1fr}
+  .rail{position:fixed;left:0;top:0;height:100dvh;width:min(84vw,300px);transform:translateX(-100%);transition:transform .22s ease;z-index:60;box-shadow:var(--shadow-2);overflow-y:auto}
+  .rail.open{transform:translateX(0)}
+  .mobile-nav{display:flex !important}
+  .content{padding:20px 16px 56px}
+  .topbar{padding:0 14px;gap:12px}
+  .hero-metric .num{font-size:64px}
+  .chat-shell{grid-template-columns:1fr;height:auto}
+  .chat-side{display:none}
+  .desk-only{display:none !important}
+  .dr-doc-main table,.content table{display:block;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+}
+@media(max-width:720px){
+  .topbar .crumb-idx{display:none}
+  .hero-metric .num{font-size:52px}
+  .t-display{font-size:34px}
+  .chat-input-wrap{flex-wrap:wrap}
+  .deep-toggle{order:-1;flex-basis:100%;justify-content:center}
+}
 .mobile-nav{display:none;align-items:center;gap:8px}
 .row{display:grid;gap:18px}
 .row-7-5{grid-template-columns:7fr 5fr}

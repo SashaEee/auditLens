@@ -3013,6 +3013,7 @@ function Shell(){
   const[banks,setBanks]=useState([]);
   const[qualityCount,setQualityCount]=useState(0);
   const[hasCaptcha,setHasCaptcha]=useState(false);
+  const[navOpen,setNavOpen]=useState(false);
 
   // Load banks for context + sidebar badges
   useEffect(()=>{
@@ -3034,7 +3035,7 @@ function Shell(){
 
   return <BanksCtx.Provider value={banks}>
     <div id="app">
-      <aside className="rail">
+      <aside className={"rail"+(navOpen?" open":"")}>
         <div className="rail-brand">
           <svg className="rail-mark" viewBox="0 0 100 100" role="img" aria-label="AuditLens">
             <path fill="#1F4DFF" d="M47.5 13 L59.5 13 L89.5 89 L75.5 89 Z"/>
@@ -3054,7 +3055,7 @@ function Shell(){
               const num=allItems.findIndex(x=>x.id===n.id)+1+(gr==="Анализ"?0:5);
               const dot=n.id==="sources"&&hasCaptcha;
               const count=n.id==="quality"&&qualityCount>0?qualityCount:null;
-              return <button key={n.id} className={`nav-item ${active?"active":""}`} onClick={()=>setPage(n.id)}>
+              return <button key={n.id} className={`nav-item ${active?"active":""}`} onClick={()=>{setPage(n.id);setNavOpen(false);}}>
                 <span className="rail-num">{String(num).padStart(2,"0")}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
                 {n.label}
@@ -3074,11 +3075,12 @@ function Shell(){
           </div>
         </div>
       </aside>
+      {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
 
       <div className="main">
         <div className="topbar">
           <div className="mobile-nav">
-            <button className="icon-btn" aria-label="меню"><Ic.menu/></button>
+            <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
           </div>
           <div className="crumb">
             <span className="crumb-idx">{idx} / 08</span>
