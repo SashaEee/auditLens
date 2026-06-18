@@ -68,6 +68,10 @@ class BrowserCollector:
         "--no-default-browser-check",
         "--disable-blink-features=AutomationControlled",
         "--ignore-certificate-errors",
+        # Контейнер: headless Chromium под non-root падает без --no-sandbox;
+        # --disable-dev-shm-usage спасает от краха при маленьком /dev/shm в Docker.
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
     ]
     # Реалистичный User-Agent. По умолчанию headless-playwright шлёт UA с меткой
     # «HeadlessChrome» → sberbank.ru (и др.) ловит это анти-ботом и отдаёт заглушку

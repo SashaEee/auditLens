@@ -28,11 +28,12 @@ _RETURN_BUDGET = 16000
 # Для них read_url рендерит страницу через Playwright (браузер на сервере есть).
 # Агрегаторы (banki.ru/sravni.ru) НЕ включаем — они читаются по httpx, а браузер
 # медленный (агент их читает много). Тюнится V2_BROWSER_RENDER (1=вкл, 0=выкл).
-# sberbank.ru НЕ рендерим браузером: эмпирически httpx (с CA-бандлом НУЦ) даёт
-# страницы переводов целиком (~5.5к симв), а browser-render — лишь ~1.6к (SPA не
-# дорендеривается) → меньше данных. Для sberbank httpx и быстрее, и полнее.
+# sberbank.ru ОБЯЗАТЕЛЬНО через browser: по httpx он отдаёт JS-заглушку
+# «Please enable JavaScript…» (~91 симв полезного текста, SPA+антибот), реальный
+# контент рисуется только JS. (Прошлые ~5.5к по httpx — это сырой HTML-shell+
+# скрипты, а извлечённого текста там лишь заглушка.)
 _SPA_RENDER_DOMAINS = (
-    "vtb.ru", "alfabank.ru", "tbank.ru", "tinkoff.ru",
+    "sberbank.ru", "vtb.ru", "alfabank.ru", "tbank.ru", "tinkoff.ru",
     "gazprombank.ru", "sovcombank.ru", "rshb.ru", "open.ru", "raiffeisen.ru",
     "pochtabank.ru", "mkb.ru", "psbank.ru", "rosbank.ru", "mtsbank.ru",
     "domrfbank.ru", "uralsib.ru", "akbars.ru",
