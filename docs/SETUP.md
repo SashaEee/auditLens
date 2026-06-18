@@ -338,7 +338,7 @@ docker compose ps
 cd ~/auditLens
 git pull                          # скачать новые файлы с GitHub
 source .venv/bin/activate
-pip install -e . --upgrade        # обновить зависимости
+pip install -e '.[local-embeddings]' --upgrade   # обновить зависимости (с локальными эмбеддингами)
 bash scripts/setup.sh init-db     # применить новые миграции
 # Перезапусти сервер (Ctrl+C в окне где он запущен → команда uvicorn заново)
 ```
@@ -411,7 +411,7 @@ EOF
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip wheel
-pip install -e .
+pip install -e '.[local-embeddings]'   # extra нужен для EMBEDDING_MODE=local (torch+sentence-transformers)
 playwright install chromium
 ```
 

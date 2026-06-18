@@ -79,7 +79,9 @@ setup_venv() {
     source .venv/bin/activate
     info "Устанавливаю Python-зависимости (займёт 3-7 минут, скачаем ~2GB на ML-модели)…"
     pip install --upgrade pip wheel >/dev/null
-    pip install -e . >/dev/null
+    # Локалка по умолчанию EMBEDDING_MODE=local → нужны torch+sentence-transformers
+    # (они в extra local-embeddings). В прод-контейнере ставится БЕЗ extra (EMBEDDING_MODE=api).
+    pip install -e '.[local-embeddings]' >/dev/null
     ok "Зависимости установлены"
 
     info "Устанавливаю Playwright Chromium (для PDF-экспорта и сложных страниц)…"
