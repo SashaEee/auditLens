@@ -581,7 +581,7 @@ function OverviewPage(){
       </div>
       <div className="surface" style={{overflow:"hidden"}}>
         {(!svm||!svm.length)?<EmptyState text="Нет данных для сравнения. Запустите сбор данных."/>:
-        <table>
+        <table className="m-cards">
           <thead><tr>
             <th style={{width:"24%"}}>Категория</th>
             <th className="right">Сбер макс.</th>
@@ -597,15 +597,15 @@ function OverviewPage(){
               const isPos=delta!=null?(lib?delta>0:delta>0):null;
               const catN=(summary.categories||[]).find(c=>c.category===r.category);
               return <tr key={r.category}>
-                <td>
+                <td className="m-primary" data-label="Категория">
                   <div style={{fontWeight:500}}>{CAT_LABELS[r.category]||r.category}</div>
                   <div className="t-cap" style={{fontSize:11.5}}>{catN?fmtNum(catN.n):"—"} предложений</div>
                 </td>
-                <td className="right mono tnum" style={{fontWeight:500}}>{pct(r.sber_max)}</td>
-                <td className="right mono tnum" style={{color:"var(--ink-2)"}}>{pct(r.market_median)}</td>
-                <td className="right mono tnum" style={{color:"var(--ink-2)"}}>{pct(r.market_max)}</td>
-                <td><PositionBar value={r.sber_max} median={r.market_median} max={r.market_max}/></td>
-                <td className="right">
+                <td className="right mono tnum" data-label="Сбер макс." style={{fontWeight:500}}>{pct(r.sber_max)}</td>
+                <td className="right mono tnum" data-label="Медиана" style={{color:"var(--ink-2)"}}>{pct(r.market_median)}</td>
+                <td className="right mono tnum" data-label="Лидер" style={{color:"var(--ink-2)"}}>{pct(r.market_max)}</td>
+                <td data-label="Позиция"><PositionBar value={r.sber_max} median={r.market_median} max={r.market_max}/></td>
+                <td className="right" data-label="Δ к медиане">
                   {delta==null?<span className="mono" style={{color:"var(--ink-4)"}}>—</span>:
                     <span className={`delta ${isPos?"pos":"neg"}`}>
                       {isPos?<Ic.arrow_up/>:<Ic.arrow_dn/>}
@@ -724,7 +724,7 @@ function MarketPage(){
       {loading?<div style={{padding:32}}><Skel h={40}/><div style={{height:12}}/><Skel h={40}/><div style={{height:12}}/><Skel h={40}/></div>:
        err?<ErrState msg={err}/>:
        filtered.length===0?<EmptyState text="Нет предложений. Возможно, источник ещё не обновлялся."/>:
-      <table>
+      <table className="m-cards">
         <thead><tr>
           <th style={{width:"22%"}}>Банк</th>
           <th>Продукт</th>
@@ -739,7 +739,7 @@ function MarketPage(){
             const isSber=!!r.is_sber;
             const rate=parseFloat(r.rate_pct);
             return <tr key={r.offer_id||i} className={isSber?"is-sber":""}>
-              <td>
+              <td className="m-primary" data-label="Банк">
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
                   <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
                   <div>
@@ -748,14 +748,14 @@ function MarketPage(){
                   </div>
                 </div>
               </td>
-              <td>
+              <td data-label="Продукт">
                 {r.url?<a href={r.url} target="_blank" rel="noopener" style={{color:"var(--ink)",borderBottom:"1px solid var(--hair-2)"}}>{r.title}</a>
                   :<span>{r.title}</span>}
               </td>
-              {showRate&&<td className="right mono tnum" style={{fontWeight:500,fontSize:14}}>
+              {showRate&&<td className="right mono tnum" data-label="Ставка" style={{fontWeight:500,fontSize:14}}>
                 {r.rate_pct!=null?pct(r.rate_pct):"—"}
               </td>}
-              {showRate&&<td>
+              {showRate&&<td data-label="Vs лидер">
                 {bestRate>0&&rate>0?<div style={{display:"flex",alignItems:"center",gap:8}}>
                   <div className="bar" style={{flex:1,maxWidth:80}}>
                     <i style={{width:`${(rate/bestRate)*100}%`,background:isSber?"var(--accent)":"var(--ink-3)"}}/>
@@ -763,8 +763,8 @@ function MarketPage(){
                   <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>{Math.round((rate/bestRate)*100)}%</span>
                 </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
               </td>}
-              <td className="mono tnum" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
-              <td className="mono tnum" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
+              <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
+              <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
               <td className="right">
                 {r.url&&<a href={r.url} target="_blank" rel="noopener" className="icon-btn" aria-label="Открыть"><Ic.ext/></a>}
               </td>
@@ -816,7 +816,7 @@ function SberPage(){
         return <div key={r.category} className="surface" style={{padding:"22px 24px"}}>
           <div className="eyebrow" style={{marginBottom:10}}>{CAT_LABELS[r.category]||r.category}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
-            <div className="serif" style={{fontSize:44,lineHeight:1,color:isPos?"var(--pos)":"var(--accent)"}}>
+            <div className="serif sber-delta" style={{lineHeight:1,color:isPos?"var(--pos)":"var(--accent)"}}>
               {delta!=null?signed(delta):"—"}
             </div>
             <div className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>п.п.</div>
@@ -845,7 +845,7 @@ function SberPage(){
         <div className="eyebrow" style={{marginBottom:4}}>Топ предложений по доходности · вклады</div>
         <div className="t-cap">Сбер выделен и подсвечен. Сортировка по убыванию ставки.</div>
       </div>
-      <table>
+      <table className="m-cards">
         <thead><tr>
           <th className="right" style={{width:"6%"}}>№</th>
           <th>Банк</th><th>Продукт</th>
@@ -856,14 +856,14 @@ function SberPage(){
           {depositTop.map((r,i)=>{
             const isSber=!!r.is_sber;
             return <tr key={i} className={isSber?"is-sber":""}>
-              <td className="right mono tnum" style={{color:"var(--ink-3)",fontSize:12}}>{String(i+1).padStart(2,"0")}</td>
-              <td><div style={{display:"flex",alignItems:"center",gap:10}}>
+              <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(i+1).padStart(2,"0")}</td>
+              <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
                 <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
                 <span style={{fontWeight:500}}>{r.bank_name}</span>
               </div></td>
-              <td>{r.title}</td>
-              <td className="right mono tnum" style={{fontWeight:500}}>{pct(r.rate_pct)}</td>
-              <td className="mono tnum" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,null)}</td>
+              <td data-label="Продукт">{r.title}</td>
+              <td className="right mono tnum" data-label="Ставка" style={{fontWeight:500}}>{pct(r.rate_pct)}</td>
+              <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,null)}</td>
             </tr>;
           })}
         </tbody>
@@ -951,17 +951,17 @@ function ReviewsPage(){
       <div className="surface" style={{padding:22}}>
         <div className="eyebrow" style={{marginBottom:14}}>Тональность по банкам</div>
         {!sentiment.length?<div style={{color:"var(--ink-3)",fontSize:13}}>Нет данных</div>:
-        <table style={{margin:"-4px"}}>
+        <table className="m-cards" style={{margin:"-4px"}}>
           <thead><tr><th>Банк</th><th className="right">Негатив %</th><th className="right">Всего</th></tr></thead>
           <tbody>
             {sentiment.slice(0,8).map((s,i)=>{
               const negPct=s.neg_pct!=null?Math.round(parseFloat(s.neg_pct)):null;
               return <tr key={i}>
-                <td style={{fontWeight:500}}>{s.bank_name||s.name||"—"}</td>
-                <td className="right">
+                <td className="m-primary" style={{fontWeight:500}}>{s.bank_name||s.name||"—"}</td>
+                <td className="right" data-label="Негатив %">
                   {negPct!=null?<span className={`badge ${negPct>40?"neg":negPct>25?"warn":"pos"}`}>{negPct}%</span>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
                 </td>
-                <td className="right mono tnum" style={{color:"var(--ink-3)"}}>{fmtNum(s.total||s.total_reviews)}</td>
+                <td className="right mono tnum" data-label="Всего" style={{color:"var(--ink-3)"}}>{fmtNum(s.total||s.total_reviews)}</td>
               </tr>;
             })}
           </tbody>
@@ -2504,7 +2504,7 @@ function BanksPage(){
     </div>
     <div className="surface" style={{overflow:"hidden"}}>
       {!sorted.length?<EmptyState text="Нет данных о банках. Запустите сбор данных."/>:
-      <table>
+      <table className="m-cards">
         <thead><tr>
           <th style={{width:"6%"}} className="right">№</th>
           <th>Банк</th>
@@ -2518,8 +2518,8 @@ function BanksPage(){
             const grade=parseFloat(b.avg_grade)||0;
             const solved=parseFloat(b.solved_pct)||0;
             return <tr key={b.bank_id||b.slug} className={b.is_sber?"is-sber":""}>
-              <td className="right mono tnum" style={{color:"var(--ink-3)",fontSize:12}}>{String(idx+1).padStart(2,"0")}</td>
-              <td>
+              <td data-label="" className="right mono tnum" style={{color:"var(--ink-3)",fontSize:12}}>{String(idx+1).padStart(2,"0")}</td>
+              <td className="m-primary">
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                   <BankAvatar slug={b.slug} name={b.name} isSber={b.is_sber}/>
                   <div>
@@ -2528,19 +2528,19 @@ function BanksPage(){
                   </div>
                 </div>
               </td>
-              <td className="right">
+              <td data-label="СР. ОЦЕНКА" className="right">
                 <span className="serif" style={{fontSize:22,fontWeight:400,color:grade>=4?"var(--pos)":grade>=3.5?"var(--warn)":"var(--neg)"}}>
                   {grade>0?grade.toFixed(2):"—"}
                 </span>
               </td>
-              <td>
+              <td data-label="РАСПРЕДЕЛЕНИЕ">
                 {grade>0?<div style={{display:"flex",gap:2,height:6,maxWidth:160}}>
                   <div style={{flex:Math.round(grade*18),background:"var(--pos)",borderRadius:2}}/>
                   <div style={{flex:Math.round((5-grade)*15),background:"var(--accent)",borderRadius:2}}/>
                 </div>:<span style={{color:"var(--ink-4)",fontSize:12}}>нет данных</span>}
               </td>
-              <td className="right mono tnum">{fmtNum(b.total_reviews)}</td>
-              <td className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${solved}%`:"—"}</td>
+              <td data-label="ОТЗЫВОВ" className="right mono tnum">{fmtNum(b.total_reviews)}</td>
+              <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${solved}%`:"—"}</td>
             </tr>;
           })}
         </tbody>

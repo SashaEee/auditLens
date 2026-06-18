@@ -1127,8 +1127,24 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 
 @media(max-width:720px){
   .topbar .crumb-idx{display:none}
-  .hero-metric .num{font-size:52px}
-  .t-display{font-size:34px}
+  /* ── нативная типографика: комфортный body, дышащий ритм ── */
+  body{font-size:15px;line-height:1.55;letter-spacing:-.002em}
+  .t-body{font-size:15px;line-height:1.6}
+  .t-cap{font-size:12.5px;line-height:1.5}
+  .lede{font-size:16px;line-height:1.6;max-width:none}
+  .t-display{font-size:33px;line-height:1.1;letter-spacing:-.018em}
+  .t-h{font-size:20px;line-height:1.25}
+  .hero-metric .num{font-size:52px;line-height:1}
+  /* eyebrow-лейблы (§ … · …) не давят */
+  .eyebrow{font-size:11.5px;letter-spacing:.04em;color:var(--ink-3);line-height:1.4}
+  .eyebrow-row{flex-wrap:wrap;gap:6px 12px;margin-bottom:16px}
+  /* поверхности → мягкие крупные карточки */
+  .surface{border-radius:16px;border-color:var(--hair);box-shadow:0 1px 2px oklch(0% 0 0 / .03),0 6px 20px oklch(0% 0 0 / .04)}
+  .surface-flat{border-radius:12px}
+  .content .surface{padding:20px 18px !important}
+  .row{gap:16px}
+  .divider{margin:24px 0}
+  section.surface,.content > .surface{margin-bottom:18px}
   /* документ deep-research компактнее */
   .dr-doc-main h1{font-size:24px;line-height:1.25}
   .dr-doc-main h2{font-size:18px;margin:22px 0 6px;padding-top:12px}
@@ -1153,6 +1169,35 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .dr-doc-main h1{font-size:22px}
   .dr-doc-main h2{font-size:16.5px}
   .topbar{gap:6px}
+}
+
+/* ── Десктоп: размер вынесенной из inline дельты Сбера (был fontSize:44) ── */
+.sber-delta{font-size:44px}
+
+/* ── Мобильные карточки из таблиц (.m-cards): строка → карточка ── */
+@media(max-width:720px){
+  .sber-delta{font-size:34px}
+  table.m-cards{display:block;width:100%;border:0;overflow:visible}
+  table.m-cards thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  table.m-cards tbody{display:block}
+  table.m-cards tr{display:block;background:var(--surface);border:1px solid var(--hair);border-radius:14px;padding:14px 16px;margin-bottom:10px;box-shadow:var(--shadow-1)}
+  table.m-cards tr.is-sber{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  table.m-cards tr:hover td{background:transparent}
+  table.m-cards td{display:flex;align-items:center;justify-content:space-between;gap:14px;width:auto;border:0;padding:5px 0;text-align:right;font-size:14px;white-space:normal}
+  table.m-cards td::before{content:attr(data-label);color:var(--ink-3);font:500 10.5px/1.3 'JetBrains Mono',monospace;letter-spacing:.05em;text-transform:uppercase;text-align:left;flex:none}
+  /* первичная ячейка = крупная шапка карточки */
+  table.m-cards td.m-primary{display:block;text-align:left;padding:0 0 10px;margin-bottom:8px;border-bottom:1px solid var(--hair);font-size:15px;font-weight:500}
+  table.m-cards td.m-primary::before{display:none}
+  table.m-cards td.m-primary .right{text-align:left}
+  /* ячейка-ранг без подписи: мелкий приглушённый префикс сверху */
+  table.m-cards td[data-label=""]{justify-content:flex-start;font-size:11px;color:var(--ink-4);padding:0 0 2px}
+  table.m-cards td[data-label=""]::before{display:none}
+  /* surface-обёртка вокруг таблицы-карточек: без двойной рамки/паддинга */
+  .content .surface:has(table.m-cards){padding:0 !important;background:transparent;border:0;box-shadow:none;overflow:visible}
+}
+@media(max-width:480px){
+  .sber-delta{font-size:30px}
+  table.m-cards td{font-size:13.5px}
 }
 .mobile-nav{display:none;align-items:center;gap:8px}
 .row{display:grid;gap:18px}
