@@ -2024,6 +2024,8 @@ function AIPage(){
   const inputRef=useRef();
   const msgsRef=useRef(msgs);
   useEffect(()=>{msgsRef.current=msgs;},[msgs]);
+  // авто-рост textarea как в современных мессенджерах: высота по контенту до max
+  useEffect(()=>{const el=inputRef.current;if(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,160)+"px";}},[q]);
   // Автоскролл «прилипает к низу» ТОЛЬКО если пользователь уже внизу. Листаешь
   // вверх — не перебиваем (раньше каждый чанк/источник утаскивал вьюпорт вниз).
   const stickRef=useRef(true);
@@ -2448,7 +2450,7 @@ function AIPage(){
                 disabled={loading}>
           Deep Research
         </button>
-        <textarea ref={inputRef} className="chat-textarea" placeholder={deepMode?"Опишите задачу для глубокого исследования. Enter — отправить":"Задайте вопрос о рынке…  Enter — отправить, Shift+Enter — перенос, ?  — горячие клавиши"}
+        <textarea ref={inputRef} className="chat-textarea" rows={1} placeholder={deepMode?"Опишите задачу для исследования…":"Спросите о рынке, ставках, рисках…"}
           value={q} onChange={e=>setQ(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
         <button className="btn btn-primary" disabled={!q.trim()||loading} onClick={()=>send()} aria-label="Отправить">
@@ -3068,7 +3070,7 @@ function Shell(){
         ))}
         <div className="rail-foot">
           <div className="user-chip">
-            <div className="avatar">АД</div>
+            <div className="avatar">А</div>
             <div>
               <div className="nm">Аудитор</div>
               <div className="role">Внутренний аудит</div>
