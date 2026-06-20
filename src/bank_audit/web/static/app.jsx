@@ -1111,7 +1111,6 @@ function CitationTooltip({source, anchor}){
 // не виден). Единый источник правды для ThinkingPanel.
 const STAGE_PHASE = {conductor:"planning", analyst:"synthesizing",
                      critic:"synthesizing", repair:"synthesizing"};
-const STAGE_ORDER = ["conductor", "analyst", "critic", "repair"];
 const PHASE_LABELS = {
   planning:        "Планирование",
   discovery:       "Discovery источников",
@@ -1124,18 +1123,6 @@ const PHASE_LABELS = {
   post_processing: "Проверка и графики",
   verifying:       "Проверка чисел",
   charting:        "Графики",
-};
-
-// Длительные стадии где LLM думает молча — нужно явно показать
-// «жив, идёт стадия X, обычно занимает Y секунд». Estimate'ы выровнены
-// с реальными timeout'ами на бэке.
-const LONG_STAGE_HINT = {
-  synthesizing:    {estimate: 35, note: "LLM пишет первый драфт отчёта по собранным данным"},
-  agent_iter_1:    {estimate: 75, note: "Ищет недостающее: 4 поисковых запроса параллельно + ингест найденных страниц"},
-  agent_iter_2:    {estimate: 75, note: "Вторая итерация — уточняет оставшиеся пробелы"},
-  merging:         {estimate: 90, note: "Финальная сборка: сливает черновик + все дополнения в один полный отчёт (5–8 тыс. символов)"},
-  post_processing: {estimate: 25, note: "Параллельно: верификация чисел, генерация графиков, cross-validation цитат"},
-  second_pass:     {estimate: 60, note: "Дополнительный pass — поднимает чанки которые synthesizer пропустил"},
 };
 
 // ─── PDF export button — premium A4 PDF через server-side Chromium.
@@ -1275,46 +1262,6 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
   </button>;
 }
 
-// ─── Outline preview — TOC до текста, чтобы пользователь сразу видел план
-//     отчёта. Минималистично: пронумерованные секции в 2-3 колонки. ────────
-function OutlinePreview({sections}){
-  if(!sections || !sections.length) return null;
-  return <div className="dr-outline-preview">
-    <span className="eyebrow">План отчёта</span>
-    <ol>
-      {sections.map((s,i)=>(
-        <li key={i} className="pending">{s.title || s.kind}</li>
-      ))}
-    </ol>
-  </div>;
-}
-
-// ─── Agent loop progress panel — итеративный agent самонаходит пробелы.
-//     Главная фича DeepResearch'а: пользователь видит «iter 1: ищет
-//     комиссии Альфы → нашёл +5 источников → iter 2: уточняет тарифы». ─────
-function AgentPanel({iterations}){
-  if(!iterations || !iterations.length) return null;
-  const isRunning = iterations.some(it=>it.status==="running");
-  return <div className={`dr-agent ${isRunning?"dr-agent-running":""}`}>
-    <div className="dr-agent-head">
-      <span className="dr-agent-mark">Iterative Agent</span>
-      <span className="dr-agent-title">Уточнение отчёта по найденным пробелам</span>
-      <span className="dr-agent-iter">
-        итерация <b>{iterations.length}</b>{iterations.length<2 ? " / 2" : ""}
-      </span>
-    </div>
-    <ul className="dr-agent-list">
-      {iterations.flatMap((it,ii)=>(it.gaps||[]).map((g,gi)=>(
-        <li key={`${ii}-${gi}`} className="dr-agent-gap">
-          <span className="dr-agent-gap-arrow">{ii+1}.{gi+1}</span>
-          <span className="dr-agent-gap-what">{g.what || g.query}</span>
-          <span className="dr-agent-gap-q">{g.query}</span>
-        </li>
-      )))}
-    </ul>
-  </div>;
-}
-
 // ─── Claim-check meta-row: «12 фактов верифицировано · 7 отфильтровано».
 //     Trust-сигнал — pipeline защитил аудитора от N галлюцинаций. ─────────
 // ─── Ход размышления — живой стрим reasoning_content модели. Заполняет тихие
@@ -1418,63 +1365,11 @@ function ClarifyCard({msg, onSubmit, onSkip}){
   </div>;
 }
 
-// ─── Stage status — prominent banner для долгих LLM-этапов.
-//     Показывает что pipeline жив, что именно делает прямо сейчас и
-//     примерно сколько ждать. Прогресс-индикатор по времени (для merging
-//     ещё показывает накопленные символы итогового отчёта). ───────────────
-function StageStatusBanner({stage, currentPhase, mode}){
-  // currentPhase — текущая phase из event'а; stage — последний stage_status
-  // event если он был. Объединяем чтобы показать максимум данных.
-  const longHint = LONG_STAGE_HINT[currentPhase] || LONG_STAGE_HINT[stage?.stage];
-  const label   = stage?.label || PHASE_LABELS[currentPhase] || currentPhase;
-  const detail  = stage?.detail || longHint?.note || "";
-  const est     = stage?.estimate_s || longHint?.estimate || 30;
-  const srvElapsed = stage?.progress_elapsed;
-  // Локальный таймер: тикаем раз в секунду, чтобы счётчик ШЁЛ плавно между
-  // серверными апдейтами (~2s). Сбрасываем при смене стадии; если сервер
-  // прислал большее elapsed — подтягиваемся к нему (источник правды — сервер).
-  const [localEl,setLocalEl]=useState(0);
-  const stageKey=(stage?.stage||currentPhase||"")+"";
-  const keyRef=useRef(stageKey);
-  useEffect(()=>{ if(keyRef.current!==stageKey){ keyRef.current=stageKey; setLocalEl(srvElapsed||0); } },[stageKey]);
-  useEffect(()=>{ if(srvElapsed!=null) setLocalEl(e=>Math.max(e,srvElapsed)); },[srvElapsed]);
-  useEffect(()=>{ const id=setInterval(()=>setLocalEl(e=>e+1),1000); return ()=>clearInterval(id); },[]);
-  // Хуки вызваны безусловно (правило hooks) — ранний выход уже после них.
-  if(!stage && !currentPhase) return null;
-  if(mode!=="deep") return null;
-  // Если currentPhase не «длинный этап» и нет stage — не показываем баннер.
-  if(!longHint && !stage) return null;
-  // Фазы с собственными живыми панелями НЕ дублируем баннером:
-  //   planning/synthesizing → ThinkingPanel (ход мысли), research → AgentsPanel.
-  // Баннер остаётся только для тихих стадий без live-UI (merging/post_processing/
-  // agent_iter и т.п.), где иначе «висит».
-  if(["planning", "research", "synthesizing"].includes(currentPhase)) return null;
-  // Таймер показываем для любой стадии с оценкой времени (estimate_s>0) либо
-  // если сервер уже прислал elapsed. Иначе — «идёт» без чисел.
-  const timed   = (stage?.estimate_s||0) > 0 || srvElapsed != null;
-  const elapsed = timed ? localEl : null;
-  // Прогресс-bar: elapsed / est (cap 100%), только при est>0.
-  const pct = (elapsed != null && est > 0) ? Math.min(100, Math.round((elapsed/est)*100)) : null;
-  return <div className="dr-stage-banner">
-    <div className="dr-stage-line">
-      <span className="dr-stage-pulse"/>
-      <span className="dr-stage-label">{label}</span>
-      <span className="dr-stage-est">
-        {elapsed != null ? `${elapsed}s` : "идёт"} / ~{est}s
-      </span>
-    </div>
-    {detail && <div className="dr-stage-detail">{detail}</div>}
-    {pct != null && <div className="dr-stage-bar">
-      <div className="dr-stage-bar-fill" style={{width:`${pct}%`}}/>
-    </div>}
-  </div>;
-}
-
 // ─── Deep Research console — единая timeline-консоль прогона (редизайн).
 //     Шесть display-фаз поверх реальных phase-событий; внутри каждой —
-//     живые агенты (research), «размышления модели» (reasoning по стадиям),
-//     план отчёта (outline) и доуточнение пробелов (gap-loop). Заменяет
-//     старые отдельные панели (AgentsPanel/ThinkingPanel/AgentPanel/Stage). ──
+//     живые агенты (research), «размышления модели» (reasoning по стадиям,
+//     переиспользуется ThinkingPanel), план отчёта (outline) и доуточнение
+//     пробелов (gap-loop). Всё на реальном SSE-стриме. ─────────────────────
 const DEEP_FLOW = [
   {key:"parse",     label:"Разбор запроса",       phases:["planning"]},
   {key:"discovery", label:"Поиск источников",     phases:["discovery"]},
@@ -1637,10 +1532,8 @@ function ClaimCheckRow({claimCheck, verification, sourcesCount}){
   </div>;
 }
 
-// ─── Панель параллельных агентов — живые карточки во время волны сбора.
-//     Статус каждого (ждёт/ищет/читает/обдумывает/готов) движется по РЕАЛЬНЫМ
-//     событиям agent_tool_call (не самоползущий бар). Показывается только в фазе
-//     research; после неё итог берёт на себя ProcessTrace. ────────────────────
+// ─── Статус агента (ждёт/ищет/читает/обдумывает/готов) по РЕАЛЬНЫМ событиям
+//     agent_tool_call. Используется карточками агентов внутри DeepConsole. ─────
 function _agentStatus(st){
   if(!st || !st.status || st.status==="pending") return {t:"ждёт", c:"var(--ink-4)", run:false};
   if(st.status==="done")  return {t:"готов", c:"var(--pos,#3fb950)", run:false};
@@ -1651,91 +1544,6 @@ function _agentStatus(st){
   if(lt==="run_sql") return {t:"запрос к БД", c:"var(--accent)", run:true};
   if(st.live_phase==="think") return {t:"обдумывает", c:"var(--accent)", run:true};
   return {t:"работает", c:"var(--accent)", run:true};
-}
-function AgentsPanel({plan, stepStates, phase}){
-  if(!plan || !plan.length || phase!=="research") return null;
-  return <div className="dr-agents">
-    <div className="dr-agents-head"><span className="eyebrow">Агенты · {plan.length} параллельно</span></div>
-    {plan.map((step,i)=>{
-      const st=stepStates?.[step.n];
-      const s=_agentStatus(st);
-      return <div key={i} className={"dr-agent-card"+(s.run?" dr-agent-card-run":"")}>
-        <span className="dr-agent-dot" style={{background:s.c}}/>
-        <span className="dr-agent-name">{step.title}</span>
-        {st?.model && <span className="dr-agent-model mono">{st.model}</span>}
-        <span className="dr-agent-status mono" style={{color:s.c}}>{s.t}</span>
-      </div>;
-    })}
-  </div>;
-}
-
-function ProcessTrace({plan, stepStates, phase, mode, sources, verification}){
-  const[expanded,setExpanded]=useState(false);
-  if(!plan || !plan.length){
-    if(phase && mode==="deep"){
-      return <div className="dr-phase-banner">{(PHASE_LABELS[phase]||phase)}…</div>;
-    }
-    return null;
-  }
-  const states = Object.values(stepStates||{});
-  const done    = states.filter(s=>s?.status==="done").length;
-  const errored = states.filter(s=>s?.status==="error").length;
-  const total   = plan.length;
-  const running = phase && phase!=="done" && (done<total || phase!=="charting");
-  const sourcesN = (sources||[]).length;
-  const unverif  = (verification?.unverified||[]).length;
-
-  if(!expanded){
-    return <div className="dr-trace">
-      <span className="dr-trace-stat">Process: <strong>{done}/{total}</strong> шагов</span>
-      <span className="dr-trace-stat">·  <strong>{sourcesN}</strong> источников</span>
-      {errored>0 && <span className="dr-trace-stat">·  <strong style={{color:"var(--warn)"}}>{errored} ошибок</strong></span>}
-      {verification && <span className="dr-trace-stat">· <strong style={{color:unverif?"var(--warn)":"var(--pos)"}}>{unverif?`${unverif} unverified`:"verified"}</strong></span>}
-      {running && <span className="dr-trace-stat" style={{color:"var(--accent)"}}>·  {(PHASE_LABELS[phase]||phase)}…</span>}
-      <span className="dr-trace-toggle" onClick={()=>setExpanded(true)}>expand</span>
-    </div>;
-  }
-  return <div className="dr-trace dr-trace-expanded">
-    <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
-      <span className="dr-trace-stat">Process: <strong>{done}/{total}</strong> шагов</span>
-      <span className="dr-trace-stat">· <strong>{sourcesN}</strong> источников</span>
-      {running && <span className="dr-trace-stat" style={{color:"var(--accent)"}}>· {(PHASE_LABELS[phase]||phase)}…</span>}
-      <span className="dr-trace-toggle" onClick={()=>setExpanded(false)}>collapse</span>
-    </div>
-    {plan.map((step,i)=>{
-      const st=stepStates?.[step.n];
-      const status=st?.status||"pending";
-      // Step-grouping: virtual N (TR-/AG-/G-/E-) визуально отличается
-      const sn = String(step.n||"");
-      const grpCls = sn.startsWith("TR-") ? " dr-trace-row-tr"
-                  : sn.startsWith("AG")    ? " dr-trace-row-ag"
-                  : sn.startsWith("G-")    ? " dr-trace-row-g"
-                  : sn.startsWith("E-")    ? " dr-trace-row-e"
-                  : "";
-      const numLabel = sn.startsWith("TR-") ? "💬"
-                     : sn.startsWith("AG")  ? "🤖"
-                     : sn.startsWith("G-")  ? "↻"
-                     : sn.startsWith("E-")  ? "+"
-                     : step.n;
-      return <div key={i} className={`dr-trace-row dr-trace-row-${status}${grpCls}`}>
-        <span className="dr-trace-num">{numLabel}</span>
-        <span className="dr-trace-title">{step.title}</span>
-        <span className="dr-trace-tool">{step.tool}</span>
-        <span className="dr-trace-found">
-          {(()=>{
-            if(status==="running") return "…";
-            if(st?.error) return "ошибка";
-            const f = st?.found, u = st?.used;
-            if(f==null && u==null) return "";
-            if(f && u && u>f) return `+${f} нов. / ${u} всего`;
-            if(f) return `+${f} ист.`;
-            if(u) return `${u} (повтор)`;
-            return "0 ист.";
-          })()}
-        </span>
-      </div>;
-    })}
-  </div>;
 }
 
 // ─── Coverage banner — minimal single-line ────────────────────────────────
@@ -2058,12 +1866,6 @@ function SourcesRail({sources, activeN, onHover, onClick}){
       })}
     </ul>
   </aside>;
-}
-
-// Backward-compat: AIPage может рендерить SourcesRail в обоих режимах.
-// Также сохраняем legacy SourcesPanel API для других мест (KnowledgePage uses SOURCE_KIND_COLORS)
-function SourcesPanel({sources}){
-  return <SourcesRail sources={sources}/>;
 }
 
 // ─── DocTocSlot: автоматическое оглавление из ближайшего .dr-doc-main ────

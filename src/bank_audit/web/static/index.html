@@ -400,53 +400,6 @@ tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
   display:flex;gap:10px;font-size:11px;color:var(--ink-3);
 }
 
-/* Process trace — collapsed by default, заменяет emoji-laden timeline */
-.dr-trace{
-  font-family:'JetBrains Mono',monospace;font-size:11.5px;
-  margin:8px 0 18px;padding:8px 12px;
-  border:1px solid var(--hair);border-radius:4px;background:var(--paper-2);
-  color:var(--ink-3);display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-}
-.dr-trace-stat{display:inline-flex;gap:5px;align-items:center}
-.dr-trace-stat strong{color:var(--ink);font-weight:600}
-.dr-trace-toggle{
-  margin-left:auto;color:var(--ink-2);text-decoration:underline;
-  text-underline-offset:3px;cursor:pointer;font-weight:500;
-}
-.dr-trace-toggle:hover{color:var(--ink)}
-.dr-trace-expanded{flex-direction:column;align-items:stretch;padding:10px 12px;gap:0}
-.dr-trace-row{
-  display:grid;grid-template-columns:22px minmax(0,1fr) auto auto;gap:10px;align-items:center;
-  padding:4px 0;border-bottom:1px dotted var(--hair);font-size:11.5px;
-}
-.dr-trace-row:last-child{border-bottom:0}
-.dr-trace-num{color:var(--ink-3);font-size:10.5px}
-.dr-trace-title{color:var(--ink);font-family:'Geist','Inter',sans-serif;font-size:12.5px;
-  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dr-trace-tool{color:var(--ink-3);white-space:nowrap}
-.dr-trace-found{color:var(--ink-2);justify-self:end;white-space:nowrap;text-align:right;
-  font-family:'JetBrains Mono',monospace;font-size:11px;font-variant-numeric:tabular-nums}
-.dr-trace-row-running .dr-trace-title{color:var(--accent);position:relative}
-.dr-trace-row-running .dr-trace-title::after{
-  content:"";position:absolute;left:0;right:0;bottom:-2px;height:1.5px;
-  background:linear-gradient(90deg,transparent,var(--accent),transparent);
-  background-size:200% 100%;animation:trace-scan 1.6s linear infinite;
-}
-@keyframes trace-scan{0%{background-position:200% 0}100%{background-position:-200% 0}}
-.dr-trace-row-error .dr-trace-title{color:var(--warn)}
-
-/* Phase banner (planning/discovery before plan ready) */
-.dr-phase-banner{
-  display:flex;align-items:center;gap:10px;
-  padding:8px 12px;margin:8px 0 14px;
-  border-left:2px solid var(--ink);background:var(--paper-2);
-  font-size:13px;color:var(--ink-2);font-family:'Geist','Inter',sans-serif;
-}
-.dr-phase-banner::before{
-  content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
-  background:var(--accent);
-}
-
 /* Coverage — single line, минимально */
 .dr-coverage{
   margin:8px 0 14px;padding:7px 12px;border-radius:4px;
@@ -459,54 +412,6 @@ tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
 .dr-coverage-warn{
   border-color:color-mix(in oklab,var(--warn),transparent 60%);
   background:color-mix(in oklab,var(--warn),transparent 95%);
-}
-
-/* ─── Agent loop progress panel ─────────────────────────────────────────────
-   Эстетика: editorial, не AI-spinner. Тонкая полоса слева указывает «agent
-   работает», цвет нейтральный (ink), iteration-номер в JetBrains Mono.
-   Без shadows/градиентов. */
-.dr-agent{
-  margin:14px 0 18px;border:1px solid var(--hair);border-left:2px solid var(--ink-2);
-  background:var(--surface);border-radius:var(--r);
-  font-family:'Geist','Inter',sans-serif;
-}
-.dr-agent-head{
-  display:flex;align-items:baseline;gap:12px;
-  padding:11px 16px 9px;border-bottom:1px solid var(--hair);
-}
-.dr-agent-mark{
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;
-  letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);
-}
-.dr-agent-title{
-  font-size:13.5px;font-weight:500;color:var(--ink);letter-spacing:-.005em;
-}
-.dr-agent-iter{
-  margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11.5px;
-  color:var(--ink-3);
-}
-.dr-agent-iter b{color:var(--ink);font-weight:600}
-.dr-agent-running .dr-agent-iter::before{
-  content:"";display:inline-block;width:5px;height:5px;border-radius:50%;
-  background:var(--ink-2);margin-right:7px;vertical-align:middle;
-  animation:pulse 1.6s ease-in-out infinite;
-}
-.dr-agent-list{list-style:none;margin:0;padding:6px 0;}
-.dr-agent-gap{
-  display:flex;align-items:baseline;gap:10px;
-  padding:7px 16px;font-size:13px;color:var(--ink-2);
-  border-bottom:1px dashed var(--hair);line-height:1.45;
-}
-.dr-agent-gap:last-child{border-bottom:0}
-.dr-agent-gap-arrow{
-  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);
-  flex-shrink:0;width:14px;
-}
-.dr-agent-gap-what{color:var(--ink);font-weight:450}
-.dr-agent-gap-q{
-  font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-3);
-  margin-left:auto;text-align:right;flex-shrink:0;max-width:50%;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 
 /* ─── Conflict badge — для критических расхождений в источниках.
@@ -555,31 +460,6 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 .dr-meta-pill.ok  .dot{background:var(--pos)}
 .dr-meta-pill.warn .dot{background:var(--warn)}
 
-/* ─── Outline preview — ToC появляется ДО текста отчёта ─────────────── */
-.dr-outline-preview{
-  margin:12px 0 18px;padding:14px 16px;
-  border:1px solid var(--hair);border-radius:var(--r);
-  background:var(--paper-2);
-}
-.dr-outline-preview .eyebrow{margin-bottom:8px;display:block}
-.dr-outline-preview ol{
-  list-style:none;margin:0;padding:0;
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 18px;
-  counter-reset:olcount;
-}
-.dr-outline-preview li{
-  font-size:13px;color:var(--ink-2);line-height:1.4;
-  counter-increment:olcount;padding-left:22px;position:relative;
-}
-.dr-outline-preview li::before{
-  content:counter(olcount,decimal-leading-zero);
-  position:absolute;left:0;top:1px;
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:500;
-  color:var(--ink-4);letter-spacing:.04em;
-}
-.dr-outline-preview li.pending{color:var(--ink-3)}
-.dr-outline-preview li.done::before{color:var(--pos);content:"✓"}
-
 /* ─── Citation excerpt tooltip ─────────────────────────────────────────────
    При hover на [N] показываем реальный chunk-snippet. Реальная reproducibility
    для аудитора — он видит откуда фраза, без перехода на сайт. */
@@ -608,17 +488,6 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
   border-top:1px solid color-mix(in oklab,var(--paper),transparent 80%);
   font-family:'JetBrains Mono',monospace;font-size:10.5px;
   color:color-mix(in oklab,var(--paper),transparent 40%);
-}
-
-/* ─── Step-grouping в timeline (TR-/AG-/G-/E-) ────────────────────────── */
-.dr-trace-row-tr  .dr-trace-num{color:color-mix(in oklab,var(--accent),var(--ink-3) 50%)}
-.dr-trace-row-ag  .dr-trace-num{color:var(--ink)}
-.dr-trace-row-g   .dr-trace-num{color:var(--ink-3)}
-.dr-trace-row-e   .dr-trace-num{color:var(--ink-3)}
-.dr-trace-grouphead{
-  padding:7px 12px 4px;font-family:'JetBrains Mono',monospace;font-size:10px;
-  letter-spacing:.1em;text-transform:uppercase;color:var(--ink-4);
-  border-bottom:1px solid var(--hair);
 }
 
 /* ─── Document toolbar (с кнопкой PDF справа от заголовка отчёта) ───── */
@@ -653,32 +522,11 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* ─── Stage banner — показывает «жив, идёт стадия X, ~Y секунд» во время
-   долгих LLM-этапов (merging, agent_iter и т.д.). Без него pipeline на 60s
-   выглядит как «зависло». Эстетика: тонкая линия, pulse-маркер слева,
-   timer справа моноширинно, progress-bar 2px высотой. */
-.dr-stage-banner{
-  margin:12px 0 16px;padding:11px 14px 10px;
-  border:1px solid var(--hair);border-left:2px solid var(--ink-2);
-  background:var(--surface);border-radius:var(--r);
-}
-.dr-stage-line{
-  display:flex;align-items:center;gap:10px;
-  font-family:'Geist','Inter',sans-serif;font-size:13px;color:var(--ink);
-}
+/* ─── Pulse-маркер «идёт стадия» — используется ThinkingPanel, PendingDots
+   и clarify-head. ──────────────────────────────────────────────────────── */
 .dr-stage-pulse{
   width:7px;height:7px;border-radius:50%;background:var(--ink-2);
   flex-shrink:0;animation:pulse 1.4s ease-in-out infinite;
-}
-.dr-stage-label{font-weight:500;letter-spacing:-.005em;flex:1;min-width:0;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dr-stage-est{
-  font-family:'JetBrains Mono',monospace;font-size:11.5px;
-  color:var(--ink-3);letter-spacing:.02em;font-variant-numeric:tabular-nums;
-}
-.dr-stage-detail{
-  margin-top:4px;font-size:12px;color:var(--ink-3);
-  font-family:'Geist','Inter',sans-serif;line-height:1.45;
 }
 @keyframes drcaret{0%,100%{opacity:1}50%{opacity:0}}
 .dr-think{
@@ -708,29 +556,12 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 @media (prefers-reduced-motion:reduce){
   .dr-stage-pulse,.dr-think-caret{animation:none}
 }
-.dr-agents{margin:12px 0 14px;display:flex;flex-direction:column;gap:6px;
-  max-width:1264px;width:100%}
-.dr-agents-head{margin-bottom:2px}
-.dr-agent-card{
-  display:flex;align-items:center;gap:10px;padding:8px 12px;
-  border:1px solid var(--hair);border-radius:var(--r);background:var(--paper-2);
-}
-.dr-agent-card-run{border-left:2px solid var(--accent)}
-.dr-agent-dot{width:8px;height:8px;border-radius:50%;flex:none}
-.dr-agent-card-run .dr-agent-dot{animation:pulse 1.4s ease-in-out infinite}
-.dr-agent-name{flex:1;min-width:0;font-size:13px;color:var(--ink);font-weight:450;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dr-agent-card{max-width:100%;width:100%;box-sizing:border-box}
-.dr-agent-status{font-size:11px;letter-spacing:.02em;flex:none;white-space:nowrap}
-.dr-agent-model{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);
-  flex:none;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
 .dr-type-caret{display:inline-block;width:7px;height:14px;background:var(--accent);
   vertical-align:-2px;margin-left:2px;animation:drcaret 1s step-end infinite}
 @keyframes drfadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .dr-fade-in{animation:drfadein .4s ease both}
 @media (prefers-reduced-motion:reduce){
-  .dr-agent-card-run .dr-agent-dot,.dr-type-caret{animation:none}
-  .dr-fade-in{animation:none}
+  .dr-type-caret,.dr-fade-in{animation:none}
 }
 
 /* ─── Deep Research console — единая timeline-консоль прогона (редизайн) ── */
@@ -844,14 +675,6 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 .clarify-go{background:var(--accent);border:1px solid var(--accent);color:var(--paper);font-weight:500;
   padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px}
 .clarify-go:hover{filter:brightness(1.08)}
-.dr-stage-bar{
-  margin-top:8px;height:2px;background:var(--hair);border-radius:1px;
-  overflow:hidden;
-}
-.dr-stage-bar-fill{
-  height:100%;background:var(--ink-2);border-radius:1px;
-  transition:width .35s ease;
-}
 
 /* ─── Document footer — дублирующая PDF-кнопка после содержания отчёта ─
    Премиум: тонкая полоса разделителя, кнопка чуть крупнее (как call-to-action
@@ -1007,7 +830,7 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 
 /* Print: clean PDF output */
 @media print{
-  .topbar,.rail,.chat-input-wrap,.deep-toggle,.dr-doc-toc,.dr-trace,
+  .topbar,.rail,.chat-input-wrap,.deep-toggle,.dr-doc-toc,
   .typing,.tools-tl,.kbd-help,.al-thread-head,.al-runbar,.dr-con-wrap,
   .quick-tools,.quick-upsell{display:none !important}
   body{background:#fff;color:#000;font-size:11pt}
@@ -1270,11 +1093,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .dr-doc-main h3{font-size:15.5px}
   .dr-doc-main table{font-size:12.5px}
   .dr-doc-main thead th,.dr-doc-main tbody td{padding:6px 8px}
-  .dr-trace-row{grid-template-columns:20px minmax(0,1fr) auto;gap:8px}
-  .dr-trace-tool{display:none}
-  .dr-agent-model{display:none}
-  .dr-agent-gap{flex-direction:column;align-items:stretch;gap:3px}
-  .dr-agent-gap-q{max-width:100%;margin-left:0;text-align:left;white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word}
+  .dr-con-spine{padding-left:12px;padding-right:12px}
+  .dr-con-gap-q{max-width:100%}
   .dr-think-head{min-height:44px}
   .dr-doc-toolbar{flex-wrap:wrap;gap:8px 12px}
   .cite-tooltip{width:auto;max-width:calc(100vw - 24px);box-sizing:border-box}
