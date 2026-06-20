@@ -1973,9 +1973,9 @@ function KbdHelp({onClose}){
 }
 
 function AIPage(){
-  const[msgs,setMsgs]=useState([
-    {role:"ai",text:"Здравствуйте. Я ИИ-аналитик AuditLens, подключён к базе предложений и отзывов. Спросите о позиции Сбера, рисках по продуктам или динамике ставок. Для глубокого исследования включите Deep Research.",tools:[]}
-  ]);
+  // Пустая лента → показывается welcome-экран (он и есть приветствие). Отдельным
+  // ai-сообщением «Здравствуйте…» не засоряем диалог после первой отправки.
+  const[msgs,setMsgs]=useState([]);
   const[q,setQ]=useState("");
   const[loading,setLoading]=useState(false);
   const[deepMode,setDeepMode]=useState(false);
@@ -2295,7 +2295,7 @@ function AIPage(){
   // время прогона, чтобы не оборвать активный stream-reader.
   const newQuery=()=>{
     if(loading)return;
-    setMsgs([{role:"ai",text:"Здравствуйте. Я ИИ-аналитик AuditLens, подключён к базе предложений и отзывов. Спросите о позиции Сбера, рисках по продуктам или динамике ставок. Для глубокого исследования включите Deep Research.",tools:[]}]);
+    setMsgs([]);                                  // → welcome
     setQ(""); setActiveCite(null); setHoverCite(null);
     setTimeout(()=>inputRef.current?.focus(),0);
   };
@@ -2325,14 +2325,14 @@ function AIPage(){
         {isEmpty && <AiWelcome onPick={send}/>}
         {!isEmpty && msgs.map((m,i)=>{
           if(m.role==="clarify"){
-            return <div key={i} className="chat-msg ai"><div className="chat-bubble chat-bubble-deep">
+            return <div key={i} className="chat-msg ai">
               <ClarifyCard msg={m} onSubmit={clarifySubmit} onSkip={clarifySkip}/>
-            </div></div>;
+            </div>;
           }
           if(m.role==="pending"){
-            return <div key={i} className="chat-msg ai"><div className="chat-bubble chat-bubble-deep">
+            return <div key={i} className="chat-msg ai">
               <PendingDots label={m.label}/>
-            </div></div>;
+            </div>;
           }
           if(m.mode==="deep"){
             // Editorial document layout
@@ -2457,40 +2457,31 @@ function AIPage(){
           <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current;if(el){stickRef.current=true;el.scrollTo({top:el.scrollHeight,behavior:"smooth"});}}}>Показать отчёт →</button>
         </div>}
       {showComposer &&
-      <div className="chat-input-wrap">
-        {deepMode && <div className="composer-accent"/>}
-        <textarea ref={inputRef} className="chat-textarea" rows={1}
-          placeholder={deepMode?"Опишите задачу для глубокого исследования…":"Спросите об условиях, ставках, рисках или позиции Сбера…"}
-          value={q} onChange={e=>setQ(e.target.value)}
-          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
-        <div className="composer-bar">
-          <div className="seg">
-            <button className={"seg-btn"+(!deepMode?" on":"")} onClick={()=>setDeepMode(false)} disabled={loading}>Быстрый</button>
-            <button className={"seg-btn"+(deepMode?" on":"")} onClick={()=>setDeepMode(true)} disabled={loading} title="Deep Research: планировщик → мульти-агент → проверка фактов"><span className="seg-dot"/>Deep Research</button>
+      <div className="composer-dock">
+        <div className="composer-inner">
+          <div className="chat-input-wrap">
+            {deepMode && <div className="composer-accent"/>}
+            <textarea ref={inputRef} className="chat-textarea" rows={1}
+              placeholder={deepMode?"Опишите задачу для глубокого исследования…":"Спросите об условиях, ставках, рисках или позиции Сбера…"}
+              value={q} onChange={e=>setQ(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
+            <div className="composer-bar">
+              <div className="seg">
+                <button className={"seg-btn"+(!deepMode?" on":"")} onClick={()=>setDeepMode(false)} disabled={loading}>Быстрый</button>
+                <button className={"seg-btn"+(deepMode?" on":"")} onClick={()=>setDeepMode(true)} disabled={loading} title="Deep Research: планировщик → мульти-агент → проверка фактов"><span className="seg-dot"/>Deep Research</button>
+              </div>
+              <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"ответ из подключённых данных · ~5с"}</span>
+              <span className="composer-kbd">Enter ↵</span>
+              <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()||loading} onClick={()=>send()} aria-label="Отправить">
+                {deepMode?"Запустить research":"Спросить"}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              </button>
+            </div>
           </div>
-          <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"ответ из подключённых данных · ~5с"}</span>
-          <span className="composer-kbd">Enter ↵</span>
-          <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()||loading} onClick={()=>send()} aria-label="Отправить">
-            {deepMode?"Запустить research":"Спросить"}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          </button>
+          <div className="composer-note">Внутренний контур · данные не покидают периметр · Llama 3.3 70B</div>
         </div>
       </div>}
     </div>
-    <aside className="chat-side">
-      <h4>Быстрые запросы</h4>
-      {QUICK.map((qp,i)=>(
-        <button key={i} className="qp" onClick={()=>send(qp.t)}>
-          <span className="qp-eb">{qp.eb}</span>
-          {qp.t}
-        </button>
-      ))}
-      <h4 style={{marginTop:24}}>Контекст сессии</h4>
-      <div className="t-cap" style={{lineHeight:1.6}}>
-        Подключены источники: <span className="mono">v_offer_current</span>, <span className="mono">v_review_topics</span>, <span className="mono">v_sber_vs_market</span>.
-        Глубина истории — 30 дней. Модель: Llama 3.3 70B via Fireworks AI.
-      </div>
-    </aside>
   </div>;
 }
 
