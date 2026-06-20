@@ -1381,7 +1381,7 @@ function ClarifyCard({msg, onSubmit, onSkip}){
   };
   return <div className="clarify-card fade-in">
     <div className="clarify-head">
-      <span className="dr-stage-pulse"/>
+      <span className="dr-stage-pulse" style={{background:"var(--accent)"}}/>
       <span className="eyebrow" style={{color:"var(--accent)"}}>Уточнение запроса · {qs.length} вопр.</span>
       <button className="clarify-x" onClick={()=>onSkip(msg.question,msg.forceDeep)} aria-label="Пропустить">✕</button>
     </div>
@@ -1413,7 +1413,7 @@ function ClarifyCard({msg, onSubmit, onSkip}){
     <div className="clarify-foot">
       <span className="clarify-count">отвечено {answered} / {qs.length}</span>
       <button className="clarify-skip-btn" onClick={()=>onSkip(msg.question,msg.forceDeep)}>Пропустить</button>
-      <button className="clarify-go" onClick={submit}>Уточнить и запустить ↗</button>
+      <button className="clarify-go" onClick={submit}>Уточнить и запустить →</button>
     </div>
   </div>;
 }
@@ -1467,6 +1467,148 @@ function StageStatusBanner({stage, currentPhase, mode}){
     {pct != null && <div className="dr-stage-bar">
       <div className="dr-stage-bar-fill" style={{width:`${pct}%`}}/>
     </div>}
+  </div>;
+}
+
+// ─── Deep Research console — единая timeline-консоль прогона (редизайн).
+//     Шесть display-фаз поверх реальных phase-событий; внутри каждой —
+//     живые агенты (research), «размышления модели» (reasoning по стадиям),
+//     план отчёта (outline) и доуточнение пробелов (gap-loop). Заменяет
+//     старые отдельные панели (AgentsPanel/ThinkingPanel/AgentPanel/Stage). ──
+const DEEP_FLOW = [
+  {key:"parse",     label:"Разбор запроса",       phases:["planning"]},
+  {key:"discovery", label:"Поиск источников",     phases:["discovery"]},
+  {key:"collect",   label:"Сбор данных",          phases:["research"]},
+  {key:"synth",     label:"Синтез отчёта",        phases:["synthesizing"]},
+  {key:"gaps",      label:"Доуточнение пробелов",  phases:["agent_iter_1","agent_iter_2","second_pass"]},
+  {key:"verify",    label:"Проверка фактов",      phases:["merging","post_processing","verifying","charting"]},
+];
+// Какие reasoning-стадии показывать под какой display-фазой. active-флаг по-
+// прежнему вычисляется через STAGE_PHASE (стадия активна ТОЛЬКО на своей фазе).
+const PHASE_REASON = {parse:["conductor"], synth:["analyst","repair"], verify:["critic"]};
+
+function DeepConsole({m, loading, elapsed}){
+  const phase=m.phase;
+  const curIdx = phase==="done" ? DEEP_FLOW.length
+    : Math.max(0, DEEP_FLOW.findIndex(d=>d.phases.includes(phase)));
+  const srcN   = (m.sources||[]).length;
+  const states = Object.values(m.stepStates||{});
+  const doneA  = states.filter(s=>s?.status==="done").length;
+  const totA   = (m.plan||[]).length;
+  const verified=m.claimCheck?.verified||0, dropped=m.claimCheck?.dropped||0;
+  const iters  = (m.agentIters||[]).length;
+  const pct = Math.min(100, Math.round(((curIdx + (phase==="done"?0:0.5))/DEEP_FLOW.length)*100));
+  const el = elapsed||0;
+  const elapsedDisplay = `${String(Math.floor(el/60)).padStart(2,"0")}:${String(el%60).padStart(2,"0")}`;
+  const runLabel = PHASE_LABELS[phase] || (phase ? phase : "запуск");
+  const right=(key,status)=>{
+    if(status==="pending") return "";
+    const done=status==="done";
+    switch(key){
+      case "parse":     return done?"запрос разобран":"извлекаю сущности";
+      case "discovery": return done?`${srcN} источников`:"сканирую веб";
+      case "collect":   return done?`${doneA}/${totA||"·"} · ${srcN} источн.`:(totA?`${totA} агентов параллельно`:"запуск агентов");
+      case "synth":     return done?"черновик готов":"пишу черновик";
+      case "gaps":      return done?(iters?`${iters} итер.`:"без пробелов"):"ищу пробелы";
+      case "verify":    return done?`${verified} подтв.${dropped?` · ${dropped} фильтр`:""}`:"сверяю числа";
+      default:          return "";
+    }
+  };
+  const dotStyle=(s)=> s==="done"
+    ? {background:"var(--ink)",borderColor:"var(--ink)"}
+    : s==="running"
+      ? {background:"var(--accent)",borderColor:"var(--accent)",boxShadow:"0 0 0 4px var(--accent-soft)"}
+      : {background:"transparent",borderColor:"var(--hair-2)"};
+  const titleStyle=(s)=> s==="pending" ? {color:"var(--ink-4)",fontWeight:450}
+                       : s==="running" ? {color:"var(--ink)",fontWeight:600}
+                       : {color:"var(--ink)",fontWeight:500};
+  return <div className="dr-con-wrap">
+    <div className="dr-con">
+      <div className="dr-con-head">
+        <span className="dr-con-pulse"/>
+        <span className="dr-con-title">Глубокое исследование</span>
+        <span className="dr-con-sub">{runLabel}</span>
+        <span className="dr-con-el mono">{elapsedDisplay}</span>
+      </div>
+      <div className="dr-con-bar"><div className="dr-con-bar-fill" style={{width:pct+"%"}}/></div>
+      <div className="dr-con-spine">
+        {DEEP_FLOW.map((d,idx)=>{
+          const status = idx<curIdx?"done":(idx===curIdx?"running":"pending");
+          const last = idx===DEEP_FLOW.length-1;
+          return <div key={d.key} className="dr-con-row">
+            <div className="dr-con-col">
+              <span className="dr-con-dot" style={dotStyle(status)}>
+                {status==="done" && <svg width="7" height="7" viewBox="0 0 24 24" fill="none"
+                  stroke="var(--paper)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
+              </span>
+              {!last && <span className="dr-con-conn" style={{background:status==="done"?"var(--ink)":"var(--hair)"}}/>}
+            </div>
+            <div className="dr-con-body">
+              <div className="dr-con-line">
+                <span className="dr-con-label" style={titleStyle(status)}>{d.label}</span>
+                <span className="dr-con-right mono" style={{color:status==="running"?"var(--accent)":"var(--ink-3)"}}>{right(d.key,status)}</span>
+              </div>
+              {/* агенты — фаза сбора */}
+              {d.key==="collect" && status!=="pending" && totA>0 &&
+                <div className="dr-con-agents">
+                  {m.plan.map((step,si)=>{
+                    const s=_agentStatus(m.stepStates?.[step.n]);
+                    return <div key={si} className="dr-con-agent">
+                      <span className="dr-con-agent-dot" style={{background:s.c,animation:s.run?"pulse 1.4s ease-in-out infinite":"none"}}/>
+                      <span className="dr-con-agent-name">{step.title}</span>
+                      <span className="dr-con-agent-st mono" style={{color:s.c}}>{s.t}</span>
+                    </div>;
+                  })}
+                </div>}
+              {/* размышления модели — reuse ThinkingPanel (таймер/скролл/стрим) */}
+              {(PHASE_REASON[d.key]||[]).filter(s=>m.reasoningStages?.[s]).map(s=>
+                <ThinkingPanel key={s} stage={s} text={m.reasoningStages[s]}
+                  active={loading && m.phase===STAGE_PHASE[s]}/>)}
+              {/* план отчёта (outline preview) */}
+              {d.key==="synth" && status!=="pending" && (m.outline||[]).length>0 &&
+                <div className="dr-con-outline">
+                  <div className="dr-con-outline-h">План отчёта</div>
+                  <div className="dr-con-outline-grid">
+                    {m.outline.map((o,oi)=>(
+                      <div key={oi} className="dr-con-outline-item">
+                        <span className="dr-con-outline-n mono">{String(oi+1).padStart(2,"0")}</span>{o.title||o.kind}
+                      </div>))}
+                  </div>
+                </div>}
+              {/* доуточнение пробелов (gap loop) */}
+              {d.key==="gaps" && status!=="pending" && (m.agentIters||[]).length>0 &&
+                <div className="dr-con-gaps">
+                  {m.agentIters.flatMap((it,ii)=>(it.gaps||[]).map((g,gi)=>(
+                    <div key={`${ii}-${gi}`} className="dr-con-gap">
+                      <span className="dr-con-gap-i mono">↻</span>
+                      <span className="dr-con-gap-w">{g.what||g.query}</span>
+                      <span className="dr-con-gap-q mono">{g.query}</span>
+                    </div>)))}
+                </div>}
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  </div>;
+}
+
+// ─── Сводка завершённого прогона (collapsed bar над отчётом, редизайн). ────
+function ResearchSummary({m}){
+  const states=Object.values(m.stepStates||{});
+  const total=(m.plan||[]).length;
+  const srcN=(m.sources||[]).length;
+  const verified=m.claimCheck?.verified||0, dropped=m.claimCheck?.dropped||0;
+  return <div className="dr-summary-bar">
+    <span className="dr-summary-ok">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      Исследование завершено
+    </span>
+    {total>0 && <><span>·</span><span>{total} этапов</span></>}
+    <span>·</span><span><b>{srcN}</b> источников</span>
+    {verified>0 && <><span>·</span><span><b>{verified}</b> фактов подтверждено</span></>}
+    {dropped>0 && <><span>·</span><span><b>{dropped}</b> отфильтровано</span></>}
   </div>;
 }
 
@@ -1616,7 +1758,9 @@ function VerificationBanner({verification}){
   const u=verification.unverified||[];
   if(!u.length){
     return <div className="dr-verify dr-verify-ok">
-      Numeric verification — все числовые утверждения подтверждены источниками.
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flex:"none"}}><path d="M20 6L9 17l-5-5"/></svg>
+      Все числовые утверждения сверены с источниками.
     </div>;
   }
   return <div className="dr-verify dr-verify-warn">
@@ -1633,7 +1777,7 @@ function RankingWidget({ranking}){
   const entries = [...ranking.entries].sort((a,b)=>(a.rank||99)-(b.rank||99));
   return <div className="dr-ranking">
     <div className="dr-ranking-head">
-      <span className="dr-ranking-title">🏆 Рейтинг</span>
+      <span className="dr-ranking-title">Рейтинг</span>
       {ranking.criterion && <span className="dr-ranking-criterion">{ranking.criterion}</span>}
     </div>
     <ol className="dr-ranking-list">
@@ -1661,7 +1805,7 @@ function InsightsWidget({insights}){
   if(!insights || insights.length===0) return null;
   return <div className="dr-insights">
     <div className="dr-insights-head">
-      <span className="dr-insights-title">💡 Ключевые инсайты</span>
+      <span className="dr-insights-title">Ключевые инсайты</span>
     </div>
     <ul className="dr-insights-list">
       {insights.map((it,i)=>{
@@ -2038,6 +2182,8 @@ function AIPage(){
   const[activeCite,setActiveCite]=useState(null);        // подсветка bidirectional
   const[hideRail,setHideRail]=useState(false);
   const[hideToc,setHideToc]=useState(false);
+  const[elapsed,setElapsed]=useState(0);                 // таймер прогона deep
+  const runStartRef=useRef(0);
   const feedRef=useRef();
   const inputRef=useRef();
   const msgsRef=useRef(msgs);
@@ -2056,6 +2202,12 @@ function AIPage(){
     const onScroll=()=>{ stickRef.current=(el.scrollHeight-el.scrollTop-el.clientHeight)<120; };
     el.addEventListener("scroll",onScroll,{passive:true});
     return ()=>el.removeEventListener("scroll",onScroll);
+  },[]);
+  // Единый таймер прогона: считаем от runStartRef. Интервал создаётся один раз
+  // (не зависит от msgs), поэтому частые SSE-апдейты его не сбрасывают.
+  useEffect(()=>{
+    const id=setInterval(()=>{ if(runStartRef.current) setElapsed(Math.floor((Date.now()-runStartRef.current)/1000)); },500);
+    return ()=>clearInterval(id);
   },[]);
 
   // ── Citation hover tooltip + bidirectional binding ──
@@ -2283,6 +2435,7 @@ function AIPage(){
       .filter(m=>m.role==="user"||m.role==="ai")
       .map(m=>({role:m.role==="user"?"user":"assistant",content:m.text||""}));
     setLoading(true);
+    runStartRef.current=Date.now(); setElapsed(0);     // старт таймера прогона
     setMsgs(m=>[...m.filter(x=>x.role!=="pending"),{role:"ai",text:"",tools:[]}]);
     streamChat(t,history,forceDeep);
   };
@@ -2329,13 +2482,44 @@ function AIPage(){
     setMsgs(m=>m.filter(x=>x.role!=="clarify"));
     runSend(srcQuestion,forceDeep);
   };
+  // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
+  const runDeepFromQuick=(srcQ)=>{
+    if(loading||!srcQ)return;
+    setDeepMode(true);
+    setMsgs(m=>[...m,{role:"user",text:srcQ}]);
+    runSend(srcQ,true);
+  };
+  // «Новый запрос» — сброс ленты к приветствию (welcome). Заблокировано во
+  // время прогона, чтобы не оборвать активный stream-reader.
+  const newQuery=()=>{
+    if(loading)return;
+    setMsgs([{role:"ai",text:"Здравствуйте. Я ИИ-аналитик AuditLens, подключён к базе предложений и отзывов. Спросите о позиции Сбера, рисках по продуктам или динамике ставок. Для глубокого исследования включите Deep Research.",tools:[]}]);
+    setQ(""); setActiveCite(null); setHoverCite(null);
+    setTimeout(()=>inputRef.current?.focus(),0);
+  };
 
   const isEmpty = !msgs.some(m=>m.role==="user");
+  const lastMsg = msgs[msgs.length-1];
+  const isClarify = lastMsg?.role==="clarify";
+  const lastDeep = [...msgs].reverse().find(m=>m.mode==="deep");
+  // Идёт активный deep-прогон (консоль + нижний бар, композер скрыт).
+  const isRunning = loading && !!lastDeep && lastDeep.phase!=="done"
+    && lastMsg?.role!=="clarify" && lastMsg?.role!=="pending";
+  const showThreadHead = !isEmpty && !isRunning && !isClarify;
+  const showComposer   = !isRunning && !isClarify;
+  const fmtEl = (s)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   return <div className={"fade-in chat-shell"+(isEmpty?" is-welcome":"")}>
     {showKbd && <KbdHelp onClose={()=>setShowKbd(false)}/>}
     {hoverCite && hoverCite.source && <CitationTooltip source={hoverCite.source} anchor={hoverCite.anchor}/>}
     <div className="chat-stream">
       <div className="chat-feed" ref={feedRef}>
+        {showThreadHead &&
+          <div className="al-thread-head">
+            <button className="al-newq" onClick={newQuery}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+              Новый запрос
+            </button>
+          </div>}
         {isEmpty && <AiWelcome onPick={send}/>}
         {!isEmpty && msgs.map((m,i)=>{
           if(m.role==="clarify"){
@@ -2351,118 +2535,126 @@ function AIPage(){
           if(m.mode==="deep"){
             // Editorial document layout
             const userQ = (i>0 && msgs[i-1]?.role==="user") ? msgs[i-1].text : "Аудит-отчёт";
-            // Кнопка показывается когда есть СОДЕРЖАТЕЛЬНЫЙ отчёт. Порог 200 chars —
-            // даже короткий стрим уже видим, и кнопка появляется почти сразу.
-            // `streaming` — отключаем кнопку пока идёт активная генерация,
-            // чтобы пользователь не экспортнул half-baked draft.
             const showPdfBtn = m.role==="ai" && m.text && m.text.length>200;
             const streaming  = m.role==="ai" && loading && i===msgs.length-1;
-            // «Запускаю исследование…» — только в зазоре ДО первых живых событий.
-            // Как только пришли phase/план/ход мысли/карточки агентов — индикатор
-            // убираем, прогресс показывают StageStatusBanner/ThinkingPanel/AgentsPanel.
-            const hasLive = !!(m.phase || m.plan || m.reasoningStages ||
-              (m.stepStates && Object.keys(m.stepStates).length) || m.stageStatus);
-            const showStartDots = m.role==="ai" && !m.text && loading && !hasLive;
+            // Режим живой консоли прогона: показываем DeepConsole. Отчёт (toolbar/
+            // toc/rail/article) появляется когда phase==="done" — как в дизайне.
+            const consoleMode = m.role==="ai" && loading && i===msgs.length-1 && m.phase!=="done";
             return <div key={i} className={`chat-msg ${m.role}`}>
-              <div className="dr-doc-toolbar">
-                <span className="who">{m.role==="user"?"Вы · аудитор":"AuditLens · аналитический отчёт"}</span>
-                {showPdfBtn &&
-                  <PdfExportButton question={userQ} report={m.text}
-                                   sources={m.sources||[]} verification={m.verification}
-                                   claimCheck={m.claimCheck} streaming={streaming}
-                                   charts={m.charts||[]} ranking={m.ranking}
-                                   insights={m.insights} gaps={m.gaps}/>}
-                {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
-              </div>
-              <div className="chat-bubble chat-bubble-deep">
-                {/* Живые карточки параллельных агентов (во время волны сбора). */}
-                {loading && i===msgs.length-1 &&
-                  <AgentsPanel plan={m.plan} stepStates={m.stepStates} phase={m.phase}/>}
-                {/* Ход размышления — ОТДЕЛЬНАЯ панель на каждую стадию. Активна та,
-                    чья стадия совпадает с текущей фазой; прочие свёрнуты «· Nс».
-                    Так дирижёр не «вечно размышляет», а аналитик/критик видны. */}
-                {m.reasoningStages && STAGE_ORDER.filter(s=>m.reasoningStages[s]).map(s=>
-                  <ThinkingPanel key={s} stage={s} text={m.reasoningStages[s]}
-                                  active={loading && i===msgs.length-1 && m.phase===STAGE_PHASE[s]}/>)}
-                {/* Доисследование пробелов (gap-loop) — только во время прогона. */}
-                {loading && i===msgs.length-1 && m.agentIters && m.agentIters.length>0 &&
-                  <AgentPanel iterations={m.agentIters}/>}
-                {/* Stage banner — только для тихих стадий без своей живой панели
-                    (research→AgentsPanel, planning/synthesizing→ThinkingPanel). */}
-                {loading && i===msgs.length-1 &&
-                  <StageStatusBanner stage={m.stageStatus} currentPhase={m.phase}
-                                      mode={m.mode}/>}
-                {/* Coverage — только как предупреждение о слабом покрытии. */}
-                {m.coverage?.warning && <CoverageBanner coverage={m.coverage}/>}
-                {/* Process trace — пост-фактум сводка процесса под готовым отчётом. */}
-                {m.plan && m.plan.length>0 && m.phase==="done" &&
-                  <ProcessTrace plan={m.plan} stepStates={m.stepStates} phase={m.phase}
-                                mode={m.mode} sources={m.sources} verification={m.verification}/>}
-                <div className="dr-doc">
-                  {!hideToc && <DocTocSlot/>}
-                  <article className="dr-doc-main" ref={(el)=>{ m._mainEl=el; }}>
-                    {/* Meta-row: «✓ N фактов верифицировано · X отфильтровано» */}
-                    {(m.claimCheck || m.verification) &&
-                      <ClaimCheckRow claimCheck={m.claimCheck}
-                                      verification={m.verification}
-                                      sourcesCount={(m.sources||[]).length}/>}
-                    {showStartDots?
-                      <PendingDots label="Запускаю исследование…"/>:
-                      <>{renderMD(m.text, m.sources, m.charts)}
-                        {streaming && m.text && <span className="dr-type-caret"/>}</>
-                    }
-                    {/* Charts-wrap внизу: только те графики, что НЕ были встроены
-                        через [[CHART:N]] маркер. Если все встроены — пустой блок
-                        не рендерим. */}
-                    {(()=>{
-                      const used = new Set((m.text||"").matchAll(/\[\[CHART:(\d+)\]\]/g));
-                      const usedIdx = new Set();
-                      (m.text||"").replace(/\[\[CHART:(\d+)\]\]/g,(_,n)=>{usedIdx.add(parseInt(n,10));return _;});
-                      const rest = (m.charts||[]).filter((_,i)=>!usedIdx.has(i));
-                      return rest.length>0 && <div className="dr-charts-wrap">
-                        {rest.map((c,ci)=><ChartCanvas key={ci} spec={c}/>)}
-                      </div>;
-                    })()}
-                    {m.ranking && <div className="dr-fade-in"><RankingWidget ranking={m.ranking}/></div>}
-                    {m.insights && m.insights.length>0 && <div className="dr-fade-in"><InsightsWidget insights={m.insights}/></div>}
-                    {m.verification&&<VerificationBanner verification={m.verification}/>}
-                    {/* Дублирующая кнопка PDF — в конце документа, после всех
-                        разделов и графиков. Нужна для длинных отчётов где
-                        верхняя ушла за viewport scroll. */}
-                    {showPdfBtn && !streaming &&
-                      <div className="dr-doc-footer">
-                        <PdfExportButton question={userQ} report={m.text}
-                                         sources={m.sources||[]} verification={m.verification}
-                                         claimCheck={m.claimCheck} streaming={false}
-                                         charts={m.charts||[]} ranking={m.ranking}
-                                         insights={m.insights} gaps={m.gaps}/>
-                        <span className="dr-doc-footer-hint">
-                          Готовый отчёт для аудита · нумерация страниц, источники, A4
-                        </span>
-                      </div>}
-                  </article>
-                  {!hideRail && <DocRailSlot>
-                    <SourcesRail sources={m.sources||[]} activeN={activeCite}
-                                  onHover={setActiveCite}/>
-                  </DocRailSlot>}
+              {consoleMode ? (
+                <div className="chat-bubble chat-bubble-deep">
+                  <DeepConsole m={m} loading={loading} elapsed={elapsed}/>
                 </div>
-              </div>
+              ) : (<>
+                <div className="dr-doc-toolbar">
+                  <span className="who">AuditLens · аналитический отчёт</span>
+                  {showPdfBtn &&
+                    <PdfExportButton question={userQ} report={m.text}
+                                     sources={m.sources||[]} verification={m.verification}
+                                     claimCheck={m.claimCheck} streaming={streaming}
+                                     charts={m.charts||[]} ranking={m.ranking}
+                                     insights={m.insights} gaps={m.gaps}/>}
+                  {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
+                </div>
+                <div className="chat-bubble chat-bubble-deep">
+                  {/* Сводка завершённого прогона (collapsed bar над отчётом). */}
+                  {m.phase==="done" && m.plan && m.plan.length>0 && <ResearchSummary m={m}/>}
+                  {/* Coverage — только как предупреждение о слабом покрытии. */}
+                  {m.coverage?.warning && <CoverageBanner coverage={m.coverage}/>}
+                  <div className="dr-doc">
+                    {!hideToc && <DocTocSlot/>}
+                    <article className="dr-doc-main" ref={(el)=>{ m._mainEl=el; }}>
+                      {(m.claimCheck || m.verification) &&
+                        <ClaimCheckRow claimCheck={m.claimCheck}
+                                        verification={m.verification}
+                                        sourcesCount={(m.sources||[]).length}/>}
+                      {renderMD(m.text, m.sources, m.charts)}
+                      {streaming && m.text && <span className="dr-type-caret"/>}
+                      {/* Charts-wrap внизу: только графики БЕЗ [[CHART:N]] маркера. */}
+                      {(()=>{
+                        const usedIdx = new Set();
+                        (m.text||"").replace(/\[\[CHART:(\d+)\]\]/g,(_,n)=>{usedIdx.add(parseInt(n,10));return _;});
+                        const rest = (m.charts||[]).filter((_,i)=>!usedIdx.has(i));
+                        return rest.length>0 && <div className="dr-charts-wrap">
+                          {rest.map((c,ci)=><ChartCanvas key={ci} spec={c}/>)}
+                        </div>;
+                      })()}
+                      {m.ranking && <div className="dr-fade-in"><RankingWidget ranking={m.ranking}/></div>}
+                      {m.insights && m.insights.length>0 && <div className="dr-fade-in"><InsightsWidget insights={m.insights}/></div>}
+                      {m.verification&&<VerificationBanner verification={m.verification}/>}
+                      {showPdfBtn && !streaming &&
+                        <div className="dr-doc-footer">
+                          <PdfExportButton question={userQ} report={m.text}
+                                           sources={m.sources||[]} verification={m.verification}
+                                           claimCheck={m.claimCheck} streaming={false}
+                                           charts={m.charts||[]} ranking={m.ranking}
+                                           insights={m.insights} gaps={m.gaps}/>
+                          {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={false}/>}
+                          <span className="dr-doc-footer-hint">
+                            Готовый отчёт для аудита · нумерация страниц, источники, A4
+                          </span>
+                        </div>}
+                    </article>
+                    {!hideRail && <DocRailSlot>
+                      <SourcesRail sources={m.sources||[]} activeN={activeCite}
+                                    onHover={setActiveCite}/>
+                    </DocRailSlot>}
+                  </div>
+                </div>
+              </>)}
             </div>;
           }
-          // Quick mode — обычный bubble
-          return <div key={i} className={`chat-msg ${m.role}`}>
-            <div className="who">{m.role==="user"?"Вы · аудитор":"AuditLens AI"}</div>
-            <div className="chat-bubble">
-              {m.tools&&m.tools.length>0&&<ToolsTimeline tools={m.tools} active={m.role==="ai"&&!m.text&&loading}/>}
-              {m.role==="ai"&&!m.text&&loading?
-                <PendingDots label="Думаю над ответом…"/>:
-                renderMD(m.text, m.sources)
-              }
-              {m.sources&&m.sources.length>0&&<SourcesPanel sources={m.sources}/>}
-            </div>
+          // Quick mode — пользовательский пузырь
+          if(m.role==="user"){
+            return <div key={i} className="chat-msg user">
+              <div className="who">Вы · аудитор</div>
+              <div className="chat-bubble">{renderMD(m.text)}</div>
+            </div>;
+          }
+          // Quick mode — ответ ИИ (редизайн: голый текст + tool-бокс + источники + апселл)
+          const prevQ = (i>0 && msgs[i-1]?.role==="user") ? msgs[i-1].text : "";
+          const thinking = !m.text && loading && i===msgs.length-1;
+          return <div key={i} className="chat-msg ai quick-msg">
+            <div className="who">AuditLens AI</div>
+            {m.tools&&m.tools.length>0 &&
+              <div className="quick-tools">
+                {m.tools.map((t,ti)=>(
+                  <span key={ti} className="quick-tool">
+                    <span className="quick-tool-dot" style={ti===m.tools.length-1&&thinking?{background:"var(--accent)",animation:"pulse 1.4s ease-in-out infinite"}:null}/>
+                    {TOOL_LABELS[t]||t}
+                  </span>))}
+              </div>}
+            {thinking
+              ? <PendingDots label="Думаю над ответом…"/>
+              : <div className="quick-answer chat-bubble">{renderMD(m.text, m.sources)}</div>}
+            {m.sources&&m.sources.length>0 &&
+              <div className="quick-sources">
+                {m.sources.map((s,si)=>(
+                  <a key={si} href={s.url||"#"} target="_blank" rel="noopener noreferrer" className="quick-src">
+                    <span className="quick-src-n">{s.n}</span>
+                    <span className="quick-src-bank">{s.bank_name||domainOf(s.url)||"источник"}</span>
+                    <span className="quick-src-dom">{domainOf(s.url)||"—"}</span>
+                  </a>))}
+              </div>}
+            {m.text && !loading && prevQ &&
+              <div className="quick-upsell">
+                <span className="quick-upsell-t">Нужен документ для аудит-дела — с таблицей, рисками и проверкой чисел?</span>
+                <button className="quick-upsell-btn" onClick={()=>runDeepFromQuick(prevQ)}>
+                  Запустить Deep Research
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                </button>
+              </div>}
           </div>;
         })}
       </div>
+      {isRunning &&
+        <div className="al-runbar">
+          <span className="al-runbar-dot"/>
+          <span className="al-runbar-text">Идёт исследование — обычно 60–120с на реальных данных</span>
+          <span className="al-runbar-el mono">{fmtEl(elapsed)}</span>
+          <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current;if(el){stickRef.current=true;el.scrollTo({top:el.scrollHeight,behavior:"smooth"});}}}>Показать отчёт →</button>
+        </div>}
+      {showComposer &&
       <div className="chat-input-wrap">
         {deepMode && <div className="composer-accent"/>}
         <textarea ref={inputRef} className="chat-textarea" rows={1}
@@ -2481,7 +2673,7 @@ function AIPage(){
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
         </div>
-      </div>
+      </div>}
     </div>
     <aside className="chat-side">
       <h4>Быстрые запросы</h4>
