@@ -18,6 +18,7 @@ import os
 from openai import AsyncOpenAI
 
 from ...ai.llm_utils import deep_reasoning_extra
+from ...clock import today_anchor
 from .knowledge_bundle import KnowledgeBundle
 from .conductor import ResearchPlan
 
@@ -171,7 +172,7 @@ async def write_report(client: AsyncOpenAI, bundle: KnowledgeBundle,
         f"Если есть рейтинг/жалобы/инсайты — они ДОЛЖНЫ быть в отчёте."
     )
 
-    _msgs = [{"role": "system", "content": SYSTEM_PROMPT},
+    _msgs = [{"role": "system", "content": today_anchor() + "\n\n" + SYSTEM_PROMPT},
              {"role": "user", "content": user_msg}]
     _max_tok = int(os.getenv("V2_ANALYST_MAX_TOKENS", "10000"))
     try:

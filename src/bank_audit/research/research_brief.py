@@ -32,6 +32,7 @@ from .entity_extractor import Entity
 from .matrix_builder import Matrix
 from .core_schema import CoreAttr
 from .narrative_generators.base import parse_json_object, format_facts_for_prompt
+from ..clock import today_anchor
 
 log = logging.getLogger(__name__)
 
@@ -209,7 +210,7 @@ async def synthesize_brief(client: AsyncOpenAI, question: str,
         resp = await asyncio.wait_for(
             client.chat.completions.create(
                 model=model,
-                messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                messages=[{"role": "system", "content": today_anchor() + "\n\n" + SYSTEM_PROMPT},
                           {"role": "user", "content": user_msg}],
                 max_tokens=4500, temperature=0.0,
                 # NB: НЕ форсим reasoning_effort=high — gpt-oss-120b при high льёт

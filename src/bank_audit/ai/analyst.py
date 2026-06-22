@@ -12,6 +12,7 @@ from typing import AsyncIterator
 from openai import AsyncOpenAI
 from sqlalchemy import text
 from .. import db
+from ..clock import today_anchor
 
 log = logging.getLogger(__name__)
 
@@ -994,7 +995,7 @@ async def stream_analysis(question: str, history: list[dict],
     client = _patch_client_reasoning_effort(client)
 
     messages = [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": today_anchor() + "\n\n" + SYSTEM},
         *history,
         {"role": "user", "content": question},
     ]

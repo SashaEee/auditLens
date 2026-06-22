@@ -34,6 +34,7 @@ from .base import (
     get_default_model,
 )
 from ..fact import Fact
+from ...clock import today_anchor
 
 log = logging.getLogger(__name__)
 
@@ -256,7 +257,7 @@ async def _llm_call(ctx: NarrativeContext, user_msg: str) -> str:
             ctx.client.chat.completions.create(
                 model=ctx.model or get_default_model(),
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": today_anchor() + "\n\n" + SYSTEM_PROMPT},
                     {"role": "user",   "content": user_msg},
                 ],
                 max_tokens=2000, temperature=0.0,

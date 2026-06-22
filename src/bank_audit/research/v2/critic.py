@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from openai import AsyncOpenAI
 
 from ...ai.llm_utils import deep_reasoning_extra
+from ...clock import today_anchor
 from .knowledge_bundle import KnowledgeBundle, Fact
 
 log = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ async def critique_report(client: AsyncOpenAI, report_md: str,
            if src_block else "")
         + "Проверь отчёт, ВКЛЮЧАЯ grounding цитат [N] по разделу ИСТОЧНИКИ. JSON."
     )
-    _msgs = [{"role": "system", "content": SYSTEM_PROMPT},
+    _msgs = [{"role": "system", "content": today_anchor() + "\n\n" + SYSTEM_PROMPT},
              {"role": "user", "content": user_msg}]
     try:
         if on_reasoning is not None:

@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable
 
 from openai import AsyncOpenAI
 
+from ..clock import today_anchor
 from .fact import Fact
 from .entity_extractor import Entity
 from .matrix_builder import Matrix
@@ -401,7 +402,7 @@ async def _critique_and_repair(ctx, results, question: str):
         resp = await asyncio.wait_for(
             ctx.client.chat.completions.create(
                 model=model,
-                messages=[{"role": "system", "content": _CRITIC_SYSTEM},
+                messages=[{"role": "system", "content": today_anchor() + "\n\n" + _CRITIC_SYSTEM},
                           {"role": "user", "content": user}],
                 max_tokens=1500, temperature=0.0,  # дефолтный effort: чистый JSON
             ), timeout=90)

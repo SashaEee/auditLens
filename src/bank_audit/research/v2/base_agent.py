@@ -32,6 +32,7 @@ from typing import Any, Awaitable, Callable
 
 from openai import AsyncOpenAI
 
+from ...clock import today_anchor
 from .knowledge_bundle import KnowledgeBundle
 
 log = logging.getLogger(__name__)
@@ -540,7 +541,7 @@ class BaseAgent:
             f"источника). Данные старше {_year - 2} — слабый источник: ищи актуальнее "
             f"или явно помечай как устаревшие."
         )
-        return [{"role": "system", "content": self.SYSTEM_PROMPT},
+        return [{"role": "system", "content": today_anchor() + "\n\n" + self.SYSTEM_PROMPT},
                 {"role": "user", "content": user}]
 
     async def _call_llm(self, messages, tools_schema, force_final=False,

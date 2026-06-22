@@ -27,6 +27,7 @@ from openai import AsyncOpenAI
 
 from ...ai.llm_utils import (_loose_json_loads, normalize_question,
                              detect_bank_slugs, deep_reasoning_extra)
+from ...clock import today_anchor
 from .base_agent import AgentMission
 
 log = logging.getLogger(__name__)
@@ -159,7 +160,7 @@ async def plan_research(client: AsyncOpenAI, model: str,
         f"{', '.join(hinted_banks) or '(явных банков нет — определи топ-5 релевантных)'}\n\n"
         f"Верни JSON-план исследования."
     )
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": today_anchor() + "\n\n" + SYSTEM_PROMPT}]
     if history:
         # Берём последние 2 реплики истории для контекста
         messages.extend(history[-2:])
