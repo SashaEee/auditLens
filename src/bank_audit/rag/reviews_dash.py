@@ -526,3 +526,60 @@ def segment_reviews(bank: str, product: str | None = None, city: str | None = No
                 "text": (r["text"] or "")[:320]} for r in revs[:4]]
     texts = [(r["text"] or "")[:600] for r in revs[:25]]
     return {"n": len(revs), "themes": themes, "samples": samples, "texts": texts}
+
+
+@_safe(None)
+def weekly_signals(bank: str, product: str | None = None) -> dict | None:
+    """Срочные аномалии за 7 дней: темы/модули, РЕЗКО выросшие к недельному
+    базлайну (пред. 8 недель) или появившиеся впервые. Числа детерминированы —
+    LLM их потом объясняет, не меняя. Скан ограничен 63 днями. Кэш 30 мин."""
+    eng = _get_engine()
+    if eng is None:
+        return None
+    bc = resolve_bank(bank)
+    if not bc:
+        return None
+
+    def _compute():
+        bclause, bp = _bank_clause(bc, product)
+        cte_sel, params = [], dict(bp)
+        for t in THEMES:
+            ts, tp = _theme_sql(t, f"w{t['key']}_")
+            params.update(tp)
+            cte_sel.append(f'({ts}) AS "{t["key"]}"')
+        wk = "dt >= now()-make_interval(days=>7)"
+        base = "dt < now()-make_interval(days=>7)"
+        sel = []
+        for t in THEMES:
+            k = t["key"]
+            sel.append(f'count(*) FILTER (WHERE {wk} AND "{k}") AS "{k}_w"')
+            sel.append(f'count(*) FILTER (WHERE {base} AND "{k}") AS "{k}_b"')
+        sql = (f'WITH tagged AS MATERIALIZED ('
+               f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)}'
+               f' FROM bankiru.reviews r WHERE {bclause}'
+               f' AND r."datePublished" >= now() - make_interval(days => 63))'
+               f' SELECT {", ".join(sel)},'
+               f' count(*) FILTER (WHERE {wk}) AS "_tw",'
+               f' count(*) FILTER (WHERE {base}) AS "_tb"'
+               f' FROM tagged')
+        with eng.connect() as c:
+            row = c.execute(text(sql), params).mappings().one()
+        BW = 8.0  # недель в базлайне (56 дн)
+        out = []
+        for t in THEMES:
+            w = int(row[f'{t["key"]}_w'])
+            b = int(row[f'{t["key"]}_b'])
+            bw = b / BW
+            new = b <= 2 and w >= 6                       # практически не было → появилось
+            surge = w >= 8 and bw >= 1.0 and w / bw >= 1.8  # резкий рост к норме
+            if surge or new:
+                out.append({"key": t["key"], "label": t["label"], "short": _short(t["label"]),
+                            "risk": t["risk"], "week": w, "baseline_week": round(bw, 1),
+                            "ratio": (round(w / bw, 1) if bw >= 0.5 else None), "new": bool(new)})
+        out.sort(key=lambda s: s["week"] * (s["ratio"] or 3), reverse=True)
+        tw, tb = int(row["_tw"]), int(row["_tb"])
+        tbw = tb / BW
+        overall = {"week": tw, "baseline_week": round(tbw, 1),
+                   "ratio": (round(tw / tbw, 1) if tbw >= 0.5 else None)}
+        return {"bank": bc, "product": product, "signals": out[:6], "overall": overall}
+    return _cached(f"wk:{bc}:{product}", _compute, ttl=1800)

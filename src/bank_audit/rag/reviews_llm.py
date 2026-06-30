@@ -114,3 +114,47 @@ async def classify_reviews(items: list[dict]) -> list[dict | None]:
         if topic:
             out[idx] = {"themes": [{"short": topic[:46], "label": topic, "risk": risk}]}
     return out
+
+
+# ── Срочные аномалии за 7 дней (audit-радар, on-demand при загрузке блока) ───
+_ANOM_SYSTEM = (
+    "Ты — аналитик службы внутреннего аудита банка. Тебе дают СЧИТАННЫЕ за 7 дней "
+    "недельные аномалии (точные числа — НЕ меняй и не выдумывай новые) и свежие "
+    "жалобы недели. Задача — за 10 секунд сказать аудитору, ГДЕ резко изменилось и "
+    "какой МОДУЛЬ идти проверять: резкий рост жалоб = модуль внезапно деградировал "
+    "или заброшен сопровождением. Не алармируй без чисел."
+)
+
+
+async def anomaly_brief(sig: dict, samples: list[dict]) -> str | None:
+    """sig — результат reviews_dash.weekly_signals(). Возвращает markdown-резюме
+    из 2–4 коротких срочных пунктов (или None — тогда показываем сами сигналы)."""
+    signals = (sig or {}).get("signals") or []
+    if not signals:
+        return None
+    lines = []
+    for s in signals:
+        tag = "НОВАЯ тема (раньше почти не было)" if s.get("new") else (
+            f"×{s['ratio']} к норме" if s.get("ratio") else "рост")
+        lines.append(f'- {s["label"]}: {s["week"]} жалоб за 7 дн ({tag}; обычно ~{s["baseline_week"]}/нед)')
+    ov = (sig or {}).get("overall") or {}
+    ov_line = (f'Всего за неделю: {ov.get("week")} (обычно ~{ov.get("baseline_week")}/нед).'
+               if ov.get("week") is not None else "")
+    samp = "\n".join(f'— {(r.get("text") or "")[:280]}' for r in (samples or [])[:14])
+    user = (
+        "Аномалии недели (числа точные):\n" + "\n".join(lines) + f"\n{ov_line}\n\n"
+        f"Свежие жалобы недели:\n{samp}\n\n"
+        "Дай 2–4 КОРОТКИХ срочных пункта (markdown, каждый с новой строки, начинай с «- »). "
+        "В каждом: что резко изменилось (с цифрой из сигналов), вероятная причина из жалоб, "
+        "и какой **модуль/тему** проверить (выдели жирным). Без вступления, без воды."
+    )
+    try:
+        resp = await _client().chat.completions.create(
+            model=smart_model(),
+            messages=[{"role": "system", "content": _ANOM_SYSTEM},
+                      {"role": "user", "content": user}],
+            temperature=0.2, max_tokens=1600)
+        return (resp.choices[0].message.content or "").strip() or None
+    except Exception as e:  # noqa: BLE001
+        log.warning("reviews_llm.anomaly_brief упал: %s", e)
+        return None

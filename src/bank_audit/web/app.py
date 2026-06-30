@@ -226,6 +226,20 @@ async def reviews_feed_classified(bank: str = "Сбербанк", product: Optio
             llm_ok = True
     return {"items": items, "count": len(items), "llm": llm_ok}
 
+@app.get("/api/reviews/anomalies")
+async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[str] = None):
+    """Срочные аномалии за 7 дней (audit-радар): детерминированные недельные
+    всплески тем/модулей + краткое LLM-объяснение. Грузится отдельно от дашборда."""
+    import asyncio
+    from ..rag import reviews_llm
+    sig = await asyncio.to_thread(_rd().weekly_signals, bank, product or None)
+    signals = (sig or {}).get("signals") or []
+    if not signals:
+        return {"summary": None, "signals": [], "overall": (sig or {}).get("overall"), "calm": True}
+    samples = await asyncio.to_thread(_rd().list_reviews, bank, product or None, None, None, 7, None, None, 15)
+    brief = await reviews_llm.anomaly_brief(sig, samples)
+    return {"summary": brief, "signals": signals, "overall": sig.get("overall"), "calm": False}
+
 @app.get("/api/reviews/explain")
 async def reviews_explain(bank: str = "Сбербанк", product: Optional[str] = None,
                           city: Optional[str] = None, month: Optional[str] = None):

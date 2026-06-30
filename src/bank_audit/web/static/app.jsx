@@ -980,6 +980,7 @@ function ReviewsPage(){
   const[explain,setExplain]=useState(null),[explainBusy,setExplainBusy]=useState(false);
   const[clsBusy,setClsBusy]=useState(false),[clsOn,setClsOn]=useState(false);
   const[thAll,setThAll]=useState(false);   // показать все темы риск-карты vs топ-12
+  const[anom,setAnom]=useState(null),[anomBusy,setAnomBusy]=useState(false);  // радар аномалий
 
   const enc=encodeURIComponent;
   const pq=()=>product?`&product=${enc(product)}`:"";
@@ -1024,6 +1025,13 @@ function ReviewsPage(){
   useEffect(()=>{ setProduct("");
     apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>setProds(d.items||[])).catch(()=>setProds([]));
   },[bank]);
+
+  // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
+  useEffect(()=>{ setAnomBusy(true);setAnom(null);
+    apiFetch(`/api/reviews/anomalies?bank=${enc(bank)}${pq()}`)
+      .then(d=>{setAnom(d||{calm:true});setAnomBusy(false);})
+      .catch(()=>{setAnom({calm:true});setAnomBusy(false);});
+  },[bank,product]);
 
   useEffect(()=>{ setFeedBusy(true);setClsOn(false);
     const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
@@ -1181,6 +1189,33 @@ function ReviewsPage(){
               <div className="rv-vp mono">{String(r.pct).replace(".",",")}%</div>
             </div>
           ))}
+        </div>
+        {/* RADAR: срочные аномалии за 7 дней (грузится отдельно, LLM) */}
+        <div className="rv-card rv-radar">
+          <div className="rv-radar-head">
+            <span className="rv-radar-ico" aria-hidden="true">⚡</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div className="rv-ttl">Срочные аномалии</div>
+              <div className="rv-cap">резкие изменения за 7 дней{ov&&ov.as_of?` · ${ov.as_of}`:""}</div>
+            </div>
+            <span className={"rv-radar-live"+(anomBusy?" scan":"")} title="LLM-радар"/>
+          </div>
+          {anomBusy?
+            <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Сканирую аномалии недели…</span></div>
+           :(!anom||anom.calm||!anom.signals||!anom.signals.length)?
+            <div className="rv-radar-calm"><span className="rv-radar-check">✓</span> Резких аномалий за неделю не выявлено</div>
+           :<>
+              <div className="rv-radar-chips">
+                {anom.signals.map((s,i)=>(
+                  <span key={i} className={"rv-radar-chip "+(s.risk||"ops")} role="button" tabIndex={0}
+                        title="открыть тему в ленте" onClick={()=>setTheme(s.key)} onKeyDown={onKey(()=>setTheme(s.key))}>
+                    {s.short||s.label}<b>{s.new?"NEW":"×"+s.ratio}</b>
+                  </span>
+                ))}
+              </div>
+              {anom.summary?<div className="rv-radar-brief">{renderMD(anom.summary)}</div>
+                :<div className="rv-cap" style={{marginTop:6}}>LLM-резюме недоступно — см. всплески выше (числа за 7 дн).</div>}
+            </>}
         </div>
       </div>
     </div>
