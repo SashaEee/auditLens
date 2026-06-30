@@ -149,6 +149,11 @@ def _slug_to_ru(n: str, idx: dict) -> str:
     for tn in norm_trs:                       # синоним, прямо присутствующий в корпусе
         if tn in idx:
             return tn
+    for tn in norm_trs:                       # синоним-префикс имени (россельхоз→россельхозбанк)
+        if len(tn) >= 5:
+            for k in idx:
+                if k.startswith(tn):
+                    return k
     cyr = [t for t in norm_trs if re.search(r"[а-я]", t)]   # иначе — для fuzzy
     return max(cyr or norm_trs, key=len)
 
