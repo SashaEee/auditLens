@@ -288,6 +288,29 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
     return out
 
 
+def search_reviews_multi(query: str | None = None, *, banks: list[str],
+                         product: str | None = None, since_days: int | None = None,
+                         k_per: int = 8) -> dict:
+    """Точечный поиск по КАЖДОМУ банку ОТДЕЛЬНО (bank-scoped) — для сравнения/«топа».
+    Надёжнее глобального семантического: у каждого банка свой top-k (точный скан по
+    подмножеству), банки не вытесняют друг друга. Возвращает {canonBank: [reviews]}.
+    Эмбеддинг запроса кэшируется → повторные банки не пересчитывают вектор."""
+    out: dict[str, list] = {}
+    seen: set[str] = set()
+    for b in (banks or [])[:10]:          # верхний предел на число банков за вызов
+        if not b:
+            continue
+        canon = resolve_bank(b)
+        if not canon or canon in seen:    # нерезолвящиеся/дубли пропускаем
+            if b and not canon:
+                out.setdefault(b, [])     # пометим как «нет в корпусе» пустым списком
+            continue
+        seen.add(canon)
+        out[canon] = search_reviews(query, bank=canon, product=product,
+                                    since_days=since_days, k=k_per)
+    return out
+
+
 def is_available() -> bool:
     """Доступна ли БД bankiru (для health/диагностики)."""
     if not ENABLED:

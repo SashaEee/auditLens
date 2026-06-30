@@ -267,22 +267,64 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
     """
     query = (args.get("query") or "").strip() or None
     bank = args.get("bank") or args.get("bank_slug") or args.get("bank_name")
-    if isinstance(bank, list):
-        bank = bank[0] if bank else None
-    if not query and not bank:
-        return json.dumps({"error": "нужен bank (для discovery) или query"},
-                          ensure_ascii=False)
     product = args.get("product")
+    since_days = args.get("since_days")
     try:
         k = int(args.get("k", 8))
     except (TypeError, ValueError):
         k = 8
+    # ── НЕСКОЛЬКО БАНКОВ: точечный поиск по каждому отдельно (надёжнее global) ──
+    raw_banks = args.get("banks")
+    banks = None
+    if isinstance(raw_banks, list) and raw_banks:
+        banks = raw_banks
+    elif isinstance(raw_banks, str) and raw_banks.strip():
+        banks = [x.strip() for x in raw_banks.split(",") if x.strip()]
+    elif isinstance(bank, list) and len(bank) > 1:
+        banks = bank
+    elif isinstance(bank, str) and "," in bank:
+        banks = [x.strip() for x in bank.split(",") if x.strip()]
+    if isinstance(bank, list):
+        bank = bank[0] if bank else None
+    from ....rag import bankiru_reviews as br
+    if banks:
+        kp = max(k, 6)
+        try:
+            by = br.search_reviews_multi(query, banks=banks, product=product,
+                                         since_days=since_days, k_per=kp)
+        except Exception as e:
+            return json.dumps({"error": f"reviews_db multi failed: {e}"}, ensure_ascii=False)
+        out_by, counts, total = {}, {}, 0
+        for bnk, revs in by.items():
+            arr = []
+            for r in revs:
+                title = " · ".join(x for x in ["banki.ru", r.get("bank"),
+                                               r.get("product"), r.get("date")] if x)
+                src_n = register_source(bundle, url=r.get("url") or "", title=title,
+                                        domain="banki.ru", trust=0.55, kind="review",
+                                        excerpt=(r.get("text") or "")[:600])
+                arr.append({"product": r.get("product"), "date": r.get("date"),
+                            "url": r.get("url"), "source_n": src_n,
+                            "text": (r.get("text") or "")[:900],
+                            "relevance": round(1.0 - float(r.get("distance", 0) or 0), 3)})
+            out_by[bnk] = arr
+            counts[bnk] = len(arr)
+            total += len(arr)
+        empties = [b for b, v in counts.items() if not v]
+        resp = {"mode": "per_bank", "query": query, "by_bank": out_by,
+                "counts": counts, "total": total}
+        if empties:
+            resp["empty_banks_note"] = ("Без жалоб в корпусе по этой теме: " + ", ".join(empties) +
+                                        " (возможно, банк вне корпуса banki.ru или нет данных по теме).")
+        return json.dumps(resp, ensure_ascii=False)
+    # ── одиночный банк / общий рыночный срез ──
+    if not query and not bank:
+        return json.dumps({"error": "нужен bank/banks (для discovery) или query"},
+                          ensure_ascii=False)
     # discovery (без темы) — отдаём больше, чтобы из них проступили темы
     if not query:
         k = max(k, 15)
-    since_days = args.get("since_days")
     try:
-        from ....rag import bankiru_reviews as br
         results = br.search_reviews(query, bank=bank, product=product,
                                      since_days=since_days, k=k)
     except Exception as e:

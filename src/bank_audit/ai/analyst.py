@@ -128,15 +128,17 @@ TOOLS = [
                 "Главный режим: передай ТОЛЬКО bank (и product при наличии) БЕЗ "
                 "query — увидишь, на что РЕАЛЬНО жалуются клиенты, не угадывая "
                 "проблему. query задавай лишь для точечного среза по теме.\n"
-                "⚠ ВСЕГДА передавай bank, если вопрос про конкретный банк ИЛИ про "
-                "СРАВНЕНИЕ банков — тогда зови инструмент ОТДЕЛЬНО по каждому банку. "
-                "Запрос query БЕЗ bank — это лишь общий рыночный top-k, он НЕ "
+                "⚠ Конкретный банк → передай bank. СРАВНЕНИЕ/ТОП банков → передай "
+                "banks=[\"Сбербанк\",\"ВТБ\",\"Альфа-Банк\",\"Т-Банк\"] (+query=тема): "
+                "инструмент сам сделает точечный поиск по каждому и вернёт by_bank. "
+                "Запрос query БЕЗ bank/banks — лишь общий рыночный top-k, он НЕ "
                 "покрывает все банки и НЕ доказывает, что у банка нет жалоб."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "bank": {"type": "string", "description": "Имя банка (Сбербанк/ВТБ/Т-Банк/…) — обязателен"},
+                    "bank": {"type": "string", "description": "Имя ОДНОГО банка (Сбербанк/ВТБ/Т-Банк/…)"},
+                    "banks": {"type": "array", "items": {"type": "string"}, "description": "Список банков для СРАВНЕНИЯ/ТОПа — поиск по каждому отдельно, ответ by_bank"},
                     "product": {"type": "string", "description": "Продукт banki.ru (опц.): «Вклад», «Кредитная карта», «Ипотека», «Обслуживание юридических лиц» (эквайринг/РКО)…"},
                     "query": {"type": "string", "description": "ОПЦИОНАЛЬНО — конкретная тема для точечного среза. Для общего обзора не задавай."},
                     "k": {"type": "integer", "default": 12},
@@ -430,6 +432,28 @@ def _run_tool(name: str, args: dict) -> str:
             _k = int(args.get("k", 12))
             if not _q:
                 _k = max(_k, 15)   # discovery — больше отзывов, чтобы видеть темы
+            # СРАВНЕНИЕ/ТОП банков — точечно по каждому (надёжнее общего семантического)
+            _banks = args.get("banks")
+            if isinstance(_banks, str):
+                _banks = [x.strip() for x in _banks.split(",") if x.strip()]
+            if not _banks and isinstance(args.get("bank"), list):
+                _banks = args.get("bank")
+            if _banks:
+                try:
+                    by = _br.search_reviews_multi(_q, banks=_banks,
+                                                  product=args.get("product"), k_per=max(_k // 2, 6))
+                except Exception as e:
+                    return json.dumps({"error": f"search_complaints multi failed: {e}"}, ensure_ascii=False)
+                out = {b: [{"product": r.get("product"), "date": r.get("date"), "url": r.get("url"),
+                            "text": (r.get("text") or "")[:600]} for r in revs]
+                       for b, revs in by.items()}
+                empties = [b for b, v in out.items() if not v]
+                resp = {"mode": "per_bank", "by_bank": out,
+                        "counts": {b: len(v) for b, v in out.items()}}
+                if empties:
+                    resp["empty_banks_note"] = ("Без жалоб по теме в корпусе: " + ", ".join(empties) +
+                                                " (возможно вне корпуса banki.ru или нет данных).")
+                return json.dumps(resp, ensure_ascii=False, default=str)
             try:
                 res = _br.search_reviews(_q, bank=args.get("bank"),
                                           product=args.get("product"), k=_k)
