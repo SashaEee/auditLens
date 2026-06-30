@@ -47,7 +47,9 @@ async def explain_segment(seg: dict, *, label: str) -> str | None:
             model=smart_model(),
             messages=[{"role": "system", "content": _SYSTEM},
                       {"role": "user", "content": user}],
-            temperature=0.2, max_tokens=600)
+            # gemini-2.5-flash — thinking-модель: бюджет должен покрыть скрытый
+            # reasoning + сам ответ, иначе текст обрезается на ~100 символах.
+            temperature=0.2, max_tokens=2048)
         return (resp.choices[0].message.content or "").strip() or None
     except Exception as e:  # noqa: BLE001 — деградируем мягко, объяснение не критично
         log.warning("reviews_llm.explain_segment упал: %s", e)

@@ -238,7 +238,7 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
             med = _median(complete)
             mad = _median([abs(v - med) for v in complete]) or (
                 sum(abs(v - med) for v in complete) / len(complete))
-            thr = med + 3.0 * mad
+            thr = med + 2.0 * mad   # ловит явный пик (напр. +55%), не шумит на ровном ряде
             for s in series:
                 s["pct_vs_median"] = round(100.0 * (s["n"] - med) / med) if med else 0
                 s["spike"] = (not s["partial"]) and s["n"] > thr and s["n"] >= med * 1.4
