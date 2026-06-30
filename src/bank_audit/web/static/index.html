@@ -1251,9 +1251,45 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-clear{color:var(--accent);cursor:pointer;font-family:'JetBrains Mono',monospace}
 .rv-clear:hover{text-decoration:underline}
 .rv-note{padding:26px 8px;text-align:center;color:var(--ink-3);font-size:13px;line-height:1.4}
-.rv-trow:focus-visible,.rv-lnk2:focus-visible,.rv-clear:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.rv-trow:focus-visible,.rv-lnk2:focus-visible,.rv-clear:focus-visible,.rv-grow-click:focus-visible,.rv-bcol:focus-visible,.rv-rq-click:focus-visible,.rv-ovl-x:focus-visible,.rv-explain-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* доверие к данным */
+.rv-disclaimer{font-size:11.5px;line-height:1.5;color:var(--ink-2);background:color-mix(in oklab,var(--warn),var(--surface) 90%);border:1px solid color-mix(in oklab,var(--warn),transparent 70%);border-radius:8px;padding:9px 12px;margin:0 0 18px}
+.rv-disclaimer b{color:var(--ink);font-weight:600}
+.rv-lown{color:var(--ink-4);font-family:'JetBrains Mono',monospace;font-size:10px}
+
+/* массовость / клик-аффордансы ленты */
+.rv-sim{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent);background:var(--accent-soft);border-radius:3px;padding:2px 6px}
+.rv-rq-click{cursor:pointer;border-radius:6px;transition:color .12s}
+.rv-rq-click:hover{color:var(--ink)}
+.rv-more{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);white-space:nowrap}
+
+/* кликабельные столбцы тренда / города */
+.rv-bcol{cursor:pointer}
+.rv-bcol:hover .rv-bar{filter:brightness(.92)}
+.rv-bar.part{background:repeating-linear-gradient(45deg,var(--ink-4),var(--ink-4) 3px,transparent 3px,transparent 6px)!important;opacity:.7}
+.rv-grow-click{cursor:pointer;border-radius:7px;transition:background .12s;margin:0 -6px;padding-left:6px;padding-right:6px}
+.rv-grow-click:hover{background:var(--paper-2)}
+
+/* оверлей: модал + правый драуэр */
+.rv-ovl{position:fixed;inset:0;z-index:200;background:color-mix(in oklab,var(--ink),transparent 78%);display:flex;align-items:center;justify-content:center;padding:24px;animation:fade-in .14s ease}
+.rv-ovl-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-2);width:760px;max-width:100%;max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+.rv-ovl-right{margin-left:auto;margin-right:0;height:100vh;max-height:100vh;width:560px;border-radius:0;border-right:none;border-top:none;border-bottom:none}
+.rv-ovl-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--hair);flex:none}
+.rv-ovl-x{width:30px;height:30px;flex:none;border-radius:6px;border:1px solid var(--hair-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:14px;line-height:1}
+.rv-ovl-x:hover{background:var(--paper-2);color:var(--ink)}
+.rv-ovl-body{padding:18px;overflow-y:auto}
+.rv-modal-text{font-family:'Source Serif 4',Georgia,serif;font-size:14.5px;line-height:1.65;color:var(--ink);white-space:pre-wrap}
+
+/* LLM-объяснение в драуэре */
+.rv-explain-btn{width:100%;height:38px;border-radius:8px;border:1px solid color-mix(in oklab,var(--accent),transparent 55%);background:var(--accent-soft);color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;cursor:pointer;transition:background .12s}
+.rv-explain-btn:hover:not(:disabled){background:color-mix(in oklab,var(--accent),transparent 80%)}
+.rv-explain-btn:disabled{opacity:.6;cursor:default}
+.rv-explain{margin:12px 0;padding:12px 14px;border-radius:8px;background:var(--paper-2);border:1px solid var(--hair);font-size:13px;line-height:1.6;color:var(--ink);white-space:pre-wrap}
+.rv-explain-err{color:var(--ink-3)}
 
 @media(max-width:920px){
+  .rv-ovl-right{width:100%}
   .rv-kpis{grid-template-columns:repeat(2,1fr)}
   .rv-row2{grid-template-columns:1fr}
   .rv-trow{grid-template-columns:1fr 80px 44px 50px}

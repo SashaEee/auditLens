@@ -906,6 +906,47 @@ const rvDelta=(d)=> d==null ? <span className="rv-flat">→</span>
 // Сбой загрузки панели ≠ «данных нет» — для аудитора это важное различие.
 function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удалось загрузить — обновите страницу":"Нет данных за выбранный период"}</div>;}
 
+// Переиспользуемый оверлей: центральный модал (полный текст) или правый драуэр
+// (drill-in по городу/месяцу). Закрытие по клику-вне, ✕ и Esc.
+function RvModal({onClose,title,sub,side,children}){
+  useEffect(()=>{
+    const h=e=>{if(e.key==="Escape")onClose();};
+    document.addEventListener("keydown",h);
+    return ()=>document.removeEventListener("keydown",h);
+  },[onClose]);
+  return <div className="rv-ovl" onClick={onClose}>
+    <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")} onClick={e=>e.stopPropagation()}>
+      <div className="rv-ovl-head">
+        <div style={{minWidth:0}}>
+          <div className="rv-ttl" style={{fontSize:15}}>{title}</div>
+          {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
+        </div>
+        <button className="rv-ovl-x" onClick={onClose} aria-label="Закрыть">✕</button>
+      </div>
+      <div className="rv-ovl-body">{children}</div>
+    </div>
+  </div>;
+}
+
+// Карточка отзыва (переиспользуется в ленте, в модале и в драуэре).
+function RvReview({r,onOpen,full}){
+  const txt=r.text||"";
+  return <div className="rv-rev">
+    <div className="rv-rh">
+      <span>{r.date}</span>
+      {r.product&&<span className="rv-pill">{r.product}</span>}
+      {r.city&&<span className="rv-pill">{r.city}</span>}
+      {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
+    </div>
+    <div className={"rv-rq"+(onOpen?" rv-rq-click":"")} role={onOpen?"button":undefined}
+         tabIndex={onOpen?0:undefined} onClick={onOpen||undefined}
+         onKeyDown={onOpen?(e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen();}}):undefined}>
+      {full?txt:(txt.slice(0,420)+(txt.length>420?"…":""))}
+      {onOpen&&txt.length>420&&<span className="rv-more"> читать полностью →</span>}
+    </div>
+  </div>;
+}
+
 function ReviewsPage(){
   const[bank,setBank]=useState("Сбербанк");
   const[bankList,setBankList]=useState(RV_BANKS);
@@ -919,9 +960,29 @@ function ReviewsPage(){
   const[feed,setFeed]=useState(null);
   const[busy,setBusy]=useState(true),[feedBusy,setFeedBusy]=useState(false);
   const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
+  const[modalRev,setModalRev]=useState(null);            // полный текст отзыва
+  const[drill,setDrill]=useState(null);                  // {type:'city'|'month',value,label}
+  const[drillItems,setDrillItems]=useState(null),[drillBusy,setDrillBusy]=useState(false);
+  const[explain,setExplain]=useState(null),[explainBusy,setExplainBusy]=useState(false);
 
   const enc=encodeURIComponent;
   const pq=()=>product?`&product=${enc(product)}`:"";
+
+  // drill-in: открыть боковую панель по городу/месяцу, подгрузить жалобы среза
+  const openDrill=(type,value,label)=>{
+    setDrill({type,value,label});setExplain(null);setExplainBusy(false);
+    setDrillItems(null);setDrillBusy(true);
+    const f=type==="city"?`&city=${enc(value)}`:`&month=${enc(value)}`;
+    apiFetch(`/api/reviews/feed?bank=${enc(bank)}${pq()}${f}&limit=40`)
+      .then(d=>{setDrillItems(d.items||[]);setDrillBusy(false);}).catch(()=>{setDrillItems([]);setDrillBusy(false);});
+  };
+  const runExplain=()=>{
+    if(!drill)return; setExplainBusy(true);
+    const f=drill.type==="city"?`&city=${enc(drill.value)}`:`&month=${enc(drill.value)}`;
+    apiFetch(`/api/reviews/explain?bank=${enc(bank)}${pq()}${f}`)
+      .then(d=>{setExplain(d&&d.summary?d.summary:"__none__");setExplainBusy(false);})
+      .catch(()=>{setExplain("__none__");setExplainBusy(false);});
+  };
 
   useEffect(()=>{
     apiFetch("/api/reviews/banks").then(d=>{
@@ -976,7 +1037,8 @@ function ReviewsPage(){
   return <div className="fade-in rv">
     <div className="eyebrow" style={{marginBottom:6}}>§ Отзывы · аудит-сигналы</div>
     <h1 className="t-h" style={{marginBottom:4,fontFamily:"'Source Serif 4',Georgia,serif",fontWeight:600,letterSpacing:"-.015em"}}>Голос клиента — риск-радар</h1>
-    <div className="rv-src">banki.ru · ~390 тыс. жалоб (1–2★) · 217 банков · 2025–2026 · обновляется ежедневно</div>
+    <div className="rv-src">banki.ru · ~390 тыс. жалоб · 217 банков{ov&&ov.as_of?<> · данные по {ov.as_of}</>:""}</div>
+    <div className="rv-disclaimer">⚠ Корпус — <b>только негатив (1–2★)</b>. Все метрики — динамика и структура <b>внутри жалоб</b>, а не доля недовольных клиентов. «Доля рынка» и «место» отражают объём выгрузки banki.ru, <b>не нормированы на клиентскую базу</b> банка.</div>
 
     <div className="rv-filters">
       <label className="rv-fl">Банк
@@ -1001,7 +1063,7 @@ function ReviewsPage(){
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Жалоб за {days} дн</div>
         <div className="rv-kv">{busy?"…":(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
-        <div className="rv-ks">{ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {Math.abs(ov.delta_pct)}%</span>:<span className="rv-up">↑ {ov.delta_pct}%</span>} к пред. периоду</>:"—"}</div>
+        <div className="rv-ks">{ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {Math.abs(ov.delta_pct)}%</span>:<span className="rv-up">↑ {ov.delta_pct}%</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
       </div>
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Доля рынка жалоб</div>
@@ -1023,14 +1085,17 @@ function ReviewsPage(){
     {/* TREND */}
     <div className="rv-card" style={{marginBottom:14}}>
       <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно · {bank}{product?` · ${product}`:""}</div></div></div>
+      <div className="rv-cap" style={{marginTop:-8,marginBottom:10}}>клик по столбцу → жалобы месяца{tr&&tr.series&&tr.series.some(s=>s.partial)?" · последний месяц неполный (штриховка)":""}</div>
       {busy?<Skel h={150}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
         <div className="rv-bars">
-          {tr.series.map((s,i)=><div key={i} className="rv-bcol" title={`${s.ym}: ${fmtNum(s.n)}`}>
-            <div className={"rv-bar"+(s.spike?" hot":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
+          {tr.series.map((s,i)=><div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={`${s.ym}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`}
+               role="button" tabIndex={0} onClick={()=>openDrill("month",s.ym,`Жалобы за ${s.ym}${s.partial?" (неполный месяц)":""}`)}
+               onKeyDown={onKey(()=>openDrill("month",s.ym,`Жалобы за ${s.ym}`))}>
+            <div className={"rv-bar"+(s.spike?" hot":"")+(s.partial?" part":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
             <div className="rv-blab">{s.ym.slice(2).replace("-",".")}</div>
           </div>)}
         </div>
-        {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик {sp.map(s=>s.ym).join(", ")} — рост к среднему, повод проверить, что менялось</div>:null;})()}
+        {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик {sp.map(s=>s.ym).join(", ")} — выше базовой линии (медиана+MAD по завершённым месяцам). Клик по столбцу — разобрать, что произошло.</div>:null;})()}
       </>}
     </div>
 
@@ -1052,9 +1117,11 @@ function ReviewsPage(){
       </div>
       <div className="rv-card">
         <div className="rv-ttl">География</div>
-        <div className="rv-cap">города · per-capita аномалии (12 мес)</div>
+        <div className="rv-cap">города · per-capita аномалии (12 мес) · клик → жалобы города</div>
         {busy?<Skel h={220}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:ge.cities.map((c,i)=>(
-          <div key={i} className="rv-grow">
+          <div key={i} className="rv-grow rv-grow-click" role="button" tabIndex={0}
+               onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
+               onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
             <div style={{minWidth:0}}>
               <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
               <div className="rv-gbar" style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
@@ -1099,8 +1166,11 @@ function ReviewsPage(){
             <span>{r.date}</span>
             {r.product&&<span className="rv-pill">{r.product}</span>}
             {r.city&&<span className="rv-pill">{r.city}</span>}
+            {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
           </div>
-          <div className="rv-rq">{(r.text||"").slice(0,420)}{(r.text||"").length>420?"…":""}</div>
+          <div className="rv-rq rv-rq-click" role="button" tabIndex={0} onClick={()=>setModalRev(r)} onKeyDown={onKey(()=>setModalRev(r))}>
+            {(r.text||"").slice(0,420)}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
+          </div>
           <div className="rv-rf">
             {r.url&&<a href={r.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
             <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(r)} onKeyDown={onKey(()=>addCase(r))}>＋ в аудит-дело</span>
@@ -1108,6 +1178,32 @@ function ReviewsPage(){
         </div>
        ))}
     </div>
+
+    {/* МОДАЛ: полный текст обращения */}
+    {modalRev&&<RvModal onClose={()=>setModalRev(null)} title="Обращение клиента"
+        sub={[modalRev.date,modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
+      {modalRev.similar>0&&<div className="rv-sim" style={{marginBottom:10}}>+{modalRev.similar} похожих обращений (массовая жалоба)</div>}
+      <div className="rv-modal-text">{modalRev.text}</div>
+      <div className="rv-rf" style={{marginTop:16}}>
+        {modalRev.url&&<a href={modalRev.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
+        <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(modalRev)} onKeyDown={onKey(()=>addCase(modalRev))}>＋ в аудит-дело</span>
+      </div>
+    </RvModal>}
+
+    {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
+    {drill&&<RvModal side="right" onClose={()=>setDrill(null)} title={drill.label}
+        sub={`${bank}${product?` · ${product}`:""}${drillItems?` · показано ${drillItems.length}`:""}`}>
+      <button className="rv-explain-btn" onClick={runExplain} disabled={explainBusy}>
+        {explainBusy?"Анализирую жалобы…":"✦ Объяснить причину (LLM)"}
+      </button>
+      {explain&&explain!=="__none__"&&<div className="rv-explain">{explain}</div>}
+      {explain==="__none__"&&<div className="rv-explain rv-explain-err">Не удалось получить объяснение (LLM недоступен). Жалобы ниже — для ручного разбора.</div>}
+      <div style={{marginTop:6}}>
+        {drillBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
+         !drillItems||!drillItems.length?<RvNote/>:
+         drillItems.map((r,i)=><RvReview key={i} r={r} onOpen={()=>setModalRev(r)}/>)}
+      </div>
+    </RvModal>}
   </div>;
 }
 
