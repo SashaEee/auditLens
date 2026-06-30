@@ -204,6 +204,28 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                                city=city or None, month=month or None, limit=limit)
     return {"items": items, "count": len(items)}
 
+@app.get("/api/reviews/feed-classified")
+async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,
+                                  theme: Optional[str] = None, q: Optional[str] = None,
+                                  city: Optional[str] = None, month: Optional[str] = None,
+                                  limit: int = 20):
+    """Лента + LLM-уточнение тем показанных отзывов (on-demand, по кнопке).
+    Regex-темы остаются fallback'ом, если LLM не разобрал строку."""
+    import asyncio
+    from ..rag import reviews_llm
+    items = await asyncio.to_thread(_rd().list_reviews, bank, product or None, theme or None,
+                                    q or None, None, city or None, month or None, limit)
+    if not items:
+        return {"items": [], "count": 0, "llm": False}
+    cls = await reviews_llm.classify_reviews(items)
+    llm_ok = False
+    for it, c in zip(items, cls):
+        if c and c.get("themes"):
+            it["themes"] = c["themes"]
+            it["theme_src"] = "llm"
+            llm_ok = True
+    return {"items": items, "count": len(items), "llm": llm_ok}
+
 @app.get("/api/reviews/explain")
 async def reviews_explain(bank: str = "Сбербанк", product: Optional[str] = None,
                           city: Optional[str] = None, month: Optional[str] = None):

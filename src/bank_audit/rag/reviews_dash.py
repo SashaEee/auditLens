@@ -45,13 +45,13 @@ THEMES = [
     {"key": "blocking", "label": "Блокировки счетов · 115-ФЗ", "risk": "compliance",
      "patterns": ["115-фз", "115 фз", "заблокир", "блокиров", "разблокир", "арест счет", "арестова"]},
     {"key": "escalation", "label": "Эскалация в ЦБ/суд/ФАС", "risk": "compliance",
-     "patterns": ["в цб", "центробанк", " в суд", "исков", "подам иск", "фас", "прокурат", "роспотреб", "жалобу в"]},
+     "patterns": ["в цб", "центробанк", "центральный банк", " в суд", "исков", "подам иск", "антимонопольн", " в фас", "прокурат", "роспотреб", "жалобу в", "регулятор"]},
     {"key": "fraud", "label": "Мошенничество / компрометация", "risk": "compliance",
      "patterns": ["мошенник", "компромет", "украли деньг", "несанкционир", "списали без", "сняли деньги без"]},
     {"key": "insurance", "label": "Навязанная страховка", "risk": "conduct",
      "patterns": ["навяз", "страховку без", "страхование без", "без моего согласия"]},
     {"key": "fees", "label": "Скрытые комиссии / рост тарифов", "risk": "conduct",
-     "patterns": ["скрыт", "повысили комисс", "подняли тариф", "повышение тариф", "комиссия за", "удержали комисс"]},
+     "patterns": ["скрыт комисс", "скрыт плат", "скрыт усл", "повысили комисс", "подняли тариф", "повышение тариф", "комиссия за", "удержали комисс", "навязали комисс"]},
     {"key": "missell", "label": "Навязывание / подключили без согласия", "risk": "conduct",
      "patterns": ["подключили без", "оформили без", "без моего ведома", "обманом", "ввели в заблужд", "не предупред"]},
     {"key": "app", "label": "Сбой приложения / ДБО", "risk": "ops",
@@ -69,10 +69,21 @@ THEME_BY_KEY = {t["key"]: t for t in THEMES}
 _THEME_RE = [(t, re.compile("|".join(re.escape(p) for p in t["patterns"]), re.I)) for t in THEMES]
 
 
+def _short(label: str) -> str:
+    """Короткая метка темы для чипов в ленте (до разделителя · или /)."""
+    return re.split(r"\s*[·/]\s*", label)[0]
+
+
+def theme_obj(key: str) -> dict | None:
+    """Полный объект темы по ключу — для LLM-классификации (key→{label,short,risk})."""
+    t = THEME_BY_KEY.get(key)
+    return {"key": t["key"], "label": t["label"], "short": _short(t["label"]), "risk": t["risk"]} if t else None
+
+
 def match_themes(body: str | None) -> list[dict]:
-    """Темы отзыва по regex — мультилейбл. Возвращает [{key,label,risk}]."""
+    """Темы отзыва по regex — мультилейбл. Возвращает [{key,label,short,risk}]."""
     b = body or ""
-    return [{"key": t["key"], "label": t["label"], "risk": t["risk"]}
+    return [{"key": t["key"], "label": t["label"], "short": _short(t["label"]), "risk": t["risk"]}
             for t, rx in _THEME_RE if rx.search(b)]
 
 
@@ -267,12 +278,14 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
             cte_sel.append(f'({ts}) AS "{t["key"]}"')
         n_sel = [f'count(*) FILTER (WHERE dt >= now()-make_interval(days=>90) AND "{t["key"]}") AS "{t["key"]}_n"' for t in THEMES]
         p_sel = [f'count(*) FILTER (WHERE dt < now()-make_interval(days=>90) AND "{t["key"]}") AS "{t["key"]}_p"' for t in THEMES]
+        any_expr = " OR ".join(f'"{t["key"]}"' for t in THEMES)   # отзыв попал хоть в одну тему
         sql = (f'WITH tagged AS MATERIALIZED ('
                f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)}'
                f' FROM bankiru.reviews r WHERE {bclause}'
                f' AND r."datePublished" >= now() - make_interval(days => 180))'
                f' SELECT {", ".join(n_sel + p_sel)},'
-               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>90)) AS "_total"'
+               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>90)) AS "_total",'
+               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>90) AND NOT ({any_expr})) AS "_other"'
                f' FROM tagged')
         with eng.connect() as c:
             row = c.execute(text(sql), params).mappings().one()
@@ -285,6 +298,12 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
             out.append({"key": t["key"], "label": t["label"], "risk": t["risk"],
                         "n": n, "pct": round(100.0 * n / total, 1), "delta_pct": d})
         out.sort(key=lambda x: x["n"], reverse=True)
+        # «Прочее / без темы» — сколько жалоб не попало ни в одну тему (контекст
+        # полноты риск-карты; темы мультилейбл, поэтому сумма pct ≠ 100%).
+        other_n = int(row["_other"])
+        if other_n:
+            out.append({"key": "other", "label": "Прочее / без темы", "risk": "other",
+                        "n": other_n, "pct": round(100.0 * other_n / total, 1), "delta_pct": None})
         return {"bank": bc, "product": product, "days": 90, "total": total, "themes": out}
     return _cached(f"th:{bc}:{product}", _compute)
 
@@ -382,7 +401,10 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
     массовость это аудит-сигнал → поле `similar`."""
     bc = resolve_bank(bank) if bank else None
     if q and q.strip():
-        return search_reviews(q, bank=bank, product=product, since_days=days, k=limit)
+        res = search_reviews(q, bank=bank, product=product, since_days=days, k=limit)
+        for r in res:
+            r["themes"] = match_themes(r.get("text", ""))   # пер-отзыв темы (regex baseline)
+        return res
     eng = _get_engine()
     if eng is None or not bc:
         return []
@@ -428,7 +450,8 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
         out.append({"bank": r["bank"], "product": r["product"],
                     "date": dt.date().isoformat() if dt else None,
                     "city": (r["location"] or "").split(" (")[0],
-                    "url": r["url"], "text": body, "similar": 0})
+                    "url": r["url"], "text": body, "similar": 0,
+                    "themes": match_themes(body)})   # пер-отзыв темы (regex baseline)
     return out[:limit]
 
 
