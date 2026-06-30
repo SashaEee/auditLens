@@ -160,9 +160,20 @@ class BrowserCollector:
             try:
                 yield ctx
             finally:
-                ctx.close()
+                # Закрываем ctx и browser НЕЗАВИСИМО. Если ctx.close() бросит
+                # (частый кейс: упавшая/таймаутнутая страница, antibot-челлендж),
+                # browser.close() ВСЁ РАВНО обязан выполниться — иначе Chromium
+                # остаётся жить под uvicorn и копится (была причина переполнения
+                # памяти/загрузки VM в проде). На success-пути поведение не меняется.
+                try:
+                    ctx.close()
+                except Exception:
+                    pass
                 if browser:
-                    browser.close()
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
 
     def fetch_html(self, url: str, wait_selector: str | None = None,
                    scroll_to_bottom: bool = False,
