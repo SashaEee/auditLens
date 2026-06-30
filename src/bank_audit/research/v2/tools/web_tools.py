@@ -265,17 +265,21 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
     и готовыми bge-m3 эмбеддингами. Это ОСНОВНОЙ источник жалоб — web нужен лишь
     для банков вне корпуса. Регистрирует найденные отзывы как источники [N].
     """
-    query = (args.get("query") or "").strip()
-    if not query:
-        return json.dumps({"error": "query пустой"}, ensure_ascii=False)
+    query = (args.get("query") or "").strip() or None
     bank = args.get("bank") or args.get("bank_slug") or args.get("bank_name")
     if isinstance(bank, list):
         bank = bank[0] if bank else None
+    if not query and not bank:
+        return json.dumps({"error": "нужен bank (для discovery) или query"},
+                          ensure_ascii=False)
     product = args.get("product")
     try:
         k = int(args.get("k", 8))
     except (TypeError, ValueError):
         k = 8
+    # discovery (без темы) — отдаём больше, чтобы из них проступили темы
+    if not query:
+        k = max(k, 15)
     since_days = args.get("since_days")
     try:
         from ....rag import bankiru_reviews as br

@@ -122,21 +122,22 @@ TOOLS = [
         "function": {
             "name": "search_complaints",
             "description": (
-                "Семантический поиск РЕАЛЬНЫХ жалоб клиентов в корпусе banki.ru "
-                "(~390к негативных отзывов 1-2★ за 2025-2026, 217 банков, с датами "
-                "и ссылками). ОСНОВНОЙ источник жалоб — полнее агрегатов "
-                "get_reviews_analysis. Используй для любых вопросов про жалобы/"
-                "проблемы/риски по банку и теме. Возвращает отзывы с датой, "
-                "продуктом, цитатой и ссылкой."
+                "Реальные жалобы клиентов из корпуса banki.ru (~390к негативных "
+                "отзывов 1-2★ за 2025-2026, 217 банков, с датами и ссылками). "
+                "ОСНОВНОЙ источник жалоб (полнее агрегатов get_reviews_analysis).\n"
+                "Главный режим: передай ТОЛЬКО bank (и product при наличии) БЕЗ "
+                "query — увидишь, на что РЕАЛЬНО жалуются клиенты, не угадывая "
+                "проблему. query задавай лишь для точечного среза по теме."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Тема/проблема (напр. «скрытые комиссии», «блокировка счёта 115-ФЗ», «навязанная страховка»)"},
-                    "bank": {"type": "string", "description": "Имя банка (Сбербанк/ВТБ/Т-Банк/…)"},
-                    "k": {"type": "integer", "default": 6},
+                    "bank": {"type": "string", "description": "Имя банка (Сбербанк/ВТБ/Т-Банк/…) — обязателен"},
+                    "product": {"type": "string", "description": "Продукт banki.ru (опц.): «Вклад», «Кредитная карта», «Ипотека», «Обслуживание юридических лиц» (эквайринг/РКО)…"},
+                    "query": {"type": "string", "description": "ОПЦИОНАЛЬНО — конкретная тема для точечного среза. Для общего обзора не задавай."},
+                    "k": {"type": "integer", "default": 12},
                 },
-                "required": ["query"],
+                "required": [],
             }
         }
     },
@@ -421,9 +422,13 @@ def _run_tool(name: str, args: dict) -> str:
 
         if name == "search_complaints":
             from ..rag import bankiru_reviews as _br
+            _q = (args.get("query") or "").strip() or None
+            _k = int(args.get("k", 12))
+            if not _q:
+                _k = max(_k, 15)   # discovery — больше отзывов, чтобы видеть темы
             try:
-                res = _br.search_reviews(args.get("query", ""), bank=args.get("bank"),
-                                          k=int(args.get("k", 6)))
+                res = _br.search_reviews(_q, bank=args.get("bank"),
+                                          product=args.get("product"), k=_k)
             except Exception as e:
                 return json.dumps({"error": f"search_complaints failed: {e}"}, ensure_ascii=False)
             if not res:

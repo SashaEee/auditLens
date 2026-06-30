@@ -156,16 +156,25 @@ def _dedup_key(body: str) -> str:
     return _norm(body)[:120]
 
 
-def search_reviews(query: str, *, bank: str | None = None, product: str | None = None,
-                   since_days: int | None = None, k: int = 8) -> list[dict]:
-    """Топ-k релевантных жалоб из bankiru по семантике запроса.
+def search_reviews(query: str | None = None, *, bank: str | None = None,
+                   product: str | None = None, since_days: int | None = None,
+                   k: int = 8) -> list[dict]:
+    """Жалобы клиентов из корпуса banki.ru. Два режима:
 
-    bank — имя/слаг банка (резолвится в каноническое имя bankiru); None = по всем.
-    product — точная метка продукта (опц.); None = без фильтра (семантика сама отберёт).
-    since_days — только отзывы за последние N дней (опц.; корпус и так с 2025).
-    Возвращает list[{bank, product, date, url, text, distance}]; [] если выкл/нет данных.
+    • DISCOVERY (query пустой) — свежие жалобы по банку (+продукту), отсортированы
+      по дате. ОСНОВНОЙ режим для аудита: когда конкретная проблема заранее НЕ
+      известна (напр. отчёт по эквайрингу), агент видит, на что РЕАЛЬНО жалуются,
+      и сам кластеризует темы. bank обязателен.
+    • SEMANTIC (query задан) — точечный поиск по теме/проблеме (cosine bge-m3).
+
+    bank — имя/слаг банка (резолвится в каноническое имя bankiru).
+    product — метка продукта banki.ru (опц.): «Вклад», «Кредитная карта»,
+              «Обслуживание юридических лиц» (сюда же эквайринг/РКО), «Ипотека»,
+              «Мобильное приложение», «Денежный перевод», …
+    since_days — только за последние N дней (опц.; корпус и так с 2025).
+    Возвращает list[{bank, product, date, url, text, distance}]; [] если нет данных.
     """
-    if not ENABLED or not query or not query.strip():
+    if not ENABLED:
         return []
     eng = _get_engine()
     if eng is None:
@@ -175,15 +184,39 @@ def search_reviews(query: str, *, bank: str | None = None, product: str | None =
         # банка нет в bankiru (мелкий/неизвестный) — пусть вызывающий уйдёт в web
         log.info("bankiru: банк %r не найден в корпусе", bank)
         return []
+    discovery = not (query and query.strip())
+    if discovery and not bank_canon:
+        # без банка discovery бессмысленно (вернули бы случайные свежие по всем)
+        return []
     try:
-        qvec = embedder.embed_one(QUERY_PREFIX + query.strip())
-        qlit = "[" + ",".join(f"{x:.6f}" for x in qvec) + "]"
         # дату-отсечку считаем в Python (datePublished — naive timestamp); так
         # избегаем NULL-параметра в make_interval (неоднозначность типа → ошибка).
         since_ts = (datetime.now() - timedelta(days=since_days)) if since_days else None
         # тянем с запасом под дедуп (один отзыв дублируется по продуктам)
         limit = max(k * 6, 30)
-        if bank_canon:
+        params = {"bank": bank_canon, "product": product,
+                  "since_ts": since_ts, "limit": limit}
+        if not discovery:
+            qvec = embedder.embed_one(QUERY_PREFIX + query.strip())
+            params["qvec"] = "[" + ",".join(f"{x:.6f}" for x in qvec) + "]"
+        if discovery:
+            # Без темы: свежие жалобы по банку/продукту (агент сам кластеризует).
+            # Эмбеддинг не нужен → быстро.
+            sql = text(
+                """
+                SELECT r."bankName" AS bank, r."product" AS product,
+                       r."datePublished" AS dt, r.url AS url, r."reviewBody" AS body,
+                       0.0 AS dist
+                FROM bankiru.reviews r
+                WHERE r."bankName" = :bank
+                  AND (CAST(:product AS text) IS NULL OR r."product" = :product)
+                  AND (CAST(:since_ts AS timestamp) IS NULL OR r."datePublished" >= CAST(:since_ts AS timestamp))
+                  AND length(r."reviewBody") >= 40
+                ORDER BY r."datePublished" DESC
+                LIMIT :limit
+                """
+            )
+        elif bank_canon:
             # Фильтр по конкретному банку → подмножество ≤50k строк. HNSW при
             # селективном фильтре часто возвращает 0 (исследует только ef_search
             # глобальных соседей). Поэтому ТОЧНЫЙ скан по подмножеству через
@@ -221,10 +254,7 @@ def search_reviews(query: str, *, bank: str | None = None, product: str | None =
                 """
             )
         with eng.connect() as c:
-            rows = c.execute(sql, {
-                "qvec": qlit, "bank": bank_canon, "product": product,
-                "since_ts": since_ts, "limit": limit,
-            }).mappings().all()
+            rows = c.execute(sql, params).mappings().all()
     except Exception as e:
         log.warning("bankiru: поиск упал (%s) — отдаю пусто, вызывающий уйдёт в web", type(e).__name__)
         return []
