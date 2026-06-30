@@ -903,6 +903,8 @@ const rvDelta=(d)=> d==null ? <span className="rv-flat">→</span>
   : d>4 ? <span className="rv-up">↑ {d}%</span>
   : d<-4 ? <span className="rv-down">↓ {Math.abs(d)}%</span>
   : <span className="rv-flat">→ {d>=0?"+":""}{d}%</span>;
+// Сбой загрузки панели ≠ «данных нет» — для аудитора это важное различие.
+function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удалось загрузить — обновите страницу":"Нет данных за выбранный период"}</div>;}
 
 function ReviewsPage(){
   const[bank,setBank]=useState("Сбербанк");
@@ -929,14 +931,17 @@ function ReviewsPage(){
 
   useEffect(()=>{
     setBusy(true);
-    Promise.all([
+    // allSettled: падение одной панели не должно стирать остальные четыре.
+    Promise.allSettled([
       apiFetch(`/api/reviews/overview?bank=${enc(bank)}${pq()}&days=${days}`),
       apiFetch(`/api/reviews/trend?bank=${enc(bank)}${pq()}`),
       apiFetch(`/api/reviews/themes?bank=${enc(bank)}${pq()}`),
       apiFetch(`/api/reviews/vs-market?bank=${enc(bank)}${pq()}&days=${days}`),
       apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}`),
-    ]).then(([o,t,h,v,g])=>{setOv(o);setTr(t);setTh(h);setVm(v);setGe(g);setBusy(false);})
-      .catch(()=>setBusy(false));
+    ]).then(([o,t,h,v,g])=>{
+      const V=s=>s.status==="fulfilled"?s.value:{__err:true};
+      setOv(V(o));setTr(V(t));setTh(V(h));setVm(V(v));setGe(V(g));setBusy(false);
+    });
   },[bank,product,days]);
 
   useEffect(()=>{ setProduct("");
@@ -961,11 +966,12 @@ function ReviewsPage(){
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`audit-case-${Date.now().toString(36)}.csv`;
     document.body.appendChild(a);a.click();a.remove();}catch{}};
 
-  const themeLabel = theme && th ? (th.themes.find(x=>x.key===theme)||{}).label : "";
-  const trendMax = tr&&tr.series&&tr.series.length ? Math.max(...tr.series.map(s=>s.n)) : 1;
-  const thMax = th&&th.themes&&th.themes.length ? Math.max(...th.themes.map(t=>t.n)) : 1;
-  const vmMax = vm&&vm.rows&&vm.rows.length ? Math.max(...vm.rows.map(r=>r.pct)) : 1;
-  const geMax = ge&&ge.cities&&ge.cities.length ? Math.max(...ge.cities.map(c=>c.n)) : 1;
+  const onKey=fn=>e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();fn();}};
+  const themeLabel = theme && th && th.themes ? (th.themes.find(x=>x.key===theme)||{}).label : "";
+  const trendMax = tr&&tr.series&&tr.series.length ? Math.max(...tr.series.map(s=>s.n))||1 : 1;
+  const thMax = th&&th.themes&&th.themes.length ? Math.max(...th.themes.map(t=>t.n))||1 : 1;
+  const vmMax = vm&&vm.rows&&vm.rows.length ? Math.max(...vm.rows.map(r=>r.pct))||1 : 1;
+  const geMax = ge&&ge.cities&&ge.cities.length ? Math.max(...ge.cities.map(c=>c.n))||1 : 1;
 
   return <div className="fade-in rv">
     <div className="eyebrow" style={{marginBottom:6}}>§ Отзывы · аудит-сигналы</div>
@@ -1010,14 +1016,14 @@ function ReviewsPage(){
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Главная тема</div>
         <div className="rv-kv-sm">{busy?"…":(th&&th.themes&&th.themes.length?th.themes[0].label:"—")}</div>
-        <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб · ${RV_RISK[th.themes[0].risk]}`:""}</div>
+        <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб за 90 дн · ${RV_RISK[th.themes[0].risk]}`:""}</div>
       </div>
     </div>
 
     {/* TREND */}
     <div className="rv-card" style={{marginBottom:14}}>
       <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно · {bank}{product?` · ${product}`:""}</div></div></div>
-      {busy||!tr||!tr.series?<Skel h={150}/>:<>
+      {busy?<Skel h={150}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
         <div className="rv-bars">
           {tr.series.map((s,i)=><div key={i} className="rv-bcol" title={`${s.ym}: ${fmtNum(s.n)}`}>
             <div className={"rv-bar"+(s.spike?" hot":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
@@ -1033,8 +1039,10 @@ function ReviewsPage(){
       <div className="rv-card">
         <div className="rv-ttl">Темы жалоб — риск-карта</div>
         <div className="rv-cap">доля от жалоб за 90 дн · momentum к пред. кварталу · клик → лента темы</div>
-        {busy||!th||!th.themes?<Skel h={220}/>:th.themes.map(t=>(
-          <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")} onClick={()=>setTheme(theme===t.key?"":t.key)}>
+        {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:th.themes.map(t=>(
+          <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")} role="button" tabIndex={0}
+               aria-pressed={theme===t.key} onClick={()=>setTheme(theme===t.key?"":t.key)}
+               onKeyDown={onKey(()=>setTheme(theme===t.key?"":t.key))}>
             <div className="rv-tname">{t.label}<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span></div>
             <div className="rv-tbarw"><div className={"rv-tbar"+(t.risk!=="ops"?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
             <div className="rv-tn mono">{fmtNum(t.n)}</div>
@@ -1045,7 +1053,7 @@ function ReviewsPage(){
       <div className="rv-card">
         <div className="rv-ttl">География</div>
         <div className="rv-cap">города · per-capita аномалии (12 мес)</div>
-        {busy||!ge||!ge.cities?<Skel h={220}/>:ge.cities.map((c,i)=>(
+        {busy?<Skel h={220}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:ge.cities.map((c,i)=>(
           <div key={i} className="rv-grow">
             <div style={{minWidth:0}}>
               <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
@@ -1061,7 +1069,7 @@ function ReviewsPage(){
     <div className="rv-card" style={{marginBottom:14}}>
       <div className="rv-ttl">{bank} против рынка</div>
       <div className="rv-cap">доля в общем потоке жалоб banki.ru · {days} дн{product?` · ${product}`:""}</div>
-      {busy||!vm||!vm.rows?<Skel h={120}/>:vm.rows.map((r,i)=>(
+      {busy?<Skel h={120}/>:!vm||!vm.rows||!vm.rows.length?<RvNote err={vm&&vm.__err}/>:vm.rows.map((r,i)=>(
         <div key={i} className="rv-vrow">
           <div className={"rv-vname"+(r.is_target?" t":"")}>{r.bank}</div>
           <div className={"rv-vbar"+(r.is_target?" t":"")} style={{width:Math.round(r.pct/vmMax*100)+"%"}}/>
@@ -1074,14 +1082,14 @@ function ReviewsPage(){
     <div className="rv-card">
       <div className="rv-ct">
         <div><div className="rv-ttl">Лента — доказательная база</div>
-          <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" onClick={()=>setTheme("")}>сбросить ✕</span></>:"реальные жалобы с датами и ссылками · фильтр = выбранные банк/продукт/тема"}</div></div>
+          <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>:"реальные жалобы с датами и ссылками · фильтр = выбранные банк/продукт/тема"}</div></div>
       </div>
       <div className="rv-search">
         <span>⌕</span>
         <input value={qInput} onChange={e=>setQInput(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter")setQ(qInput.trim());}}
           placeholder="Найти жалобы по смыслу: «не зачисляют выручку по эквайрингу», «навязали страховку»… (Enter)"/>
-        {q&&<span className="rv-clear" onClick={()=>{setQ("");setQInput("");}}>✕</span>}
+        {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}>✕</span>}
       </div>
       {feedBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
        !feed||!feed.length?<EmptyState text="Нет жалоб по выбранным фильтрам — попробуйте другой банк/продукт/тему."/>:
@@ -1095,7 +1103,7 @@ function ReviewsPage(){
           <div className="rv-rq">{(r.text||"").slice(0,420)}{(r.text||"").length>420?"…":""}</div>
           <div className="rv-rf">
             {r.url&&<a href={r.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
-            <span className="rv-lnk2" onClick={()=>addCase(r)}>＋ в аудит-дело</span>
+            <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(r)} onKeyDown={onKey(()=>addCase(r))}>＋ в аудит-дело</span>
           </div>
         </div>
        ))}
