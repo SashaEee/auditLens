@@ -912,20 +912,25 @@ function RvModal({onClose,title,sub,side,children}){
   useEffect(()=>{
     const h=e=>{if(e.key==="Escape")onClose();};
     document.addEventListener("keydown",h);
-    return ()=>document.removeEventListener("keydown",h);
+    const prev=document.body.style.overflow;
+    document.body.style.overflow="hidden";   // фон не скроллим, пока открыт оверлей
+    return ()=>{document.removeEventListener("keydown",h);document.body.style.overflow=prev;};
   },[onClose]);
-  return <div className="rv-ovl" onClick={onClose}>
-    <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")} onClick={e=>e.stopPropagation()}>
-      <div className="rv-ovl-head">
-        <div style={{minWidth:0}}>
-          <div className="rv-ttl" style={{fontSize:15}}>{title}</div>
-          {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
+  // ПОРТАЛ в body: у предка .fade-in есть transform (animation fill-mode both),
+  // который иначе становится containing-block для position:fixed и «роняет» модал вниз.
+  return ReactDOM.createPortal(
+    <div className={"rv-ovl"+(side==="right"?" rv-ovl-r":"")} onClick={onClose}>
+      <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")} onClick={e=>e.stopPropagation()}>
+        <div className="rv-ovl-head">
+          <div style={{minWidth:0}}>
+            <div className="rv-ttl" style={{fontSize:15}}>{title}</div>
+            {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
+          </div>
+          <button className="rv-ovl-x" onClick={onClose} aria-label="Закрыть">✕</button>
         </div>
-        <button className="rv-ovl-x" onClick={onClose} aria-label="Закрыть">✕</button>
+        <div className="rv-ovl-body">{children}</div>
       </div>
-      <div className="rv-ovl-body">{children}</div>
-    </div>
-  </div>;
+    </div>, document.body);
 }
 
 // Карточка отзыва (переиспользуется в ленте, в модале и в драуэре).
@@ -1082,67 +1087,70 @@ function ReviewsPage(){
       </div>
     </div>
 
-    {/* TREND */}
-    <div className="rv-card" style={{marginBottom:14}}>
-      <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно · {bank}{product?` · ${product}`:""}</div></div></div>
-      <div className="rv-cap" style={{marginTop:-8,marginBottom:10}}>клик по столбцу → жалобы месяца{tr&&tr.series&&tr.series.some(s=>s.partial)?" · последний месяц неполный (штриховка)":""}</div>
-      {busy?<Skel h={150}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
-        <div className="rv-bars">
-          {tr.series.map((s,i)=><div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={`${s.ym}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`}
-               role="button" tabIndex={0} onClick={()=>openDrill("month",s.ym,`Жалобы за ${s.ym}${s.partial?" (неполный месяц)":""}`)}
-               onKeyDown={onKey(()=>openDrill("month",s.ym,`Жалобы за ${s.ym}`))}>
-            <div className={"rv-bar"+(s.spike?" hot":"")+(s.partial?" part":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
-            <div className="rv-blab">{s.ym.slice(2).replace("-",".")}</div>
-          </div>)}
-        </div>
-        {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик {sp.map(s=>s.ym).join(", ")} — выше базовой линии (медиана+MAD по завершённым месяцам). Клик по столбцу — разобрать, что произошло.</div>:null;})()}
-      </>}
-    </div>
-
-    {/* THEMES + GEO */}
-    <div className="rv-row2">
-      <div className="rv-card">
-        <div className="rv-ttl">Темы жалоб — риск-карта</div>
-        <div className="rv-cap">доля от жалоб за 90 дн · momentum к пред. кварталу · клик → лента темы</div>
-        {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:th.themes.map(t=>(
-          <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")} role="button" tabIndex={0}
-               aria-pressed={theme===t.key} onClick={()=>setTheme(theme===t.key?"":t.key)}
-               onKeyDown={onKey(()=>setTheme(theme===t.key?"":t.key))}>
-            <div className="rv-tname">{t.label}<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span></div>
-            <div className="rv-tbarw"><div className={"rv-tbar"+(t.risk!=="ops"?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
-            <div className="rv-tn mono">{fmtNum(t.n)}</div>
-            <div className="rv-ttr">{rvDelta(t.delta_pct)}</div>
-          </div>
-        ))}
-      </div>
-      <div className="rv-card">
-        <div className="rv-ttl">География</div>
-        <div className="rv-cap">города · per-capita аномалии (12 мес) · клик → жалобы города</div>
-        {busy?<Skel h={220}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:ge.cities.map((c,i)=>(
-          <div key={i} className="rv-grow rv-grow-click" role="button" tabIndex={0}
-               onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
-               onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
-            <div style={{minWidth:0}}>
-              <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
-              <div className="rv-gbar" style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
+    {/* АНАЛИТИКА — 2 колонки: слева динамика+темы, справа география+рынок */}
+    <div className="rv-main2">
+      <div className="rv-col">
+        {/* TREND */}
+        <div className="rv-card">
+          <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно · клик по столбцу → жалобы месяца{tr&&tr.series&&tr.series.some(s=>s.partial)?" · последний месяц неполный (штриховка)":""}</div></div></div>
+          {busy?<Skel h={150}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
+            <div className="rv-bars">
+              {tr.series.map((s,i)=><div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={`${s.ym}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`}
+                   role="button" tabIndex={0} onClick={()=>openDrill("month",s.ym,`Жалобы за ${s.ym}${s.partial?" (неполный месяц)":""}`)}
+                   onKeyDown={onKey(()=>openDrill("month",s.ym,`Жалобы за ${s.ym}`))}>
+                <div className={"rv-bar"+(s.spike?" hot":"")+(s.partial?" part":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
+                <div className="rv-blab">{s.ym.slice(2).replace("-",".")}</div>
+              </div>)}
             </div>
-            <div className="mono rv-gn">{fmtNum(c.n)}{c.per_100k?<span className="rv-gp"> · {c.per_100k}/100k</span>:""}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-
-    {/* VS MARKET */}
-    <div className="rv-card" style={{marginBottom:14}}>
-      <div className="rv-ttl">{bank} против рынка</div>
-      <div className="rv-cap">доля в общем потоке жалоб banki.ru · {days} дн{product?` · ${product}`:""}</div>
-      {busy?<Skel h={120}/>:!vm||!vm.rows||!vm.rows.length?<RvNote err={vm&&vm.__err}/>:vm.rows.map((r,i)=>(
-        <div key={i} className="rv-vrow">
-          <div className={"rv-vname"+(r.is_target?" t":"")}>{r.bank}</div>
-          <div className={"rv-vbar"+(r.is_target?" t":"")} style={{width:Math.round(r.pct/vmMax*100)+"%"}}/>
-          <div className="rv-vp mono">{String(r.pct).replace(".",",")}%</div>
+            {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик {sp.map(s=>s.ym).join(", ")} — выше базовой линии (медиана+MAD по завершённым месяцам). Клик по столбцу — разобрать, что произошло.</div>:null;})()}
+          </>}
         </div>
-      ))}
+        {/* THEMES */}
+        <div className="rv-card">
+          <div className="rv-ttl">Темы жалоб — риск-карта</div>
+          <div className="rv-cap">доля от жалоб за 90 дн · momentum к пред. кварталу · клик → лента темы</div>
+          {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:th.themes.map(t=>(
+            <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")} role="button" tabIndex={0}
+                 aria-pressed={theme===t.key} onClick={()=>setTheme(theme===t.key?"":t.key)}
+                 onKeyDown={onKey(()=>setTheme(theme===t.key?"":t.key))}>
+              <div className="rv-tname">{t.label}<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span></div>
+              <div className="rv-tbarw"><div className={"rv-tbar"+(t.risk!=="ops"?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
+              <div className="rv-tn mono">{fmtNum(t.n)}</div>
+              <div className="rv-ttr">{rvDelta(t.delta_pct)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="rv-col">
+        {/* GEO */}
+        <div className="rv-card">
+          <div className="rv-ttl">География</div>
+          <div className="rv-cap">города · per-capita аномалии (12 мес) · клик → жалобы города</div>
+          {busy?<Skel h={220}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:ge.cities.map((c,i)=>(
+            <div key={i} className="rv-grow rv-grow-click" role="button" tabIndex={0}
+                 onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
+                 onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
+              <div style={{minWidth:0}}>
+                <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
+                <div className="rv-gbar" style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
+              </div>
+              <div className="mono rv-gn">{fmtNum(c.n)}{c.per_100k?<span className="rv-gp"> · {c.per_100k}/100k</span>:""}</div>
+            </div>
+          ))}
+        </div>
+        {/* VS MARKET */}
+        <div className="rv-card">
+          <div className="rv-ttl">{bank} против рынка</div>
+          <div className="rv-cap">доля в общем потоке жалоб banki.ru · {days} дн{product?` · ${product}`:""}</div>
+          {busy?<Skel h={120}/>:!vm||!vm.rows||!vm.rows.length?<RvNote err={vm&&vm.__err}/>:vm.rows.map((r,i)=>(
+            <div key={i} className="rv-vrow">
+              <div className={"rv-vname"+(r.is_target?" t":"")}>{r.bank}</div>
+              <div className={"rv-vbar"+(r.is_target?" t":"")} style={{width:Math.round(r.pct/vmMax*100)+"%"}}/>
+              <div className="rv-vp mono">{String(r.pct).replace(".",",")}%</div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
 
     {/* FEED */}
