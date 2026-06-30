@@ -979,6 +979,7 @@ function ReviewsPage(){
   const[drillItems,setDrillItems]=useState(null),[drillBusy,setDrillBusy]=useState(false);
   const[explain,setExplain]=useState(null),[explainBusy,setExplainBusy]=useState(false);
   const[clsBusy,setClsBusy]=useState(false),[clsOn,setClsOn]=useState(false);
+  const[thAll,setThAll]=useState(false);   // показать все темы риск-карты vs топ-12
 
   const enc=encodeURIComponent;
   const pq=()=>product?`&product=${enc(product)}`:"";
@@ -1128,18 +1129,28 @@ function ReviewsPage(){
         <div className="rv-card">
           <div className="rv-ttl">Темы жалоб — риск-карта</div>
           <div className="rv-cap">доля от жалоб за 90 дн · мультилейбл (сумма ≠ 100%) · клик → лента темы</div>
-          {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:th.themes.map(t=>{
-            const clk=t.key!=="other", risky=t.risk==="compliance"||t.risk==="conduct";
-            return <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")+(clk?"":" rv-trow-static")}
-                 role={clk?"button":undefined} tabIndex={clk?0:undefined} aria-pressed={clk?(theme===t.key):undefined}
-                 onClick={clk?()=>setTheme(theme===t.key?"":t.key):undefined}
-                 onKeyDown={clk?onKey(()=>setTheme(theme===t.key?"":t.key)):undefined}>
-              <div className="rv-tname">{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
-              <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
-              <div className="rv-tn mono">{fmtNum(t.n)}</div>
-              <div className="rv-ttr">{rvDelta(t.delta_pct)}</div>
-            </div>;
-          })}
+          {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:(()=>{
+            const real=th.themes.filter(t=>t.key!=="other"), other=th.themes.find(t=>t.key==="other");
+            const shown=thAll?real:real.slice(0,12);
+            const row=t=>{
+              const clk=t.key!=="other", risky=t.risk==="compliance"||t.risk==="conduct";
+              return <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")+(clk?"":" rv-trow-static")}
+                   role={clk?"button":undefined} tabIndex={clk?0:undefined} aria-pressed={clk?(theme===t.key):undefined}
+                   onClick={clk?()=>setTheme(theme===t.key?"":t.key):undefined}
+                   onKeyDown={clk?onKey(()=>setTheme(theme===t.key?"":t.key)):undefined}>
+                <div className="rv-tname">{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
+                <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
+                <div className="rv-tn mono">{fmtNum(t.n)}</div>
+                <div className="rv-ttr">{rvDelta(t.delta_pct)}</div>
+              </div>;
+            };
+            return <>
+              {shown.map(row)}
+              {real.length>12&&<div className="rv-th-toggle" role="button" tabIndex={0} onClick={()=>setThAll(!thAll)} onKeyDown={onKey(()=>setThAll(!thAll))}>
+                {thAll?"свернуть ▴":`ещё ${real.length-12} тем ▾`}</div>}
+              {other&&row(other)}
+            </>;
+          })()}
         </div>
       </div>
       <div className="rv-col">
