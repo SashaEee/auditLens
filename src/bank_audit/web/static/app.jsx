@@ -897,7 +897,8 @@ const RV_BANKS=["Сбербанк","ВТБ","Т-Банк","Альфа-Банк",
   "МТС Банк","ПСБ","Ozon Банк","Яндекс Банк","Московский кредитный банк (МКБ)",
   "Росбанк","Банк «Открытие»","Хоум Банк"];
 const RV_PERIODS=[[90,"3 мес"],[180,"6 мес"],[365,"12 мес"]];
-const RV_RISK={compliance:"compliance",conduct:"conduct",ops:"ops"};
+const RV_RISK={compliance:"комплаенс",conduct:"практики",ops:"операции"};
+const pct1=v=>v==null?"—":String(v).replace(".",",")+"%";
 const rvDelta=(d)=> d==null ? <span className="rv-flat">→</span>
   : d>4 ? <span className="rv-up">↑ {d}%</span>
   : d<-4 ? <span className="rv-down">↓ {Math.abs(d)}%</span>
@@ -993,30 +994,30 @@ function ReviewsPage(){
     <div className="rv-kpis">
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Жалоб за {days} дн</div>
-        <div className="rv-kv">{busy||!ov?"…":fmtNum(ov.total)}</div>
+        <div className="rv-kv">{busy?"…":(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
         <div className="rv-ks">{ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {Math.abs(ov.delta_pct)}%</span>:<span className="rv-up">↑ {ov.delta_pct}%</span>} к пред. периоду</>:"—"}</div>
       </div>
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Доля рынка жалоб</div>
-        <div className="rv-kv">{busy||!ov?"…":`${String(ov.market_share_pct).replace(".",",")}%`}</div>
+        <div className="rv-kv">{busy?"…":pct1(ov&&ov.market_share_pct)}</div>
         <div className="rv-ks">{ov&&ov.market_rank?`${ov.market_rank}-е место · ⓘ без нормировки на базу`:"—"}</div>
       </div>
       <div className={"rv-card rv-kpi"+(ov&&ov.escalation_pct>=12?" rv-alert":"")}>
         <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_pct>=12&&<span className="rv-tag compliance">риск</span>}</div>
-        <div className="rv-kv rv-up">{busy||!ov?"…":`${String(ov.escalation_pct).replace(".",",")}%`}</div>
+        <div className="rv-kv rv-up">{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
         <div className="rv-ks">упоминают ЦБ / суд / ФАС</div>
       </div>
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Главная тема</div>
-        <div className="rv-kv-sm">{busy||!th||!th.themes.length?"…":th.themes[0].label}</div>
-        <div className="rv-ks">{th&&th.themes.length?`${String(th.themes[0].pct).replace(".",",")}% жалоб · ${RV_RISK[th.themes[0].risk]}`:""}</div>
+        <div className="rv-kv-sm">{busy?"…":(th&&th.themes&&th.themes.length?th.themes[0].label:"—")}</div>
+        <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб · ${RV_RISK[th.themes[0].risk]}`:""}</div>
       </div>
     </div>
 
     {/* TREND */}
     <div className="rv-card" style={{marginBottom:14}}>
       <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно · {bank}{product?` · ${product}`:""}</div></div></div>
-      {busy||!tr?<Skel h={150}/>:<>
+      {busy||!tr||!tr.series?<Skel h={150}/>:<>
         <div className="rv-bars">
           {tr.series.map((s,i)=><div key={i} className="rv-bcol" title={`${s.ym}: ${fmtNum(s.n)}`}>
             <div className={"rv-bar"+(s.spike?" hot":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
@@ -1032,7 +1033,7 @@ function ReviewsPage(){
       <div className="rv-card">
         <div className="rv-ttl">Темы жалоб — риск-карта</div>
         <div className="rv-cap">доля от жалоб за 90 дн · momentum к пред. кварталу · клик → лента темы</div>
-        {busy||!th?<Skel h={220}/>:th.themes.map(t=>(
+        {busy||!th||!th.themes?<Skel h={220}/>:th.themes.map(t=>(
           <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")} onClick={()=>setTheme(theme===t.key?"":t.key)}>
             <div className="rv-tname">{t.label}<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span></div>
             <div className="rv-tbarw"><div className={"rv-tbar"+(t.risk!=="ops"?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
@@ -1044,7 +1045,7 @@ function ReviewsPage(){
       <div className="rv-card">
         <div className="rv-ttl">География</div>
         <div className="rv-cap">города · per-capita аномалии (12 мес)</div>
-        {busy||!ge?<Skel h={220}/>:ge.cities.map((c,i)=>(
+        {busy||!ge||!ge.cities?<Skel h={220}/>:ge.cities.map((c,i)=>(
           <div key={i} className="rv-grow">
             <div style={{minWidth:0}}>
               <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
@@ -1060,7 +1061,7 @@ function ReviewsPage(){
     <div className="rv-card" style={{marginBottom:14}}>
       <div className="rv-ttl">{bank} против рынка</div>
       <div className="rv-cap">доля в общем потоке жалоб banki.ru · {days} дн{product?` · ${product}`:""}</div>
-      {busy||!vm?<Skel h={120}/>:vm.rows.map((r,i)=>(
+      {busy||!vm||!vm.rows?<Skel h={120}/>:vm.rows.map((r,i)=>(
         <div key={i} className="rv-vrow">
           <div className={"rv-vname"+(r.is_target?" t":"")}>{r.bank}</div>
           <div className={"rv-vbar"+(r.is_target?" t":"")} style={{width:Math.round(r.pct/vmMax*100)+"%"}}/>
