@@ -206,7 +206,7 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
                 """
                 SELECT r."bankName" AS bank, r."product" AS product,
                        r."datePublished" AS dt, r.url AS url, r."reviewBody" AS body,
-                       0.0 AS dist
+                       r.location AS location, 0.0 AS dist
                 FROM bankiru.reviews r
                 WHERE r."bankName" = :bank
                   AND (CAST(:product AS text) IS NULL OR r."product" = :product)
@@ -226,14 +226,14 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
                 WITH cand AS MATERIALIZED (
                   SELECT r."bankName" AS bank, r."product" AS product,
                          r."datePublished" AS dt, r.url AS url,
-                         r."reviewBody" AS body, e.embedding AS emb
+                         r."reviewBody" AS body, r.location AS location, e.embedding AS emb
                   FROM bankiru.reviews r
                   JOIN bankiru.review_embeddings e ON e.review_id = r.id
                   WHERE r."bankName" = :bank
                     AND (CAST(:product AS text) IS NULL OR r."product" = :product)
                     AND (CAST(:since_ts AS timestamp) IS NULL OR r."datePublished" >= CAST(:since_ts AS timestamp))
                 )
-                SELECT bank, product, dt, url, body,
+                SELECT bank, product, dt, url, body, location,
                        (emb <=> CAST(:qvec AS vector)) AS dist
                 FROM cand ORDER BY emb <=> CAST(:qvec AS vector) LIMIT :limit
                 """
@@ -244,7 +244,7 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
                 """
                 SELECT r."bankName" AS bank, r."product" AS product,
                        r."datePublished" AS dt, r.url AS url, r."reviewBody" AS body,
-                       (e.embedding <=> CAST(:qvec AS vector)) AS dist
+                       r.location AS location, (e.embedding <=> CAST(:qvec AS vector)) AS dist
                 FROM bankiru.review_embeddings e
                 JOIN bankiru.reviews r ON r.id = e.review_id
                 WHERE (CAST(:product AS text) IS NULL OR r."product" = :product)
@@ -272,6 +272,7 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
             "bank": r["bank"],
             "product": r["product"],
             "date": dt.date().isoformat() if dt else None,
+            "city": (r["location"] or "").split(" (")[0],
             "url": r["url"],
             "text": body,
             "distance": round(float(r["dist"]), 4),

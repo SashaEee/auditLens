@@ -9,6 +9,7 @@ KPI, помесячная динамика + детект спайков, так
 """
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import threading
@@ -19,6 +20,22 @@ from sqlalchemy import text
 from .bankiru_reviews import _get_engine, resolve_bank, search_reviews
 
 log = logging.getLogger(__name__)
+
+
+def _safe(default):
+    """Не давать сбою одной панели ронять весь дашборд: при исключении
+    вернуть default (None/[]), а не пробрасывать 500. Фронт тогда покажет
+    «нет данных», а соседние панели продолжат работать."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*a, **k):
+            try:
+                return fn(*a, **k)
+            except Exception as e:  # noqa: BLE001 — намеренно широкий guard на границе API
+                log.warning("reviews_dash.%s упал: %s", fn.__name__, e)
+                return default
+        return wrapper
+    return deco
 
 # ── Аудиторская таксономия тем жалоб ────────────────────────────────────────
 # risk: compliance (регуляторика/комплаенс) | conduct (недобросовестные
@@ -98,6 +115,7 @@ def _bank_clause(bank_canon, product):
 
 
 # ── Агрегаты ────────────────────────────────────────────────────────────────
+@_safe([])
 def banks(top: int = 60) -> list[dict]:
     """Список банков корпуса banki.ru по объёму жалоб — для фильтра вкладки.
     Сбер первым (даже если по объёму не №1), дальше по убыванию."""
@@ -118,6 +136,7 @@ def banks(top: int = 60) -> list[dict]:
     return _cached(f"banks:{top}", _compute, ttl=6 * 3600)
 
 
+@_safe(None)
 def overview(bank: str, product: str | None = None, days: int = 90) -> dict | None:
     eng = _get_engine()
     if eng is None:
@@ -164,6 +183,7 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
     return _cached(f"ov:{bc}:{product}:{days}", _compute)
 
 
+@_safe(None)
 def trend(bank: str, product: str | None = None, months: int = 14) -> dict | None:
     eng = _get_engine()
     if eng is None:
@@ -195,6 +215,7 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
     return _cached(f"tr:{bc}:{product}:{months}", _compute)
 
 
+@_safe(None)
 def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None:
     eng = _get_engine()
     if eng is None:
@@ -237,6 +258,7 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
     return _cached(f"th:{bc}:{product}", _compute)
 
 
+@_safe(None)
 def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 8) -> dict | None:
     eng = _get_engine()
     if eng is None:
@@ -265,6 +287,7 @@ def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 
     return _cached(f"vm:{bc}:{product}:{days}:{top}", _compute)
 
 
+@_safe(None)
 def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) -> dict | None:
     eng = _get_engine()
     if eng is None:
@@ -299,6 +322,7 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
     return _cached(f"geo:{bc}:{product}:{days}:{top}", _compute)
 
 
+@_safe(None)
 def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
     eng = _get_engine()
     if eng is None:
