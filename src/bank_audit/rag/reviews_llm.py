@@ -12,6 +12,7 @@ import logging
 from openai import AsyncOpenAI
 
 from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL, smart_model
+from ..ai.llm_utils import _patch_client_reasoning_effort
 
 log = logging.getLogger(__name__)
 
@@ -43,12 +44,13 @@ async def explain_segment(seg: dict, *, label: str) -> str | None:
     try:
         client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY,
                              max_retries=2, timeout=60)
+        # gemini-2.5-flash — thinking-модель: без reasoning_effort=low скрытый
+        # reasoning съедает бюджет и ответ обрезается (как и в analyst.py:1040).
+        client = _patch_client_reasoning_effort(client)
         resp = await client.chat.completions.create(
             model=smart_model(),
             messages=[{"role": "system", "content": _SYSTEM},
                       {"role": "user", "content": user}],
-            # gemini-2.5-flash — thinking-модель: бюджет должен покрыть скрытый
-            # reasoning + сам ответ, иначе текст обрезается на ~100 символах.
             temperature=0.2, max_tokens=2048)
         return (resp.choices[0].message.content or "").strip() or None
     except Exception as e:  # noqa: BLE001 — деградируем мягко, объяснение не критично
