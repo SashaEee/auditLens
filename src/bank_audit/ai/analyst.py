@@ -42,13 +42,16 @@ SYSTEM = """Ты — аналитик службы внутреннего ауд
   • Структурированный слой (горячий): SQL по offers/reviews/quality_flag через run_sql, get_market_offers и др.
   • Тёплый слой: pre-indexed документы (banki_official, регуляторы, агрегаторы) через semantic_search
   • Холодный слой (real-time): fetch_official для свежих официальных страниц банков
-  • Горячий слой отзывов: get_review_themes — топ жалоб/похвал per bank/period
+  • Жалобы клиентов (ОСНОВНОЕ): search_complaints — корпус banki.ru (~390к
+    реальных негативных отзывов 2025-2026, с датами/ссылками)
+  • Горячий слой отзывов (агрегаты): get_review_themes — топ тем/sentiment per bank
 
 Стратегия выбора инструмента:
   • Точные числа (ставки, лимиты сумм) → run_sql, get_market_offers
   • Описательные сравнения (фичи, условия, тарифы, услуги) → semantic_search
   • Если semantic_search дал <3 результата ИЛИ данные могут быть устаревшими → fetch_official
-  • Анализ настроений клиентов → get_review_themes
+  • Жалобы / проблемы / риски по банку → search_complaints (реальные отзывы),
+    затем при нужде get_review_themes для агрегатов
   • Можешь вызывать НЕСКОЛЬКО tools последовательно, чтобы сложить полную картину
 
 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА цитирования (как Perplexity):
@@ -111,6 +114,29 @@ TOOLS = [
                     }
                 },
                 "required": ["bank_slug"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_complaints",
+            "description": (
+                "Семантический поиск РЕАЛЬНЫХ жалоб клиентов в корпусе banki.ru "
+                "(~390к негативных отзывов 1-2★ за 2025-2026, 217 банков, с датами "
+                "и ссылками). ОСНОВНОЙ источник жалоб — полнее агрегатов "
+                "get_reviews_analysis. Используй для любых вопросов про жалобы/"
+                "проблемы/риски по банку и теме. Возвращает отзывы с датой, "
+                "продуктом, цитатой и ссылкой."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Тема/проблема (напр. «скрытые комиссии», «блокировка счёта 115-ФЗ», «навязанная страховка»)"},
+                    "bank": {"type": "string", "description": "Имя банка (Сбербанк/ВТБ/Т-Банк/…)"},
+                    "k": {"type": "integer", "default": 6},
+                },
+                "required": ["query"],
             }
         }
     },
@@ -392,6 +418,22 @@ def _run_tool(name: str, args: dict) -> str:
                 "topics": [dict(r) for r in topics],
                 "sentiment": [dict(r) for r in sentiment]
             }, ensure_ascii=False, default=str)
+
+        if name == "search_complaints":
+            from ..rag import bankiru_reviews as _br
+            try:
+                res = _br.search_reviews(args.get("query", ""), bank=args.get("bank"),
+                                          k=int(args.get("k", 6)))
+            except Exception as e:
+                return json.dumps({"error": f"search_complaints failed: {e}"}, ensure_ascii=False)
+            if not res:
+                return json.dumps({"results": [], "count": 0,
+                    "note": "В корпусе banki.ru по этому банку/теме жалоб не найдено (банк может быть вне корпуса 217)."},
+                    ensure_ascii=False)
+            return json.dumps({"count": len(res), "results": [
+                {"bank": r.get("bank"), "product": r.get("product"), "date": r.get("date"),
+                 "url": r.get("url"), "text": (r.get("text") or "")[:700]} for r in res
+            ]}, ensure_ascii=False, default=str)
 
         if name == "get_bank_ratings":
             rows = s.execute(text("""

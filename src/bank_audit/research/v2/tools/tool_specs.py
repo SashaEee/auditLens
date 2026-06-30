@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from .web_tools import (tool_web_search, tool_read_url, tool_semantic_search,
-                         tool_run_sql)
+                         tool_run_sql, tool_search_reviews_db)
 from ..base_agent import ToolSpec
 
 
@@ -112,13 +112,43 @@ RUN_SQL = ToolSpec(
 )
 
 
+# ── SEARCH REVIEWS DB (корпус жалоб banki.ru, ~390k отзывов 1-2★) ──────────
+SEARCH_REVIEWS_DB = ToolSpec(
+    name="search_reviews_db",
+    description=(
+        "Семантический поиск РЕАЛЬНЫХ жалоб клиентов в корпусе banki.ru "
+        "(~390 тыс. негативных отзывов 1-2★ за 2025-2026 по 217 банкам, с датами "
+        "и ссылками). ИСПОЛЬЗУЙ ПЕРВЫМ и ОСНОВНЫМ для сбора жалоб — это готовые "
+        "свежие жалобы, web нужен лишь для банков ВНЕ корпуса. Делай 1-2 точечных "
+        "запроса на банк по теме. Возвращает {results:[{bank,product,date,text,"
+        "url,source_n}]} — цитируй по source_n."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description":
+                      "Тема/проблема: «скрытые комиссии», «блокировка счёта 115-ФЗ», "
+                      "«навязанная страховка», «сбой мобильного приложения» и т.п."},
+            "bank": {"type": "string", "description":
+                     "Имя банка (Сбербанк/ВТБ/Т-Банк/Альфа-Банк/…) — для точного отбора"},
+            "product": {"type": "string", "description":
+                        "Метка продукта (опц.): «Вклад», «Кредитная карта», «Ипотека», "
+                        "«Дебетовая карта», «Мобильное приложение», «Денежный перевод»…"},
+            "k": {"type": "integer", "default": 8},
+        },
+        "required": ["query"],
+    },
+    fn=tool_search_reviews_db,
+)
+
+
 # ── НАБОРЫ ДЛЯ АГЕНТОВ ────────────────────────────────────────────────────
 
 # Researcher: всё для поиска фактов
 RESEARCHER_TOOLS = [SEMANTIC_SEARCH, WEB_SEARCH, READ_URL, RUN_SQL]
 
-# Reviews: поиск отзывов + SQL по review таблице
-REVIEWS_TOOLS = [SEMANTIC_SEARCH, WEB_SEARCH, READ_URL, RUN_SQL]
+# Reviews: корпус жалоб banki.ru ПЕРВЫМ, затем web/SQL на добор
+REVIEWS_TOOLS = [SEARCH_REVIEWS_DB, SEMANTIC_SEARCH, WEB_SEARCH, READ_URL, RUN_SQL]
 
 # Regulatory: акцент на gov.ru + законы (через web_search + read_url)
 REGULATORY_TOOLS = [SEMANTIC_SEARCH, WEB_SEARCH, READ_URL]

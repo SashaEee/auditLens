@@ -254,6 +254,63 @@ def tool_semantic_search(args: dict, bundle) -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════
+# TOOL: search_reviews_db — семантический поиск жалоб в корпусе banki.ru
+# ════════════════════════════════════════════════════════════════════════
+
+
+def tool_search_reviews_db(args: dict, bundle) -> str:
+    """Семантический поиск реальных жалоб в корпусе banki.ru (БД bankiru).
+
+    ~390k негативных отзывов (1-2★) за 2025-2026 по 217 банкам, с датами/ссылками
+    и готовыми bge-m3 эмбеддингами. Это ОСНОВНОЙ источник жалоб — web нужен лишь
+    для банков вне корпуса. Регистрирует найденные отзывы как источники [N].
+    """
+    query = (args.get("query") or "").strip()
+    if not query:
+        return json.dumps({"error": "query пустой"}, ensure_ascii=False)
+    bank = args.get("bank") or args.get("bank_slug") or args.get("bank_name")
+    if isinstance(bank, list):
+        bank = bank[0] if bank else None
+    product = args.get("product")
+    try:
+        k = int(args.get("k", 8))
+    except (TypeError, ValueError):
+        k = 8
+    since_days = args.get("since_days")
+    try:
+        from ....rag import bankiru_reviews as br
+        results = br.search_reviews(query, bank=bank, product=product,
+                                     since_days=since_days, k=k)
+    except Exception as e:
+        return json.dumps({"error": f"reviews_db failed: {e}"}, ensure_ascii=False)
+
+    if not results:
+        return json.dumps({
+            "query": query, "bank": bank, "results": [], "count": 0,
+            "note": ("В корпусе banki.ru по этому банку/теме жалоб не найдено — "
+                     "банк может быть вне корпуса (там 217 банков). Попробуй "
+                     "web_search для этого банка."),
+        }, ensure_ascii=False)
+
+    out = []
+    for r in results:
+        title = " · ".join(x for x in ["banki.ru", r.get("bank"),
+                                        r.get("product"), r.get("date")] if x)
+        src_n = register_source(bundle, url=r.get("url") or "",
+                                 title=title, domain="banki.ru",
+                                 trust=0.55, kind="review",
+                                 excerpt=(r.get("text") or "")[:600])
+        out.append({
+            "bank": r.get("bank"), "product": r.get("product"),
+            "date": r.get("date"), "url": r.get("url"), "source_n": src_n,
+            "text": (r.get("text") or "")[:900],
+            "relevance": round(1.0 - float(r.get("distance", 0) or 0), 3),
+        })
+    return json.dumps({"query": query, "bank": bank, "results": out,
+                       "count": len(out)}, ensure_ascii=False)
+
+
+# ════════════════════════════════════════════════════════════════════════
 # TOOL: run_sql — read-only SQL по предзаданным view/таблицам
 # ════════════════════════════════════════════════════════════════════════
 
