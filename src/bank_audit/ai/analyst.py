@@ -127,7 +127,11 @@ TOOLS = [
                 "ОСНОВНОЙ источник жалоб (полнее агрегатов get_reviews_analysis).\n"
                 "Главный режим: передай ТОЛЬКО bank (и product при наличии) БЕЗ "
                 "query — увидишь, на что РЕАЛЬНО жалуются клиенты, не угадывая "
-                "проблему. query задавай лишь для точечного среза по теме."
+                "проблему. query задавай лишь для точечного среза по теме.\n"
+                "⚠ ВСЕГДА передавай bank, если вопрос про конкретный банк ИЛИ про "
+                "СРАВНЕНИЕ банков — тогда зови инструмент ОТДЕЛЬНО по каждому банку. "
+                "Запрос query БЕЗ bank — это лишь общий рыночный top-k, он НЕ "
+                "покрывает все банки и НЕ доказывает, что у банка нет жалоб."
             ),
             "parameters": {
                 "type": "object",
@@ -432,13 +436,27 @@ def _run_tool(name: str, args: dict) -> str:
             except Exception as e:
                 return json.dumps({"error": f"search_complaints failed: {e}"}, ensure_ascii=False)
             if not res:
-                return json.dumps({"results": [], "count": 0,
-                    "note": "В корпусе banki.ru по этому банку/теме жалоб не найдено (банк может быть вне корпуса 217)."},
-                    ensure_ascii=False)
-            return json.dumps({"count": len(res), "results": [
+                if args.get("bank"):
+                    note = ("По этому банку ничего не нашлось. Если задавал query — повтори "
+                            "БЕЗ query (discovery по банку, темы проступят сами). Если и так "
+                            "пусто — банк вне корпуса banki.ru (217 банков).")
+                else:
+                    note = ("Запрос без bank вернул пусто. Чтобы оценить конкретный банк — "
+                            "передай bank=<банк>.")
+                return json.dumps({"results": [], "count": 0, "note": note}, ensure_ascii=False)
+            out = {"count": len(res), "results": [
                 {"bank": r.get("bank"), "product": r.get("product"), "date": r.get("date"),
-                 "url": r.get("url"), "text": (r.get("text") or "")[:700]} for r in res
-            ]}, ensure_ascii=False, default=str)
+                 "url": r.get("url"), "text": (r.get("text") or "")[:700]} for r in res]}
+            if not args.get("bank"):
+                # бесбанковый запрос = общий рыночный top-k, НЕ покрывает все банки →
+                # запрет делать вывод об отсутствии жалоб у конкретного банка
+                out["note"] = ("ВНИМАНИЕ: запрос без bank — общий рыночный top-k по теме. Он "
+                               "охватывает лишь ближайшие по смыслу жалобы и структурно НЕ "
+                               "покрывает все 217 банков (банк может быть в корпусе, но не "
+                               "попасть в top-k). НЕ делай вывод, что у банка нет жалоб. Для "
+                               "КАЖДОГО интересующего банка вызови search_complaints отдельно "
+                               "с bank=<банк>.")
+            return json.dumps(out, ensure_ascii=False, default=str)
 
         if name == "get_bank_ratings":
             rows = s.execute(text("""

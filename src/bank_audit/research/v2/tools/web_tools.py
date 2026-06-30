@@ -289,12 +289,14 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
         return json.dumps({"error": f"reviews_db failed: {e}"}, ensure_ascii=False)
 
     if not results:
-        return json.dumps({
-            "query": query, "bank": bank, "results": [], "count": 0,
-            "note": ("В корпусе banki.ru по этому банку/теме жалоб не найдено — "
-                     "банк может быть вне корпуса (там 217 банков). Попробуй "
-                     "web_search для этого банка."),
-        }, ensure_ascii=False)
+        if bank:
+            note = ("По этому банку жалоб не нашлось. Если задавал query — повтори БЕЗ query "
+                    "(discovery по банку, темы проступят сами). Если и так пусто — банк вне "
+                    "корпуса banki.ru (217), тогда web_search.")
+        else:
+            note = "Запрос без bank вернул пусто. Для оценки конкретного банка передай bank=<банк>."
+        return json.dumps({"query": query, "bank": bank, "results": [], "count": 0,
+                           "note": note}, ensure_ascii=False)
 
     out = []
     for r in results:
@@ -310,8 +312,15 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
             "text": (r.get("text") or "")[:900],
             "relevance": round(1.0 - float(r.get("distance", 0) or 0), 3),
         })
-    return json.dumps({"query": query, "bank": bank, "results": out,
-                       "count": len(out)}, ensure_ascii=False)
+    resp = {"query": query, "bank": bank, "results": out, "count": len(out)}
+    if not bank:
+        # бесбанковый семантический поиск = общий рыночный top-k, НЕ покрывает все
+        # банки → запрет выводить отсутствие жалоб у конкретного банка
+        resp["note"] = ("ВНИМАНИЕ: запрос без bank — общий рыночный top-k по теме, структурно "
+                        "НЕ покрывает все 217 банков (банк может быть в корпусе, но не попасть "
+                        "в top-k). НЕ делай вывод, что у банка нет жалоб. Для КАЖДОГО банка "
+                        "вызови search_reviews_db отдельно с bank=<банк>.")
+    return json.dumps(resp, ensure_ascii=False)
 
 
 # ════════════════════════════════════════════════════════════════════════

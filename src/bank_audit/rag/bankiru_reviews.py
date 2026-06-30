@@ -253,7 +253,13 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
                 LIMIT :limit
                 """
             )
+        is_global = not discovery and not bank_canon
         with eng.connect() as c:
+            if is_global:
+                # глобальный HNSW по умолчанию (ef_search=40) даёт мелкую и
+                # смещённую выдачу (банки-доминанты вытесняют остальных) — поднимаем
+                # recall, чтобы рыночный срез был полнее и разнообразнее по банкам.
+                c.execute(text("SET LOCAL hnsw.ef_search = 400"))
             rows = c.execute(sql, params).mappings().all()
     except Exception as e:
         log.warning("bankiru: поиск упал (%s) — отдаю пусто, вызывающий уйдёт в web", type(e).__name__)
