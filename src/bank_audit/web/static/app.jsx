@@ -1177,7 +1177,7 @@ function ReviewsPage(){
                  onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
               <div style={{minWidth:0}}>
                 <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
-                <div className="rv-gbar" style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
+                <div className={"rv-gbar"+(c.anomaly?" anom":"")} style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
               </div>
               <div className="mono rv-gn">{fmtNum(c.n)}{c.per_100k?<span className="rv-gp"> · {c.per_100k}/100k</span>:""}</div>
             </div>
