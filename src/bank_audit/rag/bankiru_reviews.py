@@ -128,6 +128,31 @@ def _load_names() -> dict[str, str]:
     return _norm2name
 
 
+def _slug_to_ru(n: str, idx: dict) -> str:
+    """Слаг/латинская форма банка (sberbank/alfabank/vtb) → русский синоним,
+    который реально есть в индексе корпуса. Источник синонимов — общий с детектором
+    банков (BANK_SLUG_TRIGGERS), чтобы поиск отзывов и веб-поиск брали одни и те же
+    банки. Если n не слаг/не триггер — возвращаем как есть."""
+    try:
+        from ..ai.llm_utils import BANK_SLUG_TRIGGERS
+    except Exception:
+        return n
+    trs = BANK_SLUG_TRIGGERS.get(n)
+    if trs is None:
+        for slug, t in BANK_SLUG_TRIGGERS.items():
+            if n == slug or n in {_norm(x) for x in t}:
+                trs = t
+                break
+    if not trs:
+        return n
+    norm_trs = [_norm(t) for t in trs]
+    for tn in norm_trs:                       # синоним, прямо присутствующий в корпусе
+        if tn in idx:
+            return tn
+    cyr = [t for t in norm_trs if re.search(r"[а-я]", t)]   # иначе — для fuzzy
+    return max(cyr or norm_trs, key=len)
+
+
 def resolve_bank(name: str | None) -> str | None:
     """Имя/слаг банка → каноническое имя в bankiru (или None)."""
     if not name:
@@ -136,6 +161,9 @@ def resolve_bank(name: str | None) -> str | None:
     if n in _ALIAS:
         return _ALIAS[n]
     idx = _load_names()
+    if n in idx:
+        return idx[n]
+    n = _slug_to_ru(n, idx)        # sberbank/alfabank/… → русский синоним из корпуса
     if n in idx:
         return idx[n]
     for cand in (n + " банк", "банк " + n):
