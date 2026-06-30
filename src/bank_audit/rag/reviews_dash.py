@@ -528,58 +528,110 @@ def segment_reviews(bank: str, product: str | None = None, city: str | None = No
     return {"n": len(revs), "themes": themes, "samples": samples, "texts": texts}
 
 
+def _theme_week_counts(eng, where_sql: str, params_extra: dict) -> dict:
+    """Помесячно→понедельно: по каждой теме счёт за окна w0[0-7д], w1[7-14д],
+    base[14-63д] + общие. where_sql — bank-scoped или 'TRUE' (рынок)."""
+    cte_sel, params = [], dict(params_extra)
+    for t in THEMES:
+        ts, tp = _theme_sql(t, f"x{t['key']}_")
+        params.update(tp)
+        cte_sel.append(f'({ts}) AS "{t["key"]}"')
+    w0 = "dt >= now()-make_interval(days=>7)"
+    w1 = "dt < now()-make_interval(days=>7) AND dt >= now()-make_interval(days=>14)"
+    base = "dt < now()-make_interval(days=>14)"
+    sel = []
+    for t in THEMES:
+        k = t["key"]
+        sel += [f'count(*) FILTER (WHERE {w0} AND "{k}") AS "{k}_w0"',
+                f'count(*) FILTER (WHERE {w1} AND "{k}") AS "{k}_w1"',
+                f'count(*) FILTER (WHERE {base} AND "{k}") AS "{k}_b"']
+    sql = (f'WITH tagged AS MATERIALIZED ('
+           f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)}'
+           f' FROM bankiru.reviews r WHERE {where_sql}'
+           f' AND r."datePublished" >= now() - make_interval(days => 63))'
+           f' SELECT {", ".join(sel)},'
+           f' count(*) FILTER (WHERE {w0}) AS "_tw0", count(*) FILTER (WHERE {base}) AS "_tb"'
+           f' FROM tagged')
+    with eng.connect() as c:
+        return dict(c.execute(text(sql), params).mappings().one())
+
+
 @_safe(None)
 def weekly_signals(bank: str, product: str | None = None) -> dict | None:
-    """Срочные аномалии за 7 дней: темы/модули, РЕЗКО выросшие к недельному
-    базлайну (пред. 8 недель) или появившиеся впервые. Числа детерминированы —
-    LLM их потом объясняет, не меняя. Скан ограничен 63 днями. Кэш 30 мин."""
+    """Срочные аномалии за 7 дней — МНОГОСИГНАЛЬНО (не просто «выросло ×N»):
+    рост к базлайну (6 нед), УСКОРЕНИЕ (нед-к-нед), сравнение с РЫНКОМ (всплеск
+    только у банка vs отраслевой тренд), ГЕО-концентрация (локальный сбой), новые
+    темы. Числа детерминированы; LLM объясняет и приоритизирует, не меняя их."""
     eng = _get_engine()
     if eng is None:
         return None
     bc = resolve_bank(bank)
     if not bc:
         return None
+    BASE_W = 7.0   # недель в базлайне (49 дн: окно 14–63)
 
     def _compute():
         bclause, bp = _bank_clause(bc, product)
-        cte_sel, params = [], dict(bp)
-        for t in THEMES:
-            ts, tp = _theme_sql(t, f"w{t['key']}_")
-            params.update(tp)
-            cte_sel.append(f'({ts}) AS "{t["key"]}"')
-        wk = "dt >= now()-make_interval(days=>7)"
-        base = "dt < now()-make_interval(days=>7)"
-        sel = []
-        for t in THEMES:
-            k = t["key"]
-            sel.append(f'count(*) FILTER (WHERE {wk} AND "{k}") AS "{k}_w"')
-            sel.append(f'count(*) FILTER (WHERE {base} AND "{k}") AS "{k}_b"')
-        sql = (f'WITH tagged AS MATERIALIZED ('
-               f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)}'
-               f' FROM bankiru.reviews r WHERE {bclause}'
-               f' AND r."datePublished" >= now() - make_interval(days => 63))'
-               f' SELECT {", ".join(sel)},'
-               f' count(*) FILTER (WHERE {wk}) AS "_tw",'
-               f' count(*) FILTER (WHERE {base}) AS "_tb"'
-               f' FROM tagged')
-        with eng.connect() as c:
-            row = c.execute(text(sql), params).mappings().one()
-        BW = 8.0  # недель в базлайне (56 дн)
+        brow = _theme_week_counts(eng, bclause, bp)
+        try:
+            mrow = _theme_week_counts(eng, "TRUE", {})     # рынок (все банки)
+        except Exception as e:
+            log.warning("weekly_signals: рыночный срез не посчитан: %s", e)
+            mrow = None
         out = []
         for t in THEMES:
-            w = int(row[f'{t["key"]}_w'])
-            b = int(row[f'{t["key"]}_b'])
-            bw = b / BW
-            new = b <= 2 and w >= 6                       # практически не было → появилось
-            surge = w >= 8 and bw >= 1.0 and w / bw >= 1.8  # резкий рост к норме
-            if surge or new:
-                out.append({"key": t["key"], "label": t["label"], "short": _short(t["label"]),
-                            "risk": t["risk"], "week": w, "baseline_week": round(bw, 1),
-                            "ratio": (round(w / bw, 1) if bw >= 0.5 else None), "new": bool(new)})
-        out.sort(key=lambda s: s["week"] * (s["ratio"] or 3), reverse=True)
-        tw, tb = int(row["_tw"]), int(row["_tb"])
-        tbw = tb / BW
-        overall = {"week": tw, "baseline_week": round(tbw, 1),
-                   "ratio": (round(tw / tbw, 1) if tbw >= 0.5 else None)}
+            k = t["key"]
+            w0, w1, b = int(brow[f"{k}_w0"]), int(brow[f"{k}_w1"]), int(brow[f"{k}_b"])
+            bw = b / BASE_W
+            ratio = (w0 / bw) if bw >= 0.5 else None
+            new = b <= 2 and w0 >= 6
+            accel = w0 > w1 and w0 >= max(8, 1.4 * w1)      # нарастает неделя к неделе
+            surge = w0 >= 8 and bw >= 1.0 and ratio is not None and ratio >= 1.8
+            if not (surge or new):
+                continue
+            mratio, bank_specific = None, False
+            if mrow is not None:
+                mw0, mb = int(mrow[f"{k}_w0"]), int(mrow[f"{k}_b"])
+                mbw = mb / BASE_W
+                mratio = round(mw0 / mbw, 2) if mbw >= 0.5 else None
+                if ratio is not None and (mratio is None or mratio < 1.4 or ratio >= 1.8 * mratio):
+                    bank_specific = True   # всплеск у банка, рынок ровный → наша регрессия
+            out.append({"key": k, "label": t["label"], "short": _short(t["label"]),
+                        "risk": t["risk"], "week": w0, "prev_week": w1,
+                        "baseline_week": round(bw, 1), "ratio": (round(ratio, 1) if ratio else None),
+                        "new": bool(new), "accel": bool(accel),
+                        "market_ratio": mratio, "bank_specific": bool(bank_specific)})
+        out.sort(key=lambda s: (s["ratio"] or 5) * s["week"], reverse=True)
+        # гео-концентрация ведущего сигнала (локальный сбой/инцидент)
+        if out:
+            top = out[0]
+            try:
+                ts, tp = _theme_sql(THEME_BY_KEY[top["key"]], "g")
+                with eng.connect() as c:
+                    grows = c.execute(text(
+                        f"SELECT split_part(r.location, ' (', 1) city, count(*) n"
+                        f" FROM bankiru.reviews r WHERE {bclause} AND {ts} AND r.location <> ''"
+                        f" AND r.\"datePublished\" >= now()-make_interval(days=>7)"
+                        f" GROUP BY 1 ORDER BY 2 DESC LIMIT 3"), {**bp, **tp}).all()
+                tot = sum(int(x[1]) for x in grows) or 1
+                if grows and int(grows[0][1]) >= 4 and int(grows[0][1]) / tot >= 0.4:
+                    top["geo"] = {"city": grows[0][0], "share": round(100 * int(grows[0][1]) / tot)}
+            except Exception:
+                pass
+        # уровень приоритета
+        for s in out:
+            score = ((s["ratio"] or 4) * (1.5 if s["bank_specific"] else 1.0)
+                     * (1.3 if s["accel"] else 1.0) * (1.4 if s["risk"] == "compliance" else 1.0))
+            s["level"] = "high" if (score >= 5 and s["week"] >= 10) or (
+                s["bank_specific"] and (s["ratio"] or 0) >= 2.5) else "medium"
+        out.sort(key=lambda s: (s["level"] == "high", (s["ratio"] or 5) * s["week"]), reverse=True)
+        tw0, tb = int(brow["_tw0"]), int(brow["_tb"])
+        tbw = tb / BASE_W
+        overall = {"week": tw0, "baseline_week": round(tbw, 1),
+                   "ratio": (round(tw0 / tbw, 1) if tbw >= 0.5 else None)}
+        if mrow is not None:
+            mtw0, mtb = int(mrow["_tw0"]), int(mrow["_tb"])
+            mtbw = mtb / BASE_W
+            overall["market_ratio"] = round(mtw0 / mtbw, 2) if mtbw >= 0.5 else None
         return {"bank": bc, "product": product, "signals": out[:6], "overall": overall}
     return _cached(f"wk:{bc}:{product}", _compute, ttl=1800)

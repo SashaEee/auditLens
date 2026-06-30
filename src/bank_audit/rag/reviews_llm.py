@@ -118,42 +118,67 @@ async def classify_reviews(items: list[dict]) -> list[dict | None]:
 
 # ── Срочные аномалии за 7 дней (audit-радар, on-demand при загрузке блока) ───
 _ANOM_SYSTEM = (
-    "Ты — аналитик службы внутреннего аудита банка. Тебе дают СЧИТАННЫЕ за 7 дней "
-    "недельные аномалии (точные числа — НЕ меняй и не выдумывай новые) и свежие "
-    "жалобы недели. Задача — за 10 секунд сказать аудитору, ГДЕ резко изменилось и "
-    "какой МОДУЛЬ идти проверять: резкий рост жалоб = модуль внезапно деградировал "
-    "или заброшен сопровождением. Не алармируй без чисел."
+    "Ты — старший аналитик службы внутреннего аудита банка. НЕ пересказывай жалобы — "
+    "дай АНАЛИЗ: что аномально, почему важно, куда смотреть и насколько срочно. Тебе "
+    "дают точные недельные метрики (НЕ меняй числа) и свежие жалобы. Сигналы, на "
+    "которые опирайся:\n"
+    "• рост темы к норме (×N) и УСКОРЕНИЕ (растёт неделя-к-неделе) — проблема нарастает;\n"
+    "• «только у банка» = всплеск у банка, а рынок по теме ровный → это НАША регрессия "
+    "(высокий приоритет); если рынок тоже растёт — вероятно отраслевое/сезонное (ниже);\n"
+    "• гео-концентрация (≥40% в одном городе) → локальный сбой (отделение/банкомат/регион);\n"
+    "• жалобы ВНЕ известных тем → свежий инцидент, которого ещё нет в таксономии.\n"
+    "Не алармируй без чисел; без эмодзи."
 )
 
 
-async def anomaly_brief(sig: dict, samples: list[dict]) -> str | None:
-    """sig — результат reviews_dash.weekly_signals(). Возвращает markdown-резюме
-    из 2–4 коротких срочных пунктов (или None — тогда показываем сами сигналы)."""
+async def anomaly_brief(sig: dict, samples: list[dict],
+                        unclassified: list[dict] | None = None) -> str | None:
+    """sig — reviews_dash.weekly_signals(). Возвращает markdown-аналитику
+    (приоритизированную), или None — тогда фронт показывает сами сигналы."""
     signals = (sig or {}).get("signals") or []
     if not signals:
         return None
     lines = []
     for s in signals:
-        tag = "НОВАЯ тема (раньше почти не было)" if s.get("new") else (
-            f"×{s['ratio']} к норме" if s.get("ratio") else "рост")
-        lines.append(f'- {s["label"]}: {s["week"]} жалоб за 7 дн ({tag}; обычно ~{s["baseline_week"]}/нед)')
+        bits = []
+        if s.get("new"):
+            bits.append("НОВАЯ тема (раньше почти не было)")
+        elif s.get("ratio"):
+            bits.append(f"×{s['ratio']} к норме ~{s['baseline_week']}/нед")
+        if s.get("accel"):
+            bits.append(f"ускоряется (нед: {s.get('prev_week')}→{s['week']})")
+        mr = s.get("market_ratio")
+        if s.get("bank_specific"):
+            bits.append(f"ТОЛЬКО у банка (рынок по теме ×{mr if mr is not None else '~1'})")
+        elif mr is not None and mr >= 1.4:
+            bits.append(f"рынок тоже растёт ×{mr} (возможно отраслевое)")
+        if s.get("geo"):
+            bits.append(f"{s['geo']['share']}% из г. {s['geo']['city']}")
+        lines.append(f'- {s["label"]} [{s.get("level","medium")}]: {s["week"]} за 7 дн; ' + "; ".join(bits))
     ov = (sig or {}).get("overall") or {}
-    ov_line = (f'Всего за неделю: {ov.get("week")} (обычно ~{ov.get("baseline_week")}/нед).'
+    ov_line = (f'Всего за неделю: {ov.get("week")} (обычно ~{ov.get("baseline_week")}/нед'
+               + (f', рынок ×{ov["market_ratio"]}' if ov.get("market_ratio") is not None else '') + ').'
                if ov.get("week") is not None else "")
-    samp = "\n".join(f'— {(r.get("text") or "")[:280]}' for r in (samples or [])[:14])
+    samp = "\n".join(f'— {(r.get("text") or "")[:260]}' for r in (samples or [])[:12])
+    unc = "\n".join(f'— {(r.get("text") or "")[:240]}' for r in (unclassified or [])[:12])
     user = (
-        "Аномалии недели (числа точные):\n" + "\n".join(lines) + f"\n{ov_line}\n\n"
-        f"Свежие жалобы недели:\n{samp}\n\n"
-        "Дай 2–4 КОРОТКИХ срочных пункта (markdown, каждый с новой строки, начинай с «- »). "
-        "В каждом: что резко изменилось (с цифрой из сигналов), вероятная причина из жалоб, "
-        "и какой **модуль/тему** проверить (выдели жирным). Без вступления, без воды."
+        "СИГНАЛЫ НЕДЕЛИ (числа точные, не меняй):\n" + "\n".join(lines) + f"\n{ov_line}\n\n"
+        f"СВЕЖИЕ ЖАЛОБЫ НЕДЕЛИ (для причины):\n{samp}\n\n"
+        f"ЖАЛОБЫ ВНЕ ИЗВЕСТНЫХ ТЕМ (ищи НОВЫЙ повторяющийся инцидент):\n{unc or '—'}\n\n"
+        "Выдай markdown-список (начинай каждый пункт с «- »):\n"
+        "1) 2–4 пункта по приоритету. Формат: «**[ВЫСОКИЙ/СРЕДНИЙ]** **<модуль/тема>** — "
+        "что изменилось (с цифрой), пометь если *только у банка*/*локально*/*ускоряется*, "
+        "вероятная причина из жалоб, что проверить аудитору».\n"
+        "2) Если в жалобах вне тем виден НОВЫЙ повторяющийся инцидент — добавь пункт "
+        "«- **Новое:** <суть> (≈N жалоб) — стоит завести как тему».\n"
+        "Коротко, аналитично, без вступления и без эмодзи."
     )
     try:
         resp = await _client().chat.completions.create(
             model=smart_model(),
             messages=[{"role": "system", "content": _ANOM_SYSTEM},
                       {"role": "user", "content": user}],
-            temperature=0.2, max_tokens=1600)
+            temperature=0.2, max_tokens=1800)
         return (resp.choices[0].message.content or "").strip() or None
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_llm.anomaly_brief упал: %s", e)

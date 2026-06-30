@@ -236,8 +236,9 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
     signals = (sig or {}).get("signals") or []
     if not signals:
         return {"summary": None, "signals": [], "overall": (sig or {}).get("overall"), "calm": True}
-    samples = await asyncio.to_thread(_rd().list_reviews, bank, product or None, None, None, 7, None, None, 15)
-    brief = await reviews_llm.anomaly_brief(sig, samples)
+    recent = await asyncio.to_thread(_rd().list_reviews, bank, product or None, None, None, 7, None, None, 50)
+    unclassified = [r for r in recent if not r.get("themes")]   # кандидаты в новые инциденты
+    brief = await reviews_llm.anomaly_brief(sig, recent[:14], unclassified[:14])
     return {"summary": brief, "signals": signals, "overall": sig.get("overall"), "calm": False}
 
 @app.get("/api/reviews/explain")

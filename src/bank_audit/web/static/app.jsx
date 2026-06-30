@@ -961,6 +961,11 @@ function RvReview({r,onOpen,full}){
   </div>;
 }
 
+// SVG-иконки радара (без эмодзи, currentColor, feather-стиль)
+const IcoRadar=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 13h4l2.5 6 4-14 2.5 9 1.5-4 1.5 3H22"/></svg>;
+const IcoCheck=()=> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.5 2.5 4.7-5.4"/></svg>;
+const IcoTrendUp=()=> <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>;
+
 function ReviewsPage(){
   const[bank,setBank]=useState("Сбербанк");
   const[bankList,setBankList]=useState(RV_BANKS);
@@ -1190,31 +1195,36 @@ function ReviewsPage(){
             </div>
           ))}
         </div>
-        {/* RADAR: срочные аномалии за 7 дней (грузится отдельно, LLM) */}
+        {/* RADAR: срочные аномалии за 7 дней (грузится отдельно, LLM-анализ) */}
         <div className="rv-card rv-radar">
           <div className="rv-radar-head">
-            <span className="rv-radar-ico" aria-hidden="true">⚡</span>
+            <span className="rv-radar-ico" aria-hidden="true"><IcoRadar/></span>
             <div style={{flex:1,minWidth:0}}>
               <div className="rv-ttl">Срочные аномалии</div>
               <div className="rv-cap">резкие изменения за 7 дней{ov&&ov.as_of?` · ${ov.as_of}`:""}</div>
             </div>
-            <span className={"rv-radar-live"+(anomBusy?" scan":"")} title="LLM-радар"/>
+            <span className={"rv-radar-live"+(anomBusy?" scan":"")} title="радар активен"/>
           </div>
           {anomBusy?
-            <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Сканирую аномалии недели…</span></div>
+            <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
            :(!anom||anom.calm||!anom.signals||!anom.signals.length)?
-            <div className="rv-radar-calm"><span className="rv-radar-check">✓</span> Резких аномалий за неделю не выявлено</div>
+            <div className="rv-radar-calm"><span className="rv-radar-check"><IcoCheck/></span> Резких аномалий за неделю не выявлено</div>
            :<>
               <div className="rv-radar-chips">
-                {anom.signals.map((s,i)=>(
-                  <span key={i} className={"rv-radar-chip "+(s.risk||"ops")} role="button" tabIndex={0}
-                        title="открыть тему в ленте" onClick={()=>setTheme(s.key)} onKeyDown={onKey(()=>setTheme(s.key))}>
-                    {s.short||s.label}<b>{s.new?"NEW":"×"+s.ratio}</b>
-                  </span>
-                ))}
+                {anom.signals.map((s,i)=>{
+                  const tip=`${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)`
+                    +(s.bank_specific?" · всплеск только у банка":"")
+                    +(s.accel?` · ускоряется (${s.prev_week}→${s.week})`:"")
+                    +(s.geo?` · ${s.geo.share}% из ${s.geo.city}`:"");
+                  return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}
+                        role="button" tabIndex={0} title={tip}
+                        onClick={()=>setTheme(s.key)} onKeyDown={onKey(()=>setTheme(s.key))}>
+                    {s.short||s.label}<b>{s.new?"новое":"×"+s.ratio}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
+                  </span>;
+                })}
               </div>
               {anom.summary?<div className="rv-radar-brief">{renderMD(anom.summary)}</div>
-                :<div className="rv-cap" style={{marginTop:6}}>LLM-резюме недоступно — см. всплески выше (числа за 7 дн).</div>}
+                :<div className="rv-cap" style={{marginTop:6}}>LLM-разбор недоступен — см. всплески выше (числа за 7 дн точны).</div>}
             </>}
         </div>
       </div>

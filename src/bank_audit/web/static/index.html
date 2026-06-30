@@ -1317,7 +1317,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-radar::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;
   background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.6}
 .rv-radar-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-.rv-radar-ico{font-size:16px;line-height:1;filter:drop-shadow(0 0 6px color-mix(in oklab,var(--accent),transparent 35%))}
+.rv-radar-ico{display:flex;color:var(--accent);filter:drop-shadow(0 0 5px color-mix(in oklab,var(--accent),transparent 50%))}
 .rv-radar-live{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent);
   box-shadow:0 0 0 0 color-mix(in oklab,var(--accent),transparent 30%);animation:rv-ping 2s ease-out infinite}
 .rv-radar-live.scan{animation-duration:1s}
@@ -1333,21 +1333,20 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 @keyframes rv-sweep{0%{background-position:-50% 0}100%{background-position:150% 0}}
 /* спокойно */
 .rv-radar-calm{font-size:13px;color:var(--ink-2);padding:6px 0;display:flex;align-items:center;gap:8px}
-.rv-radar-check{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;
-  background:color-mix(in oklab,var(--pos),transparent 84%);color:var(--pos);font-size:11px;font-weight:700}
-/* чипы всплесков */
+.rv-radar-check{display:inline-flex;color:var(--pos)}
+/* чипы всплесков — цвет по приоритету (high/medium), не по risk */
 .rv-radar-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
-.rv-radar-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 9px;border-radius:20px;
+.rv-radar-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 7px 3px 10px;border-radius:20px;
   font-size:11.5px;cursor:pointer;border:1px solid var(--hair-2);background:var(--surface);color:var(--ink);
   transition:transform .12s,box-shadow .12s,border-color .12s}
 .rv-radar-chip:hover{transform:translateY(-1px);box-shadow:var(--shadow-1)}
 .rv-radar-chip b{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;padding:1px 6px;border-radius:11px;
-  background:var(--accent);color:#fff;letter-spacing:.02em}
-.rv-radar-chip.compliance{border-color:color-mix(in oklab,var(--neg),transparent 60%)}
-.rv-radar-chip.compliance b{background:var(--neg)}
-.rv-radar-chip.conduct{border-color:color-mix(in oklab,var(--warn),transparent 55%)}
-.rv-radar-chip.conduct b{background:var(--warn);color:var(--ink)}
-.rv-radar-chip.ops b{background:var(--ink-3)}
+  background:var(--ink-3);color:var(--surface);letter-spacing:.02em}
+.rv-radar-chip.lvl-high{border-color:color-mix(in oklab,var(--accent),transparent 45%);
+  background:color-mix(in oklab,var(--accent),var(--surface) 92%)}
+.rv-radar-chip.lvl-high b{background:var(--accent);color:#fff}
+.rv-radar-chip.only{box-shadow:inset 2.5px 0 0 var(--accent)}
+.rv-radar-acc{display:inline-flex;color:var(--accent)}
 .rv-radar-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* LLM-резюме */
 .rv-radar-brief{font-size:12.5px;line-height:1.55;color:var(--ink);animation:fade .3s ease both}
