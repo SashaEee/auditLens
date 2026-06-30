@@ -64,6 +64,25 @@ THEMES = [
      "patterns": ["коллектор", "взыскан", "звонят по кредит", "выбивают", "угрожа", "беспокоят родств"]},
 ]
 THEME_BY_KEY = {t["key"]: t for t in THEMES}
+# Скомпилированные паттерны для пер-отзыв тегирования (Python-side, для сегментов
+# drill-in и LLM-объяснений). Та же таксономия, что и в _theme_sql (SQL-агрегат).
+_THEME_RE = [(t, re.compile("|".join(re.escape(p) for p in t["patterns"]), re.I)) for t in THEMES]
+
+
+def match_themes(body: str | None) -> list[dict]:
+    """Темы отзыва по regex — мультилейбл. Возвращает [{key,label,risk}]."""
+    b = body or ""
+    return [{"key": t["key"], "label": t["label"], "risk": t["risk"]}
+            for t, rx in _THEME_RE if rx.search(b)]
+
+
+def _median(xs: list[float]) -> float:
+    s = sorted(xs)
+    n = len(s)
+    if not n:
+        return 0.0
+    m = n // 2
+    return float(s[m]) if n % 2 else (s[m - 1] + s[m]) / 2.0
 
 # Население городов (тыс.) — для per-capita аномалий географии. Хватает крупных.
 _POP = {
@@ -169,6 +188,10 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
                 + (' AND r."product" = :product' if product else '') +
                 ' GROUP BY 1 ORDER BY 2 DESC'),
                 {"d": days, **({"product": product} if product else {})}).all()
+            # свежесть данных — последняя дата отзыва по банку (индекс по datePublished)
+            asof = c.execute(text(
+                f'SELECT max(r."datePublished") FROM bankiru.reviews r WHERE {bclause}'),
+                bp).scalar()
         total_market = sum(int(r[1]) for r in mk) or 1
         share = round(100.0 * total_cur / total_market, 1)
         rank = next((i + 1 for i, r in enumerate(mk) if r[0] == bc), None)
@@ -177,8 +200,11 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
         return {
             "bank": bc, "product": product, "days": days,
             "total": total_cur, "prev": total_prev, "delta_pct": delta,
+            # малые абсолютные числа делают %-дельту шумной — помечаем
+            "delta_low_n": bool(total_prev and min(total_cur, total_prev) < 30),
             "market_share_pct": share, "market_rank": rank, "market_banks": len(mk),
             "escalation_pct": esc_pct,
+            "as_of": asof.date().isoformat() if asof else None,
         }
     return _cached(f"ov:{bc}:{product}:{days}", _compute)
 
@@ -201,17 +227,22 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
                 f" AND r.\"datePublished\" >= date_trunc('month', now()) - make_interval(months => :m)"
                 f" GROUP BY 1 ORDER BY 1"),
                 {**bp, "m": months - 1}).all()
-        series = [{"ym": r[0], "n": int(r[1])} for r in rows]
-        vals = [s["n"] for s in series]
-        # детект спайка: > mean + 1.0*std (и не первый месяц)
-        if len(vals) >= 4:
-            mean = sum(vals) / len(vals)
-            var = sum((v - mean) ** 2 for v in vals) / len(vals)
-            std = var ** 0.5
+            cur_ym = c.execute(text("SELECT to_char(now(),'YYYY-MM')")).scalar()
+        series = [{"ym": r[0], "n": int(r[1]), "partial": r[0] == cur_ym} for r in rows]
+        # baseline и детект спайка — ТОЛЬКО по завершённым месяцам (текущий неполный
+        # занижен и раздувал бы «падение»/смещал среднее). Robust: медиана + MAD,
+        # устойчиво к самому пику и к растущему тренду (в отличие от mean+std).
+        complete = [s["n"] for s in series if not s["partial"]]
+        med = None
+        if len(complete) >= 4:
+            med = _median(complete)
+            mad = _median([abs(v - med) for v in complete]) or (
+                sum(abs(v - med) for v in complete) / len(complete))
+            thr = med + 3.0 * mad
             for s in series:
-                s["spike"] = s["n"] > mean + std and s["n"] > mean * 1.25
-                s["pct_vs_mean"] = round(100.0 * (s["n"] - mean) / mean) if mean else 0
-        return {"bank": bc, "product": product, "series": series}
+                s["pct_vs_median"] = round(100.0 * (s["n"] - med) / med) if med else 0
+                s["spike"] = (not s["partial"]) and s["n"] > thr and s["n"] >= med * 1.4
+        return {"bank": bc, "product": product, "series": series, "baseline": med}
     return _cached(f"tr:{bc}:{product}:{months}", _compute)
 
 
@@ -343,8 +374,12 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
 
 
 def list_reviews(bank: str, product: str | None = None, theme: str | None = None,
-                 q: str | None = None, days: int | None = None, limit: int = 20) -> list[dict]:
-    """Лента доказательной базы. q → семантика; иначе свежие, опц. фильтр по теме."""
+                 q: str | None = None, days: int | None = None,
+                 city: str | None = None, month: str | None = None,
+                 limit: int = 20) -> list[dict]:
+    """Лента доказательной базы. q → семантика; иначе свежие с фильтрами
+    тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
+    массовость это аудит-сигнал → поле `similar`."""
     bc = resolve_bank(bank) if bank else None
     if q and q.strip():
         return search_reviews(q, bank=bank, product=product, since_days=days, k=limit)
@@ -352,36 +387,68 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
     if eng is None or not bc:
         return []
     bclause, bp = _bank_clause(bc, product)
-    params = {**bp, "limit": limit}
-    theme_clause = ""
+    # тянем с запасом, чтобы счётчик «ещё N похожих» был осмысленным после дедупа
+    fetch = min(max(limit * 5, 40), 120)
+    params = {**bp, "lim": fetch}
+    clause = ""
     if theme and theme in THEME_BY_KEY:
         ts, tp = _theme_sql(THEME_BY_KEY[theme], "lt")
-        theme_clause = f" AND {ts}"
+        clause += f" AND {ts}"
         params.update(tp)
     if days:
-        theme_clause += " AND r.\"datePublished\" >= now() - make_interval(days => :d)"
+        clause += " AND r.\"datePublished\" >= now() - make_interval(days => :d)"
         params["d"] = days
+    if city:
+        clause += " AND split_part(r.location, ' (', 1) = :city"
+        params["city"] = city
+    if month:
+        clause += " AND date_trunc('month', r.\"datePublished\") = to_date(:month, 'YYYY-MM')"
+        params["month"] = month
     try:
         with eng.connect() as c:
             rows = c.execute(text(
                 f'SELECT r."bankName" bank, r."product" product, r."datePublished" dt,'
                 f' r.url, r."reviewBody" body, r.location'
-                f' FROM bankiru.reviews r WHERE {bclause}{theme_clause}'
+                f' FROM bankiru.reviews r WHERE {bclause}{clause}'
                 f' AND length(r."reviewBody") >= 40'
-                f' ORDER BY r."datePublished" DESC LIMIT :limit'), params).mappings().all()
+                f' ORDER BY r."datePublished" DESC LIMIT :lim'), params).mappings().all()
     except Exception as e:
         log.warning("reviews_dash.list_reviews failed: %s", e)
         return []
-    seen, out = set(), []
+    seen: dict[str, int] = {}
+    out: list[dict] = []
     for r in rows:
         body = (r["body"] or "").strip()
         key = body[:100].lower()
         if key in seen:
+            out[seen[key]]["similar"] += 1
             continue
-        seen.add(key)
+        seen[key] = len(out)
         dt = r["dt"]
         out.append({"bank": r["bank"], "product": r["product"],
                     "date": dt.date().isoformat() if dt else None,
                     "city": (r["location"] or "").split(" (")[0],
-                    "url": r["url"], "text": body})
-    return out
+                    "url": r["url"], "text": body, "similar": 0})
+    return out[:limit]
+
+
+@_safe(None)
+def segment_reviews(bank: str, product: str | None = None, city: str | None = None,
+                    month: str | None = None, limit: int = 40) -> dict | None:
+    """Сводка по срезу (город или месяц) для LLM-объяснения аномалии/пика:
+    тексты жалоб + детерминированный regex-разбор тем + примеры со ссылками."""
+    revs = list_reviews(bank, product=product, city=city, month=month, limit=limit)
+    if not revs:
+        return {"n": 0, "themes": [], "samples": [], "texts": []}
+    from collections import Counter
+    cnt: Counter = Counter()
+    risk_by: dict[str, str] = {}
+    for r in revs:
+        for th in match_themes(r.get("text", "")):
+            cnt[th["label"]] += 1
+            risk_by[th["label"]] = th["risk"]
+    themes = [{"label": lbl, "risk": risk_by[lbl], "n": n} for lbl, n in cnt.most_common(6)]
+    samples = [{"date": r["date"], "city": r.get("city"), "url": r["url"],
+                "text": (r["text"] or "")[:320]} for r in revs[:4]]
+    texts = [(r["text"] or "")[:600] for r in revs[:25]]
+    return {"n": len(revs), "themes": themes, "samples": samples, "texts": texts}

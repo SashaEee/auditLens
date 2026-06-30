@@ -198,9 +198,30 @@ def reviews_theme_defs():
 
 @app.get("/api/reviews/feed")
 def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
-                 theme: Optional[str] = None, q: Optional[str] = None, limit: int = 20):
-    items = _rd().list_reviews(bank, product or None, theme or None, q or None, limit=limit)
+                 theme: Optional[str] = None, q: Optional[str] = None,
+                 city: Optional[str] = None, month: Optional[str] = None, limit: int = 20):
+    items = _rd().list_reviews(bank, product or None, theme or None, q or None,
+                               city=city or None, month=month or None, limit=limit)
     return {"items": items, "count": len(items)}
+
+@app.get("/api/reviews/explain")
+async def reviews_explain(bank: str = "Сбербанк", product: Optional[str] = None,
+                          city: Optional[str] = None, month: Optional[str] = None):
+    """On-demand LLM-объяснение причины гео-аномалии или пика динамики (по кнопке)."""
+    import asyncio
+    from ..rag import reviews_llm
+    seg = await asyncio.to_thread(_rd().segment_reviews, bank, product or None,
+                                  city or None, month or None)
+    if not seg or not seg.get("n"):
+        return {"summary": None, "themes": [], "samples": [], "n": 0}
+    parts = []
+    if city:
+        parts.append(f"г. {city}")
+    if month:
+        parts.append(f"месяц {month}")
+    label = f"{bank}" + (" · " + ", ".join(parts) if parts else "")
+    summary = await reviews_llm.explain_segment(seg, label=label)
+    return {"summary": summary, "themes": seg["themes"], "samples": seg["samples"], "n": seg["n"]}
 
 
 # ── banks & ratings ───────────────────────────────────────────────────────────
