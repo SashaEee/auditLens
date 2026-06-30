@@ -286,6 +286,15 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
         banks = [x.strip() for x in bank.split(",") if x.strip()]
     if isinstance(bank, list):
         bank = bank[0] if bank else None
+    # Если LLM не задал банк(и) явно — берём АНАЛИЗИРУЕМЫЕ банки из задания
+    # (bundle.subjects, определённые пайплайном из вопроса/плана), а НЕ глобальный
+    # поиск по всем. Гарантирует точечный поиск ровно по тем банкам, что в работе,
+    # а не по произвольным. (Тот же источник банков, что у web-поиска: # ОБЪЕКТЫ.)
+    if not banks and not bank:
+        subj = list(getattr(bundle, "subjects", None) or [])
+        if subj:
+            labels = getattr(bundle, "subject_labels", None) or {}
+            banks = [labels.get(s, s) for s in subj]
     from ....rag import bankiru_reviews as br
     if banks:
         kp = max(k, 6)
