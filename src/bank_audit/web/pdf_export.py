@@ -527,7 +527,16 @@ def build_pdf_html(*, question: str, report_md: str,
     sources_by_n = {s["n"]: s for s in sources if s.get("n") is not None}
     meta = meta or {}
     toc_entries: list[dict] = []
-    body_html = _md_to_html(report_md or "", sources_by_n, toc_out=toc_entries)
+    report_md = report_md or ""
+    # Заголовок документа берём из первого «# » отчёта (аналитик генерит нормальный
+    # деловой заголовок). Сырой вопрос пользователя как титул НЕ используем. Строку
+    # вырезаем из тела, чтобы h1 не задваивался (обложка + тело).
+    doc_title = "Аудит-отчёт"
+    _mt = re.search(r'^#[ \t]+(.+?)[ \t]*$', report_md, re.MULTILINE)
+    if _mt:
+        doc_title = _mt.group(1).strip()
+        report_md = (report_md[:_mt.start()] + report_md[_mt.end():]).lstrip("\n")
+    body_html = _md_to_html(report_md, sources_by_n, toc_out=toc_entries)
     sources_html = _render_sources_section(sources)
     unverified = (verification or {}).get("unverified") or []
     verification_html = _render_verification_section(unverified)
@@ -991,7 +1000,7 @@ body {{
       <span class="id">{_esc(audit_id)}</span>
     </div>
     <div class="eyebrow">Аналитический отчёт</div>
-    <h1>{_esc(question)}</h1>
+    <h1>{_esc(doc_title)}</h1>
     <dl class="meta">
       <dt>Дата</dt><dd>{_esc(now_iso)}</dd>
       <dt>Источников</dt><dd>{len(sources)}</dd>
