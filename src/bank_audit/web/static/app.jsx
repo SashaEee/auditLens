@@ -1850,11 +1850,12 @@ function VerificationBanner({verification}){
     return <div className="dr-verify dr-verify-ok">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flex:"none"}}><path d="M20 6L9 17l-5-5"/></svg>
-      Все числовые утверждения сверены с источниками.
+      Автопроверка достоверности пройдена — утверждений, требующих ручной сверки, не выявлено.
     </div>;
   }
+  const word = u.length===1?"утверждение требует":(u.length<5?"утверждения требуют":"утверждений требуют");
   return <div className="dr-verify dr-verify-warn">
-    <div className="dr-verify-head">{u.length} утверждений требуют ручной проверки</div>
+    <div className="dr-verify-head">{u.length} {word} ручной проверки</div>
     <ul className="dr-verify-list">
       {u.map((it,i)=><li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>)}
     </ul>

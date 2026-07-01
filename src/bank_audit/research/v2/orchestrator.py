@@ -285,25 +285,29 @@ async def stream_deep_research_v2(question: str,
     unverified_set = set(unverified_nums)
     for h in critique.numeric_hallucinations:
         unverified_set.add(round(float(h), 3))
+    # verified = числа отчёта, сверенные с фактами (позитивный сигнал доверия).
     verified_count = len(report_nums) - len(unverified_set)
-    # unverified — СПИСОК {claim, issue} (фронт/PDF делают .map и .length по нему;
-    # раньше слалось числом → PDF-экспорт падал `unverified.map is not a function`).
-    unverified_items = [{"claim": (f"{n:g}" if isinstance(n, float) else str(n)),
-                         "issue": "число не сопоставлено с собранными фактами"}
-                        for n in sorted(unverified_set)][:50]
+    # «Требуют ручной проверки» — КУРИРУЕМЫЙ список {claim, issue} С ПРИЧИНАМИ
+    # (расхождение с источником + единственный источник низкого доверия), а НЕ
+    # дамп всех несопоставленных чисел (раньше туда падали производные дельты/
+    # проценты/годы → перегруз и бесполезность).
+    manual_flags = _build_manual_check(report_md, bundle, critique)
+    # «Отфильтровано» — только реально пойманные критиком выдумки, а не
+    # производные числа (иначе счётчик раздувается и вводит в заблуждение).
+    dropped_count = len(critique.numeric_hallucinations)
     yield _evt({"type": "verification",
-                "method": "agent_bundle_grounding",
+                "method": "curated_audit_flags",
                 "numeric_checked": len(report_nums),
                 "verified": max(0, verified_count),
-                "unverified": unverified_items,
-                "unverified_count": len(unverified_set),
+                "unverified": manual_flags,
+                "unverified_count": len(manual_flags),
                 # grounding цитат: утверждения, противоречащие своим источникам [N]
                 # (после repair они должны быть исправлены — это что нашёл критик).
                 "citation_errors": (critique.citation_errors or [])[:8],
                 "checked": True})
     yield _evt({"type": "claim_check",
                 "verified": max(0, verified_count),
-                "dropped": len(unverified_set),
+                "dropped": dropped_count,
                 "samples": []})
 
     # ── Stage 5: STREAM FINAL REPORT ─────────────────────────────────────
@@ -628,6 +632,81 @@ async def _rewrite_with_critique(client: AsyncOpenAI, draft: str,
 # ════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════════════════════════════
+
+
+def _build_manual_check(report_md: str, bundle: KnowledgeBundle,
+                         critique: Critique) -> list[dict]:
+    """Курируемый список «Требуют ручной проверки» — только реально сомнительное,
+    С ПРИЧИНОЙ. НЕ вываливаем каждое непроверенное число (это давало перегруз,
+    т.к. производные числа отчёта — дельты/проценты/годы — не бьются с фактами
+    дословно). Что попадает (по убыванию серьёзности):
+      • расхождение утверждения со своим источником [N] (нашёл критик);
+      • значение подтверждено ЕДИНСТВЕННЫМ источником низкого доверия (<0.65),
+        и этот источник процитирован в отчёте.
+    Каждый пункт — {claim, issue}, где issue объясняет ПОЧЕМУ надо проверить.
+    """
+    import re
+    flags: list[dict] = []
+    seen: set[str] = set()
+    cited = {int(m) for m in re.findall(r"\[(\d{1,3})\]", report_md or "")}
+    srcs = {i: s for i, s in enumerate(bundle.sources.all(), 1)}
+
+    def _add(claim: str, issue: str, sev: int) -> None:
+        claim = (claim or "").strip(" —:·\n\t")
+        key = claim.lower()[:120]
+        if not claim or key in seen:
+            return
+        seen.add(key)
+        flags.append({"claim": claim[:200], "issue": (issue or "").strip()[:240],
+                      "sev": sev})
+
+    # (сев.3) Расхождение с источником — отчёт ссылается на [N], но источник
+    #         это не подтверждает/противоречит. Самое серьёзное для аудита.
+    for ce in (critique.citation_errors or []):
+        if not isinstance(ce, dict):
+            continue
+        sn = ce.get("source_n")
+        tag = f" [{sn}]" if sn else ""
+        _add(str(ce.get("claim") or ""),
+             f"расходится с источником{tag}: "
+             f"{ce.get('issue') or 'источник не подтверждает утверждение'}", 3)
+
+    # (сев.1) Единственный источник низкого доверия. Группируем факты по
+    #         (субъект, атрибут) → множеству источников; флагаем те, где ровно
+    #         один источник, он низкого доверия и процитирован в отчёте.
+    by_key: dict[tuple, set] = {}
+    fact_by_key: dict[tuple, object] = {}
+    for f in bundle.facts:
+        n = getattr(f, "source_n", 0)
+        if not n:
+            continue
+        k = (bundle.canonical_subject(f.subject), (f.attribute or "").strip().lower())
+        by_key.setdefault(k, set()).add(n)
+        fact_by_key.setdefault(k, f)
+    for k, ns in by_key.items():
+        if len(ns) != 1:
+            continue                          # подтверждено >1 источником — ок
+        n = next(iter(ns))
+        s = srcs.get(n)
+        if not s or s.trust >= 0.65:
+            continue                          # источник надёжный — не флагаем
+        if n not in cited:
+            continue                          # источник не процитирован в отчёте
+        f = fact_by_key[k]
+        val = (f.value or "").strip()
+        # Значение должно реально фигурировать в тексте отчёта — иначе читателю
+        # нечего проверять. len>=3 отсекает короткие «5%», которые ложно ловятся
+        # подстрокой (напр. «5%» внутри «1,5%»).
+        if len(val) < 3 or val not in report_md:
+            continue
+        label = bundle.subject_labels.get(f.subject, f.subject)
+        dom = s.domain or "источник"
+        _add(f"{label} — {f.attribute}: {val}",
+             f"единственный источник [{n}] ({dom}, {s.kind}), низкое доверие "
+             f"{s.trust:.2f} — сверить с первоисточником", 1)
+
+    flags.sort(key=lambda x: -x["sev"])
+    return [{"claim": fl["claim"], "issue": fl["issue"]} for fl in flags[:6]]
 
 
 def _extract_all_numbers(text: str) -> list[float]:
