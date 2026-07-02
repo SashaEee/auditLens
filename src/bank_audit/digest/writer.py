@@ -169,13 +169,13 @@ async def news(day: date) -> dict:
     try:
         raw, ti, to = await _chat(smart_model(),
                                   today_anchor() + "\n\n" + _NEWS_SYSTEM,
-                                  user, max_tokens=2200, temperature=0.1)
+                                  user, max_tokens=3000, temperature=0.1)
         try:
             parsed = _loose_json_loads(raw)
-        except ValueError:      # флак парсинга → один дешёвый ретрай
+        except ValueError:      # обрезка/флак парсинга → один дешёвый ретрай
             raw, ti2, to2 = await _chat(smart_model(),
                                         today_anchor() + "\n\n" + _NEWS_SYSTEM,
-                                        user, max_tokens=2200, temperature=0.0)
+                                        user, max_tokens=3000, temperature=0.0)
             ti, to = ti + ti2, to + to2
             parsed = _loose_json_loads(raw)
         titles = {k: t for k, t in _NEWS_GROUPS}
@@ -411,10 +411,19 @@ async def headline(day: date) -> dict:
               "3–6 инсайтов, отсортируй по важности для аудита. ref бери ТОЛЬКО из списка."
         )
         try:
+            # 3000 токенов: gemini многословен (обёртка ```json + полные инсайты),
+            # при 6 сигналах на проде 1400 обрезало JSON посреди строки → парс падал
             raw, ti, to = await _chat(fast_model(),
                                       today_anchor() + "\n\n" + _HEAD_SYSTEM,
-                                      user, max_tokens=1400, temperature=0.3)
-            result = _loose_json_loads(raw)
+                                      user, max_tokens=3000, temperature=0.3)
+            try:
+                result = _loose_json_loads(raw)
+            except ValueError:              # обрезка/мусор → ретрай холоднее
+                raw, ti2, to2 = await _chat(fast_model(),
+                                            today_anchor() + "\n\n" + _HEAD_SYSTEM,
+                                            user, max_tokens=3000, temperature=0.0)
+                ti, to = ti + ti2, to + to2
+                result = _loose_json_loads(raw)
             model = fast_model()
         except Exception as e:  # noqa: BLE001
             log.warning("headline LLM failed: %s", e)
