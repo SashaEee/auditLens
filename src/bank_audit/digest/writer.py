@@ -112,11 +112,18 @@ async def reviews_brief(day: date) -> dict:
         "«- **Новое:** <суть> (≈N жалоб)».\n"
         "Коротко, аналитично, без вступления."
     )
-    md, ti, to = await _chat(smart_model(), today_anchor() + "\n\n" + _BRIEF_SYSTEM,
-                             user, max_tokens=1800)
+    # LLM-сбой → degraded (фронт покажет детерминированные сигнал-чипы),
+    # НЕ exception: failed-секция без истории copy_forward держала бы день
+    # неполным и провоцировала lazy-перезапуски
+    try:
+        md, ti, to = await _chat(smart_model(), today_anchor() + "\n\n" + _BRIEF_SYSTEM,
+                                 user, max_tokens=1800)
+    except Exception as e:  # noqa: BLE001
+        log.warning("reviews_brief LLM failed: %s", e)
+        md, ti, to = None, None, None
     return {"markdown": md or None, "calm": False, "overall": ov,
-            "_llm_model": smart_model(), "_tokens_in": ti, "_tokens_out": to,
-            **({} if md else {"_status": "degraded"})}
+            **({"_llm_model": smart_model(), "_tokens_in": ti, "_tokens_out": to}
+               if md else {"_status": "degraded"})}
 
 
 # ── news ──────────────────────────────────────────────────────────────────────

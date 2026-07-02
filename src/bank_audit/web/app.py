@@ -119,10 +119,13 @@ async def overview_digest(date: Optional[str] = None):
         raise HTTPException(404, f"дайджест за {date} не найден")
     if not date and not doc["meta"]["refreshing"]:
         # lazy catch-up и при ПОЛНОМ отсутствии выпуска, и при упавшем на середине
-        # прогоне (часть секций есть, но день не полон) — иначе висит до утра
+        # прогоне (часть секций есть, но день не полон) — иначе висит до утра.
+        # Ночью (до GEN_HOUR) не генерим и refreshing не включаем — иначе фронт
+        # поллил бы всю ночь, а выпуск дня рождался бы в 00:xx до автосбора.
         from ..digest.pipeline import REQUIRED
+        from ..digest.scheduler import lazy_allowed
         complete = await asyncio.to_thread(digest_store.day_complete, today, REQUIRED)
-        if not complete:
+        if not complete and lazy_allowed():
             asyncio.create_task(ensure_digest("lazy"))     # не ждём
             doc["meta"]["refreshing"] = True
     return doc
@@ -422,11 +425,17 @@ def ingest_run(req: IngestRequest, background_tasks: BackgroundTasks):
     return {"status": "started", "source": req.source}
 
 def _do_ingest(source: str, target: Optional[str]):
+    from ..digest.scheduler import INGEST_MUTEX
     from ..orchestrator.runner import ingest
+    if not INGEST_MUTEX.acquire(blocking=False):
+        log.info("ingest %s: пропуск — сбор уже идёт (автосбор/другой запуск)", source)
+        return
     try:
         ingest(source, target)
     except Exception:
         pass  # статус пишется в extraction_run
+    finally:
+        INGEST_MUTEX.release()
 
 
 @app.post("/api/ingest/run-all")
@@ -443,12 +452,19 @@ def ingest_run_all(background_tasks: BackgroundTasks):
 
 
 def _do_ingest_all(sources: list[str]):
+    from ..digest.scheduler import INGEST_MUTEX
     from ..orchestrator.runner import ingest
-    for src in sources:
-        try:
-            ingest(src, None)
-        except Exception:
-            pass  # каждый источник пишет свой статус в extraction_run
+    if not INGEST_MUTEX.acquire(blocking=False):
+        log.info("ingest_all: пропуск — сбор уже идёт (автосбор/другой запуск)")
+        return
+    try:
+        for src in sources:
+            try:
+                ingest(src, None)
+            except Exception:
+                pass  # каждый источник пишет свой статус в extraction_run
+    finally:
+        INGEST_MUTEX.release()
 
 @app.delete("/api/captcha/{idx}")
 def dismiss_captcha(idx: int):

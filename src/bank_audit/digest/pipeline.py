@@ -50,6 +50,10 @@ async def _run_section(day: date, name: str,
     except Exception as e:  # noqa: BLE001 — деградирует секция, не прогон
         log.warning("digest section %s failed: %s", name, e)
         err = f"{type(e).__name__}: {str(e)[:250]}"
+        # у дня УЖЕ есть живая версия секции (перегенерация упала на транзиенте) —
+        # не перетираем хорошее содержимое failed'ом, оставляем как было
+        if name in await asyncio.to_thread(store.live_sections, day):
+            return "kept"
         copied = await asyncio.to_thread(store.copy_forward, day, name, error=err)
         if not copied:
             await asyncio.to_thread(store.upsert, day, name, {},
@@ -59,8 +63,16 @@ async def _run_section(day: date, name: str,
 
 async def run_daily(day: date, force: bool = False,
                     only: list[str] | None = None) -> dict[str, str]:
-    """Полный прогон дня (или точечный по only). Возвращает {section: status}."""
+    """Прогон дня. force=False → регенерируем ТОЛЬКО недостающие/failed секции
+    (иначе lazy-триггер при одной перманентно падающей секции гонял бы полный
+    пайплайн — LLM-вызовы и фетчи источников — по кругу весь день)."""
     names = [n for n in SECTIONS if (not only or n in only)]
+    if not force and not only:
+        live = await asyncio.to_thread(store.live_sections, day)
+        names = [n for n in names if n not in live]
+        if not names:                       # всё живое — закрываем прогон как no-op
+            await asyncio.to_thread(store.finish_run, day, {})
+            return {}
     results: dict[str, str] = {}
 
     # этап 1: всё, кроме headline, параллельно

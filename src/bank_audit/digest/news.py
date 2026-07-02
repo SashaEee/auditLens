@@ -71,16 +71,22 @@ def _strip_html(s: str) -> str:
 
 
 def _parse_dt(raw_dt: str) -> datetime | None:
+    """Всегда aware-datetime (naive → UTC): смесь naive/aware в сортировке
+    и оконном фильтре даёт TypeError."""
     if not raw_dt:
         return None
     raw_dt = raw_dt.strip()
+    ts = None
     try:
-        return parsedate_to_datetime(raw_dt)
+        ts = parsedate_to_datetime(raw_dt)
     except Exception:  # noqa: BLE001
         try:
-            return datetime.fromisoformat(raw_dt)
+            ts = datetime.fromisoformat(raw_dt)
         except Exception:  # noqa: BLE001
             return None
+    if ts is not None and ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
 
 
 _CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
@@ -141,19 +147,17 @@ def _parse_tg(html_text: str, src: dict) -> list[dict]:
     for block in html_text.split("tgme_widget_message_wrap")[1:]:
         post_m = re.search(r'data-post="([^"]+)"', block)
         time_m = re.search(r'<time[^>]*datetime="([^"]+)"', block)
-        text_m = re.search(r'tgme_widget_message_text[^>]*>(.*?)</div>',
-                           block, re.DOTALL)
+        # у поста-ответа ПЕРВЫЙ message_text — это цитата чужого поста
+        # (reply-превью); собственный текст идёт последним → берём последний
+        text_ms = re.findall(r'tgme_widget_message_text[^>]*>(.*?)</div>',
+                             block, re.DOTALL)
         if not post_m or not time_m:
             continue
-        body_html = (text_m.group(1) if text_m else "")
+        body_html = text_ms[-1] if text_ms else ""
         text = _strip_html(body_html.replace("<br/>", "\n").replace("<br>", "\n"))
         if not text or len(text) < 25:      # сервисные/медиа-посты без текста
             continue
-        ts = None
-        try:
-            ts = datetime.fromisoformat(time_m.group(1))
-        except Exception:  # noqa: BLE001
-            pass
+        ts = _parse_dt(time_m.group(1))
         first_line = text.split("\n", 1)[0].strip()
         title = (first_line if len(first_line) >= 15 else text)[:180]
         items.append({"title": title, "url": f"https://t.me/{post_m.group(1)}",

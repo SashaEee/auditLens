@@ -125,13 +125,16 @@ async def tariff_moves(day: date) -> dict:
         mass.sort(key=lambda m: -m["n_banks"])
 
         # сбор после паузы: диффы кластеризуются в момент прогона → массовость
-        # может быть артефактом сбора, честно помечаем
+        # может быть артефактом сбора, честно помечаем. extraction_run хранит
+        # строку на КАЖДЫЙ target — меряем разрыв между БАТЧАМИ (последний
+        # батч = всё в пределах 2 ч от максимума), а не между соседними строками
         gap_days = _scalar("""
-            WITH runs AS (SELECT finished_at FROM extraction_run
-                           WHERE status = 'ok' AND finished_at IS NOT NULL
-                           ORDER BY finished_at DESC LIMIT 2)
-            SELECT extract(epoch FROM max(finished_at) - min(finished_at)) / 86400.0
-              FROM runs HAVING count(*) = 2
+            WITH m AS (SELECT max(finished_at) AS mx FROM extraction_run
+                        WHERE status = 'ok' AND finished_at IS NOT NULL)
+            SELECT extract(epoch FROM (SELECT mx FROM m) - max(er.finished_at)) / 86400.0
+              FROM extraction_run er, m
+             WHERE er.status = 'ok' AND er.finished_at IS NOT NULL
+               AND er.finished_at < m.mx - interval '2 hours'
         """)
         after_pause = bool(gap_days is not None and float(gap_days) > 3.0)
 

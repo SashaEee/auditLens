@@ -136,15 +136,30 @@ def read_latest(today: date, want: date | None = None) -> dict:
     }
 
 
-def day_complete(day: date, required: tuple[str, ...]) -> bool:
-    """Все обязательные секции дня существуют и живые (не failed)."""
+def live_sections(day: date) -> set[str]:
+    """Секции дня со «живым» статусом (ok/degraded/stale — есть что показать)."""
     with db.session() as s:
         rows = s.execute(text("""
             SELECT section FROM daily_digest
              WHERE digest_date = :d AND status IN ('ok','degraded','stale')
         """), {"d": day}).all()
-    have = {r[0] for r in rows}
+    return {r[0] for r in rows}
+
+
+def day_complete(day: date, required: tuple[str, ...]) -> bool:
+    """Все обязательные секции дня существуют и живые (не failed)."""
+    have = live_sections(day)
     return all(sec in have for sec in required)
+
+
+def last_finished_age_s(day: date) -> float | None:
+    """Секунды с завершения последнего прогона дня (None — не завершался)."""
+    with db.session() as s:
+        row = s.execute(text("""
+            SELECT extract(epoch FROM now() - finished_at)
+              FROM digest_run WHERE digest_date = :d AND finished_at IS NOT NULL
+        """), {"d": day}).first()
+    return float(row[0]) if row and row[0] is not None else None
 
 
 # ── advisory lock (stampede-защита) ──────────────────────────────────────────
@@ -153,8 +168,9 @@ def day_complete(day: date, required: tuple[str, ...]) -> bool:
 def try_acquire_day_lock(day: date):
     """Сессионный advisory try-lock на (класс, день). Держим выделенный коннект
     всю генерацию: закрылся коннект (краш процесса) — лок отпущен автоматически.
+    AUTOCOMMIT: иначе коннект висит «idle in transaction» все минуты генерации.
     yield True — лок наш; False — кто-то уже генерит, молча выходим."""
-    conn = _eng().connect()
+    conn = _eng().connect().execution_options(isolation_level="AUTOCOMMIT")
     got = False
     try:
         got = bool(conn.execute(
@@ -162,15 +178,22 @@ def try_acquire_day_lock(day: date):
             {"c": DIGEST_LOCK_CLASS, "d": day.toordinal()}).scalar())
         yield got
     finally:
-        try:
-            if got:
+        released = not got
+        if got:
+            try:
                 conn.execute(text("SELECT pg_advisory_unlock(:c, :d)"),
                              {"c": DIGEST_LOCK_CLASS, "d": day.toordinal()})
-                conn.commit()
-        except Exception:  # noqa: BLE001 — коннект мог умереть, лок уйдёт с ним
-            pass
+                released = True
+            except Exception:  # noqa: BLE001 — обработка ниже: invalidate
+                pass
         try:
-            conn.close()
+            if released:
+                conn.close()
+            else:
+                # unlock не прошёл, а коннект жив → session-lock утёк бы в пул
+                # и заблокировал день до рестарта; invalidate рвёт сам коннект,
+                # и Postgres снимает лок вместе с сессией
+                conn.invalidate()
         except Exception:  # noqa: BLE001
             pass
 
@@ -190,8 +213,9 @@ def mark_run(day: date, trigger: str) -> None:
 
 def finish_run(day: date, results: dict[str, str]) -> None:
     vals = set(results.values())
-    status = ("ok" if vals <= {"ok"} else
-              "failed" if vals and "ok" not in vals and "degraded" not in vals and "stale" not in vals
+    live = {"ok", "kept", "degraded", "stale"}
+    status = ("ok" if vals <= {"ok", "kept"} else
+              "failed" if vals and not (vals & live)
               else "partial")
     with db.session() as s:
         s.execute(text("""

@@ -363,9 +363,14 @@ function renderMD(text, sources, charts){
          + `class="cite cite-t${tier}" data-cite="${n}">${n}</a></sup>`;
   };
   const inlineHTML=(s)=>s
+    // Сначала экранируем ВЕСЬ вход: в markdown попадает недоверенный текст
+    // (LLM-пересказ жалоб клиентов, сниппеты источников) — сырой <img onerror=…>
+    // иначе исполнится через dangerouslySetInnerHTML (stored XSS).
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
     // markdown-ссылки [текст](url) → <a>. ДО citation-замены и emphasis.
+    // URL — через escAttr: кавычка в URL иначе выламывается из href-атрибута.
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-             '<a href="$2" target="_blank" rel="noopener noreferrer" class="md-link">$1</a>')
+             (_,txt,url)=>`<a href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" class="md-link">${txt}</a>`)
     .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
     // __жирный__ (подчёркивания) — только на границах слова. NB: JS \w НЕ включает
     // кириллицу, поэтому класс слова задаём явно (иначе ломается имя_атрибута).
@@ -596,8 +601,14 @@ function OverviewPage(){
 
   const manualRefresh=()=>{
     if(refreshBusy)return; setRefreshBusy(true);
+    // Оптимистично включаем «обновляется»: сервер мог ещё не закоммитить
+    // mark_run, и мгновенный GET вернул бы refreshing=false — поллинг не
+    // стартовал бы и юзер не увидел бы новый выпуск. Поллинг сам сойдётся.
+    const optimistic=()=>setDg(d=>d&&({...d,meta:{...d.meta,refreshing:true}}));
     apiPost("/api/overview/digest/refresh",{force:true})
-      .then(()=>loadDigest()).catch(()=>{}).finally(()=>setRefreshBusy(false));
+      .then(optimistic)
+      .catch(()=>{optimistic();/* 409 = уже генерится — тоже поллим */})
+      .finally(()=>setRefreshBusy(false));
   };
 
   if(loading)return <LoadingPage/>;
