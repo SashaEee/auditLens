@@ -33,7 +33,9 @@ def _trust_for(domain: str, url: str) -> float:
     # Регуляторные
     reg = ("cbr.ru", "pravo.gov.ru", "consultant.ru", "garant.ru", "fas.gov.ru",
            "nalog.gov.ru", "minfin.gov.ru", "kremlin.ru", "government.ru",
-           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru")
+           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru",
+           "rospotrebnadzor.ru", "fedsfm.ru", "rosstat.gov.ru", "gks.ru",
+           "fincult.info")
     if any(r == d or d.endswith("." + r) for r in reg):
         return 0.98
     if d.endswith(".gov.ru") or d.endswith(".mil.ru"):
@@ -44,7 +46,9 @@ def _trust_for(domain: str, url: str) -> float:
     bank_domains = ("sberbank.ru", "vtb.ru", "alfabank.ru", "tbank.ru", "tinkoff.ru",
                     "sovcombank.ru", "gazprombank.ru", "rshb.ru", "domrfbank.ru",
                     "open.ru", "raiffeisen.ru", "pochtabank.ru", "mkb.ru",
-                    "psbank.ru", "rosbank.ru", "mtsbank.ru", "ozon.ru")
+                    "psbank.ru", "rosbank.ru", "mtsbank.ru", "ozon.ru",
+                    "uralsib.ru", "akbars.ru", "homecredit.ru", "otpbank.ru",
+                    "unicreditbank.ru", "absolutbank.ru", "zenit.ru", "rencredit.ru")
     if any(bd == d for bd in bank_domains):
         return 0.92
     # Агрегаторы (высокая, но не первоисточник)
@@ -179,13 +183,17 @@ def _kind_for(domain: str, url: str) -> str:
     d = domain.lower()
     reg = ("cbr.ru", "pravo.gov.ru", "consultant.ru", "garant.ru", "fas.gov.ru",
            "nalog.gov.ru", "minfin.gov.ru", "kremlin.ru", "government.ru",
-           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru")
+           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru",
+           "rospotrebnadzor.ru", "fedsfm.ru", "rosstat.gov.ru", "gks.ru",
+           "fincult.info")
     if any(r == d or d.endswith("." + r) or d.endswith(".gov.ru") for r in reg):
         return "regulatory"
     bank_domains = ("sberbank.ru", "vtb.ru", "alfabank.ru", "tbank.ru", "tinkoff.ru",
                     "sovcombank.ru", "gazprombank.ru", "rshb.ru", "domrfbank.ru",
                     "open.ru", "raiffeisen.ru", "pochtabank.ru", "mkb.ru",
-                    "psbank.ru", "rosbank.ru", "mtsbank.ru")
+                    "psbank.ru", "rosbank.ru", "mtsbank.ru", "uralsib.ru",
+                    "akbars.ru", "homecredit.ru", "otpbank.ru", "unicreditbank.ru",
+                    "absolutbank.ru", "zenit.ru", "rencredit.ru")
     if any(bd == d for bd in bank_domains):
         return "bank_official"
     if any(a == d for a in ("banki.ru", "sravni.ru", "bankiros.ru")):

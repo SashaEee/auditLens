@@ -201,7 +201,7 @@ class BaseAgent:
 
     def __init__(self, client: AsyncOpenAI, model: str,
                   mission: AgentMission, bundle: KnowledgeBundle,
-                  max_iterations: int = 8,
+                  max_iterations: int = 10,
                   loop_model: str | None = None,
                   final_model: str | None = None,
                   smart_model: str | None = None,
@@ -223,7 +223,9 @@ class BaseAgent:
         self.smart_model = smart_model or self.final_model
         self.mission = mission
         self.bundle = bundle
-        self.max_iterations = max_iterations
+        # Кап итераций (tool-циклов) агента. Env V2_AGENT_MAX_ITERS позволяет
+        # крутить баланс «больше источников ↔ скорость/риск капчи» без ребилда.
+        self.max_iterations = int(os.getenv("V2_AGENT_MAX_ITERS", str(max_iterations)))
         self.progress = AgentProgress(agent_id=mission.agent_id)
         # URL'ы, накопленные из результативных web_search — для forced-read
         # (анти-«паралич поиска»: агент игнорит soft-пинки и крутит поиск →

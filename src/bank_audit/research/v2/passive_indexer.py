@@ -37,6 +37,9 @@ _SPA_RENDER_DOMAINS = (
     "gazprombank.ru", "sovcombank.ru", "rshb.ru", "open.ru", "raiffeisen.ru",
     "pochtabank.ru", "mkb.ru", "psbank.ru", "rosbank.ru", "mtsbank.ru",
     "domrfbank.ru", "uralsib.ru", "akbars.ru",
+    # + розничные банки для физлиц
+    "homecredit.ru", "otpbank.ru", "unicreditbank.ru", "absolutbank.ru",
+    "zenit.ru", "rencredit.ru", "ozon.ru", "yoomoney.ru",
 )
 
 
