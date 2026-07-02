@@ -12,7 +12,8 @@ import re
 
 from openai import AsyncOpenAI
 
-from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL, fast_model, smart_model
+from ..ai.analyst import (LLM_API_KEY, LLM_BASE_URL, fast_model, insight_model,
+                          smart_model)
 from ..ai.llm_utils import _patch_client_reasoning_effort
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ async def explain_segment(seg: dict, *, label: str) -> str | None:
     )
     try:
         resp = await _client().chat.completions.create(
-            model=smart_model(),
+            model=insight_model(),
             messages=[{"role": "system", "content": _SYSTEM},
                       {"role": "user", "content": user}],
             temperature=0.2, max_tokens=2048)
@@ -175,7 +176,7 @@ async def anomaly_brief(sig: dict, samples: list[dict],
     )
     try:
         resp = await _client().chat.completions.create(
-            model=smart_model(),
+            model=insight_model(),
             messages=[{"role": "system", "content": _ANOM_SYSTEM},
                       {"role": "user", "content": user}],
             temperature=0.2, max_tokens=1800)

@@ -1,8 +1,12 @@
 """LLM-секции дайджеста — 3 вызова/день, числа только из SQL-агрегатов.
 
-  reviews_brief — сводка недели по жалобам (smart, ~7k in / 0.8k out)
-  news          — отбор и сжатие новостей для аудитора розницы (smart, ~6k/1.2k)
-  headline      — передовица + карточки-инсайты (fast, ~2.5k/0.6k), поверх УЖЕ
+Все три вызова идут через insight_model() (env LLM_MODEL_INSIGHT, в проде
+anthropic/claude-sonnet-4.6) — умнее для поиска скрытых паттернов; дайджест
+кэшируется на день, так что это 3 вызова/сутки на всех.
+
+  reviews_brief — сводка недели по жалобам (~7k in / 0.8k out)
+  news          — отбор и сжатие новостей для аудитора розницы (~6k/1.2k)
+  headline      — передовица + карточки-инсайты (~2.5k/0.6k), поверх УЖЕ
                   записанных секций; ссылается на сигналы по ref — обогащение
                   (drill/ai_prompt/viz) делает детерминированный python-код,
                   LLM не переписывает числа и URL.
@@ -18,7 +22,8 @@ from datetime import date
 
 from openai import AsyncOpenAI
 
-from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL, fast_model, smart_model
+from ..ai.analyst import (LLM_API_KEY, LLM_BASE_URL, fast_model, insight_model,
+                          smart_model)
 from ..ai.llm_utils import _loose_json_loads, _patch_client_reasoning_effort
 from ..clock import today_anchor, today_ru
 from . import store
@@ -116,13 +121,13 @@ async def reviews_brief(day: date) -> dict:
     # НЕ exception: failed-секция без истории copy_forward держала бы день
     # неполным и провоцировала lazy-перезапуски
     try:
-        md, ti, to = await _chat(smart_model(), today_anchor() + "\n\n" + _BRIEF_SYSTEM,
+        md, ti, to = await _chat(insight_model(), today_anchor() + "\n\n" + _BRIEF_SYSTEM,
                                  user, max_tokens=1800)
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_brief LLM failed: %s", e)
         md, ti, to = None, None, None
     return {"markdown": md or None, "calm": False, "overall": ov,
-            **({"_llm_model": smart_model(), "_tokens_in": ti, "_tokens_out": to}
+            **({"_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
                if md else {"_status": "degraded"})}
 
 
@@ -167,13 +172,13 @@ async def news(day: date) -> dict:
         "наблюдать, green — благоприятное/нейтральное."
     )
     try:
-        raw, ti, to = await _chat(smart_model(),
+        raw, ti, to = await _chat(insight_model(),
                                   today_anchor() + "\n\n" + _NEWS_SYSTEM,
                                   user, max_tokens=3000, temperature=0.1)
         try:
             parsed = _loose_json_loads(raw)
         except ValueError:      # обрезка/флак парсинга → один дешёвый ретрай
-            raw, ti2, to2 = await _chat(smart_model(),
+            raw, ti2, to2 = await _chat(insight_model(),
                                         today_anchor() + "\n\n" + _NEWS_SYSTEM,
                                         user, max_tokens=3000, temperature=0.0)
             ti, to = ti + ti2, to + to2
@@ -208,7 +213,7 @@ async def news(day: date) -> dict:
         if not groups:
             raise ValueError("LLM вернул пустые группы")
         return {"groups": groups, "sources": statuses, "raw_count": len(items),
-                "_llm_model": smart_model(), "_tokens_in": ti, "_tokens_out": to}
+                "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
     except Exception as e:  # noqa: BLE001 — деградация: сырые заголовки без LLM
         log.warning("news digest LLM failed: %s", e)
         return {"groups": [], "sources": statuses, "raw_count": len(items),
@@ -413,18 +418,18 @@ async def headline(day: date) -> dict:
         try:
             # 3000 токенов: gemini многословен (обёртка ```json + полные инсайты),
             # при 6 сигналах на проде 1400 обрезало JSON посреди строки → парс падал
-            raw, ti, to = await _chat(fast_model(),
+            raw, ti, to = await _chat(insight_model(),
                                       today_anchor() + "\n\n" + _HEAD_SYSTEM,
                                       user, max_tokens=3000, temperature=0.3)
             try:
                 result = _loose_json_loads(raw)
             except ValueError:              # обрезка/мусор → ретрай холоднее
-                raw, ti2, to2 = await _chat(fast_model(),
+                raw, ti2, to2 = await _chat(insight_model(),
                                             today_anchor() + "\n\n" + _HEAD_SYSTEM,
                                             user, max_tokens=3000, temperature=0.0)
                 ti, to = ti + ti2, to + to2
                 result = _loose_json_loads(raw)
-            model = fast_model()
+            model = insight_model()
         except Exception as e:  # noqa: BLE001
             log.warning("headline LLM failed: %s", e)
     if result is None:

@@ -26,6 +26,10 @@ LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
 # Если env не задан — fallback на LLM_MODEL_NAME (zero breaking-change).
 LLM_MODEL_FAST  = os.getenv("LLM_MODEL_FAST",  LLM_MODEL_NAME)
 LLM_MODEL_SMART = os.getenv("LLM_MODEL_SMART", LLM_MODEL_NAME)
+# Отдельный тир для аналитики вкладок «Обзор» и «Отзывы» (поиск скрытых
+# паттернов в жалобах, курирование дайджеста). Умнее smart, но НЕ трогает
+# deep-research (у него свой smart). Не задан → падаем на smart_model.
+LLM_MODEL_INSIGHT = os.getenv("LLM_MODEL_INSIGHT", "")
 
 
 def smart_model() -> str:
@@ -36,6 +40,12 @@ def smart_model() -> str:
 def fast_model() -> str:
     """Модель для рутинных задач (короткий JSON-output, structured)."""
     return LLM_MODEL_FAST or LLM_MODEL_NAME
+
+
+def insight_model() -> str:
+    """Модель для аналитики «Обзора»/«Отзывов» (скрытые паттерны, сводки).
+    Env LLM_MODEL_INSIGHT (напр. anthropic/claude-sonnet-4.6); иначе — smart."""
+    return LLM_MODEL_INSIGHT or smart_model()
 
 SYSTEM = """Ты — аналитик службы внутреннего аудита Сбербанка, отдел розничного бизнеса.
 У тебя есть доступ к knowledge layer:
