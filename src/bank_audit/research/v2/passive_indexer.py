@@ -72,10 +72,14 @@ def index_and_get_text(url: str, *,
     (document_id=None — на горячем пути его никто не использует)."""
     # 1. Быстрый путь: fetch + parse → текст немедленно (без ожидания эмбеддинга).
     text, title = "", ""
+    _fetch_via, _captcha, _status = "", False, 0
     try:
         from ...rag import fetcher
         from ...rag.parsers import parse_auto
         fr = fetcher.fetch(url, prefer_browser=_should_render(url))
+        _fetch_via = getattr(fr, "via", "") or ""
+        _captcha = bool(getattr(fr, "captcha", False))
+        _status = getattr(fr, "status", 0) or 0
         if fr.content:
             parsed = parse_auto(fr.content, url=fr.final_url,
                                 content_type=fr.content_type)
@@ -101,7 +105,8 @@ def index_and_get_text(url: str, *,
     except Exception:
         pass
 
-    return {"title": title, "text": text, "document_id": None, "indexed": False}
+    return {"title": title, "text": text, "document_id": None, "indexed": False,
+            "fetch_via": _fetch_via, "captcha": _captcha, "status": _status}
 
 
 def _load_from_db(document_id: int, query_hint: str, budget: int) -> tuple[str, str]:

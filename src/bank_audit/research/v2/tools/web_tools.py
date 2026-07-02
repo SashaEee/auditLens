@@ -134,6 +134,7 @@ def tool_read_url(args: dict, bundle) -> str:
     # Пассивная индексация (best-effort, не блокирует ответ)
     text = ""
     title = ""
+    idx: dict = {}
     try:
         from ..passive_indexer import index_and_get_text
         idx = index_and_get_text(url, bank_slug_hint=bank_slug_hint,
@@ -150,7 +151,17 @@ def tool_read_url(args: dict, bundle) -> str:
                               ensure_ascii=False)
 
     if not text:
-        return json.dumps({"error": "пустой текст (404/captcha/SPA)", "url": url},
+        # Различаем «просто нет данных» и «заблокировано антиботом/капчей».
+        # Блок → фиксируем в coverage_notes, чтобы источник честно попал в
+        # «Пробелы покрытия», а не молча урезал отчёт.
+        blocked = (bool(idx.get("captcha")) or idx.get("fetch_via") == "failed"
+                   or idx.get("status") in (403, 429, 503))
+        if blocked:
+            _note_blocked_source(bundle, url, dom, bank_slug_hint)
+            return json.dumps({"error": "источник заблокирован антиботом/капчей — "
+                               "данные недоступны, помечено в пробелах покрытия",
+                               "url": url, "blocked": True}, ensure_ascii=False)
+        return json.dumps({"error": "пустой текст (404/пустая SPA)", "url": url},
                           ensure_ascii=False)
 
     # Регистрируем источник в bundle
@@ -197,6 +208,27 @@ def _raw_fetch_text(url: str, budget: int) -> str:
     parsed = parse_auto(fr.content, url=fr.final_url, content_type=fr.content_type)
     text = parsed.text or ""
     return text[:budget]
+
+
+def _note_blocked_source(bundle, url: str, domain: str, bank_hint: str | None) -> None:
+    """Фиксирует источник, заблокированный антиботом/капчей, в coverage_notes bundle
+    (дедуп по домену). Так он ЧЕСТНО попадёт в «Пробелы покрытия» и «Честные
+    оговорки», а не молча урежет отчёт (капча-деградация)."""
+    try:
+        from ..knowledge_bundle import CoverageNote
+        dom = (domain or _domain(url) or url)[:80]
+        if dom and any(dom in (getattr(cn, "what", "") or "")
+                       for cn in bundle.coverage_notes):
+            return
+        bundle.coverage_notes.append(CoverageNote(
+            what=f"{dom}: источник недоступен для автосбора (антибот/капча)",
+            subjects=[bank_hint] if bank_hint else [],
+            reason="сайт заблокировал автоматический доступ (challenge/капча) — "
+                   "данные с него не собраны",
+            recommendation="проверить вручную по URL источника",
+        ))
+    except Exception as e:
+        log.info("note blocked source failed for %s: %s", url[:80], e)
 
 
 # ════════════════════════════════════════════════════════════════════════
