@@ -392,8 +392,22 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
     results: dict[str, dict] = {}
     pending = list(plan.missions)
 
+    # Общий кап на ВСЮ research-фазу (страховка от 40-минутных прогонов):
+    # per-agent бюджет проверяется только МЕЖДУ итерациями, а одна итерация с
+    # цепочкой медленных браузерных read_url может блокировать надолго. По
+    # достижении дедлайна прекращаем сбор и идём писать отчёт по собранному
+    # (graceful partial). Тюнится V2_TOTAL_BUDGET_S.
+    _total_budget = float(os.getenv("V2_TOTAL_BUDGET_S", "420"))
+    _deadline = time.time() + _total_budget
+    _capped = False
+
     for wave in range(3):
         if not pending:
+            break
+        if time.time() > _deadline:
+            log.warning("[v2] research total budget %.0fs исчерпан до волны %d — "
+                        "пишем отчёт по собранному", _total_budget, wave)
+            _capped = True
             break
         ready = [m for m in pending
                   if all(d in completed for d in plan.dependencies.get(m.agent_id, []))]
@@ -475,11 +489,29 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
         # эмитим по мере завершения каждого агента; при stream_on в паузах отдаём
         # живые agent_tool_call. Без stream_on getter=None → обычный as_completed.
         while running or (wave_q is not None and not wave_q.empty()):
+            # Дедлайн: если общий бюджет исчерпан, а агенты ещё бегут —
+            # отменяем их и идём писать отчёт по собранному (bundle append-only,
+            # уже найденные факты сохранены). Защита от единичного зависшего
+            # tool-вызова (напр. Chromium, который не отдаётся своим nav-таймаутом).
+            _left = _deadline - time.time()
+            if _left <= 0 and running:
+                log.warning("[v2] research total budget исчерпан — отменяю %d "
+                            "агент(ов), пишу отчёт по собранному", len(running))
+                _capped = True
+                for t in running:
+                    t.cancel()
+                await asyncio.gather(*running, return_exceptions=True)
+                running.clear()
+                break
             waitset = set(running)
             getter = asyncio.ensure_future(wave_q.get()) if wave_q is not None else None
             if getter is not None:
                 waitset.add(getter)
-            done, _pend = await asyncio.wait(waitset, return_when=asyncio.FIRST_COMPLETED)
+            # timeout у самого wait — чтобы проверять дедлайн даже в глухой
+            # await-паузе (все агенты молчат внутри длинного tool-вызова)
+            done, _pend = await asyncio.wait(
+                waitset, return_when=asyncio.FIRST_COMPLETED,
+                timeout=max(1.0, _left) if running else None)
             if getter is not None:
                 if getter in done:
                     yield _evt(getter.result())
@@ -504,6 +536,26 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
         if wave_q is not None:
             while not wave_q.empty():
                 yield _evt(wave_q.get_nowait())
+        if _capped:
+            break
+
+    # Кап сработал → честно фиксируем неполноту сбора (аналитик упомянет в отчёте,
+    # виджет «Пробелы покрытия» покажет), а не молча выдаём частичный отчёт.
+    if _capped:
+        try:
+            from .knowledge_bundle import CoverageNote
+            bundle.coverage_notes.append(CoverageNote(
+                what="Сбор данных остановлен по лимиту времени — часть источников "
+                     "не дочитана",
+                subjects=[],
+                reason=f"исследование превысило {int(_total_budget)} с "
+                       "(вероятно, медленные источники за антиботом/капчей)",
+                recommendation="повторить запрос точечнее или добрать источники вручную"))
+        except Exception:  # noqa: BLE001
+            pass
+        yield _evt({"type": "stage_status", "stage": "research",
+                    "label": "Сбор ограничен по времени",
+                    "detail": "пишу отчёт по собранному"})
 
 
 def _tier_models() -> tuple[str, str]:
