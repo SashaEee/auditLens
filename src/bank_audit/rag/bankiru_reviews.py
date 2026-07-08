@@ -227,8 +227,14 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
         since_ts = (datetime.now() - timedelta(days=since_days)) if since_days else None
         # тянем с запасом под дедуп (один отзыв дублируется по продуктам)
         limit = max(k * 6, 30)
+        # Кап кандидатов для bank-scoped точного скана: у банков-доминантов
+        # (Сбер ~41k эмбеддингов) полный скан 1024-мерных векторов = ~13с, а
+        # агент отзывов зовёт multi по 5 банкам → ~26с/вызов → зависал на минуты.
+        # Берём свежие cand_cap отзывов (для аудита релевантнее) и точный скан по
+        # ним → ~3с. Тюнится BANKIRU_CAND_CAP; поднять если нужна глубже история.
+        cand_cap = int(os.getenv("BANKIRU_CAND_CAP", "12000"))
         params = {"bank": bank_canon, "product": product,
-                  "since_ts": since_ts, "limit": limit}
+                  "since_ts": since_ts, "limit": limit, "cand_cap": cand_cap}
         if not discovery:
             qvec = embedder.embed_one(QUERY_PREFIX + query.strip())
             params["qvec"] = "[" + ",".join(f"{x:.6f}" for x in qvec) + "]"
@@ -265,6 +271,8 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
                   WHERE r."bankName" = :bank
                     AND (CAST(:product AS text) IS NULL OR r."product" = :product)
                     AND (CAST(:since_ts AS timestamp) IS NULL OR r."datePublished" >= CAST(:since_ts AS timestamp))
+                  ORDER BY r."datePublished" DESC
+                  LIMIT :cand_cap
                 )
                 SELECT bank, product, dt, url, body, location,
                        (emb <=> CAST(:qvec AS vector)) AS dist
@@ -288,6 +296,11 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
             )
         is_global = not discovery and not bank_canon
         with eng.connect() as c:
+            # Страховка от зависания: любой поиск, вышедший за таймаут, падает
+            # (ловится ниже) → вызывающий уходит в web/дальше, а не блокирует
+            # агента на минуты. Тюнится BANKIRU_STMT_TIMEOUT_MS.
+            _stmt_ms = int(os.getenv("BANKIRU_STMT_TIMEOUT_MS", "9000"))
+            c.execute(text(f"SET LOCAL statement_timeout = {_stmt_ms}"))
             if is_global:
                 # глобальный HNSW по умолчанию (ef_search=40) даёт мелкую и
                 # смещённую выдачу (банки-доминанты вытесняют остальных) — поднимаем
