@@ -214,6 +214,27 @@ async def stream_deep_research_v2(question: str,
         log.warning("[v2] extract_chart_specs упал: %s", e)
         early_charts = []
 
+    # Пустой bundle (0 фактов + 0 жалоб + 0 источников + 0 инсайтов) — это НЕ
+    # «данных нет», а сбой сбора: почти всегда недоступность LLM-эндпоинта
+    # (агенты не смогли вызвать инструменты — напр. 5xx Foundation Models).
+    # Не пишем пустой отчёт (люди думают «сломался инструмент»), а честно
+    # сообщаем и предлагаем повторить.
+    if (not bundle.facts and not bundle.complaints
+            and not bundle.sources.all() and not bundle.insights):
+        log.warning("[v2] пустой bundle после research — вероятно LLM-эндпоинт "
+                    "недоступен (5xx)")
+        yield _evt({"type": "stage_status", "stage": "analyst",
+                    "label": "Сбор не дал данных", "detail": "LLM-сервис недоступен"})
+        yield _evt({"type": "text", "chunk":
+            "\n\n⚠ **Не удалось собрать данные для отчёта.**\n\n"
+            "Агенты не получили ответ от LLM-сервиса — вероятно, временная "
+            "недоступность эндпоинта Foundation Models (ошибка сервера). Это не "
+            "проблема с данными или инструментом: повторите запрос через "
+            "несколько минут.\n"})
+        yield _evt({"type": "phase", "value": "done"})
+        yield _evt({"type": "done"})
+        return
+
     # ── Stage 3: ANALYST ─────────────────────────────────────────────────
     yield _evt({"type": "phase", "value": "synthesizing"})
     yield _evt({"type": "stage_status", "stage": "analyst",
