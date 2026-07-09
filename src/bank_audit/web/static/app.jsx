@@ -538,6 +538,28 @@ function bfGoDrill(drill){
     JSON.stringify(drill.params||{}));}catch{}
   location.hash=drill.page||"overview";
 }
+// Всегда возвращает [начало, длина] фрагмента заголовка для оранжевого акцента —
+// чтобы подсветка была на КАЖДОМ заголовке, а не только когда hot от LLM точно
+// совпал. Приоритет: точный hot → без регистра → число/процент/×N → банк/ЦБ →
+// последние 2 слова. hl — заголовок, hot — подсказка модели (может быть пустой).
+function bfPickHot(hl,hot){
+  if(!hl)return null;
+  if(hot){
+    let i=hl.indexOf(hot);
+    if(i<0)i=hl.toLowerCase().indexOf(hot.toLowerCase());
+    if(i>=0)return [i,hot.length];
+  }
+  // число с единицей: ×2.8, +140%, 17.7%, «2.8 раза», 30 000 ₽
+  let m=hl.match(/[×+\-]?\d[\d.,]*(?:\s?\d{3})*\s*(?:%|п\.?\s?п\.?|пп|раза?|₽|млрд|млн)?/);
+  if(m){const f=m[0].replace(/\s+$/,"");if(f.length>=2){const i=hl.indexOf(f);if(i>=0)return [i,f.length];}}
+  // банк / регулятор / продукт-бренд
+  const b=hl.match(/Сбер\S*|ВТБ|Альфа\S*|Газпромбанк|Т-?Банк|ЦБ\s?РФ|ЦБ|Домклик|ДОМ\.РФ/);
+  if(b)return [b.index,b[0].length];
+  // последние 2 слова (или всё, если слово одно)
+  const w=hl.trim().split(/\s+/);
+  if(w.length>=2){const f=w.slice(-2).join(" ");const i=hl.lastIndexOf(f);if(i>=0)return [i,f.length];}
+  return [0,hl.length];
+}
 
 function BfCard({ins,idx,lead}){
   const d=ins.data||{};
@@ -643,7 +665,7 @@ function OverviewPage(){
   const newsGroups=nw.groups||[];
   const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
   const hl=head.headline||"", hot=head.hot||"";
-  const hi=hot&&hl.includes(hot)?hl.indexOf(hot):-1;
+  const hh=bfPickHot(hl,hot);   // [начало,длина] акцента — есть всегда, если есть заголовок
 
   return <div className="fade-in">
     {/* ① MASTHEAD — передовица */}
@@ -668,7 +690,7 @@ function OverviewPage(){
         </div>:
         <>
           <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
-            {hi>=0?<>{hl.slice(0,hi)}<em style={{fontStyle:"italic",color:"var(--accent)"}}>{hot}</em>{hl.slice(hi+hot.length)}</>:hl||"Сводка дня"}
+            {hh?<>{hl.slice(0,hh[0])}<em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
           </h1>
           <p className="lede" style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center"}}>
             {head.stats&&<>
