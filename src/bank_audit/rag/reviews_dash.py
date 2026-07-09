@@ -207,7 +207,7 @@ def banks(top: int = 60) -> list[dict]:
     def _compute():
         with eng.connect() as c:
             rows = c.execute(text(
-                'SELECT "bankName", count(*) n FROM bankiru.reviews'
+                'SELECT "bankName", count(DISTINCT url) n FROM bankiru.reviews'
                 ' GROUP BY 1 ORDER BY 2 DESC LIMIT :top'),
                 {"top": top}).all()
         items = [{"bank": r[0], "n": int(r[1])} for r in rows]
@@ -231,21 +231,24 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
         esc, ep = _theme_sql(THEME_BY_KEY["escalation"], "e")
         with eng.connect() as c:
             # объёмы — только по дате (быстро по индексу datePublished)
+            # count(DISTINCT r.url): корпус banki.ru содержит точные дубли (сбой
+            # дедупа краулера — один URL встречается тысячи раз), считать их как
+            # разные жалобы = ложные всплески. Одна жалоба = один URL.
             cur = c.execute(text(
-                f'SELECT count(*) FILTER (WHERE r."datePublished" >= now() - make_interval(days => :d)),'
-                f'       count(*) FILTER (WHERE r."datePublished" >= now() - make_interval(days => :d2)'
+                f'SELECT count(DISTINCT r.url) FILTER (WHERE r."datePublished" >= now() - make_interval(days => :d)),'
+                f'       count(DISTINCT r.url) FILTER (WHERE r."datePublished" >= now() - make_interval(days => :d2)'
                 f'                          AND r."datePublished" < now() - make_interval(days => :d))'
                 f' FROM bankiru.reviews r WHERE {bclause}'),
                 {**bp, "d": days, "d2": days * 2}).one()
             total_cur, total_prev = int(cur[0]), int(cur[1])
             # эскалация (ILIKE) — ТОЛЬКО по строкам текущего периода (мало строк → быстро)
             esc_cur = int(c.execute(text(
-                f'SELECT count(*) FROM bankiru.reviews r WHERE {bclause}'
+                f'SELECT count(DISTINCT r.url) FROM bankiru.reviews r WHERE {bclause}'
                 f' AND r."datePublished" >= now() - make_interval(days => :d) AND {esc}'),
                 {**bp, **ep, "d": days}).scalar() or 0)
             # доля рынка + ранг за период
             mk = c.execute(text(
-                'SELECT "bankName", count(*) AS n FROM bankiru.reviews r'
+                'SELECT "bankName", count(DISTINCT r.url) AS n FROM bankiru.reviews r'
                 ' WHERE r."datePublished" >= now() - make_interval(days => :d)'
                 + (' AND r."product" = :product' if product else '') +
                 ' GROUP BY 1 ORDER BY 2 DESC'),
@@ -284,7 +287,7 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
         bclause, bp = _bank_clause(bc, product)
         with eng.connect() as c:
             rows = c.execute(text(
-                f"SELECT to_char(date_trunc('month', r.\"datePublished\"), 'YYYY-MM') ym, count(*)"
+                f"SELECT to_char(date_trunc('month', r.\"datePublished\"), 'YYYY-MM') ym, count(DISTINCT r.url)"
                 f" FROM bankiru.reviews r WHERE {bclause}"
                 f" AND r.\"datePublished\" >= date_trunc('month', now()) - make_interval(months => :m)"
                 f" GROUP BY 1 ORDER BY 1"),
@@ -330,10 +333,15 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
         n_sel = [f'count(*) FILTER (WHERE dt >= now()-make_interval(days=>90) AND "{t["key"]}") AS "{t["key"]}_n"' for t in THEMES]
         p_sel = [f'count(*) FILTER (WHERE dt < now()-make_interval(days=>90) AND "{t["key"]}") AS "{t["key"]}_p"' for t in THEMES]
         any_expr = " OR ".join(f'"{t["key"]}"' for t in THEMES)   # отзыв попал хоть в одну тему
-        sql = (f'WITH tagged AS MATERIALIZED ('
-               f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)}'
+        # дедуп источника СНАЧАЛА (DISTINCT ON url), потом regex по уникальным
+        # (корпус содержит точные дубли краулера — иначе счёт и время раздуты)
+        sql = (f'WITH dd AS MATERIALIZED ('
+               f' SELECT DISTINCT ON (r.url) r."datePublished", r."reviewBody"'
                f' FROM bankiru.reviews r WHERE {bclause}'
-               f' AND r."datePublished" >= now() - make_interval(days => 180))'
+               f' AND r."datePublished" >= now() - make_interval(days => 180)'
+               f' ORDER BY r.url),'
+               f' tagged AS MATERIALIZED ('
+               f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)} FROM dd r)'
                f' SELECT {", ".join(n_sel + p_sel)},'
                f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>90)) AS "_total",'
                f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>90) AND NOT ({any_expr})) AS "_other"'
@@ -371,7 +379,7 @@ def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 
     def _compute():
         with eng.connect() as c:
             rows = c.execute(text(
-                'SELECT "bankName", count(*) n FROM bankiru.reviews r'
+                'SELECT "bankName", count(DISTINCT r.url) n FROM bankiru.reviews r'
                 ' WHERE r."datePublished" >= now() - make_interval(days => :d)'
                 + (' AND r."product" = :product' if product else '') +
                 ' GROUP BY 1 ORDER BY 2 DESC'),
@@ -401,7 +409,7 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
         bclause, bp = _bank_clause(bc, product)
         with eng.connect() as c:
             rows = c.execute(text(
-                f"SELECT split_part(r.location, ' (', 1) AS city, count(*) n"
+                f"SELECT split_part(r.location, ' (', 1) AS city, count(DISTINCT r.url) n"
                 f" FROM bankiru.reviews r WHERE {bclause} AND r.location <> ''"
                 f" AND r.\"datePublished\" >= now() - make_interval(days => :d)"
                 f" GROUP BY 1 ORDER BY 2 DESC LIMIT 40"),
@@ -435,7 +443,7 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
     def _compute():
         with eng.connect() as c:
             rows = c.execute(text(
-                'SELECT "product", count(*) n FROM bankiru.reviews r'
+                'SELECT "product", count(DISTINCT r.url) n FROM bankiru.reviews r'
                 ' WHERE r."bankName" = :bank AND r."datePublished" >= now() - make_interval(days => :d)'
                 ' GROUP BY 1 ORDER BY 2 DESC LIMIT :top'),
                 {"bank": bc, "d": days, "top": top}).all()
@@ -479,12 +487,17 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
         params["month"] = month
     try:
         with eng.connect() as c:
+            # DISTINCT ON (url): в корпусе точные дубли краулера (один URL тысячи
+            # раз). Без дедупа окно из :lim свежих заполнялось бы копиями одной
+            # жалобы (все с датой заливки), реальные отзывы вытеснялись.
             rows = c.execute(text(
-                f'SELECT r."bankName" bank, r."product" product, r."datePublished" dt,'
-                f' r.url, r."reviewBody" body, r.location'
-                f' FROM bankiru.reviews r WHERE {bclause}{clause}'
-                f' AND length(r."reviewBody") >= 40'
-                f' ORDER BY r."datePublished" DESC LIMIT :lim'), params).mappings().all()
+                f'SELECT bank, product, dt, url, body, location FROM ('
+                f'  SELECT DISTINCT ON (r.url) r."bankName" bank, r."product" product,'
+                f'  r."datePublished" dt, r.url, r."reviewBody" body, r.location'
+                f'  FROM bankiru.reviews r WHERE {bclause}{clause}'
+                f'  AND length(r."reviewBody") >= 40'
+                f'  ORDER BY r.url, r."datePublished" DESC) s'
+                f' ORDER BY dt DESC LIMIT :lim'), params).mappings().all()
     except Exception as e:
         log.warning("reviews_dash.list_reviews failed: %s", e)
         return []
@@ -545,10 +558,16 @@ def _theme_week_counts(eng, where_sql: str, params_extra: dict) -> dict:
         sel += [f'count(*) FILTER (WHERE {w0} AND "{k}") AS "{k}_w0"',
                 f'count(*) FILTER (WHERE {w1} AND "{k}") AS "{k}_w1"',
                 f'count(*) FILTER (WHERE {base} AND "{k}") AS "{k}_b"']
-    sql = (f'WITH tagged AS MATERIALIZED ('
-           f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)}'
+    # Дедуп СНАЧАЛА (DISTINCT ON url), потом regex-скан по уникальным — иначе
+    # точные дубли краулера и раздувают счёт (ложные всплески), и удваивают
+    # тяжёлый market-скан. Один проход дедупа дешевле, чем count(DISTINCT)×63.
+    sql = (f'WITH dd AS MATERIALIZED ('
+           f' SELECT DISTINCT ON (r.url) r."datePublished", r."reviewBody"'
            f' FROM bankiru.reviews r WHERE {where_sql}'
-           f' AND r."datePublished" >= now() - make_interval(days => 63))'
+           f' AND r."datePublished" >= now() - make_interval(days => 63)'
+           f' ORDER BY r.url),'
+           f' tagged AS MATERIALIZED ('
+           f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)} FROM dd r)'
            f' SELECT {", ".join(sel)},'
            f' count(*) FILTER (WHERE {w0}) AS "_tw0", count(*) FILTER (WHERE {base}) AS "_tb"'
            f' FROM tagged')
@@ -609,7 +628,7 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
                 ts, tp = _theme_sql(THEME_BY_KEY[top["key"]], "g")
                 with eng.connect() as c:
                     grows = c.execute(text(
-                        f"SELECT split_part(r.location, ' (', 1) city, count(*) n"
+                        f"SELECT split_part(r.location, ' (', 1) city, count(DISTINCT r.url) n"
                         f" FROM bankiru.reviews r WHERE {bclause} AND {ts} AND r.location <> ''"
                         f" AND r.\"datePublished\" >= now()-make_interval(days=>7)"
                         f" GROUP BY 1 ORDER BY 2 DESC LIMIT 3"), {**bp, **tp}).all()

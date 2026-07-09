@@ -263,15 +263,21 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
             sql = text(
                 """
                 WITH cand AS MATERIALIZED (
-                  SELECT r."bankName" AS bank, r."product" AS product,
-                         r."datePublished" AS dt, r.url AS url,
-                         r."reviewBody" AS body, r.location AS location, e.embedding AS emb
-                  FROM bankiru.reviews r
-                  JOIN bankiru.review_embeddings e ON e.review_id = r.id
-                  WHERE r."bankName" = :bank
-                    AND (CAST(:product AS text) IS NULL OR r."product" = :product)
-                    AND (CAST(:since_ts AS timestamp) IS NULL OR r."datePublished" >= CAST(:since_ts AS timestamp))
-                  ORDER BY r."datePublished" DESC
+                  -- DISTINCT ON (url): корпус содержит точные дубли краулера. Без
+                  -- дедупа окно из cand_cap свежих заполняется копиями (все с датой
+                  -- заливки), а реальные отзывы вытесняются из семантического поиска.
+                  SELECT * FROM (
+                    SELECT DISTINCT ON (r.url) r."bankName" AS bank, r."product" AS product,
+                           r."datePublished" AS dt, r.url AS url,
+                           r."reviewBody" AS body, r.location AS location, e.embedding AS emb
+                    FROM bankiru.reviews r
+                    JOIN bankiru.review_embeddings e ON e.review_id = r.id
+                    WHERE r."bankName" = :bank
+                      AND (CAST(:product AS text) IS NULL OR r."product" = :product)
+                      AND (CAST(:since_ts AS timestamp) IS NULL OR r."datePublished" >= CAST(:since_ts AS timestamp))
+                    ORDER BY r.url, r."datePublished" DESC
+                  ) u
+                  ORDER BY dt DESC
                   LIMIT :cand_cap
                 )
                 SELECT bank, product, dt, url, body, location,
