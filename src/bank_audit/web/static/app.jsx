@@ -544,21 +544,26 @@ function bfGoDrill(drill){
 // последние 2 слова. hl — заголовок, hot — подсказка модели (может быть пустой).
 function bfPickHot(hl,hot){
   if(!hl)return null;
+  const trim=(i,len)=>{ // обрезаем хвостовую/ведущую пунктуацию у фрагмента
+    while(len>0&&/[\s,.;:!?«»"'()—-]/.test(hl[i+len-1]))len--;
+    while(len>0&&/[\s«»"'(—-]/.test(hl[i])){i++;len--;}
+    return len>0?[i,len]:null;
+  };
   if(hot){
     let i=hl.indexOf(hot);
     if(i<0)i=hl.toLowerCase().indexOf(hot.toLowerCase());
-    if(i>=0)return [i,hot.length];
+    if(i>=0)return trim(i,hot.length);
   }
   // число с единицей: ×2.8, +140%, 17.7%, «2.8 раза», 30 000 ₽
   let m=hl.match(/[×+\-]?\d[\d.,]*(?:\s?\d{3})*\s*(?:%|п\.?\s?п\.?|пп|раза?|₽|млрд|млн)?/);
-  if(m){const f=m[0].replace(/\s+$/,"");if(f.length>=2){const i=hl.indexOf(f);if(i>=0)return [i,f.length];}}
-  // банк / регулятор / продукт-бренд
-  const b=hl.match(/Сбер\S*|ВТБ|Альфа\S*|Газпромбанк|Т-?Банк|ЦБ\s?РФ|ЦБ|Домклик|ДОМ\.РФ/);
-  if(b)return [b.index,b[0].length];
+  if(m){const f=m[0].replace(/\s+$/,"");if(f.length>=2){const i=hl.indexOf(f);if(i>=0)return trim(i,f.length);}}
+  // банк / регулятор / продукт-бренд (только буквы, без хвостовой пунктуации)
+  const b=hl.match(/Сбер[а-яё]*|ВТБ|Альфа[-а-яё]*|Газпромбанк|Т-?Банк|ЦБ\s?РФ|ЦБ|Домклик|ДОМ\.РФ/i);
+  if(b)return trim(b.index,b[0].length);
   // последние 2 слова (или всё, если слово одно)
   const w=hl.trim().split(/\s+/);
-  if(w.length>=2){const f=w.slice(-2).join(" ");const i=hl.lastIndexOf(f);if(i>=0)return [i,f.length];}
-  return [0,hl.length];
+  if(w.length>=2){const f=w.slice(-2).join(" ");const i=hl.lastIndexOf(f);if(i>=0)return trim(i,f.length);}
+  return trim(0,hl.length);
 }
 
 function BfCard({ins,idx,lead}){
