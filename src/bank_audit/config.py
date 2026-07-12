@@ -21,7 +21,7 @@ class Settings:
 
     @classmethod
     def load(cls) -> "Settings":
-        with (ROOT / "config" / "settings.yaml").open() as f:
+        with (ROOT / "config" / "settings.yaml").open(encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         ws = Path(os.getenv("WORKSPACE_DIR", cfg["workspace_dir"])).resolve()
         return cls(
@@ -35,7 +35,7 @@ class Settings:
         )
 
 def load_sources() -> dict[str, Any]:
-    with (ROOT / "config" / "sources.yaml").open() as f:
+    with (ROOT / "config" / "sources.yaml").open(encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     # Авто-расширение targets для review-источников: подмешиваем топ-N банков
