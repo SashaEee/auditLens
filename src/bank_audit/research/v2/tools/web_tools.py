@@ -33,7 +33,9 @@ def _trust_for(domain: str, url: str) -> float:
     # Регуляторные
     reg = ("cbr.ru", "pravo.gov.ru", "consultant.ru", "garant.ru", "fas.gov.ru",
            "nalog.gov.ru", "minfin.gov.ru", "kremlin.ru", "government.ru",
-           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru")
+           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru",
+           "rospotrebnadzor.ru", "fedsfm.ru", "rosstat.gov.ru", "gks.ru",
+           "fincult.info")
     if any(r == d or d.endswith("." + r) for r in reg):
         return 0.98
     if d.endswith(".gov.ru") or d.endswith(".mil.ru"):
@@ -44,7 +46,9 @@ def _trust_for(domain: str, url: str) -> float:
     bank_domains = ("sberbank.ru", "vtb.ru", "alfabank.ru", "tbank.ru", "tinkoff.ru",
                     "sovcombank.ru", "gazprombank.ru", "rshb.ru", "domrfbank.ru",
                     "open.ru", "raiffeisen.ru", "pochtabank.ru", "mkb.ru",
-                    "psbank.ru", "rosbank.ru", "mtsbank.ru", "ozon.ru")
+                    "psbank.ru", "rosbank.ru", "mtsbank.ru", "ozon.ru",
+                    "uralsib.ru", "akbars.ru", "homecredit.ru", "otpbank.ru",
+                    "unicreditbank.ru", "absolutbank.ru", "zenit.ru", "rencredit.ru")
     if any(bd == d for bd in bank_domains):
         return 0.92
     # Агрегаторы (высокая, но не первоисточник)
@@ -134,6 +138,7 @@ def tool_read_url(args: dict, bundle) -> str:
     # Пассивная индексация (best-effort, не блокирует ответ)
     text = ""
     title = ""
+    idx: dict = {}
     try:
         from ..passive_indexer import index_and_get_text
         idx = index_and_get_text(url, bank_slug_hint=bank_slug_hint,
@@ -150,7 +155,17 @@ def tool_read_url(args: dict, bundle) -> str:
                               ensure_ascii=False)
 
     if not text:
-        return json.dumps({"error": "пустой текст (404/captcha/SPA)", "url": url},
+        # Различаем «просто нет данных» и «заблокировано антиботом/капчей».
+        # Блок → фиксируем в coverage_notes, чтобы источник честно попал в
+        # «Пробелы покрытия», а не молча урезал отчёт.
+        blocked = (bool(idx.get("captcha")) or idx.get("fetch_via") == "failed"
+                   or idx.get("status") in (403, 429, 503))
+        if blocked:
+            _note_blocked_source(bundle, url, dom, bank_slug_hint)
+            return json.dumps({"error": "источник заблокирован антиботом/капчей — "
+                               "данные недоступны, помечено в пробелах покрытия",
+                               "url": url, "blocked": True}, ensure_ascii=False)
+        return json.dumps({"error": "пустой текст (404/пустая SPA)", "url": url},
                           ensure_ascii=False)
 
     # Регистрируем источник в bundle
@@ -168,13 +183,17 @@ def _kind_for(domain: str, url: str) -> str:
     d = domain.lower()
     reg = ("cbr.ru", "pravo.gov.ru", "consultant.ru", "garant.ru", "fas.gov.ru",
            "nalog.gov.ru", "minfin.gov.ru", "kremlin.ru", "government.ru",
-           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru")
+           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru",
+           "rospotrebnadzor.ru", "fedsfm.ru", "rosstat.gov.ru", "gks.ru",
+           "fincult.info")
     if any(r == d or d.endswith("." + r) or d.endswith(".gov.ru") for r in reg):
         return "regulatory"
     bank_domains = ("sberbank.ru", "vtb.ru", "alfabank.ru", "tbank.ru", "tinkoff.ru",
                     "sovcombank.ru", "gazprombank.ru", "rshb.ru", "domrfbank.ru",
                     "open.ru", "raiffeisen.ru", "pochtabank.ru", "mkb.ru",
-                    "psbank.ru", "rosbank.ru", "mtsbank.ru")
+                    "psbank.ru", "rosbank.ru", "mtsbank.ru", "uralsib.ru",
+                    "akbars.ru", "homecredit.ru", "otpbank.ru", "unicreditbank.ru",
+                    "absolutbank.ru", "zenit.ru", "rencredit.ru")
     if any(bd == d for bd in bank_domains):
         return "bank_official"
     if any(a == d for a in ("banki.ru", "sravni.ru", "bankiros.ru")):
@@ -197,6 +216,27 @@ def _raw_fetch_text(url: str, budget: int) -> str:
     parsed = parse_auto(fr.content, url=fr.final_url, content_type=fr.content_type)
     text = parsed.text or ""
     return text[:budget]
+
+
+def _note_blocked_source(bundle, url: str, domain: str, bank_hint: str | None) -> None:
+    """Фиксирует источник, заблокированный антиботом/капчей, в coverage_notes bundle
+    (дедуп по домену). Так он ЧЕСТНО попадёт в «Пробелы покрытия» и «Честные
+    оговорки», а не молча урежет отчёт (капча-деградация)."""
+    try:
+        from ..knowledge_bundle import CoverageNote
+        dom = (domain or _domain(url) or url)[:80]
+        if dom and any(dom in (getattr(cn, "what", "") or "")
+                       for cn in bundle.coverage_notes):
+            return
+        bundle.coverage_notes.append(CoverageNote(
+            what=f"{dom}: источник недоступен для автосбора (антибот/капча)",
+            subjects=[bank_hint] if bank_hint else [],
+            reason="сайт заблокировал автоматический доступ (challenge/капча) — "
+                   "данные с него не собраны",
+            recommendation="проверить вручную по URL источника",
+        ))
+    except Exception as e:
+        log.info("note blocked source failed for %s: %s", url[:80], e)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -251,6 +291,127 @@ def tool_semantic_search(args: dict, bundle) -> str:
         })
     return json.dumps({"query": query, "results": out, "count": len(out)},
                       ensure_ascii=False)
+
+
+# ════════════════════════════════════════════════════════════════════════
+# TOOL: search_reviews_db — семантический поиск жалоб в корпусе banki.ru
+# ════════════════════════════════════════════════════════════════════════
+
+
+def tool_search_reviews_db(args: dict, bundle) -> str:
+    """Семантический поиск реальных жалоб в корпусе banki.ru (БД bankiru).
+
+    ~390k негативных отзывов (1-2★) за 2025-2026 по 217 банкам, с датами/ссылками
+    и готовыми bge-m3 эмбеддингами. Это ОСНОВНОЙ источник жалоб — web нужен лишь
+    для банков вне корпуса. Регистрирует найденные отзывы как источники [N].
+    """
+    query = (args.get("query") or "").strip() or None
+    bank = args.get("bank") or args.get("bank_slug") or args.get("bank_name")
+    product = args.get("product")
+    since_days = args.get("since_days")
+    try:
+        k = int(args.get("k", 8))
+    except (TypeError, ValueError):
+        k = 8
+    # ── НЕСКОЛЬКО БАНКОВ: точечный поиск по каждому отдельно (надёжнее global) ──
+    raw_banks = args.get("banks")
+    banks = None
+    if isinstance(raw_banks, list) and raw_banks:
+        banks = raw_banks
+    elif isinstance(raw_banks, str) and raw_banks.strip():
+        banks = [x.strip() for x in raw_banks.split(",") if x.strip()]
+    elif isinstance(bank, list) and len(bank) > 1:
+        banks = bank
+    elif isinstance(bank, str) and "," in bank:
+        banks = [x.strip() for x in bank.split(",") if x.strip()]
+    if isinstance(bank, list):
+        bank = bank[0] if bank else None
+    # Если LLM не задал банк(и) явно — берём АНАЛИЗИРУЕМЫЕ банки из задания
+    # (bundle.subjects, определённые пайплайном из вопроса/плана), а НЕ глобальный
+    # поиск по всем. Гарантирует точечный поиск ровно по тем банкам, что в работе,
+    # а не по произвольным. (Тот же источник банков, что у web-поиска: # ОБЪЕКТЫ.)
+    if not banks and not bank:
+        subj = list(getattr(bundle, "subjects", None) or [])
+        if subj:
+            labels = getattr(bundle, "subject_labels", None) or {}
+            banks = [labels.get(s, s) for s in subj]
+    from ....rag import bankiru_reviews as br
+    if banks:
+        kp = max(k, 6)
+        try:
+            by = br.search_reviews_multi(query, banks=banks, product=product,
+                                         since_days=since_days, k_per=kp)
+        except Exception as e:
+            return json.dumps({"error": f"reviews_db multi failed: {e}"}, ensure_ascii=False)
+        out_by, counts, total = {}, {}, 0
+        for bnk, revs in by.items():
+            arr = []
+            for r in revs:
+                title = " · ".join(x for x in ["banki.ru", r.get("bank"),
+                                               r.get("product"), r.get("date")] if x)
+                src_n = register_source(bundle, url=r.get("url") or "", title=title,
+                                        domain="banki.ru", trust=0.55, kind="review",
+                                        excerpt=(r.get("text") or "")[:600])
+                arr.append({"product": r.get("product"), "date": r.get("date"),
+                            "url": r.get("url"), "source_n": src_n,
+                            "text": (r.get("text") or "")[:900],
+                            "relevance": round(1.0 - float(r.get("distance", 0) or 0), 3)})
+            out_by[bnk] = arr
+            counts[bnk] = len(arr)
+            total += len(arr)
+        empties = [b for b, v in counts.items() if not v]
+        resp = {"mode": "per_bank", "query": query, "by_bank": out_by,
+                "counts": counts, "total": total}
+        if empties:
+            resp["empty_banks_note"] = ("Без жалоб в корпусе по этой теме: " + ", ".join(empties) +
+                                        " (возможно, банк вне корпуса banki.ru или нет данных по теме).")
+        return json.dumps(resp, ensure_ascii=False)
+    # ── одиночный банк / общий рыночный срез ──
+    if not query and not bank:
+        return json.dumps({"error": "нужен bank/banks (для discovery) или query"},
+                          ensure_ascii=False)
+    # discovery (без темы) — отдаём больше, чтобы из них проступили темы
+    if not query:
+        k = max(k, 15)
+    try:
+        results = br.search_reviews(query, bank=bank, product=product,
+                                     since_days=since_days, k=k)
+    except Exception as e:
+        return json.dumps({"error": f"reviews_db failed: {e}"}, ensure_ascii=False)
+
+    if not results:
+        if bank:
+            note = ("По этому банку жалоб не нашлось. Если задавал query — повтори БЕЗ query "
+                    "(discovery по банку, темы проступят сами). Если и так пусто — банк вне "
+                    "корпуса banki.ru (217), тогда web_search.")
+        else:
+            note = "Запрос без bank вернул пусто. Для оценки конкретного банка передай bank=<банк>."
+        return json.dumps({"query": query, "bank": bank, "results": [], "count": 0,
+                           "note": note}, ensure_ascii=False)
+
+    out = []
+    for r in results:
+        title = " · ".join(x for x in ["banki.ru", r.get("bank"),
+                                        r.get("product"), r.get("date")] if x)
+        src_n = register_source(bundle, url=r.get("url") or "",
+                                 title=title, domain="banki.ru",
+                                 trust=0.55, kind="review",
+                                 excerpt=(r.get("text") or "")[:600])
+        out.append({
+            "bank": r.get("bank"), "product": r.get("product"),
+            "date": r.get("date"), "url": r.get("url"), "source_n": src_n,
+            "text": (r.get("text") or "")[:900],
+            "relevance": round(1.0 - float(r.get("distance", 0) or 0), 3),
+        })
+    resp = {"query": query, "bank": bank, "results": out, "count": len(out)}
+    if not bank:
+        # бесбанковый семантический поиск = общий рыночный top-k, НЕ покрывает все
+        # банки → запрет выводить отсутствие жалоб у конкретного банка
+        resp["note"] = ("ВНИМАНИЕ: запрос без bank — общий рыночный top-k по теме, структурно "
+                        "НЕ покрывает все 217 банков (банк может быть в корпусе, но не попасть "
+                        "в top-k). НЕ делай вывод, что у банка нет жалоб. Для КАЖДОГО банка "
+                        "вызови search_reviews_db отдельно с bank=<банк>.")
+    return json.dumps(resp, ensure_ascii=False)
 
 
 # ════════════════════════════════════════════════════════════════════════

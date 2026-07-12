@@ -20,6 +20,9 @@ services:
       dockerfile: Dockerfile
     image: auditlens:latest
     restart: unless-stopped
+    init: true                          # tini как PID 1 — реапит зомби-процессы
+                                        # Chromium (Playwright). Без него defunct-
+                                        # процессы копятся в process-table.
     env_file:
       - path: .env                    # на VM вертикали; в образ не попадает
         required: false               # при Infisical-инжекте env прямо в окружение файла может не быть

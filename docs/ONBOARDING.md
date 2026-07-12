@@ -176,10 +176,12 @@ ssh -i ~/.ssh/id_ed25519_uva amzenkovskiy-2127124@87.242.123.218
   docker tag auditlens:prod auditlens:prod-prev            # откат при необходимости
   cd ~/auditlens-container && docker build -t auditlens:prod .
   docker stop auditlens-app && docker rm auditlens-app
-  docker run -d --name auditlens-app --network host \
+  docker run -d --name auditlens-app --init --network host \
     --env-file "$HOME/auditlens/.env" --restart unless-stopped auditlens:prod
   curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/   # ждём 200
 ```
+> ⚠️ Флаг `--init` ОБЯЗАТЕЛЕН: tini как PID 1 реапит зомби-процессы Chromium
+> (Playwright). Без него defunct-процессы копятся в process-table.
 > ⚠️ Ребилд занимает ~5–8 мин: в текущем `Dockerfile` слой `COPY src` идёт до установки,
 > поэтому любая правка `src` заставляет переустановить Playwright Chromium. Режим `serve`
 > миграции **не** запускает (только режим `migrate`), так что пересоздание контейнера БД не трогает.

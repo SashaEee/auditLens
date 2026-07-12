@@ -363,9 +363,14 @@ function renderMD(text, sources, charts){
          + `class="cite cite-t${tier}" data-cite="${n}">${n}</a></sup>`;
   };
   const inlineHTML=(s)=>s
+    // Сначала экранируем ВЕСЬ вход: в markdown попадает недоверенный текст
+    // (LLM-пересказ жалоб клиентов, сниппеты источников) — сырой <img onerror=…>
+    // иначе исполнится через dangerouslySetInnerHTML (stored XSS).
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
     // markdown-ссылки [текст](url) → <a>. ДО citation-замены и emphasis.
+    // URL — через escAttr: кавычка в URL иначе выламывается из href-атрибута.
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-             '<a href="$2" target="_blank" rel="noopener noreferrer" class="md-link">$1</a>')
+             (_,txt,url)=>`<a href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" class="md-link">${txt}</a>`)
     .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
     // __жирный__ (подчёркивания) — только на границах слова. NB: JS \w НЕ включает
     // кириллицу, поэтому класс слова задаём явно (иначе ломается имя_атрибута).
@@ -474,213 +479,385 @@ function renderMD(text, sources, charts){
 }
 
 // ─── OVERVIEW PAGE ────────────────────────────────────────────────────────────
+// ─── OVERVIEW · Утренний брифинг ─────────────────────────────────────────────
+// Микрокомпоненты выпуска: числа детерминированы (бэк), LLM только формулирует.
+
+function DeltaStrip({from,to}){
+  const up=to>from;
+  return <span className="bf-delta">
+    <span>{from}%</span><span className="arr">→</span>
+    <span style={{fontWeight:600}}>{to}%</span>
+    <span className={`delta ${up?"pos":"neg"}`}>{up?<Ic.arrow_up/>:<Ic.arrow_dn/>}{signed(Math.round((to-from)*100)/100)}</span>
+  </span>;
+}
+
+// ключевая ставка: ступени, не сглаживание — ставка дискретна
+function RateStep({points,w=110,h=24}){
+  if(!points||points.length<2)return null;
+  const vals=points.map(p=>p.rate);
+  const min=Math.min(...vals),max=Math.max(...vals),rng=(max-min)||1;
+  const step=w/(points.length-1);
+  let d=`M0 ${h-2-((vals[0]-min)/rng)*(h-6)}`;
+  vals.forEach((v,i)=>{const y=h-2-((v-min)/rng)*(h-6);if(i>0)d+=` H${(i*step).toFixed(1)} V${y.toFixed(1)}`;});
+  return <svg width={w} height={h} style={{display:"block"}}>
+    <path d={d} fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  </svg>;
+}
+
+// микро-глиф матрицы рисков 3×3 (вероятность × влияние из дайджеста)
+function RiskGlyph({likelihood=2,impact=2}){
+  const cells=[];
+  for(let r=0;r<3;r++)for(let c=0;c<3;c++){
+    const active=(2-r)===(impact-1)&&c===(likelihood-1);
+    cells.push(<circle key={`${r}${c}`} cx={4+c*6} cy={4+r*6} r={active?2.6:1.3}
+      fill={active?"var(--sev,var(--ink-3))":"var(--hair-2)"}/>);
+  }
+  return <svg className="bf-glyph" width="21" height="21" viewBox="0 0 21 21"
+    role="img" aria-label={`вероятность ${likelihood}/3, влияние ${impact}/3`}>
+    <title>{`вероятность ${likelihood}/3 · влияние ${impact}/3`}</title>{cells}
+  </svg>;
+}
+
+const BF_KIND={
+  review_spike:{tag:"Риск · жалобы"},
+  mass_move:{tag:"Тарифы · массовое"},
+  tariff_move:{tag:"Тарифы"},
+  rate_move:{tag:"Ключевая ставка"},
+  news_alert:{tag:"Новость"},
+  exploit:{tag:"Лазейки"},          // будущий источник соседней команды
+};
+
+function bfGoAI(prompt){
+  try{sessionStorage.setItem("al-ai-prefill",prompt);}catch{}
+  location.hash="ai";
+}
+function bfGoDrill(drill){
+  if(!drill)return;
+  if(drill.url){window.open(drill.url,"_blank","noopener");return;}
+  try{sessionStorage.setItem(drill.page==="reviews"?"al-rv-prefilter":"al-mk-preset",
+    JSON.stringify(drill.params||{}));}catch{}
+  location.hash=drill.page||"overview";
+}
+// Всегда возвращает [начало, длина] фрагмента заголовка для оранжевого акцента —
+// чтобы подсветка была на КАЖДОМ заголовке, а не только когда hot от LLM точно
+// совпал. Приоритет: точный hot → без регистра → число/процент/×N → банк/ЦБ →
+// последние 2 слова. hl — заголовок, hot — подсказка модели (может быть пустой).
+function bfPickHot(hl,hot){
+  if(!hl)return null;
+  const trim=(i,len)=>{ // обрезаем хвостовую/ведущую пунктуацию у фрагмента
+    while(len>0&&/[\s,.;:!?«»"'()—-]/.test(hl[i+len-1]))len--;
+    while(len>0&&/[\s«»"'(—-]/.test(hl[i])){i++;len--;}
+    return len>0?[i,len]:null;
+  };
+  if(hot){
+    let i=hl.indexOf(hot);
+    if(i<0)i=hl.toLowerCase().indexOf(hot.toLowerCase());
+    if(i>=0)return trim(i,hot.length);
+  }
+  // число с единицей: ×2.8, +140%, 17.7%, «2.8 раза», 30 000 ₽
+  let m=hl.match(/[×+\-]?\d[\d.,]*(?:\s?\d{3})*\s*(?:%|п\.?\s?п\.?|пп|раза?|₽|млрд|млн)?/);
+  if(m){const f=m[0].replace(/\s+$/,"");if(f.length>=2){const i=hl.indexOf(f);if(i>=0)return trim(i,f.length);}}
+  // банк / регулятор / продукт-бренд (только буквы, без хвостовой пунктуации)
+  const b=hl.match(/Сбер[а-яё]*|ВТБ|Альфа[-а-яё]*|Газпромбанк|Т-?Банк|ЦБ\s?РФ|ЦБ|Домклик|ДОМ\.РФ/i);
+  if(b)return trim(b.index,b[0].length);
+  // последние 2 слова (или всё, если слово одно)
+  const w=hl.trim().split(/\s+/);
+  if(w.length>=2){const f=w.slice(-2).join(" ");const i=hl.lastIndexOf(f);if(i>=0)return trim(i,f.length);}
+  return trim(0,hl.length);
+}
+
+function BfCard({ins,idx,lead}){
+  const d=ins.data||{};
+  const viz=(()=>{
+    if(ins.kind==="review_spike")
+      return <>
+        <Spark data={[d.baseline_week||0,d.prev_week||0,d.week||0]} w={64} h={20} color="var(--ink-3)"/>
+        {d.ratio&&<span className="mono tnum" style={{fontSize:12,fontWeight:600}}>×{d.ratio}</span>}
+        {d.geo&&<span className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{d.geo.share}% · {d.geo.city}</span>}
+      </>;
+    if(ins.kind==="tariff_move")return <DeltaStrip from={d.from} to={d.to}/>;
+    if(ins.kind==="mass_move")
+      return <span className="mono" style={{fontSize:12}}>
+        <b style={{fontSize:15}}>{d.n_banks}</b> банков · {(d.banks||[]).slice(0,3).join(", ")}{(d.banks||[]).length>3?"…":""}
+      </span>;
+    if(ins.kind==="rate_move")
+      return <><RateStep points={(d.points||[]).slice(-30)}/><span className="mono tnum" style={{fontSize:13,fontWeight:600}}>{d.current}%</span></>;
+    return null;
+  })();
+  return <article className={`bf-card${lead?" lead":""}`} data-sev={ins.severity} style={{"--i":idx}}>
+    <div className="bf-kicker">
+      {(BF_KIND[ins.kind]||{tag:ins.kind}).tag}
+      {ins.after_pause&&<span className="badge warn" style={{fontSize:9}}>сбор после паузы</span>}
+      <RiskGlyph likelihood={ins.likelihood} impact={ins.impact}/>
+    </div>
+    <h3 className="bf-title">{ins.title}</h3>
+    {ins.so_what&&<div className="bf-sowhat">{ins.so_what}</div>}
+    {viz&&<div className="bf-viz">{viz}</div>}
+    {ins.provenance&&<div className="bf-prov">{ins.provenance}</div>}
+    <div className="bf-foot">
+      <button className="bf-btn" onClick={()=>bfGoDrill(ins.drill)}>
+        {ins.kind==="news_alert"?"Источник":"Разобраться"} <Ic.ext/>
+      </button>
+      {ins.ai_prompt&&<button className="bf-btn ai" onClick={()=>bfGoAI(ins.ai_prompt)}>✦ Спросить ИИ</button>}
+    </div>
+  </article>;
+}
+
 function OverviewPage(){
-  const[data,setData]=useState(null);
+  const[dg,setDg]=useState(null);
+  const[summary,setSummary]=useState(null);
   const[loading,setLoading]=useState(true);
   const[err,setErr]=useState(null);
+  const[refreshBusy,setRefreshBusy]=useState(false);
 
+  const loadDigest=()=>apiFetch("/api/overview/digest").then(d=>{setDg(d);return d;});
   useEffect(()=>{
-    setLoading(true);
-    Promise.all([
-      apiFetch("/api/summary"),
-      apiFetch("/api/sber-vs-market"),
-      apiFetch("/api/reviews/topics"),
-      apiFetch("/api/quality"),
-    ]).then(([summary,svm,topics,quality])=>{
-      // Aggregate topics by topic name
-      const topicMap={};
-      (topics||[]).forEach(t=>{
-        if(!topicMap[t.topic])topicMap[t.topic]={topic:t.topic,n:0,total_n:0,total_r:0};
-        topicMap[t.topic].n+=parseInt(t.n)||0;
-        topicMap[t.topic].total_n+=parseInt(t.n)||0;
-        topicMap[t.topic].total_r+=(parseFloat(t.avg_rating)||0)*(parseInt(t.n)||0);
-      });
-      const aggTopics=Object.values(topicMap).map(t=>({
-        topic:t.topic, n:t.n,
-        avg_rating:t.total_n>0?t.total_r/t.total_n:0,
-      })).sort((a,b)=>b.n-a.n);
-      setData({summary,svm,topics:aggTopics,quality});
+    Promise.allSettled([loadDigest(),apiFetch("/api/summary")]).then(([d,s])=>{
+      if(s.status==="fulfilled")setSummary(s.value);
+      if(d.status==="rejected")setErr(String(d.reason&&d.reason.message||d.reason));
       setLoading(false);
-    }).catch(e=>{setErr(e.message);setLoading(false);});
+    });
   },[]);
+  // поллинг пока генерится (первый визит дня / ручной refresh)
+  const refreshing=!!(dg&&dg.meta&&dg.meta.refreshing);
+  useEffect(()=>{
+    if(!refreshing)return;
+    const id=setInterval(()=>{loadDigest().catch(()=>{});},20000);
+    return()=>clearInterval(id);
+  },[refreshing]);
+
+  const manualRefresh=()=>{
+    if(refreshBusy)return; setRefreshBusy(true);
+    // Оптимистично включаем «обновляется»: сервер мог ещё не закоммитить
+    // mark_run, и мгновенный GET вернул бы refreshing=false — поллинг не
+    // стартовал бы и юзер не увидел бы новый выпуск. Поллинг сам сойдётся.
+    const optimistic=()=>setDg(d=>d&&({...d,meta:{...d.meta,refreshing:true}}));
+    apiPost("/api/overview/digest/refresh",{force:true})
+      .then(optimistic)
+      .catch(()=>{optimistic();/* 409 = уже генерится — тоже поллим */})
+      .finally(()=>setRefreshBusy(false));
+  };
 
   if(loading)return <LoadingPage/>;
-  if(err)return <ErrState msg={err}/>;
-  const{summary,svm,topics,quality}=data;
+  if(err&&!dg)return <ErrState msg={err}/>;
 
-  // Compute avg delta for hero
-  const validDeltas=(svm||[]).filter(r=>r.sber_vs_median_pp!=null).map(r=>parseFloat(r.sber_vs_median_pp));
-  const avgDelta=validDeltas.length?validDeltas.reduce((a,b)=>a+b,0)/validDeltas.length:null;
-  const depositRow=(svm||[]).find(r=>r.category==="deposit");
-  const flagsTotal=(summary.flags_err||0)+(summary.flags_warn||0);
-  const now=new Date();
-  const timeStr=now.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})+" МСК";
-  const issueNum=now.getWeek?now.getWeek():Math.ceil((now-new Date(now.getFullYear(),0,1))/(7*86400000));
-
-  // База пуста — показываем CTA-блок с кнопкой запуска вместо обычного дашборда
-  const isEmpty=(summary.offers||0)===0&&(summary.banks||0)===0&&(summary.reviews||0)===0;
+  // База пуста — CTA-блок с кнопкой запуска сбора
+  const isEmpty=summary&&(summary.offers||0)===0&&(summary.banks||0)===0&&(summary.reviews||0)===0
+    &&dg&&dg.meta&&dg.meta.empty;
   if(isEmpty)return <EmptyOverviewCta/>;
 
+  // ── данные секций (любая может отсутствовать/деградировать) ──
+  const sec=(dg&&dg.sections)||{};
+  const P=n=>((sec[n]||{}).payload)||{};
+  const ST=n=>(sec[n]||{}).status||"failed";
+  const head=P("headline"), pulse=P("reviews_pulse"), tm=P("tariff_moves"),
+        qo=P("quality_ops"), nw=P("news"), brief=P("reviews_brief");
+  const isToday=!!(dg&&dg.meta&&dg.meta.today);
+  const generating=refreshing&&(dg.meta.empty||!isToday);
+
+  const issueDate=dg&&dg.date?new Date(dg.date+"T12:00:00"):new Date();
+  const issueNum=Math.ceil((issueDate-new Date(issueDate.getFullYear(),0,0))/864e5);
+  const genAt=dg&&dg.meta&&dg.meta.generated_at?new Date(dg.meta.generated_at):null;
+
+  // пульс дня (детерминированный, живёт без LLM)
+  const kr=tm.key_rate||{};
+  const svmRows=tm.sber_gap||[];
+  const deltas=svmRows.filter(r=>r.sber_vs_median_pp!=null).map(r=>parseFloat(r.sber_vs_median_pp));
+  const avgDelta=deltas.length?deltas.reduce((a,b)=>a+b,0)/deltas.length:null;
+  const ovl=pulse.overall||{};
+  const flagsErr=qo.flags_err||0, flagsWarn=qo.flags_warn||0;
+  const insights=head.insights||[];
+  const newsGroups=nw.groups||[];
+  const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
+  const hl=head.headline||"", hot=head.hot||"";
+  const hh=bfPickHot(hl,hot);   // [начало,длина] акцента — есть всегда, если есть заголовок
+
   return <div className="fade-in">
-    <header style={{marginBottom:32}}>
+    {/* ① MASTHEAD — передовица */}
+    <header style={{marginBottom:26}}>
       <div className="eyebrow-row">
-        <div className="eyebrow">Issue {issueNum} · {now.toLocaleDateString("ru",{month:"long",year:"numeric"})} · Розничный рынок</div>
-        <div className="mono tnum" style={{fontSize:11.5,color:"var(--ink-3)"}}>
-          обновлено {timeStr} · {fmtNum(summary.offers)} предложений · {fmtNum(summary.banks)} банков
+        <div className="eyebrow">
+          Брифинг №{issueNum} · {issueDate.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · розница / УВА
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          {refreshing?
+            <span className="bf-live"><span className="dot"/>обновляется…</span>:
+            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до утра</span>}
+          <button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
+            title="Перегенерировать выпуск">⟳</button>
         </div>
       </div>
-      <h1 className="t-display" style={{maxWidth:"24ch",marginBottom:14}}>
-        Аналитика банковского рынка — позиция Сбера vs&nbsp;<em style={{fontStyle:"italic",color:"var(--accent)"}}>конкуренты</em>
-      </h1>
-      <p className="lede">
-        Еженедельная сводка для службы внутреннего аудита: сравнение позиции Сбербанка
-        с медианой и максимумом рынка, динамика условий и ключевые риск-сигналы.
-      </p>
+      {generating&&!hl?
+        <div>
+          <div className="skel" style={{height:44,width:"58%",marginBottom:10,borderRadius:8}}/>
+          <div className="skel" style={{height:44,width:"36%",marginBottom:14,borderRadius:8}}/>
+          <p className="lede" style={{color:"var(--ink-3)"}}>Собираю сводку дня — первый визит за сегодня · ~1–2 мин. Цифры ниже уже живые.</p>
+        </div>:
+        <>
+          <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
+            {hh?<>{hl.slice(0,hh[0])}<em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
+          </h1>
+          <p className="lede" style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center"}}>
+            {head.stats&&<>
+              <span>{head.stats.risk||0} риск-сигн.</span>·<span>{head.stats.good||0} благопр.</span>·
+              <span>{head.stats.news||0} новостей</span>
+              {head.stats.checked_themes>0&&<>·<span>проверено тем: {head.stats.checked_themes}</span></>}
+            </>}
+            {ST("headline")==="stale"&&<span className="bf-stale">⚠ сводка за {sec.headline.stale_from}</span>}
+            {ST("headline")==="degraded"&&<span className="bf-stale">⚠ ИИ недоступен — сигналы детерминированные</span>}
+          </p>
+        </>}
     </header>
 
-    <section className="row row-7-5" style={{marginBottom:32}}>
-      <div className="surface" style={{padding:"28px 32px"}}>
-        <div className="eyebrow" style={{marginBottom:14}}>Главное · Сбер vs медиана рынка</div>
-        <div style={{display:"flex",alignItems:"flex-end",gap:36,flexWrap:"wrap"}}>
-          <div className="hero-metric">
-            <div className="num"><em>{avgDelta!=null?signed(avgDelta):"—"}</em></div>
-            <div className="mono tnum" style={{fontSize:12,color:"var(--ink-3)",marginTop:4}}>п.п. средневзвешенно по категориям</div>
+    {/* ② ПУЛЬС ДНЯ — тикер без LLM */}
+    <section style={{marginBottom:22}}>
+      <div className="bf-pulse">
+        <a href="#market">
+          <div className="bf-pulse-num">{kr.current!=null?kr.current:"—"}<span className="u">%</span>
+            {kr.points&&<span style={{color:"var(--ink-4)",marginLeft:2}}><RateStep points={(kr.points||[]).slice(-24)} w={54} h={20}/></span>}
           </div>
-          <div style={{flex:1,minWidth:220,paddingBottom:8}}>
-            <div className="t-cap" style={{marginBottom:14,maxWidth:"36ch"}}>
-              {depositRow?`Вклады: Сбер ${pct(depositRow.sber_max)} · медиана ${pct(depositRow.market_median)} · лидер ${pct(depositRow.market_max)}`:"Данные по категориям загружены из базы."}
-            </div>
-            {depositRow&&<div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
-              <div>
-                <div className="mono tnum" style={{fontSize:13,fontWeight:500}}>{pct(depositRow.sber_max)}</div>
-                <div className="t-cap" style={{fontSize:11}}>Сбер · вклады макс.</div>
-              </div>
-              <div style={{width:1,height:28,background:"var(--hair)"}}/>
-              <div>
-                <div className="mono tnum" style={{fontSize:13,fontWeight:500}}>{pct(depositRow.market_median)}</div>
-                <div className="t-cap" style={{fontSize:11}}>Рынок · медиана</div>
-              </div>
-              <div style={{width:1,height:28,background:"var(--hair)"}}/>
-              <div>
-                <div className="mono tnum" style={{fontSize:13,fontWeight:500}}>{pct(depositRow.market_max)}</div>
-                <div className="t-cap" style={{fontSize:11}}>Лидер рынка</div>
-              </div>
-            </div>}
+          <div className="bf-pulse-cap">Ключевая ставка{kr.as_of?` · ${kr.as_of.slice(5)}`:""}</div>
+        </a>
+        <a href="#sber">
+          <div className="bf-pulse-num">{avgDelta!=null?signed(Math.round(avgDelta*100)/100):"—"}<span className="u">пп</span></div>
+          <div className="bf-pulse-cap">Сбер vs медиана рынка</div>
+        </a>
+        <a href="#reviews">
+          <div className="bf-pulse-num">{ovl.week!=null?fmtNum(ovl.week):"—"}
+            {ovl.ratio!=null&&<span className="u" style={{color:ovl.ratio>=1.3?"var(--neg)":"var(--ink-3)"}}>×{ovl.ratio}</span>}
           </div>
-        </div>
-      </div>
-
-      <div className="surface" style={{padding:"22px 24px",display:"flex",flexDirection:"column",gap:14}}>
-        <div className="eyebrow">Состояние данных</div>
-        <StatRow label="Активных предложений" value={fmtNum(summary.offers)}/>
-        <StatRow label="Отзывов в анализе" value={fmtNum(summary.reviews)}/>
-        <StatRow label="Изменений условий (7 дн.)" value={fmtNum(summary.changes)} warn={summary.changes>50}/>
-        <StatRow label="Флаги качества" value={flagsTotal}
-          sub={`${summary.flags_err||0} ош. · ${summary.flags_warn||0} предупр.`}
-          neg={(summary.flags_err||0)>0}/>
-        {summary.last_run&&<div className="t-cap" style={{fontSize:11,color:"var(--ink-4)",paddingTop:4}}>
-          Последний сбор: {fmtDate(summary.last_run)}
-        </div>}
-        <div style={{marginTop:"auto",paddingTop:14,borderTop:"1px solid var(--hair)"}}>
-          <button className="btn btn-ghost btn-sm" style={{width:"100%",justifyContent:"space-between"}}
-            onClick={()=>window.location.hash="sources"}>
-            Открыть журнал сборов <Ic.ext/>
-          </button>
-        </div>
+          <div className="bf-pulse-cap">Жалоб за 7 дней · к норме</div>
+        </a>
+        <a href="#market">
+          <div className="bf-pulse-num">{(tm.totals&&tm.totals.changes_7d)!=null?fmtNum(tm.totals.changes_7d):"—"}</div>
+          <div className="bf-pulse-cap">Изм. тарифов 7 дн · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков</div>
+        </a>
+        <a href="#market">
+          <div className="bf-pulse-num">{tm.dep_spread_pp!=null?signed(tm.dep_spread_pp):"—"}<span className="u">пп</span></div>
+          <div className="bf-pulse-cap">Спред вклад Сбера − КС</div>
+        </a>
+        <a href="#quality">
+          <div className="bf-pulse-num" style={flagsErr?{color:"var(--neg)"}:null}>{flagsErr+flagsWarn}</div>
+          <div className="bf-pulse-cap">Флаги качества · {flagsErr} ош.</div>
+        </a>
       </div>
     </section>
 
-    <section style={{marginBottom:36}}>
-      <div className="eyebrow-row">
-        <div>
-          <div className="eyebrow" style={{marginBottom:6}}>§ 02 · Сравнение по категориям</div>
-          <h2 className="t-h">Где Сбер сильнее, где отстаёт</h2>
+    {/* ③ СВОДКА ДНЯ + ④ НОВОСТИ */}
+    <section className="bf-core" style={{marginBottom:30}}>
+      <div>
+        {insights.length?
+          <div className="bf-cards">
+            {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0}/>)}
+          </div>:
+          generating?
+            <div className="bf-cards">
+              {[0,1,2].map(i=><div key={i} className="skel" style={{height:150,borderRadius:10}}/>)}
+            </div>:
+            <div className="surface" style={{padding:"22px 24px"}}>
+              <div className="rv-radar-calm"><span className="rv-radar-check"><Ic.check/></span>
+                За сутки резких сигналов не выявлено{head.stats?` · проверено ${head.stats.checked_themes} тем жалоб`:""}</div>
+            </div>}
+        {head.quiet_note&&<div className="bf-quiet"><span className="ok"><Ic.check/></span>{head.quiet_note}</div>}
+
+        {/* ③b Анализ жалоб недели (LLM, reviews_brief) */}
+        {brief.markdown&&<div className="surface" style={{padding:"20px 24px",marginTop:16}}>
+          <div className="eyebrow-row" style={{marginBottom:12}}>
+            <div className="eyebrow">Анализ жалоб недели</div>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              {ST("reviews_brief")==="stale"&&<span className="bf-stale">за {sec.reviews_brief.stale_from}</span>}
+              <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="reviews"}>К отзывам <Ic.ext/></button>
+            </div>
+          </div>
+          <div className="bf-brief">{renderMD(brief.markdown)}</div>
+        </div>}
+      </div>
+
+      {/* ④ Новости для аудитора (sticky) */}
+      <aside className="bf-news">
+        <div className="bf-news-h">
+          <div className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</div>
+          {newsAll>0&&<span className="bf-news-cov" title={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
+            {newsOk}/{newsAll} ист.</span>}
         </div>
+        {newsGroups.length?newsGroups.map(g=><div key={g.key}>
+            <div className="bf-news-g">{g.title||g.key}</div>
+            {(g.items||[]).map((it,i)=>
+              <a key={i} className="bf-news-it" data-sev={it.severity} href={it.url}
+                 target="_blank" rel="noopener noreferrer">
+                <div className="bf-news-t">{it.title}</div>
+                {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
+                <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDate(it.ts)}`:""}<Ic.ext/></div>
+              </a>)}
+          </div>):
+          ST("news")==="degraded"&&(nw.items_raw||[]).length?
+            <div>
+              <div className="bf-news-g" style={{color:"var(--warn)"}}>Без ИИ-отбора (сырая лента)</div>
+              {(nw.items_raw||[]).slice(0,10).map((it,i)=>
+                <a key={i} className="bf-news-it" href={it.url} target="_blank" rel="noopener noreferrer">
+                  <div className="bf-news-t">{it.title}</div>
+                  <div className="bf-news-m">{it.domain}<Ic.ext/></div>
+                </a>)}
+            </div>:
+            <div className="bf-news-empty">{generating?"Собираю ленту…":"За сутки новости не собраны."}</div>}
+      </aside>
+    </section>
+
+    {/* ⑤ ТАРИФНЫЕ ДВИЖЕНИЯ НЕДЕЛИ */}
+    <section style={{marginBottom:26}}>
+      <div className="eyebrow-row">
+        <div className="eyebrow" style={{marginBottom:10}}>Тарифные движения недели</div>
+        {(tm.mass_updates||[]).length>0&&
+          <span className="badge warn">массовое движение: {tm.mass_updates.map(m=>CAT_LABELS[m.category]||m.category).join(", ")}{tm.after_pause?" · сбор после паузы":""}</span>}
       </div>
       <div className="surface" style={{overflow:"hidden"}}>
-        {(!svm||!svm.length)?<EmptyState text="Нет данных для сравнения. Запустите сбор данных."/>:
-        <table className="m-cards">
-          <thead><tr>
-            <th style={{width:"24%"}}>Категория</th>
-            <th className="right">Сбер макс.</th>
-            <th className="right">Медиана</th>
-            <th className="right">Лидер</th>
-            <th>Позиция</th>
-            <th className="right">Δ к медиане</th>
-          </tr></thead>
-          <tbody>
-            {(svm||[]).map(r=>{
-              const delta=r.sber_vs_median_pp!=null?parseFloat(r.sber_vs_median_pp):null;
-              const lib=LOWER_IS_BETTER.has(r.category);
-              const isPos=delta!=null?(lib?delta>0:delta>0):null;
-              const catN=(summary.categories||[]).find(c=>c.category===r.category);
-              return <tr key={r.category}>
-                <td className="m-primary" data-label="Категория">
-                  <div style={{fontWeight:500}}>{CAT_LABELS[r.category]||r.category}</div>
-                  <div className="t-cap" style={{fontSize:11.5}}>{catN?fmtNum(catN.n):"—"} предложений</div>
-                </td>
-                <td className="right mono tnum" data-label="Сбер макс." style={{fontWeight:500}}>{pct(r.sber_max)}</td>
-                <td className="right mono tnum" data-label="Медиана" style={{color:"var(--ink-2)"}}>{pct(r.market_median)}</td>
-                <td className="right mono tnum" data-label="Лидер" style={{color:"var(--ink-2)"}}>{pct(r.market_max)}</td>
-                <td data-label="Позиция"><PositionBar value={r.sber_max} median={r.market_median} max={r.market_max}/></td>
-                <td className="right" data-label="Δ к медиане">
-                  {delta==null?<span className="mono" style={{color:"var(--ink-4)"}}>—</span>:
-                    <span className={`delta ${isPos?"pos":"neg"}`}>
-                      {isPos?<Ic.arrow_up/>:<Ic.arrow_dn/>}
-                      {signed(delta)} п.п.
-                    </span>}
-                </td>
-              </tr>;
-            })}
-          </tbody>
-        </table>}
+        {(tm.top_changes||[]).length?
+          <table className="m-cards">
+            <thead><tr><th>Банк</th><th>Продукт</th><th className="right">Было → стало</th><th className="right">Δ</th><th className="right">Когда</th></tr></thead>
+            <tbody>{tm.top_changes.slice(0,10).map((c,i)=>{
+              const up=c.to>c.from;
+              return <tr key={i}>
+                <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}{c.is_sber&&<span className="badge solid" style={{marginLeft:8,fontSize:9}}>Сбер</span>}</div>
+                  <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
+                <td data-label="Продукт" style={{fontSize:12.5,color:"var(--ink-2)"}}>{c.title}</td>
+                <td className="right mono tnum" data-label="Было → стало">{c.from}% → <b>{c.to}%</b></td>
+                <td className="right" data-label="Δ"><span className={`delta ${up?"pos":"neg"}`}>{up?<Ic.arrow_up/>:<Ic.arrow_dn/>}{signed(c.delta)}</span></td>
+                <td className="right mono tnum" data-label="Когда" style={{fontSize:11,color:"var(--ink-3)"}}>{fmtDate(c.changed_at)}</td>
+              </tr>;})}
+            </tbody>
+          </table>:
+          <div style={{padding:"20px 24px",fontSize:13,color:"var(--ink-3)"}}>
+            Изменений ставок за неделю не зафиксировано · под наблюдением {(tm.totals&&tm.totals.banks_tracked)||0} банков
+            {tm.totals&&tm.totals.last_ok_run&&<> · последний сбор {fmtDate(tm.totals.last_ok_run)}</>}
+          </div>}
+        {(tm.top_changes||[]).length>0&&<div style={{padding:"12px 20px",borderTop:"1px solid var(--hair)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span className="bf-stamp">{(tm.totals&&tm.totals.changes_7d)||0} изменений · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков за 7 дн</span>
+          <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="market"}>Все изменения <Ic.ext/></button>
+        </div>}
       </div>
     </section>
 
-    <section className="row row-2" style={{marginBottom:36}}>
-      <div>
-        <div className="eyebrow" style={{marginBottom:14}}>§ 03 · Сигналы качества</div>
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {!(quality?.flags?.length)?
-            <div className="surface-flat" style={{padding:"18px 20px",color:"var(--ink-3)",fontSize:13}}>
-              <Ic.check style={{display:"inline",marginRight:8,color:"var(--pos)"}}/> Активных флагов нет
-            </div>:
-            (quality.flags||[]).slice(0,4).map((f,i)=>(
-              <div key={i} className={`alert ${f.severity==="error"?"error":""}`}>
-                <div className="a-icon"><Ic.alert/></div>
-                <div style={{flex:1,minWidth:0}}>
-                  <h4>{str(f.code).replace(/_/g," ")}</h4>
-                  <p>{str(f.detail)}</p>
-                  <div className="mono tnum" style={{fontSize:10.5,color:"var(--ink-4)",marginTop:4}}>{fmtDate(f.created_at)}</div>
-                </div>
-              </div>
-            ))}
-        </div>
-      </div>
-      <div>
-        <div className="eyebrow" style={{marginBottom:14}}>§ 04 · Топ темы жалоб</div>
-        <div className="surface" style={{padding:22}}>
-          {!(topics?.length)?<div style={{color:"var(--ink-3)",fontSize:13,padding:"8px 0"}}>Нет данных по темам отзывов</div>:
-          <HBars
-            rows={topics.slice(0,6).map(t=>({
-              label:TL(t.topic),value:t.n,
-              color:t.avg_rating<2.5?"var(--accent)":"var(--ink-3)",
-            }))}
-            fmt={v=>fmtNum(v)}
-          />}
-          <div style={{marginTop:18,paddingTop:14,borderTop:"1px solid var(--hair)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div className="t-cap">Красным — темы со средней оценкой ниже 2.5</div>
-            <button className="btn btn-ghost btn-sm" onClick={()=>window.location.hash="reviews"}>К отзывам <Ic.ext/></button>
-          </div>
-        </div>
-      </div>
-    </section>
+    {/* ⑥ ПОДВАЛ ДОВЕРИЯ */}
+    <div className="bf-trust">
+      {qo.totals&&<span>{fmtNum(qo.totals.offers)} предложений · {qo.totals.banks} банков</span>}
+      {pulse.kpi&&pulse.kpi.as_of&&<span>отзывы: {fmtNum((pulse.kpi.total||0))} за 90 дн (обн. {pulse.kpi.as_of})</span>}
+      {tm.totals&&tm.totals.last_ok_run&&<span>сбор тарифов: {fmtDate(tm.totals.last_ok_run)}</span>}
+      <a href="#quality">{flagsErr+flagsWarn} флаг(ов) качества</a>
+      {dg&&dg.meta&&dg.meta.tokens&&dg.meta.tokens.in>0&&<span>дайджест: {Math.round((dg.meta.tokens.in+dg.meta.tokens.out)/1000)}k токенов/день · один на всех</span>}
+      {qo.captcha_pending>0&&<a href="#sources">{qo.captcha_pending} капч(и) ждут решения</a>}
+      <a href="#sources">Источники →</a>
+    </div>
   </div>;
 }
 
 // ─── MARKET PAGE ──────────────────────────────────────────────────────────────
 function MarketPage(){
-  const[cat,setCat]=useState("deposit");
+  // preset категории из «Обзора» (клик по тарифному сигналу)
+  const mkPreset=(()=>{try{
+    const p=JSON.parse(sessionStorage.getItem("al-mk-preset")||"null");
+    sessionStorage.removeItem("al-mk-preset");return p;
+  }catch{return null;}})();
+  const[cat,setCat]=useState((mkPreset&&mkPreset.category)||"deposit");
   const[q,setQ]=useState("");
   const[offers,setOffers]=useState([]);
   const[catStats,setCatStats]=useState([]);
@@ -891,130 +1068,422 @@ function SberPage(){
   </div>;
 }
 
-// ─── REVIEWS PAGE ─────────────────────────────────────────────────────────────
-function ReviewsPage(){
-  const banks=useBanks();
-  const[bankSlug,setBankSlug]=useState("");
-  const[sent,setSent]=useState("all");
-  const[topics,setTopics]=useState([]);
-  const[sentiment,setSentiment]=useState([]);
-  const[reviews,setReviews]=useState([]);
-  const[loading,setLoading]=useState(true);
-  const[rvLoading,setRvLoading]=useState(false);
+// ─── REVIEWS PAGE — риск-радар голоса клиента (корпус banki.ru ~390к) ─────────
+const RV_BANKS=["Сбербанк","ВТБ","Т-Банк","Альфа-Банк","Газпромбанк","Совкомбанк",
+  "Россельхозбанк","Почта Банк","Райффайзен Банк","Ак Барс Банк","Уралсиб","ОТП Банк",
+  "МТС Банк","ПСБ","Ozon Банк","Яндекс Банк","Московский кредитный банк (МКБ)",
+  "Росбанк","Банк «Открытие»","Хоум Банк"];
+const RV_PERIODS=[[90,"3 мес"],[180,"6 мес"],[365,"12 мес"]];
+const RV_RISK={compliance:"комплаенс",conduct:"практики",ops:"операции"};
+const pct1=v=>v==null?"—":String(v).replace(".",",")+"%";
+const rvDelta=(d)=> d==null ? <span className="rv-flat">→</span>
+  : d>4 ? <span className="rv-up">↑ {d}%</span>
+  : d<-4 ? <span className="rv-down">↓ {Math.abs(d)}%</span>
+  : <span className="rv-flat">→ {d>=0?"+":""}{d}%</span>;
+// Сбой загрузки панели ≠ «данных нет» — для аудитора это важное различие.
+function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удалось загрузить — обновите страницу":"Нет данных за выбранный период"}</div>;}
 
-  // Initial load: topics + sentiment
+// Переиспользуемый оверлей: центральный модал (полный текст) или правый драуэр
+// (drill-in по городу/месяцу). Закрытие по клику-вне, ✕ и Esc.
+function RvModal({onClose,title,sub,side,children}){
   useEffect(()=>{
-    Promise.all([
-      apiFetch("/api/reviews/topics"),
-      apiFetch("/api/reviews/sentiment"),
-    ]).then(([t,s])=>{
-      const topicMap={};
-      (t||[]).forEach(r=>{
-        if(!topicMap[r.topic])topicMap[r.topic]={topic:r.topic,n:0,total_r:0,total_n:0};
-        topicMap[r.topic].n+=parseInt(r.n)||0;
-        topicMap[r.topic].total_r+=(parseFloat(r.avg_rating)||0)*(parseInt(r.n)||0);
-        topicMap[r.topic].total_n+=parseInt(r.n)||0;
-      });
-      const agg=Object.values(topicMap).map(x=>({topic:x.topic,n:x.n,avg_rating:x.total_n>0?x.total_r/x.total_n:0})).sort((a,b)=>b.n-a.n);
-      setTopics(agg);
-      setSentiment(s||[]);
-      setLoading(false);
-    }).catch(()=>setLoading(false));
+    const h=e=>{if(e.key==="Escape")onClose();};
+    document.addEventListener("keydown",h);
+    const prev=document.body.style.overflow;
+    document.body.style.overflow="hidden";   // фон не скроллим, пока открыт оверлей
+    return ()=>{document.removeEventListener("keydown",h);document.body.style.overflow=prev;};
+  },[onClose]);
+  // ПОРТАЛ в body: у предка .fade-in есть transform (animation fill-mode both),
+  // который иначе становится containing-block для position:fixed и «роняет» модал вниз.
+  return ReactDOM.createPortal(
+    <div className={"rv-ovl"+(side==="right"?" rv-ovl-r":"")} onClick={onClose}>
+      <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")} onClick={e=>e.stopPropagation()}>
+        <div className="rv-ovl-head">
+          <div style={{minWidth:0}}>
+            <div className="rv-ttl" style={{fontSize:15}}>{title}</div>
+            {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
+          </div>
+          <button className="rv-ovl-x" onClick={onClose} aria-label="Закрыть">✕</button>
+        </div>
+        <div className="rv-ovl-body">{children}</div>
+      </div>
+    </div>, document.body);
+}
+
+// Чипы тем обращения (классификация): regex-baseline или LLM-уточнённые.
+function RvThemes({list,src}){
+  if(!list||!list.length) return <span className="rv-tag other">Прочее</span>;
+  return <>{list.slice(0,3).map((t,j)=>(
+    <span key={j} className={"rv-tag "+(t.risk||"other")} title={t.label}>{t.short||t.label}</span>
+  ))}{src==="llm"&&<span className="rv-llm" title="темы уточнены ИИ">✦</span>}</>;
+}
+
+// Карточка отзыва (переиспользуется в ленте, в модале и в драуэре).
+function RvReview({r,onOpen,full}){
+  const txt=r.text||"";
+  return <div className="rv-rev">
+    <div className="rv-rh">
+      <span>{r.date}</span>
+      <RvThemes list={r.themes} src={r.theme_src}/>
+      {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
+      {r.city&&<span className="rv-pill">{r.city}</span>}
+      {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
+    </div>
+    <div className={"rv-rq"+(onOpen?" rv-rq-click":"")} role={onOpen?"button":undefined}
+         tabIndex={onOpen?0:undefined} onClick={onOpen||undefined}
+         onKeyDown={onOpen?(e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen();}}):undefined}>
+      {full?txt:(txt.slice(0,420)+(txt.length>420?"…":""))}
+      {onOpen&&txt.length>420&&<span className="rv-more"> читать полностью →</span>}
+    </div>
+  </div>;
+}
+
+// SVG-иконки радара (без эмодзи, currentColor, feather-стиль)
+const IcoRadar=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 13h4l2.5 6 4-14 2.5 9 1.5-4 1.5 3H22"/></svg>;
+const IcoCheck=()=> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.5 2.5 4.7-5.4"/></svg>;
+const IcoTrendUp=()=> <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>;
+
+function ReviewsPage(){
+  // prefill из «Обзора» (Разобраться → по сигналу): банк/тема/период/город
+  const preset=(()=>{try{
+    const p=JSON.parse(sessionStorage.getItem("al-rv-prefilter")||"null");
+    sessionStorage.removeItem("al-rv-prefilter");return p;
+  }catch{return null;}})();
+  const[bank,setBank]=useState((preset&&preset.bank)||"Сбербанк");
+  const[bankList,setBankList]=useState(RV_BANKS);
+  const[product,setProduct]=useState("");
+  const[days,setDays]=useState((preset&&preset.days)||90);
+  const[theme,setTheme]=useState((preset&&preset.theme)||"");
+  const[q,setQ]=useState("");
+  const[qInput,setQInput]=useState("");
+  const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
+  const[vm,setVm]=useState(null),[ge,setGe]=useState(null),[prods,setProds]=useState([]);
+  const[feed,setFeed]=useState(null);
+  const[busy,setBusy]=useState(true),[feedBusy,setFeedBusy]=useState(false);
+  const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
+  const[modalRev,setModalRev]=useState(null);            // полный текст отзыва
+  const[drill,setDrill]=useState(null);                  // {type:'city'|'month',value,label}
+  const[drillItems,setDrillItems]=useState(null),[drillBusy,setDrillBusy]=useState(false);
+  const[explain,setExplain]=useState(null),[explainBusy,setExplainBusy]=useState(false);
+  const[clsBusy,setClsBusy]=useState(false),[clsOn,setClsOn]=useState(false);
+  const[thAll,setThAll]=useState(false);   // показать все темы риск-карты vs топ-12
+  const[anom,setAnom]=useState(null),[anomBusy,setAnomBusy]=useState(false);  // радар аномалий
+
+  const enc=encodeURIComponent;
+  const pq=()=>product?`&product=${enc(product)}`:"";
+
+  // drill-in: открыть боковую панель по городу/месяцу, подгрузить жалобы среза
+  const openDrill=(type,value,label)=>{
+    setDrill({type,value,label});setExplain(null);setExplainBusy(false);
+    setDrillItems(null);setDrillBusy(true);
+    const f=type==="city"?`&city=${enc(value)}`:`&month=${enc(value)}`;
+    apiFetch(`/api/reviews/feed?bank=${enc(bank)}${pq()}${f}&limit=40`)
+      .then(d=>{setDrillItems(d.items||[]);setDrillBusy(false);}).catch(()=>{setDrillItems([]);setDrillBusy(false);});
+  };
+  const runExplain=()=>{
+    if(!drill)return; setExplainBusy(true);
+    const f=drill.type==="city"?`&city=${enc(drill.value)}`:`&month=${enc(drill.value)}`;
+    apiFetch(`/api/reviews/explain?bank=${enc(bank)}${pq()}${f}`)
+      .then(d=>{setExplain(d&&d.summary?d.summary:"__none__");setExplainBusy(false);})
+      .catch(()=>{setExplain("__none__");setExplainBusy(false);});
+  };
+
+  // prefill-город из «Обзора» → сразу открываем drill-in драуэр
+  useEffect(()=>{
+    if(preset&&preset.city)openDrill("city",preset.city,`г. ${preset.city}`);
   },[]);
 
-  // Load reviews on filter change
   useEffect(()=>{
-    setRvLoading(true);
-    const qs=bankSlug?`?bank_slug=${bankSlug}&limit=50`:"?limit=50";
-    apiFetch(`/api/reviews/list${qs}`)
-      .then(d=>{setReviews(d||[]);setRvLoading(false);})
-      .catch(()=>setRvLoading(false));
-  },[bankSlug]);
+    apiFetch("/api/reviews/banks").then(d=>{
+      if(d&&d.items&&d.items.length)setBankList(d.items.map(x=>x.bank));
+    }).catch(()=>{});
+  },[]);
 
-  const filteredReviews=sent==="all"?reviews:reviews.filter(r=>r.sentiment===sent);
+  useEffect(()=>{
+    setBusy(true);
+    // allSettled: падение одной панели не должно стирать остальные четыре.
+    Promise.allSettled([
+      apiFetch(`/api/reviews/overview?bank=${enc(bank)}${pq()}&days=${days}`),
+      apiFetch(`/api/reviews/trend?bank=${enc(bank)}${pq()}`),
+      apiFetch(`/api/reviews/themes?bank=${enc(bank)}${pq()}`),
+      apiFetch(`/api/reviews/vs-market?bank=${enc(bank)}${pq()}&days=${days}`),
+      apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}`),
+    ]).then(([o,t,h,v,g])=>{
+      const V=s=>s.status==="fulfilled"?s.value:{__err:true};
+      setOv(V(o));setTr(V(t));setTh(V(h));setVm(V(v));setGe(V(g));setBusy(false);
+    });
+  },[bank,product,days]);
 
-  return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Отзывы · {rvLoading?"…":filteredReviews.length} записей</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Голос клиента и темы жалоб</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Тональность размечена по словарям. Темы извлекаются по ключевым словам.
-      </p>
-    </header>
+  useEffect(()=>{ setProduct("");
+    apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>setProds(d.items||[])).catch(()=>setProds([]));
+  },[bank]);
 
-    <div className="filter-row">
-      <select className="select" value={bankSlug} onChange={e=>setBankSlug(e.target.value)}>
-        <option value="">Все банки</option>
-        {banks.map(b=><option key={b.slug} value={b.slug}>{b.name}</option>)}
-      </select>
-      <div className="tab-row">
-        {[["all","Все"],["neg","Негатив"],["neu","Нейтрально"],["pos","Позитив"]].map(([k,l])=>(
-          <button key={k} className={`tab ${sent===k?"active":""}`} onClick={()=>setSent(k)}>{l}</button>
-        ))}
+  // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
+  useEffect(()=>{ setAnomBusy(true);setAnom(null);
+    apiFetch(`/api/reviews/anomalies?bank=${enc(bank)}${pq()}`)
+      .then(d=>{setAnom(d||{calm:true});setAnomBusy(false);})
+      .catch(()=>{setAnom({calm:true});setAnomBusy(false);});
+  },[bank,product]);
+
+  useEffect(()=>{ setFeedBusy(true);setClsOn(false);
+    const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
+    apiFetch(`/api/reviews/feed?bank=${enc(bank)}${pq()}${tq}${qq}&limit=20`)
+      .then(d=>{setFeed(d.items||[]);setFeedBusy(false);}).catch(()=>{setFeed([]);setFeedBusy(false);});
+  },[bank,product,theme,q]);
+
+  // on-demand: уточнить темы показанных отзывов через LLM (по кнопке)
+  const classifyFeed=()=>{
+    setClsBusy(true);
+    const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
+    apiFetch(`/api/reviews/feed-classified?bank=${enc(bank)}${pq()}${tq}${qq}&limit=20`)
+      .then(d=>{if(d&&d.items)setFeed(d.items);setClsOn(!!(d&&d.llm));setClsBusy(false);})
+      .catch(()=>setClsBusy(false));
+  };
+
+  const addCase=(r)=>{try{const k="al-case";const cur=JSON.parse(localStorage.getItem(k)||"[]");
+    if(!cur.find(x=>x.url===r.url)){cur.push({bank:r.bank,product:r.product,date:r.date,city:r.city,url:r.url,text:r.text});
+      localStorage.setItem(k,JSON.stringify(cur));setCaseN(cur.length);}}catch{}};
+  const exportCase=()=>{try{const cur=JSON.parse(localStorage.getItem("al-case")||"[]");
+    if(!cur.length)return;
+    const esc=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
+    const rows=[["банк","продукт","дата","город","ссылка","текст"].map(esc).join(",")]
+      .concat(cur.map(r=>[r.bank,r.product,r.date,r.city,r.url,r.text].map(esc).join(",")));
+    const blob=new Blob(["﻿"+rows.join("\n")],{type:"text/csv;charset=utf-8"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`audit-case-${Date.now().toString(36)}.csv`;
+    document.body.appendChild(a);a.click();a.remove();}catch{}};
+
+  const onKey=fn=>e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();fn();}};
+  const themeLabel = theme && th && th.themes ? (th.themes.find(x=>x.key===theme)||{}).label : "";
+  const trendMax = tr&&tr.series&&tr.series.length ? Math.max(...tr.series.map(s=>s.n))||1 : 1;
+  const thMax = th&&th.themes&&th.themes.length ? Math.max(...th.themes.map(t=>t.n))||1 : 1;
+  const vmMax = vm&&vm.rows&&vm.rows.length ? Math.max(...vm.rows.map(r=>r.pct))||1 : 1;
+  const geMax = ge&&ge.cities&&ge.cities.length ? Math.max(...ge.cities.map(c=>c.n))||1 : 1;
+
+  return <div className="fade-in rv">
+    <div className="eyebrow" style={{marginBottom:6}}>§ Отзывы · аудит-сигналы</div>
+    <h1 className="t-h" style={{marginBottom:4,fontFamily:"'Source Serif 4',Georgia,serif",fontWeight:600,letterSpacing:"-.015em"}}>Голос клиента — риск-радар</h1>
+    <div className="rv-src">banki.ru · ~390 тыс. жалоб · 217 банков{ov&&ov.as_of?<> · данные по {ov.as_of}</>:""}</div>
+    <div className="rv-disclaimer">⚠ Корпус — <b>только негатив (1–2★)</b>. Все метрики — динамика и структура <b>внутри жалоб</b>, а не доля недовольных клиентов. «Доля рынка» и «место» отражают объём выгрузки banki.ru, <b>не нормированы на клиентскую базу</b> банка.</div>
+
+    <div className="rv-filters">
+      <label className="rv-fl">Банк
+        <select value={bank} onChange={e=>setBank(e.target.value)}>
+          {bankList.map(b=><option key={b} value={b}>{b}</option>)}
+        </select>
+      </label>
+      <label className="rv-fl">Продукт
+        <select value={product} onChange={e=>setProduct(e.target.value)}>
+          <option value="">Все продукты</option>
+          {prods.map(p=><option key={p.product} value={p.product}>{p.product} ({fmtNum(p.n)})</option>)}
+        </select>
+      </label>
+      <div className="rv-chips">
+        {RV_PERIODS.map(([d,l])=><button key={d} className={"rv-chip"+(days===d?" on":"")} onClick={()=>setDays(d)}>{l}</button>)}
+      </div>
+      <button className="rv-export" onClick={exportCase} disabled={!caseN}>↧ Аудит-дело{caseN?` · ${caseN}`:""}</button>
+    </div>
+
+    {/* KPI */}
+    <div className="rv-kpis">
+      <div className="rv-card rv-kpi">
+        <div className="rv-kl">Жалоб за {days} дн</div>
+        <div className="rv-kv">{busy?"…":(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
+        <div className="rv-ks">{ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {Math.abs(ov.delta_pct)}%</span>:<span className="rv-up">↑ {ov.delta_pct}%</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
+      </div>
+      <div className="rv-card rv-kpi">
+        <div className="rv-kl">Доля рынка жалоб</div>
+        <div className="rv-kv">{busy?"…":pct1(ov&&ov.market_share_pct)}</div>
+        <div className="rv-ks">{ov&&ov.market_rank?`${ov.market_rank}-е место · ⓘ без нормировки на базу`:"—"}</div>
+      </div>
+      <div className={"rv-card rv-kpi"+(ov&&ov.escalation_pct>=12?" rv-alert":"")}>
+        <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_pct>=12&&<span className="rv-tag compliance">риск</span>}</div>
+        <div className="rv-kv rv-up">{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
+        <div className="rv-ks">упоминают ЦБ / суд / ФАС</div>
+      </div>
+      <div className="rv-card rv-kpi">
+        <div className="rv-kl">Главная тема</div>
+        <div className="rv-kv-sm">{busy?"…":(th&&th.themes&&th.themes.length?th.themes[0].label:"—")}</div>
+        <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб за 90 дн · ${RV_RISK[th.themes[0].risk]}`:""}</div>
       </div>
     </div>
 
-    {!loading&&<div className="row row-2" style={{marginBottom:28}}>
-      <div className="surface" style={{padding:22}}>
-        <div className="eyebrow" style={{marginBottom:14}}>Темы жалоб (все банки)</div>
-        {!topics.length?<div style={{color:"var(--ink-3)",fontSize:13}}>Нет данных</div>:
-        <HBars
-          rows={topics.slice(0,8).map(t=>({
-            label:TL(t.topic),value:t.n,
-            color:t.avg_rating<2.5?"var(--accent)":"var(--ink-3)",
-          }))}
-          fmt={v=>fmtNum(v)}
-        />}
+    {/* АНАЛИТИКА — 2 колонки: слева динамика+темы, справа география+рынок */}
+    <div className="rv-main2">
+      <div className="rv-col">
+        {/* TREND */}
+        <div className="rv-card">
+          <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно · клик по столбцу → жалобы месяца{tr&&tr.series&&tr.series.some(s=>s.partial)?" · последний месяц неполный (штриховка)":""}</div></div></div>
+          {busy?<Skel h={150}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
+            <div className="rv-bars">
+              {tr.series.map((s,i)=><div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={`${s.ym}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`}
+                   role="button" tabIndex={0} onClick={()=>openDrill("month",s.ym,`Жалобы за ${s.ym}${s.partial?" (неполный месяц)":""}`)}
+                   onKeyDown={onKey(()=>openDrill("month",s.ym,`Жалобы за ${s.ym}`))}>
+                <div className={"rv-bar"+(s.spike?" hot":"")+(s.partial?" part":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
+                <div className="rv-blab">{s.ym.slice(2).replace("-",".")}</div>
+              </div>)}
+            </div>
+            {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик {sp.map(s=>s.ym).join(", ")} — выше базовой линии (медиана+MAD по завершённым месяцам). Клик по столбцу — разобрать, что произошло.</div>:null;})()}
+          </>}
+        </div>
+        {/* THEMES */}
+        <div className="rv-card">
+          <div className="rv-ttl">Темы жалоб — риск-карта</div>
+          <div className="rv-cap">доля от жалоб за 90 дн · мультилейбл (сумма ≠ 100%) · клик → лента темы</div>
+          {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:(()=>{
+            const real=th.themes.filter(t=>t.key!=="other"), other=th.themes.find(t=>t.key==="other");
+            const shown=thAll?real:real.slice(0,12);
+            const row=t=>{
+              const clk=t.key!=="other", risky=t.risk==="compliance"||t.risk==="conduct";
+              return <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")+(clk?"":" rv-trow-static")}
+                   role={clk?"button":undefined} tabIndex={clk?0:undefined} aria-pressed={clk?(theme===t.key):undefined}
+                   onClick={clk?()=>setTheme(theme===t.key?"":t.key):undefined}
+                   onKeyDown={clk?onKey(()=>setTheme(theme===t.key?"":t.key)):undefined}>
+                <div className="rv-tname">{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
+                <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
+                <div className="rv-tn mono">{fmtNum(t.n)}</div>
+                <div className="rv-ttr">{rvDelta(t.delta_pct)}</div>
+              </div>;
+            };
+            return <>
+              {shown.map(row)}
+              {real.length>12&&<div className="rv-th-toggle" role="button" tabIndex={0} onClick={()=>setThAll(!thAll)} onKeyDown={onKey(()=>setThAll(!thAll))}>
+                {thAll?"свернуть ▴":`ещё ${real.length-12} тем ▾`}</div>}
+              {other&&row(other)}
+            </>;
+          })()}
+        </div>
       </div>
-      <div className="surface" style={{padding:22}}>
-        <div className="eyebrow" style={{marginBottom:14}}>Тональность по банкам</div>
-        {!sentiment.length?<div style={{color:"var(--ink-3)",fontSize:13}}>Нет данных</div>:
-        <table className="m-cards" style={{margin:"-4px"}}>
-          <thead><tr><th>Банк</th><th className="right">Негатив %</th><th className="right">Всего</th></tr></thead>
-          <tbody>
-            {sentiment.slice(0,8).map((s,i)=>{
-              const negPct=s.neg_pct!=null?Math.round(parseFloat(s.neg_pct)):null;
-              return <tr key={i}>
-                <td className="m-primary" style={{fontWeight:500}}>{s.bank_name||s.name||"—"}</td>
-                <td className="right" data-label="Негатив %">
-                  {negPct!=null?<span className={`badge ${negPct>40?"neg":negPct>25?"warn":"pos"}`}>{negPct}%</span>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
-                </td>
-                <td className="right mono tnum" data-label="Всего" style={{color:"var(--ink-3)"}}>{fmtNum(s.total||s.total_reviews)}</td>
-              </tr>;
-            })}
-          </tbody>
-        </table>}
+      <div className="rv-col">
+        {/* GEO */}
+        <div className="rv-card">
+          <div className="rv-ttl">География</div>
+          <div className="rv-cap">города · per-capita аномалии (12 мес) · клик → жалобы города</div>
+          {busy?<Skel h={220}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:ge.cities.map((c,i)=>(
+            <div key={i} className="rv-grow rv-grow-click" role="button" tabIndex={0}
+                 onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
+                 onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
+              <div style={{minWidth:0}}>
+                <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
+                <div className={"rv-gbar"+(c.anomaly?" anom":"")} style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
+              </div>
+              <div className="mono rv-gn">{fmtNum(c.n)}{c.per_100k?<span className="rv-gp"> · {c.per_100k}/100k</span>:""}</div>
+            </div>
+          ))}
+        </div>
+        {/* VS MARKET */}
+        <div className="rv-card">
+          <div className="rv-ttl">{bank} против рынка</div>
+          <div className="rv-cap">доля в общем потоке жалоб banki.ru · {days} дн{product?` · ${product}`:""}</div>
+          {busy?<Skel h={120}/>:!vm||!vm.rows||!vm.rows.length?<RvNote err={vm&&vm.__err}/>:vm.rows.map((r,i)=>(
+            <div key={i} className="rv-vrow">
+              <div className={"rv-vname"+(r.is_target?" t":"")}>{r.bank}</div>
+              <div className={"rv-vbar"+(r.is_target?" t":"")} style={{width:Math.round(r.pct/vmMax*100)+"%"}}/>
+              <div className="rv-vp mono">{String(r.pct).replace(".",",")}%</div>
+            </div>
+          ))}
+        </div>
+        {/* RADAR: срочные аномалии за 7 дней (грузится отдельно, LLM-анализ) */}
+        <div className="rv-card rv-radar">
+          <div className="rv-radar-head">
+            <span className="rv-radar-ico" aria-hidden="true"><IcoRadar/></span>
+            <div style={{flex:1,minWidth:0}}>
+              <div className="rv-ttl">Срочные аномалии</div>
+              <div className="rv-cap">резкие изменения за 7 дней{ov&&ov.as_of?` · ${ov.as_of}`:""}</div>
+            </div>
+            <span className={"rv-radar-live"+(anomBusy?" scan":"")} title="радар активен"/>
+          </div>
+          {anomBusy?
+            <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
+           :(!anom||anom.calm||!anom.signals||!anom.signals.length)?
+            <div className="rv-radar-calm"><span className="rv-radar-check"><IcoCheck/></span> Резких аномалий за неделю не выявлено</div>
+           :<>
+              <div className="rv-radar-chips">
+                {anom.signals.map((s,i)=>{
+                  const tip=`${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)`
+                    +(s.bank_specific?" · всплеск только у банка":"")
+                    +(s.accel?` · ускоряется (${s.prev_week}→${s.week})`:"")
+                    +(s.geo?` · ${s.geo.share}% из ${s.geo.city}`:"");
+                  return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}
+                        role="button" tabIndex={0} title={tip}
+                        onClick={()=>setTheme(s.key)} onKeyDown={onKey(()=>setTheme(s.key))}>
+                    {s.short||s.label}<b>{s.new?"новое":"×"+s.ratio}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
+                  </span>;
+                })}
+              </div>
+              {anom.summary?<div className="rv-radar-brief">{renderMD(anom.summary)}</div>
+                :<div className="rv-cap" style={{marginTop:6}}>LLM-разбор недоступен — см. всплески выше (числа за 7 дн точны).</div>}
+            </>}
+        </div>
       </div>
-    </div>}
-
-    <div className="surface" style={{padding:"20px 28px"}}>
-      <div className="eyebrow" style={{marginBottom:6}}>Лента отзывов</div>
-      {rvLoading?<div style={{paddingTop:16}}><Skel h={80}/><div style={{height:8}}/><Skel h={80}/></div>:
-       filteredReviews.length===0?<EmptyState text="Нет отзывов по выбранным фильтрам"/>:
-       filteredReviews.map(r=>{
-         const rating=Math.round(parseFloat(r.rating)||0);
-         const isSber=!!r.is_sber;
-         return <article key={r.review_id} className="review">
-           <div className="review-head">
-             <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
-             <div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
-             <span className={`badge ${r.sentiment==="neg"?"neg":r.sentiment==="pos"?"pos":""}`}>
-               <span className="dot"/>
-               {r.sentiment==="neg"?"негатив":r.sentiment==="pos"?"позитив":"нейтрально"}
-             </span>
-             {r.source&&<span className="badge">{r.source}</span>}
-             <div style={{marginLeft:"auto",display:"flex",gap:4}}>
-               {[1,2,3,4,5].map(i=>(
-                 <span key={i} style={{width:8,height:8,borderRadius:1,background:i<=rating?"var(--ink)":"var(--hair-2)"}}/>
-               ))}
-             </div>
-           </div>
-           {r.title&&<div style={{fontWeight:500,fontSize:14.5,marginBottom:6}}>{r.title}</div>}
-           <p className="review-text">{r.text_short||r.text}</p>
-           <div className="review-meta">{fmtDate(r.posted_at)}</div>
-         </article>;
-       })}
     </div>
+
+    {/* FEED */}
+    <div className="rv-card">
+      <div className="rv-ct">
+        <div><div className="rv-ttl">Лента — доказательная база</div>
+          <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>:"темы обращений определены автоматически (regex) · ✦ уточнить ИИ для точности"}</div></div>
+        <button className="rv-cls-btn" onClick={classifyFeed} disabled={clsBusy||feedBusy||!feed||!feed.length}
+                title="Переклассифицировать показанные отзывы с учётом смысла и отрицаний">
+          {clsBusy?"Уточняю…":clsOn?"✦ темы уточнены ИИ":"✦ Уточнить темы (ИИ)"}
+        </button>
+      </div>
+      <div className="rv-search">
+        <span>⌕</span>
+        <input value={qInput} onChange={e=>setQInput(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter")setQ(qInput.trim());}}
+          placeholder="Найти жалобы по смыслу: «не зачисляют выручку по эквайрингу», «навязали страховку»… (Enter)"/>
+        {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}>✕</span>}
+      </div>
+      {feedBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
+       !feed||!feed.length?<EmptyState text="Нет жалоб по выбранным фильтрам — попробуйте другой банк/продукт/тему."/>:
+       feed.map((r,i)=>(
+        <div key={i} className="rv-rev">
+          <div className="rv-rh">
+            <span>{r.date}</span>
+            <RvThemes list={r.themes} src={r.theme_src}/>
+            {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
+            {r.city&&<span className="rv-pill">{r.city}</span>}
+            {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
+          </div>
+          <div className="rv-rq rv-rq-click" role="button" tabIndex={0} onClick={()=>setModalRev(r)} onKeyDown={onKey(()=>setModalRev(r))}>
+            {(r.text||"").slice(0,420)}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
+          </div>
+          <div className="rv-rf">
+            {r.url&&<a href={r.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
+            <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(r)} onKeyDown={onKey(()=>addCase(r))}>＋ в аудит-дело</span>
+          </div>
+        </div>
+       ))}
+    </div>
+
+    {/* МОДАЛ: полный текст обращения */}
+    {modalRev&&<RvModal onClose={()=>setModalRev(null)} title="Обращение клиента"
+        sub={[modalRev.date,modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
+      <div className="rv-rh" style={{marginBottom:10}}>
+        <RvThemes list={modalRev.themes} src={modalRev.theme_src}/>
+        {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
+      </div>
+      <div className="rv-modal-text">{modalRev.text}</div>
+      <div className="rv-rf" style={{marginTop:16}}>
+        {modalRev.url&&<a href={modalRev.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
+        <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(modalRev)} onKeyDown={onKey(()=>addCase(modalRev))}>＋ в аудит-дело</span>
+      </div>
+    </RvModal>}
+
+    {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
+    {drill&&<RvModal side="right" onClose={()=>setDrill(null)} title={drill.label}
+        sub={`${bank}${product?` · ${product}`:""}${drillItems?` · показано ${drillItems.length}`:""}`}>
+      <button className="rv-explain-btn" onClick={runExplain} disabled={explainBusy}>
+        {explainBusy?"Анализирую жалобы…":"✦ Объяснить причину (LLM)"}
+      </button>
+      {explain&&explain!=="__none__"&&<div className="rv-explain">{renderMD(explain)}</div>}
+      {explain==="__none__"&&<div className="rv-explain rv-explain-err">Не удалось получить объяснение (LLM недоступен). Жалобы ниже — для ручного разбора.</div>}
+      <div style={{marginTop:6}}>
+        {drillBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
+         !drillItems||!drillItems.length?<RvNote/>:
+         drillItems.map((r,i)=><RvReview key={i} r={r} onOpen={()=>setModalRev(r)}/>)}
+      </div>
+    </RvModal>}
   </div>;
 }
 
@@ -1568,11 +2037,12 @@ function VerificationBanner({verification}){
     return <div className="dr-verify dr-verify-ok">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flex:"none"}}><path d="M20 6L9 17l-5-5"/></svg>
-      Все числовые утверждения сверены с источниками.
+      Автопроверка достоверности пройдена — утверждений, требующих ручной сверки, не выявлено.
     </div>;
   }
+  const word = u.length===1?"утверждение требует":(u.length<5?"утверждения требуют":"утверждений требуют");
   return <div className="dr-verify dr-verify-warn">
-    <div className="dr-verify-head">{u.length} утверждений требуют ручной проверки</div>
+    <div className="dr-verify-head">{u.length} {word} ручной проверки</div>
     <ul className="dr-verify-list">
       {u.map((it,i)=><li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>)}
     </ul>
@@ -1990,6 +2460,15 @@ function AIPage(){
   const inputRef=useRef();
   const msgsRef=useRef(msgs);
   useEffect(()=>{msgsRef.current=msgs;},[msgs]);
+  // prefill из «Обзора» (✦ Спросить ИИ): композер заполняется, но НЕ отправляется —
+  // пользователь видит и правит промпт (контроль + экономия токенов)
+  useEffect(()=>{
+    try{
+      const p=sessionStorage.getItem("al-ai-prefill");
+      if(p){sessionStorage.removeItem("al-ai-prefill");setQ(p);
+        setTimeout(()=>{inputRef.current&&inputRef.current.focus();},50);}
+    }catch{}
+  },[]);
   // авто-рост textarea как в современных мессенджерах: высота по контенту до max
   useEffect(()=>{const el=inputRef.current;if(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,160)+"px";}},[q]);
   // Автоскролл «прилипает к низу» ТОЛЬКО если пользователь уже внизу. Листаешь

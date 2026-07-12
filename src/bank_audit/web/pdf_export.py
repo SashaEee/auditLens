@@ -27,10 +27,19 @@ def _esc(s: Any) -> str:
 
 
 def _toc_label(s: str) -> str:
-    """Чистый текст заголовка для оглавления (без markdown/цитат)."""
+    """Чистый текст заголовка для оглавления (без markdown/цитат/эмодзи)."""
     s = re.sub(r"\[\d+\]", "", s or "")
     s = re.sub(r"[*`#]+", "", s)
+    # Эмодзи/пиктограммы в начале заголовков виджетов — убираем (непремиально).
+    s = re.sub(r"^[\U0001F000-\U0001FAFF☀-➿️\s]+", "", s)
     return s.strip()
+
+
+def _toc_norm(s: str) -> str:
+    """Нормализация заголовка для дедупа TOC: без эмодзи/пунктуации/регистра."""
+    s = _toc_label(s or "")
+    s = re.sub(r"[^\w\s]", "", s, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", s).strip().lower()
 
 
 def _md_to_html(md: str, sources_by_n: dict[int, dict],
@@ -150,12 +159,12 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict],
         if m2:
             _flush_list(); hnum += 1; hid = f"sec-{hnum}"
             if toc_out is not None:
-                toc_out.append({"level": 2, "text": _toc_label(m2.group(1)), "id": hid})
+                toc_out.append({"level": 2, "text": _toc_label(m2.group(1)), "id": hid, "section_type": "body"})
             out.append(f'<h2 id="{hid}">{_inline(m2.group(1))}</h2>'); continue
         if m1:
             _flush_list(); hnum += 1; hid = f"sec-{hnum}"
             if toc_out is not None:
-                toc_out.append({"level": 1, "text": _toc_label(m1.group(1)), "id": hid})
+                toc_out.append({"level": 1, "text": _toc_label(m1.group(1)), "id": hid, "section_type": "body"})
             out.append(f'<h1 id="{hid}">{_inline(m1.group(1))}</h1>'); continue
         # Списки
         ordered_m = re.match(r"^\s*(\d+)\.\s+(.+)$", ln)
@@ -210,7 +219,8 @@ def _render_sources_section(sources: list[dict]) -> str:
         best = ""
         if isinstance(excerpts, list) and excerpts:
             best = max((str(e) for e in excerpts if e), key=len, default="")
-        excerpt_html = (f'<div class="src-excerpt">«{_esc(best[:400])}»</div>'
+        _exc = (best[:397] + "…") if len(best) > 400 else best
+        excerpt_html = (f'<div class="src-excerpt">«{_esc(_exc)}»</div>'
                         if best else "")
         title = s.get("title") or ""
         title_html = f'<div class="src-title">{_esc(title)}</div>' if title else ""
@@ -257,14 +267,14 @@ def _render_verification_section(unverified: list[dict]) -> str:
     <section class="verification-page" id="sec-verify">
       <h2>Требуют ручной проверки</h2>
       <div class="lede">
-        Автоматический верификатор не нашёл подтверждения этим утверждениям
-        в текстах источников. Это не значит что они неверны — возможно,
-        число выражено в источнике другой формулировкой. Рекомендуется
-        проверить вручную, открыв URL соответствующего источника.
+        Утверждения, которые аудитору стоит сверить вручную: слабое подтверждение
+        (единственный источник низкого доверия) либо расхождение с процитированным
+        источником. Это не значит, что они неверны — откройте URL источника и
+        сверьте с первоисточником.
       </div>
       <div class="ver-box">
         <div class="ver-box-head">
-          ⚠ {len(unverified)} {("утверждение" if len(unverified)==1 else "утверждения" if len(unverified)<5 else "утверждений")} требуют ручной проверки
+          {len(unverified)} {("утверждение" if len(unverified)==1 else "утверждения" if len(unverified)<5 else "утверждений")} требуют ручной проверки
         </div>
         <ol class="ver-list">{"".join(items)}</ol>
       </div>
@@ -302,7 +312,7 @@ def _render_ranking_section(ranking: dict | None) -> str:
             f'</div></li>')
     return f'''
     <section class="block-page ranking-page" id="sec-ranking">
-      <h2>🏆 Рейтинг</h2>
+      <h2>Рейтинг сервисов</h2>
       {f'<div class="lede">{crit}</div>' if crit else ''}
       <ol class="rank-list">{"".join(cards)}</ol>
     </section>'''
@@ -331,7 +341,7 @@ def _render_insights_section(insights: list[dict] | None) -> str:
         return ""
     return f'''
     <section class="block-page insights-page" id="sec-insights">
-      <h2>💡 Ключевые инсайты</h2>
+      <h2>Ключевые инсайты</h2>
       <ul class="insight-list">{"".join(items)}</ul>
     </section>'''
 
@@ -355,7 +365,7 @@ def _render_gaps_section(gaps: dict | None) -> str:
         return ""
     return f'''
     <section class="block-page gaps-page" id="sec-gaps">
-      <h2>⚠ Пробелы покрытия</h2>
+      <h2>Пробелы покрытия</h2>
       <div class="lede">Данные, которые не удалось собрать в открытых источниках — для честной оценки полноты.</div>
       <ul class="gap-list">{"".join(items)}</ul>
     </section>'''
@@ -369,7 +379,7 @@ def _render_claimcheck_section(cc: dict | None) -> str:
     dropped = cc.get("dropped") or 0
     if not verified and not dropped:
         return ""
-    pills = [f'<span class="cc-pill ok">✓ {verified} фактов верифицировано</span>']
+    pills = [f'<span class="cc-pill ok">{verified} фактов верифицировано</span>']
     if dropped:
         pills.append(f'<span class="cc-pill warn">{dropped} отфильтровано '
                      f'(защита от галлюцинаций)</span>')
@@ -498,18 +508,49 @@ def _render_charts_section(charts: list[dict]) -> tuple[str, str]:
 
 
 def _render_toc(entries: list[dict]) -> str:
-    """Авто-оглавление по заголовкам отчёта + крупным секциям. Ссылки
-    кликабельны в PDF (Chromium сохраняет внутренние якоря)."""
+    """Премиальное editorial-оглавление. Разделы ТЕЛА отчёта — главы с нумерацией
+    (1., 1.1.); вспомогательные виджет-секции идут отдельной приглушённой группой
+    «Приложения» после тела. Дедуп по нормализованному тексту (без эмодзи/цитат).
+    Ссылки кликабельны в PDF (Chromium сохраняет внутренние якоря)."""
     if not entries:
         return ""
-    items = []
+    seen: set[str] = set()
+    body: list[dict] = []
+    appendix: list[dict] = []
     for e in entries:
-        cls = "toc-l1" if e.get("level", 1) == 1 else "toc-l2"
-        items.append(f'<li class="{cls}"><a href="#{e["id"]}">{_esc(e["text"])}</a></li>')
+        key = _toc_norm(e.get("text", ""))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        (appendix if e.get("section_type") == "appendix" else body).append(e)
+
+    def _row(e: dict, cls: str, num: str) -> str:
+        return (f'<li class="{cls}"><a href="#{e["id"]}">'
+                f'<span class="toc-num">{num}</span>'
+                f'<span class="toc-text">{_esc(_toc_label(e["text"]))}</span>'
+                f'<span class="toc-dots"></span>'
+                f'</a></li>')
+
+    items: list[str] = []
+    n1 = 0
+    n2 = 0
+    for e in body:
+        if e.get("level", 1) == 1:
+            n1 += 1; n2 = 0
+            items.append(_row(e, "toc-l1", f"{n1}."))
+        else:
+            n2 += 1
+            items.append(_row(e, "toc-l2", f"{n1}.{n2}." if n1 else f"{n2}."))
+
+    appendix_html = ""
+    if appendix:
+        ap = "".join(_row(e, "toc-appendix", "") for e in appendix)
+        appendix_html = f'<li class="toc-appendix-head">Приложения</li>{ap}'
+
     return f'''
     <section class="toc-page">
-      <h2>Содержание</h2>
-      <ul class="toc-list">{"".join(items)}</ul>
+      <h2 class="toc-title">Содержание</h2>
+      <ul class="toc-list">{"".join(items)}{appendix_html}</ul>
     </section>'''
 
 
@@ -527,31 +568,49 @@ def build_pdf_html(*, question: str, report_md: str,
     sources_by_n = {s["n"]: s for s in sources if s.get("n") is not None}
     meta = meta or {}
     toc_entries: list[dict] = []
-    body_html = _md_to_html(report_md or "", sources_by_n, toc_out=toc_entries)
+    report_md = report_md or ""
+    # Заголовок документа берём из первого «# » отчёта (аналитик генерит нормальный
+    # деловой заголовок). Сырой вопрос пользователя как титул НЕ используем. Строку
+    # вырезаем из тела, чтобы h1 не задваивался (обложка + тело).
+    doc_title = "Аудит-отчёт"
+    _mt = re.search(r'^#[ \t]+(.+?)[ \t]*$', report_md, re.MULTILINE)
+    if _mt:
+        doc_title = _mt.group(1).strip()
+        report_md = (report_md[:_mt.start()] + report_md[_mt.end():]).lstrip("\n")
+    body_html = _md_to_html(report_md, sources_by_n, toc_out=toc_entries)
     sources_html = _render_sources_section(sources)
     unverified = (verification or {}).get("unverified") or []
     verification_html = _render_verification_section(unverified)
     charts_html, charts_js = _render_charts_section(charts or [])
     # Богатые виджеты UI, которых раньше не было в PDF (рейтинг/инсайты/gaps/claim-check)
-    ranking_html = _render_ranking_section(ranking)
-    insights_html = _render_insights_section(insights)
-    gaps_html = _render_gaps_section(gaps)
+    # Дедуп контента: рейтинг/инсайты/пробелы НЕ показываем виджетом, если они
+    # уже раскрыты прозой в теле (иначе раздел дублируется дважды).
+    _body_keys = {_toc_norm(e["text"]) for e in toc_entries
+                  if e.get("section_type") == "body"}
+    _has_ranking  = any("рейтинг" in k for k in _body_keys)
+    _has_insights = any("инсайт" in k for k in _body_keys)
+    _has_gaps     = any("пробел" in k for k in _body_keys)
+    ranking_html  = _render_ranking_section(ranking)   if ranking  and not _has_ranking  else ""
+    insights_html = _render_insights_section(insights) if insights and not _has_insights else ""
+    gaps_html     = _render_gaps_section(gaps)          if gaps     and not _has_gaps     else ""
     claimcheck_html = _render_claimcheck_section(claim_check)
-    # Оглавление: заголовки тела + крупные секции (в порядке документа).
+    # Оглавление: разделы тела — главы; вспомогательные виджеты — «Приложения».
     for cond, label, sid in (
-        (ranking_html, "🏆 Рейтинг", "sec-ranking"),
-        (insights_html, "💡 Ключевые инсайты", "sec-insights"),
-        (charts_html, "Визуализация ключевых метрик", "sec-charts"),
-        (verification_html, "Требуют ручной проверки", "sec-verify"),
-        (gaps_html, "⚠ Пробелы покрытия", "sec-gaps"),
-        (sources_html, "Источники", "sec-sources"),
+        (ranking_html,      "Рейтинг сервисов",             "sec-ranking"),
+        (insights_html,     "Ключевые инсайты",             "sec-insights"),
+        (charts_html,       "Визуализация ключевых метрик", "sec-charts"),
+        (verification_html, "Требуют ручной проверки",      "sec-verify"),
+        (gaps_html,         "Пробелы покрытия",             "sec-gaps"),
+        (sources_html,      "Источники",                    "sec-sources"),
     ):
         if cond:
-            toc_entries.append({"level": 1, "text": label, "id": sid})
+            toc_entries.append({"level": 2, "text": label, "id": sid,
+                                "section_type": "appendix"})
     toc_html = _render_toc(toc_entries)
     now_iso = datetime.now().strftime("%Y-%m-%d · %H:%M")
+    now_date = datetime.now().strftime("%Y-%m-%d")
     n_cites = len(set(re.findall(r"\[(\d{1,3})\]", report_md or "")))
-    audit_id = meta.get("audit_id") or now_iso.replace(" ", "")[:14]
+    audit_id = meta.get("audit_id") or datetime.now().strftime("%Y%m%d-%H%M")
 
     # CSS: premium editorial. Source Serif 4 для тела, Geist для UI-блоков,
     # JetBrains Mono для метаданных. Никаких градиентов / неонов.
@@ -565,7 +624,7 @@ def build_pdf_html(*, question: str, report_md: str,
 @page {{
   size: A4;
   margin: 22mm 18mm 22mm 18mm;
-  @bottom-left  {{ content: "AuditLens · {audit_id}"; font-family: 'JetBrains Mono', monospace; font-size: 8pt; color: #888; }}
+  @bottom-left  {{ content: "AuditLens · {now_date}"; font-family: 'JetBrains Mono', monospace; font-size: 8pt; color: #888; }}
   @bottom-right {{ content: "стр. " counter(page) " из " counter(pages); font-family: 'JetBrains Mono', monospace; font-size: 8pt; color: #888; }}
 }}
 * {{ box-sizing: border-box; }}
@@ -691,7 +750,7 @@ body {{
   font-size: 8.5pt;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #707075;
+  color: #44464d;
   padding: 2.5mm 3mm;
   border-bottom: 1.5px solid #16181d;
   border-top: 1px solid #d6d6d8;
@@ -701,6 +760,7 @@ body {{
   border-bottom: 1px solid #ebebed;
   vertical-align: top;
 }}
+.body tbody tr:nth-child(even) td {{ background: #fafafa; }}
 .body tbody tr:last-child td {{ border-bottom: 1.5px solid #16181d; }}
 /* Широкие сравнительные таблицы (5+ колонок): сжать, переносить, не обрезать */
 .body table.wide {{ font-size: 7.5pt; table-layout: fixed; word-break: break-word; }}
@@ -907,11 +967,12 @@ body {{
   display: grid;
   grid-template-columns: 14mm 1fr;
   align-items: baseline;
-  padding: 4mm 0;
+  padding: 4mm 3mm;
   border-bottom: 1px solid #ebebed;
   page-break-inside: avoid;
   font-family: 'Geist', system-ui, sans-serif;
 }}
+.src-row:nth-child(even) {{ background: #fafafa; }}
 .src-num {{
   font-family: 'JetBrains Mono', monospace;
   font-size: 9.5pt;
@@ -975,13 +1036,24 @@ body {{
 .cc-pill.ok {{ background: #e7f4ec; color: #1a7f4b; }}
 .cc-pill.warn {{ background: #fdf3e0; color: #9a6a00; }}
 /* ── Авто-оглавление по заголовкам ── */
-.toc-page {{ page-break-after: always; margin-top: 4mm; }}
-.toc-list {{ list-style: none; padding: 0; margin: 6mm 0 0; }}
-.toc-list li {{ margin: 3px 0; line-height: 1.4; }}
-.toc-list a {{ text-decoration: none; color: #16181d; }}
-.toc-l1 {{ font-family: 'Geist', sans-serif; font-weight: 600; font-size: 11.5pt; margin-top: 8px; }}
-.toc-l2 {{ font-family: 'Geist', sans-serif; font-size: 9.5pt; padding-left: 16px; }}
-.toc-l2 a {{ color: #3a3d44; }}
+.toc-page {{ page-break-after: always; margin-top: 6mm; }}
+.toc-page h2.toc-title {{ font-family: 'Source Serif 4', Georgia, serif; font-size: 20pt; font-weight: 500; letter-spacing: -0.01em; color: #16181d; margin: 0 0 10mm; padding: 0; border: none; text-transform: none; }}
+.toc-list {{ list-style: none; padding: 0; margin: 0; }}
+.toc-list li {{ line-height: 1.5; page-break-inside: avoid; }}
+.toc-list a {{ display: flex; align-items: baseline; gap: 6px; width: 100%; text-decoration: none; color: inherit; }}
+.toc-num {{ font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #707075; flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; }}
+.toc-text {{ flex: 0 0 auto; }}
+.toc-dots {{ flex: 1 1 auto; border-bottom: 1px dotted #c4c6cc; transform: translateY(-2px); min-width: 12mm; }}
+.toc-l1 {{ font-family: 'Source Serif 4', Georgia, serif; font-weight: 600; font-size: 12pt; color: #16181d; margin-top: 6mm; }}
+.toc-l1 .toc-num {{ min-width: 12mm; }}
+.toc-l1:first-child {{ margin-top: 0; }}
+.toc-l2 {{ font-family: 'Geist', system-ui, sans-serif; font-weight: 400; font-size: 10pt; color: #44464d; margin: 1.5mm 0 0 8mm; }}
+.toc-l2 .toc-num {{ min-width: 14mm; color: #909094; }}
+.toc-l2 .toc-dots {{ border-bottom-color: #e0e0e3; }}
+.toc-appendix-head {{ font-family: 'JetBrains Mono', monospace; font-size: 8pt; letter-spacing: 0.1em; text-transform: uppercase; color: #909094; margin: 10mm 0 3mm; padding-top: 4mm; border-top: 1px solid #d6d6d8; }}
+.toc-appendix {{ font-family: 'Geist', system-ui, sans-serif; font-size: 9.5pt; color: #54555a; margin-top: 2mm; }}
+.toc-appendix .toc-num {{ font-size: 8.5pt; color: #a0a0a4; min-width: 12mm; }}
+.toc-appendix .toc-dots {{ border-bottom-color: #e0e0e3; }}
 </style>
 </head>
 <body>
@@ -991,7 +1063,7 @@ body {{
       <span class="id">{_esc(audit_id)}</span>
     </div>
     <div class="eyebrow">Аналитический отчёт</div>
-    <h1>{_esc(question)}</h1>
+    <h1>{_esc(doc_title)}</h1>
     <dl class="meta">
       <dt>Дата</dt><dd>{_esc(now_iso)}</dd>
       <dt>Источников</dt><dd>{len(sources)}</dd>

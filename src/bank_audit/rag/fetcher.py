@@ -163,11 +163,18 @@ def _fetch_http(url: str) -> FetchResult | None:
 
 def _fetch_browser(url: str, browser=None) -> FetchResult | None:
     """Через BrowserCollector (Playwright). Возвращает FetchResult или None.
-    Если browser не передан — создаём временный."""
+    Если browser не передан — создаём временный.
+
+    ВАЖНО (перф deep-research): временный браузер для read_url создаётся с
+    КОРОТКИМ nav-таймаутом (FETCH_BROWSER_NAV_S, дефолт 22с вместо скрапинговых
+    45с). read_url — чтение текста ОДНОЙ страницы, а не выкачивание листинга;
+    при широком отчёте десятки медленных браузерных чтений по 60с+ складывались
+    в десятки минут. Меньше nav-таймаут → зависший сайт отваливается быстрее."""
     from ..collectors.browser import BrowserCollector, CaptchaRequired
     own_browser = browser
     if own_browser is None:
-        own_browser = BrowserCollector()
+        own_browser = BrowserCollector(
+            nav_timeout_s=float(os.getenv("FETCH_BROWSER_NAV_S", "22")))
 
     try:
         status, content = own_browser.fetch_html(url)

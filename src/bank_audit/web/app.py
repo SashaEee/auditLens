@@ -34,9 +34,14 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Фоновые циклы:
     #  • alerts_background_loop — раз в 30 мин quality_flag → email
+    #  • digest_background_loop — выпуск «Обзора» в 07:00 МСК (+catch-up)
+    #  • ingest_background_loop — автосбор тарифов в 05:00 МСК (+quality)
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
+    from ..digest.scheduler import digest_background_loop, ingest_background_loop
     tasks = [
         asyncio.create_task(alerts_background_loop()),
+        asyncio.create_task(digest_background_loop()),
+        asyncio.create_task(ingest_background_loop()),
     ]
     try:
         yield
@@ -86,6 +91,70 @@ def summary():
         "last_run":  scalar("SELECT max(finished_at) FROM extraction_run WHERE status='ok'"),
         "categories": q("SELECT category, count(*) n FROM v_offer_current GROUP BY category ORDER BY n DESC"),
     }
+
+# ── дневной дайджест «Обзора» (утренний брифинг) ─────────────────────────────
+
+def _digest_today():
+    from ..digest.scheduler import _today_msk
+    return _today_msk()
+
+
+@app.get("/api/overview/digest")
+async def overview_digest(date: Optional[str] = None):
+    """Выпуск дня (или последний доступный ≤ сегодня). Без date при отсутствии
+    сегодняшнего выпуска lazy-запускает генерацию в фоне и СРАЗУ отдаёт вчерашний
+    с meta.refreshing=true — никогда не пустой экран и не 500."""
+    from ..digest import store as digest_store
+    from ..digest.scheduler import ensure_digest
+    today = _digest_today()
+    want = None
+    if date:
+        from datetime import date as _date
+        try:
+            want = _date.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(400, f"плохая дата: {date}")
+    doc = await asyncio.to_thread(digest_store.read_latest, today, want)
+    if date and doc["meta"]["empty"]:
+        raise HTTPException(404, f"дайджест за {date} не найден")
+    if not date and not doc["meta"]["refreshing"]:
+        # lazy catch-up и при ПОЛНОМ отсутствии выпуска, и при упавшем на середине
+        # прогоне (часть секций есть, но день не полон) — иначе висит до утра.
+        # Ночью (до GEN_HOUR) не генерим и refreshing не включаем — иначе фронт
+        # поллил бы всю ночь, а выпуск дня рождался бы в 00:xx до автосбора.
+        from ..digest.pipeline import REQUIRED
+        from ..digest.scheduler import lazy_allowed
+        complete = await asyncio.to_thread(digest_store.day_complete, today, REQUIRED)
+        if not complete and lazy_allowed():
+            asyncio.create_task(ensure_digest("lazy"))     # не ждём
+            doc["meta"]["refreshing"] = True
+    return doc
+
+
+@app.get("/api/overview/digest/dates")
+def overview_digest_dates():
+    from ..digest import store as digest_store
+    return {"dates": digest_store.list_dates()}
+
+
+class DigestRefreshRequest(BaseModel):
+    force: bool = True
+    sections: Optional[list[str]] = None
+
+
+@app.post("/api/overview/digest/refresh")
+async def overview_digest_refresh(req: DigestRefreshRequest):
+    """Ручной перезапуск (целиком или точечно: {"sections":["news","headline"]})."""
+    from ..digest import store as digest_store
+    from ..digest.scheduler import ensure_digest
+    if await asyncio.to_thread(digest_store.run_in_progress, _digest_today()):
+        raise HTTPException(409, "Дайджест уже генерируется")
+    asyncio.create_task(ensure_digest("manual", force=req.force,
+                                      sections=req.sections))
+    return Response(status_code=202,
+                    content=json.dumps({"started": True}),
+                    media_type="application/json")
+
 
 @app.get("/api/recent-changes")
 def recent_changes():
@@ -157,22 +226,108 @@ def reviews_topics(bank_slug: Optional[str] = None):
         """, {"s": bank_slug})
     return q("SELECT bank_slug, bank_name, topic, n, avg_rating FROM v_review_topics ORDER BY n DESC")
 
-@app.get("/api/reviews/sentiment")
-def reviews_sentiment():
-    return q("SELECT * FROM v_review_sentiment_share ORDER BY total DESC")
 
-@app.get("/api/reviews/list")
-def reviews_list(bank_slug: Optional[str] = None, limit: int = 50):
-    extra = "AND b.slug = :s" if bank_slug else ""
-    return q(f"""
-        SELECT r.review_id, b.name bank_name, b.slug bank_slug, b.is_sber,
-               r.source, r.rating, r.title, left(r.text,400) text_short,
-               r.posted_at, rs.label sentiment, r.status
-          FROM review r JOIN bank b USING(bank_id)
-          LEFT JOIN review_sentiment rs USING(review_id)
-         WHERE 1=1 {extra}
-         ORDER BY r.posted_at DESC NULLS LAST LIMIT :l
-    """, {**({"s": bank_slug} if bank_slug else {}), "l": limit})
+# ── reviews dashboard (риск-радар поверх корпуса banki.ru ~390к) ────────────
+def _rd():
+    from ..rag import reviews_dash
+    return reviews_dash
+
+@app.get("/api/reviews/banks")
+def reviews_banks():
+    return {"items": _rd().banks()}
+
+@app.get("/api/reviews/overview")
+def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
+    return _rd().overview(bank, product or None, days) or {}
+
+@app.get("/api/reviews/trend")
+def reviews_trend(bank: str = "Сбербанк", product: Optional[str] = None):
+    return _rd().trend(bank, product or None) or {}
+
+@app.get("/api/reviews/themes")
+def reviews_themes(bank: str = "Сбербанк", product: Optional[str] = None):
+    return _rd().themes(bank, product or None) or {}
+
+@app.get("/api/reviews/vs-market")
+def reviews_vs_market(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
+    return _rd().vs_market(bank, product or None, days) or {}
+
+@app.get("/api/reviews/geo")
+def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None):
+    return _rd().geo(bank, product or None) or {}
+
+@app.get("/api/reviews/products")
+def reviews_products(bank: str = "Сбербанк"):
+    return _rd().products(bank) or {}
+
+@app.get("/api/reviews/theme-defs")
+def reviews_theme_defs():
+    from ..rag.reviews_dash import THEMES
+    return [{"key": t["key"], "label": t["label"], "risk": t["risk"]} for t in THEMES]
+
+@app.get("/api/reviews/feed")
+def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
+                 theme: Optional[str] = None, q: Optional[str] = None,
+                 city: Optional[str] = None, month: Optional[str] = None, limit: int = 20):
+    items = _rd().list_reviews(bank, product or None, theme or None, q or None,
+                               city=city or None, month=month or None, limit=limit)
+    return {"items": items, "count": len(items)}
+
+@app.get("/api/reviews/feed-classified")
+async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,
+                                  theme: Optional[str] = None, q: Optional[str] = None,
+                                  city: Optional[str] = None, month: Optional[str] = None,
+                                  limit: int = 20):
+    """Лента + LLM-уточнение тем показанных отзывов (on-demand, по кнопке).
+    Regex-темы остаются fallback'ом, если LLM не разобрал строку."""
+    import asyncio
+    from ..rag import reviews_llm
+    items = await asyncio.to_thread(_rd().list_reviews, bank, product or None, theme or None,
+                                    q or None, None, city or None, month or None, limit)
+    if not items:
+        return {"items": [], "count": 0, "llm": False}
+    cls = await reviews_llm.classify_reviews(items)
+    llm_ok = False
+    for it, c in zip(items, cls):
+        if c and c.get("themes"):
+            it["themes"] = c["themes"]
+            it["theme_src"] = "llm"
+            llm_ok = True
+    return {"items": items, "count": len(items), "llm": llm_ok}
+
+@app.get("/api/reviews/anomalies")
+async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[str] = None):
+    """Срочные аномалии за 7 дней (audit-радар): детерминированные недельные
+    всплески тем/модулей + краткое LLM-объяснение. Грузится отдельно от дашборда."""
+    import asyncio
+    from ..rag import reviews_llm
+    sig = await asyncio.to_thread(_rd().weekly_signals, bank, product or None)
+    signals = (sig or {}).get("signals") or []
+    if not signals:
+        return {"summary": None, "signals": [], "overall": (sig or {}).get("overall"), "calm": True}
+    recent = await asyncio.to_thread(_rd().list_reviews, bank, product or None, None, None, 7, None, None, 50)
+    unclassified = [r for r in recent if not r.get("themes")]   # кандидаты в новые инциденты
+    brief = await reviews_llm.anomaly_brief(sig, recent[:14], unclassified[:14])
+    return {"summary": brief, "signals": signals, "overall": sig.get("overall"), "calm": False}
+
+@app.get("/api/reviews/explain")
+async def reviews_explain(bank: str = "Сбербанк", product: Optional[str] = None,
+                          city: Optional[str] = None, month: Optional[str] = None):
+    """On-demand LLM-объяснение причины гео-аномалии или пика динамики (по кнопке)."""
+    import asyncio
+    from ..rag import reviews_llm
+    seg = await asyncio.to_thread(_rd().segment_reviews, bank, product or None,
+                                  city or None, month or None)
+    if not seg or not seg.get("n"):
+        return {"summary": None, "themes": [], "samples": [], "n": 0}
+    parts = []
+    if city:
+        parts.append(f"г. {city}")
+    if month:
+        parts.append(f"месяц {month}")
+    label = f"{bank}" + (" · " + ", ".join(parts) if parts else "")
+    summary = await reviews_llm.explain_segment(seg, label=label)
+    return {"summary": summary, "themes": seg["themes"], "samples": seg["samples"], "n": seg["n"]}
 
 
 # ── banks & ratings ───────────────────────────────────────────────────────────
@@ -270,11 +425,17 @@ def ingest_run(req: IngestRequest, background_tasks: BackgroundTasks):
     return {"status": "started", "source": req.source}
 
 def _do_ingest(source: str, target: Optional[str]):
+    from ..digest.scheduler import INGEST_MUTEX
     from ..orchestrator.runner import ingest
+    if not INGEST_MUTEX.acquire(blocking=False):
+        log.info("ingest %s: пропуск — сбор уже идёт (автосбор/другой запуск)", source)
+        return
     try:
         ingest(source, target)
     except Exception:
         pass  # статус пишется в extraction_run
+    finally:
+        INGEST_MUTEX.release()
 
 
 @app.post("/api/ingest/run-all")
@@ -291,12 +452,19 @@ def ingest_run_all(background_tasks: BackgroundTasks):
 
 
 def _do_ingest_all(sources: list[str]):
+    from ..digest.scheduler import INGEST_MUTEX
     from ..orchestrator.runner import ingest
-    for src in sources:
-        try:
-            ingest(src, None)
-        except Exception:
-            pass  # каждый источник пишет свой статус в extraction_run
+    if not INGEST_MUTEX.acquire(blocking=False):
+        log.info("ingest_all: пропуск — сбор уже идёт (автосбор/другой запуск)")
+        return
+    try:
+        for src in sources:
+            try:
+                ingest(src, None)
+            except Exception:
+                pass  # каждый источник пишет свой статус в extraction_run
+    finally:
+        INGEST_MUTEX.release()
 
 @app.delete("/api/captcha/{idx}")
 def dismiss_captcha(idx: int):

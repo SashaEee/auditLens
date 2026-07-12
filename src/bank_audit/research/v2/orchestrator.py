@@ -25,7 +25,8 @@ from openai import AsyncOpenAI
 from ...ai.analyst import LLM_BASE_URL, LLM_API_KEY
 from ...ai.llm_utils import (_patch_client_reasoning_effort, _format_llm_error,
                               normalize_question, deep_reasoning_extra)
-from .conductor import plan_research, ResearchPlan, fan_out_researcher
+from .conductor import (plan_research, ResearchPlan, fan_out_researcher,
+                        attach_banki_sources)
 from ._streaming import stream_reasoning_enabled
 from .knowledge_bundle import KnowledgeBundle
 from .base_agent import AgentMission
@@ -140,6 +141,10 @@ async def stream_deep_research_v2(question: str,
         # Раскладываем единого researcher'а на по-банковые миссии (глубина: каждый
         # банк получает отдельного агента с полным бюджетом чтений, а не ~1 стр/банк).
         plan = fan_out_researcher(plan)
+        # Подсовываем banki.ru product-страницы как приоритетный источник тарифов
+        # (иначе поиск по «{банк} ипотека» даёт только SPA-сайт банка → тарифы не
+        # находятся, отчёт по главному банку пустой).
+        plan = attach_banki_sources(plan)
     except Exception as e:
         log.exception("[v2] conductor failed: %s", e)
         yield _evt({"type": "text", "chunk": _format_llm_error(e, "планирование")})
@@ -208,6 +213,27 @@ async def stream_deep_research_v2(question: str,
     except Exception as e:
         log.warning("[v2] extract_chart_specs упал: %s", e)
         early_charts = []
+
+    # Пустой bundle (0 фактов + 0 жалоб + 0 источников + 0 инсайтов) — это НЕ
+    # «данных нет», а сбой сбора: почти всегда недоступность LLM-эндпоинта
+    # (агенты не смогли вызвать инструменты — напр. 5xx Foundation Models).
+    # Не пишем пустой отчёт (люди думают «сломался инструмент»), а честно
+    # сообщаем и предлагаем повторить.
+    if (not bundle.facts and not bundle.complaints
+            and not bundle.sources.all() and not bundle.insights):
+        log.warning("[v2] пустой bundle после research — вероятно LLM-эндпоинт "
+                    "недоступен (5xx)")
+        yield _evt({"type": "stage_status", "stage": "analyst",
+                    "label": "Сбор не дал данных", "detail": "LLM-сервис недоступен"})
+        yield _evt({"type": "text", "chunk":
+            "\n\n⚠ **Не удалось собрать данные для отчёта.**\n\n"
+            "Агенты не получили ответ от LLM-сервиса — вероятно, временная "
+            "недоступность эндпоинта Foundation Models (ошибка сервера). Это не "
+            "проблема с данными или инструментом: повторите запрос через "
+            "несколько минут.\n"})
+        yield _evt({"type": "phase", "value": "done"})
+        yield _evt({"type": "done"})
+        return
 
     # ── Stage 3: ANALYST ─────────────────────────────────────────────────
     yield _evt({"type": "phase", "value": "synthesizing"})
@@ -285,25 +311,29 @@ async def stream_deep_research_v2(question: str,
     unverified_set = set(unverified_nums)
     for h in critique.numeric_hallucinations:
         unverified_set.add(round(float(h), 3))
+    # verified = числа отчёта, сверенные с фактами (позитивный сигнал доверия).
     verified_count = len(report_nums) - len(unverified_set)
-    # unverified — СПИСОК {claim, issue} (фронт/PDF делают .map и .length по нему;
-    # раньше слалось числом → PDF-экспорт падал `unverified.map is not a function`).
-    unverified_items = [{"claim": (f"{n:g}" if isinstance(n, float) else str(n)),
-                         "issue": "число не сопоставлено с собранными фактами"}
-                        for n in sorted(unverified_set)][:50]
+    # «Требуют ручной проверки» — КУРИРУЕМЫЙ список {claim, issue} С ПРИЧИНАМИ
+    # (расхождение с источником + единственный источник низкого доверия), а НЕ
+    # дамп всех несопоставленных чисел (раньше туда падали производные дельты/
+    # проценты/годы → перегруз и бесполезность).
+    manual_flags = _build_manual_check(report_md, bundle, critique)
+    # «Отфильтровано» — только реально пойманные критиком выдумки, а не
+    # производные числа (иначе счётчик раздувается и вводит в заблуждение).
+    dropped_count = len(critique.numeric_hallucinations)
     yield _evt({"type": "verification",
-                "method": "agent_bundle_grounding",
+                "method": "curated_audit_flags",
                 "numeric_checked": len(report_nums),
                 "verified": max(0, verified_count),
-                "unverified": unverified_items,
-                "unverified_count": len(unverified_set),
+                "unverified": manual_flags,
+                "unverified_count": len(manual_flags),
                 # grounding цитат: утверждения, противоречащие своим источникам [N]
                 # (после repair они должны быть исправлены — это что нашёл критик).
                 "citation_errors": (critique.citation_errors or [])[:8],
                 "checked": True})
     yield _evt({"type": "claim_check",
                 "verified": max(0, verified_count),
-                "dropped": len(unverified_set),
+                "dropped": dropped_count,
                 "samples": []})
 
     # ── Stage 5: STREAM FINAL REPORT ─────────────────────────────────────
@@ -388,8 +418,22 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
     results: dict[str, dict] = {}
     pending = list(plan.missions)
 
+    # Общий кап на ВСЮ research-фазу (страховка от 40-минутных прогонов):
+    # per-agent бюджет проверяется только МЕЖДУ итерациями, а одна итерация с
+    # цепочкой медленных браузерных read_url может блокировать надолго. По
+    # достижении дедлайна прекращаем сбор и идём писать отчёт по собранному
+    # (graceful partial). Тюнится V2_TOTAL_BUDGET_S.
+    _total_budget = float(os.getenv("V2_TOTAL_BUDGET_S", "420"))
+    _deadline = time.time() + _total_budget
+    _capped = False
+
     for wave in range(3):
         if not pending:
+            break
+        if time.time() > _deadline:
+            log.warning("[v2] research total budget %.0fs исчерпан до волны %d — "
+                        "пишем отчёт по собранному", _total_budget, wave)
+            _capped = True
             break
         ready = [m for m in pending
                   if all(d in completed for d in plan.dependencies.get(m.agent_id, []))]
@@ -471,11 +515,29 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
         # эмитим по мере завершения каждого агента; при stream_on в паузах отдаём
         # живые agent_tool_call. Без stream_on getter=None → обычный as_completed.
         while running or (wave_q is not None and not wave_q.empty()):
+            # Дедлайн: если общий бюджет исчерпан, а агенты ещё бегут —
+            # отменяем их и идём писать отчёт по собранному (bundle append-only,
+            # уже найденные факты сохранены). Защита от единичного зависшего
+            # tool-вызова (напр. Chromium, который не отдаётся своим nav-таймаутом).
+            _left = _deadline - time.time()
+            if _left <= 0 and running:
+                log.warning("[v2] research total budget исчерпан — отменяю %d "
+                            "агент(ов), пишу отчёт по собранному", len(running))
+                _capped = True
+                for t in running:
+                    t.cancel()
+                await asyncio.gather(*running, return_exceptions=True)
+                running.clear()
+                break
             waitset = set(running)
             getter = asyncio.ensure_future(wave_q.get()) if wave_q is not None else None
             if getter is not None:
                 waitset.add(getter)
-            done, _pend = await asyncio.wait(waitset, return_when=asyncio.FIRST_COMPLETED)
+            # timeout у самого wait — чтобы проверять дедлайн даже в глухой
+            # await-паузе (все агенты молчат внутри длинного tool-вызова)
+            done, _pend = await asyncio.wait(
+                waitset, return_when=asyncio.FIRST_COMPLETED,
+                timeout=max(1.0, _left) if running else None)
             if getter is not None:
                 if getter in done:
                     yield _evt(getter.result())
@@ -500,6 +562,26 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
         if wave_q is not None:
             while not wave_q.empty():
                 yield _evt(wave_q.get_nowait())
+        if _capped:
+            break
+
+    # Кап сработал → честно фиксируем неполноту сбора (аналитик упомянет в отчёте,
+    # виджет «Пробелы покрытия» покажет), а не молча выдаём частичный отчёт.
+    if _capped:
+        try:
+            from .knowledge_bundle import CoverageNote
+            bundle.coverage_notes.append(CoverageNote(
+                what="Сбор данных остановлен по лимиту времени — часть источников "
+                     "не дочитана",
+                subjects=[],
+                reason=f"исследование превысило {int(_total_budget)} с "
+                       "(вероятно, медленные источники за антиботом/капчей)",
+                recommendation="повторить запрос точечнее или добрать источники вручную"))
+        except Exception:  # noqa: BLE001
+            pass
+        yield _evt({"type": "stage_status", "stage": "research",
+                    "label": "Сбор ограничен по времени",
+                    "detail": "пишу отчёт по собранному"})
 
 
 def _tier_models() -> tuple[str, str]:
@@ -628,6 +710,81 @@ async def _rewrite_with_critique(client: AsyncOpenAI, draft: str,
 # ════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════════════════════════════
+
+
+def _build_manual_check(report_md: str, bundle: KnowledgeBundle,
+                         critique: Critique) -> list[dict]:
+    """Курируемый список «Требуют ручной проверки» — только реально сомнительное,
+    С ПРИЧИНОЙ. НЕ вываливаем каждое непроверенное число (это давало перегруз,
+    т.к. производные числа отчёта — дельты/проценты/годы — не бьются с фактами
+    дословно). Что попадает (по убыванию серьёзности):
+      • расхождение утверждения со своим источником [N] (нашёл критик);
+      • значение подтверждено ЕДИНСТВЕННЫМ источником низкого доверия (<0.65),
+        и этот источник процитирован в отчёте.
+    Каждый пункт — {claim, issue}, где issue объясняет ПОЧЕМУ надо проверить.
+    """
+    import re
+    flags: list[dict] = []
+    seen: set[str] = set()
+    cited = {int(m) for m in re.findall(r"\[(\d{1,3})\]", report_md or "")}
+    srcs = {i: s for i, s in enumerate(bundle.sources.all(), 1)}
+
+    def _add(claim: str, issue: str, sev: int) -> None:
+        claim = (claim or "").strip(" —:·\n\t")
+        key = claim.lower()[:120]
+        if not claim or key in seen:
+            return
+        seen.add(key)
+        flags.append({"claim": claim[:200], "issue": (issue or "").strip()[:240],
+                      "sev": sev})
+
+    # (сев.3) Расхождение с источником — отчёт ссылается на [N], но источник
+    #         это не подтверждает/противоречит. Самое серьёзное для аудита.
+    for ce in (critique.citation_errors or []):
+        if not isinstance(ce, dict):
+            continue
+        sn = ce.get("source_n")
+        tag = f" [{sn}]" if sn else ""
+        _add(str(ce.get("claim") or ""),
+             f"расходится с источником{tag}: "
+             f"{ce.get('issue') or 'источник не подтверждает утверждение'}", 3)
+
+    # (сев.1) Единственный источник низкого доверия. Группируем факты по
+    #         (субъект, атрибут) → множеству источников; флагаем те, где ровно
+    #         один источник, он низкого доверия и процитирован в отчёте.
+    by_key: dict[tuple, set] = {}
+    fact_by_key: dict[tuple, object] = {}
+    for f in bundle.facts:
+        n = getattr(f, "source_n", 0)
+        if not n:
+            continue
+        k = (bundle.canonical_subject(f.subject), (f.attribute or "").strip().lower())
+        by_key.setdefault(k, set()).add(n)
+        fact_by_key.setdefault(k, f)
+    for k, ns in by_key.items():
+        if len(ns) != 1:
+            continue                          # подтверждено >1 источником — ок
+        n = next(iter(ns))
+        s = srcs.get(n)
+        if not s or s.trust >= 0.65:
+            continue                          # источник надёжный — не флагаем
+        if n not in cited:
+            continue                          # источник не процитирован в отчёте
+        f = fact_by_key[k]
+        val = (f.value or "").strip()
+        # Значение должно реально фигурировать в тексте отчёта — иначе читателю
+        # нечего проверять. len>=3 отсекает короткие «5%», которые ложно ловятся
+        # подстрокой (напр. «5%» внутри «1,5%»).
+        if len(val) < 3 or val not in report_md:
+            continue
+        label = bundle.subject_labels.get(f.subject, f.subject)
+        dom = s.domain or "источник"
+        _add(f"{label} — {f.attribute}: {val}",
+             f"единственный источник [{n}] ({dom}, {s.kind}), низкое доверие "
+             f"{s.trust:.2f} — сверить с первоисточником", 1)
+
+    flags.sort(key=lambda x: -x["sev"])
+    return [{"claim": fl["claim"], "issue": fl["issue"]} for fl in flags[:6]]
 
 
 def _extract_all_numbers(text: str) -> list[float]:

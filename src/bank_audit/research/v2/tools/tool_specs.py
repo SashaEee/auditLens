@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from .web_tools import (tool_web_search, tool_read_url, tool_semantic_search,
-                         tool_run_sql)
+                         tool_run_sql, tool_search_reviews_db)
 from ..base_agent import ToolSpec
 
 
@@ -112,13 +112,61 @@ RUN_SQL = ToolSpec(
 )
 
 
+# ── SEARCH REVIEWS DB (корпус жалоб banki.ru, ~390k отзывов 1-2★) ──────────
+SEARCH_REVIEWS_DB = ToolSpec(
+    name="search_reviews_db",
+    description=(
+        "Реальные жалобы клиентов из корпуса banki.ru (~390 тыс. негативных "
+        "отзывов 1-2★ за 2025-2026 по 217 банкам, с датами и ссылками). "
+        "ОСНОВНОЙ источник жалоб — ИСПОЛЬЗУЙ ПЕРВЫМ; web лишь для банков ВНЕ "
+        "корпуса.\n"
+        "ГЛАВНЫЙ режим — DISCOVERY: передай ТОЛЬКО bank (и при наличии product) "
+        "БЕЗ query — вернёт свежие жалобы, и ты сам увидишь, на что РЕАЛЬНО "
+        "жалуются клиенты. НЕ НАДО угадывать проблему заранее: для аудита "
+        "продукта (эквайринг, ипотека, карты…) проблемы должны проступить из "
+        "самих отзывов, а не из твоего предположения.\n"
+        "query задавай ТОЛЬКО если нужен точечный срез по конкретной теме.\n"
+        "СРАВНЕНИЕ/ТОП банков: НЕ перечисляй банки вручную — по умолчанию инструмент "
+        "сам ищет точечно по КАЖДОМУ из анализируемых банков задания (# ОБЪЕКТЫ) и "
+        "вернёт by_bank:{банк:[жалобы]} (у каждого свой top-k, банки не вытесняют друг "
+        "друга). banks=[...] передавай ЛИШЬ если надо сузить набор или взять иные банки.\n"
+        "Глобальный top-k (когда нет ни bank/banks, ни ОБЪЕКТОВ) НЕ покрывает все 217 "
+        "банков — не делай по нему вывод «у банка X жалоб нет».\n"
+        "Возвращает {results:[…]} или {by_bank:{банк:[…]}} — цитируй по source_n."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "bank": {"type": "string", "description":
+                     "Имя ОДНОГО банка (Сбербанк/ВТБ/Т-Банк/Альфа-Банк/…) — обязателен для discovery по одному банку"},
+            "banks": {"type": "array", "items": {"type": "string"}, "description":
+                      "ОПЦ. По умолчанию инструмент сам берёт анализируемые банки задания "
+                      "(# ОБЪЕКТЫ) и ищет по каждому → by_bank. Передавай ТОЛЬКО чтобы "
+                      "сузить набор или взять иные банки (не выдумывай произвольные)."},
+            "product": {"type": "string", "description":
+                        "Метка продукта banki.ru (опц.): «Вклад», «Кредитная карта», "
+                        "«Ипотека», «Дебетовая карта», «Мобильное приложение», "
+                        "«Денежный перевод», «Обслуживание юридических лиц» (сюда же "
+                        "эквайринг/РКО)…"},
+            "query": {"type": "string", "description":
+                      "ОПЦИОНАЛЬНО. Конкретная тема, если нужен точечный срез: "
+                      "«скрытые комиссии», «блокировка счёта 115-ФЗ» и т.п. "
+                      "Для общего обзора жалоб НЕ задавай."},
+            "k": {"type": "integer", "default": 12},
+        },
+        "required": [],
+    },
+    fn=tool_search_reviews_db,
+)
+
+
 # ── НАБОРЫ ДЛЯ АГЕНТОВ ────────────────────────────────────────────────────
 
 # Researcher: всё для поиска фактов
 RESEARCHER_TOOLS = [SEMANTIC_SEARCH, WEB_SEARCH, READ_URL, RUN_SQL]
 
-# Reviews: поиск отзывов + SQL по review таблице
-REVIEWS_TOOLS = [SEMANTIC_SEARCH, WEB_SEARCH, READ_URL, RUN_SQL]
+# Reviews: корпус жалоб banki.ru ПЕРВЫМ, затем web/SQL на добор
+REVIEWS_TOOLS = [SEARCH_REVIEWS_DB, SEMANTIC_SEARCH, WEB_SEARCH, READ_URL, RUN_SQL]
 
 # Regulatory: акцент на gov.ru + законы (через web_search + read_url)
 REGULATORY_TOOLS = [SEMANTIC_SEARCH, WEB_SEARCH, READ_URL]
