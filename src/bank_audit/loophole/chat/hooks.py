@@ -51,28 +51,6 @@ class AuditHook(AgentHook):
         for name in getattr(context, "tools_used", []):
             if name not in self.tools_used:
                 self.tools_used.append(name)
-        self._extract_records_from_messages(getattr(context, "messages", []))
-
-    def _extract_records_from_messages(self, messages: list) -> None:
-        """Парсит tool_results в сообщениях и сохраняет records/table-данные."""
-        for msg in messages or []:
-            if not isinstance(msg, dict):
-                continue
-            tool_calls = msg.get("tool_calls") or []
-            for tc in tool_calls:
-                if not isinstance(tc, dict):
-                    continue
-                func = tc.get("function") or {}
-                name = func.get("name")
-                if name in ("audit_table_load", "audit_export"):
-                    try:
-                        import json
-
-                        args = json.loads(func.get("arguments", "{}"))
-                        # Результат будет в соседней tool-role message, но hook не хранит его.
-                        # Для stream_chat records обновляются отдельно через tool results.
-                    except Exception:
-                        pass
 
     def finalize_content(self, context: Any, content: str | None) -> str | None:
         if content is None:

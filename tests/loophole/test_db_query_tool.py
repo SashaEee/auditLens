@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from bank_audit.loophole.chat.tools_nanobot import _is_read_only_select, db_query

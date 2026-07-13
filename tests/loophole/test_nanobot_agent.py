@@ -1,4 +1,3 @@
-import pytest
 from bank_audit.loophole.chat.nanobot_agent import (
     build_nanobot_config,
     build_prompt,
