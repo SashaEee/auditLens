@@ -23,7 +23,7 @@ from ...ai.llm_utils import (
     detect_bank_slugs,
     normalize_question,
 )
-from .tools import load_prompt
+from .tools_nanobot import load_prompt
 
 log = logging.getLogger(__name__)
 
