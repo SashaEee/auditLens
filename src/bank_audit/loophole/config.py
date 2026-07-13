@@ -14,6 +14,8 @@ class LoopholeSettings:
     max_results_per_keyword: int = 10
     classify_model: str = ""
     chat_model: str = ""
+    nanobot_model: str = ""
+    nanobot_max_iterations: int = 20
     trust_min: float = 0.5
     workspace_dir: Path = field(default_factory=lambda: ROOT / "workspace" / "loophole")
 
@@ -25,6 +27,8 @@ class LoopholeSettings:
             max_results_per_keyword=int(os.getenv("LOOPHOLE_MAX_RESULTS_PER_KEYWORD", "10")),
             classify_model=os.getenv("LOOPHOLE_CLASSIFY_MODEL", ""),
             chat_model=os.getenv("LOOPHOLE_CHAT_MODEL", ""),
+            nanobot_model=os.getenv("LOOPHOLE_NANOBOT_MODEL", ""),
+            nanobot_max_iterations=int(os.getenv("LOOPHOLE_NANOBOT_MAX_ITERATIONS", "20")),
             trust_min=float(os.getenv("LOOPHOLE_TRUST_MIN", "0.5")),
             workspace_dir=Path(ws_env).resolve() if ws_env else (ROOT / "workspace" / "loophole"),
         )
@@ -39,6 +43,13 @@ class LoopholeSettings:
     def effective_chat_model(self) -> str:
         return (
             self.chat_model
+            or os.getenv("LLM_MODEL_FAST")
+            or os.getenv("LLM_MODEL_NAME", "gpt-4o")
+        )
+
+    def effective_nanobot_model(self) -> str:
+        return (
+            self.nanobot_model
             or os.getenv("LLM_MODEL_FAST")
             or os.getenv("LLM_MODEL_NAME", "gpt-4o")
         )

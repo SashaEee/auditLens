@@ -82,6 +82,12 @@ dev = [
   "mypy>=1.10",
 ]
 
+# Nanobot-агент для loophole. Отдельная группа, т.к. nanobot-ai конфликтует
+# с langgraph по websockets (<16 vs >=16). В production ставится вручную.
+loophole-nanobot = [
+  "nanobot-ai>=0.2.2,<0.3",
+]
+
 [project.urls]
 Homepage = "https://github.com/SashaEee/auditLens"
 Documentation = "https://github.com/SashaEee/auditLens/blob/main/docs/"
