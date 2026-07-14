@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -9,7 +10,9 @@ from sqlalchemy import text
 
 from .. import repository as repo
 from ..adapters import fetch_decorator, search_decorator
+from ..models import LoopholeRecord
 from ..pii_mask import mask as pii_mask
+from ...hashing import sha256_text
 
 log = logging.getLogger(__name__)
 
@@ -177,6 +180,61 @@ def table_load(
     )
 
 
+def _domain_of(url: str) -> str:
+    from urllib.parse import urlparse
+
+    try:
+        return (urlparse(url).hostname or "").lower().replace("www.", "")
+    except Exception:
+        return ""
+
+
+def save_loophole(
+    title: str,
+    url: str,
+    snippet: str,
+    *,
+    bank_slug: str | None = None,
+    keyword: str | None = None,
+    raw_text: str | None = None,
+    trust_score: float = 0.5,
+    is_loophole: bool | None = None,
+    session: Any = None,
+) -> dict:
+    """Сохраняет найденную лазейку в таблицу `loophole_record`.
+
+    Дедуп по sha256 (url + snippet). Если запись уже существует — возвращает
+    существующий record_id и `is_new=False`.
+    """
+    sha = sha256_text(url + "|" + snippet)
+    rec = LoopholeRecord(
+        sha256=sha,
+        title=title,
+        url=url,
+        snippet=snippet,
+        domain=_domain_of(url),
+        trust_score=trust_score,
+        bank_slug=bank_slug,
+        keyword=keyword,
+        raw_text=raw_text or snippet,
+        is_loophole=is_loophole,
+        status="new",
+    )
+    try:
+        is_new = not repo.exists_sha256(sha, session=session)
+        record_id = repo.insert_record(rec, session=session)
+        if record_id is None:
+            record_id = repo.get_record_id_by_sha256(sha, session=session)
+        return {
+            "record_id": record_id,
+            "sha256": sha,
+            "is_new": is_new,
+        }
+    except Exception as e:
+        log.warning("[save_loophole] failed: %s", e)
+        return {"error": str(e), "sha256": sha, "record_id": None, "is_new": False}
+
+
 def refine_export(records: list[dict], *, format: str = "json") -> dict:
     """Подготовка записей к экспорту."""
     return {"format": format, "count": len(records), "records": records}
@@ -189,6 +247,22 @@ def refine_export(records: list[dict], *, format: str = "json") -> dict:
 def _tool_name(name: str) -> str:
     """Префикс audit_ предотвращает коллизии с встроенными tools nanobot."""
     return f"audit_{name}"
+
+
+def _tool_result(value: Any) -> str:
+    """Сериализует результат tool в JSON-строку.
+
+    OpenAI tool result ``content`` должен быть строкой; nanobot иначе
+    сохраняет list/dict в сессии как мультимодальный блок без поля ``type``,
+    что приводит к ``Missing 'type' field in multimodal part`` при следующем
+    запросе. ``None`` сериализуем как ``"null"``.
+    """
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        return str(value)
 
 
 try:
@@ -218,8 +292,8 @@ try:
         def read_only(self) -> bool:
             return True
 
-        async def execute(self, query: str, max_results: int = 8) -> list[dict]:
-            return web_search(query, max_results=max_results)
+        async def execute(self, query: str, max_results: int = 8) -> str:
+            return _tool_result(web_search(query, max_results=max_results))
 
     @tool_parameters({
         "type": "object",
@@ -244,8 +318,8 @@ try:
         def read_only(self) -> bool:
             return True
 
-        async def execute(self, url: str) -> dict | None:
-            return web_fetch(url)
+        async def execute(self, url: str) -> str:
+            return _tool_result(web_fetch(url))
 
     @tool_parameters({
         "type": "object",
@@ -270,8 +344,8 @@ try:
         def read_only(self) -> bool:
             return True
 
-        async def execute(self, text: str) -> list[dict]:
-            return await extract_loopholes(text)
+        async def execute(self, text: str) -> str:
+            return _tool_result(await extract_loopholes(text))
 
     @tool_parameters({
         "type": "object",
@@ -296,8 +370,8 @@ try:
         def read_only(self) -> bool:
             return True
 
-        async def execute(self, sql: str) -> dict:
-            return db_query(sql)
+        async def execute(self, sql: str) -> str:
+            return _tool_result(db_query(sql))
 
     @tool_parameters({
         "type": "object",
@@ -337,15 +411,77 @@ try:
             only_loophole: bool = True,
             status: str | None = None,
             limit: int = 200,
-        ) -> list[dict]:
-            return table_load(
-                bank_slugs=bank_slugs,
-                period_from=period_from,
-                period_to=period_to,
-                query_text=query_text,
-                only_loophole=only_loophole,
-                status=status,
-                limit=limit,
+        ) -> str:
+            try:
+                return _tool_result(
+                    table_load(
+                        bank_slugs=bank_slugs,
+                        period_from=period_from,
+                        period_to=period_to,
+                        query_text=query_text,
+                        only_loophole=only_loophole,
+                        status=status,
+                        limit=limit,
+                    )
+                )
+            except Exception as e:
+                log.warning("[table_load] failed: %s", e)
+                return _tool_result({"error": str(e)})
+
+    @tool_parameters({
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Заголовок лазейки"},
+            "url": {"type": "string", "description": "URL источника"},
+            "snippet": {"type": "string", "description": "Краткое описание/цитата"},
+            "bank_slug": {"type": "string", "description": "slug банка (опционально)"},
+            "keyword": {"type": "string", "description": "ключевое слово (опционально)"},
+            "raw_text": {"type": "string", "description": "полный текст (опционально)"},
+            "trust_score": {"type": "number", "default": 0.5},
+            "is_loophole": {"type": "boolean", "description": "предварительный вердикт (опционально)"},
+        },
+        "required": ["title", "url", "snippet"],
+    })
+    class AuditSaveLoopholeTool(Tool):
+        @property
+        def name(self) -> str:
+            return _tool_name("save_loophole")
+
+        @property
+        def description(self) -> str:
+            return (
+                "Сохраняет найденную лазейку/проблему в базу данных loophole_record. "
+                "Используй после web_search/web_fetch и extract_loopholes, "
+                "когда нужно запомнить результат для таблицы UI. "
+                "Дедуп по sha256; при повторе возвращает существующий record_id."
+            )
+
+        @property
+        def read_only(self) -> bool:
+            return False
+
+        async def execute(
+            self,
+            title: str,
+            url: str,
+            snippet: str,
+            bank_slug: str | None = None,
+            keyword: str | None = None,
+            raw_text: str | None = None,
+            trust_score: float = 0.5,
+            is_loophole: bool | None = None,
+        ) -> str:
+            return _tool_result(
+                save_loophole(
+                    title=title,
+                    url=url,
+                    snippet=snippet,
+                    bank_slug=bank_slug,
+                    keyword=keyword,
+                    raw_text=raw_text,
+                    trust_score=trust_score,
+                    is_loophole=is_loophole,
+                )
             )
 
     @tool_parameters({
@@ -369,13 +505,14 @@ try:
         def read_only(self) -> bool:
             return True
 
-        async def execute(self, records: list[dict], format: str = "json") -> dict:
-            return refine_export(records, format=format)
+        async def execute(self, records: list[dict], format: str = "json") -> str:
+            return _tool_result(refine_export(records, format=format))
 
     NANOBOT_TOOLS: tuple[type[Tool], ...] = (
         AuditWebSearchTool,
         AuditWebFetchTool,
         AuditExtractLoopholesTool,
+        AuditSaveLoopholeTool,
         AuditDbQueryTool,
         AuditTableLoadTool,
         AuditExportTool,

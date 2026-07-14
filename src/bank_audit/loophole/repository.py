@@ -84,6 +84,15 @@ def exists_sha256(sha256: str, *, session=None) -> bool:
         ).scalar_one_or_none() is not None
 
 
+def get_record_id_by_sha256(sha256: str, *, session=None) -> int | None:
+    """Возвращает record_id по sha256, если запись существует."""
+    with _session(session) as s:
+        return s.execute(
+            text(f"SELECT record_id FROM {schema.T_RECORD} WHERE sha256 = :sha LIMIT 1"),
+            {"sha": sha256},
+        ).scalar_one_or_none()
+
+
 def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
     """Вставляет запись. Если sha256 уже есть — возвращает существующий record_id (дедуп)."""
     with _session(session) as s:
