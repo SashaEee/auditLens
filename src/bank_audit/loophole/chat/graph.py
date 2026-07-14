@@ -199,28 +199,33 @@ def _map_event(event: Any, hook: AuditHook) -> dict | None:
 
     ev_type = getattr(event, "type", None)
     if ev_type == STREAM_EVENT_TEXT_DELTA:
-        return {"event": "token", "data": getattr(event, "content", "")}
+        # nanobot кладёт инкремент текста в event.delta, а НЕ в event.content
+        # (content остаётся ""). Иначе все дельты пустые → нет посимвольного
+        # стрима, ответ прилетает одним куском в конце.
+        return {"event": "token", "data": getattr(event, "delta", "") or ""}
     if ev_type == STREAM_EVENT_TOOL_STARTED:
+        # У StreamEvent nanobot имя инструмента в event.name, аргументы в
+        # event.arguments (ключа metadata.tool_name не существует → был null).
         return {
             "event": "tool_call",
             "data": {
-                "name": getattr(event, "metadata", {}).get("tool_name"),
-                "args": getattr(event, "metadata", {}).get("tool_args"),
+                "name": getattr(event, "name", None),
+                "args": getattr(event, "arguments", None),
             },
         }
     if ev_type == STREAM_EVENT_TOOL_COMPLETED:
         return {
             "event": "tool_result",
             "data": {
-                "name": getattr(event, "metadata", {}).get("tool_name"),
-                "result": getattr(event, "content", ""),
+                "name": getattr(event, "name", None),
+                "result": (getattr(event, "metadata", {}) or {}).get("detail", ""),
             },
         }
     if ev_type == STREAM_EVENT_TOOL_FAILED:
         return {
             "event": "tool_result",
             "data": {
-                "name": getattr(event, "metadata", {}).get("tool_name"),
+                "name": getattr(event, "name", None),
                 "error": getattr(event, "error", "tool failed"),
             },
         }

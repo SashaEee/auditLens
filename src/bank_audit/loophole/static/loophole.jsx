@@ -5,7 +5,10 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const API = "/api/loophole";
 
 // Константы фаз пайплайна (без финальной "done" в progress-bar).
-const PHASES = ["clarify", "plan", "execute", "aggregate", "answer"];
+// Только фазы, которые РЕАЛЬНО шлёт nanobot-бэкенд (stream_chat): clarify →
+// execute → answer. Старые plan/aggregate остались от удалённого ReAct-графа и
+// висели в степпере как фантомные непройденные шаги.
+const PHASES = ["clarify", "execute", "answer"];
 
 function LoopholeApp() {
   // ── Таблица / фильтры ──────────────────────────────────────────────────────
@@ -358,9 +361,19 @@ function LoopholeApp() {
         }
       }
       flushAssistant();
-      if (!gotAnyToken && !assistantMsg && !gotQuestions) {
-        // только если вообще ничего не пришло — добавляем заглушку
-        setChat(prev => [...prev, {role: "assistant", content: "(пустой ответ)"}]);
+      if (!gotQuestions) {
+        // Заглушку показываем ТОЛЬКО если ассистент так и не добавил ни одного
+        // сообщения за этот ход (реально пустой ответ). Флаги gotAnyToken/
+        // assistantMsg здесь уже СБРОШЕНЫ внутри flushAssistant(), поэтому
+        // опираемся на фактическое состояние чата, иначе «(пустой ответ)»
+        // лепится после каждого нормального ответа.
+        setChat(prev => {
+          const last = prev[prev.length - 1];
+          if (!last || last.role !== "assistant") {
+            return [...prev, {role: "assistant", content: "(пустой ответ)"}];
+          }
+          return prev;
+        });
       }
     } catch (e) {
       setChat(prev => [...prev, {role: "assistant", content: "Ошибка: " + String(e)}]);
@@ -437,8 +450,8 @@ function LoopholeApp() {
 
   const sortArrow = (key) => sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
 
-  // Фаза: индекс в PHASES для подсветки.
-  const phaseIdx = phase ? PHASES.indexOf(phase) : -1;
+  // Фаза: индекс в PHASES для подсветки. await_clarify показываем на шаге clarify.
+  const phaseIdx = phase === "await_clarify" ? 0 : (phase ? PHASES.indexOf(phase) : -1);
 
   return (
     <div className="lp-layout">

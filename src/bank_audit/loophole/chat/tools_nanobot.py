@@ -43,14 +43,16 @@ def _is_read_only_select(sql: str) -> bool:
 
 
 # ── web / export ───────────────────────────────────────────────────────────
-def web_search(query: str, *, max_results: int = 8, _impl: Any = None) -> list[dict]:
+def web_search(query: str, *, max_results: int = 12, _impl: Any = None) -> list[dict]:
     """Поиск в web: возвращает список {title, url, snippet, domain}."""
     return search_decorator.search(query, max_results=max_results, _impl=_impl)
 
 
 def web_fetch(url: str, *, _impl: Any = None) -> dict | None:
     """Загрузка страницы: возвращает {url, final_url, title, excerpt, status, via}."""
-    page = fetch_decorator.fetch_and_parse(url, _fetch_impl=_impl)
+    # excerpt_len=4000 (вместо дефолтных 1000): механизм лазейки в длинном
+    # форумном треде часто описан не в первых 1000 символов — даём extract больше.
+    page = fetch_decorator.fetch_and_parse(url, excerpt_len=4000, _fetch_impl=_impl)
     if page is None:
         return None
     return {
@@ -272,7 +274,7 @@ try:
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Поисковый запрос"},
-            "max_results": {"type": "integer", "default": 8},
+            "max_results": {"type": "integer", "default": 12},
         },
         "required": ["query"],
     })
@@ -292,7 +294,7 @@ try:
         def read_only(self) -> bool:
             return True
 
-        async def execute(self, query: str, max_results: int = 8) -> str:
+        async def execute(self, query: str, max_results: int = 12) -> str:
             return _tool_result(web_search(query, max_results=max_results))
 
     @tool_parameters({
