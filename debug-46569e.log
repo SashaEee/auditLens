@@ -1,0 +1,40 @@
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 5, "message_preview": "Найди в интернете статьи с описанием схемы кредитная карусель и загрузи её в БД", "user_id": "anonymous"}, "timestamp": 1782828950119}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "Найди в интернете статьи с описанием схемы кредитная карусель и загрузи её в БД"}, "timestamp": 1782828950134}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_end", "data": {"answer_len": 18}, "timestamp": 1782828958464}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 6, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782829208401}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782829208407}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782829213123}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 7, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782830026566}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782830026571}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782830038860}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 8, "message_preview": "Сбербанк, кредитная карта, 2025 год — есть ли лазейки в договоре с навязанной ст", "user_id": "anonymous"}, "timestamp": 1782830190087}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "Сбербанк, кредитная карта, 2025 год — есть ли лазейки в договоре с навязанной страховкой?"}, "timestamp": 1782830190093}
+{"sessionId": "46569e", "hypothesisId": "H3", "location": "search_decorator.py:search", "message": "search_done", "data": {"query_preview": "Сбербанк кредитная карта 2025 лазейки договор навязанная стр", "elapsed_ms": 4144, "results_count": 8}, "timestamp": 1782830216574}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_end", "data": {"answer_len": 318}, "timestamp": 1782830253190}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 10, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782831157364}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782831157368}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782831162344}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 11, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782831230473}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782831230476}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782831234168}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 12, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782831333382}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782831333386}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782831337072}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 16, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782831432544}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782831432549}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782831437072}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 17, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782831460499}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782831460503}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782831464349}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 18, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782831541427}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782831541431}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782831547322}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 19, "message_preview": "123", "user_id": "anonymous"}, "timestamp": 1782831701645}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "123"}, "timestamp": 1782831701650}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782831711407}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 20, "message_preview": "789", "user_id": "anonymous"}, "timestamp": 1782831934907}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "789"}, "timestamp": 1782831934912}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782831946032}
+{"sessionId": "46569e", "hypothesisId": "H4", "location": "web.py:chat", "message": "chat_request", "data": {"workspace_id": 21, "message_preview": "НАйди в интернете лазейки и уязвимости", "user_id": "anonymous"}, "timestamp": 1782832000005}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_start", "data": {"query": "НАйди в интернете лазейки и уязвимости"}, "timestamp": 1782832000008}
+{"sessionId": "46569e", "hypothesisId": "H1", "location": "graph.py:stream_chat", "message": "stream_chat_await_clarify", "data": {"questions": 4}, "timestamp": 1782832009620}

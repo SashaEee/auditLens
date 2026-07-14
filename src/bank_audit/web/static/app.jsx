@@ -3483,6 +3483,15 @@ function KnowledgePage(){
 }
 
 
+// ─── Loophole page (встраивает frontend модуля loophole) ─────────────────────
+function LoopholePage(){
+  return <section className="surface" style={{padding:0,overflow:"hidden"}}>
+    <iframe src="/static/loophole/loophole.html"
+            title="Лазейки и уязвимости"
+            style={{width:"100%",height:"calc(100vh - 120px)",border:"none",display:"block"}}/>
+  </section>;
+}
+
 // ─── SHELL ────────────────────────────────────────────────────────────────────
 const NAV=[
   {id:"overview",label:"Обзор",       icon:Ic.grid,   group:"Анализ"},
@@ -3491,15 +3500,17 @@ const NAV=[
   {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
   {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
   {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Анализ"},
+  {id:"loophole",label:"Лазейки",     icon:Ic.shield, group:"Анализ"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
   {id:"quality", label:"Качество",    icon:Ic.shield, group:"Данные"},
 ];
-const PAGES_FN={overview:OverviewPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage};
-const PAGE_LABELS={overview:["01","Обзор"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],banks:["07","Банки"],sources:["08","Источники"],quality:["09","Качество"]};
+const PAGES_FN={overview:OverviewPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage};
+const PAGE_LABELS={overview:["01","Обзор"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"]};
 
 function Shell(){
   const[page,setPage]=useState(()=>location.hash?.slice(1)||"overview");
+  const[loopholeMounted,setLoopholeMounted]=useState(()=>(location.hash?.slice(1)||"overview")==="loophole");
   const{theme,setTheme}=useTheme();
   const[banks,setBanks]=useState([]);
   const[qualityCount,setQualityCount]=useState(0);
@@ -3520,6 +3531,7 @@ function Shell(){
     return ()=>window.removeEventListener("hashchange",onHash);
   },[]);
   useEffect(()=>{history.replaceState(null,"","#"+page);},[page]);
+  useEffect(()=>{if(page==="loophole")setLoopholeMounted(true);},[page]);
 
   const groups=useMemo(()=>{const g={};NAV.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[]);
   const Page=PAGES_FN[page]||OverviewPage;
@@ -3575,7 +3587,7 @@ function Shell(){
             <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
           </div>
           <div className="crumb">
-            <span className="crumb-idx">{idx} / 08</span>
+            <span className="crumb-idx">{idx} / 10</span>
             <span style={{color:"var(--hair-2)"}}>—</span>
             <b>{label}</b>
           </div>
@@ -3593,7 +3605,10 @@ function Shell(){
           </button>
         </div>
         <div className="content">
-          <Page key={page}/>
+          {loopholeMounted&&<div style={{display:page==="loophole"?"block":"none",height:"100%"}}>
+            <LoopholePage/>
+          </div>}
+          {page!=="loophole"&&<Page key={page}/>}
         </div>
       </div>
     </div>
