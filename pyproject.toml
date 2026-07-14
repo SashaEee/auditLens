@@ -23,42 +23,35 @@ dependencies = [
   "httpx>=0.27",
   "selectolax>=0.3.21",
   "playwright>=1.45",
-  "playwright-stealth>=2.0",   # stealth-патч (обход headless-детекта анти-ботов банков)
+  "playwright-stealth>=2.0", # stealth-патч (обход headless-детекта анти-ботов банков)
   "tenacity>=8.3",
-  "ddgs>=9.0",          # мульти-движковый web-search (fallback когда SearXNG down)
-
+  "ddgs>=9.0", # мульти-движковый web-search (fallback когда SearXNG down)
   # ── Database / ORM ────────────────────────────────────────────────────
   "sqlalchemy>=2.0",
   "psycopg[binary]>=3.1",
   "pgvector>=0.3",
   "alembic>=1.13",
-
   # ── Web server / streaming ────────────────────────────────────────────
   "fastapi>=0.111",
   "uvicorn[standard]>=0.29",
   "sse-starlette>=2.1",
-
   # ── LLM clients ───────────────────────────────────────────────────────
   "openai>=1.30",
   "anthropic>=0.28",
-
   "langchain>=0.3",
   "langgraph>=0.2",
   "langchain-openai>=0.2",
-
   # ── Embeddings ────────────────────────────────────────────────────────
   # torch + sentence-transformers вынесены в [project.optional-dependencies]
   # → local-embeddings (см. ниже). В контейнере/проде EMBEDDING_MODE=api →
   # эмбеддинги идут через OpenAI-совместимый API (bge-m3), torch НЕ нужен
   # (~2.5 ГБ экономии в образе). Для локальных эмбеддингов:
   #   pip install -e '.[local-embeddings]'
-
   # ── Document processing (PDF/DOCX/XLSX/PPTX → text) ──────────────────
-  "pdfplumber>=0.11",        # парсинг PDF (импорт на старте через rag.indexer — обязателен!)
-  "pdfminer.six>=20231228",  # экстракция текста из тариф-PDF
+  "pdfplumber>=0.11", # парсинг PDF (импорт на старте через rag.indexer — обязателен!)
+  "pdfminer.six>=20231228", # экстракция текста из тариф-PDF
   "openpyxl>=3.1",
   "python-pptx>=0.6",
-
   # ── Common utilities ──────────────────────────────────────────────────
   "pydantic>=2.7",
   "pyyaml>=6.0",
@@ -66,6 +59,7 @@ dependencies = [
   "structlog>=24.1",
   "python-dotenv>=1.0",
   "click>=8.1",
+  "nanobot-ai>=0.2.2",
 ]
 
 [project.optional-dependencies]
@@ -80,6 +74,12 @@ dev = [
   "pytest-asyncio>=0.23",
   "ruff>=0.4",
   "mypy>=1.10",
+]
+
+# Nanobot-агент для loophole. Отдельная группа, т.к. nanobot-ai конфликтует
+# с langgraph по websockets (<16 vs >=16). В production ставится вручную.
+loophole-nanobot = [
+  "nanobot-ai>=0.2.2,<0.3",
 ]
 
 [project.urls]

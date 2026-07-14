@@ -1,263 +1,225 @@
-"""langgraph StateGraph чата loophole: ReAct-архитектура с фазами.
+"""Адаптер чата loophole на базе nanobot.
 
-Фазы: clarify → plan → execute → aggregate → answer → done.
-Entry point: clarify. Conditional edges по полю ``state["phase"]``.
+Сохраняет внешний контракт для `web.py`:
+  - `run_chat(state, *, llm=None, session=None) -> ChatState`
+  - `stream_chat(state, *, llm=None, session=None) -> AsyncIterator[dict]`
 
-Стриминг — через async generator (используется в web.py для SSE).
+Внутри: nanobot-агент с кастомными tools (`audit_web_search`, `audit_db_query`, ...)
+и lifecycle hook для сбора records/SSE-событий.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-from pathlib import Path
 from typing import Any, AsyncIterator
 
-from . import nodes
-from . import phases
+from .hooks import AuditHook
+from .nanobot_agent import build_prompt, create_nanobot
 from .state import ChatState
+from .. import repository as repo
+from . import clarify as clarify_mod
 
 log = logging.getLogger(__name__)
 
 
-def _route_after_clarify(state: ChatState) -> str:
-    phase = state.get("phase")
-    if phase == "await_clarify":
-        return "__end__"
-    return "plan"
+def _state_history(state: ChatState) -> list[dict[str, str]]:
+    """Нормализует историю сообщений из state."""
+    history = state.get("messages") or []
+    out: list[dict[str, str]] = []
+    for msg in history:
+        if isinstance(msg, dict) and msg.get("role") in ("user", "assistant"):
+            out.append({"role": msg["role"], "content": str(msg.get("content", ""))})
+    return out
 
 
-def _route_after_execute(state: ChatState) -> str:
-    phase = state.get("phase")
-    if phase == "execute":
-        return "execute"
-    return "aggregate"
+async def _run_nanobot(
+    state: ChatState,
+    *,
+    llm: Any = None,
+    session=None,
+) -> tuple[str, list[str], list[dict]]:
+    """Запускает nanobot, возвращает (answer, tools_used, records)."""
+    query = state.get("query", "")
+    workspace_id = state.get("workspace_id")
+    history = _state_history(state)
+    prompt = build_prompt(query, history)
 
-
-def build_graph():
-    """Создаёт langgraph StateGraph фаз. Возвращает скомпилированный граф.
-
-    Если langgraph недоступен — возвращает None (тесты используют run_chat).
-    """
+    bot, config_path = create_nanobot(model=llm)
     try:
-        from langgraph.graph import StateGraph, END
-    except Exception:
-        return None
+        session_key = f"loophole:{workspace_id}:{state.get('task_id', 'default')}"
+        hook = AuditHook(session=session)
+        result = await bot.run(
+            prompt,
+            session_key=session_key,
+            channel="loophole",
+            hooks=[hook],
+        )
+        content = result.content or ""
+        return content, hook.tools_used, hook.records
+    finally:
+        await bot.aclose()
+        from pathlib import Path
 
-    g = StateGraph(ChatState)
-    g.add_node("clarify", phases.clarify_node)
-    g.add_node("plan", phases.plan_node)
-    g.add_node("execute", phases.execute_node)
-    g.add_node("aggregate", phases.aggregate_node)
-    g.add_node("answer", phases.answer_node)
-    g.set_entry_point("clarify")
-    g.add_conditional_edges(
-        "clarify",
-        _route_after_clarify,
-        {"plan": "plan", END: END},
-    )
-    g.add_edge("plan", "execute")
-    g.add_conditional_edges(
-        "execute",
-        _route_after_execute,
-        {"execute": "execute", "aggregate": "aggregate"},
-    )
-    g.add_edge("aggregate", "answer")
-    g.add_edge("answer", END)
-    return g.compile()
+        Path(config_path).unlink(missing_ok=True)
 
 
-# ── Fallback: последовательный прогон фаз ───────────────────────────────────
 async def run_chat(
     state: ChatState,
     *,
     llm: Any = None,
     session=None,
 ) -> ChatState:
-    """Прогон фаз без langgraph (последовательно). Fallback для тестов/проде.
-
-    Сохраняет совместимость со старым контрактом: если в query есть /команда —
-    прогоняет старый retrieve→llm→tools путь. Иначе — фазовый ReAct.
-    """
-    if _has_command(state.get("query", "")):
-        return await _run_legacy(state, llm=llm, session=session)
-
+    """Прогон чата через nanobot. Сохраняет контракт `run_chat` для `web.py`."""
     state = {**state, "session": session if session is not None else state.get("session")}
-    state = await phases.clarify_node(state, llm=llm)
-    if state.get("phase") == "await_clarify":
-        return state
-    state = await phases.plan_node(state, llm=llm)
-    state = await phases.execute_node(state, llm=llm, session=session)
-    while state.get("phase") == "execute":
-        state = await phases.execute_node(state, llm=llm, session=session)
-    state = await phases.aggregate_node(state, llm=llm)
-    state = await phases.answer_node(state)
-    return state
+    workspace_id = state.get("workspace_id")
+
+    # Clarify-воронка.
+    clarification = await clarify_mod.generate_clarifications(
+        state.get("query", ""),
+        history=state.get("messages"),
+    )
+    if not clarification.get("complete"):
+        return {
+            **state,
+            "phase": "await_clarify",
+            "clarify_questions": clarification.get("questions", []),
+        }
+
+    enriched = await clarify_mod.build_enriched_question(
+        state.get("query", ""), state.get("clarify_answers", [])
+    )
+    state = {**state, "query": enriched}
+
+    try:
+        answer, tools_used, records = await _run_nanobot(state, llm=llm, session=session)
+    except Exception as e:
+        log.exception("[run_chat] nanobot failed")
+        answer = f"Ошибка при обработке запроса: {e}"
+        tools_used = []
+        records = []
+
+    # Сохраняем ответ в БД.
+    if workspace_id and answer:
+        try:
+            repo.add_chat_message(workspace_id, "assistant", answer, session=session)
+        except Exception:
+            log.warning("[run_chat] failed to save assistant message", exc_info=True)
+
+    return {
+        **state,
+        "answer": answer,
+        "phase": "done",
+        "tools_used": tools_used,
+        "records": records,
+        "pending_table_records": records,
+    }
 
 
-# ── Совместимость со старыми helpers ─────────────────────────────────────────
-def _strip_command(query: str) -> str:
-    """Убирает /команду из начала query."""
-    stripped = (query or "").strip()
-    for cmd in (
-        "/web_search", "/web_fetch", "/retrieve", "/export",
-        "/keywords", "/extract_loopholes", "/db_query", "/table_load",
-        "/parser_create", "/parser_start", "/parser_stop", "/parser_status",
-    ):
-        if stripped.startswith(cmd):
-            return stripped[len(cmd):].strip()
-    return stripped
-
-
-def _has_command(query: str) -> bool:
-    stripped = (query or "").strip()
-    return stripped.startswith("/") and " " in stripped
-
-
-def _format_tool_results(tool_results: list[dict]) -> str:
-    """Текстовая сводка результатов tools для SSE без LLM."""
-    parts: list[str] = []
-    for tr in tool_results or []:
-        name = tr.get("name", "")
-        result = tr.get("result")
-        if isinstance(result, dict) and "error" in result:
-            parts.append(f"{name}: {result['error']}")
-            continue
-        if name == "/web_search":
-            items = result if isinstance(result, list) else []
-            if not items:
-                parts.append("Веб-поиск не дал результатов.")
-            else:
-                lines = [f"Результаты веб-поиска ({len(items)}):"]
-                for i, r in enumerate(items[:8], 1):
-                    lines.append(f"{i}. {r.get('title') or '—'}")
-                    if r.get("url"):
-                        lines.append(f"   {r['url']}")
-                    if r.get("snippet"):
-                        lines.append(f"   {str(r['snippet'])[:300]}")
-                parts.append("\n".join(lines))
-        elif name == "/web_fetch" and isinstance(result, dict):
-            parts.append(f"Загружено: {result.get('title') or result.get('url') or '—'}")
-            if result.get("excerpt"):
-                parts.append(str(result["excerpt"])[:1500])
-        elif name == "/retrieve":
-            items = result if isinstance(result, list) else []
-            parts.append(f"Найдено записей в БД: {len(items)}")
-        elif name == "/export":
-            parts.append("Экспорт подготовлен.")
-        else:
-            parts.append(f"{name}: {result}")
-    return "\n\n".join(parts)
-
-
-async def _finalize_after_tools(state: ChatState, *, llm: Any = None) -> ChatState:
-    """Формирует итоговый answer после выполнения tools (legacy-путь)."""
-    if state.get("answer"):
-        return state
-    if llm is not None:
-        state = {**state, "query": _strip_command(state.get("query", ""))}
-        return await nodes.llm_node(state, llm=llm)
-    answer = _format_tool_results(state.get("tool_results") or [])
-    return {**state, "answer": answer}
-
-
-async def _run_legacy(
-    state: ChatState,
-    *,
-    llm: Any = None,
-    session=None,
-) -> ChatState:
-    """Старый путь retrieve→llm→tools для /команд."""
-    state = nodes.retrieve_node({**state, "session": session})
-    state = await nodes.llm_node(state, llm=llm)
-    if state.get("tool_calls"):
-        state = await asyncio.to_thread(nodes.tools_node, state, session=session)
-        state = {**state, "query": _strip_command(state.get("query", ""))}
-        state = await _finalize_after_tools(state, llm=llm)
-    return state
-
-
-# ── SSE-стриминг фаз ─────────────────────────────────────────────────────────
 async def stream_chat(
     state: ChatState,
     *,
     llm: Any = None,
     session=None,
 ) -> AsyncIterator[dict]:
-    """SSE-генератор фазового ReAct-графа.
-
-    Эмитит события: ``phase`` (при смене фазы), ``question`` (clarify questions),
-    ``subtask`` (старт/завершение), ``tool_call``/``tool_result``, ``records``
-    (pending_table_records), ``token`` (финальный answer).
-    """
+    """SSE-стриминг nanobot-чата. События: phase, question, tool_call, tool_result, token, records."""
     state = {**state, "session": session if session is not None else state.get("session")}
     workspace_id = state.get("workspace_id")
-    sess = state.get("session")
-    prev_phase: str | None = None
+    query = state.get("query", "")
 
-    def _phase_event(phase: str) -> dict | None:
-        nonlocal prev_phase
-        if phase == prev_phase:
-            return None
-        prev_phase = phase
-        return {"event": "phase", "data": {"phase": phase}}
-
-    # ── clarify ──────────────────────────────────────────────────────────────
-    state = await phases.clarify_node(state, llm=llm)
-    ev = _phase_event("clarify")
-    if ev:
-        yield ev
-    if state.get("phase") == "await_clarify":
-        questions = state.get("clarify_questions") or []
-        for q in questions:
+    # Clarify.
+    yield {"event": "phase", "data": {"phase": "clarify"}}
+    clarification = await clarify_mod.generate_clarifications(
+        query, history=state.get("messages")
+    )
+    if not clarification.get("complete"):
+        yield {"event": "phase", "data": {"phase": "await_clarify"}}
+        for q in clarification.get("questions", []):
             yield {"event": "question", "data": q}
         return
 
-    # ── plan ─────────────────────────────────────────────────────────────────
-    state = await phases.plan_node(state, llm=llm)
-    ev = _phase_event("plan")
-    if ev:
-        yield ev
-    for st in state.get("subtasks") or []:
-        yield {"event": "subtask", "data": {"status": "start", "subtask": st}}
+    enriched = await clarify_mod.build_enriched_question(
+        query, state.get("clarify_answers", [])
+    )
+    state = {**state, "query": enriched}
 
-    # ── execute ──────────────────────────────────────────────────────────────
-    ev = _phase_event("execute")
-    if ev:
-        yield ev
-    state = await phases.execute_node(state, llm=llm, session=sess)
-    for sr in state.get("subtask_results") or []:
-        yield {"event": "subtask", "data": {"status": "done", "result": sr}}
-        for obs in (sr.get("observations") or []) if isinstance(sr, dict) else []:
-            yield {"event": "tool_call", "data": {"name": obs.get("action"), "args": obs.get("args")}}
-            yield {"event": "tool_result", "data": {"name": obs.get("action"), "result": obs.get("result")}}
+    yield {"event": "phase", "data": {"phase": "execute"}}
 
-    # ── aggregate ────────────────────────────────────────────────────────────
-    state = await phases.aggregate_node(state, llm=llm)
-    ev = _phase_event("aggregate")
-    if ev:
-        yield ev
-    records = state.get("pending_table_records") or []
-    if records:
-        yield {"event": "records", "data": records}
+    prompt = build_prompt(enriched, _state_history(state))
+    bot, config_path = create_nanobot(model=llm)
+    try:
+        session_key = f"loophole:{workspace_id}:{state.get('task_id', 'default')}"
+        hook = AuditHook(session=session)
 
-    # ── answer ───────────────────────────────────────────────────────────────
-    state = await phases.answer_node(state)
-    ev = _phase_event("answer")
-    if ev:
-        yield ev
-    answer = state.get("answer") or ""
-    if answer:
-        yield {"event": "token", "data": answer}
-    # Сохраняем ответ в БД.
-    if workspace_id and answer:
-        try:
-            repo_add_chat_message(workspace_id, "assistant", answer, session=sess)
-        except Exception:
-            pass
+        async for event in bot.stream(prompt, session_key=session_key, hooks=[hook]):
+            mapped = _map_event(event, hook)
+            if mapped:
+                yield mapped
+
+        answer = hook.final_answer or ""
+        records = hook.records
+
+        if records:
+            yield {"event": "records", "data": records}
+        yield {"event": "phase", "data": {"phase": "answer"}}
+        if answer:
+            yield {"event": "token", "data": answer}
+
+        # Сохраняем ответ.
+        if workspace_id and answer:
+            try:
+                repo.add_chat_message(workspace_id, "assistant", answer, session=session)
+            except Exception:
+                log.warning("[stream_chat] failed to save assistant message", exc_info=True)
+    finally:
+        await bot.aclose()
+        from pathlib import Path
+
+        Path(config_path).unlink(missing_ok=True)
 
 
-def repo_add_chat_message(workspace_id: int, role: str, content: str, *, session=None) -> None:
-    """Обёртка для тестов-моков (чтобы не импортировать repository на верху)."""
-    from .. import repository as _repo
+def _map_event(event: Any, hook: AuditHook) -> dict | None:
+    """Маппит nanobot StreamEvent на SSE-события loophole."""
+    from nanobot.sdk.types import (
+        STREAM_EVENT_TEXT_DELTA,
+        STREAM_EVENT_TOOL_STARTED,
+        STREAM_EVENT_TOOL_COMPLETED,
+        STREAM_EVENT_TOOL_FAILED,
+        STREAM_EVENT_RUN_FAILED,
+    )
 
-    _repo.add_chat_message(workspace_id, role, content, session=session)
+    ev_type = getattr(event, "type", None)
+    if ev_type == STREAM_EVENT_TEXT_DELTA:
+        return {"event": "token", "data": getattr(event, "content", "")}
+    if ev_type == STREAM_EVENT_TOOL_STARTED:
+        return {
+            "event": "tool_call",
+            "data": {
+                "name": getattr(event, "metadata", {}).get("tool_name"),
+                "args": getattr(event, "metadata", {}).get("tool_args"),
+            },
+        }
+    if ev_type == STREAM_EVENT_TOOL_COMPLETED:
+        return {
+            "event": "tool_result",
+            "data": {
+                "name": getattr(event, "metadata", {}).get("tool_name"),
+                "result": getattr(event, "content", ""),
+            },
+        }
+    if ev_type == STREAM_EVENT_TOOL_FAILED:
+        return {
+            "event": "tool_result",
+            "data": {
+                "name": getattr(event, "metadata", {}).get("tool_name"),
+                "error": getattr(event, "error", "tool failed"),
+            },
+        }
+    if ev_type == STREAM_EVENT_RUN_FAILED:
+        return {"event": "token", "data": f"Ошибка: {getattr(event, 'error', 'unknown')}"}
+    return None
+
+
+# Legacy compat: graph compile оставлен для старых импортов, но ReAct фазы удалены.
+# web.py использует только stream_chat/run_chat.
+def build_graph():
+    """Возвращает None — ReAct-граф заменён на nanobot."""
+    return None

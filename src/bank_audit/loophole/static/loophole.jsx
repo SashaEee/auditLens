@@ -382,13 +382,21 @@ function LoopholeApp() {
   };
 
   const submitAnswers = async () => {
-    if (!pendingQuestions) return;
-    const q = pendingQuestions[0]; // backend сейчас обрабатывает один вопрос за раз
+    if (!pendingQuestions || !pendingQuestions.length) return;
+    const q = pendingQuestions[0];
     const ans = answersByQ[q.id] || {selected: [], other: ""};
+    const answersPayload = pendingQuestions.map(pq => {
+      const a = answersByQ[pq.id] || {selected: [], other: ""};
+      return {
+        question: pq.question,
+        selected: a.selected,
+        other: a.other,
+      };
+    });
     try {
       const r = await fetch(`${API}/clarify/answer`, {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({question: q.question, answers: ans}),
+        body: JSON.stringify({question: q.question, answers: answersPayload}),
       });
       const d = await r.json();
       const enriched = (d && d.enriched_question) || (typeof d === "string" ? d : "");
