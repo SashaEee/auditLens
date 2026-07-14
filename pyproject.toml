@@ -38,8 +38,11 @@ dependencies = [
   # ── LLM clients ───────────────────────────────────────────────────────
   "openai>=1.30",
   "anthropic>=0.28",
-  "langchain>=0.3",
-  "langgraph>=0.2",
+  # langchain (мета) и langgraph УБРАНЫ: код loophole использует только
+  # langchain_openai.ChatOpenAI и langchain_core.messages. langchain 1.x тянет
+  # langgraph-sdk, который требует websockets<16 — конфликт с nanobot-ai
+  # (websockets>=16) ломал docker-сборку (ResolutionImpossible). langchain-openai
+  # тянет только langchain-core (без websockets) — конфликта нет.
   "langchain-openai>=0.2",
   # ── Embeddings ────────────────────────────────────────────────────────
   # torch + sentence-transformers вынесены в [project.optional-dependencies]
