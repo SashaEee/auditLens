@@ -25,12 +25,15 @@ CREATE INDEX IF NOT EXISTS idx_lat_status ON loophole_agent_task(status);
 CREATE INDEX IF NOT EXISTS idx_lat_phase ON loophole_agent_task(phase);
 
 -- ── База знаний: примеры (few-shot / reference) ─────────────────────────────
+-- vector-колонки (embedding) добавляются УСЛОВНО — только если расширение
+-- pgvector включено (его ставит суперюзер). Без guard миграция падала бы на
+-- проде, где vector ещё не активен. КБ-фичи (few-shot / RAG) деградируют без
+-- эмбеддингов; чат-агент работает и без них.
 CREATE TABLE IF NOT EXISTS loophole_kb_example (
     example_id   BIGSERIAL,
     title        TEXT,
     description  TEXT,
     category     TEXT,
-    embedding    vector(1024),
     created_at   TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_lkbe_category ON loophole_kb_example(category);
@@ -40,10 +43,18 @@ CREATE TABLE IF NOT EXISTS loophole_kb_doc (
     doc_id       BIGSERIAL,
     source       TEXT,
     content      TEXT,
-    embedding    vector(1024),
     created_at   TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_lkbd_source ON loophole_kb_doc(source);
+
+-- Условное добавление embedding-колонок (+ ivfflat-индексы) при наличии pgvector.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+        ALTER TABLE loophole_kb_example ADD COLUMN IF NOT EXISTS embedding vector(1024);
+        ALTER TABLE loophole_kb_doc     ADD COLUMN IF NOT EXISTS embedding vector(1024);
+    END IF;
+END $$;
 
 -- ── Парсеры пользовательского кода (workspace-scoped) ──────────────────────
 CREATE TABLE IF NOT EXISTS loophole_parser (
