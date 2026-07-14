@@ -85,3 +85,5 @@ workspace/
 # Ad-hoc A/B, timing и диагностические харнессы (локальные, не часть продукта)
 ab_*.py
 diag_*.py
+
+.cursor/

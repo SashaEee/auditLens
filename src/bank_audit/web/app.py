@@ -950,6 +950,38 @@ def readyz():
         raise HTTPException(status_code=503, detail=f"db unavailable: {e}")
 
 
+# ── loophole module (mount router + static) ─────────────────────────────────
+from ..loophole.web import router as loophole_router  # noqa: E402
+app.include_router(loophole_router, prefix="/api/loophole")
+LOOPHOLE_STATIC_DIR = Path(__file__).resolve().parent.parent / "loophole" / "static"
+
+
+def _loophole_html_with_bust() -> str:
+    """Cache-bust для loophole.jsx — иначе Babel/браузер держат старый чат-UI."""
+    html_path = LOOPHOLE_STATIC_DIR / "loophole.html"
+    html = html_path.read_text(encoding="utf-8")
+    jsx_path = LOOPHOLE_STATIC_DIR / "loophole.jsx"
+    if jsx_path.exists():
+        v = int(jsx_path.stat().st_mtime)
+        html = html.replace(
+            'src="/static/loophole/loophole.jsx"',
+            f'src="/static/loophole/loophole.jsx?v={v}"',
+        )
+    return html
+
+
+@app.get("/static/loophole/loophole.html")
+def loophole_page():
+    return Response(
+        content=_loophole_html_with_bust(),
+        media_type="text/html; charset=utf-8",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
+# Более длинный префикс — до общего /static, иначе Starlette отдаёт 404 на loophole.html.
+app.mount("/static/loophole", StaticFiles(directory=LOOPHOLE_STATIC_DIR), name="loophole-static")
+
 # ── static (SPA) ─────────────────────────────────────────────────────────────
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
