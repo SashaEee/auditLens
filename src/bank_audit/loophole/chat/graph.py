@@ -154,9 +154,12 @@ async def stream_chat(
         session_key = f"loophole:{workspace_id}:{state.get('task_id', 'default')}"
         hook = AuditHook(session=session)
 
+        streamed_any = False
         async for event in bot.stream(prompt, session_key=session_key, hooks=[hook]):
             mapped = _map_event(event, hook)
             if mapped:
+                if mapped.get("event") == "token" and mapped.get("data"):
+                    streamed_any = True
                 yield mapped
 
         answer = hook.final_answer or ""
@@ -165,7 +168,10 @@ async def stream_chat(
         if records:
             yield {"event": "records", "data": records}
         yield {"event": "phase", "data": {"phase": "answer"}}
-        if answer:
+        # Полный ответ дошлём ТОЛЬКО если модель не стримила дельты. Иначе токен
+        # с полным текстом дублирует уже показанный поток (или плодит пустой
+        # пузырь при смене фазы) — это и был «(пустой ответ)».
+        if answer and not streamed_any:
             yield {"event": "token", "data": answer}
 
         # Сохраняем ответ.

@@ -36,6 +36,7 @@ function LoopholeApp() {
   const [phase, setPhase] = useState(null);                // текущая фаза
   const [subtasks, setSubtasks] = useState([]);            // [{title, status}]
   const [pendingQuestions, setPendingQuestions] = useState(null); // null | array
+  const [pendingQuery, setPendingQuery] = useState("");           // исходный запрос, вызвавший clarify
   const [answersByQ, setAnswersByQ] = useState({});        // {qid: {selected:[], other:""}}
   const [toolEvents, setToolEvents] = useState([]);        // badges tool_call/tool_result
 
@@ -216,6 +217,9 @@ function LoopholeApp() {
     const skipClarify = !!(opts && opts.skipClarify);
     const userMsg = overrideMessage != null ? overrideMessage : chatInput;
     if (!userMsg || !userMsg.trim() || !workspaceId) return;
+    // запоминаем ИСХОДНЫЙ запрос (не enriched) — из него build_enriched_question
+    // соберёт обогащённый вопрос после ответов на уточнения
+    if (!skipClarify) setPendingQuery(userMsg);
     setChat(prev => [...prev, {role: "user", content: userMsg}]);
     if (overrideMessage == null) setChatInput("");
     setChatLoading(true);
@@ -397,7 +401,9 @@ function LoopholeApp() {
     try {
       const r = await fetch(`${API}/clarify/answer`, {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({question: q.question, answers: answersPayload}),
+        // ИСХОДНЫЙ запрос пользователя (pendingQuery), НЕ текст уточняющего
+        // вопроса — иначе enriched строится из вопроса и агент ищет ерунду
+        body: JSON.stringify({question: pendingQuery || q.question, answers: answersPayload}),
       });
       const d = await r.json();
       const enriched = (d && d.enriched_question) || (typeof d === "string" ? d : "");
