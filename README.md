@@ -140,7 +140,7 @@ uvicorn bank_audit.web.app:app --host 127.0.0.1 --port 8000
 
 > 📖 **Не уверен в командах?** → [docs/SETUP.md](docs/SETUP.md) — пошаговый гайд с разделением по mac/Windows/Linux
 > 🔑 **Где взять API-ключ?** → [docs/API_KEYS.md](docs/API_KEYS.md)
-> ☁️ **Развернуть в Облаке УВА (Cloud.ru)?** → [docs/DEPLOY_UVA.md](docs/DEPLOY_UVA.md)
+> ☁️ **Развернуть в облаке Cloud.ru?** → [docs/DEPLOY_UVA.md](docs/DEPLOY_UVA.md)
 
 ---
 
@@ -316,7 +316,7 @@ auditlens/
 │   ├── API_KEYS.md                  ← где брать ключи
 │   ├── USAGE.md                     ← примеры вопросов
 │   ├── ARCHITECTURE.md              ← как устроена система
-│   ├── DEPLOY_UVA.md                ← развёртывание в Облаке УВА
+│   ├── DEPLOY_UVA.md                ← развёртывание в облаке
 │   ├── TROUBLESHOOTING.md           ← типовые проблемы
 │   └── img/                         ← скриншоты для README
 ├── migrations/                      ← SQL миграции (001–013 + ensure_vector)
@@ -344,7 +344,7 @@ auditlens/
 - [x] PDF export с графиками
 - [x] «Обзор» — ежедневный брифинг с детерминированным пульсом
 - [x] «Лазейки» — агент поиска схем обхода
-- [x] Развёртывание в Облаке УВА (Cloud.ru) + Foundation Models
+- [x] Развёртывание в облаке Cloud.ru + Foundation Models
 - [ ] Загрузка собственных PDF из UI
 - [ ] Excel-экспорт сравнительных таблиц
 - [ ] Snapshot-based diff («что изменилось в условиях по вкладам за месяц»)
