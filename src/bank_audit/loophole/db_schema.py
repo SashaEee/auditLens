@@ -12,8 +12,8 @@ from sqlalchemy import text
 
 from ..config import ROOT
 
-MIGRATION_PATH = ROOT / "migrations" / "010_loophole.sql"
-MIGRATION_011_PATH = ROOT / "migrations" / "011_loophole_agent.sql"
+MIGRATION_PATH = ROOT / "migrations" / "012_loophole.sql"
+MIGRATION_011_PATH = ROOT / "migrations" / "013_loophole_agent.sql"
 
 T_KEYWORD = "loophole_keyword"
 T_RECORD = "loophole_record"

@@ -5,7 +5,10 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const API = "/api/loophole";
 
 // Константы фаз пайплайна (без финальной "done" в progress-bar).
-const PHASES = ["clarify", "plan", "execute", "aggregate", "answer"];
+// Только фазы, которые РЕАЛЬНО шлёт nanobot-бэкенд (stream_chat): clarify →
+// execute → answer. Старые plan/aggregate остались от удалённого ReAct-графа и
+// висели в степпере как фантомные непройденные шаги.
+const PHASES = ["clarify", "execute", "answer"];
 
 function LoopholeApp() {
   // ── Таблица / фильтры ──────────────────────────────────────────────────────
@@ -36,6 +39,7 @@ function LoopholeApp() {
   const [phase, setPhase] = useState(null);                // текущая фаза
   const [subtasks, setSubtasks] = useState([]);            // [{title, status}]
   const [pendingQuestions, setPendingQuestions] = useState(null); // null | array
+  const [pendingQuery, setPendingQuery] = useState("");           // исходный запрос, вызвавший clarify
   const [answersByQ, setAnswersByQ] = useState({});        // {qid: {selected:[], other:""}}
   const [toolEvents, setToolEvents] = useState([]);        // badges tool_call/tool_result
 
@@ -212,9 +216,13 @@ function LoopholeApp() {
   };
 
   // ── Чат: отправка + полный SSE-парсер ──────────────────────────────────────
-  const sendChat = useCallback(async (overrideMessage) => {
+  const sendChat = useCallback(async (overrideMessage, opts) => {
+    const skipClarify = !!(opts && opts.skipClarify);
     const userMsg = overrideMessage != null ? overrideMessage : chatInput;
     if (!userMsg || !userMsg.trim() || !workspaceId) return;
+    // запоминаем ИСХОДНЫЙ запрос (не enriched) — из него build_enriched_question
+    // соберёт обогащённый вопрос после ответов на уточнения
+    if (!skipClarify) setPendingQuery(userMsg);
     setChat(prev => [...prev, {role: "user", content: userMsg}]);
     if (overrideMessage == null) setChatInput("");
     setChatLoading(true);
@@ -224,7 +232,7 @@ function LoopholeApp() {
     try {
       const resp = await fetch(`${API}/chat`, {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({workspace_id: workspaceId, message: userMsg, history: chat}),
+        body: JSON.stringify({workspace_id: workspaceId, message: userMsg, history: chat, skip_clarify: skipClarify}),
       });
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -353,16 +361,29 @@ function LoopholeApp() {
         }
       }
       flushAssistant();
-      if (!gotAnyToken && !assistantMsg && !gotQuestions) {
-        // только если вообще ничего не пришло — добавляем заглушку
-        setChat(prev => [...prev, {role: "assistant", content: "(пустой ответ)"}]);
+      if (!gotQuestions) {
+        // Заглушку показываем ТОЛЬКО если ассистент так и не добавил ни одного
+        // сообщения за этот ход (реально пустой ответ). Флаги gotAnyToken/
+        // assistantMsg здесь уже СБРОШЕНЫ внутри flushAssistant(), поэтому
+        // опираемся на фактическое состояние чата, иначе «(пустой ответ)»
+        // лепится после каждого нормального ответа.
+        setChat(prev => {
+          const last = prev[prev.length - 1];
+          if (!last || last.role !== "assistant") {
+            return [...prev, {role: "assistant", content: "(пустой ответ)"}];
+          }
+          return prev;
+        });
       }
     } catch (e) {
       setChat(prev => [...prev, {role: "assistant", content: "Ошибка: " + String(e)}]);
     } finally {
       setChatLoading(false);
+      // Подтягиваем в таблицу лазейки, которые агент сохранил за этот ход
+      // (audit_save_loophole пишет в loophole_record во время стрима).
+      loadRecords();
     }
-  }, [chatInput, workspaceId, chat]);
+  }, [chatInput, workspaceId, chat, loadRecords]);
 
   // ── Уточняющие вопросы: helpers ──────────────────────────────────────────
   const toggleAnswer = (qid, value, multi) => {
@@ -396,15 +417,18 @@ function LoopholeApp() {
     try {
       const r = await fetch(`${API}/clarify/answer`, {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({question: q.question, answers: answersPayload}),
+        // ИСХОДНЫЙ запрос пользователя (pendingQuery), НЕ текст уточняющего
+        // вопроса — иначе enriched строится из вопроса и агент ищет ерунду
+        body: JSON.stringify({question: pendingQuery || q.question, answers: answersPayload}),
       });
       const d = await r.json();
       const enriched = (d && d.enriched_question) || (typeof d === "string" ? d : "");
       setPendingQuestions(null);
       setAnswersByQ({});
       if (enriched) {
+        // clarify уже пройден → просим бэкенд пропустить гейт (не зацикливаться)
         // отправляем обогащённый вопрос как новое сообщение в чат
-        await sendChat(enriched);
+        await sendChat(enriched, {skipClarify: true});
       }
     } catch (e) {
       setChat(prev => [...prev, {role: "assistant", content: "Ошибка отправки ответа: " + String(e)}]);
@@ -429,8 +453,8 @@ function LoopholeApp() {
 
   const sortArrow = (key) => sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
 
-  // Фаза: индекс в PHASES для подсветки.
-  const phaseIdx = phase ? PHASES.indexOf(phase) : -1;
+  // Фаза: индекс в PHASES для подсветки. await_clarify показываем на шаге clarify.
+  const phaseIdx = phase === "await_clarify" ? 0 : (phase ? PHASES.indexOf(phase) : -1);
 
   return (
     <div className="lp-layout">

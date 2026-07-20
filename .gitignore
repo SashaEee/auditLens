@@ -87,3 +87,7 @@ ab_*.py
 diag_*.py
 
 .cursor/
+
+# отладочный мусор
+debug-*.log
+*TMP*.txt

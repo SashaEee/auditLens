@@ -125,20 +125,25 @@ async def stream_chat(
     workspace_id = state.get("workspace_id")
     query = state.get("query", "")
 
-    # Clarify.
-    yield {"event": "phase", "data": {"phase": "clarify"}}
-    clarification = await clarify_mod.generate_clarifications(
-        query, history=state.get("messages")
-    )
-    if not clarification.get("complete"):
-        yield {"event": "phase", "data": {"phase": "await_clarify"}}
-        for q in clarification.get("questions", []):
-            yield {"event": "question", "data": q}
-        return
-
-    enriched = await clarify_mod.build_enriched_question(
-        query, state.get("clarify_answers", [])
-    )
+    # Clarify — ТОЛЬКО на первом ходе. skip_clarify=True приходит с /chat после
+    # /clarify/answer (сообщение уже обогащено ответами) → пропускаем гейт и идём
+    # выполнять. Иначе generate_clarifications перезапускался бы на КАЖДЫЙ /chat,
+    # и агент зацикливался на уточнениях.
+    if state.get("skip_clarify"):
+        enriched = query
+    else:
+        yield {"event": "phase", "data": {"phase": "clarify"}}
+        clarification = await clarify_mod.generate_clarifications(
+            query, history=state.get("messages")
+        )
+        if not clarification.get("complete"):
+            yield {"event": "phase", "data": {"phase": "await_clarify"}}
+            for q in clarification.get("questions", []):
+                yield {"event": "question", "data": q}
+            return
+        enriched = await clarify_mod.build_enriched_question(
+            query, state.get("clarify_answers", [])
+        )
     state = {**state, "query": enriched}
 
     yield {"event": "phase", "data": {"phase": "execute"}}
@@ -149,9 +154,12 @@ async def stream_chat(
         session_key = f"loophole:{workspace_id}:{state.get('task_id', 'default')}"
         hook = AuditHook(session=session)
 
+        streamed_any = False
         async for event in bot.stream(prompt, session_key=session_key, hooks=[hook]):
             mapped = _map_event(event, hook)
             if mapped:
+                if mapped.get("event") == "token" and mapped.get("data"):
+                    streamed_any = True
                 yield mapped
 
         answer = hook.final_answer or ""
@@ -160,7 +168,10 @@ async def stream_chat(
         if records:
             yield {"event": "records", "data": records}
         yield {"event": "phase", "data": {"phase": "answer"}}
-        if answer:
+        # Полный ответ дошлём ТОЛЬКО если модель не стримила дельты. Иначе токен
+        # с полным текстом дублирует уже показанный поток (или плодит пустой
+        # пузырь при смене фазы) — это и был «(пустой ответ)».
+        if answer and not streamed_any:
             yield {"event": "token", "data": answer}
 
         # Сохраняем ответ.
@@ -188,28 +199,33 @@ def _map_event(event: Any, hook: AuditHook) -> dict | None:
 
     ev_type = getattr(event, "type", None)
     if ev_type == STREAM_EVENT_TEXT_DELTA:
-        return {"event": "token", "data": getattr(event, "content", "")}
+        # nanobot кладёт инкремент текста в event.delta, а НЕ в event.content
+        # (content остаётся ""). Иначе все дельты пустые → нет посимвольного
+        # стрима, ответ прилетает одним куском в конце.
+        return {"event": "token", "data": getattr(event, "delta", "") or ""}
     if ev_type == STREAM_EVENT_TOOL_STARTED:
+        # У StreamEvent nanobot имя инструмента в event.name, аргументы в
+        # event.arguments (ключа metadata.tool_name не существует → был null).
         return {
             "event": "tool_call",
             "data": {
-                "name": getattr(event, "metadata", {}).get("tool_name"),
-                "args": getattr(event, "metadata", {}).get("tool_args"),
+                "name": getattr(event, "name", None),
+                "args": getattr(event, "arguments", None),
             },
         }
     if ev_type == STREAM_EVENT_TOOL_COMPLETED:
         return {
             "event": "tool_result",
             "data": {
-                "name": getattr(event, "metadata", {}).get("tool_name"),
-                "result": getattr(event, "content", ""),
+                "name": getattr(event, "name", None),
+                "result": (getattr(event, "metadata", {}) or {}).get("detail", ""),
             },
         }
     if ev_type == STREAM_EVENT_TOOL_FAILED:
         return {
             "event": "tool_result",
             "data": {
-                "name": getattr(event, "metadata", {}).get("tool_name"),
+                "name": getattr(event, "name", None),
                 "error": getattr(event, "error", "tool failed"),
             },
         }

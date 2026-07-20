@@ -141,6 +141,10 @@ class ChatRequest(BaseModel):
     workspace_id: int
     message: str
     history: list[dict] = []
+    # true → уточнение уже пройдено (сообщение — обогащённый запрос после
+    # /clarify/answer). Пропускаем clarify-гейт и идём выполнять. Без этого
+    # /chat заново гонял бы generate_clarifications на КАЖДЫЙ вызов → петля.
+    skip_clarify: bool = False
 
 
 @router.post("/chat")
@@ -157,6 +161,7 @@ async def chat(
         "workspace_id": body.workspace_id,
         "user_id": user_id,
         "session": session,
+        "skip_clarify": body.skip_clarify,
     }
     # Сохраняем сообщение пользователя.
     repo.add_chat_message(body.workspace_id, "user", body.message, session=session)

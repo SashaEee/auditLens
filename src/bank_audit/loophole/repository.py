@@ -106,15 +106,15 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
             text(
                 f"INSERT INTO {schema.T_RECORD} "
                 "(sha256, title, url, snippet, domain, trust_score, bank_slug, keyword, "
-                "raw_text, status) "
-                "VALUES (:sha, :title, :url, :snip, :dom, :trust, :bank, :kw, :raw, :status) "
+                "raw_text, status, is_loophole) "
+                "VALUES (:sha, :title, :url, :snip, :dom, :trust, :bank, :kw, :raw, :status, :loop) "
                 "RETURNING record_id"
             ),
             {
                 "sha": rec.sha256, "title": rec.title, "url": rec.url,
                 "snip": rec.snippet, "dom": rec.domain, "trust": rec.trust_score,
                 "bank": rec.bank_slug, "kw": rec.keyword, "raw": rec.raw_text,
-                "status": rec.status,
+                "status": rec.status, "loop": rec.is_loophole,
             },
         ).scalar_one()
         return row
