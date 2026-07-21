@@ -357,34 +357,48 @@ def update_interests_from_query(username: str, question: str) -> dict:
     return signals
 
 
-def top_interests(username: str, k: int = 5) -> dict:
-    """Топ банков/продуктов по весу — для персон-дайджеста и профиля."""
-    user = get_user(username) or {}
-    interests = user.get("interests") or {}
-    if isinstance(interests, str):
-        import json
-        interests = json.loads(interests or "{}")
-    counters = interests.get("counters") or {}
-    out = {}
-    for dim in ("banks", "products"):
-        items = sorted((counters.get(dim) or {}).items(), key=lambda x: -x[1])
-        out[dim] = [name for name, _ in items[:k]]
-    out["pinned"] = interests.get("pinned") or []
-    out["muted"] = interests.get("muted") or []
-    return out
-
-
-def set_interest_overrides(username: str, pinned: list[str] | None = None,
-                           muted: list[str] | None = None) -> None:
+def _load_interests(username: str) -> dict:
     import json
     user = get_user(username) or {}
     interests = user.get("interests") or {}
     if isinstance(interests, str):
         interests = json.loads(interests or "{}")
+    return interests
+
+
+def top_interests(username: str, k: int = 6) -> dict:
+    """Профиль интересов: авто-темы (за вычетом заглушённых), закреплённые,
+    заглушённые, ручные (custom) — для персон-дайджеста и страницы профиля."""
+    interests = _load_interests(username)
+    counters = interests.get("counters") or {}
+    muted = set(interests.get("muted") or [])
+    out = {}
+    for dim in ("banks", "products"):
+        items = sorted((counters.get(dim) or {}).items(), key=lambda x: -x[1])
+        out[dim] = [name for name, _ in items[:k] if name not in muted]
+    out["pinned"] = interests.get("pinned") or []
+    out["muted"] = interests.get("muted") or []
+    out["custom"] = interests.get("custom") or []
+    return out
+
+
+def set_interest_overrides(username: str, pinned: list[str] | None = None,
+                           muted: list[str] | None = None,
+                           custom: list[str] | None = None) -> None:
+    import json
+    interests = _load_interests(username)
     if pinned is not None:
-        interests["pinned"] = pinned
+        interests["pinned"] = [x for x in pinned if x][:40]
     if muted is not None:
-        interests["muted"] = muted
+        interests["muted"] = [x for x in muted if x][:40]
+    if custom is not None:
+        # ручные темы: тримим, дедуп, ограничиваем
+        seen, out = set(), []
+        for x in custom:
+            t = str(x).strip()[:60]
+            if t and t.lower() not in seen:
+                seen.add(t.lower()); out.append(t)
+        interests["custom"] = out[:30]
     with db.session() as s:
         s.execute(text("UPDATE app_user SET interests = CAST(:i AS jsonb) WHERE username = :u"),
                   {"i": json.dumps(interests, ensure_ascii=False), "u": username})

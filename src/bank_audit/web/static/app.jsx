@@ -3849,9 +3849,9 @@ const NAV=[
 const PAGES_FN={overview:OverviewPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage,profile:ProfilePage};
 const PAGE_LABELS={overview:["01","Обзор"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"],profile:["·","Профиль"]};
 
-// ─── Профиль и персонализация (Фаза 2+4) ──────────────────────────────────────
+// ─── Профиль и персонализация (Фазы 2+4) ──────────────────────────────────────
 const PROFILE_CSS=`
-.pf-wrap{max-width:760px;}
+.pf-wrap{max-width:720px;}
 .pf-hero{display:flex;align-items:center;gap:18px;margin-bottom:26px;}
 .pf-avatar{width:60px;height:60px;flex:none;border-radius:16px;display:grid;place-items:center;
   font-size:22px;font-weight:600;color:var(--accent);background:var(--accent-soft);
@@ -3859,22 +3859,44 @@ const PROFILE_CSS=`
 .pf-hero h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:32px;line-height:1.05;letter-spacing:-.01em;color:var(--ink);margin:3px 0 4px;}
 .pf-sub{font-size:12px;color:var(--ink-3);}
 .pf-card{padding:22px 24px;margin-bottom:16px;}
-.pf-card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.pf-card-h{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;}
 .pf-mini{font-size:11.5px;color:var(--ink-3);border:1px solid var(--hair);border-radius:7px;padding:5px 11px;
-  transition:border-color .14s,color .14s,transform .1s;}
+  transition:border-color .14s,color .14s,transform .1s;white-space:nowrap;}
 .pf-mini:hover:not(:disabled){border-color:var(--ink-4);color:var(--ink);}
 .pf-mini:active:not(:disabled){transform:scale(.96);}
 .pf-mini:disabled{opacity:.55;cursor:default;}
-.pf-note{font-family:'Source Serif 4',serif;font-size:16.5px;line-height:1.55;color:var(--ink);text-wrap:pretty;
+.pf-hint{font-size:12.5px;line-height:1.5;color:var(--ink-3);margin-bottom:12px;max-width:64ch;text-wrap:pretty;}
+.pf-ta{width:100%;min-height:82px;resize:vertical;border:1px solid var(--hair);border-radius:10px;background:var(--surface);
+  color:var(--ink);font-size:13.5px;line-height:1.55;padding:12px 14px;font-family:'Geist','Inter',sans-serif;transition:border-color .14s;}
+.pf-ta:focus{outline:none;border-color:var(--accent);}
+.pf-ta::placeholder{color:var(--ink-4);}
+.pf-note{font-family:'Source Serif 4',serif;font-size:16px;line-height:1.55;color:var(--ink);text-wrap:pretty;
   padding-left:14px;border-left:2px solid var(--accent-soft);}
-.pf-note-empty{font-size:13.5px;line-height:1.55;color:var(--ink-3);text-wrap:pretty;max-width:60ch;}
-.pf-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;}
-.pf-chip{font-size:12px;padding:4px 11px;border-radius:8px;background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2);}
-.pf-chip-bank{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 82%);color:var(--accent);font-weight:500;}
+.pf-note-empty{font-size:13.5px;line-height:1.55;color:var(--ink-3);text-wrap:pretty;max-width:62ch;}
+.pf-src{font-size:10.5px;color:var(--ink-4);margin-top:12px;font-family:'JetBrains Mono',monospace;}
+.pf-topics{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.pf-topic{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;padding:5px 7px 5px 12px;border-radius:9px;
+  background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2);transition:border-color .14s,background .14s,color .14s;}
+.pf-topic.pinned{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 80%);color:var(--accent);font-weight:500;}
+.pf-tacts{display:inline-flex;gap:0;max-width:0;overflow:hidden;transition:max-width .18s ease;}
+.pf-topic:hover .pf-tacts,.pf-topic.pinned .pf-tacts{max-width:52px;}
+.pf-tacts button{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;color:currentColor;opacity:.65;transition:opacity .12s,background .12s;}
+.pf-tacts button:hover{opacity:1;background:color-mix(in oklab,currentColor,transparent 88%);}
+.pf-add input{border:1px dashed var(--hair-2);border-radius:9px;background:none;color:var(--ink);font-size:12.5px;
+  padding:5px 12px;width:140px;transition:border-color .16s,border-style .16s,width .2s;font-family:inherit;}
+.pf-add input:focus{outline:none;border-color:var(--accent);border-style:solid;width:220px;}
+.pf-add input::placeholder{color:var(--ink-4);}
+.pf-muted-h{font-size:11.5px;color:var(--ink-4);margin-top:18px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  font-family:'JetBrains Mono',monospace;transition:color .12s;}
+.pf-muted-h:hover{color:var(--ink-3);}
+.pf-muted-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}
+.pf-muted-chip{font-size:11.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--hair);color:var(--ink-4);
+  text-decoration:line-through;cursor:pointer;transition:color .12s,border-color .12s,text-decoration .12s;}
+.pf-muted-chip:hover{color:var(--ink-2);border-color:var(--ink-4);text-decoration:none;}
 .pf-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 0;border-bottom:1px solid var(--hair);}
 .pf-row:last-of-type{border-bottom:0;}
 .pf-row-t{font-size:13.5px;color:var(--ink);}
-.pf-row-d{font-size:12px;color:var(--ink-3);margin-top:2px;max-width:42ch;}
+.pf-row-d{font-size:12px;color:var(--ink-3);margin-top:2px;max-width:44ch;}
 .pf-input{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
   font-size:13px;padding:8px 11px;font-family:'JetBrains Mono',monospace;min-width:170px;transition:border-color .14s;}
 .pf-input:focus{outline:none;border-color:var(--accent);}
@@ -3884,7 +3906,8 @@ const PROFILE_CSS=`
 .pf-toggle span{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--surface);
   box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.2,0,0,1);}
 .pf-toggle.on span{transform:translateX(18px);}
-.pf-actions{display:flex;justify-content:flex-end;margin-top:18px;}
+.pf-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;}
+.pf-saved{font-size:12px;color:var(--pos);font-family:'JetBrains Mono',monospace;}
 .pf-save{font-size:13px;color:#fff;background:var(--accent);border-radius:9px;padding:9px 20px;font-weight:500;
   transition:transform .1s,filter .14s;}
 .pf-save:hover{filter:brightness(1.05);}
@@ -3892,36 +3915,70 @@ const PROFILE_CSS=`
 `;
 const BANK_RU={sberbank:"Сбербанк",vtb:"ВТБ",alfabank:"Альфа-Банк",tinkoff:"Т-Банк",gazprombank:"Газпромбанк",rshb:"Россельхозбанк",domrf:"Банк ДОМ.РФ",psb:"ПСБ",sovcombank:"Совкомбанк",mtsbank:"МТС-Банк",raiffeisen:"Райффайзен",otkritie:"Открытие"};
 const PROD_RU={ipoteka:"Ипотека",deposit:"Вклады",credit_card:"Кредитные карты",debit_card:"Дебетовые карты",consumer_loan:"Потребкредиты",auto:"Автокредиты",rko:"РКО",savings:"Накопит. счета",acquiring:"Эквайринг",premium:"Премиальные пакеты",transfers:"Переводы и комиссии"};
+const topicLabel=(t)=>BANK_RU[t]||PROD_RU[t]||t;
+
+const IcPinSm=()=><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l2 3.2H7z"/></svg>;
+const IcMuteSm=()=><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>;
 
 function ProfilePage(){
   const me=useMe();
   const[data,setData]=useState(null);
+  const[selfDesc,setSelfDesc]=useState("");
+  const[interests,setInterests]=useState({banks:[],products:[],pinned:[],muted:[],custom:[]});
   const[tz,setTz]=useState("");
   const[personalDigest,setPersonalDigest]=useState(true);
   const[morningHour,setMorningHour]=useState(7);
+  const[newTopic,setNewTopic]=useState("");
+  const[showMuted,setShowMuted]=useState(false);
   const[busy,setBusy]=useState(false);
-  const[saved,setSaved]=useState(false);
+  const[savedDesc,setSavedDesc]=useState(false);
+  const[savedSet,setSavedSet]=useState(false);
+
+  const applyMe=(d)=>{ setData(d); const p=d.prefs||{};
+    setSelfDesc(p.self_description||""); setTz(d.timezone||"");
+    setPersonalDigest(p.personal_digest!==false); setMorningHour(p.morning_hour||7);
+    setInterests(d.interests||{banks:[],products:[],pinned:[],muted:[],custom:[]}); };
   useEffect(()=>{
-    apiFetch("/api/me").then(d=>{ setData(d); setTz(d.timezone||"");
-      const p=d.prefs||{}; setPersonalDigest(p.personal_digest!==false); setMorningHour(p.morning_hour||7);
-    }).catch(()=>{});
+    apiFetch("/api/me").then(applyMe).catch(()=>{});
+    // визит на профиль = онбординг пройден
+    apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});
   },[]);
+
+  const saveInterests=async(patch)=>{
+    const next={...interests,...patch}; setInterests(next);
+    try{ const r=await apiPut("/api/me/interests",{pinned:next.pinned,muted:next.muted,custom:next.custom});
+      if(r&&r.interests) setInterests(r.interests); }catch{}
+  };
+  const isPinned=(t)=>(interests.pinned||[]).includes(t);
+  const togglePin=(t)=>saveInterests({pinned:isPinned(t)?interests.pinned.filter(x=>x!==t):[...(interests.pinned||[]),t]});
+  const mute=(t)=>saveInterests({muted:[...new Set([...(interests.muted||[]),t])],
+                                 pinned:(interests.pinned||[]).filter(x=>x!==t),
+                                 custom:(interests.custom||[]).filter(x=>x!==t)});
+  const unmute=(t)=>saveInterests({muted:(interests.muted||[]).filter(x=>x!==t)});
+  const addCustom=()=>{ const t=newTopic.trim(); if(!t)return; setNewTopic("");
+    saveInterests({custom:[...new Set([...(interests.custom||[]),t])]}); };
+
   const refreshNote=async()=>{ setBusy(true);
     try{ const r=await apiPost("/api/me/profile/refresh",{}); if(r&&r.note) setData(d=>({...d,profile_note:r.note})); }catch{}
     setBusy(false); };
+  const saveDesc=async()=>{
+    try{ await apiPut("/api/me",{prefs:{self_description:selfDesc.trim()}}); }catch{}
+    setSavedDesc(true); setTimeout(()=>setSavedDesc(false),1800); };
   const saveSettings=async()=>{
     try{ await apiPut("/api/me",{timezone:tz.trim()||"Europe/Moscow",
       prefs:{personal_digest:personalDigest,morning_hour:Number(morningHour)||7}}); }catch{}
-    setSaved(true); setTimeout(()=>setSaved(false),1800);
-  };
+    setSavedSet(true); setTimeout(()=>setSavedSet(false),1800); };
+
   if(!data) return <LoadingPage/>;
-  const banks=(data.interests&&data.interests.banks)||[];
-  const products=(data.interests&&data.interests.products)||[];
-  const hasInterests=banks.length||products.length;
+  const autoTopics=[...(interests.banks||[]),...(interests.products||[])];
+  const customTopics=interests.custom||[];
+  const muted=interests.muted||[];
+  const hasTopics=autoTopics.length||customTopics.length;
+
   return <div className="fade-in pf-wrap">
     <style>{PROFILE_CSS}</style>
     <div className="pf-hero">
-      <div className="pf-avatar">{initials(me?.name||data.name)}</div>
+      <div className="pf-avatar">{initials(me&&me.name||data.name)}</div>
       <div>
         <div className="eyebrow">§ Профиль · персонализация</div>
         <h1>{data.name||(me&&me.name)||"Аудитор"}</h1>
@@ -3929,24 +3986,63 @@ function ProfilePage(){
       </div>
     </div>
 
+    {/* Ручное описание — приоритетный источник персонализации */}
+    <div className="surface pf-card">
+      <div className="eyebrow" style={{marginBottom:8}}>Чем вы занимаетесь</div>
+      <p className="pf-hint">Опишите своими словами, какие процессы, продукты и риски вы проверяете. Это <b>главный</b> источник — по нему система настраивает подачу, персональные сводки и приоритет новостей.</p>
+      <textarea className="pf-ta" value={selfDesc} onChange={e=>setSelfDesc(e.target.value)}
+        placeholder="Например: проверяю корректность начисления процентов по вкладам и комиссии по эквайрингу для ИП; слежу за ипотечными программами Сбера и ВТБ и жалобами по кредитным картам."/>
+      <div className="pf-actions">
+        {savedDesc&&<span className="pf-saved">Сохранено ✓</span>}
+        <button className="pf-save" onClick={saveDesc}>Сохранить описание</button>
+      </div>
+    </div>
+
+    {/* Темы в фокусе — управление вручную */}
+    <div className="surface pf-card">
+      <div className="eyebrow" style={{marginBottom:6}}>Темы в фокусе</div>
+      <p className="pf-hint">Что учитывать в персонализации. Система добавляет темы автоматически по запросам — вы можете <b>закрепить</b> важное, <b>заглушить</b> лишнее и добавить своё.</p>
+      {hasTopics
+        ? <div className="pf-topics">
+            {customTopics.map(t=>(
+              <span key={"c"+t} className="pf-topic pinned">{t}
+                <span className="pf-tacts"><button onClick={()=>mute(t)} title="Убрать"><IcMuteSm/></button></span>
+              </span>))}
+            {autoTopics.map(t=>{ const p=isPinned(t);
+              return <span key={t} className={"pf-topic"+(p?" pinned":"")}>{topicLabel(t)}
+                <span className="pf-tacts">
+                  <button onClick={()=>togglePin(t)} title={p?"Открепить":"Закрепить"}><IcPinSm/></button>
+                  <button onClick={()=>mute(t)} title="Заглушить"><IcMuteSm/></button>
+                </span>
+              </span>;})}
+            <span className="pf-add"><input value={newTopic} onChange={e=>setNewTopic(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter")addCustom();}} placeholder="+ добавить тему"/></span>
+          </div>
+        : <div className="pf-topics"><span className="pf-add"><input value={newTopic} onChange={e=>setNewTopic(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter")addCustom();}} placeholder="+ добавить тему"/></span>
+            <span className="t-cap" style={{color:"var(--ink-4)"}}>авто-темы появятся после нескольких запросов</span></div>}
+      {muted.length>0 && <>
+        <div className="pf-muted-h" onClick={()=>setShowMuted(v=>!v)}>{showMuted?"▾":"▸"} Заглушённые · {muted.length}</div>
+        {showMuted && <div className="pf-muted-list">
+          {muted.map(t=><span key={t} className="pf-muted-chip" onClick={()=>unmute(t)} title="Вернуть">{topicLabel(t)}</span>)}
+        </div>}
+      </>}
+    </div>
+
+    {/* Авто-нарратив — как система видит */}
     <div className="surface pf-card">
       <div className="pf-card-h">
-        <div className="eyebrow">Профиль интересов</div>
+        <div className="eyebrow">Как вас видит система</div>
         <button className="pf-mini" onClick={refreshNote} disabled={busy}>{busy?"Собираю…":"Обновить"}</button>
       </div>
       {data.profile_note
-        ? <p className="pf-note">{data.profile_note}</p>
-        : <p className="pf-note-empty">Профиль соберётся <b>автоматически</b> по мере ваших запросов к ИИ-аналитику — система сама поймёт, какие банки и продукты у вас в фокусе, и опишет это здесь. Задайте несколько вопросов и нажмите «Обновить».</p>}
-      {hasInterests
-        ? <div className="pf-chips">
-            {banks.map(b=><span key={b} className="pf-chip pf-chip-bank">{BANK_RU[b]||b}</span>)}
-            {products.map(p=><span key={p} className="pf-chip">{PROD_RU[p]||p}</span>)}
-          </div>
-        : <div className="t-cap" style={{marginTop:12,color:"var(--ink-4)"}}>Интересы появятся после нескольких запросов.</div>}
+        ? <><p className="pf-note">{data.profile_note}</p><div className="pf-src">сформировано автоматически по вашим запросам и описанию</div></>
+        : <p className="pf-note-empty">Здесь появится краткий портрет ваших интересов — система соберёт его автоматически после нескольких запросов или из вашего описания выше. Нажмите «Обновить».</p>}
     </div>
 
+    {/* Настройки */}
     <div className="surface pf-card">
-      <div className="eyebrow" style={{marginBottom:6}}>Настройки персонализации</div>
+      <div className="eyebrow" style={{marginBottom:6}}>Настройки</div>
       <div className="pf-row">
         <div><div className="pf-row-t">Часовой пояс</div><div className="pf-row-d">Приветствие и «утро» вашей главной подстраиваются под него</div></div>
         <input className="pf-input" value={tz} onChange={e=>setTz(e.target.value)} placeholder="Europe/Moscow"/>
@@ -3960,7 +4056,8 @@ function ProfilePage(){
         <input className="pf-input pf-input-sm" type="number" min="0" max="12" value={morningHour} onChange={e=>setMorningHour(e.target.value)}/>
       </div>
       <div className="pf-actions">
-        <button className="pf-save" onClick={saveSettings}>{saved?"Сохранено ✓":"Сохранить"}</button>
+        {savedSet&&<span className="pf-saved">Сохранено ✓</span>}
+        <button className="pf-save" onClick={saveSettings}>Сохранить</button>
       </div>
     </div>
   </div>;
@@ -3975,6 +4072,7 @@ function Shell(){
   const[hasCaptcha,setHasCaptcha]=useState(false);
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
+  const[onbSeen,setOnbSeen]=useState(false);
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Load banks for context + sidebar badges
@@ -4004,7 +4102,21 @@ function Shell(){
 
   return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
     <div id="app">
-      <style>{`.user-chip:hover{background:var(--surface);} .user-chip.active{background:var(--accent-soft);} .user-chip.active .nm{color:var(--accent);}`}</style>
+      <style>{`.user-chip:hover{background:var(--surface);} .user-chip.active{background:var(--accent-soft);} .user-chip.active .nm{color:var(--accent);}
+        @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
+        .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
+        .rail-foot{position:relative;}
+        .onb-callout{position:absolute;left:6px;right:6px;bottom:64px;z-index:60;background:var(--surface);
+          border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:fade-in .3s ease-out;}
+        .onb-callout .t{font-size:12.5px;color:var(--ink);line-height:1.5;margin-bottom:11px;text-wrap:pretty;}
+        .onb-callout .t b{color:var(--accent);font-weight:600;}
+        .onb-callout .b{display:flex;gap:8px;}
+        .onb-callout button{font-size:11.5px;padding:6px 12px;border-radius:8px;transition:transform .1s,filter .12s;}
+        .onb-callout button:active{transform:scale(.96);}
+        .onb-callout .go{background:var(--accent);color:#fff;font-weight:500;}
+        .onb-callout .skip{color:var(--ink-3);border:1px solid var(--hair);}
+        .onb-callout::after{content:"";position:absolute;left:26px;bottom:-6px;width:11px;height:11px;background:var(--surface);
+          border-right:1px solid var(--hair);border-bottom:1px solid var(--hair);transform:rotate(45deg);}`}</style>
       <aside className={"rail"+(navOpen?" open":"")}>
         <div className="rail-brand">
           <svg className="rail-mark" viewBox="0 0 100 100" role="img" aria-label="AuditLens">
@@ -4036,8 +4148,16 @@ function Shell(){
           </div>
         ))}
         <div className="rail-foot">
-          <button className={"user-chip"+(page==="profile"?" active":"")} title="Профиль и персонализация"
-                  onClick={()=>{setPage("profile");setNavOpen(false);}}
+          {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile";
+            return showOnb ? <div className="onb-callout">
+              <div className="t">✦ <b>Новое:</b> настройте инструмент под себя — опишите, что проверяете, и получайте персональную подачу и сводки.</div>
+              <div className="b">
+                <button className="go" onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}>Настроить</button>
+                <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
+              </div>
+            </div> : null; })()}
+          <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title="Профиль и персонализация"
+                  onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}
                   style={{width:"100%",textAlign:"left",transition:"background .14s"}}>
             <div className="avatar">{me?initials(me.name):"А"}</div>
             <div>

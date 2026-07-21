@@ -88,6 +88,7 @@ class MeUpdate(BaseModel):
 class InterestsUpdate(BaseModel):
     pinned: Optional[list] = None
     muted: Optional[list] = None
+    custom: Optional[list] = None
 
 class RenameReq(BaseModel):
     title: str
@@ -133,8 +134,9 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
 
 @app.put("/api/me/interests")
 def put_interests(body: InterestsUpdate, user: CurrentUser = Depends(get_current_user)):
-    userdata.set_interest_overrides(user.username, pinned=body.pinned, muted=body.muted)
-    return {"ok": True}
+    userdata.set_interest_overrides(user.username, pinned=body.pinned,
+                                    muted=body.muted, custom=body.custom)
+    return {"ok": True, "interests": userdata.top_interests(user.username)}
 
 
 @app.post("/api/me/profile/refresh")

@@ -34,17 +34,32 @@ def _client() -> AsyncOpenAI:
 
 
 async def generate_profile_note(username: str) -> str | None:
-    """Генерирует и сохраняет нарратив профиля. None если данных мало / сбой."""
+    """Генерирует и сохраняет нарратив профиля по запросам + ручному описанию.
+
+    None если данных совсем мало (нет ни запросов, ни ручного описания) / сбой.
+    """
     queries = userdata.recent_queries(username, 25)
-    if len(queries) < 3:
-        return None
     top = userdata.top_interests(username)
-    user_msg = (
-        "Недавние запросы аудитора:\n"
-        + "\n".join(f"- {q}" for q in queries[:25])
-        + f"\n\nЧаще всего в запросах — банки: {', '.join(top.get('banks') or []) or '—'}"
-        + f"\nПродукты: {', '.join(top.get('products') or []) or '—'}"
+    user = userdata.get_user(username) or {}
+    prefs = user.get("prefs") or {}
+    if isinstance(prefs, str):
+        import json
+        prefs = json.loads(prefs or "{}")
+    self_desc = (prefs.get("self_description") or "").strip()
+    # Нужны хоть какие-то данные: ≥3 запроса ИЛИ ручное описание.
+    if len(queries) < 3 and not self_desc:
+        return None
+    parts = []
+    if self_desc:
+        parts.append("Аудитор сам описал свою работу (это ПРИОРИТЕТ):\n" + self_desc)
+    if queries:
+        parts.append("Недавние запросы:\n" + "\n".join(f"- {q}" for q in queries[:25]))
+    parts.append(
+        f"Частые банки: {', '.join(top.get('banks') or []) or '—'}\n"
+        f"Продукты: {', '.join(top.get('products') or []) or '—'}\n"
+        f"Закреплено вручную: {', '.join((top.get('pinned') or [])+(top.get('custom') or [])) or '—'}"
     )
+    user_msg = "\n\n".join(parts)
     try:
         r = await _client().chat.completions.create(
             model=insight_model(),
