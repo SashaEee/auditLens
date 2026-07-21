@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, Query, BackgroundTasks, HTTPException, Depends
+from fastapi import FastAPI, Query, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +23,7 @@ from ..rag.indexer import ingest_document_from_url
 from ..rag.url_discovery import bootstrap_bank_profile, TOP_BANK_SITES
 from ..rag.crawler import crawl_one_bank, crawl_all_profiles
 from .auth import CurrentUser, get_current_user
-from . import userdata
+from . import telemetry, userdata
 
 STATIC_DIR = Path(__file__).parent / "static"
 settings = Settings.load()
@@ -66,6 +66,33 @@ if _cors_env:
     _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
     app.add_middleware(CORSMiddleware, allow_origins=_cors_origins,
                        allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def _telemetry_mw(request: Request, call_next):
+    """Телеметрия API: латентность/статус каждого /api-запроса + исключения.
+    Запись — fire-and-forget в отдельном треде, основной запрос не тормозим."""
+    path = request.url.path
+    if not path.startswith("/api/") or path == "/api/track":
+        return await call_next(request)
+    import time as _t
+    t0 = _t.perf_counter()
+    username = request.headers.get("X-Authentik-Username") or None
+    try:
+        resp = await call_next(request)
+    except Exception as e:
+        dur = int((_t.perf_counter() - t0) * 1000)
+        asyncio.get_running_loop().create_task(asyncio.to_thread(
+            telemetry.log_event, username, "api_error", telemetry.norm_path(path),
+            dur, 500, {"error": f"{type(e).__name__}: {str(e)[:200]}",
+                       "method": request.method}))
+        raise
+    dur = int((_t.perf_counter() - t0) * 1000)
+    kind = "api_error" if resp.status_code >= 500 else "api_request"
+    asyncio.get_running_loop().create_task(asyncio.to_thread(
+        telemetry.log_event, username, kind, telemetry.norm_path(path),
+        dur, resp.status_code, None))
+    return resp
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -125,6 +152,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "profile_note": row.get("profile_note"),
         "profile_note_at": row.get("profile_note_at"),
         "personalization": userdata.personalization_score(user.username),
+        "is_admin": telemetry.is_admin(user.username),
         "authenticated": user.authenticated,
     }
 
@@ -225,6 +253,27 @@ def get_feedback(kind: str, user: CurrentUser = Depends(get_current_user)):
 def quality_ai_feedback(user: CurrentUser = Depends(get_current_user)):
     """Пульс оценок ИИ-ответов для «Качества» (контур владельца)."""
     return userdata.ai_feedback_stats()
+
+
+# ── телеметрия и дашборд «Пульс» (только владелец, env ADMIN_USERS) ───────────
+
+class TrackIn(BaseModel):
+    events: list[dict] = []
+
+
+@app.post("/api/track")
+def track_events(body: TrackIn, user: CurrentUser = Depends(get_current_user)):
+    """Батч клиентских событий (page_view/page_leave/client_error). Best-effort."""
+    n = telemetry.track_batch(user.username, body.events)
+    return {"ok": True, "accepted": n}
+
+
+@app.get("/api/admin/metrics")
+def admin_metrics(days: int = 14, user: CurrentUser = Depends(get_current_user)):
+    """Метрики «Пульса»: аудитория + продукт + техника одним ответом."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    return telemetry.metrics(days)
 
 
 @app.get("/api/overview/foryou")

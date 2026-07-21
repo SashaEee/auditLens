@@ -4517,6 +4517,245 @@ function LoopholePage(){
 }
 
 // ─── SHELL ────────────────────────────────────────────────────────────────────
+// ─── «Пульс» — дашборд владельца: аудитория + продукт + техника в одном ───────
+const AD_CSS=`
+.ad-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 22px;}
+.ad-tile{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px 12px;}
+.ad-tile .l{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-4);margin-bottom:7px;display:flex;align-items:center;gap:6px;}
+.ad-tile .v{font-family:'Source Serif 4',Georgia,serif;font-size:27px;line-height:1;}
+.ad-tile .s{font-size:10.5px;color:var(--ink-4);margin-top:5px;font-family:'JetBrains Mono',monospace;}
+.ad-tile.neg .v{color:var(--neg);}
+.ad-live{width:6px;height:6px;border-radius:50%;background:var(--pos);animation:pulse 1.8s ease infinite;}
+.ad-sec{margin-top:24px;}
+.ad-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
+@media(max-width:1000px){.ad-grid2{grid-template-columns:1fr;}}
+.ad-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;}
+.ad-card .h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;}
+.ad-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px;}
+.ad-bar-row .lb{width:110px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ad-bar-row .tr{flex:1;height:16px;background:var(--paper-2);border-radius:4px;overflow:hidden;}
+.ad-bar-row .fl{height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
+  transition:width .5s ease;}
+.ad-bar-row .vv{width:100px;flex:none;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);}
+.ad-kv{display:flex;justify-content:space-between;align-items:baseline;padding:7px 2px;border-top:1px solid var(--hair);font-size:12.5px;}
+.ad-kv:first-of-type{border-top:0;}
+.ad-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;}
+.ad-heat{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:12px;}
+.ad-heat .hl{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--ink-4);align-self:center;}
+.ad-heat .c{aspect-ratio:1;border-radius:2.5px;background:var(--paper-2);min-width:0;}
+.ad-tbl{width:100%;font-size:11.5px;border-collapse:collapse;}
+.ad-tbl th{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-4);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;}
+.ad-tbl th:first-child{text-align:left;}
+.ad-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;text-align:right;color:var(--ink-2);}
+.ad-tbl td:first-child{text-align:left;color:var(--ink);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ad-tbl tr:last-child td{border-bottom:0;}
+.ad-err{display:flex;gap:9px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
+.ad-err:first-of-type{border-top:0;}
+.ad-err .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
+.ad-err .k{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--neg);flex:none;text-transform:uppercase;}
+.ad-err .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
+.ad-feed-row{display:flex;gap:9px;align-items:center;padding:5px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
+.ad-feed-row:first-of-type{border-top:0;}
+.ad-feed-row .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;width:34px;}
+.ad-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+  display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
+.ad-feed-row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
+.ad-chip{font-family:'JetBrains Mono',monospace;font-size:9.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);}
+.ad-chip.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
+.ad-chip.bad{color:var(--neg);border-color:color-mix(in oklab,var(--neg),transparent 70%);}
+`;
+const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
+  ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Лазейки",banks:"Банки",sources:"Источники",
+  quality:"Качество",profile:"Профиль",pulse:"Пульс"};
+const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
+  if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1)+"ч"; };
+
+// area-график: users (заливка) + views (тонкая линия), даты по оси
+function AdArea({data,h=130}){
+  const w=640, vals=(data||[]);
+  if(vals.length<2) return <div style={{color:"var(--ink-4)",fontSize:12,padding:"20px 0"}}>Данные накапливаются — график появится после пары дней жизни телеметрии.</div>;
+  const maxU=Math.max(...vals.map(v=>v.users||0),1);
+  const maxV=Math.max(...vals.map(v=>v.views||0),1);
+  const px=(i)=>i/(vals.length-1)*(w-8)+4;
+  const pyU=(v)=>h-16-((v||0)/maxU)*(h-34);
+  const pyV=(v)=>h-16-((v||0)/maxV)*(h-34);
+  const dU=vals.map((v,i)=>(i?"L":"M")+px(i).toFixed(1)+","+pyU(v.users).toFixed(1)).join("");
+  const dV=vals.map((v,i)=>(i?"L":"M")+px(i).toFixed(1)+","+pyV(v.views).toFixed(1)).join("");
+  const last=vals[vals.length-1];
+  const dd=(s)=>(s||"").slice(8,10)+"."+(s||"").slice(5,7);
+  return <svg width="100%" viewBox={"0 0 "+w+" "+h} style={{display:"block"}}>
+    <path d={dU+"L"+(w-4)+","+(h-14)+"L4,"+(h-14)+"Z"} fill="var(--accent-soft)" opacity=".6"/>
+    <path d={dV} fill="none" stroke="var(--ink-4)" strokeWidth="1" opacity=".55" strokeDasharray="3 3"/>
+    <path d={dU} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round"/>
+    <circle cx={px(vals.length-1)} cy={pyU(last.users)} r="2.6" fill="var(--accent)"/>
+    <text x="4" y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono">{dd(vals[0].d)}</text>
+    <text x={w-4} y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">{dd(last.d)}</text>
+    <text x={w-4} y="10" fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">макс {maxU} польз. · {maxV} просм.</text>
+  </svg>;
+}
+
+function AdHeat({cells}){
+  const map={}; let max=1;
+  (cells||[]).forEach(c=>{ map[c.dow+"-"+c.hour]=c.n; if(c.n>max)max=c.n; });
+  const days=["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+  const out=[];
+  days.forEach((dl,di)=>{
+    out.push(<span key={"l"+di} className="hl">{dl}</span>);
+    for(let hh=0;hh<24;hh++){
+      const n=map[(di+1)+"-"+hh]||0;
+      out.push(<span key={di+"-"+hh} className="c" title={dl+" "+hh+":00 · "+n+" событий"}
+        style={n?{background:"color-mix(in oklab,var(--accent),var(--paper-2) "+Math.round(88-(n/max)*78)+"%)"}:null}/>);
+    }
+  });
+  return <div className="ad-heat">{out}</div>;
+}
+
+function PulsePage(){
+  const me=useMe();
+  const[days,setDays]=useState(14);
+  const[m,setM]=useState(null);
+  const[err,setErr]=useState(false);
+  const[ts,setTs]=useState(null);
+  const load=useCallback(()=>{
+    apiFetch("/api/admin/metrics?days="+days)
+      .then(d=>{setM(d);setErr(false);setTs(new Date());})
+      .catch(()=>setErr(true));
+  },[days]);
+  useEffect(()=>{ load(); const t=setInterval(load,60000); return ()=>clearInterval(t); },[load]);
+
+  if(me&&!me.is_admin) return <div className="fade-in"><ErrState msg="Раздел доступен только владельцу инструмента."/></div>;
+  if(err) return <div className="fade-in"><ErrState msg="Не удалось загрузить метрики."/></div>;
+  if(!m) return <LoadingPage/>;
+
+  const t=m.today||{}, f=m.features||{};
+  const maxPage=Math.max(...(m.pages||[]).map(x=>x.views||0),1);
+  const nErr=(m.errors_recent||[]).length;
+  const tokSum=(m.tokens||[]).reduce((a,x)=>a+(+x.tin||0)+(+x.tout||0),0);
+  return <div className="fade-in">
+    <style>{AD_CSS}</style>
+    <header style={{marginBottom:4}}>
+      <div className="eyebrow-row">
+        <div className="eyebrow">Пульс инструмента · доступ: владелец · <span style={{color:"var(--accent)"}}>автообновление 60с</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          {ts&&<span className="bf-stamp">{ts.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>}
+          <div className="seg">{[7,14,30].map(d=><button key={d} className={"seg-btn"+(days===d?" on":"")}
+            onClick={()=>setDays(d)}>{d} дн</button>)}</div>
+        </div>
+      </div>
+      <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:6}}>Как <em style={{fontStyle:"italic",color:"var(--accent)"}}>живёт</em> AuditLens</h1>
+      <p className="lede">Маркетинг и техника в одном экране: аудитория, вовлечённость, фичи, ошибки, латентность.</p>
+    </header>
+
+    {/* ① сегодня */}
+    <div className="ad-tiles">
+      <div className="ad-tile"><div className="l"><span className="ad-live"/>Онлайн сейчас</div>
+        <div className="v tnum">{t.online||0}</div><div className="s">за 15 минут</div></div>
+      <div className="ad-tile"><div className="l">Активных сегодня</div>
+        <div className="v tnum">{t.active||0}</div><div className="s">из {t.users_total||0} всего</div></div>
+      <div className="ad-tile"><div className="l">Просмотров сегодня</div>
+        <div className="v tnum">{t.views||0}</div><div className="s">страниц</div></div>
+      <div className="ad-tile"><div className="l">ИИ-запросов сегодня</div>
+        <div className="v tnum">{t.ai||0}</div><div className="s">quick + deep</div></div>
+      <div className={"ad-tile"+(t.errors>0?" neg":"")}><div className="l">Ошибок сегодня</div>
+        <div className="v tnum">{t.errors||0}</div><div className="s">{t.errors>0?"см. раздел техники ↓":"чисто ✓"}</div></div>
+    </div>
+
+    {/* ② аудитория */}
+    <div className="ad-card">
+      <div className="h"><span>Аудитория · уникальные в день</span>
+        <span>— пользователи · ‥ просмотры · новых за период: {(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0)}</span></div>
+      <AdArea data={m.dau}/>
+    </div>
+
+    {/* ③ вовлечённость + фичи */}
+    <div className="ad-grid2">
+      <div className="ad-card">
+        <div className="h"><span>Страницы · {m.days} дн</span><span>просмотры · время</span></div>
+        {(m.pages||[]).length===0&&<div style={{color:"var(--ink-4)",fontSize:12}}>Пока пусто.</div>}
+        {(m.pages||[]).map(pg=><div key={pg.page} className="ad-bar-row">
+          <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
+          <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxPage)*100)+"%"}}/></span>
+          <span className="vv tnum">{pg.views} · {adFmtS(pg.total_s)}</span>
+        </div>)}
+      </div>
+      <div className="ad-card">
+        <div className="h"><span>Функции · {m.days} дн</span></div>
+        <div className="ad-kv"><span>ИИ-запросы</span><b className="tnum">{f.ai_total||0}</b></div>
+        <div className="ad-kv"><span>Аудит-отчёты создано</span><b className="tnum">{f.reports||0}</b></div>
+        <div className="ad-kv"><span>Шеринги отчётов</span><b className="tnum">{f.shares||0}</b></div>
+        <div className="ad-kv"><span>Оценки контента 👍/👎</span>
+          <b className="tnum"><span style={{color:"var(--pos)"}}>{f.fb_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.fb_dislikes||0}</span></b></div>
+        <div className="ad-kv"><span>Оценки ответов ИИ 👍/👎</span>
+          <b className="tnum"><span style={{color:"var(--pos)"}}>{f.ai_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.ai_dislikes||0}</span></b></div>
+        <div className="ad-kv"><span>Профилей заполнено</span><b className="tnum">{f.profiles||0} из {t.users_total||0}</b></div>
+      </div>
+    </div>
+
+    {/* ④ тепловая карта */}
+    <div className="ad-card ad-sec">
+      <div className="h"><span>Когда пользуются · час × день недели (МСК)</span><span>{m.days} дн</span></div>
+      <AdHeat cells={m.heatmap}/>
+    </div>
+
+    {/* ⑤ техника */}
+    <div className="ad-grid2 ad-sec">
+      <div className="ad-card">
+        <div className="h"><span>Латентность API · 7 дн</span><span>мс</span></div>
+        {(m.latency||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>
+          :<table className="ad-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
+            <tbody>{(m.latency||[]).map((r,i)=><tr key={i}>
+              <td title={r.path}>{(r.path||"").replace("/api/","")}</td>
+              <td>{r.n}</td><td>{r.p50}</td>
+              <td style={r.p95>3000?{color:"var(--warn)"}:null}>{r.p95}</td>
+              <td style={r.errs>0?{color:"var(--neg)"}:null}>{r.errs||0}</td>
+            </tr>)}</tbody></table>}
+      </div>
+      <div className="ad-card">
+        <div className="h"><span>Ошибки · последние</span>
+          <span className={"ad-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
+        {nErr===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
+          :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="ad-err">
+            <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"js":"api"}</span>
+            <span className="m" title={e.msg||""}>{e.page||"—"}{e.status?" · "+e.status:""}{e.msg?" · "+e.msg:""}</span>
+          </div>)}
+      </div>
+    </div>
+
+    <div className="ad-grid2 ad-sec">
+      <div className="ad-card">
+        <div className="h"><span>Дайджест · последний выпуск</span>
+          <span>LLM-токены за период: {tokSum.toLocaleString("ru")}</span></div>
+        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+          {(m.digest||[]).map(s=><span key={s.section}
+            className={"ad-chip "+(s.status==="ok"?"ok":s.status==="failed"?"bad":"")}
+            title={(s.error||"")+(s.gen_ms?" · "+s.gen_ms+"мс":"")}>
+            {s.section} · {s.status}{s.at?" · "+s.at:""}</span>)}
+        </div>
+      </div>
+      <div className="ad-card">
+        <div className="h"><span>Живая лента</span><span>последние события</span></div>
+        {(m.feed||[]).map((e,i)=><div key={i} className="ad-feed-row">
+          <span className="t">{e.ts}</span>
+          <span className="a">{initials(e.username||"?")}</span>
+          <span className="w">{e.kind==="page_view"?"открыл "+(AD_PAGE_RU[e.page]||e.page)
+            :e.kind==="page_leave"?((AD_PAGE_RU[e.page]||e.page)+" · "+adFmtS((e.dur_ms||0)/1000))
+            :e.kind==="client_error"?"⚠ JS-ошибка на "+(AD_PAGE_RU[e.page]||e.page)
+            :"⚠ API "+(e.page||"")+(e.status?" · "+e.status:"")}</span>
+        </div>)}
+      </div>
+    </div>
+
+    <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
+                 fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:"var(--ink-4)"}}>
+      телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS
+    </div>
+  </div>;
+}
+
 const NAV=[
   {id:"overview",label:"Обзор",       icon:Ic.grid,   group:"Анализ"},
   {id:"market",  label:"Рынок",       icon:Ic.market, group:"Анализ"},
@@ -4529,8 +4768,8 @@ const NAV=[
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
   {id:"quality", label:"Качество",    icon:Ic.shield, group:"Данные"},
 ];
-const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage,profile:ProfilePage};
-const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"],profile:["·","Профиль"]};
+const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage,profile:ProfilePage,pulse:PulsePage};
+const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"],profile:["·","Профиль"],pulse:["·","Пульс"]};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
@@ -4885,6 +5124,43 @@ function Shell(){
   // должны действовать сразу, без F5
   useEffect(()=>{ if(page!=="profile") return; return loadMe; },[page]);
 
+  // ── телеметрия: page_view / page_leave(время) / клиентские ошибки ──────────
+  const trkQ=useRef([]); const trkPage=useRef({page:null,t:Date.now()});
+  const trkFlush=(beacon)=>{ const evs=trkQ.current.splice(0);
+    if(!evs.length)return;
+    const body=JSON.stringify({events:evs});
+    if(beacon&&navigator.sendBeacon){
+      try{navigator.sendBeacon("/api/track",new Blob([body],{type:"application/json"}));return;}catch{}
+    }
+    fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},body}).catch(()=>{});
+  };
+  const trk=(ev)=>{ trkQ.current.push(ev); if(trkQ.current.length>=8)trkFlush(); };
+  useEffect(()=>{
+    const prev=trkPage.current;
+    if(prev.page&&prev.page!==page)
+      trk({kind:"page_leave",page:prev.page,dur_ms:Math.min(Date.now()-prev.t,1800000)});
+    trkPage.current={page,t:Date.now()};
+    trk({kind:"page_view",page});
+    const t=setTimeout(trkFlush,1500);
+    return ()=>clearTimeout(t);
+  },[page]); // eslint-disable-line
+  useEffect(()=>{
+    const onVis=()=>{ if(document.visibilityState==="hidden"){
+        const p=trkPage.current;
+        if(p.page) trkQ.current.push({kind:"page_leave",page:p.page,dur_ms:Math.min(Date.now()-p.t,1800000)});
+        trkPage.current={...p,t:Date.now()};
+        trkFlush(true);
+      } else { trkPage.current={...trkPage.current,t:Date.now()}; } };
+    const onErr=(e)=>trk({kind:"client_error",page:(location.hash||"#").slice(1),
+      payload:{msg:String((e&&(e.message||e.reason))||"").slice(0,300)}});
+    document.addEventListener("visibilitychange",onVis);
+    window.addEventListener("error",onErr);
+    window.addEventListener("unhandledrejection",onErr);
+    return ()=>{document.removeEventListener("visibilitychange",onVis);
+      window.removeEventListener("error",onErr);
+      window.removeEventListener("unhandledrejection",onErr);};
+  },[]); // eslint-disable-line
+
   useEffect(()=>{
     const onHash=()=>setPage(location.hash?.slice(1)||"overview");
     window.addEventListener("hashchange",onHash);
@@ -4895,7 +5171,9 @@ function Shell(){
   // запоминаем последний режим «Обзора» (Общий/Для вас) — возвращаем туда же
   useEffect(()=>{ if(page==="overview"||page==="foryou"){try{localStorage.setItem("al-ov-mode",page);}catch{}} },[page]);
 
-  const groups=useMemo(()=>{const g={};NAV.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[]);
+  const groups=useMemo(()=>{
+    const items=(me&&me.is_admin)?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
+    const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
   const Page=PAGES_FN[page]||OverviewPage;
   const[idx,label]=PAGE_LABELS[page]||["01","Обзор"];
 
@@ -4933,7 +5211,7 @@ function Shell(){
             <div className="rail-section">{gr}</div>
             {items.map(n=>{
               const active=page===n.id||(n.id==="overview"&&page==="foryou");
-              const allItems=NAV.filter(x=>x.group===gr);
+              const allItems=items;   // items группы (включая условный «Пульс»), не базовый NAV
               const num=allItems.findIndex(x=>x.id===n.id)+1+(gr==="Анализ"?0:5);
               const dot=n.id==="sources"&&hasCaptcha;
               const count=n.id==="quality"&&qualityCount>0?qualityCount:null;
