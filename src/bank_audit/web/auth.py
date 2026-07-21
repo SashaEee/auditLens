@@ -46,6 +46,19 @@ class CurrentUser:
 _DEV_USER = os.getenv("DEV_USER", "local-dev")
 
 
+def _fix_header_encoding(s: str) -> str:
+    """HTTP-заголовки Starlette декодирует как latin-1, а Authentik кладёт имя
+    в UTF-8 → кириллица приходит мохибейком. Восстанавливаем: latin-1→bytes→utf-8.
+    Если строка ASCII или уже корректна — возвращаем как есть.
+    """
+    if not s or s.isascii():
+        return s
+    try:
+        return s.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return s
+
+
 def get_current_user(
     x_authentik_username: Annotated[str | None, Header()] = None,
     x_authentik_name: Annotated[str | None, Header()] = None,
@@ -56,10 +69,7 @@ def get_current_user(
     """
     username = (x_authentik_username or "").strip()
     if username:
-        return CurrentUser(
-            username=username,
-            name=(x_authentik_name or "").strip() or username,
-            authenticated=True,
-        )
+        name = _fix_header_encoding((x_authentik_name or "").strip()) or username
+        return CurrentUser(username=username, name=name, authenticated=True)
     # Заголовка нет → локалка или прямой доступ к :8000 в обход nginx.
     return CurrentUser(username=_DEV_USER, name=_DEV_USER, authenticated=False)

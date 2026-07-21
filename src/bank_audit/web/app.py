@@ -23,6 +23,7 @@ from ..rag.indexer import ingest_document_from_url
 from ..rag.url_discovery import bootstrap_bank_profile, TOP_BANK_SITES
 from ..rag.crawler import crawl_one_bank, crawl_all_profiles
 from .auth import CurrentUser, get_current_user
+from . import userdata
 
 STATIC_DIR = Path(__file__).parent / "static"
 settings = Settings.load()
@@ -78,16 +79,142 @@ def scalar(sql: str, params: dict = {}):
         return s.execute(text(sql), params).scalar_one_or_none()
 
 
-# ── auth / identity ───────────────────────────────────────────────────────────
+# ── auth / identity / user-data ───────────────────────────────────────────────
+
+class MeUpdate(BaseModel):
+    timezone: Optional[str] = None
+    prefs: Optional[dict] = None
+
+class InterestsUpdate(BaseModel):
+    pinned: Optional[list] = None
+    muted: Optional[list] = None
+
+class RenameReq(BaseModel):
+    title: str
+
+class PinReq(BaseModel):
+    pinned: bool
+
+class ShareReq(BaseModel):
+    shared_with: Optional[str] = None    # None → всем пользователям инструмента
+
 
 @app.get("/api/whoami")
 def whoami(user: CurrentUser = Depends(get_current_user)):
     """Текущий пользователь из заголовков Authentik (за nginx forward-auth)."""
+    return {"username": user.username, "name": user.name,
+            "authenticated": user.authenticated}
+
+
+@app.get("/api/me")
+def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+    """Профиль пользователя (+ upsert app_user, обновление last_seen/TZ)."""
+    row = userdata.touch_user(user.username, user.name, timezone=tz) or {}
     return {
         "username": user.username,
-        "name": user.name,
+        "name": row.get("display_name") or user.name,
+        "timezone": row.get("timezone") or "Europe/Moscow",
+        "prefs": row.get("prefs") or {},
+        "interests": userdata.top_interests(user.username),
+        "profile_note": row.get("profile_note"),
         "authenticated": user.authenticated,
     }
+
+
+@app.put("/api/me")
+def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
+    userdata.touch_user(user.username, user.name)
+    if body.timezone:
+        userdata.set_timezone(user.username, body.timezone)
+    if body.prefs is not None:
+        userdata.update_prefs(user.username, body.prefs)
+    return {"ok": True}
+
+
+@app.put("/api/me/interests")
+def put_interests(body: InterestsUpdate, user: CurrentUser = Depends(get_current_user)):
+    userdata.set_interest_overrides(user.username, pinned=body.pinned, muted=body.muted)
+    return {"ok": True}
+
+
+@app.get("/api/users")
+def get_users(user: CurrentUser = Depends(get_current_user)):
+    """Директория пользователей инструмента (для шеринга)."""
+    return {"users": userdata.list_users(exclude=user.username)}
+
+
+# ── история чатов ─────────────────────────────────────────────────────────────
+
+@app.get("/api/chat/sessions")
+def get_sessions(user: CurrentUser = Depends(get_current_user)):
+    return {"sessions": userdata.list_sessions(user.username)}
+
+
+@app.get("/api/chat/sessions/{sid}")
+def get_session_ep(sid: int, user: CurrentUser = Depends(get_current_user)):
+    msgs = userdata.get_session_messages(sid, user.username)
+    if msgs is None:
+        raise HTTPException(404, "session not found")
+    return {"session_id": sid, "messages": msgs}
+
+
+@app.post("/api/chat/sessions/{sid}/rename")
+def rename_session_ep(sid: int, body: RenameReq,
+                      user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.rename_session(sid, user.username, body.title)}
+
+
+@app.post("/api/chat/sessions/{sid}/pin")
+def pin_session_ep(sid: int, body: PinReq,
+                   user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.pin_session(sid, user.username, body.pinned)}
+
+
+@app.delete("/api/chat/sessions/{sid}")
+def delete_session_ep(sid: int, user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.delete_session(sid, user.username)}
+
+
+# ── отчёты + шеринг ───────────────────────────────────────────────────────────
+
+@app.get("/api/reports")
+def get_reports(user: CurrentUser = Depends(get_current_user)):
+    return {"reports": userdata.list_reports(user.username),
+            "shared": userdata.list_shared_with_me(user.username)}
+
+
+@app.get("/api/reports/{rid}")
+def get_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
+    r = userdata.get_report(rid, user.username)
+    if r is None:
+        raise HTTPException(404, "report not found")
+    return r
+
+
+@app.delete("/api/reports/{rid}")
+def delete_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.delete_report(rid, user.username)}
+
+
+@app.post("/api/reports/{rid}/share")
+def share_report_ep(rid: int, body: ShareReq,
+                    user: CurrentUser = Depends(get_current_user)):
+    sid = userdata.share_report(rid, user.username, body.shared_with)
+    if sid is None:
+        raise HTTPException(403, "not owner")
+    userdata.log_event(user.username, "share",
+                       {"report_id": rid, "with": body.shared_with})
+    return {"ok": True, "share_id": sid}
+
+
+@app.get("/api/reports/{rid}/shares")
+def report_shares_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
+    return {"shares": userdata.list_report_shares(rid, user.username)}
+
+
+@app.post("/api/shares/{share_id}/revoke")
+def revoke_share_ep(share_id: int, user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.revoke_share(share_id, user.username)}
 
 
 # ── dashboard ─────────────────────────────────────────────────────────────────
@@ -832,9 +959,59 @@ class ChatRequest(BaseModel):
     question: str
     history: list = []
     force_deep: Optional[bool] = None    # None=auto, True=force deep mode, False=force quick
+    session_id: Optional[int] = None     # продолжение существующей сессии истории
+
+
+async def _persisting_stream(inner, username: str, session_id: int, question: str):
+    """Оборачивает stream_analysis: прозрачно проксирует SSE-события, попутно
+    копит финальный ответ+источники и по завершении сохраняет сообщение ассистента
+    и (для содержательных ответов) отчёт. Копим так же, как фронт: text-чанки +
+    report_replace (перекрывает) + sources.
+    """
+    # Сразу отдаём фронту session_id, чтобы следующий вопрос продолжил эту сессию.
+    yield json.dumps({"type": "session", "session_id": session_id}, ensure_ascii=False)
+    parts: list[str] = []
+    replaced: Optional[str] = None
+    sources: list = []
+    mode: Optional[str] = None
+    try:
+        async for ev in inner:
+            try:
+                data = json.loads(ev)
+                t = data.get("type")
+                if t == "text":
+                    if data.get("chunk"):
+                        parts.append(data["chunk"])
+                    elif isinstance(data.get("text"), str):
+                        replaced = data["text"]
+                elif t == "report_replace" and isinstance(data.get("text"), str):
+                    replaced = data["text"]
+                elif t == "sources" and isinstance(data.get("sources"), list):
+                    sources = data["sources"]
+                elif t == "mode":
+                    mode = data.get("value")
+            except Exception:
+                pass
+            yield ev
+    finally:
+        body = replaced if replaced is not None else "".join(parts)
+        if body and body.strip():
+            try:
+                banks = userdata.parse_query_signals(question).get("banks", [])
+                is_report = (mode == "deep") or (len(body) > 800)
+                report_id = None
+                if is_report:
+                    report_id = userdata.save_report(
+                        username, session_id, question, body,
+                        payload={"sources": sources, "mode": mode}, banks=banks)
+                userdata.add_message(session_id, "assistant", body, {
+                    "sources": sources, "mode": mode, "report_id": report_id})
+            except Exception:
+                log.warning("[ai_analyze] persist failed", exc_info=True)
+
 
 @app.post("/api/ai/analyze")
-async def ai_analyze(req: ChatRequest):
+async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_user)):
     # ── Demo hook: если DEMO_MODE=1 и вопрос совпадает с trigger_keywords ──
     # одного из demo/responses/*.json — стримим заготовленный ответ за ~25-30s.
     # Любые ДРУГИЕ вопросы идут в нормальный pipeline.
@@ -854,12 +1031,32 @@ async def ai_analyze(req: ChatRequest):
 
     if not os.getenv("LLM_API_KEY"):
         raise HTTPException(503, "LLM_API_KEY не задан в .env")
+
+    # Персонализация: заводим/продолжаем сессию истории, сохраняем вопрос,
+    # обновляем профиль интересов, логируем событие (всё best-effort — не должно
+    # уронить ответ, если БД недоступна).
+    username = user.username
+    session_id = req.session_id
+    try:
+        userdata.touch_user(username, user.name)
+        session_id = userdata.get_or_create_session(username, req.session_id, req.question)
+        userdata.add_message(session_id, "user", req.question,
+                             {"force_deep": req.force_deep})
+        signals = userdata.update_interests_from_query(username, req.question)
+        userdata.log_event(username, "ai_query", {"question": req.question, **signals})
+    except Exception:
+        log.warning("[ai_analyze] pre-persist failed", exc_info=True)
+
+    inner = stream_analysis(req.question, req.history, force_deep=req.force_deep)
+    gen = (_persisting_stream(inner, username, session_id, req.question)
+           if session_id else inner)
+
     # Deep-research pipeline идёт 90-300s. Между phase-событиями могут быть
     # длинные паузы (LLM-запросы по 30-60s). Без keep-alive проксики/браузер
     # рвут idle-соединение. ping=10 шлёт SSE-комментарий ':\n\n' каждые 10s —
     # это валидный SSE no-op, фронт игнорирует, прокси-таймауты не срабатывают.
     return EventSourceResponse(
-        stream_analysis(req.question, req.history, force_deep=req.force_deep),
+        gen,
         media_type="text/event-stream",
         ping=10,
         headers={
