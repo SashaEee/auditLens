@@ -643,6 +643,82 @@ function BfCard({ins,idx,lead}){
   </article>;
 }
 
+// ─── Персональный band «Обзора» (Фаза 3) ──────────────────────────────────────
+const PB_CSS=`
+.pb{margin-bottom:30px;padding:20px 22px 22px;border-radius:14px;
+  background:color-mix(in oklab,var(--accent-soft),transparent 45%);
+  border:1px solid color-mix(in oklab,var(--accent),transparent 86%);animation:fade-in .3s ease-out;}
+.pb-greet{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:11px;}
+.pb-lead{font-family:'Source Serif 4',serif;font-size:18px;line-height:1.52;color:var(--ink);text-wrap:pretty;max-width:80ch;}
+.pb-nudge{margin-top:6px;font-size:13.5px;line-height:1.5;color:var(--ink-2);}
+.pb-nudge button{color:var(--accent);font-weight:500;margin-left:4px;}
+.pb-fy-h{display:flex;align-items:baseline;justify-content:space-between;margin:20px 0 11px;}
+.pb-fy-n{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;}
+.pb-fy{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:10px;}
+.pb-card{position:relative;background:var(--surface);border:1px solid var(--hair);border-radius:11px;padding:13px 15px;
+  border-left:3px solid var(--ink-4);transition:box-shadow .14s,transform .18s,opacity .18s;}
+.pb-card:hover{box-shadow:var(--shadow-1);}
+.pb-card.sev-red{border-left-color:var(--neg);}
+.pb-card.sev-amber{border-left-color:var(--warn);}
+.pb-card.sev-green{border-left-color:var(--pos);}
+.pb-x{position:absolute;top:7px;right:7px;width:22px;height:22px;border-radius:6px;color:var(--ink-4);font-size:11px;
+  display:grid;place-items:center;opacity:0;transition:opacity .12s,background .12s,color .12s;}
+.pb-card:hover .pb-x{opacity:1;}
+.pb-x:hover{background:var(--paper-2);color:var(--ink);}
+.pb-reason{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin-bottom:5px;}
+.pb-card-t{font-size:13px;line-height:1.4;color:var(--ink);margin-bottom:3px;padding-right:16px;}
+.pb-card-s{font-size:12px;line-height:1.42;color:var(--ink-3);}
+.pb-card-f{display:flex;gap:14px;align-items:center;margin-top:10px;}
+.pb-card-f a,.pb-card-f button{font-size:11.5px;transition:color .12s;}
+.pb-open{color:var(--ink-3);}
+.pb-open:hover{color:var(--accent);}
+.pb-ask{color:var(--accent);}
+.pb-ask:hover{filter:brightness(1.1);}
+.pb-quiet{margin-top:12px;font-size:12.5px;color:var(--ink-3);font-style:italic;}
+.pb-skel{height:118px;margin-bottom:30px;border-radius:14px;
+  background:linear-gradient(90deg,var(--paper-2) 25%,var(--surface) 50%,var(--paper-2) 75%);
+  background-size:200% 100%;animation:pb-sh 1.5s ease-in-out infinite;}
+@keyframes pb-sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+`;
+function PersonalBand(){
+  const me=useMe();
+  const[p,setP]=useState(undefined);         // undefined=грузится, null=выкл, obj=данные
+  const[gone,setGone]=useState({});
+  useEffect(()=>{ apiFetch("/api/overview/personal").then(d=>setP(d.personal||null)).catch(()=>setP(null)); },[]);
+  if(p===undefined) return <div className="pb-skel"/>;
+  if(p===null) return null;                   // персонализация выключена
+  const items=(p.for_you||[]).filter(x=>!gone[x.title]);
+  const dismiss=(x)=>{ setGone(g=>({...g,[x.title]:1}));
+    if(x.reason_slugs&&x.reason_slugs.length)
+      apiPost("/api/overview/personal/feedback",{topics:x.reason_slugs}).catch(()=>{}); };
+  const g=greetWord(me&&me.timezone);
+  return <div className="pb">
+    <style>{PB_CSS}</style>
+    <div className="pb-greet">{g}{p.name?", "+p.name:""}</div>
+    {p.lead && <p className="pb-lead">{p.lead}</p>}
+    {!p.has_profile && <div className="pb-nudge">Настройте персонализацию — опишите, что вы проверяете, и «Обзор» будет собираться под вас.
+      <button onClick={()=>{location.hash="profile";}}>Настроить →</button></div>}
+    {items.length>0 && <>
+      <div className="pb-fy-h"><span className="eyebrow">В вашем фокусе</span><span className="pb-fy-n">{items.length} · для вас</span></div>
+      <div className="pb-fy">
+        {items.map((x,i)=>(
+          <div key={i} className={"pb-card sev-"+(x.severity||"amber")}>
+            <button className="pb-x" onClick={()=>dismiss(x)} title="Не интересно — заглушить тему">✕</button>
+            {x.reason&&<div className="pb-reason">ваш фокус: {x.reason}</div>}
+            <div className="pb-card-t">{x.title}</div>
+            {x.summary&&<div className="pb-card-s">{x.summary}</div>}
+            <div className="pb-card-f">
+              {x.url&&<a className="pb-open" href={x.url} target="_blank" rel="noreferrer">Источник ↗</a>}
+              <button className="pb-ask" onClick={()=>bfGoAI("Разбери подробно для аудита: "+(x.title||""))}>✦ Спросить ИИ</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>}
+    {p.quiet && !items.length && <div className="pb-quiet">По вашим темам сегодня спокойно · под наблюдением {(p.top_topics||[]).length||"—"} тем</div>}
+  </div>;
+}
+
 function OverviewPage(){
   const[dg,setDg]=useState(null);
   const[summary,setSummary]=useState(null);
@@ -713,6 +789,8 @@ function OverviewPage(){
   const hh=bfPickHot(hl,hot);   // [начало,длина] акцента — есть всегда, если есть заголовок
 
   return <div className="fade-in">
+    {/* ⓪ ЛИЧНЫЙ СЛОЙ — персональный дайджест (Фаза 3), над передовицей */}
+    <PersonalBand/>
     {/* ① MASTHEAD — передовица */}
     <header style={{marginBottom:26}}>
       <div className="eyebrow-row">

@@ -99,6 +99,10 @@ class PinReq(BaseModel):
 class ShareReq(BaseModel):
     shared_with: Optional[str] = None    # None → всем пользователям инструмента
 
+class PersonalFeedback(BaseModel):
+    topics: list[str] = []               # слаги тем для «× не интересно» → заглушить
+    action: str = "mute"
+
 
 @app.get("/api/whoami")
 def whoami(user: CurrentUser = Depends(get_current_user)):
@@ -145,6 +149,40 @@ async def refresh_profile_note(user: CurrentUser = Depends(get_current_user)):
     from .profile_ai import generate_profile_note
     note = await generate_profile_note(user.username)
     return {"note": note}
+
+
+# ── персональный дайджест «Обзора» (Фаза 3) ───────────────────────────────────
+
+@app.get("/api/overview/personal")
+async def overview_personal(user: CurrentUser = Depends(get_current_user)):
+    """Личный слой «Обзора»: lead + «Для вас» + тишина. None → персонализация выключена."""
+    from ..digest import personal
+    try:
+        userdata.touch_user(user.username, user.name)
+    except Exception:
+        pass
+    p = await personal.build_personal(user.username)
+    return {"personal": p}
+
+
+@app.post("/api/overview/personal/refresh")
+async def overview_personal_refresh(user: CurrentUser = Depends(get_current_user)):
+    from ..digest import personal
+    p = await personal.build_personal(user.username, force=True)
+    return {"personal": p}
+
+
+@app.post("/api/overview/personal/feedback")
+def overview_personal_feedback(body: PersonalFeedback,
+                               user: CurrentUser = Depends(get_current_user)):
+    """«× не интересно» на карточке → заглушить темы (учится под пользователя)."""
+    if body.topics and body.action == "mute":
+        cur = userdata.top_interests(user.username)
+        muted = set(cur.get("muted") or []) | {t for t in body.topics if t}
+        userdata.set_interest_overrides(user.username, muted=list(muted))
+        userdata.log_event(user.username, "personal_feedback",
+                           {"muted": body.topics})
+    return {"ok": True, "interests": userdata.top_interests(user.username)}
 
 
 @app.get("/api/users")

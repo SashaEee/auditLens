@@ -404,6 +404,41 @@ def set_interest_overrides(username: str, pinned: list[str] | None = None,
                   {"i": json.dumps(interests, ensure_ascii=False), "u": username})
 
 
+def interest_weight_profile(username: str) -> dict:
+    """Весовой профиль тем для персонального дайджеста (Фаза 3):
+    self_description ×3 + pinned ×2 + авто-счётчики ×1 − muted (исключить).
+    custom (свободный текст) отдаём отдельно — матчим по вхождению в текст.
+    """
+    import json
+    interests = _load_interests(username)
+    user = get_user(username) or {}
+    prefs = user.get("prefs") or {}
+    if isinstance(prefs, str):
+        prefs = json.loads(prefs or "{}")
+    self_desc = (prefs.get("self_description") or "").strip()
+    counters = interests.get("counters") or {}
+    muted = set(interests.get("muted") or [])
+    pinned = interests.get("pinned") or []
+    custom = interests.get("custom") or []
+    desc_sig = parse_query_signals(self_desc) if self_desc else {"banks": [], "products": []}
+
+    weights: dict[str, float] = {}
+    def _add(topic: str, w: float):
+        if not topic or topic in muted:
+            return
+        weights[topic] = round(weights.get(topic, 0.0) + w, 3)
+
+    for dim in ("banks", "products"):
+        for t in desc_sig.get(dim, []):
+            _add(t, 3.0)
+        for t, c in (counters.get(dim) or {}).items():
+            _add(t, min(float(c), 3.0) * 1.0)
+    for t in pinned:
+        _add(t, 2.0)
+    return {"weights": weights, "self_desc": self_desc, "custom": custom,
+            "pinned": list(pinned), "muted": list(muted)}
+
+
 def set_profile_note(username: str, note: str) -> None:
     with db.session() as s:
         s.execute(text("""UPDATE app_user
