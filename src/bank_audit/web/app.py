@@ -137,6 +137,14 @@ def put_interests(body: InterestsUpdate, user: CurrentUser = Depends(get_current
     return {"ok": True}
 
 
+@app.post("/api/me/profile/refresh")
+async def refresh_profile_note(user: CurrentUser = Depends(get_current_user)):
+    """Пересобрать LLM-нарратив профиля интересов по недавним запросам."""
+    from .profile_ai import generate_profile_note
+    note = await generate_profile_note(user.username)
+    return {"note": note}
+
+
 @app.get("/api/users")
 def get_users(user: CurrentUser = Depends(get_current_user)):
     """Директория пользователей инструмента (для шеринга)."""
@@ -1004,6 +1012,14 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     report_id = userdata.save_report(
                         username, session_id, question, body,
                         payload={"sources": sources, "mode": mode}, banks=banks)
+                    # Само-дополняющийся профиль: каждый 3-й отчёт обновляем
+                    # LLM-нарратив интересов (в фоне, не блокируя ответ).
+                    try:
+                        if userdata.count_reports(username) % 3 == 0:
+                            from .profile_ai import generate_profile_note
+                            asyncio.create_task(generate_profile_note(username))
+                    except Exception:
+                        pass
                 userdata.add_message(session_id, "assistant", body, {
                     "sources": sources, "mode": mode, "report_id": report_id})
             except Exception:

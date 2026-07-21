@@ -3846,8 +3846,125 @@ const NAV=[
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
   {id:"quality", label:"Качество",    icon:Ic.shield, group:"Данные"},
 ];
-const PAGES_FN={overview:OverviewPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage};
-const PAGE_LABELS={overview:["01","Обзор"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"]};
+const PAGES_FN={overview:OverviewPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage,profile:ProfilePage};
+const PAGE_LABELS={overview:["01","Обзор"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"],profile:["·","Профиль"]};
+
+// ─── Профиль и персонализация (Фаза 2+4) ──────────────────────────────────────
+const PROFILE_CSS=`
+.pf-wrap{max-width:760px;}
+.pf-hero{display:flex;align-items:center;gap:18px;margin-bottom:26px;}
+.pf-avatar{width:60px;height:60px;flex:none;border-radius:16px;display:grid;place-items:center;
+  font-size:22px;font-weight:600;color:var(--accent);background:var(--accent-soft);
+  border:1px solid color-mix(in oklab,var(--accent),transparent 80%);letter-spacing:-.01em;}
+.pf-hero h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:32px;line-height:1.05;letter-spacing:-.01em;color:var(--ink);margin:3px 0 4px;}
+.pf-sub{font-size:12px;color:var(--ink-3);}
+.pf-card{padding:22px 24px;margin-bottom:16px;}
+.pf-card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.pf-mini{font-size:11.5px;color:var(--ink-3);border:1px solid var(--hair);border-radius:7px;padding:5px 11px;
+  transition:border-color .14s,color .14s,transform .1s;}
+.pf-mini:hover:not(:disabled){border-color:var(--ink-4);color:var(--ink);}
+.pf-mini:active:not(:disabled){transform:scale(.96);}
+.pf-mini:disabled{opacity:.55;cursor:default;}
+.pf-note{font-family:'Source Serif 4',serif;font-size:16.5px;line-height:1.55;color:var(--ink);text-wrap:pretty;
+  padding-left:14px;border-left:2px solid var(--accent-soft);}
+.pf-note-empty{font-size:13.5px;line-height:1.55;color:var(--ink-3);text-wrap:pretty;max-width:60ch;}
+.pf-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;}
+.pf-chip{font-size:12px;padding:4px 11px;border-radius:8px;background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2);}
+.pf-chip-bank{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 82%);color:var(--accent);font-weight:500;}
+.pf-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 0;border-bottom:1px solid var(--hair);}
+.pf-row:last-of-type{border-bottom:0;}
+.pf-row-t{font-size:13.5px;color:var(--ink);}
+.pf-row-d{font-size:12px;color:var(--ink-3);margin-top:2px;max-width:42ch;}
+.pf-input{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
+  font-size:13px;padding:8px 11px;font-family:'JetBrains Mono',monospace;min-width:170px;transition:border-color .14s;}
+.pf-input:focus{outline:none;border-color:var(--accent);}
+.pf-input-sm{min-width:64px;width:64px;text-align:center;}
+.pf-toggle{width:42px;height:24px;border-radius:999px;background:var(--hair-2);position:relative;flex:none;transition:background .18s;}
+.pf-toggle.on{background:var(--accent);}
+.pf-toggle span{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--surface);
+  box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.2,0,0,1);}
+.pf-toggle.on span{transform:translateX(18px);}
+.pf-actions{display:flex;justify-content:flex-end;margin-top:18px;}
+.pf-save{font-size:13px;color:#fff;background:var(--accent);border-radius:9px;padding:9px 20px;font-weight:500;
+  transition:transform .1s,filter .14s;}
+.pf-save:hover{filter:brightness(1.05);}
+.pf-save:active{transform:scale(.97);}
+`;
+const BANK_RU={sberbank:"Сбербанк",vtb:"ВТБ",alfabank:"Альфа-Банк",tinkoff:"Т-Банк",gazprombank:"Газпромбанк",rshb:"Россельхозбанк",domrf:"Банк ДОМ.РФ",psb:"ПСБ",sovcombank:"Совкомбанк",mtsbank:"МТС-Банк",raiffeisen:"Райффайзен",otkritie:"Открытие"};
+const PROD_RU={ipoteka:"Ипотека",deposit:"Вклады",credit_card:"Кредитные карты",debit_card:"Дебетовые карты",consumer_loan:"Потребкредиты",auto:"Автокредиты",rko:"РКО",savings:"Накопит. счета",acquiring:"Эквайринг",premium:"Премиальные пакеты",transfers:"Переводы и комиссии"};
+
+function ProfilePage(){
+  const me=useMe();
+  const[data,setData]=useState(null);
+  const[tz,setTz]=useState("");
+  const[personalDigest,setPersonalDigest]=useState(true);
+  const[morningHour,setMorningHour]=useState(7);
+  const[busy,setBusy]=useState(false);
+  const[saved,setSaved]=useState(false);
+  useEffect(()=>{
+    apiFetch("/api/me").then(d=>{ setData(d); setTz(d.timezone||"");
+      const p=d.prefs||{}; setPersonalDigest(p.personal_digest!==false); setMorningHour(p.morning_hour||7);
+    }).catch(()=>{});
+  },[]);
+  const refreshNote=async()=>{ setBusy(true);
+    try{ const r=await apiPost("/api/me/profile/refresh",{}); if(r&&r.note) setData(d=>({...d,profile_note:r.note})); }catch{}
+    setBusy(false); };
+  const saveSettings=async()=>{
+    try{ await apiPut("/api/me",{timezone:tz.trim()||"Europe/Moscow",
+      prefs:{personal_digest:personalDigest,morning_hour:Number(morningHour)||7}}); }catch{}
+    setSaved(true); setTimeout(()=>setSaved(false),1800);
+  };
+  if(!data) return <LoadingPage/>;
+  const banks=(data.interests&&data.interests.banks)||[];
+  const products=(data.interests&&data.interests.products)||[];
+  const hasInterests=banks.length||products.length;
+  return <div className="fade-in pf-wrap">
+    <style>{PROFILE_CSS}</style>
+    <div className="pf-hero">
+      <div className="pf-avatar">{initials(me?.name||data.name)}</div>
+      <div>
+        <div className="eyebrow">§ Профиль · персонализация</div>
+        <h1>{data.name||(me&&me.name)||"Аудитор"}</h1>
+        <div className="pf-sub mono">{data.username} · внутренний аудит</div>
+      </div>
+    </div>
+
+    <div className="surface pf-card">
+      <div className="pf-card-h">
+        <div className="eyebrow">Профиль интересов</div>
+        <button className="pf-mini" onClick={refreshNote} disabled={busy}>{busy?"Собираю…":"Обновить"}</button>
+      </div>
+      {data.profile_note
+        ? <p className="pf-note">{data.profile_note}</p>
+        : <p className="pf-note-empty">Профиль соберётся <b>автоматически</b> по мере ваших запросов к ИИ-аналитику — система сама поймёт, какие банки и продукты у вас в фокусе, и опишет это здесь. Задайте несколько вопросов и нажмите «Обновить».</p>}
+      {hasInterests
+        ? <div className="pf-chips">
+            {banks.map(b=><span key={b} className="pf-chip pf-chip-bank">{BANK_RU[b]||b}</span>)}
+            {products.map(p=><span key={p} className="pf-chip">{PROD_RU[p]||p}</span>)}
+          </div>
+        : <div className="t-cap" style={{marginTop:12,color:"var(--ink-4)"}}>Интересы появятся после нескольких запросов.</div>}
+    </div>
+
+    <div className="surface pf-card">
+      <div className="eyebrow" style={{marginBottom:6}}>Настройки персонализации</div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Часовой пояс</div><div className="pf-row-d">Приветствие и «утро» вашей главной подстраиваются под него</div></div>
+        <input className="pf-input" value={tz} onChange={e=>setTz(e.target.value)} placeholder="Europe/Moscow"/>
+      </div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Персональный дайджест</div><div className="pf-row-d">Личная сводка «что важно именно вам» на вкладке «Обзор»</div></div>
+        <button className={"pf-toggle"+(personalDigest?" on":"")} onClick={()=>setPersonalDigest(v=>!v)} aria-label="переключить"><span/></button>
+      </div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Начало «утра»</div><div className="pf-row-d">С какого часа показывать утренний выпуск (0–12)</div></div>
+        <input className="pf-input pf-input-sm" type="number" min="0" max="12" value={morningHour} onChange={e=>setMorningHour(e.target.value)}/>
+      </div>
+      <div className="pf-actions">
+        <button className="pf-save" onClick={saveSettings}>{saved?"Сохранено ✓":"Сохранить"}</button>
+      </div>
+    </div>
+  </div>;
+}
 
 function Shell(){
   const[page,setPage]=useState(()=>location.hash?.slice(1)||"overview");
@@ -3887,6 +4004,7 @@ function Shell(){
 
   return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
     <div id="app">
+      <style>{`.user-chip:hover{background:var(--surface);} .user-chip.active{background:var(--accent-soft);} .user-chip.active .nm{color:var(--accent);}`}</style>
       <aside className={"rail"+(navOpen?" open":"")}>
         <div className="rail-brand">
           <svg className="rail-mark" viewBox="0 0 100 100" role="img" aria-label="AuditLens">
@@ -3918,13 +4036,15 @@ function Shell(){
           </div>
         ))}
         <div className="rail-foot">
-          <div className="user-chip">
+          <button className={"user-chip"+(page==="profile"?" active":"")} title="Профиль и персонализация"
+                  onClick={()=>{setPage("profile");setNavOpen(false);}}
+                  style={{width:"100%",textAlign:"left",transition:"background .14s"}}>
             <div className="avatar">{me?initials(me.name):"А"}</div>
             <div>
               <div className="nm">{me?.name||"Аудитор"}</div>
               <div className="role">Внутренний аудит</div>
             </div>
-          </div>
+          </button>
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
@@ -3935,8 +4055,8 @@ function Shell(){
             <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
           </div>
           <div className="crumb">
-            <span className="crumb-idx">{idx} / 10</span>
-            <span style={{color:"var(--hair-2)"}}>—</span>
+            {page!=="profile" && <><span className="crumb-idx">{idx} / 10</span>
+            <span style={{color:"var(--hair-2)"}}>—</span></>}
             <b>{label}</b>
           </div>
           <div className="tb-spacer"/>

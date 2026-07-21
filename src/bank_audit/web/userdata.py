@@ -193,6 +193,10 @@ def save_report(username: str, session_id: int | None, question: str,
           "banks": banks or []}))
 
 
+def count_reports(username: str) -> int:
+    return int(_scalar("SELECT count(*) FROM report WHERE username = :u", {"u": username}) or 0)
+
+
 def list_reports(username: str, limit: int = 100) -> list[dict]:
     return _rows("""SELECT report_id, session_id, question, title, banks, created_at,
                            left(body, 240) AS preview
