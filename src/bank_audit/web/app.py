@@ -121,7 +121,9 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "timezone": row.get("timezone") or "Europe/Moscow",
         "prefs": row.get("prefs") or {},
         "interests": userdata.top_interests(user.username),
+        "recommendations": userdata.recommend_topics(user.username),
         "profile_note": row.get("profile_note"),
+        "profile_note_at": row.get("profile_note_at"),
         "authenticated": user.authenticated,
     }
 

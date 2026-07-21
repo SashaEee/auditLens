@@ -112,28 +112,46 @@ def _score(cand: dict, weights: dict, custom: list[str]) -> tuple[float, list[st
     return s, labels, slugs
 
 
-def _for_you(cands: list[dict], weights: dict, custom: list[str], k: int = 4) -> list[dict]:
+_COMPETITORS = {"vtb", "alfabank", "tinkoff", "gazprombank", "rshb", "domrf",
+                "psb", "sovcombank", "mtsbank", "raiffeisen", "otkritie"}
+_PRODUCTS = {"ipoteka", "deposit", "credit_card", "debit_card", "consumer_loan",
+             "auto", "rko", "savings", "acquiring", "premium", "transfers"}
+
+
+def _for_you(cands: list[dict], weights: dict, custom: list[str], k: int = 3) -> list[dict]:
+    """Ре-ранк под Сбер-аудитора: Сбер — якорь, конкуренты — только рыночный бенчмарк."""
     scored = []
     for c in cands:
         s, labels, slugs = _score(c, weights, custom)
-        if s > 0:
-            scored.append((s, labels, slugs, c))
+        if s <= 0:
+            continue
+        topics = c.get("topics", set()) or set()
+        is_sber = "sberbank" in topics
+        comp_only = bool(topics & _COMPETITORS) and not is_sber
+        if is_sber:
+            s += 1.5                       # якорь: Сбер важнее
+        if comp_only:
+            s *= 0.3                        # чисто конкурент — только как рыночный контекст
+        scored.append((s, labels, slugs, is_sber, c))
     scored.sort(key=lambda x: -x[0])
     seen, out = set(), []
-    for _s, labels, slugs, c in scored:
+    for _s, labels, slugs, is_sber, c in scored:
         key = (c.get("title") or "")[:40]
         if key in seen:
             continue
         seen.add(key)
-        rs, seenr = [], set()
-        for r in labels:
-            if r not in seenr:
-                seenr.add(r); rs.append(r)
+        # Причина в Сбер-формулировке: «Сбер · <продукты>»; банки-конкуренты в причину не кладём.
+        prod_labels = [_label(sl) for sl in slugs if sl in _PRODUCTS]
+        for c2 in custom:
+            if c2 and c2.lower() in ((c.get("title") or "") + " " + (c.get("summary") or "")).lower():
+                prod_labels.append(c2)
+        prod_labels = list(dict.fromkeys(prod_labels))[:2]
+        reason_parts = (["Сбер"] if is_sber else ["рынок"]) + prod_labels
         out.append({
             "title": c.get("title"), "summary": c.get("summary"), "url": c.get("url"),
             "severity": c.get("severity"), "kind": c.get("kind"),
-            "reason": ", ".join(rs[:2]),
-            "reason_slugs": list(dict.fromkeys(slugs))[:3],
+            "reason": " · ".join(reason_parts),
+            "reason_slugs": [sl for sl in slugs if sl in _PRODUCTS][:3],
         })
         if len(out) >= k:
             break
@@ -148,12 +166,16 @@ def _client() -> AsyncOpenAI:
 
 
 _LEAD_SYS = (
-    "Ты пишешь ЛИЧНУЮ утреннюю сводку для конкретного аудитора банковской розницы. "
+    "Ты пишешь ЛИЧНУЮ утреннюю сводку для аудитора СБЕРБАНКА (служба внутреннего аудита "
+    "розницы Сбера). КРИТИЧНО: все его проверки — про продукты, тарифы, процессы и жалобы "
+    "САМОГО СБЕРА. Конкурентов (ВТБ, Альфа, Т-Банк и др.) упоминай ТОЛЬКО как рыночный "
+    "бенчмарк/контекст («рынок повышает ставки», «Сбер на фоне рынка»), и НИКОГДА не предлагай "
+    "проверять или аудировать чужие банки — это не его зона ответственности. "
     "СТРОГО 2–3 предложения, максимально ёмко, деловой редакторский тон, по-русски. НЕ "
     "здоровайся и НЕ начинай с имени — приветствие показано отдельно; сразу к сути. Свяжи "
-    "1–2 главных сигнала дня с ЕГО зоной ответственности (что он проверяет): на что взглянуть, "
-    "где вероятны расхождения. Только по предоставленным сигналам, НЕ выдумывай числа/банки/"
-    "события. Если сигналов мало — коротко скажи, что по его темам спокойно. Без воды, без списков."
+    "1–2 главных сигнала дня с его зоной ответственности В СБЕРЕ: на что взглянуть у Сбера, "
+    "где вероятны расхождения. Только по предоставленным сигналам, НЕ выдумывай числа/события. "
+    "Если сигналов мало — коротко скажи, что по его темам в Сбере спокойно. Без воды, без списков."
 )
 
 
@@ -166,10 +188,11 @@ async def _lead(name: str, self_desc: str, top_topics: list[str], for_you: list[
     ) or "— (значимых сигналов в его темах сегодня нет)"
     user_msg = (
         f"Сегодня: {today_ru()}\n"
+        f"Банк (объект аудита): СБЕРБАНК\n"
         f"Аудитор: {name}\n"
-        f"Зона ответственности (его словами): {self_desc or '— (не описана)'}\n"
-        f"Ключевые темы: {', '.join(top_topics) or '—'}\n\n"
-        f"Сигналы дня в его темах:\n{signals}"
+        f"Зона ответственности в Сбере (его словами): {self_desc or '— (не описана)'}\n"
+        f"Ключевые продукты в фокусе: {', '.join(top_topics) or '—'}\n\n"
+        f"Сигналы дня (для контекста; конкуренты — только бенчмарк):\n{signals}"
     )
     try:
         r = await _client().chat.completions.create(

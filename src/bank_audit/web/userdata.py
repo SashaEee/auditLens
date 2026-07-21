@@ -435,8 +435,43 @@ def interest_weight_profile(username: str) -> dict:
             _add(t, min(float(c), 3.0) * 1.0)
     for t in pinned:
         _add(t, 2.0)
+    # Сбер — якорь для всех: пользователи это аудиторы Сбербанка.
+    if "sberbank" not in muted:
+        weights["sberbank"] = max(weights.get("sberbank", 0.0), 2.5)
     return {"weights": weights, "self_desc": self_desc, "custom": custom,
             "pinned": list(pinned), "muted": list(muted)}
+
+
+# Соседние продукты (для AI-рекомендаций «в фокус»).
+_ADJACENT: dict[str, list[str]] = {
+    "deposit": ["savings", "transfers"], "savings": ["deposit", "transfers"],
+    "credit_card": ["debit_card", "consumer_loan", "transfers"],
+    "debit_card": ["credit_card", "transfers"],
+    "consumer_loan": ["credit_card", "ipoteka"],
+    "ipoteka": ["consumer_loan", "auto"], "auto": ["consumer_loan", "ipoteka"],
+    "rko": ["acquiring", "transfers"], "acquiring": ["rko", "transfers"],
+    "transfers": ["credit_card", "deposit"], "premium": ["deposit", "debit_card"],
+}
+# Популярно у аудиторов розницы Сбера — для холодного старта.
+_POPULAR = ["deposit", "credit_card", "ipoteka", "transfers", "acquiring"]
+
+
+def recommend_topics(username: str, k: int = 3) -> list[str]:
+    """AI-рекомендации продуктов «в фокус»: соседние к текущим + популярные."""
+    prof = top_interests(username)
+    have = set(prof.get("products") or []) | set(prof.get("pinned") or [])
+    muted = set(prof.get("muted") or [])
+    rec: list[str] = []
+    for p in (prof.get("products") or []):
+        for adj in _ADJACENT.get(p, []):
+            if adj not in have and adj not in muted and adj not in rec:
+                rec.append(adj)
+    for p in _POPULAR:
+        if len(rec) >= k:
+            break
+        if p not in have and p not in muted and p not in rec:
+            rec.append(p)
+    return rec[:k]
 
 
 def set_profile_note(username: str, note: str) -> None:
