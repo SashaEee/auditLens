@@ -124,10 +124,15 @@ _PRODUCTS = {"ipoteka", "deposit", "credit_card", "debit_card", "consumer_loan",
              "auto", "rko", "savings", "acquiring", "premium", "transfers"}
 
 
-def _for_you(cands: list[dict], weights: dict, custom: list[str], k: int = 3) -> list[dict]:
+def _for_you(cands: list[dict], weights: dict, custom: list[str], k: int = 3,
+             reacts: dict | None = None) -> list[dict]:
     """Ре-ранк под Сбер-аудитора: Сбер — якорь, конкуренты — только рыночный бенчмарк."""
+    disliked = (reacts or {}).get("disliked_keys") or set()
     scored = []
     for c in cands:
+        key = c.get("url") or (c.get("title") or "")[:60]
+        if key and key in disliked:
+            continue                        # дизлайкнутое не возвращается
         s, labels, slugs = _score(c, weights, custom)
         if s <= 0:
             continue
@@ -250,9 +255,14 @@ def _focus_cards(slugs: list[str]) -> list[dict]:
     return cards
 
 
-def _news_tiles(sections: dict, weights: dict, custom: list[str], k: int = 8) -> list[dict]:
+def _news_tiles(sections: dict, weights: dict, custom: list[str],
+                reacts: dict | None = None, k: int = 8) -> list[dict]:
     """Персональная новостная сетка: ре-ранк полного пула дня под профиль (0 LLM).
-    Обогащение (summary/severity) подмешиваем из LLM-групп ядра по url."""
+    Обогащение (summary/severity) подмешиваем из LLM-групп ядра по url.
+    reacts (👍/👎): аффинити к источникам ± и вечное скрытие дизлайкнутого."""
+    reacts = reacts or {}
+    disliked = reacts.get("disliked_keys") or set()
+    src_aff = reacts.get("sources") or {}
     news = (sections.get("news") or {}).get("payload") or {}
     enrich: dict[str, dict] = {}
     for g in (news.get("groups") or []):
@@ -272,6 +282,8 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str], k: int = 8) ->
         if not title or key in seen:
             continue
         seen.add(key)
+        if key in disliked or (url and url in disliked):
+            continue                        # дизлайкнутое не возвращается никогда
         e = enrich.get(url) or {}
         txt = " ".join([title, str(it.get("snippet") or ""), str(e.get("summary") or "")])
         topics = _tag(txt)
@@ -287,6 +299,7 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str], k: int = 8) ->
             s += 0.6                    # редакция ядра пометила как прямую угрозу
         elif e:
             s += 0.25                   # прошла отбор редакции
+        s += float(src_aff.get(it.get("source") or "", 0.0))   # 👍/👎 по источнику
         if s <= 0:
             continue
         prod_labels = list(dict.fromkeys(
@@ -449,14 +462,20 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
     meta = doc.get("meta") or {}
     sections = doc.get("sections") or {}
 
+    try:
+        reacts = userdata.reaction_profile(username)
+    except Exception:
+        log.warning("[personal] reaction profile failed", exc_info=True)
+        reacts = {}
+
     cands = _candidates(sections)
-    fy = _for_you(cands, prof["weights"], prof["custom"])
+    fy = _for_you(cands, prof["weights"], prof["custom"], reacts=reacts)
     focus, default_focus = _focus_slugs(prof["weights"])
     top_topics = [_label(t) for t, _ in
                   sorted(prof["weights"].items(), key=lambda x: -x[1])[:5]]
     name = _first_name(user.get("display_name") or username)
 
-    tiles = _news_tiles(sections, prof["weights"], prof["custom"])
+    tiles = _news_tiles(sections, prof["weights"], prof["custom"], reacts=reacts)
     tariffs = _tariff_block(sections, focus)
     rp = (sections.get("reviews_pulse") or {}).get("payload") or {}
     signals = [{k: s.get(k) for k in
@@ -482,6 +501,7 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
         "headline": ai["headline"], "hot": ai["hot"], "checks": ai["checks"],
         "focus": cards, "default_focus": default_focus,
         "news": tiles, "tariffs": tariffs, "signals": signals,
+        "feedback_used": int(reacts.get("n_total") or 0),
         "generated_at": datetime.now(MSK).isoformat(),
     }
     # Кэшируем только «хороший» результат: ядро — СЕГОДНЯШНЕЕ и не в процессе

@@ -693,9 +693,12 @@ function PersonalBand(){
   if(p===undefined) return <div className="pl-skel"/>;
   if(p===null) return null;                    // персонализация выключена
   const items=(p.for_you||[]).filter(x=>!gone[x.title]).slice(0,3);
-  const dismiss=(x)=>{ setGone(g=>({...g,[x.title]:1}));
-    if(x.reason_slugs&&x.reason_slugs.length)
-      apiPost("/api/overview/personal/feedback",{topics:x.reason_slugs}).catch(()=>{}); };
+  const bandFb=(x,verdict)=>{ const key=x.url||x.title; if(!key)return;
+    if(verdict===-1){ setGone(g=>({...g,[x.title]:1}));
+      fbToast("Понял — такого будет меньше",true); }
+    else fbToast("Учтём в вашей подборке",true);
+    apiPost("/api/feedback",{kind:"for_you",item_key:key,verdict,
+      topics:x.reason_slugs||[],payload:{title:x.title,kind_src:x.kind}}).catch(()=>{}); };
   const g=greetWord(me&&me.timezone);
   return <div className="pl">
     <style>{PL_CSS}</style>
@@ -715,13 +718,98 @@ function PersonalBand(){
           {x.reason&&<span className="pl-fy-tag">{x.reason}</span>}
           <span className="pl-fy-act" onClick={e=>e.stopPropagation()}>
             <button className="ask" title="Спросить ИИ" onClick={()=>bfGoAI("Разбери подробно для аудита: "+(x.title||""))}>✦</button>
-            <button className="mute" title="Не интересно — заглушить тему" onClick={()=>dismiss(x)}>✕</button>
+            <button className="ask" title="Интересно — больше такого" onClick={()=>bandFb(x,1)}><IcTUp s={11}/></button>
+            <button className="mute" title="Не интересно — меньше такого" onClick={()=>bandFb(x,-1)}><IcTDn s={11}/></button>
           </span>
         </div>
       ))}
     </div>}
     <hr className="pl-div"/>
   </div>;
+}
+
+// ─── Оценки 👍/👎: два контура — рекомендации (контент) / качество (ответы ИИ) ──
+const FB_CSS=`
+.fb-toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:400;background:var(--surface);
+  border:1px solid var(--hair);border-radius:999px;box-shadow:var(--shadow-2);padding:9px 18px;
+  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-2);opacity:0;transition:opacity .25s,transform .25s;
+  pointer-events:none;max-width:min(88vw,500px);text-align:center;}
+.fb-toast.on{opacity:1;transform:translate(-50%,0);}
+.fb-toast .sp{color:var(--accent);}
+.aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.aifb-l{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);}
+.aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
+  border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
+.aifb button.tb:hover{color:var(--ink-2);background:var(--paper-2);}
+.aifb button.tb.on{color:var(--accent);background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.aifb button.tb.on-neg{color:var(--neg);background:color-mix(in oklab,var(--neg),transparent 90%);border-color:color-mix(in oklab,var(--neg),transparent 75%);}
+.aifb-why{width:100%;display:flex;flex-wrap:wrap;gap:7px;align-items:center;animation:fade-in .2s ease-out;}
+.aifb-chip{font-size:11.5px;padding:5px 11px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);transition:all .12s;}
+.aifb-chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+.aifb-inp{flex:1;min-width:170px;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
+  background:var(--paper);color:var(--ink);}
+.aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:500;}
+.aifb-done{font-size:11.5px;color:var(--pos);}
+`;
+function fbToast(text,sparkle){
+  try{
+    const el=document.createElement("div"); el.className="fb-toast";
+    if(sparkle){const s=document.createElement("span");s.className="sp";s.textContent="✦ ";el.appendChild(s);}
+    el.appendChild(document.createTextNode(text));
+    document.body.appendChild(el);
+    requestAnimationFrame(()=>el.classList.add("on"));
+    setTimeout(()=>{el.classList.remove("on");setTimeout(()=>el.remove(),300);},2600);
+  }catch{}
+}
+const IcTUp=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M7 10v11"/><path d="M7 11l4-8.3c1-.4 2.5.2 2.5 1.8V9h4.9c1.2 0 2.1 1.1 1.9 2.3l-1.2 6.9c-.2 1-1 1.7-2 1.7H7"/></svg>;
+const IcTDn=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><g transform="rotate(180 12 12)"><path d="M7 10v11"/><path d="M7 11l4-8.3c1-.4 2.5.2 2.5 1.8V9h4.9c1.2 0 2.1 1.1 1.9 2.3l-1.2 6.9c-.2 1-1 1.7-2 1.7H7"/></g></svg>;
+
+// панель оценки под ответом ИИ-аналитика: 👍 = удачно (учит и рекомендации),
+// 👎 = причины+комментарий → команде на разбор
+const AIFB_REASONS=[["offtopic","не по делу"],["shallow","мало конкретики"],
+                    ["wrong","ошибка в данных"],["long","слишком длинно"]];
+function AiFbBar({q,text,sessionId,mode,fbMap}){
+  const key="s"+(sessionId||0)+":"+fyHash((q||"")+"|"+(text||"").slice(0,180));
+  const[v,setV]=useState(0);
+  useEffect(()=>{ if(fbMap&&fbMap[key]) setV(fbMap[key]); },[fbMap,key]);
+  const[open,setOpen]=useState(false);
+  const[rs,setRs]=useState({});
+  const[comment,setComment]=useState("");
+  const[sent,setSent]=useState(false);
+  const post=(verdict,extra)=>apiPost("/api/feedback",{kind:"ai_answer",item_key:key,verdict,
+    payload:{question:(q||"").slice(0,300),mode:mode||"quick",session_id:sessionId,...(extra||{})}}).catch(()=>{});
+  const like=()=>{const nv=v===1?0:1;setV(nv);setOpen(false);post(1);
+    if(nv===1)fbToast("Спасибо! Удачный ответ — учтём и в ваших рекомендациях",true);};
+  const dislike=()=>{const nv=v===-1?0:-1;setV(nv);setSent(false);
+    if(nv===-1){setOpen(true);post(-1);}else{setOpen(false);post(-1);}};
+  const send=()=>{post(-1,{reasons:Object.keys(rs).filter(k=>rs[k]),comment:comment.slice(0,300)});
+    setSent(true);setOpen(false);fbToast("Спасибо — команда разберёт этот ответ");};
+  return <div className="aifb" onClick={e=>e.stopPropagation()}>
+    <span className="aifb-l">Оценить ответ</span>
+    <button className={"tb"+(v===1?" on":"")} title="Полезный ответ" onClick={like}><IcTUp/></button>
+    <button className={"tb"+(v===-1?" on-neg":"")} title="Плохой ответ — команда разберёт" onClick={dislike}><IcTDn/></button>
+    {sent&&v===-1&&<span className="aifb-done">отправлено — разберём ✓</span>}
+    {open&&v===-1&&<div className="aifb-why">
+      {AIFB_REASONS.map(([k,l])=><button key={k} className={"aifb-chip"+(rs[k]?" on":"")}
+        onClick={()=>setRs(r=>({...r,[k]:!r[k]}))}>{l}</button>)}
+      <input className="aifb-inp" placeholder="что не так? (необязательно)" value={comment}
+        onChange={e=>setComment(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send();}}/>
+      <button className="aifb-send" onClick={send}>Отправить</button>
+    </div>}
+  </div>;
+}
+
+// кольцо «Сила персонализации» (профиль)
+function PfRing({score}){
+  const r=26,c=2*Math.PI*r;
+  return <svg width="72" height="72" viewBox="0 0 64 64" aria-hidden="true">
+    <circle cx="32" cy="32" r={r} fill="none" stroke="var(--hair)" strokeWidth="5"/>
+    <circle cx="32" cy="32" r={r} fill="none" stroke="var(--accent)" strokeWidth="5" strokeLinecap="round"
+      strokeDasharray={c} strokeDashoffset={c*(1-Math.min(score,100)/100)} transform="rotate(-90 32 32)"
+      style={{transition:"stroke-dashoffset .6s ease"}}/>
+    <text x="32" y="37" textAnchor="middle" fontSize="14" fontWeight="600" fill="var(--ink)"
+      fontFamily="'Geist','Inter',sans-serif">{score}%</text>
+  </svg>;
 }
 
 // ─── «Общий / Для вас»: сегмент-переключатель + персональный разворот ─────────
@@ -849,14 +937,31 @@ const FY_CSS=`
   font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
 .fy-trust a{color:var(--ink-3);cursor:pointer;transition:color .12s;}
 .fy-trust a:hover{color:var(--accent);}
+.fy-tile .acts button.on{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%);}
+.fy-tile.liked{border-color:color-mix(in oklab,var(--accent),transparent 55%);}
+.fy-tile.liked::after{content:"✓ в фокусе";position:absolute;top:8px;left:8px;z-index:2;
+  font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.04em;color:var(--accent);
+  background:color-mix(in oklab,var(--paper),transparent 8%);backdrop-filter:blur(4px);
+  border:1px solid color-mix(in oklab,var(--accent),transparent 70%);padding:2px 7px;border-radius:999px;}
+.fy-check .acts2{margin-left:auto;display:flex;gap:2px;flex:none;}
+.fy-check .acts2 button{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
+  transition:color .12s,background .12s;}
+.fy-check .acts2 button:hover{color:var(--accent);background:var(--accent-soft);}
+.fy-check .acts2 button.on{color:var(--accent);background:var(--accent-soft);}
+.fy-pshint{margin-top:13px;display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.03em;color:var(--ink-3);
+  border:1px dashed color-mix(in oklab,var(--accent),transparent 65%);border-radius:999px;padding:5px 13px;
+  transition:color .12s,border-color .12s;}
+.fy-pshint:hover{color:var(--accent);border-color:var(--accent);}
+.fy-pshint .pc{color:var(--accent);font-weight:600;}
 `;
 
 // плитка новости (Perplexity-стиль): картинка или детерминированный градиент-фолбэк
-function FyTile({t,hero,onMute}){
+function FyTile({t,hero,fb,onFb}){
   const[imgOk,setImgOk]=useState(true);
   const src=fySrcName(t);
   const open=()=>{if(t.url)window.open(t.url,"_blank","noopener");};
-  return <div className={"fy-tile"+(hero?" hero":"")} onClick={open} role="link" tabIndex={0}
+  return <div className={"fy-tile"+(hero?" hero":"")+(fb===1?" liked":"")} onClick={open} role="link" tabIndex={0}
               onKeyDown={e=>{if(e.key==="Enter")open();}}>
     {t.image&&imgOk
       ?<div className="img" style={{backgroundImage:"url("+JSON.stringify(t.image)+")"}}>
@@ -875,26 +980,53 @@ function FyTile({t,hero,onMute}){
     </div>
     <span className="acts" onClick={e=>e.stopPropagation()}>
       <button title="Разобрать с ИИ" onClick={()=>bfGoAI("Разбери подробно для внутреннего аудита Сбера: "+(t.title||""))}>✦</button>
-      <button title="Не интересно — учит подборку" onClick={()=>onMute(t)}>✕</button>
+      <button className={fb===1?"on":""} title="Интересно — больше такого" onClick={()=>onFb(t,1)}><IcTUp s={12}/></button>
+      <button title="Не интересно — меньше такого" onClick={()=>onFb(t,-1)}><IcTDn s={12}/></button>
     </span>
   </div>;
 }
 
 function ForYouPage(){
+  const me=useMe();
   const[p,setP]=useState(undefined);          // undefined=грузится, null=выкл/ошибка
   const[err,setErr]=useState(false);
   const[busy,setBusy]=useState(false);
   const[gone,setGone]=useState({});
+  const[goneChk,setGoneChk]=useState({});
+  const[fb,setFb]=useState({});               // {key: verdict} — оценки плиток
+  const[cfb,setCfb]=useState({});             // оценки зацепок
   const load=()=>apiFetch("/api/overview/foryou")
     .then(d=>{setP(d.foryou||null);setErr(false);})
     .catch(()=>{setP(null);setErr(true);});
-  useEffect(()=>{load();},[]);
+  useEffect(()=>{load();
+    apiFetch("/api/feedback?kind=news").then(d=>setFb(d.items||{})).catch(()=>{});
+    apiFetch("/api/feedback?kind=check").then(d=>setCfb(d.items||{})).catch(()=>{});
+  },[]);
   const refresh=async()=>{ if(busy)return; setBusy(true);
     try{const d=await apiPost("/api/overview/foryou/refresh",{});setP(d.foryou||null);}catch{}
     setBusy(false); };
-  const dismiss=(x)=>{ setGone(g=>({...g,[x.title]:1}));
-    if(x.reason_slugs&&x.reason_slugs.length)
-      apiPost("/api/overview/personal/feedback",{topics:x.reason_slugs}).catch(()=>{}); };
+  // 👍/👎 на плитке: мгновенная локальная реакция + обучение весов тем/источников
+  const onTileFb=(t,verdict)=>{
+    const key=t.url||t.title; if(!key)return;
+    const nv=(fb[key]||0)===verdict?0:verdict;
+    setFb(m=>({...m,[key]:nv}));
+    if(verdict===-1&&nv===-1){ setGone(g=>({...g,[t.title]:1}));
+      fbToast("Понял — такого будет меньше в вашей подборке",true); }
+    if(verdict===1&&nv===1) fbToast("Учтём в вашей подборке",true);
+    apiPost("/api/feedback",{kind:"news",item_key:key,verdict,
+      topics:t.reason_slugs||[],
+      payload:{title:t.title,source:t.source,reason:t.reason}}).catch(()=>{});
+  };
+  const onCheckFb=(c,verdict)=>{
+    const key=c.title; if(!key)return;
+    const nv=(cfb[key]||0)===verdict?0:verdict;
+    setCfb(m=>({...m,[key]:nv}));
+    if(verdict===-1&&nv===-1){ setGoneChk(g=>({...g,[key]:1}));
+      fbToast("Понял — не то. Научимся предлагать точнее",true); }
+    if(verdict===1&&nv===1) fbToast("Учтём — таких зацепок будет больше",true);
+    apiPost("/api/feedback",{kind:"check",item_key:key,verdict,
+      payload:{title:c.title,why:c.why}}).catch(()=>{});
+  };
   const goProfile=()=>{location.hash="profile";};
 
   if(p===undefined) return <div className="fade-in">
@@ -959,17 +1091,27 @@ function ForYouPage(){
         {p.top_topics.slice(0,5).map((t,i)=><span key={t} className={"fy-chip"+(i===0?" acc":"")}>{t}</span>)}
         <span className="fy-tune" onClick={goProfile}>настроить →</span>
       </div>}
+      {(()=>{ const ps=me&&me.personalization;
+        if(!ps||ps.score>=60) return null;
+        const next=(ps.parts||[]).find(x=>!x.done&&x.cta);
+        return <div className="fy-pshint" onClick={goProfile} title="Открыть профиль">
+          ✦ персонализация <span className="pc">{ps.score}%</span> · {next?next.cta:"уточните профиль"} →
+        </div>; })()}
     </header>
 
     {/* ② что проверить сегодня (ИИ-зацепки) */}
-    {checks.length>0&&<section className="fy-sec">
+    {checks.filter(c=>!goneChk[c.title]).length>0&&<section className="fy-sec">
       <div className="eyebrow">Что проверить сегодня · <span className="fy-ai">✦ по сигналам дня</span></div>
       <div className="fy-checks-row">
-        {checks.map((c,i)=><div key={i} className="fy-check">
+        {checks.filter(c=>!goneChk[c.title]).map((c,i)=><div key={c.title} className="fy-check">
           <span className="n">{String(i+1).padStart(2,"0")}</span>
           <div className="t">{c.title}{c.why&&<div className="w">{c.why}</div>}</div>
-          <button className="ask" title="Составить план проверки с ИИ"
-                  onClick={()=>bfGoAI("Проверка в Сбере: "+c.title+". "+(c.why||"")+" Составь детальный план аудиторской проверки по этому пункту.")}>✦</button>
+          <span className="acts2">
+            <button title="Составить план проверки с ИИ"
+                    onClick={()=>bfGoAI("Проверка в Сбере: "+c.title+". "+(c.why||"")+" Составь детальный план аудиторской проверки по этому пункту.")}>✦</button>
+            <button className={cfb[c.title]===1?"on":""} title="Полезная зацепка" onClick={()=>onCheckFb(c,1)}><IcTUp s={12}/></button>
+            <button title="Не то — научимся точнее" onClick={()=>onCheckFb(c,-1)}><IcTDn s={12}/></button>
+          </span>
         </div>)}
       </div>
     </section>}
@@ -1003,10 +1145,11 @@ function ForYouPage(){
     {tiles.length>0&&<section className="fy-sec">
       <div className="eyebrow-row">
         <div className="eyebrow">Новости для вас · <span className="fy-ai">✦ отобрано по профилю</span></div>
-        <span className="fy-hint">✕ на плитке — учит подборку</span>
+        <span className="fy-hint">👍/👎 на плитках учат подборку</span>
       </div>
       <div className="fy-grid">
-        {tiles.map((t,i)=><FyTile key={t.url||t.title} t={t} hero={i===0&&!!t.image} onMute={dismiss}/>)}
+        {tiles.map((t,i)=><FyTile key={t.url||t.title} t={t} hero={i===0&&!!t.image}
+          fb={fb[t.url||t.title]||0} onFb={onTileFb}/>)}
       </div>
     </section>}
 
@@ -1038,7 +1181,7 @@ function ForYouPage(){
 
     {/* ⑥ подвал-доверие */}
     <footer className="fy-trust">
-      <span>данные брифинга {p.digest_date||"—"} · карточки и сетка — детерминированные данные · заголовок, лид и зацепки — ИИ</span>
+      <span>данные брифинга {p.digest_date||"—"} · заголовок, лид и зацепки — ИИ · 👍/👎 учат ваши рекомендации{p.feedback_used>0?" · учтено "+p.feedback_used+" ваших оценок":""}</span>
       <a onClick={goProfile}>настроить профиль →</a>
     </footer>
   </div>;
@@ -3147,6 +3290,8 @@ function AIPage(){
   const[hideRail,setHideRail]=useState(false);
   const[hideToc,setHideToc]=useState(false);
   const[sessionId,setSessionId]=useState(null);          // текущая сессия истории
+  const[aiFb,setAiFb]=useState(null);                    // мои оценки ответов (ai_answer)
+  useEffect(()=>{apiFetch("/api/feedback?kind=ai_answer").then(d=>setAiFb(d.items||{})).catch(()=>setAiFb({}));},[]);
   const[histOpen,setHistOpen]=useState(false);           // command palette истории
   const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome
   const[elapsed,setElapsed]=useState(0);                 // таймер прогона deep
@@ -3621,6 +3766,8 @@ function AIPage(){
                             Готовый отчёт для аудита · нумерация страниц, источники, A4
                           </span>
                         </div>}
+                      {!streaming&&m.text&&
+                        <AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep" fbMap={aiFb}/>}
                     </article>
                     {!hideRail && <DocRailSlot>
                       <SourcesRail sources={m.sources||[]} activeN={activeCite}
@@ -3671,6 +3818,8 @@ function AIPage(){
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                 </button>
               </div>}
+            {m.text&&!(loading&&i===msgs.length-1)&&
+              <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb}/>}
           </div>;
         })}
       </div>
@@ -4020,9 +4169,11 @@ function QualityPage(){
   const[data,setData]=useState(null);
   const[loading,setLoading]=useState(true);
   const[err,setErr]=useState(null);
+  const[aifb,setAifb]=useState(null);          // оценки ответов ИИ (контур владельца)
 
   useEffect(()=>{
     apiFetch("/api/quality").then(d=>{setData(d);setLoading(false);}).catch(e=>{setErr(e.message);setLoading(false);});
+    apiFetch("/api/quality/ai-feedback").then(setAifb).catch(()=>{});
   },[]);
 
   if(loading)return <LoadingPage/>;
@@ -4040,6 +4191,34 @@ function QualityPage(){
         Правила: устаревшие данные, скачки ставок &gt; 25%, дубли по (банк, категория, external_id), пустые снимки.
       </p>
     </header>
+
+    {/* Оценки ответов ИИ-аналитика: пульс 👍/👎 + последние дизлайки на разбор */}
+    {aifb&&<div className="surface" style={{padding:"16px 20px",marginBottom:18}}>
+      <div className="eyebrow-row" style={{marginBottom:(aifb.recent_dislikes||[]).length?10:0}}>
+        <div className="eyebrow">Оценки ответов ИИ · 7 дней</div>
+        <span className="mono tnum" style={{fontSize:12}}>
+          <span style={{color:"var(--pos)"}}>▲ {aifb.likes_7d||0}</span>
+          <span style={{color:"var(--neg)",marginLeft:12}}>▼ {aifb.dislikes_7d||0}</span>
+        </span>
+      </div>
+      {(aifb.recent_dislikes||[]).length>0
+        ? (aifb.recent_dislikes||[]).slice(0,8).map((d,i)=>(
+            <div key={i} style={{display:"flex",gap:10,alignItems:"baseline",padding:"7px 2px",
+                                 borderTop:"1px solid var(--hair)",fontSize:12.5}}>
+              <span className="mono" style={{fontSize:10,color:"var(--neg)",flex:"none"}}>▼</span>
+              <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+                    title={d.question||""}>{d.question||"—"}</span>
+              {(d.reasons||[]).length>0&&<span className="mono" style={{fontSize:9.5,color:"var(--ink-3)",flex:"none"}}>
+                {(d.reasons||[]).join(" · ")}</span>}
+              <span className="mono" style={{fontSize:9.5,color:"var(--ink-4)",flex:"none"}}>
+                {(d.created_at||"").slice(5,16).replace("T"," ")}</span>
+            </div>))
+        : <div className="t-cap" style={{color:"var(--ink-4)"}}>Дизлайков нет — либо всё хорошо, либо оценок пока мало.</div>}
+      {(aifb.recent_dislikes||[]).some(d=>d.comment)&&
+        <div className="t-cap" style={{marginTop:8,color:"var(--ink-3)"}}>
+          Последний комментарий: «{(aifb.recent_dislikes.find(d=>d.comment)||{}).comment}»</div>}
+    </div>}
+
 
     <div className="row row-3" style={{marginBottom:24}}>
       <div className="surface" style={{padding:"22px 24px"}}>
@@ -4376,13 +4555,14 @@ function ProfilePage(){
   const[busy,setBusy]=useState(false);
   const[savedDesc,setSavedDesc]=useState(false);
   const[savedSet,setSavedSet]=useState(false);
+  const[ps,setPs]=useState(null);              // «сила персонализации» из /api/me
 
   const applyMe=(d)=>{ setData(d);
     const p=d.prefs||{}; setSelfDesc(p.self_description||"");
     setPersonalDigest(p.personal_digest!==false); setBandHome(p.personal_band_home===true);
     setMorningHour(p.morning_hour||7);
     setInterests(d.interests||{banks:[],products:[],pinned:[],muted:[],custom:[]});
-    setRecs(d.recommendations||[]); };
+    setRecs(d.recommendations||[]); setPs(d.personalization||null); };
   useEffect(()=>{
     let dtz=""; try{dtz=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch{}
     setDetectedTz(dtz);
@@ -4442,7 +4622,7 @@ function ProfilePage(){
     <div className="surface pf-card">
       <div className="eyebrow" style={{marginBottom:8}}>Чем вы занимаетесь в Сбере</div>
       <p className="pf-hint">Опишите своими словами, какие продукты, процессы и риски Сбера вы проверяете. Это единственное, что нужно ввести — остальное система соберёт и настроит сама.</p>
-      <textarea className="pf-ta" value={selfDesc} onChange={e=>setSelfDesc(e.target.value)}
+      <textarea id="pf-desc" className="pf-ta" value={selfDesc} onChange={e=>setSelfDesc(e.target.value)}
         placeholder="Например: проверяю корректность начисления процентов по вкладам Сбера и комиссии по эквайрингу для ИП; слежу за ипотечными программами и жалобами по кредитным картам."/>
       <div className="pf-actions">
         {savedDesc&&<span className="pf-saved">Сохранено · профиль пересобирается ✦</span>}
@@ -4463,6 +4643,45 @@ function ProfilePage(){
               <div className="pf-src"><span className="live"/>обновляется автоматически по вашим запросам и описанию</div></>
           : <p className="pf-note-empty">Здесь ИИ соберёт краткий портрет ваших интересов — автоматически, по мере ваших запросов и из описания выше. Задайте пару вопросов ИИ-аналитику или нажмите «Пересобрать».</p>}
     </div>
+
+    {/* Сила персонализации: сколько система уже знает + что даст больше всего */}
+    {ps&&<div className="surface pf-card">
+      <style>{`
+        .pf-power{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;}
+        .pf-power-list{flex:1;min-width:260px;display:flex;flex-direction:column;}
+        .pf-power-row{display:flex;align-items:baseline;gap:10px;padding:7px 4px;border-top:1px solid var(--hair);
+          font-size:13px;color:var(--ink-2);}
+        .pf-power-row:first-child{border-top:0;}
+        .pf-power-row .tick{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);flex:none;width:14px;}
+        .pf-power-row.done .tick{color:var(--pos);}
+        .pf-power-row.done{color:var(--ink-3);}
+        .pf-power-row:not(.done){cursor:pointer;transition:color .12s;}
+        .pf-power-row:not(.done):hover{color:var(--accent);}
+        .pf-power-row .lbl{flex:1;min-width:0;}
+        .pf-power-row .pts{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);flex:none;}
+        .pf-power-row:not(.done) .pts{color:var(--accent);font-weight:600;}
+        .pf-power-cap{font-size:11.5px;color:var(--ink-4);margin-top:10px;line-height:1.5;}
+      `}</style>
+      <div className="eyebrow" style={{marginBottom:12}}>Сила персонализации · <span style={{color:"var(--accent)"}}>✦ растёт от ваших действий</span></div>
+      <div className="pf-power">
+        <PfRing score={ps.score}/>
+        <div className="pf-power-list">
+          {(ps.parts||[]).filter(x=>x.max>0&&x.key!=="regular")
+            .sort((a,b)=>(a.done?1:0)-(b.done?1:0)||((b.max-b.earned)-(a.max-a.earned)))
+            .map(x=><div key={x.key} className={"pf-power-row"+(x.done?" done":"")}
+              onClick={()=>{ if(x.done)return;
+                if(x.target==="profile"){const el=document.getElementById("pf-desc");
+                  if(el){el.focus();el.scrollIntoView({behavior:"smooth",block:"center"});}}
+                else if(x.target) location.hash=x.target; }}>
+              <span className="tick">{x.done?"✓":"○"}</span>
+              <span className="lbl">{x.done?x.label:x.cta||x.label}</span>
+              <span className="pts">{x.done?"+"+x.max+"%":"+"+Math.max(x.max-x.earned,0)+"%"}</span>
+            </div>)}
+        </div>
+      </div>
+      <div className="pf-power-cap">Оценки 👍/👎 на «Для вас» и полосе учат ВАШИ рекомендации; оценки ответов
+        ИИ-аналитика уходят команде — по ним мы чиним инструмент. Каждый пункт выше показывает свой вклад.</div>
+    </div>}
 
     {/* Темы в фокусе — определяет система, ручное вторично */}
     <div className="surface pf-card">
@@ -4583,6 +4802,7 @@ function Shell(){
 
   return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
     <div id="app">
+      <style>{FB_CSS}</style>
       <style>{`.user-chip:hover{background:var(--surface);} .user-chip.active{background:var(--accent-soft);} .user-chip.active .nm{color:var(--accent);}
         @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
         .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}

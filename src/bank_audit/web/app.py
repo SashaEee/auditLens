@@ -124,6 +124,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "recommendations": userdata.recommend_topics(user.username),
         "profile_note": row.get("profile_note"),
         "profile_note_at": row.get("profile_note_at"),
+        "personalization": userdata.personalization_score(user.username),
         "authenticated": user.authenticated,
     }
 
@@ -181,6 +182,49 @@ async def overview_personal_refresh(user: CurrentUser = Depends(get_current_user
     from ..digest import personal
     p = await personal.build_personal(user.username, force=True)
     return {"personal": p}
+
+
+class FeedbackIn(BaseModel):
+    kind: str                       # news | for_you | check | ai_answer
+    item_key: str
+    verdict: int                    # +1 / -1
+    topics: list[str] = []
+    payload: dict = {}
+
+
+@app.post("/api/feedback")
+def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user)):
+    """Единая точка оценок 👍/👎. Контентные (news/for_you/check) учат ЕГО
+    рекомендации; ai_answer — контур качества (разбор командой)."""
+    if body.kind not in ("news", "for_you", "check", "ai_answer") \
+            or body.verdict not in (1, -1) or not body.item_key:
+        raise HTTPException(400, "bad feedback")
+    res = userdata.save_feedback(user.username, body.kind, body.item_key[:500],
+                                 body.verdict, topics=body.topics[:10],
+                                 payload=body.payload)
+    # 👍 на ответ ИИ дополнительно усиливает темы вопроса в профиле интересов
+    if body.kind == "ai_answer" and res.get("verdict") == 1:
+        q = str((body.payload or {}).get("question") or "")
+        if q:
+            try:
+                userdata.update_interests_from_query(user.username, q)
+            except Exception:
+                pass
+    return {"ok": True, **res}
+
+
+@app.get("/api/feedback")
+def get_feedback(kind: str, user: CurrentUser = Depends(get_current_user)):
+    """Карта оценок пользователя по kind — для рендера уже проставленных."""
+    if kind not in ("news", "for_you", "check", "ai_answer"):
+        raise HTTPException(400, "bad kind")
+    return {"items": userdata.feedback_map(user.username, kind)}
+
+
+@app.get("/api/quality/ai-feedback")
+def quality_ai_feedback(user: CurrentUser = Depends(get_current_user)):
+    """Пульс оценок ИИ-ответов для «Качества» (контур владельца)."""
+    return userdata.ai_feedback_stats()
 
 
 @app.get("/api/overview/foryou")

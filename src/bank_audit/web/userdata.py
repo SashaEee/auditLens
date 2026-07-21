@@ -435,6 +435,14 @@ def interest_weight_profile(username: str) -> dict:
             _add(t, min(float(c), 3.0) * 1.0)
     for t in pinned:
         _add(t, 2.0)
+    # Явные оценки 👍/👎 — самый сильный сигнал (может и ослаблять тему до нуля).
+    try:
+        for t, w in reaction_profile(username)["topics"].items():
+            if t not in muted:
+                weights[t] = round(weights.get(t, 0.0) + w, 3)
+    except Exception:
+        log.warning("[userdata] reaction profile failed", exc_info=True)
+    weights = {t: w for t, w in weights.items() if w > 0}
     # Сбер — якорь для всех: пользователи это аудиторы Сбербанка.
     if "sberbank" not in muted:
         weights["sberbank"] = max(weights.get("sberbank", 0.0), 2.5)
@@ -521,3 +529,178 @@ def clear_personal_digest(username: str) -> None:
     with db.session() as s:
         s.execute(text("DELETE FROM personal_digest WHERE username = :u"),
                   {"u": username})
+
+
+# ── Явные оценки 👍/👎 (миграция 015) ─────────────────────────────────────────
+# Два контура: news/for_you/check учат ЕГО рекомендации; ai_answer идёт команде
+# (разбор косяков ИИ-аналитика). События храним сырыми — профиль пересчитывается
+# и остаётся объяснимым.
+
+_FEEDBACK_CONTENT_KINDS = ("news", "for_you", "check")
+
+
+def save_feedback(username: str, kind: str, item_key: str, verdict: int,
+                  topics: list[str] | None = None,
+                  payload: dict | None = None) -> dict:
+    """Upsert оценки. Повторный клик тем же вердиктом (без reasons/comment) —
+    снятие; с reasons/comment — обновление снапшота (детали дизлайка ИИ-ответа)."""
+    import json
+    meaningful = bool((payload or {}).get("reasons") or (payload or {}).get("comment"))
+    with db.session() as s:
+        row = s.execute(text("""SELECT verdict FROM item_feedback
+                                WHERE username=:u AND kind=:k AND item_key=:i"""),
+                        {"u": username, "k": kind, "i": item_key}).mappings().first()
+        if row is not None and int(row["verdict"]) == verdict and not meaningful:
+            s.execute(text("""DELETE FROM item_feedback
+                              WHERE username=:u AND kind=:k AND item_key=:i"""),
+                      {"u": username, "k": kind, "i": item_key})
+            new_v = 0
+        else:
+            s.execute(text("""
+                INSERT INTO item_feedback (username, kind, item_key, verdict, topics, payload)
+                VALUES (:u, :k, :i, :v, CAST(:t AS jsonb), CAST(:p AS jsonb))
+                ON CONFLICT (username, kind, item_key) DO UPDATE
+                   SET verdict = EXCLUDED.verdict, topics = EXCLUDED.topics,
+                       payload = EXCLUDED.payload, created_at = now()
+            """), {"u": username, "k": kind, "i": item_key, "v": verdict,
+                   "t": json.dumps(topics or [], ensure_ascii=False),
+                   "p": json.dumps(payload or {}, ensure_ascii=False, default=str)})
+            new_v = verdict
+    n = _scalar("""SELECT count(*) FROM item_feedback
+                   WHERE username=:u AND kind IN ('news','for_you','check')""",
+                {"u": username}) or 0
+    return {"verdict": new_v, "content_ratings": int(n)}
+
+
+def feedback_map(username: str, kind: str) -> dict:
+    """{item_key: verdict} — чтобы UI рендерил уже проставленные оценки."""
+    rows = _rows("""SELECT item_key, verdict FROM item_feedback
+                    WHERE username=:u AND kind=:k
+                    ORDER BY created_at DESC LIMIT 500""",
+                 {"u": username, "k": kind}) or []
+    return {r["item_key"]: int(r["verdict"]) for r in rows}
+
+
+def reaction_profile(username: str) -> dict:
+    """Обучение на контентных оценках: веса тем (±) и источников (±),
+    навсегда скрытые ключи. Экспоненциальное затухание, полураспад 30 дней —
+    профиль живой, старые вкусы отмирают сами. Всё детерминированно/объяснимо."""
+    import json
+    from datetime import datetime, timezone
+    rows = _rows("""SELECT item_key, verdict, topics, payload, created_at
+                    FROM item_feedback
+                    WHERE username=:u AND kind IN ('news','for_you','check')
+                    ORDER BY created_at DESC LIMIT 400""", {"u": username}) or []
+    topics_w: dict[str, float] = {}
+    sources_w: dict[str, float] = {}
+    disliked: set[str] = set()
+    likes = dislikes = 0
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        v = int(r["verdict"])
+        likes += v > 0
+        dislikes += v < 0
+        if v < 0 and r.get("item_key"):
+            disliked.add(str(r["item_key"]))
+        try:
+            age_d = max((now - r["created_at"]).total_seconds() / 86400.0, 0.0)
+        except Exception:
+            age_d = 0.0
+        decay = 0.5 ** (age_d / 30.0)
+        ts = r.get("topics") or []
+        if isinstance(ts, str):
+            try:
+                ts = json.loads(ts)
+            except Exception:
+                ts = []
+        for t in ts:
+            delta = (1.0 if v > 0 else -1.2) * decay
+            topics_w[t] = max(-2.0, min(2.0, topics_w.get(t, 0.0) + delta))
+        p = r.get("payload") or {}
+        if isinstance(p, str):
+            try:
+                p = json.loads(p)
+            except Exception:
+                p = {}
+        src = p.get("source")
+        if src:
+            delta = (0.3 if v > 0 else -0.3) * decay
+            sources_w[src] = max(-0.9, min(0.9, sources_w.get(src, 0.0) + delta))
+    return {"topics": {t: round(w, 3) for t, w in topics_w.items() if abs(w) > 0.05},
+            "sources": {s_: round(w, 3) for s_, w in sources_w.items() if abs(w) > 0.05},
+            "disliked_keys": disliked,
+            "n_likes": likes, "n_dislikes": dislikes, "n_total": len(rows)}
+
+
+def personalization_score(username: str) -> dict:
+    """«Сила персонализации» 0–100: детерминированная, объяснимая разбивка
+    с CTA — пользователь точно видит, какое действие сколько даёт."""
+    import json
+    user = get_user(username) or {}
+    prefs = user.get("prefs") or {}
+    if isinstance(prefs, str):
+        prefs = json.loads(prefs or "{}")
+    desc = (prefs.get("self_description") or "").strip()
+    ti = top_interests(username)
+    focus_n = len(set((ti.get("products") or []) + (ti.get("pinned") or [])))
+    q_n = int(_scalar("""SELECT count(*) FROM user_event
+                         WHERE username=:u AND kind='ai_query'""", {"u": username}) or 0)
+    fb_n = int(_scalar("""SELECT count(*) FROM item_feedback
+                          WHERE username=:u AND kind IN ('news','for_you','check')""",
+                       {"u": username}) or 0)
+    ai_n = int(_scalar("""SELECT count(*) FROM item_feedback
+                          WHERE username=:u AND kind='ai_answer'""", {"u": username}) or 0)
+    note = bool(user.get("profile_note"))
+
+    parts: list[dict] = []
+
+    def part(key, label, earned, mx, done, cta, target):
+        parts.append({"key": key, "label": label, "earned": int(round(earned)),
+                      "max": mx, "done": bool(done), "cta": cta, "target": target})
+
+    part("desc", "Описание зоны ответственности", 25 * min(len(desc) / 40, 1), 25,
+         len(desc) >= 40, "Опишите, что вы проверяете в Сбере", "profile")
+    part("ratings", "5+ оценок в «Для вас»", 20 * min(fb_n / 5, 1), 20,
+         fb_n >= 5, "Оцените публикации 👍/👎 на «Для вас»", "foryou")
+    part("focus", "3+ темы в фокусе", 15 * min(focus_n / 3, 1), 15,
+         focus_n >= 3, "Закрепите темы в профиле", "profile")
+    part("queries", "5+ вопросов ИИ-аналитику", 15 * min(q_n / 5, 1), 15,
+         q_n >= 5, "Спросите ИИ-аналитика о своей теме", "ai")
+    part("ai_ratings", "3+ оценки ответов ИИ", 10 * min(ai_n / 3, 1), 10,
+         ai_n >= 3, "Оцените пару ответов ИИ-аналитика", "ai")
+    part("note", "ИИ-нарратив профиля собран", 10 if note else 0, 10,
+         note, "Соберите профиль кнопкой «Пересобрать»", "profile")
+    part("regular", "Регулярное использование", 5, 5, True, "", "")
+    score = min(100, sum(p["earned"] for p in parts))
+    return {"score": score, "parts": parts,
+            "counts": {"queries": q_n, "content_ratings": fb_n, "ai_ratings": ai_n}}
+
+
+def ai_feedback_stats(limit: int = 10) -> dict:
+    """Для вкладки «Качество» (контур владельца): пульс оценок ИИ-ответов
+    и последние дизлайки с причинами — сырьё для разбора косяков."""
+    import json
+    likes = int(_scalar("""SELECT count(*) FROM item_feedback
+                           WHERE kind='ai_answer' AND verdict=1
+                             AND created_at > now() - interval '7 days'""") or 0)
+    dislikes = int(_scalar("""SELECT count(*) FROM item_feedback
+                              WHERE kind='ai_answer' AND verdict=-1
+                                AND created_at > now() - interval '7 days'""") or 0)
+    rows = _rows("""SELECT username, payload, created_at FROM item_feedback
+                    WHERE kind='ai_answer' AND verdict=-1
+                    ORDER BY created_at DESC LIMIT :l""", {"l": limit}) or []
+    out = []
+    for r in rows:
+        p = r.get("payload") or {}
+        if isinstance(p, str):
+            try:
+                p = json.loads(p)
+            except Exception:
+                p = {}
+        out.append({"username": r.get("username"),
+                    "question": (p.get("question") or "")[:200],
+                    "reasons": p.get("reasons") or [],
+                    "comment": (p.get("comment") or "")[:300],
+                    "mode": p.get("mode"),
+                    "created_at": str(r.get("created_at") or "")})
+    return {"likes_7d": likes, "dislikes_7d": dislikes, "recent_dislikes": out}
