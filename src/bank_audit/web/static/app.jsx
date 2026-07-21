@@ -2466,6 +2466,169 @@ function KbdHelp({onClose}){
   </div>;
 }
 
+// ─── История чатов/отчётов: off-canvas drawer (премиальный, лёгкий) ───────────
+function fmtHistTime(s){
+  try{
+    const d=new Date(s), now=new Date();
+    if(d.toDateString()===now.toDateString())
+      return d.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"});
+    return d.toLocaleDateString("ru",{day:"2-digit",month:"2-digit"});
+  }catch{return "";}
+}
+function histGroup(s){
+  try{
+    const d=new Date(s), now=new Date(), day=86400000;
+    const startToday=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+    const t=d.getTime();
+    if(t>=startToday) return "Сегодня";
+    if(t>=startToday-day) return "Вчера";
+    if(t>=startToday-6*day) return "На этой неделе";
+    return "Раньше";
+  }catch{return "Раньше";}
+}
+const HD_CSS=`
+.hd-backdrop{position:fixed;inset:0;z-index:150;background:oklch(0% 0 0 / .28);
+  opacity:0;pointer-events:none;transition:opacity .22s ease;backdrop-filter:blur(2px);}
+.hd-backdrop.open{opacity:1;pointer-events:auto;}
+.hd-panel{position:fixed;top:0;left:0;bottom:0;width:340px;max-width:86vw;z-index:151;
+  background:var(--paper);border-right:1px solid var(--hair);box-shadow:var(--shadow-2);
+  display:flex;flex-direction:column;transform:translateX(-104%);
+  transition:transform .24s cubic-bezier(.4,0,.2,1);}
+.hd-panel.open{transform:translateX(0);}
+.hd-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px;}
+.hd-title{font-family:'Source Serif 4',serif;font-weight:600;font-size:17px;}
+.hd-x{background:none;border:0;color:var(--ink-3);font-size:15px;cursor:pointer;padding:4px 6px;border-radius:6px;}
+.hd-x:hover{background:var(--surface);color:var(--ink);}
+.hd-tabs{display:flex;gap:4px;padding:0 14px 8px;border-bottom:1px solid var(--hair);}
+.hd-tabs button{flex:1;background:none;border:0;padding:8px;font-size:13px;color:var(--ink-3);
+  cursor:pointer;border-radius:6px 6px 0 0;border-bottom:2px solid transparent;}
+.hd-tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:500;}
+.hd-search{margin:10px 14px;padding:8px 10px;border:1px solid var(--hair);border-radius:var(--r-sm);
+  background:var(--surface);color:var(--ink);font-size:13px;font-family:inherit;}
+.hd-search:focus{outline:none;border-color:var(--accent);}
+.hd-list{flex:1;overflow-y:auto;padding:2px 8px 16px;}
+.hd-group{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);
+  font-family:'JetBrains Mono',monospace;padding:12px 8px 5px;}
+.hd-item{display:flex;gap:8px;padding:8px 8px;border-radius:var(--r-sm);cursor:pointer;position:relative;}
+.hd-item:hover{background:var(--surface);}
+.hd-item-main{flex:1;min-width:0;}
+.hd-item-t{font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hd-item-p{font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+.hd-item-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;}
+.hd-time{font-size:10.5px;color:var(--ink-4);font-family:'JetBrains Mono',monospace;white-space:nowrap;}
+.hd-actions{display:none;gap:2px;}
+.hd-item:hover .hd-actions{display:flex;}
+.hd-actions button{background:none;border:0;color:var(--ink-3);cursor:pointer;font-size:12px;padding:2px 4px;border-radius:4px;line-height:1;}
+.hd-actions button:hover{background:var(--paper-2);color:var(--ink);}
+.hd-pin{margin-right:4px;font-size:11px;}
+.hd-report{padding:10px 10px;border:1px solid var(--hair);border-radius:var(--r-sm);margin:6px 4px;cursor:pointer;}
+.hd-report:hover{border-color:var(--accent-soft);background:var(--surface);}
+.hd-report-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;}
+.hd-bank{font-size:10px;background:var(--surface);border:1px solid var(--hair);border-radius:4px;padding:1px 6px;color:var(--ink-3);font-family:'JetBrains Mono',monospace;}
+.hd-owner{font-size:11px;color:var(--accent);}
+.hd-empty{color:var(--ink-4);font-size:13px;text-align:center;padding:32px 12px;}
+.chat-shell{position:relative;}
+.hd-trigger{position:absolute;top:14px;left:16px;z-index:5;display:inline-flex;align-items:center;gap:6px;
+  background:var(--paper);border:1px solid var(--hair);border-radius:var(--r-sm);padding:6px 11px;
+  font-size:12.5px;color:var(--ink-2);cursor:pointer;box-shadow:var(--shadow-1);}
+.hd-trigger:hover{border-color:var(--accent-soft);color:var(--ink);}
+`;
+function HistoryDrawer({open,onClose,onLoadSession,onLoadReport}){
+  const[tab,setTab]=useState("chats");
+  const[sessions,setSessions]=useState([]);
+  const[reports,setReports]=useState([]);
+  const[shared,setShared]=useState([]);
+  const[search,setSearch]=useState("");
+  const[busy,setBusy]=useState(false);
+  const load=useCallback(()=>{
+    setBusy(true);
+    Promise.all([
+      apiFetch("/api/chat/sessions").then(d=>setSessions(d.sessions||[])).catch(()=>{}),
+      apiFetch("/api/reports").then(d=>{setReports(d.reports||[]);setShared(d.shared||[]);}).catch(()=>{}),
+    ]).finally(()=>setBusy(false));
+  },[]);
+  useEffect(()=>{ if(open) load(); },[open,load]);
+  useEffect(()=>{
+    if(!open)return;
+    const onKey=(e)=>{ if(e.key==="Escape")onClose(); };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[open,onClose]);
+  const delSession=async(e,sid)=>{ e.stopPropagation();
+    await apiDel(`/api/chat/sessions/${sid}`); setSessions(s=>s.filter(x=>x.session_id!==sid)); };
+  const pinSession=async(e,s)=>{ e.stopPropagation();
+    await apiPost(`/api/chat/sessions/${s.session_id}/pin`,{pinned:!s.pinned}).catch(()=>{}); load(); };
+
+  const fSessions=sessions.filter(s=>!search||(s.title||"").toLowerCase().includes(search.toLowerCase()));
+  const groups={};
+  fSessions.forEach(s=>{ const g=s.pinned?"Закреплённые":histGroup(s.updated_at); (groups[g]=groups[g]||[]).push(s); });
+  const order=["Закреплённые","Сегодня","Вчера","На этой неделе","Раньше"];
+
+  return <>
+    <style>{HD_CSS}</style>
+    <div className={"hd-backdrop"+(open?" open":"")} onClick={onClose}/>
+    <aside className={"hd-panel"+(open?" open":"")}>
+      <div className="hd-head">
+        <span className="hd-title">История</span>
+        <button className="hd-x" onClick={onClose} aria-label="закрыть">✕</button>
+      </div>
+      <div className="hd-tabs">
+        <button className={tab==="chats"?"on":""} onClick={()=>setTab("chats")}>Диалоги</button>
+        <button className={tab==="reports"?"on":""} onClick={()=>setTab("reports")}>Отчёты</button>
+      </div>
+      {tab==="chats" ? <>
+        <input className="hd-search" placeholder="Поиск по диалогам…" value={search}
+               onChange={e=>setSearch(e.target.value)}/>
+        <div className="hd-list">
+          {busy && !sessions.length && <div className="hd-empty">Загрузка…</div>}
+          {!busy && !fSessions.length && <div className="hd-empty">Пока нет диалогов</div>}
+          {order.filter(g=>groups[g]).map(g=>(
+            <div key={g}>
+              <div className="hd-group">{g}</div>
+              {groups[g].map(s=>(
+                <div key={s.session_id} className="hd-item" onClick={()=>onLoadSession(s.session_id)}>
+                  <div className="hd-item-main">
+                    <div className="hd-item-t">{s.pinned&&<span className="hd-pin">📌</span>}{s.title||"Без названия"}</div>
+                    <div className="hd-item-p">{(s.last_preview||"").replace(/[#*|>\n]/g," ").replace(/\s+/g," ").slice(0,64)}</div>
+                  </div>
+                  <div className="hd-item-side">
+                    <span className="hd-time">{fmtHistTime(s.updated_at)}</span>
+                    <div className="hd-actions">
+                      <button onClick={e=>pinSession(e,s)} title={s.pinned?"Открепить":"Закрепить"}>{s.pinned?"📌":"⇧"}</button>
+                      <button onClick={e=>delSession(e,s.session_id)} title="Удалить">✕</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </> : <div className="hd-list">
+        {!reports.length && !shared.length && <div className="hd-empty">Пока нет отчётов</div>}
+        {reports.map(r=>(
+          <div key={"r"+r.report_id} className="hd-report" onClick={()=>onLoadReport(r.report_id)}>
+            <div className="hd-item-t">{r.title||r.question}</div>
+            <div className="hd-report-meta">
+              {(r.banks||[]).slice(0,3).map(b=><span key={b} className="hd-bank">{b}</span>)}
+              <span className="hd-time" style={{marginLeft:"auto"}}>{fmtHistTime(r.created_at)}</span>
+            </div>
+          </div>
+        ))}
+        {shared.length>0 && <div className="hd-group">Поделились со мной</div>}
+        {shared.map(r=>(
+          <div key={"s"+r.report_id} className="hd-report" onClick={()=>onLoadReport(r.report_id)}>
+            <div className="hd-item-t">{r.title||r.question}</div>
+            <div className="hd-report-meta">
+              <span className="hd-owner">от {r.owner_name||r.owner}</span>
+              <span className="hd-time" style={{marginLeft:"auto"}}>{fmtHistTime(r.created_at)}</span>
+            </div>
+          </div>
+        ))}
+      </div>}
+    </aside>
+  </>;
+}
+
 function AIPage(){
   // Пустая лента → показывается welcome-экран (он и есть приветствие). Отдельным
   // ai-сообщением «Здравствуйте…» не засоряем диалог после первой отправки.
@@ -2478,6 +2641,8 @@ function AIPage(){
   const[activeCite,setActiveCite]=useState(null);        // подсветка bidirectional
   const[hideRail,setHideRail]=useState(false);
   const[hideToc,setHideToc]=useState(false);
+  const[sessionId,setSessionId]=useState(null);          // текущая сессия истории
+  const[histOpen,setHistOpen]=useState(false);           // drawer истории
   const[elapsed,setElapsed]=useState(0);                 // таймер прогона deep
   const runStartRef=useRef(0);
   const feedRef=useRef();
@@ -2583,7 +2748,7 @@ function AIPage(){
       const res=await fetch("/api/ai/analyze",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({question,history,force_deep:forceDeep}),
+        body:JSON.stringify({question,history,force_deep:forceDeep,session_id:sessionId}),
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({detail:res.statusText}));
@@ -2605,7 +2770,9 @@ function AIPage(){
             if(!line.startsWith("data: "))continue;
             try{
               const data=JSON.parse(line.slice(6));
-              if(data.type==="text"&&data.chunk){
+              if(data.type==="session"){
+                if(data.session_id) setSessionId(data.session_id);
+              }else if(data.type==="text"&&data.chunk){
                 updateLast(last=>({text:(last.text||"")+data.chunk}));
               }else if(data.type==="reasoning"){
                 // Живой ход мысли LLM (delta.reasoning_content). Копим ПО СТАДИЯМ
@@ -2799,9 +2966,46 @@ function AIPage(){
   const newQuery=()=>{
     if(loading)return;
     setMsgs([]);                                  // → welcome
+    setSessionId(null);                           // новая сессия истории
     setQ(""); setActiveCite(null); setHoverCite(null);
     setTimeout(()=>inputRef.current?.focus(),0);
   };
+
+  // Загрузка сессии из истории → в ленту (продолжение возможно, sessionId сохранён).
+  const openSession=async(sid)=>{
+    if(loading)return;
+    setHistOpen(false);
+    try{
+      const d=await apiFetch(`/api/chat/sessions/${sid}`);
+      const mapped=(d.messages||[]).map(m=>{
+        if(m.role==="user") return {role:"user",text:m.content};
+        const meta=m.meta||{};
+        return {role:"ai",text:m.content,sources:meta.sources||[],
+                mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined};
+      });
+      setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
+      setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
+    }catch{}
+  };
+  // Открыть сохранённый отчёт (свой или расшаренный) в ленте.
+  const openReport=async(rid)=>{
+    if(loading)return;
+    setHistOpen(false);
+    try{
+      const r=await apiFetch(`/api/reports/${rid}`);
+      const p=r.payload||{};
+      setMsgs([{role:"user",text:r.question},
+               {role:"ai",text:r.body,sources:p.sources||[],mode:p.mode||"deep",phase:"done"}]);
+      setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
+      setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
+    }catch{}
+  };
+  // ⌘K / Ctrl+K — открыть/закрыть историю.
+  useEffect(()=>{
+    const onKey=(e)=>{ if((e.metaKey||e.ctrlKey)&&(e.key==="k"||e.key==="K")){e.preventDefault();setHistOpen(o=>!o);} };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[]);
 
   const isEmpty = !msgs.some(m=>m.role==="user");
   const lastMsg = msgs[msgs.length-1];
@@ -2816,6 +3020,12 @@ function AIPage(){
   return <div className={"fade-in chat-shell"+(isEmpty?" is-welcome":"")}>
     {showKbd && <KbdHelp onClose={()=>setShowKbd(false)}/>}
     {hoverCite && hoverCite.source && <CitationTooltip source={hoverCite.source} anchor={hoverCite.anchor}/>}
+    {!isRunning && <button className="hd-trigger" onClick={()=>setHistOpen(true)} title="История (⌘K)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/></svg>
+      История
+    </button>}
+    <HistoryDrawer open={histOpen} onClose={()=>setHistOpen(false)}
+                   onLoadSession={openSession} onLoadReport={openReport}/>
     <div className="chat-stream">
       <div className="chat-feed" ref={feedRef}>
         {showThreadHead &&
