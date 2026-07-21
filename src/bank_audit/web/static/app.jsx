@@ -29,8 +29,9 @@ const QUICK = [
 
 // Редакторский экран приветствия ИИ-аналитика (новый дизайн)
 function AiWelcome({onPick}){
+  const me=useMe();
   return <div className="ai-welcome fade-in">
-    <div className="aw-eyebrow">ИИ-аналитик · AuditLens</div>
+    <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-аналитик`:"ИИ-аналитик · AuditLens"}</div>
     <h1 className="aw-title">Спросите об условиях<br/>банковского рынка</h1>
     <p className="aw-lede">Сравнение тарифов, ставок и рисков по продуктам — с цитированием официальных источников и позицией Сбера. Для аудит-вывода включите <b>Deep&nbsp;Research</b>: планировщик, мульти-агентный сбор и проверка чисел.</p>
     <div className="aw-cards">
@@ -70,6 +71,7 @@ const fmtTerm = (min,max) => {
 const apiFetch = (path) => fetch(path).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json();});
 const apiPost  = (path,body) => fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 const apiDel   = (path) => fetch(path,{method:"DELETE"}).then(r=>r.json()).catch(()=>{});
+const apiPut   = (path,body) => fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 const ThemeCtx = createContext({theme:"light",setTheme:()=>{}});
@@ -81,6 +83,28 @@ function ThemeProvider({children}){
 const useTheme = () => useContext(ThemeCtx);
 const BanksCtx = createContext([]);
 const useBanks = () => useContext(BanksCtx);
+
+// ─── Пользователь (персонализация) ────────────────────────────────────────────
+const MeCtx = createContext(null);
+const useMe = () => useContext(MeCtx);
+const firstName = (name) => (name||"").trim().split(/\s+/)[0] || "";
+const initials = (name) => {
+  const p=(name||"").trim().split(/\s+/).filter(Boolean);
+  return ((p[0]?.[0]||"")+(p[1]?.[0]||"")).toUpperCase() || "А";
+};
+const greetWord = (tz) => {
+  let h;
+  try{ h=parseInt(new Intl.DateTimeFormat("ru",{hour:"numeric",hour12:false,timeZone:tz||undefined}).format(new Date())); }
+  catch{ h=new Date().getHours(); }
+  if(h>=5&&h<12) return "Доброе утро";
+  if(h>=12&&h<18) return "Добрый день";
+  if(h>=18&&h<23) return "Добрый вечер";
+  return "Доброй ночи";
+};
+const greeting = (me) => {
+  const fn=firstName(me?.name), w=greetWord(me?.timezone);
+  return fn?`${w}, ${fn}`:w;
+};
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Ic = {
@@ -3516,6 +3540,7 @@ function Shell(){
   const[qualityCount,setQualityCount]=useState(0);
   const[hasCaptcha,setHasCaptcha]=useState(false);
   const[navOpen,setNavOpen]=useState(false);
+  const[me,setMe]=useState(null);
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Load banks for context + sidebar badges
@@ -3523,6 +3548,12 @@ function Shell(){
     apiFetch("/api/banks").then(d=>{setBanks(d||[]);}).catch(()=>{});
     apiFetch("/api/quality").then(d=>{setQualityCount((d?.flags||[]).length);}).catch(()=>{});
     apiFetch("/api/sources").then(d=>{setHasCaptcha((d?.captcha_pending||[]).length>0);}).catch(()=>{});
+  },[]);
+
+  // Профиль пользователя (+ отдаём серверу свой часовой пояс из браузера).
+  useEffect(()=>{
+    let tz=""; try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch{}
+    apiFetch("/api/me"+(tz?"?tz="+encodeURIComponent(tz):"")).then(setMe).catch(()=>{});
   },[]);
 
   useEffect(()=>{
@@ -3537,7 +3568,7 @@ function Shell(){
   const Page=PAGES_FN[page]||OverviewPage;
   const[idx,label]=PAGE_LABELS[page]||["01","Обзор"];
 
-  return <BanksCtx.Provider value={banks}>
+  return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
     <div id="app">
       <aside className={"rail"+(navOpen?" open":"")}>
         <div className="rail-brand">
@@ -3571,9 +3602,9 @@ function Shell(){
         ))}
         <div className="rail-foot">
           <div className="user-chip">
-            <div className="avatar">А</div>
+            <div className="avatar">{me?initials(me.name):"А"}</div>
             <div>
-              <div className="nm">Аудитор</div>
+              <div className="nm">{me?.name||"Аудитор"}</div>
               <div className="role">Внутренний аудит</div>
             </div>
           </div>
@@ -3612,7 +3643,7 @@ function Shell(){
         </div>
       </div>
     </div>
-  </BanksCtx.Provider>;
+  </BanksCtx.Provider></MeCtx.Provider>;
 }
 
 function App(){
