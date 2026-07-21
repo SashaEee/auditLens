@@ -643,79 +643,79 @@ function BfCard({ins,idx,lead}){
   </article>;
 }
 
-// ─── Персональный band «Обзора» (Фаза 3) ──────────────────────────────────────
-const PB_CSS=`
-.pb{margin-bottom:30px;padding:20px 22px 22px;border-radius:14px;
-  background:color-mix(in oklab,var(--accent-soft),transparent 45%);
-  border:1px solid color-mix(in oklab,var(--accent),transparent 86%);animation:fade-in .3s ease-out;}
-.pb-greet{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:11px;}
-.pb-lead{font-family:'Source Serif 4',serif;font-size:18px;line-height:1.52;color:var(--ink);text-wrap:pretty;max-width:80ch;}
-.pb-nudge{margin-top:6px;font-size:13.5px;line-height:1.5;color:var(--ink-2);}
-.pb-nudge button{color:var(--accent);font-weight:500;margin-left:4px;}
-.pb-fy-h{display:flex;align-items:baseline;justify-content:space-between;margin:20px 0 11px;}
-.pb-fy-n{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;}
-.pb-fy{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:10px;}
-.pb-card{position:relative;background:var(--surface);border:1px solid var(--hair);border-radius:11px;padding:13px 15px;
-  border-left:3px solid var(--ink-4);transition:box-shadow .14s,transform .18s,opacity .18s;}
-.pb-card:hover{box-shadow:var(--shadow-1);}
-.pb-card.sev-red{border-left-color:var(--neg);}
-.pb-card.sev-amber{border-left-color:var(--warn);}
-.pb-card.sev-green{border-left-color:var(--pos);}
-.pb-x{position:absolute;top:7px;right:7px;width:22px;height:22px;border-radius:6px;color:var(--ink-4);font-size:11px;
-  display:grid;place-items:center;opacity:0;transition:opacity .12s,background .12s,color .12s;}
-.pb-card:hover .pb-x{opacity:1;}
-.pb-x:hover{background:var(--paper-2);color:var(--ink);}
-.pb-reason{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin-bottom:5px;}
-.pb-card-t{font-size:13px;line-height:1.4;color:var(--ink);margin-bottom:3px;padding-right:16px;}
-.pb-card-s{font-size:12px;line-height:1.42;color:var(--ink-3);}
-.pb-card-f{display:flex;gap:14px;align-items:center;margin-top:10px;}
-.pb-card-f a,.pb-card-f button{font-size:11.5px;transition:color .12s;}
-.pb-open{color:var(--ink-3);}
-.pb-open:hover{color:var(--accent);}
-.pb-ask{color:var(--accent);}
-.pb-ask:hover{filter:brightness(1.1);}
-.pb-quiet{margin-top:12px;font-size:12.5px;color:var(--ink-3);font-style:italic;}
-.pb-skel{height:118px;margin-bottom:30px;border-radius:14px;
-  background:linear-gradient(90deg,var(--paper-2) 25%,var(--surface) 50%,var(--paper-2) 75%);
-  background-size:200% 100%;animation:pb-sh 1.5s ease-in-out infinite;}
-@keyframes pb-sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+// ─── Личная полоса «Обзора» (Фаза 3) — редакторский пролог, без плашек ────────
+const PL_CSS=`
+.pl{margin-bottom:30px;}
+.pl-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:13px;flex-wrap:wrap;}
+.pl-hi{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);}
+.pl-set{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--hair-2);background:var(--surface);border-radius:var(--r);
+  padding:4px 10px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);transition:color .12s,border-color .12s;}
+.pl-set:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 82%);}
+.pl-lede{font-family:'Source Serif 4',Georgia,serif;font-size:19px;line-height:1.56;letter-spacing:-.004em;color:var(--ink);
+  text-wrap:pretty;max-width:64ch;}
+.pl-nudge{font-family:'Source Serif 4',Georgia,serif;font-size:18px;line-height:1.52;color:var(--ink-3);max-width:60ch;text-wrap:pretty;}
+.pl-nudge button{font-family:'Geist','Inter',sans-serif;font-size:13.5px;color:var(--accent);font-weight:500;margin-left:7px;transition:filter .12s;}
+.pl-nudge button:hover{filter:brightness(1.12);}
+.pl-quiet{font-family:'Source Serif 4',Georgia,serif;font-size:16.5px;color:var(--ink-3);font-style:italic;}
+.pl-fy{margin-top:18px;}
+.pl-fy-row{display:flex;align-items:center;gap:13px;padding:10px 3px;border-top:1px solid var(--hair);cursor:pointer;transition:background .12s;}
+.pl-fy-row:last-child{border-bottom:1px solid var(--hair);}
+.pl-fy-row:hover{background:color-mix(in oklab,var(--surface),transparent 30%);}
+.pl-dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--ink-4);}
+.pl-dot.sev-red{background:var(--neg);}
+.pl-dot.sev-amber{background:var(--warn);}
+.pl-dot.sev-green{background:var(--pos);}
+.pl-fy-t{flex:1;min-width:0;font-size:13.5px;line-height:1.4;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pl-fy-tag{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);
+  white-space:nowrap;flex:none;transition:opacity .12s;}
+.pl-fy-act{display:flex;gap:4px;align-items:center;flex:none;opacity:0;width:0;overflow:hidden;transition:opacity .14s;}
+.pl-fy-row:hover .pl-fy-tag{opacity:0;}
+.pl-fy-row:hover .pl-fy-act{opacity:1;width:auto;}
+.pl-fy-act button{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:12px;color:var(--ink-4);transition:background .12s,color .12s;}
+.pl-fy-act button:hover{background:var(--paper-2);}
+.pl-fy-act .ask:hover{color:var(--accent);}
+.pl-fy-act .mute:hover{color:var(--ink);}
+.pl-div{border:0;border-top:1px solid var(--hair);margin:28px 0 0;}
+.pl-skel{height:80px;margin-bottom:30px;border-radius:var(--r-lg);
+  background:linear-gradient(90deg,var(--paper-2) 25%,var(--surface) 50%,var(--paper-2) 75%);background-size:200% 100%;animation:pl-sh 1.5s ease-in-out infinite;}
+@keyframes pl-sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
 `;
 function PersonalBand(){
   const me=useMe();
-  const[p,setP]=useState(undefined);         // undefined=грузится, null=выкл, obj=данные
+  const[p,setP]=useState(undefined);          // undefined=грузится, null=выкл, obj=данные
   const[gone,setGone]=useState({});
   useEffect(()=>{ apiFetch("/api/overview/personal").then(d=>setP(d.personal||null)).catch(()=>setP(null)); },[]);
-  if(p===undefined) return <div className="pb-skel"/>;
-  if(p===null) return null;                   // персонализация выключена
-  const items=(p.for_you||[]).filter(x=>!gone[x.title]);
+  if(p===undefined) return <div className="pl-skel"/>;
+  if(p===null) return null;                    // персонализация выключена
+  const items=(p.for_you||[]).filter(x=>!gone[x.title]).slice(0,3);
   const dismiss=(x)=>{ setGone(g=>({...g,[x.title]:1}));
     if(x.reason_slugs&&x.reason_slugs.length)
       apiPost("/api/overview/personal/feedback",{topics:x.reason_slugs}).catch(()=>{}); };
   const g=greetWord(me&&me.timezone);
-  return <div className="pb">
-    <style>{PB_CSS}</style>
-    <div className="pb-greet">{g}{p.name?", "+p.name:""}</div>
-    {p.lead && <p className="pb-lead">{p.lead}</p>}
-    {!p.has_profile && <div className="pb-nudge">Настройте персонализацию — опишите, что вы проверяете, и «Обзор» будет собираться под вас.
-      <button onClick={()=>{location.hash="profile";}}>Настроить →</button></div>}
-    {items.length>0 && <>
-      <div className="pb-fy-h"><span className="eyebrow">В вашем фокусе</span><span className="pb-fy-n">{items.length} · для вас</span></div>
-      <div className="pb-fy">
-        {items.map((x,i)=>(
-          <div key={i} className={"pb-card sev-"+(x.severity||"amber")}>
-            <button className="pb-x" onClick={()=>dismiss(x)} title="Не интересно — заглушить тему">✕</button>
-            {x.reason&&<div className="pb-reason">ваш фокус: {x.reason}</div>}
-            <div className="pb-card-t">{x.title}</div>
-            {x.summary&&<div className="pb-card-s">{x.summary}</div>}
-            <div className="pb-card-f">
-              {x.url&&<a className="pb-open" href={x.url} target="_blank" rel="noreferrer">Источник ↗</a>}
-              <button className="pb-ask" onClick={()=>bfGoAI("Разбери подробно для аудита: "+(x.title||""))}>✦ Спросить ИИ</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </>}
-    {p.quiet && !items.length && <div className="pb-quiet">По вашим темам сегодня спокойно · под наблюдением {(p.top_topics||[]).length||"—"} тем</div>}
+  return <div className="pl">
+    <style>{PL_CSS}</style>
+    <div className="pl-top">
+      <span className="pl-hi">{g}{p.name?", "+p.name:""}</span>
+      <button className="pl-set" onClick={()=>{location.hash="profile";}} title="Персонализация">⚙ персонализация</button>
+    </div>
+    {p.lead ? <p className="pl-lede">{p.lead}</p>
+      : !p.has_profile
+        ? <p className="pl-nudge">Опишите, какие процессы и продукты вы проверяете — и эта полоса будет собираться лично под вас.<button onClick={()=>{location.hash="profile";}}>Настроить →</button></p>
+        : <p className="pl-quiet">По вашим темам сегодня спокойно.</p>}
+    {items.length>0 && <div className="pl-fy">
+      {items.map((x,i)=>(
+        <div key={i} className="pl-fy-row" onClick={()=>{ if(x.url) window.open(x.url,"_blank","noopener"); }}>
+          <span className={"pl-dot sev-"+(x.severity||"amber")}/>
+          <span className="pl-fy-t">{x.title}</span>
+          {x.reason&&<span className="pl-fy-tag">{x.reason}</span>}
+          <span className="pl-fy-act" onClick={e=>e.stopPropagation()}>
+            <button className="ask" title="Спросить ИИ" onClick={()=>bfGoAI("Разбери подробно для аудита: "+(x.title||""))}>✦</button>
+            <button className="mute" title="Не интересно — заглушить тему" onClick={()=>dismiss(x)}>✕</button>
+          </span>
+        </div>
+      ))}
+    </div>}
+    <hr className="pl-div"/>
   </div>;
 }
 
