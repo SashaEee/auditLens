@@ -135,6 +135,11 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
         userdata.set_timezone(user.username, body.timezone)
     if body.prefs is not None:
         userdata.update_prefs(user.username, body.prefs)
+        if "self_description" in body.prefs:   # профиль изменился → «Для вас» устарел
+            try:
+                userdata.clear_personal_digest(user.username)
+            except Exception:
+                pass
     return {"ok": True}
 
 
@@ -142,6 +147,10 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
 def put_interests(body: InterestsUpdate, user: CurrentUser = Depends(get_current_user)):
     userdata.set_interest_overrides(user.username, pinned=body.pinned,
                                     muted=body.muted, custom=body.custom)
+    try:
+        userdata.clear_personal_digest(user.username)   # темы изменились → пересобрать
+    except Exception:
+        pass
     return {"ok": True, "interests": userdata.top_interests(user.username)}
 
 
@@ -172,6 +181,26 @@ async def overview_personal_refresh(user: CurrentUser = Depends(get_current_user
     from ..digest import personal
     p = await personal.build_personal(user.username, force=True)
     return {"personal": p}
+
+
+@app.get("/api/overview/foryou")
+async def overview_foryou(user: CurrentUser = Depends(get_current_user)):
+    """Персональный разворот «Для вас»: полноценная страница под профиль аудитора.
+    None → персонализация выключена. Никогда не 500-ит (best-effort по дизайну)."""
+    from ..digest import personal
+    try:
+        userdata.touch_user(user.username, user.name)
+    except Exception:
+        pass
+    p = await personal.build_foryou(user.username)
+    return {"foryou": p}
+
+
+@app.post("/api/overview/foryou/refresh")
+async def overview_foryou_refresh(user: CurrentUser = Depends(get_current_user)):
+    from ..digest import personal
+    p = await personal.build_foryou(user.username, force=True)
+    return {"foryou": p}
 
 
 @app.post("/api/overview/personal/feedback")

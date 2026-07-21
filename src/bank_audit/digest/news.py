@@ -102,6 +102,54 @@ def _parse_dt(raw_dt: str) -> datetime | None:
 
 _CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
 
+# ── картинки для плиток «Для вас» (enclosure/media:* в RSS, фото в t.me/s) ────
+_MEDIA_NS = "{http://search.yahoo.com/mrss/}"
+_IMG_EXT_RE = re.compile(r"\.(jpe?g|png|webp|gif)(\?|$)", re.IGNORECASE)
+# фото/видео-превью TG: class идёт до style, внутри атрибутов '>' не бывает
+_TG_IMG_RE = re.compile(
+    r"tgme_widget_message_(?:photo_wrap|video_thumb)[^>]*"
+    r"background-image:url\('([^']+)'\)")
+
+
+def _rss_image(it: ET.Element) -> str | None:
+    """Картинка item'а: <enclosure type=image> либо media:content/thumbnail."""
+    enc = it.find("enclosure")
+    if enc is not None:
+        url = (enc.get("url") or "").strip()
+        typ = (enc.get("type") or "").lower()
+        if url.startswith("http") and ("image" in typ or _IMG_EXT_RE.search(url)):
+            return url
+    for tag in ("content", "thumbnail"):
+        for m in it.iter(_MEDIA_NS + tag):
+            url = (m.get("url") or "").strip()
+            typ = (m.get("type") or "").lower()
+            if url.startswith("http") and ("video" not in typ):
+                return url
+    return None
+
+
+_IMG_SRC_RE = re.compile(r'<img[^>]+src="(https?://[^"]+)"', re.IGNORECASE)
+
+
+def _img_from_html(raw: str) -> str | None:
+    """<img src> внутри description/content:encoded (frankmedia кладёт так)."""
+    m = _IMG_SRC_RE.search(html.unescape(raw or ""))
+    return m.group(1) if m else None
+
+
+def _rss_image_re(block: str) -> str | None:
+    """То же для regex-fallback (битый XML banki.ru)."""
+    m = re.search(r'<(enclosure|media:content|media:thumbnail)[^>]*url="([^"]+)"',
+                  block, re.IGNORECASE)
+    if m:
+        url = html.unescape(m.group(2)).strip()
+        tag_txt = m.group(0).lower()
+        if url.startswith("http") and "video" not in tag_txt and (
+                "image" in tag_txt or "media:" in m.group(1).lower()
+                or _IMG_EXT_RE.search(url)):
+            return url
+    return _img_from_html(block)
+
 
 def _xml_field(block: str, tag: str) -> str:
     m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", block, re.DOTALL | re.IGNORECASE)
@@ -124,7 +172,9 @@ def _parse_rss_fallback(xml_text: str, src: dict) -> list[dict]:
         items.append({"title": title[:220], "url": link,
                       "ts": _parse_dt(_xml_field(block, "pubDate")),
                       "snippet": _strip_html(_xml_field(block, "description"))[:300],
-                      "source": src["key"], "tag": src["tag"]})
+                      "source": src["key"], "tag": src["tag"],
+                      "dimension": src.get("dimension"),
+                      "image": _rss_image_re(block)})
     return items
 
 
@@ -144,9 +194,13 @@ def _parse_rss(xml_text: str, src: dict) -> list[dict]:
             continue
         raw_dt = it.findtext("pubDate") or it.findtext(
             "{http://purl.org/dc/elements/1.1/}date") or ""
+        desc_raw = ((it.findtext("description") or "") + " " +
+                    (it.findtext("{http://purl.org/rss/1.0/modules/content/}encoded") or ""))
         snippet = _strip_html(it.findtext("description") or "")[:300]
         items.append({"title": title[:220], "url": link, "ts": _parse_dt(raw_dt),
-                      "snippet": snippet, "source": src["key"], "tag": src["tag"]})
+                      "snippet": snippet, "source": src["key"], "tag": src["tag"],
+                      "dimension": src.get("dimension"),
+                      "image": _rss_image(it) or _img_from_html(desc_raw)})
     return items
 
 
@@ -171,9 +225,12 @@ def _parse_tg(html_text: str, src: dict) -> list[dict]:
         ts = _parse_dt(time_m.group(1))
         first_line = text.split("\n", 1)[0].strip()
         title = (first_line if len(first_line) >= 15 else text)[:180]
+        img_m = _TG_IMG_RE.search(block)
         items.append({"title": title, "url": f"https://t.me/{post_m.group(1)}",
                       "ts": ts, "snippet": text[:400],
-                      "source": src["key"], "tag": src["tag"]})
+                      "source": src["key"], "tag": src["tag"],
+                      "dimension": src.get("dimension"),
+                      "image": html.unescape(img_m.group(1)) if img_m else None})
     return items
 
 
@@ -206,12 +263,14 @@ def _fetch_search() -> tuple[list[dict], dict]:
     items = []
     try:
         from ..rag.web_search import search
+        dim = {"incident": "ops", "scheme": "fraud", "regulator": "compliance"}
         for query, tag in SEARCH_QUERIES:
             for r in search(query, max_results=4, cache_ttl_seconds=6 * 3600):
                 items.append({"title": (r.get("title") or "")[:220],
                               "url": r.get("url") or "", "ts": None,
                               "snippet": (r.get("snippet") or "")[:300],
-                              "source": "web_search", "tag": tag})
+                              "source": "web_search", "tag": tag,
+                              "dimension": dim.get(tag, "market"), "image": None})
         status.update(ok=True, items=len(items))
     except Exception as e:  # noqa: BLE001
         status["skipped_reason"] = f"{type(e).__name__}: {str(e)[:120]}"

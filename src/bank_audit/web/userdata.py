@@ -513,3 +513,11 @@ def save_personal_digest(username: str, local_date: date, payload: dict,
         """), {"u": username, "d": local_date,
                "p": json.dumps(payload, ensure_ascii=False, default=str),
                "m": llm_model, "ti": tokens_in, "to": tokens_out})
+
+
+def clear_personal_digest(username: str) -> None:
+    """Сброс дневного кэша «Для вас» — после изменения профиля (описание/темы)
+    следующий GET пересоберёт разворот уже под новый профиль, а не завтра."""
+    with db.session() as s:
+        s.execute(text("DELETE FROM personal_digest WHERE username = :u"),
+                  {"u": username})
