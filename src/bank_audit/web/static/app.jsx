@@ -28,7 +28,7 @@ const QUICK = [
 ];
 
 // Редакторский экран приветствия ИИ-аналитика (новый дизайн)
-function AiWelcome({onPick}){
+function AiWelcome({onPick,recent,onOpenHistory,onLoadSession}){
   const me=useMe();
   return <div className="ai-welcome fade-in">
     <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-аналитик`:"ИИ-аналитик · AuditLens"}</div>
@@ -42,6 +42,22 @@ function AiWelcome({onPick}){
         </button>
       ))}
     </div>
+    {recent&&recent.length>0 && <div className="aw-recent">
+      <div className="aw-recent-h">
+        <span className="l">Продолжить</span>
+        <button onClick={onOpenHistory}>Вся история
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+      <div className="aw-recent-grid">
+        {recent.slice(0,4).map(s=>(
+          <button key={s.session_id} className="aw-rec" onClick={()=>onLoadSession&&onLoadSession(s.session_id)}>
+            <span className="t">{s.title||"Без названия"}</span>
+            <span className="m">{fmtHistTime(s.updated_at)} · {s.n_messages||0} сообщ.</span>
+          </button>
+        ))}
+      </div>
+    </div>}
     <div className="aw-conn">Подключено: <span>v_offer_current · v_review_topics · v_sber_vs_market</span> · глубина 30 дней</div>
   </div>;
 }
@@ -2486,152 +2502,236 @@ function histGroup(s){
     return "Раньше";
   }catch{return "Раньше";}
 }
-const HD_CSS=`
-.hd-backdrop{position:fixed;inset:0;z-index:150;background:oklch(0% 0 0 / .28);
-  opacity:0;pointer-events:none;transition:opacity .22s ease;backdrop-filter:blur(2px);}
-.hd-backdrop.open{opacity:1;pointer-events:auto;}
-.hd-panel{position:fixed;top:0;left:0;bottom:0;width:340px;max-width:86vw;z-index:151;
-  background:var(--paper);border-right:1px solid var(--hair);box-shadow:var(--shadow-2);
-  display:flex;flex-direction:column;transform:translateX(-104%);
-  transition:transform .24s cubic-bezier(.4,0,.2,1);}
-.hd-panel.open{transform:translateX(0);}
-.hd-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px;}
-.hd-title{font-family:'Source Serif 4',serif;font-weight:600;font-size:17px;}
-.hd-x{background:none;border:0;color:var(--ink-3);font-size:15px;cursor:pointer;padding:4px 6px;border-radius:6px;}
-.hd-x:hover{background:var(--surface);color:var(--ink);}
-.hd-tabs{display:flex;gap:4px;padding:0 14px 8px;border-bottom:1px solid var(--hair);}
-.hd-tabs button{flex:1;background:none;border:0;padding:8px;font-size:13px;color:var(--ink-3);
-  cursor:pointer;border-radius:6px 6px 0 0;border-bottom:2px solid transparent;}
-.hd-tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:500;}
-.hd-search{margin:10px 14px;padding:8px 10px;border:1px solid var(--hair);border-radius:var(--r-sm);
-  background:var(--surface);color:var(--ink);font-size:13px;font-family:inherit;}
-.hd-search:focus{outline:none;border-color:var(--accent);}
-.hd-list{flex:1;overflow-y:auto;padding:2px 8px 16px;}
-.hd-group{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);
-  font-family:'JetBrains Mono',monospace;padding:12px 8px 5px;}
-.hd-item{display:flex;gap:8px;padding:8px 8px;border-radius:var(--r-sm);cursor:pointer;position:relative;}
-.hd-item:hover{background:var(--surface);}
-.hd-item-main{flex:1;min-width:0;}
-.hd-item-t{font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.hd-item-p{font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
-.hd-item-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;}
-.hd-time{font-size:10.5px;color:var(--ink-4);font-family:'JetBrains Mono',monospace;white-space:nowrap;}
-.hd-actions{display:none;gap:2px;}
-.hd-item:hover .hd-actions{display:flex;}
-.hd-actions button{background:none;border:0;color:var(--ink-3);cursor:pointer;font-size:12px;padding:2px 4px;border-radius:4px;line-height:1;}
-.hd-actions button:hover{background:var(--paper-2);color:var(--ink);}
-.hd-pin{margin-right:4px;font-size:11px;}
-.hd-report{padding:10px 10px;border:1px solid var(--hair);border-radius:var(--r-sm);margin:6px 4px;cursor:pointer;}
-.hd-report:hover{border-color:var(--accent-soft);background:var(--surface);}
-.hd-report-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;}
-.hd-bank{font-size:10px;background:var(--surface);border:1px solid var(--hair);border-radius:4px;padding:1px 6px;color:var(--ink-3);font-family:'JetBrains Mono',monospace;}
-.hd-owner{font-size:11px;color:var(--accent);}
-.hd-empty{color:var(--ink-4);font-size:13px;text-align:center;padding:32px 12px;}
-.chat-shell{position:relative;}
-.hd-trigger{position:absolute;top:14px;left:16px;z-index:5;display:inline-flex;align-items:center;gap:6px;
-  background:var(--paper);border:1px solid var(--hair);border-radius:var(--r-sm);padding:6px 11px;
-  font-size:12.5px;color:var(--ink-2);cursor:pointer;box-shadow:var(--shadow-1);}
-.hd-trigger:hover{border-color:var(--accent-soft);color:var(--ink);}
+const CP_CSS=`
+.cp-ov{position:fixed;inset:0;z-index:200;display:grid;place-items:start center;padding:12vh 20px 20px;
+  background:oklch(20% 0.02 260 / .34);backdrop-filter:blur(4px) saturate(1.05);
+  opacity:0;transition:opacity .17s ease;}
+.cp-ov.in{opacity:1;}
+.cp{width:600px;max-width:100%;max-height:74vh;display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--hair);border-radius:16px;overflow:hidden;
+  box-shadow:0 24px 70px oklch(0% 0 0 / .22), 0 3px 10px oklch(0% 0 0 / .08);
+  transform:translateY(10px) scale(.986);opacity:0;
+  transition:transform .22s cubic-bezier(.2,0,0,1),opacity .2s ease;}
+.cp-ov.in .cp{transform:none;opacity:1;}
+.cp-search{display:flex;align-items:center;gap:11px;padding:16px 18px;border-bottom:1px solid var(--hair);}
+.cp-search>svg{color:var(--ink-4);flex:none;}
+.cp-search input{flex:1;border:0;background:none;font-size:16px;line-height:1.3;color:var(--ink);
+  font-family:'Geist','Inter',sans-serif;letter-spacing:-.01em;}
+.cp-search input::placeholder{color:var(--ink-4);}
+.cp-search input:focus{outline:none;}
+.cp-esc{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);
+  border:1px solid var(--hair);border-radius:5px;padding:3px 7px;flex:none;}
+.cp-seg{display:flex;gap:3px;padding:9px 14px 5px;}
+.cp-seg button{font-size:12px;color:var(--ink-3);padding:5px 11px;border-radius:7px;display:flex;
+  align-items:center;gap:7px;transition:background .14s,color .14s;}
+.cp-seg button:hover{color:var(--ink-2);}
+.cp-seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:500;}
+.cp-seg .n{font-family:'JetBrains Mono',monospace;font-size:10px;font-variant-numeric:tabular-nums;opacity:.75;}
+.cp-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:3px 8px 10px;}
+.cp-group{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-4);padding:13px 10px 5px;}
+.cp-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:9px;cursor:pointer;
+  scroll-margin:10px;transition:background .12s;}
+.cp-row:active{transform:scale(.97);}
+.cp-row.sel{background:var(--accent-soft);}
+.cp-ic{width:30px;height:30px;flex:none;border-radius:8px;display:grid;place-items:center;
+  background:var(--paper-2);color:var(--ink-3);border:1px solid var(--hair);transition:color .12s,border-color .12s,background .12s;}
+.cp-row.sel .cp-ic{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 78%);background:var(--surface);}
+.cp-main{flex:1;min-width:0;}
+.cp-t{font-size:13.5px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cp-p{font-size:12px;line-height:1.35;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+.cp-meta{display:flex;align-items:center;gap:9px;flex:none;}
+.cp-time{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.cp-acts{display:none;gap:2px;}
+.cp-row:hover .cp-acts,.cp-row.sel .cp-acts{display:flex;}
+.cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-4);display:grid;place-items:center;
+  transition:background .12s,color .12s;}
+.cp-acts button:hover{background:var(--paper-2);color:var(--ink);}
+.cp-acts button.on{color:var(--accent);}
+.cp-banks{display:flex;gap:4px;}
+.cp-bank{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;}
+.cp-owner{font-size:11px;color:var(--accent);white-space:nowrap;}
+.cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-4);text-align:center;}
+.cp-empty>svg{opacity:.45;}
+.cp-empty .t{font-size:14px;color:var(--ink-3);text-wrap:balance;max-width:320px;line-height:1.5;}
+.cp-empty .h{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);}
+.cp-foot{display:flex;align-items:center;gap:18px;padding:10px 16px;border-top:1px solid var(--hair);
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
+.cp-foot span{display:inline-flex;align-items:center;gap:5px;}
+.cp-foot kbd{border:1px solid var(--hair);border-radius:4px;padding:1px 5px;color:var(--ink-3);
+  min-width:16px;text-align:center;line-height:1.5;}
+/* вход в историю: пилюля рядом с «Новый запрос» и на welcome */
+.hist-btn{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;
+  border:1px solid var(--hair);background:var(--surface);color:var(--ink-2);font-size:12.5px;
+  box-shadow:var(--shadow-1);transition:border-color .14s,color .14s,transform .1s;}
+.hist-btn:hover{border-color:var(--ink-4);color:var(--ink);}
+.hist-btn:active{transform:scale(.97);}
+.hist-btn kbd{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);
+  border:1px solid var(--hair);border-radius:4px;padding:0 4px;}
+/* welcome: «Продолжить» — недавние диалоги */
+.aw-recent{margin-top:30px;width:100%;max-width:640px;}
+.aw-recent-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.aw-recent-h .l{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);}
+.aw-recent-h button{font-size:11.5px;color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;transition:color .12s;}
+.aw-recent-h button:hover{color:var(--accent);}
+.aw-recent-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.aw-rec{text-align:left;padding:11px 13px;border:1px solid var(--hair);background:var(--surface);border-radius:10px;
+  display:flex;flex-direction:column;gap:3px;transition:border-color .14s,transform .12s,box-shadow .14s;min-width:0;}
+.aw-rec:hover{border-color:var(--ink-4);transform:translateY(-2px);box-shadow:var(--shadow-1);}
+.aw-rec .t{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.aw-rec .m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;}
 `;
-function HistoryDrawer({open,onClose,onLoadSession,onLoadReport}){
+
+// SVG-иконки (единый штрих, оптически выверенные)
+const IcSearch = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>;
+const IcChat = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>;
+const IcDoc = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M8 13h8M8 17h6"/></svg>;
+const IcPin = ({on}) => <svg width="14" height="14" viewBox="0 0 24 24" fill={on?"currentColor":"none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l2 3.2H7z"/></svg>;
+const IcTrash = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>;
+
+// Command palette истории (⌘K): диалоги + отчёты, клавиатурная навигация.
+function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
+  const[vis,setVis]=useState(false);
   const[tab,setTab]=useState("chats");
+  const[query,setQuery]=useState("");
   const[sessions,setSessions]=useState([]);
   const[reports,setReports]=useState([]);
   const[shared,setShared]=useState([]);
-  const[search,setSearch]=useState("");
-  const[busy,setBusy]=useState(false);
-  const load=useCallback(()=>{
-    setBusy(true);
+  const[sel,setSel]=useState(0);
+  const[loading,setLoading]=useState(false);
+  const inputRef=useRef();
+  const listRef=useRef();
+
+  const reload=useCallback(()=>{
+    setLoading(true);
     Promise.all([
       apiFetch("/api/chat/sessions").then(d=>setSessions(d.sessions||[])).catch(()=>{}),
       apiFetch("/api/reports").then(d=>{setReports(d.reports||[]);setShared(d.shared||[]);}).catch(()=>{}),
-    ]).finally(()=>setBusy(false));
+    ]).finally(()=>setLoading(false));
   },[]);
-  useEffect(()=>{ if(open) load(); },[open,load]);
+  useEffect(()=>{
+    if(open){ setVis(true); setQuery(""); setSel(0); reload();
+      setTimeout(()=>inputRef.current&&inputRef.current.focus(),70); }
+  },[open,refreshTick,reload]);
+  const close=useCallback(()=>{ setVis(false); setTimeout(onClose,170); },[onClose]);
+
+  const match=(t)=>!query||(t||"").toLowerCase().includes(query.toLowerCase());
+  const fSessions=sessions.filter(s=>match(s.title)||match(s.last_preview));
+  const fReports=reports.filter(r=>match(r.title)||match(r.question));
+  const fShared=shared.filter(r=>match(r.title)||match(r.question));
+  // Плоский nav-список (в порядке отображения) для клавиатуры.
+  const nav = tab==="chats"
+    ? fSessions.map(s=>({kind:"chat",id:s.session_id}))
+    : [...fReports.map(r=>({kind:"report",id:r.report_id})), ...fShared.map(r=>({kind:"report",id:r.report_id}))];
+  useEffect(()=>{ setSel(s=>Math.max(0,Math.min(s,nav.length-1))); },[tab,query,sessions,reports,shared]); // eslint-disable-line
+
+  const activate=(it)=>{ if(!it)return; close();
+    setTimeout(()=>{ it.kind==="chat"?onLoadSession(it.id):onLoadReport(it.id); },60); };
   useEffect(()=>{
     if(!open)return;
-    const onKey=(e)=>{ if(e.key==="Escape")onClose(); };
+    const onKey=(e)=>{
+      if(e.key==="Escape"){e.preventDefault();close();}
+      else if(e.key==="ArrowDown"){e.preventDefault();setSel(s=>Math.min(nav.length-1,s+1));}
+      else if(e.key==="ArrowUp"){e.preventDefault();setSel(s=>Math.max(0,s-1));}
+      else if(e.key==="Enter"){e.preventDefault();activate(nav[sel]);}
+    };
     window.addEventListener("keydown",onKey);
     return ()=>window.removeEventListener("keydown",onKey);
-  },[open,onClose]);
+  },[open,nav,sel]); // eslint-disable-line
+  useEffect(()=>{ // автоскролл выделенной строки
+    const el=listRef.current&&listRef.current.querySelector(".cp-row.sel");
+    if(el)el.scrollIntoView({block:"nearest"});
+  },[sel,tab]);
+
   const delSession=async(e,sid)=>{ e.stopPropagation();
     await apiDel(`/api/chat/sessions/${sid}`); setSessions(s=>s.filter(x=>x.session_id!==sid)); };
   const pinSession=async(e,s)=>{ e.stopPropagation();
-    await apiPost(`/api/chat/sessions/${s.session_id}/pin`,{pinned:!s.pinned}).catch(()=>{}); load(); };
+    await apiPost(`/api/chat/sessions/${s.session_id}/pin`,{pinned:!s.pinned}).catch(()=>{}); reload(); };
 
-  const fSessions=sessions.filter(s=>!search||(s.title||"").toLowerCase().includes(search.toLowerCase()));
-  const groups={};
-  fSessions.forEach(s=>{ const g=s.pinned?"Закреплённые":histGroup(s.updated_at); (groups[g]=groups[g]||[]).push(s); });
-  const order=["Закреплённые","Сегодня","Вчера","На этой неделе","Раньше"];
+  if(!open&&!vis)return null;
+  const nChats=sessions.length, nReports=reports.length+shared.length;
 
-  return <>
-    <style>{HD_CSS}</style>
-    <div className={"hd-backdrop"+(open?" open":"")} onClick={onClose}/>
-    <aside className={"hd-panel"+(open?" open":"")}>
-      <div className="hd-head">
-        <span className="hd-title">История</span>
-        <button className="hd-x" onClick={onClose} aria-label="закрыть">✕</button>
-      </div>
-      <div className="hd-tabs">
-        <button className={tab==="chats"?"on":""} onClick={()=>setTab("chats")}>Диалоги</button>
-        <button className={tab==="reports"?"on":""} onClick={()=>setTab("reports")}>Отчёты</button>
-      </div>
-      {tab==="chats" ? <>
-        <input className="hd-search" placeholder="Поиск по диалогам…" value={search}
-               onChange={e=>setSearch(e.target.value)}/>
-        <div className="hd-list">
-          {busy && !sessions.length && <div className="hd-empty">Загрузка…</div>}
-          {!busy && !fSessions.length && <div className="hd-empty">Пока нет диалогов</div>}
-          {order.filter(g=>groups[g]).map(g=>(
-            <div key={g}>
-              <div className="hd-group">{g}</div>
-              {groups[g].map(s=>(
-                <div key={s.session_id} className="hd-item" onClick={()=>onLoadSession(s.session_id)}>
-                  <div className="hd-item-main">
-                    <div className="hd-item-t">{s.pinned&&<span className="hd-pin">📌</span>}{s.title||"Без названия"}</div>
-                    <div className="hd-item-p">{(s.last_preview||"").replace(/[#*|>\n]/g," ").replace(/\s+/g," ").slice(0,64)}</div>
-                  </div>
-                  <div className="hd-item-side">
-                    <span className="hd-time">{fmtHistTime(s.updated_at)}</span>
-                    <div className="hd-actions">
-                      <button onClick={e=>pinSession(e,s)} title={s.pinned?"Открепить":"Закрепить"}>{s.pinned?"📌":"⇧"}</button>
-                      <button onClick={e=>delSession(e,s.session_id)} title="Удалить">✕</button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
+  // Рендер списка чатов с группами по времени (порядок = nav-порядок).
+  let navIdx=-1, lastG=null;
+  const chatRows=[];
+  fSessions.forEach((s)=>{
+    navIdx++; const i=navIdx;
+    const g=s.pinned?"Закреплённые":histGroup(s.updated_at);
+    if(g!==lastG){ chatRows.push(<div className="cp-group" key={"g"+i}>{g}</div>); lastG=g; }
+    chatRows.push(
+      <div key={s.session_id} className={"cp-row"+(i===sel?" sel":"")}
+           onMouseEnter={()=>setSel(i)} onClick={()=>activate({kind:"chat",id:s.session_id})}>
+        <div className="cp-ic"><IcChat/></div>
+        <div className="cp-main">
+          <div className="cp-t">{s.title||"Без названия"}</div>
+          <div className="cp-p">{(s.last_preview||"").replace(/[#*|>\n]/g," ").replace(/\s+/g," ").trim().slice(0,70)||"—"}</div>
         </div>
-      </> : <div className="hd-list">
-        {!reports.length && !shared.length && <div className="hd-empty">Пока нет отчётов</div>}
-        {reports.map(r=>(
-          <div key={"r"+r.report_id} className="hd-report" onClick={()=>onLoadReport(r.report_id)}>
-            <div className="hd-item-t">{r.title||r.question}</div>
-            <div className="hd-report-meta">
-              {(r.banks||[]).slice(0,3).map(b=><span key={b} className="hd-bank">{b}</span>)}
-              <span className="hd-time" style={{marginLeft:"auto"}}>{fmtHistTime(r.created_at)}</span>
-            </div>
+        <div className="cp-meta">
+          <span className="cp-time">{fmtHistTime(s.updated_at)}</span>
+          <div className="cp-acts">
+            <button className={s.pinned?"on":""} onClick={(e)=>pinSession(e,s)} title={s.pinned?"Открепить":"Закрепить"}><IcPin on={s.pinned}/></button>
+            <button onClick={(e)=>delSession(e,s.session_id)} title="Удалить"><IcTrash/></button>
           </div>
-        ))}
-        {shared.length>0 && <div className="hd-group">Поделились со мной</div>}
-        {shared.map(r=>(
-          <div key={"s"+r.report_id} className="hd-report" onClick={()=>onLoadReport(r.report_id)}>
-            <div className="hd-item-t">{r.title||r.question}</div>
-            <div className="hd-report-meta">
-              <span className="hd-owner">от {r.owner_name||r.owner}</span>
-              <span className="hd-time" style={{marginLeft:"auto"}}>{fmtHistTime(r.created_at)}</span>
+        </div>
+      </div>);
+  });
+
+  const reportRow=(r,i,ownerName)=>(
+    <div key={(ownerName?"s":"r")+r.report_id} className={"cp-row"+(i===sel?" sel":"")}
+         onMouseEnter={()=>setSel(i)} onClick={()=>activate({kind:"report",id:r.report_id})}>
+      <div className="cp-ic"><IcDoc/></div>
+      <div className="cp-main">
+        <div className="cp-t">{r.title||r.question}</div>
+        <div className="cp-p">{ownerName?<span className="cp-owner">от {ownerName}</span>:(r.question||"")}</div>
+      </div>
+      <div className="cp-meta">
+        {(r.banks||[]).slice(0,2).length>0 && <div className="cp-banks">{(r.banks||[]).slice(0,2).map(b=><span key={b} className="cp-bank">{b}</span>)}</div>}
+        <span className="cp-time">{fmtHistTime(r.created_at)}</span>
+      </div>
+    </div>);
+  let ri=-1;
+  const reportRows=[];
+  if(fReports.length){ fReports.forEach(r=>{ ri++; reportRows.push(reportRow(r,ri,null)); }); }
+  if(fShared.length){ reportRows.push(<div className="cp-group" key="shg">Поделились со мной</div>);
+    fShared.forEach(r=>{ ri++; reportRows.push(reportRow(r,ri,r.owner_name||r.owner)); }); }
+
+  const empty=(tab==="chats"?!fSessions.length:!reportRows.length);
+
+  return <div className={"cp-ov"+(vis?" in":"")} onClick={close}>
+    <div className="cp" onClick={e=>e.stopPropagation()}>
+      <div className="cp-search">
+        <IcSearch/>
+        <input ref={inputRef} value={query} onChange={e=>{setQuery(e.target.value);setSel(0);}}
+               placeholder={tab==="chats"?"Поиск по диалогам…":"Поиск по отчётам…"}/>
+        <span className="cp-esc">ESC</span>
+      </div>
+      <div className="cp-seg">
+        <button className={tab==="chats"?"on":""} onClick={()=>{setTab("chats");setSel(0);}}><IcChat/>Диалоги <span className="n">{nChats}</span></button>
+        <button className={tab==="reports"?"on":""} onClick={()=>{setTab("reports");setSel(0);}}><IcDoc/>Отчёты <span className="n">{nReports}</span></button>
+      </div>
+      <div className="cp-list" ref={listRef}>
+        {empty
+          ? <div className="cp-empty">
+              {tab==="chats"?<IcChat/>:<IcDoc/>}
+              <div className="t">{loading?"Загрузка…":(query?"Ничего не найдено":(tab==="chats"?"Здесь появятся ваши диалоги с ИИ-аналитиком":"Здесь появятся ваши аудит-отчёты"))}</div>
+              {!query&&!loading&&<div className="h">задайте вопрос, чтобы начать</div>}
             </div>
-          </div>
-        ))}
-      </div>}
-    </aside>
-  </>;
+          : (tab==="chats"?chatRows:reportRows)}
+      </div>
+      <div className="cp-foot">
+        <span><kbd>↑</kbd><kbd>↓</kbd> навигация</span>
+        <span><kbd>↵</kbd> открыть</span>
+        <span><kbd>esc</kbd> закрыть</span>
+      </div>
+    </div>
+  </div>;
 }
 
 function AIPage(){
   // Пустая лента → показывается welcome-экран (он и есть приветствие). Отдельным
   // ai-сообщением «Здравствуйте…» не засоряем диалог после первой отправки.
+  const me=useMe();
   const[msgs,setMsgs]=useState([]);
   const[q,setQ]=useState("");
   const[loading,setLoading]=useState(false);
@@ -2642,13 +2742,19 @@ function AIPage(){
   const[hideRail,setHideRail]=useState(false);
   const[hideToc,setHideToc]=useState(false);
   const[sessionId,setSessionId]=useState(null);          // текущая сессия истории
-  const[histOpen,setHistOpen]=useState(false);           // drawer истории
+  const[histOpen,setHistOpen]=useState(false);           // command palette истории
+  const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome
   const[elapsed,setElapsed]=useState(0);                 // таймер прогона deep
   const runStartRef=useRef(0);
   const feedRef=useRef();
   const inputRef=useRef();
   const msgsRef=useRef(msgs);
   useEffect(()=>{msgsRef.current=msgs;},[msgs]);
+  // Недавние диалоги для welcome-экрана (обновляются при возврате к пустой ленте).
+  useEffect(()=>{
+    if(!msgs.some(m=>m.role==="user"))
+      apiFetch("/api/chat/sessions").then(d=>setRecent((d.sessions||[]).slice(0,4))).catch(()=>{});
+  },[msgs]);
   // prefill из «Обзора» (✦ Спросить ИИ): композер заполняется, но НЕ отправляется —
   // пользователь видит и правит промпт (контроль + экономия токенов)
   useEffect(()=>{
@@ -3018,24 +3124,25 @@ function AIPage(){
   const showComposer   = !isRunning && !isClarify;
   const fmtEl = (s)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   return <div className={"fade-in chat-shell"+(isEmpty?" is-welcome":"")}>
+    <style>{CP_CSS}</style>
     {showKbd && <KbdHelp onClose={()=>setShowKbd(false)}/>}
     {hoverCite && hoverCite.source && <CitationTooltip source={hoverCite.source} anchor={hoverCite.anchor}/>}
-    {!isRunning && <button className="hd-trigger" onClick={()=>setHistOpen(true)} title="История (⌘K)">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/></svg>
-      История
-    </button>}
-    <HistoryDrawer open={histOpen} onClose={()=>setHistOpen(false)}
-                   onLoadSession={openSession} onLoadReport={openReport}/>
+    <CommandPalette open={histOpen} onClose={()=>setHistOpen(false)}
+                    onLoadSession={openSession} onLoadReport={openReport}/>
     <div className="chat-stream">
       <div className="chat-feed" ref={feedRef}>
         {showThreadHead &&
-          <div className="al-thread-head">
+          <div className="al-thread-head" style={{display:"flex",gap:8,alignItems:"center"}}>
             <button className="al-newq" onClick={newQuery}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
               Новый запрос
             </button>
+            <button className="hist-btn" onClick={()=>setHistOpen(true)} title="История (⌘K)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/></svg>
+              История <kbd>⌘K</kbd>
+            </button>
           </div>}
-        {isEmpty && <AiWelcome onPick={send}/>}
+        {isEmpty && <AiWelcome onPick={send} recent={recent} onOpenHistory={()=>setHistOpen(true)} onLoadSession={openSession}/>}
         {!isEmpty && msgs.map((m,i)=>{
           if(m.role==="clarify"){
             return <div key={i} className="chat-msg ai">
@@ -3122,7 +3229,7 @@ function AIPage(){
           // Quick mode — пользовательский пузырь
           if(m.role==="user"){
             return <div key={i} className="chat-msg user">
-              <div className="who">Вы · аудитор</div>
+              <div className="who">Вы{me&&firstName(me.name)?" · "+firstName(me.name):""}</div>
               <div className="chat-bubble">{renderMD(m.text)}</div>
             </div>;
           }
