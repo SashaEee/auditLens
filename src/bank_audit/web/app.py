@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, Query, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Query, BackgroundTasks, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +22,7 @@ from ..rag import cache as rag_cache
 from ..rag.indexer import ingest_document_from_url
 from ..rag.url_discovery import bootstrap_bank_profile, TOP_BANK_SITES
 from ..rag.crawler import crawl_one_bank, crawl_all_profiles
+from .auth import CurrentUser, get_current_user
 
 STATIC_DIR = Path(__file__).parent / "static"
 settings = Settings.load()
@@ -75,6 +76,18 @@ def q(sql: str, params: dict = {}):
 def scalar(sql: str, params: dict = {}):
     with db.session() as s:
         return s.execute(text(sql), params).scalar_one_or_none()
+
+
+# ── auth / identity ───────────────────────────────────────────────────────────
+
+@app.get("/api/whoami")
+def whoami(user: CurrentUser = Depends(get_current_user)):
+    """Текущий пользователь из заголовков Authentik (за nginx forward-auth)."""
+    return {
+        "username": user.username,
+        "name": user.name,
+        "authenticated": user.authenticated,
+    }
 
 
 # ── dashboard ─────────────────────────────────────────────────────────────────
