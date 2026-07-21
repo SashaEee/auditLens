@@ -750,6 +750,34 @@ const FB_CSS=`
   background:var(--paper);color:var(--ink);}
 .aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:500;}
 .aifb-done{font-size:11.5px;color:var(--pos);}
+.shr{position:relative;display:inline-flex;}
+.shr-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--hair);
+  border-radius:8px;background:var(--surface);font-size:12px;color:var(--ink-2);transition:color .12s,border-color .12s;}
+.shr-btn:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.shr-btn .n{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent);background:var(--accent-soft);
+  border-radius:999px;padding:1px 6px;}
+.shr-pop{position:absolute;top:34px;right:0;z-index:90;width:302px;background:var(--surface);border:1px solid var(--hair);
+  border-radius:12px;box-shadow:var(--shadow-2);padding:10px;animation:fade-in .15s ease-out;text-align:left;}
+.shr-h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-4);margin:2px 2px 8px;}
+.shr-row{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;border-radius:8px;font-size:12.5px;
+  color:var(--ink-2);text-align:left;transition:background .12s;}
+.shr-row:hover{background:var(--paper-2);}
+.shr-row .ava{width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+  display:grid;place-items:center;font-size:10px;font-weight:600;flex:none;}
+.shr-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.shr-row .st{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
+.shr-row.on .st{color:var(--pos);}
+.shr-row.on:hover .st{color:var(--neg);}
+.shr-div{border-top:1px solid var(--hair);margin:8px 0;}
+.shr-q{width:100%;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
+  background:var(--paper);color:var(--ink);margin-bottom:6px;}
+.shr-list{max-height:210px;overflow:auto;}
+.shr-empty{font-size:12px;color:var(--ink-4);padding:10px;text-align:center;}
+.shr-foot{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:8px;
+  line-height:1.5;padding:0 2px;}
+.shr-owner{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);
+  border:1px solid var(--hair);border-radius:999px;padding:3px 10px;}
 `;
 function fbToast(text,sparkle){
   try{
@@ -797,6 +825,66 @@ function AiFbBar({q,text,sessionId,mode,fbMap}){
       <button className="aifb-send" onClick={send}>Отправить</button>
     </div>}
   </div>;
+}
+
+// шеринг отчёта (Фаза 5): владелец открывает доступ всем или адресно, с отзывом
+const IcShare=()=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>;
+function ShareButton({reportId}){
+  const[open,setOpen]=useState(false);
+  const[users,setUsers]=useState(null);
+  const[shares,setShares]=useState(null);
+  const[q,setQ]=useState("");
+  const ref=useRef(null);
+  const load=()=>{
+    apiFetch("/api/users").then(d=>setUsers(d.users||[])).catch(()=>setUsers([]));
+    apiFetch(`/api/reports/${reportId}/shares`).then(d=>setShares(d.shares||[])).catch(()=>setShares([]));
+  };
+  useEffect(()=>{ if(open)load(); },[open,reportId]); // eslint-disable-line
+  useEffect(()=>{ if(!open)return;
+    const onDoc=(e)=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown",onDoc);
+    return ()=>document.removeEventListener("mousedown",onDoc);
+  },[open]);
+  const shareTo=async(username,label)=>{ try{
+      await apiPost(`/api/reports/${reportId}/share`,{shared_with:username});
+      fbToast(username?"Отчёт доступен: "+label:"Отчёт открыт всем пользователям AuditLens",true);
+      load();
+    }catch{ fbToast("Не удалось поделиться"); } };
+  const revoke=async(shareId)=>{ try{ await apiPost(`/api/shares/${shareId}/revoke`,{}); load(); }catch{} };
+  const activeAll=(shares||[]).find(s=>!s.shared_with);
+  const byUser={}; (shares||[]).forEach(s=>{ if(s.shared_with) byUser[s.shared_with]=s; });
+  const n=(shares||[]).length;
+  const flt=(users||[]).filter(u=>!q||((u.display_name||u.username).toLowerCase().includes(q.toLowerCase())));
+  return <span className="shr" ref={ref}>
+    <button className="shr-btn" onClick={()=>setOpen(o=>!o)} title="Поделиться отчётом с коллегами">
+      <IcShare/>Поделиться{n>0&&<span className="n">{n}</span>}
+    </button>
+    {open&&<div className="shr-pop" onClick={e=>e.stopPropagation()}>
+      <div className="shr-h">Доступ к отчёту</div>
+      <button className={"shr-row all"+(activeAll?" on":"")}
+              title={activeAll?"Клик — закрыть общий доступ":"Открыть отчёт всем пользователям"}
+              onClick={()=>activeAll?revoke(activeAll.share_id):shareTo(null,null)}>
+        <span className="ava">✦</span>
+        <span className="nm">Всем пользователям AuditLens</span>
+        <span className="st">{activeAll?"✓ открыт":"открыть"}</span>
+      </button>
+      <div className="shr-div"/>
+      <input className="shr-q" placeholder="Найти коллегу…" value={q} onChange={e=>setQ(e.target.value)}/>
+      <div className="shr-list">
+        {users===null?<div className="shr-empty">Загрузка…</div>
+          :flt.length===0?<div className="shr-empty">{q?"Не найдено":"Коллеги появятся здесь после первого входа в инструмент"}</div>
+          :flt.map(u=>{ const s=byUser[u.username]; const label=u.display_name||u.username;
+            return <button key={u.username} className={"shr-row"+(s?" on":"")}
+                title={s?"Клик — отозвать доступ":"Дать доступ"}
+                onClick={()=>s?revoke(s.share_id):shareTo(u.username,label)}>
+              <span className="ava">{initials(label)}</span>
+              <span className="nm">{label}</span>
+              <span className="st">{s?"✓ доступ":"дать доступ"}</span>
+            </button>; })}
+      </div>
+      <div className="shr-foot">Коллеги найдут отчёт в истории (⌘K) → Отчёты → «Поделились со мной»</div>
+    </div>}
+  </span>;
 }
 
 // кольцо «Сила персонализации» (профиль)
@@ -3538,6 +3626,8 @@ function AIPage(){
                 updateLast(()=>({ranking:data}));
               }else if(data.type==="insights"&&Array.isArray(data.items)){
                 updateLast(()=>({insights:data.items}));
+              }else if(data.type==="report_saved"){
+                updateLast(()=>({report_id:data.report_id}));   // «Поделиться» сразу после прогона
               }else if(data.type==="done"){
                 break outer;
               }
@@ -3651,7 +3741,8 @@ function AIPage(){
       const r=await apiFetch(`/api/reports/${rid}`);
       const p=r.payload||{};
       setMsgs([{role:"user",text:r.question},
-               {role:"ai",text:r.body,sources:p.sources||[],mode:p.mode||"deep",phase:"done"}]);
+               {role:"ai",text:r.body,sources:p.sources||[],mode:p.mode||"deep",phase:"done",
+                report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
@@ -3720,6 +3811,10 @@ function AIPage(){
               ) : (<>
                 <div className="dr-doc-toolbar">
                   <span className="who">AuditLens · аналитический отчёт</span>
+                  {m.report_owner&&me&&m.report_owner!==me.username&&
+                    <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
+                  {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!streaming&&
+                    <ShareButton reportId={m.report_id}/>}
                   {showPdfBtn &&
                     <PdfExportButton question={userQ} report={m.text}
                                      sources={m.sources||[]} verification={m.verification}
@@ -3818,6 +3913,10 @@ function AIPage(){
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                 </button>
               </div>}
+            {m.report_owner&&me&&m.report_owner!==me.username&&
+              <div style={{marginTop:10}}><span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span></div>}
+            {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!(loading&&i===msgs.length-1)&&
+              <div style={{marginTop:10}}><ShareButton reportId={m.report_id}/></div>}
             {m.text&&!(loading&&i===msgs.length-1)&&
               <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb}/>}
           </div>;

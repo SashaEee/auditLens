@@ -1097,6 +1097,36 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     replaced: Optional[str] = None
     sources: list = []
     mode: Optional[str] = None
+    persisted = False
+
+    def _persist() -> int | None:
+        """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
+        body = replaced if replaced is not None else "".join(parts)
+        if not (body and body.strip()):
+            return None
+        try:
+            banks = userdata.parse_query_signals(question).get("banks", [])
+            is_report = (mode == "deep") or (len(body) > 800)
+            report_id = None
+            if is_report:
+                report_id = userdata.save_report(
+                    username, session_id, question, body,
+                    payload={"sources": sources, "mode": mode}, banks=banks)
+                # Само-дополняющийся профиль: каждый 3-й отчёт обновляем
+                # LLM-нарратив интересов (в фоне, не блокируя ответ).
+                try:
+                    if userdata.count_reports(username) % 3 == 0:
+                        from .profile_ai import generate_profile_note
+                        asyncio.create_task(generate_profile_note(username))
+                except Exception:
+                    pass
+            userdata.add_message(session_id, "assistant", body, {
+                "sources": sources, "mode": mode, "report_id": report_id})
+            return report_id
+        except Exception:
+            log.warning("[ai_analyze] persist failed", exc_info=True)
+            return None
+
     try:
         async for ev in inner:
             try:
@@ -1113,32 +1143,20 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     sources = data["sources"]
                 elif t == "mode":
                     mode = data.get("value")
+                elif t == "done" and not persisted:
+                    # Персистим ДО done: клиент успевает получить report_id
+                    # (кнопка «Поделиться» доступна сразу после прогона).
+                    persisted = True
+                    rid = _persist()
+                    if rid:
+                        yield json.dumps({"type": "report_saved", "report_id": rid},
+                                         ensure_ascii=False)
             except Exception:
                 pass
             yield ev
     finally:
-        body = replaced if replaced is not None else "".join(parts)
-        if body and body.strip():
-            try:
-                banks = userdata.parse_query_signals(question).get("banks", [])
-                is_report = (mode == "deep") or (len(body) > 800)
-                report_id = None
-                if is_report:
-                    report_id = userdata.save_report(
-                        username, session_id, question, body,
-                        payload={"sources": sources, "mode": mode}, banks=banks)
-                    # Само-дополняющийся профиль: каждый 3-й отчёт обновляем
-                    # LLM-нарратив интересов (в фоне, не блокируя ответ).
-                    try:
-                        if userdata.count_reports(username) % 3 == 0:
-                            from .profile_ai import generate_profile_note
-                            asyncio.create_task(generate_profile_note(username))
-                    except Exception:
-                        pass
-                userdata.add_message(session_id, "assistant", body, {
-                    "sources": sources, "mode": mode, "report_id": report_id})
-            except Exception:
-                log.warning("[ai_analyze] persist failed", exc_info=True)
+        if not persisted:      # обрыв соединения/стрима без done — не теряем ответ
+            _persist()
 
 
 @app.post("/api/ai/analyze")
