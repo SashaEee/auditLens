@@ -391,6 +391,19 @@ def _chart_valid(c) -> bool:
     return isinstance(c, dict) and bool(c.get("labels")) and bool(c.get("datasets"))
 
 
+def _chart_height_mm(c: dict) -> int:
+    """Высота канваса: horizontalBar растёт с числом строк (labels×datasets) —
+    иначе многострочные сравнения плющатся в блин."""
+    t = c.get("chartType")
+    if t == "doughnut":
+        return 70
+    if t == "horizontalBar":
+        rows = max(len(c.get("labels") or []), 1) * max(len(c.get("datasets") or []), 1)
+        legend = 10 if len(c.get("datasets") or []) > 1 else 0
+        return min(150, max(60, 24 + rows * 13 + legend))
+    return 80
+
+
 def _chart_figure_html(i: int, c: dict) -> str:
     """Карточка графика: canvas + подпись (title · unit) + insight + источники."""
     cid = f"pdfchart_{i}"
@@ -408,7 +421,7 @@ def _chart_figure_html(i: int, c: dict) -> str:
                       '</div>')
     return (
         f'<figure class="chart-figure">'
-        f'  <div class="chart-canvas-wrap"><canvas id="{cid}"></canvas></div>'
+        f'  <div class="chart-canvas-wrap" style="height:{_chart_height_mm(c)}mm"><canvas id="{cid}"></canvas></div>'
         f'  {f"<figcaption class=\"chart-caption\">{title}</figcaption>" if title else ""}'
         f'  {f"<div class=\"chart-insight\">{insight}</div>" if insight else ""}'
         f'  {cite_html}'
@@ -475,7 +488,8 @@ def _render_charts_assets(charts: list[dict], tail_ids: list[int]) -> tuple[str,
         '      backgroundColor:isDough?labels.map(pos):(isLine?"transparent":(single?labels.map(pos):base)),'
         '      borderColor:isDough?PAPER:base, borderWidth:isLine?2:(isDough?2:0),'
         '      borderRadius:(!isLine&&!isDough)?3:0,'
-        '      pointRadius:isLine?3:0, pointBackgroundColor:base, tension:isLine?0.25:0};});'
+        '      pointRadius:isLine?3:0, pointBackgroundColor:base, tension:isLine?0.25:0,'
+        '      maxBarThickness:22};});'
         '  const fmt=v=>v==null?"":Number(v).toLocaleString("ru-RU",{maximumFractionDigits:1});'
         '  const valLabels={id:"valLabels",afterDatasetsDraw(chart){'
         '    if(isLine||isDough)return; const{ctx}=chart;'
@@ -520,6 +534,7 @@ def _render_charts_assets(charts: list[dict], tail_ids: list[int]) -> tuple[str,
         '    data:{labels:labels, datasets:ds},'
         '    plugins:[valLabels,monoAxis,refLine],'
         '    options:{indexAxis:horiz?"y":"x", responsive:true, maintainAspectRatio:false,'
+        '      devicePixelRatio:2,'
         '      animation:false, layout:{padding:{top:isDough?4:18,right:horiz?44:8}},'
         '      plugins:{legend:{display:ds.length>1||isDough,'
         '          position:isDough?"right":"bottom",'
@@ -1182,7 +1197,7 @@ def render_pdf(html_str: str) -> bytes:
                                       args=["--no-sandbox",
                                              "--disable-blink-features=AutomationControlled"])
         try:
-            ctx = browser.new_context()
+            ctx = browser.new_context(device_scale_factor=2)
             page = ctx.new_page()
             page.set_content(html_str, wait_until="networkidle", timeout=30000)
             # Ждём загрузку шрифтов Google Fonts
