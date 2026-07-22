@@ -77,8 +77,9 @@ _RATE_FIELDS = ("rate_pct", "fee_service", "fee_open")
 async def tariff_moves(day: date) -> dict:
     def _compute():
         rows = _q("""
-            SELECT b.name AS bank, b.is_sber, o.category, o.title,
-                   ch.diff, ch.changed_at
+            SELECT b.name AS bank, b.slug AS bank_slug, b.is_sber,
+                   o.category, o.title, o.url,
+                   ch.change_id, ch.offer_id, ch.diff, ch.changed_at
               FROM change_history ch
               JOIN product_offer o USING (offer_id)
               JOIN bank b USING (bank_id)
@@ -107,7 +108,11 @@ async def tariff_moves(day: date) -> dict:
                 top.append({"bank": r["bank"], "is_sber": bool(r["is_sber"]),
                             "category": r["category"], "title": (r["title"] or "")[:90],
                             "from": f, "to": t, "delta": round(t - f, 2),
-                            "changed_at": r["changed_at"].isoformat()})
+                            "changed_at": r["changed_at"].isoformat(),
+                            # точные диплинки «Обзор → конкретное изменение»
+                            "bank_slug": r.get("bank_slug"),
+                            "offer_id": r.get("offer_id"),
+                            "change_id": r.get("change_id")})
                 # окно 48ч для детекта массового движения (возраст — в python,
                 # НЕ отдельным SQL на строку)
                 ts = r["changed_at"]

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
 from .. import db
+from .. import categories as cat_meta
 from ..config import Settings
 from ..ai.analyst import stream_analysis
 from ..ai.clarify import generate_clarifications, build_enriched_question
@@ -478,33 +479,203 @@ async def overview_digest_refresh(req: DigestRefreshRequest):
                     media_type="application/json")
 
 
+def _parse_rate_move(diff) -> tuple[Optional[float], Optional[float]]:
+    """from/to ставки из diff (значения в истории — строки, бывают с запятой)."""
+    if isinstance(diff, str):
+        try:
+            diff = json.loads(diff)
+        except Exception:  # noqa: BLE001
+            return None, None
+    rate = (diff or {}).get("rate_pct") or {}
+
+    def _f(v):
+        try:
+            return float(str(v).replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+    return _f(rate.get("from")), _f(rate.get("to"))
+
+
 @app.get("/api/recent-changes")
-def recent_changes():
-    return q("""
-        SELECT b.name bank_name, b.is_sber, o.category, o.title,
-               ch.changed_at, ch.diff
+def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = None,
+                   offer_id: Optional[int] = None, days: int = 7,
+                   significant: bool = True, limit: int = 50, offset: int = 0):
+    """Журнал изменений условий — посадочная для диплинков с Обзора.
+    significant=True — тот же критерий, что в totals дайджеста: нестаточное поле
+    в диффе ИЛИ |Δ ставки| ≥ 0.01 пп (микрошум расчётных ставок скрыт)."""
+    days = max(1, min(days, 90))
+    limit = max(1, min(limit, 200))
+    cond, params = [], {"days": days, "lim": limit, "off": max(0, offset)}
+    if category:
+        cond.append("o.category = :cat"); params["cat"] = category
+    if bank_slug:
+        cond.append("b.slug = :bs"); params["bs"] = bank_slug
+    if offer_id:
+        cond.append("ch.offer_id = :oid"); params["oid"] = offer_id
+    if significant:
+        cond.append("""((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
+                          WHERE k <> 'rate_pct') > 0
+                    OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
+                         - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)""")
+    where = " AND ".join(cond) if cond else "true"
+    rows = q(f"""
+        SELECT ch.change_id, ch.offer_id, ch.changed_at, ch.diff,
+               b.slug AS bank_slug, b.name AS bank_name, b.is_sber,
+               o.category, o.title, o.url
           FROM change_history ch
           JOIN product_offer o USING(offer_id)
           JOIN bank b USING(bank_id)
-         ORDER BY ch.changed_at DESC LIMIT 20
-    """)
+         WHERE ch.changed_at > now() - make_interval(days => :days)
+           AND {where}
+         ORDER BY ch.changed_at DESC
+         LIMIT :lim OFFSET :off
+    """, params)
+    for r in rows:
+        f, t = _parse_rate_move(r.get("diff"))
+        r["rate_from"], r["rate_to"] = f, t
+        r["rate_delta"] = round(t - f, 4) if f is not None and t is not None else None
+    return rows
 
 
 # ── market ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/market")
-def market(category: str = "deposit", limit: int = 100):
-    return q("""
+def market(category: str = "deposit", limit: int = 100, offset: int = 0,
+           q_text: Optional[str] = Query(None, alias="q"),
+           term: Optional[str] = None):
+    """Витрина категории: чистая база (без псевдо-офферов рейтингов), серверный
+    поиск и пагинация — раньше limit=100 молча усекал категорию, а поиск шарил
+    только по загруженной сотне."""
+    limit = max(1, min(limit, 200))
+    cond, params = ["category = :c"], {"c": category, "l": limit,
+                                       "off": max(0, offset)}
+    if q_text:
+        cond.append("(bank_name ILIKE :qq OR title ILIKE :qq)")
+        params["qq"] = f"%{q_text.strip()}%"
+    if term:
+        cond.append("term_bucket = :tb"); params["tb"] = term
+    lower = category in cat_meta.LOWER_IS_BETTER
+    order = "rate_pct ASC NULLS LAST" if lower else "rate_pct DESC NULLS LAST"
+    return q(f"""
         SELECT bank_slug, bank_name, is_sber, offer_id, title, url,
-               rate_pct, rate_kind, currency,
+               rate_pct, rate_kind, term_bucket,
                amount_min, amount_max, term_months_min, term_months_max,
                fee_open, fee_service, early_withdraw, capitalization,
-               replenishable, conditions, valid_from
-          FROM v_offer_current
-         WHERE category = :c
-         ORDER BY rate_pct DESC NULLS LAST
-         LIMIT :l
-    """, {"c": category, "l": limit})
+               replenishable, conditions, valid_from,
+               count(*) OVER () AS total
+          FROM v_market_rub_offer
+         WHERE {' AND '.join(cond)}
+         ORDER BY {order}
+         LIMIT :l OFFSET :off
+    """, params)
+
+
+@app.get("/api/meta/categories")
+def meta_categories():
+    """Единый словарь категорий (categories.py) + живые счётчики."""
+    counts = {r["category"]: r for r in q("""
+        SELECT category, count(*) AS n,
+               count(*) FILTER (WHERE is_sber) AS n_sber
+          FROM v_market_rub_offer GROUP BY category
+    """)}
+    out = []
+    for c in cat_meta.CATEGORIES:
+        cc = counts.get(c["id"], {})
+        out.append({**c, "n": cc.get("n", 0), "n_sber": cc.get("n_sber", 0)})
+    return out
+
+
+@app.get("/api/market/atlas")
+def market_atlas(term: Optional[str] = None):
+    """Атлас позиций: по каждой категории — распределение ЛУЧШИХ офферов банков
+    (одна точка = один банк, чтобы банк с 15 витринными вкладами не перетягивал
+    медиану), позиция Сбера в нём (ранг/перцентиль), квартили, лидер.
+    Для lower_is_better «лучший» = минимальная ставка и ранг по возрастанию."""
+    cond = "rate_pct IS NOT NULL"
+    params: dict = {}
+    if term:
+        cond += " AND term_bucket = :tb"; params["tb"] = term
+    rows = q(f"""
+        SELECT category, bank_slug, bank_name, is_sber, offer_id, title,
+               rate_pct, rate_kind, term_bucket
+          FROM v_market_rub_offer WHERE {cond}
+    """, params)
+    by_cat: dict[str, dict] = {}
+    for r in rows:
+        best = by_cat.setdefault(r["category"], {})
+        lower = r["category"] in cat_meta.LOWER_IS_BETTER
+        cur = best.get(r["bank_slug"])
+        rate = float(r["rate_pct"])
+        if cur is None or (rate < cur["rate"] if lower else rate > cur["rate"]):
+            best[r["bank_slug"]] = {
+                "slug": r["bank_slug"], "name": r["bank_name"],
+                "is_sber": bool(r["is_sber"]), "rate": rate,
+                "offer_id": r["offer_id"], "title": r["title"],
+                "rate_kind": r["rate_kind"], "term_bucket": r["term_bucket"],
+            }
+
+    def _pct(sorted_vals: list[float], p: float) -> Optional[float]:
+        if not sorted_vals:
+            return None
+        i = (len(sorted_vals) - 1) * p
+        lo, hi = int(i), min(int(i) + 1, len(sorted_vals) - 1)
+        return round(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (i - lo), 2)
+
+    out = []
+    for c in cat_meta.CATEGORIES:
+        cid = c["id"]
+        banks = list(by_cat.get(cid, {}).values())
+        if c["compare"] != "rate" or not banks:
+            out.append({"category": cid, "label": c["label"],
+                        "lower_is_better": c["lower_is_better"],
+                        "status": "no_metric" if c["compare"] != "rate" else "no_data",
+                        "n_banks": len(banks)})
+            continue
+        lower = c["lower_is_better"]
+        banks.sort(key=lambda b: b["rate"], reverse=not lower)  # [0] = лидер
+        vals = sorted(b["rate"] for b in banks)
+        sber = next((b for b in banks if b["is_sber"]), None)
+        entry = {
+            "category": cid, "label": c["label"], "lower_is_better": lower,
+            "status": "ok", "n_banks": len(banks),
+            "small_n": len(banks) < 5,
+            "points": banks,
+            "median": _pct(vals, 0.5), "p25": _pct(vals, 0.25),
+            "p75": _pct(vals, 0.75),
+            "min": vals[0], "max": vals[-1],
+            "leader": {k: banks[0][k] for k in ("slug", "name", "rate", "title")},
+        }
+        if sber:
+            rank = banks.index(sber) + 1
+            entry["sber"] = {**sber, "rank": rank,
+                             "gap_leader": round(sber["rate"] - banks[0]["rate"], 2),
+                             "gap_median": round(sber["rate"] - entry["median"], 2),
+                             # доля рынка, которую Сбер опережает (1.0 = лидер)
+                             "beats_share": round(1 - (rank - 1) / max(len(banks) - 1, 1), 2)}
+        out.append(entry)
+    return {"term": term, "categories": out}
+
+
+@app.get("/api/market/offer/{offer_id}/history")
+def market_offer_history(offer_id: int):
+    """Досье оффера: паспорт текущих условий + SCD2-ряд ставки + диффы."""
+    cur = q("SELECT * FROM v_offer_current WHERE offer_id = :o", {"o": offer_id})
+    versions = q("""
+        SELECT rate_pct, valid_from, valid_to
+          FROM product_terms WHERE offer_id = :o
+         ORDER BY valid_from
+    """, {"o": offer_id})
+    changes = q("""
+        SELECT change_id, changed_at, diff FROM change_history
+         WHERE offer_id = :o ORDER BY changed_at DESC LIMIT 60
+    """, {"o": offer_id})
+    for ch in changes:
+        f, t = _parse_rate_move(ch.get("diff"))
+        ch["rate_from"], ch["rate_to"] = f, t
+        ch["rate_delta"] = round(t - f, 4) if f is not None and t is not None else None
+    if not cur:
+        raise HTTPException(404, "Оффер не найден")
+    return {"offer": cur[0], "rate_series": versions, "changes": changes}
 
 @app.get("/api/market/categories")
 def market_categories():

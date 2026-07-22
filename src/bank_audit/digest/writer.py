@@ -264,9 +264,9 @@ _HEAD_SYSTEM = (
     "бенчмарк и ранний сигнал, НЕ «перейти/закупить у них»). Без эмодзи."
 )
 
-_CAT_RU = {"deposit": "вклады", "savings": "накопительные счета", "credit": "кредиты",
-           "mortgage": "ипотека", "autocredit": "автокредиты", "credit_card": "кредитные карты",
-           "debit_card": "дебетовые карты", "transfers": "переводы"}
+# Раньше здесь жила локальная копия с битыми ключами (autocredit/credit_card
+# вместо auto_loan/card_credit из enum) — LLM получал сырые слаги
+from ..categories import CAT_RU as _CAT_RU
 
 
 def _cat_ru(c: str) -> str:
@@ -377,10 +377,16 @@ def _drill(kind: str, d: dict) -> dict:
         if d.get("geo"):
             p["city"] = d["geo"]["city"]
         return {"page": "reviews", "params": p}
-    if kind in ("mass_move", "tariff_move"):
-        return {"page": "market", "params": {"category": d.get("category")}}
+    if kind == "tariff_move":
+        p = {"category": d.get("category"), "view": "changes",
+             "bank": d.get("bank_slug"), "offer": d.get("offer_id"),
+             "change": d.get("change_id")}
+        return {"page": "market", "params": {k: v for k, v in p.items() if v}}
+    if kind == "mass_move":
+        return {"page": "market",
+                "params": {"category": d.get("category"), "view": "changes"}}
     if kind == "rate_move":
-        return {"page": "market", "params": {}}
+        return {"page": "market", "params": {"view": "changes"}}
     if kind == "news_alert":
         return {"url": d.get("url")}
     return {}
