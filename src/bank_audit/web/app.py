@@ -360,6 +360,11 @@ def get_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
     r = userdata.get_report(rid, user.username)
     if r is None:
         raise HTTPException(404, "report not found")
+    try:    # телеметрия чтений отчётов (свой/расшаренный) — для «Пульса»
+        userdata.log_event(user.username, "report_open",
+                           {"report_id": rid, "own": r.get("owner") == user.username})
+    except Exception:
+        pass
     return r
 
 

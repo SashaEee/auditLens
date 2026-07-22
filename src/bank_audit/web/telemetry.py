@@ -250,8 +250,74 @@ def metrics(days: int = 14) -> dict:
         WHERE kind IN ('page_view', 'page_leave', 'api_error', 'client_error')
         ORDER BY created_at DESC LIMIT 14""")
 
+    reports_per_day = _rows("""
+        SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d, count(*) AS n
+        FROM report WHERE created_at > now() - (:days || ' days')::interval
+        GROUP BY 1 ORDER BY 1""", p)
+
+    # пофамильно: активность каждого за период + комбинированный скор для сортировки
+    users_table = _rows("""
+        SELECT au.username, COALESCE(au.display_name, au.username) AS name,
+               COALESCE(e.days_active, 0) AS days_active,
+               COALESCE(e.views, 0)       AS views,
+               COALESCE(e.time_s, 0)      AS time_s,
+               COALESCE(q.ai, 0)          AS ai,
+               COALESCE(r.reports, 0)     AS reports,
+               COALESCE(fb.ratings, 0)    AS ratings,
+               to_char(au.last_seen_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS last_seen
+        FROM app_user au
+        LEFT JOIN (SELECT username,
+                          count(DISTINCT date_trunc('day', created_at AT TIME ZONE 'Europe/Moscow')) AS days_active,
+                          count(*) FILTER (WHERE kind = 'page_view') AS views,
+                          round(COALESCE(sum(dur_ms) FILTER (WHERE kind = 'page_leave'), 0) / 1000.0) AS time_s
+                   FROM usage_event
+                   WHERE created_at > now() - (:days || ' days')::interval AND username IS NOT NULL
+                   GROUP BY 1) e USING (username)
+        LEFT JOIN (SELECT username, count(*) AS ai FROM user_event
+                   WHERE kind = 'ai_query' AND ts > now() - (:days || ' days')::interval
+                   GROUP BY 1) q USING (username)
+        LEFT JOIN (SELECT username, count(*) AS reports FROM report
+                   WHERE created_at > now() - (:days || ' days')::interval
+                   GROUP BY 1) r USING (username)
+        LEFT JOIN (SELECT username, count(*) AS ratings FROM item_feedback
+                   WHERE created_at > now() - (:days || ' days')::interval
+                   GROUP BY 1) fb USING (username)
+        ORDER BY (COALESCE(e.time_s, 0) / 60.0 + COALESCE(e.views, 0) * 2
+                  + COALESCE(q.ai, 0) * 15 + COALESCE(r.reports, 0) * 30
+                  + COALESCE(fb.ratings, 0) * 5) DESC
+        LIMIT 15""", p)
+
+    # сегменты аудитории: исследователи (ИИ) / читатели новостей / разовые / спящие
+    seg_rows = _rows("""
+        SELECT e.username, COALESCE(a.n, 0) AS ai, e.views, e.news_views
+        FROM (SELECT username,
+                     count(*) FILTER (WHERE kind = 'page_view') AS views,
+                     count(*) FILTER (WHERE kind = 'page_view'
+                                      AND page IN ('overview', 'foryou')) AS news_views
+              FROM usage_event
+              WHERE created_at > now() - (:days || ' days')::interval AND username IS NOT NULL
+              GROUP BY 1) e
+        LEFT JOIN (SELECT username, count(*) AS n FROM user_event
+                   WHERE kind = 'ai_query' AND ts > now() - (:days || ' days')::interval
+                   GROUP BY 1) a USING (username)""", p)
+    researchers = sum(1 for r in seg_rows if (r.get("ai") or 0) > 0)
+    readers = sum(1 for r in seg_rows
+                  if not (r.get("ai") or 0) and (r.get("views") or 0) > 0
+                  and (r.get("news_views") or 0) >= (r.get("views") or 1) * 0.6)
+    casual = max(len(seg_rows) - researchers - readers, 0)
+    segments = {"researchers": researchers, "readers": readers, "casual": casual,
+                "sleepers": max(today["users_total"] - len(seg_rows), 0),
+                "active": len(seg_rows)}
+
+    features["report_opens"] = int(_scalar("""SELECT count(*) FROM user_event
+                                              WHERE kind = 'report_open'
+                                                AND ts > now() - (:days || ' days')::interval""",
+                                           p) or 0)
+
     return {"days": days, "today": today, "dau": dau, "new_users": new_users,
             "pages": pages, "ai_per_day": ai_per_day, "features": features,
             "heatmap": heatmap, "latency": latency,
             "errors_recent": errors_recent, "errors_per_day": errors_per_day,
-            "tokens": tokens, "digest": digest, "feed": feed}
+            "tokens": tokens, "digest": digest, "feed": feed,
+            "reports_per_day": reports_per_day, "users_table": users_table,
+            "segments": segments}

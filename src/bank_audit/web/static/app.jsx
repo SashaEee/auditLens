@@ -4567,6 +4567,17 @@ const AD_CSS=`
 .ad-chip{font-family:'JetBrains Mono',monospace;font-size:9.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);}
 .ad-chip.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
 .ad-chip.bad{color:var(--neg);border-color:color-mix(in oklab,var(--neg),transparent 70%);}
+.ad-note{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);margin-top:10px;line-height:1.6;}
+.ad-note .acc{color:var(--accent);}
+.ad-u{display:inline-flex;align-items:center;gap:8px;font-family:'Geist','Inter',sans-serif;font-size:12.5px;color:var(--ink);}
+.ad-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+  display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
+.ad-crown{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--accent);white-space:nowrap;
+  border:1px solid color-mix(in oklab,var(--accent),transparent 70%);background:var(--accent-soft);
+  border-radius:999px;padding:2px 7px;}
+.ad-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
+.ad-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
+.ad-team td:first-child{max-width:260px;}
 `;
 const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
   ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Лазейки",banks:"Банки",sources:"Источники",
@@ -4614,6 +4625,58 @@ function AdHeat({cells}){
   return <div className="ad-heat">{out}</div>;
 }
 
+// донат-сегментация аудитории (SVG, без библиотек)
+function AdDonut({parts,center,sub}){
+  const total=(parts||[]).reduce((s,p)=>s+(p.value||0),0)||1;
+  const R=40,C=2*Math.PI*R; let cum=0;
+  return <div style={{display:"flex",gap:22,alignItems:"center",flexWrap:"wrap"}}>
+    <svg width="116" height="116" viewBox="0 0 116 116" style={{flex:"none"}}>
+      <circle cx="58" cy="58" r={R} fill="none" stroke="var(--paper-2)" strokeWidth="15"/>
+      {(parts||[]).filter(p=>p.value>0).map((p,i)=>{
+        const frac=p.value/total;
+        const el=<circle key={i} cx="58" cy="58" r={R} fill="none" stroke={p.color} strokeWidth="15"
+          strokeDasharray={Math.max(frac*C-1.6,.6)+" "+(C-Math.max(frac*C-1.6,.6))}
+          transform={"rotate("+(cum*360-90)+" 58 58)"}/>;
+        cum+=frac; return el;})}
+      <text x="58" y="57" textAnchor="middle" fontSize="21" fontWeight="600" fill="var(--ink)"
+        fontFamily="'Source Serif 4',Georgia,serif">{center}</text>
+      <text x="58" y="73" textAnchor="middle" fontSize="7.5" fill="var(--ink-4)"
+        fontFamily="'JetBrains Mono',monospace">{sub}</text>
+    </svg>
+    <div style={{display:"flex",flexDirection:"column",gap:7}}>
+      {(parts||[]).map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,fontSize:12.5}}>
+        <span style={{width:9,height:9,borderRadius:3,background:p.color,flex:"none"}}/>
+        <span style={{color:"var(--ink-2)"}}>{p.label}</span>
+        <b className="tnum" style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11.5}}>{p.value||0}</b>
+      </div>)}
+    </div>
+  </div>;
+}
+
+// парные колонки по дням: ИИ-запросы (accent) + отчёты (ink); ось — дни из dau
+function AdCols({axis,a,b,h=118}){
+  const w=620;
+  const am={};(a||[]).forEach(x=>am[x.d]=+x.n||0);
+  const bm={};(b||[]).forEach(x=>bm[x.d]=+x.n||0);
+  const days=(axis||[]).map(x=>x.d);
+  if(!days.length) return <div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>;
+  const max=Math.max(...days.map(d=>Math.max(am[d]||0,bm[d]||0)),1);
+  const slot=(w-32)/days.length, bw=Math.max(3,Math.min(13,slot/2-2));
+  const dd=(s)=>(s||"").slice(8,10)+"."+(s||"").slice(5,7);
+  return <svg width="100%" viewBox={"0 0 "+w+" "+h} style={{display:"block"}}>
+    {days.map((d,i)=>{
+      const x=16+i*slot+(slot-bw*2-2)/2;
+      const ha=(am[d]||0)/max*(h-32), hb=(bm[d]||0)/max*(h-32);
+      return <g key={d}>
+        {am[d]>0&&<rect x={x} y={h-16-Math.max(ha,2)} width={bw} height={Math.max(ha,2)} rx="2" fill="var(--accent)" opacity=".88"/>}
+        {bm[d]>0&&<rect x={x+bw+2} y={h-16-Math.max(hb,2)} width={bw} height={Math.max(hb,2)} rx="2" fill="var(--ink-3)" opacity=".65"/>}
+      </g>;})}
+    <text x="16" y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono">{dd(days[0])}</text>
+    <text x={w-16} y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">{dd(days[days.length-1])}</text>
+    <text x={w-16} y="10" fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">макс {max}/день</text>
+  </svg>;
+}
+
 function PulsePage(){
   const me=useMe();
   const[days,setDays]=useState(14);
@@ -4631,10 +4694,12 @@ function PulsePage(){
   if(err) return <div className="fade-in"><ErrState msg="Не удалось загрузить метрики."/></div>;
   if(!m) return <LoadingPage/>;
 
-  const t=m.today||{}, f=m.features||{};
+  const t=m.today||{}, f=m.features||{}, sg=m.segments||{};
   const maxPage=Math.max(...(m.pages||[]).map(x=>x.views||0),1);
   const nErr=(m.errors_recent||[]).length;
   const tokSum=(m.tokens||[]).reduce((a,x)=>a+(+x.tin||0)+(+x.tout||0),0);
+  const team=m.users_table||[];
+  const maxT=Math.max(...team.map(x=>+x.time_s||0),1);
   return <div className="fade-in">
     <style>{AD_CSS}</style>
     <header style={{marginBottom:4}}>
@@ -4670,6 +4735,49 @@ function PulsePage(){
         <span>— пользователи · ‥ просмотры · новых за период: {(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0)}</span></div>
       <AdArea data={m.dau}/>
     </div>
+
+    {/* ②b сегменты аудитории + генерация по дням */}
+    <div className="ad-grid2 ad-sec">
+      <div className="ad-card">
+        <div className="h"><span>Кто наша аудитория · {m.days} дн</span></div>
+        <AdDonut center={String(sg.active||0)} sub="активных"
+          parts={[
+            {label:"исследователи · ИИ и отчёты",value:sg.researchers||0,color:"var(--accent)"},
+            {label:"читатели новостей",value:sg.readers||0,color:"var(--warn)"},
+            {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-4)"},
+            {label:"спящие за период",value:sg.sleepers||0,color:"var(--hair-2)"},
+          ]}/>
+        <div className="ad-note">
+          {sg.readers>0
+            ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Обзор»/«Для вас») — точка роста для ИИ-аналитика</>
+            : "читатели ≥60% просмотров в «Обзоре»/«Для вас» без единого ИИ-запроса"}
+        </div>
+      </div>
+      <div className="ad-card">
+        <div className="h"><span>Генерация · по дням</span>
+          <span><span style={{color:"var(--accent)"}}>■</span> ИИ-запросы · <span style={{color:"var(--ink-3)"}}>■</span> отчёты</span></div>
+        <AdCols axis={m.dau} a={m.ai_per_day} b={m.reports_per_day}/>
+        <div className="ad-note">за период: {f.ai_total||0} запросов · {f.reports||0} отчётов создано · {f.report_opens||0} открытий сохранённых · {f.shares||0} шерингов</div>
+      </div>
+    </div>
+
+    {/* ②c команда пофамильно */}
+    {team.length>0&&<div className="ad-card ad-sec">
+      <div className="h"><span>Команда · пофамильно · {m.days} дн</span>
+        <span>скор: время + просмотры + ИИ×15 + отчёты×30 + оценки×5</span></div>
+      <table className="ad-tbl ad-team">
+        <thead><tr><th>пользователь</th><th>время</th><th>дней</th><th>просм.</th><th>ИИ</th><th>отчёты</th><th>оценки</th><th>был(а)</th></tr></thead>
+        <tbody>
+          {team.map((u,i)=><tr key={u.username}>
+            <td><span className="ad-u"><span className="a">{initials(u.name)}</span>{u.name}
+              {i===0&&(+u.views>0)&&<span className="ad-crown">✦ самый активный</span>}</span></td>
+            <td><span className="ad-tm"><span className="bar" style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
+            <td>{u.days_active}</td><td>{u.views}</td><td>{u.ai}</td><td>{u.reports}</td><td>{u.ratings}</td>
+            <td>{u.last_seen||"—"}</td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>}
 
     {/* ③ вовлечённость + фичи */}
     <div className="ad-grid2">
