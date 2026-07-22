@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # AuditLens SQL: смотреть/добавлять/править — свободно; удалять — нельзя (правило владельца).
 DSN='__DSN_С_ПРАВАМИ_SELECT_INSERT_UPDATE__
+[ "$1" = "-c" ] && shift
 SQL="${*:-$(cat)}"
 if echo "$SQL" | grep -qiE '\b(drop|truncate|delete|alter|grant|revoke)\b'; then
   echo "ОТКАЗ: DROP/TRUNCATE/DELETE/ALTER запрещены правилом владельца. Разрешено: SELECT/INSERT/UPDATE и \d-метакоманды."

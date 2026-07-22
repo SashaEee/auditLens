@@ -3678,6 +3678,9 @@ function AIPage(){
     setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"user",text:t},
                 {role:"pending",label:"Анализирую запрос…"}]);
     setLoading(true);
+    // Уточняющая воронка — только для Deep Research: быстрый режим отвечает сразу,
+    // агент сам делает разумные допущения (фидбек владельца 22.07).
+    if(!deepMode && !forceDeep){ runSend(t,forceDeep); return; }
     let data=null;
     try{ data=await apiPost("/api/ai/clarify",{question:t,deep:!!deepMode}); }catch(e){ data=null; }
     if(!data || data.complete!==false || !(Array.isArray(data.questions)&&data.questions.length)){
