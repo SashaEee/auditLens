@@ -336,6 +336,22 @@ async def stream_deep_research_v2(question: str,
                 "dropped": dropped_count,
                 "samples": []})
 
+    # ── Stage 4.5: ВИЗУАЛЬНЫЙ РЕДАКТОР (LLM) ─────────────────────────────
+    # LLM решает что/как/где визуализировать и ставит [[CHART:i]]-маркеры по
+    # смыслу текста; числа валидируются против bundle.facts (галлюцинация =
+    # брак графика). Детерминированные early_charts — аварийный фолбэк.
+    yield _evt({"type": "stage_status", "stage": "charts",
+                "label": "Проектирую визуализации"})
+    charts_out = []
+    try:
+        from .chart_designer import design_charts
+        charts_out, report_md = await design_charts(client, report_md,
+                                                    bundle, question)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[v2] chart_designer упал: %s — фолбэк на детерминированные", e)
+    if not charts_out:
+        charts_out = early_charts
+
     # ── Stage 5: STREAM FINAL REPORT ─────────────────────────────────────
     # Очередность: отчёт параграфами (для UI-отрисовки)
     paragraphs = report_md.split("\n\n")
@@ -345,9 +361,8 @@ async def stream_deep_research_v2(question: str,
         yield _evt({"type": "text", "chunk": p + "\n\n"})
         await asyncio.sleep(0.03)
 
-    # Графики (детерминированные из фактов, без LLM — числа не галлюцинируются).
-    # Эмитим после текста отчёта (раньше шли ранним preview, который убрали).
-    for ch in early_charts:
+    # Графики: по маркерам в тексте (LLM-редактор) либо хвостом (фолбэк).
+    for ch in charts_out:
         yield _evt({"type": "chart", "spec": ch})
         await asyncio.sleep(0.03)
 

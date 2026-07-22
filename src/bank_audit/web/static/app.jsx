@@ -2331,7 +2331,7 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           question: question,
-          report_md: report,
+          report_md: (report||"").replace(/\n?\[\[CHART:\d+\]\]\n?/g, "\n"),  // маркеры — только для веб-рендера
           sources: (sources || []).map(s => ({
             n: s.n, url: s.url, bank_name: s.bank_name, title: s.title,
             source_kind: s.source_kind, trust_score: s.trust_score,
@@ -2784,33 +2784,40 @@ function ChartCanvas({spec, sources}){
   useEffect(()=>{
     if(!ref.current||!window.Chart||!spec)return;
     const ctx=ref.current.getContext("2d");
-    // Editorial palette — 5 нейтральных тонов, sequential по тёмности.
-    // Никакого кричащего красного: для аудит-отчёта цвет НЕ должен
-    // прочитываться как «плохо/хорошо». Лидер = самый тёмный, остальные
-    // светлее. Это даёт автоматическую визуальную иерархию.
-    const palette = [
-      "#16181d",  // ink — primary (обычно first entity = лидер)
-      "#44464d",  // ink-2
-      "#707075",  // ink-3
-      "#9c9ea3",  // ink-4
-      "#c4c6cc",  // ink-5
-    ];
-    // Для doughnut пускаем по этому же sequential — самый большой сегмент
-    // будет самый тёмный (это работает естественно с правильной сортировкой).
+    // Палитра из дизайн-токенов (живьём из CSS → авто тёмная тема).
+    // Сбер/highlight — всегда фирменный accent; остальные — ink-градации:
+    // иерархия сохраняется, но график в языке инструмента, а не ч/б-ксерокс.
+    const css=(n,fb)=>{try{const v=getComputedStyle(document.documentElement).getPropertyValue(n).trim();return v||fb;}catch{return fb;}};
+    const ACC=css("--accent","#c94f34"), INK=css("--ink","#16181d"),
+          INK2=css("--ink-2","#44464d"), INK3=css("--ink-3","#707075"),
+          INK4=css("--ink-4","#9c9ea3"), HAIR=css("--hair","#ebebed"),
+          PAPER=css("--paper","#faf9f7");
+    const palette=[INK,INK2,INK3,INK4,HAIR];
+    const hl=spec.highlight||null;
+    const isHl=(lb)=>hl&&String(lb||"").toLowerCase().includes(String(hl).toLowerCase().slice(0,5));
+    // цвет позиции: подсвеченная метка (Сбер) = accent, прочие — sequential ink
+    const posColor=(lb,i)=>isHl(lb)?ACC:palette[i%palette.length];
     const horizontal = spec.chartType==="horizontalBar";
     const isDoughnut = spec.chartType==="doughnut";
     const isLine     = spec.chartType==="line";
-    const datasets = (spec.datasets||[]).map((d,i)=>({
-      ...d,
-      backgroundColor: isDoughnut ? palette
-                       : isLine ? `${palette[i%palette.length]}22`   // hex+alpha=22 (13%)
-                       : palette[i%palette.length],
-      borderColor:     palette[i%palette.length],
-      borderWidth:     isLine ? 2 : 0,
-      pointRadius:     isLine ? 3 : 0,
-      pointBackgroundColor: palette[i%palette.length],
-      tension:         isLine ? 0.25 : 0,
-    }));
+    const single=(spec.datasets||[]).length===1;
+    const datasets = (spec.datasets||[]).map((d,i)=>{
+      const seriesHl=isHl(d.label);
+      const base=seriesHl?ACC:palette[i%palette.length];
+      return {
+        ...d,
+        backgroundColor: isDoughnut ? (spec.labels||[]).map((lb,li)=>posColor(lb,li))
+                         : isLine ? "transparent"
+                         : single ? (spec.labels||[]).map((lb,li)=>posColor(lb,li))
+                         : base,
+        borderColor:     isDoughnut ? PAPER : base,
+        borderWidth:     isLine ? 2 : (isDoughnut ? 2 : 0),
+        borderRadius:    (!isLine&&!isDoughnut) ? 3 : 0,
+        pointRadius:     isLine ? 3 : 0,
+        pointBackgroundColor: base,
+        tension:         isLine ? 0.25 : 0,
+      };
+    });
     // Data-labels плагин — рисуем значения прямо на барах (premium-эстетика)
     const fmtVal = (v)=>{
       if(v==null) return "";
@@ -2830,7 +2837,7 @@ function ChartCanvas({spec, sources}){
             if(v==null) return;
             ctx.save();
             ctx.font = "500 10.5px 'JetBrains Mono', monospace";
-            ctx.fillStyle = "#16181d";
+            ctx.fillStyle = INK;
             ctx.textAlign = horizontal ? "left" : "center";
             ctx.textBaseline = horizontal ? "middle" : "bottom";
             const text = fmtVal(v);
@@ -2844,10 +2851,34 @@ function ChartCanvas({spec, sources}){
         });
       },
     };
+    // Пунктирная референс-линия (медиана/ключевая ставка) с подписью.
+    const refPlugin = {
+      id:"refLine",
+      afterDatasetsDraw(chart){
+        const rl=spec.referenceLine;
+        if(!rl||isDoughnut||rl.value==null) return;
+        const area=chart.chartArea;
+        const sc=horizontal?chart.scales.x:chart.scales.y;
+        if(!sc)return;
+        const px=sc.getPixelForValue(+rl.value);
+        const c2=chart.ctx; c2.save();
+        c2.strokeStyle=INK3; c2.setLineDash([4,4]); c2.lineWidth=1;
+        c2.beginPath();
+        if(horizontal){c2.moveTo(px,area.top);c2.lineTo(px,area.bottom);}
+        else{c2.moveTo(area.left,px);c2.lineTo(area.right,px);}
+        c2.stroke();
+        c2.setLineDash([]);
+        c2.font="500 9.5px 'JetBrains Mono', monospace"; c2.fillStyle=INK3;
+        const t=((rl.label||"")+" "+fmtVal(+rl.value)).trim();
+        if(horizontal) c2.fillText(t, Math.min(px+5,area.right-60), area.top+10);
+        else c2.fillText(t, area.left+5, Math.max(px-5,area.top+10));
+        c2.restore();
+      },
+    };
     const inst = new window.Chart(ctx, {
       type: horizontal ? "bar" : (isDoughnut ? "doughnut" : isLine ? "line" : "bar"),
       data: {labels: spec.labels||[], datasets},
-      plugins: [dataLabelsPlugin],
+      plugins: [dataLabelsPlugin, refPlugin],
       options: {
         indexAxis: horizontal ? "y" : "x",
         responsive: true, maintainAspectRatio: false,
@@ -2859,18 +2890,20 @@ function ChartCanvas({spec, sources}){
             position: isDoughnut ? "right" : "bottom",
             labels: {
               font:{size:11, family:"Geist, Inter, sans-serif"},
-              color:"#44464d", boxWidth:10, boxHeight:10, padding:14,
+              color:INK2, boxWidth:10, boxHeight:10, padding:14,
               usePointStyle: true, pointStyle: "rect",
             },
           },
           title: {
-            display: !!spec.title, text: spec.title,
+            display: !!spec.title,
+            text: spec.title + (spec.unit ? " · " + spec.unit : ""),
             font: {size:13.5, weight:"600", family:"'Source Serif 4', Georgia, serif"},
-            color: "#16181d", padding: {bottom: 14},
+            color: INK, padding: {bottom: 14},
             align: "start",
           },
           tooltip: {
-            intersect: false, backgroundColor: "#16181d",
+            intersect: false, backgroundColor: INK,
+            titleColor: PAPER, bodyColor: PAPER,
             titleFont:{size:12, weight:"500"},
             bodyFont:{size:11.5, family:"Geist, sans-serif"},
             padding: 10, cornerRadius: 4,
@@ -2881,14 +2914,21 @@ function ChartCanvas({spec, sources}){
         },
         scales: isDoughnut ? {} : {
           x: {
-            ticks: {font:{size:10.5, family:"Geist, sans-serif"}, color:"#707075"},
-            grid: {display: !horizontal, color:"#ebebed", lineWidth: 1, drawTicks: false},
+            ticks: {font:{size:10.5, family:"Geist, sans-serif"},
+                    // категорийная ось снизу (vertical bar): Сбер — акцентом
+                    color: horizontal ? INK3
+                      : (c)=>isHl((spec.labels||[])[c.index]) ? ACC : INK3},
+            grid: {display: !horizontal, color:HAIR, lineWidth: 1, drawTicks: false},
             border: {display: false},
           },
           y: {
             beginAtZero: true,
-            ticks: {font:{size:10.5, family:"Geist, sans-serif"}, color:"#707075"},
-            grid: {display: horizontal, color:"#ebebed", lineWidth: 1, drawTicks: false},
+            ticks: {font:{size:10.5, family:"Geist, sans-serif"},
+                    // категорийная ось слева (horizontalBar): Сбер — акцентом
+                    color: horizontal
+                      ? (c)=>isHl((spec.labels||[])[c.index]) ? ACC : INK3
+                      : INK3},
+            grid: {display: horizontal, color:HAIR, lineWidth: 1, drawTicks: false},
             border: {display: false},
           },
         },
@@ -2898,6 +2938,7 @@ function ChartCanvas({spec, sources}){
   },[spec]);
   return <div className="dr-chart">
     <canvas ref={ref} id={idRef.current}/>
+    {spec.insight&&<div className="dr-chart-insight">{spec.insight}</div>}
     {spec.sourceCitations&&spec.sourceCitations.length>0&&
       <div className="dr-chart-cites">
         Источники:&nbsp;
@@ -3753,7 +3794,8 @@ function AIPage(){
       const r=await apiFetch(`/api/reports/${rid}`);
       const p=r.payload||{};
       setMsgs([{role:"user",text:r.question},
-               {role:"ai",text:r.body,sources:p.sources||[],mode:p.mode||"deep",phase:"done",
+               {role:"ai",text:r.body,sources:p.sources||[],charts:p.charts||[],
+                mode:p.mode||"deep",phase:"done",
                 report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);

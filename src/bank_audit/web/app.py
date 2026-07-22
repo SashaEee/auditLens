@@ -1155,6 +1155,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     parts: list[str] = []
     replaced: Optional[str] = None
     sources: list = []
+    charts: list = []
     mode: Optional[str] = None
     persisted = False
 
@@ -1170,7 +1171,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             if is_report:
                 report_id = userdata.save_report(
                     username, session_id, question, body,
-                    payload={"sources": sources, "mode": mode}, banks=banks)
+                    payload={"sources": sources, "mode": mode, "charts": charts},
+                    banks=banks)
                 # Само-дополняющийся профиль: каждый 3-й отчёт обновляем
                 # LLM-нарратив интересов (в фоне, не блокируя ответ).
                 try:
@@ -1200,6 +1202,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     replaced = data["text"]
                 elif t == "sources" and isinstance(data.get("sources"), list):
                     sources = data["sources"]
+                elif t == "chart" and isinstance(data.get("spec"), dict):
+                    charts.append(data["spec"])   # графики — в payload отчёта
                 elif t == "mode":
                     mode = data.get("value")
                 elif t == "done" and not persisted:
