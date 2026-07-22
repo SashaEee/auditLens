@@ -261,6 +261,10 @@ class TrackIn(BaseModel):
     events: list[dict] = []
 
 
+# «journal» вместо «track», «pulse» вместо «metrics»: слова track/metrics/telemetry
+# режутся адблокерами (EasyPrivacy) → события молча пропадали у части пользователей.
+# Старые пути оставлены алиасами для уже загруженных вкладок.
+@app.post("/api/journal")
 @app.post("/api/track")
 def track_events(body: TrackIn, user: CurrentUser = Depends(get_current_user)):
     """Батч клиентских событий (page_view/page_leave/client_error). Best-effort."""
@@ -268,6 +272,7 @@ def track_events(body: TrackIn, user: CurrentUser = Depends(get_current_user)):
     return {"ok": True, "accepted": n}
 
 
+@app.get("/api/admin/pulse")
 @app.get("/api/admin/metrics")
 def admin_metrics(days: int = 14, user: CurrentUser = Depends(get_current_user)):
     """Метрики «Пульса»: аудитория + продукт + техника одним ответом."""

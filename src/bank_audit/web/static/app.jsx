@@ -4519,65 +4519,65 @@ function LoopholePage(){
 // ─── SHELL ────────────────────────────────────────────────────────────────────
 // ─── «Пульс» — дашборд владельца: аудитория + продукт + техника в одном ───────
 const AD_CSS=`
-.ad-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 22px;}
-.ad-tile{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px 12px;}
-.ad-tile .l{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+.pu-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 22px;}
+.pu-tile{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px 12px;}
+.pu-tile .l{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-4);margin-bottom:7px;display:flex;align-items:center;gap:6px;}
-.ad-tile .v{font-family:'Source Serif 4',Georgia,serif;font-size:27px;line-height:1;}
-.ad-tile .s{font-size:10.5px;color:var(--ink-4);margin-top:5px;font-family:'JetBrains Mono',monospace;}
-.ad-tile.neg .v{color:var(--neg);}
-.ad-live{width:6px;height:6px;border-radius:50%;background:var(--pos);animation:pulse 1.8s ease infinite;}
-.ad-sec{margin-top:24px;}
-.ad-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
-@media(max-width:1000px){.ad-grid2{grid-template-columns:1fr;}}
-.ad-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;}
-.ad-card .h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+.pu-tile .v{font-family:'Source Serif 4',Georgia,serif;font-size:27px;line-height:1;}
+.pu-tile .s{font-size:10.5px;color:var(--ink-4);margin-top:5px;font-family:'JetBrains Mono',monospace;}
+.pu-tile.neg .v{color:var(--neg);}
+.pu-live{width:6px;height:6px;border-radius:50%;background:var(--pos);animation:pulse 1.8s ease infinite;}
+.pu-sec{margin-top:24px;}
+.pu-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
+@media(max-width:1000px){.pu-grid2{grid-template-columns:1fr;}}
+.pu-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;}
+.pu-card .h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;}
-.ad-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px;}
-.ad-bar-row .lb{width:110px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ad-bar-row .tr{flex:1;height:16px;background:var(--paper-2);border-radius:4px;overflow:hidden;}
-.ad-bar-row .fl{height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
+.pu-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px;}
+.pu-bar-row .lb{width:110px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pu-bar-row .tr{flex:1;height:16px;background:var(--paper-2);border-radius:4px;overflow:hidden;}
+.pu-bar-row .fl{height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
   transition:width .5s ease;}
-.ad-bar-row .vv{width:100px;flex:none;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);}
-.ad-kv{display:flex;justify-content:space-between;align-items:baseline;padding:7px 2px;border-top:1px solid var(--hair);font-size:12.5px;}
-.ad-kv:first-of-type{border-top:0;}
-.ad-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;}
-.ad-heat{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:12px;}
-.ad-heat .hl{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--ink-4);align-self:center;}
-.ad-heat .c{aspect-ratio:1;border-radius:2.5px;background:var(--paper-2);min-width:0;}
-.ad-tbl{width:100%;font-size:11.5px;border-collapse:collapse;}
-.ad-tbl th{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
+.pu-bar-row .vv{width:100px;flex:none;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);}
+.pu-kv{display:flex;justify-content:space-between;align-items:baseline;padding:7px 2px;border-top:1px solid var(--hair);font-size:12.5px;}
+.pu-kv:first-of-type{border-top:0;}
+.pu-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;}
+.pu-heat{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:12px;}
+.pu-heat .hl{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--ink-4);align-self:center;}
+.pu-heat .c{aspect-ratio:1;border-radius:2.5px;background:var(--paper-2);min-width:0;}
+.pu-tbl{width:100%;font-size:11.5px;border-collapse:collapse;}
+.pu-tbl th{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-4);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;}
-.ad-tbl th:first-child{text-align:left;}
-.ad-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:'JetBrains Mono',monospace;
+.pu-tbl th:first-child{text-align:left;}
+.pu-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:'JetBrains Mono',monospace;
   font-size:10.5px;text-align:right;color:var(--ink-2);}
-.ad-tbl td:first-child{text-align:left;color:var(--ink);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ad-tbl tr:last-child td{border-bottom:0;}
-.ad-err{display:flex;gap:9px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
-.ad-err:first-of-type{border-top:0;}
-.ad-err .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
-.ad-err .k{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--neg);flex:none;text-transform:uppercase;}
-.ad-err .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
-.ad-feed-row{display:flex;gap:9px;align-items:center;padding:5px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
-.ad-feed-row:first-of-type{border-top:0;}
-.ad-feed-row .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;width:34px;}
-.ad-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+.pu-tbl td:first-child{text-align:left;color:var(--ink);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pu-tbl tr:last-child td{border-bottom:0;}
+.pu-err{display:flex;gap:9px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
+.pu-err:first-of-type{border-top:0;}
+.pu-err .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
+.pu-err .k{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--neg);flex:none;text-transform:uppercase;}
+.pu-err .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
+.pu-feed-row{display:flex;gap:9px;align-items:center;padding:5px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
+.pu-feed-row:first-of-type{border-top:0;}
+.pu-feed-row .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;width:34px;}
+.pu-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
   display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
-.ad-feed-row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
-.ad-chip{font-family:'JetBrains Mono',monospace;font-size:9.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);}
-.ad-chip.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
-.ad-chip.bad{color:var(--neg);border-color:color-mix(in oklab,var(--neg),transparent 70%);}
-.ad-note{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);margin-top:10px;line-height:1.6;}
-.ad-note .acc{color:var(--accent);}
-.ad-u{display:inline-flex;align-items:center;gap:8px;font-family:'Geist','Inter',sans-serif;font-size:12.5px;color:var(--ink);}
-.ad-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+.pu-feed-row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
+.pu-chip{font-family:'JetBrains Mono',monospace;font-size:9.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);}
+.pu-chip.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
+.pu-chip.bad{color:var(--neg);border-color:color-mix(in oklab,var(--neg),transparent 70%);}
+.pu-note{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);margin-top:10px;line-height:1.6;}
+.pu-note .acc{color:var(--accent);}
+.pu-u{display:inline-flex;align-items:center;gap:8px;font-family:'Geist','Inter',sans-serif;font-size:12.5px;color:var(--ink);}
+.pu-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
   display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
-.ad-crown{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--accent);white-space:nowrap;
+.pu-crown{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--accent);white-space:nowrap;
   border:1px solid color-mix(in oklab,var(--accent),transparent 70%);background:var(--accent-soft);
   border-radius:999px;padding:2px 7px;}
-.ad-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
-.ad-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
-.ad-team td:first-child{max-width:260px;}
+.pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
+.pu-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
+.pu-team td:first-child{max-width:260px;}
 `;
 const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
   ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Лазейки",banks:"Банки",sources:"Источники",
@@ -4622,7 +4622,7 @@ function AdHeat({cells}){
         style={n?{background:"color-mix(in oklab,var(--accent),var(--paper-2) "+Math.round(88-(n/max)*78)+"%)"}:null}/>);
     }
   });
-  return <div className="ad-heat">{out}</div>;
+  return <div className="pu-heat">{out}</div>;
 }
 
 // донат-сегментация аудитории (SVG, без библиотек)
@@ -4684,7 +4684,7 @@ function PulsePage(){
   const[err,setErr]=useState(false);
   const[ts,setTs]=useState(null);
   const load=useCallback(()=>{
-    apiFetch("/api/admin/metrics?days="+days)
+    apiFetch("/api/admin/pulse?days="+days)
       .then(d=>{setM(d);setErr(false);setTs(new Date());})
       .catch(()=>setErr(true));
   },[days]);
@@ -4716,29 +4716,29 @@ function PulsePage(){
     </header>
 
     {/* ① сегодня */}
-    <div className="ad-tiles">
-      <div className="ad-tile"><div className="l"><span className="ad-live"/>Онлайн сейчас</div>
+    <div className="pu-tiles">
+      <div className="pu-tile"><div className="l"><span className="pu-live"/>Онлайн сейчас</div>
         <div className="v tnum">{t.online||0}</div><div className="s">за 15 минут</div></div>
-      <div className="ad-tile"><div className="l">Активных сегодня</div>
+      <div className="pu-tile"><div className="l">Активных сегодня</div>
         <div className="v tnum">{t.active||0}</div><div className="s">из {t.users_total||0} всего</div></div>
-      <div className="ad-tile"><div className="l">Просмотров сегодня</div>
+      <div className="pu-tile"><div className="l">Просмотров сегодня</div>
         <div className="v tnum">{t.views||0}</div><div className="s">страниц</div></div>
-      <div className="ad-tile"><div className="l">ИИ-запросов сегодня</div>
+      <div className="pu-tile"><div className="l">ИИ-запросов сегодня</div>
         <div className="v tnum">{t.ai||0}</div><div className="s">quick + deep</div></div>
-      <div className={"ad-tile"+(t.errors>0?" neg":"")}><div className="l">Ошибок сегодня</div>
+      <div className={"pu-tile"+(t.errors>0?" neg":"")}><div className="l">Ошибок сегодня</div>
         <div className="v tnum">{t.errors||0}</div><div className="s">{t.errors>0?"см. раздел техники ↓":"чисто ✓"}</div></div>
     </div>
 
     {/* ② аудитория */}
-    <div className="ad-card">
+    <div className="pu-card">
       <div className="h"><span>Аудитория · уникальные в день</span>
         <span>— пользователи · ‥ просмотры · новых за период: {(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0)}</span></div>
       <AdArea data={m.dau}/>
     </div>
 
     {/* ②b сегменты аудитории + генерация по дням */}
-    <div className="ad-grid2 ad-sec">
-      <div className="ad-card">
+    <div className="pu-grid2 pu-sec">
+      <div className="pu-card">
         <div className="h"><span>Кто наша аудитория · {m.days} дн</span></div>
         <AdDonut center={String(sg.active||0)} sub="активных"
           parts={[
@@ -4747,31 +4747,31 @@ function PulsePage(){
             {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-4)"},
             {label:"спящие за период",value:sg.sleepers||0,color:"var(--hair-2)"},
           ]}/>
-        <div className="ad-note">
+        <div className="pu-note">
           {sg.readers>0
             ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Обзор»/«Для вас») — точка роста для ИИ-аналитика</>
             : "читатели ≥60% просмотров в «Обзоре»/«Для вас» без единого ИИ-запроса"}
         </div>
       </div>
-      <div className="ad-card">
+      <div className="pu-card">
         <div className="h"><span>Генерация · по дням</span>
           <span><span style={{color:"var(--accent)"}}>■</span> ИИ-запросы · <span style={{color:"var(--ink-3)"}}>■</span> отчёты</span></div>
         <AdCols axis={m.dau} a={m.ai_per_day} b={m.reports_per_day}/>
-        <div className="ad-note">за период: {f.ai_total||0} запросов · {f.reports||0} отчётов создано · {f.report_opens||0} открытий сохранённых · {f.shares||0} шерингов</div>
+        <div className="pu-note">за период: {f.ai_total||0} запросов · {f.reports||0} отчётов создано · {f.report_opens||0} открытий сохранённых · {f.shares||0} шерингов</div>
       </div>
     </div>
 
     {/* ②c команда пофамильно */}
-    {team.length>0&&<div className="ad-card ad-sec">
+    {team.length>0&&<div className="pu-card pu-sec">
       <div className="h"><span>Команда · пофамильно · {m.days} дн</span>
         <span>скор: время + просмотры + ИИ×15 + отчёты×30 + оценки×5</span></div>
-      <table className="ad-tbl ad-team">
+      <table className="pu-tbl pu-team">
         <thead><tr><th>пользователь</th><th>время</th><th>дней</th><th>просм.</th><th>ИИ</th><th>отчёты</th><th>оценки</th><th>был(а)</th></tr></thead>
         <tbody>
           {team.map((u,i)=><tr key={u.username}>
-            <td><span className="ad-u"><span className="a">{initials(u.name)}</span>{u.name}
-              {i===0&&(+u.views>0)&&<span className="ad-crown">✦ самый активный</span>}</span></td>
-            <td><span className="ad-tm"><span className="bar" style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
+            <td><span className="pu-u"><span className="a">{initials(u.name)}</span>{u.name}
+              {i===0&&(+u.views>0)&&<span className="pu-crown">✦ самый активный</span>}</span></td>
+            <td><span className="pu-tm"><span className="bar" style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
             <td>{u.days_active}</td><td>{u.views}</td><td>{u.ai}</td><td>{u.reports}</td><td>{u.ratings}</td>
             <td>{u.last_seen||"—"}</td>
           </tr>)}
@@ -4780,41 +4780,41 @@ function PulsePage(){
     </div>}
 
     {/* ③ вовлечённость + фичи */}
-    <div className="ad-grid2">
-      <div className="ad-card">
+    <div className="pu-grid2">
+      <div className="pu-card">
         <div className="h"><span>Страницы · {m.days} дн</span><span>просмотры · время</span></div>
         {(m.pages||[]).length===0&&<div style={{color:"var(--ink-4)",fontSize:12}}>Пока пусто.</div>}
-        {(m.pages||[]).map(pg=><div key={pg.page} className="ad-bar-row">
+        {(m.pages||[]).map(pg=><div key={pg.page} className="pu-bar-row">
           <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
           <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxPage)*100)+"%"}}/></span>
           <span className="vv tnum">{pg.views} · {adFmtS(pg.total_s)}</span>
         </div>)}
       </div>
-      <div className="ad-card">
+      <div className="pu-card">
         <div className="h"><span>Функции · {m.days} дн</span></div>
-        <div className="ad-kv"><span>ИИ-запросы</span><b className="tnum">{f.ai_total||0}</b></div>
-        <div className="ad-kv"><span>Аудит-отчёты создано</span><b className="tnum">{f.reports||0}</b></div>
-        <div className="ad-kv"><span>Шеринги отчётов</span><b className="tnum">{f.shares||0}</b></div>
-        <div className="ad-kv"><span>Оценки контента 👍/👎</span>
+        <div className="pu-kv"><span>ИИ-запросы</span><b className="tnum">{f.ai_total||0}</b></div>
+        <div className="pu-kv"><span>Аудит-отчёты создано</span><b className="tnum">{f.reports||0}</b></div>
+        <div className="pu-kv"><span>Шеринги отчётов</span><b className="tnum">{f.shares||0}</b></div>
+        <div className="pu-kv"><span>Оценки контента 👍/👎</span>
           <b className="tnum"><span style={{color:"var(--pos)"}}>{f.fb_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.fb_dislikes||0}</span></b></div>
-        <div className="ad-kv"><span>Оценки ответов ИИ 👍/👎</span>
+        <div className="pu-kv"><span>Оценки ответов ИИ 👍/👎</span>
           <b className="tnum"><span style={{color:"var(--pos)"}}>{f.ai_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.ai_dislikes||0}</span></b></div>
-        <div className="ad-kv"><span>Профилей заполнено</span><b className="tnum">{f.profiles||0} из {t.users_total||0}</b></div>
+        <div className="pu-kv"><span>Профилей заполнено</span><b className="tnum">{f.profiles||0} из {t.users_total||0}</b></div>
       </div>
     </div>
 
     {/* ④ тепловая карта */}
-    <div className="ad-card ad-sec">
+    <div className="pu-card pu-sec">
       <div className="h"><span>Когда пользуются · час × день недели (МСК)</span><span>{m.days} дн</span></div>
       <AdHeat cells={m.heatmap}/>
     </div>
 
     {/* ⑤ техника */}
-    <div className="ad-grid2 ad-sec">
-      <div className="ad-card">
+    <div className="pu-grid2 pu-sec">
+      <div className="pu-card">
         <div className="h"><span>Латентность API · 7 дн</span><span>мс</span></div>
         {(m.latency||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>
-          :<table className="ad-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
+          :<table className="pu-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
             <tbody>{(m.latency||[]).map((r,i)=><tr key={i}>
               <td title={r.path}>{(r.path||"").replace("/api/","")}</td>
               <td>{r.n}</td><td>{r.p50}</td>
@@ -4822,31 +4822,31 @@ function PulsePage(){
               <td style={r.errs>0?{color:"var(--neg)"}:null}>{r.errs||0}</td>
             </tr>)}</tbody></table>}
       </div>
-      <div className="ad-card">
+      <div className="pu-card">
         <div className="h"><span>Ошибки · последние</span>
-          <span className={"ad-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
+          <span className={"pu-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
         {nErr===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
-          :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="ad-err">
+          :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="pu-err">
             <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"js":"api"}</span>
             <span className="m" title={e.msg||""}>{e.page||"—"}{e.status?" · "+e.status:""}{e.msg?" · "+e.msg:""}</span>
           </div>)}
       </div>
     </div>
 
-    <div className="ad-grid2 ad-sec">
-      <div className="ad-card">
+    <div className="pu-grid2 pu-sec">
+      <div className="pu-card">
         <div className="h"><span>Дайджест · последний выпуск</span>
           <span>LLM-токены за период: {tokSum.toLocaleString("ru")}</span></div>
         <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
           {(m.digest||[]).map(s=><span key={s.section}
-            className={"ad-chip "+(s.status==="ok"?"ok":s.status==="failed"?"bad":"")}
+            className={"pu-chip "+(s.status==="ok"?"ok":s.status==="failed"?"bad":"")}
             title={(s.error||"")+(s.gen_ms?" · "+s.gen_ms+"мс":"")}>
             {s.section} · {s.status}{s.at?" · "+s.at:""}</span>)}
         </div>
       </div>
-      <div className="ad-card">
+      <div className="pu-card">
         <div className="h"><span>Живая лента</span><span>последние события</span></div>
-        {(m.feed||[]).map((e,i)=><div key={i} className="ad-feed-row">
+        {(m.feed||[]).map((e,i)=><div key={i} className="pu-feed-row">
           <span className="t">{e.ts}</span>
           <span className="a">{initials(e.username||"?")}</span>
           <span className="w">{e.kind==="page_view"?"открыл "+(AD_PAGE_RU[e.page]||e.page)
@@ -5207,7 +5207,7 @@ class PageBoundary extends React.Component{
   static getDerivedStateFromError(e){return{err:e};}
   componentDidCatch(e,info){
     try{
-      fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
+      fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({events:[{kind:"client_error",page:(location.hash||"#").slice(1),
           payload:{msg:String((e&&e.message)||e).slice(0,300),
                    stack:String((info&&info.componentStack)||"").slice(0,400)}}]})}).catch(()=>{});
@@ -5268,9 +5268,9 @@ function Shell(){
     if(!evs.length)return;
     const body=JSON.stringify({events:evs});
     if(beacon&&navigator.sendBeacon){
-      try{navigator.sendBeacon("/api/track",new Blob([body],{type:"application/json"}));return;}catch{}
+      try{navigator.sendBeacon("/api/journal",new Blob([body],{type:"application/json"}));return;}catch{}
     }
-    fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},body}).catch(()=>{});
+    fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},body}).catch(()=>{});
   };
   const trk=(ev)=>{ trkQ.current.push(ev); if(trkQ.current.length>=8)trkFlush(); };
   useEffect(()=>{
