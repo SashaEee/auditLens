@@ -16,6 +16,7 @@ import io
 import json
 import logging
 import re
+from pathlib import Path
 from datetime import datetime
 from typing import Any
 
@@ -386,93 +387,138 @@ def _render_claimcheck_section(cc: dict | None) -> str:
     return f'<section class="cc-section"><div class="cc-box">{"".join(pills)}</div></section>'
 
 
-def _render_charts_section(charts: list[dict]) -> tuple[str, str]:
-    """Возвращает (html_block, js_block) для отрисовки графиков в PDF.
-    Каждый chart = canvas + Chart.js script. Playwright ждёт networkidle
-    после загрузки CDN и рендера всех графиков, прежде чем снимать PDF."""
-    if not charts:
-        return "", ""
-    items = []
-    js_chunks = []
-    for i, c in enumerate(charts):
-        if not isinstance(c, dict): continue
-        if not c.get("labels") or not c.get("datasets"): continue
-        cid = f"pdfchart_{i}"
-        title = _esc(c.get("title", ""))
-        cites = c.get("sourceCitations") or []
-        cite_html = ""
-        if cites:
-            cite_html = ('<div class="chart-cites">Источники: ' +
-                          " ".join(f'<span class="cite-mark">[{int(n)}]</span>'
-                                    for n in cites if isinstance(n, (int, float))) +
-                          '</div>')
-        items.append(
-            f'<figure class="chart-figure">'
-            f'  <div class="chart-canvas-wrap"><canvas id="{cid}"></canvas></div>'
-            f'  {f"<figcaption class=\"chart-caption\">{title}</figcaption>" if title else ""}'
-            f'  {cite_html}'
-            f'</figure>'
-        )
-        # Chart.js spec — JSON.dump через json.dumps (escape кавычек, unicode)
-        spec_json = json.dumps({
-            "type": ("bar" if c.get("chartType") in ("bar","horizontalBar")
-                      else c.get("chartType") or "bar"),
-            "data": {
-                "labels":   c.get("labels") or [],
-                "datasets": c.get("datasets") or [],
-            },
-            "horizontal": c.get("chartType") == "horizontalBar",
-            "ctype": c.get("chartType") or "bar",
-        }, ensure_ascii=False)
-        js_chunks.append(
-            f'  renderChart("{cid}", {spec_json});'
-        )
-    if not items:
-        return "", ""
-    section = (
-        '<section class="charts-page" id="sec-charts">'
-        '<h2>Визуализация ключевых метрик</h2>'
-        '<div class="lede">Ключевые числовые сравнения из отчёта</div>'
-        + "".join(items) +
-        '</section>'
+def _chart_valid(c) -> bool:
+    return isinstance(c, dict) and bool(c.get("labels")) and bool(c.get("datasets"))
+
+
+def _chart_figure_html(i: int, c: dict) -> str:
+    """Карточка графика: canvas + подпись (title · unit) + insight + источники."""
+    cid = f"pdfchart_{i}"
+    title = _esc(c.get("title", ""))
+    unit = _esc(c.get("unit") or "")
+    if title and unit:
+        title = f"{title} · {unit}"
+    insight = _esc(c.get("insight") or "")
+    cites = c.get("sourceCitations") or []
+    cite_html = ""
+    if cites:
+        cite_html = ('<div class="chart-cites">Источники: ' +
+                      " ".join(f'<span class="cite-mark">[{int(n)}]</span>'
+                                for n in cites if isinstance(n, (int, float))) +
+                      '</div>')
+    return (
+        f'<figure class="chart-figure">'
+        f'  <div class="chart-canvas-wrap"><canvas id="{cid}"></canvas></div>'
+        f'  {f"<figcaption class=\"chart-caption\">{title}</figcaption>" if title else ""}'
+        f'  {f"<div class=\"chart-insight\">{insight}</div>" if insight else ""}'
+        f'  {cite_html}'
+        f'</figure>'
     )
-    # Промисом ждём пока Chart.js загрузится с CDN (на случай если
-    # set_content вернётся раньше чем onload), потом вызываем renderChart
-    # для каждого spec'а. Window-флаг __chartsRendered позволяет Playwright'у
-    # дождаться завершения через wait_for_function.
-    calls = "\n".join(js_chunks)
+
+
+def _render_charts_assets(charts: list[dict], tail_ids: list[int]) -> tuple[str, str]:
+    """(tail_html, js). JS рендерит ВСЕ канвасы (inline в теле + хвост).
+    Chart.js заинлайнен из /static/vendor (никаких CDN — часть сетей их режет).
+    Стиль = веб-ChartCanvas: Сбер/highlight акцентом, ink-градации, монограммы
+    банков на категорийной оси, пунктирная референс-линия."""
+    calls = []
+    for i, c in enumerate(charts):
+        if not _chart_valid(c):
+            continue
+        spec_json = json.dumps({
+            "labels": c.get("labels") or [],
+            "datasets": c.get("datasets") or [],
+            "ctype": c.get("chartType") or "bar",
+            "horizontal": c.get("chartType") == "horizontalBar",
+            "hl": c.get("highlight") or "",
+            "refline": c.get("referenceLine") or None,
+        }, ensure_ascii=False)
+        calls.append(f'  renderChart("pdfchart_{i}", {spec_json});')
+    if not calls:
+        return "", ""
+
+    tail_html = ""
+    tail_items = [_chart_figure_html(i, charts[i]) for i in tail_ids
+                  if _chart_valid(charts[i])]
+    if tail_items:
+        tail_html = (
+            '<section class="charts-page" id="sec-charts">'
+            '<h2>Дополнительные визуализации</h2>'
+            '<div class="lede">Сравнения, не привязанные к разделам отчёта</div>'
+            + "".join(tail_items) + '</section>'
+        )
+
+    # Chart.js — локальный (тот же vendored файл, что у веб-фронта)
+    try:
+        chartjs_src = (Path(__file__).parent / "static" / "vendor"
+                       / "chart.umd.js").read_text(encoding="utf-8")
+    except Exception:
+        chartjs_src = ""
     js = (
-        '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>'
+        '<script>' + chartjs_src + '</script>'
         '<script>'
-        'const PALETTE=["#16181d","#44464d","#707075","#9c9ea3","#c4c6cc"];'
+        'const PAL=["#16181d","#44464d","#707075","#9c9ea3","#c4c6cc"];'
+        'const ACC="oklch(58% 0.18 25)",INK="#16181d",INK3="#707075",'
+        '      HAIR="#ebebed",PAPER="#ffffff";'
         'function renderChart(cid, spec){'
         '  const el=document.getElementById(cid); if(!el||!window.Chart) return;'
-        '  const ds=(spec.data.datasets||[]).map((d,i)=>({...d,'
-        '    backgroundColor: spec.ctype==="doughnut"?PALETTE:PALETTE[i%5],'
-        '    borderColor: PALETTE[i%5], borderWidth: spec.ctype==="line"?2:0,'
-        '    pointRadius: spec.ctype==="line"?3:0, tension:0.25}));'
         '  const horiz=spec.horizontal===true;'
         '  const isLine=spec.ctype==="line", isDough=spec.ctype==="doughnut";'
+        '  const hl=String(spec.hl||"").toLowerCase().slice(0,5);'
+        '  const isHl=lb=>hl&&String(lb||"").toLowerCase().includes(hl);'
+        '  const pos=(lb,i)=>isHl(lb)?ACC:PAL[i%PAL.length];'
+        '  const labels=spec.labels||[];'
+        '  const single=(spec.datasets||[]).length===1;'
+        '  const ds=(spec.datasets||[]).map((d,i)=>{'
+        '    const base=isHl(d.label)?ACC:PAL[i%PAL.length];'
+        '    return {...d,'
+        '      backgroundColor:isDough?labels.map(pos):(isLine?"transparent":(single?labels.map(pos):base)),'
+        '      borderColor:isDough?PAPER:base, borderWidth:isLine?2:(isDough?2:0),'
+        '      borderRadius:(!isLine&&!isDough)?3:0,'
+        '      pointRadius:isLine?3:0, pointBackgroundColor:base, tension:isLine?0.25:0};});'
         '  const fmt=v=>v==null?"":Number(v).toLocaleString("ru-RU",{maximumFractionDigits:1});'
-        '  const dataLabelsPlugin={id:"valLabels",afterDatasetsDraw(chart){'
+        '  const valLabels={id:"valLabels",afterDatasetsDraw(chart){'
         '    if(isLine||isDough)return; const{ctx}=chart;'
         '    chart.data.datasets.forEach((set,di)=>{'
         '      chart.getDatasetMeta(di).data.forEach((bar,i)=>{'
         '        const v=set.data[i]; if(v==null)return;'
-        '        ctx.save(); ctx.font="500 11px JetBrains Mono, monospace";'
-        '        ctx.fillStyle="#16181d";'
-        '        ctx.textAlign=horiz?"left":"center";'
-        '        ctx.textBaseline=horiz?"middle":"bottom";'
-        '        if(horiz)ctx.fillText(fmt(v),bar.x+5,bar.y);'
-        '        else ctx.fillText(fmt(v),bar.x,bar.y-5);'
-        '        ctx.restore();'
-        '      });'
-        '    });'
+        '        ctx.save(); ctx.font="500 11px JetBrains Mono, monospace"; ctx.fillStyle=INK;'
+        '        ctx.textAlign=horiz?"left":"center"; ctx.textBaseline=horiz?"middle":"bottom";'
+        '        if(horiz)ctx.fillText(fmt(v),bar.x+5,bar.y); else ctx.fillText(fmt(v),bar.x,bar.y-5);'
+        '        ctx.restore();});});'
+        '  }};'
+        '  const inits=lb=>{const p=String(lb||"").split(/[\\s\\-]+/).filter(Boolean);'
+        '    return ((p.length>1?p[0][0]+p[1][0]:String(lb||"").slice(0,2))||"·").toUpperCase();};'
+        '  const monoAxis={id:"monoAxis",afterDraw(chart){'
+        '    if(!horiz||isDough)return; const s=chart.scales.y; if(!s)return; const c2=chart.ctx;'
+        '    labels.forEach((lb,i)=>{const y=s.getPixelForTick(i); const cx=s.left+12;'
+        '      c2.save(); c2.beginPath(); c2.arc(cx,y,9,0,Math.PI*2);'
+        '      c2.fillStyle=pos(lb,i); c2.fill();'
+        '      c2.font="600 8px JetBrains Mono, monospace"; c2.fillStyle=PAPER;'
+        '      c2.textAlign="center"; c2.textBaseline="middle"; c2.fillText(inits(lb),cx,y+0.5);'
+        '      c2.font="500 10.5px Geist, sans-serif"; c2.fillStyle=isHl(lb)?ACC:INK3;'
+        '      c2.textAlign="left";'
+        '      let nm=String(lb||""); if(nm.length>13)nm=nm.slice(0,12)+"…";'
+        '      c2.fillText(nm,cx+14,y+0.5); c2.restore();});'
+        '  }};'
+        '  const refLine={id:"refLine",afterDatasetsDraw(chart){'
+        '    const rl=spec.refline; if(!rl||isDough||rl.value==null)return;'
+        '    const area=chart.chartArea; const sc=horiz?chart.scales.x:chart.scales.y;'
+        '    if(!sc)return; const px=sc.getPixelForValue(+rl.value); const c2=chart.ctx;'
+        '    c2.save(); c2.strokeStyle=INK3; c2.setLineDash([4,4]); c2.lineWidth=1; c2.beginPath();'
+        '    if(horiz){c2.moveTo(px,area.top);c2.lineTo(px,area.bottom);}'
+        '    else{c2.moveTo(area.left,px);c2.lineTo(area.right,px);}'
+        '    c2.stroke(); c2.setLineDash([]);'
+        '    c2.font="500 9.5px JetBrains Mono, monospace"; c2.fillStyle=INK3;'
+        '    const t=((rl.label||"")+" "+fmt(+rl.value)).trim();'
+        '    if(horiz)c2.fillText(t,Math.min(px+5,area.right-60),area.top+10);'
+        '    else c2.fillText(t,area.left+5,Math.max(px-5,area.top+10));'
+        '    c2.restore();'
         '  }};'
         '  new Chart(el.getContext("2d"),{'
         '    type: horiz?"bar":(isDough?"doughnut":isLine?"line":"bar"),'
-        '    data:{labels:spec.data.labels||[], datasets:ds},'
-        '    plugins:[dataLabelsPlugin],'
+        '    data:{labels:labels, datasets:ds},'
+        '    plugins:[valLabels,monoAxis,refLine],'
         '    options:{indexAxis:horiz?"y":"x", responsive:true, maintainAspectRatio:false,'
         '      animation:false, layout:{padding:{top:isDough?4:18,right:horiz?44:8}},'
         '      plugins:{legend:{display:ds.length>1||isDough,'
@@ -480,21 +526,22 @@ def _render_charts_section(charts: list[dict]) -> tuple[str, str]:
         '          labels:{font:{size:11,family:"Geist,sans-serif"},color:"#44464d",'
         '                  boxWidth:10,boxHeight:10,padding:14,usePointStyle:true,pointStyle:"rect"}},'
         '        tooltip:{enabled:false}},'
-        '      scales:isDough?{}:{x:{ticks:{font:{size:10.5,family:"Geist,sans-serif"},color:"#707075"},'
-        '        grid:{display:!horiz,color:"#ebebed",lineWidth:1,drawTicks:false},'
+        '      scales:isDough?{}:{x:{ticks:{font:{size:10.5,family:"Geist,sans-serif"},'
+        '          color:horiz?INK3:(c)=>isHl(labels[c.index])?ACC:INK3},'
+        '        grid:{display:!horiz,color:HAIR,lineWidth:1,drawTicks:false},'
         '        border:{display:false}},'
-        '      y:{beginAtZero:true,ticks:{font:{size:10.5,family:"Geist,sans-serif"},color:"#707075"},'
-        '        grid:{display:horiz,color:"#ebebed",lineWidth:1,drawTicks:false},'
+        '      y:{beginAtZero:true,'
+        '        afterFit:horiz?(sc)=>{sc.width=Math.max(sc.width,118);}:undefined,'
+        '        ticks:horiz?{display:false}:{font:{size:10.5,family:"Geist,sans-serif"},color:INK3},'
+        '        grid:{display:horiz,color:HAIR,lineWidth:1,drawTicks:false},'
         '        border:{display:false}}}}'
         '  });'
         '}'
-        # Ждём готовности Chart.js (тики setTimeout по 50ms), потом
-        # вызываем все renderChart и ставим флаг чтобы Playwright поймал
         '\nfunction _runCharts(){\n'
         '  if(typeof window.Chart === "undefined"){\n'
         '    setTimeout(_runCharts, 50); return;\n'
         '  }\n'
-        f'  {calls}\n'
+        + "\n".join(calls) + '\n'
         '  window.__chartsRendered = true;\n'
         '}\n'
         'if(document.readyState === "complete" || document.readyState === "interactive"){\n'
@@ -504,7 +551,7 @@ def _render_charts_section(charts: list[dict]) -> tuple[str, str]:
         '}\n'
         '</script>'
     )
-    return section, js
+    return tail_html, js
 
 
 def _render_toc(entries: list[dict]) -> str:
@@ -577,11 +624,30 @@ def build_pdf_html(*, question: str, report_md: str,
     if _mt:
         doc_title = _mt.group(1).strip()
         report_md = (report_md[:_mt.start()] + report_md[_mt.end():]).lstrip("\n")
+    # [[CHART:i]] → алфанум-токен: markdown-конвертер не должен его исказить
+    report_md = re.sub(r"\[\[CHART:(\d+)\]\]", r"CHARTSLOT7f3a\1end", report_md)
     body_html = _md_to_html(report_md, sources_by_n, toc_out=toc_entries)
     sources_html = _render_sources_section(sources)
     unverified = (verification or {}).get("unverified") or []
     verification_html = _render_verification_section(unverified)
-    charts_html, charts_js = _render_charts_section(charts or [])
+    # Графики по местам: [[CHART:i]]-маркеры из тела → inline-фигуры;
+    # непривязанные — хвостовой секцией. JS рендерит все канвасы.
+    charts = charts or []
+    _figs = {i: _chart_figure_html(i, c) for i, c in enumerate(charts)
+             if _chart_valid(c)}
+    _placed: set[int] = set()
+
+    def _chsub(mm):
+        i = int(mm.group(1))
+        if i in _figs and i not in _placed:
+            _placed.add(i)
+            return _figs[i]
+        return ""
+
+    body_html = re.sub(r"(?:<p>\s*)?CHARTSLOT7f3a(\d+)end(?:\s*</p>)?",
+                       _chsub, body_html)
+    _tail = [i for i in _figs if i not in _placed]
+    charts_html, charts_js = _render_charts_assets(charts, _tail)
     # Богатые виджеты UI, которых раньше не было в PDF (рейтинг/инсайты/gaps/claim-check)
     # Дедуп контента: рейтинг/инсайты/пробелы НЕ показываем виджетом, если они
     # уже раскрыты прозой в теле (иначе раздел дублируется дважды).
@@ -827,6 +893,13 @@ body {{
 .chart-figure {{
   margin: 0 0 14mm;
   page-break-inside: avoid;
+}}
+.chart-insight {{
+  font-style: italic;
+  color: #44464d;
+  font-size: 10.5pt;
+  margin: 2mm 0 0;
+  line-height: 1.5;
 }}
 .chart-canvas-wrap {{
   width: 100%;

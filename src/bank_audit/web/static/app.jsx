@@ -2331,7 +2331,7 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           question: question,
-          report_md: (report||"").replace(/\n?\[\[CHART:\d+\]\]\n?/g, "\n"),  // маркеры — только для веб-рендера
+          report_md: report,   // [[CHART:i]]-маркеры остаются: PDF ставит графики по местам
           sources: (sources || []).map(s => ({
             n: s.n, url: s.url, bank_name: s.bank_name, title: s.title,
             source_kind: s.source_kind, trust_score: s.trust_score,
@@ -2875,10 +2875,38 @@ function ChartCanvas({spec, sources}){
         c2.restore();
       },
     };
+    // Монограммы банков на категорийной оси (horizontalBar): бейдж-кружок цвета
+    // бара с инициалами + имя (Сбер — акцентом). Родные тики оси скрываются.
+    const monoPlugin = {
+      id:"monoAxis",
+      afterDraw(chart){
+        if(!horizontal||isDoughnut) return;
+        const s=chart.scales.y; if(!s) return;
+        const c2=chart.ctx;
+        const inits=(lb)=>{const p=String(lb||"").split(/[\s\-]+/).filter(Boolean);
+          return ((p.length>1?p[0][0]+p[1][0]:String(lb||"").slice(0,2))||"·").toUpperCase();};
+        (spec.labels||[]).forEach((lb,i)=>{
+          const y=s.getPixelForTick(i);
+          const cx=s.left+12;
+          c2.save();
+          c2.beginPath(); c2.arc(cx,y,9,0,Math.PI*2);
+          c2.fillStyle=posColor(lb,i); c2.fill();
+          c2.font="600 8px 'JetBrains Mono', monospace"; c2.fillStyle=PAPER;
+          c2.textAlign="center"; c2.textBaseline="middle";
+          c2.fillText(inits(lb),cx,y+0.5);
+          c2.font="500 10.5px Geist, sans-serif";
+          c2.fillStyle=isHl(lb)?ACC:INK3;
+          c2.textAlign="left";
+          let nm=String(lb||""); if(nm.length>13)nm=nm.slice(0,12)+"…";
+          c2.fillText(nm,cx+14,y+0.5);
+          c2.restore();
+        });
+      },
+    };
     const inst = new window.Chart(ctx, {
       type: horizontal ? "bar" : (isDoughnut ? "doughnut" : isLine ? "line" : "bar"),
       data: {labels: spec.labels||[], datasets},
-      plugins: [dataLabelsPlugin, refPlugin],
+      plugins: [dataLabelsPlugin, refPlugin, monoPlugin],
       options: {
         indexAxis: horizontal ? "y" : "x",
         responsive: true, maintainAspectRatio: false,
@@ -2923,11 +2951,11 @@ function ChartCanvas({spec, sources}){
           },
           y: {
             beginAtZero: true,
-            ticks: {font:{size:10.5, family:"Geist, sans-serif"},
-                    // категорийная ось слева (horizontalBar): Сбер — акцентом
-                    color: horizontal
-                      ? (c)=>isHl((spec.labels||[])[c.index]) ? ACC : INK3
-                      : INK3},
+            // horizontalBar: родные тики скрыты — ось рисует monoPlugin
+            // (бейджи-монограммы банков + имена, Сбер акцентом)
+            afterFit: horizontal ? (sc)=>{sc.width=Math.max(sc.width,118);} : undefined,
+            ticks: horizontal ? {display:false}
+              : {font:{size:10.5, family:"Geist, sans-serif"}, color:INK3},
             grid: {display: horizontal, color:HAIR, lineWidth: 1, drawTicks: false},
             border: {display: false},
           },
