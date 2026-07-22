@@ -1481,7 +1481,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .bf-news-it[data-sev=green]::before{background:var(--pos)}
 .bf-news-t{font-size:12.5px;font-weight:500;line-height:1.4}
 .bf-news-s{font-size:11.5px;line-height:1.5;color:var(--ink-2);margin-top:3px}
-.bf-news-m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:5px;display:flex;gap:8px;align-items:center}
+.bf-news-m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* продуктовый чип новости («Ипотека», «Вклады»…) — детектор тегов, правка аналитиков */
+.bf-chip{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--hair-2);border-radius:3px;padding:1px 5px;line-height:1.5;white-space:nowrap}
 .bf-news-empty{padding:22px 16px;font-size:12.5px;color:var(--ink-3)}
 
 /* сводка жалоб (markdown из reviews_brief) */

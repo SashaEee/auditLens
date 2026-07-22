@@ -73,6 +73,16 @@ const fmtDate = s => {
   try { return new Date(s).toLocaleString("ru",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}); }
   catch { return String(s).slice(0,16); }
 };
+// Дата публикации новости: всегда МСК и явная пометка пояса (правка аналитиков)
+const fmtDateMsk = s => {
+  if(!s) return "";
+  try {
+    const d = new Date(s);
+    if(isNaN(d)) return String(s).slice(0,16);
+    return d.toLocaleString("ru",{timeZone:"Europe/Moscow",day:"2-digit",month:"2-digit",
+      hour:"2-digit",minute:"2-digit"}).replace(", "," ")+" МСК";
+  } catch { return String(s).slice(0,16); }
+};
 const fmtAmount = (min,max) => {
   const f=n=>{if(!n)return null;n=parseFloat(n);if(n>=1e6)return`${+(n/1e6).toFixed(1)} млн`;if(n>=1e3)return`${Math.round(n/1e3)} тыс.`;return String(Math.round(n));};
   const[a,b]=[f(min),f(max)];
@@ -1472,7 +1482,9 @@ function OverviewPage(){
                  target="_blank" rel="noopener noreferrer">
                 <div className="bf-news-t">{it.title}</div>
                 {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
-                <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDate(it.ts)}`:""}<Ic.ext/></div>
+                <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
+                  {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}
+                  <Ic.ext/></div>
               </a>)}
           </div>):
           ST("news")==="degraded"&&(nw.items_raw||[]).length?
@@ -1579,7 +1591,7 @@ function MarketPage(){
       <div className="eyebrow" style={{marginBottom:6}}>§ Рынок · {loading?"…":filtered.length} предложений</div>
       <h1 className="t-h" style={{marginBottom:6}}>Действующие условия по категориям</h1>
       <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Снимок с агрегаторов sravni.ru и banki.ru. Идемпотентность по (банк, категория, external_id). Изменения хранятся как SCD2.
+        Снимок с агрегаторов sravni.ru и banki.ru. Обновляется ежедневно в 05:00 МСК, вся история изменений условий сохраняется.
       </p>
     </header>
 
@@ -1590,9 +1602,13 @@ function MarketPage(){
             {c.label}{c.n!=null&&<span className="n">{c.n}</span>}
           </button>
         ))}
-        <select className="select" value={cat} onChange={e=>setCat(e.target.value)} style={{height:26,fontSize:12.5,marginLeft:4}}>
-          {tabs.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
-        </select>
+        {tabs.length>5&&<select className="select" value={tabs.slice(5).some(c=>c.id===cat)?cat:""}
+            onChange={e=>{if(e.target.value)setCat(e.target.value);}}
+            style={{height:26,fontSize:12.5,marginLeft:4,
+                    color:tabs.slice(5).some(c=>c.id===cat)?"var(--ink)":"var(--ink-3)"}}>
+          <option value="" disabled>Ещё…</option>
+          {tabs.slice(5).map(c=><option key={c.id} value={c.id}>{c.label}{c.n!=null?` (${c.n})`:""}</option>)}
+        </select>}
       </div>
       <div className="search-wrap">
         <Ic.search/>
@@ -1609,7 +1625,7 @@ function MarketPage(){
           <th style={{width:"22%"}}>Банк</th>
           <th>Продукт</th>
           {showRate&&<th className="right">Ставка</th>}
-          {showRate&&<th>Vs лидер</th>}
+          {showRate&&<th>% от лидера</th>}
           <th>Сумма</th>
           <th>Срок</th>
           <th></th>
@@ -1635,7 +1651,7 @@ function MarketPage(){
               {showRate&&<td className="right mono tnum" data-label="Ставка" style={{fontWeight:500,fontSize:14}}>
                 {r.rate_pct!=null?pct(r.rate_pct):"—"}
               </td>}
-              {showRate&&<td data-label="Vs лидер">
+              {showRate&&<td data-label="% от лидера">
                 {bestRate>0&&rate>0?<div style={{display:"flex",alignItems:"center",gap:8}}>
                   <div className="bar" style={{flex:1,maxWidth:80}}>
                     <i style={{width:`${(rate/bestRate)*100}%`,background:isSber?"var(--accent)":"var(--ink-3)"}}/>
@@ -1722,8 +1738,8 @@ function SberPage(){
 
     {depositTop.length>0&&<div className="surface" style={{overflow:"hidden"}}>
       <div style={{padding:"20px 24px",borderBottom:"1px solid var(--hair)"}}>
-        <div className="eyebrow" style={{marginBottom:4}}>Топ предложений по доходности · вклады</div>
-        <div className="t-cap">Сбер выделен и подсвечен. Сортировка по убыванию ставки.</div>
+        <div className="eyebrow" style={{marginBottom:4}}>Топ ставок по вкладам</div>
+        <div className="t-cap">Только вклады, сортировка по убыванию ставки. Сбер подсвечен фирменным акцентом.</div>
       </div>
       <table className="m-cards">
         <thead><tr>

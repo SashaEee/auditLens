@@ -143,9 +143,18 @@ _NEWS_SYSTEM = (
     "НЕ выдумывай фактов сверх текста новости."
 )
 
-_NEWS_GROUPS = (("regulatory", "Регуляторика"), ("incidents", "Инциденты"),
-                ("schemes", "Схемы мошенничества"), ("competitors", "Конкуренты и рынок"),
-                ("rates", "Ставки"))
+# Рубрикатор согласован с аналитиками УВА (фидбек 07.2026): «Сбер» отдельно,
+# ставки/экономика слиты в регуляторику, схемы — в инциденты
+_NEWS_GROUPS = (("sber", "Сбер: продукты и технологии"),
+                ("regulatory", "Регуляторика и экономика"),
+                ("incidents", "Инциденты и безопасность"),
+                ("market", "Рынок и конкуренты"),
+                ("other", "Прочее важное"))
+
+def _news_products(txt: str) -> list[str]:
+    """Продуктовые теги новости (детерминированно, 0 LLM) — чипы на карточке."""
+    from ..web.userdata import _PRODUCT_KEYWORDS
+    return [slug for rx, slug in _PRODUCT_KEYWORDS if rx.search(txt or "")][:2]
 
 
 def _news_pool(items: list[dict]) -> list[dict]:
@@ -172,6 +181,11 @@ async def news(day: date) -> dict:
     user = (
         f"Дата: {today_ru()}. Лента ({len(items)} позиций):\n{listing}\n\n"
         f"Верни СТРОГО JSON без markdown. Допустимые key групп: {group_keys}.\n"
+        "Смысл групп: sber — всё про Сбер (продукты, технологии, сервисы, экосистема); "
+        "regulatory — ЦБ, законы, ключевая ставка, макроэкономика; "
+        "incidents — сбои, утечки, хищения, схемы мошенничества; "
+        "market — конкуренты, их продукты и ставки, движения рынка; "
+        "other — важное аудитору, но не подошедшее выше (используй редко).\n"
         "Пример формата (значения — твои):\n"
         '{"groups":[{"key":"regulatory","items":[{"n":3,'
         '"summary":"1 предложение сути","why":"почему важно аудитору розницы Сбера, '
@@ -197,7 +211,7 @@ async def news(day: date) -> dict:
         for g in (parsed.get("groups") or []):
             key = str(g.get("key") or "").strip()
             if key not in titles:       # модель скопировала альтернативу/мусор
-                key = next((k for k in titles if k in key), "competitors")
+                key = next((k for k in titles if k in key), "market")
             out_items = []
             for gi in (g.get("items") or [])[:4]:
                 try:
@@ -213,6 +227,8 @@ async def news(day: date) -> dict:
                     "domain": src.get("domain"), "source": src["source"],
                     "ts": src.get("ts"), "tag": src.get("tag"),
                     "image": src.get("image"),
+                    "products": _news_products(
+                        f'{src["title"]} {gi.get("summary") or ""}'),
                     "summary": str(gi.get("summary") or "")[:220],
                     "why": str(gi.get("why") or "")[:200],
                     "severity": sev if sev in ("red", "amber", "green") else "amber",
@@ -222,6 +238,8 @@ async def news(day: date) -> dict:
                                "items": out_items})
         if not groups:
             raise ValueError("LLM вернул пустые группы")
+        _ord = {k: i for i, (k, _) in enumerate(_NEWS_GROUPS)}
+        groups.sort(key=lambda g: _ord.get(g["key"], 99))  # стабильный порядок рубрик
         return {"groups": groups, "sources": statuses, "raw_count": len(items),
                 "pool": _news_pool(items),
                 "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
