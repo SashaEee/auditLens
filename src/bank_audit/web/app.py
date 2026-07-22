@@ -526,11 +526,24 @@ def sber_vs_market():
 
 @app.get("/api/sber-vs-market/top")
 def sber_vs_market_top():
+    # Топ-5 + лучшая строка Сбера с его ФАКТИЧЕСКИМ рангом (фидбек аналитиков:
+    # «Сбер не подсвечен» — он просто не попадал в топ-5 по ставке)
     return q("""
-        SELECT bank_name, bank_slug, is_sber, category, title,
-               rate_pct, term_months_min, amount_min, rk
-          FROM v_offer_top_by_rate WHERE rk <= 5
-         ORDER BY category, rk
+        SELECT * FROM (
+            SELECT bank_name, bank_slug, is_sber, category, title,
+                   rate_pct, term_months_min, amount_min, rk
+              FROM v_offer_top_by_rate WHERE rk <= 5
+        ) a
+        UNION ALL
+        SELECT * FROM (
+            SELECT DISTINCT ON (category)
+                   bank_name, bank_slug, is_sber, category, title,
+                   rate_pct, term_months_min, amount_min, rk
+              FROM v_offer_top_by_rate
+             WHERE is_sber AND rk > 5
+             ORDER BY category, rk
+        ) b
+        ORDER BY category, rk
     """)
 
 

@@ -1739,7 +1739,7 @@ function SberPage(){
     {depositTop.length>0&&<div className="surface" style={{overflow:"hidden"}}>
       <div style={{padding:"20px 24px",borderBottom:"1px solid var(--hair)"}}>
         <div className="eyebrow" style={{marginBottom:4}}>Топ ставок по вкладам</div>
-        <div className="t-cap">Только вклады, сортировка по убыванию ставки. Сбер подсвечен фирменным акцентом.</div>
+        <div className="t-cap">Только вклады, сортировка по убыванию ставки. Сбер подсвечен — с его фактической позицией в полном рейтинге.</div>
       </div>
       <table className="m-cards">
         <thead><tr>
@@ -1751,8 +1751,12 @@ function SberPage(){
         <tbody>
           {depositTop.map((r,i)=>{
             const isSber=!!r.is_sber;
-            return <tr key={i} className={isSber?"is-sber":""}>
-              <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(i+1).padStart(2,"0")}</td>
+            const prev=depositTop[i-1];
+            const gap=prev&&r.rk!=null&&prev.rk!=null&&(r.rk-prev.rk)>1;
+            return <React.Fragment key={i}>
+            {gap&&<tr><td colSpan={5} style={{textAlign:"center",color:"var(--ink-4)",fontSize:11,padding:"2px 0",letterSpacing:".3em"}}>⋯</td></tr>}
+            <tr className={isSber?"is-sber":""}>
+              <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(r.rk??(i+1)).padStart(2,"0")}</td>
               <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
                 <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
                 <span style={{fontWeight:500}}>{r.bank_name}</span>
@@ -1760,7 +1764,8 @@ function SberPage(){
               <td data-label="Продукт">{r.title}</td>
               <td className="right mono tnum" data-label="Ставка" style={{fontWeight:500}}>{pct(r.rate_pct)}</td>
               <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,null)}</td>
-            </tr>;
+            </tr>
+            </React.Fragment>;
           })}
         </tbody>
       </table>

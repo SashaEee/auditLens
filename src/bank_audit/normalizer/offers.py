@@ -2,6 +2,7 @@
    Работает идемпотентно: повторный запуск без изменений данных не создаёт новых строк."""
 from __future__ import annotations
 import json
+import re
 from decimal import Decimal
 from typing import Iterable
 from sqlalchemy import text
@@ -38,6 +39,15 @@ def resolve_bank(session, raw_name: str) -> int:
         match = process.extractOne(key, list(BANK_ALIASES.keys()), scorer=fuzz.WRatio)
         if match and match[1] >= 88:
             slug = BANK_ALIASES[match[0]]
+    if not slug and key and re.fullmatch(r"[a-z0-9_-]+", key):
+        # Источники иногда отдают латинский slug вместо имени («gazprombank»,
+        # «psb») — до unknown_-фолбэка пробуем прямое совпадение со слагом уже
+        # известного банка. Иначе плодятся латинские двойники (фидбек аналитиков;
+        # 105 офферов были слиты миграцией 22.07.2026).
+        row = session.execute(text("SELECT bank_id FROM bank WHERE slug=:s"),
+                              {"s": key}).first()
+        if row:
+            return row[0]
     if not slug:
         # Пустое имя или "?" → bank_id из placeholder-банка "unknown_empty"
         slug_key = key if key else "_empty_"
