@@ -1040,7 +1040,8 @@ async def _with_heartbeat(agen: AsyncIterator[str],
 
 
 async def stream_analysis(question: str, history: list[dict],
-                           force_deep: bool | None = None) -> AsyncIterator[str]:
+                           force_deep: bool | None = None,
+                           session_hint: str | None = None) -> AsyncIterator[str]:
     """Главный entry-point AI-чата.
     Автоматически выбирает режим: quick (single-shot tool-use)
     либо deep (planner → multi-step → synthesize → verify → charts).
@@ -1083,8 +1084,29 @@ async def stream_analysis(question: str, history: list[dict],
             yield ev
         return
 
-    # Quick path (текущий single-shot)
+    # Quick path
     yield json.dumps({"type": "mode", "value": "quick"})
+
+    # Движок Hermes (агент Nous Research поверх нашего MCP): умнее single-shot —
+    # сам ищет в новостном пуле/вебе, ведёт память и скиллы, самообучается.
+    # Любой сбой ДО первого чанка → прозрачный откат на нативный цикл ниже.
+    if os.getenv("QUICK_ENGINE", "hermes").lower() == "hermes":
+        from .hermes_quick import HermesNotStreamed, stream_quick_hermes
+        try:
+            yield json.dumps({"type": "engine", "value": "hermes"})
+            async for ev in _with_heartbeat(stream_quick_hermes(
+                    question, history, session_hint=session_hint)):
+                yield ev
+            return
+        except HermesNotStreamed as e:
+            log.warning("[quick] hermes недоступен (%s) → нативный цикл", e)
+        except Exception as e:  # noqa: BLE001 — частичный стрим: честно завершаем
+            log.warning("[quick] hermes упал после начала стрима: %s", e)
+            yield json.dumps({"type": "text",
+                              "chunk": "\n\n⚠ _Движок прервался, ответ неполный._"},
+                             ensure_ascii=False)
+            yield json.dumps({"type": "done"})
+            return
 
     client = AsyncOpenAI(
         base_url=LLM_BASE_URL,

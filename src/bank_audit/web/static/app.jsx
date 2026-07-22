@@ -2922,6 +2922,13 @@ const TOOL_LABELS = {
   semantic_search:      "Поиск по документам",
   fetch_official:       "Запрос к источнику",
   run_sql:              "SQL-запрос",
+  news_pool:            "Новостной пул дня",
+  execute_code:         "Код и SQL",
+  skill_view:           "Навык агента",
+  terminal:             "Терминал",
+  web_search:           "Веб-поиск",
+  search_complaints:    "Поиск жалоб",
+  get_bank_features:    "Условия банка",
 };
 
 function ToolsTimeline({tools, active}){
@@ -3540,6 +3547,8 @@ function AIPage(){
                 // Final merge-pass — синтезатор объединил draft + addendum'ы в
                 // один чистый отчёт. Заменяем весь body, отчёт перерендерится.
                 updateLast(()=>({text:data.text, merged:true}));
+              }else if(data.type==="engine"){
+                updateLast(()=>({engine:data.value}));
               }else if(data.type==="tool_call"){
                 updateLast(last=>({tools:[...(last.tools||[]),data.name]}));
               }else if(data.type==="sources"&&Array.isArray(data.sources)){
@@ -3884,7 +3893,7 @@ function AIPage(){
           const prevQ = (i>0 && msgs[i-1]?.role==="user") ? msgs[i-1].text : "";
           const thinking = !m.text && loading && i===msgs.length-1;
           return <div key={i} className="chat-msg ai quick-msg">
-            <div className="who">AuditLens AI</div>
+            <div className="who">AuditLens AI{m.engine==="hermes"?" · Hermes ✦":""}</div>
             {m.tools&&m.tools.length>0 &&
               <div className="quick-tools">
                 {m.tools.map((t,ti)=>(
@@ -3943,7 +3952,7 @@ function AIPage(){
                 <button className={"seg-btn"+(!deepMode?" on":"")} onClick={()=>setDeepMode(false)} disabled={loading}>Быстрый</button>
                 <button className={"seg-btn"+(deepMode?" on":"")} onClick={()=>setDeepMode(true)} disabled={loading} title="Deep Research: планировщик → мульти-агент → проверка фактов"><span className="seg-dot"/>Deep Research</button>
               </div>
-              <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"ответ из подключённых данных · ~5с"}</span>
+              <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"агент Hermes · БД, новости, веб"}</span>
               <span className="composer-kbd">Enter ↵</span>
               <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()||loading} onClick={()=>send()} aria-label="Отправить">
                 {deepMode?"Запустить research":"Спросить"}

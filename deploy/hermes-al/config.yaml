@@ -1,0 +1,9 @@
+model:
+  default: zai-org/GLM-5.2
+  provider: custom
+  base_url: https://foundation-models.api.cloud.ru/v1/
+  api_key: __LLM_API_KEY__   # из Infisical/.env, не коммитить настоящий
+agent:
+  max_turns: 20
+  reasoning_effort: low
+  verbose: false

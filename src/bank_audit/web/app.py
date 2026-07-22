@@ -1255,7 +1255,9 @@ async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_u
     except Exception:
         log.warning("[ai_analyze] pre-persist failed", exc_info=True)
 
-    inner = stream_analysis(req.question, req.history, force_deep=req.force_deep)
+    inner = stream_analysis(req.question, req.history, force_deep=req.force_deep,
+                            session_hint=(f"{user.username}-{session_id}"
+                                          if session_id else user.username))
     gen = (_persisting_stream(inner, username, session_id, req.question)
            if session_id else inner)
 
