@@ -421,7 +421,7 @@ def _chart_figure_html(i: int, c: dict) -> str:
                       '</div>')
     return (
         f'<figure class="chart-figure">'
-        f'  <div class="chart-canvas-wrap" style="height:{_chart_height_mm(c)}mm"><canvas id="{cid}"></canvas></div>'
+        f'  <div class="chart-canvas-wrap"><canvas id="{cid}"></canvas></div>'
         f'  {f"<figcaption class=\"chart-caption\">{title}</figcaption>" if title else ""}'
         f'  {f"<div class=\"chart-insight\">{insight}</div>" if insight else ""}'
         f'  {cite_html}'
@@ -481,6 +481,9 @@ def _render_charts_assets(charts: list[dict], tail_ids: list[int]) -> tuple[str,
         '  const isHl=lb=>hl&&String(lb||"").toLowerCase().includes(hl);'
         '  const pos=(lb,i)=>isHl(lb)?ACC:PAL[i%PAL.length];'
         '  const labels=spec.labels||[];'
+        '  const rows=(labels.length||1)*Math.max((spec.datasets||[]).length,1);'
+        '  const Hpx=isDough?340:(horiz?Math.min(900,90+rows*44+((spec.datasets||[]).length>1?30:0)):380);'
+        '  el.width=760; el.height=Hpx;'
         '  const single=(spec.datasets||[]).length===1;'
         '  const ds=(spec.datasets||[]).map((d,i)=>{'
         '    const base=isHl(d.label)?ACC:PAL[i%PAL.length];'
@@ -529,12 +532,12 @@ def _render_charts_assets(charts: list[dict], tail_ids: list[int]) -> tuple[str,
         '    else c2.fillText(t,area.left+5,Math.max(px-5,area.top+10));'
         '    c2.restore();'
         '  }};'
-        '  new Chart(el.getContext("2d"),{'
+        '  const _ch=new Chart(el.getContext("2d"),{'
         '    type: horiz?"bar":(isDough?"doughnut":isLine?"line":"bar"),'
         '    data:{labels:labels, datasets:ds},'
         '    plugins:[valLabels,monoAxis,refLine],'
-        '    options:{indexAxis:horiz?"y":"x", responsive:true, maintainAspectRatio:false,'
-        '      devicePixelRatio:2,'
+        '    options:{indexAxis:horiz?"y":"x", responsive:false,'
+        '      devicePixelRatio:3,'
         '      animation:false, layout:{padding:{top:isDough?4:18,right:horiz?44:8}},'
         '      plugins:{legend:{display:ds.length>1||isDough,'
         '          position:isDough?"right":"bottom",'
@@ -551,6 +554,10 @@ def _render_charts_assets(charts: list[dict], tail_ids: list[int]) -> tuple[str,
         '        grid:{display:horiz,color:HAIR,lineWidth:1,drawTicks:false},'
         '        border:{display:false}}}}'
         '  });'
+        '  try{const img=document.createElement("img");'
+        '  img.src=el.toDataURL("image/png");'
+        '  img.style.width="100%";img.style.height="auto";img.style.display="block";'
+        '  el.parentNode.replaceChild(img,el);_ch.destroy();}catch(e){}'
         '}'
         '\nfunction _runCharts(){\n'
         '  if(typeof window.Chart === "undefined"){\n'
@@ -918,7 +925,7 @@ body {{
 }}
 .chart-canvas-wrap {{
   width: 100%;
-  height: 80mm;
+  height: auto;
   position: relative;
   border: 1px solid #ebebed;
   background: #ffffff;
