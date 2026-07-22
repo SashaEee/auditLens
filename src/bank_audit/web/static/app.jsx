@@ -5200,6 +5200,33 @@ function ProfilePage(){
   </div>;
 }
 
+// Любая ошибка рендера страницы → заглушка с кнопкой вместо белого экрана,
+// ошибка уходит в журнал «Пульса» (kind=client_error) даже если трекер страницы мёртв.
+class PageBoundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(e){return{err:e};}
+  componentDidCatch(e,info){
+    try{
+      fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({events:[{kind:"client_error",page:(location.hash||"#").slice(1),
+          payload:{msg:String((e&&e.message)||e).slice(0,300),
+                   stack:String((info&&info.componentStack)||"").slice(0,400)}}]})}).catch(()=>{});
+    }catch{}
+  }
+  componentDidUpdate(prev){ if(prev.pageKey!==this.props.pageKey&&this.state.err)this.setState({err:null}); }
+  render(){
+    if(this.state.err) return <div style={{padding:"64px 24px",textAlign:"center"}}>
+      <div style={{fontSize:26,marginBottom:10,color:"var(--warn)"}}>⚠</div>
+      <div style={{fontWeight:500,marginBottom:6}}>Страница не смогла отрисоваться</div>
+      <div className="t-cap" style={{maxWidth:"46ch",margin:"0 auto 16px"}}>
+        Ошибка записана в журнал «Пульса». Чаще всего в вкладке осталась старая версия
+        приложения — обновление решает.</div>
+      <button className="btn btn-accent" onClick={()=>location.reload()}>Обновить приложение</button>
+    </div>;
+    return this.props.children;
+  }
+}
+
 function Shell(){
   const[page,setPage]=useState(()=>{ const h=location.hash?.slice(1);
     if(h) return h;
@@ -5223,11 +5250,14 @@ function Shell(){
   },[]);
 
   // Профиль пользователя (+ отдаём серверу свой часовой пояс из браузера).
-  const loadMe=()=>{
+  // Ретрай: без me не появляются админ-вкладка и персональные тумблеры.
+  const loadMe=(attempt)=>{
     let tz=""; try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch{}
-    apiFetch("/api/me"+(tz?"?tz="+encodeURIComponent(tz):"")).then(setMe).catch(()=>{});
+    apiFetch("/api/me"+(tz?"?tz="+encodeURIComponent(tz):"")).then(setMe)
+      .catch(()=>{ const a=typeof attempt==="number"?attempt:0;
+        if(a<2)setTimeout(()=>loadMe(a+1),3000); });
   };
-  useEffect(loadMe,[]);
+  useEffect(()=>{loadMe(0);},[]); // eslint-disable-line
   // после выхода из «Профиля» перечитываем me: тумблеры (полоса на главной и т.п.)
   // должны действовать сразу, без F5
   useEffect(()=>{ if(page!=="profile") return; return loadMe; },[page]);
@@ -5282,6 +5312,18 @@ function Shell(){
   const groups=useMemo(()=>{
     const items=(me&&me.is_admin)?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
     const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
+  // Страница есть на сервере, но неизвестна ЭТОМУ бандлу (вкладка держит старую
+  // версию SPA — hash-переход её не перезагружает) → одно само-обновление.
+  useEffect(()=>{
+    if(page&&!PAGES_FN[page]){
+      try{
+        if(sessionStorage.getItem("al-reload-for")!==page){
+          sessionStorage.setItem("al-reload-for",page);
+          location.reload();
+        }
+      }catch{}
+    }
+  },[page]);
   const Page=PAGES_FN[page]||OverviewPage;
   const[idx,label]=PAGE_LABELS[page]||["01","Обзор"];
 
@@ -5385,7 +5427,7 @@ function Shell(){
           {loopholeMounted&&<div style={{display:page==="loophole"?"block":"none",height:"100%"}}>
             <LoopholePage/>
           </div>}
-          {page!=="loophole"&&<Page key={page}/>}
+          {page!=="loophole"&&<PageBoundary pageKey={page}><Page key={page}/></PageBoundary>}
         </div>
       </div>
     </div>
