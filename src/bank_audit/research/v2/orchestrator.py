@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import os
 import time
 from typing import AsyncIterator
@@ -182,11 +183,22 @@ async def stream_deep_research_v2(question: str,
 
     # Эмитим источники когда все агенты отработали (полный индекс)
     sources_ui = bundle.sources.to_ui()
+    # Сбойные источники (ошибки загрузки/таймауты) не размазываем по списку —
+    # фронт покажет одной строкой «⚠ N источников недоступны» (фидбек аналитиков).
+    _err_re = re.compile(r"ошибк|недоступ|timeout|тайм-?аут|error|failed|не удалось",
+                         re.IGNORECASE)
+    failed_ui = [s for s in sources_ui
+                 if _err_re.search(str(s.get("title") or ""))
+                 or (not s.get("excerpt") and (s.get("trust_score") or 0) == 0)]
+    if failed_ui:
+        failed_ns = {s["n"] for s in failed_ui}
+        sources_ui = [s for s in sources_ui if s["n"] not in failed_ns]
     if sources_ui:
         total = len(sources_ui)
         high = sum(1 for s in sources_ui if s["trust_score"] >= 0.85)
         mid = sum(1 for s in sources_ui if 0.6 <= s["trust_score"] < 0.85)
-        yield _evt({"type": "sources", "sources": sources_ui})
+        yield _evt({"type": "sources", "sources": sources_ui,
+                    "failed": len(failed_ui)})
         yield _evt({"type": "coverage",
                     "total_sources": total, "high_trust": high, "mid_trust": mid,
                     "low_trust": total - high - mid,

@@ -1357,7 +1357,7 @@ function OverviewPage(){
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {refreshing?
             <span className="bf-live"><span className="dot"/>обновляется…</span>:
-            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до утра</span>}
+            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до 07:00 МСК</span>}
           <button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
             title="Перегенерировать выпуск">⟳</button>
         </div>
@@ -1386,34 +1386,44 @@ function OverviewPage(){
 
     {/* ② ПУЛЬС ДНЯ — тикер без LLM */}
     <section style={{marginBottom:22}}>
+      {/* Каждая плитка объяснима по наведению (фидбек аналитиков): период,
+          выборка и формула — в data-tip, сами цифры не выхолащиваем. */}
       <div className="bf-pulse">
-        <a href="#market">
+        <a href="#market" className="bf-tip"
+           data-tip={"Ключевая ставка Банка России"+(kr.as_of?" на "+kr.as_of:"")+". Мини-график — динамика последних решений СД ЦБ."}>
           <div className="bf-pulse-num">{kr.current!=null?kr.current:"—"}<span className="u">%</span>
             {kr.points&&<span style={{color:"var(--ink-4)",marginLeft:2}}><RateStep points={(kr.points||[]).slice(-24)} w={54} h={20}/></span>}
           </div>
-          <div className="bf-pulse-cap">Ключевая ставка{kr.as_of?` · ${kr.as_of.slice(5)}`:""}</div>
+          <div className="bf-pulse-cap">Ключевая ставка ЦБ{kr.as_of?` · ${kr.as_of.slice(5)}`:""}</div>
         </a>
-        <a href="#sber">
+        <a href="#sber" className="bf-tip"
+           data-tip={"Среднее отклонение максимальных ставок Сбера от медианы действующих предложений "+((tm.totals&&tm.totals.banks_tracked)||"~130")+" банков, по категориям продуктов."}>
           <div className="bf-pulse-num">{avgDelta!=null?signed(Math.round(avgDelta*100)/100):"—"}<span className="u">пп</span></div>
           <div className="bf-pulse-cap">Сбер vs медиана рынка</div>
         </a>
-        <a href="#reviews">
+        <a href="#reviews" className="bf-tip"
+           data-tip={(ovl.week!=null?ovl.week+" жалоб за 7 дней":"Жалобы за 7 дней")+
+             (ovl.baseline_week?" против медианной недели прошлых 6 недель ("+Math.round(ovl.baseline_week)+")":"")+
+             (ovl.ratio!=null?" → ×"+ovl.ratio:"")+". Только Сбер · негативные отзывы banki.ru (1–2★)."}>
           <div className="bf-pulse-num">{ovl.week!=null?fmtNum(ovl.week):"—"}
             {ovl.ratio!=null&&<span className="u" style={{color:ovl.ratio>=1.3?"var(--neg)":"var(--ink-3)"}}>×{ovl.ratio}</span>}
           </div>
-          <div className="bf-pulse-cap">Жалоб за 7 дней · к норме</div>
+          <div className="bf-pulse-cap">Жалоб за 7 дн · Сбер · banki.ru</div>
         </a>
-        <a href="#market">
+        <a href="#market" className="bf-tip"
+           data-tip={"Офферы со значимым изменением условий за 7 дней (порог 0.01 п.п. — микрофлуктуации расчётных ставок не считаются). Журнал изменений тарифов banki.ru/sravni.ru."}>
           <div className="bf-pulse-num">{(tm.totals&&tm.totals.changes_7d)!=null?fmtNum(tm.totals.changes_7d):"—"}</div>
-          <div className="bf-pulse-cap">Изм. тарифов 7 дн · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков</div>
+          <div className="bf-pulse-cap">Офферов изменились · 7 дн · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков</div>
         </a>
-        <a href="#market">
+        <a href="#market" className="bf-tip"
+           data-tip={"Максимальная ставка вклада Сбера минус ключевая ставка ЦБ ("+(kr.current!=null?kr.current+"%":"—")+")."}>
           <div className="bf-pulse-num">{tm.dep_spread_pp!=null?signed(tm.dep_spread_pp):"—"}<span className="u">пп</span></div>
           <div className="bf-pulse-cap">Спред вклад Сбера − КС</div>
         </a>
-        <a href="#quality">
-          <div className="bf-pulse-num" style={flagsErr?{color:"var(--neg)"}:null}>{flagsErr+flagsWarn}</div>
-          <div className="bf-pulse-cap">Флаги качества · {flagsErr} ош.</div>
+        <a href="#market" className="bf-tip"
+           data-tip={"Значимые изменения условий по продуктам самого Сбера за 7 дней — что аудитору смотреть в первую очередь."}>
+          <div className="bf-pulse-num">{(tm.totals&&tm.totals.sber_changes_7d)!=null?fmtNum(tm.totals.sber_changes_7d):"—"}</div>
+          <div className="bf-pulse-cap">Изменений у Сбера · 7 дн</div>
         </a>
       </div>
     </section>
@@ -3053,7 +3063,7 @@ function TableOfContents({contentEl, activeId, onClick}){
 }
 
 // ─── Sources rail — sticky right column with bidirectional binding ────────
-function SourcesRail({sources, activeN, onHover, onClick}){
+function SourcesRail({sources, activeN, onHover, onClick, failed}){
   if(!sources||!sources.length)return null;
   const officialN  = sources.filter(s=>s.source_kind==="bank_official").length;
   const regulatorN = sources.filter(s=>s.source_kind==="regulator").length;
@@ -3087,6 +3097,7 @@ function SourcesRail({sources, activeN, onHover, onClick}){
         </li>;
       })}
     </ul>
+    {failed>0&&<div className="dr-rail-failed">⚠ {failed} источник(ов) недоступны — исключены из списка</div>}
   </aside>;
 }
 
@@ -3456,6 +3467,10 @@ function AIPage(){
   const[sessionId,setSessionId]=useState(null);          // текущая сессия истории
   const[aiFb,setAiFb]=useState(null);                    // мои оценки ответов (ai_answer)
   useEffect(()=>{apiFetch("/api/feedback?kind=ai_answer").then(d=>setAiFb(d.items||{})).catch(()=>setAiFb({}));},[]);
+  // страница живёт в фоне (Shell держит смонтированной) — сообщаем Shell о ходе
+  // прогона: точка в rail + тост «Отчёт готов», когда пользователь на другой вкладке
+  useEffect(()=>{ try{window.dispatchEvent(new CustomEvent("al-ai-state",
+    {detail:{running:loading}}));}catch{} },[loading]);
   const[histOpen,setHistOpen]=useState(false);           // command palette истории
   const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome
   const[elapsed,setElapsed]=useState(0);                 // таймер прогона deep
@@ -3621,7 +3636,7 @@ function AIPage(){
               }else if(data.type==="tool_call"){
                 updateLast(last=>({tools:[...(last.tools||[]),data.name]}));
               }else if(data.type==="sources"&&Array.isArray(data.sources)){
-                updateLast(()=>({sources:data.sources}));
+                updateLast(()=>({sources:data.sources,sourcesFailed:data.failed||0}));
               }else if(data.type==="mode"){
                 updateLast(()=>({mode:data.value}));
               }else if(data.type==="phase"){
@@ -3947,7 +3962,7 @@ function AIPage(){
                         <AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep" fbMap={aiFb}/>}
                     </article>
                     {!hideRail && <DocRailSlot>
-                      <SourcesRail sources={m.sources||[]} activeN={activeCite}
+                      <SourcesRail sources={m.sources||[]} failed={m.sourcesFailed||0} activeN={activeCite}
                                     onHover={setActiveCite}/>
                     </DocRailSlot>}
                   </div>
@@ -5315,6 +5330,13 @@ function Shell(){
     try{ if(localStorage.getItem("al-ov-mode")==="foryou") return "foryou"; }catch{}
     return "overview"; });
   const[loopholeMounted,setLoopholeMounted]=useState(()=>(location.hash?.slice(1)||"overview")==="loophole");
+  // ИИ-аналитик живёт в фоне: страница не размонтируется при уходе на другие
+  // вкладки — прогон продолжается, по завершении сигналим точкой в rail и тостом.
+  const[aiMounted,setAiMounted]=useState(()=>(location.hash?.slice(1)||"overview")==="ai");
+  const[aiBusy,setAiBusy]=useState(false);
+  const[aiReady,setAiReady]=useState(false);
+  const aiPrevRun=useRef(false);
+  const pageCurRef=useRef(null);
   const{theme,setTheme}=useTheme();
   const[banks,setBanks]=useState([]);
   const[qualityCount,setQualityCount]=useState(0);
@@ -5388,6 +5410,17 @@ function Shell(){
   },[]);
   useEffect(()=>{history.replaceState(null,"","#"+page);},[page]);
   useEffect(()=>{if(page==="loophole")setLoopholeMounted(true);},[page]);
+  useEffect(()=>{if(page==="ai"){setAiMounted(true);setAiReady(false);}
+    pageCurRef.current=page;},[page]);
+  // сигналы от AIPage о ходе прогона (running true/false)
+  useEffect(()=>{
+    const h=(e)=>{ const r=!!(e.detail&&e.detail.running);
+      setAiBusy(r);
+      if(aiPrevRun.current&&!r&&pageCurRef.current!=="ai") setAiReady(true);
+      aiPrevRun.current=r; };
+    window.addEventListener("al-ai-state",h);
+    return ()=>window.removeEventListener("al-ai-state",h);
+  },[]);
   // запоминаем последний режим «Обзора» (Общий/Для вас) — возвращаем туда же
   useEffect(()=>{ if(page==="overview"||page==="foryou"){try{localStorage.setItem("al-ov-mode",page);}catch{}} },[page]);
 
@@ -5413,6 +5446,16 @@ function Shell(){
     <div id="app">
       <style>{FB_CSS}</style>
       <style>{`.user-chip:hover{background:var(--surface);} .user-chip.active{background:var(--accent-soft);} .user-chip.active .nm{color:var(--accent);}
+        .nav-dot.ai-run{background:var(--accent);animation:pulse 1.5s ease infinite;}
+        .nav-dot.ai-done{background:var(--pos);}
+        .ai-ready{position:fixed;right:22px;bottom:22px;z-index:300;display:flex;align-items:center;gap:9px;cursor:pointer;
+          background:var(--surface);border:1px solid color-mix(in oklab,var(--accent),transparent 70%);border-radius:12px;
+          padding:12px 16px;font-size:13px;font-weight:500;color:var(--ink);box-shadow:var(--shadow-2);
+          animation:fade-in .3s ease-out;transition:transform .15s,border-color .15s;}
+        .ai-ready:hover{transform:translateY(-2px);border-color:var(--accent);}
+        .ai-ready .sp{color:var(--accent);}
+        .ai-ready .x{color:var(--ink-4);font-size:12px;padding:2px 4px;border-radius:5px;}
+        .ai-ready .x:hover{color:var(--ink);background:var(--paper-2);}
         @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
         .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
         .rail-foot{position:relative;}
@@ -5447,11 +5490,14 @@ function Shell(){
               const num=allItems.findIndex(x=>x.id===n.id)+1+(gr==="Анализ"?0:5);
               const dot=n.id==="sources"&&hasCaptcha;
               const count=n.id==="quality"&&qualityCount>0?qualityCount:null;
+              // ИИ-аналитик: пульсирующая точка = прогон идёт; зелёная = отчёт готов
+              const aiDot=n.id==="ai"&&(aiBusy||aiReady);
               return <button key={n.id} className={`nav-item ${active?"active":""}`} onClick={()=>{setPage(n.id);setNavOpen(false);}}>
                 <span className="rail-num">{String(num).padStart(2,"0")}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
                 {n.label}
                 {dot&&<span className="nav-dot"/>}
+                {aiDot&&<span className={"nav-dot"+(aiBusy?" ai-run":" ai-done")}/>}
                 {count&&<span className="nav-count">{count}</span>}
               </button>;
             })}
@@ -5509,7 +5555,15 @@ function Shell(){
           {loopholeMounted&&<div style={{display:page==="loophole"?"block":"none",height:"100%"}}>
             <LoopholePage/>
           </div>}
-          {page!=="loophole"&&<PageBoundary pageKey={page}><Page key={page}/></PageBoundary>}
+          {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
+            <PageBoundary pageKey="ai"><AIPage/></PageBoundary>
+          </div>}
+          {page!=="loophole"&&page!=="ai"&&<PageBoundary pageKey={page}><Page key={page}/></PageBoundary>}
+          {aiReady&&page!=="ai"&&
+            <div className="ai-ready" onClick={()=>{setAiReady(false);setPage("ai");}}>
+              <span className="sp">✦</span> Отчёт готов — открыть
+              <button className="x" onClick={(e)=>{e.stopPropagation();setAiReady(false);}}>✕</button>
+            </div>}
         </div>
       </div>
     </div>

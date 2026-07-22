@@ -804,7 +804,18 @@ class SravniApiAdapter(SourceAdapter):
         for item in items:
             if card_filter:
                 itype = (item.get("type") or item.get("cardType") or "").lower()
-                if itype and card_filter not in itype:
+                if not itype:
+                    # Тип не указан у части офферов витрины /karty/ — раньше такие
+                    # попадали В ОБЕ категории (кредитки в «дебетовых», жалоба
+                    # аналитиков). Определяем по названию; неопределимое относим
+                    # к кредитным (витрина преимущественно кредитная) — но НИКОГДА
+                    # не дублируем в обе.
+                    name_l = str(item.get("name") or item.get("title") or "").lower()
+                    if re.search(r"дебетов|для выплат|зарплатн", name_l):
+                        itype = "debit"
+                    else:
+                        itype = "credit"
+                if card_filter not in itype:
                     continue
 
             org_id = item.get("organization")

@@ -157,6 +157,11 @@ def _run_ingest_all() -> None:
             log.info("daily ingest: quality %s", res)
         except Exception as e:  # noqa: BLE001
             log.warning("daily quality failed: %s", e)
+        try:    # ротационная проверка ссылок офферов (404 → url=NULL)
+            from ..normalizer.offers import validate_offer_urls
+            log.info("daily ingest: url-check %s", validate_offer_urls())
+        except Exception as e:  # noqa: BLE001
+            log.warning("url-check failed: %s", e)
     finally:
         INGEST_MUTEX.release()
 

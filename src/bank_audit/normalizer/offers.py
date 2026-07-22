@@ -6,8 +6,11 @@ from decimal import Decimal
 from typing import Iterable
 from sqlalchemy import text
 from rapidfuzz import process, fuzz
+import logging
 from .. import db
 from ..hashing import stable_digest
+
+log = logging.getLogger(__name__)
 from ..models import OfferDraft
 from .rules import BANK_ALIASES, SBER_SLUGS, normalize_bank_key
 
@@ -115,15 +118,68 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
             "early_withdraw": d.early_withdraw, "capitalization": d.capitalization,
             "replenishable": d.replenishable, "conditions": d.conditions,
         }
+        # Порог значимости: дрожь расчётных ставок в 3-4-м знаке (3.8544→3.8549)
+        # — не событие; она давала ~12k мусорных строк/нед («14 тыс. изменений»
+        # из фидбека аналитиков). Числовые поля сравниваем с допуском.
+        _num_eps = {"rate_pct": 0.01, "fee_open": 0.5, "fee_service": 0.5,
+                    "amount_min": 1.0, "amount_max": 1.0}
+
+        def _same(k, a, b):
+            if a is None or b is None:
+                return a is b
+            eps = _num_eps.get(k)
+            if eps is not None:
+                try:
+                    return abs(float(a) - float(b)) < eps
+                except (TypeError, ValueError):
+                    pass
+            return str(a) == str(b)
+
         diff = {k: {"from": str(prev[k]) if prev[k] is not None else None,
                     "to": str(v) if v is not None else None}
-                for k, v in new_vals.items() if str(prev[k]) != str(v)}
-        session.execute(text("""
-            INSERT INTO change_history(offer_id, prev_terms_id, new_terms_id, diff)
-            VALUES (:o,:p,:n, CAST(:d AS jsonb))
-        """), {"o": offer_id, "p": cur[0], "n": new_id,
-               "d": json.dumps(diff, ensure_ascii=False)})
+                for k, v in new_vals.items() if not _same(k, prev[k], v)}
+        if diff:                       # пустой дифф (только шум) — не событие
+            session.execute(text("""
+                INSERT INTO change_history(offer_id, prev_terms_id, new_terms_id, diff)
+                VALUES (:o,:p,:n, CAST(:d AS jsonb))
+            """), {"o": offer_id, "p": cur[0], "n": new_id,
+                   "d": json.dumps(diff, ensure_ascii=False)})
     return offer_id, True
+
+def validate_offer_urls(limit: int = 80) -> dict:
+    """HEAD/GET-проба ссылок активных офферов (случайная ротация — за пару дней
+    прочёсывается весь пул): 404/410 → url=NULL, фронт покажет оффер без ссылки.
+    Фикс жалобы аналитиков: клик по офферу (кейс ПСБ) вёл на 404."""
+    import httpx
+    from sqlalchemy import text as _t
+    rows = []
+    with db.session() as s:
+        rows = [dict(r) for r in s.execute(_t("""
+            SELECT offer_id, url FROM product_offer
+            WHERE url IS NOT NULL AND is_active
+            ORDER BY random() LIMIT :l"""), {"l": limit}).mappings().all()]
+    bad: list[int] = []
+    checked = 0
+    ua = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 Chrome/126.0 Safari/537.36"}
+    with httpx.Client(timeout=6.0, follow_redirects=True, headers=ua) as c:
+        for r in rows:
+            checked += 1
+            try:
+                resp = c.head(r["url"])
+                if resp.status_code in (403, 405):     # HEAD не любят — добиваем GET
+                    resp = c.get(r["url"])
+                if resp.status_code in (404, 410):
+                    bad.append(r["offer_id"])
+            except Exception:  # noqa: BLE001 — сетевой флак ≠ битая ссылка
+                continue
+    if bad:
+        with db.session() as s:
+            s.execute(_t("UPDATE product_offer SET url = NULL "
+                         "WHERE offer_id = ANY(:ids)"), {"ids": bad})
+    log.info("[url-check] проверено %d, битых %d", checked, len(bad))
+    return {"checked": checked, "dead": len(bad)}
+
 
 def normalize_batch(drafts: Iterable[OfferDraft], snapshot_id: int | None,
                     source_page_id: int | None) -> dict:

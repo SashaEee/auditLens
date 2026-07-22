@@ -349,6 +349,8 @@ tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
   border-bottom:1px solid var(--hair);
   display:flex;align-items:center;gap:8px;
 }
+.dr-rail-failed{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--warn);
+  padding:9px 4px 2px;border-top:1px solid var(--hair);margin-top:8px;line-height:1.5;}
 .dr-rail-list{list-style:none;margin:0;padding:0}
 .dr-rail-item{
   display:block;padding:8px 4px 9px 12px;
@@ -1406,6 +1408,14 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .bf-live .dot{width:6px;height:6px;border-radius:50%;background:var(--warn);animation:pulse 1.6s ease infinite}
 
 /* пульс дня — детерминированный тикер, живёт без LLM */
+/* объяснимость цифр: тёмный поповер по наведению (data-tip) */
+.bf-tip{position:relative;}
+.bf-tip:hover::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 9px);transform:translateX(-50%);
+  background:var(--ink);color:var(--paper);font-family:'Geist','Inter',sans-serif;font-size:11.5px;font-weight:400;
+  line-height:1.55;letter-spacing:0;text-transform:none;padding:9px 13px;border-radius:9px;width:max-content;max-width:300px;
+  white-space:normal;text-align:left;z-index:60;box-shadow:var(--shadow-2);pointer-events:none;}
+.bf-tip:hover::before{content:"";position:absolute;left:50%;bottom:100%;transform:translateX(-50%) rotate(45deg);
+  margin-bottom:5px;width:9px;height:9px;background:var(--ink);z-index:61;pointer-events:none;}
 .bf-pulse{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--hair);
   border-radius:var(--r-lg);background:var(--surface);overflow:hidden;box-shadow:var(--shadow-1)}
 .bf-pulse>a{display:block;padding:14px 18px 12px;border-left:1px solid var(--hair);text-decoration:none;color:inherit;

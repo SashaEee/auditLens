@@ -154,12 +154,36 @@ async def tariff_moves(day: date) -> dict:
             "after_pause": after_pause,
             "sber_gap": sber_gap,
             "totals": {
-                "changes_7d": int(_scalar(
-                    "SELECT count(*) FROM change_history WHERE changed_at > now()-interval '7 days'") or 0),
+                # СОБЫТИЯ, не строки: считаем офферы со значимым изменением
+                # (порог 0.01 п.п. — как в normalizer; исторический микрошум
+                # 3-4-го знака давал «14 тыс. изменений» — фидбек аналитиков)
+                "changes_7d": int(_scalar("""
+                    SELECT count(DISTINCT ch.offer_id) FROM change_history ch
+                     WHERE ch.changed_at > now()-interval '7 days'
+                       AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
+                              WHERE k <> 'rate_pct') > 0
+                            OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
+                                 - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
+                    """) or 0),
                 "banks_changed_7d": int(_scalar("""
                     SELECT count(DISTINCT b.bank_id) FROM change_history ch
                       JOIN product_offer o USING (offer_id) JOIN bank b USING (bank_id)
-                     WHERE ch.changed_at > now()-interval '7 days'""") or 0),
+                     WHERE ch.changed_at > now()-interval '7 days'
+                       AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
+                              WHERE k <> 'rate_pct') > 0
+                            OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
+                                 - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
+                    """) or 0),
+                # изменения самого Сбера — для плитки пульса вместо «флагов качества»
+                "sber_changes_7d": int(_scalar("""
+                    SELECT count(DISTINCT ch.offer_id) FROM change_history ch
+                      JOIN product_offer o USING (offer_id) JOIN bank b USING (bank_id)
+                     WHERE b.is_sber AND ch.changed_at > now()-interval '7 days'
+                       AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
+                              WHERE k <> 'rate_pct') > 0
+                            OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
+                                 - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
+                    """) or 0),
                 "banks_tracked": int(_scalar(
                     "SELECT count(DISTINCT bank_id) FROM product_offer WHERE is_active") or 0),
                 "last_change_at": (_scalar("SELECT max(changed_at) FROM change_history") or None),
