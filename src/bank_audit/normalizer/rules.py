@@ -6,6 +6,7 @@ BANK_ALIASES: dict[str, str] = {
     # ── Топ-20 ───────────────────────────────────────────────────────────────
     "сбер":            "sberbank", "сбербанк":   "sberbank", "сбер банк": "sberbank",
     "sber":            "sberbank", "sberbank":   "sberbank", "пао сбер":  "sberbank",
+    "сбербанк россии": "sberbank",
     "втб":             "vtb", "vtb":            "vtb", "втб банк": "vtb",
     "тинькофф":        "tinkoff", "tinkoff":    "tinkoff",
     "т-банк":          "tinkoff", "т банк":     "tinkoff", "тбанк":     "tinkoff",
@@ -69,6 +70,23 @@ BANK_ALIASES: dict[str, str] = {
     "интерпрогрессбанк":"ipb", "интерпрогресс":"ipb",
     "транскапиталбанк":"tcb", "тkb":            "tcb",
     "крайинвестбанк":  "krayinvest",
+
+    # ── Жертвы fuzzy-склеек (аудит 22.07.2026) — явные алиасы, чтобы больше
+    #    не всасывались в банки-магниты (Сбер/Тинькофф/Норвик/Ренессанс/Прио)
+    "национальный банк сбережений": "nacionalnyj-bank-sberezhenij",
+    "русский банк сбережений":      "russkij-bank-sberezhenij",
+    "ик банк":         "ik-bank",  "ик-банк":    "ik-bank",
+    "нс банк":         "ns-bank",  "нс-банк":    "ns-bank",
+    "приобье":         "priobe",   "банк приобье":"priobe",
+    "автокредитбанк":  "avtokreditbank",
+    "ит банк":         "it-bank",  "ит-банк":    "it-bank",
+    "юг-инвестбанк":   "jug-investbank", "юг инвестбанк":"jug-investbank",
+    "металлинвестбанк":"metallinvestbank",
+    "реалист банк":    "realistbank", "реалистбанк":"realistbank",
+    "роял кредит банк":"rojal-kredit-bank",
+    "рокетбанк":       "roketbank",
+    "углеметбанк":     "uglemetbank",
+    "зираат банк":     "ziraat-bank-moskva", "зираат банк москва":"ziraat-bank-moskva",
 
     # ── Брокеры/НПФ ─────────────────────────────────────────────────────────
     "финам":           "finam",

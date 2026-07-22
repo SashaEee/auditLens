@@ -23,6 +23,17 @@ NORMALIZE_FIELDS = (
     "conditions",
 )
 
+def _fuzzy_ok(key: str, alias: str) -> bool:
+    """Вето на ложные fuzzy-склейки: WRatio даёт ~90 коротким ключам-подстрокам
+    («ик банк» ⊂ «норвик банк», «сбер» ⊂ «сбережений») — так Тинькофф «всасывал»
+    Металлинвестбанк, а Сбер — Национальный банк сбережений (аудит 22.07.2026:
+    5 банков-магнитов, 24 чужих оффера). Принимаем матч, только если токены
+    одной стороны — подмножество другой («сбербанк россии» ~ «сбербанк») или
+    имена похожи целиком (опечатки: «сити банк» ~ «ситибанк»)."""
+    kt, at = set(key.split()), set(alias.split())
+    return kt <= at or at <= kt or fuzz.ratio(key, alias) >= 85
+
+
 def resolve_bank(session, raw_name: str) -> int:
     """Резолвит raw-имя банка в bank_id (создаёт строку при необходимости).
     Логика:
@@ -35,10 +46,16 @@ def resolve_bank(session, raw_name: str) -> int:
     key = normalize_bank_key(raw_name)
     slug = BANK_ALIASES.get(key)
     if not slug and key:
-        # fuzzy
-        match = process.extractOne(key, list(BANK_ALIASES.keys()), scorer=fuzz.WRatio)
-        if match and match[1] >= 88:
-            slug = BANK_ALIASES[match[0]]
+        # fuzzy: топ-5 кандидатов, а не единственный лучший — иначе короткий
+        # ключ-подстрока («сбер») с тем же score перекрывает валидный «сбербанк»,
+        # вето его режет, и «Сбербанк России» падал бы в unknown_
+        for alias, score, _ in process.extract(
+                key, list(BANK_ALIASES.keys()), scorer=fuzz.WRatio, limit=5):
+            if score < 88:
+                break
+            if _fuzzy_ok(key, alias):
+                slug = BANK_ALIASES[alias]
+                break
     if not slug and key and re.fullmatch(r"[a-z0-9_-]+", key):
         # Источники иногда отдают латинский slug вместо имени («gazprombank»,
         # «psb») — до unknown_-фолбэка пробуем прямое совпадение со слагом уже
