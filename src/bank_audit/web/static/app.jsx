@@ -1406,7 +1406,7 @@ function OverviewPage(){
           </div>
           <div className="bf-pulse-cap">Ключевая ставка ЦБ{kr.as_of?` · ${kr.as_of.slice(5)}`:""}</div>
         </a>
-        <a href="#sber" className="bf-tip"
+        <a href="#market" className="bf-tip"
            data-tip={"Среднее отклонение максимальных ставок Сбера от медианы действующих предложений "+((tm.totals&&tm.totals.banks_tracked)||"~130")+" банков, по категориям продуктов."}>
           <div className="bf-pulse-num">{avgDelta!=null?signed(Math.round(avgDelta*100)/100):"—"}<span className="u">пп</span></div>
           <div className="bf-pulse-cap">Сбер vs медиана рынка</div>
@@ -1420,7 +1420,7 @@ function OverviewPage(){
           </div>
           <div className="bf-pulse-cap">Жалоб за 7 дн · Сбер · banki.ru</div>
         </a>
-        <a href="#market" className="bf-tip"
+        <a href="#market?view=changes" className="bf-tip"
            data-tip={"Офферы со значимым изменением условий за 7 дней (порог 0.01 п.п. — микрофлуктуации расчётных ставок не считаются). Журнал изменений тарифов banki.ru/sravni.ru."}>
           <div className="bf-pulse-num">{(tm.totals&&tm.totals.changes_7d)!=null?fmtNum(tm.totals.changes_7d):"—"}</div>
           <div className="bf-pulse-cap">Офферов изменились · 7 дн · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков</div>
@@ -1430,7 +1430,7 @@ function OverviewPage(){
           <div className="bf-pulse-num">{tm.dep_spread_pp!=null?signed(tm.dep_spread_pp):"—"}<span className="u">пп</span></div>
           <div className="bf-pulse-cap">Спред вклад Сбера − КС</div>
         </a>
-        <a href="#market" className="bf-tip"
+        <a href="#market?view=changes&bank=sberbank" className="bf-tip"
            data-tip={"Значимые изменения условий по продуктам самого Сбера за 7 дней — что аудитору смотреть в первую очередь."}>
           <div className="bf-pulse-num">{(tm.totals&&tm.totals.sber_changes_7d)!=null?fmtNum(tm.totals.sber_changes_7d):"—"}</div>
           <div className="bf-pulse-cap">Изменений у Сбера · 7 дн</div>
@@ -1505,7 +1505,9 @@ function OverviewPage(){
       <div className="eyebrow-row">
         <div className="eyebrow" style={{marginBottom:10}}>Тарифные движения недели</div>
         {(tm.mass_updates||[]).length>0&&
-          <span className="badge warn">массовое движение: {tm.mass_updates.map(m=>CAT_LABELS[m.category]||m.category).join(", ")}{tm.after_pause?" · сбор после паузы":""}</span>}
+          <span className="badge warn" style={{cursor:"pointer"}} title="Открыть журнал изменений"
+            onClick={()=>{const m=tm.mass_updates[0];location.hash="market?"+new URLSearchParams({cat:m.category||"",view:"changes"});}}>
+            массовое движение: {tm.mass_updates.map(m=>CAT_LABELS[m.category]||m.category).join(", ")}{tm.after_pause?" · сбор после паузы":""}</span>}
       </div>
       <div className="surface" style={{overflow:"hidden"}}>
         {(tm.top_changes||[]).length?
@@ -1513,7 +1515,14 @@ function OverviewPage(){
             <thead><tr><th>Банк</th><th>Продукт</th><th className="right">Было → стало</th><th className="right">Δ</th><th className="right">Когда</th></tr></thead>
             <tbody>{tm.top_changes.slice(0,10).map((c,i)=>{
               const up=c.to>c.from;
-              return <tr key={i}>
+              // точный диплинк в журнал: свежие выпуски несут offer_id/change_id,
+              // старые — хотя бы категорию
+              const go=()=>{const sp=new URLSearchParams({cat:c.category||"",view:"changes"});
+                if(c.bank_slug)sp.set("bank",c.bank_slug);
+                if(c.change_id)sp.set("change",c.change_id);
+                if(c.offer_id)sp.set("offer",c.offer_id);
+                location.hash="market?"+sp.toString();};
+              return <tr key={i} onClick={go} style={{cursor:"pointer"}} title="Открыть в журнале изменений">
                 <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}{c.is_sber&&<span className="badge solid" style={{marginLeft:8,fontSize:9}}>Сбер</span>}</div>
                   <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
                 <td data-label="Продукт" style={{fontSize:12.5,color:"var(--ink-2)"}}>{c.title}</td>
@@ -1529,7 +1538,7 @@ function OverviewPage(){
           </div>}
         {(tm.top_changes||[]).length>0&&<div style={{padding:"12px 20px",borderTop:"1px solid var(--hair)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span className="bf-stamp">{(tm.totals&&tm.totals.changes_7d)||0} изменений · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков за 7 дн</span>
-          <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="market"}>Все изменения <Ic.ext/></button>
+          <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="market?view=changes"}>Все изменения <Ic.ext/></button>
         </div>}
       </div>
     </section>
@@ -1547,232 +1556,386 @@ function OverviewPage(){
   </div>;
 }
 
-// ─── MARKET PAGE ──────────────────────────────────────────────────────────────
-function MarketPage(){
-  // preset категории из «Обзора» (клик по тарифному сигналу)
-  const mkPreset=(()=>{try{
+// ─── MARKET PAGE — «Позиция»: рынок × Сбер в одном развороте ─────────────────
+// Три слоя: Атлас (cat=null) → рабочая область категории (Витрина/Журнал) →
+// драуэр-досье оффера. Состояние зеркалится в hash (#market?cat=…&view=…):
+// диплинки с Обзора шарятся ссылкой, F5 не теряет срез. Легаси-пресет
+// al-mk-preset (bfGoDrill) конвертируется при маунте, URL приоритетнее.
+
+const MK_TERMS=[["0-3","до 3 мес"],["4-6","4–6 мес"],["7-12","7–12 мес"],["13+","от года"]];
+const MK_FLD={rate_pct:"ставка",amount_min:"мин. сумма",amount_max:"макс. сумма",
+  term_months_min:"срок от",term_months_max:"срок до",fee_open:"комиссия открытия",
+  fee_service:"обслуживание",early_withdraw:"досрочное снятие",capitalization:"капитализация",
+  replenishable:"пополнение",conditions:"условия",rate_kind:"тип ставки",currency:"валюта"};
+
+// strip-plot распределения категории: полоса IQR, засечка медианы,
+// точки — лучший оффер каждого банка, Сбер — крупная accent-точка
+function MkStrip({c,big}){
+  if(c.status!=="ok")return null;
+  const rng=(c.max-c.min)||1;
+  const X=v=>((v-c.min)/rng)*94+3;
+  return <div className={"mk-strip"+(big?" mk-strip-big":"")}>
+    <i className="mk-iqr" style={{left:X(c.p25)+"%",width:Math.max(X(c.p75)-X(c.p25),.6)+"%"}}/>
+    <i className="mk-med" style={{left:X(c.median)+"%"}} title={`медиана ${pct(c.median)}`}/>
+    {(c.points||[]).map((p,i)=>p.is_sber
+      ?<i key={i} className="mk-dot sber" style={{left:X(p.rate)+"%"}} title={`Сбер · ${pct(p.rate)} · ${p.title||""}`}/>
+      :<i key={i} className="mk-dot" style={{left:X(p.rate)+"%"}} title={`${p.name} · ${pct(p.rate)}`}/>)}
+  </div>;
+}
+
+// ступенчатая история ставки оффера (SCD2-версии условий)
+function MkStep({series}){
+  const pts=(series||[]).filter(p=>p.rate_pct!=null);
+  if(pts.length<2)return null;
+  const W=280,H=64;
+  const vals=pts.map(p=>parseFloat(p.rate_pct));
+  const t0=new Date(pts[0].valid_from).getTime(),t1=Date.now();
+  const min=Math.min(...vals),max=Math.max(...vals),rng=(max-min)||1;
+  const X=t=>4+((t-t0)/((t1-t0)||1))*(W-8);
+  const Y=v=>H-10-((v-min)/rng)*(H-24);
+  let d=`M${X(t0).toFixed(1)} ${Y(vals[0]).toFixed(1)}`;
+  for(let i=1;i<pts.length;i++){
+    const x=X(new Date(pts[i].valid_from).getTime());
+    d+=` H${x.toFixed(1)} V${Y(vals[i]).toFixed(1)}`;
+  }
+  d+=` H${W-4}`;
+  return <div className="mk-stepw">
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",display:"block"}} aria-hidden>
+      <path d={d} fill="none" stroke="var(--accent)" strokeWidth="1.6"/>
+    </svg>
+    <div className="mk-steplbl">
+      <span>{fmtDate(pts[0].valid_from)}</span>
+      <span className="tnum">{pct(min)} – {pct(max)}</span>
+      <span>сейчас {pct(vals[vals.length-1])}</span>
+    </div>
+  </div>;
+}
+
+function MarketPage({params}){
+  const P=params||{};
+  // одноразовый легаси-пресет от bfGoDrill — только как фолбэк при пустом URL
+  const legacy=useRef(null);
+  if(legacy.current===null){try{
     const p=JSON.parse(sessionStorage.getItem("al-mk-preset")||"null");
-    sessionStorage.removeItem("al-mk-preset");return p;
-  }catch{return null;}})();
-  const[cat,setCat]=useState((mkPreset&&mkPreset.category)||"deposit");
-  const[q,setQ]=useState("");
-  const[offers,setOffers]=useState([]);
-  const[catStats,setCatStats]=useState([]);
-  const[loading,setLoading]=useState(true);
+    sessionStorage.removeItem("al-mk-preset");legacy.current=p||{};
+  }catch{legacy.current={};}}
+  const L=legacy.current;
+  const[cat,setCat]=useState(P.cat||P.category||L.category||null);
+  const[view,setView]=useState(P.view||L.view||"vitrina");
+  const[term,setTerm]=useState(P.term||null);
+  const[qLive,setQLive]=useState(P.q||L.q||"");
+  const[q,setQ]=useState(P.q||L.q||"");
+  const[bank,setBank]=useState(P.bank||L.bank||null);
+  const hlChange=useRef(P.change?parseInt(P.change):null);
+  const[meta,setMeta]=useState(null);
+  const[atlas,setAtlas]=useState(null);
+  const[sum,setSum]=useState(null);
+  const[offers,setOffers]=useState(null);
+  const[moreBusy,setMoreBusy]=useState(false);
+  const[changes,setChanges]=useState(null);
+  const[noise,setNoise]=useState(false);
+  const[drawer,setDrawer]=useState(P.offer?parseInt(P.offer):null);
+  const[dossier,setDossier]=useState(null);
   const[err,setErr]=useState(null);
 
-  // Load category stats once
+  // повторный диплинк, когда страница уже открыта: применяем новые URL-параметры
+  const lastP=useRef(JSON.stringify(P));
+  useEffect(()=>{const s=JSON.stringify(P);
+    if(s!==lastP.current){lastP.current=s;
+      setCat(P.cat||P.category||null);setView(P.view||"vitrina");
+      setTerm(P.term||null);setQLive(P.q||"");setQ(P.q||"");setBank(P.bank||null);
+      hlChange.current=P.change?parseInt(P.change):null;
+      if(P.offer)setDrawer(parseInt(P.offer));}
+  },[params]); // eslint-disable-line
+
+  // debounce поиска (серверный q — не дёргаем API на каждую букву)
+  useEffect(()=>{const t=setTimeout(()=>setQ(qLive),350);return()=>clearTimeout(t);},[qLive]);
+
+  // состояние → hash: диплинк живёт в адресе, F5 ничего не теряет
   useEffect(()=>{
-    apiFetch("/api/market/categories").then(setCatStats).catch(()=>{});
+    const sp=new URLSearchParams();
+    if(cat)sp.set("cat",cat);
+    if(view!=="vitrina")sp.set("view",view);
+    if(term)sp.set("term",term);
+    if(q)sp.set("q",q);
+    if(bank)sp.set("bank",bank);
+    const s=sp.toString();
+    history.replaceState(null,"","#market"+(s?"?"+s:""));
+  },[cat,view,term,q,bank]);
+
+  useEffect(()=>{
+    Promise.all([apiFetch("/api/meta/categories"),apiFetch("/api/market/atlas"),
+                 apiFetch("/api/summary").catch(()=>null)])
+      .then(([m,a,s])=>{setMeta(m);setAtlas(a);setSum(s);})
+      .catch(e=>setErr(e.message));
   },[]);
 
-  // Load offers on category change
-  useEffect(()=>{
-    setLoading(true);setErr(null);
-    apiFetch(`/api/market?category=${cat}&limit=100`)
-      .then(d=>{setOffers(d||[]);setLoading(false);})
-      .catch(e=>{setErr(e.message);setLoading(false);});
-  },[cat]);
+  useEffect(()=>{ // витрина
+    if(!cat||view!=="vitrina")return;
+    setOffers(null);
+    const sp=new URLSearchParams({category:cat,limit:"100"});
+    if(term)sp.set("term",term);
+    if(q)sp.set("q",q);
+    apiFetch("/api/market?"+sp).then(setOffers).catch(e=>setErr(e.message));
+  },[cat,term,q,view]);
 
-  const showRate=!["card_debit","metals"].includes(cat);
-  const filtered=(offers||[]).filter(r=>!q||
-    (r.bank_name||"").toLowerCase().includes(q.toLowerCase())||
-    (r.title||"").toLowerCase().includes(q.toLowerCase()));
-  const bestRate=filtered.length&&showRate?Math.max(...filtered.map(r=>parseFloat(r.rate_pct)||0)):0;
+  useEffect(()=>{ // журнал
+    if(view!=="changes")return;
+    setChanges(null);
+    const sp=new URLSearchParams({days:"7",limit:"120"});
+    if(cat)sp.set("category",cat);
+    if(bank)sp.set("bank_slug",bank);
+    if(noise)sp.set("significant","false");
+    apiFetch("/api/recent-changes?"+sp).then(setChanges).catch(e=>setErr(e.message));
+  },[cat,bank,noise,view]);
 
-  // Build tabs from catStats + CATS_ORDER
-  const tabs=CATS_ORDER.map(id=>{
-    const s=catStats.find(c=>c.category===id);
-    return{id,label:CAT_LABELS[id]||id,n:s?s.total:null};
-  });
+  useEffect(()=>{ // досье оффера
+    if(!drawer){setDossier(null);return;}
+    setDossier(null);
+    apiFetch(`/api/market/offer/${drawer}/history`)
+      .then(setDossier).catch(()=>setDossier({error:true}));
+  },[drawer]);
+
+  const hlRef=useRef(null);
+  useEffect(()=>{if(changes&&hlRef.current)
+    hlRef.current.scrollIntoView({block:"center",behavior:"smooth"});},[changes]);
+
+  const A=atlas?Object.fromEntries((atlas.categories||[]).map(c=>[c.category,c])):{};
+  const M=meta?Object.fromEntries(meta.map(m=>[m.id,m])):{};
+  const ac=cat?A[cat]:null;
+  const total=offers&&offers.length?offers[0].total:null;
+  const loadMore=()=>{
+    if(!offers||moreBusy)return;
+    setMoreBusy(true);
+    const sp=new URLSearchParams({category:cat,limit:"100",offset:String(offers.length)});
+    if(term)sp.set("term",term);
+    if(q)sp.set("q",q);
+    apiFetch("/api/market?"+sp).then(d=>{setOffers([...offers,...(d||[])]);setMoreBusy(false);})
+      .catch(()=>setMoreBusy(false));
+  };
+  const openAI=(o)=>bfGoAI(`Проанализируй позицию Сбера относительно оффера «${o.title}» банка ${o.bank_name} (${(CAT_LABELS[o.category]||o.category).toLowerCase()}, ставка ${o.rate_pct??"—"}%). Насколько условия Сбера конкурентны и стоит ли реагировать?`);
+
+  const lower=ac&&ac.lower_is_better;
+  const sberIn=offers&&offers.some(o=>o.is_sber);
+  const bestRate=offers&&offers.length?parseFloat(offers[0].rate_pct):null;
 
   return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Рынок · {loading?"…":filtered.length} предложений</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Действующие условия по категориям</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Снимок с агрегаторов sravni.ru и banki.ru. Обновляется ежедневно в 05:00 МСК, вся история изменений условий сохраняется.
+    <header style={{marginBottom:20}}>
+      <div className="eyebrow" style={{marginBottom:6}}>§ Рынок · позиция объекта аудита</div>
+      <h1 className="t-h" style={{marginBottom:6}}>Позиция Сбера на рынке</h1>
+      <p className="t-cap" style={{maxWidth:"72ch"}}>
+        {sum?`${sum.offers} офферов · ${sum.banks} банков · сбор ежедневно 05:00 МСК${sum.last_run?` · срез ${fmtDateMsk(sum.last_run)}`:""}`:"…"}
       </p>
+      <p className="mk-disc">Сравнение внутри сопоставимой выборки: ₽, лучший оффер банка, без промо-строк рейтингов. Для кредитных продуктов ниже ставка = лучше позиция. Наведите на любую цифру — покажем, как она посчитана.</p>
     </header>
 
-    <div className="filter-row">
+    <div className="filter-row" style={{marginBottom:18}}>
       <div className="tab-row">
-        {tabs.slice(0,5).map(c=>(
-          <button key={c.id} className={`tab ${cat===c.id?"active":""}`} onClick={()=>setCat(c.id)}>
-            {c.label}{c.n!=null&&<span className="n">{c.n}</span>}
-          </button>
-        ))}
-        {tabs.length>5&&<select className="select" value={tabs.slice(5).some(c=>c.id===cat)?cat:""}
-            onChange={e=>{if(e.target.value)setCat(e.target.value);}}
-            style={{height:26,fontSize:12.5,marginLeft:4,
-                    color:tabs.slice(5).some(c=>c.id===cat)?"var(--ink)":"var(--ink-3)"}}>
-          <option value="" disabled>Ещё…</option>
-          {tabs.slice(5).map(c=><option key={c.id} value={c.id}>{c.label}{c.n!=null?` (${c.n})`:""}</option>)}
-        </select>}
+        <button className={`tab ${!cat&&view!=="changes"?"active":""}`} onClick={()=>{setCat(null);setView("vitrina");setDrawer(null);}}>Атлас</button>
+        {(meta||[]).filter(m=>m.n>0).map(m=>{
+          const sb=A[m.id]&&A[m.id].sber;
+          return <button key={m.id} className={`tab ${cat===m.id?"active":""}`} onClick={()=>{setCat(m.id);setBank(null);}}>
+            {m.label}{sb&&<span className={"mk-rk"+(sb.beats_share<0.5?" bad":"")}
+              title={`Сбер — #${sb.rank} из ${A[m.id].n_banks} банков по лучшему офферу`}>#{sb.rank}</span>}
+          </button>;})}
       </div>
       <div className="search-wrap">
         <Ic.search/>
-        <input className="input" placeholder="Поиск по банку или продукту…" value={q} onChange={e=>setQ(e.target.value)}/>
+        <input className="input" placeholder="Банк или продукт…" value={qLive}
+               onChange={e=>{setQLive(e.target.value);if(!cat&&e.target.value)setCat("deposit");}}/>
       </div>
     </div>
 
-    <div className="surface" style={{overflow:"hidden"}}>
-      {loading?<div style={{padding:32}}><Skel h={40}/><div style={{height:12}}/><Skel h={40}/><div style={{height:12}}/><Skel h={40}/></div>:
-       err?<ErrState msg={err}/>:
-       filtered.length===0?<EmptyState text="Нет предложений. Возможно, источник ещё не обновлялся."/>:
-      <table className="m-cards">
-        <thead><tr>
-          <th style={{width:"22%"}}>Банк</th>
-          <th>Продукт</th>
-          {showRate&&<th className="right">Ставка</th>}
-          {showRate&&<th>% от лидера</th>}
-          <th>Сумма</th>
-          <th>Срок</th>
-          <th></th>
-        </tr></thead>
-        <tbody>
-          {filtered.map((r,i)=>{
-            const isSber=!!r.is_sber;
-            const rate=parseFloat(r.rate_pct);
-            return <tr key={r.offer_id||i} className={isSber?"is-sber":""}>
-              <td className="m-primary" data-label="Банк">
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
-                  <div>
-                    <div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
-                    {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
-                  </div>
-                </div>
-              </td>
-              <td data-label="Продукт">
-                {r.url?<a href={r.url} target="_blank" rel="noopener" style={{color:"var(--ink)",borderBottom:"1px solid var(--hair-2)"}}>{r.title}</a>
-                  :<span>{r.title}</span>}
-              </td>
-              {showRate&&<td className="right mono tnum" data-label="Ставка" style={{fontWeight:500,fontSize:14}}>
-                {r.rate_pct!=null?pct(r.rate_pct):"—"}
-              </td>}
-              {showRate&&<td data-label="% от лидера">
-                {bestRate>0&&rate>0?<div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div className="bar" style={{flex:1,maxWidth:80}}>
-                    <i style={{width:`${(rate/bestRate)*100}%`,background:isSber?"var(--accent)":"var(--ink-3)"}}/>
-                  </div>
-                  <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>{Math.round((rate/bestRate)*100)}%</span>
-                </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
-              </td>}
-              <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
-              <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
-              <td className="right">
-                {r.url&&<a href={r.url} target="_blank" rel="noopener" className="icon-btn" aria-label="Открыть"><Ic.ext/></a>}
-              </td>
-            </tr>;
-          })}
-        </tbody>
-      </table>}
-    </div>
-  </div>;
-}
+    {err&&<ErrState msg={err}/>}
 
-// ─── SBER VS MARKET PAGE ──────────────────────────────────────────────────────
-function SberPage(){
-  const[data,setData]=useState(null);
-  const[loading,setLoading]=useState(true);
-  const[err,setErr]=useState(null);
-
-  useEffect(()=>{
-    setLoading(true);
-    Promise.all([
-      apiFetch("/api/sber-vs-market"),
-      apiFetch("/api/sber-vs-market/top"),
-    ]).then(([svm,top])=>{setData({svm,top});setLoading(false);})
-      .catch(e=>{setErr(e.message);setLoading(false);});
-  },[]);
-
-  if(loading)return <LoadingPage/>;
-  if(err)return <ErrState msg={err}/>;
-  const{svm,top}=data;
-  const withData=(svm||[]).filter(r=>r.sber_max!=null);
-  const depositTop=(top||[]).filter(r=>r.category==="deposit").sort((a,b)=>parseFloat(b.rate_pct||0)-parseFloat(a.rate_pct||0));
-
-  return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Сбер / Рынок · разбор</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Позиция Сбербанка по категориям</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Дельта рассчитывается между лучшей ставкой Сбера и медианой рынка. Для кредитных продуктов меньше = лучше для клиента.
-      </p>
-    </header>
-
-    {!withData.length?<EmptyState text="Нет данных для сравнения. Запустите сбор данных из раздела Источники."/>:<>
-    <div className="row" style={{gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",marginBottom:28}}>
-      {withData.map(r=>{
-        const delta=r.sber_vs_median_pp!=null?parseFloat(r.sber_vs_median_pp):null;
-        const lib=LOWER_IS_BETTER.has(r.category);
-        const isPos=delta!=null?(lib?delta>0:delta>0):null;
-        const barW=r.market_max?Math.min(100,(parseFloat(r.sber_max||0)/parseFloat(r.market_max))*100):50;
-        return <div key={r.category} className="surface" style={{padding:"22px 24px"}}>
-          <div className="eyebrow" style={{marginBottom:10}}>{CAT_LABELS[r.category]||r.category}</div>
-          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
-            <div className="serif sber-delta" style={{lineHeight:1,color:isPos?"var(--pos)":"var(--accent)"}}>
-              {delta!=null?signed(delta):"—"}
+    {/* ── СЛОЙ 1 · АТЛАС ─────────────────────────────────────────────── */}
+    {!cat&&view!=="changes"&&!err&&<div className="surface" style={{overflow:"hidden"}}>
+      <div style={{padding:"18px 24px",borderBottom:"1px solid var(--hair)"}}>
+        <div className="eyebrow" style={{marginBottom:2}}>Атлас позиций · категория × распределение рынка</div>
+        <div className="t-cap">Точка — лучший оффер банка. Красная — Сбер. Полоса — середина рынка (25–75 перцентиль), засечка — медиана. Клик — в категорию.</div>
+      </div>
+      {!atlas?<div style={{padding:28}}><Skel h={40}/><div style={{height:10}}/><Skel h={40}/><div style={{height:10}}/><Skel h={40}/></div>:
+        (atlas.categories||[]).map(c=>{
+          const m=M[c.category]||{};
+          const sb=c.sber;
+          return <button key={c.category} className="mk-arow" onClick={()=>setCat(c.category)}>
+            <div className="mk-alabel">
+              <div style={{fontWeight:500}}>{m.label||c.category}</div>
+              <div className="mk-an">{c.status==="ok"?`${c.n_banks} банков`:""}{c.lower_is_better&&c.status==="ok"?" · ниже = лучше":""}</div>
             </div>
-            <div className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>п.п.</div>
-          </div>
-          <div className="bar accent" style={{marginBottom:12}}>
-            <i style={{width:`${barW}%`,background:isPos?"var(--pos)":"var(--accent)"}}/>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"4px 0"}}>
-            <span style={{color:"var(--ink-3)"}}>Сбер макс.</span>
-            <span className="mono tnum" style={{fontWeight:500}}>{pct(r.sber_max)}</span>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"4px 0",borderTop:"1px solid var(--hair)"}}>
-            <span style={{color:"var(--ink-3)"}}>Медиана рынка</span>
-            <span className="mono tnum" style={{color:"var(--ink-2)"}}>{pct(r.market_median)}</span>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"4px 0",borderTop:"1px solid var(--hair)"}}>
-            <span style={{color:"var(--ink-3)"}}>Лидер рынка</span>
-            <span className="mono tnum" style={{color:"var(--ink-2)"}}>{pct(r.market_max)}</span>
-          </div>
-        </div>;
-      })}
-    </div>
-
-    {depositTop.length>0&&<div className="surface" style={{overflow:"hidden"}}>
-      <div style={{padding:"20px 24px",borderBottom:"1px solid var(--hair)"}}>
-        <div className="eyebrow" style={{marginBottom:4}}>Топ ставок по вкладам</div>
-        <div className="t-cap">Только вклады, сортировка по убыванию ставки. Сбер подсвечен — с его фактической позицией в полном рейтинге.</div>
-      </div>
-      <table className="m-cards">
-        <thead><tr>
-          <th className="right" style={{width:"6%"}}>№</th>
-          <th>Банк</th><th>Продукт</th>
-          <th className="right">Ставка</th>
-          <th>Срок</th>
-        </tr></thead>
-        <tbody>
-          {depositTop.map((r,i)=>{
-            const isSber=!!r.is_sber;
-            const prev=depositTop[i-1];
-            const gap=prev&&r.rk!=null&&prev.rk!=null&&(r.rk-prev.rk)>1;
-            return <React.Fragment key={i}>
-            {gap&&<tr><td colSpan={5} style={{textAlign:"center",color:"var(--ink-4)",fontSize:11,padding:"2px 0",letterSpacing:".3em"}}>⋯</td></tr>}
-            <tr className={isSber?"is-sber":""}>
-              <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(r.rk??(i+1)).padStart(2,"0")}</td>
-              <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
-                <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
-                <span style={{fontWeight:500}}>{r.bank_name}</span>
-              </div></td>
-              <td data-label="Продукт">{r.title}</td>
-              <td className="right mono tnum" data-label="Ставка" style={{fontWeight:500}}>{pct(r.rate_pct)}</td>
-              <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,null)}</td>
-            </tr>
-            </React.Fragment>;
-          })}
-        </tbody>
-      </table>
+            {c.status==="ok"?<MkStrip c={c}/>:
+              <div className="mk-anote">{c.status==="no_metric"?"сопоставимая метрика не собирается источником — доступна витрина":"нет данных"}</div>}
+            <div className="mk-apos">
+              {sb?<>
+                <b className={"serif"+(sb.beats_share<0.5?" bad":"")}
+                   title={`лучший оффер Сбера против лучших офферов ${c.n_banks} банков${c.small_n?" · малая база!":""}`}>#{sb.rank}</b>
+                <span className="mk-an">{sb.gap_median>0?"+":""}{sb.gap_median} пп к медиане{c.small_n?" · малая база":""}</span>
+              </>:c.status==="ok"?<span className="mk-an">Сбера нет в выборке</span>:null}
+            </div>
+            <div className="mk-ago" aria-hidden>→</div>
+          </button>;})}
     </div>}
+
+    {/* ── СЛОЙ 2 · КАТЕГОРИЯ (журнал доступен и без категории) ───────── */}
+    {(cat||view==="changes")&&!err&&<>
+      {ac&&ac.status==="ok"&&<div className="mk-kpis">
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков категории${ac.small_n?" · малая база!":""}`}>
+          <b className={ac.sber.beats_share<0.5?"bad":""}>#{ac.sber.rank}<small> из {ac.n_banks}</small></b>
+          <span>ранг Сбера{ac.small_n?" · малая база":""}</span></div>}
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.sber.title||""}>
+          <b>{pct(ac.sber.rate)}</b><span>лучшая ставка Сбера</span></div>}
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`лидер: ${ac.leader.name} · ${pct(ac.leader.rate)} · «${ac.leader.title}»`}>
+          <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{ac.sber.gap_leader>0?"+":""}{ac.sber.gap_leader} пп</b>
+          <span>до лидера ({ac.leader.name})</span></div>}
+        <div className="surface mk-kpi bf-tip" data-tip={`медиана лучших офферов ${ac.n_banks} банков · разброс ${pct(ac.min)}–${pct(ac.max)}`}>
+          <b>{pct(ac.median)}</b><span>медиана рынка</span></div>
+      </div>}
+      {ac&&ac.status==="ok"&&<div className="surface" style={{padding:"14px 20px",marginBottom:14}}>
+        <MkStrip c={ac} big/>
+      </div>}
+
+      <div className="filter-row" style={{marginBottom:14}}>
+        <div className="tab-row">
+          {cat&&<button className={`tab ${view==="vitrina"?"active":""}`} onClick={()=>setView("vitrina")}>Витрина</button>}
+          <button className={`tab ${view==="changes"?"active":""}`} onClick={()=>setView("changes")}>Журнал изменений{!cat?" · весь рынок":""}</button>
+        </div>
+        {view==="vitrina"&&<div className="tab-row">
+          {MK_TERMS.map(([id,l])=><button key={id} className={`tab ${term===id?"active":""}`}
+            onClick={()=>setTerm(term===id?null:id)}>{l}</button>)}
+        </div>}
+        {view==="changes"&&<label className="mk-noise">
+          <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум
+        </label>}
+        {view==="changes"&&bank&&<button className="tab active" onClick={()=>setBank(null)}>банк: {bank} ✕</button>}
+      </div>
+
+      {/* ВИТРИНА */}
+      {view==="vitrina"&&<div className="surface" style={{overflow:"hidden"}}>
+        {ac&&ac.sber&&!sberIn&&offers&&<button className="mk-sber-pin" onClick={()=>setDrawer(ac.sber.offer_id)}>
+          <BankAvatar slug="sberbank" name="Сбербанк" isSber={true}/>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontWeight:500}}>Сбербанк · {ac.sber.title}</div>
+            <div className="mk-an">лучший оффер Сбера · #{ac.sber.rank} из {ac.n_banks} банков{term?" · фильтр срока может его скрывать":""}</div>
+          </div>
+          <div className="serif" style={{fontSize:18,marginLeft:"auto"}}>{pct(ac.sber.rate)}</div>
+        </button>}
+        {!offers?<div style={{padding:28}}><Skel h={40}/><div style={{height:10}}/><Skel h={40}/><div style={{height:10}}/><Skel h={40}/></div>:
+         offers.length===0?<EmptyState text="Нет предложений под фильтры. Сбросьте срок или поиск."/>:
+        <table className="m-cards">
+          <thead><tr>
+            <th className="right" style={{width:"5%"}}>№</th>
+            <th>Банк</th><th>Продукт</th>
+            <th className="right">Ставка</th>
+            <th>К лидеру</th>
+            <th>Сумма</th><th>Срок</th>
+          </tr></thead>
+          <tbody>
+            {offers.map((r,i)=>{
+              const isSber=!!r.is_sber;
+              const rate=parseFloat(r.rate_pct);
+              const rel=bestRate&&rate?(lower?bestRate/rate:rate/bestRate):null;
+              return <tr key={r.offer_id||i} className={(isSber?"is-sber ":"")+"mk-click"} onClick={()=>setDrawer(r.offer_id)}>
+                <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(i+1).padStart(2,"0")}</td>
+                <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
+                  <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
+                    {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
+                  </div></div></td>
+                <td data-label="Продукт">{r.title}</td>
+                <td className="right mono tnum" data-label="Ставка" style={{fontWeight:500,fontSize:14}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>
+                <td data-label="К лидеру">
+                  {rel!=null&&isFinite(rel)?<div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div className="bar" style={{flex:1,maxWidth:70}}>
+                      <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--accent)":"var(--ink-3)"}}/>
+                    </div>
+                    <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
+                      {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2)} пп`}</span>
+                  </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
+                </td>
+                <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
+                <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
+              </tr>;})}
+          </tbody>
+        </table>}
+        {offers&&total>offers.length&&<button className="btn btn-ghost mk-more" onClick={loadMore} disabled={moreBusy}>
+          {moreBusy?"Загружаю…":`Показать ещё (${offers.length} из ${total})`}</button>}
+      </div>}
+
+      {/* ЖУРНАЛ ИЗМЕНЕНИЙ */}
+      {view==="changes"&&<div className="surface" style={{overflow:"hidden"}}>
+        <div style={{padding:"14px 20px",borderBottom:"1px solid var(--hair)"}}>
+          <div className="eyebrow" style={{marginBottom:2}}>Журнал изменений · 7 дней{noise?" · включая микрошум":" · только значимые"}</div>
+          <div className="t-cap">Значимое = изменение нестаточного условия или сдвиг ставки от 0.01 пп. Клик по строке — досье оффера.</div>
+        </div>
+        {!changes?<div style={{padding:28}}><Skel h={30}/><div style={{height:8}}/><Skel h={30}/><div style={{height:8}}/><Skel h={30}/></div>:
+         changes.length===0?<EmptyState text="За неделю изменений не зафиксировано."/>:
+         changes.map(ch=>{
+           const hl=hlChange.current&&ch.change_id===hlChange.current;
+           const other=(()=>{let d=ch.diff;if(typeof d==="string"){try{d=JSON.parse(d);}catch{d={};}}
+             return Object.keys(d||{}).filter(k=>k!=="rate_pct").map(k=>MK_FLD[k]||k);})();
+           const big=ch.rate_delta!=null&&Math.abs(ch.rate_delta)>=0.05;
+           return <button key={ch.change_id} ref={hl?hlRef:null}
+             className={"mk-chrow"+(hl?" hl":"")+(big?" big":"")} onClick={()=>setDrawer(ch.offer_id)}>
+             <span className="mono mk-chdate">{fmtDateMsk(ch.changed_at)}</span>
+             <span className="mk-chbank">
+               <BankAvatar slug={ch.bank_slug} name={ch.bank_name} isSber={!!ch.is_sber}/>
+               <span>{ch.bank_name}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>{ch.title}{!cat?` · ${(CAT_LABELS[ch.category]||ch.category).toLowerCase()}`:""}</i></span>
+             </span>
+             <span className="mk-chmove mono tnum">
+               {ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!other.length)
+                 ?<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
+                    {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2)}</em>}</>
+                 :<span className="mk-an">{other.join(", ")||"условия"}</span>}
+             </span>
+           </button>;})}
+      </div>}
     </>}
+
+    {/* ── СЛОЙ 3 · ДОСЬЕ ОФФЕРА ──────────────────────────────────────── */}
+    {drawer&&<RvModal side="right" onClose={()=>setDrawer(null)}
+        title={dossier&&dossier.offer?`${dossier.offer.bank_name} · ${dossier.offer.title}`:"Досье оффера"}
+        sub={dossier&&dossier.offer?(CAT_LABELS[dossier.offer.category]||dossier.offer.category):""}>
+      {!dossier?<div style={{padding:8}}><Skel h={60}/><div style={{height:10}}/><Skel h={120}/></div>:
+       dossier.error?<RvNote err={true}/>:<>
+        <div className="mk-pass">
+          <div><span>Ставка</span><b className="tnum">{dossier.offer.rate_pct!=null?pct(dossier.offer.rate_pct):"—"}</b>
+            {dossier.offer.rate_kind&&<i className="mk-an">{dossier.offer.rate_kind}</i>}</div>
+          <div><span>Сумма</span><b className="tnum">{fmtAmount(dossier.offer.amount_min,dossier.offer.amount_max)}</b></div>
+          <div><span>Срок</span><b className="tnum">{fmtTerm(dossier.offer.term_months_min,dossier.offer.term_months_max)}</b></div>
+          {dossier.offer.capitalization!=null&&<div><span>Капитализация</span><b>{dossier.offer.capitalization?"да":"нет"}</b></div>}
+          {dossier.offer.replenishable!=null&&<div><span>Пополнение</span><b>{dossier.offer.replenishable?"да":"нет"}</b></div>}
+          {dossier.offer.early_withdraw!=null&&<div><span>Досрочное</span><b>{dossier.offer.early_withdraw?"да":"нет"}</b></div>}
+          <div><span>Версия условий с</span><b className="tnum">{fmtDate(dossier.offer.valid_from)}</b></div>
+        </div>
+        {dossier.rate_series&&dossier.rate_series.length>1&&<>
+          <div className="eyebrow" style={{margin:"16px 0 6px"}}>История ставки</div>
+          <MkStep series={dossier.rate_series}/>
+        </>}
+        {dossier.changes&&dossier.changes.length>0&&<>
+          <div className="eyebrow" style={{margin:"16px 0 6px"}}>Изменения условий</div>
+          {dossier.changes.map(ch=>{
+            const other=(()=>{let d=ch.diff;if(typeof d==="string"){try{d=JSON.parse(d);}catch{d={};}}
+              return Object.keys(d||{}).filter(k=>k!=="rate_pct").map(k=>MK_FLD[k]||k);})();
+            return <div key={ch.change_id} className="mk-dhrow mono tnum">
+              <span className="mk-an">{fmtDateMsk(ch.changed_at)}</span>
+              {ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!other.length)
+                ?<span>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b></span>
+                :<span className="mk-an" style={{textAlign:"right"}}>{other.join(", ")||"условия"}</span>}
+            </div>;})}
+        </>}
+        {dossier.offer.conditions&&<>
+          <div className="eyebrow" style={{margin:"16px 0 6px"}}>Условия</div>
+          <p className="t-cap" style={{whiteSpace:"pre-wrap"}}>{String(dossier.offer.conditions).slice(0,600)}</p>
+        </>}
+        <div className="mk-dbtns">
+          {dossier.offer.url&&<a className="btn btn-ghost btn-sm" href={dossier.offer.url} target="_blank" rel="noopener noreferrer">↗ Первоисточник</a>}
+          <button className="btn btn-accent btn-sm" onClick={()=>openAI(dossier.offer)}>✦ Спросить ИИ</button>
+        </div>
+      </>}
+    </RvModal>}
   </div>;
 }
+const SberPage=MarketPage; // вкладки объединены («Позиция», 07.2026) — алиас для старых закладок
 
 // ─── REVIEWS PAGE — риск-радар голоса клиента (корпус banki.ru ~390к) ─────────
 const RV_BANKS=["Сбербанк","ВТБ","Т-Банк","Альфа-Банк","Газпромбанк","Совкомбанк",
@@ -4984,8 +5147,7 @@ function PulsePage(){
 
 const NAV=[
   {id:"overview",label:"Обзор",       icon:Ic.grid,   group:"Анализ"},
-  {id:"market",  label:"Рынок",       icon:Ic.market, group:"Анализ"},
-  {id:"sber",    label:"Сбер / Рынок",icon:Ic.scale,  group:"Анализ"},
+  {id:"market",  label:"Рынок · позиция",icon:Ic.market, group:"Анализ"},
   {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
   {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
   {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Анализ"},
@@ -4995,7 +5157,7 @@ const NAV=[
   {id:"quality", label:"Качество",    icon:Ic.shield, group:"Данные"},
 ];
 const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage,profile:ProfilePage,pulse:PulsePage};
-const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"],profile:["·","Профиль"],pulse:["·","Пульс"]};
+const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],market:["02","Рынок · позиция"],sber:["02","Рынок · позиция"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"],profile:["·","Профиль"],pulse:["·","Пульс"]};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
@@ -5345,15 +5507,28 @@ class PageBoundary extends React.Component{
   }
 }
 
+// hash → {p: id страницы, prm: параметры}. Диплинки несут срез в адресе:
+// #market?cat=deposit&view=changes&change=123. #sber — алиас (вкладки
+// объединены в «Позицию», 07.2026).
+function parseHash(){
+  const h=(location.hash||"").slice(1);
+  const qi=h.indexOf("?");
+  let p=qi>=0?h.slice(0,qi):h, prm={};
+  if(qi>=0){try{prm=Object.fromEntries(new URLSearchParams(h.slice(qi+1)).entries());}catch{}}
+  if(p==="sber")p="market";
+  return{p,prm};
+}
+
 function Shell(){
-  const[page,setPage]=useState(()=>{ const h=location.hash?.slice(1);
+  const[page,setPage]=useState(()=>{ const h=parseHash().p;
     if(h) return h;
     try{ if(localStorage.getItem("al-ov-mode")==="foryou") return "foryou"; }catch{}
     return "overview"; });
-  const[loopholeMounted,setLoopholeMounted]=useState(()=>(location.hash?.slice(1)||"overview")==="loophole");
+  const[pageParams,setPageParams]=useState(()=>parseHash().prm);
+  const[loopholeMounted,setLoopholeMounted]=useState(()=>(parseHash().p||"overview")==="loophole");
   // ИИ-аналитик живёт в фоне: страница не размонтируется при уходе на другие
   // вкладки — прогон продолжается, по завершении сигналим точкой в rail и тостом.
-  const[aiMounted,setAiMounted]=useState(()=>(location.hash?.slice(1)||"overview")==="ai");
+  const[aiMounted,setAiMounted]=useState(()=>(parseHash().p||"overview")==="ai");
   const[aiBusy,setAiBusy]=useState(false);
   const[aiReady,setAiReady]=useState(false);
   const aiPrevRun=useRef(false);
@@ -5425,11 +5600,16 @@ function Shell(){
   },[]); // eslint-disable-line
 
   useEffect(()=>{
-    const onHash=()=>setPage(location.hash?.slice(1)||"overview");
+    const onHash=()=>{const{p,prm}=parseHash();setPage(p||"overview");setPageParams(prm);};
     window.addEventListener("hashchange",onHash);
     return ()=>window.removeEventListener("hashchange",onHash);
   },[]);
-  useEffect(()=>{history.replaceState(null,"","#"+page);},[page]);
+  // пишем hash только если сменилась СТРАНИЦА — параметры (#market?cat=…)
+  // зеркалит сама страница, затирать их нельзя
+  useEffect(()=>{
+    const cur=(location.hash||"").slice(1).split("?")[0];
+    if((cur==="sber"?"market":cur)!==page)history.replaceState(null,"","#"+page);
+  },[page]);
   useEffect(()=>{if(page==="loophole")setLoopholeMounted(true);},[page]);
   useEffect(()=>{if(page==="ai"){setAiMounted(true);setAiReady(false);}
     pageCurRef.current=page;},[page]);
@@ -5579,7 +5759,7 @@ function Shell(){
           {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
             <PageBoundary pageKey="ai"><AIPage/></PageBoundary>
           </div>}
-          {page!=="loophole"&&page!=="ai"&&<PageBoundary pageKey={page}><Page key={page}/></PageBoundary>}
+          {page!=="loophole"&&page!=="ai"&&<PageBoundary pageKey={page}><Page key={page} params={pageParams}/></PageBoundary>}
           {aiReady&&page!=="ai"&&
             <div className="ai-ready" onClick={()=>{setAiReady(false);setPage("ai");}}>
               <span className="sp">✦</span> Отчёт готов — открыть

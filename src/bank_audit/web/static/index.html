@@ -1482,6 +1482,67 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .bf-news-t{font-size:12.5px;font-weight:500;line-height:1.4}
 .bf-news-s{font-size:11.5px;line-height:1.5;color:var(--ink-2);margin-top:3px}
 .bf-news-m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* ── «Позиция» (объединённый Рынок × Сбер), неймспейс mk- ─────────────────── */
+.mk-disc{font-size:12.5px;color:var(--ink-3);max-width:78ch;margin:8px 0 0;padding:8px 12px;border:1px solid var(--hair);border-left:2px solid var(--warn,#b48a2f);border-radius:4px;background:var(--surface)}
+.mk-strip{position:relative;height:30px;min-width:120px}
+.mk-strip-big{height:44px}
+.mk-strip .mk-iqr{position:absolute;top:50%;transform:translateY(-50%);height:12px;background:var(--hair);border-radius:3px}
+.mk-strip-big .mk-iqr{height:16px}
+.mk-strip .mk-med{position:absolute;top:50%;transform:translate(-50%,-50%);width:1.5px;height:22px;background:var(--ink-2)}
+.mk-strip-big .mk-med{height:30px}
+.mk-strip .mk-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:5px;height:5px;border-radius:50%;background:var(--ink-3);opacity:.55}
+.mk-strip-big .mk-dot{width:6px;height:6px}
+.mk-strip .mk-dot.sber{width:9px;height:9px;background:var(--accent);opacity:1;box-shadow:0 0 0 2px var(--surface);z-index:2}
+.mk-strip-big .mk-dot.sber{width:11px;height:11px}
+.mk-arow{display:grid;grid-template-columns:170px 1fr 170px 24px;gap:16px;align-items:center;width:100%;padding:13px 24px;border:0;border-bottom:1px solid var(--hair);background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.mk-arow:hover{background:var(--surface)}
+.mk-arow:last-child{border-bottom:0}
+.mk-an{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);letter-spacing:.02em;font-style:normal}
+.mk-anote{font-size:12px;color:var(--ink-4)}
+.mk-apos b{font-size:19px;font-weight:500;display:block}
+.mk-apos b.bad{color:var(--accent)}
+.mk-ago{color:var(--ink-4);font-size:15px;text-align:right}
+.mk-rk{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);margin-left:5px}
+.mk-rk.bad{color:var(--accent)}
+.mk-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px}
+.mk-kpi{padding:14px 18px}
+.mk-kpi b{font-family:Georgia,'Times New Roman',serif;font-size:24px;font-weight:500;display:block;line-height:1.15}
+.mk-kpi b small{font-size:12px;color:var(--ink-3);font-family:'JetBrains Mono',monospace}
+.mk-kpi b.bad{color:var(--accent)}
+.mk-kpi span{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.mk-noise{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.mk-sber-pin{display:flex;align-items:center;gap:12px;width:100%;padding:13px 24px;border:0;border-bottom:1px solid var(--hair);background:var(--accent-soft,rgba(200,50,30,.05));color:var(--ink);font:inherit;cursor:pointer}
+.mk-sber-pin:hover{filter:brightness(.985)}
+.mk-more{display:block;width:100%;border-radius:0;border-top:1px solid var(--hair)}
+.mk-click{cursor:pointer}
+.mk-chrow{display:grid;grid-template-columns:130px 1fr 200px;gap:14px;align-items:center;width:100%;padding:11px 24px;border:0;border-bottom:1px solid var(--hair);background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.mk-chrow:hover{background:var(--surface)}
+.mk-chrow:last-child{border-bottom:0}
+.mk-chrow.big .mk-chmove{font-weight:600}
+.mk-chrow.hl{box-shadow:inset 3px 0 0 var(--accent);background:var(--accent-soft,rgba(200,50,30,.05))}
+.mk-chdate{font-size:10.5px;color:var(--ink-3)}
+.mk-chbank{display:flex;align-items:center;gap:10px;min-width:0}
+.mk-chbank>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.mk-chmove{font-size:12.5px;text-align:right}
+.mk-chmove em{font-style:normal;margin-left:7px;font-size:11px}
+.mk-chmove em.up{color:var(--pos)}
+.mk-chmove em.dn{color:var(--accent)}
+.mk-pass{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+.mk-pass>div{border:1px solid var(--hair);border-radius:6px;padding:9px 12px}
+.mk-pass span{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:2px}
+.mk-pass b{font-size:14px;font-weight:500}
+.mk-pass i{display:block;margin-top:1px}
+.mk-stepw{border:1px solid var(--hair);border-radius:6px;padding:10px 12px 6px}
+.mk-steplbl{display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);margin-top:4px}
+.mk-dhrow{display:flex;justify-content:space-between;gap:12px;padding:6px 2px;border-bottom:1px solid var(--hair);font-size:12px}
+.mk-dhrow:last-child{border-bottom:0}
+.mk-dbtns{display:flex;gap:10px;margin-top:18px}
+@media(max-width:760px){
+  .mk-arow{grid-template-columns:1fr;gap:6px}
+  .mk-ago{display:none}
+  .mk-chrow{grid-template-columns:1fr;gap:4px}
+  .mk-chmove{text-align:left}
+}
 /* продуктовый чип новости («Ипотека», «Вклады»…) — детектор тегов, правка аналитиков */
 .bf-chip{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--hair-2);border-radius:3px;padding:1px 5px;line-height:1.5;white-space:nowrap}
 .bf-news-empty{padding:22px 16px;font-size:12.5px;color:var(--ink-3)}
