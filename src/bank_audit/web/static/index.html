@@ -76,6 +76,10 @@ input,select,textarea{font:inherit;color:inherit}
 .nav-item.active::before{content:"";position:absolute;left:-14px;top:8px;bottom:8px;width:2px;background:var(--ink);}
 .nav-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:auto}
 .nav-count{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3)}
+/* метка «beta» у вкладки в разработке — тише названия, но заметна */
+.nav-badge{margin-left:7px;font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--accent);border:1px solid color-mix(in oklab,var(--accent),transparent 60%);
+  border-radius:20px;padding:1px 5px;line-height:1.5;flex:0 0 auto}
 .rail-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--hair)}
 .user-chip{display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px}
 .avatar{width:28px;height:28px;border-radius:50%;background:var(--ink);color:var(--paper);display:grid;place-items:center;font-size:12px;font-weight:600}
@@ -1700,6 +1704,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-14"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-15"></script>
 </body>
 </html>

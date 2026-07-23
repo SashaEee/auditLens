@@ -5611,7 +5611,7 @@ const NAV=[
   {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
   {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
   {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Анализ"},
-  {id:"loophole",label:"Лазейки",     icon:Ic.shield, group:"Анализ"},
+  {id:"loophole",label:"Лазейки",     icon:Ic.shield, group:"Анализ", badge:"beta"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
 ];
@@ -6170,6 +6170,7 @@ function Shell(){
                 {n.label}
                 {dot&&<span className="nav-dot"/>}
                 {aiDot&&<span className={"nav-dot"+(aiBusy?" ai-run":" ai-done")}/>}
+                {n.badge&&<span className="nav-badge">{n.badge}</span>}
                 {count&&<span className="nav-count">{count}</span>}
               </button>;
             })}
