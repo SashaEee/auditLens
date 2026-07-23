@@ -1441,7 +1441,9 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .bf-t-sub{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);
   margin-top:5px;line-height:1.45}
 .bf-stampline{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);
-  margin:8px 0 0;display:flex;gap:6px;flex-wrap:wrap;align-items:baseline}
+  margin:8px 0 0;line-height:1.7}
+/* строка-штамп переносится КАК ТЕКСТ: при display:flex каждый разделитель «·»
+   становился отдельным элементом и отрывался на свою строку (мобилка) */
 .bf-stampline a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--hair-2)}
 .bf-stampline a:hover{color:var(--ink-2)}
 .bf-stampline a.warn,.bf-stampline .bf-stale{color:var(--warn)}
@@ -1642,6 +1644,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-7"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-8"></script>
 </body>
 </html>
