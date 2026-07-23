@@ -1023,6 +1023,135 @@ def quality():
 
 # ── sources / jobs ────────────────────────────────────────────────────────────
 
+# ── источники: каталог доверия и заявки от аудиторов ─────────────────────────
+
+@app.get("/api/sources/catalog")
+def sources_catalog():
+    """Какие источники и с каким доверием участвуют в каждом контуре."""
+    from . import sources_catalog as sc
+    return {"purposes": sc.catalog()}
+
+
+class SourceProposal(BaseModel):
+    purpose: str
+    url: str
+    title: Optional[str] = None
+    reason: Optional[str] = None
+
+
+@app.get("/api/sources/check")
+def sources_check(url: str, purpose: str, user: CurrentUser = Depends(get_current_user)):
+    """Проверка ДО отправки: валиден ли адрес, не используется ли уже,
+    не предлагали ли его раньше. Аудитор видит вердикт сразу, а не после
+    отправки формы."""
+    from . import sources_catalog as sc
+    dom = sc.normalize_domain(url)
+    if not dom or "." not in dom:
+        return {"ok": False, "state": "bad_url",
+                "message": "Не похоже на адрес сайта. Пример: cbr.ru или t.me/канал"}
+    if purpose not in sc.PURPOSE_IDS:
+        raise HTTPException(400, "неизвестный раздел")
+    used = sc.known_domains().get(purpose) or []
+    if dom in used:
+        return {"ok": False, "state": "already_used", "domain": dom,
+                "message": f"{dom} уже используется в этом разделе"}
+    other = [pid for pid, doms in sc.known_domains().items()
+             if pid != purpose and dom in doms]
+    row = q("""
+        SELECT status, created_at, proposer_name FROM source_proposal
+         WHERE purpose = :p AND domain = :d ORDER BY created_at DESC LIMIT 1
+    """, {"p": purpose, "d": dom})
+    if row and row[0]["status"] == "pending":
+        return {"ok": False, "state": "pending", "domain": dom,
+                "message": f"{dom} уже предложен и ждёт рассмотрения"}
+    if row and row[0]["status"] == "rejected":
+        return {"ok": True, "state": "was_rejected", "domain": dom,
+                "message": f"{dom} ранее отклоняли — опишите, что изменилось"}
+    msg = f"{dom} — новый источник для этого раздела"
+    if other:
+        from . import sources_catalog as _sc
+        names = ", ".join(next(x["title"] for x in _sc.PURPOSES if x["id"] == o)
+                          for o in other)
+        msg += f". Уже используется в разделе «{names}» — здесь будет отдельно"
+    return {"ok": True, "state": "new", "domain": dom, "message": msg}
+
+
+@app.post("/api/sources/propose")
+def sources_propose(req: SourceProposal, user: CurrentUser = Depends(get_current_user)):
+    from . import sources_catalog as sc
+    if req.purpose not in sc.PURPOSE_IDS:
+        raise HTTPException(400, "неизвестный раздел")
+    dom = sc.normalize_domain(req.url)
+    if not dom or "." not in dom:
+        raise HTTPException(400, "Не похоже на адрес сайта")
+    if dom in (sc.known_domains().get(req.purpose) or []):
+        raise HTTPException(409, f"{dom} уже используется в этом разделе")
+    try:
+        with db.session() as s:
+            pid = s.execute(text("""
+                INSERT INTO source_proposal(purpose, url, domain, title, reason,
+                                            proposed_by, proposer_name)
+                VALUES (:p, :u, :d, :t, :r, :by, :nm)
+                RETURNING proposal_id
+            """), {"p": req.purpose, "u": req.url.strip(), "d": dom,
+                   "t": (req.title or "").strip()[:200] or None,
+                   "r": (req.reason or "").strip()[:2000] or None,
+                   "by": user.username, "nm": user.name}).scalar_one()
+    except Exception as e:  # noqa: BLE001 — уникальный индекс по живым заявкам
+        if "source_proposal_pending_uniq" in str(e):
+            raise HTTPException(409, f"{dom} уже предложен и ждёт рассмотрения")
+        raise
+    log.info("source proposal #%s: %s → %s (%s)", pid, dom, req.purpose, user.username)
+    return {"ok": True, "proposal_id": pid, "domain": dom}
+
+
+@app.get("/api/sources/proposals")
+def sources_proposals(user: CurrentUser = Depends(get_current_user)):
+    """Свои заявки; владельцу — все, для рассмотрения."""
+    admin = telemetry.is_admin(user.username)
+    rows = q("""
+        SELECT proposal_id, purpose, url, domain, title, reason, status,
+               review_note, proposer_name, proposed_by, created_at, reviewed_at
+          FROM source_proposal
+         WHERE :admin OR proposed_by = :me
+         ORDER BY created_at DESC LIMIT 100
+    """, {"admin": admin, "me": user.username})
+    return {"proposals": rows, "is_admin": admin}
+
+
+class ProposalReview(BaseModel):
+    status: str                      # approved | rejected
+    note: Optional[str] = None
+
+
+@app.post("/api/sources/proposals/{pid}/review")
+def sources_review(pid: int, req: ProposalReview,
+                   user: CurrentUser = Depends(get_current_user)):
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "только владелец инструмента")
+    if req.status not in ("approved", "rejected"):
+        raise HTTPException(400, "статус: approved | rejected")
+    with db.session() as s:
+        row = s.execute(text("""
+            UPDATE source_proposal
+               SET status = :st, review_note = :n, reviewed_by = :by, reviewed_at = now()
+             WHERE proposal_id = :id
+            RETURNING purpose, domain, title
+        """), {"st": req.status, "n": (req.note or "").strip()[:1000] or None,
+               "by": user.username, "id": pid}).mappings().first()
+        if not row:
+            raise HTTPException(404, "заявка не найдена")
+        # одобренный веб-источник сразу получает вес доверия — попадёт в отчёты
+        if req.status == "approved" and row["purpose"] == "ai":
+            s.execute(text("""
+                INSERT INTO source_trust(kind, domain, weight, notes)
+                VALUES ('media', :d, 0.60, :n)
+                ON CONFLICT (kind, domain) DO NOTHING
+            """), {"d": row["domain"],
+                   "n": (row["title"] or "предложен аудитором") + " · одобрен"})
+    return {"ok": True}
+
+
 @app.get("/api/sources")
 def sources_status():
     from ..config import load_sources

@@ -1575,6 +1575,57 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
   .mk-chrow{grid-template-columns:1fr;gap:4px}
   .mk-chmove{text-align:left}
 }
+/* ── Источники: карта доверия для аудитора (src-) ─────────────────────────── */
+.src-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px}
+.src-card{padding:20px 22px}
+.src-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:12px}
+.src-lead{font-size:13.5px;color:var(--ink-2);margin:0;max-width:52ch}
+.src-count{font-size:10.5px;color:var(--ink-3);white-space:nowrap;padding-top:2px}
+.src-what{font-size:12.5px;color:var(--ink-2);line-height:1.55;margin-bottom:8px}
+.src-what b{color:var(--ink);font-weight:600}
+.src-list{margin:14px 0 4px;border-top:1px solid var(--hair)}
+.src-item{display:block;padding:9px 0;border-bottom:1px solid var(--hair);text-decoration:none;color:inherit}
+.src-item:hover{background:var(--surface)}
+.src-dom{display:flex;align-items:baseline;gap:8px;font-size:13.5px;font-weight:500;flex-wrap:wrap}
+.src-w{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
+  font-style:normal;border-radius:20px;padding:1px 7px;border:1px solid var(--hair-2);color:var(--ink-3)}
+.src-w.hi{border-color:color-mix(in oklab,var(--pos),transparent 55%);color:var(--pos)}
+.src-w.mid{border-color:var(--hair-2);color:var(--ink-2)}
+.src-w.lo{border-color:color-mix(in oklab,var(--warn),transparent 55%);color:var(--warn)}
+.src-meta{display:block;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);margin-top:2px}
+.src-ttl{display:block;font-size:11.5px;color:var(--ink-3);margin-top:1px}
+.src-more{margin-top:10px}
+.src-req{margin-top:14px;border-top:1px solid var(--hair);padding-top:12px}
+.src-req>summary{cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10.5px;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--accent);list-style:none}
+.src-req>summary::-webkit-details-marker{display:none}
+.src-req>summary::before{content:"＋ ";font-family:inherit}
+.src-req[open]>summary::before{content:"− "}
+.src-req-list{margin:10px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-2);line-height:1.6}
+.src-req-list li{margin:3px 0}
+.src-req-list li::marker{color:var(--accent)}
+.src-form{margin-top:14px;padding-top:14px;border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:10px}
+.src-form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.src-form label,.src-form-full{display:flex;flex-direction:column;gap:4px}
+.src-form label>span{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3)}
+.src-form label>span i{font-style:normal;color:var(--ink-4);text-transform:none;letter-spacing:0}
+.src-form textarea.input{height:auto;padding:9px 12px;line-height:1.5;resize:vertical;font-family:inherit}
+.src-check{font-size:12px;padding:7px 11px;border-radius:6px;border:1px solid var(--hair-2)}
+.src-check.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
+.src-check.bad{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
+.src-form-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.src-done{margin-top:14px;padding:14px 16px;border-radius:8px;border:1px solid var(--hair-2);
+  border-left:3px solid var(--pos);background:var(--surface)}
+.src-done-t{font-weight:600;color:var(--pos);margin-bottom:5px}
+.src-done p{font-size:12.5px;color:var(--ink-2);margin:0 0 10px;max-width:60ch}
+.src-tech>summary{cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10.5px;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);list-style:none}
+.src-tech>summary::-webkit-details-marker{display:none}
+.src-tech>summary::before{content:"＋ ";}
+.src-tech[open]>summary::before{content:"− ";}
+@media(max-width:760px){.src-grid{grid-template-columns:1fr}.src-form-row{grid-template-columns:1fr}}
+
 /* ── Всплывашки: портал в body, fixed, поверх всего ────────────────────────
    Раньше попап жил внутри плитки и обрезался контейнером с overflow:hidden
    (полоса пульса, карточки), а hover-фильтры создавали конкурирующие слои. */
@@ -1649,6 +1700,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-11"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-12"></script>
 </body>
 </html>

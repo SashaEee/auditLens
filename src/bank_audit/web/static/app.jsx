@@ -4725,8 +4725,8 @@ function AlertsStatusBar(){
   </div>;
 }
 
-function SourcesPage(){
-  const[data,setData]=useState({runs:[],captcha_pending:[],configured:[]});
+function SourcesTech({data:extData}){
+  const[data,setData]=useState(extData||{runs:[],captcha_pending:[],configured:[]});
   const[loading,setLoading]=useState(true);
   const[starting,setStarting]=useState({});
   const[runningAll,setRunningAll]=useState(false);
@@ -4784,14 +4784,7 @@ function SourcesPage(){
     ...runs.map(r=>r.source),
   ])];
 
-  return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Источники · OpenClaw</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Запуски сбора и капчи</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Идемпотентный приём данных по sha256 снимка. Капча решается через кнопку ниже — откроется браузер с тем же профилем что используется для парсинга.
-      </p>
-    </header>
+  return <div>
 
     {captchas.map((c,i)=>{
       const st=solving[i];
@@ -4902,6 +4895,219 @@ function SourcesPage(){
 }
 
 // ─── QUALITY PAGE ─────────────────────────────────────────────────────────────
+
+// ─── ИСТОЧНИКИ — карта доверия для аудитора ──────────────────────────────────
+// Была техническая консоль (прогоны сборщиков, капчи). Аудитору нужно понимать,
+// откуда взялась каждая цифра и насколько источнику доверяет инструмент, и уметь
+// предложить свой. Инженерная часть переехала под кат «Техническое состояние».
+
+const SRC_STATUS_RU={pending:"на рассмотрении",approved:"одобрен",rejected:"отклонён"};
+
+function SrcProposeForm({purpose,onDone}){
+  const[url,setUrl]=useState("");
+  const[title,setTitle]=useState("");
+  const[reason,setReason]=useState("");
+  const[check,setCheck]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const[done,setDone]=useState(null);
+  const[err,setErr]=useState(null);
+
+  // проверка ДО отправки: занят ли домен, не предлагали ли раньше
+  useEffect(()=>{
+    if(!url.trim()){setCheck(null);return;}
+    const t=setTimeout(()=>{
+      apiFetch(`/api/sources/check?purpose=${purpose.id}&url=${encodeURIComponent(url.trim())}`)
+        .then(setCheck).catch(()=>setCheck(null));
+    },450);
+    return()=>clearTimeout(t);
+  },[url,purpose.id]);
+
+  const submit=async()=>{
+    setBusy(true);setErr(null);
+    try{
+      const r=await apiPost("/api/sources/propose",
+        {purpose:purpose.id,url:url.trim(),title:title.trim(),reason:reason.trim()});
+      setDone(r);setUrl("");setTitle("");setReason("");setCheck(null);
+      if(onDone)onDone();
+    }catch(e){ setErr(e.message||"не удалось отправить"); }
+    setBusy(false);
+  };
+
+  if(done)return <div className="src-done">
+    <div className="src-done-t">Заявка принята — {done.domain}</div>
+    <p>Команда рассмотрит источник. При одобрении вы увидите его
+      {purpose.id==="ai"?" в новых отчётах ИИ-аналитика"
+        :purpose.id==="digest"?" в новых утренних выпусках"
+        :purpose.id==="reviews"?" в анализе отзывов после следующего сбора"
+        :" в витрине тарифов после следующего сбора"}.
+      Статус заявки виден ниже на этой странице.</p>
+    <button className="btn btn-ghost btn-sm" onClick={()=>setDone(null)}>Предложить ещё один</button>
+  </div>;
+
+  const bad=check&&!check.ok;
+  return <div className="src-form">
+    <div className="src-form-row">
+      <label>
+        <span>Адрес источника</span>
+        <input className="input" value={url} placeholder="cbr.ru или t.me/канал"
+               onChange={e=>setUrl(e.target.value)}/>
+      </label>
+      <label>
+        <span>Название <i>необязательно</i></span>
+        <input className="input" value={title} placeholder="Как его называть"
+               onChange={e=>setTitle(e.target.value)}/>
+      </label>
+    </div>
+    {check&&<div className={"src-check "+(bad?"bad":"ok")}>
+      {bad?"⚠ ":"✓ "}{check.message}</div>}
+    <label className="src-form-full">
+      <span>Чем полезен аудиту</span>
+      <textarea className="input" rows={3} value={reason}
+        placeholder="Например: публикует предписания ЦБ раньше агрегаторов; нужен для проверки сроков реагирования"
+        onChange={e=>setReason(e.target.value)}/>
+    </label>
+    {err&&<div className="src-check bad">⚠ {err}</div>}
+    <div className="src-form-foot">
+      <button className="btn btn-primary btn-sm" disabled={busy||!url.trim()||bad}
+              onClick={submit}>{busy?"Отправляю…":"Отправить на рассмотрение"}</button>
+      <span className="t-cap">Перед отправкой сверьтесь с требованиями выше</span>
+    </div>
+  </div>;
+}
+
+function SrcPurpose({p,openForm,setOpenForm,onProposed}){
+  const[showAll,setShowAll]=useState(false);
+  const list=showAll?p.sources:(p.sources||[]).slice(0,8);
+  const open=openForm===p.id;
+  return <section className="surface src-card">
+    <div className="src-head">
+      <div>
+        <div className="eyebrow" style={{marginBottom:4}}>{p.title}</div>
+        <p className="src-lead">{p.lead}</p>
+      </div>
+      <span className="src-count mono">{p.n} источн.</span>
+    </div>
+
+    <div className="src-what"><b>Где используется.</b> {p.what_for}</div>
+    <div className="src-what"><b>Как учитывается доверие.</b> {p.trust_note}</div>
+
+    {(p.sources||[]).length>0&&<div className="src-list">
+      {list.map((s,i)=><a key={i} className="src-item" href={s.url}
+                          target="_blank" rel="noopener noreferrer">
+        <span className="src-dom">{s.domain}
+          {s.weight!=null&&<i className={"src-w "+(s.weight>=0.9?"hi":s.weight>=0.7?"mid":"lo")}>
+            {s.band} · {s.weight}</i>}</span>
+        <span className="src-meta">{s.role}{s.kind?` · ${s.kind}`:""}
+          {s.coverage?` · ${s.coverage}`:""}</span>
+        <span className="src-ttl">{s.title!==s.domain?s.title:""}</span>
+      </a>)}
+      {(p.sources||[]).length>8&&<button className="btn btn-ghost btn-sm src-more"
+        onClick={()=>setShowAll(v=>!v)}>
+        {showAll?"Свернуть":`Показать все ${p.n}`}</button>}
+    </div>}
+
+    <details className="src-req" open={open}>
+      <summary onClick={e=>{e.preventDefault();setOpenForm(open?null:p.id);}}>
+        Требования к источнику для этого раздела
+      </summary>
+      <ul className="src-req-list">
+        {(p.requirements||[]).map((r,i)=><li key={i}>{r}</li>)}
+      </ul>
+      {p.examples&&<div className="t-cap" style={{marginTop:8}}>Примеры подходящих: {p.examples}</div>}
+      <SrcProposeForm purpose={p} onDone={onProposed}/>
+    </details>
+  </section>;
+}
+
+function SourcesPage(){
+  const[cat,setCat]=useState(null);
+  const[props_,setProps]=useState(null);
+  const[openForm,setOpenForm]=useState(null);
+  const[tech,setTech]=useState(null);
+  const[techOpen,setTechOpen]=useState(false);
+  const[err,setErr]=useState(null);
+  const me=useContext(MeCtx);
+
+  const loadProps=()=>apiFetch("/api/sources/proposals").then(setProps).catch(()=>{});
+  useEffect(()=>{
+    apiFetch("/api/sources/catalog").then(setCat).catch(e=>setErr(e.message));
+    loadProps();
+  },[]);
+  useEffect(()=>{ if(techOpen&&!tech)apiFetch("/api/sources").then(setTech).catch(()=>{}); },[techOpen,tech]);
+
+  const review=async(id,status)=>{
+    const note=status==="rejected"?prompt("Причина отклонения (увидит автор):")||"":"";
+    await apiPost(`/api/sources/proposals/${id}/review`,{status,note});
+    loadProps();
+  };
+
+  if(err)return <ErrState msg={err}/>;
+  if(!cat)return <LoadingPage/>;
+
+  const mine=(props_&&props_.proposals)||[];
+  const isAdmin=!!(props_&&props_.is_admin);
+
+  return <div className="fade-in">
+    <header style={{marginBottom:22}}>
+      <div className="eyebrow" style={{marginBottom:6}}>§ Источники · доверие и покрытие</div>
+      <h1 className="t-h" style={{marginBottom:6}}>Откуда инструмент берёт данные</h1>
+      <p className="t-cap" style={{maxWidth:"74ch"}}>
+        Для каждого раздела — свой набор источников и своя планка доверия. Здесь видно,
+        кто участвует в выводах, и можно предложить источник, которого не хватает:
+        требования к нему у каждого раздела отдельные.
+      </p>
+    </header>
+
+    <div className="src-grid">
+      {(cat.purposes||[]).map(p=>
+        <SrcPurpose key={p.id} p={p} openForm={openForm} setOpenForm={setOpenForm}
+                    onProposed={loadProps}/>)}
+    </div>
+
+    {mine.length>0&&<section className="surface src-card" style={{marginTop:18}}>
+      <div className="eyebrow" style={{marginBottom:10}}>
+        {isAdmin?"Заявки на источники — все":"Мои заявки"}</div>
+      <table className="m-cards">
+        <thead><tr><th>Источник</th><th>Раздел</th><th>Статус</th>
+          {isAdmin&&<th>Автор</th>}<th></th></tr></thead>
+        <tbody>{mine.map(p=>{
+          const pur=(cat.purposes||[]).find(x=>x.id===p.purpose);
+          return <tr key={p.proposal_id}>
+            <td className="m-primary" data-label="Источник">
+              <div style={{fontWeight:500}}>{p.domain}</div>
+              {p.title&&<div className="t-cap" style={{fontSize:11}}>{p.title}</div>}
+              {p.review_note&&<div className="t-cap" style={{fontSize:11,color:"var(--accent)"}}>
+                {p.review_note}</div>}
+            </td>
+            <td data-label="Раздел">{pur?pur.title:p.purpose}</td>
+            <td data-label="Статус">
+              <span className={"badge "+(p.status==="approved"?"pos":p.status==="rejected"?"neg":"warn")}>
+                {SRC_STATUS_RU[p.status]||p.status}</span>
+              <div className="t-cap" style={{fontSize:10.5}}>{fmtDateMsk(p.created_at)}</div>
+            </td>
+            {isAdmin&&<td data-label="Автор" className="t-cap">{p.proposer_name||p.proposed_by}</td>}
+            <td className="right">
+              {isAdmin&&p.status==="pending"&&<div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                <button className="btn btn-ghost btn-sm" onClick={()=>review(p.proposal_id,"approved")}>Одобрить</button>
+                <button className="btn btn-ghost btn-sm" onClick={()=>review(p.proposal_id,"rejected")}>Отклонить</button>
+              </div>}
+            </td>
+          </tr>;})}
+        </tbody>
+      </table>
+    </section>}
+
+    <details className="surface src-card src-tech" open={techOpen}
+             onToggle={e=>setTechOpen(e.target.open)} style={{marginTop:18}}>
+      <summary>Техническое состояние сборщиков</summary>
+      <p className="t-cap" style={{margin:"6px 0 12px"}}>
+        Для инженерной проверки: расписание, последние прогоны, ручной запуск.
+        Данные обновляются автоматически — вмешательство обычно не требуется.</p>
+      {!tech?<Skel h={80}/>:<SourcesTech data={tech}/>}
+    </details>
+  </div>;
+}
+
 function QualityPage(){
   const[data,setData]=useState(null);
   const[loading,setLoading]=useState(true);
