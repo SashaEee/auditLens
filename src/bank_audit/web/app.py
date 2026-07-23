@@ -1971,12 +1971,10 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     и (для содержательных ответов) отчёт. Копим так же, как фронт: text-чанки +
     report_replace (перекрывает) + sources.
     """
-    # Помечаем разбор: страницы, которые агент прочитает по дороге, лягут в базу
-    # знаний с отметкой, из чьего отчёта и по какому вопросу они там появились.
-    # report_id сейчас ещё не существует — отчёт сохраняется в самом конце, —
-    # поэтому связываем по run_id и проставляем report_id постфактум.
-    run_id = runctx.set_origin(kind="report", username=username,
-                               session_id=session_id, question=question)
+    # Метка разбора уже поставлена эндпоинтом — здесь только запоминаем её,
+    # чтобы в конце привязать сохранённый отчёт к прочитанным страницам
+    # (в момент чтения номера отчёта ещё не существует).
+    run_id = runctx.current_run_id()
 
     # Сразу отдаём фронту session_id, чтобы следующий вопрос продолжил эту сессию.
     yield json.dumps({"type": "session", "session_id": session_id}, ensure_ascii=False)
@@ -2097,6 +2095,12 @@ async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_u
         userdata.log_event(username, "ai_query", {"question": req.question, **signals})
     except Exception:
         log.warning("[ai_analyze] pre-persist failed", exc_info=True)
+
+    # Метку разбора ставим ЗДЕСЬ, до создания генератора: контекст задачи
+    # копируется в момент её создания, поэтому отметка, поставленная выше по
+    # стеку, доходит до всех порождённых задач — включая агентов deep-research.
+    run_id = runctx.set_origin(kind="report", username=username,
+                               session_id=session_id, question=req.question)
 
     inner = stream_analysis(req.question, req.history, force_deep=req.force_deep,
                             session_hint=(f"{user.username}-{session_id}"

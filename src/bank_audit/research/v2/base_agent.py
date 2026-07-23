@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -618,7 +619,13 @@ class BaseAgent:
             return json.dumps({"error": f"unknown tool {name}"})
         loop = asyncio.get_event_loop()
         try:
-            result = await loop.run_in_executor(None, tool.fn, args, self.bundle)
+            # copy_context обязателен: run_in_executor не переносит contextvars
+            # в рабочий поток. Без него инструмент не знает, чей это разбор, и
+            # прочитанные им страницы ложатся в базу знаний без привязки к
+            # отчёту — аудитор не увидит, откуда документ там взялся.
+            ctx = contextvars.copy_context()
+            result = await loop.run_in_executor(
+                None, lambda: ctx.run(tool.fn, args, self.bundle))
             # Обрезаем длинные tool-результаты (контекст LLM). Для read_url —
             # потолок выше (18000): финальное извлечение фактов на сильной модели
             # (FINAL_MODEL_TIER=smart у researcher) идёт из истории сообщений, и
