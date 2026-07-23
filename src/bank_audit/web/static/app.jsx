@@ -1367,7 +1367,7 @@ function OverviewPage(){
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {refreshing?
             <span className="bf-live"><span className="dot"/>обновляется…</span>:
-            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до 07:00 МСК</span>}
+            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до {String((d.meta&&d.meta.digest_hour_msk)??7).padStart(2,"0")}:00 МСК</span>}
           <button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
             title="Перегенерировать выпуск">⟳</button>
         </div>
@@ -1681,6 +1681,7 @@ function MarketPage({params}){
   const[meta,setMeta]=useState(null);
   const[atlas,setAtlas]=useState(null);
   const[sum,setSum]=useState(null);
+  const[sch,setSch]=useState(null);
   const[offers,setOffers]=useState(null);
   const[moreBusy,setMoreBusy]=useState(false);
   const[changes,setChanges]=useState(null);
@@ -1716,8 +1717,9 @@ function MarketPage({params}){
 
   useEffect(()=>{
     Promise.all([apiFetch("/api/meta/categories"),apiFetch("/api/market/atlas"),
-                 apiFetch("/api/summary").catch(()=>null)])
-      .then(([m,a,s])=>{setMeta(m);setAtlas(a);setSum(s);})
+                 apiFetch("/api/summary").catch(()=>null),
+                 apiFetch("/api/meta/schedule").catch(()=>null)])
+      .then(([m,a,s,sc])=>{setMeta(m);setAtlas(a);setSum(s);setSch(sc);})
       .catch(e=>setErr(e.message));
   },[]);
 
@@ -1778,7 +1780,10 @@ function MarketPage({params}){
       <div className="eyebrow" style={{marginBottom:6}}>§ Рынок · позиция объекта аудита</div>
       <h1 className="t-h" style={{marginBottom:6}}>Позиция Сбера на рынке</h1>
       <p className="t-cap" style={{maxWidth:"72ch"}}>
-        {sum?`${sum.offers} офферов · ${sum.banks} банков · сбор ежедневно 05:00 МСК${sum.last_run?` · срез ${fmtDateMsk(sum.last_run)}`:""}`:"…"}
+        {sum?`${sum.offers} офферов · ${sum.banks} банков`:"…"}
+        {sch&&sch.enabled?` · автосбор ежедневно ${String(sch.ingest_hour_msk).padStart(2,"0")}:00 МСК`:sch?" · автосбор выключен":""}
+        {sum&&sum.last_run?` · срез ${fmtDateMsk(sum.last_run)}`:""}
+        {sch&&sch.stale&&<span className="mk-stale" title={`последний успешный сбор ${sch.last_ok_age_h!=null?sch.last_ok_age_h+" ч назад":"не зафиксирован"}; сторож догонит автоматически`}> · ⚠ данные устарели</span>}
       </p>
       <p className="mk-disc">Сравнение внутри сопоставимой выборки: ₽, лучший оффер банка, без промо-строк рейтингов. Для кредитных продуктов ниже ставка = лучше позиция. Наведите на любую цифру — покажем, как она посчитана.</p>
     </header>

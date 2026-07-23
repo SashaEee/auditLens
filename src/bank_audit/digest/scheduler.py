@@ -27,11 +27,18 @@ log = logging.getLogger(__name__)
 GEN_HOUR = int(os.getenv("DIGEST_GEN_HOUR_MSK", "7"))
 INGEST_HOUR = int(os.getenv("INGEST_HOUR_MSK", "5"))
 INGEST_DAILY = os.getenv("INGEST_DAILY", "1") == "1"
+# Сторож свежести: если последний УСПЕШНЫЙ сбор был давнее — догоняем сразу,
+# в любой час. Без него простой VM в 05:00 означал сутки протухших данных
+# (окно catch-up было жёстко [INGEST_HOUR, +4ч)).
+INGEST_MAX_STALE_H = int(os.getenv("INGEST_MAX_STALE_H", "26"))
+WATCHDOG_EVERY_S = int(os.getenv("INGEST_WATCHDOG_EVERY_S", "3600"))
 # lazy-прогоны не чаще раза в N секунд: одна перманентно падающая секция иначе
 # гоняла бы регенерацию по кругу (каждый GET с поллинга)
 LAZY_COOLDOWN_S = int(os.getenv("DIGEST_LAZY_COOLDOWN_S", "600"))
 
 _proc_lock = asyncio.Lock()
+# отметка последнего тика сторожа: доказательство, что цикл РАБОТАЕТ
+_watchdog_tick: datetime | None = None
 
 
 def _today_msk() -> date:
@@ -122,6 +129,42 @@ def _ingest_ran_today() -> bool:
     return bool(row and int(row) > 0)
 
 
+def last_ok_ingest_age_h() -> float | None:
+    """Часы с последнего успешного сбора тарифов (None — не было никогда)."""
+    with db.session() as s:
+        v = s.execute(text("""
+            SELECT extract(epoch FROM now() - max(finished_at)) / 3600.0
+              FROM extraction_run
+             WHERE status = 'ok' AND finished_at IS NOT NULL
+               AND source LIKE 'sravni%'
+        """)).scalar()
+    return float(v) if v is not None else None
+
+
+def ingest_schedule() -> dict:
+    """Реальное расписание и свежесть — источник правды для UI (без хардкода)."""
+    now = datetime.now(MSK)
+    nxt = now.replace(hour=INGEST_HOUR, minute=0, second=0, microsecond=0)
+    if nxt <= now:
+        nxt += timedelta(days=1)
+    age = last_ok_ingest_age_h()
+    tick_age = ((now - _watchdog_tick).total_seconds()
+                if _watchdog_tick else None)
+    return {
+        "enabled": INGEST_DAILY,
+        # сторож считается живым, если тикал не позже двух интервалов назад
+        "watchdog_alive": bool(tick_age is not None
+                               and tick_age < WATCHDOG_EVERY_S * 2 + 300),
+        "watchdog_last_tick": _watchdog_tick.isoformat() if _watchdog_tick else None,
+        "ingest_hour_msk": INGEST_HOUR,
+        "digest_hour_msk": GEN_HOUR,
+        "max_stale_h": INGEST_MAX_STALE_H,
+        "next_run_msk": nxt.isoformat(),
+        "last_ok_age_h": round(age, 1) if age is not None else None,
+        "stale": bool(age is None or age > INGEST_MAX_STALE_H),
+    }
+
+
 def _captcha_pending() -> bool:
     """Решается капча (in-process флаг веб-слоя) → сбор не запускаем.
     Lazy-импорт: web.app сам импортирует scheduler (иначе цикл)."""
@@ -178,25 +221,36 @@ async def ingest_background_loop():
         log.info("daily ingest: выключен (INGEST_DAILY=0)")
         return
     await asyncio.sleep(120)
-    try:
-        # catch-up ТОЛЬКО в окне [INGEST_HOUR, +4ч): рестарт/деплой посреди
-        # рабочего дня не должен внезапно запускать полный сбор (браузер, капчи).
-        # Первый сбор после дневного деплоя случится завтра в INGEST_HOUR — или
-        # вручную кнопкой «Запустить весь сбор».
-        now_h = datetime.now(MSK).hour
-        if INGEST_HOUR <= now_h < INGEST_HOUR + 4 and not (
-                await asyncio.to_thread(_ingest_ran_today)):
-            await asyncio.to_thread(_run_ingest_all)
-    except Exception as e:  # noqa: BLE001
-        log.warning("daily ingest catch-up failed: %s", e)
+    log.info("daily ingest: расписание %02d:00 МСК, сторож свежести %d ч",
+             INGEST_HOUR, INGEST_MAX_STALE_H)
+
+    async def _maybe_run(reason: str) -> None:
+        if await asyncio.to_thread(_ingest_ran_today):
+            return
+        log.info("daily ingest: старт (%s)", reason)
+        await asyncio.to_thread(_run_ingest_all)
+
+    global _watchdog_tick
     while True:
-        now = datetime.now(MSK)
-        nxt = now.replace(hour=INGEST_HOUR, minute=0, second=0, microsecond=0)
-        if nxt <= now:
-            nxt += timedelta(days=1)
-        await asyncio.sleep((nxt - now).total_seconds())
         try:
-            if not await asyncio.to_thread(_ingest_ran_today):
-                await asyncio.to_thread(_run_ingest_all)
+            now = datetime.now(MSK)
+            _watchdog_tick = now
+            nxt = now.replace(hour=INGEST_HOUR, minute=0, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            # ежедневный слот наступил → собираем; иначе просыпаемся раз в час
+            # и проверяем СВЕЖЕСТЬ: простой VM/деплой в час сбора больше не
+            # означает сутки протухших данных
+            wait = min((nxt - now).total_seconds(), WATCHDOG_EVERY_S)
+            await asyncio.sleep(wait)
+
+            now = datetime.now(MSK)
+            if now >= nxt or (now.hour == INGEST_HOUR):
+                await _maybe_run("плановый слот")
+                continue
+            age = await asyncio.to_thread(last_ok_ingest_age_h)
+            if age is None or age > INGEST_MAX_STALE_H:
+                await _maybe_run(f"данные устарели ({age and round(age)} ч)")
         except Exception as e:  # noqa: BLE001
-            log.warning("daily ingest failed: %s", e)
+            log.warning("daily ingest loop failed: %s", e)
+            await asyncio.sleep(300)

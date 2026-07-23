@@ -32,6 +32,15 @@ db.init(settings)
 
 log = logging.getLogger(__name__)
 
+# LOG_LEVEL был в .env, но логирование нигде не настраивалось: все log.info
+# приложения (старт автосбора, протухание, url-check, дайджест) уходили в
+# никуда — автоматика была чёрным ящиком. Настраиваем один раз на старте.
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -451,6 +460,10 @@ async def overview_digest(date: Optional[str] = None):
         if not complete and lazy_allowed():
             asyncio.create_task(ensure_digest("lazy"))     # не ждём
             doc["meta"]["refreshing"] = True
+    # часы расписания — в meta, чтобы UI не хардкодил «до 07:00 МСК»
+    from ..digest.scheduler import GEN_HOUR, INGEST_HOUR
+    doc["meta"]["digest_hour_msk"] = GEN_HOUR
+    doc["meta"]["ingest_hour_msk"] = INGEST_HOUR
     return doc
 
 
@@ -576,6 +589,18 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
          ORDER BY {order}
          LIMIT :l OFFSET :off
     """, params)
+
+
+@app.get("/api/meta/schedule")
+def meta_schedule():
+    """Реальное расписание автообновления + свежесть данных.
+    UI берёт часы отсюда, а не хардкодом: смена INGEST_HOUR_MSK в env
+    сразу отражается в интерфейсе."""
+    from ..digest.scheduler import ingest_schedule
+    sch = ingest_schedule()
+    sch["last_run"] = scalar(
+        "SELECT max(finished_at) FROM extraction_run WHERE status='ok'")
+    return sch
 
 
 @app.get("/api/meta/categories")
