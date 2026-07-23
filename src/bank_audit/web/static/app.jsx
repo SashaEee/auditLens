@@ -5348,7 +5348,9 @@ function KbCasePicker({doc,onDone}){
   const[note,setNote]=useState("");
   const[done,setDone]=useState(null);
   const load=()=>apiFetch("/api/cases").then(d=>setCases(d.cases||[])).catch(()=>setCases([]));
-  useEffect(load,[]);
+  // именно ()=>{load()}, а не useEffect(load,[]): load возвращает промис,
+  // и React принял бы его за функцию очистки — падение при уходе со страницы
+  useEffect(()=>{load();},[]);
 
   const attach=async(caseId)=>{
     await apiPost(`/api/cases/${caseId}/items`,{kind:"document",ref_id:doc.document_id,
@@ -5515,7 +5517,9 @@ function KbCases({onClose,onOpenDoc}){
   const[open,setOpen]=useState(null);
   const[cur,setCur]=useState(null);
   const load=()=>apiFetch("/api/cases").then(d=>setList(d.cases||[])).catch(()=>setList([]));
-  useEffect(load,[]);
+  // именно ()=>{load()}, а не useEffect(load,[]): load возвращает промис,
+  // и React принял бы его за функцию очистки — падение при уходе со страницы
+  useEffect(()=>{load();},[]);
   useEffect(()=>{ if(open)apiFetch(`/api/cases/${open}`).then(setCur).catch(()=>{}); },[open]);
 
   const drop=async(itemId)=>{
