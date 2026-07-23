@@ -18,7 +18,7 @@ from .rules import BANK_ALIASES, SBER_SLUGS, normalize_bank_key
 NORMALIZE_FIELDS = (
     "rate_pct", "rate_kind", "currency",
     "amount_min", "amount_max", "term_months_min", "term_months_max",
-    "fee_open", "fee_service",
+    "fee_open", "fee_service", "grace_days", "cashback_pct",
     "early_withdraw", "capitalization", "replenishable",
     "conditions",
 )
@@ -116,9 +116,10 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
         INSERT INTO product_terms(
             offer_id, rate_pct, rate_kind, currency,
             amount_min, amount_max, term_months_min, term_months_max,
-            fee_open, fee_service, early_withdraw, capitalization, replenishable,
+            fee_open, fee_service, grace_days, cashback_pct,
+            early_withdraw, capitalization, replenishable,
             conditions, raw, source_snapshot_id, filter_context_id, digest)
-        VALUES (:o,:r,:rk,:cur,:amn,:amx,:tmn,:tmx,:fo,:fs,:ew,:cap,:rep,
+        VALUES (:o,:r,:rk,:cur,:amn,:amx,:tmn,:tmx,:fo,:fs,:gd,:cb,:ew,:cap,:rep,
                 :cond, CAST(:raw AS jsonb), :ssid, :fid, :dg)
         RETURNING terms_id
     """), {
@@ -126,6 +127,7 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
         "amn": d.amount_min, "amx": d.amount_max,
         "tmn": d.term_months_min, "tmx": d.term_months_max,
         "fo": d.fee_open, "fs": d.fee_service,
+        "gd": d.grace_days, "cb": d.cashback_pct,
         "ew": d.early_withdraw, "cap": d.capitalization, "rep": d.replenishable,
         "cond": d.conditions, "raw": json.dumps(d.raw, ensure_ascii=False, default=str),
         "ssid": snapshot_id, "fid": source_page_id, "dg": new_digest,
@@ -136,6 +138,7 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
         prev = session.execute(text("""
             SELECT rate_pct, rate_kind, currency, amount_min, amount_max,
                    term_months_min, term_months_max, fee_open, fee_service,
+                   grace_days, cashback_pct,
                    early_withdraw, capitalization, replenishable, conditions
               FROM product_terms WHERE terms_id=:t
         """), {"t": cur[0]}).mappings().one()
@@ -144,6 +147,7 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
             "amount_min": d.amount_min, "amount_max": d.amount_max,
             "term_months_min": d.term_months_min, "term_months_max": d.term_months_max,
             "fee_open": d.fee_open, "fee_service": d.fee_service,
+            "grace_days": d.grace_days, "cashback_pct": d.cashback_pct,
             "early_withdraw": d.early_withdraw, "capitalization": d.capitalization,
             "replenishable": d.replenishable, "conditions": d.conditions,
         }
@@ -151,7 +155,7 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
         # — не событие; она давала ~12k мусорных строк/нед («14 тыс. изменений»
         # из фидбека аналитиков). Числовые поля сравниваем с допуском.
         _num_eps = {"rate_pct": 0.01, "fee_open": 0.5, "fee_service": 0.5,
-                    "amount_min": 1.0, "amount_max": 1.0}
+                    "amount_min": 1.0, "amount_max": 1.0, "cashback_pct": 0.05}
 
         def _same(k, a, b):
             if a is None or b is None:

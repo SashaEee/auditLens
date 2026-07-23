@@ -47,6 +47,13 @@ _SRAVNI_CAT_PATH = {
     "auto_loan": "avtokredity/", "microloan": "zaimy/",
 }
 
+# Пути продуктовых разделов НА СТРАНИЦЕ БАНКА (sravni.ru/bank/<alias>/<...>/)
+_SRAVNI_BANK_PATH = {
+    "deposit": "vklady/", "mortgage": "ipoteka/", "credit": "kredity/",
+    "card_credit": "credit-cards/", "card_debit": "debetovye-karty/",
+    "auto_loan": "avtokredity/",
+}
+
 _CAT_MAP = {
     # ── Розница: вклады/кредиты/ипотека/карты/авто ─────────────────────────
     "deposit": {
@@ -162,6 +169,38 @@ def _add_query(url: str, key: str, value: Any) -> str:
     return f"{url}{sep}{key}={value}"
 
 
+def _card_metrics(item: dict) -> dict:
+    """Сопоставимые метрики карт из выдачи sravni (аудит 23.07.2026).
+
+    У карт нет «ставки» как класса, поэтому сравниваем то, что реально есть
+    у 100% офферов: стоимость обслуживания, приведённую к рублям в ГОД
+    (frequencyNew: month ×12, year как есть, lumpSum — разовая плата за
+    выпуск → fee_open, не годовая), грейс кредиток и максимальный кешбэк.
+    maintenancePriceSS — безусловная цена; maintenancePrice — льготная
+    «при выполнении условий», кладём в raw как справочную.
+    """
+    price_ss = _dec(item.get("maintenancePriceSS"))
+    freq = str(item.get("frequencyNew") or "").strip()
+    fee_service = fee_open = None
+    if price_ss is not None:
+        if freq == "month":
+            fee_service = price_ss * 12
+        elif freq == "year":
+            fee_service = price_ss
+        else:
+            # lumpSum — плата разовая (за выпуск), регулярной НЕТ: годовое
+            # обслуживание = 0, а не «неизвестно». 63% карт витрины именно
+            # такие — иначе метрика выглядела бы полупустой (аудит 23.07.2026)
+            fee_open = price_ss
+            fee_service = Decimal(0)
+    grace = _to_int(item.get("interestFreePeriodPurchase"))
+    cashback = _dec(item.get("sortCashback"))
+    if cashback is None:           # часть карт даёт бонусы вместо кешбэка
+        cashback = _dec(item.get("sortBonusPercentMax"))
+    return {"fee_service": fee_service, "fee_open": fee_open,
+            "grace_days": grace, "cashback_pct": cashback}
+
+
 class SravniApiAdapter(SourceAdapter):
     """HTTP-адаптер для sravni.ru с полной пагинацией."""
 
@@ -185,11 +224,20 @@ class SravniApiAdapter(SourceAdapter):
         cat_cfg  = _CAT_MAP.get(category, _CAT_MAP["deposit"])
         fc       = target.get("filter_context", {})
 
-        base_url = cat_cfg["url_tpl"].format(
-            amount=fc.get("amount", 100000),
-            period=fc.get("period_months", 12),
-            region=fc.get("region", "msk"),
-        )
+        # bank= в filter_context → страница конкретного банка вместо витрины:
+        # витрина отдаёт только top-N рынка, а аудитору нужны ВСЕ продукты
+        # ключевых банков (Сбер и конкуренты) — у по-банковых страниц тот же
+        # redux-путь products.list.offers (проверено 23.07.2026)
+        bank = fc.get("bank")
+        if bank and category in _SRAVNI_BANK_PATH:
+            base_url = (f"https://www.sravni.ru/bank/{bank}/"
+                        f"{_SRAVNI_BANK_PATH[category]}")
+        else:
+            base_url = cat_cfg["url_tpl"].format(
+                amount=fc.get("amount", 100000),
+                period=fc.get("period_months", 12),
+                region=fc.get("region", "msk"),
+            )
 
         client   = self._get_client()
         strategy = cat_cfg["strategy"]
@@ -604,6 +652,8 @@ class SravniApiAdapter(SourceAdapter):
             else:
                 url = "https://www.sravni.ru/" + _SRAVNI_CAT_PATH.get(category, "")
 
+            _cm = _card_metrics(item)
+
             yield OfferDraft(
                 bank_name_raw=bank_name,
                 category=category,
@@ -617,8 +667,18 @@ class SravniApiAdapter(SourceAdapter):
                 amount_max=sum_max,
                 term_months_min=term_min,
                 term_months_max=term_max,
+                fee_service=_cm.get("fee_service"),
+                fee_open=_cm.get("fee_open"),
+                grace_days=_cm.get("grace_days"),
+                cashback_pct=_cm.get("cashback_pct"),
                 raw={
                     "bank_alias":        bank_slug,
+                    "maintenance_price_promo": item.get("maintenancePrice"),
+                    "maintenance_frequency":   item.get("frequencyNew"),
+                    "balance_income_pct":      item.get("sortBalanceIncome"),
+                    "cashback_min_pct":        item.get("sortCashbackMin"),
+                    "limit_from":              item.get("limitFrom"),
+                    "limit_to":                item.get("limitTo"),
                     "is_sber":           is_sber,
                     "rate_psk_from":     item.get("ratePskFrom") or item.get("ratePskPurchaseFrom") or item.get("minPsk"),
                     "rate_psk_to":       item.get("ratePskTo")   or item.get("ratePskPurchaseTo")   or item.get("maxPsk"),
@@ -903,6 +963,7 @@ class SravniApiAdapter(SourceAdapter):
             if u_to == "years" and tmax:
                 tmax = int(tmax) * 12
 
+            _cm = _card_metrics(item)
             product_name = item.get("name") or category
             ext_id = stable_digest({
                 "bank": bank_name, "alias": bank_slug,
@@ -922,6 +983,10 @@ class SravniApiAdapter(SourceAdapter):
                 currency="RUB",
                 amount_min=amount_min,
                 amount_max=amount_max,
+                fee_service=_cm.get("fee_service"),
+                fee_open=_cm.get("fee_open"),
+                grace_days=_cm.get("grace_days"),
+                cashback_pct=_cm.get("cashback_pct"),
                 term_months_min=int(tmin) if tmin else None,
                 term_months_max=int(tmax) if tmax else None,
                 raw={

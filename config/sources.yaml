@@ -77,6 +77,103 @@ sravni_api:
     - { name: cards_debit_spb,  category: card_debit, max_pages: 1,
         filter_context: { region: sankt-peterburg } }
 
+
+    # ─── ПО-БАНКОВЫЕ СТРАНИЦЫ (аудит 23.07.2026): витрина отдаёт только top-N
+    #     рынка, поэтому продукты ключевых банков собираем напрямую с их страниц
+    #     sravni.ru/bank/<alias>/<раздел>/. Так в данные попадает, в частности,
+    #     ипотека Сбера, которой нет в общей витрине.
+    #     Вклады сюда НЕ входят: они собираются POST-API /proxy-deposits/, который
+    #     игнорирует URL страницы — по-банковый таргет тянул бы всю витрину заново.
+    - { name: bank_sber_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: sberbank-rossii, region: msk } }
+    - { name: bank_sber_cred, category: credit, max_pages: 1,
+        filter_context: { bank: sberbank-rossii, region: msk } }
+    - { name: bank_sber_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: sberbank-rossii, region: msk } }
+    - { name: bank_vtb_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: vtb, region: msk } }
+    - { name: bank_vtb_cred, category: credit, max_pages: 1,
+        filter_context: { bank: vtb, region: msk } }
+    - { name: bank_vtb_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: vtb, region: msk } }
+    - { name: bank_alfa_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: alfa-bank, region: msk } }
+    - { name: bank_alfa_cred, category: credit, max_pages: 1,
+        filter_context: { bank: alfa-bank, region: msk } }
+    - { name: bank_alfa_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: alfa-bank, region: msk } }
+    - { name: bank_gpb_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: gazprombank, region: msk } }
+    - { name: bank_gpb_cred, category: credit, max_pages: 1,
+        filter_context: { bank: gazprombank, region: msk } }
+    - { name: bank_gpb_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: gazprombank, region: msk } }
+    - { name: bank_rshb_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: rosselkhozbank, region: msk } }
+    - { name: bank_rshb_cred, category: credit, max_pages: 1,
+        filter_context: { bank: rosselkhozbank, region: msk } }
+    - { name: bank_rshb_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: rosselkhozbank, region: msk } }
+    - { name: bank_tbank_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: t-bank, region: msk } }
+    - { name: bank_tbank_cred, category: credit, max_pages: 1,
+        filter_context: { bank: t-bank, region: msk } }
+    - { name: bank_tbank_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: t-bank, region: msk } }
+    - { name: bank_psb_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: promsvjazbank, region: msk } }
+    - { name: bank_psb_cred, category: credit, max_pages: 1,
+        filter_context: { bank: promsvjazbank, region: msk } }
+    - { name: bank_psb_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: promsvjazbank, region: msk } }
+    - { name: bank_sovcom_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: sovkombank, region: msk } }
+    - { name: bank_sovcom_cred, category: credit, max_pages: 1,
+        filter_context: { bank: sovkombank, region: msk } }
+    - { name: bank_sovcom_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: sovkombank, region: msk } }
+    - { name: bank_mkb_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: moskovskij-kreditnyj-bank, region: msk } }
+    - { name: bank_mkb_cred, category: credit, max_pages: 1,
+        filter_context: { bank: moskovskij-kreditnyj-bank, region: msk } }
+    - { name: bank_mkb_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: moskovskij-kreditnyj-bank, region: msk } }
+    - { name: bank_akbars_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: ak-bars, region: msk } }
+    - { name: bank_akbars_cred, category: credit, max_pages: 1,
+        filter_context: { bank: ak-bars, region: msk } }
+    - { name: bank_akbars_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: ak-bars, region: msk } }
+    - { name: bank_pochta_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: pochtobank, region: msk } }
+    - { name: bank_pochta_cred, category: credit, max_pages: 1,
+        filter_context: { bank: pochtobank, region: msk } }
+    - { name: bank_pochta_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: pochtobank, region: msk } }
+    - { name: bank_domrf_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: bank-domrf, region: msk } }
+    - { name: bank_domrf_cred, category: credit, max_pages: 1,
+        filter_context: { bank: bank-domrf, region: msk } }
+    - { name: bank_domrf_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: bank-domrf, region: msk } }
+    - { name: bank_mts_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: mts-bank, region: msk } }
+    - { name: bank_mts_cred, category: credit, max_pages: 1,
+        filter_context: { bank: mts-bank, region: msk } }
+    - { name: bank_mts_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: mts-bank, region: msk } }
+    - { name: bank_ozon_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: ozon-bank, region: msk } }
+    - { name: bank_ozon_cred, category: credit, max_pages: 1,
+        filter_context: { bank: ozon-bank, region: msk } }
+    - { name: bank_ozon_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: ozon-bank, region: msk } }
+    - { name: bank_uralsib_ipo, category: mortgage, max_pages: 1,
+        filter_context: { bank: uralsib, region: msk } }
+    - { name: bank_uralsib_cred, category: credit, max_pages: 1,
+        filter_context: { bank: uralsib, region: msk } }
+    - { name: bank_uralsib_cc, category: card_credit, max_pages: 1,
+        filter_context: { bank: uralsib, region: msk } }
     # ─── АВТОКРЕДИТЫ — top-15 ─────────────────────────────────────────────
     - { name: auto_msk, category: auto_loan, max_pages: 1,
         filter_context: { amount: 500000, period_months: 60, region: msk } }

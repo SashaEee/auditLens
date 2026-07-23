@@ -1563,10 +1563,19 @@ function OverviewPage(){
 // al-mk-preset (bfGoDrill) конвертируется при маунте, URL приоритетнее.
 
 const MK_TERMS=[["0-3","до 3 мес"],["4-6","4–6 мес"],["7-12","7–12 мес"],["13+","от года"]];
+// значение сопоставимой метрики категории: ставка / ₽ в год / дни грейса
+const mkMetric=(v,m)=>{
+  if(v==null)return "—";
+  const n=parseFloat(v);
+  if(m==="fee_service")return n===0?"бесплатно":fmtNum(Math.round(n))+" ₽/год";
+  if(m==="grace_days")return Math.round(n)+" дн";
+  return pct(n);
+};
 const MK_FLD={rate_pct:"ставка",amount_min:"мин. сумма",amount_max:"макс. сумма",
   term_months_min:"срок от",term_months_max:"срок до",fee_open:"комиссия открытия",
   fee_service:"обслуживание",early_withdraw:"досрочное снятие",capitalization:"капитализация",
-  replenishable:"пополнение",conditions:"условия",rate_kind:"тип ставки",currency:"валюта"};
+  replenishable:"пополнение",conditions:"условия",rate_kind:"тип ставки",currency:"валюта",
+  grace_days:"грейс-период",cashback_pct:"кешбэк"};
 // значение поля диффа — человеком: аудитору нужны цифры, а не имена полей
 const mkFldVal=(k,v)=>{
   if(v==null||v==="None"||v==="")return "—";
@@ -1575,6 +1584,8 @@ const mkFldVal=(k,v)=>{
     return isNaN(n)?String(v).slice(0,30):fmtNum(n)+" ₽";
   if(k==="term_months_min"||k==="term_months_max")
     return isNaN(n)?String(v).slice(0,30):n+" мес";
+  if(k==="grace_days")return isNaN(n)?String(v):n+" дн";
+  if(k==="cashback_pct")return isNaN(n)?String(v):pct(n,1);
   if(k==="rate_pct")return isNaN(n)?String(v):pct(n);
   if(v==="true")return "да"; if(v==="false")return "нет";
   return String(v).slice(0,30);
@@ -1782,7 +1793,7 @@ function MarketPage({params}){
           return <button key={c.category} className="mk-arow" onClick={()=>setCat(c.category)}>
             <div className="mk-alabel">
               <div style={{fontWeight:500}}>{m.label||c.category}</div>
-              <div className="mk-an">{c.status==="ok"?`${c.n_banks} банков`:""}{c.lower_is_better&&c.status==="ok"?" · ниже = лучше":""}</div>
+              <div className="mk-an">{c.status==="ok"?`${c.n_banks} банков · ${(c.metric_label||"").toLowerCase()}`:""}{c.lower_is_better&&c.status==="ok"?" · ниже = лучше":""}{c.subsidized_excluded>0?` · без ${c.subsidized_excluded} господдержки`:""}</div>
             </div>
             {c.status==="ok"?<MkStrip c={c}/>:
               <div className="mk-anote">{c.status==="no_metric"?((M[c.category]||{}).caveat||"сопоставимой метрики нет")+" — доступна витрина":"нет данных"}</div>}
@@ -1790,7 +1801,7 @@ function MarketPage({params}){
               {sb?<>
                 <b className={"serif"+(sb.beats_share<0.5?" bad":"")}
                    title={`лучший оффер Сбера против лучших офферов ${c.n_banks} банков${c.small_n?" · малая база!":""}`}>#{sb.rank}</b>
-                <span className="mk-an">{sb.gap_median>0?"+":""}{sb.gap_median} пп к медиане{c.small_n?" · малая база":""}</span>
+                <span className="mk-an" title={sb.title||""}>{mkMetric(sb.rate,c.metric)} · {sb.gap_median>0?"+":""}{c.metric==="rate_pct"?sb.gap_median+" пп":sb.gap_median} к медиане{c.small_n?" · малая база":""}</span>
               </>:c.status==="ok"?<span className="mk-an">Сбера нет в выборке</span>:null}
             </div>
             <div className="mk-ago" aria-hidden>→</div>
@@ -1800,16 +1811,20 @@ function MarketPage({params}){
     {/* ── СЛОЙ 2 · КАТЕГОРИЯ (журнал доступен и без категории) ───────── */}
     {(cat||view==="changes")&&!err&&<>
       {ac&&ac.status==="ok"&&<div className="mk-kpis">
-        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков категории${ac.small_n?" · малая база!":""}`}>
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков${ac.sber.tied>1?`; ${ac.sber.tied} банков с тем же значением делят это место`:""}${ac.small_n?" · малая база!":""}`}>
           <b className={ac.sber.beats_share<0.5?"bad":""}>#{ac.sber.rank}<small> из {ac.n_banks}</small></b>
-          <span>ранг Сбера{ac.small_n?" · малая база":""}</span></div>}
+          <span>ранг Сбера{ac.sber.tied>1?` · ${ac.sber.tied} наравне`:""}{ac.small_n?" · малая база":""}</span></div>}
         {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.sber.title||""}>
-          <b>{pct(ac.sber.rate)}</b><span>лучшая ставка Сбера</span></div>}
-        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`лидер: ${ac.leader.name} · ${pct(ac.leader.rate)} · «${ac.leader.title}»`}>
-          <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{ac.sber.gap_leader>0?"+":""}{ac.sber.gap_leader} пп</b>
+          <b>{mkMetric(ac.sber.rate,ac.metric)}</b><span>{ac.sber.title?String(ac.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`лидер: ${ac.leader.name} · ${mkMetric(ac.leader.rate,ac.metric)} · «${ac.leader.title}»`}>
+          <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{
+            ac.sber.gap_leader===0?"наравне"
+            :ac.metric==="rate_pct"?(ac.sber.gap_leader>0?"+":"")+ac.sber.gap_leader+" пп"
+            :ac.metric==="grace_days"?(ac.sber.gap_leader>0?"+":"")+ac.sber.gap_leader+" дн"
+            :(ac.sber.gap_leader>0?"+":"−")+fmtNum(Math.abs(Math.round(ac.sber.gap_leader)))+" ₽"}</b>
           <span>до лидера ({ac.leader.name})</span></div>}
-        <div className="surface mk-kpi bf-tip" data-tip={`медиана лучших офферов ${ac.n_banks} банков · разброс ${pct(ac.min)}–${pct(ac.max)}`}>
-          <b>{pct(ac.median)}</b><span>медиана рынка</span></div>
+        <div className="surface mk-kpi bf-tip" data-tip={`медиана лучших офферов ${ac.n_banks} банков · разброс ${mkMetric(ac.min,ac.metric)}–${mkMetric(ac.max,ac.metric)}`}>
+          <b>{mkMetric(ac.median,ac.metric)}</b><span>медиана рынка</span></div>
       </div>}
       {ac&&ac.status==="ok"&&<div className="surface" style={{padding:"14px 20px",marginBottom:14}}>
         <MkStrip c={ac} big/>
@@ -1832,6 +1847,8 @@ function MarketPage({params}){
 
       {/* ВИТРИНА */}
       {mcat.caveat&&<p className="mk-disc" style={{margin:"0 0 12px"}}>⚠ {mcat.caveat}.</p>}
+      {ac&&ac.subsidized_excluded>0&&<p className="mk-disc" style={{margin:"0 0 12px"}}>
+        Из рыночного сравнения исключено программ с господдержкой: {ac.subsidized_excluded} — их ставку задаёт государство, она одинакова у всех банков. В витрине ниже они присутствуют.</p>}
       {view==="vitrina"&&<div className="surface" style={{overflow:"hidden"}}>
         {ac&&ac.sber&&!sberIn&&offers&&<button className="mk-sber-pin" onClick={()=>setDrawer(ac.sber.offer_id)}>
           <BankAvatar slug="sberbank" name="Сбербанк" isSber={true}/>
@@ -1839,7 +1856,7 @@ function MarketPage({params}){
             <div style={{fontWeight:500}}>Сбербанк · {ac.sber.title}</div>
             <div className="mk-an">лучший оффер Сбера · #{ac.sber.rank} из {ac.n_banks} банков{term?" · фильтр срока может его скрывать":""}</div>
           </div>
-          <div className="serif" style={{fontSize:18,marginLeft:"auto"}}>{pct(ac.sber.rate)}</div>
+          <div className="serif" style={{fontSize:18,marginLeft:"auto"}}>{mkMetric(ac.sber.rate,ac.metric)}</div>
         </button>}
         {!offers?<div style={{padding:28}}><Skel h={40}/><div style={{height:10}}/><Skel h={40}/><div style={{height:10}}/><Skel h={40}/></div>:
          offers.length===0?<EmptyState text="Нет предложений под фильтры. Сбросьте срок или поиск."/>:
@@ -1847,7 +1864,9 @@ function MarketPage({params}){
           <thead><tr>
             <th className="right" style={{width:"5%"}}>№</th>
             <th>Банк</th><th>Продукт</th>
-            {showRateCol&&<th className="right">{mcat.rate_label||"Ставка"}</th>}
+            <th className="right">{mcat.metric_label||"Ставка"}</th>
+            {showRateCol&&mcat.metric!=="rate_pct"&&<th className="right">{mcat.rate_label}</th>}
+            {mcat.secondary&&<th className="right">Кешбэк</th>}
             {showBarCol&&<th>К лидеру</th>}
             <th>Сумма</th><th>Срок</th>
           </tr></thead>
@@ -1864,7 +1883,9 @@ function MarketPage({params}){
                     {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
                 <td data-label="Продукт">{r.title}</td>
-                {showRateCol&&<td className="right mono tnum" data-label={mcat.rate_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
+                <td className="right mono tnum" data-label={mcat.metric_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>{mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
+                {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12.5}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
+                {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
                 {showBarCol&&<td data-label="К лидеру">
                   {rel!=null&&isFinite(rel)?<div style={{display:"flex",alignItems:"center",gap:8}}>
                     <div className="bar" style={{flex:1,maxWidth:70}}>
@@ -1929,6 +1950,10 @@ function MarketPage({params}){
           {dossier.offer.capitalization!=null&&<div><span>Капитализация</span><b>{dossier.offer.capitalization?"да":"нет"}</b></div>}
           {dossier.offer.replenishable!=null&&<div><span>Пополнение</span><b>{dossier.offer.replenishable?"да":"нет"}</b></div>}
           {dossier.offer.early_withdraw!=null&&<div><span>Досрочное</span><b>{dossier.offer.early_withdraw?"да":"нет"}</b></div>}
+          {dossier.offer.grace_days!=null&&<div><span>Грейс-период</span><b className="tnum">{dossier.offer.grace_days} дн</b></div>}
+          {dossier.offer.fee_service!=null&&<div><span>Обслуживание</span><b className="tnum">{mkMetric(dossier.offer.fee_service,"fee_service")}</b></div>}
+          {dossier.offer.fee_open!=null&&parseFloat(dossier.offer.fee_open)>0&&<div><span>Выпуск (разово)</span><b className="tnum">{fmtNum(Math.round(dossier.offer.fee_open))} ₽</b></div>}
+          {dossier.offer.cashback_pct!=null&&<div><span>Кешбэк до</span><b className="tnum">{pct(dossier.offer.cashback_pct,1)}</b></div>}
           <div><span>Версия условий с</span><b className="tnum">{fmtDate(dossier.offer.valid_from)}</b></div>
         </div>
         {(M[dossier.offer.category]||{}).show_rate!==false&&dossier.rate_series&&dossier.rate_series.length>1&&<>

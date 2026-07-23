@@ -547,20 +547,28 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     поиск и пагинация — раньше limit=100 молча усекал категорию, а поиск шарил
     только по загруженной сотне."""
     limit = max(1, min(limit, 200))
-    cond, params = ["category = :c"], {"c": category, "l": limit,
-                                       "off": max(0, offset)}
+    # не-банки (сервисы подбора, застройщики) не показываем в банковской витрине
+    cond, params = ["category = :c",
+                    "bank_name !~* :nonbank"], {
+        "c": category, "l": limit, "off": max(0, offset),
+        "nonbank": cat_meta.NON_BANK_SQL_RE}
     if q_text:
         cond.append("(bank_name ILIKE :qq OR title ILIKE :qq)")
         params["qq"] = f"%{q_text.strip()}%"
     if term:
         cond.append("term_bucket = :tb"); params["tb"] = term
-    lower = category in cat_meta.LOWER_IS_BETTER
-    order = "rate_pct ASC NULLS LAST" if lower else "rate_pct DESC NULLS LAST"
+    # сортировка по СОПОСТАВИМОЙ метрике категории (у карт это не ставка)
+    meta = cat_meta.CAT_META.get(category)
+    m_field = meta["metric"] if meta else "rate_pct"
+    m_lower = meta["metric_lower_is_better"] if meta else False
+    order = (f"{m_field} ASC NULLS LAST" if m_lower
+             else f"{m_field} DESC NULLS LAST")
     return q(f"""
         SELECT bank_slug, bank_name, is_sber, offer_id, title, url,
                rate_pct, rate_kind, term_bucket,
                amount_min, amount_max, term_months_min, term_months_max,
-               fee_open, fee_service, early_withdraw, capitalization,
+               fee_open, fee_service, grace_days, cashback_pct,
+               early_withdraw, capitalization,
                replenishable, conditions, valid_from,
                count(*) OVER () AS total
           FROM v_market_rub_offer
@@ -576,8 +584,10 @@ def meta_categories():
     counts = {r["category"]: r for r in q("""
         SELECT category, count(*) AS n,
                count(*) FILTER (WHERE is_sber) AS n_sber
-          FROM v_market_rub_offer GROUP BY category
-    """)}
+          FROM v_market_rub_offer
+         WHERE bank_name !~* :nonbank
+         GROUP BY category
+    """, {"nonbank": cat_meta.NON_BANK_SQL_RE})}
     out = []
     for c in cat_meta.CATEGORIES:
         cc = counts.get(c["id"], {})
@@ -591,27 +601,57 @@ def market_atlas(term: Optional[str] = None):
     (одна точка = один банк, чтобы банк с 15 витринными вкладами не перетягивал
     медиану), позиция Сбера в нём (ранг/перцентиль), квартили, лидер.
     Для lower_is_better «лучший» = минимальная ставка и ранг по возрастанию."""
-    cond = "rate_pct IS NOT NULL"
+    # фильтр по СВОЕЙ метрике каждой категории: у карт rate_pct пуст by design
+    metrics = {c["metric"] for c in cat_meta.CATEGORIES}
+    cond = "(" + " OR ".join(f"{m} IS NOT NULL" for m in sorted(metrics)) + ")"
     params: dict = {}
     if term:
         cond += " AND term_bucket = :tb"; params["tb"] = term
     rows = q(f"""
         SELECT category, bank_slug, bank_name, is_sber, offer_id, title,
-               rate_pct, rate_kind, term_bucket
+               rate_pct, rate_kind, term_bucket,
+               fee_service, grace_days, cashback_pct
           FROM v_market_rub_offer WHERE {cond}
     """, params)
+    # ключевая ставка ЦБ — база числового стража субсидий (кэш SOAP ЦБ)
+    key_rate = None
+    try:
+        from ..digest.news import fetch_key_rate
+        kr = fetch_key_rate() or {}
+        key_rate = float(kr.get("current")) if kr.get("current") else None
+    except Exception:  # noqa: BLE001 — без КС работает только текстовый фильтр
+        pass
     by_cat: dict[str, dict] = {}
+    subsidized: dict[str, int] = {}
     for r in rows:
+        meta = cat_meta.CAT_META.get(r["category"])
+        if not meta:                       # не витринная категория (рейтинги и пр.)
+            continue
+        val = r.get(meta["metric"])
+        if val is None:
+            continue
+        if cat_meta.is_non_bank(r["bank_name"]):
+            continue                       # застройщик/сервис подбора — не банк
+        if cat_meta.is_subsidized(r["title"], r["category"], float(val), key_rate):
+            # Господдержка (семейная/IT/военная/образовательный с субсидией):
+            # ставка установлена государством и ОДИНАКОВА у всех банков —
+            # ранжировать банки по ней бессмысленно и искажает картину
+            # («Сбер #2 на рынке кредитов» из-за образовательного под 3%).
+            subsidized[r["category"]] = subsidized.get(r["category"], 0) + 1
+            continue
+        val = float(val)
         best = by_cat.setdefault(r["category"], {})
-        lower = r["category"] in cat_meta.LOWER_IS_BETTER
+        lower = meta["metric_lower_is_better"]
         cur = best.get(r["bank_slug"])
-        rate = float(r["rate_pct"])
-        if cur is None or (rate < cur["rate"] if lower else rate > cur["rate"]):
+        if cur is None or (val < cur["rate"] if lower else val > cur["rate"]):
             best[r["bank_slug"]] = {
                 "slug": r["bank_slug"], "name": r["bank_name"],
-                "is_sber": bool(r["is_sber"]), "rate": rate,
+                "is_sber": bool(r["is_sber"]), "rate": val,
                 "offer_id": r["offer_id"], "title": r["title"],
                 "rate_kind": r["rate_kind"], "term_bucket": r["term_bucket"],
+                "secondary": (float(r[meta["secondary"]])
+                              if meta.get("secondary") and r.get(meta["secondary"]) is not None
+                              else None),
             }
 
     def _pct(sorted_vals: list[float], p: float) -> Optional[float]:
@@ -625,20 +665,24 @@ def market_atlas(term: Optional[str] = None):
     for c in cat_meta.CATEGORIES:
         cid = c["id"]
         banks = list(by_cat.get(cid, {}).values())
-        if c["compare"] != "rate" or not banks:
+        if not banks:
             out.append({"category": cid, "label": c["label"],
-                        "lower_is_better": c["lower_is_better"],
-                        "status": "no_metric" if c["compare"] != "rate" else "no_data",
-                        "n_banks": len(banks)})
+                        "lower_is_better": c["metric_lower_is_better"],
+                        "metric": c["metric"], "metric_label": c["metric_label"],
+                        "metric_unit": c["metric_unit"],
+                        "status": "no_data", "n_banks": 0})
             continue
-        lower = c["lower_is_better"]
+        lower = c["metric_lower_is_better"]
         banks.sort(key=lambda b: b["rate"], reverse=not lower)  # [0] = лидер
         vals = sorted(b["rate"] for b in banks)
         sber = next((b for b in banks if b["is_sber"]), None)
         entry = {
             "category": cid, "label": c["label"], "lower_is_better": lower,
+            "metric": c["metric"], "metric_label": c["metric_label"],
+            "metric_unit": c["metric_unit"],
             "status": "ok", "n_banks": len(banks),
             "small_n": len(banks) < 5,
+            "subsidized_excluded": subsidized.get(cid, 0),
             "points": banks,
             "median": _pct(vals, 0.5), "p25": _pct(vals, 0.25),
             "p75": _pct(vals, 0.75),
@@ -646,8 +690,14 @@ def market_atlas(term: Optional[str] = None):
             "leader": {k: banks[0][k] for k in ("slug", "name", "rate", "title")},
         }
         if sber:
-            rank = banks.index(sber) + 1
-            entry["sber"] = {**sber, "rank": rank,
+            # ранг с учётом РАВНЫХ значений: 91 карта с «0 ₽/год» — это один
+            # уровень, а не 91 разных мест (иначе Сбер выглядел «#39» с лучшей
+            # из возможных цен). Классический competition rank (1,1,3…).
+            rank = sum(1 for b in banks
+                       if (b["rate"] < sber["rate"] if lower
+                           else b["rate"] > sber["rate"])) + 1
+            n_tied = sum(1 for b in banks if b["rate"] == sber["rate"])
+            entry["sber"] = {**sber, "rank": rank, "tied": n_tied,
                              "gap_leader": round(sber["rate"] - banks[0]["rate"], 2),
                              "gap_median": round(sber["rate"] - entry["median"], 2),
                              # доля рынка, которую Сбер опережает (1.0 = лидер)
@@ -659,7 +709,9 @@ def market_atlas(term: Optional[str] = None):
 @app.get("/api/market/offer/{offer_id}/history")
 def market_offer_history(offer_id: int):
     """Досье оффера: паспорт текущих условий + SCD2-ряд ставки + диффы."""
-    cur = q("SELECT * FROM v_offer_current WHERE offer_id = :o", {"o": offer_id})
+    cur = q("SELECT * FROM v_market_rub_offer WHERE offer_id = :o", {"o": offer_id})
+    if not cur:                       # оффер деактивирован/вне витрины — показываем как есть
+        cur = q("SELECT * FROM v_offer_current WHERE offer_id = :o", {"o": offer_id})
     versions = q("""
         SELECT rate_pct, valid_from, valid_to
           FROM product_terms WHERE offer_id = :o

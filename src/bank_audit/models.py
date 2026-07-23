@@ -52,7 +52,9 @@ class OfferDraft(BaseModel):
     term_months_min: Optional[int] = None
     term_months_max: Optional[int] = None
     fee_open: Optional[Decimal] = None
-    fee_service: Optional[Decimal] = None
+    fee_service: Optional[Decimal] = None       # руб./год (месячная плата ×12)
+    grace_days: Optional[int] = None            # грейс-период кредиток, дней
+    cashback_pct: Optional[Decimal] = None      # макс. кешбэк дебетовок, %
     early_withdraw: Optional[bool] = None
     capitalization: Optional[bool] = None
     replenishable: Optional[bool] = None
