@@ -1564,6 +1564,14 @@ function OverviewPage(){
 
 const MK_TERMS=[["0-3","до 3 мес"],["4-6","4–6 мес"],["7-12","7–12 мес"],["13+","от года"]];
 // значение сопоставимой метрики категории: ставка / ₽ в год / дни грейса
+const mkGap=(v,m)=>{
+  if(v==null)return "—";
+  const n=parseFloat(v), sign=n>0?"+":(n<0?"−":"");
+  const a=Math.abs(n);
+  if(m==="fee_service")return n===0?"наравне":sign+fmtNum(Math.round(a))+" ₽/год";
+  if(m==="grace_days")return n===0?"наравне":sign+Math.round(a)+" дн";
+  return n===0?"наравне":sign+a.toFixed(2)+" пп";
+};
 const mkMetric=(v,m)=>{
   if(v==null)return "—";
   const n=parseFloat(v);
@@ -1599,16 +1607,30 @@ const mkDiffOthers=(diff)=>{
 
 // strip-plot распределения категории: полоса IQR, засечка медианы,
 // точки — лучший оффер каждого банка, Сбер — крупная accent-точка
+// подсказка точки: величина каждого поля подписана своей единицей — грейс в
+// днях, ПСК и кешбэк в процентах, обслуживание в рублях (раньше всё гналось
+// через pct() и грейс выглядел как «120%»)
+function mkPointTitle(p,c){
+  // подписи оставляем как есть: «ПСК» — аббревиатура, строчными читается плохо
+  const bits=[`${c.metric_label||"Значение"} ${mkMetric(p.rate,c.metric)}`];
+  if(c.metric!=="rate_pct"&&p.rate_pct!=null)
+    bits.push(`${c.rate_label||"Ставка"} ${pct(p.rate_pct)}`);
+  if(c.secondary==="cashback_pct"&&p.secondary!=null)
+    bits.push(`кешбэк до ${pct(p.secondary,1)}`);
+  return `${p.is_sber?"Сбербанк":p.name}${p.title?` · ${p.title}`:""}\n${bits.join(" · ")}`;
+}
+
 function MkStrip({c,big}){
   if(c.status!=="ok")return null;
   const rng=(c.max-c.min)||1;
   const X=v=>((v-c.min)/rng)*94+3;
   return <div className={"mk-strip"+(big?" mk-strip-big":"")}>
-    <i className="mk-iqr" style={{left:X(c.p25)+"%",width:Math.max(X(c.p75)-X(c.p25),.6)+"%"}}/>
-    <i className="mk-med" style={{left:X(c.median)+"%"}} title={`медиана ${pct(c.median)}`}/>
-    {(c.points||[]).map((p,i)=>p.is_sber
-      ?<i key={i} className="mk-dot sber" style={{left:X(p.rate)+"%"}} title={`Сбер · ${pct(p.rate)} · ${p.title||""}`}/>
-      :<i key={i} className="mk-dot" style={{left:X(p.rate)+"%"}} title={`${p.name} · ${pct(p.rate)}`}/>)}
+    <i className="mk-iqr" style={{left:X(c.p25)+"%",width:Math.max(X(c.p75)-X(c.p25),.6)+"%"}}
+       title={`середина рынка: ${mkMetric(c.p25,c.metric)} – ${mkMetric(c.p75,c.metric)}`}/>
+    <i className="mk-med" style={{left:X(c.median)+"%"}} title={`медиана ${mkMetric(c.median,c.metric)}`}/>
+    {(c.points||[]).map((p,i)=>
+      <i key={i} className={"mk-dot"+(p.is_sber?" sber":"")} style={{left:X(p.rate)+"%"}}
+         title={mkPointTitle(p,c)}/>)}
   </div>;
 }
 
@@ -1801,7 +1823,7 @@ function MarketPage({params}){
               {sb?<>
                 <b className={"serif"+(sb.beats_share<0.5?" bad":"")}
                    title={`лучший оффер Сбера против лучших офферов ${c.n_banks} банков${c.small_n?" · малая база!":""}`}>#{sb.rank}</b>
-                <span className="mk-an" title={sb.title||""}>{mkMetric(sb.rate,c.metric)} · {sb.gap_median>0?"+":""}{c.metric==="rate_pct"?sb.gap_median+" пп":sb.gap_median} к медиане{c.small_n?" · малая база":""}</span>
+                <span className="mk-an" title={sb.title||""}>{mkMetric(sb.rate,c.metric)} · {mkGap(sb.gap_median,c.metric)} к медиане{c.small_n?" · малая база":""}</span>
               </>:c.status==="ok"?<span className="mk-an">Сбера нет в выборке</span>:null}
             </div>
             <div className="mk-ago" aria-hidden>→</div>
@@ -1817,11 +1839,7 @@ function MarketPage({params}){
         {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.sber.title||""}>
           <b>{mkMetric(ac.sber.rate,ac.metric)}</b><span>{ac.sber.title?String(ac.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
         {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`лидер: ${ac.leader.name} · ${mkMetric(ac.leader.rate,ac.metric)} · «${ac.leader.title}»`}>
-          <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{
-            ac.sber.gap_leader===0?"наравне"
-            :ac.metric==="rate_pct"?(ac.sber.gap_leader>0?"+":"")+ac.sber.gap_leader+" пп"
-            :ac.metric==="grace_days"?(ac.sber.gap_leader>0?"+":"")+ac.sber.gap_leader+" дн"
-            :(ac.sber.gap_leader>0?"+":"−")+fmtNum(Math.abs(Math.round(ac.sber.gap_leader)))+" ₽"}</b>
+          <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{mkGap(ac.sber.gap_leader,ac.metric)}</b>
           <span>до лидера ({ac.leader.name})</span></div>}
         <div className="surface mk-kpi bf-tip" data-tip={`медиана лучших офферов ${ac.n_banks} банков · разброс ${mkMetric(ac.min,ac.metric)}–${mkMetric(ac.max,ac.metric)}`}>
           <b>{mkMetric(ac.median,ac.metric)}</b><span>медиана рынка</span></div>

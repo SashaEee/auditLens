@@ -649,6 +649,9 @@ def market_atlas(term: Optional[str] = None):
                 "is_sber": bool(r["is_sber"]), "rate": val,
                 "offer_id": r["offer_id"], "title": r["title"],
                 "rate_kind": r["rate_kind"], "term_bucket": r["term_bucket"],
+                # ставка отдельно от метрики: у кредиток метрика — грейс в днях,
+                # а ПСК «от» нужна в подсказке рядом с ним
+                "rate_pct": (float(r["rate_pct"]) if r["rate_pct"] is not None else None),
                 "secondary": (float(r[meta["secondary"]])
                               if meta.get("secondary") and r.get(meta["secondary"]) is not None
                               else None),
@@ -679,7 +682,8 @@ def market_atlas(term: Optional[str] = None):
         entry = {
             "category": cid, "label": c["label"], "lower_is_better": lower,
             "metric": c["metric"], "metric_label": c["metric_label"],
-            "metric_unit": c["metric_unit"],
+            "metric_unit": c["metric_unit"], "rate_label": c.get("rate_label"),
+            "secondary": c.get("secondary"),
             "status": "ok", "n_banks": len(banks),
             "small_n": len(banks) < 5,
             "subsidized_excluded": subsidized.get(cid, 0),
