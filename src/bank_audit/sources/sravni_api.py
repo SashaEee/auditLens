@@ -948,6 +948,12 @@ class SravniApiAdapter(SourceAdapter):
                     first_range = next(iter(rates_dict.values()), {})
                     rate = _dec(first_range.get("from"))
                     rate_max = _dec(first_range.get("to"))
+            if rate is None and category in ("card_credit", "card_debit"):
+                # У карт minRate/rates нет вовсе: ставка живёт в ПСК по покупкам.
+                # Без этого фолбэка прогон затирал уже собранную ПСК в NULL
+                # (проверено на живом прогоне 23.07.2026: 49→43 карт с ПСК).
+                rate = _dec(item.get("ratePskPurchaseFrom"))
+                rate_max = _dec(item.get("ratePskPurchaseTo"))
 
             amount_min = _dec(item.get("minSumFrom"))
             amount_max = _dec(item.get("maxSumTo"))
@@ -979,7 +985,8 @@ class SravniApiAdapter(SourceAdapter):
                 rate_pct=rate,
                 # minRate = нижняя граница промо-диапазона («ставка от»); прежние
                 # метки 'psk'/'effective' здесь врали (аудит 22.07.2026)
-                rate_kind="min",
+                rate_kind=("psk_min" if category in ("card_credit", "card_debit")
+                           else "min"),
                 currency="RUB",
                 amount_min=amount_min,
                 amount_max=amount_max,
