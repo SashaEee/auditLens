@@ -1555,7 +1555,6 @@ function OverviewPage(){
   const deltas=svmRows.filter(r=>r.sber_vs_median_pp!=null).map(r=>parseFloat(r.sber_vs_median_pp));
   const avgDelta=deltas.length?deltas.reduce((a,b)=>a+b,0)/deltas.length:null;
   const ovl=pulse.overall||{};
-  const flagsErr=qo.flags_err||0, flagsWarn=qo.flags_warn||0;
   const insights=head.insights||[];
   const newsGroups=nw.groups||[];
   const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
@@ -1624,7 +1623,6 @@ function OverviewPage(){
             {kpi.as_of?`жалобы на ${fmtDateMsk(kpi.as_of)}`:"данные обновляются"}
             {tm.totals&&tm.totals.last_ok_run&&<> · тарифы на {fmtDateMsk(tm.totals.last_ok_run)}</>}
             {runsAll>0&&<> · <a href="#sources" className={runsOk<runsAll?"warn":""}>источники {runsOk}/{runsAll}</a></>}
-            {flagsErr>0&&<> · <a href="#quality" className="warn">{flagsErr} ошибок качества</a></>}
             {kpi.total&&<> · корпус {fmtNum(kpi.total)} жалоб за 90 дн</>}
             {kr.current!=null&&<> · ключевая ЦБ {kr.current}%</>}
             {ST("headline")==="stale"&&<span className="bf-stale"> · ⚠ сводка за {sec.headline.stale_from}</span>}
@@ -1831,7 +1829,6 @@ function OverviewPage(){
       {qo.totals&&<span>{fmtNum(qo.totals.offers)} предложений · {qo.totals.banks} банков</span>}
       {pulse.kpi&&pulse.kpi.as_of&&<span>отзывы: {fmtNum((pulse.kpi.total||0))} за 90 дн (обн. {pulse.kpi.as_of})</span>}
       {tm.totals&&tm.totals.last_ok_run&&<span>сбор тарифов: {fmtDate(tm.totals.last_ok_run)}</span>}
-      <a href="#quality">{flagsErr+flagsWarn} флаг(ов) качества</a>
       {dg&&dg.meta&&dg.meta.tokens&&dg.meta.tokens.in>0&&<span>дайджест: {Math.round((dg.meta.tokens.in+dg.meta.tokens.out)/1000)}k токенов/день · один на всех</span>}
       {qo.captcha_pending>0&&<a href="#sources">{qo.captcha_pending} капч(и) ждут решения</a>}
       <a href="#sources">Источники →</a>
@@ -5108,106 +5105,6 @@ function SourcesPage(){
   </div>;
 }
 
-function QualityPage(){
-  const[data,setData]=useState(null);
-  const[loading,setLoading]=useState(true);
-  const[err,setErr]=useState(null);
-  const[aifb,setAifb]=useState(null);          // оценки ответов ИИ (контур владельца)
-
-  useEffect(()=>{
-    apiFetch("/api/quality").then(d=>{setData(d);setLoading(false);}).catch(e=>{setErr(e.message);setLoading(false);});
-    apiFetch("/api/quality/ai-feedback").then(setAifb).catch(()=>{});
-  },[]);
-
-  if(loading)return <LoadingPage/>;
-  if(err)return <ErrState msg={err}/>;
-
-  const flags=data?.flags||[];
-  const errCount=flags.filter(f=>f.severity==="error").length;
-  const warnCount=flags.filter(f=>f.severity==="warn").length;
-
-  return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Качество данных · 48&nbsp;ч</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Активные флаги и аномалии</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Правила: устаревшие данные, скачки ставок &gt; 25%, дубли по (банк, категория, external_id), пустые снимки.
-      </p>
-    </header>
-
-    {/* Оценки ответов ИИ-аналитика: пульс 👍/👎 + последние дизлайки на разбор */}
-    {aifb&&<div className="surface" style={{padding:"16px 20px",marginBottom:18}}>
-      <div className="eyebrow-row" style={{marginBottom:(aifb.recent_dislikes||[]).length?10:0}}>
-        <div className="eyebrow">Оценки ответов ИИ · 7 дней</div>
-        <span className="mono tnum" style={{fontSize:12}}>
-          <span style={{color:"var(--pos)"}}>▲ {aifb.likes_7d||0}</span>
-          <span style={{color:"var(--neg)",marginLeft:12}}>▼ {aifb.dislikes_7d||0}</span>
-        </span>
-      </div>
-      {(aifb.recent_dislikes||[]).length>0
-        ? (aifb.recent_dislikes||[]).slice(0,8).map((d,i)=>(
-            <div key={i} style={{display:"flex",gap:10,alignItems:"baseline",padding:"7px 2px",
-                                 borderTop:"1px solid var(--hair)",fontSize:12.5}}>
-              <span className="mono" style={{fontSize:10,color:"var(--neg)",flex:"none"}}>▼</span>
-              <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
-                    title={d.question||""}>{d.question||"—"}</span>
-              {(d.reasons||[]).length>0&&<span className="mono" style={{fontSize:9.5,color:"var(--ink-3)",flex:"none"}}>
-                {(d.reasons||[]).join(" · ")}</span>}
-              <span className="mono" style={{fontSize:9.5,color:"var(--ink-4)",flex:"none"}}>
-                {(d.created_at||"").slice(5,16).replace("T"," ")}</span>
-            </div>))
-        : <div className="t-cap" style={{color:"var(--ink-4)"}}>Дизлайков нет — либо всё хорошо, либо оценок пока мало.</div>}
-      {(aifb.recent_dislikes||[]).some(d=>d.comment)&&
-        <div className="t-cap" style={{marginTop:8,color:"var(--ink-3)"}}>
-          Последний комментарий: «{(aifb.recent_dislikes.find(d=>d.comment)||{}).comment}»</div>}
-    </div>}
-
-
-    <div className="row row-3" style={{marginBottom:24}}>
-      <div className="surface" style={{padding:"22px 24px"}}>
-        <div className="eyebrow" style={{marginBottom:8}}>Ошибки · 24ч</div>
-        <div className="serif" style={{fontSize:48,color:errCount>0?"var(--neg)":"var(--pos)",lineHeight:1}}>{errCount}</div>
-        <div className="t-cap" style={{marginTop:6}}>{errCount>0?"требуют немедленного разбора":"всё в порядке"}</div>
-      </div>
-      <div className="surface" style={{padding:"22px 24px"}}>
-        <div className="eyebrow" style={{marginBottom:8}}>Предупреждения · 24ч</div>
-        <div className="serif" style={{fontSize:48,color:warnCount>0?"var(--warn)":"var(--pos)",lineHeight:1}}>{warnCount}</div>
-        <div className="t-cap" style={{marginTop:6}}>{warnCount>0?"можно ставить в бэклог":"нет предупреждений"}</div>
-      </div>
-      <div className="surface" style={{padding:"22px 24px"}}>
-        <div className="eyebrow" style={{marginBottom:8}}>Всего флагов · 48ч</div>
-        <div className="serif" style={{fontSize:48,color:flags.length===0?"var(--pos)":"var(--ink)",lineHeight:1}}>{flags.length}</div>
-        <div className="t-cap" style={{marginTop:6}}>в базе quality_flag</div>
-      </div>
-    </div>
-
-    <div className="surface" style={{overflow:"hidden"}}>
-      {!flags.length?<EmptyState text="Активных флагов качества нет — всё чисто"/>:
-      <table>
-        <thead><tr>
-          <th>Код</th><th>Тип</th><th>Тяжесть</th><th>Детали</th><th>Когда</th>
-        </tr></thead>
-        <tbody>
-          {flags.map((f,i)=>(
-            <tr key={f.flag_id||i}>
-              <td className="mono" style={{fontWeight:500,fontSize:12.5}}>{str(f.code)}</td>
-              <td className="mono" style={{color:"var(--ink-2)",fontSize:12.5}}>{str(f.entity_type)}</td>
-              <td>
-                <span className={`badge ${f.severity==="error"?"neg":"warn"}`}>
-                  <span className="dot"/>{f.severity==="error"?"ошибка":"предупр."}
-                </span>
-              </td>
-              <td style={{maxWidth:520,fontSize:13}}>{str(f.detail)}</td>
-              <td className="mono tnum" style={{color:"var(--ink-3)",fontSize:12}}>{fmtDate(f.created_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>}
-    </div>
-  </div>;
-}
-
-// ─── KNOWLEDGE PAGE: knowledge layer coverage + live semantic search ───────
 function KnowledgePage(){
   const[coverage,setCoverage]=useState([]);
   const[recent,setRecent]=useState([]);
@@ -5717,10 +5614,14 @@ const NAV=[
   {id:"loophole",label:"Лазейки",     icon:Ic.shield, group:"Анализ"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
-  {id:"quality", label:"Качество",    icon:Ic.shield, group:"Данные"},
 ];
-const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage,profile:ProfilePage,pulse:PulsePage};
-const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],market:["02","Рынок · позиция"],sber:["02","Рынок · позиция"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"],profile:["·","Профиль"],pulse:["·","Пульс"]};
+const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,profile:ProfilePage,pulse:PulsePage};
+// Номера синхронизированы с порядком в меню; итог берётся из NAV, а не хардкодом
+const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],
+  market:["02","Рынок · позиция"],sber:["02","Рынок · позиция"],
+  reviews:["03","Отзывы"],ai:["04","ИИ-аналитик"],knowledge:["05","База знаний"],
+  loophole:["06","Лазейки"],banks:["07","Банки"],sources:["08","Источники"],
+  profile:["·","Профиль"],pulse:["09","Пульс"]};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
@@ -6079,6 +5980,7 @@ function parseHash(){
   let p=qi>=0?h.slice(0,qi):h, prm={};
   if(qi>=0){try{prm=Object.fromEntries(new URLSearchParams(h.slice(qi+1)).entries());}catch{}}
   if(p==="sber")p="market";
+  if(p==="quality")p="sources";   // вкладка «Качество» убрана — техчасть на «Источниках»
   return{p,prm};
 }
 
@@ -6098,7 +6000,6 @@ function Shell(){
   const pageCurRef=useRef(null);
   const{theme,setTheme}=useTheme();
   const[banks,setBanks]=useState([]);
-  const[qualityCount,setQualityCount]=useState(0);
   const[hasCaptcha,setHasCaptcha]=useState(false);
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
@@ -6108,7 +6009,6 @@ function Shell(){
   // Load banks for context + sidebar badges
   useEffect(()=>{
     apiFetch("/api/banks").then(d=>{setBanks(d||[]);}).catch(()=>{});
-    apiFetch("/api/quality").then(d=>{setQualityCount((d?.flags||[]).length);}).catch(()=>{});
     apiFetch("/api/sources").then(d=>{setHasCaptcha((d?.captcha_pending||[]).length>0);}).catch(()=>{});
   },[]);
 
@@ -6188,6 +6088,11 @@ function Shell(){
   // запоминаем последний режим «Обзора» (Общий/Для вас) — возвращаем туда же
   useEffect(()=>{ if(page==="overview"||page==="foryou"){try{localStorage.setItem("al-ov-mode",page);}catch{}} },[page]);
 
+  const navOrder=useMemo(()=>{
+    const items=(me&&me.is_admin)?[...NAV,{id:"pulse"}]:NAV;
+    const g={};items.forEach(n=>{(g[n.group||"Данные"]=g[n.group||"Данные"]||[]).push(n.id);});
+    return Object.values(g).flat();
+  },[me]);
   const groups=useMemo(()=>{
     const items=(me&&me.is_admin)?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
     const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
@@ -6251,10 +6156,12 @@ function Shell(){
             <div className="rail-section">{gr}</div>
             {items.map(n=>{
               const active=page===n.id||(n.id==="overview"&&page==="foryou");
-              const allItems=items;   // items группы (включая условный «Пульс»), не базовый NAV
-              const num=allItems.findIndex(x=>x.id===n.id)+1+(gr==="Анализ"?0:5);
+              // сквозная нумерация по всем группам: раньше был сдвиг «+5» под
+              // фиксированный размер группы «Анализ», из-за чего после
+              // удаления/добавления вкладок номера дублировались (два «06»)
+              const num=navOrder.indexOf(n.id)+1;
               const dot=n.id==="sources"&&hasCaptcha;
-              const count=n.id==="quality"&&qualityCount>0?qualityCount:null;
+              const count=null;
               // ИИ-аналитик: пульсирующая точка = прогон идёт; зелёная = отчёт готов
               const aiDot=n.id==="ai"&&(aiBusy||aiReady);
               return <button key={n.id} className={`nav-item ${active?"active":""}`} onClick={()=>{setPage(n.id);setNavOpen(false);}}>
@@ -6296,7 +6203,7 @@ function Shell(){
             <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
           </div>
           <div className="crumb">
-            {page!=="profile" && <><span className="crumb-idx">{idx} / 10</span>
+            {page!=="profile" && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
             <span style={{color:"var(--hair-2)"}}>—</span></>}
             <b>{label}</b>
           </div>
