@@ -58,12 +58,24 @@ sravni_api:
         filter_context: { amount: 6000000, period_months: 240, region: msk } }
     - { name: mortgage_spb, category: mortgage, max_pages: 1,
         filter_context: { amount: 6000000, period_months: 240, region: sankt-peterburg } }
+    # Дополнительные срезы стоимости/регионов: SSR отдаёт top-N на срез —
+    # разные cost дают другой набор программ (покрытие после чистки демо-сида)
+    - { name: mortgage_msk_3m, category: mortgage, max_pages: 1,
+        filter_context: { amount: 3000000, period_months: 240, region: msk } }
+    - { name: mortgage_msk_12m, category: mortgage, max_pages: 1,
+        filter_context: { amount: 12000000, period_months: 300, region: msk } }
+    - { name: mortgage_ekb, category: mortgage, max_pages: 1,
+        filter_context: { amount: 5000000, period_months: 240, region: ekaterinburg } }
 
     # ─── КАРТЫ — общая витрина /karty/, фильтр по type в парсере ──────────
     - { name: cards_credit_msk, category: card_credit, max_pages: 1,
         filter_context: { region: msk } }
     - { name: cards_debit_msk,  category: card_debit, max_pages: 1,
         filter_context: { region: msk } }
+    - { name: cards_credit_spb, category: card_credit, max_pages: 1,
+        filter_context: { region: sankt-peterburg } }
+    - { name: cards_debit_spb,  category: card_debit, max_pages: 1,
+        filter_context: { region: sankt-peterburg } }
 
     # ─── АВТОКРЕДИТЫ — top-15 ─────────────────────────────────────────────
     - { name: auto_msk, category: auto_loan, max_pages: 1,
