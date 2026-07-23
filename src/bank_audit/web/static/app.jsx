@@ -592,6 +592,66 @@ function bfGoDrill(drill){
 // чтобы подсветка была на КАЖДОМ заголовке, а не только когда hot от LLM точно
 // совпал. Приоритет: точный hot → без регистра → число/процент/×N → банк/ЦБ →
 // последние 2 слова. hl — заголовок, hot — подсказка модели (может быть пустой).
+// ─── Всплывашки поверх всего: портал в body + fixed ──────────────────────────
+// Раньше попап жил внутри плитки и обрезался её контейнером (у полосы пульса
+// overflow:hidden ради скруглённых углов), а hover-фильтры создавали слои,
+// перекрывавшие подсказку. Портал в body снимает и обрезание, и конкуренцию
+// z-index: попап физически вне всех контейнеров страницы.
+function popPlace(el,{w=400,h=280,gap=12}={}){
+  const r=el.getBoundingClientRect();
+  // размеры окна берём с фолбэками: в некоторых встроенных вебвью innerWidth
+  // приходит нулём, и без страховки попап получал отрицательную ширину
+  const de=document.documentElement;
+  const W=window.innerWidth||de.clientWidth||de.getBoundingClientRect().width||1280;
+  const H=window.innerHeight||de.clientHeight||800;
+  const M=12;
+  const ww=Math.max(240,Math.min(w,W-M*2));
+  let left,top,arrow;
+  if(W-r.right>=ww+gap){ left=r.right+gap; top=r.top-10; arrow="left"; }
+  else if(r.left>=ww+gap){ left=r.left-ww-gap; top=r.top-10; arrow="right"; }
+  else if(H-r.bottom>=h+gap){ left=r.left; top=r.bottom+gap; arrow="top"; }
+  else { left=r.left; top=r.top-h-gap; arrow="bottom"; }
+  left=Math.min(Math.max(M,left),W-ww-M);
+  top=Math.min(Math.max(M,top),H-Math.min(h,H-M*2)-M);
+  return {left,top,width:ww,arrow};
+}
+
+// Текстовая подсказка [data-tip] — тоже порталом (была CSS ::after, обрезалась)
+function TipLayer(){
+  const[tip,setTip]=useState(null);
+  useEffect(()=>{
+    let cur=null;
+    const show=e=>{
+      const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
+      if(!el||el===cur)return;
+      const txt=el.getAttribute("data-tip");
+      if(!txt)return;
+      cur=el;
+      setTip({txt,...popPlace(el,{w:320,h:120})});
+    };
+    const hide=e=>{
+      if(!cur)return;
+      if(e&&e.target&&e.target.closest&&e.target.closest("[data-tip]")===cur&&e.type!=="scroll")return;
+      cur=null;setTip(null);
+    };
+    document.addEventListener("mouseover",show);
+    document.addEventListener("mouseout",hide);
+    document.addEventListener("focusin",show);
+    document.addEventListener("focusout",hide);
+    window.addEventListener("scroll",hide,true);
+    return()=>{document.removeEventListener("mouseover",show);
+      document.removeEventListener("mouseout",hide);
+      document.removeEventListener("focusin",show);
+      document.removeEventListener("focusout",hide);
+      window.removeEventListener("scroll",hide,true);};
+  },[]);
+  if(!tip)return null;
+  return ReactDOM.createPortal(
+    <div className={"tip-pop tip-a-"+tip.arrow}
+         style={{left:tip.left,top:tip.top,maxWidth:tip.width}}>{tip.txt}</div>,
+    document.body);
+}
+
 // ─── «Как это посчитано» — раскрытие любой цифры брифинга ─────────────────────
 // Аудитор не должен гадать, откуда взялось «×2.1»: показываем формулу словами,
 // как считалась норма, на какой выборке и из какого источника.
@@ -681,27 +741,31 @@ const xpThemeUp=t=>[
 // иначе снизу/сверху — попап не должен резать строку заголовка.
 function Xp({rows,children,note}){
   const ref=useRef(null);
-  const[pos,setPos]=useState("side");
-  const place=useCallback(()=>{
-    const el=ref.current; if(!el)return;
-    const r=el.getBoundingClientRect();
-    const W=window.innerWidth, H=window.innerHeight;
-    const need=420, needH=300;
-    if(W>=900&&W-r.right>=need) setPos("side");          // справа есть место
-    else if(W>=900&&r.left>=need) setPos("side-left");   // слева есть место
-    else if(H-r.bottom>=needH) setPos("down");
-    else setPos("up");
-  },[]);
+  const[box,setBox]=useState(null);
+  const show=useCallback(()=>{
+    if(ref.current)setBox(popPlace(ref.current,{w:400,h:Math.min(300,80+34*((rows||[]).length))}));
+  },[rows]);
+  const hide=useCallback(()=>setBox(null),[]);
+  useEffect(()=>{
+    if(!box)return;
+    const off=()=>setBox(null);
+    window.addEventListener("scroll",off,true);
+    window.addEventListener("resize",off);
+    return()=>{window.removeEventListener("scroll",off,true);
+      window.removeEventListener("resize",off);};
+  },[box]);
   if(!rows||!rows.length)return children;
-  return <span className={"xp xp-"+pos} tabIndex={0} ref={ref}
-      onMouseEnter={place} onFocus={place}>
+  return <span className="xp" tabIndex={0} ref={ref}
+      onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}>
     {children}
-    <span className="xp-pop" role="tooltip">
-      <span className="xp-h">как это посчитано</span>
-      {rows.map(([k,v],i)=><span key={i} className="xp-row">
-        <span className="xp-k">{k}</span><span className="xp-v">{v}</span></span>)}
-      {note&&<span className="xp-note">{note}</span>}
-    </span>
+    {box&&ReactDOM.createPortal(
+      <div className={"xp-pop xp-a-"+box.arrow} role="tooltip"
+           style={{left:box.left,top:box.top,width:box.width}}>
+        <span className="xp-h">как это посчитано</span>
+        {rows.map(([k,v],i)=><span key={i} className="xp-row">
+          <span className="xp-k">{k}</span><span className="xp-v">{v}</span></span>)}
+        {note&&<span className="xp-note">{note}</span>}
+      </div>, document.body)}
   </span>;
 }
 
@@ -5938,6 +6002,7 @@ function Shell(){
 
   return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
     <div id="app">
+      <TipLayer/>
       <style>{FB_CSS}</style>
       <style>{`.user-chip:hover{background:var(--surface);} .user-chip.active{background:var(--accent-soft);} .user-chip.active .nm{color:var(--accent);}
         .nav-dot.ai-run{background:var(--accent);animation:pulse 1.5s ease infinite;}

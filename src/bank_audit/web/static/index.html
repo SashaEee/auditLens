@@ -1410,11 +1410,13 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 /* пульс дня — детерминированный тикер, живёт без LLM */
 /* объяснимость цифр: тёмный поповер по наведению (data-tip) */
 .bf-tip{position:relative;}
-.bf-tip:hover::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 9px);transform:translateX(-50%);
+.bf-tip{position:relative}
+/* старая CSS-подсказка отключена: рисуется порталом TipLayer, иначе обрезалась */
+.bf-tip--off::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 9px);transform:translateX(-50%);
   background:var(--ink);color:var(--paper);font-family:'Geist','Inter',sans-serif;font-size:11.5px;font-weight:400;
   line-height:1.55;letter-spacing:0;text-transform:none;padding:9px 13px;border-radius:9px;width:max-content;max-width:300px;
   white-space:normal;text-align:left;z-index:60;box-shadow:var(--shadow-2);pointer-events:none;}
-.bf-tip:hover::before{content:"";position:absolute;left:50%;bottom:100%;transform:translateX(-50%) rotate(45deg);
+.bf-tip--off::before{content:"";position:absolute;left:50%;bottom:100%;transform:translateX(-50%) rotate(45deg);
   margin-bottom:5px;width:9px;height:9px;background:var(--ink);z-index:61;pointer-events:none;}
 /* ── Пульс дня: сменный лист аудитора (переработан 23.07.2026) ─────────────
    Было repeat(6,1fr) + nowrap/ellipsis → подписи обрезались («СБЕР VS МЕДИАНА РЫ…»).
@@ -1573,30 +1575,24 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
   .mk-chrow{grid-template-columns:1fr;gap:4px}
   .mk-chmove{text-align:left}
 }
-/* ── «Как это посчитано»: раскрытие цифр брифинга (xp-) ───────────────────── */
+/* ── Всплывашки: портал в body, fixed, поверх всего ────────────────────────
+   Раньше попап жил внутри плитки и обрезался контейнером с overflow:hidden
+   (полоса пульса, карточки), а hover-фильтры создавали конкурирующие слои. */
 .xp{position:relative;display:inline;cursor:help;border-bottom:1px dashed color-mix(in oklab,var(--accent),transparent 55%)}
 .xp:focus{outline:none}
 .xp-link{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
-.xp-pop{position:absolute;z-index:70;display:none;
-  width:max-content;max-width:min(400px,86vw);padding:13px 15px 12px;text-align:left;
+.xp-pop{position:fixed;z-index:9000;padding:13px 15px 12px;text-align:left;
   background:var(--surface);color:var(--ink);border:1px solid var(--hair-2);border-radius:12px;
-  box-shadow:var(--shadow-2);font-style:normal;font-weight:400;
-  font-family:'Geist','Inter',-apple-system,sans-serif;font-size:12.5px;line-height:1.5;letter-spacing:0}
-.xp:hover .xp-pop,.xp:focus .xp-pop,.xp:focus-within .xp-pop{display:block;animation:xpIn .13s ease}
+  box-shadow:var(--shadow-2);font-style:normal;font-weight:400;pointer-events:none;
+  font-family:'Geist','Inter',-apple-system,sans-serif;font-size:12.5px;line-height:1.5;letter-spacing:0;
+  animation:xpIn .12s ease}
 @keyframes xpIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
-/* сбоку — не перекрывает ни строки текста (основной вариант на десктопе) */
-.xp-side .xp-pop{left:calc(100% + 16px);top:-10px}
-.xp-side .xp-pop::before{content:"";position:absolute;left:-5px;top:18px;width:9px;height:9px;transform:rotate(45deg);
-  background:var(--surface);border-left:1px solid var(--hair-2);border-bottom:1px solid var(--hair-2)}
-.xp-side-left .xp-pop{right:calc(100% + 16px);top:-10px}
-.xp-side-left .xp-pop::before{content:"";position:absolute;right:-5px;top:18px;width:9px;height:9px;transform:rotate(45deg);
-  background:var(--surface);border-right:1px solid var(--hair-2);border-top:1px solid var(--hair-2)}
-.xp-down .xp-pop{left:0;top:calc(100% + 8px)}
-.xp-down .xp-pop::before{content:"";position:absolute;left:22px;top:-5px;width:9px;height:9px;transform:rotate(45deg);
-  background:var(--surface);border-left:1px solid var(--hair-2);border-top:1px solid var(--hair-2)}
-.xp-up .xp-pop{left:0;bottom:calc(100% + 8px)}
-.xp-up .xp-pop::before{content:"";position:absolute;left:22px;bottom:-5px;width:9px;height:9px;transform:rotate(45deg);
-  background:var(--surface);border-right:1px solid var(--hair-2);border-bottom:1px solid var(--hair-2)}
+.xp-pop::before{content:"";position:absolute;width:9px;height:9px;transform:rotate(45deg);
+  background:var(--surface);border:1px solid var(--hair-2)}
+.xp-pop.xp-a-left::before  {left:-5px;top:18px;clip-path:polygon(0 0,0 100%,100% 100%)}
+.xp-pop.xp-a-right::before {right:-5px;top:18px;clip-path:polygon(100% 0,100% 100%,0 0)}
+.xp-pop.xp-a-top::before   {left:22px;top:-5px;clip-path:polygon(0 0,100% 0,0 100%)}
+.xp-pop.xp-a-bottom::before{left:22px;bottom:-5px;clip-path:polygon(100% 100%,100% 0,0 100%)}
 .xp-h{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.12em;
   text-transform:uppercase;color:var(--ink-4);margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid var(--hair)}
 .xp-row{display:grid;grid-template-columns:104px 1fr;gap:10px;padding:3px 0;align-items:baseline}
@@ -1605,7 +1601,13 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .xp-row:first-of-type .xp-v{color:var(--ink);font-weight:500}
 .xp-note{display:block;margin-top:8px;padding-top:7px;border-top:1px solid var(--hair);
   font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4)}
+/* текстовая подсказка [data-tip] — тем же порталом */
+.tip-pop{position:fixed;z-index:9000;background:var(--ink);color:var(--paper);
+  font-family:'Geist','Inter',-apple-system,sans-serif;font-size:11.5px;font-weight:400;line-height:1.55;
+  letter-spacing:0;text-transform:none;padding:9px 13px;border-radius:9px;
+  box-shadow:var(--shadow-2);pointer-events:none;animation:xpIn .12s ease}
 .bf-prov-sep{color:var(--ink-4)}
+@media(max-width:720px){.xp-row{grid-template-columns:1fr;gap:1px}}
 @media(max-width:900px){
   .xp .xp-pop{left:auto;right:0;top:calc(100% + 8px);bottom:auto;max-width:88vw}
   .xp .xp-pop::before{left:auto;right:22px;top:-5px;bottom:auto;
@@ -1647,6 +1649,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-9"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-11"></script>
 </body>
 </html>
