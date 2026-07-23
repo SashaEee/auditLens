@@ -76,14 +76,17 @@ def index_and_get_text(url: str, *,
     # 1. Быстрый путь: fetch + parse → текст немедленно (без ожидания эмбеддинга).
     text, title = "", ""
     _fetch_via, _captcha, _status = "", False, 0
+    _render = _should_render(url)
+    _content, _ctype, _final = None, None, None
     try:
         from ...rag import fetcher
         from ...rag.parsers import parse_auto
-        fr = fetcher.fetch(url, prefer_browser=_should_render(url))
+        fr = fetcher.fetch(url, prefer_browser=_render)
         _fetch_via = getattr(fr, "via", "") or ""
         _captcha = bool(getattr(fr, "captcha", False))
         _status = getattr(fr, "status", 0) or 0
         if fr.content:
+            _content, _ctype, _final = fr.content, fr.content_type, fr.final_url
             parsed = parse_auto(fr.content, url=fr.final_url,
                                 content_type=fr.content_type)
             full = parsed.text or ""
@@ -95,21 +98,31 @@ def index_and_get_text(url: str, *,
 
     # 2. Тяжёлая индексация (chunk+embed+insert) — В ФОН: нужна только будущему
     #    semantic_search, не этому запросу. Агент не ждёт.
-    def _bg_index():
-        try:
-            from ...rag.indexer import ingest_document_from_url
-            ingest_document_from_url(url, bank_slug_hint=bank_slug_hint,
-                                     prefer_browser=False)
-        except Exception as e:
-            log.info("background index failed for %s: %s", url[:80], e)
-    try:
-        import threading
-        threading.Thread(target=_bg_index, daemon=True).start()
-    except Exception:
-        pass
+    #
+    # Передаём УЖЕ СКАЧАННОЕ. Раньше фон качал ту же страницу заново и всегда
+    # без браузера — а сайты банков это SPA с антиботом: по HTTP они отдают
+    # 91 символ «Please enable JavaScript… Your support ID». Именно эта заглушка
+    # и оседала в базе вместо тарифов: из 193 страниц sberbank.ru осмысленными
+    # были 8. Теперь в базу ложится ровно то, что прочитал агент.
+    from ...rag import ingest_queue
+    ingest_queue.submit(url, bank_slug_hint=bank_slug_hint,
+                        prefer_browser=_render,
+                        content=_content, content_type=_ctype, final_url=_final,
+                        origin=_origin_ctx())
 
     return {"title": title, "text": text, "document_id": None, "indexed": False,
             "fetch_via": _fetch_via, "captcha": _captcha, "status": _status}
+
+
+# Происхождение текущего чтения: кто и ради какого вопроса читает страницу.
+# Через contextvars, чтобы не тащить эти поля через шесть сигнатур подряд —
+# от эндпоинта чата до инструмента агента.
+def _origin_ctx() -> dict:
+    try:
+        from ...web.runctx import current_origin
+        return current_origin()
+    except Exception:
+        return {"kind": "report"}
 
 
 def _load_from_db(document_id: int, query_hint: str, budget: int) -> tuple[str, str]:

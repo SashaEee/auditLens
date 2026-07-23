@@ -138,10 +138,24 @@ def ingest_document_from_url(
     chunk_tokens: int = DEFAULT_CHUNK_TOKENS,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     browser=None,
+    content: bytes | None = None,
+    content_type: str | None = None,
+    final_url: str | None = None,
 ) -> IngestResult:
-    """Основной pipeline: URL → проиндексированный document с chunks."""
+    """Основной pipeline: URL → проиндексированный document с chunks.
 
-    fr = fetcher.fetch(url, prefer_browser=prefer_browser, browser=browser)
+    content/content_type/final_url — уже скачанное вызывающим. Тогда в сеть не
+    ходим. Это не только экономия: агент читает сайты банков через браузер
+    (они SPA с антиботом), а повторная загрузка по HTTP приносила бы вместо
+    тарифов заглушку «Please enable JavaScript» — именно она и оседала в базе.
+    """
+
+    if content:
+        fr = fetcher.FetchResult(url=url, final_url=final_url or url, status=200,
+                                 content=content, content_type=content_type,
+                                 via="prefetched")
+    else:
+        fr = fetcher.fetch(url, prefer_browser=prefer_browser, browser=browser)
     if not fr.content:
         reason = "captcha" if fr.captcha else "fetch_failed"
         return IngestResult(document_id=None, url=url, bank_id=None,
@@ -177,15 +191,24 @@ def ingest_document_from_url(
                                 is_sponsored=sponsored, is_new=False,
                                 skipped_reason="duplicate")
 
+        # Тема раздела по пути URL — содержательная ось для карты покрытия.
+        # doc_type для этого не годится: это формат файла (html/pdf), а не
+        # предмет («вклады», «комиссии», «ипотека»).
+        try:
+            from .url_discovery import classify_url
+            topics = classify_url(fr.final_url) or None
+        except Exception:
+            topics = None
+
         doc_id = s.execute(text("""
             INSERT INTO document(
                 source_id, bank_id, url, doc_type, title,
                 headings_path, content_text, content_sha256,
-                fetched_at, trust_score, is_sponsored, bytes
+                fetched_at, trust_score, is_sponsored, bytes, topics
             )
             VALUES (:src, :b, :u, CAST(:dt AS doc_type), :t,
                     :hp, :ct, :sha,
-                    now(), :tr, :sp, :bt)
+                    now(), :tr, :sp, :bt, :tp)
             RETURNING document_id
         """), {
             "src": source_id, "b": bank_id, "u": fr.final_url,
@@ -193,7 +216,7 @@ def ingest_document_from_url(
             "hp": parsed.headings_path,
             "ct": parsed.text[:1_000_000],
             "sha": sha, "tr": trust, "sp": sponsored,
-            "bt": len(fr.content),
+            "bt": len(fr.content), "tp": topics,
         }).scalar()
 
         # Если sponsored или невалидный — chunks НЕ добавляем (нет смысла индексировать)

@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, asyncio, logging, time
+import json, os, re, asyncio, logging, time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +24,7 @@ from ..rag.indexer import ingest_document_from_url
 from ..rag.url_discovery import bootstrap_bank_profile, TOP_BANK_SITES
 from ..rag.crawler import crawl_one_bank, crawl_all_profiles
 from .auth import CurrentUser, get_current_user
-from . import telemetry, userdata
+from . import telemetry, userdata, runctx
 
 STATIC_DIR = Path(__file__).parent / "static"
 settings = Settings.load()
@@ -50,11 +50,17 @@ async def lifespan(app: FastAPI):
     #  • ingest_background_loop — автосбор тарифов в 05:00 МСК (+quality)
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
     from ..digest.scheduler import digest_background_loop, ingest_background_loop
+    from ..rag import ingest_queue
     tasks = [
         asyncio.create_task(alerts_background_loop()),
         asyncio.create_task(digest_background_loop()),
         asyncio.create_task(ingest_background_loop()),
     ]
+    # Воркеры индексации базы знаний. Раньше на каждую прочитанную агентом
+    # страницу поднимался свой daemon-поток: при остановке контейнера их
+    # убивало на полуслове, документ оставался без фрагментов — и навсегда,
+    # потому что повторная загрузка отсекалась как дубль.
+    ingest_queue.start()
     try:
         yield
     finally:
@@ -65,6 +71,10 @@ async def lifespan(app: FastAPI):
                 await t
             except (asyncio.CancelledError, Exception):
                 pass
+        # Даём очереди доработать. Без этого воркеры (не daemon) не дадут
+        # контейнеру остановиться, а с нулевым ожиданием мы вернулись бы
+        # к обрыву индексации на полуслове.
+        ingest_queue.drain(timeout=float(os.getenv("INGEST_DRAIN_S", "10")))
 
 
 app = FastAPI(title="Bank Audit Platform", docs_url=None, lifespan=lifespan)
@@ -1581,6 +1591,285 @@ def knowledge_overview():
     return {"stats": (stats or [{}])[0], "banks": banks, "kinds": kinds}
 
 
+@app.get("/api/knowledge/doc/{document_id}")
+def knowledge_doc(document_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Карточка документа: чем он является, откуда взялся и как менялся."""
+    head = q("""
+        SELECT d.document_id, d.url, d.title, d.doc_type::text doc_type,
+               d.trust_score, d.is_sponsored, d.fetched_at, d.bytes, d.topics,
+               length(d.content_text) text_len,
+               b.slug bank_slug, b.name bank_name,
+               st.kind source_kind, st.domain source_domain, st.notes source_note,
+               (SELECT count(*) FROM document_chunk c
+                 WHERE c.document_id = d.document_id) chunks
+          FROM document d
+          LEFT JOIN bank b ON b.bank_id = d.bank_id
+          LEFT JOIN source_trust st ON st.source_id = d.source_id
+         WHERE d.document_id = :i
+    """, {"i": document_id})
+    if not head:
+        raise HTTPException(404, "документ не найден")
+    doc = head[0]
+
+    # Ревизии: ingest никогда не перезаписывает — изменившийся текст даёт новую
+    # строку с тем же адресом. Значит история уже накоплена, копить не нужно.
+    revisions = q("""
+        SELECT document_id, fetched_at, content_sha256,
+               length(content_text) text_len, trust_score
+          FROM document WHERE url = :u ORDER BY fetched_at DESC LIMIT 30
+    """, {"u": doc["url"]})
+
+    origins = q("""
+        SELECT o.kind, o.username, o.question, o.report_id, o.created_at,
+               o.fetch_mode, o.skipped_reason, r.title report_title
+          FROM document_origin o
+          LEFT JOIN report r ON r.report_id = o.report_id
+         WHERE o.document_id = :i OR o.url = :u
+         ORDER BY o.created_at DESC LIMIT 10
+    """, {"i": document_id, "u": doc["url"]})
+    # Чужие вопросы не показываем дословно: отчёт коллеги — его работа.
+    me = user.username
+    for o in origins:
+        if o.get("username") and o["username"] != me:
+            o["question"] = None
+            o["mine"] = False
+        else:
+            o["mine"] = True
+
+    preview = q("""
+        SELECT idx, headings_path, left(text, 700) text
+          FROM document_chunk WHERE document_id = :i ORDER BY idx LIMIT 4
+    """, {"i": document_id})
+
+    return {"doc": doc, "revisions": revisions, "origins": origins,
+            "preview": preview}
+
+
+@app.get("/api/knowledge/doc/{document_id}/diff")
+def knowledge_doc_diff(document_id: int, prev: int):
+    """Что изменилось между двумя обходами страницы.
+
+    Аудитору важен не текст целиком, а разница: банк поменял ставку, убрал
+    оговорку, добавил комиссию. Сравниваем по абзацам — построчный дифф на
+    веб-странице даёт шум из-за переносов.
+    """
+    import difflib
+    rows = q("""
+        SELECT document_id, url, fetched_at, content_text
+          FROM document WHERE document_id = ANY(:ids)
+    """, {"ids": [document_id, prev]})
+    by_id = {r["document_id"]: r for r in rows}
+    if document_id not in by_id or prev not in by_id:
+        raise HTTPException(404, "версия не найдена")
+    a, b = by_id[prev], by_id[document_id]
+    if a["url"] != b["url"]:
+        raise HTTPException(400, "это версии разных страниц")
+
+    def paras(t: str) -> list[str]:
+        out = [p.strip() for p in re.split(r"\n\s*\n|\n(?=#)", t or "")]
+        return [p for p in out if len(p) > 1]
+
+    pa, pb = paras(a["content_text"]), paras(b["content_text"])
+    sm = difflib.SequenceMatcher(None, pa, pb, autojunk=False)
+    added, removed = [], []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag in ("delete", "replace"):
+            removed += pa[i1:i2]
+        if tag in ("insert", "replace"):
+            added += pb[j1:j2]
+    LIM = 40
+    return {
+        "url": a["url"],
+        "from": {"document_id": prev, "fetched_at": a["fetched_at"]},
+        "to": {"document_id": document_id, "fetched_at": b["fetched_at"]},
+        "added": [x[:600] for x in added[:LIM]],
+        "removed": [x[:600] for x in removed[:LIM]],
+        "added_total": len(added), "removed_total": len(removed),
+        "similarity": round(sm.ratio(), 3),
+    }
+
+
+@app.get("/api/knowledge/coverage")
+def knowledge_coverage():
+    """Карта покрытия «банк × тема» — где выводы инструмента обоснованы, а где нет.
+
+    Ось «тема» берётся из адреса страницы (вклады, комиссии, ипотека), а не из
+    doc_type: тот означает формат файла, и матрица «банк × html» бесполезна.
+    Часть документов темы не имеет вовсе — акты ЦБ и новости, где предмет из
+    адреса не читается; их считаем отдельно, а не размазываем по клеткам.
+    """
+    cells = q("""
+        SELECT b.slug, b.name, t topic, count(DISTINCT d.document_id) n,
+               max(d.fetched_at) last_fetch
+          FROM document d
+          JOIN bank b ON b.bank_id = d.bank_id
+          JOIN document_chunk c ON c.document_id = d.document_id
+          CROSS JOIN LATERAL unnest(d.topics) t
+         WHERE d.trust_score >= 0.5 AND d.is_sponsored = FALSE
+         GROUP BY 1,2,3
+    """)
+    # «Пробовали, но не получилось» — отдельное состояние клетки. Без него
+    # карта врёт: капча на сайте банка выглядела бы как отсутствие документа.
+    failed = q("""
+        SELECT b.slug, o.skipped_reason, count(*) n
+          FROM document_origin o
+          JOIN bank b ON position(b.slug in o.url) > 0
+         WHERE o.skipped_reason IS NOT NULL
+         GROUP BY 1,2
+    """)
+    banks = q("""
+        SELECT b.slug, b.name, count(DISTINCT d.document_id) n
+          FROM bank b
+          LEFT JOIN document d ON d.bank_id = b.bank_id AND d.trust_score >= 0.5
+          LEFT JOIN document_chunk c ON c.document_id = d.document_id
+         GROUP BY 1,2 HAVING count(DISTINCT d.document_id) > 0
+         ORDER BY n DESC LIMIT 20
+    """)
+    untagged = q("""
+        SELECT count(DISTINCT d.document_id) n FROM document d
+          JOIN document_chunk c ON c.document_id = d.document_id
+         WHERE d.trust_score >= 0.5 AND (d.topics IS NULL OR d.topics = '{}')
+    """)
+    return {"cells": cells, "banks": banks, "failed": failed,
+            "topics": [{"id": k, "label": KNOWLEDGE_TOPIC_RU.get(k, k)}
+                       for k in KNOWLEDGE_TOPIC_ORDER],
+            "untagged": (untagged or [{"n": 0}])[0]["n"]}
+
+
+# Человеческие названия тем. Ключи — из classify_url (rag/url_discovery.py);
+# порядок — от того, что чаще проверяет аудитор, к редкому.
+KNOWLEDGE_TOPIC_RU = {
+    "deposits": "Вклады", "credits": "Кредиты", "mortgage": "Ипотека",
+    "cards": "Карты", "cards_credit": "Кредитные карты",
+    "cards_debit": "Дебетовые карты", "auto": "Автокредиты",
+    "tariffs": "Тарифы", "fees": "Комиссии", "transfers": "Переводы",
+    "transfers_intl": "Переводы за рубеж", "rko": "РКО",
+    "business": "Бизнесу", "investments": "Инвестиции", "premium": "Премиальным",
+    "documents": "Документы и оферты", "document": "Файлы (PDF, XLS)",
+    "support": "Поддержка", "mobile_app": "Мобильное приложение",
+    "about": "О банке",
+}
+KNOWLEDGE_TOPIC_ORDER = [
+    "deposits", "credits", "mortgage", "cards", "cards_credit", "cards_debit",
+    "auto", "tariffs", "fees", "transfers", "transfers_intl", "rko",
+    "business", "investments", "premium", "documents", "document",
+    "support", "mobile_app", "about",
+]
+
+
+# ── Аудит-дело ───────────────────────────────────────────────────────────────
+
+class CaseCreate(BaseModel):
+    title: str
+    note: Optional[str] = None
+
+
+class CaseItem(BaseModel):
+    kind: str = "document"
+    ref_id: Optional[int] = None
+    url: Optional[str] = None
+    title: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.get("/api/cases")
+def cases_list(user: CurrentUser = Depends(get_current_user)):
+    return {"cases": userdata.list_cases(user.username)}
+
+
+@app.post("/api/cases")
+def cases_create(req: CaseCreate, user: CurrentUser = Depends(get_current_user)):
+    if not (req.title or "").strip():
+        raise HTTPException(400, "нужно название дела")
+    return {"case_id": userdata.create_case(user.username, req.title.strip(), req.note)}
+
+
+@app.get("/api/cases/{case_id}")
+def cases_get(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    case = userdata.get_case(case_id, user.username)
+    if not case:
+        raise HTTPException(404, "дело не найдено")
+    return case
+
+
+@app.post("/api/cases/{case_id}/items")
+def cases_add_item(case_id: int, req: CaseItem,
+                   user: CurrentUser = Depends(get_current_user)):
+    if not userdata.add_case_item(case_id, user.username, kind=req.kind,
+                                  ref_id=req.ref_id, url=req.url,
+                                  title=req.title, note=req.note):
+        raise HTTPException(403, "приобщать можно только в своё дело")
+    return {"ok": True}
+
+
+@app.delete("/api/cases/{case_id}/items/{item_id}")
+def cases_del_item(case_id: int, item_id: int,
+                   user: CurrentUser = Depends(get_current_user)):
+    if not userdata.remove_case_item(case_id, item_id, user.username):
+        raise HTTPException(403, "нет прав")
+    return {"ok": True}
+
+
+@app.delete("/api/cases/{case_id}")
+def cases_delete(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    if not userdata.delete_case(case_id, user.username):
+        raise HTTPException(403, "нет прав")
+    return {"ok": True}
+
+
+@app.post("/api/cases/{case_id}/share")
+def cases_share(case_id: int, req: dict,
+                user: CurrentUser = Depends(get_current_user)):
+    if not userdata.share_case(case_id, user.username, req.get("shared_with")):
+        raise HTTPException(403, "делиться может только владелец")
+    return {"ok": True}
+
+
+@app.get("/api/cases/{case_id}/export.csv")
+def cases_export(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Выгрузка дела — чтобы приложить к рабочему файлу проверки.
+
+    Собирается на сервере, а не в браузере: у выгрузки должен быть один формат
+    независимо от того, кто и откуда её взял.
+    """
+    import csv, io
+    case = userdata.get_case(case_id, user.username)
+    if not case:
+        raise HTTPException(404, "дело не найдено")
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["Дело", case["title"]])
+    if case.get("note"):
+        w.writerow(["Примечание", case["note"]])
+    w.writerow(["Выгружено", datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M")])
+    w.writerow([])
+    w.writerow(["№", "Тип", "Банк", "Название", "Адрес источника",
+                "Доверие", "Дата обхода", "Комментарий аудитора"])
+    for i, it in enumerate(case.get("items") or [], 1):
+        w.writerow([i,
+                    {"document": "документ", "review": "отзыв",
+                     "offer": "продукт", "report": "отчёт"}.get(it["kind"], it["kind"]),
+                    it.get("bank_name") or "",
+                    it.get("title") or "",
+                    it.get("url") or "",
+                    it.get("trust_score") if it.get("trust_score") is not None else "",
+                    str(it.get("fetched_at") or "")[:10],
+                    it.get("note") or ""])
+    # BOM: без него Excel открывает кириллицу как «РґРѕРєСѓРјРµРЅС‚»
+    data = "﻿" + buf.getvalue()
+    fname = f"audit-case-{case_id}.csv"
+    return Response(content=data.encode("utf-8"),
+                    media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@app.get("/api/knowledge/queue")
+def knowledge_queue():
+    """Состояние очереди индексации — доказательство, что фон доходит до конца."""
+    from ..rag import ingest_queue
+    return ingest_queue.stats()
+
+
 class SemanticSearchRequest(BaseModel):
     query: str
     top_k: int = 8
@@ -1682,6 +1971,13 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     и (для содержательных ответов) отчёт. Копим так же, как фронт: text-чанки +
     report_replace (перекрывает) + sources.
     """
+    # Помечаем разбор: страницы, которые агент прочитает по дороге, лягут в базу
+    # знаний с отметкой, из чьего отчёта и по какому вопросу они там появились.
+    # report_id сейчас ещё не существует — отчёт сохраняется в самом конце, —
+    # поэтому связываем по run_id и проставляем report_id постфактум.
+    run_id = runctx.set_origin(kind="report", username=username,
+                               session_id=session_id, question=question)
+
     # Сразу отдаём фронту session_id, чтобы следующий вопрос продолжил эту сессию.
     yield json.dumps({"type": "session", "session_id": session_id}, ensure_ascii=False)
     parts: list[str] = []
@@ -1715,6 +2011,17 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     pass
             userdata.add_message(session_id, "assistant", body, {
                 "sources": sources, "mode": mode, "report_id": report_id})
+            # Достраиваем связь «документ → отчёт»: страницы уже легли в базу
+            # знаний с run_id, а номер отчёта появился только сейчас.
+            if report_id:
+                try:
+                    with db.session() as s:
+                        s.execute(text("""
+                            UPDATE document_origin SET report_id = :r
+                             WHERE run_id = :run AND report_id IS NULL
+                        """), {"r": report_id, "run": run_id})
+                except Exception:
+                    pass
             return report_id
         except Exception:
             log.warning("[ai_analyze] persist failed", exc_info=True)

@@ -7,7 +7,7 @@
      LLM_MODEL_NAME — напр. accounts/fireworks/models/llama-v3p3-70b-instruct
 """
 from __future__ import annotations
-import asyncio, json, os, logging, time
+import asyncio, contextvars, json, os, logging, time
 from typing import AsyncIterator
 from openai import AsyncOpenAI
 from sqlalchemy import text
@@ -559,6 +559,20 @@ def _run_tool(name: str, args: dict) -> str:
     return json.dumps({"error": "unknown tool"})
 
 
+async def _run_tool_async(name: str, args: dict) -> str:
+    """То же, но не занимает event-loop.
+
+    _run_tool синхронный: он ходит в БД, считает эмбеддинги, а fetch_official
+    ещё и качает страницу из сети. Вызванный напрямую из async-генератора, он
+    останавливал весь сервер (uvicorn запущен без воркеров) — вставали и чужие
+    запросы, и SSE-пинги. Уносим в пул потоков.
+    """
+    import asyncio as _a
+    ctx = contextvars.copy_context()      # инструменту нужен origin текущего разбора
+    return await _a.get_running_loop().run_in_executor(
+        None, lambda: ctx.run(_run_tool, name, args))
+
+
 def _get_review_themes(bank_slug: str | None, period: str = "all") -> str:
     """Читает review_summary. Если для данного банка/периода нет — на лету
     генерит и записывает (на следующий запрос будет из кеша)."""
@@ -734,53 +748,55 @@ def _fetch_official(url: str | None = None,
             "error": "не задан ни url, ни bank_slug+topic, ни bank_profile",
         }, ensure_ascii=False)
 
-    # Ingest
+    # Качаем и разбираем — это нужно ответу прямо сейчас. А вот индексация
+    # (нарезка + эмбеддинги) нужна только будущим поискам, поэтому уходит в
+    # очередь: раньше агент ждал её целиком, и на этом стоял весь ответ.
     try:
-        from ..rag.indexer import ingest_document_from_url
-        result = ingest_document_from_url(
-            target_url, bank_slug_hint=bank_slug,
-            prefer_browser=use_browser,
-        )
+        from ..rag import fetcher, ingest_queue
+        from ..rag.parsers import parse_auto
+        fr = fetcher.fetch(target_url, prefer_browser=use_browser)
     except Exception as e:
         return json.dumps({"error": f"fetch_failed: {e}"}, ensure_ascii=False)
 
+    if not fr.content:
+        return json.dumps({"error": "captcha" if fr.captcha else "fetch_failed",
+                           "url": target_url}, ensure_ascii=False)
+
+    parsed = parse_auto(fr.content, url=fr.final_url, content_type=fr.content_type)
+    full = parsed.text or ""
+
+    # В очередь отдаём уже скачанное: второй заход в сеть не нужен, а для
+    # банковских SPA он ещё и вреден — по HTTP они отдают JS-заглушку.
+    from ..web import runctx
+    ingest_queue.submit(fr.final_url, bank_slug_hint=bank_slug,
+                        prefer_browser=use_browser,
+                        content=fr.content, content_type=fr.content_type,
+                        final_url=fr.final_url,
+                        origin=runctx.current_origin())
+
     response: dict = {
-        "url":            result.url,
-        "bank_slug":      bank_slug,
-        "doc_type":       result.doc_type,
-        "trust_score":    result.trust_score,
-        "is_sponsored":   result.is_sponsored,
-        "is_new":         result.is_new,
-        "chunks_added":   result.chunks_added,
-        "skipped_reason": result.skipped_reason,
+        "url":        fr.final_url,
+        "bank_slug":  bank_slug,
+        "doc_type":   parsed.doc_type,
+        "title":      parsed.title,
+        "indexing":   "в очереди",
     }
 
-    # Если есть query — сразу делаем semantic_search в свежесвалявшем документе
-    if query and result.document_id:
-        with db.session() as s:
-            rows = s.execute(text("""
-                SELECT chunk_id, text, headings_path, idx
-                  FROM document_chunk WHERE document_id = :d ORDER BY idx
-                 LIMIT 50
-            """), {"d": result.document_id}).mappings().all()
-        if rows:
-            from ..rag import embedder
-            qvec = embedder.embed_one(query)
-            scored = []
-            for r in rows:
-                # Re-embed chunks мы уже не делаем — они в БД, можно через SQL
-                pass  # упростим: используем текстовый поиск как fallback
-            # Простой текстовый поиск: keyword match в chunk.text
-            ql = query.lower()
-            keyword_rank = []
-            for r in rows:
-                t = r["text"].lower()
-                hits = sum(1 for w in ql.split() if w in t)
-                keyword_rank.append((hits, r))
-            keyword_rank.sort(key=lambda x: x[0], reverse=True)
-            top = [{"text": r["text"][:600], "headings_path": r["headings_path"],
-                    "idx": r["idx"]} for hits, r in keyword_rank[:5] if hits > 0]
-            response["top_relevant"] = top
+    # Релевантные куски отдаём сразу из разобранного текста — без обращения к БД,
+    # где документа ещё может не быть (он только встал в очередь).
+    if query and full:
+        ql = [w for w in query.lower().split() if len(w) >= 3]
+        win, best = 1200, []
+        for start in range(0, len(full), 900):
+            piece = full[start:start + win]
+            if len(piece) < 200:
+                continue
+            low = piece.lower()
+            best.append((sum(low.count(w) for w in ql), piece))
+        best.sort(key=lambda x: -x[0])
+        response["top_relevant"] = [{"text": p[:600]} for hits, p in best[:5] if hits > 0]
+    if not response.get("top_relevant"):
+        response["text"] = full[:6000]
 
     return json.dumps(response, ensure_ascii=False, default=str)
 
@@ -1211,7 +1227,7 @@ async def stream_analysis(question: str, history: list[dict],
                     args = json.loads(tc["arguments"] or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                result = _run_tool(tc["name"], args)
+                result = await _run_tool_async(tc["name"], args)
                 # Citation tracking: enriches LLM-side data с [N] метками
                 result = _extract_sources_from_tool_result(tc["name"], result, sources)
                 messages.append({
@@ -1230,7 +1246,7 @@ async def stream_analysis(question: str, history: list[dict],
             if parsed:
                 name, args = parsed["name"], parsed["arguments"]
                 yield json.dumps({'type': 'tool_call', 'name': name})
-                result = _run_tool(name, args)
+                result = await _run_tool_async(name, args)
                 # Citation tracking
                 result = _extract_sources_from_tool_result(name, result, sources)
                 log.info("analyst: tool %s → %d chars", name, len(result))

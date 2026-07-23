@@ -704,3 +704,123 @@ def ai_feedback_stats(limit: int = 10) -> dict:
                     "mode": p.get("mode"),
                     "created_at": str(r.get("created_at") or "")})
     return {"likes_7d": likes, "dislikes_7d": dislikes, "recent_dislikes": out}
+
+
+# ── Аудит-дело: подборка доказательств ───────────────────────────────────────
+#
+# До этого «дело» жило в localStorage браузера: закрыл вкладку — подборка
+# пропала, показать коллеге нечего, к проверке не приложить. Теперь на сервере,
+# с приобщением документов из базы знаний и выгрузкой.
+
+def list_cases(username: str) -> list[dict]:
+    return _rows("""
+        SELECT c.case_id, c.title, c.note, c.created_at, c.updated_at,
+               (SELECT count(*) FROM audit_case_item i
+                 WHERE i.case_id = c.case_id) items,
+               (c.username = :u) AS mine, c.username AS owner
+          FROM audit_case c
+         WHERE c.username = :u
+            OR EXISTS (SELECT 1 FROM audit_case_share sh
+                        WHERE sh.case_id = c.case_id AND sh.revoked_at IS NULL
+                          AND (sh.shared_with = :u OR sh.shared_with IS NULL))
+         ORDER BY c.updated_at DESC LIMIT 100
+    """, {"u": username})
+
+
+def create_case(username: str, title: str, note: str | None = None) -> int:
+    return int(_scalar("""
+        INSERT INTO audit_case (username, title, note)
+        VALUES (:u, :t, :n) RETURNING case_id
+    """, {"u": username, "t": title[:200], "n": (note or None)}))
+
+
+def _may_read_case(case_id: int, username: str) -> bool:
+    return bool(_scalar("""
+        SELECT 1 FROM audit_case c
+         WHERE c.case_id = :c
+           AND (c.username = :u
+             OR EXISTS (SELECT 1 FROM audit_case_share sh
+                         WHERE sh.case_id = c.case_id AND sh.revoked_at IS NULL
+                           AND (sh.shared_with = :u OR sh.shared_with IS NULL)))
+    """, {"c": case_id, "u": username}))
+
+
+def _owns_case(case_id: int, username: str) -> bool:
+    return _scalar("SELECT username FROM audit_case WHERE case_id = :c",
+                   {"c": case_id}) == username
+
+
+def get_case(case_id: int, username: str) -> dict | None:
+    if not _may_read_case(case_id, username):
+        return None
+    case = _one("""SELECT case_id, username AS owner, title, note,
+                          created_at, updated_at
+                     FROM audit_case WHERE case_id = :c""", {"c": case_id})
+    if not case:
+        return None
+    case["mine"] = case["owner"] == username
+    # Документы подтягиваем свежими: доверие и дата обхода могли измениться
+    # с момента приобщения, и в деле должно стоять актуальное состояние.
+    case["items"] = _rows("""
+        SELECT i.item_id, i.kind, i.ref_id, i.url, i.title, i.note, i.added_at,
+               d.trust_score, d.fetched_at, d.doc_type::text doc_type,
+               b.name bank_name
+          FROM audit_case_item i
+          LEFT JOIN document d ON d.document_id = i.ref_id AND i.kind = 'document'
+          LEFT JOIN bank b ON b.bank_id = d.bank_id
+         WHERE i.case_id = :c ORDER BY i.added_at
+    """, {"c": case_id})
+    return case
+
+
+def add_case_item(case_id: int, username: str, *, kind: str,
+                  ref_id: int | None = None, url: str | None = None,
+                  title: str | None = None, note: str | None = None) -> bool:
+    if not _owns_case(case_id, username):
+        return False
+    with db.session() as s:
+        s.execute(text("""
+            INSERT INTO audit_case_item (case_id, kind, ref_id, url, title, note)
+            VALUES (:c, :k, :r, :u, :t, :n)
+            ON CONFLICT DO NOTHING
+        """), {"c": case_id, "k": kind, "r": ref_id, "u": url,
+               "t": (title or "")[:300] or None, "n": (note or None)})
+        s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
+                  {"c": case_id})
+    return True
+
+
+def remove_case_item(case_id: int, item_id: int, username: str) -> bool:
+    if not _owns_case(case_id, username):
+        return False
+    with db.session() as s:
+        s.execute(text("DELETE FROM audit_case_item WHERE item_id=:i AND case_id=:c"),
+                  {"i": item_id, "c": case_id})
+        s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
+                  {"c": case_id})
+    return True
+
+
+def delete_case(case_id: int, username: str) -> bool:
+    if not _owns_case(case_id, username):
+        return False
+    with db.session() as s:
+        s.execute(text("DELETE FROM audit_case WHERE case_id = :c"), {"c": case_id})
+    return True
+
+
+def share_case(case_id: int, owner: str, shared_with: str | None) -> bool:
+    """Своя таблица шеринга, а не общая с отчётами: у report_share нет пометки,
+    какая это сущность, и права считаются по голому номеру — доступ к отчёту №42
+    молча открыл бы дело №42."""
+    if not _owns_case(case_id, owner):
+        return False
+    with db.session() as s:
+        s.execute(text("""
+            INSERT INTO audit_case_share (case_id, owner, shared_with)
+            SELECT :c, :o, :w
+             WHERE NOT EXISTS (SELECT 1 FROM audit_case_share
+                                WHERE case_id=:c AND revoked_at IS NULL
+                                  AND shared_with IS NOT DISTINCT FROM :w)
+        """), {"c": case_id, "o": owner, "w": shared_with})
+    return True

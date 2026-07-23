@@ -5236,7 +5236,7 @@ function kbMark(s){
     p.startsWith("⟦")?<mark key={i} className="kb-hl">{p.slice(1,-1)}</mark>:<span key={i}>{p}</span>);
 }
 
-function KbDoc({g}){
+function KbDoc({g,onOpen}){
   const[open,setOpen]=useState(false);
   const kind=KB_KIND_RU[g.source_kind]||g.source_kind||null;
   const dom=(g.url||"").split("/")[2]||"";
@@ -5249,7 +5249,7 @@ function KbDoc({g}){
   return <article className="kb-doc">
     <div className="kb-doc-head">
       <div className="kb-doc-title">
-        <a href={g.url} target="_blank" rel="noopener noreferrer">{title}</a>
+        <button className="kb-doc-a" onClick={()=>onOpen&&onOpen(g.document_id)}>{title}</button>
         {g.doc_type&&g.doc_type!=="html"&&
           <span className="kb-type">{KB_TYPE_RU[g.doc_type]||g.doc_type}</span>}
       </div>
@@ -5276,7 +5276,294 @@ function KbDoc({g}){
   </article>;
 }
 
-function KnowledgePage(){
+// ─── Карточка документа: что это, откуда взялось и как менялось ─────────────
+// Аудитор ссылается на документ в рабочем файле, поэтому ему нужно не «есть
+// совпадение», а происхождение и история: кто и когда это принёс, что в тексте
+// поменялось с прошлого обхода, можно ли приобщить к делу.
+
+const KB_ORIGIN_RU={report:"из отчёта ИИ-аналитика",quick:"из быстрого ответа",
+  crawl:"из планового сбора",manual:"добавлен вручную",refresh:"при перепроверке"};
+
+function KbRevisions({doc,revisions}){
+  const[pair,setPair]=useState(null);   // {prev, cur}
+  const[diff,setDiff]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState(null);
+
+  useEffect(()=>{
+    if(!pair)return;
+    setBusy(true);setErr(null);setDiff(null);
+    apiFetch(`/api/knowledge/doc/${pair.cur}/diff?prev=${pair.prev}`)
+      .then(setDiff).catch(e=>setErr(e.message)).finally(()=>setBusy(false));
+  },[pair]);
+
+  if(!revisions||revisions.length<2)return <div className="kb-norev">
+    Версия от {fmtDateMsk(doc.fetched_at)}. Других версий страницы в архиве нет —
+    она переобходится, когда ИИ-аналитик снова к ней обращается.
+  </div>;
+
+  return <div className="kb-rev">
+    <div className="kb-rev-line">
+      {revisions.map((r,i)=>{
+        const prev=revisions[i+1];
+        const delta=prev?r.text_len-prev.text_len:0;
+        return <div key={r.document_id} className="kb-rev-item">
+          <span className="kb-rev-dot"/>
+          <div className="kb-rev-body">
+            <div className="kb-rev-top">
+              <b>{fmtDateMsk(r.fetched_at)}</b>
+              <span className="mono">{r.text_len.toLocaleString("ru")} зн.</span>
+              {prev&&delta!==0&&<span className={"kb-rev-d "+(delta>0?"pos":"neg")}>
+                {delta>0?"+":"−"}{Math.abs(delta).toLocaleString("ru")}</span>}
+              {r.document_id===doc.document_id&&<span className="kb-rev-cur">открыта</span>}
+            </div>
+            {prev&&<button className="btn btn-ghost btn-sm"
+              onClick={()=>setPair(pair&&pair.cur===r.document_id
+                ?null:{cur:r.document_id,prev:prev.document_id})}>
+              {pair&&pair.cur===r.document_id?"Скрыть изменения":"Что изменилось"}</button>}
+          </div>
+          {pair&&pair.cur===r.document_id&&<div className="kb-diff">
+            {busy&&<Skel h={54}/>}
+            {err&&<div className="kb-empty neg">{err}</div>}
+            {diff&&<>
+              <div className="kb-diff-sum mono">
+                совпадение текста {Math.round(diff.similarity*100)}% ·
+                добавлено {diff.added_total} · убрано {diff.removed_total}
+              </div>
+              {diff.removed.map((x,j)=><p key={"r"+j} className="kb-d-out">− {x}</p>)}
+              {diff.added.map((x,j)=><p key={"a"+j} className="kb-d-in">+ {x}</p>)}
+              {!diff.added.length&&!diff.removed.length&&
+                <p className="t-cap">Текст не изменился — различие только в невидимой разметке.</p>}
+            </>}
+          </div>}
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function KbCasePicker({doc,onDone}){
+  const[cases,setCases]=useState(null);
+  const[title,setTitle]=useState("");
+  const[note,setNote]=useState("");
+  const[done,setDone]=useState(null);
+  const load=()=>apiFetch("/api/cases").then(d=>setCases(d.cases||[])).catch(()=>setCases([]));
+  useEffect(load,[]);
+
+  const attach=async(caseId)=>{
+    await apiPost(`/api/cases/${caseId}/items`,{kind:"document",ref_id:doc.document_id,
+      url:doc.url,title:doc.title,note:note.trim()||null});
+    setDone(caseId);if(onDone)onDone();
+  };
+  const create=async()=>{
+    const r=await apiPost("/api/cases",{title:title.trim()});
+    await attach(r.case_id);
+  };
+
+  if(done)return <div className="kb-attached">Документ приобщён к делу.
+    {" "}<a href="#knowledge?cases=1">Открыть дела</a></div>;
+
+  const mine=(cases||[]).filter(c=>c.mine);
+  return <div className="kb-case-pick">
+    <label className="kb-case-note">
+      <span>Зачем приобщаете <i>необязательно</i></span>
+      <input className="input" value={note} onChange={e=>setNote(e.target.value)}
+             placeholder="напр.: подтверждает ставку на дату проверки"/>
+    </label>
+    {cases===null?<Skel h={40}/>:mine.length>0&&<div className="kb-case-list">
+      {mine.map(c=><button key={c.case_id} className="kb-case-btn"
+        onClick={()=>attach(c.case_id)}>{c.title}<i>{c.items}</i></button>)}
+    </div>}
+    <div className="kb-case-new">
+      <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
+             placeholder="…или новое дело: название"/>
+      <button className="btn btn-primary btn-sm" disabled={!title.trim()}
+              onClick={create}>Создать и приобщить</button>
+    </div>
+  </div>;
+}
+
+function KbDocCard({documentId,onClose}){
+  const[d,setD]=useState(null);
+  const[err,setErr]=useState(null);
+  const[tab,setTab]=useState("about");
+  useEffect(()=>{
+    setD(null);setErr(null);
+    apiFetch(`/api/knowledge/doc/${documentId}`).then(setD).catch(e=>setErr(e.message));
+  },[documentId]);
+
+  if(err)return <RvModal side="right" title="Документ" onClose={onClose}>
+    <div className="kb-empty neg">{err}</div></RvModal>;
+  if(!d)return <RvModal side="right" title="Документ" onClose={onClose}>
+    <Skel h={200}/></RvModal>;
+
+  const doc=d.doc, dom=(doc.url||"").split("/")[2]||"";
+  const raw=(doc.title||"").trim();
+  const title=(!raw||/^https?:\/\//i.test(raw))?dom:raw;
+  const topics=(doc.topics||[]).map(t=>KB_TOPIC_RU[t]||t);
+
+  return <RvModal side="right" title={title} sub={dom} onClose={onClose}>
+    <div className="kb-card-meta">
+      {doc.bank_name&&<span className="kb-bank">{doc.bank_name}</span>}
+      <TrustDots score={doc.trust_score}/>
+      <span>{KB_KIND_RU[doc.source_kind]||doc.source_kind||"источник не размечен"}</span>
+      <span>{KB_TYPE_RU[doc.doc_type]||doc.doc_type}</span>
+    </div>
+    {topics.length>0&&<div className="kb-card-topics">
+      {topics.map((t,i)=><span key={i} className="kb-topic">{t}</span>)}</div>}
+
+    <div className="kb-card-kv">
+      <span>Собран</span><b>{fmtDateMsk(doc.fetched_at)}</b>
+      <span>Объём текста</span><b>{(doc.text_len||0).toLocaleString("ru")} знаков</b>
+      <span>Фрагментов в поиске</span><b>{doc.chunks}</b>
+      <span>Версий в архиве</span><b>{(d.revisions||[]).length}</b>
+    </div>
+
+    {/* Происхождение — прямой ответ на «откуда это в базе» */}
+    {(d.origins||[]).length>0&&<div className="kb-origin">
+      {d.origins.slice(0,3).map((o,i)=><div key={i} className="kb-origin-row">
+        <b>{KB_ORIGIN_RU[o.kind]||o.kind}</b>
+        {" "}{fmtDateMsk(o.created_at)}
+        {o.mine&&o.question&&<div className="kb-origin-q">«{o.question}»</div>}
+        {!o.mine&&<div className="kb-origin-q">запрос коллеги</div>}
+        {o.report_id&&o.mine&&<a href={`#ai?report=${o.report_id}`}>открыть отчёт</a>}
+        {o.skipped_reason&&<span className="kb-origin-skip">не проиндексирован: {o.skipped_reason}</span>}
+      </div>)}
+    </div>}
+
+    <a className="btn btn-sm kb-card-open" href={doc.url} target="_blank"
+       rel="noopener noreferrer">Открыть первоисточник ↗</a>
+
+    <div className="kb-tabs">
+      {[["about","Текст"],["rev","История"],["case","В дело"]].map(([k,l])=>
+        <button key={k} className={"kb-tab"+(tab===k?" on":"")}
+                onClick={()=>setTab(k)}>{l}
+          {k==="rev"&&(d.revisions||[]).length>1&&
+            <i>{d.revisions.length}</i>}</button>)}
+    </div>
+
+    {tab==="about"&&<div className="kb-preview">
+      {(d.preview||[]).map((p,i)=><div key={i} className="kb-hit">
+        {p.headings_path&&<div className="kb-crumbs">{p.headings_path}</div>}
+        <p className="kb-snip">{p.text}…</p>
+      </div>)}
+      {!(d.preview||[]).length&&<div className="kb-empty">
+        У документа нет фрагментов в поиске — он либо слишком короткий,
+        либо загрузился заглушкой.</div>}
+    </div>}
+    {tab==="rev"&&<KbRevisions doc={doc} revisions={d.revisions}/>}
+    {tab==="case"&&<KbCasePicker doc={doc}/>}
+  </RvModal>;
+}
+
+// ─── Карта покрытия: где выводы обоснованы, а где дыра ──────────────────────
+const KB_TOPIC_RU={deposits:"Вклады",credits:"Кредиты",mortgage:"Ипотека",cards:"Карты",
+  cards_credit:"Кредитные карты",cards_debit:"Дебетовые карты",auto:"Автокредиты",
+  tariffs:"Тарифы",fees:"Комиссии",transfers:"Переводы",transfers_intl:"Переводы за рубеж",
+  rko:"РКО",business:"Бизнесу",investments:"Инвестиции",premium:"Премиальным",
+  documents:"Документы и оферты",document:"Файлы (PDF, XLS)",support:"Поддержка",
+  mobile_app:"Приложение",about:"О банке"};
+
+function KbCoverage({onPick}){
+  const[c,setC]=useState(null);
+  useEffect(()=>{apiFetch("/api/knowledge/coverage").then(setC).catch(()=>{});},[]);
+  if(!c)return <Skel h={180}/>;
+
+  const banks=(c.banks||[]).slice(0,10);
+  // показываем только темы, где хоть что-то есть — пустые столбцы это шум
+  const live=(c.topics||[]).filter(t=>(c.cells||[]).some(x=>x.topic===t.id));
+  const at=(slug,topic)=>{
+    const x=(c.cells||[]).find(y=>y.slug===slug&&y.topic===topic);
+    return x?x.n:0;
+  };
+  const max=Math.max(1,...(c.cells||[]).map(x=>x.n));
+
+  return <section className="surface kb-panel">
+    <div className="eyebrow">Карта покрытия — банк × тема</div>
+    <p className="t-cap" style={{margin:"4px 0 12px"}}>
+      Насыщенность клетки — сколько документов собрано. Пустая клетка значит,
+      что по этой теме у банка доказательной базы нет: вывод инструмента там
+      опирается только на агрегаторы. Нажмите на клетку, чтобы искать в ней.
+    </p>
+    <div className="kb-heat-wrap">
+      <table className="kb-heat">
+        <thead><tr><th></th>{live.map(t=>
+          <th key={t.id}><span>{t.label}</span></th>)}</tr></thead>
+        <tbody>{banks.map(b=><tr key={b.slug}>
+          <th>{b.name}</th>
+          {live.map(t=>{const n=at(b.slug,t.id);
+            return <td key={t.id}>
+              <button className={"kb-cell"+(n?"":" nil")}
+                      style={n?{"--f":Math.min(1,0.18+n/max)}:null}
+                      title={n?`${b.name} · ${t.label}: ${n} док.`
+                              :`${b.name} · ${t.label}: документов нет`}
+                      onClick={()=>onPick&&onPick(b,t,n)}>
+                {n||""}</button></td>;})}
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {c.untagged>0&&<p className="t-cap" style={{marginTop:10}}>
+      Ещё {c.untagged} документов вне карты: это акты ЦБ, судебная практика и
+      новости — у них тема не определяется по адресу страницы. Поиск их находит.
+    </p>}
+  </section>;
+}
+
+// ─── Дела ────────────────────────────────────────────────────────────────────
+function KbCases({onClose,onOpenDoc}){
+  const[list,setList]=useState(null);
+  const[open,setOpen]=useState(null);
+  const[cur,setCur]=useState(null);
+  const load=()=>apiFetch("/api/cases").then(d=>setList(d.cases||[])).catch(()=>setList([]));
+  useEffect(load,[]);
+  useEffect(()=>{ if(open)apiFetch(`/api/cases/${open}`).then(setCur).catch(()=>{}); },[open]);
+
+  const drop=async(itemId)=>{
+    await apiDel(`/api/cases/${open}/items/${itemId}`);
+    apiFetch(`/api/cases/${open}`).then(setCur);
+  };
+
+  if(open&&cur)return <RvModal side="right" title={cur.title}
+      sub={`${(cur.items||[]).length} материалов`} onClose={()=>{setOpen(null);setCur(null);}}>
+    {cur.note&&<p className="t-cap">{cur.note}</p>}
+    <div className="kb-case-acts">
+      <a className="btn btn-sm" href={`/api/cases/${open}/export.csv`}>Выгрузить CSV</a>
+    </div>
+    {(cur.items||[]).map(it=><div key={it.item_id} className="kb-case-item">
+      <div className="kb-case-it-h">
+        <button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc(it.ref_id)}>
+          {it.title||it.url}</button>
+        {cur.mine&&<button className="kb-case-x" onClick={()=>drop(it.item_id)}
+                           title="Убрать из дела">✕</button>}
+      </div>
+      <div className="kb-doc-meta">
+        {it.bank_name&&<span className="kb-bank">{it.bank_name}</span>}
+        {it.trust_score!=null&&<TrustDots score={it.trust_score}/>}
+        {it.fetched_at&&<span>обход {fmtDateMsk(it.fetched_at)}</span>}
+      </div>
+      {it.note&&<p className="kb-case-note-t">{it.note}</p>}
+    </div>)}
+    {!(cur.items||[]).length&&<div className="kb-empty">
+      Дело пустое. Найдите документ и нажмите «В дело» в его карточке.</div>}
+  </RvModal>;
+
+  return <RvModal side="right" title="Аудит-дела"
+      sub="подборки доказательств" onClose={onClose}>
+    {list===null?<Skel h={120}/>:!list.length?<div className="kb-empty">
+      <b>Дел пока нет.</b>
+      <p>Дело — это подборка документов под одну проверку: нашли подтверждение,
+        приобщили, выгрузили в рабочий файл. Приобщать можно из карточки любого
+        документа в поиске.</p></div>:
+      list.map(c=><button key={c.case_id} className="kb-case-row"
+          onClick={()=>setOpen(c.case_id)}>
+        <span className="kb-case-row-t">{c.title}</span>
+        <span className="t-cap">{c.items} матер. · {fmtDateMsk(c.updated_at)}
+          {!c.mine&&" · от коллеги"}</span>
+      </button>)}
+  </RvModal>;
+}
+
+function KnowledgePage({params}){
   const[q,setQ]=useState("");
   const[res,setRes]=useState(null);
   const[busy,setBusy]=useState(false);
@@ -5286,7 +5573,23 @@ function KnowledgePage(){
   const[fresh,setFresh]=useState(0);
   const[ov,setOv]=useState(null);
   const[tech,setTech]=useState(false);
+  // документ и дела открываются через адресную строку: аудитор даёт коллеге
+  // ссылку на конкретный документ, а не «найди в поиске сам»
+  const[docId,setDocId]=useState(()=>Number((params||{}).doc)||null);
+  const[cases,setCases]=useState(()=>!!(params||{}).cases);
   const abort=useRef(null);
+
+  useEffect(()=>{
+    const p=params||{};
+    setDocId(Number(p.doc)||null);
+    setCases(!!p.cases);
+  },[(params||{}).doc,(params||{}).cases]);
+
+  // Формат именно #knowledge?doc=123, а не #knowledge/doc/123: разбор хэша
+  // режет его только по «?», и путь с косыми не нашёлся бы среди страниц —
+  // защита от устаревшего бандла перезагрузила бы вкладку и увела на «Обзор».
+  const openDoc=id=>{ setDocId(id); location.hash=`#knowledge?doc=${id}`; };
+  const closeDoc=()=>{ setDocId(null); location.hash="#knowledge"; };
 
   useEffect(()=>{apiFetch("/api/knowledge/overview").then(setOv).catch(()=>{});},[]);
 
@@ -5320,14 +5623,20 @@ function KnowledgePage(){
   const active=!!(bank||dtype||fresh);
 
   return <div className="fade-in">
-    <header style={{marginBottom:20}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ База знаний · доказательная база</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Поиск по собранным документам</h1>
-      <p className="t-cap" style={{maxWidth:"76ch"}}>
-        Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы.
-        Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит
-        вести счёт», а можно вставить «ПСК» или номер пункта договора.
-      </p>
+    {docId&&<KbDocCard documentId={docId} onClose={closeDoc}/>}
+    {cases&&<KbCases onClose={()=>setCases(false)} onOpenDoc={id=>{setCases(false);openDoc(id);}}/>}
+    <header style={{marginBottom:20,display:"flex",justifyContent:"space-between",
+                    alignItems:"flex-start",gap:16,flexWrap:"wrap"}}>
+      <div>
+        <div className="eyebrow" style={{marginBottom:6}}>§ База знаний · доказательная база</div>
+        <h1 className="t-h" style={{marginBottom:6}}>Поиск по собранным документам</h1>
+        <p className="t-cap" style={{maxWidth:"76ch"}}>
+          Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы.
+          Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит
+          вести счёт», а можно вставить «ПСК» или номер пункта договора.
+        </p>
+      </div>
+      <button className="btn btn-sm" onClick={()=>setCases(true)}>Аудит-дела</button>
     </header>
 
     <div className="kb-bar">
@@ -5366,7 +5675,7 @@ function KnowledgePage(){
                 смысловых совпадений {res.modes.vector}, дословных {res.modes.text}</span>}</>
           : <>Ничего не нашлось</>}
       </div>
-      {groups.map(g=><KbDoc key={g.document_id} g={g}/>)}
+      {groups.map(g=><KbDoc key={g.document_id} g={g} onOpen={openDoc}/>)}
       {res.total===0&&<div className="kb-empty">
         <b>По запросу «{res.query}» в архиве ничего нет.</b>
         <p>Это не значит, что документа не существует — значит, он ещё не собран.
@@ -5419,6 +5728,10 @@ function KnowledgePage(){
             и ещё {ov.banks.length-14} банков</p>}
         </section>
       </div>}
+
+      <div style={{marginTop:12}}>
+        <KbCoverage onPick={(b,t,n)=>{ setBank(b.slug); setQ(t.label); }}/>
+      </div>
 
       <div className="kb-hint">
         <b>Как искать.</b> Обычная фраза ищет по смыслу. Кавычки — точная фраза
