@@ -947,7 +947,15 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
     sig = await asyncio.to_thread(_rd().weekly_signals, bank, product or None)
     signals = (sig or {}).get("signals") or []
     if not signals:
-        return {"summary": None, "signals": [], "overall": (sig or {}).get("overall"), "calm": True}
+        # Порог всплеска (×1.8) не пробит — но это НЕ значит «всё спокойно»:
+        # тема может расти вдвое быстрее рынка при ×1.6. Радар обязан показать
+        # такое как наблюдение, иначе он противоречит анализу недели, где эта
+        # же тема идёт первым пунктом (жалоба владельца 23.07.2026).
+        wp = await asyncio.to_thread(_rd().week_pulse, bank, product or None)
+        watch = [d for d in ((wp or {}).get("diverge") or []) if (d.get("gap") or 0) >= 1.15]
+        return {"summary": None, "signals": [], "watch": watch[:4],
+                "overall": (sig or {}).get("overall"),
+                "calm": not watch}
     recent = await asyncio.to_thread(_rd().list_reviews, bank, product or None, None, None, 7, None, None, 50)
     unclassified = [r for r in recent if not r.get("themes")]   # кандидаты в новые инциденты
     brief = await reviews_llm.anomaly_brief(sig, recent[:14], unclassified[:14])

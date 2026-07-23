@@ -396,23 +396,11 @@ function trustTier(score){
   return 3;
 }
 
-function renderMD(text, sources, charts){
-  if(!text) return null;
-  const chartsArr = Array.isArray(charts) ? charts : [];
-  const srcByN={};
-  if(Array.isArray(sources)){for(const s of sources){if(s&&s.n!=null)srcByN[s.n]=s;}}
-  const escAttr=(v)=>(v==null?"":String(v).replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
-  const renderCitation=(n)=>{
-    const s=srcByN[n];
-    if(!s||!s.url){
-      // Невалидная цитата — quiet якорь (не открывает в новой вкладке)
-      return `<sup><a href="#src-${n}" class="cite cite-anchor" data-cite="${n}">${n}</a></sup>`;
-    }
-    const tier=trustTier(s.trust_score);
-    return `<sup><a href="${escAttr(s.url)}" target="_blank" rel="noopener noreferrer" `
-         + `class="cite cite-t${tier}" data-cite="${n}">${n}</a></sup>`;
-  };
-  const inlineHTML=(s)=>s
+  // Экранирование + inline-markdown. Вынесено из renderMD в общую область:
+// разбор «Анализа жалоб недели» в карточки использует ту же санитизацию,
+// а вложенная функция была недоступна снаружи (ReferenceError на проде).
+function _inlineHTML(s, renderCitation=(n)=>`[${n}]`){
+  return String(s)
     // Сначала экранируем ВЕСЬ вход: в markdown попадает недоверенный текст
     // (LLM-пересказ жалоб клиентов, сниппеты источников) — сырой <img onerror=…>
     // иначе исполнится через dangerouslySetInnerHTML (stored XSS).
@@ -438,7 +426,27 @@ function renderMD(text, sources, charts){
              '<span class="dr-conflict">$1$2</span>')
     .replace(/⚠\s*(КОНФЛИКТ|РАСХОЖДЕНИЕ|ПРОТИВОРЕЧИЕ)([^.\n]{0,80})/gi,
              '<span class="dr-conflict">$1$2</span>');
+}
 
+function inlineHTML(s){return _inlineHTML(s);}
+
+function renderMD(text, sources, charts){
+  if(!text) return null;
+  const chartsArr = Array.isArray(charts) ? charts : [];
+  const srcByN={};
+  if(Array.isArray(sources)){for(const s of sources){if(s&&s.n!=null)srcByN[s.n]=s;}}
+  const escAttr=(v)=>(v==null?"":String(v).replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
+  const renderCitation=(n)=>{
+    const s=srcByN[n];
+    if(!s||!s.url){
+      // Невалидная цитата — quiet якорь (не открывает в новой вкладке)
+      return `<sup><a href="#src-${n}" class="cite cite-anchor" data-cite="${n}">${n}</a></sup>`;
+    }
+    const tier=trustTier(s.trust_score);
+    return `<sup><a href="${escAttr(s.url)}" target="_blank" rel="noopener noreferrer" `
+         + `class="cite cite-t${tier}" data-cite="${n}">${n}</a></sup>`;
+  };
+  const inlineHTML=(s)=>_inlineHTML(s, renderCitation);
   const lines=text.split("\n");
   let out=[],inTable=false,tableHead=[],tableRows=[],listBuf=[],listOrdered=false,bqBuf=[];
   // Slugify для anchor id заголовков (используется TOC)
@@ -822,6 +830,56 @@ function bfPickHot(hl,hot){
   const w=hl.trim().split(/\s+/);
   if(w.length>=2){const f=w.slice(-2).join(" ");const i=hl.lastIndexOf(f);if(i>=0)return trim(i,f.length);}
   return trim(0,hl.length);
+}
+
+// ─── Анализ жалоб недели: разбор LLM-текста в карточки ───────────────────────
+// ИИ пишет структурой «- **[УРОВЕНЬ]** **Тема** — разбор… Аудитору: действие»,
+// но раньше это выводилось сплошным списком абзацев и выглядело сырым на фоне
+// остальной страницы. Разбираем структуру и показываем как карточки: уровень
+// бейджем, тема заголовком, действие аудитору — отдельным блоком.
+function bfParseBrief(md){
+  const out=[];
+  String(md||"").split(/\n(?=\s*[-*]\s)/).forEach(block=>{
+    let b=block.trim().replace(/^[-*]\s+/,"");
+    if(!b)return;
+    let level=null,isNew=false,title=null,action=null;
+    const ml=b.match(/^\*\*\[([^\]]+)\]\*\*\s*/);
+    if(ml){level=ml[1].trim();b=b.slice(ml[0].length);}
+    const mn=b.match(/^\*\*Новое:?\*\*\s*/i);
+    if(mn){isNew=true;b=b.slice(mn[0].length);}
+    const mt=b.match(/^\*\*(.+?)\*\*\s*[—–-]\s*/);
+    if(mt){title=mt[1].trim();b=b.slice(mt[0].length);}
+    // NB: \b в JS опирается на \w, где НЕТ кириллицы — граница перед «Аудитору»
+    // никогда не срабатывала, и действие не отделялось от тела карточки
+    const ma=b.match(/(?:^|[\s.;)])Аудитору\s*[:—–-]\s*/i);
+    if(ma){action=b.slice(ma.index+ma[0].length).trim();
+           b=b.slice(0,ma.index+ (ma[0].match(/^[\s.;)]/)?1:0)).trim();}
+    b=b.replace(/[;,.\s]+$/,"");
+    if(b||title)out.push({level,isNew,title,body:b,action});
+  });
+  return out;
+}
+
+function BfBrief({markdown}){
+  const items=useMemo(()=>bfParseBrief(markdown),[markdown]);
+  // не распарсилось — показываем как было, хуже не станет
+  if(!items.length)return <div className="bf-brief">{renderMD(markdown)}</div>;
+  const cls=it=>it.isNew?"new":/высок/i.test(it.level||"")?"high"
+    :/средн/i.test(it.level||"")?"mid":/низк/i.test(it.level||"")?"low":"mid";
+  const lbl=it=>it.isNew?"новая тема":(it.level||"наблюдение").toLowerCase();
+  return <div className="bfb-list">
+    {items.map((it,i)=><article key={i} className={"bfb-item lvl-"+cls(it)}>
+      <div className="bfb-head">
+        <span className="bfb-badge">{lbl(it)}</span>
+        {it.title&&<h4 className="bfb-title">{it.title}</h4>}
+      </div>
+      {it.body&&<p className="bfb-body" dangerouslySetInnerHTML={{__html:inlineHTML(it.body)}}/>}
+      {it.action&&<div className="bfb-act">
+        <span className="bfb-act-l">Аудитору</span>
+        <span dangerouslySetInnerHTML={{__html:inlineHTML(it.action)}}/>
+      </div>}
+    </article>)}
+  </div>;
 }
 
 function BfCard({ins,idx,lead}){
@@ -1756,7 +1814,7 @@ function OverviewPage(){
               <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="reviews"}>К отзывам <Ic.ext/></button>
             </div>
           </div>
-          <div className="bf-brief">{renderMD(brief.markdown)}</div>
+          <BfBrief markdown={brief.markdown}/>
         </div>}
       </div>
 
@@ -2629,8 +2687,24 @@ function ReviewsPage(){
           </div>
           {anomBusy?
             <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
-           :(!anom||anom.calm||!anom.signals||!anom.signals.length)?
+           :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?
             <div className="rv-radar-calm"><span className="rv-radar-check"><IcoCheck/></span> Резких аномалий за неделю не выявлено</div>
+           :(!anom.signals||!anom.signals.length)?
+            /* порог всплеска не пробит, но расхождение с рынком есть —
+               «спокойно» здесь было бы неправдой */
+            <>
+              <div className="rv-radar-sub">Резких всплесков нет. Растут быстрее рынка:</div>
+              <div className="rv-radar-chips">
+                {(anom.watch||[]).map((d,i)=>
+                  <span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
+                    title={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
+                    onClick={()=>setTheme(d.key)} onKeyDown={onKey(()=>setTheme(d.key))}>
+                    {d.short||d.label}<b>×{d.gap}</b></span>)}
+              </div>
+              <div className="rv-cap" style={{marginTop:8}}>
+                Всплеском считаем рост от ×1.8 к своей норме. Здесь — темы ниже этого порога,
+                но обгоняющие рынок: их стоит держать в поле зрения.</div>
+            </>
            :<>
               <div className="rv-radar-chips">
                 {anom.signals.map((s,i)=>{

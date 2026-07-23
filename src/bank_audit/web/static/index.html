@@ -77,6 +77,33 @@ input,select,textarea{font:inherit;color:inherit}
 .nav-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:auto}
 .nav-count{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3)}
 /* метка «beta» у вкладки в разработке — тише названия, но заметна */
+/* ── Анализ жалоб недели: карточки вместо сплошного текста (bfb-) ─────────── */
+.bfb-list{display:flex;flex-direction:column;gap:12px}
+.bfb-item{border:1px solid var(--hair);border-radius:10px;padding:14px 16px 13px;
+  background:var(--surface);border-left:3px solid var(--hair-2);transition:border-color .12s}
+.bfb-item:hover{border-color:var(--hair-2)}
+.bfb-item.lvl-high{border-left-color:var(--accent);background:color-mix(in oklab,var(--accent),transparent 97%)}
+.bfb-item.lvl-mid{border-left-color:var(--warn)}
+.bfb-item.lvl-low{border-left-color:var(--hair-2)}
+.bfb-item.lvl-new{border-left-color:var(--ink);background:color-mix(in oklab,var(--ink),transparent 97%)}
+.bfb-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:7px}
+.bfb-badge{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;
+  border-radius:20px;padding:2px 8px;border:1px solid var(--hair-2);color:var(--ink-3);white-space:nowrap;flex:0 0 auto}
+.lvl-high .bfb-badge{border-color:color-mix(in oklab,var(--accent),transparent 55%);color:var(--accent)}
+.lvl-mid .bfb-badge{border-color:color-mix(in oklab,var(--warn),transparent 55%);color:var(--warn)}
+.lvl-new .bfb-badge{border-color:var(--ink-3);color:var(--ink)}
+.bfb-title{font-family:Georgia,'Times New Roman',serif;font-size:16px;font-weight:500;margin:0;line-height:1.25;flex:1;min-width:0}
+.bfb-body{font-size:13.5px;line-height:1.62;color:var(--ink-2);margin:0}
+.bfb-body em{font-style:normal;color:var(--accent);font-weight:500}
+.bfb-body strong{color:var(--ink);font-weight:600}
+.bfb-act{margin-top:10px;padding-top:9px;border-top:1px dashed var(--hair-2);
+  font-size:12.5px;line-height:1.55;color:var(--ink-2);display:grid;grid-template-columns:78px 1fr;gap:10px;align-items:baseline}
+.bfb-act-l{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+@media(max-width:640px){.bfb-act{grid-template-columns:1fr;gap:3px}}
+.rv-radar-sub{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-3);margin:2px 0 8px}
+.rv-radar-chip.lvl-watch{border-color:color-mix(in oklab,var(--warn),transparent 60%);color:var(--ink-2)}
+.rv-radar-chip.lvl-watch b{color:var(--warn)}
 .trust-dots{display:inline-flex;gap:3px;align-items:center;margin-left:6px}
 .trust-dots i{width:5px;height:5px;border-radius:50%;background:var(--hair-2);display:inline-block}
 .trust-dots i.on{background:var(--pos)}
@@ -1707,6 +1734,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-17"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-20"></script>
 </body>
 </html>
