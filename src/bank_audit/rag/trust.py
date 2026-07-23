@@ -72,6 +72,10 @@ def detect_invalid_content(text: str | None) -> tuple[bool, str | None]:
     if not text or len(text.strip()) < 50:
         return True, "too_short"
     low = text[:4000].lower()
+    # Заглушки антибота: страница отдалась, но содержимого нет. Такие копии
+    # оседали в архиве (5 копий одной страницы sberbank.com) и занимали место
+    if "your support id is" in low or "enable javascript to view" in low:
+        return True, "antibot_stub"
     for marker in _CAPTCHA_LEXICAL:
         if marker in low:
             return True, f"captcha:{marker}"
@@ -102,6 +106,11 @@ def compute_trust(base_weight: float, url: str, text: str | None) -> float:
 # Расширяется через source_trust таблицу.
 KNOWN_BANK_DOMAINS = {
     "sberbank.ru":       "sberbank",
+    "sberbank.com":      "sberbank",   # .com-зеркало — тот же первоисточник
+    "sber.ru":           "sberbank",
+    "domclick.ru":       "sberbank",
+    "vtb.com":           "vtb",
+    "alfabank.com":      "alfabank",
     "alfabank.ru":       "alfabank",
     "vtb.ru":            "vtb",
     "tinkoff.ru":        "tinkoff",
@@ -171,6 +180,17 @@ GOVT_TRUST_DOMAINS: dict[str, tuple[str, float, str]] = {
     "rospotrebnadzor.ru":   ("government", 0.88, "Роспотребнадзор"),
     "asv.org.ru":           ("regulator", 0.92, "АСВ"),
     "moex.com":             ("regulator", 0.90, "Московская биржа"),
+    # Добавлено по ревизии корпуса 23.07.2026: эти первоисточники лежали в
+    # архиве как «блог» с весом 0.30 и не попадали в поиск
+    "fas.gov.ru":           ("regulator", 0.92, "ФАС России"),
+    "cbr-ru.ru":            ("regulator", 0.90, "Банк России (зеркало)"),
+    "sudrf.ru":             ("government", 0.90, "ГАС «Правосудие»"),
+    "arbitr.ru":            ("government", 0.90, "Картотека арбитражных дел"),
+    "kad.arbitr.ru":        ("government", 0.90, "Картотека арбитражных дел"),
+    "genproc.gov.ru":       ("government", 0.88, "Генпрокуратура"),
+    "roskomnadzor.ru":      ("government", 0.86, "Роскомнадзор"),
+    "fedsfm.ru":            ("government", 0.88, "Росфинмониторинг"),
+    "finuslugi.ru":         ("government", 0.80, "Финуслуги — платформа Мосбиржи"),
     # Юридические БД — third-party, но de-facto authoritative
     "consultant.ru":        ("legal_db", 0.85, "КонсультантПлюс"),
     "garant.ru":            ("legal_db", 0.85, "Гарант"),

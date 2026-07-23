@@ -892,7 +892,102 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
   .dr-doc-main table{break-inside:avoid}
 }
 
-/* ─── Knowledge page ─────────────────────────────────────────────────── */
+/* ─── База знаний ────────────────────────────────────────────────────── */
+.kb-bar{position:sticky;top:0;z-index:5;padding:10px 0 12px;margin-bottom:6px;
+  background:linear-gradient(var(--paper) 78%,transparent);}
+.kb-input-wrap{position:relative;display:flex;align-items:center}
+.kb-input{width:100%;padding:14px 44px 14px 16px;border:1px solid var(--hair-2);
+  border-radius:10px;background:var(--surface);font-size:15px;color:var(--ink);
+  transition:border-color .15s,box-shadow .15s}
+.kb-input::placeholder{color:var(--ink-4)}
+.kb-input:focus{outline:none;border-color:var(--ink);
+  box-shadow:0 0 0 3px color-mix(in oklab,var(--ink),transparent 90%)}
+.kb-spin{position:absolute;right:16px;width:13px;height:13px;border-radius:50%;
+  border:2px solid var(--hair-2);border-top-color:var(--accent);
+  animation:kbspin .7s linear infinite}
+@keyframes kbspin{to{transform:rotate(360deg)}}
+.kb-clear{position:absolute;right:12px;border:0;background:none;cursor:pointer;
+  color:var(--ink-4);font-size:20px;line-height:1;padding:2px 6px;border-radius:5px}
+.kb-clear:hover{color:var(--ink);background:var(--paper-2)}
+.kb-filters{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
+.kb-sel{padding:6px 10px;border:1px solid var(--hair);border-radius:7px;
+  background:var(--surface);font-size:12px;color:var(--ink-2);cursor:pointer;
+  font-family:'JetBrains Mono',monospace}
+.kb-sel:focus{outline:none;border-color:var(--ink-3)}
+
+.kb-summary{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);
+  padding:2px 2px 12px;display:flex;gap:14px;flex-wrap:wrap;align-items:baseline}
+.kb-summary b{color:var(--ink-2)}
+.kb-modes{padding-left:14px;border-left:1px solid var(--hair)}
+
+.kb-doc{background:var(--surface);border:1px solid var(--hair);border-radius:10px;
+  padding:15px 17px;margin-bottom:10px;transition:border-color .15s}
+.kb-doc:hover{border-color:var(--hair-2)}
+.kb-doc-head{display:flex;align-items:flex-start;gap:12px;justify-content:space-between}
+.kb-doc-title{font-size:14.5px;line-height:1.4;font-weight:500}
+.kb-doc-title a{color:var(--ink);text-decoration:none}
+.kb-doc-title a:hover{text-decoration:underline;text-underline-offset:3px}
+.kb-type{margin-left:8px;font-family:'JetBrains Mono',monospace;font-size:9.5px;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--ink-4);
+  border:1px solid var(--hair-2);border-radius:4px;padding:1px 5px;vertical-align:2px}
+.kb-doc-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4)}
+.kb-doc-meta .kb-bank{color:var(--ink-2)}
+.kb-doc-meta .kb-dom{color:var(--accent)}
+.kb-hits{margin-top:11px;display:flex;flex-direction:column;gap:9px}
+.kb-hit{border-left:2px solid var(--hair-2);padding-left:11px}
+.kb-crumbs{font-size:10.5px;color:var(--ink-4);font-style:italic;margin-bottom:3px}
+.kb-snip{font-size:13px;line-height:1.62;color:var(--ink-2);margin:0}
+.kb-hl{background:color-mix(in oklab,var(--accent),transparent 82%);
+  color:var(--ink);border-radius:2px;padding:0 1px;font-weight:500}
+.kb-via{display:inline-block;margin-top:5px;font-family:'JetBrains Mono',monospace;
+  font-size:9.5px;letter-spacing:.04em;color:var(--ink-4)}
+
+.kb-empty{padding:22px 24px;border:1px dashed var(--hair-2);border-radius:10px;
+  font-size:13.5px;line-height:1.65;color:var(--ink-2);background:var(--surface)}
+.kb-empty.neg{border-color:color-mix(in oklab,var(--neg),transparent 60%);color:var(--neg)}
+.kb-empty b{color:var(--ink)}
+.kb-empty p{margin:8px 0 6px}
+.kb-empty ul{margin:0;padding-left:18px}
+.kb-empty li{margin-bottom:4px}
+
+.kb-what{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:12px;margin:6px 0 18px}
+.kb-what-k{background:var(--surface);border:1px solid var(--hair);border-radius:10px;
+  padding:14px 16px}
+.kb-what-k b{display:block;font-family:'Source Serif 4',Georgia,serif;font-size:28px;
+  line-height:1;color:var(--ink);font-feature-settings:"tnum"}
+.kb-what-k span{display:block;margin-top:6px;font-size:11px;color:var(--ink-4);line-height:1.4}
+.kb-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:900px){.kb-grid2{grid-template-columns:1fr}}
+.kb-panel{padding:16px 18px}
+.kb-kind{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12.5px}
+.kb-kind-n{width:150px;flex:none;color:var(--ink-2)}
+.kb-kind-bar{flex:1;height:6px;background:var(--paper-2);border-radius:3px;overflow:hidden}
+.kb-kind-bar i{display:block;height:100%;border-radius:3px;
+  background:color-mix(in oklab,var(--accent),transparent 45%)}
+.kb-kind-v{width:44px;text-align:right;font-size:11px;color:var(--ink-3)}
+.kb-banks{display:flex;flex-wrap:wrap;gap:6px}
+.kb-bank-chip{border:1px solid var(--hair);background:var(--paper-2);border-radius:20px;
+  padding:5px 11px;font-size:12px;color:var(--ink-2);cursor:pointer;
+  display:inline-flex;align-items:baseline;gap:6px;transition:border-color .15s}
+.kb-bank-chip:hover{border-color:var(--ink-3);color:var(--ink)}
+.kb-bank-chip i{font-style:normal;font-family:'JetBrains Mono',monospace;
+  font-size:10px;color:var(--ink-4)}
+.kb-hint{margin-top:16px;padding:13px 16px;border:1px solid var(--hair);
+  border-radius:10px;font-size:12.5px;line-height:1.6;color:var(--ink-3);
+  background:var(--paper-2)}
+.kb-hint b{color:var(--ink-2)}
+.kb-tech{margin-top:18px;padding:14px 18px}
+.kb-tech summary{cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10.5px;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4)}
+.kb-tech summary:hover{color:var(--ink-2)}
+.kb-tech-kv{display:grid;grid-template-columns:auto auto;gap:6px 20px;
+  justify-content:start;font-size:12.5px}
+.kb-tech-kv span{color:var(--ink-4)}
+.kb-tech-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-2)}
+
+/* ─── Knowledge page (устаревшее, осталось от инженерной консоли) ────── */
 .k-kpi-row{
   display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:16px;
   margin-bottom:28px;align-items:end;
@@ -1734,6 +1829,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-20"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-24"></script>
 </body>
 </html>

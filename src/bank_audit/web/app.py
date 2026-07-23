@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, asyncio, logging
+import json, os, asyncio, logging, time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1505,6 +1505,80 @@ def rag_bootstrap_all(background_tasks: BackgroundTasks):
                 log.warning("bootstrap-all %s failed: %s", slug, e)
     background_tasks.add_task(_do)
     return {"started": True, "count": len(TOP_BANK_SITES)}
+
+
+@app.get("/api/knowledge/search")
+def knowledge_search(
+    q: str,
+    bank: Optional[str] = None,
+    doc_type: Optional[str] = None,
+    fresh: Optional[int] = None,
+    limit: int = 20,
+):
+    """Витрина «База знаний»: гибридный поиск, сгруппированный по документам.
+
+    GET, а не POST: живой поиск шлёт запрос на каждое нажатие клавиши, и браузер
+    должен уметь отменить предыдущий и переиспользовать кэш.
+    """
+    from ..rag.retriever import hybrid_search
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"query": q, "groups": [], "total": 0, "too_short": True}
+    t0 = time.time()
+    try:
+        res = hybrid_search(
+            q, limit=max(1, min(limit, 50)),
+            bank_slugs=[bank] if bank else None,
+            doc_types=[doc_type] if doc_type else None,
+            max_age_days=fresh or None,
+        )
+    except Exception as e:
+        log.warning("knowledge_search %r failed: %s", q[:60], e)
+        raise HTTPException(500, "поиск не отработал")
+    for g in res["groups"]:
+        if g.get("fetched_at"):
+            g["fetched_at"] = g["fetched_at"].isoformat()
+    res["query"] = q
+    res["took_ms"] = int((time.time() - t0) * 1000)
+    return res
+
+
+@app.get("/api/knowledge/overview")
+def knowledge_overview():
+    """Состояние архива: что вообще можно найти, до того как что-то искать.
+
+    Пустая страница поиска без этого — глухая стена: аудитор не знает ни объёма,
+    ни свежести, ни того, по каким банкам данные есть, а по каким дыра.
+    """
+    stats = q("""
+        SELECT count(DISTINCT d.document_id)                    AS documents,
+               count(*)                                          AS fragments,
+               count(DISTINCT d.bank_id)                         AS banks,
+               max(d.fetched_at)                                 AS last_fetch,
+               count(DISTINCT d.document_id) FILTER (
+                   WHERE d.fetched_at > now() - interval '30 days') AS fresh_30d
+          FROM document d JOIN document_chunk dc USING (document_id)
+         WHERE d.trust_score >= 0.5 AND d.is_sponsored = FALSE
+    """)
+    banks = q("""
+        SELECT b.slug, b.name,
+               count(DISTINCT d.document_id) documents,
+               max(d.fetched_at) last_fetch
+          FROM document d JOIN document_chunk dc USING (document_id)
+          JOIN bank b ON b.bank_id = d.bank_id
+         WHERE d.trust_score >= 0.5 AND d.is_sponsored = FALSE
+         GROUP BY 1,2 ORDER BY documents DESC LIMIT 40
+    """)
+    kinds = q("""
+        SELECT COALESCE(st.kind, 'прочее') kind,
+               count(DISTINCT d.document_id) documents,
+               round(avg(d.trust_score)::numeric, 2) trust
+          FROM document d JOIN document_chunk dc USING (document_id)
+          LEFT JOIN source_trust st ON st.source_id = d.source_id
+         WHERE d.trust_score >= 0.5 AND d.is_sponsored = FALSE
+         GROUP BY 1 ORDER BY documents DESC
+    """)
+    return {"stats": (stats or [{}])[0], "banks": banks, "kinds": kinds}
 
 
 class SemanticSearchRequest(BaseModel):

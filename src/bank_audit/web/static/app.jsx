@@ -94,7 +94,9 @@ const fmtTerm = (min,max) => {
 };
 
 // ─── API ──────────────────────────────────────────────────────────────────────
-const apiFetch = (path) => fetch(path).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json();});
+// opts нужен живому поиску: он передаёт AbortSignal, чтобы медленный ответ на
+// «вкла» не перезатёр быстрый ответ на «вклады»
+const apiFetch = (path, opts) => fetch(path, opts).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json();});
 const apiPost  = (path,body) => fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 const apiDel   = (path) => fetch(path,{method:"DELETE"}).then(r=>r.json()).catch(()=>{});
 const apiPut   = (path,body) => fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
@@ -5203,145 +5205,240 @@ function SourcesPage(){
   </div>;
 }
 
+// ─── БАЗА ЗНАНИЙ — доказательная база аудитора ───────────────────────────────
+// Была инженерная консоль: «pgvector», «BGE-M3 1024d», кнопки «Crawl всех банков»,
+// колонка «Features». Аудитору нужно другое: найти документ, на который можно
+// сослаться в рабочем файле, и понимать, чего в архиве нет.
+//
+// Поиск гибридный: вектор ловит смысл («сколько стоит вести счёт» → «плата за
+// обслуживание»), полнотекст — точные формулировки («ПСК», «п. 4.2», номер
+// предписания). Выдача сгруппирована по документам: документ — то, на что
+// ссылаются, фрагменты внутри — доказательство, почему он подошёл.
+
+const KB_KIND_RU={regulator:"регулятор",government:"госорган",bank_official:"официальный сайт банка",
+  aggregator:"агрегатор",media:"СМИ",press:"СМИ",reviews:"отзывы",blog:"блог",
+  legal_db:"правовая база",forum:"форум",прочее:"прочее"};
+const KB_TYPE_RU={html:"веб-страница",pdf:"PDF",txt:"текст",doc:"документ"};
+const KB_FRESH=[{v:0,l:"любая давность"},{v:30,l:"за месяц"},{v:90,l:"за квартал"},{v:365,l:"за год"}];
+
+// Русское склонение по числу: 1 копия / 2 копии / 5 копий.
+// 11–14 — исключение, они идут по форме «копий» несмотря на последнюю цифру.
+function plural(n,one,few,many){
+  const a=Math.abs(n)%100, b=a%10;
+  return a>10&&a<20?many:b>1&&b<5?few:b===1?one:many;
+}
+
+// Подсветка приходит с сервера в маркерах ⟦ ⟧ — не HTML, чтобы содержимое
+// документов никогда не попадало в разметку страницы.
+function kbMark(s){
+  if(!s)return null;
+  return s.split(/(⟦[^⟧]*⟧)/g).map((p,i)=>
+    p.startsWith("⟦")?<mark key={i} className="kb-hl">{p.slice(1,-1)}</mark>:<span key={i}>{p}</span>);
+}
+
+function KbDoc({g}){
+  const[open,setOpen]=useState(false);
+  const kind=KB_KIND_RU[g.source_kind]||g.source_kind||null;
+  const dom=(g.url||"").split("/")[2]||"";
+  // у части документов (выгрузки ЦБ, PDF без метаданных) в заголовке лежит сам
+  // адрес, а в хлебных крошках — «Страница 71». Тогда единственное осмысленное
+  // название — первая строка самого документа, её отдаёт сервер
+  const raw=(g.title||"").trim();
+  const title=(!raw||/^https?:\/\//i.test(raw))
+    ? ((g.text_head||"").trim()||dom||"Документ") : raw;
+  return <article className="kb-doc">
+    <div className="kb-doc-head">
+      <div className="kb-doc-title">
+        <a href={g.url} target="_blank" rel="noopener noreferrer">{title}</a>
+        {g.doc_type&&g.doc_type!=="html"&&
+          <span className="kb-type">{KB_TYPE_RU[g.doc_type]||g.doc_type}</span>}
+      </div>
+      <TrustDots score={g.trust_score}/>
+    </div>
+    <div className="kb-doc-meta">
+      {g.bank_name&&<span className="kb-bank">{g.bank_name}</span>}
+      <span className="kb-dom">{dom}</span>
+      {kind&&<span>{kind}</span>}
+      <span>обновлён {formatRelDate(g.fetched_at)}</span>
+      {g.duplicates>0&&<span title="тот же текст найден и по другим адресам">
+        ещё {g.duplicates} {plural(g.duplicates,"копия","копии","копий")}</span>}
+    </div>
+    <div className="kb-hits">
+      {(g.hits||[]).slice(0,open?99:2).map((h,i)=><div key={i} className="kb-hit">
+        {h.headings_path&&<div className="kb-crumbs">{h.headings_path}</div>}
+        <p className="kb-snip">{kbMark(h.snippet)}</p>
+        <span className="kb-via">{h.via}</span>
+      </div>)}
+      {(g.hits||[]).length>2&&<button className="btn btn-ghost btn-sm"
+        onClick={()=>setOpen(v=>!v)}>
+        {open?"Свернуть":`Ещё ${g.hits.length-2} фрагм.`}</button>}
+    </div>
+  </article>;
+}
+
 function KnowledgePage(){
-  const[coverage,setCoverage]=useState([]);
-  const[recent,setRecent]=useState([]);
-  const[loading,setLoading]=useState(true);
-  const[query,setQuery]=useState("");
-  const[searchResults,setSearchResults]=useState(null);
-  const[searching,setSearching]=useState(false);
-  const[bootstrapping,setBootstrapping]=useState(false);
-  const[crawling,setCrawling]=useState(false);
+  const[q,setQ]=useState("");
+  const[res,setRes]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState(null);
+  const[bank,setBank]=useState("");
+  const[dtype,setDtype]=useState("");
+  const[fresh,setFresh]=useState(0);
+  const[ov,setOv]=useState(null);
+  const[tech,setTech]=useState(false);
+  const abort=useRef(null);
 
-  const load=()=>{
-    Promise.all([
-      apiFetch("/api/rag/coverage").catch(()=>[]),
-      apiFetch("/api/sources").then(d=>(d?.runs||[])).catch(()=>[]),
-    ]).then(([cov,runs])=>{
-      setCoverage(Array.isArray(cov)?cov:[]);
-      setRecent((runs||[]).filter(r=>r.status==="ok").slice(0,8));
-      setLoading(false);
-    });
-  };
-  useEffect(()=>{load();const id=setInterval(load,8000);return()=>clearInterval(id);},[]);
+  useEffect(()=>{apiFetch("/api/knowledge/overview").then(setOv).catch(()=>{});},[]);
 
-  const runSearch=async()=>{
-    const q=query.trim(); if(!q)return;
-    setSearching(true);setSearchResults(null);
-    try{
-      // вызываем chat endpoint в режиме semantic_search (но проще — создадим прямой endpoint)
-      // Для MVP — вызываем AI agent с явным указанием
-      const res=await apiPost("/api/rag/semantic-search",{query:q,top_k:8,trust_min:0.5});
-      setSearchResults(res?.results||[]);
-    }catch(e){
-      setSearchResults({error:e.message});
-    }finally{setSearching(false);}
-  };
+  // Живой поиск. Задержка 280 мс — короче, и каждый набранный символ уходит
+  // отдельным запросом; длиннее, и ощущается «затупом». Предыдущий запрос
+  // отменяем: иначе медленный ответ на «вкла» перезатрёт быстрый на «вклады».
+  useEffect(()=>{
+    const term=q.trim();
+    if(term.length<2){setRes(null);setErr(null);setBusy(false);return;}
+    setBusy(true);
+    const t=setTimeout(()=>{
+      if(abort.current)abort.current.abort();
+      const ac=new AbortController();abort.current=ac;
+      const p=new URLSearchParams({q:term});
+      if(bank)p.set("bank",bank);
+      if(dtype)p.set("doc_type",dtype);
+      if(fresh)p.set("fresh",String(fresh));
+      apiFetch(`/api/knowledge/search?${p}`,{signal:ac.signal})
+        .then(d=>{setRes(d);setErr(null);})
+        .catch(e=>{if(e.name!=="AbortError")setErr(e.message||"поиск не отработал");})
+        .finally(()=>{if(!ac.signal.aborted)setBusy(false);});
+    },280);
+    return()=>clearTimeout(t);
+  },[q,bank,dtype,fresh]);
 
-  const totalDocs=coverage.reduce((s,c)=>s+(Number(c.documents)||0),0);
-  const totalChunks=coverage.reduce((s,c)=>s+(Number(c.chunks)||0),0);
-  const banksWithData=coverage.filter(c=>(Number(c.documents)||0)>0).length;
-  const banksWithoutData=coverage.length-banksWithData;
-
-  const startBootstrap=async()=>{
-    setBootstrapping(true);
-    try{await apiPost("/api/rag/bootstrap-all",{});}catch{}
-    setTimeout(()=>{setBootstrapping(false);load();},2000);
-  };
-  const startCrawl=async()=>{
-    setCrawling(true);
-    try{await apiPost("/api/rag/crawl-all",{});}catch{}
-    setTimeout(()=>{setCrawling(false);load();},2000);
-  };
+  const st=(ov&&ov.stats)||{};
+  const groups=(res&&res.groups)||[];
+  const facetBanks=(res&&res.facets&&res.facets.banks)||[];
+  // именно !!, а не ||: при fresh===0 выражение даёт число 0, и React
+  // отрисовывает его как текст «0» вместо того, чтобы скрыть блок
+  const active=!!(bank||dtype||fresh);
 
   return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Knowledge layer · pgvector</div>
-      <h1 className="t-h" style={{marginBottom:6}}>База знаний по банкам</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Документы официальных сайтов, ЦБ-реестра и агрегаторов.
-        Для каждого фрагмента считаем семантический embedding (BGE-M3 1024d) — RAG-поиск возвращает релевантные фрагменты с trust-фильтром.
+    <header style={{marginBottom:20}}>
+      <div className="eyebrow" style={{marginBottom:6}}>§ База знаний · доказательная база</div>
+      <h1 className="t-h" style={{marginBottom:6}}>Поиск по собранным документам</h1>
+      <p className="t-cap" style={{maxWidth:"76ch"}}>
+        Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы.
+        Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит
+        вести счёт», а можно вставить «ПСК» или номер пункта договора.
       </p>
     </header>
 
-    {/* KPI bar */}
-    <div className="k-kpi-row">
-      <div className="k-kpi"><div className="k-kpi-num">{totalDocs}</div><div className="k-kpi-lbl">документов</div></div>
-      <div className="k-kpi"><div className="k-kpi-num">{totalChunks}</div><div className="k-kpi-lbl">фрагментов</div></div>
-      <div className="k-kpi"><div className="k-kpi-num">{banksWithData}<span className="k-kpi-frac"> / {banksWithData+banksWithoutData}</span></div><div className="k-kpi-lbl">банков с данными</div></div>
-      <div className="k-kpi-actions">
-        <button className="btn btn-sm" disabled={bootstrapping} onClick={startBootstrap}>
-          <Ic.refresh/> {bootstrapping?"Discovery…":"Discovery sitemap"}
-        </button>
-        <button className="btn btn-sm" disabled={crawling} onClick={startCrawl}
-                style={{background:"var(--accent)",color:"#fff",borderColor:"var(--accent)"}}>
-          <Ic.refresh/> {crawling?"Запуск…":"Crawl всех банков"}
-        </button>
+    <div className="kb-bar">
+      <div className="kb-input-wrap">
+        <input className="kb-input" autoFocus value={q} onChange={e=>setQ(e.target.value)}
+               placeholder='например: комиссия за снятие наличных · ПСК · «п. 4.2» · страхование при отказе'/>
+        {busy&&<span className="kb-spin" aria-label="ищу"/>}
+        {q&&!busy&&<button className="kb-clear" onClick={()=>setQ("")} title="Очистить">×</button>}
+      </div>
+      <div className="kb-filters">
+        <select className="kb-sel" value={bank} onChange={e=>setBank(e.target.value)}>
+          <option value="">все банки</option>
+          {(facetBanks.length?facetBanks:((ov&&ov.banks)||[])).map(b=>
+            <option key={b.slug} value={b.slug}>{b.name} · {b.n||b.documents}</option>)}
+        </select>
+        <select className="kb-sel" value={dtype} onChange={e=>setDtype(e.target.value)}>
+          <option value="">любой формат</option>
+          <option value="html">веб-страница</option>
+          <option value="pdf">PDF</option>
+        </select>
+        <select className="kb-sel" value={fresh} onChange={e=>setFresh(Number(e.target.value))}>
+          {KB_FRESH.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+        </select>
+        {active&&<button className="btn btn-ghost btn-sm"
+          onClick={()=>{setBank("");setDtype("");setFresh(0);}}>сбросить</button>}
       </div>
     </div>
 
-    {/* Live semantic search */}
-    <section className="k-section">
-      <div className="k-section-head">
-        <div>
-          <h3 className="k-section-title">Live-поиск по базе</h3>
-          <p className="t-cap">Тест семантического поиска (без LLM). Возвращает топ-фрагментов с trust-score.</p>
-        </div>
-      </div>
-      <div className="k-search-wrap">
-        <input className="k-search-input" placeholder='напр. "лимит SWIFT в Турцию", "комиссия за обслуживание карты"…'
-               value={query} onChange={e=>setQuery(e.target.value)}
-               onKeyDown={e=>{if(e.key==="Enter")runSearch();}}/>
-        <button className="btn btn-sm" disabled={!query.trim()||searching} onClick={runSearch}
-                style={{background:"var(--accent)",color:"#fff",borderColor:"var(--accent)"}}>
-          {searching?"Ищу…":"Найти"}
-        </button>
-      </div>
-      {searchResults&&Array.isArray(searchResults)&&<div className="k-search-results">
-        {searchResults.length===0?
-          <div className="k-empty">По запросу ничего не нашлось. Попробуйте проиндексировать больше документов.</div>:
-          searchResults.map((r,i)=><div key={i} className="k-search-card" style={{"--src-accent":SOURCE_KIND_COLORS[r.source_kind]||"#737373"}}>
-            <div className="k-search-card-head">
-              <strong>{r.bank_name||"Источник"}</strong>
-              <span className="k-search-rel">релевантность {(r.relevance*100).toFixed(0)}%</span>
-              <TrustDots score={r.trust_score}/>
-            </div>
-            {r.headings_path&&<div className="k-search-crumbs">{r.headings_path}</div>}
-            <div className="k-search-text">{r.text?.slice(0,400)}…</div>
-            <a href={r.url} target="_blank" rel="noopener noreferrer" className="k-search-url">{r.url}</a>
-          </div>)
-        }
-      </div>}
-      {searchResults&&searchResults.error&&<div className="k-empty" style={{color:"var(--neg)"}}>
-        Ошибка: {searchResults.error}
-      </div>}
-    </section>
+    {err&&<div className="kb-empty neg">Поиск не отработал: {err}</div>}
 
-    {/* Bank coverage table */}
-    <section className="k-section">
-      <div className="k-section-head">
-        <h3 className="k-section-title">Покрытие по банкам</h3>
+    {res&&!err&&<>
+      <div className="kb-summary">
+        {res.total>0
+          ? <>Найдено <b>{res.total}</b> док. · показаны {groups.length} · {res.took_ms} мс
+              {res.modes&&<span className="kb-modes">
+                смысловых совпадений {res.modes.vector}, дословных {res.modes.text}</span>}</>
+          : <>Ничего не нашлось</>}
       </div>
-      {loading?<div className="k-empty">Загрузка…</div>:
-       coverage.length===0?<div className="k-empty">
-         База ещё пустая. Нажмите «Discovery sitemap» для топ-27 банков, затем «Crawl всех банков» для индексации.
-       </div>:
-       <table className="k-cov-table">
-         <thead><tr>
-           <th>Банк</th><th>Документы</th><th>Фрагменты</th><th>Features</th>
-           <th>Последний fetch</th>
-         </tr></thead>
-         <tbody>{coverage.map((c,i)=>(
-           <tr key={i}>
-             <td><strong>{c.name||c.slug}</strong> <span className="t-cap">/{c.slug}</span></td>
-             <td>{c.documents||0}</td>
-             <td>{c.chunks||0}</td>
-             <td>{c.features||0}</td>
-             <td className="t-cap">{formatRelDate(c.last_doc_fetch)}</td>
-           </tr>
-         ))}</tbody>
-       </table>}
-    </section>
+      {groups.map(g=><KbDoc key={g.document_id} g={g}/>)}
+      {res.total===0&&<div className="kb-empty">
+        <b>По запросу «{res.query}» в архиве ничего нет.</b>
+        <p>Это не значит, что документа не существует — значит, он ещё не собран.
+          Что можно сделать:</p>
+        <ul>
+          {active&&<li>снять фильтры — возможно, документ есть у другого банка или в другом формате;</li>}
+          <li>переформулировать: архив хранит тексты банков и ЦБ, а не готовые ответы —
+            «плата за обслуживание» найдётся, «выгодно ли мне» нет;</li>
+          <li>если источника не хватает системно — предложите его на вкладке{" "}
+            <a href="#sources">Источники</a>, требования там же.</li>
+        </ul>
+      </div>}
+    </>}
+
+    {!res&&!err&&<>
+      <div className="kb-what">
+        <div className="kb-what-k"><b>{st.documents||"—"}</b><span>документов доступно поиску</span></div>
+        <div className="kb-what-k"><b>{st.fragments||"—"}</b><span>проиндексированных фрагментов</span></div>
+        <div className="kb-what-k"><b>{st.banks||"—"}</b><span>банков в архиве</span></div>
+        <div className="kb-what-k"><b>{st.fresh_30d||"—"}</b><span>обновлено за месяц</span></div>
+      </div>
+
+      {ov&&<div className="kb-grid2">
+        <section className="surface kb-panel">
+          <div className="eyebrow">Что в архиве — по типу источника</div>
+          <p className="t-cap" style={{margin:"4px 0 12px"}}>
+            Чем выше доверие, тем весомее ссылка в рабочем файле: акт регулятора
+            и запись в блоге — разные доказательства.</p>
+          {(ov.kinds||[]).map((k,i)=><div key={i} className="kb-kind">
+            <span className="kb-kind-n">{KB_KIND_RU[k.kind]||k.kind}</span>
+            <span className="kb-kind-bar">
+              <i style={{width:`${Math.min(100,(k.documents/(st.documents||1))*100)}%`}}/>
+            </span>
+            <span className="kb-kind-v mono">{k.documents}</span>
+            <TrustDots score={k.trust}/>
+          </div>)}
+        </section>
+
+        <section className="surface kb-panel">
+          <div className="eyebrow">Покрытие по банкам</div>
+          <p className="t-cap" style={{margin:"4px 0 12px"}}>
+            Где документов мало — там вывод инструмента слабее обоснован.
+            Это карта не только знаний, но и слепых зон.</p>
+          <div className="kb-banks">
+            {(ov.banks||[]).slice(0,14).map((b,i)=>
+              <button key={i} className="kb-bank-chip" onClick={()=>{setBank(b.slug);setQ(b.name);}}>
+                {b.name}<i>{b.documents}</i></button>)}
+          </div>
+          {(ov.banks||[]).length>14&&<p className="t-cap" style={{marginTop:8}}>
+            и ещё {ov.banks.length-14} банков</p>}
+        </section>
+      </div>}
+
+      <div className="kb-hint">
+        <b>Как искать.</b> Обычная фраза ищет по смыслу. Кавычки — точная фраза
+        («полная стоимость кредита»). Минус исключает слово (кредит -ипотека).
+        Фильтры сверху сужают по банку, формату и свежести.
+      </div>
+    </>}
+
+    <details className="surface kb-tech" open={tech} onToggle={e=>setTech(e.target.open)}>
+      <summary>Техническое состояние индекса</summary>
+      <p className="t-cap" style={{margin:"6px 0 10px"}}>
+        Поиск двухконтурный: векторный индекс (HNSW, косинус) и полнотекстовый
+        (русская морфология). Результаты сливаются ранговой суммой. Архив
+        пополняется автоматически при ночном сборе — ручной запуск не нужен.</p>
+      <div className="kb-tech-kv">
+        <span>Последнее пополнение</span><b>{formatRelDate(st.last_fetch)}</b>
+        <span>Порог доверия для поиска</span><b>0.50</b>
+        <span>Фрагментов в индексе</span><b>{st.fragments||"—"}</b>
+      </div>
+    </details>
   </div>;
 }
 
