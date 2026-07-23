@@ -576,6 +576,109 @@ def _theme_week_counts(eng, where_sql: str, params_extra: dict) -> dict:
 
 
 @_safe(None)
+def week_pulse(bank: str, product: str | None = None) -> dict | None:
+    """Недельный срез для «пульса дня» на главной — БЕЗ порога сигнала.
+
+    Сигналы (weekly_signals) показывают только пробившие порог ×1.8, и в
+    спокойный день их ноль — полоса пустеет. Здесь считаем то, что есть всегда:
+      • расхождение с рынком по каждой теме (наша динамика против отраслевой) —
+        главный вопрос аудитора «это мы или рынок»;
+      • слепая зона: жалобы, не попавшие ни в одну из тем классификатора.
+    Оба числа берутся из уже выполняемых запросов, лишней нагрузки нет.
+    """
+    eng = _get_engine()
+    if eng is None:
+        return None
+    bc = resolve_bank(bank)
+    if not bc:
+        return None
+    bclause, bp = _bank_clause(bc, product)
+    brow = _theme_week_counts(eng, bclause, bp)
+    try:
+        mrow = _theme_week_counts(eng, "TRUE", {})
+    except Exception as e:  # noqa: BLE001
+        log.warning("week_pulse: рыночный срез не посчитан: %s", e)
+        mrow = None
+
+    BASE_W = 7.0
+    diverge = []
+    for t in THEMES:
+        k = t["key"]
+        w0, b = int(brow[f"{k}_w0"]), int(brow[f"{k}_b"])
+        bw = b / BASE_W
+        if w0 < 5 or bw < 1.0:          # малая база — коэффициент неустойчив
+            continue
+        ratio = w0 / bw
+        mratio = None
+        if mrow is not None:
+            mw0, mb = int(mrow[f"{k}_w0"]), int(mrow[f"{k}_b"])
+            mbw = mb / BASE_W
+            mratio = (mw0 / mbw) if mbw >= 0.5 else None
+        # расхождение = во сколько раз наш рост обгоняет рыночный
+        gap = (ratio / mratio) if mratio and mratio > 0 else None
+        diverge.append({
+            "key": k, "label": t["label"], "short": _short(t["label"]),
+            "risk": t["risk"], "week": w0, "baseline_week": round(bw, 1),
+            "base_count": b, "base_weeks": int(BASE_W),
+            "ratio": round(ratio, 2),
+            "market_ratio": round(mratio, 2) if mratio else None,
+            "gap": round(gap, 2) if gap else None,
+        })
+    # ведущая тема: сначала по расхождению с рынком, при равенстве — по объёму
+    diverge.sort(key=lambda d: ((d["gap"] or d["ratio"]), d["week"]), reverse=True)
+
+    tw0, tb = int(brow["_tw0"]), int(brow["_tb"])
+    return {
+        "diverge": diverge[:5],
+        "week_total": tw0,
+        "baseline_total": round(tb / BASE_W, 1),
+    }
+
+
+@_safe(None)
+def unclassified_week(bank: str, product: str | None = None) -> dict | None:
+    """Слепая зона: жалобы недели, не попавшие ни в одну тему классификатора,
+    и та же доля по базовому окну — чтобы отличить «свежий инцидент вне
+    таксономии» от обычного уровня непокрытия."""
+    eng = _get_engine()
+    if eng is None:
+        return None
+    bc = resolve_bank(bank)
+    if not bc:
+        return None
+    bclause, bp = _bank_clause(bc, product)
+    with eng.connect() as c:
+        rows = c.execute(text(
+            f'SELECT DISTINCT ON (r.url) r."reviewBody" AS body, r."datePublished" AS dt'
+            f' FROM bankiru.reviews r WHERE {bclause}'
+            f' AND r."datePublished" >= now() - make_interval(days => 63)'
+            f' ORDER BY r.url'), bp).all()
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    w_edge, b_edge = now - timedelta(days=7), now - timedelta(days=14)
+    w_tot = w_unc = b_tot = b_unc = 0
+    for body, dt in rows:
+        if dt is None:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        unmatched = not match_themes(body)
+        if dt >= w_edge:
+            w_tot += 1
+            w_unc += unmatched
+        elif dt < b_edge:
+            b_tot += 1
+            b_unc += unmatched
+    base_week = round(b_unc / 7.0, 1)
+    return {
+        "week": w_unc, "week_total": w_tot,
+        "pct": round(100 * w_unc / w_tot) if w_tot else 0,
+        "baseline_week": base_week,
+        "ratio": round(w_unc / base_week, 2) if base_week >= 1 else None,
+    }
+
+
+@_safe(None)
 def weekly_signals(bank: str, product: str | None = None) -> dict | None:
     """Срочные аномалии за 7 дней — МНОГОСИГНАЛЬНО (не просто «выросло ×N»):
     рост к базлайну (среднее за 7 нед, окно 14–63 дн), УСКОРЕНИЕ (нед-к-нед), сравнение с РЫНКОМ (всплеск

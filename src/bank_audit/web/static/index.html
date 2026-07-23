@@ -1416,17 +1416,39 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   white-space:normal;text-align:left;z-index:60;box-shadow:var(--shadow-2);pointer-events:none;}
 .bf-tip:hover::before{content:"";position:absolute;left:50%;bottom:100%;transform:translateX(-50%) rotate(45deg);
   margin-bottom:5px;width:9px;height:9px;background:var(--ink);z-index:61;pointer-events:none;}
-.bf-pulse{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--hair);
-  border-radius:var(--r-lg);background:var(--surface);overflow:hidden;box-shadow:var(--shadow-1)}
-.bf-pulse>a{display:block;padding:14px 18px 12px;border-left:1px solid var(--hair);text-decoration:none;color:inherit;
-  transition:background .12s;min-width:0}
-.bf-pulse>a:first-child{border-left:none}
-.bf-pulse>a:hover{background:var(--paper-2)}
-.bf-pulse-num{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:24px;letter-spacing:-.02em;
-  font-variant-numeric:tabular-nums;line-height:1.1;display:flex;align-items:baseline;gap:7px;white-space:nowrap}
-.bf-pulse-num .u{font-size:12px;color:var(--ink-3);font-family:'JetBrains Mono',monospace;font-weight:400}
-.bf-pulse-cap{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-4);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ── Пульс дня: сменный лист аудитора (переработан 23.07.2026) ─────────────
+   Было repeat(6,1fr) + nowrap/ellipsis → подписи обрезались («СБЕР VS МЕДИАНА РЫ…»).
+   Стало 4 колонки, hero на две, подпись переносится на 2 строки. */
+.bf-pulse{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--hair);
+  border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-1)}
+.bf-t{display:block;background:var(--surface);padding:13px 16px 12px;min-width:0;
+  text-decoration:none;color:inherit;transition:background .12s}
+a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
+.bf-t-hero{grid-column:span 2}
+.bf-t-wide{grid-column:span 2}
+.bf-t.attn{background:color-mix(in oklab,var(--warn),transparent 92%)}
+.bf-t.alarm{background:var(--accent-soft)}
+.bf-t-cap{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:6px;line-height:1.4;
+  white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;min-height:2.3em}
+.bf-t-chip{display:inline-block;font-size:8px;letter-spacing:.06em;border:1px solid var(--accent);
+  color:var(--accent);border-radius:20px;padding:0 6px;margin-left:6px;vertical-align:1px}
+.bf-t-val{font-family:Georgia,'Times New Roman',serif;font-size:21px;font-weight:500;
+  line-height:1.12;display:inline-block;font-variant-numeric:tabular-nums}
+.bf-t-hero .bf-t-val{font-size:24px}
+.bf-t-val small{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3);font-weight:400}
+.bf-t-sub{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);
+  margin-top:5px;line-height:1.45}
+.bf-stampline{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);
+  margin:8px 0 0;display:flex;gap:6px;flex-wrap:wrap;align-items:baseline}
+.bf-stampline a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--hair-2)}
+.bf-stampline a:hover{color:var(--ink-2)}
+.bf-stampline a.warn,.bf-stampline .bf-stale{color:var(--warn)}
+@media(max-width:1100px){.bf-pulse{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:760px){.bf-pulse{grid-template-columns:repeat(2,1fr)}
+  .bf-t-hero,.bf-t-wide{grid-column:span 2}
+.bf-t-wide{grid-column:span 2}.bf-t-cap{-webkit-line-clamp:3;min-height:0}}
 
 /* ядро: лента инсайтов + новостная колонка */
 .bf-core{display:grid;grid-template-columns:minmax(0,1fr) 336px;gap:16px;align-items:start}
@@ -1607,17 +1629,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 @media(max-width:1100px){
   .bf-core{grid-template-columns:1fr}
   .bf-news{position:static}
-  .bf-pulse{grid-template-columns:repeat(3,1fr)}
-  .bf-pulse>a{border-top:1px solid var(--hair)}
-  .bf-pulse>a:nth-child(-n+3){border-top:none}
-  .bf-pulse>a:nth-child(3n+1){border-left:none}
 }
 @media(max-width:720px){
   .bf-cards{grid-template-columns:1fr}
-  .bf-pulse{grid-template-columns:1fr 1fr}
-  .bf-pulse>a{border-top:1px solid var(--hair)}
-  .bf-pulse>a:nth-child(-n+2){border-top:none}
-  .bf-pulse>a:nth-child(odd){border-left:none}
 }
 @media(prefers-reduced-motion:reduce){
   .bf-card{animation:none}
@@ -1628,6 +1642,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-5"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-7"></script>
 </body>
 </html>

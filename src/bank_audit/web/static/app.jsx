@@ -633,6 +633,49 @@ function xpRows(kind,d){
   return R;
 }
 
+// расшифровки плиток пульса: у каждой цифры своя формула и своя выборка
+const xpDiverge=d=>[
+  ["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`],
+  ["Норма",`${d.base_count} жалоб за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks}`],
+  ["Рынок",d.market_ratio!=null
+    ?`та же тема по всем банкам ×${d.market_ratio} — мы растём в ${d.gap} раза быстрее рынка`
+    :"рыночный срез недоступен"],
+  ["Почему здесь","из 22 тем показана та, где наш рост сильнее всего обгоняет рыночный"],
+  ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
+];
+const xpEscalation=k=>[
+  ["Значение",`${pct1(k.escalation_pct)} жалоб содержат угрозу обращения в ЦБ, суд, ФАС или прокуратуру`],
+  ["Как ищем","по формулировкам жалобы: «жалоба в ЦБ», «подам иск», «в прокуратуру» и подобным"],
+  ["Порог","12% — принятый в инструменте уровень внимания"],
+  ["Выборка",`${fmtNum(k.total||0)} жалоб за 90 дней · только Сбербанк · banki.ru`],
+];
+const xpWeek=(ov,k)=>[
+  ["Расчёт",`${ov.week} жалоб за последние 7 дней`],
+  ["Норма",ov.baseline_week!=null
+    ?`${Math.round(ov.baseline_week)} в неделю — среднее по окну 14–63 дня назад`:"—"],
+  ["Рынок",ov.market_ratio!=null?`по всем банкам ×${ov.market_ratio} к своей норме`:"—"],
+  ["Масштаб",k.total?`корпус ${fmtNum(k.total)} жалоб за 90 дн · доля рынка ${k.market_share_pct}% · ${k.market_rank}-е место из ${k.market_banks}`:"—"],
+  ["Канал","banki.ru, негативные отзывы 1–2★ — один из каналов, не все обращения"],
+];
+const xpOurChanges=tm=>[
+  ["Значение",`${(tm.totals&&tm.totals.sber_changes_7d)||0} офферов Сбера со значимым изменением условий за 7 дней`],
+  ["Значимое","изменение нестаточного условия или сдвиг ставки от 0.01 п.п."],
+  ["Зачем","проверить, что изменения тарифов прошли согласование и корректно отражены"],
+  ["Источник","журнал изменений условий (sravni.ru), сверка ежедневная"],
+];
+const xpUnclassified=u=>u?[
+  ["Значение",`${u.week} жалоб из ${u.week_total} за неделю (${u.pct}%) не попали ни в одну из 22 тем`],
+  ["Норма",`${u.baseline_week} в неделю по окну 14–63 дня назад`+(u.ratio!=null?` — сейчас ×${u.ratio}`:"")],
+  ["Что значит","классификатор их не видит: либо инцидент вне таксономии, либо пробел в правилах"],
+  ["Зачем","картина по темам неполна на эту долю — это надо знать до выводов"],
+]:[];
+const xpThemeUp=t=>[
+  ["Расчёт",`${t.n} жалоб за 90 дней против ${Math.round(t.n/(1+(t.delta_pct||0)/100))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
+  ["Горизонт","квартал — медленные тренды, которых не видно в недельном окне"],
+  ["Порог","показываем тему с ростом от 50% и не менее 30 жалоб"],
+  ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
+];
+
 // обёртка вокруг числа: пунктирное подчёркивание + карточка-расшифровка.
 // Позиция выбирается по свободному месту: сбоку (не перекрывает текст вообще),
 // иначе снизу/сверху — попап не должен резать строку заголовка.
@@ -660,6 +703,20 @@ function Xp({rows,children,note}){
       {note&&<span className="xp-note">{note}</span>}
     </span>
   </span>;
+}
+
+// Вердикт дня, если LLM не сформулировала: одна фраза по тем же числам.
+function bfVerdict(dv,esc,ovl,unc){
+  const bits=[];
+  if(dv&&dv.gap>=1.25)
+    bits.push(`Внимание на «${(dv.short||dv.label).toLowerCase()}»: ${dv.week} жалоб при норме ${dv.baseline_week}` +
+      (dv.market_ratio!=null&&dv.market_ratio<1.15?" — и это только у нас, по рынку тема ровная":""));
+  else bits.push("Спокойное утро: тем с ростом сильнее рынка нет");
+  if(esc!=null&&esc>=12) bits.push(`эскалации в ЦБ и суд выше порога — ${pct1(esc)} при 12%`);
+  if(unc&&unc.ratio!=null&&unc.ratio>=1.3) bits.push(`жалоб вне известных тем больше обычного (${unc.week} против ${unc.baseline_week})`);
+  if(bits.length===1&&ovl&&ovl.week!=null&&ovl.baseline_week!=null)
+    bits.push(`всего ${ovl.week} жалоб за неделю при норме ${Math.round(ovl.baseline_week)}`);
+  return bits.join(", ")+".";
 }
 
 function bfPickHot(hl,hot){
@@ -1429,6 +1486,12 @@ function OverviewPage(){
   const newsGroups=nw.groups||[];
   const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
   const hl=head.headline||"", hot=head.hot||"";
+  // данные плиток пульса
+  const kpi=pulse.kpi||{}, esc=kpi.escalation_pct;
+  const dv=(pulse.diverge||[]).find(d=>d.gap!=null&&d.gap>=1.15)||null;  // ведущее расхождение
+  const unc=pulse.unclassified||null;
+  const up=(pulse.themes_up||[])[0]||null;
+  const runsOk=(qo.runs||[]).filter(r=>r.status==="ok").length, runsAll=(qo.runs||[]).length;
   const hh=bfPickHot(hl,hot);   // [начало,длина] акцента — есть всегда, если есть заголовок
   // заголовок дня пишется по ведущему сигналу — его расчёт и раскрываем на акценте.
   // Если акцент — число, ищем сигнал, чьё значение в нём фигурирует.
@@ -1478,58 +1541,103 @@ function OverviewPage(){
               </Xp>
               {hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
           </h1>
-          <p className="lede" style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center"}}>
-            {head.stats&&<>
-              <span>{head.stats.risk||0} риск-сигн.</span>·<span>{head.stats.good||0} благопр.</span>·
-              <span>{head.stats.news||0} новостей</span>
-              {head.stats.checked_themes>0&&<>·<span>проверено тем: {head.stats.checked_themes}</span></>}
-            </>}
-            {ST("headline")==="stale"&&<span className="bf-stale">⚠ сводка за {sec.headline.stale_from}</span>}
-            {ST("headline")==="degraded"&&<span className="bf-stale">⚠ ИИ недоступен — сигналы детерминированные</span>}
+          {/* Вердикт дня вместо статистики генератора («3 риск-сигн · 8 новостей»
+              ничего не меняли в решениях аудитора). Берём фразу от LLM, если она
+              есть, иначе собираем детерминированно из тех же чисел. */}
+          <p className="lede" style={{maxWidth:"70ch"}}>{head.quiet_note||bfVerdict(dv,esc,ovl,unc)}</p>
+          <p className="bf-stampline">
+            {kpi.as_of?`жалобы на ${fmtDateMsk(kpi.as_of)}`:"данные обновляются"}
+            {tm.totals&&tm.totals.last_ok_run&&<> · тарифы на {fmtDateMsk(tm.totals.last_ok_run)}</>}
+            {runsAll>0&&<> · <a href="#sources" className={runsOk<runsAll?"warn":""}>источники {runsOk}/{runsAll}</a></>}
+            {flagsErr>0&&<> · <a href="#quality" className="warn">{flagsErr} ошибок качества</a></>}
+            {kpi.total&&<> · корпус {fmtNum(kpi.total)} жалоб за 90 дн</>}
+            {kr.current!=null&&<> · ключевая ЦБ {kr.current}%</>}
+            {ST("headline")==="stale"&&<span className="bf-stale"> · ⚠ сводка за {sec.headline.stale_from}</span>}
+            {ST("headline")==="degraded"&&<span className="bf-stale"> · ⚠ ИИ недоступен, сигналы детерминированные</span>}
           </p>
         </>}
     </header>
 
-    {/* ② ПУЛЬС ДНЯ — тикер без LLM */}
+    {/* ② ПУЛЬС ДНЯ — сменный лист аудитора (без LLM).
+        Отбор переработан 23.07.2026 по отзыву аудиторов «бесполезная»: рыночные
+        метрики (медиана, спред) убраны — они отвечают на вопрос трейдера;
+        ключевая ставка ушла в штамп. Каждая плитка = вопрос аудитора, ведёт
+        туда, где с этим работают, и раскрывается попапом «как посчитано».
+        Коэффициент ×N на экран не выводится: только пара «факт · норма». */}
     <section style={{marginBottom:22}}>
-      {/* Каждая плитка объяснима по наведению (фидбек аналитиков): период,
-          выборка и формула — в data-tip, сами цифры не выхолащиваем. */}
       <div className="bf-pulse">
-        <a href="#market" className="bf-tip"
-           data-tip={"Ключевая ставка Банка России"+(kr.as_of?" на "+kr.as_of:"")+". Мини-график — динамика последних решений СД ЦБ."}>
-          <div className="bf-pulse-num">{kr.current!=null?kr.current:"—"}<span className="u">%</span>
-            {kr.points&&<span style={{color:"var(--ink-4)",marginLeft:2}}><RateStep points={(kr.points||[]).slice(-24)} w={54} h={20}/></span>}
-          </div>
-          <div className="bf-pulse-cap">Ключевая ставка ЦБ{kr.as_of?` · ${kr.as_of.slice(5)}`:""}</div>
+        {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
+            Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
+        <div className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+             onClick={dv?()=>bfGoDrill({page:"reviews",params:{theme:dv.key}}):undefined}
+             style={dv?{cursor:"pointer"}:undefined}>
+          <div className="bf-t-cap">Проверить сегодня
+            {dv&&dv.gap>=1.25&&<span className="bf-t-chip">сильнее рынка</span>}</div>
+          {dv?<>
+            <Xp rows={xpDiverge(dv)} note="banki.ru · негативные отзывы 1–2★">
+              <span className="bf-t-val">{dv.short||dv.label}</span>
+            </Xp>
+            <div className="bf-t-sub">{dv.week} жалоб · норма {dv.baseline_week}
+              {dv.market_ratio!=null&&<> · по рынку {dv.market_ratio>1.1?"тоже растёт":"без роста"}</>}</div>
+          </>:<>
+            <span className="bf-t-val">Ничего срочного</span>
+            <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||22} тем — превышений нет</div>
+          </>}
+        </div>
+
+        {/* Регуляторный риск: доля жалоб с угрозой ЦБ/суда/ФАС */}
+        <a className={"bf-t"+(esc!=null&&esc>=12?" attn":"")} href="#reviews">
+          <div className="bf-t-cap">Дошло до ЦБ и суда</div>
+          <Xp rows={xpEscalation(kpi)} note="banki.ru · окно 90 дней">
+            <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
+          </Xp>
+          <div className="bf-t-sub">порог 12%{kpi.total?` · из ${fmtNum(kpi.total)} жалоб за 90 дн`:""}</div>
         </a>
-        <a href="#market" className="bf-tip"
-           data-tip={"Среднее отклонение максимальных ставок Сбера от медианы действующих предложений "+((tm.totals&&tm.totals.banks_tracked)||"~130")+" банков, по категориям продуктов."}>
-          <div className="bf-pulse-num">{avgDelta!=null?signed(Math.round(avgDelta*100)/100):"—"}<span className="u">пп</span></div>
-          <div className="bf-pulse-cap">Сбер vs медиана рынка</div>
+
+        {/* Объём недели — с нормой рядом, без коэффициента */}
+        <a className="bf-t" href="#reviews">
+          <div className="bf-t-cap">Жалобы · 7 дней</div>
+          <Xp rows={xpWeek(ovl,kpi)} note="banki.ru · негативные отзывы 1–2★">
+            <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
+              {ovl.baseline_week!=null&&<small> норма {Math.round(ovl.baseline_week)}</small>}</span>
+          </Xp>
+          <div className="bf-t-sub">banki.ru · 1–2★{kpi.market_rank?` · ${kpi.market_rank}-е место из ${kpi.market_banks}`:""}</div>
         </a>
-        <a href="#reviews" className="bf-tip"
-           data-tip={(ovl.week!=null?ovl.week+" жалоб за 7 дней":"Жалобы за 7 дней")+
-             (ovl.baseline_week?" против медианной недели прошлых 6 недель ("+Math.round(ovl.baseline_week)+")":"")+
-             (ovl.ratio!=null?" → ×"+ovl.ratio:"")+". Только Сбер · негативные отзывы banki.ru (1–2★)."}>
-          <div className="bf-pulse-num">{ovl.week!=null?fmtNum(ovl.week):"—"}
-            {ovl.ratio!=null&&<span className="u" style={{color:ovl.ratio>=1.3?"var(--neg)":"var(--ink-3)"}}>×{ovl.ratio}</span>}
-          </div>
-          <div className="bf-pulse-cap">Жалоб за 7 дн · Сбер · banki.ru</div>
+
+        {/* Что меняли МЫ САМИ — согласовано ли */}
+        <a className="bf-t" href="#market?view=changes&bank=sberbank">
+          <div className="bf-t-cap">Меняли сами</div>
+          <Xp rows={xpOurChanges(tm)} note="журнал изменений условий">
+            <span className="bf-t-val">{(tm.totals&&tm.totals.sber_changes_7d)!=null?fmtNum(tm.totals.sber_changes_7d):"—"}
+              <small> офферов</small></span>
+          </Xp>
+          <div className="bf-t-sub">за 7 дней · условия продуктов Сбера</div>
         </a>
-        <a href="#market?view=changes" className="bf-tip"
-           data-tip={"Офферы со значимым изменением условий за 7 дней (порог 0.01 п.п. — микрофлуктуации расчётных ставок не считаются). Журнал изменений тарифов banki.ru/sravni.ru."}>
-          <div className="bf-pulse-num">{(tm.totals&&tm.totals.changes_7d)!=null?fmtNum(tm.totals.changes_7d):"—"}</div>
-          <div className="bf-pulse-cap">Офферов изменились · 7 дн · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков</div>
+
+        {/* Слепая зона: чего классификатор не видит */}
+        <a className={"bf-t"+(unc&&unc.ratio>=1.3?" attn":"")} href="#reviews">
+          <div className="bf-t-cap">Вне известных тем</div>
+          <Xp rows={xpUnclassified(unc)} note="классификатор тем · 22 темы">
+            <span className="bf-t-val">{unc&&unc.week!=null?unc.week:"—"}
+              {unc&&unc.pct!=null&&<small> · {unc.pct}%</small>}</span>
+          </Xp>
+          <div className="bf-t-sub">{unc&&unc.ratio!=null
+            ?(unc.ratio>=1.3?"выше обычного — возможен новый инцидент":"как обычно")
+            :"жалобы без темы"}</div>
         </a>
-        <a href="#market" className="bf-tip"
-           data-tip={"Максимальная ставка вклада Сбера минус ключевая ставка ЦБ ("+(kr.current!=null?kr.current+"%":"—")+")."}>
-          <div className="bf-pulse-num">{tm.dep_spread_pp!=null?signed(tm.dep_spread_pp):"—"}<span className="u">пп</span></div>
-          <div className="bf-pulse-cap">Спред вклад Сбера − КС</div>
-        </a>
-        <a href="#market?view=changes&bank=sberbank" className="bf-tip"
-           data-tip={"Значимые изменения условий по продуктам самого Сбера за 7 дней — что аудитору смотреть в первую очередь."}>
-          <div className="bf-pulse-num">{(tm.totals&&tm.totals.sber_changes_7d)!=null?fmtNum(tm.totals.sber_changes_7d):"—"}</div>
-          <div className="bf-pulse-cap">Изменений у Сбера · 7 дн</div>
+
+        {/* Медленный тренд — то, чего не видно в недельном окне */}
+        <a className="bf-t bf-t-wide" href="#reviews">
+          <div className="bf-t-cap">Растёт за квартал</div>
+          {up?<>
+            <Xp rows={xpThemeUp(up)} note="banki.ru · окно 90 дней против предыдущих 90">
+              <span className="bf-t-val">{up.short||up.label}</span>
+            </Xp>
+            <div className="bf-t-sub">+{Math.round(up.delta_pct)}% к прошлому кварталу · {up.n} жалоб</div>
+          </>:<>
+            <span className="bf-t-val">Без роста</span>
+            <div className="bf-t-sub">ни одна тема не выросла заметно за квартал</div>
+          </>}
         </a>
       </div>
     </section>

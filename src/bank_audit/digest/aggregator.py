@@ -53,6 +53,10 @@ async def reviews_pulse(day: date) -> dict:
                      if t.get("key") != "other"
                      and (t.get("delta_pct") or 0) >= 50 and (t.get("n") or 0) >= 30][:5]
         series = (tr.get("series") or [])[-8:]
+        # «пульс дня» на главной: расхождение с рынком (есть всегда, в отличие
+        # от пороговых сигналов) и слепая зона классификатора
+        wp = rd.week_pulse(bank) or {}
+        unc = rd.unclassified_week(bank) or {}
         return {
             "kpi": {k: ov.get(k) for k in
                     ("total", "prev", "delta_pct", "delta_low_n", "market_share_pct",
@@ -60,6 +64,8 @@ async def reviews_pulse(day: date) -> dict:
             "signals": wk.get("signals") or [],
             "overall": wk.get("overall") or {},
             "themes_up": themes_up,
+            "diverge": wp.get("diverge") or [],
+            "unclassified": unc,
             "trend": series,
             "checked": {"themes": len((th.get("themes") or [])),
                         "signals": len(wk.get("signals") or [])},
