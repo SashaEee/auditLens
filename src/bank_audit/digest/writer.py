@@ -394,7 +394,7 @@ def _drill(kind: str, d: dict) -> dict:
 
 def _provenance(kind: str, d: dict) -> str:
     if kind == "review_spike":
-        return f'banki.ru · {d.get("week")} жалоб/7дн · базлайн 6 нед + рынок'
+        return f'banki.ru · {d.get("week")} жалоб/7дн · норма — среднее за 7 нед + сверка с рынком'
     if kind in ("mass_move", "tariff_move"):
         return "журнал изменений тарифов (banki.ru/sravni.ru)"
     if kind == "rate_move":

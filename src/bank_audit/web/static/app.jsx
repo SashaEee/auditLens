@@ -601,12 +601,20 @@ function xpRows(kind,d){
     if(d.week!=null&&d.baseline_week!=null)
       R.push(["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`]);
     if(d.baseline_week!=null)
-      R.push(["Норма",`медиана недельных значений за 6 предыдущих недель — ${d.baseline_week} жалоб`]);
+      // ВАЖНО: это среднее по окну 14–63 дня назад (7 недель), не медиана и не
+      // «прошлые 6 недель» — последние две недели в норму НЕ входят, иначе
+      // всплеск разбавлял бы сам себя
+      R.push(["Норма",d.base_count!=null
+        ? `${d.base_count} жалоб за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks} = ${d.baseline_week} в неделю`
+        : `среднее за неделю по окну 14–63 дня назад — ${d.baseline_week} жалоб`]);
     if(d.prev_week!=null) R.push(["Прошлая неделя",`${d.prev_week} жалоб`]);
+    // масштаб: 6.7/нед — это ОДНА тема; без общего числа цифра кажется мелкой
+    if(d.week_total)
+      R.push(["Масштаб",`тема — ${Math.round(100*d.week/d.week_total)}% всех жалоб на Сбер за неделю (${d.week} из ${d.week_total})`]);
     if(d.market_ratio!=null)
       R.push(["Рынок",`та же тема по рынку ×${d.market_ratio}` +
         (d.bank_specific?" — значит всплеск наш, а не отраслевой":"")]);
-    R.push(["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"]);
+    R.push(["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★) · темы по ключевым словам"]);
   } else if(kind==="tariff_move"){
     if(d.from!=null&&d.to!=null)
       R.push(["Расчёт",`${d.from}% → ${d.to}% = ${d.delta>0?"+":""}${d.delta} п.п.`]);
@@ -625,10 +633,25 @@ function xpRows(kind,d){
   return R;
 }
 
-// обёртка вокруг числа: пунктирное подчёркивание + карточка-расшифровка
+// обёртка вокруг числа: пунктирное подчёркивание + карточка-расшифровка.
+// Позиция выбирается по свободному месту: сбоку (не перекрывает текст вообще),
+// иначе снизу/сверху — попап не должен резать строку заголовка.
 function Xp({rows,children,note}){
+  const ref=useRef(null);
+  const[pos,setPos]=useState("side");
+  const place=useCallback(()=>{
+    const el=ref.current; if(!el)return;
+    const r=el.getBoundingClientRect();
+    const W=window.innerWidth, H=window.innerHeight;
+    const need=420, needH=300;
+    if(W>=900&&W-r.right>=need) setPos("side");          // справа есть место
+    else if(W>=900&&r.left>=need) setPos("side-left");   // слева есть место
+    else if(H-r.bottom>=needH) setPos("down");
+    else setPos("up");
+  },[]);
   if(!rows||!rows.length)return children;
-  return <span className="xp" tabIndex={0}>
+  return <span className={"xp xp-"+pos} tabIndex={0} ref={ref}
+      onMouseEnter={place} onFocus={place}>
     {children}
     <span className="xp-pop" role="tooltip">
       <span className="xp-h">как это посчитано</span>

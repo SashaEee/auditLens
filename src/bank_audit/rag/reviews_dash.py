@@ -578,7 +578,7 @@ def _theme_week_counts(eng, where_sql: str, params_extra: dict) -> dict:
 @_safe(None)
 def weekly_signals(bank: str, product: str | None = None) -> dict | None:
     """Срочные аномалии за 7 дней — МНОГОСИГНАЛЬНО (не просто «выросло ×N»):
-    рост к базлайну (6 нед), УСКОРЕНИЕ (нед-к-нед), сравнение с РЫНКОМ (всплеск
+    рост к базлайну (среднее за 7 нед, окно 14–63 дн), УСКОРЕНИЕ (нед-к-нед), сравнение с РЫНКОМ (всплеск
     только у банка vs отраслевой тренд), ГЕО-концентрация (локальный сбой), новые
     темы. Числа детерминированы; LLM объясняет и приоритизирует, не меняя их."""
     eng = _get_engine()
@@ -617,6 +617,10 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
                     bank_specific = True   # всплеск у банка, рынок ровный → наша регрессия
             out.append({"key": k, "label": t["label"], "short": _short(t["label"]),
                         "risk": t["risk"], "week": w0, "prev_week": w1,
+                        # сырьё нормы — чтобы UI показывал аудитору саму формулу,
+                        # а не только результат (b жалоб за BASE_W недель)
+                        "base_count": b, "base_weeks": int(BASE_W),
+                        "week_total": int(brow["_tw0"]),
                         "baseline_week": round(bw, 1), "ratio": (round(ratio, 1) if ratio else None),
                         "new": bool(new), "accel": bool(accel),
                         "market_ratio": mratio, "bank_specific": bool(bank_specific)})
