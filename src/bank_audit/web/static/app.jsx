@@ -2747,6 +2747,19 @@ const SOURCE_KIND_LABELS = {
   sponsored:     "Реклама"
 };
 // Палитра графиков — 4 цвета editorial palette, без gradients
+// Доверие к источнику фрагмента — три точки (0.9+ / 0.7+ / ниже).
+// Компонент использовался в результатах поиска, но никогда не был объявлен:
+// любой успешный поиск ронял страницу в заглушку «не смогла отрисоваться».
+function TrustDots({score}){
+  const w=Number(score);
+  if(!isFinite(w))return null;
+  const lvl=w>=0.9?3:w>=0.7?2:w>=0.5?1:0;
+  const label=w>=0.9?"первоисточник":w>=0.7?"проверенный":w>=0.5?"с оговоркой":"ниже порога";
+  return <span className="trust-dots" title={`доверие ${w.toFixed(2)} — ${label}`}>
+    {[1,2,3].map(i=><i key={i} className={i<=lvl?"on":""}/>)}
+  </span>;
+}
+
 const SOURCE_KIND_COLORS = {
   bank_official: "var(--ink)",
   regulator:     "var(--ink)",
