@@ -89,7 +89,9 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
         INSERT INTO product_offer(bank_id, category, external_id, primary_source, title, url)
         VALUES (:b,:c,:e,:s,:t,:u)
         ON CONFLICT (bank_id, category, external_id) DO UPDATE
-          SET last_seen=now(), title=EXCLUDED.title, url=COALESCE(EXCLUDED.url, product_offer.url)
+          SET last_seen=now(), title=EXCLUDED.title,
+              url=COALESCE(EXCLUDED.url, product_offer.url),
+              is_active=true    -- вернувшийся из протухания оффер оживает
         RETURNING offer_id
     """), {"b": bank_id, "c": d.category, "e": d.external_id,
            "s": "sravni_aggregator", "t": d.title, "u": d.url}).scalar_one()
@@ -172,6 +174,27 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
             """), {"o": offer_id, "p": cur[0], "n": new_id,
                    "d": json.dumps(diff, ensure_ascii=False)})
     return offer_id, True
+
+# Категории ежедневного sravni-сбора: только для них применимо протухание
+# (bank_rating/npf/invest_broker собираются другими источниками и редко)
+_DAILY_CATEGORIES = ("deposit", "credit", "mortgage", "card_credit",
+                     "card_debit", "auto_loan", "metals", "microloan")
+
+
+def expire_stale_offers(days: int = 3) -> int:
+    """Деактивирует офферы, пропавшие из выдачи источника (аудит 22.07.2026:
+    394 «вечно живых» вклада и весь metals с данными от 10 июня висели в
+    витрине как актуальные). Вернувшийся оффер оживает в upsert_offer."""
+    with db.session() as s:
+        n = s.execute(text("""
+            UPDATE product_offer SET is_active = false
+             WHERE is_active
+               AND category = ANY(CAST(:cats AS product_category[]))
+               AND last_seen < now() - make_interval(days => :d)
+        """), {"cats": list(_DAILY_CATEGORIES), "d": days}).rowcount
+    log.info("[expire] деактивировано протухших офферов: %d", n)
+    return n
+
 
 def validate_offer_urls(limit: int = 80) -> dict:
     """HEAD/GET-проба ссылок активных офферов (случайная ротация — за пару дней

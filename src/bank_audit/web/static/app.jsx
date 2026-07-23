@@ -1567,6 +1567,24 @@ const MK_FLD={rate_pct:"ставка",amount_min:"мин. сумма",amount_max
   term_months_min:"срок от",term_months_max:"срок до",fee_open:"комиссия открытия",
   fee_service:"обслуживание",early_withdraw:"досрочное снятие",capitalization:"капитализация",
   replenishable:"пополнение",conditions:"условия",rate_kind:"тип ставки",currency:"валюта"};
+// значение поля диффа — человеком: аудитору нужны цифры, а не имена полей
+const mkFldVal=(k,v)=>{
+  if(v==null||v==="None"||v==="")return "—";
+  const n=parseFloat(v);
+  if(k==="amount_min"||k==="amount_max"||k==="fee_open"||k==="fee_service")
+    return isNaN(n)?String(v).slice(0,30):fmtNum(n)+" ₽";
+  if(k==="term_months_min"||k==="term_months_max")
+    return isNaN(n)?String(v).slice(0,30):n+" мес";
+  if(k==="rate_pct")return isNaN(n)?String(v):pct(n);
+  if(v==="true")return "да"; if(v==="false")return "нет";
+  return String(v).slice(0,30);
+};
+// диффы без ставки → список «поле: было → стало»
+const mkDiffOthers=(diff)=>{
+  let d=diff;if(typeof d==="string"){try{d=JSON.parse(d);}catch{d={};}}
+  return Object.entries(d||{}).filter(([k])=>k!=="rate_pct")
+    .map(([k,v])=>({k,label:MK_FLD[k]||k,from:v&&v.from,to:v&&v.to}));
+};
 
 // strip-plot распределения категории: полоса IQR, засечка медианы,
 // точки — лучший оффер каждого банка, Сбер — крупная accent-точка
@@ -1718,6 +1736,9 @@ function MarketPage({params}){
   const lower=ac&&ac.lower_is_better;
   const sberIn=offers&&offers.some(o=>o.is_sber);
   const bestRate=offers&&offers.length?parseFloat(offers[0].rate_pct):null;
+  const mcat=cat?(M[cat]||{}):{};                 // семантика витрины категории
+  const showRateCol=mcat.show_rate!==false;
+  const showBarCol=mcat.show_bar!==false&&showRateCol;
 
   return <div className="fade-in">
     <header style={{marginBottom:20}}>
@@ -1764,7 +1785,7 @@ function MarketPage({params}){
               <div className="mk-an">{c.status==="ok"?`${c.n_banks} банков`:""}{c.lower_is_better&&c.status==="ok"?" · ниже = лучше":""}</div>
             </div>
             {c.status==="ok"?<MkStrip c={c}/>:
-              <div className="mk-anote">{c.status==="no_metric"?"сопоставимая метрика не собирается источником — доступна витрина":"нет данных"}</div>}
+              <div className="mk-anote">{c.status==="no_metric"?((M[c.category]||{}).caveat||"сопоставимой метрики нет")+" — доступна витрина":"нет данных"}</div>}
             <div className="mk-apos">
               {sb?<>
                 <b className={"serif"+(sb.beats_share<0.5?" bad":"")}
@@ -1799,7 +1820,7 @@ function MarketPage({params}){
           {cat&&<button className={`tab ${view==="vitrina"?"active":""}`} onClick={()=>setView("vitrina")}>Витрина</button>}
           <button className={`tab ${view==="changes"?"active":""}`} onClick={()=>setView("changes")}>Журнал изменений{!cat?" · весь рынок":""}</button>
         </div>
-        {view==="vitrina"&&<div className="tab-row">
+        {view==="vitrina"&&mcat.show_terms&&<div className="tab-row">
           {MK_TERMS.map(([id,l])=><button key={id} className={`tab ${term===id?"active":""}`}
             onClick={()=>setTerm(term===id?null:id)}>{l}</button>)}
         </div>}
@@ -1810,6 +1831,7 @@ function MarketPage({params}){
       </div>
 
       {/* ВИТРИНА */}
+      {mcat.caveat&&<p className="mk-disc" style={{margin:"0 0 12px"}}>⚠ {mcat.caveat}.</p>}
       {view==="vitrina"&&<div className="surface" style={{overflow:"hidden"}}>
         {ac&&ac.sber&&!sberIn&&offers&&<button className="mk-sber-pin" onClick={()=>setDrawer(ac.sber.offer_id)}>
           <BankAvatar slug="sberbank" name="Сбербанк" isSber={true}/>
@@ -1825,8 +1847,8 @@ function MarketPage({params}){
           <thead><tr>
             <th className="right" style={{width:"5%"}}>№</th>
             <th>Банк</th><th>Продукт</th>
-            <th className="right">Ставка</th>
-            <th>К лидеру</th>
+            {showRateCol&&<th className="right">{mcat.rate_label||"Ставка"}</th>}
+            {showBarCol&&<th>К лидеру</th>}
             <th>Сумма</th><th>Срок</th>
           </tr></thead>
           <tbody>
@@ -1842,8 +1864,8 @@ function MarketPage({params}){
                     {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
                 <td data-label="Продукт">{r.title}</td>
-                <td className="right mono tnum" data-label="Ставка" style={{fontWeight:500,fontSize:14}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>
-                <td data-label="К лидеру">
+                {showRateCol&&<td className="right mono tnum" data-label={mcat.rate_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
+                {showBarCol&&<td data-label="К лидеру">
                   {rel!=null&&isFinite(rel)?<div style={{display:"flex",alignItems:"center",gap:8}}>
                     <div className="bar" style={{flex:1,maxWidth:70}}>
                       <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--accent)":"var(--ink-3)"}}/>
@@ -1851,7 +1873,7 @@ function MarketPage({params}){
                     <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
                       {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2)} пп`}</span>
                   </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
-                </td>
+                </td>}
                 <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
                 <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
               </tr>;})}
@@ -1871,9 +1893,9 @@ function MarketPage({params}){
          changes.length===0?<EmptyState text="За неделю изменений не зафиксировано."/>:
          changes.map(ch=>{
            const hl=hlChange.current&&ch.change_id===hlChange.current;
-           const other=(()=>{let d=ch.diff;if(typeof d==="string"){try{d=JSON.parse(d);}catch{d={};}}
-             return Object.keys(d||{}).filter(k=>k!=="rate_pct").map(k=>MK_FLD[k]||k);})();
+           const others=mkDiffOthers(ch.diff);
            const big=ch.rate_delta!=null&&Math.abs(ch.rate_delta)>=0.05;
+           const showRateMove=ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!others.length);
            return <button key={ch.change_id} ref={hl?hlRef:null}
              className={"mk-chrow"+(hl?" hl":"")+(big?" big":"")} onClick={()=>setDrawer(ch.offer_id)}>
              <span className="mono mk-chdate">{fmtDateMsk(ch.changed_at)}</span>
@@ -1882,10 +1904,11 @@ function MarketPage({params}){
                <span>{ch.bank_name}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>{ch.title}{!cat?` · ${(CAT_LABELS[ch.category]||ch.category).toLowerCase()}`:""}</i></span>
              </span>
              <span className="mk-chmove mono tnum">
-               {ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!other.length)
-                 ?<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
-                    {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2)}</em>}</>
-                 :<span className="mk-an">{other.join(", ")||"условия"}</span>}
+               {showRateMove&&<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
+                  {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2)}</em>}</>}
+               {others.slice(0,3).map(o=><span key={o.k} className="mk-dv">
+                 {o.label}: {mkFldVal(o.k,o.from)} → <b>{mkFldVal(o.k,o.to)}</b></span>)}
+               {others.length>3&&<span className="mk-dv mk-an">ещё {others.length-3}</span>}
              </span>
            </button>;})}
       </div>}
@@ -1898,8 +1921,9 @@ function MarketPage({params}){
       {!dossier?<div style={{padding:8}}><Skel h={60}/><div style={{height:10}}/><Skel h={120}/></div>:
        dossier.error?<RvNote err={true}/>:<>
         <div className="mk-pass">
-          <div><span>Ставка</span><b className="tnum">{dossier.offer.rate_pct!=null?pct(dossier.offer.rate_pct):"—"}</b>
-            {dossier.offer.rate_kind&&<i className="mk-an">{dossier.offer.rate_kind}</i>}</div>
+          {(M[dossier.offer.category]||{}).show_rate!==false&&
+          <div><span>{(M[dossier.offer.category]||{}).rate_label||"Ставка"}</span><b className="tnum">{dossier.offer.rate_pct!=null?pct(dossier.offer.rate_pct):"—"}</b>
+            {dossier.offer.rate_kind&&<i className="mk-an">{dossier.offer.rate_kind}</i>}</div>}
           <div><span>Сумма</span><b className="tnum">{fmtAmount(dossier.offer.amount_min,dossier.offer.amount_max)}</b></div>
           <div><span>Срок</span><b className="tnum">{fmtTerm(dossier.offer.term_months_min,dossier.offer.term_months_max)}</b></div>
           {dossier.offer.capitalization!=null&&<div><span>Капитализация</span><b>{dossier.offer.capitalization?"да":"нет"}</b></div>}
@@ -1907,20 +1931,22 @@ function MarketPage({params}){
           {dossier.offer.early_withdraw!=null&&<div><span>Досрочное</span><b>{dossier.offer.early_withdraw?"да":"нет"}</b></div>}
           <div><span>Версия условий с</span><b className="tnum">{fmtDate(dossier.offer.valid_from)}</b></div>
         </div>
-        {dossier.rate_series&&dossier.rate_series.length>1&&<>
+        {(M[dossier.offer.category]||{}).show_rate!==false&&dossier.rate_series&&dossier.rate_series.length>1&&<>
           <div className="eyebrow" style={{margin:"16px 0 6px"}}>История ставки</div>
           <MkStep series={dossier.rate_series}/>
         </>}
         {dossier.changes&&dossier.changes.length>0&&<>
           <div className="eyebrow" style={{margin:"16px 0 6px"}}>Изменения условий</div>
           {dossier.changes.map(ch=>{
-            const other=(()=>{let d=ch.diff;if(typeof d==="string"){try{d=JSON.parse(d);}catch{d={};}}
-              return Object.keys(d||{}).filter(k=>k!=="rate_pct").map(k=>MK_FLD[k]||k);})();
+            const other=mkDiffOthers(ch.diff);
             return <div key={ch.change_id} className="mk-dhrow mono tnum">
               <span className="mk-an">{fmtDateMsk(ch.changed_at)}</span>
-              {ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!other.length)
-                ?<span>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b></span>
-                :<span className="mk-an" style={{textAlign:"right"}}>{other.join(", ")||"условия"}</span>}
+              <span style={{textAlign:"right",display:"flex",flexDirection:"column",gap:2}}>
+                {ch.rate_from!=null&&ch.rate_to!=null&&Math.abs(ch.rate_delta||0)>=0.01
+                  &&<span>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b></span>}
+                {other.map(o=><span key={o.k} className="mk-an">
+                  {o.label}: {mkFldVal(o.k,o.from)} → {mkFldVal(o.k,o.to)}</span>)}
+              </span>
             </div>;})}
         </>}
         {dossier.offer.conditions&&<>

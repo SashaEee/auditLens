@@ -162,6 +162,11 @@ def _run_ingest_all() -> None:
             log.info("daily ingest: url-check %s", validate_offer_urls())
         except Exception as e:  # noqa: BLE001
             log.warning("url-check failed: %s", e)
+        try:    # протухание: пропавшие из выдачи офферы гаснут (is_active=false)
+            from ..normalizer.offers import expire_stale_offers
+            expire_stale_offers()
+        except Exception as e:  # noqa: BLE001
+            log.warning("expire failed: %s", e)
     finally:
         INGEST_MUTEX.release()
 

@@ -39,6 +39,14 @@ _NEXT_DATA_RE = re.compile(
     r'<script\s[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL
 )
 
+# Реальные пути sravni.ru по внутренним категориям — для фолбэк-ссылок
+# (внутренний слаг в URL давал 404: /mortgage/ вместо /ipoteka/)
+_SRAVNI_CAT_PATH = {
+    "deposit": "vklady/", "credit": "kredity/", "mortgage": "ipoteka/",
+    "card_credit": "karty/", "card_debit": "debetovye-karty/",
+    "auto_loan": "avtokredity/", "microloan": "zaimy/",
+}
+
 _CAT_MAP = {
     # ── Розница: вклады/кредиты/ипотека/карты/авто ─────────────────────────
     "deposit": {
@@ -63,8 +71,9 @@ _CAT_MAP = {
         "ssr_path": "products.list.offers",
     },
     "card_debit": {
-        # Та же витрина /karty/ — отфильтруем по item.type в парсере
-        "url_tpl": "https://www.sravni.ru/karty/?region={region}",
+        # Отдельная ДЕБЕТОВАЯ витрина: на общей /karty/ дебетовок нет вообще —
+        # card_debit наполнялся дублями кредиток (аудит 22.07.2026)
+        "url_tpl": "https://www.sravni.ru/debetovye-karty/?region={region}",
         "strategy": "ssr_vitrins",
         "ssr_path": "products.list.offers",
     },
@@ -401,6 +410,13 @@ class SravniApiAdapter(SourceAdapter):
                 "category": category, "currency": "RUB",
                 "product_id":   prod_uid,
                 "product_name": prod.get("name") or prod.get("depositType") or "",
+                # Контекст запроса — ЧАСТЬ ключа: displayValue-ставка и сроки
+                # считаются под (amount, period). Без этого таргеты с разными
+                # контекстами (1 млн/12м и 500 тыс/24м) перезаписывали один
+                # оффер по кругу → ~1.7k фиктивных «изменений» в день (аудит
+                # 22.07.2026). Регион в ключ не входит: он меняет НАБОР банков.
+                "ctx_amount": fc.get("amount"),
+                "ctx_period": fc.get("period_months"),
             })[:32]
 
             card_text = " ".join(d.get("label", "") + " " + d.get("displayValue", "")
@@ -486,6 +502,15 @@ class SravniApiAdapter(SourceAdapter):
 
         fmap = self._REDUX_FIELD_MAP.get(category, self._REDUX_FIELD_MAP["credit"])
 
+        # Витрина /karty/ смешивает типы карт; без фильтра ОДИН envelope писался
+        # в ОБЕ категории — кредитки «115 дней без %» (ПСК 59.9) оказывались
+        # «дебетовыми» (аудит 22.07.2026). Логика зеркалит _parse_ssr_vitrins.
+        card_filter = None
+        if category == "card_debit":
+            card_filter = "debit"
+        elif category == "card_credit":
+            card_filter = "credit"
+
         # Lookup organization id → display info (от envelope.organizations
         # — это dict.values() из state.products.list.offers.organizations)
         org_by_id: dict[str, dict] = {}
@@ -499,6 +524,16 @@ class SravniApiAdapter(SourceAdapter):
         for item in items:
             if not isinstance(item, dict):
                 continue
+            if card_filter:
+                itype = str(item.get("type") or item.get("cardType") or "").lower()
+                if not itype:
+                    name_l = str(item.get("name") or item.get("title") or "").lower()
+                    # дефолт = тип витрины таргета (URL уже типизирован),
+                    # явно «дебетовое» имя — исключение для смешанной /karty/
+                    itype = "debit" if re.search(r"дебетов|для выплат|зарплатн",
+                                                 name_l) else card_filter
+                if card_filter not in itype:
+                    continue
 
             # ── Organization: id-string или inline-dict (mortgage кладёт целый объект)
             org_field = item.get("organization") or item.get("organizationId")
@@ -538,6 +573,12 @@ class SravniApiAdapter(SourceAdapter):
             sum_max  = _first(fmap.get("sum_max", []),  _dec)
             term_min = _first(fmap.get("term_min", []), _to_int)
             term_max = _first(fmap.get("term_max", []), _to_int)
+            if category == "mortgage" and term_max is not None and term_max <= 35:
+                # UI sravni оперирует ГОДАМИ; ипотека «на 7–30 месяцев» — это
+                # годы без пересчёта (санити-защита, аудит 22.07.2026)
+                term_max *= 12
+                if term_min is not None and term_min <= 35:
+                    term_min *= 12
 
             rate_kind = "min" if rate is not None else None
 
@@ -550,9 +591,18 @@ class SravniApiAdapter(SourceAdapter):
                 "name":     item.get("name"),
             })[:32]
 
-            url = (f"https://www.sravni.ru/bank/{bank_slug}/{item.get('alias')}/"
-                   if bank_slug and item.get("alias")
-                   else f"https://www.sravni.ru/{category}/")
+            # Прямая ссылка источника (item.link) приоритетна; фолбэк — карточка
+            # банка; последний фолбэк — реальный путь sravni, а не внутренний
+            # слаг категории (f"…/{category}/" давал 404 вроде /mortgage/)
+            link = item.get("link") or item.get("url")
+            if isinstance(link, str) and link.startswith("http"):
+                url = link
+            elif isinstance(link, str) and link.startswith("/"):
+                url = "https://www.sravni.ru" + link
+            elif bank_slug and item.get("alias"):
+                url = f"https://www.sravni.ru/bank/{bank_slug}/{item.get('alias')}/"
+            else:
+                url = "https://www.sravni.ru/" + _SRAVNI_CAT_PATH.get(category, "")
 
             yield OfferDraft(
                 bank_name_raw=bank_name,
@@ -805,16 +855,14 @@ class SravniApiAdapter(SourceAdapter):
             if card_filter:
                 itype = (item.get("type") or item.get("cardType") or "").lower()
                 if not itype:
-                    # Тип не указан у части офферов витрины /karty/ — раньше такие
-                    # попадали В ОБЕ категории (кредитки в «дебетовых», жалоба
-                    # аналитиков). Определяем по названию; неопределимое относим
-                    # к кредитным (витрина преимущественно кредитная) — но НИКОГДА
-                    # не дублируем в обе.
+                    # Тип не указан у части офферов — дефолт = тип витрины
+                    # таргета (URL уже типизирован: /karty/ или /debetovye-karty/);
+                    # явно «дебетовое» имя — исключение. НИКОГДА не дублируем в обе.
                     name_l = str(item.get("name") or item.get("title") or "").lower()
                     if re.search(r"дебетов|для выплат|зарплатн", name_l):
                         itype = "debit"
                     else:
-                        itype = "credit"
+                        itype = card_filter
                 if card_filter not in itype:
                     continue
 
@@ -846,10 +894,14 @@ class SravniApiAdapter(SourceAdapter):
 
             tmin = item.get("minTermFrom")
             tmax = item.get("maxTermTo")
-            unit = item.get("unitFrom") or item.get("unitTo") or "months"
-            if unit == "years":
-                tmin = int(tmin) * 12 if tmin else None
-                tmax = int(tmax) * 12 if tmax else None
+            # единицы применяются К СВОЕМУ концу диапазона: одна unit на оба
+            # конца ломала смешанные «min в месяцах, max в годах»
+            u_from = item.get("unitFrom") or "months"
+            u_to = item.get("unitTo") or u_from
+            if u_from == "years" and tmin:
+                tmin = int(tmin) * 12
+            if u_to == "years" and tmax:
+                tmax = int(tmax) * 12
 
             product_name = item.get("name") or category
             ext_id = stable_digest({
@@ -864,7 +916,9 @@ class SravniApiAdapter(SourceAdapter):
                 title=product_name,
                 url=f"https://www.sravni.ru/bank/{bank_slug}/",
                 rate_pct=rate,
-                rate_kind="psk" if category == "credit" else "effective",
+                # minRate = нижняя граница промо-диапазона («ставка от»); прежние
+                # метки 'psk'/'effective' здесь врали (аудит 22.07.2026)
+                rate_kind="min",
                 currency="RUB",
                 amount_min=amount_min,
                 amount_max=amount_max,
