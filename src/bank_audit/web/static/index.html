@@ -1440,6 +1440,9 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .bf-t-val small{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3);font-weight:400}
 .bf-t-sub{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);
   margin-top:5px;line-height:1.45}
+.bf-t-delta{display:block;margin-top:2px;font-weight:500}
+.bf-t-delta.good{color:var(--pos)}
+.bf-t-delta.bad{color:var(--accent)}
 .bf-stampline{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);
   margin:8px 0 0;line-height:1.7}
 /* строка-штамп переносится КАК ТЕКСТ: при display:flex каждый разделитель «·»
@@ -1644,6 +1647,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-8"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-9"></script>
 </body>
 </html>

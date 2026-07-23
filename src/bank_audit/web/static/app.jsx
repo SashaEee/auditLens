@@ -705,6 +705,16 @@ function Xp({rows,children,note}){
   </span>;
 }
 
+// «−22 ко вчера» под числом плитки: носитель смысла — изменение, а не уровень.
+// Сравниваются снапшоты выпусков (см. _digest_delta на бэке), поэтому дрейф
+// скользящего окна внутри дня сюда не попадает.
+function BfDelta({v,unit,invert}){
+  if(v==null||v===0)return null;
+  const better=invert?v<0:v>0;      // invert=true → рост это плохо
+  return <span className={"bf-t-delta "+(better?"good":"bad")}>
+    {v>0?"+":"−"}{Math.abs(v)}{unit||""} ко вчера</span>;
+}
+
 // Вердикт дня, если LLM не сформулировала: одна фраза по тем же числам.
 function bfVerdict(dv,esc,ovl,unc){
   const bits=[];
@@ -1488,6 +1498,7 @@ function OverviewPage(){
   const hl=head.headline||"", hot=head.hot||"";
   // данные плиток пульса
   const kpi=pulse.kpi||{}, esc=kpi.escalation_pct;
+  const dlt=(dg&&dg.meta&&dg.meta.delta)||{};
   const dv=(pulse.diverge||[]).find(d=>d.gap!=null&&d.gap>=1.15)||null;  // ведущее расхождение
   const unc=pulse.unclassified||null;
   const up=(pulse.themes_up||[])[0]||null;
@@ -1578,7 +1589,8 @@ function OverviewPage(){
               <span className="bf-t-val">{dv.short||dv.label}</span>
             </Xp>
             <div className="bf-t-sub">{dv.week} жалоб · норма {dv.baseline_week}
-              {dv.market_ratio!=null&&<> · по рынку {dv.market_ratio>1.1?"тоже растёт":"без роста"}</>}</div>
+              {dv.market_ratio!=null&&<> · по рынку {dv.market_ratio>1.1?"тоже растёт":"без роста"}</>}
+              {dlt.diverge_key===dv.key&&<BfDelta v={dlt.diverge_week} invert/>}</div>
           </>:<>
             <span className="bf-t-val">Ничего срочного</span>
             <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||22} тем — превышений нет</div>
@@ -1591,7 +1603,8 @@ function OverviewPage(){
           <Xp rows={xpEscalation(kpi)} note="banki.ru · окно 90 дней">
             <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
           </Xp>
-          <div className="bf-t-sub">порог 12%{kpi.total?` · из ${fmtNum(kpi.total)} жалоб за 90 дн`:""}</div>
+          <div className="bf-t-sub">порог 12%{kpi.total?` · из ${fmtNum(kpi.total)} жалоб за 90 дн`:""}
+            <BfDelta v={dlt.escalation_pct} unit=" пп" invert/></div>
         </a>
 
         {/* Объём недели — с нормой рядом, без коэффициента */}
@@ -1601,7 +1614,8 @@ function OverviewPage(){
             <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
               {ovl.baseline_week!=null&&<small> норма {Math.round(ovl.baseline_week)}</small>}</span>
           </Xp>
-          <div className="bf-t-sub">banki.ru · 1–2★{kpi.market_rank?` · ${kpi.market_rank}-е место из ${kpi.market_banks}`:""}</div>
+          <div className="bf-t-sub">banki.ru · 1–2★{kpi.market_rank?` · ${kpi.market_rank}-е место из ${kpi.market_banks}`:""}
+            <BfDelta v={dlt.week} invert/></div>
         </a>
 
         {/* Что меняли МЫ САМИ — согласовано ли */}
@@ -1611,7 +1625,8 @@ function OverviewPage(){
             <span className="bf-t-val">{(tm.totals&&tm.totals.sber_changes_7d)!=null?fmtNum(tm.totals.sber_changes_7d):"—"}
               <small> офферов</small></span>
           </Xp>
-          <div className="bf-t-sub">за 7 дней · условия продуктов Сбера</div>
+          <div className="bf-t-sub">за 7 дней · условия продуктов Сбера
+            <BfDelta v={dlt.sber_changes}/></div>
         </a>
 
         {/* Слепая зона: чего классификатор не видит */}
@@ -1623,7 +1638,7 @@ function OverviewPage(){
           </Xp>
           <div className="bf-t-sub">{unc&&unc.ratio!=null
             ?(unc.ratio>=1.3?"выше обычного — возможен новый инцидент":"как обычно")
-            :"жалобы без темы"}</div>
+            :"жалобы без темы"}<BfDelta v={dlt.unclassified} invert/></div>
         </a>
 
         {/* Медленный тренд — то, чего не видно в недельном окне */}

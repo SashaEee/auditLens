@@ -464,7 +464,63 @@ async def overview_digest(date: Optional[str] = None):
     from ..digest.scheduler import GEN_HOUR, INGEST_HOUR
     doc["meta"]["digest_hour_msk"] = GEN_HOUR
     doc["meta"]["ingest_hour_msk"] = INGEST_HOUR
+    doc["meta"]["delta"] = await asyncio.to_thread(_digest_delta, doc)
     return doc
+
+
+def _digest_delta(doc: dict) -> dict:
+    """Сравнение с предыдущим выпуском — «−22 ко вчера» под числами пульса.
+
+    Считается в API, а не при генерации: во-первых, работает и для уже
+    выпущенных дайджестов, во-вторых, поломка сравнения физически не может
+    сорвать утреннюю генерацию. Сравниваются СНАПШОТЫ выпусков, а не живые
+    значения: скользящее окно «за 7 дней» само по себе меньше к вечеру, и это
+    не событие.
+    """
+    try:
+        from ..digest import store as digest_store
+        cur_day = doc.get("date")
+        if not cur_day:
+            return {}
+        from datetime import date as _d
+        cur = _d.fromisoformat(cur_day)
+        prev_day = next((d for d in digest_store.list_dates(10)
+                         if _d.fromisoformat(d) < cur), None)
+        if not prev_day:
+            return {}
+        prev = digest_store.read_latest(cur, _d.fromisoformat(prev_day))
+
+        def _pl(document: dict, section: str) -> dict:
+            return ((document.get("sections") or {}).get(section) or {}).get("payload") or {}
+
+        now_rp, was_rp = _pl(doc, "reviews_pulse"), _pl(prev, "reviews_pulse")
+        now_tm, was_tm = _pl(doc, "tariff_moves"), _pl(prev, "tariff_moves")
+
+        def _d2(a, b):
+            try:
+                return round(float(a) - float(b), 2)
+            except (TypeError, ValueError):
+                return None
+
+        out = {"prev_date": prev_day}
+        out["week"] = _d2((now_rp.get("overall") or {}).get("week"),
+                          (was_rp.get("overall") or {}).get("week"))
+        out["escalation_pct"] = _d2((now_rp.get("kpi") or {}).get("escalation_pct"),
+                                    (was_rp.get("kpi") or {}).get("escalation_pct"))
+        out["unclassified"] = _d2((now_rp.get("unclassified") or {}).get("week"),
+                                  (was_rp.get("unclassified") or {}).get("week"))
+        out["sber_changes"] = _d2((now_tm.get("totals") or {}).get("sber_changes_7d"),
+                                  (was_tm.get("totals") or {}).get("sber_changes_7d"))
+        # ведущая тема: сравниваем только если тема ТА ЖЕ, иначе дельта врёт
+        nd = (now_rp.get("diverge") or [{}])[0]
+        wd = next((x for x in (was_rp.get("diverge") or []) if x.get("key") == nd.get("key")), None)
+        if nd.get("key") and wd:
+            out["diverge_key"] = nd["key"]
+            out["diverge_week"] = _d2(nd.get("week"), wd.get("week"))
+        return {k: v for k, v in out.items() if v is not None}
+    except Exception as e:  # noqa: BLE001 — дельта необязательна
+        log.info("digest delta skipped: %s", e)
+        return {}
 
 
 @app.get("/api/overview/digest/dates")
