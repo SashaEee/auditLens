@@ -1546,6 +1546,31 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .mk-chrow{grid-template-columns:1fr;gap:4px}
   .mk-chmove{text-align:left}
 }
+/* ── «Как это посчитано»: раскрытие цифр брифинга (xp-) ───────────────────── */
+.xp{position:relative;display:inline;cursor:help;border-bottom:1px dashed color-mix(in oklab,var(--accent),transparent 55%)}
+.xp:focus{outline:none}
+.xp-link{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+.xp-pop{position:absolute;left:0;top:calc(100% + 10px);z-index:70;display:none;
+  width:max-content;max-width:min(400px,86vw);padding:13px 15px 12px;text-align:left;
+  background:var(--surface);color:var(--ink);border:1px solid var(--hair-2);border-radius:12px;
+  box-shadow:var(--shadow-2);font-style:normal;font-weight:400;
+  font-family:'Geist','Inter',-apple-system,sans-serif;font-size:12.5px;line-height:1.5;letter-spacing:0}
+.xp:hover .xp-pop,.xp:focus .xp-pop,.xp:focus-within .xp-pop{display:block;animation:xpIn .13s ease}
+@keyframes xpIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.xp-pop::before{content:"";position:absolute;left:22px;top:-5px;width:9px;height:9px;transform:rotate(45deg);
+  background:var(--surface);border-left:1px solid var(--hair-2);border-top:1px solid var(--hair-2)}
+.xp-h{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-4);margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid var(--hair)}
+.xp-row{display:grid;grid-template-columns:104px 1fr;gap:10px;padding:3px 0;align-items:baseline}
+.xp-k{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.xp-v{color:var(--ink-2);font-variant-numeric:tabular-nums}
+.xp-row:first-of-type .xp-v{color:var(--ink);font-weight:500}
+.xp-note{display:block;margin-top:8px;padding-top:7px;border-top:1px solid var(--hair);
+  font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4)}
+.bf-prov-sep{color:var(--ink-4)}
+@media(max-width:720px){.xp-pop{left:auto;right:0;max-width:88vw}.xp-pop::before{left:auto;right:22px}
+  .xp-row{grid-template-columns:1fr;gap:1px}}
+
 /* продуктовый чип новости («Ипотека», «Вклады»…) — детектор тегов, правка аналитиков */
 .bf-chip{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--hair-2);border-radius:3px;padding:1px 5px;line-height:1.5;white-space:nowrap}
 .bf-news-empty{padding:22px 16px;font-size:12.5px;color:var(--ink-3)}
@@ -1588,6 +1613,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260723-2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260723-4"></script>
 </body>
 </html>

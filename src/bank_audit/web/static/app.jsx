@@ -592,6 +592,53 @@ function bfGoDrill(drill){
 // чтобы подсветка была на КАЖДОМ заголовке, а не только когда hot от LLM точно
 // совпал. Приоритет: точный hot → без регистра → число/процент/×N → банк/ЦБ →
 // последние 2 слова. hl — заголовок, hot — подсказка модели (может быть пустой).
+// ─── «Как это посчитано» — раскрытие любой цифры брифинга ─────────────────────
+// Аудитор не должен гадать, откуда взялось «×2.1»: показываем формулу словами,
+// как считалась норма, на какой выборке и из какого источника.
+function xpRows(kind,d){
+  const R=[];
+  if(kind==="review_spike"){
+    if(d.week!=null&&d.baseline_week!=null)
+      R.push(["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`]);
+    if(d.baseline_week!=null)
+      R.push(["Норма",`медиана недельных значений за 6 предыдущих недель — ${d.baseline_week} жалоб`]);
+    if(d.prev_week!=null) R.push(["Прошлая неделя",`${d.prev_week} жалоб`]);
+    if(d.market_ratio!=null)
+      R.push(["Рынок",`та же тема по рынку ×${d.market_ratio}` +
+        (d.bank_specific?" — значит всплеск наш, а не отраслевой":"")]);
+    R.push(["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"]);
+  } else if(kind==="tariff_move"){
+    if(d.from!=null&&d.to!=null)
+      R.push(["Расчёт",`${d.from}% → ${d.to}% = ${d.delta>0?"+":""}${d.delta} п.п.`]);
+    if(d.category) R.push(["Продукт",`${CAT_LABELS[d.category]||d.category} · ${d.title||""}`]);
+    R.push(["Порог","в движения недели попадают сдвиги от 0.05 п.п."]);
+    R.push(["Источник","журнал изменений тарифов (sravni.ru)"]);
+  } else if(kind==="mass_move"){
+    R.push(["Расчёт",`${d.n_banks} банков изменили условия за ${d.window_h||48} ч`]);
+    if(d.banks) R.push(["Банки",(d.banks||[]).slice(0,6).join(", ")]);
+    R.push(["Критерий","массовым считаем движение от 3 банков одной категории"]);
+  } else if(kind==="rate_move"){
+    if(d.current!=null) R.push(["Значение",`ключевая ставка ЦБ ${d.current}%`]);
+    if(d.as_of) R.push(["На дату",String(d.as_of)]);
+    R.push(["Источник","Банк России, официальная публикация"]);
+  }
+  return R;
+}
+
+// обёртка вокруг числа: пунктирное подчёркивание + карточка-расшифровка
+function Xp({rows,children,note}){
+  if(!rows||!rows.length)return children;
+  return <span className="xp" tabIndex={0}>
+    {children}
+    <span className="xp-pop" role="tooltip">
+      <span className="xp-h">как это посчитано</span>
+      {rows.map(([k,v],i)=><span key={i} className="xp-row">
+        <span className="xp-k">{k}</span><span className="xp-v">{v}</span></span>)}
+      {note&&<span className="xp-note">{note}</span>}
+    </span>
+  </span>;
+}
+
 function bfPickHot(hl,hot){
   if(!hl)return null;
   const trim=(i,len)=>{ // обрезаем хвостовую/ведущую пунктуацию у фрагмента
@@ -618,6 +665,7 @@ function bfPickHot(hl,hot){
 
 function BfCard({ins,idx,lead}){
   const d=ins.data||{};
+  const xp=xpRows(ins.kind,d);
   const viz=(()=>{
     if(ins.kind==="review_spike")
       return <>
@@ -643,7 +691,13 @@ function BfCard({ins,idx,lead}){
     <h3 className="bf-title">{ins.title}</h3>
     {ins.so_what&&<div className="bf-sowhat">{ins.so_what}</div>}
     {viz&&<div className="bf-viz">{viz}</div>}
-    {ins.provenance&&<div className="bf-prov">{ins.provenance}</div>}
+    {(ins.provenance||xp.length>0)&&<div className="bf-prov">
+      {xp.length>0
+        ?<Xp rows={xp} note={ins.provenance}><span className="xp-link">как посчитано</span></Xp>
+        :null}
+      {xp.length>0&&ins.provenance?<span className="bf-prov-sep"> · </span>:null}
+      {ins.provenance}
+    </div>}
     <div className="bf-foot">
       <button className="bf-btn" onClick={()=>bfGoDrill(ins.drill)}>
         {ins.kind==="news_alert"?"Источник":"Разобраться"} <Ic.ext/>
@@ -1353,6 +1407,21 @@ function OverviewPage(){
   const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
   const hl=head.headline||"", hot=head.hot||"";
   const hh=bfPickHot(hl,hot);   // [начало,длина] акцента — есть всегда, если есть заголовок
+  // заголовок дня пишется по ведущему сигналу — его расчёт и раскрываем на акценте.
+  // Если акцент — число, ищем сигнал, чьё значение в нём фигурирует.
+  const leadIns=(()=>{
+    if(!insights.length)return null;
+    const frag=hh?hl.slice(hh[0],hh[0]+hh[1]):"";
+    const num=(frag.match(/\d+[.,]?\d*/)||[])[0];
+    if(num){
+      const n=parseFloat(num.replace(",","."));
+      const hit=insights.find(i=>{const d=i.data||{};
+        return [d.ratio,d.week,d.delta,d.to,d.current,d.n_banks].some(v=>v!=null&&Math.abs(parseFloat(v)-n)<0.051);});
+      if(hit)return hit;
+    }
+    return insights[0];
+  })();
+  const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{}):[];
 
   return <div className="fade-in">
     <div className="fy-seg-mob"><OvSeg page="overview"/></div>
@@ -1367,7 +1436,7 @@ function OverviewPage(){
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {refreshing?
             <span className="bf-live"><span className="dot"/>обновляется…</span>:
-            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до {String((d.meta&&d.meta.digest_hour_msk)??7).padStart(2,"0")}:00 МСК</span>}
+            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до {String((dg&&dg.meta&&dg.meta.digest_hour_msk)??7).padStart(2,"0")}:00 МСК</span>}
           <button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
             title="Перегенерировать выпуск">⟳</button>
         </div>
@@ -1380,7 +1449,11 @@ function OverviewPage(){
         </div>:
         <>
           <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
-            {hh?<>{hl.slice(0,hh[0])}<em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
+            {hh?<>{hl.slice(0,hh[0])}
+              <Xp rows={leadXp} note={leadIns?leadIns.provenance:null}>
+                <em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>
+              </Xp>
+              {hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
           </h1>
           <p className="lede" style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center"}}>
             {head.stats&&<>
