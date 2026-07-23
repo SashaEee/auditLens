@@ -685,6 +685,13 @@ function xpRows(kind,d){
     R.push(["Расчёт",`${d.n_banks} банков изменили условия за ${d.window_h||48} ч`]);
     if(d.banks) R.push(["Банки",(d.banks||[]).slice(0,6).join(", ")]);
     R.push(["Критерий","массовым считаем движение от 3 банков одной категории"]);
+  } else if(kind==="news_alert"){
+    const sev={red:"прямая угроза или инцидент",amber:"наблюдать",green:"благоприятное"};
+    if(d.domain||d.source) R.push(["Источник",`${d.domain||d.source}${d.ts?` · ${fmtDateMsk(d.ts)}`:""}`]);
+    if(d.why) R.push(["Почему важно",d.why]);
+    if(d.summary) R.push(["Суть",d.summary]);
+    if(d.severity) R.push(["Оценка",sev[d.severity]||d.severity]);
+    R.push(["Проверка","цифры и формулировки — из текста публикации, ИИ их не додумывает"]);
   } else if(kind==="rate_move"){
     if(d.current!=null) R.push(["Значение",`ключевая ставка ЦБ ${d.current}%`]);
     if(d.as_of) R.push(["На дату",String(d.as_of)]);
@@ -1575,11 +1582,15 @@ function OverviewPage(){
     const num=(frag.match(/\d+[.,]?\d*/)||[])[0];
     if(num){
       const n=parseFloat(num.replace(",","."));
+      // допуск на округление: заголовок пишет «в 2 раза» там, где сигнал 2.1
+      const near=v=>v!=null&&Math.abs(parseFloat(v)-n)<=Math.max(0.051,Math.abs(n)*0.08);
       const hit=insights.find(i=>{const d=i.data||{};
-        return [d.ratio,d.week,d.delta,d.to,d.current,d.n_banks].some(v=>v!=null&&Math.abs(parseFloat(v)-n)<0.051);});
+        return [d.ratio,d.week,d.delta,d.to,d.current,d.n_banks].some(near);});
       if(hit)return hit;
     }
-    return insights[0];
+    // иначе — первая карточка, у которой расшифровка непустая: акцент без
+    // объяснения хуже, чем объяснение соседнего сигнала того же выпуска
+    return insights.find(i=>xpRows(i.kind,i.data||{}).length)||insights[0];
   })();
   const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{}):[];
 
