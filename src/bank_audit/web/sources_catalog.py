@@ -152,6 +152,7 @@ _NEWS_RU = {
     "tg_frankmedia": "Frank Media — телеграм",
     "tg_kommersant": "Коммерсантъ",
     "tg_rbc": "РБК",
+    "ria_novosti": "РИА Новости",
 }
 
 

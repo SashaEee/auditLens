@@ -57,6 +57,10 @@ SOURCES: list[dict] = [
     # @dolg_rf пуст → не добавлены. Гос-RSS чистого фида не отдают.
     {"key": "tg_kommersant", "kind": "tg",  "url": "https://t.me/s/kommersant",           "tag": "market",    "dimension": "market"},
     {"key": "tg_rbc",        "kind": "tg",  "url": "https://t.me/s/rbc_news",             "tag": "market",    "dimension": "market"},
+    # РИА Новости — госагентство, часто первым сообщает решения ЦБ и предупреждения
+    # о мошенничестве. Секционных фидов РИА больше не отдаёт (economy/politics = 404),
+    # берём общий архивный; _PER_SOURCE_CAP=10 + LLM-отбор оставляют банк-релевантное.
+    {"key": "ria_novosti",   "kind": "rss", "url": "https://ria.ru/export/rss2/archive/index.xml", "tag": "market", "dimension": "market"},
 ]
 
 # Точечные поисковые запросы (SearXNG). У выдачи нет дат → берём мало и метим.
