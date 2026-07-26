@@ -104,6 +104,16 @@ CREATE TABLE loophole_action_log (
     created_at    TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_lal_user ON loophole_action_log(user_id, created_at);
+
+CREATE TABLE loophole_kb_example (
+    example_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    title         TEXT,
+    description   TEXT,
+    category      TEXT,
+    record_id     INTEGER,
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_lkbe_record ON loophole_kb_example(record_id);
 """
 
 

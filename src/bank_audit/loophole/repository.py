@@ -508,22 +508,62 @@ def save_kb_example(
     *,
     category: str | None = None,
     embedding: list[float] | None = None,
+    record_id: int | None = None,
     session=None,
 ) -> int:
-    """Сохраняет пример в KB. embedding — list[float], сериализуется для pgvector."""
+    """Сохраняет пример в KB. embedding — list[float], сериализуется для pgvector.
+
+    record_id связывает пример с записью loophole_record (ручная маркировка:
+    дедуп и откат). Без embedding колонка опускается — кросс-БД (SQLite-тесты
+    не понимают каст ::vector).
+    """
+    with _session(session) as s:
+        if embedding is None:
+            row = s.execute(
+                text(
+                    f"INSERT INTO {schema.T_KB_EXAMPLE} "
+                    "(title, description, category, record_id) "
+                    "VALUES (:title, :desc, :cat, :rid) RETURNING example_id"
+                ),
+                {"title": title, "desc": description, "cat": category, "rid": record_id},
+            ).scalar_one()
+        else:
+            row = s.execute(
+                text(
+                    f"INSERT INTO {schema.T_KB_EXAMPLE} "
+                    "(title, description, category, embedding, record_id) "
+                    "VALUES (:title, :desc, :cat, :emb::vector, :rid) RETURNING example_id"
+                ),
+                {
+                    "title": title, "desc": description, "cat": category,
+                    "emb": _embedding_to_pgvector(embedding), "rid": record_id,
+                },
+            ).scalar_one()
+        return row
+
+
+def get_kb_example_by_record(record_id: int, *, session=None) -> dict | None:
+    """Пример KB, привязанный к записи (дедуп ручной маркировки)."""
     with _session(session) as s:
         row = s.execute(
             text(
-                f"INSERT INTO {schema.T_KB_EXAMPLE} "
-                "(title, description, category, embedding) "
-                "VALUES (:title, :desc, :cat, :emb::vector) RETURNING example_id"
+                f"SELECT example_id, title, description, category, record_id, "
+                f"created_at FROM {schema.T_KB_EXAMPLE} "
+                "WHERE record_id = :rid LIMIT 1"
             ),
-            {
-                "title": title, "desc": description, "cat": category,
-                "emb": _embedding_to_pgvector(embedding),
-            },
-        ).scalar_one()
-        return row
+            {"rid": record_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+
+def delete_kb_example_by_record(record_id: int, *, session=None) -> int:
+    """Удаляет примеры KB записи (откат ручной маркировки). Возвращает число удалённых."""
+    with _session(session) as s:
+        result = s.execute(
+            text(f"DELETE FROM {schema.T_KB_EXAMPLE} WHERE record_id = :rid"),
+            {"rid": record_id},
+        )
+        return result.rowcount
 
 
 def search_kb_similar(

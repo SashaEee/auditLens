@@ -957,16 +957,19 @@ LOOPHOLE_STATIC_DIR = Path(__file__).resolve().parent.parent / "loophole" / "sta
 
 
 def _loophole_html_with_bust() -> str:
-    """Cache-bust для loophole.jsx — иначе Babel/браузер держат старый чат-UI."""
+    """Cache-bust для loophole.jsx и loophole.css — иначе Babel/браузер держат
+    старый чат-UI, а браузер — старые стили (StaticFiles не шлёт Cache-Control,
+    css кэшируется эвристически и не ревалидируется)."""
     html_path = LOOPHOLE_STATIC_DIR / "loophole.html"
     html = html_path.read_text(encoding="utf-8")
-    jsx_path = LOOPHOLE_STATIC_DIR / "loophole.jsx"
-    if jsx_path.exists():
-        v = int(jsx_path.stat().st_mtime)
-        html = html.replace(
-            'src="/static/loophole/loophole.jsx"',
-            f'src="/static/loophole/loophole.jsx?v={v}"',
-        )
+    for name, attr in (("loophole.jsx", "src"), ("loophole.css", "href")):
+        asset = LOOPHOLE_STATIC_DIR / name
+        if asset.exists():
+            v = int(asset.stat().st_mtime)
+            html = html.replace(
+                f'{attr}="/static/loophole/{name}"',
+                f'{attr}="/static/loophole/{name}?v={v}"',
+            )
     return html
 
 

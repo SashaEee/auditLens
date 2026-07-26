@@ -1,6 +1,7 @@
 """Реестр парсеров: list/get/delete с обогащением runtime-статусом."""
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -11,10 +12,25 @@ from .runner import _RUNNING
 log = logging.getLogger(__name__)
 
 
+def _hoist_config(row: dict) -> None:
+    """Поднимает query/targets из config (dict или JSON-строка) наверх."""
+    cfg = row.get("config")
+    if isinstance(cfg, str):
+        try:
+            cfg = json.loads(cfg)
+        except Exception:
+            cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    row["targets"] = cfg.get("targets") or []
+    row["query"] = cfg.get("query") or ""
+
+
 def list_parsers(workspace_id: int, *, session: Any = None) -> list[dict]:
     """Список парсеров workspace + runtime-статус из _RUNNING."""
     rows = repo.list_parsers(workspace_id, session=session)
     for row in rows:
+        _hoist_config(row)
         pid = row.get("parser_id")
         runner = _RUNNING.get(pid) if pid is not None else None
         row["is_running"] = runner is not None

@@ -91,3 +91,6 @@ diag_*.py
 # отладочный мусор
 debug-*.log
 *TMP*.txt
+
+.superpowers
+docs/superpowers

@@ -4,6 +4,9 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 const API = "/api/loophole";
 
+// Максимум записей в одной CSV-выгрузке (дублирует EXPORT_LIMIT на бэкенде).
+const EXPORT_LIMIT = 10000;
+
 // Константы фаз пайплайна (без финальной "done" в progress-bar).
 // Только фазы, которые РЕАЛЬНО шлёт nanobot-бэкенд (stream_chat): clarify →
 // execute → answer. Старые plan/aggregate остались от удалённого ReAct-графа и
@@ -28,6 +31,14 @@ function LoopholeApp() {
   // Выделение строк
   const [selected, setSelected] = useState(new Set());
 
+  // ── Ручная маркировка вердиктов ───────────────────────────────────────────
+  const [verdictModal, setVerdictModal] = useState(null); // {record} | null
+  const [markComment, setMarkComment] = useState("");
+  const [bulkComment, setBulkComment] = useState("");
+  const [markBusy, setMarkBusy] = useState(false);
+  const [toast, setToast] = useState("");
+  const toastTimerRef = useRef(null);
+
   // ── Чат ────────────────────────────────────────────────────────────────────
   const [chat, setChat] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -48,6 +59,7 @@ function LoopholeApp() {
   const [parsers, setParsers] = useState([]);
   const [newParserQuery, setNewParserQuery] = useState("");
   const [parsersBusy, setParsersBusy] = useState(false);
+  const [parserError, setParserError] = useState("");
 
   // Создаём workspace при старте.
   useEffect(() => {
@@ -133,26 +145,66 @@ function LoopholeApp() {
     }
   };
 
-  // ── CSV-экспорт по фильтрам ────────────────────────────────────────────────
+  // ── CSV-экспорт выделенных записей ─────────────────────────────────────────
   const exportCSV = useCallback(async () => {
-    const r = await fetch(`${API}/export/csv`, {
+    if (selected.size === 0) {
+      alert("Сначала выделите перечень лазеек для выгрузки в CSV.");
+      return;
+    }
+    if (selected.size > EXPORT_LIMIT) {
+      alert(`Выделено ${selected.size} записей. За один раз можно выгрузить не более ${EXPORT_LIMIT}.`);
+      return;
+    }
+    const r = await fetch(`${API}/export`, {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        bank_slugs: fBanks,
-        period_from: fFrom || null,
-        period_to: fTo || null,
-        query_text: fText.trim(),
-        only_loophole: fVerdict === "loophole" ? true
-                     : fVerdict === "not" ? false : null,
-        status: fStatus || null,
-      }),
+      body: JSON.stringify({records: [...selected], format: "csv"}),
     });
+    if (!r.ok) {
+      const d = await r.json().catch(() => null);
+      alert((d && d.detail) || "Ошибка выгрузки CSV.");
+      return;
+    }
     const blob = new Blob([await r.text()], {type: "text/csv;charset=utf-8"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = "loopholes.csv"; a.click();
     URL.revokeObjectURL(url);
-  }, [fText, fBanks, fFrom, fTo, fVerdict, fStatus]);
+  }, [selected]);
+
+  // ── Ручная маркировка: toast + POST /records/verdict ──────────────────────
+  const showToast = (msg) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(msg);
+    toastTimerRef.current = setTimeout(() => setToast(""), 4000);
+  };
+
+  const markVerdict = async (ids, isLoophole, comment) => {
+    if (!ids.length || markBusy) return false;
+    setMarkBusy(true);
+    try {
+      const r = await fetch(`${API}/records/verdict`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          record_ids: ids, is_loophole: isLoophole, comment: comment || null,
+        }),
+      });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) {
+        showToast((d && typeof d.detail === "string" && d.detail) || "Ошибка маркировки.");
+        return false;
+      }
+      if (d && d.skipped && d.skipped.length) {
+        showToast(`Пропущено записей: ${d.skipped.length} (не найдены).`);
+      }
+      await loadRecords();
+      return true;
+    } catch (e) {
+      showToast("Ошибка маркировки: " + String(e));
+      return false;
+    } finally {
+      setMarkBusy(false);
+    }
+  };
 
   // ── Парсеры: список + CRUD + polling ───────────────────────────────────────
   const loadParsers = useCallback(async () => {
@@ -171,18 +223,35 @@ function LoopholeApp() {
     return () => clearInterval(t);
   }, [parsersOpen, loadParsers]);
 
+  // URL ресурса или группа мессенджера — обязательны для создания парсера.
+  const TARGET_RE = /(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\/\S+|https?:\/\/\S+|@[A-Za-z][A-Za-z0-9_]{4,31}\b/i;
+  const hasTarget = (q) => TARGET_RE.test(q || "");
+
   const createParser = async () => {
-    if (!newParserQuery.trim() || !workspaceId) return;
+    const q = newParserQuery.trim();
+    if (!q || !workspaceId) return;
+    if (!hasTarget(q)) {
+      setParserError("Укажите URL ресурса или группу мессенджера (например: https://example.com или https://t.me/group_name)");
+      return;
+    }
     setParsersBusy(true);
+    setParserError("");
     try {
       const r = await fetch(`${API}/parsers`, {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({workspace_id: workspaceId, query: newParserQuery.trim()}),
+        body: JSON.stringify({workspace_id: workspaceId, query: q}),
       });
       const d = await r.json();
+      if (!r.ok) {
+        setParserError(d.detail || `Ошибка создания парсера (HTTP ${r.status})`);
+        return null;
+      }
       setNewParserQuery("");
       await loadParsers();
       return d;
+    } catch (e) {
+      setParserError("Сеть недоступна, парсер не создан");
+      return null;
     } finally {
       setParsersBusy(false);
     }
@@ -447,8 +516,8 @@ function LoopholeApp() {
 
   const verdictLabel = (r) => {
     if (r.is_loophole === true) return "лазейка";
-    if (r.is_loophole === false) return "нет";
-    return "—";
+    if (r.is_loophole === false) return "не лазейка";
+    return "не размечено";
   };
 
   const sortArrow = (key) => sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
@@ -471,7 +540,8 @@ function LoopholeApp() {
               ⚙ Парсеры
             </button>
             <button className="lp-btn lp-btn-primary" onClick={exportCSV}
-                    disabled={loading || sortedRecords.length === 0}>
+                    disabled={loading || sortedRecords.length === 0}
+                    title="Выгрузить выделенные записи в CSV (не более 10000)">
               ⬇ CSV
             </button>
             <button className="lp-btn" onClick={loadRecords} disabled={loading}>
@@ -537,6 +607,39 @@ function LoopholeApp() {
           </div>
         </div>
 
+        {/* Панель массовой маркировки */}
+        {selected.size > 0 && (
+          <div className="lp-mark-panel">
+            <div className="lp-mark-meta">
+              <span className="lp-mark-eyebrow">Массовая маркировка</span>
+              <span className="lp-mark-count">{selected.size}</span>
+            </div>
+            <input type="text" className="lp-mark-comment" value={bulkComment}
+                   onChange={e => setBulkComment(e.target.value)}
+                   placeholder="Комментарий аудитора (необязательно)"/>
+            <div className="lp-mark-actions">
+              <button className="lp-mark-btn lp-mark-btn-bad" disabled={markBusy}
+                      onClick={async () => {
+                        const ok = await markVerdict([...selected], true, bulkComment.trim());
+                        if (ok) setBulkComment("");
+                      }}>
+                <span className="lp-verdict-dot"></span>Лазейка
+              </button>
+              <button className="lp-mark-btn lp-mark-btn-ok" disabled={markBusy}
+                      onClick={async () => {
+                        const ok = await markVerdict([...selected], false, bulkComment.trim());
+                        if (ok) setBulkComment("");
+                      }}>
+                <span className="lp-verdict-dot"></span>Обычный запрос
+              </button>
+              <button className="lp-btn lp-btn-sm" disabled={markBusy}
+                      onClick={() => setSelected(new Set())}>
+                Снять выбор
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Таблица */}
         <div className="lp-table-wrap">
           {sortedRecords.length === 0 && !loading ? (
@@ -596,12 +699,21 @@ function LoopholeApp() {
                     <td>{r.bank_slug || "—"}</td>
                     <td>{fmtNum(r.verdict_confidence)}</td>
                     <td>{fmtNum(r.trust_score)}</td>
-                    <td>
-                      <span className={"lp-badge " +
-                        (r.is_loophole === true ? "lp-badge-bad"
-                       : r.is_loophole === false ? "lp-badge-ok" : "lp-badge-na")}>
+                    <td onClick={e => e.stopPropagation()}>
+                      <button type="button"
+                              className={"lp-verdict-chip " +
+                                (r.is_loophole === true ? "lp-verdict-chip-bad"
+                               : r.is_loophole === false ? "lp-verdict-chip-ok"
+                               : "lp-verdict-chip-na")}
+                              title="Изменить вердикт"
+                              onClick={() => { setMarkComment(""); setVerdictModal({record: r}); }}>
+                        <span className="lp-verdict-dot"></span>
                         {verdictLabel(r)}
-                      </span>
+                      </button>
+                      {r.verdict_model === "manual" && (
+                        <span className="lp-manual-mark"
+                              title="Вердикт проставлен вручную">ручная</span>
+                      )}
                     </td>
                     <td>
                       <span className="lp-status">{r.status || "—"}</span>
@@ -807,8 +919,8 @@ function LoopholeApp() {
               <input
                 type="text"
                 value={newParserQuery}
-                onChange={e => setNewParserQuery(e.target.value)}
-                placeholder="Запрос для нового парсера (например: 'ипотечные продукты')"
+                onChange={e => { setNewParserQuery(e.target.value); setParserError(""); }}
+                placeholder="URL ресурса или группа мессенджера (например: https://t.me/group_name)"
                 onKeyDown={e => { if (e.key === "Enter") createParser(); }}
               />
               <button className="lp-btn lp-btn-primary"
@@ -817,6 +929,7 @@ function LoopholeApp() {
                 Создать
               </button>
             </div>
+            {parserError && <div className="lp-parser-error">{parserError}</div>}
 
             <div className="lp-parsers-list">
               {parsers.length === 0 && (
@@ -826,6 +939,17 @@ function LoopholeApp() {
                 <div key={p.parser_id} className="lp-parser-row">
                   <div className="lp-parser-info">
                     <div className="lp-parser-name">{p.name || p.code_path || p.parser_id}</div>
+                    {(p.targets && p.targets.length > 0) && (
+                      <div className="lp-parser-targets">
+                        {p.targets.map((t, i) => {
+                          const href = /^https?:\/\//i.test(t) ? t
+                            : (t.startsWith("@") ? `https://t.me/${t.slice(1)}` : `https://${t}`);
+                          return (
+                            <a key={i} href={href} target="_blank" rel="noopener noreferrer">{t}</a>
+                          );
+                        })}
+                      </div>
+                    )}
                     <div className="lp-parser-meta">
                       <code>{p.code_path}</code>
                       {p.pid != null && <span> · pid: {p.pid}</span>}
@@ -857,6 +981,90 @@ function LoopholeApp() {
           </div>
         </div>
       )}
+
+      {/* ── Модал ручной маркировки вердикта ────────────────────────────────── */}
+      {verdictModal && (() => {
+        const rec = verdictModal.record;
+        const current = rec.is_loophole; // true | false | null
+        const choose = async (val) => {
+          const ok = await markVerdict([rec.record_id], val, markComment.trim());
+          if (ok) setVerdictModal(null);
+        };
+        return (
+          <div className="lp-parsers-modal" onClick={() => setVerdictModal(null)}>
+            <div className="lp-parsers-dialog lp-verdict-dialog"
+                 onClick={e => e.stopPropagation()}>
+              <div className="lp-parsers-header lp-verdict-header">
+                <div>
+                  <div className="lp-eyebrow">Ручная маркировка</div>
+                  <h2>Вердикт записи</h2>
+                </div>
+                <button className="lp-dialog-x" aria-label="Закрыть"
+                        onClick={() => setVerdictModal(null)}>✕</button>
+              </div>
+              <div className="lp-verdict-body">
+                <div className="lp-verdict-record">
+                  <div className="lp-verdict-title">
+                    {rec.title || rec.snippet || "—"}
+                  </div>
+                  <div className="lp-verdict-meta">
+                    <span>{rec.bank_slug || "банк не указан"}</span>
+                    <span>доверие {fmtNum(rec.verdict_confidence)}</span>
+                    <span>собрано {fmtDate(rec.collected_at)}</span>
+                  </div>
+                </div>
+                <div className="lp-verdict-field">
+                  <label htmlFor="lp-mark-comment">Комментарий аудитора</label>
+                  <textarea id="lp-mark-comment" rows={2} value={markComment}
+                            onChange={e => setMarkComment(e.target.value)}
+                            placeholder="Почему это лазейка или обычный запрос…"/>
+                </div>
+                <div className="lp-verdict-options">
+                  {current !== true && (
+                    <button className="lp-verdict-option lp-verdict-option-bad"
+                            disabled={markBusy} onClick={() => choose(true)}>
+                      <span className="lp-verdict-dot"></span>
+                      <span className="lp-verdict-option-text">
+                        <span className="lp-verdict-option-name">Лазейка</span>
+                        <span className="lp-verdict-option-desc">
+                          подтверждённая схема обхода условий
+                        </span>
+                      </span>
+                    </button>
+                  )}
+                  {current !== false && (
+                    <button className="lp-verdict-option lp-verdict-option-ok"
+                            disabled={markBusy} onClick={() => choose(false)}>
+                      <span className="lp-verdict-dot"></span>
+                      <span className="lp-verdict-option-text">
+                        <span className="lp-verdict-option-name">Обычный запрос</span>
+                        <span className="lp-verdict-option-desc">
+                          лазейкой не является
+                        </span>
+                      </span>
+                    </button>
+                  )}
+                </div>
+                <div className="lp-verdict-foot">
+                  {current != null && (
+                    <span className="lp-verdict-current">
+                      Текущий вердикт: {verdictLabel(rec)}
+                      {rec.verdict_model === "manual" ? " · ручная" : ""}
+                    </span>
+                  )}
+                  <button className="lp-btn lp-btn-sm"
+                          onClick={() => setVerdictModal(null)}>
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Toast-уведомление об ошибке ─────────────────────────────────────── */}
+      {toast && <div className="lp-toast" role="alert">{toast}</div>}
     </div>
   );
 }

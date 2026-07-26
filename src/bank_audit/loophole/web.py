@@ -19,6 +19,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from .. import db
 from . import repository as repo
+from .kb import repository as kb_repo
 from . import keywords as kw_mod
 from . import workspace as ws_mod
 from . import logging_audit
@@ -108,6 +109,72 @@ def list_records(
     return {"records": records, "count": len(records)}
 
 
+class VerdictRequest(BaseModel):
+    record_ids: list[int]
+    is_loophole: bool
+    comment: str | None = None
+
+
+@router.post("/records/verdict")
+def mark_verdict(
+    body: VerdictRequest,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Ручная маркировка записей: «лазейка» / «обычный запрос».
+
+    Покрывает одиночную (массив из одного id) и массовую маркировку.
+    is_loophole=true → пример добавляется в KB (дедуп по record_id);
+    is_loophole=false → пример удаляется из KB (откат).
+    """
+    if not body.record_ids:
+        raise HTTPException(status_code=400, detail="record_ids пуст")
+    updated: list[int] = []
+    skipped: list[int] = []
+    reason = body.comment or f"manual:{user_id}"
+    for rid in body.record_ids:
+        record = repo.get_record(rid, session=session)
+        if record is None:
+            skipped.append(rid)
+            continue
+        repo.update_verdict(
+            rid,
+            is_loophole=body.is_loophole,
+            confidence=1.0,
+            reason=reason,
+            model="manual",
+            session=session,
+        )
+        if body.is_loophole:
+            if repo.get_kb_example_by_record(rid, session=session) is None:
+                description = (
+                    record.get("snippet")
+                    or (record.get("raw_text") or "")[:2000]
+                    or record.get("title")
+                    or ""
+                )
+                kb_repo.add_example(
+                    record.get("title") or description[:200],
+                    description,
+                    category="manual",
+                    record_id=rid,
+                    session=session,
+                )
+        else:
+            repo.delete_kb_example_by_record(rid, session=session)
+        updated.append(rid)
+    logging_audit.log_action(
+        user_id, "mark_verdict",
+        detail={
+            "ids": body.record_ids,
+            "is_loophole": body.is_loophole,
+            "comment": body.comment,
+        },
+        session=session,
+    )
+    return {"updated": len(updated), "skipped": skipped}
+
+
 @router.get("/banks")
 def list_banks(session=Depends(get_session)):
     """Уникальные bank_slug из loophole_record — для фильтра таблицы."""
@@ -186,12 +253,23 @@ async def chat(
     return EventSourceResponse(event_generator())
 
 
+EXPORT_LIMIT = 10000  # максимум записей в одной выгрузке
+
+
 @router.post("/export")
 def export(
     body: ExportRequest,
     user_id: str = Depends(get_user_id),
     session=Depends(get_session),
 ):
+    if body.records and len(body.records) > EXPORT_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Нельзя выгрузить более {EXPORT_LIMIT} записей за раз "
+                f"(запрошено {len(body.records)}). Сократите выделение."
+            ),
+        )
     records = []
     if body.records:
         for rid in body.records:
@@ -383,9 +461,12 @@ async def create_parser(
     """Генерация нового парсера через LLM."""
     from .parsers import generator as parser_generator
 
-    result = await parser_generator.generate_parser(
-        user_id, body.workspace_id, body.query, session=session
-    )
+    try:
+        result = await parser_generator.generate_parser(
+            user_id, body.workspace_id, body.query, session=session
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     logging_audit.log_action(
         user_id, "parser_create",
         workspace_id=body.workspace_id,

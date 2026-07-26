@@ -14,7 +14,7 @@ from bank_audit.loophole import repository as repo
 from bank_audit.loophole.models import LoopholeRecord
 from bank_audit.hashing import sha256_text
 
-from tests.loophole.test_repository import session as sqlite_session  # noqa: E402
+from tests.loophole.conftest import session as sqlite_session  # noqa: E402
 
 
 PARSER_SCHEMA = (

@@ -4,6 +4,7 @@
 :root {
   --bg: #fafaf7;
   --fg: #1a1a1a;
+  --ink: #20242c;
   --muted: #6b6b6b;
   --muted-2: #9a9a93;
   --accent: #b03a2e;
@@ -367,17 +368,6 @@ html, body {
 }
 .lp-cell-url a:hover { text-decoration: underline; }
 
-.lp-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 0.74rem;
-  font-weight: 600;
-}
-.lp-badge-bad { background: #fce4e4; color: var(--bad); }
-.lp-badge-ok  { background: #e4f6e8; color: var(--ok); }
-.lp-badge-na  { background: #eee; color: var(--muted); }
-
 .lp-status {
   font-family: var(--mono);
   font-size: 0.74rem;
@@ -722,8 +712,365 @@ html, body {
   color: var(--ok);
   font-weight: 600;
 }
+.lp-parser-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 2px 0;
+}
+.lp-parser-targets a {
+  font-size: 0.78rem;
+  color: var(--accent, #2f6fed);
+  text-decoration: none;
+  word-break: break-all;
+}
+.lp-parser-targets a:hover { text-decoration: underline; }
+.lp-parser-error {
+  margin: 0 18px 8px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  color: #b3261e;
+  background: #fdecea;
+  border: 1px solid #f5c6c0;
+  border-radius: 6px;
+}
 .lp-parser-actions {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* ── Ручная маркировка вердиктов ─────────────────────────────────────────── */
+/* Язык основной системы: mono-лейблы uppercase, точки-индикаторы, hairline,
+   3px radius у бейджей, 6px у кнопок. */
+
+/* Вердикт-чип в таблице — точка входа в маркировку. */
+.lp-verdict-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.lp-verdict-chip:hover { border-color: var(--muted-2); }
+.lp-verdict-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lp-verdict-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.lp-verdict-chip-bad {
+  color: var(--bad);
+  border-color: rgba(224, 49, 49, 0.35);
+  background: rgba(224, 49, 49, 0.07);
+}
+.lp-verdict-chip-bad:hover { border-color: rgba(224, 49, 49, 0.6); }
+.lp-verdict-chip-ok {
+  color: var(--ok);
+  border-color: rgba(47, 158, 68, 0.35);
+  background: rgba(47, 158, 68, 0.07);
+}
+.lp-verdict-chip-ok:hover { border-color: rgba(47, 158, 68, 0.6); }
+.lp-verdict-chip-na { border-style: dashed; }
+
+/* Признак ручного вердикта рядом с чипом. */
+.lp-manual-mark {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+/* Панель массовой маркировки — плавающая surface-карточка под фильтрами. */
+.lp-mark-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 24px 0;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.lp-mark-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.lp-mark-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+.lp-mark-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--panel);
+  background: var(--ink);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+.lp-mark-comment {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  background: var(--panel);
+  color: var(--fg);
+}
+.lp-mark-comment:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(32, 36, 44, 0.12);
+}
+.lp-mark-comment::placeholder { color: var(--muted-2); }
+.lp-mark-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.lp-mark-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, filter 0.12s;
+}
+.lp-mark-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.lp-mark-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lp-mark-btn-bad { background: var(--accent); color: #fff; }
+.lp-mark-btn-bad:not(:disabled):hover { filter: brightness(1.06); }
+.lp-mark-btn-ok {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--border);
+}
+.lp-mark-btn-ok:not(:disabled):hover { background: var(--border-soft); }
+.lp-mark-btn-ok .lp-verdict-dot { background: var(--ok); }
+.lp-mark-btn-bad .lp-verdict-dot { background: #fff; }
+
+/* Модал маркировки: eyebrow → запись → комментарий → вердикт-карточки. */
+.lp-verdict-dialog { width: min(520px, 92vw); }
+.lp-verdict-header { align-items: flex-start; }
+.lp-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  margin-bottom: 3px;
+}
+.lp-dialog-x {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.lp-dialog-x:hover { background: var(--border-soft); color: var(--fg); }
+.lp-verdict-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 18px;
+}
+.lp-verdict-record {
+  border: 1px solid var(--border-soft);
+  background: #faf9f5;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.lp-verdict-title {
+  font-weight: 500;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.lp-verdict-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted-2);
+}
+.lp-verdict-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.lp-verdict-field label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+.lp-verdict-field textarea {
+  resize: vertical;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  background: var(--panel);
+  color: var(--fg);
+}
+.lp-verdict-field textarea:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(32, 36, 44, 0.12);
+}
+.lp-verdict-field textarea::placeholder { color: var(--muted-2); }
+.lp-verdict-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.lp-verdict-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  font-family: var(--sans);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.lp-verdict-option:disabled { opacity: 0.55; cursor: wait; }
+.lp-verdict-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lp-verdict-option .lp-verdict-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+}
+.lp-verdict-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.lp-verdict-option-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+.lp-verdict-option-desc {
+  font-size: 0.74rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.lp-verdict-option-bad .lp-verdict-dot { background: var(--bad); }
+.lp-verdict-option-bad:not(:disabled):hover {
+  border-color: rgba(224, 49, 49, 0.5);
+  background: rgba(224, 49, 49, 0.04);
+}
+.lp-verdict-option-ok .lp-verdict-dot { background: var(--ok); }
+.lp-verdict-option-ok:not(:disabled):hover {
+  border-color: rgba(47, 158, 68, 0.5);
+  background: rgba(47, 158, 68, 0.04);
+}
+.lp-verdict-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+.lp-verdict-current {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted-2);
+}
+.lp-verdict-foot .lp-btn { margin-left: auto; }
+
+/* Toast: surface-карточка с левым баром (как .alert в основной системе). */
+.lp-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1001;
+  max-width: 380px;
+  padding: 10px 14px 10px 18px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  font-size: 0.83rem;
+  line-height: 1.45;
+  overflow: hidden;
+}
+.lp-toast::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--bad);
+}
+
+@media (max-width: 640px) {
+  .lp-verdict-options { grid-template-columns: 1fr; }
+  .lp-mark-panel { flex-wrap: wrap; }
+  .lp-mark-comment { flex-basis: 100%; order: 3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-verdict-chip, .lp-mark-btn, .lp-verdict-option { transition: none; }
 }

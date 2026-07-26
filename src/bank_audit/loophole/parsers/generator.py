@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 from .. import repository as repo
@@ -33,6 +32,28 @@ def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", (name or "").strip())
     cleaned = cleaned.strip("._-")
     return cleaned or "parser"
+
+
+# Цели парсинга: URL ресурса или группа в мессенджере (Telegram).
+TG_LINK_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?(?:t|telegram)\.me/[^\s<>\"']+", re.IGNORECASE
+)
+URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+TG_HANDLE_RE = re.compile(r"@[A-Za-z][A-Za-z0-9_]{4,31}\b")
+
+
+def extract_targets(query: str) -> list[str]:
+    """Извлекает из запроса URL ресурсов и группы мессенджеров.
+
+    Возвращает дедуплицированный список целей (Telegram-ссылки первыми).
+    """
+    targets: list[str] = []
+    for pattern in (TG_LINK_RE, URL_RE, TG_HANDLE_RE):
+        for match in pattern.findall(query or ""):
+            match = match.rstrip(".,);]")
+            if match not in targets:
+                targets.append(match)
+    return targets
 
 
 def _default_llm() -> Any:
@@ -89,8 +110,15 @@ async def generate_parser(
 ) -> dict:
     """Генерирует Scrapy-паука через LLM, сохраняет код в workspace и БД.
 
-    Возвращает {"parser_id", "code_path", "name"}.
+    Возвращает {"parser_id", "code_path", "name", "targets"}.
+    Бросает ValueError, если в запросе нет URL ресурса или группы мессенджера.
     """
+    targets = extract_targets(query)
+    if not targets:
+        raise ValueError(
+            "В запросе не указан URL ресурса или группа мессенджера "
+            "(например: https://example.com/page или https://t.me/group_name)"
+        )
     if llm is None:
         llm = _default_llm()
 
@@ -114,11 +142,16 @@ async def generate_parser(
         workspace_id,
         name=name,
         code_path=str(code_path),
-        config={"query": query},
+        config={"query": query, "targets": targets},
         session=session,
     )
     log.info(
-        "[parsers.generator] создан парсер id=%s name=%s path=%s",
-        parser_id, name, code_path,
+        "[parsers.generator] создан парсер id=%s name=%s path=%s targets=%s",
+        parser_id, name, code_path, targets,
     )
-    return {"parser_id": parser_id, "code_path": str(code_path), "name": name}
+    return {
+        "parser_id": parser_id,
+        "code_path": str(code_path),
+        "name": name,
+        "targets": targets,
+    }

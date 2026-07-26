@@ -10,7 +10,7 @@ from sqlalchemy import text
 from bank_audit.loophole.parsers import generator
 from bank_audit.loophole import repository as repo
 
-from tests.loophole.test_repository import session as sqlite_session  # noqa: E402
+from tests.loophole.conftest import session as sqlite_session  # noqa: E402
 
 
 VALID_SPIDER_CODE = '''import scrapy, json
@@ -71,12 +71,14 @@ async def test_generate_parser_saves_file_and_registers(
 
     llm = _llm_mock()
     result = await generator.generate_parser(
-        "test-user", workspace_id, "скрытые комиссии по вкладам",
+        "test-user", workspace_id,
+        "скрытые комиссии по вкладам https://bank-example.ru/deposits",
         llm=llm, session=session,
     )
 
     assert "parser_id" in result and result["parser_id"] > 0
     assert result["code_path"].endswith(".py")
+    assert result["targets"] == ["https://bank-example.ru/deposits"]
     from pathlib import Path
     p = Path(result["code_path"])
     assert p.exists()
@@ -89,6 +91,8 @@ async def test_generate_parser_saves_file_and_registers(
     assert row["name"] == result["name"]
     assert row["code_path"] == result["code_path"]
     assert row["status"] == "created"
+    cfg = json.loads(row["config"])
+    assert cfg["targets"] == ["https://bank-example.ru/deposits"]
 
 
 @pytest.mark.asyncio
@@ -102,12 +106,47 @@ async def test_generate_parser_strips_code_fences(
     fenced = "```python\n" + VALID_SPIDER_CODE + "\n```"
     llm = _llm_mock(fenced)
     result = await generator.generate_parser(
-        "test-user", workspace_id, "тест", llm=llm, session=session,
+        "test-user", workspace_id, "тест https://t.me/bank_group",
+        llm=llm, session=session,
     )
     from pathlib import Path
     content = Path(result["code_path"]).read_text(encoding="utf-8")
     assert not content.startswith("```")
     assert "class" in content
+
+
+@pytest.mark.asyncio
+async def test_generate_parser_rejects_query_without_target(
+    tmp_path, monkeypatch, session, workspace_id,
+):
+    """Без URL ресурса или группы мессенджера парсер не создаётся,
+    LLM не вызывается."""
+    from bank_audit.loophole.config import LoopholeSettings
+    settings = LoopholeSettings(workspace_dir=tmp_path)
+    monkeypatch.setattr(LoopholeSettings, "load", classmethod(lambda cls: settings))
+
+    llm = _llm_mock()
+    with pytest.raises(ValueError, match="URL"):
+        await generator.generate_parser(
+            "test-user", workspace_id, "скрытые комиссии по вкладам",
+            llm=llm, session=session,
+        )
+    llm.ainvoke.assert_not_called()
+    # Ни файла, ни записи в БД.
+    assert repo.list_parsers(workspace_id, session=session) == []
+
+
+def test_extract_targets_urls_and_telegram():
+    assert generator.extract_targets(
+        "смотри https://bank.ru/promo и t.me/bank_loopholes"
+    ) == ["t.me/bank_loopholes", "https://bank.ru/promo"]
+    assert generator.extract_targets("группа @bank_secrets") == ["@bank_secrets"]
+    assert generator.extract_targets(
+        "https://t.me/group1 https://t.me/group1"
+    ) == ["https://t.me/group1"]
+    # Без целей — пустой список.
+    assert generator.extract_targets("просто текст без ссылок") == []
+    assert generator.extract_targets("") == []
 
 
 def test_sanitize_filename_basic():

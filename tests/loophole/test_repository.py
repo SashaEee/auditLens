@@ -136,3 +136,44 @@ def test_log_action_and_list(session):
     # DESC по created_at — последний первым.
     assert actions[0]["action"] == "export"
     assert actions[0]["user_id"] == "u1"
+
+
+# ── KB: record_id (ручная маркировка) ───────────────────────────────────────
+def test_save_kb_example_with_record_id_without_embedding(session):
+    """Без embedding вставка работает на SQLite (нет ::vector каста)."""
+    ex_id = repo.save_kb_example(
+        "Скрытая комиссия", "Банк не раскрывает ПСК",
+        category="manual", record_id=777, session=session,
+    )
+    assert ex_id is not None
+    row = repo.get_kb_example_by_record(777, session=session)
+    assert row is not None
+    assert row["title"] == "Скрытая комиссия"
+    assert row["category"] == "manual"
+    assert row["record_id"] == 777
+
+
+def test_save_kb_example_without_record_id(session):
+    """Обратная совместимость: record_id опционален (None по умолчанию)."""
+    ex_id = repo.save_kb_example("t", "d", category="general", session=session)
+    assert ex_id is not None
+    rid = session.execute(
+        text("SELECT record_id FROM loophole_kb_example WHERE example_id = :id"),
+        {"id": ex_id},
+    ).scalar()
+    assert rid is None
+
+
+def test_get_kb_example_by_record_missing(session):
+    assert repo.get_kb_example_by_record(424242, session=session) is None
+
+
+def test_delete_kb_example_by_record(session):
+    repo.save_kb_example("t1", "d1", category="manual", record_id=55, session=session)
+    deleted = repo.delete_kb_example_by_record(55, session=session)
+    assert deleted == 1
+    assert repo.get_kb_example_by_record(55, session=session) is None
+
+
+def test_delete_kb_example_by_record_missing(session):
+    assert repo.delete_kb_example_by_record(31337, session=session) == 0

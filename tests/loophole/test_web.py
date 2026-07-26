@@ -23,9 +23,7 @@ from bank_audit.hashing import sha256_text
 from fastapi import FastAPI
 
 
-SCHEMA_SQL = open(
-    __import__("pathlib").Path(__file__).parent / "test_repository.py"
-).read().split('SCHEMA_SQL = """')[1].split('"""')[0]
+from .conftest import SCHEMA_SQL
 
 
 @pytest.fixture
@@ -119,6 +117,28 @@ def test_export_csv(client, app_session):
     assert r.status_code == 200
     assert "text/csv" in r.headers.get("content-type", "")
     assert "лазейка" in r.text
+
+
+def test_export_csv_only_selected(client, app_session):
+    """Выгружаются ТОЛЬКО переданные ids, а не все записи таблицы."""
+    rec1 = LoopholeRecord(sha256=sha256_text("s1"), title="лазейка выделенная", bank_slug="sberbank")
+    rec2 = LoopholeRecord(sha256=sha256_text("s2"), title="лазейка невыделенная", bank_slug="vtb")
+    rid1 = repo.insert_record(rec1, session=app_session)
+    repo.insert_record(rec2, session=app_session)
+    r = client.post("/api/loophole/export", json={"records": [rid1], "format": "csv"})
+    assert r.status_code == 200
+    assert "лазейка выделенная" in r.text
+    assert "лазейка невыделенная" not in r.text
+
+
+def test_export_over_limit(client):
+    """Более 10000 ids за раз — отказ с понятной ошибкой."""
+    r = client.post(
+        "/api/loophole/export",
+        json={"records": list(range(10001)), "format": "csv"},
+    )
+    assert r.status_code == 400
+    assert "10000" in r.json()["detail"]
 
 
 def test_search_logs_action(client, app_session):

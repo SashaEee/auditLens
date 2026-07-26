@@ -98,6 +98,37 @@ def test_add_example_default_category(mock_embed):
     assert kwargs["category"] == "general"
 
 
+def test_add_example_passes_record_id(mock_embed):
+    """record_id пробрасывается в repo.save_kb_example (ручная маркировка)."""
+    with patch.object(kb_repo.repo, "save_kb_example", return_value=7) as save_mock:
+        result = kb_repo.add_example(
+            "Заголовок", "Описание", category="manual", record_id=123,
+        )
+    assert result == 7
+    _, kwargs = save_mock.call_args
+    assert kwargs["record_id"] == 123
+    assert kwargs["category"] == "manual"
+
+
+def test_add_example_default_record_id_none(mock_embed):
+    with patch.object(kb_repo.repo, "save_kb_example", return_value=1) as save_mock:
+        kb_repo.add_example("t", "d")
+    _, kwargs = save_mock.call_args
+    assert kwargs["record_id"] is None
+
+
+def test_add_example_embedding_failure_saves_without_embedding():
+    """Сбой embed_one → warning + сохранение без embedding (graceful fallback)."""
+    with patch.object(
+        kb_repo.embedder, "embed_one", side_effect=RuntimeError("emb down")
+    ), patch.object(kb_repo.repo, "save_kb_example", return_value=9) as save_mock:
+        result = kb_repo.add_example("t", "d", category="manual", record_id=5)
+    assert result == 9
+    _, kwargs = save_mock.call_args
+    assert kwargs["embedding"] is None
+    assert kwargs["record_id"] == 5
+
+
 # ── search_similar ──────────────────────────────────────────────────────────
 def test_search_similar_delegates_to_search_kb_similar(mock_embed):
     m, fake_vec = mock_embed
