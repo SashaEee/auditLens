@@ -177,6 +177,35 @@ class ParserRunner:
         self._stderr_lines: list[str] = []
         self._finalized = False
 
+    def _release(self) -> None:
+        """Убирает runner из реестра запущенных парсеров."""
+        _RUNNING.pop(self.parser_id, None)
+
+    def _finalize(self, status: str, found: int, new: int, dup: int,
+                  error_text: str | None) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        tail = None
+        if self.run_id is not None:
+            tail = "\n".join(log_tail(self.run_id))[-_LOG_TAIL_CHARS:]
+            repo.finish_run(
+                self.run_id, status,
+                items_found=found, items_new=new, items_dup=dup,
+                error_text=error_text, log_tail=tail, session=self.session,
+            )
+            finish_stream(self.run_id, {
+                "status": status, "items_found": found, "items_new": new,
+                "items_dup": dup, "error_text": error_text,
+            })
+        repo.update_parser_status(self.parser_id, status, session=self.session)
+        log.info("[parsers.runner] завершён parser_id=%s status=%s new=%s dup=%s",
+                 self.parser_id, status, new, dup)
+
+    def _set_returncode_from_proc(self) -> None:
+        if self._proc is not None and self._returncode is None:
+            self._returncode = self._proc.returncode
+
     async def start(self) -> int:
         """Запускает `python <code_path>`, status='running'. Возвращает pid."""
         # Регистрируем слот ДО await, чтобы закрыть check-then-set гонку
@@ -192,7 +221,7 @@ class ParserRunner:
                 limit=10 * 1024 * 1024,
             )
         except Exception:
-            _RUNNING.pop(self.parser_id, None)
+            self._release()
             raise
         if self.run_id is None:
             self.run_id = repo.create_run(self.parser_id, self.trigger, session=self.session)
@@ -212,11 +241,11 @@ class ParserRunner:
                 emit_line(self.run_id, _format_log_line(text_line))
 
     async def stop(self) -> None:
-        """Terminate subprocess; run фиксируется как error('stopped by user')."""
+        """Останавливает процесс и фиксирует run как error."""
         if self._proc is not None and self._proc.returncode is None:
             try:
                 self._proc.terminate()
-                await asyncio.wait_for(self._proc.wait(), timeout=10)
+                await asyncio.wait_for(self._proc.wait(), timeout=5)
             except Exception as e:
                 log.warning("[parsers.runner] terminate failed: %s", e)
                 try:
@@ -230,7 +259,7 @@ class ParserRunner:
                             session=self.session)
             finish_stream(self.run_id, {"status": "error",
                                         "error_text": "stopped by user"})
-        _RUNNING.pop(self.parser_id, None)
+        self._release()
 
     async def status(self) -> dict:
         pid = self._proc.pid if self._proc is not None else None
@@ -254,6 +283,7 @@ class ParserRunner:
         timeout = timeout if timeout is not None else _timeout_s()
         if self._proc is None:
             self._finalize("error", 0, 0, 0, "process not started")
+            self._release()
             return 0
         tasks = [
             asyncio.ensure_future(self._pump(self._proc.stdout, self._stdout_lines)),
@@ -273,6 +303,7 @@ class ParserRunner:
             except Exception as e:
                 log.warning("[parsers.runner] reap after kill failed: %s", e)
             self._finalize("error", 0, 0, 0, f"timeout {timeout}s")
+            self._release()
             return 0
         except Exception as e:
             # Любая ошибка pump/proc не должна оставлять run висеть 'running':
@@ -282,12 +313,15 @@ class ParserRunner:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             self._finalize("error", 0, 0, 0, f"{type(e).__name__}: {e}"[:4000])
+            self._release()
             return 0
 
         if self._finalized:  # stop() уже зафиксировал итог
+            self._release()
             return 0
 
-        self._returncode = self._proc.returncode
+        self._set_returncode_from_proc()
+        self._release()
         results_path = Path(self.code_path).parent / "results.json"
         if results_path.exists():
             try:
@@ -344,24 +378,3 @@ class ParserRunner:
             self._finalize(status, found, new, dup, err)
         return new
 
-    def _finalize(self, status: str, found: int, new: int, dup: int,
-                  error_text: str | None) -> None:
-        if self._finalized:
-            return
-        self._finalized = True
-        tail = None
-        if self.run_id is not None:
-            tail = "\n".join(log_tail(self.run_id))[-_LOG_TAIL_CHARS:]
-            repo.finish_run(
-                self.run_id, status,
-                items_found=found, items_new=new, items_dup=dup,
-                error_text=error_text, log_tail=tail, session=self.session,
-            )
-            finish_stream(self.run_id, {
-                "status": status, "items_found": found, "items_new": new,
-                "items_dup": dup, "error_text": error_text,
-            })
-        repo.update_parser_status(self.parser_id, status, session=self.session)
-        _RUNNING.pop(self.parser_id, None)
-        log.info("[parsers.runner] завершён parser_id=%s status=%s new=%s dup=%s",
-                 self.parser_id, status, new, dup)

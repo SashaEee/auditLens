@@ -317,6 +317,8 @@ async def test_wait_finalize_false_does_not_finish_run(
     assert await r.wait(timeout=5, finalize=False) == 1
     # run record должен остаться в running (finalize не вызывался).
     assert repo.get_run(run_id, session=session)["status"] == "running"
+    # runner должен быть убран из реестра запущенных, иначе блокирует повторный запуск.
+    assert parser_id not in runner._RUNNING
 
 
 # ── stop ─────────────────────────────────────────────────────────────────────
