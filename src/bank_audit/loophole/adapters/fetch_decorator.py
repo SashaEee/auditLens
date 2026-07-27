@@ -48,7 +48,7 @@ def _sanitize_ca_bundle_env() -> None:
         if mod is not None and getattr(mod, "CA_BUNDLE_PATH", None) == path:
             mod.CA_BUNDLE_PATH = None
 
-_CHARSET_RE = re.compile(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_\\-]+)", re.I)
+_CHARSET_RE = re.compile(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_-]+)", re.I)
 
 
 def _normalize_to_utf8(content: bytes, content_type: str | None) -> bytes:
