@@ -1,12 +1,12 @@
 """Тест healer: детект сбоя, heal_attempts, отключение после 3 неудач, пробный запуск."""
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-import asyncio
 import pytest
 
 from bank_audit.clock import MSK
