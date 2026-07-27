@@ -642,7 +642,11 @@ def personalization_score(username: str) -> dict:
         prefs = json.loads(prefs or "{}")
     desc = (prefs.get("self_description") or "").strip()
     ti = top_interests(username)
-    focus_n = len(set((ti.get("products") or []) + (ti.get("pinned") or [])))
+    # custom — темы, добавленные руками в «Добавить своё». Они влияют на выдачу
+    # («Для вас» их учитывает) и показаны в том же блоке профиля, но в балл
+    # не входили: человек добавлял темы, а счётчик не двигался.
+    focus_n = len(set((ti.get("products") or []) + (ti.get("pinned") or [])
+                      + (ti.get("custom") or [])))
     q_n = int(_scalar("""SELECT count(*) FROM user_event
                          WHERE username=:u AND kind='ai_query'""", {"u": username}) or 0)
     fb_n = int(_scalar("""SELECT count(*) FROM item_feedback

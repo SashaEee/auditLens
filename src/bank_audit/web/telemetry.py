@@ -320,4 +320,208 @@ def metrics(days: int = 14) -> dict:
             "errors_recent": errors_recent, "errors_per_day": errors_per_day,
             "tokens": tokens, "digest": digest, "feed": feed,
             "reports_per_day": reports_per_day, "users_table": users_table,
-            "segments": segments}
+            "segments": segments,
+            "ai_feedback": _ai_feedback(days),
+            "persona": _persona(),
+            "proposals": _proposals(),
+            "ingest": _ingest_health(days),
+            "collect": _collect_health(days),
+            "topics": _team_topics(days)}
+
+
+# ── оценки ответов ИИ: «что разбирать» ───────────────────────────────────────
+# Владелец видит и жалобы, и похвалы. Текст жалобы показывать этично: кнопка
+# подписана «Плохой ответ — команда разберёт», пользователь отправляет это
+# команде осознанно. Тексты ОБЫЧНЫХ вопросов к ИИ сюда не попадают — в аудите
+# «кто что проверяет» это план проверок коллеги.
+
+AIFB_REASON_RU = {"offtopic": "не по делу", "shallow": "мало конкретики",
+                  "wrong": "ошибка в данных", "long": "слишком длинно"}
+
+
+def _ai_feedback(days: int, limit: int = 20) -> dict:
+    p = {"days": days, "lim": limit}
+    rows = _rows("""
+        SELECT username, verdict, created_at,
+               payload->>'question'   AS question,
+               payload->>'comment'    AS comment,
+               payload->>'mode'       AS mode,
+               payload->'reasons'     AS reasons,
+               payload->>'report_id'  AS report_id
+          FROM item_feedback
+         WHERE kind = 'ai_answer'
+           AND created_at > now() - (:days || ' days')::interval
+         ORDER BY created_at DESC LIMIT :lim""", p)
+    out = []
+    counts: dict[str, int] = {}
+    for r in rows:
+        reasons = r.get("reasons")
+        if isinstance(reasons, str):
+            try:
+                reasons = json.loads(reasons)
+            except Exception:  # noqa: BLE001
+                reasons = []
+        reasons = [x for x in (reasons or []) if x]
+        for x in reasons:
+            counts[x] = counts.get(x, 0) + 1
+        out.append({
+            "username": r.get("username"), "verdict": int(r.get("verdict") or 0),
+            "question": (r.get("question") or "")[:300],
+            "comment": (r.get("comment") or "")[:300],
+            "mode": r.get("mode"), "report_id": r.get("report_id"),
+            "reasons": [AIFB_REASON_RU.get(x, x) for x in reasons],
+            "created_at": str(r.get("created_at") or ""),
+        })
+    likes = sum(1 for x in out if x["verdict"] > 0)
+    dislikes = sum(1 for x in out if x["verdict"] < 0)
+    # Знаменатель покрытия: сколько ответов вообще выдали за период.
+    answers = int(_scalar("""SELECT count(*) FROM user_event WHERE kind = 'ai_query'
+                             AND ts > now() - (:days || ' days')::interval""",
+                          {"days": days}) or 0)
+    return {"items": out, "likes": likes, "dislikes": dislikes,
+            "answers": answers,
+            "reasons": sorted(({"key": k, "label": AIFB_REASON_RU.get(k, k), "n": v}
+                               for k, v in counts.items()), key=lambda x: -x["n"])}
+
+
+# ── готовность к персонализации ──────────────────────────────────────────────
+# Формула повторяет userdata.personalization_score, но одним запросом на всех:
+# там ~5 SQL на человека, а «Пульс» перезапрашивается раз в минуту.
+# Слагаемое «регулярное использование» не показываем — оно даёт 5 из 5 всем
+# безусловно и только размывает картину.
+PERSONA_PARTS = [
+    ("desc",       "Описание зоны ответственности", 25),
+    ("ratings",    "5+ оценок в «Для вас»",         20),
+    ("focus",      "3+ темы в фокусе",              15),
+    ("queries",    "5+ вопросов ИИ",                15),
+    ("ai_ratings", "3+ оценки ответов ИИ",          10),
+    ("note",       "ИИ-нарратив собран",            10),
+]
+
+
+def _persona() -> dict:
+    rows = _rows("""
+        SELECT au.username, COALESCE(au.display_name, au.username) AS name,
+               length(COALESCE(au.prefs->>'self_description','')) AS desc_len,
+               (au.profile_note IS NOT NULL AND au.profile_note <> '') AS has_note,
+               COALESCE(au.prefs->>'personal_digest','') <> 'false' AS personal_on,
+               (SELECT count(DISTINCT x) FROM (
+                    SELECT jsonb_object_keys(COALESCE(au.interests->'counters'->'products','{}'::jsonb)) x
+                    UNION SELECT jsonb_array_elements_text(COALESCE(au.interests->'pinned','[]'::jsonb))
+                    UNION SELECT jsonb_array_elements_text(COALESCE(au.interests->'custom','[]'::jsonb))
+               ) f) AS focus_n,
+               (SELECT count(*) FROM user_event ue
+                 WHERE ue.username = au.username AND ue.kind = 'ai_query') AS q_n,
+               (SELECT count(*) FROM item_feedback f2
+                 WHERE f2.username = au.username
+                   AND f2.kind IN ('news','for_you','check')) AS fb_n,
+               (SELECT count(*) FROM item_feedback f3
+                 WHERE f3.username = au.username AND f3.kind = 'ai_answer') AS ai_n
+          FROM app_user au ORDER BY 2""")
+    out = []
+    for r in rows:
+        earned = {
+            "desc":       25 * min((r["desc_len"] or 0) / 40, 1),
+            "ratings":    20 * min((r["fb_n"] or 0) / 5, 1),
+            "focus":      15 * min((r["focus_n"] or 0) / 3, 1),
+            "queries":    15 * min((r["q_n"] or 0) / 5, 1),
+            "ai_ratings": 10 * min((r["ai_n"] or 0) / 3, 1),
+            "note":       10 if r["has_note"] else 0,
+        }
+        # 95, а не 100: пятое слагаемое «регулярное использование» скрыто
+        score = round(sum(earned.values()) / 95 * 100)
+        out.append({"username": r["username"], "name": r["name"],
+                    "score": min(100, score),
+                    "personal_on": bool(r["personal_on"]),
+                    "parts": {k: earned[k] >= mx for k, _, mx in PERSONA_PARTS}})
+    # Где упирается больше всего людей — это про инструмент, а не про людей
+    gaps = []
+    if out:
+        for key, label, _mx in PERSONA_PARTS:
+            miss = sum(1 for u in out if not u["parts"][key])
+            if miss:
+                gaps.append({"key": key, "label": label, "miss": miss})
+        gaps.sort(key=lambda x: -x["miss"])
+    scores = sorted(u["score"] for u in out)
+    median = scores[len(scores) // 2] if scores else 0
+    return {"users": out, "median": median, "gaps": gaps[:3],
+            "parts": [{"key": k, "label": l} for k, l, _ in PERSONA_PARTS]}
+
+
+def _proposals() -> dict:
+    """Заявки на источники — прямая очередь задач владельца."""
+    rows = _rows("""
+        SELECT proposal_id, purpose, domain, title,
+               COALESCE(proposer_name, proposed_by) AS author,
+               created_at,
+               EXTRACT(day FROM now() - created_at)::int AS age_days
+          FROM source_proposal WHERE status = 'pending'
+         ORDER BY created_at LIMIT 10""")
+    return {"pending": len(rows),
+            "oldest_days": max((r["age_days"] or 0) for r in rows) if rows else 0,
+            "items": [{**r, "created_at": str(r["created_at"])} for r in rows]}
+
+
+def _ingest_health(days: int) -> dict:
+    """Фоновая индексация: доходит ли до конца.
+
+    Счётчики очереди живут в памяти процесса и обнуляются рестартом — это
+    подписано в интерфейсе, иначе «0 в очереди» читалось бы как «фон умер».
+    """
+    q = {}
+    try:
+        from ..rag import ingest_queue
+        q = ingest_queue.stats()
+    except Exception:  # noqa: BLE001 — сбой импорта не должен ронять весь «Пульс»
+        q = {}
+    hist = _rows("""
+        SELECT date_trunc('day', created_at AT TIME ZONE 'Europe/Moscow')::date AS d,
+               count(*) AS n,
+               count(*) FILTER (WHERE status = 204) AS empty,
+               round(percentile_cont(0.5) WITHIN GROUP (ORDER BY dur_ms)) AS p50,
+               round(percentile_cont(0.95) WITHIN GROUP (ORDER BY dur_ms)) AS p95
+          FROM usage_event
+         WHERE kind = 'rag_ingest'
+           AND created_at > now() - (:days || ' days')::interval
+         GROUP BY 1 ORDER BY 1""", {"days": days})
+    return {"queue": q, "per_day": [{**r, "d": str(r["d"])} for r in hist]}
+
+
+def _collect_health(days: int) -> dict:
+    """Что не доехало до базы знаний. Две группы, а не одна: «не дошло»
+    (капча, сеть) и «дошло, но индексировать нечего» (дубль, пустая страница).
+    Смешивать нельзя — первое требует вмешательства, второе штатно."""
+    rows = _rows("""
+        SELECT COALESCE(skipped_reason, 'ok') AS reason, count(*) AS n
+          FROM document_origin
+         WHERE created_at > now() - (:days || ' days')::interval
+         GROUP BY 1 ORDER BY 2 DESC""", {"days": days})
+    HARD = {"captcha", "fetch_failed", "empty_after_parse"}
+    RU = {"ok": "проиндексировано", "duplicate": "уже было",
+          "captcha": "капча", "fetch_failed": "не загрузилось",
+          "empty_after_parse": "пустая страница", "no_chunks": "нечего индексировать",
+          "sponsored_or_low_trust": "реклама / низкое доверие"}
+    ok = sum(r["n"] for r in rows if r["reason"] == "ok")
+    hard = sum(r["n"] for r in rows if r["reason"] in HARD)
+    soft = sum(r["n"] for r in rows if r["reason"] not in HARD and r["reason"] != "ok")
+    domains = _rows("""
+        SELECT split_part(url, '/', 3) AS domain, count(*) AS n
+          FROM document_origin
+         WHERE skipped_reason = ANY(:hard)
+           AND created_at > now() - (:days || ' days')::interval
+         GROUP BY 1 ORDER BY 2 DESC LIMIT 6""",
+        {"days": days, "hard": list(HARD)})
+    return {"ok": ok, "hard": hard, "soft": soft,
+            "reasons": [{"key": r["reason"], "label": RU.get(r["reason"], r["reason"]),
+                         "n": r["n"], "hard": r["reason"] in HARD} for r in rows],
+            "domains": domains}
+
+
+def _team_topics(days: int) -> dict:
+    """Что проверяет отдел — агрегат по команде, без имён и без текстов вопросов."""
+    banks = _rows("""
+        SELECT b AS name, count(*) AS n
+          FROM report, unnest(banks) b
+         WHERE created_at > now() - (:days || ' days')::interval
+         GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", {"days": days})
+    return {"banks": banks}

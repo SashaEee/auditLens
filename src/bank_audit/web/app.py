@@ -97,7 +97,9 @@ async def _telemetry_mw(request: Request, call_next):
     """Телеметрия API: латентность/статус каждого /api-запроса + исключения.
     Запись — fire-and-forget в отдельном треде, основной запрос не тормозим."""
     path = request.url.path
-    if not path.startswith("/api/") or path == "/api/track":
+    # /api/journal — приёмник самой телеметрии: без исключения каждый батч
+    # событий писался как api_request и раздувал тепловую карту и латентность
+    if not path.startswith("/api/") or path in ("/api/track", "/api/journal"):
         return await call_next(request)
     import time as _t
     t0 = _t.perf_counter()
@@ -275,7 +277,13 @@ def get_feedback(kind: str, user: CurrentUser = Depends(get_current_user)):
 
 @app.get("/api/quality/ai-feedback")
 def quality_ai_feedback(user: CurrentUser = Depends(get_current_user)):
-    """Пульс оценок ИИ-ответов для «Качества» (контур владельца)."""
+    """Пульс оценок ИИ-ответов. Осталось от убранной вкладки «Качество»;
+    фронт это не зовёт, но маршрут держим для ручной диагностики.
+
+    Отдаёт жалобы КОЛЛЕГ с текстами вопросов — значит только владельцу.
+    Раньше проверки не было: хватало быть авторизованным."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
     return userdata.ai_feedback_stats()
 
 
@@ -1868,8 +1876,11 @@ def cases_export(case_id: int, user: CurrentUser = Depends(get_current_user)):
 
 
 @app.get("/api/knowledge/queue")
-def knowledge_queue():
-    """Состояние очереди индексации — доказательство, что фон доходит до конца."""
+def knowledge_queue(user: CurrentUser = Depends(get_current_user)):
+    """Состояние очереди индексации — доказательство, что фон доходит до конца.
+    Внутреннее состояние процесса: отдаём владельцу (раньше было открыто всем)."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
     from ..rag import ingest_queue
     return ingest_queue.stats()
 

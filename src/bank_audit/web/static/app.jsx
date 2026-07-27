@@ -1081,7 +1081,7 @@ const IcTDn=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" 
 // 👎 = причины+комментарий → команде на разбор
 const AIFB_REASONS=[["offtopic","не по делу"],["shallow","мало конкретики"],
                     ["wrong","ошибка в данных"],["long","слишком длинно"]];
-function AiFbBar({q,text,sessionId,mode,fbMap}){
+function AiFbBar({q,text,sessionId,mode,fbMap,reportId}){
   const key="s"+(sessionId||0)+":"+fyHash((q||"")+"|"+(text||"").slice(0,180));
   const[v,setV]=useState(0);
   useEffect(()=>{ if(fbMap&&fbMap[key]) setV(fbMap[key]); },[fbMap,key]);
@@ -1090,7 +1090,9 @@ function AiFbBar({q,text,sessionId,mode,fbMap}){
   const[comment,setComment]=useState("");
   const[sent,setSent]=useState(false);
   const post=(verdict,extra)=>apiPost("/api/feedback",{kind:"ai_answer",item_key:key,verdict,
-    payload:{question:(q||"").slice(0,300),mode:mode||"quick",session_id:sessionId,...(extra||{})}}).catch(()=>{});
+    payload:{question:(q||"").slice(0,300),mode:mode||"quick",session_id:sessionId,
+      // report_id — чтобы из жалобы на «Пульсе» открыть сам отчёт; поле jsonb, миграция не нужна
+      ...(reportId?{report_id:reportId}:{}),...(extra||{})}}).catch(()=>{});
   const like=()=>{const nv=v===1?0:1;setV(nv);setOpen(false);post(1);
     if(nv===1)fbToast("Спасибо! Удачный ответ — учтём и в ваших рекомендациях",true);};
   const dislike=()=>{const nv=v===-1?0:-1;setV(nv);setSent(false);
@@ -4600,7 +4602,7 @@ function AIPage(){
                           </span>
                         </div>}
                       {!streaming&&m.text&&
-                        <AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep" fbMap={aiFb}/>}
+                        <AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep" fbMap={aiFb} reportId={m.report_id}/>}
                     </article>
                     {!hideRail && <DocRailSlot>
                       <SourcesRail sources={m.sources||[]} failed={m.sourcesFailed||0} activeN={activeCite}
@@ -4656,7 +4658,7 @@ function AIPage(){
             {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!(loading&&i===msgs.length-1)&&
               <div style={{marginTop:10}}><ShareButton reportId={m.report_id}/></div>}
             {m.text&&!(loading&&i===msgs.length-1)&&
-              <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb}/>}
+              <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb} reportId={m.report_id}/>}
           </div>;
         })}
       </div>
@@ -5834,6 +5836,73 @@ const AD_CSS=`
 .pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
 .pu-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
 .pu-team td:first-child{max-width:260px;}
+
+/* ── новые разделы «Пульса» ── */
+.pu-guard{margin:0 0 14px;padding:11px 15px;border-radius:10px;font-size:12.5px;
+  background:color-mix(in oklab,var(--neg),transparent 92%);
+  border:1px solid color-mix(in oklab,var(--neg),transparent 72%);
+  display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;}
+.pu-guard.ok{background:color-mix(in oklab,var(--pos),transparent 93%);
+  border-color:color-mix(in oklab,var(--pos),transparent 78%);color:var(--ink-2);}
+.pu-guard b{color:var(--neg);}
+.pu-guard-i{padding-left:10px;border-left:1px solid var(--hair-2);color:var(--ink-2);}
+.pu-guard-i:first-of-type{border-left:0;padding-left:0;}
+
+.pu-tabs{display:flex;gap:4px;margin:0 0 16px;border-bottom:1px solid var(--hair);
+  padding-bottom:10px;}
+
+.pu-empty{padding:16px 18px;border:1px dashed var(--hair-2);border-radius:9px;
+  font-size:12.5px;line-height:1.6;color:var(--ink-3);}
+.pu-empty b{color:var(--ink);display:block;margin-bottom:5px;}
+.pu-empty p{margin:0;}
+
+.pu-reasons{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+.pu-reason{font-size:11.5px;color:var(--ink-2);background:var(--paper-2);
+  border:1px solid var(--hair);border-radius:20px;padding:3px 10px;
+  display:inline-flex;align-items:baseline;gap:6px;}
+.pu-reason.sm{font-size:10.5px;padding:2px 8px;}
+.pu-reason.bad{border-color:color-mix(in oklab,var(--neg),transparent 60%);color:var(--neg);}
+.pu-reason.ok{border-color:color-mix(in oklab,var(--pos),transparent 60%);}
+.pu-reason i{font-style:normal;font-family:'JetBrains Mono',monospace;
+  font-size:10px;color:var(--ink-4);}
+
+.pu-fb-seg{display:flex;gap:4px;margin-bottom:12px;}
+.pu-fb{padding:11px 13px;border-radius:9px;margin-bottom:8px;background:var(--paper-2);
+  border-left:2px solid var(--hair-2);}
+.pu-fb.neg{border-left-color:var(--neg);}
+.pu-fb-h{display:flex;gap:8px;align-items:baseline;}
+.pu-fb-h b{font-size:13px;font-weight:500;color:var(--ink);line-height:1.45;}
+.pu-fb-v{flex:none;}
+.pu-fb-m{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;
+  font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);}
+.pu-fb-m a{color:var(--accent);}
+.pu-fb-r{margin-top:7px;display:flex;gap:5px;flex-wrap:wrap;}
+.pu-fb-c{margin:7px 0 0;font-size:12.5px;color:var(--ink-2);font-style:italic;line-height:1.55;}
+
+.pu-mini{display:inline-block;width:72px;height:6px;border-radius:3px;
+  background:var(--paper-2);overflow:hidden;vertical-align:middle;margin-right:8px;}
+.pu-mini i{display:block;height:100%;border-radius:3px;
+  background:color-mix(in oklab,var(--accent),transparent 40%);}
+.pu-chk{text-align:center;}
+.pu-chk .yes{color:var(--pos);}
+.pu-chk .no{color:var(--ink-4);}
+.pu-off{font-size:9.5px;color:var(--ink-4);border:1px solid var(--hair);
+  border-radius:4px;padding:0 4px;margin-left:6px;}
+
+.pu-todo{border-color:color-mix(in oklab,var(--accent),transparent 70%);}
+.pu-todo-row{padding:7px 0;border-top:1px solid var(--hair);font-size:12.5px;
+  display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;}
+.pu-todo-row:first-of-type{border-top:0;}
+
+.pu-kv{display:grid;grid-template-columns:repeat(4,auto);gap:5px 20px;
+  justify-content:start;font-size:12.5px;margin-bottom:4px;}
+.pu-kv span{color:var(--ink-4);}
+.pu-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-2);}
+.pu-kv b.neg{color:var(--neg);}
+.pu-kv-row{display:flex;justify-content:space-between;padding:5px 2px;
+  border-top:1px solid var(--hair);font-size:12.5px;}
+.pu-kv-row b{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-3);}
+
 `;
 const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
   ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Лазейки",banks:"Банки",sources:"Источники",
@@ -5933,9 +6002,213 @@ function AdCols({axis,a,b,h=118}){
   </svg>;
 }
 
+// ─── Новые разделы «Пульса» ──────────────────────────────────────────────────
+// Владелец спросил: что оценивают в ответах ИИ и насколько заполнены профили.
+// К этому добавлены блоки, закрывающие вопросы, на которые панель не отвечала:
+// что ждёт моего решения, доходит ли фоновая индексация, что не доехало в базу.
+
+// Сторож в шапке: всё плохое одной строкой. Раньше, чтобы понять «всё ли в
+// порядке», приходилось пролистать весь экран.
+function PuGuard({m}){
+  const t=m.today||{}, ing=(m.ingest||{}).queue||{}, dg=m.digest||{};
+  const fb=m.ai_feedback||{};
+  const bad=[];
+  if((t.errors||0)>0) bad.push({k:"err",s:`ошибок сегодня: ${t.errors}`,to:"tech"});
+  if((ing.dropped||0)>0) bad.push({k:"drop",s:`очередь переполнялась: ${ing.dropped}`,to:"data"});
+  if(ing.workers===0) bad.push({k:"wrk",s:"воркеры индексации не запущены",to:"data"});
+  if((dg.sections||[]).some(s=>s.status&&s.status!=="ok"))
+    bad.push({k:"dg",s:"дайджест собрался не полностью",to:"data"});
+  if((fb.dislikes||0)>0) bad.push({k:"fb",s:`жалоб на ответы ИИ: ${fb.dislikes}`,to:"ai"});
+  if(!bad.length) return <div className="pu-guard ok">Всё в порядке: ошибок нет,
+    фон работает, жалоб на ответы ИИ нет.</div>;
+  return <div className="pu-guard">
+    <b>Требует внимания:</b>
+    {bad.map(x=><span key={x.k} className="pu-guard-i">{x.s}</span>)}
+  </div>;
+}
+
+// ── Оценки ответов ИИ ───────────────────────────────────────────────────────
+// Проценты сознательно не показываем: на десятке оценок доля — генератор
+// ложных выводов. Абсолютные числа и сырой журнал честнее.
+function PuAiFeedback({fb}){
+  const[only,setOnly]=useState("all");
+  const items=(fb.items||[]).filter(x=>only==="all"?true:x.verdict<0);
+  const rated=(fb.likes||0)+(fb.dislikes||0);
+
+  return <div className="pu-card">
+    <div className="h">
+      <span>Оценки ответов ИИ</span>
+      <span className="mono">👍 {fb.likes||0} · 👎 {fb.dislikes||0} · оценено {rated} из {fb.answers||0}</span>
+    </div>
+
+    {(fb.reasons||[]).length>0&&<div className="pu-reasons">
+      {fb.reasons.map(r=><span key={r.key} className="pu-reason">{r.label}<i>{r.n}</i></span>)}
+    </div>}
+
+    {rated===0
+      ? <div className="pu-empty">
+          <b>Ответы ИИ пока никто не оценивал.</b>
+          <p>За период выдано {fb.answers||0} ответов. Кнопки 👍/👎 стоят под каждым
+             ответом ИИ-аналитика; при 👎 открывается выбор причины и поле комментария —
+             это и попадёт сюда.</p>
+        </div>
+      : <>
+        <div className="pu-fb-seg">
+          {[["all","все оценки"],["neg","только жалобы"]].map(([k,l])=>
+            <button key={k} className={"seg-btn"+(only===k?" on":"")}
+                    onClick={()=>setOnly(k)}>{l}</button>)}
+        </div>
+        {!items.length&&<div className="pu-empty"><b>Жалоб не было.</b>
+          <p>За период — только положительные оценки.</p></div>}
+        {items.map((x,i)=><div key={i} className={"pu-fb"+(x.verdict<0?" neg":"")}>
+          <div className="pu-fb-h">
+            <span className="pu-fb-v">{x.verdict<0?"👎":"👍"}</span>
+            <b>{x.question||"без текста вопроса"}</b>
+          </div>
+          <div className="pu-fb-m">
+            <span>{initials(x.username||"?")}</span>
+            <span>{x.mode==="deep"?"глубокий разбор":"быстрый ответ"}</span>
+            <span>{fmtDateMsk(x.created_at)}</span>
+            {x.report_id&&<a href={`#ai?report=${x.report_id}`}>отчёт #{x.report_id}</a>}
+          </div>
+          {x.reasons&&x.reasons.length>0&&<div className="pu-fb-r">
+            {x.reasons.map((r,j)=><span key={j} className="pu-reason sm">{r}</span>)}
+          </div>}
+          {x.comment&&<p className="pu-fb-c">«{x.comment}»</p>}
+          {x.verdict<0&&!x.comment&&!(x.reasons||[]).length&&
+            <p className="pu-fb-c t-cap">без причины — панель не отправлена</p>}
+        </div>)}
+      </>}
+  </div>;
+}
+
+// ── Готовность к персонализации ─────────────────────────────────────────────
+// Не «заполнение профиля»: полям профиля соответствует половина баллов,
+// остальное — накопленное поведение (вопросы, оценки).
+function PuPersona({p}){
+  const parts=p.parts||[];
+  return <div className="pu-card">
+    <div className="h"><span>Готовность к персонализации</span>
+      <span className="mono">медиана {p.median||0}%</span></div>
+    <p className="t-cap" style={{margin:"0 0 12px"}}>
+      Насколько инструмент знает, что проверяет каждый. Складывается из описания
+      зоны ответственности, тем в фокусе, вопросов ИИ и оценок — по ним строится
+      лента «Для вас». Личные интересы и тексты вопросов здесь не показываются.
+    </p>
+    <table className="pu-tbl">
+      <thead><tr><th>Аудитор</th><th>Готовность</th>
+        {parts.map(x=><th key={x.key} title={x.label}>{x.label.split(" ")[0]}</th>)}
+      </tr></thead>
+      <tbody>{(p.users||[]).map(u=><tr key={u.username}>
+        <td>{u.name}{!u.personal_on&&<span className="pu-off" title="персонализация выключена пользователем"> выкл</span>}</td>
+        <td>
+          <div className="pu-mini"><i style={{width:`${u.score}%`}}/></div>
+          <span className="mono">{u.score}%</span>
+        </td>
+        {parts.map(x=><td key={x.key} className="pu-chk">
+          {u.parts[x.key]?<span className="yes">✓</span>:<span className="no">○</span>}</td>)}
+      </tr>)}</tbody>
+    </table>
+    {(p.gaps||[]).length>0&&<p className="t-cap" style={{marginTop:10}}>
+      Чаще всего не хватает: {p.gaps.map(g=>`${g.label.toLowerCase()} (${g.miss} чел.)`).join(" · ")}.
+    </p>}
+  </div>;
+}
+
+// ── Заявки на источники: очередь решений владельца ──────────────────────────
+function PuProposals({p}){
+  if(!p||!p.pending) return null;
+  return <div className="pu-card pu-todo">
+    <div className="h"><span>Требует вашего решения</span>
+      <span className="mono">{p.pending} заявок · старейшей {p.oldest_days} дн</span></div>
+    {(p.items||[]).map(x=><div key={x.proposal_id} className="pu-todo-row">
+      <b>{x.domain}</b>
+      <span className="t-cap">{x.title||""} · предложил {x.author} · {fmtDateMsk(x.created_at)}</span>
+    </div>)}
+    <a className="btn btn-sm" href="#sources" style={{marginTop:10}}>Рассмотреть на «Источниках»</a>
+  </div>;
+}
+
+// ── Фоновая индексация ──────────────────────────────────────────────────────
+function PuIngest({ing}){
+  const q=ing.queue||{}, days=ing.per_day||[];
+  const mx=Math.max(1,...days.map(d=>+d.n||0));
+  return <div className="pu-card">
+    <div className="h"><span>Фоновая индексация</span>
+      <span className="mono">воркеров {q.workers??"—"}</span></div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      Страницы, которые ИИ-аналитик читает по дороге, попадают в базу знаний
+      фоном. Счётчики очереди обнуляются при перезапуске — пустая очередь не
+      означает, что фон не работает.
+    </p>
+    <div className="pu-kv">
+      <span>В очереди</span><b>{q.depth??"—"}</b>
+      <span>Обработано</span><b>{q.done??"—"}</b>
+      <span>Отброшено</span><b className={q.dropped?"neg":""}>{q.dropped??"—"}</b>
+      <span>Ошибок</span><b className={q.failed?"neg":""}>{q.failed??"—"}</b>
+    </div>
+    {days.length>0&&<>
+      <div className="h" style={{marginTop:14}}><span>По дням</span><span>всего · пусто · p95</span></div>
+      {days.slice(-10).map(d=><div key={d.d} className="pu-bar-row">
+        <span className="lb">{fmtDateMsk(d.d)}</span>
+        <span className="tr"><i className="fl" style={{width:`${(d.n/mx)*100}%`}}/></span>
+        <span className="vv">{d.n} · {d.empty} · {d.p95||0} мс</span>
+      </div>)}
+    </>}
+  </div>;
+}
+
+// ── Здоровье сбора: что не доехало в базу знаний ────────────────────────────
+function PuCollect({c}){
+  const total=(c.ok||0)+(c.hard||0)+(c.soft||0);
+  if(!total) return null;
+  return <div className="pu-card">
+    <div className="h"><span>Что не доехало в базу знаний</span>
+      <span className="mono">{c.hard||0} сбоев из {total}</span></div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      Разделено намеренно: «сбой» требует вмешательства (капча, сеть),
+      «штатно пропущено» — нормальная работа (документ уже был в базе).
+      Учитываются только загрузки через очередь.
+    </p>
+    <div className="pu-reasons">
+      {(c.reasons||[]).map(r=><span key={r.key}
+        className={"pu-reason"+(r.hard?" bad":r.key==="ok"?" ok":"")}>
+        {r.label}<i>{r.n}</i></span>)}
+    </div>
+    {(c.domains||[]).length>0&&<>
+      <div className="h" style={{marginTop:14}}><span>Где срывается чаще</span></div>
+      {c.domains.map(d=><div key={d.domain} className="pu-kv-row">
+        <span>{d.domain}</span><b>{d.n}</b></div>)}
+    </>}
+  </div>;
+}
+
+// ── Что проверяет отдел ─────────────────────────────────────────────────────
+function PuTopics({t}){
+  const banks=(t||{}).banks||[];
+  if(!banks.length) return null;
+  const mx=Math.max(1,...banks.map(b=>+b.n||0));
+  return <div className="pu-card">
+    <div className="h"><span>Что проверяет отдел</span><span>банки в отчётах</span></div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      Агрегат по команде без имён: под какие темы затачивать инструмент.
+    </p>
+    {banks.map(b=><div key={b.name} className="pu-bar-row">
+      <span className="lb">{b.name}</span>
+      <span className="tr"><i className="fl" style={{width:`${(b.n/mx)*100}%`}}/></span>
+      <span className="vv">{b.n}</span>
+    </div>)}
+  </div>;
+}
+
+const PU_TABS=[["people","Люди"],["ai","Качество ИИ"],["data","Данные"],["tech","Техника"]];
+
 function PulsePage(){
   const me=useMe();
   const[days,setDays]=useState(14);
+  // вкладка живёт в состоянии страницы: load() раз в 60 с меняет только m,
+  // поэтому переключатель не сбрасывается под руками
+  const[tab,setTab]=useState("people");
   const[m,setM]=useState(null);
   const[err,setErr]=useState(false);
   const[ts,setTs]=useState(null);
@@ -5968,7 +6241,7 @@ function PulsePage(){
         </div>
       </div>
       <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:6}}>Как <em style={{fontStyle:"italic",color:"var(--accent)"}}>живёт</em> AuditLens</h1>
-      <p className="lede">Маркетинг и техника в одном экране: аудитория, вовлечённость, фичи, ошибки, латентность.</p>
+      <p className="lede">Люди, качество ответов ИИ, состояние данных и техника — на четырёх вкладках.</p>
     </header>
 
     {/* ① сегодня */}
@@ -5985,133 +6258,160 @@ function PulsePage(){
         <div className="v tnum">{t.errors||0}</div><div className="s">{t.errors>0?"см. раздел техники ↓":"чисто ✓"}</div></div>
     </div>
 
-    {/* ② аудитория */}
-    <div className="pu-card">
-      <div className="h"><span>Аудитория · уникальные в день</span>
-        <span>— пользователи · ‥ просмотры · новых за период: {(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0)}</span></div>
-      <AdArea data={m.dau}/>
+
+    <PuGuard m={m}/>
+    <PuProposals p={m.proposals}/>
+
+    {/* вкладки: 17 блоков одной лентой — свалка; переключатель тот же .seg */}
+    <div className="pu-tabs">
+      {PU_TABS.map(([k,l])=><button key={k} className={"seg-btn"+(tab===k?" on":"")}
+        onClick={()=>setTab(k)}>{l}</button>)}
     </div>
 
-    {/* ②b сегменты аудитории + генерация по дням */}
-    <div className="pu-grid2 pu-sec">
-      <div className="pu-card">
-        <div className="h"><span>Кто наша аудитория · {m.days} дн</span></div>
-        <AdDonut center={String(sg.active||0)} sub="активных"
-          parts={[
-            {label:"исследователи · ИИ и отчёты",value:sg.researchers||0,color:"var(--accent)"},
-            {label:"читатели новостей",value:sg.readers||0,color:"var(--warn)"},
-            {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-4)"},
-            {label:"спящие за период",value:sg.sleepers||0,color:"var(--hair-2)"},
-          ]}/>
-        <div className="pu-note">
-          {sg.readers>0
-            ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Обзор»/«Для вас») — точка роста для ИИ-аналитика</>
-            : "читатели ≥60% просмотров в «Обзоре»/«Для вас» без единого ИИ-запроса"}
+    {tab==="people"&&<>
+        {/* ② аудитория */}
+        <div className="pu-card">
+          <div className="h"><span>Аудитория · уникальные в день</span>
+            <span>— пользователи · ‥ просмотры · новых за период: {(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0)}</span></div>
+          <AdArea data={m.dau}/>
         </div>
-      </div>
-      <div className="pu-card">
-        <div className="h"><span>Генерация · по дням</span>
-          <span><span style={{color:"var(--accent)"}}>■</span> ИИ-запросы · <span style={{color:"var(--ink-3)"}}>■</span> отчёты</span></div>
-        <AdCols axis={m.dau} a={m.ai_per_day} b={m.reports_per_day}/>
-        <div className="pu-note">за период: {f.ai_total||0} запросов · {f.reports||0} отчётов создано · {f.report_opens||0} открытий сохранённых · {f.shares||0} шерингов</div>
-      </div>
-    </div>
 
-    {/* ②c команда пофамильно */}
-    {team.length>0&&<div className="pu-card pu-sec">
-      <div className="h"><span>Команда · пофамильно · {m.days} дн</span>
-        <span>скор: время + просмотры + ИИ×15 + отчёты×30 + оценки×5</span></div>
-      <table className="pu-tbl pu-team">
-        <thead><tr><th>пользователь</th><th>время</th><th>дней</th><th>просм.</th><th>ИИ</th><th>отчёты</th><th>оценки</th><th>был(а)</th></tr></thead>
-        <tbody>
-          {team.map((u,i)=><tr key={u.username}>
-            <td><span className="pu-u"><span className="a">{initials(u.name)}</span>{u.name}
-              {i===0&&(+u.views>0)&&<span className="pu-crown">✦ самый активный</span>}</span></td>
-            <td><span className="pu-tm"><span className="bar" style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
-            <td>{u.days_active}</td><td>{u.views}</td><td>{u.ai}</td><td>{u.reports}</td><td>{u.ratings}</td>
-            <td>{u.last_seen||"—"}</td>
-          </tr>)}
-        </tbody>
-      </table>
-    </div>}
-
-    {/* ③ вовлечённость + фичи */}
-    <div className="pu-grid2">
-      <div className="pu-card">
-        <div className="h"><span>Страницы · {m.days} дн</span><span>просмотры · время</span></div>
-        {(m.pages||[]).length===0&&<div style={{color:"var(--ink-4)",fontSize:12}}>Пока пусто.</div>}
-        {(m.pages||[]).map(pg=><div key={pg.page} className="pu-bar-row">
-          <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
-          <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxPage)*100)+"%"}}/></span>
-          <span className="vv tnum">{pg.views} · {adFmtS(pg.total_s)}</span>
-        </div>)}
-      </div>
-      <div className="pu-card">
-        <div className="h"><span>Функции · {m.days} дн</span></div>
-        <div className="pu-kv"><span>ИИ-запросы</span><b className="tnum">{f.ai_total||0}</b></div>
-        <div className="pu-kv"><span>Аудит-отчёты создано</span><b className="tnum">{f.reports||0}</b></div>
-        <div className="pu-kv"><span>Шеринги отчётов</span><b className="tnum">{f.shares||0}</b></div>
-        <div className="pu-kv"><span>Оценки контента 👍/👎</span>
-          <b className="tnum"><span style={{color:"var(--pos)"}}>{f.fb_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.fb_dislikes||0}</span></b></div>
-        <div className="pu-kv"><span>Оценки ответов ИИ 👍/👎</span>
-          <b className="tnum"><span style={{color:"var(--pos)"}}>{f.ai_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.ai_dislikes||0}</span></b></div>
-        <div className="pu-kv"><span>Профилей заполнено</span><b className="tnum">{f.profiles||0} из {t.users_total||0}</b></div>
-      </div>
-    </div>
-
-    {/* ④ тепловая карта */}
-    <div className="pu-card pu-sec">
-      <div className="h"><span>Когда пользуются · час × день недели (МСК)</span><span>{m.days} дн</span></div>
-      <AdHeat cells={m.heatmap}/>
-    </div>
-
-    {/* ⑤ техника */}
-    <div className="pu-grid2 pu-sec">
-      <div className="pu-card">
-        <div className="h"><span>Латентность API · 7 дн</span><span>мс</span></div>
-        {(m.latency||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>
-          :<table className="pu-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
-            <tbody>{(m.latency||[]).map((r,i)=><tr key={i}>
-              <td title={r.path}>{(r.path||"").replace("/api/","")}</td>
-              <td>{r.n}</td><td>{r.p50}</td>
-              <td style={r.p95>3000?{color:"var(--warn)"}:null}>{r.p95}</td>
-              <td style={r.errs>0?{color:"var(--neg)"}:null}>{r.errs||0}</td>
-            </tr>)}</tbody></table>}
-      </div>
-      <div className="pu-card">
-        <div className="h"><span>Ошибки · последние</span>
-          <span className={"pu-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
-        {nErr===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
-          :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="pu-err">
-            <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"js":"api"}</span>
-            <span className="m" title={e.msg||""}>{e.page||"—"}{e.status?" · "+e.status:""}{e.msg?" · "+e.msg:""}</span>
-          </div>)}
-      </div>
-    </div>
-
-    <div className="pu-grid2 pu-sec">
-      <div className="pu-card">
-        <div className="h"><span>Дайджест · последний выпуск</span>
-          <span>LLM-токены за период: {tokSum.toLocaleString("ru")}</span></div>
-        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-          {(m.digest||[]).map(s=><span key={s.section}
-            className={"pu-chip "+(s.status==="ok"?"ok":s.status==="failed"?"bad":"")}
-            title={(s.error||"")+(s.gen_ms?" · "+s.gen_ms+"мс":"")}>
-            {s.section} · {s.status}{s.at?" · "+s.at:""}</span>)}
+        {/* ②b сегменты аудитории + генерация по дням */}
+        <div className="pu-grid2 pu-sec">
+          <div className="pu-card">
+            <div className="h"><span>Кто наша аудитория · {m.days} дн</span></div>
+            <AdDonut center={String(sg.active||0)} sub="активных"
+              parts={[
+                {label:"исследователи · ИИ и отчёты",value:sg.researchers||0,color:"var(--accent)"},
+                {label:"читатели новостей",value:sg.readers||0,color:"var(--warn)"},
+                {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-4)"},
+                {label:"спящие за период",value:sg.sleepers||0,color:"var(--hair-2)"},
+              ]}/>
+            <div className="pu-note">
+              {sg.readers>0
+                ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Обзор»/«Для вас») — точка роста для ИИ-аналитика</>
+                : "читатели ≥60% просмотров в «Обзоре»/«Для вас» без единого ИИ-запроса"}
+            </div>
+          </div>
+          <div className="pu-card">
+            <div className="h"><span>Генерация · по дням</span>
+              <span><span style={{color:"var(--accent)"}}>■</span> ИИ-запросы · <span style={{color:"var(--ink-3)"}}>■</span> отчёты</span></div>
+            <AdCols axis={m.dau} a={m.ai_per_day} b={m.reports_per_day}/>
+            <div className="pu-note">за период: {f.ai_total||0} запросов · {f.reports||0} отчётов создано · {f.report_opens||0} открытий сохранённых · {f.shares||0} шерингов</div>
+          </div>
         </div>
-      </div>
-      <div className="pu-card">
-        <div className="h"><span>Живая лента</span><span>последние события</span></div>
-        {(m.feed||[]).map((e,i)=><div key={i} className="pu-feed-row">
-          <span className="t">{e.ts}</span>
-          <span className="a">{initials(e.username||"?")}</span>
-          <span className="w">{e.kind==="page_view"?"открыл "+(AD_PAGE_RU[e.page]||e.page)
-            :e.kind==="page_leave"?((AD_PAGE_RU[e.page]||e.page)+" · "+adFmtS((e.dur_ms||0)/1000))
-            :e.kind==="client_error"?"⚠ JS-ошибка на "+(AD_PAGE_RU[e.page]||e.page)
-            :"⚠ API "+(e.page||"")+(e.status?" · "+e.status:"")}</span>
-        </div>)}
-      </div>
-    </div>
+
+        {/* ②c команда пофамильно */}
+        {team.length>0&&<div className="pu-card pu-sec">
+          <div className="h"><span>Команда · пофамильно · {m.days} дн</span>
+            <span>скор: время + просмотры + ИИ×15 + отчёты×30 + оценки×5</span></div>
+          <table className="pu-tbl pu-team">
+            <thead><tr><th>пользователь</th><th>время</th><th>дней</th><th>просм.</th><th>ИИ</th><th>отчёты</th><th>оценки</th><th>был(а)</th></tr></thead>
+            <tbody>
+              {team.map((u,i)=><tr key={u.username}>
+                <td><span className="pu-u"><span className="a">{initials(u.name)}</span>{u.name}
+                  {i===0&&(+u.views>0)&&<span className="pu-crown">✦ самый активный</span>}</span></td>
+                <td><span className="pu-tm"><span className="bar" style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
+                <td>{u.days_active}</td><td>{u.views}</td><td>{u.ai}</td><td>{u.reports}</td><td>{u.ratings}</td>
+                <td>{u.last_seen||"—"}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>}
+
+        {/* ④ тепловая карта */}
+        <div className="pu-card pu-sec">
+          <div className="h"><span>Когда пользуются · час × день недели (МСК)</span><span>{m.days} дн</span></div>
+          <AdHeat cells={m.heatmap}/>
+        </div>
+
+    </>}
+
+    {tab==="ai"&&<>
+      <PuAiFeedback fb={m.ai_feedback||{}}/>
+      <PuPersona p={m.persona||{}}/>
+      <PuTopics t={m.topics}/>
+        {/* ③ вовлечённость + фичи */}
+        <div className="pu-grid2">
+          <div className="pu-card">
+            <div className="h"><span>Страницы · {m.days} дн</span><span>просмотры · время</span></div>
+            {(m.pages||[]).length===0&&<div style={{color:"var(--ink-4)",fontSize:12}}>Пока пусто.</div>}
+            {(m.pages||[]).map(pg=><div key={pg.page} className="pu-bar-row">
+              <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
+              <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxPage)*100)+"%"}}/></span>
+              <span className="vv tnum">{pg.views} · {adFmtS(pg.total_s)}</span>
+            </div>)}
+          </div>
+          <div className="pu-card">
+            <div className="h"><span>Функции · {m.days} дн</span></div>
+            <div className="pu-kv"><span>ИИ-запросы</span><b className="tnum">{f.ai_total||0}</b></div>
+            <div className="pu-kv"><span>Аудит-отчёты создано</span><b className="tnum">{f.reports||0}</b></div>
+            <div className="pu-kv"><span>Шеринги отчётов</span><b className="tnum">{f.shares||0}</b></div>
+            <div className="pu-kv"><span>Оценки контента 👍/👎</span>
+              <b className="tnum"><span style={{color:"var(--pos)"}}>{f.fb_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.fb_dislikes||0}</span></b></div>
+            <div className="pu-kv"><span>Оценки ответов ИИ 👍/👎</span>
+              <b className="tnum"><span style={{color:"var(--pos)"}}>{f.ai_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.ai_dislikes||0}</span></b></div>
+            <div className="pu-kv"><span>Профилей заполнено</span><b className="tnum">{f.profiles||0} из {t.users_total||0}</b></div>
+          </div>
+        </div>
+
+    </>}
+
+    {tab==="data"&&<>
+      <PuIngest ing={m.ingest||{}}/>
+      <PuCollect c={m.collect||{}}/>
+    </>}
+
+    {tab==="tech"&&<>
+        {/* ⑤ техника */}
+        <div className="pu-grid2 pu-sec">
+          <div className="pu-card">
+            <div className="h"><span>Латентность API · 7 дн</span><span>мс</span></div>
+            {(m.latency||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>
+              :<table className="pu-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
+                <tbody>{(m.latency||[]).map((r,i)=><tr key={i}>
+                  <td title={r.path}>{(r.path||"").replace("/api/","")}</td>
+                  <td>{r.n}</td><td>{r.p50}</td>
+                  <td style={r.p95>3000?{color:"var(--warn)"}:null}>{r.p95}</td>
+                  <td style={r.errs>0?{color:"var(--neg)"}:null}>{r.errs||0}</td>
+                </tr>)}</tbody></table>}
+          </div>
+          <div className="pu-card">
+            <div className="h"><span>Ошибки · последние</span>
+              <span className={"pu-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
+            {nErr===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
+              :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="pu-err">
+                <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"js":"api"}</span>
+                <span className="m" title={e.msg||""}>{e.page||"—"}{e.status?" · "+e.status:""}{e.msg?" · "+e.msg:""}</span>
+              </div>)}
+          </div>
+        </div>
+
+        <div className="pu-grid2 pu-sec">
+          <div className="pu-card">
+            <div className="h"><span>Дайджест · последний выпуск</span>
+              <span>LLM-токены за период: {tokSum.toLocaleString("ru")}</span></div>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+              {(m.digest||[]).map(s=><span key={s.section}
+                className={"pu-chip "+(s.status==="ok"?"ok":s.status==="failed"?"bad":"")}
+                title={(s.error||"")+(s.gen_ms?" · "+s.gen_ms+"мс":"")}>
+                {s.section} · {s.status}{s.at?" · "+s.at:""}</span>)}
+            </div>
+          </div>
+          <div className="pu-card">
+            <div className="h"><span>Живая лента</span><span>последние события</span></div>
+            {(m.feed||[]).map((e,i)=><div key={i} className="pu-feed-row">
+              <span className="t">{e.ts}</span>
+              <span className="a">{initials(e.username||"?")}</span>
+              <span className="w">{e.kind==="page_view"?"открыл "+(AD_PAGE_RU[e.page]||e.page)
+                :e.kind==="page_leave"?((AD_PAGE_RU[e.page]||e.page)+" · "+adFmtS((e.dur_ms||0)/1000))
+                :e.kind==="client_error"?"⚠ JS-ошибка на "+(AD_PAGE_RU[e.page]||e.page)
+                :"⚠ API "+(e.page||"")+(e.status?" · "+e.status:"")}</span>
+            </div>)}
+          </div>
+        </div>
+    </>}
+
 
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
                  fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:"var(--ink-4)"}}>
