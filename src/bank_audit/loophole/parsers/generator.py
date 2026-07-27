@@ -96,9 +96,9 @@ def _build_messages(query: str) -> list:
             SystemMessage(
                 content=(
                     "Ты — Python-разработчик, генерирующий Scrapy-пауков для "
-                    "сбора данных о лазейках в банковских продуктах. Возвращай "
-                    "ТОЛЬКО валидный Python-код без markdown-обёрток и "
-                    "пояснений."
+                    "сбора данных о лазейках в банковских продуктах. Верни "
+                    "два блока кода: parser.py внутри ```python ... ``` и "
+                    "requirements.txt внутри ```text ... ```, без лишних пояснений."
                 )
             ),
             HumanMessage(content=prompt),
@@ -202,7 +202,7 @@ async def generate_parser(
 ) -> dict:
     """Генерирует Scrapy-паука, сохраняет код в catalog/ и запись в БД.
 
-    Возвращает {"parser_id", "code_path", "name", "targets"}.
+    Возвращает {"parser_id", "code_path", "venv_path", "name", "targets"}.
     Бросает ValueError, если в запросе нет URL ресурса или группы мессенджера.
     """
     targets = extract_targets(query)
