@@ -473,7 +473,13 @@ async def create_parser(
         detail={"parser_id": result.get("parser_id"), "query": body.query[:200]},
         session=session,
     )
-    return result
+    return {
+        "parser_id": result["parser_id"],
+        "validation_run_id": result["validation_run_id"],
+        "name": result["name"],
+        "targets": result["targets"],
+        "warnings": result.get("warnings") or [],
+    }
 
 
 @router.post("/parsers/{parser_id}/run")

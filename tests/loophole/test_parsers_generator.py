@@ -1,6 +1,7 @@
 """Тест generator: мок LLM, код сохраняется в общий каталог parsers/catalog/."""
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -8,9 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from bank_audit.loophole.parsers import generator
 from bank_audit.loophole import repository as repo
-
+from bank_audit.loophole.parsers import generator
 
 VALID_SPIDER_CODE = '''import scrapy, json
 
@@ -149,3 +149,40 @@ def test_write_requirements_and_code(tmp_path, monkeypatch):
     generator.write_parser_code(d, "print(1)\n")
     assert (d / "requirements.txt").read_text() == "httpx\nfoo\n"
     assert (d / "parser.py").read_text() == "print(1)\n"
+
+
+@pytest.mark.asyncio
+async def test_validation_success_sets_ready_status(
+    session, workspace_id, catalog_dir, monkeypatch,
+):
+    results = [{"title": "t", "url": "https://a.ru/1", "snippet": "s"}]
+
+    class _FakeRunner:
+        def __init__(self, parser_id, code_path, *, workspace_id=None,
+                     session=None, run_id=None, trigger="validation"):
+            self.run_id = run_id
+            self.code_path = code_path
+        async def start(self):
+            pass
+        async def wait(self, timeout=None, finalize=True):
+            parser_dir = Path(self.code_path).parent
+            parser_dir.mkdir(parents=True, exist_ok=True)
+            (parser_dir / "results.json").write_text(
+                json.dumps(results), encoding="utf-8",
+            )
+            return 1
+        def _finalize(self, *a, **kw):
+            pass
+
+    monkeypatch.setattr(generator.runner_mod, "ParserRunner", _FakeRunner)
+    pid = repo.save_parser(
+        workspace_id, "x", "",
+        config={"query": "q", "targets": ["https://a.ru/1"]},
+        session=session,
+    )
+    code_path = str(catalog_dir / f"parser_{pid}_x" / "parser.py")
+    repo.update_parser_code_path(pid, code_path, session=session)
+    validation_run_id = await generator.start_validation(pid, code_path, session=session)
+    await asyncio.sleep(0.2)
+    assert repo.get_parser(pid, session=session)["status"] == "ready"
+    assert validation_run_id > 0

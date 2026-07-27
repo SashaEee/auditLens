@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -19,6 +20,7 @@ from typing import Any
 from .. import repository as repo
 from ..config import LoopholeSettings
 from . import dedup as dedup_mod
+from . import runner as runner_mod
 
 log = logging.getLogger(__name__)
 
@@ -103,10 +105,34 @@ def _build_messages(query: str) -> list:
             ),
             HumanMessage(content=prompt),
         ]
-    except Exception:
+    except ImportError:
         return [
             {"role": "system", "content": "Ты — Python-разработчик."},
             {"role": "user", "content": prompt},
+        ]
+
+
+def _build_fix_messages(code: str, requirements: str, error_info: str, query: str) -> list:
+    content = (
+        "Исправь Scrapy-паука. Он не собрал ни одной записи с url или упал.\n\n"
+        f"Запрос: {query}\n\n"
+        "Текущий parser.py:\n```python\n" + code + "\n```\n\n"
+        "Текущий requirements.txt:\n```text\n" + requirements + "\n```\n\n"
+        "Ошибка/лог последнего запуска:\n" + error_info[:4000] + "\n\n"
+        "Верни ИСПРАВЛЕННЫЕ parser.py и requirements.txt в том же формате: "
+        "```python ... ``` и ```text ... ```. Паук должен сохранять результаты в results.json "
+        "и писать JSON-логи в stdout."
+    )
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+        return [
+            SystemMessage(content="Ты — Python-разработчик, исправляющий Scrapy-пауков."),
+            HumanMessage(content=content),
+        ]
+    except ImportError:
+        return [
+            {"role": "system", "content": "Ты — Python-разработчик."},
+            {"role": "user", "content": content},
         ]
 
 
@@ -182,8 +208,8 @@ async def install_requirements(dir_path: Path, *, timeout: int = 300) -> None:
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+        _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         raise RuntimeError("pip install timeout")
@@ -253,10 +279,90 @@ async def generate_parser(
         "[parsers.generator] создан парсер id=%s name=%s path=%s targets=%s",
         parser_id, name, code_path, targets,
     )
+    validation_run_id = await start_validation(parser_id, str(code_path), session=session)
     return {
         "parser_id": parser_id,
         "code_path": str(code_path),
         "venv_path": str(venv_path),
         "name": name,
         "targets": targets,
+        "validation_run_id": validation_run_id,
     }
+
+
+async def start_validation(parser_id: int, code_path: str, *, session=None) -> int:
+    """Создаёт run валидации и запускает фоновый цикл исправлений."""
+    run_id = repo.create_run(parser_id, "validation", session=session)
+    asyncio.create_task(_validate(parser_id, code_path, run_id, session=session))
+    return run_id
+
+
+async def _validate(parser_id: int, code_path: str, run_id: int, *, session=None) -> None:
+    from . import registry as registry_mod
+
+    parser_dir = Path(code_path).parent
+    workspace_id = None
+    query = ""
+    row = repo.get_parser(parser_id, session=session)
+    if row:
+        workspace_id = row.get("workspace_id")
+        cfg = row.get("config") or {}
+        if isinstance(cfg, str):
+            try:
+                cfg = json.loads(cfg)
+            except json.JSONDecodeError:
+                cfg = {}
+        query = (cfg or {}).get("query", "")
+
+    for attempt in range(1, 21):
+        runner = runner_mod.ParserRunner(
+            parser_id, code_path,
+            workspace_id=workspace_id,
+            session=session, run_id=run_id, trigger="validation",
+        )
+        try:
+            await runner.start()
+            items_new = await runner.wait(timeout=runner_mod._timeout_s(), finalize=False)
+        except Exception as e:  # noqa: BLE001
+            runner_mod.emit_line(run_id, f"[validation] run error: {e}")
+            items_new = 0
+
+        results_path = parser_dir / "results.json"
+        if results_path.exists():
+            try:
+                data = json.loads(results_path.read_text(encoding="utf-8"))
+                if isinstance(data, list) and any(r.get("url") for r in data):
+                    runner._finalize("success", len(data), items_new, 0, None)
+                    repo.update_parser_status(parser_id, "ready", session=session)
+                    return
+            except Exception as e:  # noqa: BLE001
+                log.warning("[parsers.generator] validation result check failed: %s", e)
+
+        if attempt >= 20:
+            break
+
+        error_info = "\n".join(runner_mod.log_tail(run_id))[-4000:]
+        code = (parser_dir / "parser.py").read_text(encoding="utf-8")
+        req = (parser_dir / "requirements.txt").read_text(encoding="utf-8")
+        llm = _default_llm()
+        try:
+            resp = await llm.ainvoke(_build_fix_messages(code, req, error_info, query))
+            raw = getattr(resp, "content", None) or str(resp)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[parsers.generator] validation fix LLM failed: %s", e)
+            continue
+
+        blocks = _extract_code_blocks(raw)
+        new_code = blocks.get("parser.py", _strip_code_fences(raw))
+        new_req = blocks.get("requirements.txt", "")
+        write_parser_code(parser_dir, new_code)
+        write_requirements(parser_dir, build_requirements(
+            [line.strip() for line in new_req.splitlines() if line.strip()]
+        ))
+        try:
+            await install_requirements(parser_dir)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[parsers.generator] validation install failed: %s", e)
+
+    runner._finalize("error", 0, 0, 0, "Validation failed after 20 attempts")
+    registry_mod.delete_parser(parser_id, session=session)
