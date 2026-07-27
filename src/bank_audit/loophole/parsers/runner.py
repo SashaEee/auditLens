@@ -181,8 +181,16 @@ class ParserRunner:
         """Убирает runner из реестра запущенных парсеров."""
         _RUNNING.pop(self.parser_id, None)
 
-    def _finalize(self, status: str, found: int, new: int, dup: int,
-                  error_text: str | None) -> None:
+    def _finalize(
+        self,
+        status: str,
+        found: int,
+        new: int,
+        dup: int,
+        error_text: str | None,
+        *,
+        update_parser_status: bool = True,
+    ) -> None:
         if self._finalized:
             return
         self._finalized = True
@@ -198,7 +206,8 @@ class ParserRunner:
                 "status": status, "items_found": found, "items_new": new,
                 "items_dup": dup, "error_text": error_text,
             })
-        repo.update_parser_status(self.parser_id, status, session=self.session)
+        if update_parser_status:
+            repo.update_parser_status(self.parser_id, status, session=self.session)
         log.info("[parsers.runner] завершён parser_id=%s status=%s new=%s dup=%s",
                  self.parser_id, status, new, dup)
 

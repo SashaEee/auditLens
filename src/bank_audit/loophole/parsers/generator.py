@@ -314,55 +314,121 @@ async def _validate(parser_id: int, code_path: str, run_id: int, *, session=None
                 cfg = {}
         query = (cfg or {}).get("query", "")
 
-    for attempt in range(1, 21):
+    try:
+        for attempt in range(1, 21):
+            results_path = parser_dir / "results.json"
+            results_path.unlink(missing_ok=True)
+
+            runner = runner_mod.ParserRunner(
+                parser_id, code_path,
+                workspace_id=workspace_id,
+                session=session, run_id=run_id, trigger="validation",
+            )
+            items_new = 0
+            try:
+                await runner.start()
+                items_new = await runner.wait(
+                    timeout=runner_mod._timeout_s(), finalize=False
+                )
+            except Exception:
+                log.exception(
+                    "[parsers.generator] validation run error parser_id=%s attempt=%s",
+                    parser_id, attempt,
+                )
+                runner_mod.emit_line(run_id, f"[validation] run error on attempt {attempt}")
+                items_new = 0
+
+            if runner._returncode != 0:
+                runner_mod.emit_line(
+                    run_id,
+                    f"[validation] non-zero return code {runner._returncode} on attempt {attempt}",
+                )
+            else:
+                results_path = parser_dir / "results.json"
+                if results_path.exists():
+                    try:
+                        data = json.loads(results_path.read_text(encoding="utf-8"))
+                        if isinstance(data, list) and any(r.get("url") for r in data):
+                            runner._finalize(
+                                "success", len(data), items_new, 0, None,
+                                update_parser_status=False,
+                            )
+                            repo.update_parser_status(
+                                parser_id, "ready", session=session
+                            )
+                            return
+                    except Exception:
+                        log.exception(
+                            "[parsers.generator] validation result check failed parser_id=%s attempt=%s",
+                            parser_id, attempt,
+                        )
+
+            if attempt >= 20:
+                break
+
+            error_info = "\n".join(runner_mod.log_tail(run_id))[-4000:]
+            try:
+                code = (parser_dir / "parser.py").read_text(encoding="utf-8")
+                req = (parser_dir / "requirements.txt").read_text(encoding="utf-8")
+            except Exception:
+                log.exception(
+                    "[parsers.generator] failed to read parser files parser_id=%s attempt=%s",
+                    parser_id, attempt,
+                )
+                continue
+            llm = _default_llm()
+            try:
+                resp = await llm.ainvoke(_build_fix_messages(code, req, error_info, query))
+                raw = getattr(resp, "content", None) or str(resp)
+            except Exception:
+                log.exception(
+                    "[parsers.generator] validation fix LLM failed parser_id=%s attempt=%s",
+                    parser_id, attempt,
+                )
+                continue
+
+            blocks = _extract_code_blocks(raw)
+            new_code = blocks.get("parser.py", _strip_code_fences(raw))
+            new_req = blocks.get("requirements.txt", "")
+            write_parser_code(parser_dir, new_code)
+            write_requirements(parser_dir, build_requirements(
+                [line.strip() for line in new_req.splitlines() if line.strip()]
+            ))
+            try:
+                await install_requirements(parser_dir)
+            except Exception:
+                log.exception(
+                    "[parsers.generator] validation install failed parser_id=%s attempt=%s",
+                    parser_id, attempt,
+                )
+
         runner = runner_mod.ParserRunner(
             parser_id, code_path,
             workspace_id=workspace_id,
             session=session, run_id=run_id, trigger="validation",
         )
+        runner._finalize(
+            "error", 0, 0, 0, "Validation failed after 20 attempts",
+            update_parser_status=False,
+        )
+        registry_mod.delete_parser(parser_id, session=session)
+    except Exception:
+        log.exception(
+            "[parsers.generator] unhandled validation error parser_id=%s run_id=%s",
+            parser_id, run_id,
+        )
         try:
-            await runner.start()
-            items_new = await runner.wait(timeout=runner_mod._timeout_s(), finalize=False)
-        except Exception as e:  # noqa: BLE001
-            runner_mod.emit_line(run_id, f"[validation] run error: {e}")
-            items_new = 0
-
-        results_path = parser_dir / "results.json"
-        if results_path.exists():
-            try:
-                data = json.loads(results_path.read_text(encoding="utf-8"))
-                if isinstance(data, list) and any(r.get("url") for r in data):
-                    runner._finalize("success", len(data), items_new, 0, None)
-                    repo.update_parser_status(parser_id, "ready", session=session)
-                    return
-            except Exception as e:  # noqa: BLE001
-                log.warning("[parsers.generator] validation result check failed: %s", e)
-
-        if attempt >= 20:
-            break
-
-        error_info = "\n".join(runner_mod.log_tail(run_id))[-4000:]
-        code = (parser_dir / "parser.py").read_text(encoding="utf-8")
-        req = (parser_dir / "requirements.txt").read_text(encoding="utf-8")
-        llm = _default_llm()
-        try:
-            resp = await llm.ainvoke(_build_fix_messages(code, req, error_info, query))
-            raw = getattr(resp, "content", None) or str(resp)
-        except Exception as e:  # noqa: BLE001
-            log.warning("[parsers.generator] validation fix LLM failed: %s", e)
-            continue
-
-        blocks = _extract_code_blocks(raw)
-        new_code = blocks.get("parser.py", _strip_code_fences(raw))
-        new_req = blocks.get("requirements.txt", "")
-        write_parser_code(parser_dir, new_code)
-        write_requirements(parser_dir, build_requirements(
-            [line.strip() for line in new_req.splitlines() if line.strip()]
-        ))
-        try:
-            await install_requirements(parser_dir)
-        except Exception as e:  # noqa: BLE001
-            log.warning("[parsers.generator] validation install failed: %s", e)
-
-    runner._finalize("error", 0, 0, 0, "Validation failed after 20 attempts")
-    registry_mod.delete_parser(parser_id, session=session)
+            runner = runner_mod.ParserRunner(
+                parser_id, code_path,
+                workspace_id=workspace_id,
+                session=session, run_id=run_id, trigger="validation",
+            )
+            runner._finalize(
+                "error", 0, 0, 0, "Unhandled validation error",
+                update_parser_status=False,
+            )
+        except Exception:
+            log.exception(
+                "[parsers.generator] failed to finalize validation error parser_id=%s run_id=%s",
+                parser_id, run_id,
+            )

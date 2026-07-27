@@ -160,8 +160,11 @@ async def test_validation_success_sets_ready_status(
     class _FakeRunner:
         def __init__(self, parser_id, code_path, *, workspace_id=None,
                      session=None, run_id=None, trigger="validation"):
+            self.parser_id = parser_id
             self.run_id = run_id
             self.code_path = code_path
+            self.session = session
+            self._returncode = 0
         async def start(self):
             pass
         async def wait(self, timeout=None, finalize=True):
@@ -171,8 +174,15 @@ async def test_validation_success_sets_ready_status(
                 json.dumps(results), encoding="utf-8",
             )
             return 1
-        def _finalize(self, *a, **kw):
-            pass
+        def _finalize(self, status, found, new, dup, err, *, update_parser_status=True):
+            if self.run_id is not None:
+                repo.finish_run(
+                    self.run_id, status,
+                    items_found=found, items_new=new, items_dup=dup,
+                    error_text=err, session=self.session,
+                )
+            if update_parser_status:
+                repo.update_parser_status(self.parser_id, status, session=self.session)
 
     monkeypatch.setattr(generator.runner_mod, "ParserRunner", _FakeRunner)
     pid = repo.save_parser(
@@ -186,3 +196,5 @@ async def test_validation_success_sets_ready_status(
     await asyncio.sleep(0.2)
     assert repo.get_parser(pid, session=session)["status"] == "ready"
     assert validation_run_id > 0
+    run = repo.get_run(validation_run_id, session=session)
+    assert run["status"] == "success"
