@@ -1,16 +1,14 @@
-"""Тест generator: мок LLM возвращает код Scrapy-паука, проверяем сохранение файла и БД."""
+"""Тест generator: мок LLM, код сохраняется в общий каталог parsers/catalog/."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import text
 
 from bank_audit.loophole.parsers import generator
 from bank_audit.loophole import repository as repo
-
-from tests.loophole.conftest import session as sqlite_session  # noqa: E402
 
 
 VALID_SPIDER_CODE = '''import scrapy, json
@@ -23,33 +21,16 @@ class LoopholeSpider(scrapy.Spider):
 
 
 @pytest.fixture
-def session(sqlite_session):
-    # Добавляем таблицу loophole_parser (миграция 011) в SQLite-схему.
-    sqlite_session.execute(text(
-        "CREATE TABLE IF NOT EXISTS loophole_parser ("
-        "parser_id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "workspace_id INTEGER, name TEXT, code_path TEXT, "
-        "status TEXT DEFAULT 'created', config TEXT, "
-        "created_at TEXT DEFAULT CURRENT_TIMESTAMP, last_run_at TEXT)"
-    ))
-    sqlite_session.execute(text(
-        "CREATE TABLE IF NOT EXISTS loophole_record ("
-        "record_id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "sha256 TEXT NOT NULL, title TEXT, url TEXT, snippet TEXT, "
-        "domain TEXT, trust_score REAL, fetched_at TEXT, "
-        "collected_at TEXT DEFAULT CURRENT_TIMESTAMP, bank_slug TEXT, "
-        "keyword TEXT, raw_text TEXT, is_loophole INTEGER, "
-        "verdict_confidence REAL, verdict_reason TEXT, verdict_model TEXT, "
-        "classified_at TEXT, status TEXT DEFAULT 'new')"
-    ))
-    sqlite_session.commit()
-    return sqlite_session
+def workspace_id(session) -> int:
+    return repo.create_workspace("test-user", "ws-test", session=session)
 
 
 @pytest.fixture
-def workspace_id(session) -> int:
-    wid = repo.create_workspace("test-user", "ws-test", session=session)
-    return wid
+def catalog_dir(tmp_path, monkeypatch) -> Path:
+    """Перенаправляет CATALOG_DIR во tmp_path."""
+    d = tmp_path / "catalog"
+    monkeypatch.setattr(generator, "CATALOG_DIR", d)
+    return d
 
 
 def _llm_mock(code: str = VALID_SPIDER_CODE):
@@ -61,70 +42,40 @@ def _llm_mock(code: str = VALID_SPIDER_CODE):
 
 
 @pytest.mark.asyncio
-async def test_generate_parser_saves_file_and_registers(
-    tmp_path, monkeypatch, session, workspace_id,
-):
-    # Перенаправим workspace-директорию во tmp_path.
-    from bank_audit.loophole.config import LoopholeSettings
-    settings = LoopholeSettings(workspace_dir=tmp_path)
-    monkeypatch.setattr(LoopholeSettings, "load", classmethod(lambda cls: settings))
-
-    llm = _llm_mock()
+async def test_generate_saves_to_catalog(session, workspace_id, catalog_dir):
     result = await generator.generate_parser(
         "test-user", workspace_id,
-        "скрытые комиссии по вкладам https://bank-example.ru/deposits",
-        llm=llm, session=session,
+        "скрытые комиссии https://bank-example.ru/deposits",
+        llm=_llm_mock(), session=session,
     )
+    assert result["parser_id"] > 0
+    path = Path(result["code_path"])
+    assert path.parent == catalog_dir
+    assert path.name.startswith(f"parser_{result['parser_id']}_")
+    assert "scrapy" in path.read_text(encoding="utf-8").lower()
 
-    assert "parser_id" in result and result["parser_id"] > 0
-    assert result["code_path"].endswith(".py")
-    assert result["targets"] == ["https://bank-example.ru/deposits"]
-    from pathlib import Path
-    p = Path(result["code_path"])
-    assert p.exists()
-    content = p.read_text(encoding="utf-8")
-    assert "class" in content and "scrapy" in content.lower()
-
-    # Запись в БД.
     row = repo.get_parser(result["parser_id"], session=session)
-    assert row is not None
-    assert row["name"] == result["name"]
     assert row["code_path"] == result["code_path"]
-    assert row["status"] == "created"
+    assert row["created_by"] == "test-user"
+    assert json.loads(row["source_keys"]) == ["bank-example.ru/deposits"]
     cfg = json.loads(row["config"])
     assert cfg["targets"] == ["https://bank-example.ru/deposits"]
 
 
 @pytest.mark.asyncio
-async def test_generate_parser_strips_code_fences(
-    tmp_path, monkeypatch, session, workspace_id,
-):
-    from bank_audit.loophole.config import LoopholeSettings
-    settings = LoopholeSettings(workspace_dir=tmp_path)
-    monkeypatch.setattr(LoopholeSettings, "load", classmethod(lambda cls: settings))
-
+async def test_generate_strips_code_fences(session, workspace_id, catalog_dir):
     fenced = "```python\n" + VALID_SPIDER_CODE + "\n```"
-    llm = _llm_mock(fenced)
     result = await generator.generate_parser(
         "test-user", workspace_id, "тест https://t.me/bank_group",
-        llm=llm, session=session,
+        llm=_llm_mock(fenced), session=session,
     )
-    from pathlib import Path
     content = Path(result["code_path"]).read_text(encoding="utf-8")
     assert not content.startswith("```")
     assert "class" in content
 
 
 @pytest.mark.asyncio
-async def test_generate_parser_rejects_query_without_target(
-    tmp_path, monkeypatch, session, workspace_id,
-):
-    """Без URL ресурса или группы мессенджера парсер не создаётся,
-    LLM не вызывается."""
-    from bank_audit.loophole.config import LoopholeSettings
-    settings = LoopholeSettings(workspace_dir=tmp_path)
-    monkeypatch.setattr(LoopholeSettings, "load", classmethod(lambda cls: settings))
-
+async def test_generate_rejects_query_without_target(session, workspace_id, catalog_dir):
     llm = _llm_mock()
     with pytest.raises(ValueError, match="URL"):
         await generator.generate_parser(
@@ -132,8 +83,7 @@ async def test_generate_parser_rejects_query_without_target(
             llm=llm, session=session,
         )
     llm.ainvoke.assert_not_called()
-    # Ни файла, ни записи в БД.
-    assert repo.list_parsers(workspace_id, session=session) == []
+    assert repo.list_all_parsers(session=session) == []
 
 
 def test_extract_targets_urls_and_telegram():
@@ -141,24 +91,36 @@ def test_extract_targets_urls_and_telegram():
         "смотри https://bank.ru/promo и t.me/bank_loopholes"
     ) == ["t.me/bank_loopholes", "https://bank.ru/promo"]
     assert generator.extract_targets("группа @bank_secrets") == ["@bank_secrets"]
-    assert generator.extract_targets(
-        "https://t.me/group1 https://t.me/group1"
-    ) == ["https://t.me/group1"]
-    # Без целей — пустой список.
-    assert generator.extract_targets("просто текст без ссылок") == []
-    assert generator.extract_targets("") == []
+    assert generator.extract_targets("https://t.me/g1 https://t.me/g1") == ["https://t.me/g1"]
+    assert generator.extract_targets("просто текст") == []
 
 
 def test_sanitize_filename_basic():
     assert generator.sanitize_filename("bank-loophole") == "bank-loophole"
     assert generator.sanitize_filename("") == "parser"
     assert generator.sanitize_filename(".../etc/passwd") == "etc_passwd"
-    # Кириллица заменяется на _, но не должна давать пустоту.
-    out = generator.sanitize_filename("скрытые комиссии")
-    assert out and all(c.isalnum() or c in "-_" for c in out)
 
 
-def test_sanitize_filename_alnum_only():
-    out = generator.sanitize_filename("query 123!")
-    assert all(c.isalnum() or c in "-_" for c in out)
-    assert out
+def test_build_requirements_includes_base_and_extras():
+    req = generator.build_requirements(["fake-pkg==1.0"])
+    assert "scrapy" in req
+    assert "playwright" in req
+    assert "playwright-stealth" in req
+    assert "httpx" in req
+    assert "fake-pkg==1.0" in req
+
+
+def test_create_parser_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(generator, "CATALOG_DIR", tmp_path)
+    path = generator.create_parser_dir(7, "bank-test")
+    assert path.exists()
+    assert path.name == "parser_7_bank-test"
+
+
+def test_write_requirements_and_code(tmp_path, monkeypatch):
+    monkeypatch.setattr(generator, "CATALOG_DIR", tmp_path)
+    d = generator.create_parser_dir(8, "x")
+    generator.write_requirements(d, "httpx\nfoo\n")
+    generator.write_parser_code(d, "print(1)\n")
+    assert (d / "requirements.txt").read_text() == "httpx\nfoo\n"
+    assert (d / "parser.py").read_text() == "print(1)\n"

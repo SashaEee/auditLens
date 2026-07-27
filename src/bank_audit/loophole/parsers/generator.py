@@ -1,21 +1,37 @@
 """Генерация кода Scrapy+Playwright парсеров через LLM.
 
-Сгенерированный код сохраняется ТОЛЬКО в workspace-директории
-`workspace/loophole/<user>/<ws>/parsers/` (вне репозитория) и регистрируется
-в таблице loophole_parser через repository.save_parser.
+Сгенерированный код сохраняется в ОБЩИЙ каталог пакета
+`parsers/catalog/parser_<parser_id>_<name>.py` (виден всем пользователям)
+и регистрируется в loophole_parser с source_keys для дедупликации.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 from .. import repository as repo
 from ..config import LoopholeSettings
-from ..workspace import workspace_dir
+from . import dedup as dedup_mod
 
 log = logging.getLogger(__name__)
+
+# Общий каталог кода парсеров (внутри пакета; код в git не коммитится).
+CATALOG_DIR = Path(__file__).resolve().parent / "catalog"
+
+
+_BASE_REQUIREMENTS = [
+    "scrapy",
+    "playwright",
+    "playwright-stealth",
+    "httpx",
+]
 
 
 PROMPT_TEMPLATE = (
@@ -100,6 +116,45 @@ def _strip_code_fences(raw: str) -> str:
     return s.strip() + "\n"
 
 
+def _parser_dir_path(parser_id: int, name: str) -> Path:
+    return CATALOG_DIR / f"parser_{parser_id}_{name}"
+
+
+def create_parser_dir(parser_id: int, name: str) -> Path:
+    path = _parser_dir_path(parser_id, name)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+async def create_venv(dir_path: Path) -> Path:
+    venv_path = dir_path / "venv"
+    await asyncio.to_thread(
+        subprocess.run,
+        [sys.executable, "-m", "venv", str(venv_path)],
+        check=True,
+        capture_output=True,
+    )
+    return venv_path
+
+
+def build_requirements(extras: list[str]) -> str:
+    lines = list(_BASE_REQUIREMENTS)
+    lines.extend(extras)
+    return "\n".join(lines) + "\n"
+
+
+def write_requirements(dir_path: Path, contents: str) -> Path:
+    path = dir_path / "requirements.txt"
+    path.write_text(contents, encoding="utf-8")
+    return path
+
+
+def write_parser_code(dir_path: Path, code: str) -> Path:
+    path = dir_path / "parser.py"
+    path.write_text(code, encoding="utf-8")
+    return path
+
+
 async def generate_parser(
     user_id: str,
     workspace_id: int,
@@ -108,7 +163,7 @@ async def generate_parser(
     llm: Any = None,
     session: Any = None,
 ) -> dict:
-    """Генерирует Scrapy-паука через LLM, сохраняет код в workspace и БД.
+    """Генерирует Scrapy-паука, сохраняет код в catalog/ и запись в БД.
 
     Возвращает {"parser_id", "code_path", "name", "targets"}.
     Бросает ValueError, если в запросе нет URL ресурса или группы мессенджера.
@@ -123,28 +178,30 @@ async def generate_parser(
         llm = _default_llm()
 
     name = sanitize_filename(query[:40] or "parser")
-    messages = _build_messages(query)
     try:
-        resp = await llm.ainvoke(messages)
+        resp = await llm.ainvoke(_build_messages(query))
         raw = getattr(resp, "content", None) or str(resp)
     except Exception as e:
         log.warning("[parsers.generator] LLM failed: %s", e)
         raise
 
     code = _strip_code_fences(raw)
+    source_keys = [k for k in (dedup_mod.normalize_target(t) for t in targets) if k]
 
-    parsers_dir = workspace_dir(user_id, workspace_id) / "parsers"
-    parsers_dir.mkdir(parents=True, exist_ok=True)
-    code_path = parsers_dir / f"parser_{name}.py"
-    code_path.write_text(code, encoding="utf-8")
-
+    # Сначала запись (нужен parser_id для имени файла), затем файл и code_path.
     parser_id = repo.save_parser(
         workspace_id,
         name=name,
-        code_path=str(code_path),
+        code_path="",
         config={"query": query, "targets": targets},
+        created_by=user_id,
+        source_keys=source_keys,
         session=session,
     )
+    CATALOG_DIR.mkdir(parents=True, exist_ok=True)
+    code_path = CATALOG_DIR / f"parser_{parser_id}_{name}.py"
+    code_path.write_text(code, encoding="utf-8")
+    repo.update_parser_code_path(parser_id, str(code_path), session=session)
     log.info(
         "[parsers.generator] создан парсер id=%s name=%s path=%s targets=%s",
         parser_id, name, code_path, targets,
