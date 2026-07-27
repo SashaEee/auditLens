@@ -92,5 +92,8 @@ diag_*.py
 debug-*.log
 *TMP*.txt
 
+# Isolated parser runtime artifacts (generated code, venv, results)
+src/bank_audit/loophole/parsers/catalog/
+
 .superpowers
 docs/superpowers
