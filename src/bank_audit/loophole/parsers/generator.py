@@ -182,9 +182,10 @@ async def install_requirements(dir_path: Path, *, timeout: int = 300) -> None:
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        stdout, stderr = await asyncio.wait_for(proc.wait(), timeout=timeout)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.wait()
         raise RuntimeError("pip install timeout")
     if proc.returncode != 0:
         raise RuntimeError(
