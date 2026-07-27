@@ -1,8 +1,9 @@
 """Генерация кода Scrapy+Playwright парсеров через LLM.
 
-Сгенерированный код сохраняется в ОБЩИЙ каталог пакета
-`parsers/catalog/parser_<parser_id>_<name>.py` (виден всем пользователям)
-и регистрируется в loophole_parser с source_keys для дедупликации.
+Сгенерированный код сохраняется в изолированную директорию внутри общего
+каталога пакета `parsers/catalog/parser_<parser_id>_<name>/parser.py`
+(виден всем пользователям) и регистрируется в loophole_parser с source_keys
+для дедупликации. Рядом с кодом создаётся `requirements.txt` и venv.
 """
 from __future__ import annotations
 
@@ -10,7 +11,6 @@ import asyncio
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -38,8 +38,11 @@ PROMPT_TEMPLATE = (
     "Сгенерируй Scrapy-паука на Python для поиска лазеек в банковских "
     "продуктах по запросу: {query}. Используй playwright-stealth для "
     "рендеринга JS. Паук должен собирать title, url, snippet, text. "
-    "Возвращает JSON-список результатов. Код должен быть готов к запуску "
-    "через `scrapy crawl`."
+    "Код должен писать JSON-логи в stdout и сохранять результаты в файл "
+    "results.json рядом с parser.py. "
+    "Верни ДВА блока кода: сначала parser.py внутри ```python ... ```, "
+    "затем requirements.txt внутри ```text ... ```. Базовые пакеты уже "
+    "установлены: scrapy, playwright, playwright-stealth, httpx."
 )
 
 
@@ -116,6 +119,19 @@ def _strip_code_fences(raw: str) -> str:
     return s.strip() + "\n"
 
 
+def _extract_code_blocks(raw: str) -> dict[str, str]:
+    """Извлекает parser.py и requirements.txt из markdown-ответа LLM."""
+    import re
+
+    blocks: dict[str, str] = {}
+    for lang, key in (("python", "parser.py"), ("text", "requirements.txt")):
+        pattern = rf"```(?:{lang})\s*\n(.*?)\n```"
+        match = re.search(pattern, raw, re.DOTALL)
+        if match:
+            blocks[key] = match.group(1).strip() + "\n"
+    return blocks
+
+
 def _parser_dir_path(parser_id: int, name: str) -> Path:
     return CATALOG_DIR / f"parser_{parser_id}_{name}"
 
@@ -155,6 +171,27 @@ def write_parser_code(dir_path: Path, code: str) -> Path:
     return path
 
 
+async def install_requirements(dir_path: Path, *, timeout: int = 300) -> None:
+    """Устанавливает requirements.txt в venv парсера."""
+    from .env import venv_python
+
+    req_path = dir_path / "requirements.txt"
+    proc = await asyncio.create_subprocess_exec(
+        str(venv_python(dir_path)), "-m", "pip", "install", "-r", str(req_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise RuntimeError("pip install timeout")
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"pip install failed: {(stderr or b'').decode('utf-8', errors='replace')[:2000]}"
+        )
+
+
 async def generate_parser(
     user_id: str,
     workspace_id: int,
@@ -185,10 +222,13 @@ async def generate_parser(
         log.warning("[parsers.generator] LLM failed: %s", e)
         raise
 
-    code = _strip_code_fences(raw)
+    blocks = _extract_code_blocks(raw)
+    code = blocks.get("parser.py", _strip_code_fences(raw))
+    req_text = blocks.get("requirements.txt", "")
+    extras = [line.strip() for line in req_text.splitlines() if line.strip()]
+
     source_keys = [k for k in (dedup_mod.normalize_target(t) for t in targets) if k]
 
-    # Сначала запись (нужен parser_id для имени файла), затем файл и code_path.
     parser_id = repo.save_parser(
         workspace_id,
         name=name,
@@ -198,9 +238,15 @@ async def generate_parser(
         source_keys=source_keys,
         session=session,
     )
+
     CATALOG_DIR.mkdir(parents=True, exist_ok=True)
-    code_path = CATALOG_DIR / f"parser_{parser_id}_{name}.py"
-    code_path.write_text(code, encoding="utf-8")
+    parser_dir = create_parser_dir(parser_id, name)
+    venv_path = await create_venv(parser_dir)
+    requirements = build_requirements(extras)
+    write_requirements(parser_dir, requirements)
+    await install_requirements(parser_dir)
+    code_path = write_parser_code(parser_dir, code)
+
     repo.update_parser_code_path(parser_id, str(code_path), session=session)
     log.info(
         "[parsers.generator] создан парсер id=%s name=%s path=%s targets=%s",
@@ -209,6 +255,7 @@ async def generate_parser(
     return {
         "parser_id": parser_id,
         "code_path": str(code_path),
+        "venv_path": str(venv_path),
         "name": name,
         "targets": targets,
     }

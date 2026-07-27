@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,6 +34,27 @@ def catalog_dir(tmp_path, monkeypatch) -> Path:
     return d
 
 
+@pytest.fixture(autouse=True)
+def _mock_venv_and_pip(monkeypatch):
+    """venv и pip install в тестах не делаем — медленно."""
+    async def fake_create_venv(dir_path: Path) -> Path:
+        venv_path = dir_path / "venv"
+        venv_path.mkdir(parents=True, exist_ok=True)
+        py = venv_path / ("Scripts" if sys.platform == "win32" else "bin") / (
+            "python.exe" if sys.platform == "win32" else "python"
+        )
+        py.parent.mkdir(parents=True, exist_ok=True)
+        py.write_text("")
+        return venv_path
+
+    monkeypatch.setattr(generator, "create_venv", fake_create_venv)
+
+    async def fake_install_requirements(*a, **kw):
+        return None
+
+    monkeypatch.setattr(generator, "install_requirements", fake_install_requirements)
+
+
 def _llm_mock(code: str = VALID_SPIDER_CODE):
     msg = MagicMock()
     msg.content = code
@@ -49,13 +71,16 @@ async def test_generate_saves_to_catalog(session, workspace_id, catalog_dir):
         llm=_llm_mock(), session=session,
     )
     assert result["parser_id"] > 0
-    path = Path(result["code_path"])
-    assert path.parent == catalog_dir
-    assert path.name.startswith(f"parser_{result['parser_id']}_")
-    assert "scrapy" in path.read_text(encoding="utf-8").lower()
+    code_path = Path(result["code_path"])
+    parser_dir = code_path.parent
+    assert parser_dir.parent == catalog_dir
+    assert parser_dir.name.startswith(f"parser_{result['parser_id']}_")
+    assert code_path.name == "parser.py"
+    assert (parser_dir / "requirements.txt").exists()
+    assert "scrapy" in code_path.read_text(encoding="utf-8").lower()
 
     row = repo.get_parser(result["parser_id"], session=session)
-    assert row["code_path"] == result["code_path"]
+    assert row["code_path"] == str(code_path)
     assert row["created_by"] == "test-user"
     assert json.loads(row["source_keys"]) == ["bank-example.ru/deposits"]
     cfg = json.loads(row["config"])
