@@ -254,3 +254,76 @@ async def ingest_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("daily ingest loop failed: %s", e)
             await asyncio.sleep(300)
+
+
+# ── Сторож ключевой ставки ───────────────────────────────────────────────────
+# Ставка меняется 8 раз в год, но именно в эти дни аудитор на неё и смотрит.
+# 27.07.2026: ЦБ снизил 14.25 → 14.00 с понедельника, но в 07:00 SOAP ещё отдавал
+# пятничное значение. Оно закэшировалось и вмёрзло в выпуск дня — на главной весь
+# день висело «Ставка 14.25%» и посчитанный от неё спред «−0.75 пп» вместо
+# верных «−0.50 пп». Перечитать было некому: выпуск собирается раз в сутки.
+#
+# Сторож раз в час сверяет ставку с ЦБ и, заметив новое значение, пересобирает
+# ровно те секции, которые от неё зависят: tariff_moves (снимок ставки, только
+# SQL) и headline (текст и спред, один быстрый вызов модели). Остальные секции
+# не трогаем — в них ставки нет, а лишняя пересборка перетирает выпуск.
+KEYRATE_EVERY_S = int(os.getenv("KEYRATE_WATCH_EVERY_S", "3600"))
+KEYRATE_SECTIONS = ("tariff_moves", "headline")
+_keyrate_tick: datetime | None = None
+
+
+def _known_key_rate() -> tuple[str, float] | None:
+    """Ставка, на которой построен текущий выпуск (снимок в tariff_moves)."""
+    from sqlalchemy import text as _t
+    try:
+        with db.session() as s:
+            row = s.execute(_t("""
+                SELECT payload->'key_rate'->>'current',
+                       payload->'key_rate'->>'as_of'
+                  FROM daily_digest
+                 WHERE digest_date = current_date AND section = 'tariff_moves'
+            """)).first()
+    except Exception:  # noqa: BLE001
+        return None
+    if not row or row[0] is None:
+        return None
+    try:
+        return (row[1] or ""), float(row[0])
+    except (TypeError, ValueError):
+        return None
+
+
+async def keyrate_background_loop():
+    """Раз в час: не изменил ли ЦБ ставку. Изменил → пересобрать зависящие секции."""
+    from .news import fetch_key_rate
+    await asyncio.sleep(180)          # даём приложению подняться
+    log.info("сторож ключевой ставки: раз в %d с", KEYRATE_EVERY_S)
+    global _keyrate_tick
+    while True:
+        try:
+            await asyncio.sleep(KEYRATE_EVERY_S)
+            _keyrate_tick = datetime.now(MSK)
+            live = await asyncio.to_thread(fetch_key_rate)
+            if not live or live.get("current") is None:
+                continue
+            known = await asyncio.to_thread(_known_key_rate)
+            if known is None:
+                continue              # выпуска ещё нет — соберётся штатно
+            known_as_of, known_rate = known
+            if abs(float(live["current"]) - known_rate) < 0.001:
+                continue              # ставка та же — ничего не делаем
+            log.info("ЦБ изменил ставку: %s (на %s) → %s (на %s), пересобираю %s",
+                     known_rate, known_as_of, live["current"], live.get("as_of"),
+                     ", ".join(KEYRATE_SECTIONS))
+            await ensure_digest("keyrate", force=True,
+                                sections=list(KEYRATE_SECTIONS))
+        except Exception as e:  # noqa: BLE001
+            log.warning("сторож ключевой ставки: %s", e)
+            await asyncio.sleep(300)
+
+
+def keyrate_watch_status() -> dict:
+    """Для витрины «Источники»: сторож жив и когда последний раз просыпался."""
+    return {"every_s": KEYRATE_EVERY_S,
+            "last_tick": _keyrate_tick.isoformat() if _keyrate_tick else None,
+            "alive": _keyrate_tick is not None}

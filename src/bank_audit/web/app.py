@@ -49,12 +49,16 @@ async def lifespan(app: FastAPI):
     #  • digest_background_loop — выпуск «Обзора» в 07:00 МСК (+catch-up)
     #  • ingest_background_loop — автосбор тарифов в 05:00 МСК (+quality)
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
-    from ..digest.scheduler import digest_background_loop, ingest_background_loop
+    from ..digest.scheduler import (digest_background_loop, ingest_background_loop,
+                                    keyrate_background_loop)
     from ..rag import ingest_queue
     tasks = [
         asyncio.create_task(alerts_background_loop()),
         asyncio.create_task(digest_background_loop()),
         asyncio.create_task(ingest_background_loop()),
+        # сторож ключевой ставки: выпуск собирается раз в сутки, а ЦБ меняет
+        # ставку в свой срок — без сторожа новое значение ждало бы утра
+        asyncio.create_task(keyrate_background_loop()),
     ]
     # Воркеры индексации базы знаний. Раньше на каждую прочитанную агентом
     # страницу поднимался свой daemon-поток: при остановке контейнера их

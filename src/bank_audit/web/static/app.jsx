@@ -1695,7 +1695,10 @@ function OverviewPage(){
             {tm.totals&&tm.totals.last_ok_run&&<> · тарифы на {fmtDateMsk(tm.totals.last_ok_run)}</>}
             {runsAll>0&&<> · <a href="#sources" className={runsOk<runsAll?"warn":""}>источники {runsOk}/{runsAll}</a></>}
             {kpi.total&&<> · корпус {fmtNum(kpi.total)} жалоб за 90 дн</>}
-            {kr.current!=null&&<> · ключевая ЦБ {kr.current}%</>}
+            {/* дата обязательна: голое число не отличить от вчерашнего, а ставка
+                вступает в силу конкретным днём — аудитор на неё ссылается */}
+            {kr.current!=null&&<> · ключевая ЦБ {kr.current}%
+              {kr.as_of&&<> с {fmtDateMsk(kr.as_of)}</>}</>}
             {ST("headline")==="stale"&&<span className="bf-stale"> · ⚠ сводка за {sec.headline.stale_from}</span>}
             {ST("headline")==="degraded"&&<span className="bf-stale"> · ⚠ ИИ недоступен, сигналы детерминированные</span>}
           </p>

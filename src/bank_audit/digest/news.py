@@ -35,6 +35,14 @@ _TIMEOUT = float(os.getenv("DIGEST_FETCH_TIMEOUT_S", "10"))
 MAX_ITEMS = int(os.getenv("DIGEST_NEWS_MAX_ITEMS", "40"))
 _PER_SOURCE_CAP = 10          # чтобы cbr_news (100 items) не вытеснил остальных
 _WINDOW_H = int(os.getenv("DIGEST_NEWS_WINDOW_H", "48"))
+# Окно для регуляторных источников (ЦБ, ФАС). 96 ч = пятничное решение доживает
+# до утра понедельника: ЦБ объявляет ставку в пятницу ~13:30, а работает аудитор
+# в будни. Шире общего окна намеренно — таких новостей мало, и они не вытесняют
+# ленту (на источник всё равно действует _PER_SOURCE_CAP).
+_WINDOW_REG_H = int(os.getenv("DIGEST_NEWS_WINDOW_REG_H", "96"))
+# Сколько мест в пуле держим за регуляторикой, чтобы её не вытеснил свежий шум.
+# 10 из 40 — четверть: заметно, но лента остаётся живой.
+_REG_QUOTA = int(os.getenv("DIGEST_NEWS_REG_QUOTA", "10"))
 
 # tag — подсказка LLM для группировки (regulator/incident/scheme/market/search)
 # tag — грубая категория (для группировки на UI). dimension — измерение аудита
@@ -43,7 +51,11 @@ _WINDOW_H = int(os.getenv("DIGEST_NEWS_WINDOW_H", "48"))
 # (httpx-проба 2026-07-21): ФАС/бизнес/взыскание через Telegram-web (t.me/s/, парсится
 # существующим _parse_tg). Гос-RSS (fas.gov.ru/rospotrebnadzor) чистого фида не отдают.
 SOURCES: list[dict] = [
-    {"key": "cbr_press",     "kind": "rss", "url": "https://www.cbr.ru/rss/RssPress",     "tag": "regulator", "dimension": "compliance"},
+    # decisions=True — лента, где ЦБ объявляет РЕШЕНИЯ (ставка, санкции), в отличие
+    # от cbr_news, куда ежедневно валится операционная текучка («Депозиты банков
+    # в Банке России», «Условия РЕПО»). Решения редки и ценны, текучка свежа и
+    # бесполезна — без этого различия текучка вытесняла решение по ключевой ставке.
+    {"key": "cbr_press",     "kind": "rss", "url": "https://www.cbr.ru/rss/RssPress",     "tag": "regulator", "dimension": "compliance", "decisions": True},
     {"key": "cbr_news",      "kind": "rss", "url": "https://www.cbr.ru/rss/RssNews",      "tag": "regulator", "dimension": "compliance"},
     {"key": "banki_news",    "kind": "rss", "url": "https://www.banki.ru/xml/news.rss",   "tag": "market",    "dimension": "market"},
     {"key": "frankmedia",    "kind": "rss", "url": "https://frankmedia.ru/feed",          "tag": "market",    "dimension": "market"},
@@ -177,6 +189,7 @@ def _parse_rss_fallback(xml_text: str, src: dict) -> list[dict]:
                       "ts": _parse_dt(_xml_field(block, "pubDate")),
                       "snippet": _strip_html(_xml_field(block, "description"))[:300],
                       "source": src["key"], "tag": src["tag"],
+                      "decisions": bool(src.get("decisions")),
                       "dimension": src.get("dimension"),
                       "image": _rss_image_re(block)})
     return items
@@ -203,6 +216,7 @@ def _parse_rss(xml_text: str, src: dict) -> list[dict]:
         snippet = _strip_html(it.findtext("description") or "")[:300]
         items.append({"title": title[:220], "url": link, "ts": _parse_dt(raw_dt),
                       "snippet": snippet, "source": src["key"], "tag": src["tag"],
+                      "decisions": bool(src.get("decisions")),
                       "dimension": src.get("dimension"),
                       "image": _rss_image(it) or _img_from_html(desc_raw)})
     return items
@@ -233,6 +247,7 @@ def _parse_tg(html_text: str, src: dict) -> list[dict]:
         items.append({"title": title, "url": f"https://t.me/{post_m.group(1)}",
                       "ts": ts, "snippet": text[:400],
                       "source": src["key"], "tag": src["tag"],
+                      "decisions": bool(src.get("decisions")),
                       "dimension": src.get("dimension"),
                       "image": html.unescape(img_m.group(1)) if img_m else None})
     return items
@@ -325,22 +340,40 @@ def fetch_all() -> tuple[list[dict], list[dict]]:
     items += s_items
     statuses.append(s_status)
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=_WINDOW_H)
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(hours=_WINDOW_H)
+    cutoff_reg = now_utc - timedelta(hours=_WINDOW_REG_H)
     fresh = []
     for it in items:
         ts = it.get("ts")
         if ts is not None:
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
-            if ts < cutoff:
+            # Регуляторике окно шире. Совет директоров ЦБ заседает по пятницам
+            # около 13:30, и при общем окне 48 ч решение по ключевой ставке к
+            # утру понедельника уже старше окна — выпадало ровно в тот день,
+            # когда новая ставка вступает в силу (проверено 27.07.2026: 67.8 ч).
+            if ts < (cutoff_reg if it.get("tag") == "regulator" else cutoff):
                 continue
             it["ts"] = ts
         fresh.append(it)
 
     fresh = _dedupe(fresh)
-    fresh.sort(key=lambda x: x["ts"] or datetime.min.replace(tzinfo=timezone.utc),
-               reverse=True)
-    fresh = fresh[:MAX_ITEMS]
+    _newest = lambda x: x["ts"] or datetime.min.replace(tzinfo=timezone.utc)  # noqa: E731
+    fresh.sort(key=_newest, reverse=True)
+
+    # Отсечка по MAX_ITEMS шла чисто по свежести — и решение ЦБ по ставке,
+    # объявленное в пятницу, к понедельнику проигрывало сегодняшнему шуму и не
+    # доходило до модели, хотя окно проходило (проверено 27.07.2026: 68 ч при
+    # окне 96 ч). Держим для регуляторики квоту: такие новости редки, но это
+    # именно то, ради чего аудитор открывает сводку.
+    reg = sorted((i for i in fresh if i.get("tag") == "regulator"),
+                 key=lambda i: (bool(i.get("decisions")), _newest(i)),
+                 reverse=True)[:_REG_QUOTA]
+    taken = {id(i) for i in reg}          # по тождеству: одинаковые словари ≠ один элемент
+    rest = [i for i in fresh if id(i) not in taken]
+    fresh = sorted(reg + rest[:max(0, MAX_ITEMS - len(reg))],
+                   key=_newest, reverse=True)
     for it in fresh:                       # ts → isoformat для jsonb
         it["title"] = _EMOJI_RE.sub("", it["title"]).strip() or it["title"]
         it["ts"] = it["ts"].isoformat() if it.get("ts") else None
@@ -369,9 +402,64 @@ _KEYRATE_ENVELOPE = """<?xml version="1.0" encoding="utf-8"?>
 _KR_ROW_RE = re.compile(r"<DT>([^<]+)</DT>\s*<Rate>([^<]+)</Rate>", re.IGNORECASE)
 
 
+# Ставка меняется 8 раз в год, но именно в эти дни она и нужна. Час — компромисс:
+# ЦБ не нагружаем (24 запроса в сутки), а отставание экрана не превышает часа.
+# Раньше здесь было 6 часов, и 27.07.2026 это стоило суток неверной ставки на
+# главной: в 07:00 ЦБ ещё отдавал вчерашнее значение, а перечитать было некому.
+_KEYRATE_TTL_S = int(os.getenv("KEYRATE_TTL_S", "3600"))
+
+
+def _store_key_rate(points: list[dict]) -> None:
+    """Сохраняет точки в cbr_key_rate. Ошибка не должна ломать выдачу ставки."""
+    if not points:
+        return
+    try:
+        from .. import db
+        from sqlalchemy import text as _t
+        with db.session() as s:
+            for p in points:
+                s.execute(_t("""
+                    INSERT INTO cbr_key_rate(rate_date, rate) VALUES (:d, :r)
+                    ON CONFLICT (rate_date) DO UPDATE
+                       SET rate = EXCLUDED.rate, fetched_at = now()
+                """), {"d": p["date"], "r": p["rate"]})
+    except Exception as e:  # noqa: BLE001
+        log.info("не сохранил историю ставки: %s", e)
+
+
+def key_rate_from_db(months: int = 6) -> dict | None:
+    """Последнее известное значение из БД — на случай, когда ЦБ недоступен.
+
+    Раньше при недоступности SOAP функция возвращала None, и экран оставался
+    вовсе без ставки. Показать последнее известное значение с честной датой
+    полезнее, чем пустое место.
+    """
+    try:
+        from .. import db
+        from sqlalchemy import text as _t
+        with db.session() as s:
+            rows = s.execute(_t("""
+                SELECT rate_date::text d, rate::float r FROM cbr_key_rate
+                 WHERE rate_date <= current_date
+                   AND rate_date > current_date - make_interval(months => :m)
+                 ORDER BY rate_date
+            """), {"m": months}).all()
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    points = [{"date": d, "rate": r} for d, r in rows]
+    return {"current": points[-1]["rate"], "as_of": points[-1]["date"],
+            "points": points, "from_db": True}
+
+
 def fetch_key_rate(months: int = 6) -> dict | None:
     """История ключевой ставки за N месяцев: {current, points:[{date,rate}]}.
-    Кэш 6 ч (rag_cache) — ставка меняется в дни решений СД ЦБ."""
+
+    Порядок: свежий кэш → SOAP ЦБ (с записью истории в БД) → последнее
+    известное из БД. Последняя ступень важна: без неё недоступность ЦБ
+    оставляла экран вообще без ставки.
+    """
     from ..rag import cache as rag_cache
     cached = rag_cache.get("digest_keyrate", months)
     if cached:
@@ -379,14 +467,18 @@ def fetch_key_rate(months: int = 6) -> dict | None:
     now = datetime.now(timezone.utc)
     frm = (now - timedelta(days=months * 31)).strftime("%Y-%m-%d")
     to = now.strftime("%Y-%m-%d")
-    r = httpx.post(_KEYRATE_URL,
-                   content=_KEYRATE_ENVELOPE.format(frm=frm, to=to).encode(),
-                   timeout=_TIMEOUT,
-                   headers={"Content-Type": "text/xml; charset=utf-8",
-                            "SOAPAction": '"http://web.cbr.ru/KeyRate"',
-                            "User-Agent": _UA})
+    try:
+        r = httpx.post(_KEYRATE_URL,
+                       content=_KEYRATE_ENVELOPE.format(frm=frm, to=to).encode(),
+                       timeout=_TIMEOUT,
+                       headers={"Content-Type": "text/xml; charset=utf-8",
+                                "SOAPAction": '"http://web.cbr.ru/KeyRate"',
+                                "User-Agent": _UA})
+    except Exception as e:  # noqa: BLE001 — сеть до ЦБ не должна ронять выдачу
+        log.info("ЦБ недоступен (%s), беру ставку из БД", type(e).__name__)
+        return key_rate_from_db(months)
     if r.status_code != 200:
-        return None
+        return key_rate_from_db(months)
     points = []
     for dt_raw, rate_raw in _KR_ROW_RE.findall(r.text):
         try:
@@ -395,11 +487,12 @@ def fetch_key_rate(months: int = 6) -> dict | None:
         except ValueError:
             continue
     if not points:
-        return None
+        return key_rate_from_db(months)
     points.sort(key=lambda p: p["date"])
+    _store_key_rate(points)
     out = {"current": points[-1]["rate"], "as_of": points[-1]["date"], "points": points}
     try:
-        rag_cache.put("digest_keyrate", out, 6 * 3600, months)
+        rag_cache.put("digest_keyrate", out, _KEYRATE_TTL_S, months)
     except Exception:  # noqa: BLE001
         pass
     return out

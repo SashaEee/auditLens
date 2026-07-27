@@ -209,8 +209,8 @@ async def tariff_moves(day: date) -> dict:
         if v is not None and not isinstance(v, str):
             out["totals"][k] = v.isoformat()
 
-    # ключевая ставка — отдельный best-effort fetch (SOAP ЦБ, кэш 6 ч);
-    # недоступна → секция живёт без неё
+    # ключевая ставка — отдельный best-effort fetch (SOAP ЦБ, кэш 1 ч, история
+    # в cbr_key_rate); ЦБ недоступен → берётся последнее известное из БД
     try:
         from .news import fetch_key_rate
         out["key_rate"] = await asyncio.to_thread(fetch_key_rate)
