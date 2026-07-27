@@ -24,6 +24,7 @@ SELECTORS = {
 _RATE_RE = re.compile(r"(\d{1,2}[.,]\d{1,2}|\d{1,2})\s*%")
 _AMOUNT_RE = re.compile(r"([\d\s]+)")
 _PERIOD_RE = re.compile(r"(\d+)\s*(мес|год|лет)", re.IGNORECASE)
+_PERIOD_RANGE_RE = re.compile(r"от\s*(\d+)\s*до\s*(\d+)\s*(мес|год|лет)", re.IGNORECASE)
 
 def _to_decimal(s: str | None) -> Decimal | None:
     if not s: return None
@@ -46,6 +47,12 @@ def _extract_amount(s: str | None) -> tuple[Decimal | None, Decimal | None]:
 
 def _extract_term_months(s: str | None) -> tuple[int | None, int | None]:
     if not s: return (None, None)
+    rng = _PERIOD_RANGE_RE.search(s)
+    if rng:
+        lo, hi = int(rng.group(1)), int(rng.group(2))
+        if rng.group(3).lower().startswith(("год", "лет")):
+            lo, hi = lo * 12, hi * 12
+        return (min(lo, hi), max(lo, hi))
     months = []
     for num, unit in _PERIOD_RE.findall(s):
         v = int(num)
@@ -77,7 +84,11 @@ class SravniAggregatorAdapter(SourceAdapter):
     def parse_offers(self, html: bytes, target: dict[str, Any]) -> Iterable[OfferDraft]:
         tree = HTMLParser(html.decode("utf-8", errors="ignore"))
         category = target.get("category", "deposit")
+        seen_cards: set[int] = set()
         for card in tree.css(SELECTORS["card"]):
+            if card.mem_id in seen_cards:
+                continue
+            seen_cards.add(card.mem_id)
             bank = (card.css_first(SELECTORS["bank_name"]) or None)
             title = (card.css_first(SELECTORS["title"]) or None)
             rate_node = card.css_first(SELECTORS["rate"])

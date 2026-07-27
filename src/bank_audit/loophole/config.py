@@ -17,6 +17,7 @@ class LoopholeSettings:
     nanobot_model: str = ""
     nanobot_max_iterations: int = 20
     trust_min: float = 0.5
+    raw_text_max_chars: int = 200_000
     workspace_dir: Path = field(default_factory=lambda: ROOT / "workspace" / "loophole")
 
     @classmethod
@@ -30,6 +31,7 @@ class LoopholeSettings:
             nanobot_model=os.getenv("LOOPHOLE_NANOBOT_MODEL", ""),
             nanobot_max_iterations=int(os.getenv("LOOPHOLE_NANOBOT_MAX_ITERATIONS", "20")),
             trust_min=float(os.getenv("LOOPHOLE_TRUST_MIN", "0.5")),
+            raw_text_max_chars=int(os.getenv("LOOPHOLE_RAW_TEXT_MAX_CHARS", "200000")),
             workspace_dir=Path(ws_env).resolve() if ws_env else (ROOT / "workspace" / "loophole"),
         )
 

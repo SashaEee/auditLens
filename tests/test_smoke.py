@@ -1,7 +1,7 @@
 """Минимальные smoke-тесты без сети и БД: парсеры разбирают фикстуры."""
 from bank_audit.sources.sravni_aggregator import SravniAggregatorAdapter, SELECTORS
 
-FIXTURE = b"""
+FIXTURE = """
 <html><body>
   <article data-qa="product-card">
     <h3 data-qa="bank-name">Сбербанк</h3>
@@ -12,7 +12,7 @@ FIXTURE = b"""
     <a href="/vklady/sber/luchshij/"></a>
   </article>
 </body></html>
-"""
+""".encode("utf-8")
 
 def test_aggregator_parses_card(tmp_path):
     a = SravniAggregatorAdapter(settings=None, raw_store=None)

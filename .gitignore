@@ -97,3 +97,9 @@ src/bank_audit/loophole/parsers/catalog/
 
 .superpowers
 docs/superpowers
+_bmad*
+.agents
+.bmad-loop/runs/
+.bmad-loop/cache/
+.bmad-loop/policy.toml
+.bmad-loop

@@ -104,7 +104,7 @@ def add_doc(
             text(
                 f"INSERT INTO {schema.T_KB_DOC} "
                 "(source, content, embedding) "
-                "VALUES (:src, :content, :emb::vector) RETURNING doc_id"
+                "VALUES (:src, :content, CAST(:emb AS vector)) RETURNING doc_id"
             ),
             {"source": source, "content": content, "emb": emb_str},
         ).scalar_one()

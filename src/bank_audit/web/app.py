@@ -36,14 +36,29 @@ async def lifespan(app: FastAPI):
     #  • alerts_background_loop — раз в 30 мин quality_flag → email
     #  • digest_background_loop — выпуск «Обзора» в 07:00 МСК (+catch-up)
     #  • ingest_background_loop — автосбор тарифов в 05:00 МСК (+quality)
+    #  • parser_scheduler_loop — cron-запуск парсеров + self-healing (PARSER_SCHEDULER_ENABLED)
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
     from ..digest.scheduler import digest_background_loop, ingest_background_loop
+    from ..loophole.parsers.scheduler import (
+        ENABLED as PARSER_SCHED_ENABLED,
+        parser_scheduler_loop,
+    )
+    from ..loophole import repository as loophole_repo
     tasks = [
         asyncio.create_task(alerts_background_loop()),
         asyncio.create_task(digest_background_loop()),
         asyncio.create_task(ingest_background_loop()),
     ]
+    if PARSER_SCHED_ENABLED:
+        tasks.append(asyncio.create_task(parser_scheduler_loop()))
     try:
+        # Reaper: зависшие 'running' запуски после рестарта → 'error'.
+        # Best-effort: недоступная БД/неприменённые миграции не должны
+        # ронять старт приложения.
+        try:
+            await asyncio.to_thread(loophole_repo.reap_stale_runs)
+        except Exception:
+            log.warning("[lifespan] reap_stale_runs failed", exc_info=True)
         yield
     finally:
         for t in tasks:

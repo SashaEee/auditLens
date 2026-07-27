@@ -107,3 +107,74 @@ async def test_tool_executes_return_strings(monkeypatch):
     assert isinstance(await db_query_tool.execute("SELECT 1"), str)
     assert isinstance(await table_load_tool.execute(), str)
     assert isinstance(await export_tool.execute([{"id": 1}]), str)
+
+
+# ── heal-tools: fetch_target / patch_parser ─────────────────────────────────
+def test_fetch_target_success(monkeypatch):
+    from bank_audit.loophole.chat import tools_nanobot
+
+    class _FakeCollector:
+        def __init__(self, **kw):
+            pass
+
+        def fetch(self, url):
+            return 200, b"<html>page content</html>"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(tools_nanobot, "_http_collector", lambda **kw: _FakeCollector())
+    out = tools_nanobot.fetch_target("https://a.ru")
+    assert out["ok"] is True
+    assert out["status"] == 200
+    assert "page content" in out["excerpt"]
+
+
+def test_fetch_target_failure(monkeypatch):
+    from bank_audit.loophole.chat import tools_nanobot
+
+    class _FailCollector:
+        def __init__(self, **kw):
+            pass
+
+        def fetch(self, url):
+            raise RuntimeError("connection refused")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(tools_nanobot, "_http_collector", lambda **kw: _FailCollector())
+    out = tools_nanobot.fetch_target("https://down.ru")
+    assert out["ok"] is False
+    assert "connection refused" in out["error"]
+
+
+def test_patch_parser_validates_syntax(session):
+    from bank_audit.loophole.chat import tools_nanobot
+    from bank_audit.loophole import repository as repo
+
+    wid = repo.create_workspace("u", "ws", session=session)
+    pid = repo.save_parser(wid, "p", "", session=session)
+    out = tools_nanobot.patch_parser(pid, "def broken(:", session=session)
+    assert out["patched"] is False
+    assert "syntax" in out["error"]
+
+
+def test_patch_parser_writes_atomically(session, tmp_path):
+    from bank_audit.loophole.chat import tools_nanobot
+    from bank_audit.loophole import repository as repo
+
+    code = tmp_path / "parser_1_x.py"
+    code.write_text("OLD = 1\n", encoding="utf-8")
+    wid = repo.create_workspace("u", "ws", session=session)
+    pid = repo.save_parser(wid, "p", str(code), session=session)
+    out = tools_nanobot.patch_parser(pid, "NEW = 2\n", session=session)
+    assert out["patched"] is True
+    assert code.read_text(encoding="utf-8") == "NEW = 2\n"
+    assert not (tmp_path / "parser_1_x.py.tmp").exists()
+
+
+def test_patch_parser_not_found(session):
+    from bank_audit.loophole.chat import tools_nanobot
+    out = tools_nanobot.patch_parser(9999, "x = 1\n", session=session)
+    assert out["patched"] is False

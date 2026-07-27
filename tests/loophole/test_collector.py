@@ -120,3 +120,35 @@ async def test_collect_once_seeds_if_empty(session):
         max_per_keyword=1,
     )
     assert n >= 1
+
+
+@pytest.mark.asyncio
+async def test_collect_once_saves_full_content(session):
+    """Коллектор сохраняет полный текст страницы (не excerpt) + статус контента."""
+    kw_mod.seed_keywords(session=session)
+    kws = repo.list_keywords(session=session)
+    for k in kws[1:]:
+        repo.set_keyword_active(k["keyword_id"], False, session=session)
+
+    results = [
+        {"title": "лазейка", "url": "https://example.ru/full",
+         "snippet": "короткий сниппет", "domain": "example.ru"},
+    ]
+    settings = LoopholeSettings(trust_min=0.0)
+    await collector.collect_once(
+        settings=settings,
+        llm=_llm_mock({"is_loophole": True, "confidence": 0.9, "reason": "ок"}),
+        session=session,
+        search_impl=_search_impl_factory(results),
+        fetch_impl=_fetch_impl_factory(
+            text="полный текст страницы, заметно длиннее сниппета"
+        ),
+    )
+    row = session.execute(
+        __import__("sqlalchemy").text(
+            "SELECT raw_text, content_status, raw_text_len FROM loophole_record LIMIT 1"
+        )
+    ).mappings().first()
+    assert "полный текст страницы" in (row["raw_text"] or "")
+    assert row["content_status"] == "full"
+    assert row["raw_text_len"] == len(row["raw_text"])

@@ -75,12 +75,12 @@ def test_migration_011_path_constant_defined():
 
 
 def test_apply_migration_executes_all_migrations():
-    """apply_migration должна выполнять все миграции (010 + 011 + 014)."""
+    """apply_migration должна выполнять все миграции (012 + 013 + 014 + 015 + 016)."""
     from unittest.mock import MagicMock
 
     session = MagicMock()
     db_schema.apply_migration(session)
-    assert session.execute.call_count == 3
+    assert session.execute.call_count == 5
     texts = [str(call.args[0].text) for call in session.execute.call_args_list]
     assert any("loophole_record" in t for t in texts), "миграция 010 не выполнена"
     assert any("loophole_agent_task" in t for t in texts), "миграция 011 не выполнена"

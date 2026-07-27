@@ -38,6 +38,41 @@ def test_create_nanobot_registers_custom_tools():
         Path(config_path).unlink(missing_ok=True)
 
 
+def _find_type_arrays(node, path=""):
+    """Рекурсивно ищет ``type``-массивы в JSON Schema (Gemini их отклоняет)."""
+    bad = []
+    if isinstance(node, dict):
+        if isinstance(node.get("type"), list):
+            bad.append((path, node["type"]))
+        for key, value in node.items():
+            bad.extend(_find_type_arrays(value, f"{path}.{key}"))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            bad.extend(_find_type_arrays(value, f"{path}[{i}]"))
+    return bad
+
+
+def test_create_nanobot_tool_schemas_gemini_compatible():
+    """Gemini отклоняет ``type`` как массив (['string','null']):
+    proto-поле не repeating. Все схемы tools должны быть схлопнуты."""
+    from bank_audit.loophole.chat.tools_nanobot import NANOBOT_HEAL_TOOLS
+
+    bot, config_path = create_nanobot(extra_tools=NANOBOT_HEAL_TOOLS)
+    try:
+        bad = []
+        for definition in bot._loop.tools.get_definitions():
+            name = (definition.get("function") or {}).get("name")
+            for path, types in _find_type_arrays(definition):
+                bad.append(f"{name}{path}: {types}")
+        assert not bad, f"type-массивы в схемах tools: {bad}"
+    finally:
+        import asyncio
+        from pathlib import Path
+
+        asyncio.run(bot.aclose())
+        Path(config_path).unlink(missing_ok=True)
+
+
 def test_create_nanobot_respects_custom_model():
     bot, config_path = create_nanobot(model="gpt-4o")
     try:

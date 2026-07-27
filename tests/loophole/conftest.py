@@ -52,11 +52,16 @@ CREATE TABLE loophole_record (
     bank_slug     TEXT,
     keyword       TEXT,
     raw_text      TEXT,
+    content_status TEXT DEFAULT 'legacy',
+    raw_text_len   INTEGER,
+    raw_text_truncated INTEGER DEFAULT 0,
     is_loophole   INTEGER,
     verdict_confidence REAL,
     verdict_reason TEXT,
     verdict_model TEXT,
     classified_at TEXT,
+    parser_id     INTEGER,
+    text_sha256   TEXT,
     status        TEXT DEFAULT 'new'
 );
 CREATE INDEX idx_lr_sha ON loophole_record(sha256);
@@ -114,6 +119,39 @@ CREATE TABLE loophole_kb_example (
     created_at    TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_lkbe_record ON loophole_kb_example(record_id);
+
+CREATE TABLE loophole_parser (
+    parser_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id   INTEGER,
+    name           TEXT,
+    code_path      TEXT,
+    status         TEXT DEFAULT 'created',
+    config         TEXT,
+    created_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_run_at    TEXT,
+    created_by     TEXT,
+    last_edited_by TEXT,
+    cron_expr      TEXT,
+    auto_enabled   INTEGER DEFAULT 0,
+    next_run_at    TEXT,
+    source_keys    TEXT,
+    heal_attempts  INTEGER DEFAULT 0
+);
+
+CREATE TABLE loophole_parser_run (
+    run_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    parser_id    INTEGER,
+    run_trigger  TEXT,
+    status       TEXT,
+    started_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    finished_at  TEXT,
+    items_found  INTEGER DEFAULT 0,
+    items_new    INTEGER DEFAULT 0,
+    items_dup    INTEGER DEFAULT 0,
+    error_text   TEXT,
+    log_tail     TEXT,
+    heal_report  TEXT
+);
 """
 
 

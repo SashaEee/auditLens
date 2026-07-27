@@ -101,7 +101,7 @@ def get_parser(parser_id: int, *, session: Any = None) -> dict | None:
 
 
 def delete_parser(parser_id: int, *, session: Any = None) -> bool:
-    """Удаляет код-файл и запись из БД (если парсер не running).
+    """Удаляет код-файл, директорию парсера и запись из БД.
 
     Возвращает True если удалено, False если парсер running или не найден.
     """
@@ -118,11 +118,20 @@ def delete_parser(parser_id: int, *, session: Any = None) -> bool:
             path.unlink(missing_ok=True)
         except Exception as e:
             log.warning("[parsers.registry] не удалось удалить файл %s: %s", code_path, e)
-        # Удаляем родительскую директорию парсера целиком.
+        # Удаляем родительскую директорию парсера целиком, но только если она
+        # лежит внутри общего каталога парсеров (защита от относительных путей).
         parser_dir = path.parent
         if parser_dir.name.startswith("parser_"):
             try:
-                shutil.rmtree(parser_dir, ignore_errors=True)
+                from .generator import CATALOG_DIR
+
+                if parser_dir.is_relative_to(CATALOG_DIR):
+                    shutil.rmtree(parser_dir, ignore_errors=True)
+                else:
+                    log.warning(
+                        "[parsers.registry] parser_dir %s вне каталога %s, пропускаем удаление",
+                        parser_dir, CATALOG_DIR,
+                    )
             except Exception as e:
                 log.warning("[parsers.registry] не удалось удалить директорию %s: %s", parser_dir, e)
     # Удаляем запись из БД напрямую (в repository нет delete_parser).

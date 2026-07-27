@@ -31,6 +31,11 @@ function LoopholeApp() {
   // Выделение строк
   const [selected, setSelected] = useState(new Set());
 
+  // ── Полный контент записей (ленивая подгрузка) ──────────────────────────
+  const [expanded, setExpanded] = useState(new Set());      // record_id с развёрнутым контентом
+  const [contentCache, setContentCache] = useState({});     // {id: {loading, data, error}}
+  const [fullView, setFullView] = useState(new Set());      // record_id в режиме «развернуть полностью»
+
   // ── Ручная маркировка вердиктов ───────────────────────────────────────────
   const [verdictModal, setVerdictModal] = useState(null); // {record} | null
   const [markComment, setMarkComment] = useState("");
@@ -52,6 +57,7 @@ function LoopholeApp() {
   const [pendingQuestions, setPendingQuestions] = useState(null); // null | array
   const [pendingQuery, setPendingQuery] = useState("");           // исходный запрос, вызвавший clarify
   const [answersByQ, setAnswersByQ] = useState({});        // {qid: {selected:[], other:""}}
+  const [clarifySubmitting, setClarifySubmitting] = useState(false); // идёт /clarify/answer
   const [toolEvents, setToolEvents] = useState([]);        // badges tool_call/tool_result
 
   // ── Парсеры ───────────────────────────────────────────────────────────────
@@ -60,6 +66,17 @@ function LoopholeApp() {
   const [newParserQuery, setNewParserQuery] = useState("");
   const [parsersBusy, setParsersBusy] = useState(false);
   const [parserError, setParserError] = useState("");
+  const [editParserId, setEditParserId] = useState(null);     // id открытой формы
+  const [editForm, setEditForm] = useState({name: "", cron_expr: "", auto_enabled: false});
+  const [editError, setEditError] = useState("");
+  const [logPanel, setLogPanel] = useState(null);  // {parserId, runId, lines, done}
+  const logRef = useRef(null);
+  const logEsRef = useRef(null);  // активный EventSource live-лога
+
+  // Закрытие live-лога при размонтировании (EventSource иначе живёт вечно).
+  useEffect(() => () => {
+    if (logEsRef.current) logEsRef.current.close();
+  }, []);
 
   // Создаём workspace при старте.
   useEffect(() => {
@@ -102,8 +119,8 @@ function LoopholeApp() {
 
   useEffect(() => { loadRecords(); }, [loadRecords]);
 
-  // Сброс выделения при смене фильтров.
-  useEffect(() => { setSelected(new Set()); }, [fText, fBanks, fFrom, fTo, fVerdict, fStatus]);
+  // Сброс выделения и развёрнутых строк при смене фильтров.
+  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo, fVerdict, fStatus]);
 
   // ── Сортировка на клиенте ──────────────────────────────────────────────────
   const sortedRecords = useMemo(() => {
@@ -208,13 +225,12 @@ function LoopholeApp() {
 
   // ── Парсеры: список + CRUD + polling ───────────────────────────────────────
   const loadParsers = useCallback(async () => {
-    if (!workspaceId) return;
     try {
-      const r = await fetch(`${API}/parsers?workspace_id=${workspaceId}`);
+      const r = await fetch(`${API}/parsers`);
       const d = await r.json();
       setParsers(d.parsers || []);
     } catch {}
-  }, [workspaceId]);
+  }, []);
 
   useEffect(() => {
     if (!parsersOpen) return;
@@ -222,6 +238,11 @@ function LoopholeApp() {
     const t = setInterval(loadParsers, 5000);
     return () => clearInterval(t);
   }, [parsersOpen, loadParsers]);
+
+  // Автопрокрутка live-лога к последней строке.
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logPanel && logPanel.lines.length]);
 
   // URL ресурса или группа мессенджера — обязательны для создания парсера.
   const TARGET_RE = /(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\/\S+|https?:\/\/\S+|@[A-Za-z][A-Za-z0-9_]{4,31}\b/i;
@@ -243,8 +264,18 @@ function LoopholeApp() {
       });
       const d = await r.json();
       if (!r.ok) {
-        setParserError(d.detail || `Ошибка создания парсера (HTTP ${r.status})`);
+        const det = d.detail;
+        if (r.status === 409 && det && det.conflict_with) {
+          setParserError(
+            `Такой источник уже парсит «${det.conflict_with.name || det.conflict_with.parser_id}» (id ${det.conflict_with.parser_id})`
+          );
+        } else {
+          setParserError(typeof det === "string" ? det : `Ошибка создания парсера (HTTP ${r.status})`);
+        }
         return null;
+      }
+      if (d.warnings && d.warnings.length) {
+        showToast(`Частичное пересечение источников с парсером id ${d.warnings[0].conflict_with}`);
       }
       setNewParserQuery("");
       await loadParsers();
@@ -257,10 +288,111 @@ function LoopholeApp() {
     }
   };
 
+  // Закрывает активный EventSource live-лога (если есть).
+  const closeLogEs = () => {
+    if (logEsRef.current) {
+      logEsRef.current.close();
+      logEsRef.current = null;
+    }
+  };
+
+  const openLog = (parserId, runId) => {
+    setLogPanel({parserId, runId, lines: [], done: null});
+    closeLogEs();  // закрываем предыдущее соединение, чтобы не плодить утечки
+    const es = new EventSource(`${API}/parsers/${parserId}/log/stream?run_id=${runId}`);
+    logEsRef.current = es;
+    es.addEventListener("log", (e) => {
+      setLogPanel(prev => prev && prev.runId === runId
+        ? {...prev, lines: [...prev.lines, e.data]} : prev);
+    });
+    es.addEventListener("done", (e) => {
+      es.close();
+      logEsRef.current = null;
+      let payload = null;
+      try { payload = JSON.parse(e.data); } catch {}
+      setLogPanel(prev => prev && prev.runId === runId ? {...prev, done: payload} : prev);
+      loadParsers();
+    });
+    es.onerror = () => { es.close(); logEsRef.current = null; };
+  };
+
   const startParser = async (pid) => {
     setParsersBusy(true);
     try {
-      await fetch(`${API}/parsers/${pid}/run`, {method: "POST"});
+      const r = await fetch(`${API}/parsers/${pid}/run`, {method: "POST"});
+      const d = await r.json();
+      if (r.ok && d.run_id) {
+        openLog(pid, d.run_id);
+      } else {
+        showToast(typeof d.detail === "string" ? d.detail : "Запуск невозможен");
+      }
+      await loadParsers();
+    } finally {
+      setParsersBusy(false);
+    }
+  };
+
+  const healParser = async (pid) => {
+    setParsersBusy(true);
+    try {
+      const r = await fetch(`${API}/parsers/${pid}/heal`, {method: "POST"});
+      const d = await r.json();
+      if (r.ok && d.heal_run_id) {
+        openLog(pid, d.heal_run_id);
+      } else {
+        showToast(typeof d.detail === "string" ? d.detail : "Восстановление недоступно");
+      }
+    } finally {
+      setParsersBusy(false);
+    }
+  };
+
+  const openEdit = (p) => {
+    setEditParserId(p.parser_id);
+    setEditForm({
+      name: p.name || "",
+      cron_expr: p.cron_expr || "",
+      auto_enabled: !!p.auto_enabled,
+    });
+    setEditError("");
+  };
+
+  const saveEdit = async () => {
+    setParsersBusy(true);
+    setEditError("");
+    try {
+      const r = await fetch(`${API}/parsers/${editParserId}`, {
+        method: "PATCH", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          name: editForm.name,
+          cron_expr: editForm.cron_expr,   // "" очищает расписание (бэкенд → NULL)
+          auto_enabled: editForm.auto_enabled,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setEditError(typeof d.detail === "string" ? d.detail : `Ошибка сохранения (HTTP ${r.status})`);
+        return;
+      }
+      setEditParserId(null);
+      await loadParsers();
+    } finally {
+      setParsersBusy(false);
+    }
+  };
+
+  const deleteParser = async (pid) => {
+    if (!window.confirm("Удалить парсер? Код и запись будут удалены.")) return;
+    setParsersBusy(true);
+    try {
+      const r = await fetch(`${API}/parsers/${pid}`, {method: "DELETE"});
+      if (!r.ok) {
+        const d = await r.json();
+        showToast(typeof d.detail === "string" ? d.detail : "Удаление невозможно");
+      } else if (logPanel && logPanel.parserId === pid) {
+        closeLogEs();
+        setLogPanel(null);
+      }
       await loadParsers();
     } finally {
       setParsersBusy(false);
@@ -275,13 +407,6 @@ function LoopholeApp() {
     } finally {
       setParsersBusy(false);
     }
-  };
-
-  const statusParser = async (pid) => {
-    try {
-      const r = await fetch(`${API}/parsers/${pid}/status`);
-      return await r.json();
-    } catch (e) { return null; }
   };
 
   // ── Чат: отправка + полный SSE-парсер ──────────────────────────────────────
@@ -472,9 +597,9 @@ function LoopholeApp() {
   };
 
   const submitAnswers = async () => {
-    if (!pendingQuestions || !pendingQuestions.length) return;
+    if (!pendingQuestions || !pendingQuestions.length || clarifySubmitting) return;
+    setClarifySubmitting(true);
     const q = pendingQuestions[0];
-    const ans = answersByQ[q.id] || {selected: [], other: ""};
     const answersPayload = pendingQuestions.map(pq => {
       const a = answersByQ[pq.id] || {selected: [], other: ""};
       return {
@@ -483,6 +608,10 @@ function LoopholeApp() {
         other: a.other,
       };
     });
+    // Закрываем окно ДО запроса: /clarify/answer ждёт LLM до ~70с, иначе
+    // пользователь видит «зависшую» карточку без какой-либо реакции.
+    setPendingQuestions(null);
+    setAnswersByQ({});
     try {
       const r = await fetch(`${API}/clarify/answer`, {
         method: "POST", headers: {"Content-Type": "application/json"},
@@ -492,8 +621,6 @@ function LoopholeApp() {
       });
       const d = await r.json();
       const enriched = (d && d.enriched_question) || (typeof d === "string" ? d : "");
-      setPendingQuestions(null);
-      setAnswersByQ({});
       if (enriched) {
         // clarify уже пройден → просим бэкенд пропустить гейт (не зацикливаться)
         // отправляем обогащённый вопрос как новое сообщение в чат
@@ -501,6 +628,8 @@ function LoopholeApp() {
       }
     } catch (e) {
       setChat(prev => [...prev, {role: "assistant", content: "Ошибка отправки ответа: " + String(e)}]);
+    } finally {
+      setClarifySubmitting(false);
     }
   };
 
@@ -518,6 +647,82 @@ function LoopholeApp() {
     if (r.is_loophole === true) return "лазейка";
     if (r.is_loophole === false) return "не лазейка";
     return "не размечено";
+  };
+
+  // Ленивая загрузка полного контента записи (кэш — без повторных запросов).
+  const toggleContent = (id) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    if (contentCache[id]) return;
+    setContentCache(prev => ({...prev, [id]: {loading: true, data: null, error: null}}));
+    fetch(`${API}/records/${id}/content`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+      .then(data => setContentCache(prev => ({...prev, [id]: {loading: false, data, error: null}})))
+      .catch(e => setContentCache(prev => ({...prev, [id]: {loading: false, data: null, error: String(e)}})));
+  };
+
+  const toggleFullView = (id) => {
+    setFullView(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // Бейдж статуса контента в строке таблицы.
+  const contentBadge = (r) => {
+    if (r.content_status === "full")
+      return <span className="lp-content-badge" title="Полный контент сохранён">📄</span>;
+    if (r.content_status === "truncated")
+      return <span className="lp-content-badge" title="Контент обрезан по лимиту">✂</span>;
+    if (r.content_status === "fetch_failed" || r.content_status === "empty")
+      return <span className="lp-content-badge" title="Контент не загружен">⚠</span>;
+    return null; // legacy/нет данных
+  };
+
+  // Развёрнутый блок контента под строкой.
+  const renderRecordContent = (r) => {
+    const entry = contentCache[r.record_id];
+    if (!entry || entry.loading) {
+      return <div className="lp-content-block lp-content-loading">Загрузка контента…</div>;
+    }
+    if (entry.error) {
+      return <div className="lp-content-block lp-content-error">Ошибка загрузки: {entry.error}</div>;
+    }
+    const d = entry.data || {};
+    const sizeKb = d.raw_text_len ? Math.ceil(d.raw_text_len / 1024) : null;
+    const failed = d.content_status === "fetch_failed" || d.content_status === "empty";
+    const showFull = fullView.has(r.record_id);
+    return (
+      <div className="lp-content-block" onClick={e => e.stopPropagation()}>
+        <div className="lp-content-head">
+          {d.content_status === "full" && <span className="lp-content-badge">📄 полный</span>}
+          {d.content_status === "truncated" && <span className="lp-content-badge">✂ обрезан{sizeKb ? ` до ${sizeKb} КБ` : ""}</span>}
+          {failed && <span className="lp-content-badge">⚠ контент не загружен</span>}
+          {sizeKb != null && <span className="lp-content-meta">{sizeKb} КБ</span>}
+          {r.url && <a href={r.url} target="_blank" rel="noopener noreferrer">открыть источник ↗</a>}
+          {d.fetched_at && <span className="lp-content-meta">загружено {fmtDate(d.fetched_at)}</span>}
+        </div>
+        <div className={"lp-content-body" + (showFull ? " lp-content-body-full" : "")}>
+          {d.raw_text || "—"}
+        </div>
+        {failed && (
+          <div className="lp-content-note">
+            Полный контент не удалось загрузить; показан сохранённый фрагмент.
+            Контент станет доступен после backfill.
+          </div>
+        )}
+        {!failed && (d.raw_text_len || 0) > 2000 && (
+          <button type="button" className="lp-btn lp-btn-sm lp-content-more"
+                  onClick={() => toggleFullView(r.record_id)}>
+            {showFull ? "Свернуть" : "Развернуть полностью"}
+          </button>
+        )}
+      </div>
+    );
   };
 
   const sortArrow = (key) => sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
@@ -681,50 +886,66 @@ function LoopholeApp() {
               </thead>
               <tbody>
                 {sortedRecords.map(r => (
-                  <tr key={r.record_id}
-                      className={selected.has(r.record_id) ? "lp-row-sel" : ""}
-                      onClick={() => toggleRow(r.record_id)}>
-                    <td className="lp-col-check" onClick={e => e.stopPropagation()}>
-                      <input type="checkbox" checked={selected.has(r.record_id)}
-                             onChange={() => toggleRow(r.record_id)}/>
-                    </td>
-                    <td className="lp-cell-title">
-                      <div className="lp-title-text">{r.title || r.snippet || "—"}</div>
-                      {r.verdict_reason && (
-                        <div className="lp-reason" title={r.verdict_reason}>
-                          {r.verdict_reason}
+                  <React.Fragment key={r.record_id}>
+                    <tr className={selected.has(r.record_id) ? "lp-row-sel" : ""}
+                        onClick={() => toggleRow(r.record_id)}>
+                      <td className="lp-col-check" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={selected.has(r.record_id)}
+                               onChange={() => toggleRow(r.record_id)}/>
+                      </td>
+                      <td className="lp-cell-title">
+                        <div className="lp-title-text">
+                          <button type="button" className="lp-content-toggle"
+                                  title={expanded.has(r.record_id) ? "Скрыть контент" : "Показать контент"}
+                                  onClick={e => { e.stopPropagation(); toggleContent(r.record_id); }}>
+                            {expanded.has(r.record_id) ? "▾" : "▸"}
+                          </button>
+                          {r.title || r.snippet || "—"}
+                          {contentBadge(r)}
                         </div>
-                      )}
-                    </td>
-                    <td>{r.bank_slug || "—"}</td>
-                    <td>{fmtNum(r.verdict_confidence)}</td>
-                    <td>{fmtNum(r.trust_score)}</td>
-                    <td onClick={e => e.stopPropagation()}>
-                      <button type="button"
-                              className={"lp-verdict-chip " +
-                                (r.is_loophole === true ? "lp-verdict-chip-bad"
-                               : r.is_loophole === false ? "lp-verdict-chip-ok"
-                               : "lp-verdict-chip-na")}
-                              title="Изменить вердикт"
-                              onClick={() => { setMarkComment(""); setVerdictModal({record: r}); }}>
-                        <span className="lp-verdict-dot"></span>
-                        {verdictLabel(r)}
-                      </button>
-                      {r.verdict_model === "manual" && (
-                        <span className="lp-manual-mark"
-                              title="Вердикт проставлен вручную">ручная</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="lp-status">{r.status || "—"}</span>
-                    </td>
-                    <td className="lp-cell-date">{fmtDate(r.collected_at)}</td>
-                    <td className="lp-cell-url">
-                      {r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer"
-                                   onClick={e => e.stopPropagation()}>открыть ↗</a>
-                             : "—"}
-                    </td>
-                  </tr>
+                        {r.verdict_reason && (
+                          <div className="lp-reason" title={r.verdict_reason}>
+                            {r.verdict_reason}
+                          </div>
+                        )}
+                      </td>
+                      <td>{r.bank_slug || "—"}</td>
+                      <td>{fmtNum(r.verdict_confidence)}</td>
+                      <td>{fmtNum(r.trust_score)}</td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <button type="button"
+                                className={"lp-verdict-chip " +
+                                  (r.is_loophole === true ? "lp-verdict-chip-bad"
+                                 : r.is_loophole === false ? "lp-verdict-chip-ok"
+                                 : "lp-verdict-chip-na")}
+                                title="Изменить вердикт"
+                                onClick={() => { setMarkComment(""); setVerdictModal({record: r}); }}>
+                          <span className="lp-verdict-dot"></span>
+                          {verdictLabel(r)}
+                        </button>
+                        {r.verdict_model === "manual" && (
+                          <span className="lp-manual-mark"
+                                title="Вердикт проставлен вручную">ручная</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="lp-status">{r.status || "—"}</span>
+                      </td>
+                      <td className="lp-cell-date">{fmtDate(r.collected_at)}</td>
+                      <td className="lp-cell-url">
+                        {r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer"
+                                     onClick={e => e.stopPropagation()}>открыть ↗</a>
+                               : "—"}
+                      </td>
+                    </tr>
+                    {expanded.has(r.record_id) && (
+                      <tr className="lp-content-row">
+                        <td colSpan={9}>
+                          {renderRecordContent(r)}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -870,8 +1091,9 @@ function LoopholeApp() {
                 )}
                 <div className="lp-question-actions">
                   <button className="lp-btn lp-btn-primary lp-btn-sm"
+                          disabled={clarifySubmitting}
                           onClick={submitAnswers}>
-                    Ответить
+                    {clarifySubmitting ? "Отправляю…" : "Ответить"}
                   </button>
                 </div>
               </div>
@@ -935,49 +1157,127 @@ function LoopholeApp() {
               {parsers.length === 0 && (
                 <div className="lp-empty-state">Парсеры не созданы.</div>
               )}
-              {parsers.map(p => (
-                <div key={p.parser_id} className="lp-parser-row">
-                  <div className="lp-parser-info">
-                    <div className="lp-parser-name">{p.name || p.code_path || p.parser_id}</div>
-                    {(p.targets && p.targets.length > 0) && (
-                      <div className="lp-parser-targets">
-                        {p.targets.map((t, i) => {
-                          const href = /^https?:\/\//i.test(t) ? t
-                            : (t.startsWith("@") ? `https://t.me/${t.slice(1)}` : `https://${t}`);
-                          return (
-                            <a key={i} href={href} target="_blank" rel="noopener noreferrer">{t}</a>
-                          );
-                        })}
+              {parsers.map(p => {
+                const st = p.last_run && p.last_run.status;
+                const fmtDt = (v) => {
+                  if (!v) return null;
+                  const d = new Date(v);
+                  return isNaN(d) ? String(v) : d.toLocaleString("ru-RU");
+                };
+                return (
+                  <div key={p.parser_id} className="lp-parser-row">
+                    <div className="lp-parser-info">
+                      <div className="lp-parser-name">
+                        {p.name || `Парсер #${p.parser_id}`}
+                        {p.is_running && <span className="lp-badge lp-badge-run">⏳ running</span>}
+                        {!p.is_running && st === "success" && <span className="lp-badge lp-badge-ok">✅ успех</span>}
+                        {!p.is_running && st === "error" && <span className="lp-badge lp-badge-err">❌ ошибка</span>}
+                        {!p.is_running && st === "empty" && <span className="lp-badge lp-badge-empty">⚪ 0 результатов</span>}
+                        {p.needs_attention && <span className="lp-badge lp-badge-attn">🔧 требует вмешательства</span>}
                       </div>
-                    )}
-                    <div className="lp-parser-meta">
-                      <code>{p.code_path}</code>
-                      {p.pid != null && <span> · pid: {p.pid}</span>}
-                      {p.running && <span className="lp-parser-running"> · running</span>}
+                      {(p.targets && p.targets.length > 0) && (
+                        <div className="lp-parser-targets">
+                          {p.targets.map((t, i) => {
+                            const href = /^https?:\/\//i.test(t) ? t
+                              : (t.startsWith("@") ? `https://t.me/${t.slice(1)}` : `https://${t}`);
+                            return <a key={i} href={href} target="_blank" rel="noopener noreferrer">{t}</a>;
+                          })}
+                        </div>
+                      )}
+                      <div className="lp-parser-meta">
+                        <span>источников в БД: {p.records_count ?? 0}</span>
+                        {p.last_run && p.last_run.finished_at && (
+                          <span> · последний запуск: {fmtDt(p.last_run.finished_at)}</span>
+                        )}
+                        {p.last_run && st === "success" && (
+                          <span> · новых: {p.last_run.items_new}</span>
+                        )}
+                        {p.auto_enabled && p.next_run_at && (
+                          <span> · след. запуск: {fmtDt(p.next_run_at)}</span>
+                        )}
+                        {p.created_by && <span> · автор: {p.created_by}</span>}
+                      </div>
+
+                      {editParserId === p.parser_id && (
+                        <div className="lp-parser-edit">
+                          <label>Название
+                            <input type="text" value={editForm.name}
+                                   onChange={e => setEditForm({...editForm, name: e.target.value})} />
+                          </label>
+                          <label>Расписание (cron)
+                            <input type="text" placeholder="0 5 * * *"
+                                   value={editForm.cron_expr}
+                                   disabled={!editForm.auto_enabled}
+                                   onChange={e => setEditForm({...editForm, cron_expr: e.target.value})} />
+                          </label>
+                          <label className="lp-parser-edit-toggle">
+                            <input type="checkbox" checked={editForm.auto_enabled}
+                                   onChange={e => setEditForm({...editForm, auto_enabled: e.target.checked})} />
+                            Автозапуск включён
+                          </label>
+                          {editError && <div className="lp-parser-error">{editError}</div>}
+                          <div className="lp-parser-edit-actions">
+                            <button className="lp-btn lp-btn-sm lp-btn-primary"
+                                    onClick={saveEdit} disabled={parsersBusy}>
+                              Сохранить
+                            </button>
+                            <button className="lp-btn lp-btn-sm"
+                                    onClick={() => setEditParserId(null)}>
+                              Отмена
+                            </button>
+                            <button className="lp-btn lp-btn-sm"
+                                    onClick={() => healParser(p.parser_id)}
+                                    disabled={parsersBusy}>
+                              🔧 Анализ и восстановление
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="lp-parser-actions">
+                      <button className="lp-btn lp-btn-sm"
+                              onClick={() => startParser(p.parser_id)}
+                              disabled={parsersBusy || p.is_running}>
+                        ▶ Запустить
+                      </button>
+                      <button className="lp-btn lp-btn-sm"
+                              onClick={() => stopParser(p.parser_id)}
+                              disabled={parsersBusy || !p.is_running}>
+                        ■
+                      </button>
+                      <button className="lp-btn lp-btn-sm"
+                              onClick={() => openEdit(p)}
+                              disabled={parsersBusy}>
+                        Редактировать
+                      </button>
+                      <button className="lp-btn lp-btn-sm"
+                              onClick={() => deleteParser(p.parser_id)}
+                              disabled={parsersBusy || p.is_running}>
+                        Удалить
+                      </button>
                     </div>
                   </div>
-                  <div className="lp-parser-actions">
-                    <button className="lp-btn lp-btn-sm"
-                            onClick={() => startParser(p.parser_id)}
-                            disabled={parsersBusy || p.running}>
-                      ▶ Запустить
-                    </button>
-                    <button className="lp-btn lp-btn-sm"
-                            onClick={() => stopParser(p.parser_id)}
-                            disabled={parsersBusy || !p.running}>
-                      ■ Остановить
-                    </button>
-                    <button className="lp-btn lp-btn-sm"
-                            onClick={async () => {
-                              const s = await statusParser(p.parser_id);
-                              if (s) alert(JSON.stringify(s, null, 2));
-                            }}>
-                      Статус
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+
+            {logPanel && (
+              <div className="lp-log-panel">
+                <div className="lp-log-header">
+                  <span>Лог запуска #{logPanel.runId}</span>
+                  {logPanel.done && (
+                    <span className="lp-log-done">
+                      {logPanel.done.status}
+                      {logPanel.done.items_new != null && ` · новых: ${logPanel.done.items_new}`}
+                    </span>
+                  )}
+                  <button className="lp-btn lp-btn-sm" onClick={() => { closeLogEs(); setLogPanel(null); }}>✕</button>
+                </div>
+                <pre className="lp-log-body" ref={logRef}>
+                  {logPanel.lines.join("\n")}
+                </pre>
+              </div>
+            )}
           </div>
         </div>
       )}

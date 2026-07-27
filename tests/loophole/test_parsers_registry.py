@@ -45,7 +45,9 @@ def test_list_catalog_needs_attention(session, parser_id):
     assert row["needs_attention"] is True
 
 
-def test_delete_parser_removes_directory(session, parser_id, tmp_path):
+def test_delete_parser_removes_directory(session, parser_id, tmp_path, monkeypatch):
+    from bank_audit.loophole.parsers import generator
+    monkeypatch.setattr(generator, "CATALOG_DIR", tmp_path)
     parser_dir = tmp_path / f"parser_{parser_id}_p1"
     parser_dir.mkdir()
     (parser_dir / "parser.py").write_text("code")
@@ -53,6 +55,20 @@ def test_delete_parser_removes_directory(session, parser_id, tmp_path):
     repo.update_parser_code_path(parser_id, str(parser_dir / "parser.py"), session=session)
     assert registry.delete_parser(parser_id, session=session) is True
     assert not parser_dir.exists()
+    assert repo.get_parser(parser_id, session=session) is None
+
+
+def test_delete_parser_skips_outside_directory(session, parser_id, tmp_path, monkeypatch):
+    from bank_audit.loophole.parsers import generator
+    monkeypatch.setattr(generator, "CATALOG_DIR", tmp_path)
+    parser_dir = tmp_path / ".." / f"parser_{parser_id}_p1"
+    parser_dir.mkdir(parents=True, exist_ok=True)
+    (parser_dir / "parser.py").write_text("code")
+    code_path = str(parser_dir.resolve() / "parser.py")
+    repo.update_parser_code_path(parser_id, code_path, session=session)
+    assert registry.delete_parser(parser_id, session=session) is True
+    # Директория вне каталога — должна остаться.
+    assert parser_dir.exists()
     assert repo.get_parser(parser_id, session=session) is None
 
 

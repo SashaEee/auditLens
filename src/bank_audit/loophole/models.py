@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 class LoopholeRecord(BaseModel):
     record_id: int | None = None
     sha256: str
+    parser_id: int | None = None
+    text_sha256: str | None = None
     title: str | None = None
     url: str | None = None
     snippet: str | None = None
@@ -20,6 +22,9 @@ class LoopholeRecord(BaseModel):
     bank_slug: str | None = None
     keyword: str | None = None
     raw_text: str | None = None
+    content_status: str | None = None
+    raw_text_len: int | None = None
+    raw_text_truncated: bool = False
     is_loophole: bool | None = None
     verdict_confidence: float | None = None
     verdict_reason: str | None = None

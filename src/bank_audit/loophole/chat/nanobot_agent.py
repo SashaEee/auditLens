@@ -67,6 +67,35 @@ def build_nanobot_config(
     }
 
 
+def _collapse_type_arrays(node: Any) -> Any:
+    """Схлопывает ``"type": [X, "null"]`` → ``"type": X`` рекурсивно.
+
+    Gemini (OpenAI-совместимый эндпоинт) отклоняет массив в ``type``:
+    ``Proto field is not repeating``. Встроенные tools nanobot
+    (complete_goal, long_task) генерируют nullable-схемы с type-массивом.
+    """
+    if isinstance(node, dict):
+        t = node.get("type")
+        if isinstance(t, list):
+            node["type"] = next((x for x in t if x != "null"), "string")
+        for value in node.values():
+            _collapse_type_arrays(value)
+    elif isinstance(node, list):
+        for value in node:
+            _collapse_type_arrays(value)
+    return node
+
+
+def _patch_registry_for_gemini(registry: Any) -> None:
+    """Оборачивает ``get_definitions`` санитизацией type-массивов."""
+    original = registry.get_definitions
+
+    def sanitized() -> list[dict]:
+        return [_collapse_type_arrays(d) for d in original()]
+
+    registry.get_definitions = sanitized
+
+
 def create_nanobot(
     *,
     model: str | None = None,
@@ -74,11 +103,13 @@ def create_nanobot(
     temperature: float = 0.3,
     max_iterations: int | None = None,
     workspace: str | Path | None = None,
+    extra_tools: tuple = (),
 ) -> Any:
     """Создаёт Nanobot, отключает встроенные tools, регистрирует кастомные.
 
-    Возвращает экземпляр `nanobot.Nanobot` и путь к временному config-файлу,
-    который вызывающая сторона должна удалить по завершении.
+    extra_tools — дополнительные классы tools (например, NANOBOT_HEAL_TOOLS
+    для healer'а). Возвращает экземпляр `nanobot.Nanobot` и путь к временному
+    config-файлу, который вызывающая сторона должна удалить по завершении.
     """
     from nanobot import Nanobot
 
@@ -95,8 +126,9 @@ def create_nanobot(
     ws.mkdir(parents=True, exist_ok=True)
 
     bot = Nanobot.from_config(config_path=config_path, workspace=str(ws))
-    for tool_cls in NANOBOT_TOOLS:
+    for tool_cls in (*NANOBOT_TOOLS, *extra_tools):
         bot._loop.tools.register(tool_cls())
+    _patch_registry_for_gemini(bot._loop.tools)
 
     return bot, config_path
 
