@@ -24,15 +24,26 @@ def add_example(
     description: str,
     *,
     category: str = "general",
+    record_id: int | None = None,
     session: Any = None,
 ) -> int:
-    """Добавляет пример лазейки: эмбеддит description и делегирует в repo."""
-    embedding = embedder.embed_one(description)
+    """Добавляет пример лазейки: эмбеддит description и делегирует в repo.
+
+    record_id связывает пример с записью loophole_record (ручная маркировка).
+    Сбой эмбеддинга не блокирует сохранение: пример сохраняется без embedding,
+    warning в лог (паттерн search_kb_similar).
+    """
+    try:
+        embedding = embedder.embed_one(description)
+    except Exception as exc:
+        log.warning("эмбеддинг примера KB не удался, сохраняем без embedding: %s", exc)
+        embedding = None
     return repo.save_kb_example(
         title,
         description,
         category=category,
         embedding=embedding,
+        record_id=record_id,
         session=session,
     )
 
@@ -93,7 +104,7 @@ def add_doc(
             text(
                 f"INSERT INTO {schema.T_KB_DOC} "
                 "(source, content, embedding) "
-                "VALUES (:src, :content, :emb::vector) RETURNING doc_id"
+                "VALUES (:src, :content, CAST(:emb AS vector)) RETURNING doc_id"
             ),
             {"source": source, "content": content, "emb": emb_str},
         ).scalar_one()

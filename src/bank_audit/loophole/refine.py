@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
@@ -39,9 +38,9 @@ def _default_llm():
 
 def _build_messages(loopholes: list[dict], existing: list[str]) -> list:
     user = (
-        f"Известные лазейки:\n"
+        "Известные лазейки:\n"
         + "\n".join(
-            f"- {l.get('title') or ''}: {l.get('snippet') or ''}" for l in loopholes[:20]
+            f"- {lh.get('title') or ''}: {lh.get('snippet') or ''}" for lh in loopholes[:20]
         )
         + f"\n\nУже известные ключевые слова: {', '.join(existing) or '(нет)'}\n\n"
         "Предложи новые ключевые слова в формате JSON."

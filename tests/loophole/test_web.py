@@ -4,13 +4,11 @@
 """
 from __future__ import annotations
 
-import json
-from contextlib import contextmanager
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -23,9 +21,7 @@ from bank_audit.hashing import sha256_text
 from fastapi import FastAPI
 
 
-SCHEMA_SQL = open(
-    __import__("pathlib").Path(__file__).parent / "test_repository.py"
-).read().split('SCHEMA_SQL = """')[1].split('"""')[0]
+from .conftest import SCHEMA_SQL
 
 
 @pytest.fixture
@@ -121,6 +117,28 @@ def test_export_csv(client, app_session):
     assert "лазейка" in r.text
 
 
+def test_export_csv_only_selected(client, app_session):
+    """Выгружаются ТОЛЬКО переданные ids, а не все записи таблицы."""
+    rec1 = LoopholeRecord(sha256=sha256_text("s1"), title="лазейка выделенная", bank_slug="sberbank")
+    rec2 = LoopholeRecord(sha256=sha256_text("s2"), title="лазейка невыделенная", bank_slug="vtb")
+    rid1 = repo.insert_record(rec1, session=app_session)
+    repo.insert_record(rec2, session=app_session)
+    r = client.post("/api/loophole/export", json={"records": [rid1], "format": "csv"})
+    assert r.status_code == 200
+    assert "лазейка выделенная" in r.text
+    assert "лазейка невыделенная" not in r.text
+
+
+def test_export_over_limit(client):
+    """Более 10000 ids за раз — отказ с понятной ошибкой."""
+    r = client.post(
+        "/api/loophole/export",
+        json={"records": list(range(10001)), "format": "csv"},
+    )
+    assert r.status_code == 400
+    assert "10000" in r.json()["detail"]
+
+
 def test_search_logs_action(client, app_session):
     client.post("/api/loophole/search", json={"query_text": "тест", "bank_slugs": []})
     actions = repo.list_actions("test-user", session=app_session)
@@ -186,26 +204,36 @@ def test_table_load_with_record(client, app_session):
 
 
 def test_parsers_list_empty(client, monkeypatch):
-    """GET /parsers — пустой список через мок registry."""
+    """GET /parsers — пустой список через мок registry (общий каталог)."""
     from bank_audit.loophole.parsers import registry as parser_registry
 
-    monkeypatch.setattr(parser_registry, "list_parsers", lambda ws, session=None: [])
+    monkeypatch.setattr(parser_registry, "list_catalog", lambda session=None: [])
     r = client.get("/api/loophole/parsers", params={"workspace_id": 1})
     assert r.status_code == 200
     assert r.json() == {"parsers": []}
 
 
 def test_parsers_create(client, monkeypatch):
-    """POST /parsers — мок generator.generate_parser."""
+    """POST /parsers — мок generator.generate_parser (запрос с URL-таргетом)."""
     from bank_audit.loophole.parsers import generator as parser_generator
 
     async def fake_gen(user_id, workspace_id, query, *, llm=None, session=None):
-        return {"parser_id": 42, "code_path": "/tmp/p.py", "name": "parser"}
+        return {
+            "parser_id": 42,
+            "code_path": "/tmp/p.py",
+            "name": "parser",
+            "validation_run_id": 99,
+            "targets": ["https://b.ru/y"],
+        }
 
     monkeypatch.setattr(parser_generator, "generate_parser", fake_gen)
-    r = client.post("/api/loophole/parsers", json={"workspace_id": 1, "query": "комиссии"})
+    r = client.post("/api/loophole/parsers", json={
+        "workspace_id": 1, "query": "комиссии https://b.ru/y",
+    })
     assert r.status_code == 200
     assert r.json()["parser_id"] == 42
+    assert r.json()["validation_run_id"] == 99
+    assert r.json()["targets"] == ["https://b.ru/y"]
 
 
 def test_parser_run_not_found(client, monkeypatch):
@@ -216,23 +244,13 @@ def test_parser_run_not_found(client, monkeypatch):
 
 
 def test_parser_run_ok(client, monkeypatch):
-    """POST /parsers/{id}/run — запуск через мок ParserRunner."""
+    """POST /parsers/{id}/run — запуск через мок runner.run, возвращает run_id."""
     from bank_audit.loophole.parsers import runner as runner_mod
 
-    monkeypatch.setattr(repo, "get_parser", lambda pid, session=None: {
-        "parser_id": pid, "code_path": "/tmp/p.py", "workspace_id": 1,
-    })
-
-    class FakeRunner:
-        def __init__(self, *args, **kwargs):
-            pass
-        async def start(self):
-            return 12345
-
-    monkeypatch.setattr(runner_mod, "ParserRunner", FakeRunner)
+    monkeypatch.setattr(runner_mod, "run", AsyncMock(return_value=99))
     r = client.post("/api/loophole/parsers/7/run")
     assert r.status_code == 200
-    assert r.json() == {"parser_id": 7, "pid": 12345}
+    assert r.json() == {"parser_id": 7, "run_id": 99}
 
 
 def test_parser_stop_not_running(client, monkeypatch):
@@ -307,3 +325,104 @@ def test_parser_delete_not_found(client, monkeypatch):
     monkeypatch.setattr(parser_registry, "delete_parser", lambda pid, session=None: False)
     r = client.delete("/api/loophole/parsers/9")
     assert r.status_code == 404
+
+
+# ── Content endpoints ────────────────────────────────────────────────────────
+def test_record_content_ok(client, app_session):
+    rec = LoopholeRecord(sha256=sha256_text("ct1"), title="t", url="https://x.ru",
+                         snippet="s", raw_text="ПОЛНЫЙ ТЕКСТ",
+                         content_status="full", raw_text_len=12,
+                         raw_text_truncated=True)
+    rid = repo.insert_record(rec, session=app_session)
+    r = client.get(f"/api/loophole/records/{rid}/content")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["record_id"] == rid
+    assert d["raw_text"] == "ПОЛНЫЙ ТЕКСТ"
+    assert d["content_status"] == "full"
+    assert d["raw_text_len"] == 12
+    assert d["raw_text_truncated"] is True
+
+
+def test_record_content_404(client):
+    r = client.get("/api/loophole/records/999999/content")
+    assert r.status_code == 404
+
+
+def test_backfill_content_updates_legacy(client, app_session, monkeypatch):
+    from bank_audit.loophole import content_fetch
+
+    rec = LoopholeRecord(sha256=sha256_text("bf1"), title="t",
+                         url="https://x.ru/old", snippet="сниппет",
+                         raw_text="сниппет")  # content_status NULL → очередь
+    rid = repo.insert_record(rec, session=app_session)
+
+    monkeypatch.setattr(
+        content_fetch, "fetch_full_content",
+        lambda url, **kw: content_fetch.FullContent(
+            text="ДОГРУЖЕННЫЙ ПОЛНЫЙ ТЕКСТ", status=content_fetch.STATUS_FULL,
+            length=24, truncated=False),
+    )
+    r = client.post("/api/loophole/records/backfill-content",
+                    json={"limit": 10, "delay_ms": 0})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["processed"] == 1
+    assert d["updated"] == 1
+    assert d["remaining"] == 0
+    row = repo.get_record(rid, session=app_session)
+    assert row["raw_text"] == "ДОГРУЖЕННЫЙ ПОЛНЫЙ ТЕКСТ"
+    assert row["content_status"] == "full"
+
+
+def test_backfill_content_fetch_failed_keeps_text(client, app_session, monkeypatch):
+    from bank_audit.loophole import content_fetch
+
+    rec = LoopholeRecord(sha256=sha256_text("bf2"), title="t",
+                         url="https://x.ru/dead", snippet="важный сниппет",
+                         raw_text="важный сниппет")
+    rid = repo.insert_record(rec, session=app_session)
+
+    monkeypatch.setattr(
+        content_fetch, "fetch_full_content",
+        lambda url, **kw: content_fetch.FullContent(
+            text=None, status=content_fetch.STATUS_FAILED, length=0,
+            truncated=False),
+    )
+    r = client.post("/api/loophole/records/backfill-content",
+                    json={"limit": 10, "delay_ms": 0})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["failed"] == 1
+    assert d["updated"] == 0
+    assert d["remaining"] == 1  # fetch_failed остаётся в очереди на повтор
+    row = repo.get_record(rid, session=app_session)
+    assert row["raw_text"] == "важный сниппет"  # не затёрт (COALESCE)
+    assert row["content_status"] == "fetch_failed"
+
+
+def test_export_csv_contains_content_columns(client, app_session):
+    rec = LoopholeRecord(sha256=sha256_text("csv1"), title="t", url="https://x.ru",
+                         snippet="s", raw_text="ПОЛНЫЙ ТЕКСТ В CSV",
+                         content_status="full", raw_text_len=17)
+    rid = repo.insert_record(rec, session=app_session)
+    r = client.post("/api/loophole/export",
+                    json={"records": [rid], "format": "csv"})
+    assert r.status_code == 200
+    body = r.content.decode("utf-8-sig")
+    header = body.splitlines()[0]
+    assert "content_status" in header
+    assert "raw_text_len" in header
+    assert "raw_text" in header
+    assert "ПОЛНЫЙ ТЕКСТ В CSV" in body
+
+
+def test_export_csv_filtered_contains_content(client, app_session):
+    rec = LoopholeRecord(sha256=sha256_text("csv2"), title="t2",
+                         url="https://x.ru/2", snippet="s2",
+                         raw_text="КОНТЕНТ ФИЛЬТРОВАННОГО CSV",
+                         content_status="full", raw_text_len=25)
+    repo.insert_record(rec, session=app_session)
+    r = client.post("/api/loophole/export/csv", json={})
+    assert r.status_code == 200
+    assert "КОНТЕНТ ФИЛЬТРОВАННОГО CSV" in r.content.decode("utf-8-sig")

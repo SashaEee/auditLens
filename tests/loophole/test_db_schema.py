@@ -78,9 +78,9 @@ def test_migration_is_idempotent_if_not_exists():
 def test_apply_migration_calls_session_execute():
     session = MagicMock()
     db_schema.apply_migration(session)
-    # 010 + 011 — две миграции выполняются идемпотентно.
-    assert session.execute.call_count == 2
-    # Переданы объекты text() с SQL обеих миграций.
+    # 012 + 013 + 014 + 015 + 016 — пять миграций выполняются идемпотентно.
+    assert session.execute.call_count == 5
+    # Переданы объекты text() с SQL миграций.
     texts = [str(call.args[0].text) for call in session.execute.call_args_list]
     assert any("loophole_record" in t for t in texts), "миграция 010 не выполнена"
     assert any("loophole_agent_task" in t for t in texts), "миграция 011 не выполнена"

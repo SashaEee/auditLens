@@ -55,7 +55,7 @@ def test_rss_fallback_direct():
 
 def test_tg_parses_real_fixture():
     """Живой снапшот t.me/s/banksta: каждый пост = data-post + text + time."""
-    html = (FIXTURES / "tg_banksta.html").read_text()
+    html = (FIXTURES / "tg_banksta.html").read_text(encoding="utf-8")
     items = _parse_tg(html, {"key": "tg_banksta", "tag": "incident"})
     assert len(items) >= 8                       # 19 постов минус медиа/короткие
     for it in items:

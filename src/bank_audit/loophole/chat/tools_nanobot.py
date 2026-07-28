@@ -8,8 +8,10 @@ from typing import Any
 
 from sqlalchemy import text
 
+from .. import content_fetch
 from .. import repository as repo
 from ..adapters import fetch_decorator, search_decorator
+from ..config import LoopholeSettings
 from ..models import LoopholeRecord
 from ..pii_mask import mask as pii_mask
 from ...hashing import sha256_text
@@ -202,12 +204,31 @@ def save_loophole(
     trust_score: float = 0.5,
     is_loophole: bool | None = None,
     session: Any = None,
+    settings: LoopholeSettings | None = None,
 ) -> dict:
     """Сохраняет найденную лазейку в таблицу `loophole_record`.
 
-    Дедуп по sha256 (url + snippet). Если запись уже существует — возвращает
-    существующий record_id и `is_new=False`.
+    Точка гарантии полного контента: если агент не передал raw_text (или он
+    короче сниппета) — страница скачивается сервером через content_fetch.
+    Запись сохраняется ВСЕГДА: при fetch_failed — со сниппетом и честным
+    статусом. Дедуп по sha256 (url + snippet): повтор возвращает существующий
+    record_id с is_new=False, контент существующей записи не перезаписывается
+    (догрузка — через /records/backfill-content).
     """
+    settings = settings or LoopholeSettings.load()
+    if raw_text is None or len(raw_text) < len(snippet or ""):
+        content = content_fetch.fetch_full_content(url, settings=settings)
+        if content.text is None:
+            # fetch_failed/empty — сохраняем со сниппетом (старое поведение),
+            # статус оставляем честным для очереди backfill.
+            content = content_fetch.FullContent(
+                text=snippet, status=content.status,
+                length=len(snippet or ""), truncated=False,
+            )
+    else:
+        content = content_fetch.limit_content(
+            raw_text, max_chars=settings.raw_text_max_chars
+        )
     sha = sha256_text(url + "|" + snippet)
     rec = LoopholeRecord(
         sha256=sha,
@@ -218,7 +239,10 @@ def save_loophole(
         trust_score=trust_score,
         bank_slug=bank_slug,
         keyword=keyword,
-        raw_text=raw_text or snippet,
+        raw_text=content.text,
+        content_status=content.status,
+        raw_text_len=content.length,
+        raw_text_truncated=content.truncated,
         is_loophole=is_loophole,
         status="new",
     )
@@ -240,6 +264,54 @@ def save_loophole(
 def refine_export(records: list[dict], *, format: str = "json") -> dict:
     """Подготовка записей к экспорту."""
     return {"format": format, "count": len(records), "records": records}
+
+
+# ── Heal-tools: диагностика и патч парсеров (использует healer) ─────────────
+def _http_collector(**kwargs):
+    """Фабрика HttpCollector (вынесена для моков в тестах)."""
+    from ...collectors.http import HttpCollector
+
+    return HttpCollector(**kwargs)
+
+
+def fetch_target(url: str, *, timeout: float = 20.0) -> dict:
+    """Самостоятельная загрузка источника для диагностики healer'ом.
+
+    Возвращает {url, ok, status?, excerpt?} или {url, ok: False, error}.
+    """
+    c = _http_collector(timeout=timeout, delay_ms=0)
+    try:
+        status, content = c.fetch(url)
+        return {
+            "url": url,
+            "ok": status < 400,
+            "status": status,
+            "excerpt": content[:4000].decode("utf-8", errors="replace"),
+        }
+    except Exception as e:
+        return {"url": url, "ok": False, "error": str(e)}
+    finally:
+        c.close()
+
+
+def patch_parser(parser_id: int, new_code: str, *, session=None) -> dict:
+    """Валидирует (ast.parse) и атомарно заменяет файл кода парсера."""
+    import ast
+
+    try:
+        ast.parse(new_code)
+    except SyntaxError as e:
+        return {"patched": False, "error": f"syntax error: {e}"}
+    from .. import repository as repo
+
+    row = repo.get_parser(parser_id, session=session)
+    if not row or not row.get("code_path"):
+        return {"patched": False, "error": "parser not found"}
+    path = Path(row["code_path"])
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(new_code, encoding="utf-8")
+    tmp.replace(path)
+    return {"patched": True, "code_path": str(path)}
 
 
 # ── Nanobot Tool wrappers ───────────────────────────────────────────────────
@@ -455,6 +527,8 @@ try:
                 "Сохраняет найденную лазейку/проблему в базу данных loophole_record. "
                 "Используй после web_search/web_fetch и extract_loopholes, "
                 "когда нужно запомнить результат для таблицы UI. "
+                "Полный текст страницы сервер скачивает АВТОМАТИЧЕСКИ по url — "
+                "передавать raw_text не нужно, достаточно title/url/snippet. "
                 "Дедуп по sha256; при повторе возвращает существующий record_id."
             )
 
@@ -510,6 +584,69 @@ try:
         async def execute(self, records: list[dict], format: str = "json") -> str:
             return _tool_result(refine_export(records, format=format))
 
+    @tool_parameters({
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "URL источника для проверки"},
+        },
+        "required": ["url"],
+    })
+    class AuditFetchTargetTool(Tool):
+        @property
+        def name(self) -> str:
+            return _tool_name("fetch_target")
+
+        @property
+        def description(self) -> str:
+            return (
+                "Самостоятельно загружает данные из источника парсера (HTTP). "
+                "Возвращает {ok, status, excerpt} — используй, чтобы понять, "
+                "доступен ли источник и как выглядит страница."
+            )
+
+        @property
+        def read_only(self) -> bool:
+            return True
+
+        async def execute(self, url: str) -> str:
+            return _tool_result(fetch_target(url))
+
+    @tool_parameters({
+        "type": "object",
+        "properties": {
+            "parser_id": {"type": "integer", "description": "ID парсера"},
+            "new_code": {
+                "type": "string",
+                "description": "Полный исправленный Python-код парсера",
+            },
+        },
+        "required": ["parser_id", "new_code"],
+    })
+    class AuditPatchParserTool(Tool):
+        @property
+        def name(self) -> str:
+            return _tool_name("patch_parser")
+
+        @property
+        def description(self) -> str:
+            return (
+                "Заменяет код парсера исправленной версией (атомарно, с "
+                "проверкой синтаксиса). Вызывай только после анализа причины "
+                "сбоя и когда источник доступен."
+            )
+
+        @property
+        def read_only(self) -> bool:
+            return False
+
+        async def execute(self, parser_id: int, new_code: str) -> str:
+            return _tool_result(patch_parser(parser_id, new_code))
+
+    NANOBOT_HEAL_TOOLS: tuple[type[Tool], ...] = (
+        AuditFetchTargetTool,
+        AuditPatchParserTool,
+    )
+
     NANOBOT_TOOLS: tuple[type[Tool], ...] = (
         AuditWebSearchTool,
         AuditWebFetchTool,
@@ -521,4 +658,5 @@ try:
     )
 except Exception as _exc:  # pragma: no cover - nanobot optional
     NANOBOT_TOOLS: tuple[type, ...] = ()  # type: ignore[no-redef]
+    NANOBOT_HEAL_TOOLS: tuple[type, ...] = ()  # type: ignore[no-redef]
     log.debug("nanobot tools not available: %s", _exc)

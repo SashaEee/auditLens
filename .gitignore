@@ -91,3 +91,15 @@ diag_*.py
 # отладочный мусор
 debug-*.log
 *TMP*.txt
+
+# Isolated parser runtime artifacts (generated code, venv, results)
+src/bank_audit/loophole/parsers/catalog/
+
+.superpowers
+docs/superpowers
+_bmad*
+.agents
+.bmad-loop/runs/
+.bmad-loop/cache/
+.bmad-loop/policy.toml
+.bmad-loop

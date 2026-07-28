@@ -7,7 +7,7 @@ from bank_audit.loophole import logging_audit
 from bank_audit.loophole import repository as repo
 
 
-from tests.loophole.test_repository import session as sqlite_session  # noqa: E402
+from tests.loophole.conftest import session as sqlite_session  # noqa: E402
 
 
 def test_log_action_stores_fields(sqlite_session):
