@@ -143,9 +143,27 @@ _NEWS_SYSTEM = (
     "НЕ выдумывай фактов сверх текста новости."
 )
 
-_NEWS_GROUPS = (("regulatory", "Регуляторика"), ("incidents", "Инциденты"),
-                ("schemes", "Схемы мошенничества"), ("competitors", "Конкуренты и рынок"),
-                ("rates", "Ставки"))
+# Рубрикатор согласован с аналитиками УВА (фидбек 07.2026): «Сбер» отдельно,
+# ставки/экономика слиты в регуляторику, схемы — в инциденты
+_NEWS_GROUPS = (("sber", "Сбер: продукты и технологии"),
+                ("regulatory", "Регуляторика и экономика"),
+                ("incidents", "Инциденты и безопасность"),
+                ("market", "Рынок и конкуренты"),
+                ("other", "Прочее важное"))
+
+def _news_products(txt: str) -> list[str]:
+    """Продуктовые теги новости (детерминированно, 0 LLM) — чипы на карточке."""
+    from ..web.userdata import _PRODUCT_KEYWORDS
+    return [slug for rx, slug in _PRODUCT_KEYWORDS if rx.search(txt or "")][:2]
+
+
+def _news_pool(items: list[dict]) -> list[dict]:
+    """Полный сырой пул дня — сырьё для персонального ре-ранка («Для вас»).
+    LLM-группы дают ≤12 позиций на всех; персональная сетка ранжирует из всего пула."""
+    return [{"title": it.get("title"), "url": it.get("url"), "domain": it.get("domain"),
+             "source": it.get("source"), "ts": it.get("ts"), "tag": it.get("tag"),
+             "dimension": it.get("dimension"), "image": it.get("image"),
+             "snippet": (it.get("snippet") or "")[:200]} for it in items]
 
 
 async def news(day: date) -> dict:
@@ -163,6 +181,11 @@ async def news(day: date) -> dict:
     user = (
         f"Дата: {today_ru()}. Лента ({len(items)} позиций):\n{listing}\n\n"
         f"Верни СТРОГО JSON без markdown. Допустимые key групп: {group_keys}.\n"
+        "Смысл групп: sber — всё про Сбер (продукты, технологии, сервисы, экосистема); "
+        "regulatory — ЦБ, законы, ключевая ставка, макроэкономика; "
+        "incidents — сбои, утечки, хищения, схемы мошенничества; "
+        "market — конкуренты, их продукты и ставки, движения рынка; "
+        "other — важное аудитору, но не подошедшее выше (используй редко).\n"
         "Пример формата (значения — твои):\n"
         '{"groups":[{"key":"regulatory","items":[{"n":3,'
         '"summary":"1 предложение сути","why":"почему важно аудитору розницы Сбера, '
@@ -188,7 +211,7 @@ async def news(day: date) -> dict:
         for g in (parsed.get("groups") or []):
             key = str(g.get("key") or "").strip()
             if key not in titles:       # модель скопировала альтернативу/мусор
-                key = next((k for k in titles if k in key), "competitors")
+                key = next((k for k in titles if k in key), "market")
             out_items = []
             for gi in (g.get("items") or [])[:4]:
                 try:
@@ -202,7 +225,10 @@ async def news(day: date) -> dict:
                 out_items.append({
                     "title": src["title"], "url": src["url"],
                     "domain": src.get("domain"), "source": src["source"],
-                    "ts": src.get("ts"),
+                    "ts": src.get("ts"), "tag": src.get("tag"),
+                    "image": src.get("image"),
+                    "products": _news_products(
+                        f'{src["title"]} {gi.get("summary") or ""}'),
                     "summary": str(gi.get("summary") or "")[:220],
                     "why": str(gi.get("why") or "")[:200],
                     "severity": sev if sev in ("red", "amber", "green") else "amber",
@@ -212,14 +238,18 @@ async def news(day: date) -> dict:
                                "items": out_items})
         if not groups:
             raise ValueError("LLM вернул пустые группы")
+        _ord = {k: i for i, (k, _) in enumerate(_NEWS_GROUPS)}
+        groups.sort(key=lambda g: _ord.get(g["key"], 99))  # стабильный порядок рубрик
         return {"groups": groups, "sources": statuses, "raw_count": len(items),
+                "pool": _news_pool(items),
                 "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
     except Exception as e:  # noqa: BLE001 — деградация: сырые заголовки без LLM
         log.warning("news digest LLM failed: %s", e)
         return {"groups": [], "sources": statuses, "raw_count": len(items),
                 "items_raw": [{k: it.get(k) for k in
-                               ("title", "url", "domain", "source", "ts", "tag")}
+                               ("title", "url", "domain", "source", "ts", "tag", "image")}
                               for it in items[:15]],
+                "pool": _news_pool(items),
                 "_status": "degraded"}
 
 
@@ -234,9 +264,9 @@ _HEAD_SYSTEM = (
     "бенчмарк и ранний сигнал, НЕ «перейти/закупить у них»). Без эмодзи."
 )
 
-_CAT_RU = {"deposit": "вклады", "savings": "накопительные счета", "credit": "кредиты",
-           "mortgage": "ипотека", "autocredit": "автокредиты", "credit_card": "кредитные карты",
-           "debit_card": "дебетовые карты", "transfers": "переводы"}
+# Раньше здесь жила локальная копия с битыми ключами (autocredit/credit_card
+# вместо auto_loan/card_credit из enum) — LLM получал сырые слаги
+from ..categories import CAT_RU as _CAT_RU
 
 
 def _cat_ru(c: str) -> str:
@@ -347,10 +377,16 @@ def _drill(kind: str, d: dict) -> dict:
         if d.get("geo"):
             p["city"] = d["geo"]["city"]
         return {"page": "reviews", "params": p}
-    if kind in ("mass_move", "tariff_move"):
-        return {"page": "market", "params": {"category": d.get("category")}}
+    if kind == "tariff_move":
+        p = {"category": d.get("category"), "view": "changes",
+             "bank": d.get("bank_slug"), "offer": d.get("offer_id"),
+             "change": d.get("change_id")}
+        return {"page": "market", "params": {k: v for k, v in p.items() if v}}
+    if kind == "mass_move":
+        return {"page": "market",
+                "params": {"category": d.get("category"), "view": "changes"}}
     if kind == "rate_move":
-        return {"page": "market", "params": {}}
+        return {"page": "market", "params": {"view": "changes"}}
     if kind == "news_alert":
         return {"url": d.get("url")}
     return {}
@@ -358,7 +394,7 @@ def _drill(kind: str, d: dict) -> dict:
 
 def _provenance(kind: str, d: dict) -> str:
     if kind == "review_spike":
-        return f'banki.ru · {d.get("week")} жалоб/7дн · базлайн 6 нед + рынок'
+        return f'banki.ru · {d.get("week")} жалоб/7дн · норма — среднее за 7 нед + сверка с рынком'
     if kind in ("mass_move", "tariff_move"):
         return "журнал изменений тарифов (banki.ru/sravni.ru)"
     if kind == "rate_move":

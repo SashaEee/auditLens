@@ -30,6 +30,17 @@ DDG_HTML = "https://html.duckduckgo.com/html/"
 # чтобы dotenv успел подхватить .env (он грузится в config.py).
 def _searxng_url() -> str | None:
     return os.getenv("SEARXNG_URL") or None
+def _searxng_engines() -> str | None:
+    # Наш локальный инстанс: можно ограничить движки (напр. "dogpile" — bing с
+    # IP дата-центра деградировал в шум). Пусто → все движки категории.
+    return os.getenv("SEARXNG_ENGINES") or None
+def _fleet_searxng_url() -> str | None:
+    # Общий SearXNG fleet на резидентских прокси (гейтвей коллеги): там живы
+    # google cse/yandex/duckduckgo, которые с нашего IP под капчей. Основной
+    # backend; наш локальный SearXNG остаётся fallback'ом.
+    return os.getenv("FLEET_SEARXNG_URL") or None
+def _fleet_searxng_engines() -> str:
+    return os.getenv("FLEET_SEARXNG_ENGINES") or "google cse,yandex,duckduckgo"
 def _brave_key() -> str | None:
     return os.getenv("BRAVE_SEARCH_API_KEY") or None
 BRAVE_API_ENDPOINT   = "https://api.search.brave.com/res/v1/web/search"
@@ -94,6 +105,11 @@ def search(
         return cached[:max_results]
 
     backends = []
+    # Fleet SearXNG на резидентских прокси — приоритет: google cse/yandex дают
+    # первоисточники (cbr.ru/garant.ru/sberbank), где локальный bing тащил
+    # букмекеров/аптеки. Наш локальный SearXNG — fallback при недоступности.
+    if _fleet_searxng_url():
+        backends.append(("fleet", _search_fleet))
     if _searxng_url():
         backends.append(("searxng", _search_searxng))
     if _brave_key():
@@ -201,24 +217,16 @@ def _search_ddgs(query: str, *, max_results: int = 8,
     return out[:max_results]
 
 
-# ── Backend 1: SearXNG ────────────────────────────────────────────────────
-def _search_searxng(query: str, *, max_results: int = 8,
-                     site_filter: list[str] | None = None,
-                     region: str = "ru-ru") -> list[dict]:
-    """SearXNG self-hosted JSON API.
-    Движки задаются в settings.yml на сервере (НЕ пиннятся здесь). Эмпирически
-    с IP дата-центра cloud.ru живы только bing + dogpile (остальные под
-    капчей/access-denied — google/yandex/brave/qwant/startpage/baidu/ddg…).
-    dogpile = метапоиск, проксирует Google/Yandex со своих серверов → даёт
-    релевантную выдачу по узким запросам, не упираясь в капчу нашего IP.
-    SEARXNG_URL должен указывать на инстанс с включённым JSON output:
-      `formats: [html, json]` в settings.yml."""
-    base = _searxng_url()
-    if not base:
-        return []
-    # Живые движки (bing/dogpile) ПЛОХО отрабатывают оператор site: в запросе
-    # → 0 результатов. Поэтому извлекаем домены из site:... и из site_filter,
-    # шлём ЧИСТЫЙ запрос, а результаты фильтруем по домену сами.
+# ── Backend 1: SearXNG (общий хелпер + fleet/локальный враппер) ────────────
+def _searxng_query(base: str, query: str, *, max_results: int,
+                   site_filter: list[str] | None, engines: str | None,
+                   read_timeout: float, label: str) -> list[dict]:
+    """Общий вызов SearXNG JSON API (для fleet-гейтвея и локального инстанса).
+
+    Движки (bing/dogpile локально; google cse/yandex на fleet) ПЛОХО отрабатывают
+    оператор site: → 0 результатов. Извлекаем домены из site:... и site_filter,
+    шлём ЧИСТЫЙ запрос, фильтруем по домену сами. engines — опциональный явный
+    список движков (comma-separated Value'ы SearXNG)."""
     import re as _re
     sites_in_q = _re.findall(r"site:(\S+)", query, flags=_re.IGNORECASE)
     clean = _re.sub(r"site:\S+", " ", query, flags=_re.IGNORECASE)
@@ -231,18 +239,19 @@ def _search_searxng(query: str, *, max_results: int = 8,
         if host:
             domains.append(host)
     q_send = clean or query
+    params = {"q": q_send, "format": "json", "language": "ru", "safesearch": "0"}
+    if engines:
+        params["engines"] = engines
     try:
-        with httpx.Client(timeout=httpx.Timeout(connect=5, read=20,
+        with httpx.Client(timeout=httpx.Timeout(connect=5, read=read_timeout,
                                                   write=5, pool=5)) as c:
-            resp = c.get(f"{base.rstrip('/')}/search",
-                         params={"q": q_send, "format": "json",
-                                 "language": "ru", "safesearch": "0"})
+            resp = c.get(f"{base.rstrip('/')}/search", params=params)
         if resp.status_code != 200:
-            log.warning("searxng %s: HTTP %s", q_send[:50], resp.status_code)
+            log.warning("%s %s: HTTP %s", label, q_send[:50], resp.status_code)
             return []
         data = resp.json()
     except Exception as e:
-        log.info("searxng %s: %s", q_send[:50], type(e).__name__)
+        log.info("%s %s: %s", label, q_send[:50], type(e).__name__)
         return []
 
     matched: list[dict] = []
@@ -266,11 +275,41 @@ def _search_searxng(query: str, *, max_results: int = 8,
             matched.append(item)
         else:
             extra.append(item)
-    # Домен-совпадения первыми; если их мало (Bing не всегда поднимает узкий
-    # site:-домен) — добиваем широкими результатами, чтобы НЕ отдавать 0 и не
-    # уходить в ddgs-fallback. Без site: — просто широкая выдача.
+    # Домен-совпадения первыми; если их мало (движок не всегда поднимает узкий
+    # site:-домен) — добиваем широкими результатами, чтобы НЕ отдавать 0.
     out = (matched + extra) if domains else extra
     return out[:max_results]
+
+
+def _search_fleet(query: str, *, max_results: int = 8,
+                  site_filter: list[str] | None = None,
+                  region: str = "ru-ru") -> list[dict]:
+    """Fleet SearXNG на резидентских прокси (FLEET_SEARXNG_URL) — ОСНОВНОЙ backend.
+    google cse/yandex/duckduckgo доступны без капчи → первоисточники (cbr.ru/
+    garant.ru/sberbank), где локальный bing тащил букмекеров/аптеки. Таймаут выше
+    (ходит через прокси; гайд рекомендует ≥60с)."""
+    base = _fleet_searxng_url()
+    if not base:
+        return []
+    return _searxng_query(base, query, max_results=max_results,
+                          site_filter=site_filter,
+                          engines=_fleet_searxng_engines(),
+                          read_timeout=60, label="fleet-searxng")
+
+
+def _search_searxng(query: str, *, max_results: int = 8,
+                     site_filter: list[str] | None = None,
+                     region: str = "ru-ru") -> list[dict]:
+    """Локальный self-hosted SearXNG (SEARXNG_URL) — FALLBACK при недоступности
+    fleet-гейтвея. С IP дата-центра cloud.ru живы только bing+dogpile; bing
+    деградировал в шум → `SEARXNG_ENGINES=dogpile` сужает fallback до здорового
+    движка. Инстанс должен иметь `formats: [html, json]`."""
+    base = _searxng_url()
+    if not base:
+        return []
+    return _searxng_query(base, query, max_results=max_results,
+                          site_filter=site_filter, engines=_searxng_engines(),
+                          read_timeout=20, label="searxng")
 
 
 # ── Backend 2: Brave Search API ──────────────────────────────────────────

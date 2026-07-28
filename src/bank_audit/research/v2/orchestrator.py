@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import os
 import time
 from typing import AsyncIterator
@@ -182,11 +183,22 @@ async def stream_deep_research_v2(question: str,
 
     # Эмитим источники когда все агенты отработали (полный индекс)
     sources_ui = bundle.sources.to_ui()
+    # Сбойные источники (ошибки загрузки/таймауты) не размазываем по списку —
+    # фронт покажет одной строкой «⚠ N источников недоступны» (фидбек аналитиков).
+    _err_re = re.compile(r"ошибк|недоступ|timeout|тайм-?аут|error|failed|не удалось",
+                         re.IGNORECASE)
+    failed_ui = [s for s in sources_ui
+                 if _err_re.search(str(s.get("title") or ""))
+                 or (not s.get("excerpt") and (s.get("trust_score") or 0) == 0)]
+    if failed_ui:
+        failed_ns = {s["n"] for s in failed_ui}
+        sources_ui = [s for s in sources_ui if s["n"] not in failed_ns]
     if sources_ui:
         total = len(sources_ui)
         high = sum(1 for s in sources_ui if s["trust_score"] >= 0.85)
         mid = sum(1 for s in sources_ui if 0.6 <= s["trust_score"] < 0.85)
-        yield _evt({"type": "sources", "sources": sources_ui})
+        yield _evt({"type": "sources", "sources": sources_ui,
+                    "failed": len(failed_ui)})
         yield _evt({"type": "coverage",
                     "total_sources": total, "high_trust": high, "mid_trust": mid,
                     "low_trust": total - high - mid,
@@ -336,6 +348,22 @@ async def stream_deep_research_v2(question: str,
                 "dropped": dropped_count,
                 "samples": []})
 
+    # ── Stage 4.5: ВИЗУАЛЬНЫЙ РЕДАКТОР (LLM) ─────────────────────────────
+    # LLM решает что/как/где визуализировать и ставит [[CHART:i]]-маркеры по
+    # смыслу текста; числа валидируются против bundle.facts (галлюцинация =
+    # брак графика). Детерминированные early_charts — аварийный фолбэк.
+    yield _evt({"type": "stage_status", "stage": "charts",
+                "label": "Проектирую визуализации"})
+    charts_out = []
+    try:
+        from .chart_designer import design_charts
+        charts_out, report_md = await design_charts(client, report_md,
+                                                    bundle, question)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[v2] chart_designer упал: %s — фолбэк на детерминированные", e)
+    if not charts_out:
+        charts_out = early_charts
+
     # ── Stage 5: STREAM FINAL REPORT ─────────────────────────────────────
     # Очередность: отчёт параграфами (для UI-отрисовки)
     paragraphs = report_md.split("\n\n")
@@ -345,9 +373,8 @@ async def stream_deep_research_v2(question: str,
         yield _evt({"type": "text", "chunk": p + "\n\n"})
         await asyncio.sleep(0.03)
 
-    # Графики (детерминированные из фактов, без LLM — числа не галлюцинируются).
-    # Эмитим после текста отчёта (раньше шли ранним preview, который убрали).
-    for ch in early_charts:
+    # Графики: по маркерам в тексте (LLM-редактор) либо хвостом (фолбэк).
+    for ch in charts_out:
         yield _evt({"type": "chart", "spec": ch})
         await asyncio.sleep(0.03)
 
