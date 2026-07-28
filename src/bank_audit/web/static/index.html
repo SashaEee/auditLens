@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>AuditLens — Bank Market Intelligence</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+<!-- Все vendor-ресурсы САМОРАЗМЕЩЕНЫ (/static/vendor/): внешние CDN (unpkg,
+     jsdelivr, Google Fonts) на части сетей недоступны -> белая страница при
+     живом сервере. Никаких внешних зависимостей у фронта быть не должно. -->
+<link href="/static/vendor/fonts.css" rel="stylesheet">
+<script src="/static/vendor/react.min.js"></script>
+<script src="/static/vendor/react-dom.min.js"></script>
+<script src="/static/vendor/babel.min.js"></script>
+<script src="/static/vendor/chart.umd.js"></script>
 <style>
 :root{
   --paper:        oklch(98.5% 0.004 80);
@@ -75,6 +76,40 @@ input,select,textarea{font:inherit;color:inherit}
 .nav-item.active::before{content:"";position:absolute;left:-14px;top:8px;bottom:8px;width:2px;background:var(--ink);}
 .nav-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:auto}
 .nav-count{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3)}
+/* метка «beta» у вкладки в разработке — тише названия, но заметна */
+/* ── Анализ жалоб недели: карточки вместо сплошного текста (bfb-) ─────────── */
+.bfb-list{display:flex;flex-direction:column;gap:12px}
+.bfb-item{border:1px solid var(--hair);border-radius:10px;padding:14px 16px 13px;
+  background:var(--surface);border-left:3px solid var(--hair-2);transition:border-color .12s}
+.bfb-item:hover{border-color:var(--hair-2)}
+.bfb-item.lvl-high{border-left-color:var(--accent);background:color-mix(in oklab,var(--accent),transparent 97%)}
+.bfb-item.lvl-mid{border-left-color:var(--warn)}
+.bfb-item.lvl-low{border-left-color:var(--hair-2)}
+.bfb-item.lvl-new{border-left-color:var(--ink);background:color-mix(in oklab,var(--ink),transparent 97%)}
+.bfb-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:7px}
+.bfb-badge{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;
+  border-radius:20px;padding:2px 8px;border:1px solid var(--hair-2);color:var(--ink-3);white-space:nowrap;flex:0 0 auto}
+.lvl-high .bfb-badge{border-color:color-mix(in oklab,var(--accent),transparent 55%);color:var(--accent)}
+.lvl-mid .bfb-badge{border-color:color-mix(in oklab,var(--warn),transparent 55%);color:var(--warn)}
+.lvl-new .bfb-badge{border-color:var(--ink-3);color:var(--ink)}
+.bfb-title{font-family:Georgia,'Times New Roman',serif;font-size:16px;font-weight:500;margin:0;line-height:1.25;flex:1;min-width:0}
+.bfb-body{font-size:13.5px;line-height:1.62;color:var(--ink-2);margin:0}
+.bfb-body em{font-style:normal;color:var(--accent);font-weight:500}
+.bfb-body strong{color:var(--ink);font-weight:600}
+.bfb-act{margin-top:10px;padding-top:9px;border-top:1px dashed var(--hair-2);
+  font-size:12.5px;line-height:1.55;color:var(--ink-2);display:grid;grid-template-columns:78px 1fr;gap:10px;align-items:baseline}
+.bfb-act-l{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+@media(max-width:640px){.bfb-act{grid-template-columns:1fr;gap:3px}}
+.rv-radar-sub{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-3);margin:2px 0 8px}
+.rv-radar-chip.lvl-watch{border-color:color-mix(in oklab,var(--warn),transparent 60%);color:var(--ink-2)}
+.rv-radar-chip.lvl-watch b{color:var(--warn)}
+.trust-dots{display:inline-flex;gap:3px;align-items:center;margin-left:6px}
+.trust-dots i{width:5px;height:5px;border-radius:50%;background:var(--hair-2);display:inline-block}
+.trust-dots i.on{background:var(--pos)}
+.nav-badge{margin-left:7px;font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--accent);border:1px solid color-mix(in oklab,var(--accent),transparent 60%);
+  border-radius:20px;padding:1px 5px;line-height:1.5;flex:0 0 auto}
 .rail-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--hair)}
 .user-chip{display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px}
 .avatar{width:28px;height:28px;border-radius:50%;background:var(--ink);color:var(--paper);display:grid;place-items:center;font-size:12px;font-weight:600}
@@ -348,6 +383,8 @@ tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
   border-bottom:1px solid var(--hair);
   display:flex;align-items:center;gap:8px;
 }
+.dr-rail-failed{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--warn);
+  padding:9px 4px 2px;border-top:1px solid var(--hair);margin-top:8px;line-height:1.5;}
 .dr-rail-list{list-style:none;margin:0;padding:0}
 .dr-rail-item{
   display:block;padding:8px 4px 9px 12px;
@@ -772,6 +809,8 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
   grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:20px;
 }
 .dr-chart{padding:0;background:transparent;border:0;border-top:1px solid var(--hair);padding-top:14px}
+.dr-chart-insight{font-family:'Source Serif 4',Georgia,serif;font-style:italic;font-size:13px;color:var(--ink-2);margin-top:9px;line-height:1.5;max-width:64ch;}
+.dr-chart-inline{margin:6px 0 18px;}
 .dr-chart > canvas{max-height:240px}
 .dr-chart-cites{
   margin-top:8px;font-size:11px;color:var(--ink-3);
@@ -1403,17 +1442,54 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .bf-live .dot{width:6px;height:6px;border-radius:50%;background:var(--warn);animation:pulse 1.6s ease infinite}
 
 /* пульс дня — детерминированный тикер, живёт без LLM */
-.bf-pulse{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--hair);
-  border-radius:var(--r-lg);background:var(--surface);overflow:hidden;box-shadow:var(--shadow-1)}
-.bf-pulse>a{display:block;padding:14px 18px 12px;border-left:1px solid var(--hair);text-decoration:none;color:inherit;
-  transition:background .12s;min-width:0}
-.bf-pulse>a:first-child{border-left:none}
-.bf-pulse>a:hover{background:var(--paper-2)}
-.bf-pulse-num{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:24px;letter-spacing:-.02em;
-  font-variant-numeric:tabular-nums;line-height:1.1;display:flex;align-items:baseline;gap:7px;white-space:nowrap}
-.bf-pulse-num .u{font-size:12px;color:var(--ink-3);font-family:'JetBrains Mono',monospace;font-weight:400}
-.bf-pulse-cap{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-4);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* объяснимость цифр: тёмный поповер по наведению (data-tip) */
+.bf-tip{position:relative;}
+.bf-tip{position:relative}
+/* старая CSS-подсказка отключена: рисуется порталом TipLayer, иначе обрезалась */
+.bf-tip--off::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 9px);transform:translateX(-50%);
+  background:var(--ink);color:var(--paper);font-family:'Geist','Inter',sans-serif;font-size:11.5px;font-weight:400;
+  line-height:1.55;letter-spacing:0;text-transform:none;padding:9px 13px;border-radius:9px;width:max-content;max-width:300px;
+  white-space:normal;text-align:left;z-index:60;box-shadow:var(--shadow-2);pointer-events:none;}
+.bf-tip--off::before{content:"";position:absolute;left:50%;bottom:100%;transform:translateX(-50%) rotate(45deg);
+  margin-bottom:5px;width:9px;height:9px;background:var(--ink);z-index:61;pointer-events:none;}
+/* ── Пульс дня: сменный лист аудитора (переработан 23.07.2026) ─────────────
+   Было repeat(6,1fr) + nowrap/ellipsis → подписи обрезались («СБЕР VS МЕДИАНА РЫ…»).
+   Стало 4 колонки, hero на две, подпись переносится на 2 строки. */
+.bf-pulse{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--hair);
+  border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-1)}
+.bf-t{display:block;background:var(--surface);padding:13px 16px 12px;min-width:0;
+  text-decoration:none;color:inherit;transition:background .12s}
+a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
+.bf-t-hero{grid-column:span 2}
+.bf-t-wide{grid-column:span 2}
+.bf-t.attn{background:color-mix(in oklab,var(--warn),transparent 92%)}
+.bf-t.alarm{background:var(--accent-soft)}
+.bf-t-cap{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:6px;line-height:1.4;
+  white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;min-height:2.3em}
+.bf-t-chip{display:inline-block;font-size:8px;letter-spacing:.06em;border:1px solid var(--accent);
+  color:var(--accent);border-radius:20px;padding:0 6px;margin-left:6px;vertical-align:1px}
+.bf-t-val{font-family:Georgia,'Times New Roman',serif;font-size:21px;font-weight:500;
+  line-height:1.12;display:inline-block;font-variant-numeric:tabular-nums}
+.bf-t-hero .bf-t-val{font-size:24px}
+.bf-t-val small{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3);font-weight:400}
+.bf-t-sub{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);
+  margin-top:5px;line-height:1.45}
+.bf-t-delta{display:block;margin-top:2px;font-weight:500}
+.bf-t-delta.good{color:var(--pos)}
+.bf-t-delta.bad{color:var(--accent)}
+.bf-stampline{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);
+  margin:8px 0 0;line-height:1.7}
+/* строка-штамп переносится КАК ТЕКСТ: при display:flex каждый разделитель «·»
+   становился отдельным элементом и отрывался на свою строку (мобилка) */
+.bf-stampline a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--hair-2)}
+.bf-stampline a:hover{color:var(--ink-2)}
+.bf-stampline a.warn,.bf-stampline .bf-stale{color:var(--warn)}
+@media(max-width:1100px){.bf-pulse{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:760px){.bf-pulse{grid-template-columns:repeat(2,1fr)}
+  .bf-t-hero,.bf-t-wide{grid-column:span 2}
+.bf-t-wide{grid-column:span 2}.bf-t-cap{-webkit-line-clamp:3;min-height:0}}
 
 /* ядро: лента инсайтов + новостная колонка */
 .bf-core{display:grid;grid-template-columns:minmax(0,1fr) 336px;gap:16px;align-items:start}
@@ -1468,7 +1544,164 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .bf-news-it[data-sev=green]::before{background:var(--pos)}
 .bf-news-t{font-size:12.5px;font-weight:500;line-height:1.4}
 .bf-news-s{font-size:11.5px;line-height:1.5;color:var(--ink-2);margin-top:3px}
-.bf-news-m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:5px;display:flex;gap:8px;align-items:center}
+.bf-news-m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* ── «Позиция» (объединённый Рынок × Сбер), неймспейс mk- ─────────────────── */
+.mk-disc{font-size:12.5px;color:var(--ink-3);max-width:78ch;margin:8px 0 0;padding:8px 12px;border:1px solid var(--hair);border-left:2px solid var(--warn,#b48a2f);border-radius:4px;background:var(--surface)}
+.mk-strip{position:relative;height:30px;min-width:120px}
+.mk-strip-big{height:44px}
+.mk-strip .mk-iqr{position:absolute;top:50%;transform:translateY(-50%);height:12px;background:var(--hair);border-radius:3px}
+.mk-strip-big .mk-iqr{height:16px}
+.mk-strip .mk-med{position:absolute;top:50%;transform:translate(-50%,-50%);width:1.5px;height:22px;background:var(--ink-2)}
+.mk-strip-big .mk-med{height:30px}
+.mk-strip .mk-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:5px;height:5px;border-radius:50%;background:var(--ink-3);opacity:.55}
+.mk-strip-big .mk-dot{width:6px;height:6px}
+.mk-strip .mk-dot.sber{width:9px;height:9px;background:var(--accent);opacity:1;box-shadow:0 0 0 2px var(--surface);z-index:2}
+.mk-strip-big .mk-dot.sber{width:11px;height:11px}
+.mk-arow{display:grid;grid-template-columns:170px 1fr 170px 24px;gap:16px;align-items:center;width:100%;padding:13px 24px;border:0;border-bottom:1px solid var(--hair);background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.mk-arow:hover{background:var(--surface)}
+.mk-arow:last-child{border-bottom:0}
+.mk-an{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);letter-spacing:.02em;font-style:normal}
+.mk-anote{font-size:12px;color:var(--ink-4)}
+.mk-apos b{font-size:19px;font-weight:500;display:block}
+.mk-apos b.bad{color:var(--accent)}
+.mk-ago{color:var(--ink-4);font-size:15px;text-align:right}
+.mk-rk{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);margin-left:5px}
+.mk-rk.bad{color:var(--accent)}
+.mk-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px}
+.mk-kpi{padding:14px 18px}
+.mk-kpi b{font-family:Georgia,'Times New Roman',serif;font-size:24px;font-weight:500;display:block;line-height:1.15}
+.mk-kpi b small{font-size:12px;color:var(--ink-3);font-family:'JetBrains Mono',monospace}
+.mk-kpi b.bad{color:var(--accent)}
+.mk-kpi span{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.mk-noise{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.mk-sber-pin{display:flex;align-items:center;gap:12px;width:100%;padding:13px 24px;border:0;border-bottom:1px solid var(--hair);background:var(--accent-soft,rgba(200,50,30,.05));color:var(--ink);font:inherit;cursor:pointer}
+.mk-sber-pin:hover{filter:brightness(.985)}
+.mk-more{display:block;width:100%;border-radius:0;border-top:1px solid var(--hair)}
+.mk-click{cursor:pointer}
+.mk-chrow{display:grid;grid-template-columns:130px 1fr 200px;gap:14px;align-items:center;width:100%;padding:11px 24px;border:0;border-bottom:1px solid var(--hair);background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.mk-chrow:hover{background:var(--surface)}
+.mk-chrow:last-child{border-bottom:0}
+.mk-chrow.big .mk-chmove{font-weight:600}
+.mk-chrow.hl{box-shadow:inset 3px 0 0 var(--accent);background:var(--accent-soft,rgba(200,50,30,.05))}
+.mk-chdate{font-size:10.5px;color:var(--ink-3)}
+.mk-chbank{display:flex;align-items:center;gap:10px;min-width:0}
+.mk-chbank>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.mk-chmove{font-size:12.5px;text-align:right}
+.mk-chmove em{font-style:normal;margin-left:7px;font-size:11px}
+.mk-chmove em.up{color:var(--pos)}
+.mk-chmove em.dn{color:var(--accent)}
+.mk-chmove .mk-dv{display:block;font-size:11px;color:var(--ink-2)}
+.mk-chmove .mk-dv b{font-weight:600}
+.mk-stale{color:var(--warn,#b48a2f);font-weight:500}
+.mk-pass{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+.mk-pass>div{border:1px solid var(--hair);border-radius:6px;padding:9px 12px}
+.mk-pass span{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:2px}
+.mk-pass b{font-size:14px;font-weight:500}
+.mk-pass i{display:block;margin-top:1px}
+.mk-stepw{border:1px solid var(--hair);border-radius:6px;padding:10px 12px 6px}
+.mk-steplbl{display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);margin-top:4px}
+.mk-dhrow{display:flex;justify-content:space-between;gap:12px;padding:6px 2px;border-bottom:1px solid var(--hair);font-size:12px}
+.mk-dhrow:last-child{border-bottom:0}
+.mk-dbtns{display:flex;gap:10px;margin-top:18px}
+@media(max-width:760px){
+  .mk-arow{grid-template-columns:1fr;gap:6px}
+  .mk-ago{display:none}
+  .mk-chrow{grid-template-columns:1fr;gap:4px}
+  .mk-chmove{text-align:left}
+}
+/* ── Источники: карта доверия для аудитора (src-) ─────────────────────────── */
+.src-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px}
+.src-card{padding:20px 22px}
+.src-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:12px}
+.src-lead{font-size:13.5px;color:var(--ink-2);margin:0;max-width:52ch}
+.src-count{font-size:10.5px;color:var(--ink-3);white-space:nowrap;padding-top:2px}
+.src-what{font-size:12.5px;color:var(--ink-2);line-height:1.55;margin-bottom:8px}
+.src-what b{color:var(--ink);font-weight:600}
+.src-list{margin:14px 0 4px;border-top:1px solid var(--hair)}
+.src-item{display:block;padding:9px 0;border-bottom:1px solid var(--hair);text-decoration:none;color:inherit}
+.src-item:hover{background:var(--surface)}
+.src-dom{display:flex;align-items:baseline;gap:8px;font-size:13.5px;font-weight:500;flex-wrap:wrap}
+.src-w{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
+  font-style:normal;border-radius:20px;padding:1px 7px;border:1px solid var(--hair-2);color:var(--ink-3)}
+.src-w.hi{border-color:color-mix(in oklab,var(--pos),transparent 55%);color:var(--pos)}
+.src-w.mid{border-color:var(--hair-2);color:var(--ink-2)}
+.src-w.lo{border-color:color-mix(in oklab,var(--warn),transparent 55%);color:var(--warn)}
+.src-meta{display:block;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);margin-top:2px}
+.src-ttl{display:block;font-size:11.5px;color:var(--ink-3);margin-top:1px}
+.src-more{margin-top:10px}
+.src-req{margin-top:14px;border-top:1px solid var(--hair);padding-top:12px}
+.src-req>summary{cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10.5px;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--accent);list-style:none}
+.src-req>summary::-webkit-details-marker{display:none}
+.src-req>summary::before{content:"＋ ";font-family:inherit}
+.src-req[open]>summary::before{content:"− "}
+.src-req-list{margin:10px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-2);line-height:1.6}
+.src-req-list li{margin:3px 0}
+.src-req-list li::marker{color:var(--accent)}
+.src-form{margin-top:14px;padding-top:14px;border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:10px}
+.src-form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.src-form label,.src-form-full{display:flex;flex-direction:column;gap:4px}
+.src-form label>span{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3)}
+.src-form label>span i{font-style:normal;color:var(--ink-4);text-transform:none;letter-spacing:0}
+.src-form textarea.input{height:auto;padding:9px 12px;line-height:1.5;resize:vertical;font-family:inherit}
+.src-check{font-size:12px;padding:7px 11px;border-radius:6px;border:1px solid var(--hair-2)}
+.src-check.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
+.src-check.bad{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
+.src-form-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.src-done{margin-top:14px;padding:14px 16px;border-radius:8px;border:1px solid var(--hair-2);
+  border-left:3px solid var(--pos);background:var(--surface)}
+.src-done-t{font-weight:600;color:var(--pos);margin-bottom:5px}
+.src-done p{font-size:12.5px;color:var(--ink-2);margin:0 0 10px;max-width:60ch}
+.src-tech>summary{cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10.5px;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);list-style:none}
+.src-tech>summary::-webkit-details-marker{display:none}
+.src-tech>summary::before{content:"＋ ";}
+.src-tech[open]>summary::before{content:"− ";}
+@media(max-width:760px){.src-grid{grid-template-columns:1fr}.src-form-row{grid-template-columns:1fr}}
+
+/* ── Всплывашки: портал в body, fixed, поверх всего ────────────────────────
+   Раньше попап жил внутри плитки и обрезался контейнером с overflow:hidden
+   (полоса пульса, карточки), а hover-фильтры создавали конкурирующие слои. */
+.xp{position:relative;display:inline;cursor:help;border-bottom:1px dashed color-mix(in oklab,var(--accent),transparent 55%)}
+.xp:focus{outline:none}
+.xp-link{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+.xp-pop{position:fixed;z-index:9000;padding:13px 15px 12px;text-align:left;
+  background:var(--surface);color:var(--ink);border:1px solid var(--hair-2);border-radius:12px;
+  box-shadow:var(--shadow-2);font-style:normal;font-weight:400;pointer-events:none;
+  font-family:'Geist','Inter',-apple-system,sans-serif;font-size:12.5px;line-height:1.5;letter-spacing:0;
+  animation:xpIn .12s ease}
+@keyframes xpIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.xp-pop::before{content:"";position:absolute;width:9px;height:9px;transform:rotate(45deg);
+  background:var(--surface);border:1px solid var(--hair-2)}
+.xp-pop.xp-a-left::before  {left:-5px;top:18px;clip-path:polygon(0 0,0 100%,100% 100%)}
+.xp-pop.xp-a-right::before {right:-5px;top:18px;clip-path:polygon(100% 0,100% 100%,0 0)}
+.xp-pop.xp-a-top::before   {left:22px;top:-5px;clip-path:polygon(0 0,100% 0,0 100%)}
+.xp-pop.xp-a-bottom::before{left:22px;bottom:-5px;clip-path:polygon(100% 100%,100% 0,0 100%)}
+.xp-h{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-4);margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid var(--hair)}
+.xp-row{display:grid;grid-template-columns:104px 1fr;gap:10px;padding:3px 0;align-items:baseline}
+.xp-k{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.xp-v{color:var(--ink-2);font-variant-numeric:tabular-nums}
+.xp-row:first-of-type .xp-v{color:var(--ink);font-weight:500}
+.xp-note{display:block;margin-top:8px;padding-top:7px;border-top:1px solid var(--hair);
+  font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4)}
+/* текстовая подсказка [data-tip] — тем же порталом */
+.tip-pop{position:fixed;z-index:9000;background:var(--ink);color:var(--paper);
+  font-family:'Geist','Inter',-apple-system,sans-serif;font-size:11.5px;font-weight:400;line-height:1.55;
+  letter-spacing:0;text-transform:none;padding:9px 13px;border-radius:9px;
+  box-shadow:var(--shadow-2);pointer-events:none;animation:xpIn .12s ease}
+.bf-prov-sep{color:var(--ink-4)}
+@media(max-width:720px){.xp-row{grid-template-columns:1fr;gap:1px}}
+@media(max-width:900px){
+  .xp .xp-pop{left:auto;right:0;top:calc(100% + 8px);bottom:auto;max-width:88vw}
+  .xp .xp-pop::before{left:auto;right:22px;top:-5px;bottom:auto;
+    border-left:1px solid var(--hair-2);border-top:1px solid var(--hair-2);
+    border-right:none;border-bottom:none}
+  .xp-row{grid-template-columns:1fr;gap:1px}}
+
+/* продуктовый чип новости («Ипотека», «Вклады»…) — детектор тегов, правка аналитиков */
+.bf-chip{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--hair-2);border-radius:3px;padding:1px 5px;line-height:1.5;white-space:nowrap}
 .bf-news-empty{padding:22px 16px;font-size:12.5px;color:var(--ink-3)}
 
 /* сводка жалоб (markdown из reviews_brief) */
@@ -1488,17 +1721,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 @media(max-width:1100px){
   .bf-core{grid-template-columns:1fr}
   .bf-news{position:static}
-  .bf-pulse{grid-template-columns:repeat(3,1fr)}
-  .bf-pulse>a{border-top:1px solid var(--hair)}
-  .bf-pulse>a:nth-child(-n+3){border-top:none}
-  .bf-pulse>a:nth-child(3n+1){border-left:none}
 }
 @media(max-width:720px){
   .bf-cards{grid-template-columns:1fr}
-  .bf-pulse{grid-template-columns:1fr 1fr}
-  .bf-pulse>a{border-top:1px solid var(--hair)}
-  .bf-pulse>a:nth-child(-n+2){border-top:none}
-  .bf-pulse>a:nth-child(odd){border-left:none}
 }
 @media(prefers-reduced-motion:reduce){
   .bf-card{animation:none}
@@ -1508,6 +1733,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" src="/static/app.jsx"></script>
+<!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
+<script type="text/babel" src="/static/app.jsx?v=20260723-20"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, Query, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Query, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
 from .. import db
+from .. import categories as cat_meta
 from ..config import Settings
 from ..ai.analyst import stream_analysis
 from ..ai.clarify import generate_clarifications, build_enriched_question
@@ -22,12 +23,23 @@ from ..rag import cache as rag_cache
 from ..rag.indexer import ingest_document_from_url
 from ..rag.url_discovery import bootstrap_bank_profile, TOP_BANK_SITES
 from ..rag.crawler import crawl_one_bank, crawl_all_profiles
+from .auth import CurrentUser, get_current_user
+from . import telemetry, userdata
 
 STATIC_DIR = Path(__file__).parent / "static"
 settings = Settings.load()
 db.init(settings)
 
 log = logging.getLogger(__name__)
+
+# LOG_LEVEL был в .env, но логирование нигде не настраивалось: все log.info
+# приложения (старт автосбора, протухание, url-check, дайджест) уходили в
+# никуда — автоматика была чёрным ящиком. Настраиваем один раз на старте.
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
+)
 
 
 @asynccontextmanager
@@ -66,6 +78,33 @@ if _cors_env:
                        allow_methods=["*"], allow_headers=["*"])
 
 
+@app.middleware("http")
+async def _telemetry_mw(request: Request, call_next):
+    """Телеметрия API: латентность/статус каждого /api-запроса + исключения.
+    Запись — fire-and-forget в отдельном треде, основной запрос не тормозим."""
+    path = request.url.path
+    if not path.startswith("/api/") or path == "/api/track":
+        return await call_next(request)
+    import time as _t
+    t0 = _t.perf_counter()
+    username = request.headers.get("X-Authentik-Username") or None
+    try:
+        resp = await call_next(request)
+    except Exception as e:
+        dur = int((_t.perf_counter() - t0) * 1000)
+        asyncio.get_running_loop().create_task(asyncio.to_thread(
+            telemetry.log_event, username, "api_error", telemetry.norm_path(path),
+            dur, 500, {"error": f"{type(e).__name__}: {str(e)[:200]}",
+                       "method": request.method}))
+        raise
+    dur = int((_t.perf_counter() - t0) * 1000)
+    kind = "api_error" if resp.status_code >= 500 else "api_request"
+    asyncio.get_running_loop().create_task(asyncio.to_thread(
+        telemetry.log_event, username, kind, telemetry.norm_path(path),
+        dur, resp.status_code, None))
+    return resp
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def q(sql: str, params: dict = {}):
@@ -75,6 +114,299 @@ def q(sql: str, params: dict = {}):
 def scalar(sql: str, params: dict = {}):
     with db.session() as s:
         return s.execute(text(sql), params).scalar_one_or_none()
+
+
+# ── auth / identity / user-data ───────────────────────────────────────────────
+
+class MeUpdate(BaseModel):
+    timezone: Optional[str] = None
+    prefs: Optional[dict] = None
+
+class InterestsUpdate(BaseModel):
+    pinned: Optional[list] = None
+    muted: Optional[list] = None
+    custom: Optional[list] = None
+
+class RenameReq(BaseModel):
+    title: str
+
+class PinReq(BaseModel):
+    pinned: bool
+
+class ShareReq(BaseModel):
+    shared_with: Optional[str] = None    # None → всем пользователям инструмента
+
+class PersonalFeedback(BaseModel):
+    topics: list[str] = []               # слаги тем для «× не интересно» → заглушить
+    action: str = "mute"
+
+
+@app.get("/api/whoami")
+def whoami(user: CurrentUser = Depends(get_current_user)):
+    """Текущий пользователь из заголовков Authentik (за nginx forward-auth)."""
+    return {"username": user.username, "name": user.name,
+            "authenticated": user.authenticated}
+
+
+@app.get("/api/me")
+def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+    """Профиль пользователя (+ upsert app_user, обновление last_seen/TZ)."""
+    row = userdata.touch_user(user.username, user.name, timezone=tz) or {}
+    return {
+        "username": user.username,
+        "name": row.get("display_name") or user.name,
+        "timezone": row.get("timezone") or "Europe/Moscow",
+        "prefs": row.get("prefs") or {},
+        "interests": userdata.top_interests(user.username),
+        "recommendations": userdata.recommend_topics(user.username),
+        "profile_note": row.get("profile_note"),
+        "profile_note_at": row.get("profile_note_at"),
+        "personalization": userdata.personalization_score(user.username),
+        "is_admin": telemetry.is_admin(user.username),
+        "authenticated": user.authenticated,
+    }
+
+
+@app.put("/api/me")
+def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
+    userdata.touch_user(user.username, user.name)
+    if body.timezone:
+        userdata.set_timezone(user.username, body.timezone)
+    if body.prefs is not None:
+        userdata.update_prefs(user.username, body.prefs)
+        if "self_description" in body.prefs:   # профиль изменился → «Для вас» устарел
+            try:
+                userdata.clear_personal_digest(user.username)
+            except Exception:
+                pass
+    return {"ok": True}
+
+
+@app.put("/api/me/interests")
+def put_interests(body: InterestsUpdate, user: CurrentUser = Depends(get_current_user)):
+    userdata.set_interest_overrides(user.username, pinned=body.pinned,
+                                    muted=body.muted, custom=body.custom)
+    try:
+        userdata.clear_personal_digest(user.username)   # темы изменились → пересобрать
+    except Exception:
+        pass
+    return {"ok": True, "interests": userdata.top_interests(user.username)}
+
+
+@app.post("/api/me/profile/refresh")
+async def refresh_profile_note(user: CurrentUser = Depends(get_current_user)):
+    """Пересобрать LLM-нарратив профиля интересов по недавним запросам."""
+    from .profile_ai import generate_profile_note
+    note = await generate_profile_note(user.username)
+    return {"note": note}
+
+
+# ── персональный дайджест «Обзора» (Фаза 3) ───────────────────────────────────
+
+@app.get("/api/overview/personal")
+async def overview_personal(user: CurrentUser = Depends(get_current_user)):
+    """Личный слой «Обзора»: lead + «Для вас» + тишина. None → персонализация выключена."""
+    from ..digest import personal
+    try:
+        userdata.touch_user(user.username, user.name)
+    except Exception:
+        pass
+    p = await personal.build_personal(user.username)
+    return {"personal": p}
+
+
+@app.post("/api/overview/personal/refresh")
+async def overview_personal_refresh(user: CurrentUser = Depends(get_current_user)):
+    from ..digest import personal
+    p = await personal.build_personal(user.username, force=True)
+    return {"personal": p}
+
+
+class FeedbackIn(BaseModel):
+    kind: str                       # news | for_you | check | ai_answer
+    item_key: str
+    verdict: int                    # +1 / -1
+    topics: list[str] = []
+    payload: dict = {}
+
+
+@app.post("/api/feedback")
+def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user)):
+    """Единая точка оценок 👍/👎. Контентные (news/for_you/check) учат ЕГО
+    рекомендации; ai_answer — контур качества (разбор командой)."""
+    if body.kind not in ("news", "for_you", "check", "ai_answer") \
+            or body.verdict not in (1, -1) or not body.item_key:
+        raise HTTPException(400, "bad feedback")
+    res = userdata.save_feedback(user.username, body.kind, body.item_key[:500],
+                                 body.verdict, topics=body.topics[:10],
+                                 payload=body.payload)
+    # 👍 на ответ ИИ дополнительно усиливает темы вопроса в профиле интересов
+    if body.kind == "ai_answer" and res.get("verdict") == 1:
+        q = str((body.payload or {}).get("question") or "")
+        if q:
+            try:
+                userdata.update_interests_from_query(user.username, q)
+            except Exception:
+                pass
+    return {"ok": True, **res}
+
+
+@app.get("/api/feedback")
+def get_feedback(kind: str, user: CurrentUser = Depends(get_current_user)):
+    """Карта оценок пользователя по kind — для рендера уже проставленных."""
+    if kind not in ("news", "for_you", "check", "ai_answer"):
+        raise HTTPException(400, "bad kind")
+    return {"items": userdata.feedback_map(user.username, kind)}
+
+
+@app.get("/api/quality/ai-feedback")
+def quality_ai_feedback(user: CurrentUser = Depends(get_current_user)):
+    """Пульс оценок ИИ-ответов для «Качества» (контур владельца)."""
+    return userdata.ai_feedback_stats()
+
+
+# ── телеметрия и дашборд «Пульс» (только владелец, env ADMIN_USERS) ───────────
+
+class TrackIn(BaseModel):
+    events: list[dict] = []
+
+
+# «journal» вместо «track», «pulse» вместо «metrics»: слова track/metrics/telemetry
+# режутся адблокерами (EasyPrivacy) → события молча пропадали у части пользователей.
+# Старые пути оставлены алиасами для уже загруженных вкладок.
+@app.post("/api/journal")
+@app.post("/api/track")
+def track_events(body: TrackIn, user: CurrentUser = Depends(get_current_user)):
+    """Батч клиентских событий (page_view/page_leave/client_error). Best-effort."""
+    n = telemetry.track_batch(user.username, body.events)
+    return {"ok": True, "accepted": n}
+
+
+@app.get("/api/admin/pulse")
+@app.get("/api/admin/metrics")
+def admin_metrics(days: int = 14, user: CurrentUser = Depends(get_current_user)):
+    """Метрики «Пульса»: аудитория + продукт + техника одним ответом."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    return telemetry.metrics(days)
+
+
+@app.get("/api/overview/foryou")
+async def overview_foryou(user: CurrentUser = Depends(get_current_user)):
+    """Персональный разворот «Для вас»: полноценная страница под профиль аудитора.
+    None → персонализация выключена. Никогда не 500-ит (best-effort по дизайну)."""
+    from ..digest import personal
+    try:
+        userdata.touch_user(user.username, user.name)
+    except Exception:
+        pass
+    p = await personal.build_foryou(user.username)
+    return {"foryou": p}
+
+
+@app.post("/api/overview/foryou/refresh")
+async def overview_foryou_refresh(user: CurrentUser = Depends(get_current_user)):
+    from ..digest import personal
+    p = await personal.build_foryou(user.username, force=True)
+    return {"foryou": p}
+
+
+@app.post("/api/overview/personal/feedback")
+def overview_personal_feedback(body: PersonalFeedback,
+                               user: CurrentUser = Depends(get_current_user)):
+    """«× не интересно» на карточке → заглушить темы (учится под пользователя)."""
+    if body.topics and body.action == "mute":
+        cur = userdata.top_interests(user.username)
+        muted = set(cur.get("muted") or []) | {t for t in body.topics if t}
+        userdata.set_interest_overrides(user.username, muted=list(muted))
+        userdata.log_event(user.username, "personal_feedback",
+                           {"muted": body.topics})
+    return {"ok": True, "interests": userdata.top_interests(user.username)}
+
+
+@app.get("/api/users")
+def get_users(user: CurrentUser = Depends(get_current_user)):
+    """Директория пользователей инструмента (для шеринга)."""
+    return {"users": userdata.list_users(exclude=user.username)}
+
+
+# ── история чатов ─────────────────────────────────────────────────────────────
+
+@app.get("/api/chat/sessions")
+def get_sessions(user: CurrentUser = Depends(get_current_user)):
+    return {"sessions": userdata.list_sessions(user.username)}
+
+
+@app.get("/api/chat/sessions/{sid}")
+def get_session_ep(sid: int, user: CurrentUser = Depends(get_current_user)):
+    msgs = userdata.get_session_messages(sid, user.username)
+    if msgs is None:
+        raise HTTPException(404, "session not found")
+    return {"session_id": sid, "messages": msgs}
+
+
+@app.post("/api/chat/sessions/{sid}/rename")
+def rename_session_ep(sid: int, body: RenameReq,
+                      user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.rename_session(sid, user.username, body.title)}
+
+
+@app.post("/api/chat/sessions/{sid}/pin")
+def pin_session_ep(sid: int, body: PinReq,
+                   user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.pin_session(sid, user.username, body.pinned)}
+
+
+@app.delete("/api/chat/sessions/{sid}")
+def delete_session_ep(sid: int, user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.delete_session(sid, user.username)}
+
+
+# ── отчёты + шеринг ───────────────────────────────────────────────────────────
+
+@app.get("/api/reports")
+def get_reports(user: CurrentUser = Depends(get_current_user)):
+    return {"reports": userdata.list_reports(user.username),
+            "shared": userdata.list_shared_with_me(user.username)}
+
+
+@app.get("/api/reports/{rid}")
+def get_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
+    r = userdata.get_report(rid, user.username)
+    if r is None:
+        raise HTTPException(404, "report not found")
+    try:    # телеметрия чтений отчётов (свой/расшаренный) — для «Пульса»
+        userdata.log_event(user.username, "report_open",
+                           {"report_id": rid, "own": r.get("owner") == user.username})
+    except Exception:
+        pass
+    return r
+
+
+@app.delete("/api/reports/{rid}")
+def delete_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.delete_report(rid, user.username)}
+
+
+@app.post("/api/reports/{rid}/share")
+def share_report_ep(rid: int, body: ShareReq,
+                    user: CurrentUser = Depends(get_current_user)):
+    sid = userdata.share_report(rid, user.username, body.shared_with)
+    if sid is None:
+        raise HTTPException(403, "not owner")
+    userdata.log_event(user.username, "share",
+                       {"report_id": rid, "with": body.shared_with})
+    return {"ok": True, "share_id": sid}
+
+
+@app.get("/api/reports/{rid}/shares")
+def report_shares_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
+    return {"shares": userdata.list_report_shares(rid, user.username)}
+
+
+@app.post("/api/shares/{share_id}/revoke")
+def revoke_share_ep(share_id: int, user: CurrentUser = Depends(get_current_user)):
+    return {"ok": userdata.revoke_share(share_id, user.username)}
 
 
 # ── dashboard ─────────────────────────────────────────────────────────────────
@@ -128,7 +460,67 @@ async def overview_digest(date: Optional[str] = None):
         if not complete and lazy_allowed():
             asyncio.create_task(ensure_digest("lazy"))     # не ждём
             doc["meta"]["refreshing"] = True
+    # часы расписания — в meta, чтобы UI не хардкодил «до 07:00 МСК»
+    from ..digest.scheduler import GEN_HOUR, INGEST_HOUR
+    doc["meta"]["digest_hour_msk"] = GEN_HOUR
+    doc["meta"]["ingest_hour_msk"] = INGEST_HOUR
+    doc["meta"]["delta"] = await asyncio.to_thread(_digest_delta, doc)
     return doc
+
+
+def _digest_delta(doc: dict) -> dict:
+    """Сравнение с предыдущим выпуском — «−22 ко вчера» под числами пульса.
+
+    Считается в API, а не при генерации: во-первых, работает и для уже
+    выпущенных дайджестов, во-вторых, поломка сравнения физически не может
+    сорвать утреннюю генерацию. Сравниваются СНАПШОТЫ выпусков, а не живые
+    значения: скользящее окно «за 7 дней» само по себе меньше к вечеру, и это
+    не событие.
+    """
+    try:
+        from ..digest import store as digest_store
+        cur_day = doc.get("date")
+        if not cur_day:
+            return {}
+        from datetime import date as _d
+        cur = _d.fromisoformat(cur_day)
+        prev_day = next((d for d in digest_store.list_dates(10)
+                         if _d.fromisoformat(d) < cur), None)
+        if not prev_day:
+            return {}
+        prev = digest_store.read_latest(cur, _d.fromisoformat(prev_day))
+
+        def _pl(document: dict, section: str) -> dict:
+            return ((document.get("sections") or {}).get(section) or {}).get("payload") or {}
+
+        now_rp, was_rp = _pl(doc, "reviews_pulse"), _pl(prev, "reviews_pulse")
+        now_tm, was_tm = _pl(doc, "tariff_moves"), _pl(prev, "tariff_moves")
+
+        def _d2(a, b):
+            try:
+                return round(float(a) - float(b), 2)
+            except (TypeError, ValueError):
+                return None
+
+        out = {"prev_date": prev_day}
+        out["week"] = _d2((now_rp.get("overall") or {}).get("week"),
+                          (was_rp.get("overall") or {}).get("week"))
+        out["escalation_pct"] = _d2((now_rp.get("kpi") or {}).get("escalation_pct"),
+                                    (was_rp.get("kpi") or {}).get("escalation_pct"))
+        out["unclassified"] = _d2((now_rp.get("unclassified") or {}).get("week"),
+                                  (was_rp.get("unclassified") or {}).get("week"))
+        out["sber_changes"] = _d2((now_tm.get("totals") or {}).get("sber_changes_7d"),
+                                  (was_tm.get("totals") or {}).get("sber_changes_7d"))
+        # ведущая тема: сравниваем только если тема ТА ЖЕ, иначе дельта врёт
+        nd = (now_rp.get("diverge") or [{}])[0]
+        wd = next((x for x in (was_rp.get("diverge") or []) if x.get("key") == nd.get("key")), None)
+        if nd.get("key") and wd:
+            out["diverge_key"] = nd["key"]
+            out["diverge_week"] = _d2(nd.get("week"), wd.get("week"))
+        return {k: v for k, v in out.items() if v is not None}
+    except Exception as e:  # noqa: BLE001 — дельта необязательна
+        log.info("digest delta skipped: %s", e)
+        return {}
 
 
 @app.get("/api/overview/digest/dates")
@@ -156,33 +548,271 @@ async def overview_digest_refresh(req: DigestRefreshRequest):
                     media_type="application/json")
 
 
+def _parse_rate_move(diff) -> tuple[Optional[float], Optional[float]]:
+    """from/to ставки из diff (значения в истории — строки, бывают с запятой)."""
+    if isinstance(diff, str):
+        try:
+            diff = json.loads(diff)
+        except Exception:  # noqa: BLE001
+            return None, None
+    rate = (diff or {}).get("rate_pct") or {}
+
+    def _f(v):
+        try:
+            return float(str(v).replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+    return _f(rate.get("from")), _f(rate.get("to"))
+
+
 @app.get("/api/recent-changes")
-def recent_changes():
-    return q("""
-        SELECT b.name bank_name, b.is_sber, o.category, o.title,
-               ch.changed_at, ch.diff
+def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = None,
+                   offer_id: Optional[int] = None, days: int = 7,
+                   significant: bool = True, limit: int = 50, offset: int = 0):
+    """Журнал изменений условий — посадочная для диплинков с Обзора.
+    significant=True — тот же критерий, что в totals дайджеста: нестаточное поле
+    в диффе ИЛИ |Δ ставки| ≥ 0.01 пп (микрошум расчётных ставок скрыт)."""
+    days = max(1, min(days, 90))
+    limit = max(1, min(limit, 200))
+    cond, params = [], {"days": days, "lim": limit, "off": max(0, offset)}
+    if category:
+        cond.append("o.category = :cat"); params["cat"] = category
+    if bank_slug:
+        cond.append("b.slug = :bs"); params["bs"] = bank_slug
+    if offer_id:
+        cond.append("ch.offer_id = :oid"); params["oid"] = offer_id
+    if significant:
+        cond.append("""((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
+                          WHERE k <> 'rate_pct') > 0
+                    OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
+                         - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)""")
+    where = " AND ".join(cond) if cond else "true"
+    rows = q(f"""
+        SELECT ch.change_id, ch.offer_id, ch.changed_at, ch.diff,
+               b.slug AS bank_slug, b.name AS bank_name, b.is_sber,
+               o.category, o.title, o.url
           FROM change_history ch
           JOIN product_offer o USING(offer_id)
           JOIN bank b USING(bank_id)
-         ORDER BY ch.changed_at DESC LIMIT 20
-    """)
+         WHERE ch.changed_at > now() - make_interval(days => :days)
+           AND {where}
+         ORDER BY ch.changed_at DESC
+         LIMIT :lim OFFSET :off
+    """, params)
+    for r in rows:
+        f, t = _parse_rate_move(r.get("diff"))
+        r["rate_from"], r["rate_to"] = f, t
+        r["rate_delta"] = round(t - f, 4) if f is not None and t is not None else None
+    return rows
 
 
 # ── market ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/market")
-def market(category: str = "deposit", limit: int = 100):
-    return q("""
+def market(category: str = "deposit", limit: int = 100, offset: int = 0,
+           q_text: Optional[str] = Query(None, alias="q"),
+           term: Optional[str] = None):
+    """Витрина категории: чистая база (без псевдо-офферов рейтингов), серверный
+    поиск и пагинация — раньше limit=100 молча усекал категорию, а поиск шарил
+    только по загруженной сотне."""
+    limit = max(1, min(limit, 200))
+    # не-банки (сервисы подбора, застройщики) не показываем в банковской витрине
+    cond, params = ["category = :c",
+                    "bank_name !~* :nonbank"], {
+        "c": category, "l": limit, "off": max(0, offset),
+        "nonbank": cat_meta.NON_BANK_SQL_RE}
+    if q_text:
+        cond.append("(bank_name ILIKE :qq OR title ILIKE :qq)")
+        params["qq"] = f"%{q_text.strip()}%"
+    if term:
+        cond.append("term_bucket = :tb"); params["tb"] = term
+    # сортировка по СОПОСТАВИМОЙ метрике категории (у карт это не ставка)
+    meta = cat_meta.CAT_META.get(category)
+    m_field = meta["metric"] if meta else "rate_pct"
+    m_lower = meta["metric_lower_is_better"] if meta else False
+    order = (f"{m_field} ASC NULLS LAST" if m_lower
+             else f"{m_field} DESC NULLS LAST")
+    return q(f"""
         SELECT bank_slug, bank_name, is_sber, offer_id, title, url,
-               rate_pct, rate_kind, currency,
+               rate_pct, rate_kind, term_bucket,
                amount_min, amount_max, term_months_min, term_months_max,
-               fee_open, fee_service, early_withdraw, capitalization,
-               replenishable, conditions, valid_from
-          FROM v_offer_current
-         WHERE category = :c
-         ORDER BY rate_pct DESC NULLS LAST
-         LIMIT :l
-    """, {"c": category, "l": limit})
+               fee_open, fee_service, grace_days, cashback_pct,
+               early_withdraw, capitalization,
+               replenishable, conditions, valid_from,
+               count(*) OVER () AS total
+          FROM v_market_rub_offer
+         WHERE {' AND '.join(cond)}
+         ORDER BY {order}
+         LIMIT :l OFFSET :off
+    """, params)
+
+
+@app.get("/api/meta/schedule")
+def meta_schedule():
+    """Реальное расписание автообновления + свежесть данных.
+    UI берёт часы отсюда, а не хардкодом: смена INGEST_HOUR_MSK в env
+    сразу отражается в интерфейсе."""
+    from ..digest.scheduler import ingest_schedule
+    sch = ingest_schedule()
+    sch["last_run"] = scalar(
+        "SELECT max(finished_at) FROM extraction_run WHERE status='ok'")
+    return sch
+
+
+@app.get("/api/meta/categories")
+def meta_categories():
+    """Единый словарь категорий (categories.py) + живые счётчики."""
+    counts = {r["category"]: r for r in q("""
+        SELECT category, count(*) AS n,
+               count(*) FILTER (WHERE is_sber) AS n_sber
+          FROM v_market_rub_offer
+         WHERE bank_name !~* :nonbank
+         GROUP BY category
+    """, {"nonbank": cat_meta.NON_BANK_SQL_RE})}
+    out = []
+    for c in cat_meta.CATEGORIES:
+        cc = counts.get(c["id"], {})
+        out.append({**c, "n": cc.get("n", 0), "n_sber": cc.get("n_sber", 0)})
+    return out
+
+
+@app.get("/api/market/atlas")
+def market_atlas(term: Optional[str] = None):
+    """Атлас позиций: по каждой категории — распределение ЛУЧШИХ офферов банков
+    (одна точка = один банк, чтобы банк с 15 витринными вкладами не перетягивал
+    медиану), позиция Сбера в нём (ранг/перцентиль), квартили, лидер.
+    Для lower_is_better «лучший» = минимальная ставка и ранг по возрастанию."""
+    # фильтр по СВОЕЙ метрике каждой категории: у карт rate_pct пуст by design
+    metrics = {c["metric"] for c in cat_meta.CATEGORIES}
+    cond = "(" + " OR ".join(f"{m} IS NOT NULL" for m in sorted(metrics)) + ")"
+    params: dict = {}
+    if term:
+        cond += " AND term_bucket = :tb"; params["tb"] = term
+    rows = q(f"""
+        SELECT category, bank_slug, bank_name, is_sber, offer_id, title,
+               rate_pct, rate_kind, term_bucket,
+               fee_service, grace_days, cashback_pct
+          FROM v_market_rub_offer WHERE {cond}
+    """, params)
+    # ключевая ставка ЦБ — база числового стража субсидий (кэш SOAP ЦБ)
+    key_rate = None
+    try:
+        from ..digest.news import fetch_key_rate
+        kr = fetch_key_rate() or {}
+        key_rate = float(kr.get("current")) if kr.get("current") else None
+    except Exception:  # noqa: BLE001 — без КС работает только текстовый фильтр
+        pass
+    by_cat: dict[str, dict] = {}
+    subsidized: dict[str, int] = {}
+    for r in rows:
+        meta = cat_meta.CAT_META.get(r["category"])
+        if not meta:                       # не витринная категория (рейтинги и пр.)
+            continue
+        val = r.get(meta["metric"])
+        if val is None:
+            continue
+        if cat_meta.is_non_bank(r["bank_name"]):
+            continue                       # застройщик/сервис подбора — не банк
+        if cat_meta.is_subsidized(r["title"], r["category"], float(val), key_rate):
+            # Господдержка (семейная/IT/военная/образовательный с субсидией):
+            # ставка установлена государством и ОДИНАКОВА у всех банков —
+            # ранжировать банки по ней бессмысленно и искажает картину
+            # («Сбер #2 на рынке кредитов» из-за образовательного под 3%).
+            subsidized[r["category"]] = subsidized.get(r["category"], 0) + 1
+            continue
+        val = float(val)
+        best = by_cat.setdefault(r["category"], {})
+        lower = meta["metric_lower_is_better"]
+        cur = best.get(r["bank_slug"])
+        if cur is None or (val < cur["rate"] if lower else val > cur["rate"]):
+            best[r["bank_slug"]] = {
+                "slug": r["bank_slug"], "name": r["bank_name"],
+                "is_sber": bool(r["is_sber"]), "rate": val,
+                "offer_id": r["offer_id"], "title": r["title"],
+                "rate_kind": r["rate_kind"], "term_bucket": r["term_bucket"],
+                # ставка отдельно от метрики: у кредиток метрика — грейс в днях,
+                # а ПСК «от» нужна в подсказке рядом с ним
+                "rate_pct": (float(r["rate_pct"]) if r["rate_pct"] is not None else None),
+                "secondary": (float(r[meta["secondary"]])
+                              if meta.get("secondary") and r.get(meta["secondary"]) is not None
+                              else None),
+            }
+
+    def _pct(sorted_vals: list[float], p: float) -> Optional[float]:
+        if not sorted_vals:
+            return None
+        i = (len(sorted_vals) - 1) * p
+        lo, hi = int(i), min(int(i) + 1, len(sorted_vals) - 1)
+        return round(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (i - lo), 2)
+
+    out = []
+    for c in cat_meta.CATEGORIES:
+        cid = c["id"]
+        banks = list(by_cat.get(cid, {}).values())
+        if not banks:
+            out.append({"category": cid, "label": c["label"],
+                        "lower_is_better": c["metric_lower_is_better"],
+                        "metric": c["metric"], "metric_label": c["metric_label"],
+                        "metric_unit": c["metric_unit"],
+                        "status": "no_data", "n_banks": 0})
+            continue
+        lower = c["metric_lower_is_better"]
+        banks.sort(key=lambda b: b["rate"], reverse=not lower)  # [0] = лидер
+        vals = sorted(b["rate"] for b in banks)
+        sber = next((b for b in banks if b["is_sber"]), None)
+        entry = {
+            "category": cid, "label": c["label"], "lower_is_better": lower,
+            "metric": c["metric"], "metric_label": c["metric_label"],
+            "metric_unit": c["metric_unit"], "rate_label": c.get("rate_label"),
+            "secondary": c.get("secondary"),
+            "status": "ok", "n_banks": len(banks),
+            "small_n": len(banks) < 5,
+            "subsidized_excluded": subsidized.get(cid, 0),
+            "points": banks,
+            "median": _pct(vals, 0.5), "p25": _pct(vals, 0.25),
+            "p75": _pct(vals, 0.75),
+            "min": vals[0], "max": vals[-1],
+            "leader": {k: banks[0][k] for k in ("slug", "name", "rate", "title")},
+        }
+        if sber:
+            # ранг с учётом РАВНЫХ значений: 91 карта с «0 ₽/год» — это один
+            # уровень, а не 91 разных мест (иначе Сбер выглядел «#39» с лучшей
+            # из возможных цен). Классический competition rank (1,1,3…).
+            rank = sum(1 for b in banks
+                       if (b["rate"] < sber["rate"] if lower
+                           else b["rate"] > sber["rate"])) + 1
+            n_tied = sum(1 for b in banks if b["rate"] == sber["rate"])
+            entry["sber"] = {**sber, "rank": rank, "tied": n_tied,
+                             "gap_leader": round(sber["rate"] - banks[0]["rate"], 2),
+                             "gap_median": round(sber["rate"] - entry["median"], 2),
+                             # доля рынка, которую Сбер опережает (1.0 = лидер)
+                             "beats_share": round(1 - (rank - 1) / max(len(banks) - 1, 1), 2)}
+        out.append(entry)
+    return {"term": term, "categories": out}
+
+
+@app.get("/api/market/offer/{offer_id}/history")
+def market_offer_history(offer_id: int):
+    """Досье оффера: паспорт текущих условий + SCD2-ряд ставки + диффы."""
+    cur = q("SELECT * FROM v_market_rub_offer WHERE offer_id = :o", {"o": offer_id})
+    if not cur:                       # оффер деактивирован/вне витрины — показываем как есть
+        cur = q("SELECT * FROM v_offer_current WHERE offer_id = :o", {"o": offer_id})
+    versions = q("""
+        SELECT rate_pct, valid_from, valid_to
+          FROM product_terms WHERE offer_id = :o
+         ORDER BY valid_from
+    """, {"o": offer_id})
+    changes = q("""
+        SELECT change_id, changed_at, diff FROM change_history
+         WHERE offer_id = :o ORDER BY changed_at DESC LIMIT 60
+    """, {"o": offer_id})
+    for ch in changes:
+        f, t = _parse_rate_move(ch.get("diff"))
+        ch["rate_from"], ch["rate_to"] = f, t
+        ch["rate_delta"] = round(t - f, 4) if f is not None and t is not None else None
+    if not cur:
+        raise HTTPException(404, "Оффер не найден")
+    return {"offer": cur[0], "rate_series": versions, "changes": changes}
 
 @app.get("/api/market/categories")
 def market_categories():
@@ -204,11 +834,24 @@ def sber_vs_market():
 
 @app.get("/api/sber-vs-market/top")
 def sber_vs_market_top():
+    # Топ-5 + лучшая строка Сбера с его ФАКТИЧЕСКИМ рангом (фидбек аналитиков:
+    # «Сбер не подсвечен» — он просто не попадал в топ-5 по ставке)
     return q("""
-        SELECT bank_name, bank_slug, is_sber, category, title,
-               rate_pct, term_months_min, amount_min, rk
-          FROM v_offer_top_by_rate WHERE rk <= 5
-         ORDER BY category, rk
+        SELECT * FROM (
+            SELECT bank_name, bank_slug, is_sber, category, title,
+                   rate_pct, term_months_min, amount_min, rk
+              FROM v_offer_top_by_rate WHERE rk <= 5
+        ) a
+        UNION ALL
+        SELECT * FROM (
+            SELECT DISTINCT ON (category)
+                   bank_name, bank_slug, is_sber, category, title,
+                   rate_pct, term_months_min, amount_min, rk
+              FROM v_offer_top_by_rate
+             WHERE is_sber AND rk > 5
+             ORDER BY category, rk
+        ) b
+        ORDER BY category, rk
     """)
 
 
@@ -304,7 +947,15 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
     sig = await asyncio.to_thread(_rd().weekly_signals, bank, product or None)
     signals = (sig or {}).get("signals") or []
     if not signals:
-        return {"summary": None, "signals": [], "overall": (sig or {}).get("overall"), "calm": True}
+        # Порог всплеска (×1.8) не пробит — но это НЕ значит «всё спокойно»:
+        # тема может расти вдвое быстрее рынка при ×1.6. Радар обязан показать
+        # такое как наблюдение, иначе он противоречит анализу недели, где эта
+        # же тема идёт первым пунктом (жалоба владельца 23.07.2026).
+        wp = await asyncio.to_thread(_rd().week_pulse, bank, product or None)
+        watch = [d for d in ((wp or {}).get("diverge") or []) if (d.get("gap") or 0) >= 1.15]
+        return {"summary": None, "signals": [], "watch": watch[:4],
+                "overall": (sig or {}).get("overall"),
+                "calm": not watch}
     recent = await asyncio.to_thread(_rd().list_reviews, bank, product or None, None, None, 7, None, None, 50)
     unclassified = [r for r in recent if not r.get("themes")]   # кандидаты в новые инциденты
     brief = await reviews_llm.anomaly_brief(sig, recent[:14], unclassified[:14])
@@ -379,6 +1030,135 @@ def quality():
 
 
 # ── sources / jobs ────────────────────────────────────────────────────────────
+
+# ── источники: каталог доверия и заявки от аудиторов ─────────────────────────
+
+@app.get("/api/sources/catalog")
+def sources_catalog():
+    """Какие источники и с каким доверием участвуют в каждом контуре."""
+    from . import sources_catalog as sc
+    return {"purposes": sc.catalog()}
+
+
+class SourceProposal(BaseModel):
+    purpose: str
+    url: str
+    title: Optional[str] = None
+    reason: Optional[str] = None
+
+
+@app.get("/api/sources/check")
+def sources_check(url: str, purpose: str, user: CurrentUser = Depends(get_current_user)):
+    """Проверка ДО отправки: валиден ли адрес, не используется ли уже,
+    не предлагали ли его раньше. Аудитор видит вердикт сразу, а не после
+    отправки формы."""
+    from . import sources_catalog as sc
+    dom = sc.normalize_domain(url)
+    if not dom or "." not in dom:
+        return {"ok": False, "state": "bad_url",
+                "message": "Не похоже на адрес сайта. Пример: cbr.ru или t.me/канал"}
+    if purpose not in sc.PURPOSE_IDS:
+        raise HTTPException(400, "неизвестный раздел")
+    used = sc.known_domains().get(purpose) or []
+    if dom in used:
+        return {"ok": False, "state": "already_used", "domain": dom,
+                "message": f"{dom} уже используется в этом разделе"}
+    other = [pid for pid, doms in sc.known_domains().items()
+             if pid != purpose and dom in doms]
+    row = q("""
+        SELECT status, created_at, proposer_name FROM source_proposal
+         WHERE purpose = :p AND domain = :d ORDER BY created_at DESC LIMIT 1
+    """, {"p": purpose, "d": dom})
+    if row and row[0]["status"] == "pending":
+        return {"ok": False, "state": "pending", "domain": dom,
+                "message": f"{dom} уже предложен и ждёт рассмотрения"}
+    if row and row[0]["status"] == "rejected":
+        return {"ok": True, "state": "was_rejected", "domain": dom,
+                "message": f"{dom} ранее отклоняли — опишите, что изменилось"}
+    msg = f"{dom} — новый источник для этого раздела"
+    if other:
+        from . import sources_catalog as _sc
+        names = ", ".join(next(x["title"] for x in _sc.PURPOSES if x["id"] == o)
+                          for o in other)
+        msg += f". Уже используется в разделе «{names}» — здесь будет отдельно"
+    return {"ok": True, "state": "new", "domain": dom, "message": msg}
+
+
+@app.post("/api/sources/propose")
+def sources_propose(req: SourceProposal, user: CurrentUser = Depends(get_current_user)):
+    from . import sources_catalog as sc
+    if req.purpose not in sc.PURPOSE_IDS:
+        raise HTTPException(400, "неизвестный раздел")
+    dom = sc.normalize_domain(req.url)
+    if not dom or "." not in dom:
+        raise HTTPException(400, "Не похоже на адрес сайта")
+    if dom in (sc.known_domains().get(req.purpose) or []):
+        raise HTTPException(409, f"{dom} уже используется в этом разделе")
+    try:
+        with db.session() as s:
+            pid = s.execute(text("""
+                INSERT INTO source_proposal(purpose, url, domain, title, reason,
+                                            proposed_by, proposer_name)
+                VALUES (:p, :u, :d, :t, :r, :by, :nm)
+                RETURNING proposal_id
+            """), {"p": req.purpose, "u": req.url.strip(), "d": dom,
+                   "t": (req.title or "").strip()[:200] or None,
+                   "r": (req.reason or "").strip()[:2000] or None,
+                   "by": user.username, "nm": user.name}).scalar_one()
+    except Exception as e:  # noqa: BLE001 — уникальный индекс по живым заявкам
+        if "source_proposal_pending_uniq" in str(e):
+            raise HTTPException(409, f"{dom} уже предложен и ждёт рассмотрения")
+        raise
+    log.info("source proposal #%s: %s → %s (%s)", pid, dom, req.purpose, user.username)
+    return {"ok": True, "proposal_id": pid, "domain": dom}
+
+
+@app.get("/api/sources/proposals")
+def sources_proposals(user: CurrentUser = Depends(get_current_user)):
+    """Свои заявки; владельцу — все, для рассмотрения."""
+    admin = telemetry.is_admin(user.username)
+    rows = q("""
+        SELECT proposal_id, purpose, url, domain, title, reason, status,
+               review_note, proposer_name, proposed_by, created_at, reviewed_at
+          FROM source_proposal
+         WHERE :admin OR proposed_by = :me
+         ORDER BY created_at DESC LIMIT 100
+    """, {"admin": admin, "me": user.username})
+    return {"proposals": rows, "is_admin": admin}
+
+
+class ProposalReview(BaseModel):
+    status: str                      # approved | rejected
+    note: Optional[str] = None
+
+
+@app.post("/api/sources/proposals/{pid}/review")
+def sources_review(pid: int, req: ProposalReview,
+                   user: CurrentUser = Depends(get_current_user)):
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "только владелец инструмента")
+    if req.status not in ("approved", "rejected"):
+        raise HTTPException(400, "статус: approved | rejected")
+    with db.session() as s:
+        row = s.execute(text("""
+            UPDATE source_proposal
+               SET status = :st, review_note = :n, reviewed_by = :by, reviewed_at = now()
+             WHERE proposal_id = :id
+            RETURNING purpose, domain, title
+        """), {"st": req.status, "n": (req.note or "").strip()[:1000] or None,
+               "by": user.username, "id": pid}).mappings().first()
+        if not row:
+            raise HTTPException(404, "заявка не найдена")
+        # одобренный веб-источник сразу получает вес доверия — попадёт в отчёты
+        if req.status == "approved" and row["purpose"] == "ai":
+            s.execute(text("""
+                INSERT INTO source_trust(kind, domain, weight, notes)
+                VALUES ('media', :d, 0.60, :n)
+                ON CONFLICT (kind, domain) DO NOTHING
+            """), {"d": row["domain"],
+                   "n": (row["title"] or "предложен аудитором") + " · одобрен"})
+    return {"ok": True}
+
 
 @app.get("/api/sources")
 def sources_status():
@@ -819,9 +1599,89 @@ class ChatRequest(BaseModel):
     question: str
     history: list = []
     force_deep: Optional[bool] = None    # None=auto, True=force deep mode, False=force quick
+    session_id: Optional[int] = None     # продолжение существующей сессии истории
+
+
+async def _persisting_stream(inner, username: str, session_id: int, question: str):
+    """Оборачивает stream_analysis: прозрачно проксирует SSE-события, попутно
+    копит финальный ответ+источники и по завершении сохраняет сообщение ассистента
+    и (для содержательных ответов) отчёт. Копим так же, как фронт: text-чанки +
+    report_replace (перекрывает) + sources.
+    """
+    # Сразу отдаём фронту session_id, чтобы следующий вопрос продолжил эту сессию.
+    yield json.dumps({"type": "session", "session_id": session_id}, ensure_ascii=False)
+    parts: list[str] = []
+    replaced: Optional[str] = None
+    sources: list = []
+    charts: list = []
+    mode: Optional[str] = None
+    persisted = False
+
+    def _persist() -> int | None:
+        """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
+        body = replaced if replaced is not None else "".join(parts)
+        if not (body and body.strip()):
+            return None
+        try:
+            banks = userdata.parse_query_signals(question).get("banks", [])
+            is_report = (mode == "deep") or (len(body) > 800)
+            report_id = None
+            if is_report:
+                report_id = userdata.save_report(
+                    username, session_id, question, body,
+                    payload={"sources": sources, "mode": mode, "charts": charts},
+                    banks=banks)
+                # Само-дополняющийся профиль: каждый 3-й отчёт обновляем
+                # LLM-нарратив интересов (в фоне, не блокируя ответ).
+                try:
+                    if userdata.count_reports(username) % 3 == 0:
+                        from .profile_ai import generate_profile_note
+                        asyncio.create_task(generate_profile_note(username))
+                except Exception:
+                    pass
+            userdata.add_message(session_id, "assistant", body, {
+                "sources": sources, "mode": mode, "report_id": report_id})
+            return report_id
+        except Exception:
+            log.warning("[ai_analyze] persist failed", exc_info=True)
+            return None
+
+    try:
+        async for ev in inner:
+            try:
+                data = json.loads(ev)
+                t = data.get("type")
+                if t == "text":
+                    if data.get("chunk"):
+                        parts.append(data["chunk"])
+                    elif isinstance(data.get("text"), str):
+                        replaced = data["text"]
+                elif t == "report_replace" and isinstance(data.get("text"), str):
+                    replaced = data["text"]
+                elif t == "sources" and isinstance(data.get("sources"), list):
+                    sources = data["sources"]
+                elif t == "chart" and isinstance(data.get("spec"), dict):
+                    charts.append(data["spec"])   # графики — в payload отчёта
+                elif t == "mode":
+                    mode = data.get("value")
+                elif t == "done" and not persisted:
+                    # Персистим ДО done: клиент успевает получить report_id
+                    # (кнопка «Поделиться» доступна сразу после прогона).
+                    persisted = True
+                    rid = _persist()
+                    if rid:
+                        yield json.dumps({"type": "report_saved", "report_id": rid},
+                                         ensure_ascii=False)
+            except Exception:
+                pass
+            yield ev
+    finally:
+        if not persisted:      # обрыв соединения/стрима без done — не теряем ответ
+            _persist()
+
 
 @app.post("/api/ai/analyze")
-async def ai_analyze(req: ChatRequest):
+async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_user)):
     # ── Demo hook: если DEMO_MODE=1 и вопрос совпадает с trigger_keywords ──
     # одного из demo/responses/*.json — стримим заготовленный ответ за ~25-30s.
     # Любые ДРУГИЕ вопросы идут в нормальный pipeline.
@@ -841,12 +1701,34 @@ async def ai_analyze(req: ChatRequest):
 
     if not os.getenv("LLM_API_KEY"):
         raise HTTPException(503, "LLM_API_KEY не задан в .env")
+
+    # Персонализация: заводим/продолжаем сессию истории, сохраняем вопрос,
+    # обновляем профиль интересов, логируем событие (всё best-effort — не должно
+    # уронить ответ, если БД недоступна).
+    username = user.username
+    session_id = req.session_id
+    try:
+        userdata.touch_user(username, user.name)
+        session_id = userdata.get_or_create_session(username, req.session_id, req.question)
+        userdata.add_message(session_id, "user", req.question,
+                             {"force_deep": req.force_deep})
+        signals = userdata.update_interests_from_query(username, req.question)
+        userdata.log_event(username, "ai_query", {"question": req.question, **signals})
+    except Exception:
+        log.warning("[ai_analyze] pre-persist failed", exc_info=True)
+
+    inner = stream_analysis(req.question, req.history, force_deep=req.force_deep,
+                            session_hint=(f"{user.username}-{session_id}"
+                                          if session_id else user.username))
+    gen = (_persisting_stream(inner, username, session_id, req.question)
+           if session_id else inner)
+
     # Deep-research pipeline идёт 90-300s. Между phase-событиями могут быть
     # длинные паузы (LLM-запросы по 30-60s). Без keep-alive проксики/браузер
     # рвут idle-соединение. ping=10 шлёт SSE-комментарий ':\n\n' каждые 10s —
     # это валидный SSE no-op, фронт игнорирует, прокси-таймауты не срабатывают.
     return EventSourceResponse(
-        stream_analysis(req.question, req.history, force_deep=req.force_deep),
+        gen,
         media_type="text/event-stream",
         ping=10,
         headers={

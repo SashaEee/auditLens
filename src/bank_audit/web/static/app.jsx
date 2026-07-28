@@ -28,9 +28,10 @@ const QUICK = [
 ];
 
 // Редакторский экран приветствия ИИ-аналитика (новый дизайн)
-function AiWelcome({onPick}){
+function AiWelcome({onPick,recent,onOpenHistory,onLoadSession}){
+  const me=useMe();
   return <div className="ai-welcome fade-in">
-    <div className="aw-eyebrow">ИИ-аналитик · AuditLens</div>
+    <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-аналитик`:"ИИ-аналитик · AuditLens"}</div>
     <h1 className="aw-title">Спросите об условиях<br/>банковского рынка</h1>
     <p className="aw-lede">Сравнение тарифов, ставок и рисков по продуктам — с цитированием официальных источников и позицией Сбера. Для аудит-вывода включите <b>Deep&nbsp;Research</b>: планировщик, мульти-агентный сбор и проверка чисел.</p>
     <div className="aw-cards">
@@ -41,6 +42,22 @@ function AiWelcome({onPick}){
         </button>
       ))}
     </div>
+    {recent&&recent.length>0 && <div className="aw-recent">
+      <div className="aw-recent-h">
+        <span className="l">Продолжить</span>
+        <button onClick={onOpenHistory}>Вся история
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+      <div className="aw-recent-grid">
+        {recent.slice(0,4).map(s=>(
+          <button key={s.session_id} className="aw-rec" onClick={()=>onLoadSession&&onLoadSession(s.session_id)}>
+            <span className="t">{s.title||"Без названия"}</span>
+            <span className="m">{fmtHistTime(s.updated_at)} · {s.n_messages||0} сообщ.</span>
+          </button>
+        ))}
+      </div>
+    </div>}
     <div className="aw-conn">Подключено: <span>v_offer_current · v_review_topics · v_sber_vs_market</span> · глубина 30 дней</div>
   </div>;
 }
@@ -56,6 +73,16 @@ const fmtDate = s => {
   try { return new Date(s).toLocaleString("ru",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}); }
   catch { return String(s).slice(0,16); }
 };
+// Дата публикации новости: всегда МСК и явная пометка пояса (правка аналитиков)
+const fmtDateMsk = s => {
+  if(!s) return "";
+  try {
+    const d = new Date(s);
+    if(isNaN(d)) return String(s).slice(0,16);
+    return d.toLocaleString("ru",{timeZone:"Europe/Moscow",day:"2-digit",month:"2-digit",
+      hour:"2-digit",minute:"2-digit"}).replace(", "," ")+" МСК";
+  } catch { return String(s).slice(0,16); }
+};
 const fmtAmount = (min,max) => {
   const f=n=>{if(!n)return null;n=parseFloat(n);if(n>=1e6)return`${+(n/1e6).toFixed(1)} млн`;if(n>=1e3)return`${Math.round(n/1e3)} тыс.`;return String(Math.round(n));};
   const[a,b]=[f(min),f(max)];
@@ -70,6 +97,7 @@ const fmtTerm = (min,max) => {
 const apiFetch = (path) => fetch(path).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json();});
 const apiPost  = (path,body) => fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 const apiDel   = (path) => fetch(path,{method:"DELETE"}).then(r=>r.json()).catch(()=>{});
+const apiPut   = (path,body) => fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 const ThemeCtx = createContext({theme:"light",setTheme:()=>{}});
@@ -81,6 +109,28 @@ function ThemeProvider({children}){
 const useTheme = () => useContext(ThemeCtx);
 const BanksCtx = createContext([]);
 const useBanks = () => useContext(BanksCtx);
+
+// ─── Пользователь (персонализация) ────────────────────────────────────────────
+const MeCtx = createContext(null);
+const useMe = () => useContext(MeCtx);
+const firstName = (name) => (name||"").trim().split(/\s+/)[0] || "";
+const initials = (name) => {
+  const p=(name||"").trim().split(/\s+/).filter(Boolean);
+  return ((p[0]?.[0]||"")+(p[1]?.[0]||"")).toUpperCase() || "А";
+};
+const greetWord = (tz) => {
+  let h;
+  try{ h=parseInt(new Intl.DateTimeFormat("ru",{hour:"numeric",hour12:false,timeZone:tz||undefined}).format(new Date())); }
+  catch{ h=new Date().getHours(); }
+  if(h>=5&&h<12) return "Доброе утро";
+  if(h>=12&&h<18) return "Добрый день";
+  if(h>=18&&h<23) return "Добрый вечер";
+  return "Доброй ночи";
+};
+const greeting = (me) => {
+  const fn=firstName(me?.name), w=greetWord(me?.timezone);
+  return fn?`${w}, ${fn}`:w;
+};
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Ic = {
@@ -346,23 +396,11 @@ function trustTier(score){
   return 3;
 }
 
-function renderMD(text, sources, charts){
-  if(!text) return null;
-  const chartsArr = Array.isArray(charts) ? charts : [];
-  const srcByN={};
-  if(Array.isArray(sources)){for(const s of sources){if(s&&s.n!=null)srcByN[s.n]=s;}}
-  const escAttr=(v)=>(v==null?"":String(v).replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
-  const renderCitation=(n)=>{
-    const s=srcByN[n];
-    if(!s||!s.url){
-      // Невалидная цитата — quiet якорь (не открывает в новой вкладке)
-      return `<sup><a href="#src-${n}" class="cite cite-anchor" data-cite="${n}">${n}</a></sup>`;
-    }
-    const tier=trustTier(s.trust_score);
-    return `<sup><a href="${escAttr(s.url)}" target="_blank" rel="noopener noreferrer" `
-         + `class="cite cite-t${tier}" data-cite="${n}">${n}</a></sup>`;
-  };
-  const inlineHTML=(s)=>s
+  // Экранирование + inline-markdown. Вынесено из renderMD в общую область:
+// разбор «Анализа жалоб недели» в карточки использует ту же санитизацию,
+// а вложенная функция была недоступна снаружи (ReferenceError на проде).
+function _inlineHTML(s, renderCitation=(n)=>`[${n}]`){
+  return String(s)
     // Сначала экранируем ВЕСЬ вход: в markdown попадает недоверенный текст
     // (LLM-пересказ жалоб клиентов, сниппеты источников) — сырой <img onerror=…>
     // иначе исполнится через dangerouslySetInnerHTML (stored XSS).
@@ -388,7 +426,27 @@ function renderMD(text, sources, charts){
              '<span class="dr-conflict">$1$2</span>')
     .replace(/⚠\s*(КОНФЛИКТ|РАСХОЖДЕНИЕ|ПРОТИВОРЕЧИЕ)([^.\n]{0,80})/gi,
              '<span class="dr-conflict">$1$2</span>');
+}
 
+function inlineHTML(s){return _inlineHTML(s);}
+
+function renderMD(text, sources, charts){
+  if(!text) return null;
+  const chartsArr = Array.isArray(charts) ? charts : [];
+  const srcByN={};
+  if(Array.isArray(sources)){for(const s of sources){if(s&&s.n!=null)srcByN[s.n]=s;}}
+  const escAttr=(v)=>(v==null?"":String(v).replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
+  const renderCitation=(n)=>{
+    const s=srcByN[n];
+    if(!s||!s.url){
+      // Невалидная цитата — quiet якорь (не открывает в новой вкладке)
+      return `<sup><a href="#src-${n}" class="cite cite-anchor" data-cite="${n}">${n}</a></sup>`;
+    }
+    const tier=trustTier(s.trust_score);
+    return `<sup><a href="${escAttr(s.url)}" target="_blank" rel="noopener noreferrer" `
+         + `class="cite cite-t${tier}" data-cite="${n}">${n}</a></sup>`;
+  };
+  const inlineHTML=(s)=>_inlineHTML(s, renderCitation);
   const lines=text.split("\n");
   let out=[],inTable=false,tableHead=[],tableRows=[],listBuf=[],listOrdered=false,bqBuf=[];
   // Slugify для anchor id заголовков (используется TOC)
@@ -542,6 +600,214 @@ function bfGoDrill(drill){
 // чтобы подсветка была на КАЖДОМ заголовке, а не только когда hot от LLM точно
 // совпал. Приоритет: точный hot → без регистра → число/процент/×N → банк/ЦБ →
 // последние 2 слова. hl — заголовок, hot — подсказка модели (может быть пустой).
+// ─── Всплывашки поверх всего: портал в body + fixed ──────────────────────────
+// Раньше попап жил внутри плитки и обрезался её контейнером (у полосы пульса
+// overflow:hidden ради скруглённых углов), а hover-фильтры создавали слои,
+// перекрывавшие подсказку. Портал в body снимает и обрезание, и конкуренцию
+// z-index: попап физически вне всех контейнеров страницы.
+function popPlace(el,{w=400,h=280,gap=12}={}){
+  const r=el.getBoundingClientRect();
+  // размеры окна берём с фолбэками: в некоторых встроенных вебвью innerWidth
+  // приходит нулём, и без страховки попап получал отрицательную ширину
+  const de=document.documentElement;
+  const W=window.innerWidth||de.clientWidth||de.getBoundingClientRect().width||1280;
+  const H=window.innerHeight||de.clientHeight||800;
+  const M=12;
+  const ww=Math.max(240,Math.min(w,W-M*2));
+  let left,top,arrow;
+  if(W-r.right>=ww+gap){ left=r.right+gap; top=r.top-10; arrow="left"; }
+  else if(r.left>=ww+gap){ left=r.left-ww-gap; top=r.top-10; arrow="right"; }
+  else if(H-r.bottom>=h+gap){ left=r.left; top=r.bottom+gap; arrow="top"; }
+  else { left=r.left; top=r.top-h-gap; arrow="bottom"; }
+  left=Math.min(Math.max(M,left),W-ww-M);
+  top=Math.min(Math.max(M,top),H-Math.min(h,H-M*2)-M);
+  return {left,top,width:ww,arrow};
+}
+
+// Текстовая подсказка [data-tip] — тоже порталом (была CSS ::after, обрезалась)
+function TipLayer(){
+  const[tip,setTip]=useState(null);
+  useEffect(()=>{
+    let cur=null;
+    const show=e=>{
+      const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
+      if(!el||el===cur)return;
+      const txt=el.getAttribute("data-tip");
+      if(!txt)return;
+      cur=el;
+      setTip({txt,...popPlace(el,{w:320,h:120})});
+    };
+    const hide=e=>{
+      if(!cur)return;
+      if(e&&e.target&&e.target.closest&&e.target.closest("[data-tip]")===cur&&e.type!=="scroll")return;
+      cur=null;setTip(null);
+    };
+    document.addEventListener("mouseover",show);
+    document.addEventListener("mouseout",hide);
+    document.addEventListener("focusin",show);
+    document.addEventListener("focusout",hide);
+    window.addEventListener("scroll",hide,true);
+    return()=>{document.removeEventListener("mouseover",show);
+      document.removeEventListener("mouseout",hide);
+      document.removeEventListener("focusin",show);
+      document.removeEventListener("focusout",hide);
+      window.removeEventListener("scroll",hide,true);};
+  },[]);
+  if(!tip)return null;
+  return ReactDOM.createPortal(
+    <div className={"tip-pop tip-a-"+tip.arrow}
+         style={{left:tip.left,top:tip.top,maxWidth:tip.width}}>{tip.txt}</div>,
+    document.body);
+}
+
+// ─── «Как это посчитано» — раскрытие любой цифры брифинга ─────────────────────
+// Аудитор не должен гадать, откуда взялось «×2.1»: показываем формулу словами,
+// как считалась норма, на какой выборке и из какого источника.
+function xpRows(kind,d){
+  const R=[];
+  if(kind==="review_spike"){
+    if(d.week!=null&&d.baseline_week!=null)
+      R.push(["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`]);
+    if(d.baseline_week!=null)
+      // ВАЖНО: это среднее по окну 14–63 дня назад (7 недель), не медиана и не
+      // «прошлые 6 недель» — последние две недели в норму НЕ входят, иначе
+      // всплеск разбавлял бы сам себя
+      R.push(["Норма",d.base_count!=null
+        ? `${d.base_count} жалоб за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks} = ${d.baseline_week} в неделю`
+        : `среднее за неделю по окну 14–63 дня назад — ${d.baseline_week} жалоб`]);
+    if(d.prev_week!=null) R.push(["Прошлая неделя",`${d.prev_week} жалоб`]);
+    // масштаб: 6.7/нед — это ОДНА тема; без общего числа цифра кажется мелкой
+    if(d.week_total)
+      R.push(["Масштаб",`тема — ${Math.round(100*d.week/d.week_total)}% всех жалоб на Сбер за неделю (${d.week} из ${d.week_total})`]);
+    if(d.market_ratio!=null)
+      R.push(["Рынок",`та же тема по рынку ×${d.market_ratio}` +
+        (d.bank_specific?" — значит всплеск наш, а не отраслевой":"")]);
+    R.push(["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★) · темы по ключевым словам"]);
+  } else if(kind==="tariff_move"){
+    if(d.from!=null&&d.to!=null)
+      R.push(["Расчёт",`${d.from}% → ${d.to}% = ${d.delta>0?"+":""}${d.delta} п.п.`]);
+    if(d.category) R.push(["Продукт",`${CAT_LABELS[d.category]||d.category} · ${d.title||""}`]);
+    R.push(["Порог","в движения недели попадают сдвиги от 0.05 п.п."]);
+    R.push(["Источник","журнал изменений тарифов (sravni.ru)"]);
+  } else if(kind==="mass_move"){
+    R.push(["Расчёт",`${d.n_banks} банков изменили условия за ${d.window_h||48} ч`]);
+    if(d.banks) R.push(["Банки",(d.banks||[]).slice(0,6).join(", ")]);
+    R.push(["Критерий","массовым считаем движение от 3 банков одной категории"]);
+  } else if(kind==="news_alert"){
+    const sev={red:"прямая угроза или инцидент",amber:"наблюдать",green:"благоприятное"};
+    if(d.domain||d.source) R.push(["Источник",`${d.domain||d.source}${d.ts?` · ${fmtDateMsk(d.ts)}`:""}`]);
+    if(d.why) R.push(["Почему важно",d.why]);
+    if(d.summary) R.push(["Суть",d.summary]);
+    if(d.severity) R.push(["Оценка",sev[d.severity]||d.severity]);
+    R.push(["Проверка","цифры и формулировки — из текста публикации, ИИ их не додумывает"]);
+  } else if(kind==="rate_move"){
+    if(d.current!=null) R.push(["Значение",`ключевая ставка ЦБ ${d.current}%`]);
+    if(d.as_of) R.push(["На дату",String(d.as_of)]);
+    R.push(["Источник","Банк России, официальная публикация"]);
+  }
+  return R;
+}
+
+// расшифровки плиток пульса: у каждой цифры своя формула и своя выборка
+const xpDiverge=d=>[
+  ["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`],
+  ["Норма",`${d.base_count} жалоб за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks}`],
+  ["Рынок",d.market_ratio!=null
+    ?`та же тема по всем банкам ×${d.market_ratio} — мы растём в ${d.gap} раза быстрее рынка`
+    :"рыночный срез недоступен"],
+  ["Почему здесь","из 22 тем показана та, где наш рост сильнее всего обгоняет рыночный"],
+  ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
+];
+const xpEscalation=k=>[
+  ["Значение",`${pct1(k.escalation_pct)} жалоб содержат угрозу обращения в ЦБ, суд, ФАС или прокуратуру`],
+  ["Как ищем","по формулировкам жалобы: «жалоба в ЦБ», «подам иск», «в прокуратуру» и подобным"],
+  ["Порог","12% — принятый в инструменте уровень внимания"],
+  ["Выборка",`${fmtNum(k.total||0)} жалоб за 90 дней · только Сбербанк · banki.ru`],
+];
+const xpWeek=(ov,k)=>[
+  ["Расчёт",`${ov.week} жалоб за последние 7 дней`],
+  ["Норма",ov.baseline_week!=null
+    ?`${Math.round(ov.baseline_week)} в неделю — среднее по окну 14–63 дня назад`:"—"],
+  ["Рынок",ov.market_ratio!=null?`по всем банкам ×${ov.market_ratio} к своей норме`:"—"],
+  ["Масштаб",k.total?`корпус ${fmtNum(k.total)} жалоб за 90 дн · доля рынка ${k.market_share_pct}% · ${k.market_rank}-е место из ${k.market_banks}`:"—"],
+  ["Канал","banki.ru, негативные отзывы 1–2★ — один из каналов, не все обращения"],
+];
+const xpOurChanges=tm=>[
+  ["Значение",`${(tm.totals&&tm.totals.sber_changes_7d)||0} офферов Сбера со значимым изменением условий за 7 дней`],
+  ["Значимое","изменение нестаточного условия или сдвиг ставки от 0.01 п.п."],
+  ["Зачем","проверить, что изменения тарифов прошли согласование и корректно отражены"],
+  ["Источник","журнал изменений условий (sravni.ru), сверка ежедневная"],
+];
+const xpUnclassified=u=>u?[
+  ["Значение",`${u.week} жалоб из ${u.week_total} за неделю (${u.pct}%) не попали ни в одну из 22 тем`],
+  ["Норма",`${u.baseline_week} в неделю по окну 14–63 дня назад`+(u.ratio!=null?` — сейчас ×${u.ratio}`:"")],
+  ["Что значит","классификатор их не видит: либо инцидент вне таксономии, либо пробел в правилах"],
+  ["Зачем","картина по темам неполна на эту долю — это надо знать до выводов"],
+]:[];
+const xpThemeUp=t=>[
+  ["Расчёт",`${t.n} жалоб за 90 дней против ${Math.round(t.n/(1+(t.delta_pct||0)/100))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
+  ["Горизонт","квартал — медленные тренды, которых не видно в недельном окне"],
+  ["Порог","показываем тему с ростом от 50% и не менее 30 жалоб"],
+  ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
+];
+
+// обёртка вокруг числа: пунктирное подчёркивание + карточка-расшифровка.
+// Позиция выбирается по свободному месту: сбоку (не перекрывает текст вообще),
+// иначе снизу/сверху — попап не должен резать строку заголовка.
+function Xp({rows,children,note}){
+  const ref=useRef(null);
+  const[box,setBox]=useState(null);
+  const show=useCallback(()=>{
+    if(ref.current)setBox(popPlace(ref.current,{w:400,h:Math.min(300,80+34*((rows||[]).length))}));
+  },[rows]);
+  const hide=useCallback(()=>setBox(null),[]);
+  useEffect(()=>{
+    if(!box)return;
+    const off=()=>setBox(null);
+    window.addEventListener("scroll",off,true);
+    window.addEventListener("resize",off);
+    return()=>{window.removeEventListener("scroll",off,true);
+      window.removeEventListener("resize",off);};
+  },[box]);
+  if(!rows||!rows.length)return children;
+  return <span className="xp" tabIndex={0} ref={ref}
+      onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}>
+    {children}
+    {box&&ReactDOM.createPortal(
+      <div className={"xp-pop xp-a-"+box.arrow} role="tooltip"
+           style={{left:box.left,top:box.top,width:box.width}}>
+        <span className="xp-h">как это посчитано</span>
+        {rows.map(([k,v],i)=><span key={i} className="xp-row">
+          <span className="xp-k">{k}</span><span className="xp-v">{v}</span></span>)}
+        {note&&<span className="xp-note">{note}</span>}
+      </div>, document.body)}
+  </span>;
+}
+
+// «−22 ко вчера» под числом плитки: носитель смысла — изменение, а не уровень.
+// Сравниваются снапшоты выпусков (см. _digest_delta на бэке), поэтому дрейф
+// скользящего окна внутри дня сюда не попадает.
+function BfDelta({v,unit,invert}){
+  if(v==null||v===0)return null;
+  const better=invert?v<0:v>0;      // invert=true → рост это плохо
+  return <span className={"bf-t-delta "+(better?"good":"bad")}>
+    {v>0?"+":"−"}{Math.abs(v)}{unit||""} ко вчера</span>;
+}
+
+// Вердикт дня, если LLM не сформулировала: одна фраза по тем же числам.
+function bfVerdict(dv,esc,ovl,unc){
+  const bits=[];
+  if(dv&&dv.gap>=1.25)
+    bits.push(`Внимание на «${(dv.short||dv.label).toLowerCase()}»: ${dv.week} жалоб при норме ${dv.baseline_week}` +
+      (dv.market_ratio!=null&&dv.market_ratio<1.15?" — и это только у нас, по рынку тема ровная":""));
+  else bits.push("Спокойное утро: тем с ростом сильнее рынка нет");
+  if(esc!=null&&esc>=12) bits.push(`эскалации в ЦБ и суд выше порога — ${pct1(esc)} при 12%`);
+  if(unc&&unc.ratio!=null&&unc.ratio>=1.3) bits.push(`жалоб вне известных тем больше обычного (${unc.week} против ${unc.baseline_week})`);
+  if(bits.length===1&&ovl&&ovl.week!=null&&ovl.baseline_week!=null)
+    bits.push(`всего ${ovl.week} жалоб за неделю при норме ${Math.round(ovl.baseline_week)}`);
+  return bits.join(", ")+".";
+}
+
 function bfPickHot(hl,hot){
   if(!hl)return null;
   const trim=(i,len)=>{ // обрезаем хвостовую/ведущую пунктуацию у фрагмента
@@ -566,8 +832,59 @@ function bfPickHot(hl,hot){
   return trim(0,hl.length);
 }
 
+// ─── Анализ жалоб недели: разбор LLM-текста в карточки ───────────────────────
+// ИИ пишет структурой «- **[УРОВЕНЬ]** **Тема** — разбор… Аудитору: действие»,
+// но раньше это выводилось сплошным списком абзацев и выглядело сырым на фоне
+// остальной страницы. Разбираем структуру и показываем как карточки: уровень
+// бейджем, тема заголовком, действие аудитору — отдельным блоком.
+function bfParseBrief(md){
+  const out=[];
+  String(md||"").split(/\n(?=\s*[-*]\s)/).forEach(block=>{
+    let b=block.trim().replace(/^[-*]\s+/,"");
+    if(!b)return;
+    let level=null,isNew=false,title=null,action=null;
+    const ml=b.match(/^\*\*\[([^\]]+)\]\*\*\s*/);
+    if(ml){level=ml[1].trim();b=b.slice(ml[0].length);}
+    const mn=b.match(/^\*\*Новое:?\*\*\s*/i);
+    if(mn){isNew=true;b=b.slice(mn[0].length);}
+    const mt=b.match(/^\*\*(.+?)\*\*\s*[—–-]\s*/);
+    if(mt){title=mt[1].trim();b=b.slice(mt[0].length);}
+    // NB: \b в JS опирается на \w, где НЕТ кириллицы — граница перед «Аудитору»
+    // никогда не срабатывала, и действие не отделялось от тела карточки
+    const ma=b.match(/(?:^|[\s.;)])Аудитору\s*[:—–-]\s*/i);
+    if(ma){action=b.slice(ma.index+ma[0].length).trim();
+           b=b.slice(0,ma.index+ (ma[0].match(/^[\s.;)]/)?1:0)).trim();}
+    b=b.replace(/[;,.\s]+$/,"");
+    if(b||title)out.push({level,isNew,title,body:b,action});
+  });
+  return out;
+}
+
+function BfBrief({markdown}){
+  const items=useMemo(()=>bfParseBrief(markdown),[markdown]);
+  // не распарсилось — показываем как было, хуже не станет
+  if(!items.length)return <div className="bf-brief">{renderMD(markdown)}</div>;
+  const cls=it=>it.isNew?"new":/высок/i.test(it.level||"")?"high"
+    :/средн/i.test(it.level||"")?"mid":/низк/i.test(it.level||"")?"low":"mid";
+  const lbl=it=>it.isNew?"новая тема":(it.level||"наблюдение").toLowerCase();
+  return <div className="bfb-list">
+    {items.map((it,i)=><article key={i} className={"bfb-item lvl-"+cls(it)}>
+      <div className="bfb-head">
+        <span className="bfb-badge">{lbl(it)}</span>
+        {it.title&&<h4 className="bfb-title">{it.title}</h4>}
+      </div>
+      {it.body&&<p className="bfb-body" dangerouslySetInnerHTML={{__html:inlineHTML(it.body)}}/>}
+      {it.action&&<div className="bfb-act">
+        <span className="bfb-act-l">Аудитору</span>
+        <span dangerouslySetInnerHTML={{__html:inlineHTML(it.action)}}/>
+      </div>}
+    </article>)}
+  </div>;
+}
+
 function BfCard({ins,idx,lead}){
   const d=ins.data||{};
+  const xp=xpRows(ins.kind,d);
   const viz=(()=>{
     if(ins.kind==="review_spike")
       return <>
@@ -593,7 +910,13 @@ function BfCard({ins,idx,lead}){
     <h3 className="bf-title">{ins.title}</h3>
     {ins.so_what&&<div className="bf-sowhat">{ins.so_what}</div>}
     {viz&&<div className="bf-viz">{viz}</div>}
-    {ins.provenance&&<div className="bf-prov">{ins.provenance}</div>}
+    {(ins.provenance||xp.length>0)&&<div className="bf-prov">
+      {xp.length>0
+        ?<Xp rows={xp} note={ins.provenance}><span className="xp-link">как посчитано</span></Xp>
+        :null}
+      {xp.length>0&&ins.provenance?<span className="bf-prov-sep"> · </span>:null}
+      {ins.provenance}
+    </div>}
     <div className="bf-foot">
       <button className="bf-btn" onClick={()=>bfGoDrill(ins.drill)}>
         {ins.kind==="news_alert"?"Источник":"Разобраться"} <Ic.ext/>
@@ -601,6 +924,638 @@ function BfCard({ins,idx,lead}){
       {ins.ai_prompt&&<button className="bf-btn ai" onClick={()=>bfGoAI(ins.ai_prompt)}>✦ Спросить ИИ</button>}
     </div>
   </article>;
+}
+
+// ─── Личная полоса «Обзора» (Фаза 3) — редакторский пролог, без плашек ────────
+const PL_CSS=`
+.pl{margin-bottom:30px;}
+.pl-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:13px;flex-wrap:wrap;}
+.pl-hi{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);}
+.pl-set{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--hair-2);background:var(--surface);border-radius:var(--r);
+  padding:4px 10px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);transition:color .12s,border-color .12s;}
+.pl-set:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 82%);}
+.pl-lede{font-family:'Source Serif 4',Georgia,serif;font-size:19px;line-height:1.56;letter-spacing:-.004em;color:var(--ink);
+  text-wrap:pretty;max-width:64ch;}
+.pl-nudge{font-family:'Source Serif 4',Georgia,serif;font-size:18px;line-height:1.52;color:var(--ink-3);max-width:60ch;text-wrap:pretty;}
+.pl-nudge button{font-family:'Geist','Inter',sans-serif;font-size:13.5px;color:var(--accent);font-weight:500;margin-left:7px;transition:filter .12s;}
+.pl-nudge button:hover{filter:brightness(1.12);}
+.pl-quiet{font-family:'Source Serif 4',Georgia,serif;font-size:16.5px;color:var(--ink-3);font-style:italic;}
+.pl-fy{margin-top:18px;}
+.pl-fy-row{display:flex;align-items:center;gap:13px;padding:10px 3px;border-top:1px solid var(--hair);cursor:pointer;transition:background .12s;}
+.pl-fy-row:last-child{border-bottom:1px solid var(--hair);}
+.pl-fy-row:hover{background:color-mix(in oklab,var(--surface),transparent 30%);}
+.pl-dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--ink-4);}
+.pl-dot.sev-red{background:var(--neg);}
+.pl-dot.sev-amber{background:var(--warn);}
+.pl-dot.sev-green{background:var(--pos);}
+.pl-fy-t{flex:1;min-width:0;font-size:13.5px;line-height:1.4;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pl-fy-tag{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);
+  white-space:nowrap;flex:none;transition:opacity .12s;}
+.pl-fy-act{display:flex;gap:4px;align-items:center;flex:none;opacity:0;width:0;overflow:hidden;transition:opacity .14s;}
+.pl-fy-row:hover .pl-fy-tag{opacity:0;}
+.pl-fy-row:hover .pl-fy-act{opacity:1;width:auto;}
+.pl-fy-act button{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:12px;color:var(--ink-4);transition:background .12s,color .12s;}
+.pl-fy-act button:hover{background:var(--paper-2);}
+.pl-fy-act .ask:hover{color:var(--accent);}
+.pl-fy-act .mute:hover{color:var(--ink);}
+.pl-div{border:0;border-top:1px solid var(--hair);margin:28px 0 0;}
+.pl-skel{height:80px;margin-bottom:30px;border-radius:var(--r-lg);
+  background:linear-gradient(90deg,var(--paper-2) 25%,var(--surface) 50%,var(--paper-2) 75%);background-size:200% 100%;animation:pl-sh 1.5s ease-in-out infinite;}
+@keyframes pl-sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+`;
+function PersonalBand(){
+  const me=useMe();
+  // полоса на главной — опция (prefs.personal_band_home), по умолчанию выключена:
+  // основной персональный опыт живёт на странице «Для вас»
+  const enabled=!!(me&&me.prefs&&me.prefs.personal_band_home);
+  const[p,setP]=useState(undefined);          // undefined=грузится, null=выкл, obj=данные
+  const[gone,setGone]=useState({});
+  useEffect(()=>{ if(!enabled)return;
+    apiFetch("/api/overview/personal").then(d=>setP(d.personal||null)).catch(()=>setP(null)); },[enabled]);
+  if(!enabled) return null;
+  if(p===undefined) return <div className="pl-skel"/>;
+  if(p===null) return null;                    // персонализация выключена
+  const items=(p.for_you||[]).filter(x=>!gone[x.title]).slice(0,3);
+  const bandFb=(x,verdict)=>{ const key=x.url||x.title; if(!key)return;
+    if(verdict===-1){ setGone(g=>({...g,[x.title]:1}));
+      fbToast("Понял — такого будет меньше",true); }
+    else fbToast("Учтём в вашей подборке",true);
+    apiPost("/api/feedback",{kind:"for_you",item_key:key,verdict,
+      topics:x.reason_slugs||[],payload:{title:x.title,kind_src:x.kind}}).catch(()=>{}); };
+  const g=greetWord(me&&me.timezone);
+  return <div className="pl">
+    <style>{PL_CSS}</style>
+    <div className="pl-top">
+      <span className="pl-hi">{g}{p.name?", "+p.name:""}</span>
+      <button className="pl-set" onClick={()=>{location.hash="profile";}} title="Персонализация">⚙ персонализация</button>
+    </div>
+    {p.lead ? <p className="pl-lede">{p.lead}</p>
+      : !p.has_profile
+        ? <p className="pl-nudge">Опишите, какие процессы и продукты вы проверяете — и эта полоса будет собираться лично под вас.<button onClick={()=>{location.hash="profile";}}>Настроить →</button></p>
+        : <p className="pl-quiet">По вашим темам сегодня спокойно.</p>}
+    {items.length>0 && <div className="pl-fy">
+      {items.map((x,i)=>(
+        <div key={i} className="pl-fy-row" onClick={()=>{ if(x.url) window.open(x.url,"_blank","noopener"); }}>
+          <span className={"pl-dot sev-"+(x.severity||"amber")}/>
+          <span className="pl-fy-t">{x.title}</span>
+          {x.reason&&<span className="pl-fy-tag">{x.reason}</span>}
+          <span className="pl-fy-act" onClick={e=>e.stopPropagation()}>
+            <button className="ask" title="Спросить ИИ" onClick={()=>bfGoAI("Разбери подробно для аудита: "+(x.title||""))}>✦</button>
+            <button className="ask" title="Интересно — больше такого" onClick={()=>bandFb(x,1)}><IcTUp s={11}/></button>
+            <button className="mute" title="Не интересно — меньше такого" onClick={()=>bandFb(x,-1)}><IcTDn s={11}/></button>
+          </span>
+        </div>
+      ))}
+    </div>}
+    <hr className="pl-div"/>
+  </div>;
+}
+
+// ─── Оценки 👍/👎: два контура — рекомендации (контент) / качество (ответы ИИ) ──
+const FB_CSS=`
+.fb-toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:400;background:var(--surface);
+  border:1px solid var(--hair);border-radius:999px;box-shadow:var(--shadow-2);padding:9px 18px;
+  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-2);opacity:0;transition:opacity .25s,transform .25s;
+  pointer-events:none;max-width:min(88vw,500px);text-align:center;}
+.fb-toast.on{opacity:1;transform:translate(-50%,0);}
+.fb-toast .sp{color:var(--accent);}
+.aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.aifb-l{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);}
+.aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
+  border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
+.aifb button.tb:hover{color:var(--ink-2);background:var(--paper-2);}
+.aifb button.tb.on{color:var(--accent);background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.aifb button.tb.on-neg{color:var(--neg);background:color-mix(in oklab,var(--neg),transparent 90%);border-color:color-mix(in oklab,var(--neg),transparent 75%);}
+.aifb-why{width:100%;display:flex;flex-wrap:wrap;gap:7px;align-items:center;animation:fade-in .2s ease-out;}
+.aifb-chip{font-size:11.5px;padding:5px 11px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);transition:all .12s;}
+.aifb-chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+.aifb-inp{flex:1;min-width:170px;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
+  background:var(--paper);color:var(--ink);}
+.aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:500;}
+.aifb-done{font-size:11.5px;color:var(--pos);}
+.shr{position:relative;display:inline-flex;}
+.shr-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--hair);
+  border-radius:8px;background:var(--surface);font-size:12px;color:var(--ink-2);transition:color .12s,border-color .12s;}
+.shr-btn:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.shr-btn .n{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent);background:var(--accent-soft);
+  border-radius:999px;padding:1px 6px;}
+.shr-pop{position:absolute;top:34px;right:0;z-index:90;width:302px;background:var(--surface);border:1px solid var(--hair);
+  border-radius:12px;box-shadow:var(--shadow-2);padding:10px;animation:fade-in .15s ease-out;text-align:left;}
+.shr-h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-4);margin:2px 2px 8px;}
+.shr-row{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;border-radius:8px;font-size:12.5px;
+  color:var(--ink-2);text-align:left;transition:background .12s;}
+.shr-row:hover{background:var(--paper-2);}
+.shr-row .ava{width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+  display:grid;place-items:center;font-size:10px;font-weight:600;flex:none;}
+.shr-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.shr-row .st{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
+.shr-row.on .st{color:var(--pos);}
+.shr-row.on:hover .st{color:var(--neg);}
+.shr-div{border-top:1px solid var(--hair);margin:8px 0;}
+.shr-q{width:100%;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
+  background:var(--paper);color:var(--ink);margin-bottom:6px;}
+.shr-list{max-height:210px;overflow:auto;}
+.shr-empty{font-size:12px;color:var(--ink-4);padding:10px;text-align:center;}
+.shr-foot{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:8px;
+  line-height:1.5;padding:0 2px;}
+.shr-owner{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);
+  border:1px solid var(--hair);border-radius:999px;padding:3px 10px;}
+`;
+function fbToast(text,sparkle){
+  try{
+    const el=document.createElement("div"); el.className="fb-toast";
+    if(sparkle){const s=document.createElement("span");s.className="sp";s.textContent="✦ ";el.appendChild(s);}
+    el.appendChild(document.createTextNode(text));
+    document.body.appendChild(el);
+    requestAnimationFrame(()=>el.classList.add("on"));
+    setTimeout(()=>{el.classList.remove("on");setTimeout(()=>el.remove(),300);},2600);
+  }catch{}
+}
+const IcTUp=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M7 10v11"/><path d="M7 11l4-8.3c1-.4 2.5.2 2.5 1.8V9h4.9c1.2 0 2.1 1.1 1.9 2.3l-1.2 6.9c-.2 1-1 1.7-2 1.7H7"/></svg>;
+const IcTDn=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><g transform="rotate(180 12 12)"><path d="M7 10v11"/><path d="M7 11l4-8.3c1-.4 2.5.2 2.5 1.8V9h4.9c1.2 0 2.1 1.1 1.9 2.3l-1.2 6.9c-.2 1-1 1.7-2 1.7H7"/></g></svg>;
+
+// панель оценки под ответом ИИ-аналитика: 👍 = удачно (учит и рекомендации),
+// 👎 = причины+комментарий → команде на разбор
+const AIFB_REASONS=[["offtopic","не по делу"],["shallow","мало конкретики"],
+                    ["wrong","ошибка в данных"],["long","слишком длинно"]];
+function AiFbBar({q,text,sessionId,mode,fbMap}){
+  const key="s"+(sessionId||0)+":"+fyHash((q||"")+"|"+(text||"").slice(0,180));
+  const[v,setV]=useState(0);
+  useEffect(()=>{ if(fbMap&&fbMap[key]) setV(fbMap[key]); },[fbMap,key]);
+  const[open,setOpen]=useState(false);
+  const[rs,setRs]=useState({});
+  const[comment,setComment]=useState("");
+  const[sent,setSent]=useState(false);
+  const post=(verdict,extra)=>apiPost("/api/feedback",{kind:"ai_answer",item_key:key,verdict,
+    payload:{question:(q||"").slice(0,300),mode:mode||"quick",session_id:sessionId,...(extra||{})}}).catch(()=>{});
+  const like=()=>{const nv=v===1?0:1;setV(nv);setOpen(false);post(1);
+    if(nv===1)fbToast("Спасибо! Удачный ответ — учтём и в ваших рекомендациях",true);};
+  const dislike=()=>{const nv=v===-1?0:-1;setV(nv);setSent(false);
+    if(nv===-1){setOpen(true);post(-1);}else{setOpen(false);post(-1);}};
+  const send=()=>{post(-1,{reasons:Object.keys(rs).filter(k=>rs[k]),comment:comment.slice(0,300)});
+    setSent(true);setOpen(false);fbToast("Спасибо — команда разберёт этот ответ");};
+  return <div className="aifb" onClick={e=>e.stopPropagation()}>
+    <span className="aifb-l">Оценить ответ</span>
+    <button className={"tb"+(v===1?" on":"")} title="Полезный ответ" onClick={like}><IcTUp/></button>
+    <button className={"tb"+(v===-1?" on-neg":"")} title="Плохой ответ — команда разберёт" onClick={dislike}><IcTDn/></button>
+    {sent&&v===-1&&<span className="aifb-done">отправлено — разберём ✓</span>}
+    {open&&v===-1&&<div className="aifb-why">
+      {AIFB_REASONS.map(([k,l])=><button key={k} className={"aifb-chip"+(rs[k]?" on":"")}
+        onClick={()=>setRs(r=>({...r,[k]:!r[k]}))}>{l}</button>)}
+      <input className="aifb-inp" placeholder="что не так? (необязательно)" value={comment}
+        onChange={e=>setComment(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send();}}/>
+      <button className="aifb-send" onClick={send}>Отправить</button>
+    </div>}
+  </div>;
+}
+
+// шеринг отчёта (Фаза 5): владелец открывает доступ всем или адресно, с отзывом
+const IcShare=()=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>;
+function ShareButton({reportId}){
+  const[open,setOpen]=useState(false);
+  const[users,setUsers]=useState(null);
+  const[shares,setShares]=useState(null);
+  const[q,setQ]=useState("");
+  const ref=useRef(null);
+  const load=()=>{
+    apiFetch("/api/users").then(d=>setUsers(d.users||[])).catch(()=>setUsers([]));
+    apiFetch(`/api/reports/${reportId}/shares`).then(d=>setShares(d.shares||[])).catch(()=>setShares([]));
+  };
+  useEffect(()=>{ if(open)load(); },[open,reportId]); // eslint-disable-line
+  useEffect(()=>{ if(!open)return;
+    const onDoc=(e)=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown",onDoc);
+    return ()=>document.removeEventListener("mousedown",onDoc);
+  },[open]);
+  const shareTo=async(username,label)=>{ try{
+      await apiPost(`/api/reports/${reportId}/share`,{shared_with:username});
+      fbToast(username?"Отчёт доступен: "+label:"Отчёт открыт всем пользователям AuditLens",true);
+      load();
+    }catch{ fbToast("Не удалось поделиться"); } };
+  const revoke=async(shareId)=>{ try{ await apiPost(`/api/shares/${shareId}/revoke`,{}); load(); }catch{} };
+  const activeAll=(shares||[]).find(s=>!s.shared_with);
+  const byUser={}; (shares||[]).forEach(s=>{ if(s.shared_with) byUser[s.shared_with]=s; });
+  const n=(shares||[]).length;
+  const flt=(users||[]).filter(u=>!q||((u.display_name||u.username).toLowerCase().includes(q.toLowerCase())));
+  return <span className="shr" ref={ref}>
+    <button className="shr-btn" onClick={()=>setOpen(o=>!o)} title="Поделиться отчётом с коллегами">
+      <IcShare/>Поделиться{n>0&&<span className="n">{n}</span>}
+    </button>
+    {open&&<div className="shr-pop" onClick={e=>e.stopPropagation()}>
+      <div className="shr-h">Доступ к отчёту</div>
+      <button className={"shr-row all"+(activeAll?" on":"")}
+              title={activeAll?"Клик — закрыть общий доступ":"Открыть отчёт всем пользователям"}
+              onClick={()=>activeAll?revoke(activeAll.share_id):shareTo(null,null)}>
+        <span className="ava">✦</span>
+        <span className="nm">Всем пользователям AuditLens</span>
+        <span className="st">{activeAll?"✓ открыт":"открыть"}</span>
+      </button>
+      <div className="shr-div"/>
+      <input className="shr-q" placeholder="Найти коллегу…" value={q} onChange={e=>setQ(e.target.value)}/>
+      <div className="shr-list">
+        {users===null?<div className="shr-empty">Загрузка…</div>
+          :flt.length===0?<div className="shr-empty">{q?"Не найдено":"Коллеги появятся здесь после первого входа в инструмент"}</div>
+          :flt.map(u=>{ const s=byUser[u.username]; const label=u.display_name||u.username;
+            return <button key={u.username} className={"shr-row"+(s?" on":"")}
+                title={s?"Клик — отозвать доступ":"Дать доступ"}
+                onClick={()=>s?revoke(s.share_id):shareTo(u.username,label)}>
+              <span className="ava">{initials(label)}</span>
+              <span className="nm">{label}</span>
+              <span className="st">{s?"✓ доступ":"дать доступ"}</span>
+            </button>; })}
+      </div>
+      <div className="shr-foot">Коллеги найдут отчёт в истории (⌘K) → Отчёты → «Поделились со мной»</div>
+    </div>}
+  </span>;
+}
+
+// кольцо «Сила персонализации» (профиль)
+function PfRing({score}){
+  const r=26,c=2*Math.PI*r;
+  return <svg width="72" height="72" viewBox="0 0 64 64" aria-hidden="true">
+    <circle cx="32" cy="32" r={r} fill="none" stroke="var(--hair)" strokeWidth="5"/>
+    <circle cx="32" cy="32" r={r} fill="none" stroke="var(--accent)" strokeWidth="5" strokeLinecap="round"
+      strokeDasharray={c} strokeDashoffset={c*(1-Math.min(score,100)/100)} transform="rotate(-90 32 32)"
+      style={{transition:"stroke-dashoffset .6s ease"}}/>
+    <text x="32" y="37" textAnchor="middle" fontSize="14" fontWeight="600" fill="var(--ink)"
+      fontFamily="'Geist','Inter',sans-serif">{score}%</text>
+  </svg>;
+}
+
+// ─── «Общий / Для вас»: сегмент-переключатель + персональный разворот ─────────
+const OVSEG_CSS=`
+.ovseg{position:relative;display:inline-flex;padding:3px;background:var(--paper-2);border:1px solid var(--hair);border-radius:10px;user-select:none;}
+.ovseg-thumb{position:absolute;top:3px;left:3px;height:calc(100% - 6px);width:104px;background:var(--surface);border-radius:7px;
+  box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.3,.7,.4,1);}
+.ovseg.fy .ovseg-thumb{transform:translateX(104px);}
+.ovseg button{position:relative;z-index:1;width:104px;height:26px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  font-size:12.5px;color:var(--ink-3);border-radius:7px;transition:color .15s;}
+.ovseg button.on{color:var(--ink);font-weight:500;}
+.ovseg .sp{color:var(--accent);font-size:11px;line-height:1;}
+.ovseg-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);}
+.fy-seg-mob{display:none;margin-bottom:18px;}
+/* 960px — тот же брейкпоинт, что у .desk-only: без «мёртвой зоны» 901-960 */
+@media(max-width:960px){.fy-seg-mob{display:flex;justify-content:center;}}
+`;
+function OvSeg({page}){
+  const go=(p)=>{ if(p===page)return; try{localStorage.setItem("al-ov-mode",p);}catch{} location.hash=p; };
+  return <div className={"ovseg"+(page==="foryou"?" fy":"")} role="tablist" aria-label="Режим обзора">
+    <style>{OVSEG_CSS}</style>
+    <span className="ovseg-thumb"/>
+    <button className={page==="overview"?"on":""} onClick={()=>go("overview")}>Общий</button>
+    <button className={page==="foryou"?"on":""} onClick={()=>go("foryou")}><span className="sp">✦</span>Для вас</button>
+  </div>;
+}
+
+const FY_SRC={cbr_press:"ЦБ РФ",cbr_news:"ЦБ РФ",banki_news:"Банки.ру",frankmedia:"Frank Media",
+  tg_cbr:"ЦБ · Telegram",tg_banksta:"Банкста",tg_cyberpolice:"Киберполиция",tg_frankmedia:"Frank Media",
+  tg_kommersant:"Коммерсантъ",tg_rbc:"РБК",web_search:"веб-поиск"};
+const fySrcName=(t)=>FY_SRC[t.source]||t.domain||"источник";
+const fyHash=(s)=>{let h=0;for(let i=0;i<(s||"").length;i++)h=(h*31+s.charCodeAt(i))|0;return Math.abs(h);};
+
+// мини-спарклайн тренда (инлайновый SVG, без библиотек)
+function FySpark({series,w=118,h=30}){
+  const vals=(series||[]).map(p=>(p&&p.n)||0);
+  if(vals.length<3) return null;
+  const max=Math.max(...vals,1),min=Math.min(...vals);
+  const pts=vals.map((v,i)=>[i/(vals.length-1)*w,h-3-((v-min)/((max-min)||1))*(h-8)]);
+  const d=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+","+p[1].toFixed(1)).join("");
+  const last=pts[pts.length-1];
+  return <svg className="spark" width={w} height={h} viewBox={"0 0 "+w+" "+h} aria-hidden="true">
+    <path d={d+"L"+w.toFixed(1)+","+(h-1)+"L0,"+(h-1)+"Z"} fill="var(--accent-soft)" opacity=".5"/>
+    <path d={d} fill="none" stroke="var(--accent)" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round"/>
+    <circle cx={last[0]} cy={last[1]} r="2.2" fill="var(--accent)"/>
+  </svg>;
+}
+
+const FY_CSS=`
+.fy-head{margin-bottom:4px;}
+.fy-ai{color:var(--accent);}
+.fy-lede{font-family:'Source Serif 4',Georgia,serif;font-size:18.5px;line-height:1.56;color:var(--ink-2);max-width:66ch;text-wrap:pretty;}
+.fy-chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:15px;align-items:center;}
+.fy-chip{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);
+  border:1px solid var(--hair);border-radius:999px;padding:4px 11px;}
+.fy-chip.acc{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);background:var(--accent-soft);}
+.fy-tune{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);cursor:pointer;transition:color .12s;}
+.fy-tune:hover{color:var(--accent);}
+.fy-hint{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
+.fy-hint a{color:var(--accent);cursor:pointer;}
+.fy-sec{margin-top:30px;}
+.fy-checks-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-top:12px;}
+.fy-check{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);
+  padding:14px 16px;transition:border-color .15s,box-shadow .15s;}
+.fy-check:hover{border-color:color-mix(in oklab,var(--accent),transparent 78%);box-shadow:var(--shadow-1);}
+.fy-check .n{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);padding-top:2px;flex:none;}
+.fy-check .t{font-size:13.5px;font-weight:500;line-height:1.45;min-width:0;}
+.fy-check .w{font-size:12px;font-weight:400;color:var(--ink-3);margin-top:4px;line-height:1.5;}
+.fy-check .ask{margin-left:auto;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);flex:none;transition:color .12s,background .12s;}
+.fy-check .ask:hover{color:var(--accent);background:var(--accent-soft);}
+.fy-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:12px;margin-top:12px;}
+.fy-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px 13px;cursor:pointer;
+  transition:transform .15s,box-shadow .15s,border-color .15s;}
+.fy-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-2);border-color:var(--hair-2);}
+.fy-card .lbl{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);
+  margin-bottom:9px;display:flex;justify-content:space-between;gap:8px;}
+.fy-card .num{font-family:'Source Serif 4',Georgia,serif;font-size:29px;line-height:1;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.fy-card .num small{font-size:12px;color:var(--ink-3);font-family:'Geist','Inter',sans-serif;}
+.fy-card .delta{font-size:11.5px;font-weight:600;font-family:'Geist','Inter',sans-serif;}
+.fy-card .delta.up{color:var(--neg);}
+.fy-card .delta.down{color:var(--pos);}
+.fy-card .spark{display:block;margin:11px 0 6px;}
+.fy-card .meta{font-size:11.5px;color:var(--ink-3);line-height:1.5;}
+.fy-card .meta b{color:var(--ink-2);font-weight:500;}
+.fy-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-top:12px;grid-auto-flow:dense;}
+@media(max-width:1200px){.fy-grid{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:560px){.fy-grid{grid-template-columns:1fr;}}
+.fy-tile{position:relative;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);
+  overflow:hidden;cursor:pointer;transition:transform .16s,box-shadow .16s;}
+.fy-tile:hover{transform:translateY(-2px);box-shadow:var(--shadow-2);}
+.fy-tile.hero{grid-column:span 2;grid-row:span 2;}
+@media(max-width:560px){.fy-tile.hero{grid-column:span 1;}}
+.fy-tile .img{height:96px;background-size:cover;background-position:center;flex:none;}
+.fy-tile.hero .img{flex:1;min-height:210px;height:auto;}
+.fy-tile .img.ph{display:grid;place-items:center;}
+.fy-tile .img.ph span{font-family:'Instrument Serif',serif;font-size:34px;color:color-mix(in oklab,var(--ink),transparent 60%);}
+.fy-g0{background:linear-gradient(135deg,var(--accent-soft),color-mix(in oklab,var(--accent),var(--paper) 80%));}
+.fy-g1{background:linear-gradient(135deg,var(--paper-2),color-mix(in oklab,var(--ink),var(--paper) 88%));}
+.fy-g2{background:linear-gradient(160deg,color-mix(in oklab,var(--pos),var(--paper) 86%),var(--paper-2));}
+.fy-g3{background:linear-gradient(150deg,color-mix(in oklab,var(--warn),var(--paper) 86%),var(--paper-2));}
+.fy-g4{background:linear-gradient(140deg,color-mix(in oklab,var(--accent),var(--paper) 90%),color-mix(in oklab,var(--ink),var(--paper) 92%));}
+.fy-tile .body{padding:12px 14px 13px;display:flex;flex-direction:column;gap:7px;flex:none;min-height:0;}
+.fy-tile .src{display:flex;align-items:center;gap:7px;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-3);}
+.fy-tile .src .dt{margin-left:auto;color:var(--ink-4);text-transform:none;letter-spacing:0;}
+.fy-tile .sev{width:6px;height:6px;border-radius:50%;flex:none;}
+.fy-tile .sev.red{background:var(--neg);} .fy-tile .sev.amber{background:var(--warn);} .fy-tile .sev.green{background:var(--pos);}
+.fy-tile .tt{font-family:'Source Serif 4',Georgia,serif;font-size:14.5px;line-height:1.38;color:var(--ink);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.fy-tile.hero .tt{font-size:19px;}
+.fy-tile .sum{font-size:12.5px;color:var(--ink-3);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.fy-tile .why{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.04em;}
+.fy-tile .acts{position:absolute;top:8px;right:8px;display:flex;gap:5px;opacity:0;transition:opacity .15s;z-index:2;}
+.fy-tile:hover .acts{opacity:1;}
+.fy-tile .acts button{width:26px;height:26px;border-radius:7px;background:color-mix(in oklab,var(--paper),transparent 10%);
+  backdrop-filter:blur(6px);border:1px solid var(--hair);display:grid;place-items:center;font-size:12px;color:var(--ink-2);transition:color .12s;}
+.fy-tile .acts button:hover{color:var(--accent);}
+.fy-tar{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
+@media(max-width:900px){.fy-tar{grid-template-columns:1fr;}}
+.fy-tar .surface{padding:15px 18px 8px;}
+.fy-tar-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:8px 0;border-top:1px solid var(--hair);font-size:13px;}
+.fy-tar-row:first-of-type{border-top:0;}
+.fy-tar-row .r{white-space:nowrap;font-size:12.5px;}
+.fy-trust{margin-top:36px;padding-top:14px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
+.fy-trust a{color:var(--ink-3);cursor:pointer;transition:color .12s;}
+.fy-trust a:hover{color:var(--accent);}
+.fy-tile .acts button.on{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%);}
+.fy-tile.liked{border-color:color-mix(in oklab,var(--accent),transparent 55%);}
+.fy-tile.liked::after{content:"✓ в фокусе";position:absolute;top:8px;left:8px;z-index:2;
+  font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.04em;color:var(--accent);
+  background:color-mix(in oklab,var(--paper),transparent 8%);backdrop-filter:blur(4px);
+  border:1px solid color-mix(in oklab,var(--accent),transparent 70%);padding:2px 7px;border-radius:999px;}
+.fy-check .acts2{margin-left:auto;display:flex;gap:2px;flex:none;}
+.fy-check .acts2 button{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
+  transition:color .12s,background .12s;}
+.fy-check .acts2 button:hover{color:var(--accent);background:var(--accent-soft);}
+.fy-check .acts2 button.on{color:var(--accent);background:var(--accent-soft);}
+.fy-pshint{margin-top:13px;display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.03em;color:var(--ink-3);
+  border:1px dashed color-mix(in oklab,var(--accent),transparent 65%);border-radius:999px;padding:5px 13px;
+  transition:color .12s,border-color .12s;}
+.fy-pshint:hover{color:var(--accent);border-color:var(--accent);}
+.fy-pshint .pc{color:var(--accent);font-weight:600;}
+`;
+
+// плитка новости (Perplexity-стиль): картинка или детерминированный градиент-фолбэк
+function FyTile({t,hero,fb,onFb}){
+  const[imgOk,setImgOk]=useState(true);
+  const src=fySrcName(t);
+  const open=()=>{if(t.url)window.open(t.url,"_blank","noopener");};
+  return <div className={"fy-tile"+(hero?" hero":"")+(fb===1?" liked":"")} onClick={open} role="link" tabIndex={0}
+              onKeyDown={e=>{if(e.key==="Enter")open();}}>
+    {t.image&&imgOk
+      ?<div className="img" style={{backgroundImage:"url("+JSON.stringify(t.image)+")"}}>
+         <img src={t.image} alt="" style={{display:"none"}} loading="lazy" referrerPolicy="no-referrer" onError={()=>setImgOk(false)}/>
+       </div>
+      :<div className={"img ph fy-g"+(fyHash(t.source||t.domain||t.title||"")%5)}><span>{(src[0]||"·").toUpperCase()}</span></div>}
+    <div className="body">
+      <div className="src">
+        {t.severity&&<span className={"sev "+t.severity}/>}
+        {src}
+        {t.ts&&<span className="dt">{new Date(t.ts).toLocaleDateString("ru",{day:"numeric",month:"short"})}</span>}
+      </div>
+      <div className="tt">{t.title}</div>
+      {hero&&t.summary?<div className="sum">{t.summary}</div>:null}
+      {t.reason&&<div className="why">{t.reason}</div>}
+    </div>
+    <span className="acts" onClick={e=>e.stopPropagation()}>
+      <button title="Разобрать с ИИ" onClick={()=>bfGoAI("Разбери подробно для внутреннего аудита Сбера: "+(t.title||""))}>✦</button>
+      <button className={fb===1?"on":""} title="Интересно — больше такого" onClick={()=>onFb(t,1)}><IcTUp s={12}/></button>
+      <button title="Не интересно — меньше такого" onClick={()=>onFb(t,-1)}><IcTDn s={12}/></button>
+    </span>
+  </div>;
+}
+
+function ForYouPage(){
+  const me=useMe();
+  const[p,setP]=useState(undefined);          // undefined=грузится, null=выкл/ошибка
+  const[err,setErr]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[gone,setGone]=useState({});
+  const[goneChk,setGoneChk]=useState({});
+  const[fb,setFb]=useState({});               // {key: verdict} — оценки плиток
+  const[cfb,setCfb]=useState({});             // оценки зацепок
+  const load=()=>apiFetch("/api/overview/foryou")
+    .then(d=>{setP(d.foryou||null);setErr(false);})
+    .catch(()=>{setP(null);setErr(true);});
+  useEffect(()=>{load();
+    apiFetch("/api/feedback?kind=news").then(d=>setFb(d.items||{})).catch(()=>{});
+    apiFetch("/api/feedback?kind=check").then(d=>setCfb(d.items||{})).catch(()=>{});
+  },[]);
+  const refresh=async()=>{ if(busy)return; setBusy(true);
+    try{const d=await apiPost("/api/overview/foryou/refresh",{});setP(d.foryou||null);}catch{}
+    setBusy(false); };
+  // 👍/👎 на плитке: мгновенная локальная реакция + обучение весов тем/источников
+  const onTileFb=(t,verdict)=>{
+    const key=t.url||t.title; if(!key)return;
+    const nv=(fb[key]||0)===verdict?0:verdict;
+    setFb(m=>({...m,[key]:nv}));
+    if(verdict===-1&&nv===-1){ setGone(g=>({...g,[t.title]:1}));
+      fbToast("Понял — такого будет меньше в вашей подборке",true); }
+    if(verdict===1&&nv===1) fbToast("Учтём в вашей подборке",true);
+    apiPost("/api/feedback",{kind:"news",item_key:key,verdict,
+      topics:t.reason_slugs||[],
+      payload:{title:t.title,source:t.source,reason:t.reason}}).catch(()=>{});
+  };
+  const onCheckFb=(c,verdict)=>{
+    const key=c.title; if(!key)return;
+    const nv=(cfb[key]||0)===verdict?0:verdict;
+    setCfb(m=>({...m,[key]:nv}));
+    if(verdict===-1&&nv===-1){ setGoneChk(g=>({...g,[key]:1}));
+      fbToast("Понял — не то. Научимся предлагать точнее",true); }
+    if(verdict===1&&nv===1) fbToast("Учтём — таких зацепок будет больше",true);
+    apiPost("/api/feedback",{kind:"check",item_key:key,verdict,
+      payload:{title:c.title,why:c.why}}).catch(()=>{});
+  };
+  const goProfile=()=>{location.hash="profile";};
+
+  if(p===undefined) return <div className="fade-in">
+    <style>{FY_CSS}</style>
+    <div className="fy-seg-mob"><OvSeg page="foryou"/></div>
+    <div className="skel" style={{height:13,width:260,marginBottom:16,borderRadius:6}}/>
+    <div className="skel" style={{height:44,width:"54%",marginBottom:10,borderRadius:8}}/>
+    <div className="skel" style={{height:20,width:"68%",marginBottom:28,borderRadius:6}}/>
+    <div className="fy-grid">{[0,1,2,3,4].map(i=><div key={i} className="skel" style={{height:i===0?260:150,borderRadius:10,gridColumn:i===0?"span 2":undefined,gridRow:i===0?"span 2":undefined}}/>)}</div>
+  </div>;
+
+  if(err) return <div className="fade-in">
+    <style>{FY_CSS}</style><div className="fy-seg-mob"><OvSeg page="foryou"/></div>
+    <ErrState msg="Не удалось собрать персональную страницу. Обновите страницу или попробуйте позже."/>
+  </div>;
+
+  if(p===null) return <div className="fade-in">
+    <style>{FY_CSS}</style><div className="fy-seg-mob"><OvSeg page="foryou"/></div>
+    <div style={{padding:"72px 24px",textAlign:"center",maxWidth:500,margin:"0 auto"}}>
+      <div style={{fontSize:26,marginBottom:12,color:"var(--accent)"}}>✦</div>
+      <div className="t-h" style={{marginBottom:8}}>Персонализация выключена</div>
+      <p className="t-cap" style={{marginBottom:20,textWrap:"pretty"}}>Включите персональный дайджест — и эта страница будет собираться каждое утро под вашу зону ответственности в Сбере: направления, новости, зацепки для проверок.</p>
+      <button className="btn btn-accent" onClick={async()=>{try{await apiPut("/api/me",{prefs:{personal_digest:true}});setP(undefined);load();}catch{}}}>Включить персонализацию</button>
+    </div>
+  </div>;
+
+  const hl=p.headline||"Ваша повестка на сегодня";
+  const hh=bfPickHot(hl,p.hot||"");
+  const genAt=p.generated_at?new Date(p.generated_at):null;
+  const tiles=(()=>{ const arr=(p.news||[]).filter(t=>t&&t.title&&!gone[t.title]).slice(0,8);
+    const hi=arr.findIndex(t=>t.image);
+    if(hi>0){const[t]=arr.splice(hi,1);arr.unshift(t);}
+    return arr; })();
+  const focus=p.focus||[], checks=p.checks||[];
+  const tar=p.tariffs||{}, gap=tar.gap||[], moves=tar.moves||[];
+  const openReviews=(c)=>{ try{sessionStorage.setItem("al-rv-prefilter",
+      JSON.stringify({bank:"Сбербанк",product:c.product||""}));}catch{}
+    location.hash="reviews"; };
+
+  return <div className="fade-in">
+    <style>{FY_CSS}</style>
+    <div className="fy-seg-mob"><OvSeg page="foryou"/></div>
+
+    {/* ① персональный masthead */}
+    <header className="fy-head">
+      <div className="eyebrow-row">
+        <div className="eyebrow">Для вас · {new Date().toLocaleDateString("ru",{day:"numeric",month:"long"})} · <span className="fy-ai">✦ собрано под ваш профиль</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          {busy?
+            <span className="bf-live"><span className="dot"/>пересобираю…</span>:
+            genAt&&<span className="bf-stamp">обновлено {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})}</span>}
+          <button className="bf-refresh" onClick={refresh} disabled={busy} title="Пересобрать под профиль">⟳</button>
+        </div>
+      </div>
+      <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
+        {hh?<>{hl.slice(0,hh[0])}<em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl}
+      </h1>
+      {p.lead?<p className="fy-lede">{p.lead}</p>
+        :!p.has_profile?<p className="fy-lede" style={{color:"var(--ink-3)"}}>Опишите в профиле, что вы проверяете в Сбере — и каждое утро здесь будет личная сводка. <a style={{color:"var(--accent)",cursor:"pointer"}} onClick={goProfile}>Настроить →</a></p>
+        :<p className="fy-lede" style={{color:"var(--ink-3)"}}>По вашим темам сегодня спокойно — ниже общая картина по вашим направлениям.</p>}
+      {(p.top_topics||[]).length>0&&<div className="fy-chips">
+        {p.top_topics.slice(0,5).map((t,i)=><span key={t} className={"fy-chip"+(i===0?" acc":"")}>{t}</span>)}
+        <span className="fy-tune" onClick={goProfile}>настроить →</span>
+      </div>}
+      {(()=>{ const ps=me&&me.personalization;
+        if(!ps||ps.score>=60) return null;
+        const next=(ps.parts||[]).find(x=>!x.done&&x.cta);
+        return <div className="fy-pshint" onClick={goProfile} title="Открыть профиль">
+          ✦ персонализация <span className="pc">{ps.score}%</span> · {next?next.cta:"уточните профиль"} →
+        </div>; })()}
+    </header>
+
+    {/* ② что проверить сегодня (ИИ-зацепки) */}
+    {checks.filter(c=>!goneChk[c.title]).length>0&&<section className="fy-sec">
+      <div className="eyebrow">Что проверить сегодня · <span className="fy-ai">✦ по сигналам дня</span></div>
+      <div className="fy-checks-row">
+        {checks.filter(c=>!goneChk[c.title]).map((c,i)=><div key={c.title} className="fy-check">
+          <span className="n">{String(i+1).padStart(2,"0")}</span>
+          <div className="t">{c.title}{c.why&&<div className="w">{c.why}</div>}</div>
+          <span className="acts2">
+            <button title="Составить план проверки с ИИ"
+                    onClick={()=>bfGoAI("Проверка в Сбере: "+c.title+". "+(c.why||"")+" Составь детальный план аудиторской проверки по этому пункту.")}>✦</button>
+            <button className={cfb[c.title]===1?"on":""} title="Полезная зацепка" onClick={()=>onCheckFb(c,1)}><IcTUp s={12}/></button>
+            <button title="Не то — научимся точнее" onClick={()=>onCheckFb(c,-1)}><IcTDn s={12}/></button>
+          </span>
+        </div>)}
+      </div>
+    </section>}
+
+    {/* ③ стат-карты направлений */}
+    {focus.length>0&&<section className="fy-sec">
+      <div className="eyebrow-row">
+        <div className="eyebrow">Ваши направления · жалобы Сбера · 90 дней</div>
+        {p.default_focus&&<span className="fy-hint">стартовый набор — <a onClick={goProfile}>уточните профиль</a></span>}
+      </div>
+      <div className="fy-cards">
+        {focus.map(c=>{
+          const st=c.stats;
+          const d=st&&typeof st.delta_pct==="number"?st.delta_pct:null;
+          return <div key={c.slug} className="fy-card" onClick={()=>openReviews(c)} title="Открыть в «Отзывах»">
+            <div className="lbl"><span>{c.label}</span>{st&&st.market_rank?<span>#{st.market_rank} на рынке</span>:null}</div>
+            {st?<div className="num tnum">{(st.total||0).toLocaleString("ru")}<small>жалоб</small>
+                {d!=null&&!st.delta_low_n&&<span className={"delta "+(d>0?"up":"down")}>{d>0?"+":""}{Math.round(d)}%</span>}</div>
+              :<div style={{fontSize:14,color:"var(--ink-3)",padding:"6px 0"}}>отдельного среза по продукту нет</div>}
+            <FySpark series={c.trend}/>
+            <div className="meta">
+              {c.theme?<>горячая тема: <b>{c.theme.label}</b>{typeof c.theme.delta_pct==="number"&&c.theme.delta_pct>0?" · +"+Math.round(c.theme.delta_pct)+"%":""}</>
+                :st&&st.market_share_pct!=null?<>доля рынка жалоб: {st.market_share_pct}%</>
+                :<span style={{color:"var(--ink-4)"}}>клик — все отзывы</span>}
+            </div>
+          </div>;})}
+      </div>
+    </section>}
+
+    {/* ④ новостная сетка (Perplexity-стиль) */}
+    {tiles.length>0&&<section className="fy-sec">
+      <div className="eyebrow-row">
+        <div className="eyebrow">Новости для вас · <span className="fy-ai">✦ отобрано по профилю</span></div>
+        <span className="fy-hint">👍/👎 на плитках учат подборку</span>
+      </div>
+      <div className="fy-grid">
+        {tiles.map((t,i)=><FyTile key={t.url||t.title} t={t} hero={i===0&&!!t.image}
+          fb={fb[t.url||t.title]||0} onFb={onTileFb}/>)}
+      </div>
+    </section>}
+
+    {/* ⑤ тарифы: Сбер на фоне рынка */}
+    {(gap.length>0||moves.length>0)&&<section className="fy-sec">
+      <div className="eyebrow">Тарифы в ваших категориях{tar.key_rate!=null?" · ключевая "+tar.key_rate+"%":""}</div>
+      <div className="fy-tar">
+        {gap.length>0&&<div className="surface">
+          <div className="t-cap" style={{marginBottom:4}}>Сбер против рынка (макс. ставка)</div>
+          {gap.map(r=><div key={r.category} className="fy-tar-row">
+            <span>{CAT_LABELS[r.category]||r.category}</span>
+            <span className="mono tnum r">{r.sber_max!=null?(+r.sber_max).toFixed(2)+"%":"—"}
+              <span style={{color:"var(--ink-4)"}}> · медиана {r.market_median!=null?(+r.market_median).toFixed(2)+"%":"—"}</span>
+              {r.sber_vs_median_pp!=null&&<b style={{marginLeft:8,color:"var(--ink-2)"}}>{r.sber_vs_median_pp>0?"+":""}{(+r.sber_vs_median_pp).toFixed(2)} п.п.</b>}</span>
+          </div>)}
+        </div>}
+        {moves.length>0&&<div className="surface">
+          <div className="t-cap" style={{marginBottom:4}}>Движения за 7 дней</div>
+          {moves.map((m,i)=><div key={i} className="fy-tar-row">
+            <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {m.is_sber?<b style={{color:"var(--accent)"}}>Сбер</b>:m.bank}
+              <span style={{color:"var(--ink-4)"}}> · {CAT_LABELS[m.category]||m.category}</span></span>
+            <span className="mono tnum r">{m.from}→{m.to}
+              {typeof m.delta==="number"&&<b style={{marginLeft:6,color:"var(--ink-2)"}}>{m.delta>0?"+":""}{m.delta} п.п.</b>}</span>
+          </div>)}
+        </div>}
+      </div>
+    </section>}
+
+    {/* ⑥ подвал-доверие */}
+    <footer className="fy-trust">
+      <span>данные брифинга {p.digest_date||"—"} · заголовок, лид и зацепки — ИИ · 👍/👎 учат ваши рекомендации{p.feedback_used>0?" · учтено "+p.feedback_used+" ваших оценок":""}</span>
+      <a onClick={goProfile}>настроить профиль →</a>
+    </footer>
+  </div>;
 }
 
 function OverviewPage(){
@@ -665,14 +1620,42 @@ function OverviewPage(){
   const deltas=svmRows.filter(r=>r.sber_vs_median_pp!=null).map(r=>parseFloat(r.sber_vs_median_pp));
   const avgDelta=deltas.length?deltas.reduce((a,b)=>a+b,0)/deltas.length:null;
   const ovl=pulse.overall||{};
-  const flagsErr=qo.flags_err||0, flagsWarn=qo.flags_warn||0;
   const insights=head.insights||[];
   const newsGroups=nw.groups||[];
   const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
   const hl=head.headline||"", hot=head.hot||"";
+  // данные плиток пульса
+  const kpi=pulse.kpi||{}, esc=kpi.escalation_pct;
+  const dlt=(dg&&dg.meta&&dg.meta.delta)||{};
+  const dv=(pulse.diverge||[]).find(d=>d.gap!=null&&d.gap>=1.15)||null;  // ведущее расхождение
+  const unc=pulse.unclassified||null;
+  const up=(pulse.themes_up||[])[0]||null;
+  const runsOk=(qo.runs||[]).filter(r=>r.status==="ok").length, runsAll=(qo.runs||[]).length;
   const hh=bfPickHot(hl,hot);   // [начало,длина] акцента — есть всегда, если есть заголовок
+  // заголовок дня пишется по ведущему сигналу — его расчёт и раскрываем на акценте.
+  // Если акцент — число, ищем сигнал, чьё значение в нём фигурирует.
+  const leadIns=(()=>{
+    if(!insights.length)return null;
+    const frag=hh?hl.slice(hh[0],hh[0]+hh[1]):"";
+    const num=(frag.match(/\d+[.,]?\d*/)||[])[0];
+    if(num){
+      const n=parseFloat(num.replace(",","."));
+      // допуск на округление: заголовок пишет «в 2 раза» там, где сигнал 2.1
+      const near=v=>v!=null&&Math.abs(parseFloat(v)-n)<=Math.max(0.051,Math.abs(n)*0.08);
+      const hit=insights.find(i=>{const d=i.data||{};
+        return [d.ratio,d.week,d.delta,d.to,d.current,d.n_banks].some(near);});
+      if(hit)return hit;
+    }
+    // иначе — первая карточка, у которой расшифровка непустая: акцент без
+    // объяснения хуже, чем объяснение соседнего сигнала того же выпуска
+    return insights.find(i=>xpRows(i.kind,i.data||{}).length)||insights[0];
+  })();
+  const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{}):[];
 
   return <div className="fade-in">
+    <div className="fy-seg-mob"><OvSeg page="overview"/></div>
+    {/* ⓪ ЛИЧНЫЙ СЛОЙ — опциональная полоса (prefs.personal_band_home), над передовицей */}
+    <PersonalBand/>
     {/* ① MASTHEAD — передовица */}
     <header style={{marginBottom:26}}>
       <div className="eyebrow-row">
@@ -682,7 +1665,7 @@ function OverviewPage(){
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {refreshing?
             <span className="bf-live"><span className="dot"/>обновляется…</span>:
-            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до утра</span>}
+            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до {String((dg&&dg.meta&&dg.meta.digest_hour_msk)??7).padStart(2,"0")}:00 МСК</span>}
           <button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
             title="Перегенерировать выпуск">⟳</button>
         </div>
@@ -695,50 +1678,112 @@ function OverviewPage(){
         </div>:
         <>
           <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
-            {hh?<>{hl.slice(0,hh[0])}<em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
+            {hh?<>{hl.slice(0,hh[0])}
+              <Xp rows={leadXp} note={leadIns?leadIns.provenance:null}>
+                <em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>
+              </Xp>
+              {hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
           </h1>
-          <p className="lede" style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center"}}>
-            {head.stats&&<>
-              <span>{head.stats.risk||0} риск-сигн.</span>·<span>{head.stats.good||0} благопр.</span>·
-              <span>{head.stats.news||0} новостей</span>
-              {head.stats.checked_themes>0&&<>·<span>проверено тем: {head.stats.checked_themes}</span></>}
-            </>}
-            {ST("headline")==="stale"&&<span className="bf-stale">⚠ сводка за {sec.headline.stale_from}</span>}
-            {ST("headline")==="degraded"&&<span className="bf-stale">⚠ ИИ недоступен — сигналы детерминированные</span>}
+          {/* Вердикт дня вместо статистики генератора («3 риск-сигн · 8 новостей»
+              ничего не меняли в решениях аудитора). Берём фразу от LLM, если она
+              есть, иначе собираем детерминированно из тех же чисел. */}
+          <p className="lede" style={{maxWidth:"70ch"}}>{head.quiet_note||bfVerdict(dv,esc,ovl,unc)}</p>
+          <p className="bf-stampline">
+            {kpi.as_of?`жалобы на ${fmtDateMsk(kpi.as_of)}`:"данные обновляются"}
+            {tm.totals&&tm.totals.last_ok_run&&<> · тарифы на {fmtDateMsk(tm.totals.last_ok_run)}</>}
+            {runsAll>0&&<> · <a href="#sources" className={runsOk<runsAll?"warn":""}>источники {runsOk}/{runsAll}</a></>}
+            {kpi.total&&<> · корпус {fmtNum(kpi.total)} жалоб за 90 дн</>}
+            {kr.current!=null&&<> · ключевая ЦБ {kr.current}%</>}
+            {ST("headline")==="stale"&&<span className="bf-stale"> · ⚠ сводка за {sec.headline.stale_from}</span>}
+            {ST("headline")==="degraded"&&<span className="bf-stale"> · ⚠ ИИ недоступен, сигналы детерминированные</span>}
           </p>
         </>}
     </header>
 
-    {/* ② ПУЛЬС ДНЯ — тикер без LLM */}
+    {/* ② ПУЛЬС ДНЯ — сменный лист аудитора (без LLM).
+        Отбор переработан 23.07.2026 по отзыву аудиторов «бесполезная»: рыночные
+        метрики (медиана, спред) убраны — они отвечают на вопрос трейдера;
+        ключевая ставка ушла в штамп. Каждая плитка = вопрос аудитора, ведёт
+        туда, где с этим работают, и раскрывается попапом «как посчитано».
+        Коэффициент ×N на экран не выводится: только пара «факт · норма». */}
     <section style={{marginBottom:22}}>
       <div className="bf-pulse">
-        <a href="#market">
-          <div className="bf-pulse-num">{kr.current!=null?kr.current:"—"}<span className="u">%</span>
-            {kr.points&&<span style={{color:"var(--ink-4)",marginLeft:2}}><RateStep points={(kr.points||[]).slice(-24)} w={54} h={20}/></span>}
-          </div>
-          <div className="bf-pulse-cap">Ключевая ставка{kr.as_of?` · ${kr.as_of.slice(5)}`:""}</div>
+        {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
+            Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
+        <div className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+             onClick={dv?()=>bfGoDrill({page:"reviews",params:{theme:dv.key}}):undefined}
+             style={dv?{cursor:"pointer"}:undefined}>
+          <div className="bf-t-cap">Проверить сегодня
+            {dv&&dv.gap>=1.25&&<span className="bf-t-chip">сильнее рынка</span>}</div>
+          {dv?<>
+            <Xp rows={xpDiverge(dv)} note="banki.ru · негативные отзывы 1–2★">
+              <span className="bf-t-val">{dv.short||dv.label}</span>
+            </Xp>
+            <div className="bf-t-sub">{dv.week} жалоб · норма {dv.baseline_week}
+              {dv.market_ratio!=null&&<> · по рынку {dv.market_ratio>1.1?"тоже растёт":"без роста"}</>}
+              {dlt.diverge_key===dv.key&&<BfDelta v={dlt.diverge_week} invert/>}</div>
+          </>:<>
+            <span className="bf-t-val">Ничего срочного</span>
+            <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||22} тем — превышений нет</div>
+          </>}
+        </div>
+
+        {/* Регуляторный риск: доля жалоб с угрозой ЦБ/суда/ФАС */}
+        <a className={"bf-t"+(esc!=null&&esc>=12?" attn":"")} href="#reviews">
+          <div className="bf-t-cap">Дошло до ЦБ и суда</div>
+          <Xp rows={xpEscalation(kpi)} note="banki.ru · окно 90 дней">
+            <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
+          </Xp>
+          <div className="bf-t-sub">порог 12%{kpi.total?` · из ${fmtNum(kpi.total)} жалоб за 90 дн`:""}
+            <BfDelta v={dlt.escalation_pct} unit=" пп" invert/></div>
         </a>
-        <a href="#sber">
-          <div className="bf-pulse-num">{avgDelta!=null?signed(Math.round(avgDelta*100)/100):"—"}<span className="u">пп</span></div>
-          <div className="bf-pulse-cap">Сбер vs медиана рынка</div>
+
+        {/* Объём недели — с нормой рядом, без коэффициента */}
+        <a className="bf-t" href="#reviews">
+          <div className="bf-t-cap">Жалобы · 7 дней</div>
+          <Xp rows={xpWeek(ovl,kpi)} note="banki.ru · негативные отзывы 1–2★">
+            <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
+              {ovl.baseline_week!=null&&<small> норма {Math.round(ovl.baseline_week)}</small>}</span>
+          </Xp>
+          <div className="bf-t-sub">banki.ru · 1–2★{kpi.market_rank?` · ${kpi.market_rank}-е место из ${kpi.market_banks}`:""}
+            <BfDelta v={dlt.week} invert/></div>
         </a>
-        <a href="#reviews">
-          <div className="bf-pulse-num">{ovl.week!=null?fmtNum(ovl.week):"—"}
-            {ovl.ratio!=null&&<span className="u" style={{color:ovl.ratio>=1.3?"var(--neg)":"var(--ink-3)"}}>×{ovl.ratio}</span>}
-          </div>
-          <div className="bf-pulse-cap">Жалоб за 7 дней · к норме</div>
+
+        {/* Что меняли МЫ САМИ — согласовано ли */}
+        <a className="bf-t" href="#market?view=changes&bank=sberbank">
+          <div className="bf-t-cap">Меняли сами</div>
+          <Xp rows={xpOurChanges(tm)} note="журнал изменений условий">
+            <span className="bf-t-val">{(tm.totals&&tm.totals.sber_changes_7d)!=null?fmtNum(tm.totals.sber_changes_7d):"—"}
+              <small> офферов</small></span>
+          </Xp>
+          <div className="bf-t-sub">за 7 дней · условия продуктов Сбера
+            <BfDelta v={dlt.sber_changes}/></div>
         </a>
-        <a href="#market">
-          <div className="bf-pulse-num">{(tm.totals&&tm.totals.changes_7d)!=null?fmtNum(tm.totals.changes_7d):"—"}</div>
-          <div className="bf-pulse-cap">Изм. тарифов 7 дн · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков</div>
+
+        {/* Слепая зона: чего классификатор не видит */}
+        <a className={"bf-t"+(unc&&unc.ratio>=1.3?" attn":"")} href="#reviews">
+          <div className="bf-t-cap">Вне известных тем</div>
+          <Xp rows={xpUnclassified(unc)} note="классификатор тем · 22 темы">
+            <span className="bf-t-val">{unc&&unc.week!=null?unc.week:"—"}
+              {unc&&unc.pct!=null&&<small> · {unc.pct}%</small>}</span>
+          </Xp>
+          <div className="bf-t-sub">{unc&&unc.ratio!=null
+            ?(unc.ratio>=1.3?"выше обычного — возможен новый инцидент":"как обычно")
+            :"жалобы без темы"}<BfDelta v={dlt.unclassified} invert/></div>
         </a>
-        <a href="#market">
-          <div className="bf-pulse-num">{tm.dep_spread_pp!=null?signed(tm.dep_spread_pp):"—"}<span className="u">пп</span></div>
-          <div className="bf-pulse-cap">Спред вклад Сбера − КС</div>
-        </a>
-        <a href="#quality">
-          <div className="bf-pulse-num" style={flagsErr?{color:"var(--neg)"}:null}>{flagsErr+flagsWarn}</div>
-          <div className="bf-pulse-cap">Флаги качества · {flagsErr} ош.</div>
+
+        {/* Медленный тренд — то, чего не видно в недельном окне */}
+        <a className="bf-t bf-t-wide" href="#reviews">
+          <div className="bf-t-cap">Растёт за квартал</div>
+          {up?<>
+            <Xp rows={xpThemeUp(up)} note="banki.ru · окно 90 дней против предыдущих 90">
+              <span className="bf-t-val">{up.short||up.label}</span>
+            </Xp>
+            <div className="bf-t-sub">+{Math.round(up.delta_pct)}% к прошлому кварталу · {up.n} жалоб</div>
+          </>:<>
+            <span className="bf-t-val">Без роста</span>
+            <div className="bf-t-sub">ни одна тема не выросла заметно за квартал</div>
+          </>}
         </a>
       </div>
     </section>
@@ -769,7 +1814,7 @@ function OverviewPage(){
               <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="reviews"}>К отзывам <Ic.ext/></button>
             </div>
           </div>
-          <div className="bf-brief">{renderMD(brief.markdown)}</div>
+          <BfBrief markdown={brief.markdown}/>
         </div>}
       </div>
 
@@ -787,7 +1832,9 @@ function OverviewPage(){
                  target="_blank" rel="noopener noreferrer">
                 <div className="bf-news-t">{it.title}</div>
                 {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
-                <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDate(it.ts)}`:""}<Ic.ext/></div>
+                <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
+                  {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}
+                  <Ic.ext/></div>
               </a>)}
           </div>):
           ST("news")==="degraded"&&(nw.items_raw||[]).length?
@@ -808,7 +1855,9 @@ function OverviewPage(){
       <div className="eyebrow-row">
         <div className="eyebrow" style={{marginBottom:10}}>Тарифные движения недели</div>
         {(tm.mass_updates||[]).length>0&&
-          <span className="badge warn">массовое движение: {tm.mass_updates.map(m=>CAT_LABELS[m.category]||m.category).join(", ")}{tm.after_pause?" · сбор после паузы":""}</span>}
+          <span className="badge warn" style={{cursor:"pointer"}} title="Открыть журнал изменений"
+            onClick={()=>{const m=tm.mass_updates[0];location.hash="market?"+new URLSearchParams({cat:m.category||"",view:"changes"});}}>
+            массовое движение: {tm.mass_updates.map(m=>CAT_LABELS[m.category]||m.category).join(", ")}{tm.after_pause?" · сбор после паузы":""}</span>}
       </div>
       <div className="surface" style={{overflow:"hidden"}}>
         {(tm.top_changes||[]).length?
@@ -816,7 +1865,14 @@ function OverviewPage(){
             <thead><tr><th>Банк</th><th>Продукт</th><th className="right">Было → стало</th><th className="right">Δ</th><th className="right">Когда</th></tr></thead>
             <tbody>{tm.top_changes.slice(0,10).map((c,i)=>{
               const up=c.to>c.from;
-              return <tr key={i}>
+              // точный диплинк в журнал: свежие выпуски несут offer_id/change_id,
+              // старые — хотя бы категорию
+              const go=()=>{const sp=new URLSearchParams({cat:c.category||"",view:"changes"});
+                if(c.bank_slug)sp.set("bank",c.bank_slug);
+                if(c.change_id)sp.set("change",c.change_id);
+                if(c.offer_id)sp.set("offer",c.offer_id);
+                location.hash="market?"+sp.toString();};
+              return <tr key={i} onClick={go} style={{cursor:"pointer"}} title="Открыть в журнале изменений">
                 <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}{c.is_sber&&<span className="badge solid" style={{marginLeft:8,fontSize:9}}>Сбер</span>}</div>
                   <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
                 <td data-label="Продукт" style={{fontSize:12.5,color:"var(--ink-2)"}}>{c.title}</td>
@@ -832,7 +1888,7 @@ function OverviewPage(){
           </div>}
         {(tm.top_changes||[]).length>0&&<div style={{padding:"12px 20px",borderTop:"1px solid var(--hair)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span className="bf-stamp">{(tm.totals&&tm.totals.changes_7d)||0} изменений · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков за 7 дн</span>
-          <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="market"}>Все изменения <Ic.ext/></button>
+          <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="market?view=changes"}>Все изменения <Ic.ext/></button>
         </div>}
       </div>
     </section>
@@ -842,7 +1898,6 @@ function OverviewPage(){
       {qo.totals&&<span>{fmtNum(qo.totals.offers)} предложений · {qo.totals.banks} банков</span>}
       {pulse.kpi&&pulse.kpi.as_of&&<span>отзывы: {fmtNum((pulse.kpi.total||0))} за 90 дн (обн. {pulse.kpi.as_of})</span>}
       {tm.totals&&tm.totals.last_ok_run&&<span>сбор тарифов: {fmtDate(tm.totals.last_ok_run)}</span>}
-      <a href="#quality">{flagsErr+flagsWarn} флаг(ов) качества</a>
       {dg&&dg.meta&&dg.meta.tokens&&dg.meta.tokens.in>0&&<span>дайджест: {Math.round((dg.meta.tokens.in+dg.meta.tokens.out)/1000)}k токенов/день · один на всех</span>}
       {qo.captcha_pending>0&&<a href="#sources">{qo.captcha_pending} капч(и) ждут решения</a>}
       <a href="#sources">Источники →</a>
@@ -850,223 +1905,460 @@ function OverviewPage(){
   </div>;
 }
 
-// ─── MARKET PAGE ──────────────────────────────────────────────────────────────
-function MarketPage(){
-  // preset категории из «Обзора» (клик по тарифному сигналу)
-  const mkPreset=(()=>{try{
+// ─── MARKET PAGE — «Позиция»: рынок × Сбер в одном развороте ─────────────────
+// Три слоя: Атлас (cat=null) → рабочая область категории (Витрина/Журнал) →
+// драуэр-досье оффера. Состояние зеркалится в hash (#market?cat=…&view=…):
+// диплинки с Обзора шарятся ссылкой, F5 не теряет срез. Легаси-пресет
+// al-mk-preset (bfGoDrill) конвертируется при маунте, URL приоритетнее.
+
+const MK_TERMS=[["0-3","до 3 мес"],["4-6","4–6 мес"],["7-12","7–12 мес"],["13+","от года"]];
+// значение сопоставимой метрики категории: ставка / ₽ в год / дни грейса
+const mkGap=(v,m)=>{
+  if(v==null)return "—";
+  const n=parseFloat(v), sign=n>0?"+":(n<0?"−":"");
+  const a=Math.abs(n);
+  if(m==="fee_service")return n===0?"наравне":sign+fmtNum(Math.round(a))+" ₽/год";
+  if(m==="grace_days")return n===0?"наравне":sign+Math.round(a)+" дн";
+  return n===0?"наравне":sign+a.toFixed(2)+" пп";
+};
+const mkMetric=(v,m)=>{
+  if(v==null)return "—";
+  const n=parseFloat(v);
+  if(m==="fee_service")return n===0?"бесплатно":fmtNum(Math.round(n))+" ₽/год";
+  if(m==="grace_days")return Math.round(n)+" дн";
+  return pct(n);
+};
+const MK_FLD={rate_pct:"ставка",amount_min:"мин. сумма",amount_max:"макс. сумма",
+  term_months_min:"срок от",term_months_max:"срок до",fee_open:"комиссия открытия",
+  fee_service:"обслуживание",early_withdraw:"досрочное снятие",capitalization:"капитализация",
+  replenishable:"пополнение",conditions:"условия",rate_kind:"тип ставки",currency:"валюта",
+  grace_days:"грейс-период",cashback_pct:"кешбэк"};
+// значение поля диффа — человеком: аудитору нужны цифры, а не имена полей
+const mkFldVal=(k,v)=>{
+  if(v==null||v==="None"||v==="")return "—";
+  const n=parseFloat(v);
+  if(k==="amount_min"||k==="amount_max"||k==="fee_open"||k==="fee_service")
+    return isNaN(n)?String(v).slice(0,30):fmtNum(n)+" ₽";
+  if(k==="term_months_min"||k==="term_months_max")
+    return isNaN(n)?String(v).slice(0,30):n+" мес";
+  if(k==="grace_days")return isNaN(n)?String(v):n+" дн";
+  if(k==="cashback_pct")return isNaN(n)?String(v):pct(n,1);
+  if(k==="rate_pct")return isNaN(n)?String(v):pct(n);
+  if(v==="true")return "да"; if(v==="false")return "нет";
+  return String(v).slice(0,30);
+};
+// диффы без ставки → список «поле: было → стало»
+const mkDiffOthers=(diff)=>{
+  let d=diff;if(typeof d==="string"){try{d=JSON.parse(d);}catch{d={};}}
+  return Object.entries(d||{}).filter(([k])=>k!=="rate_pct")
+    .map(([k,v])=>({k,label:MK_FLD[k]||k,from:v&&v.from,to:v&&v.to}));
+};
+
+// strip-plot распределения категории: полоса IQR, засечка медианы,
+// точки — лучший оффер каждого банка, Сбер — крупная accent-точка
+// подсказка точки: величина каждого поля подписана своей единицей — грейс в
+// днях, ПСК и кешбэк в процентах, обслуживание в рублях (раньше всё гналось
+// через pct() и грейс выглядел как «120%»)
+function mkPointTitle(p,c){
+  // подписи оставляем как есть: «ПСК» — аббревиатура, строчными читается плохо
+  const bits=[`${c.metric_label||"Значение"} ${mkMetric(p.rate,c.metric)}`];
+  if(c.metric!=="rate_pct"&&p.rate_pct!=null)
+    bits.push(`${c.rate_label||"Ставка"} ${pct(p.rate_pct)}`);
+  if(c.secondary==="cashback_pct"&&p.secondary!=null)
+    bits.push(`кешбэк до ${pct(p.secondary,1)}`);
+  return `${p.is_sber?"Сбербанк":p.name}${p.title?` · ${p.title}`:""}\n${bits.join(" · ")}`;
+}
+
+function MkStrip({c,big}){
+  if(c.status!=="ok")return null;
+  const rng=(c.max-c.min)||1;
+  const X=v=>((v-c.min)/rng)*94+3;
+  return <div className={"mk-strip"+(big?" mk-strip-big":"")}>
+    <i className="mk-iqr" style={{left:X(c.p25)+"%",width:Math.max(X(c.p75)-X(c.p25),.6)+"%"}}
+       title={`середина рынка: ${mkMetric(c.p25,c.metric)} – ${mkMetric(c.p75,c.metric)}`}/>
+    <i className="mk-med" style={{left:X(c.median)+"%"}} title={`медиана ${mkMetric(c.median,c.metric)}`}/>
+    {(c.points||[]).map((p,i)=>
+      <i key={i} className={"mk-dot"+(p.is_sber?" sber":"")} style={{left:X(p.rate)+"%"}}
+         title={mkPointTitle(p,c)}/>)}
+  </div>;
+}
+
+// ступенчатая история ставки оффера (SCD2-версии условий)
+function MkStep({series}){
+  const pts=(series||[]).filter(p=>p.rate_pct!=null);
+  if(pts.length<2)return null;
+  const W=280,H=64;
+  const vals=pts.map(p=>parseFloat(p.rate_pct));
+  const t0=new Date(pts[0].valid_from).getTime(),t1=Date.now();
+  const min=Math.min(...vals),max=Math.max(...vals),rng=(max-min)||1;
+  const X=t=>4+((t-t0)/((t1-t0)||1))*(W-8);
+  const Y=v=>H-10-((v-min)/rng)*(H-24);
+  let d=`M${X(t0).toFixed(1)} ${Y(vals[0]).toFixed(1)}`;
+  for(let i=1;i<pts.length;i++){
+    const x=X(new Date(pts[i].valid_from).getTime());
+    d+=` H${x.toFixed(1)} V${Y(vals[i]).toFixed(1)}`;
+  }
+  d+=` H${W-4}`;
+  return <div className="mk-stepw">
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",display:"block"}} aria-hidden>
+      <path d={d} fill="none" stroke="var(--accent)" strokeWidth="1.6"/>
+    </svg>
+    <div className="mk-steplbl">
+      <span>{fmtDate(pts[0].valid_from)}</span>
+      <span className="tnum">{pct(min)} – {pct(max)}</span>
+      <span>сейчас {pct(vals[vals.length-1])}</span>
+    </div>
+  </div>;
+}
+
+function MarketPage({params}){
+  const P=params||{};
+  // одноразовый легаси-пресет от bfGoDrill — только как фолбэк при пустом URL
+  const legacy=useRef(null);
+  if(legacy.current===null){try{
     const p=JSON.parse(sessionStorage.getItem("al-mk-preset")||"null");
-    sessionStorage.removeItem("al-mk-preset");return p;
-  }catch{return null;}})();
-  const[cat,setCat]=useState((mkPreset&&mkPreset.category)||"deposit");
-  const[q,setQ]=useState("");
-  const[offers,setOffers]=useState([]);
-  const[catStats,setCatStats]=useState([]);
-  const[loading,setLoading]=useState(true);
+    sessionStorage.removeItem("al-mk-preset");legacy.current=p||{};
+  }catch{legacy.current={};}}
+  const L=legacy.current;
+  const[cat,setCat]=useState(P.cat||P.category||L.category||null);
+  const[view,setView]=useState(P.view||L.view||"vitrina");
+  const[term,setTerm]=useState(P.term||null);
+  const[qLive,setQLive]=useState(P.q||L.q||"");
+  const[q,setQ]=useState(P.q||L.q||"");
+  const[bank,setBank]=useState(P.bank||L.bank||null);
+  const hlChange=useRef(P.change?parseInt(P.change):null);
+  const[meta,setMeta]=useState(null);
+  const[atlas,setAtlas]=useState(null);
+  const[sum,setSum]=useState(null);
+  const[sch,setSch]=useState(null);
+  const[offers,setOffers]=useState(null);
+  const[moreBusy,setMoreBusy]=useState(false);
+  const[changes,setChanges]=useState(null);
+  const[noise,setNoise]=useState(false);
+  const[drawer,setDrawer]=useState(P.offer?parseInt(P.offer):null);
+  const[dossier,setDossier]=useState(null);
   const[err,setErr]=useState(null);
 
-  // Load category stats once
+  // повторный диплинк, когда страница уже открыта: применяем новые URL-параметры
+  const lastP=useRef(JSON.stringify(P));
+  useEffect(()=>{const s=JSON.stringify(P);
+    if(s!==lastP.current){lastP.current=s;
+      setCat(P.cat||P.category||null);setView(P.view||"vitrina");
+      setTerm(P.term||null);setQLive(P.q||"");setQ(P.q||"");setBank(P.bank||null);
+      hlChange.current=P.change?parseInt(P.change):null;
+      if(P.offer)setDrawer(parseInt(P.offer));}
+  },[params]); // eslint-disable-line
+
+  // debounce поиска (серверный q — не дёргаем API на каждую букву)
+  useEffect(()=>{const t=setTimeout(()=>setQ(qLive),350);return()=>clearTimeout(t);},[qLive]);
+
+  // состояние → hash: диплинк живёт в адресе, F5 ничего не теряет
   useEffect(()=>{
-    apiFetch("/api/market/categories").then(setCatStats).catch(()=>{});
+    const sp=new URLSearchParams();
+    if(cat)sp.set("cat",cat);
+    if(view!=="vitrina")sp.set("view",view);
+    if(term)sp.set("term",term);
+    if(q)sp.set("q",q);
+    if(bank)sp.set("bank",bank);
+    const s=sp.toString();
+    history.replaceState(null,"","#market"+(s?"?"+s:""));
+  },[cat,view,term,q,bank]);
+
+  useEffect(()=>{
+    Promise.all([apiFetch("/api/meta/categories"),apiFetch("/api/market/atlas"),
+                 apiFetch("/api/summary").catch(()=>null),
+                 apiFetch("/api/meta/schedule").catch(()=>null)])
+      .then(([m,a,s,sc])=>{setMeta(m);setAtlas(a);setSum(s);setSch(sc);})
+      .catch(e=>setErr(e.message));
   },[]);
 
-  // Load offers on category change
-  useEffect(()=>{
-    setLoading(true);setErr(null);
-    apiFetch(`/api/market?category=${cat}&limit=100`)
-      .then(d=>{setOffers(d||[]);setLoading(false);})
-      .catch(e=>{setErr(e.message);setLoading(false);});
-  },[cat]);
+  useEffect(()=>{ // витрина
+    if(!cat||view!=="vitrina")return;
+    setOffers(null);
+    const sp=new URLSearchParams({category:cat,limit:"100"});
+    if(term)sp.set("term",term);
+    if(q)sp.set("q",q);
+    apiFetch("/api/market?"+sp).then(setOffers).catch(e=>setErr(e.message));
+  },[cat,term,q,view]);
 
-  const showRate=!["card_debit","metals"].includes(cat);
-  const filtered=(offers||[]).filter(r=>!q||
-    (r.bank_name||"").toLowerCase().includes(q.toLowerCase())||
-    (r.title||"").toLowerCase().includes(q.toLowerCase()));
-  const bestRate=filtered.length&&showRate?Math.max(...filtered.map(r=>parseFloat(r.rate_pct)||0)):0;
+  useEffect(()=>{ // журнал
+    if(view!=="changes")return;
+    setChanges(null);
+    const sp=new URLSearchParams({days:"7",limit:"120"});
+    if(cat)sp.set("category",cat);
+    if(bank)sp.set("bank_slug",bank);
+    if(noise)sp.set("significant","false");
+    apiFetch("/api/recent-changes?"+sp).then(setChanges).catch(e=>setErr(e.message));
+  },[cat,bank,noise,view]);
 
-  // Build tabs from catStats + CATS_ORDER
-  const tabs=CATS_ORDER.map(id=>{
-    const s=catStats.find(c=>c.category===id);
-    return{id,label:CAT_LABELS[id]||id,n:s?s.total:null};
-  });
+  useEffect(()=>{ // досье оффера
+    if(!drawer){setDossier(null);return;}
+    setDossier(null);
+    apiFetch(`/api/market/offer/${drawer}/history`)
+      .then(setDossier).catch(()=>setDossier({error:true}));
+  },[drawer]);
+
+  const hlRef=useRef(null);
+  useEffect(()=>{if(changes&&hlRef.current)
+    hlRef.current.scrollIntoView({block:"center",behavior:"smooth"});},[changes]);
+
+  const A=atlas?Object.fromEntries((atlas.categories||[]).map(c=>[c.category,c])):{};
+  const M=meta?Object.fromEntries(meta.map(m=>[m.id,m])):{};
+  const ac=cat?A[cat]:null;
+  const total=offers&&offers.length?offers[0].total:null;
+  const loadMore=()=>{
+    if(!offers||moreBusy)return;
+    setMoreBusy(true);
+    const sp=new URLSearchParams({category:cat,limit:"100",offset:String(offers.length)});
+    if(term)sp.set("term",term);
+    if(q)sp.set("q",q);
+    apiFetch("/api/market?"+sp).then(d=>{setOffers([...offers,...(d||[])]);setMoreBusy(false);})
+      .catch(()=>setMoreBusy(false));
+  };
+  const openAI=(o)=>bfGoAI(`Проанализируй позицию Сбера относительно оффера «${o.title}» банка ${o.bank_name} (${(CAT_LABELS[o.category]||o.category).toLowerCase()}, ставка ${o.rate_pct??"—"}%). Насколько условия Сбера конкурентны и стоит ли реагировать?`);
+
+  const lower=ac&&ac.lower_is_better;
+  const sberIn=offers&&offers.some(o=>o.is_sber);
+  const bestRate=offers&&offers.length?parseFloat(offers[0].rate_pct):null;
+  const mcat=cat?(M[cat]||{}):{};                 // семантика витрины категории
+  const showRateCol=mcat.show_rate!==false;
+  const showBarCol=mcat.show_bar!==false&&showRateCol;
 
   return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Рынок · {loading?"…":filtered.length} предложений</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Действующие условия по категориям</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Снимок с агрегаторов sravni.ru и banki.ru. Идемпотентность по (банк, категория, external_id). Изменения хранятся как SCD2.
+    <header style={{marginBottom:20}}>
+      <div className="eyebrow" style={{marginBottom:6}}>§ Рынок · позиция объекта аудита</div>
+      <h1 className="t-h" style={{marginBottom:6}}>Позиция Сбера на рынке</h1>
+      <p className="t-cap" style={{maxWidth:"72ch"}}>
+        {sum?`${sum.offers} офферов · ${sum.banks} банков`:"…"}
+        {sch&&sch.enabled?` · автосбор ежедневно ${String(sch.ingest_hour_msk).padStart(2,"0")}:00 МСК`:sch?" · автосбор выключен":""}
+        {sum&&sum.last_run?` · срез ${fmtDateMsk(sum.last_run)}`:""}
+        {sch&&sch.stale&&<span className="mk-stale" title={`последний успешный сбор ${sch.last_ok_age_h!=null?sch.last_ok_age_h+" ч назад":"не зафиксирован"}; сторож догонит автоматически`}> · ⚠ данные устарели</span>}
       </p>
+      <p className="mk-disc">Сравнение внутри сопоставимой выборки: ₽, лучший оффер банка, без промо-строк рейтингов. Для кредитных продуктов ниже ставка = лучше позиция. Наведите на любую цифру — покажем, как она посчитана.</p>
     </header>
 
-    <div className="filter-row">
+    <div className="filter-row" style={{marginBottom:18}}>
       <div className="tab-row">
-        {tabs.slice(0,5).map(c=>(
-          <button key={c.id} className={`tab ${cat===c.id?"active":""}`} onClick={()=>setCat(c.id)}>
-            {c.label}{c.n!=null&&<span className="n">{c.n}</span>}
-          </button>
-        ))}
-        <select className="select" value={cat} onChange={e=>setCat(e.target.value)} style={{height:26,fontSize:12.5,marginLeft:4}}>
-          {tabs.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
-        </select>
+        <button className={`tab ${!cat&&view!=="changes"?"active":""}`} onClick={()=>{setCat(null);setView("vitrina");setDrawer(null);}}>Атлас</button>
+        {(meta||[]).filter(m=>m.n>0).map(m=>{
+          const sb=A[m.id]&&A[m.id].sber;
+          return <button key={m.id} className={`tab ${cat===m.id?"active":""}`} onClick={()=>{setCat(m.id);setBank(null);}}>
+            {m.label}{sb&&<span className={"mk-rk"+(sb.beats_share<0.5?" bad":"")}
+              title={`Сбер — #${sb.rank} из ${A[m.id].n_banks} банков по лучшему офферу`}>#{sb.rank}</span>}
+          </button>;})}
       </div>
       <div className="search-wrap">
         <Ic.search/>
-        <input className="input" placeholder="Поиск по банку или продукту…" value={q} onChange={e=>setQ(e.target.value)}/>
+        <input className="input" placeholder="Банк или продукт…" value={qLive}
+               onChange={e=>{setQLive(e.target.value);if(!cat&&e.target.value)setCat("deposit");}}/>
       </div>
     </div>
 
-    <div className="surface" style={{overflow:"hidden"}}>
-      {loading?<div style={{padding:32}}><Skel h={40}/><div style={{height:12}}/><Skel h={40}/><div style={{height:12}}/><Skel h={40}/></div>:
-       err?<ErrState msg={err}/>:
-       filtered.length===0?<EmptyState text="Нет предложений. Возможно, источник ещё не обновлялся."/>:
-      <table className="m-cards">
-        <thead><tr>
-          <th style={{width:"22%"}}>Банк</th>
-          <th>Продукт</th>
-          {showRate&&<th className="right">Ставка</th>}
-          {showRate&&<th>Vs лидер</th>}
-          <th>Сумма</th>
-          <th>Срок</th>
-          <th></th>
-        </tr></thead>
-        <tbody>
-          {filtered.map((r,i)=>{
-            const isSber=!!r.is_sber;
-            const rate=parseFloat(r.rate_pct);
-            return <tr key={r.offer_id||i} className={isSber?"is-sber":""}>
-              <td className="m-primary" data-label="Банк">
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
-                  <div>
-                    <div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
-                    {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
-                  </div>
-                </div>
-              </td>
-              <td data-label="Продукт">
-                {r.url?<a href={r.url} target="_blank" rel="noopener" style={{color:"var(--ink)",borderBottom:"1px solid var(--hair-2)"}}>{r.title}</a>
-                  :<span>{r.title}</span>}
-              </td>
-              {showRate&&<td className="right mono tnum" data-label="Ставка" style={{fontWeight:500,fontSize:14}}>
-                {r.rate_pct!=null?pct(r.rate_pct):"—"}
-              </td>}
-              {showRate&&<td data-label="Vs лидер">
-                {bestRate>0&&rate>0?<div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div className="bar" style={{flex:1,maxWidth:80}}>
-                    <i style={{width:`${(rate/bestRate)*100}%`,background:isSber?"var(--accent)":"var(--ink-3)"}}/>
-                  </div>
-                  <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>{Math.round((rate/bestRate)*100)}%</span>
-                </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
-              </td>}
-              <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
-              <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
-              <td className="right">
-                {r.url&&<a href={r.url} target="_blank" rel="noopener" className="icon-btn" aria-label="Открыть"><Ic.ext/></a>}
-              </td>
-            </tr>;
-          })}
-        </tbody>
-      </table>}
-    </div>
-  </div>;
-}
+    {err&&<ErrState msg={err}/>}
 
-// ─── SBER VS MARKET PAGE ──────────────────────────────────────────────────────
-function SberPage(){
-  const[data,setData]=useState(null);
-  const[loading,setLoading]=useState(true);
-  const[err,setErr]=useState(null);
-
-  useEffect(()=>{
-    setLoading(true);
-    Promise.all([
-      apiFetch("/api/sber-vs-market"),
-      apiFetch("/api/sber-vs-market/top"),
-    ]).then(([svm,top])=>{setData({svm,top});setLoading(false);})
-      .catch(e=>{setErr(e.message);setLoading(false);});
-  },[]);
-
-  if(loading)return <LoadingPage/>;
-  if(err)return <ErrState msg={err}/>;
-  const{svm,top}=data;
-  const withData=(svm||[]).filter(r=>r.sber_max!=null);
-  const depositTop=(top||[]).filter(r=>r.category==="deposit").sort((a,b)=>parseFloat(b.rate_pct||0)-parseFloat(a.rate_pct||0));
-
-  return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Сбер / Рынок · разбор</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Позиция Сбербанка по категориям</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Дельта рассчитывается между лучшей ставкой Сбера и медианой рынка. Для кредитных продуктов меньше = лучше для клиента.
-      </p>
-    </header>
-
-    {!withData.length?<EmptyState text="Нет данных для сравнения. Запустите сбор данных из раздела Источники."/>:<>
-    <div className="row" style={{gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",marginBottom:28}}>
-      {withData.map(r=>{
-        const delta=r.sber_vs_median_pp!=null?parseFloat(r.sber_vs_median_pp):null;
-        const lib=LOWER_IS_BETTER.has(r.category);
-        const isPos=delta!=null?(lib?delta>0:delta>0):null;
-        const barW=r.market_max?Math.min(100,(parseFloat(r.sber_max||0)/parseFloat(r.market_max))*100):50;
-        return <div key={r.category} className="surface" style={{padding:"22px 24px"}}>
-          <div className="eyebrow" style={{marginBottom:10}}>{CAT_LABELS[r.category]||r.category}</div>
-          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
-            <div className="serif sber-delta" style={{lineHeight:1,color:isPos?"var(--pos)":"var(--accent)"}}>
-              {delta!=null?signed(delta):"—"}
+    {/* ── СЛОЙ 1 · АТЛАС ─────────────────────────────────────────────── */}
+    {!cat&&view!=="changes"&&!err&&<div className="surface" style={{overflow:"hidden"}}>
+      <div style={{padding:"18px 24px",borderBottom:"1px solid var(--hair)"}}>
+        <div className="eyebrow" style={{marginBottom:2}}>Атлас позиций · категория × распределение рынка</div>
+        <div className="t-cap">Точка — лучший оффер банка. Красная — Сбер. Полоса — середина рынка (25–75 перцентиль), засечка — медиана. Клик — в категорию.</div>
+      </div>
+      {!atlas?<div style={{padding:28}}><Skel h={40}/><div style={{height:10}}/><Skel h={40}/><div style={{height:10}}/><Skel h={40}/></div>:
+        (atlas.categories||[]).map(c=>{
+          const m=M[c.category]||{};
+          const sb=c.sber;
+          return <button key={c.category} className="mk-arow" onClick={()=>setCat(c.category)}>
+            <div className="mk-alabel">
+              <div style={{fontWeight:500}}>{m.label||c.category}</div>
+              <div className="mk-an">{c.status==="ok"?`${c.n_banks} банков · ${(c.metric_label||"").toLowerCase()}`:""}{c.lower_is_better&&c.status==="ok"?" · ниже = лучше":""}{c.subsidized_excluded>0?` · без ${c.subsidized_excluded} господдержки`:""}</div>
             </div>
-            <div className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>п.п.</div>
-          </div>
-          <div className="bar accent" style={{marginBottom:12}}>
-            <i style={{width:`${barW}%`,background:isPos?"var(--pos)":"var(--accent)"}}/>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"4px 0"}}>
-            <span style={{color:"var(--ink-3)"}}>Сбер макс.</span>
-            <span className="mono tnum" style={{fontWeight:500}}>{pct(r.sber_max)}</span>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"4px 0",borderTop:"1px solid var(--hair)"}}>
-            <span style={{color:"var(--ink-3)"}}>Медиана рынка</span>
-            <span className="mono tnum" style={{color:"var(--ink-2)"}}>{pct(r.market_median)}</span>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"4px 0",borderTop:"1px solid var(--hair)"}}>
-            <span style={{color:"var(--ink-3)"}}>Лидер рынка</span>
-            <span className="mono tnum" style={{color:"var(--ink-2)"}}>{pct(r.market_max)}</span>
-          </div>
-        </div>;
-      })}
-    </div>
-
-    {depositTop.length>0&&<div className="surface" style={{overflow:"hidden"}}>
-      <div style={{padding:"20px 24px",borderBottom:"1px solid var(--hair)"}}>
-        <div className="eyebrow" style={{marginBottom:4}}>Топ предложений по доходности · вклады</div>
-        <div className="t-cap">Сбер выделен и подсвечен. Сортировка по убыванию ставки.</div>
-      </div>
-      <table className="m-cards">
-        <thead><tr>
-          <th className="right" style={{width:"6%"}}>№</th>
-          <th>Банк</th><th>Продукт</th>
-          <th className="right">Ставка</th>
-          <th>Срок</th>
-        </tr></thead>
-        <tbody>
-          {depositTop.map((r,i)=>{
-            const isSber=!!r.is_sber;
-            return <tr key={i} className={isSber?"is-sber":""}>
-              <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(i+1).padStart(2,"0")}</td>
-              <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
-                <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
-                <span style={{fontWeight:500}}>{r.bank_name}</span>
-              </div></td>
-              <td data-label="Продукт">{r.title}</td>
-              <td className="right mono tnum" data-label="Ставка" style={{fontWeight:500}}>{pct(r.rate_pct)}</td>
-              <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,null)}</td>
-            </tr>;
-          })}
-        </tbody>
-      </table>
+            {c.status==="ok"?<MkStrip c={c}/>:
+              <div className="mk-anote">{c.status==="no_metric"?((M[c.category]||{}).caveat||"сопоставимой метрики нет")+" — доступна витрина":"нет данных"}</div>}
+            <div className="mk-apos">
+              {sb?<>
+                <b className={"serif"+(sb.beats_share<0.5?" bad":"")}
+                   title={`лучший оффер Сбера против лучших офферов ${c.n_banks} банков${c.small_n?" · малая база!":""}`}>#{sb.rank}</b>
+                <span className="mk-an" title={sb.title||""}>{mkMetric(sb.rate,c.metric)} · {mkGap(sb.gap_median,c.metric)} к медиане{c.small_n?" · малая база":""}</span>
+              </>:c.status==="ok"?<span className="mk-an">Сбера нет в выборке</span>:null}
+            </div>
+            <div className="mk-ago" aria-hidden>→</div>
+          </button>;})}
     </div>}
+
+    {/* ── СЛОЙ 2 · КАТЕГОРИЯ (журнал доступен и без категории) ───────── */}
+    {(cat||view==="changes")&&!err&&<>
+      {ac&&ac.status==="ok"&&<div className="mk-kpis">
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков${ac.sber.tied>1?`; ${ac.sber.tied} банков с тем же значением делят это место`:""}${ac.small_n?" · малая база!":""}`}>
+          <b className={ac.sber.beats_share<0.5?"bad":""}>#{ac.sber.rank}<small> из {ac.n_banks}</small></b>
+          <span>ранг Сбера{ac.sber.tied>1?` · ${ac.sber.tied} наравне`:""}{ac.small_n?" · малая база":""}</span></div>}
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.sber.title||""}>
+          <b>{mkMetric(ac.sber.rate,ac.metric)}</b><span>{ac.sber.title?String(ac.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`лидер: ${ac.leader.name} · ${mkMetric(ac.leader.rate,ac.metric)} · «${ac.leader.title}»`}>
+          <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{mkGap(ac.sber.gap_leader,ac.metric)}</b>
+          <span>до лидера ({ac.leader.name})</span></div>}
+        <div className="surface mk-kpi bf-tip" data-tip={`медиана лучших офферов ${ac.n_banks} банков · разброс ${mkMetric(ac.min,ac.metric)}–${mkMetric(ac.max,ac.metric)}`}>
+          <b>{mkMetric(ac.median,ac.metric)}</b><span>медиана рынка</span></div>
+      </div>}
+      {ac&&ac.status==="ok"&&<div className="surface" style={{padding:"14px 20px",marginBottom:14}}>
+        <MkStrip c={ac} big/>
+      </div>}
+
+      <div className="filter-row" style={{marginBottom:14}}>
+        <div className="tab-row">
+          {cat&&<button className={`tab ${view==="vitrina"?"active":""}`} onClick={()=>setView("vitrina")}>Витрина</button>}
+          <button className={`tab ${view==="changes"?"active":""}`} onClick={()=>setView("changes")}>Журнал изменений{!cat?" · весь рынок":""}</button>
+        </div>
+        {view==="vitrina"&&mcat.show_terms&&<div className="tab-row">
+          {MK_TERMS.map(([id,l])=><button key={id} className={`tab ${term===id?"active":""}`}
+            onClick={()=>setTerm(term===id?null:id)}>{l}</button>)}
+        </div>}
+        {view==="changes"&&<label className="mk-noise">
+          <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум
+        </label>}
+        {view==="changes"&&bank&&<button className="tab active" onClick={()=>setBank(null)}>банк: {bank} ✕</button>}
+      </div>
+
+      {/* ВИТРИНА */}
+      {mcat.caveat&&<p className="mk-disc" style={{margin:"0 0 12px"}}>⚠ {mcat.caveat}.</p>}
+      {ac&&ac.subsidized_excluded>0&&<p className="mk-disc" style={{margin:"0 0 12px"}}>
+        Из рыночного сравнения исключено программ с господдержкой: {ac.subsidized_excluded} — их ставку задаёт государство, она одинакова у всех банков. В витрине ниже они присутствуют.</p>}
+      {view==="vitrina"&&<div className="surface" style={{overflow:"hidden"}}>
+        {ac&&ac.sber&&!sberIn&&offers&&<button className="mk-sber-pin" onClick={()=>setDrawer(ac.sber.offer_id)}>
+          <BankAvatar slug="sberbank" name="Сбербанк" isSber={true}/>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontWeight:500}}>Сбербанк · {ac.sber.title}</div>
+            <div className="mk-an">лучший оффер Сбера · #{ac.sber.rank} из {ac.n_banks} банков{term?" · фильтр срока может его скрывать":""}</div>
+          </div>
+          <div className="serif" style={{fontSize:18,marginLeft:"auto"}}>{mkMetric(ac.sber.rate,ac.metric)}</div>
+        </button>}
+        {!offers?<div style={{padding:28}}><Skel h={40}/><div style={{height:10}}/><Skel h={40}/><div style={{height:10}}/><Skel h={40}/></div>:
+         offers.length===0?<EmptyState text="Нет предложений под фильтры. Сбросьте срок или поиск."/>:
+        <table className="m-cards">
+          <thead><tr>
+            <th className="right" style={{width:"5%"}}>№</th>
+            <th>Банк</th><th>Продукт</th>
+            <th className="right">{mcat.metric_label||"Ставка"}</th>
+            {showRateCol&&mcat.metric!=="rate_pct"&&<th className="right">{mcat.rate_label}</th>}
+            {mcat.secondary&&<th className="right">Кешбэк</th>}
+            {showBarCol&&<th>К лидеру</th>}
+            <th>Сумма</th><th>Срок</th>
+          </tr></thead>
+          <tbody>
+            {offers.map((r,i)=>{
+              const isSber=!!r.is_sber;
+              const rate=parseFloat(r.rate_pct);
+              const rel=bestRate&&rate?(lower?bestRate/rate:rate/bestRate):null;
+              return <tr key={r.offer_id||i} className={(isSber?"is-sber ":"")+"mk-click"} onClick={()=>setDrawer(r.offer_id)}>
+                <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(i+1).padStart(2,"0")}</td>
+                <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
+                  <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
+                    {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
+                  </div></div></td>
+                <td data-label="Продукт">{r.title}</td>
+                <td className="right mono tnum" data-label={mcat.metric_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>{mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
+                {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12.5}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
+                {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
+                {showBarCol&&<td data-label="К лидеру">
+                  {rel!=null&&isFinite(rel)?<div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div className="bar" style={{flex:1,maxWidth:70}}>
+                      <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--accent)":"var(--ink-3)"}}/>
+                    </div>
+                    <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
+                      {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2)} пп`}</span>
+                  </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
+                </td>}
+                <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
+                <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
+              </tr>;})}
+          </tbody>
+        </table>}
+        {offers&&total>offers.length&&<button className="btn btn-ghost mk-more" onClick={loadMore} disabled={moreBusy}>
+          {moreBusy?"Загружаю…":`Показать ещё (${offers.length} из ${total})`}</button>}
+      </div>}
+
+      {/* ЖУРНАЛ ИЗМЕНЕНИЙ */}
+      {view==="changes"&&<div className="surface" style={{overflow:"hidden"}}>
+        <div style={{padding:"14px 20px",borderBottom:"1px solid var(--hair)"}}>
+          <div className="eyebrow" style={{marginBottom:2}}>Журнал изменений · 7 дней{noise?" · включая микрошум":" · только значимые"}</div>
+          <div className="t-cap">Значимое = изменение нестаточного условия или сдвиг ставки от 0.01 пп. Клик по строке — досье оффера.</div>
+        </div>
+        {!changes?<div style={{padding:28}}><Skel h={30}/><div style={{height:8}}/><Skel h={30}/><div style={{height:8}}/><Skel h={30}/></div>:
+         changes.length===0?<EmptyState text="За неделю изменений не зафиксировано."/>:
+         changes.map(ch=>{
+           const hl=hlChange.current&&ch.change_id===hlChange.current;
+           const others=mkDiffOthers(ch.diff);
+           const big=ch.rate_delta!=null&&Math.abs(ch.rate_delta)>=0.05;
+           const showRateMove=ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!others.length);
+           return <button key={ch.change_id} ref={hl?hlRef:null}
+             className={"mk-chrow"+(hl?" hl":"")+(big?" big":"")} onClick={()=>setDrawer(ch.offer_id)}>
+             <span className="mono mk-chdate">{fmtDateMsk(ch.changed_at)}</span>
+             <span className="mk-chbank">
+               <BankAvatar slug={ch.bank_slug} name={ch.bank_name} isSber={!!ch.is_sber}/>
+               <span>{ch.bank_name}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>{ch.title}{!cat?` · ${(CAT_LABELS[ch.category]||ch.category).toLowerCase()}`:""}</i></span>
+             </span>
+             <span className="mk-chmove mono tnum">
+               {showRateMove&&<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
+                  {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2)}</em>}</>}
+               {others.slice(0,3).map(o=><span key={o.k} className="mk-dv">
+                 {o.label}: {mkFldVal(o.k,o.from)} → <b>{mkFldVal(o.k,o.to)}</b></span>)}
+               {others.length>3&&<span className="mk-dv mk-an">ещё {others.length-3}</span>}
+             </span>
+           </button>;})}
+      </div>}
     </>}
+
+    {/* ── СЛОЙ 3 · ДОСЬЕ ОФФЕРА ──────────────────────────────────────── */}
+    {drawer&&<RvModal side="right" onClose={()=>setDrawer(null)}
+        title={dossier&&dossier.offer?`${dossier.offer.bank_name} · ${dossier.offer.title}`:"Досье оффера"}
+        sub={dossier&&dossier.offer?(CAT_LABELS[dossier.offer.category]||dossier.offer.category):""}>
+      {!dossier?<div style={{padding:8}}><Skel h={60}/><div style={{height:10}}/><Skel h={120}/></div>:
+       dossier.error?<RvNote err={true}/>:<>
+        <div className="mk-pass">
+          {(M[dossier.offer.category]||{}).show_rate!==false&&
+          <div><span>{(M[dossier.offer.category]||{}).rate_label||"Ставка"}</span><b className="tnum">{dossier.offer.rate_pct!=null?pct(dossier.offer.rate_pct):"—"}</b>
+            {dossier.offer.rate_kind&&<i className="mk-an">{dossier.offer.rate_kind}</i>}</div>}
+          <div><span>Сумма</span><b className="tnum">{fmtAmount(dossier.offer.amount_min,dossier.offer.amount_max)}</b></div>
+          <div><span>Срок</span><b className="tnum">{fmtTerm(dossier.offer.term_months_min,dossier.offer.term_months_max)}</b></div>
+          {dossier.offer.capitalization!=null&&<div><span>Капитализация</span><b>{dossier.offer.capitalization?"да":"нет"}</b></div>}
+          {dossier.offer.replenishable!=null&&<div><span>Пополнение</span><b>{dossier.offer.replenishable?"да":"нет"}</b></div>}
+          {dossier.offer.early_withdraw!=null&&<div><span>Досрочное</span><b>{dossier.offer.early_withdraw?"да":"нет"}</b></div>}
+          {dossier.offer.grace_days!=null&&<div><span>Грейс-период</span><b className="tnum">{dossier.offer.grace_days} дн</b></div>}
+          {dossier.offer.fee_service!=null&&<div><span>Обслуживание</span><b className="tnum">{mkMetric(dossier.offer.fee_service,"fee_service")}</b></div>}
+          {dossier.offer.fee_open!=null&&parseFloat(dossier.offer.fee_open)>0&&<div><span>Выпуск (разово)</span><b className="tnum">{fmtNum(Math.round(dossier.offer.fee_open))} ₽</b></div>}
+          {dossier.offer.cashback_pct!=null&&<div><span>Кешбэк до</span><b className="tnum">{pct(dossier.offer.cashback_pct,1)}</b></div>}
+          <div><span>Версия условий с</span><b className="tnum">{fmtDate(dossier.offer.valid_from)}</b></div>
+        </div>
+        {(M[dossier.offer.category]||{}).show_rate!==false&&dossier.rate_series&&dossier.rate_series.length>1&&<>
+          <div className="eyebrow" style={{margin:"16px 0 6px"}}>История ставки</div>
+          <MkStep series={dossier.rate_series}/>
+        </>}
+        {dossier.changes&&dossier.changes.length>0&&<>
+          <div className="eyebrow" style={{margin:"16px 0 6px"}}>Изменения условий</div>
+          {dossier.changes.map(ch=>{
+            const other=mkDiffOthers(ch.diff);
+            return <div key={ch.change_id} className="mk-dhrow mono tnum">
+              <span className="mk-an">{fmtDateMsk(ch.changed_at)}</span>
+              <span style={{textAlign:"right",display:"flex",flexDirection:"column",gap:2}}>
+                {ch.rate_from!=null&&ch.rate_to!=null&&Math.abs(ch.rate_delta||0)>=0.01
+                  &&<span>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b></span>}
+                {other.map(o=><span key={o.k} className="mk-an">
+                  {o.label}: {mkFldVal(o.k,o.from)} → {mkFldVal(o.k,o.to)}</span>)}
+              </span>
+            </div>;})}
+        </>}
+        {dossier.offer.conditions&&<>
+          <div className="eyebrow" style={{margin:"16px 0 6px"}}>Условия</div>
+          <p className="t-cap" style={{whiteSpace:"pre-wrap"}}>{String(dossier.offer.conditions).slice(0,600)}</p>
+        </>}
+        <div className="mk-dbtns">
+          {dossier.offer.url&&<a className="btn btn-ghost btn-sm" href={dossier.offer.url} target="_blank" rel="noopener noreferrer">↗ Первоисточник</a>}
+          <button className="btn btn-accent btn-sm" onClick={()=>openAI(dossier.offer)}>✦ Спросить ИИ</button>
+        </div>
+      </>}
+    </RvModal>}
   </div>;
 }
+const SberPage=MarketPage; // вкладки объединены («Позиция», 07.2026) — алиас для старых закладок
 
 // ─── REVIEWS PAGE — риск-радар голоса клиента (корпус banki.ru ~390к) ─────────
 const RV_BANKS=["Сбербанк","ВТБ","Т-Банк","Альфа-Банк","Газпромбанк","Совкомбанк",
@@ -1151,7 +2443,8 @@ function ReviewsPage(){
   }catch{return null;}})();
   const[bank,setBank]=useState((preset&&preset.bank)||"Сбербанк");
   const[bankList,setBankList]=useState(RV_BANKS);
-  const[product,setProduct]=useState("");
+  const[product,setProduct]=useState((preset&&preset.product)||"");
+  const firstBankRun=useRef(true);   // не сбрасывать префилл продукта при монтировании
   const[days,setDays]=useState((preset&&preset.days)||90);
   const[theme,setTheme]=useState((preset&&preset.theme)||"");
   const[q,setQ]=useState("");
@@ -1214,7 +2507,7 @@ function ReviewsPage(){
     });
   },[bank,product,days]);
 
-  useEffect(()=>{ setProduct("");
+  useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");}
     apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>setProds(d.items||[])).catch(()=>setProds([]));
   },[bank]);
 
@@ -1394,8 +2687,24 @@ function ReviewsPage(){
           </div>
           {anomBusy?
             <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
-           :(!anom||anom.calm||!anom.signals||!anom.signals.length)?
+           :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?
             <div className="rv-radar-calm"><span className="rv-radar-check"><IcoCheck/></span> Резких аномалий за неделю не выявлено</div>
+           :(!anom.signals||!anom.signals.length)?
+            /* порог всплеска не пробит, но расхождение с рынком есть —
+               «спокойно» здесь было бы неправдой */
+            <>
+              <div className="rv-radar-sub">Резких всплесков нет. Растут быстрее рынка:</div>
+              <div className="rv-radar-chips">
+                {(anom.watch||[]).map((d,i)=>
+                  <span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
+                    title={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
+                    onClick={()=>setTheme(d.key)} onKeyDown={onKey(()=>setTheme(d.key))}>
+                    {d.short||d.label}<b>×{d.gap}</b></span>)}
+              </div>
+              <div className="rv-cap" style={{marginTop:8}}>
+                Всплеском считаем рост от ×1.8 к своей норме. Здесь — темы ниже этого порога,
+                но обгоняющие рынок: их стоит держать в поле зрения.</div>
+            </>
            :<>
               <div className="rv-radar-chips">
                 {anom.signals.map((s,i)=>{
@@ -1512,6 +2821,19 @@ const SOURCE_KIND_LABELS = {
   sponsored:     "Реклама"
 };
 // Палитра графиков — 4 цвета editorial palette, без gradients
+// Доверие к источнику фрагмента — три точки (0.9+ / 0.7+ / ниже).
+// Компонент использовался в результатах поиска, но никогда не был объявлен:
+// любой успешный поиск ронял страницу в заглушку «не смогла отрисоваться».
+function TrustDots({score}){
+  const w=Number(score);
+  if(!isFinite(w))return null;
+  const lvl=w>=0.9?3:w>=0.7?2:w>=0.5?1:0;
+  const label=w>=0.9?"первоисточник":w>=0.7?"проверенный":w>=0.5?"с оговоркой":"ниже порога";
+  return <span className="trust-dots" title={`доверие ${w.toFixed(2)} — ${label}`}>
+    {[1,2,3].map(i=><i key={i} className={i<=lvl?"on":""}/>)}
+  </span>;
+}
+
 const SOURCE_KIND_COLORS = {
   bank_official: "var(--ink)",
   regulator:     "var(--ink)",
@@ -1655,7 +2977,7 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           question: question,
-          report_md: report,
+          report_md: report,   // [[CHART:i]]-маркеры остаются: PDF ставит графики по местам
           sources: (sources || []).map(s => ({
             n: s.n, url: s.url, bank_name: s.bank_name, title: s.title,
             source_kind: s.source_kind, trust_score: s.trust_score,
@@ -2108,33 +3430,40 @@ function ChartCanvas({spec, sources}){
   useEffect(()=>{
     if(!ref.current||!window.Chart||!spec)return;
     const ctx=ref.current.getContext("2d");
-    // Editorial palette — 5 нейтральных тонов, sequential по тёмности.
-    // Никакого кричащего красного: для аудит-отчёта цвет НЕ должен
-    // прочитываться как «плохо/хорошо». Лидер = самый тёмный, остальные
-    // светлее. Это даёт автоматическую визуальную иерархию.
-    const palette = [
-      "#16181d",  // ink — primary (обычно first entity = лидер)
-      "#44464d",  // ink-2
-      "#707075",  // ink-3
-      "#9c9ea3",  // ink-4
-      "#c4c6cc",  // ink-5
-    ];
-    // Для doughnut пускаем по этому же sequential — самый большой сегмент
-    // будет самый тёмный (это работает естественно с правильной сортировкой).
+    // Палитра из дизайн-токенов (живьём из CSS → авто тёмная тема).
+    // Сбер/highlight — всегда фирменный accent; остальные — ink-градации:
+    // иерархия сохраняется, но график в языке инструмента, а не ч/б-ксерокс.
+    const css=(n,fb)=>{try{const v=getComputedStyle(document.documentElement).getPropertyValue(n).trim();return v||fb;}catch{return fb;}};
+    const ACC=css("--accent","#c94f34"), INK=css("--ink","#16181d"),
+          INK2=css("--ink-2","#44464d"), INK3=css("--ink-3","#707075"),
+          INK4=css("--ink-4","#9c9ea3"), HAIR=css("--hair","#ebebed"),
+          PAPER=css("--paper","#faf9f7");
+    const palette=[INK,INK2,INK3,INK4,HAIR];
+    const hl=spec.highlight||null;
+    const isHl=(lb)=>hl&&String(lb||"").toLowerCase().includes(String(hl).toLowerCase().slice(0,5));
+    // цвет позиции: подсвеченная метка (Сбер) = accent, прочие — sequential ink
+    const posColor=(lb,i)=>isHl(lb)?ACC:palette[i%palette.length];
     const horizontal = spec.chartType==="horizontalBar";
     const isDoughnut = spec.chartType==="doughnut";
     const isLine     = spec.chartType==="line";
-    const datasets = (spec.datasets||[]).map((d,i)=>({
-      ...d,
-      backgroundColor: isDoughnut ? palette
-                       : isLine ? `${palette[i%palette.length]}22`   // hex+alpha=22 (13%)
-                       : palette[i%palette.length],
-      borderColor:     palette[i%palette.length],
-      borderWidth:     isLine ? 2 : 0,
-      pointRadius:     isLine ? 3 : 0,
-      pointBackgroundColor: palette[i%palette.length],
-      tension:         isLine ? 0.25 : 0,
-    }));
+    const single=(spec.datasets||[]).length===1;
+    const datasets = (spec.datasets||[]).map((d,i)=>{
+      const seriesHl=isHl(d.label);
+      const base=seriesHl?ACC:palette[i%palette.length];
+      return {
+        ...d,
+        backgroundColor: isDoughnut ? (spec.labels||[]).map((lb,li)=>posColor(lb,li))
+                         : isLine ? "transparent"
+                         : single ? (spec.labels||[]).map((lb,li)=>posColor(lb,li))
+                         : base,
+        borderColor:     isDoughnut ? PAPER : base,
+        borderWidth:     isLine ? 2 : (isDoughnut ? 2 : 0),
+        borderRadius:    (!isLine&&!isDoughnut) ? 3 : 0,
+        pointRadius:     isLine ? 3 : 0,
+        pointBackgroundColor: base,
+        tension:         isLine ? 0.25 : 0,
+      };
+    });
     // Data-labels плагин — рисуем значения прямо на барах (premium-эстетика)
     const fmtVal = (v)=>{
       if(v==null) return "";
@@ -2154,7 +3483,7 @@ function ChartCanvas({spec, sources}){
             if(v==null) return;
             ctx.save();
             ctx.font = "500 10.5px 'JetBrains Mono', monospace";
-            ctx.fillStyle = "#16181d";
+            ctx.fillStyle = INK;
             ctx.textAlign = horizontal ? "left" : "center";
             ctx.textBaseline = horizontal ? "middle" : "bottom";
             const text = fmtVal(v);
@@ -2168,10 +3497,62 @@ function ChartCanvas({spec, sources}){
         });
       },
     };
+    // Пунктирная референс-линия (медиана/ключевая ставка) с подписью.
+    const refPlugin = {
+      id:"refLine",
+      afterDatasetsDraw(chart){
+        const rl=spec.referenceLine;
+        if(!rl||isDoughnut||rl.value==null) return;
+        const area=chart.chartArea;
+        const sc=horizontal?chart.scales.x:chart.scales.y;
+        if(!sc)return;
+        const px=sc.getPixelForValue(+rl.value);
+        const c2=chart.ctx; c2.save();
+        c2.strokeStyle=INK3; c2.setLineDash([4,4]); c2.lineWidth=1;
+        c2.beginPath();
+        if(horizontal){c2.moveTo(px,area.top);c2.lineTo(px,area.bottom);}
+        else{c2.moveTo(area.left,px);c2.lineTo(area.right,px);}
+        c2.stroke();
+        c2.setLineDash([]);
+        c2.font="500 9.5px 'JetBrains Mono', monospace"; c2.fillStyle=INK3;
+        const t=((rl.label||"")+" "+fmtVal(+rl.value)).trim();
+        if(horizontal) c2.fillText(t, Math.min(px+5,area.right-60), area.top+10);
+        else c2.fillText(t, area.left+5, Math.max(px-5,area.top+10));
+        c2.restore();
+      },
+    };
+    // Монограммы банков на категорийной оси (horizontalBar): бейдж-кружок цвета
+    // бара с инициалами + имя (Сбер — акцентом). Родные тики оси скрываются.
+    const monoPlugin = {
+      id:"monoAxis",
+      afterDraw(chart){
+        if(!horizontal||isDoughnut) return;
+        const s=chart.scales.y; if(!s) return;
+        const c2=chart.ctx;
+        const inits=(lb)=>{const p=String(lb||"").split(/[\s\-]+/).filter(Boolean);
+          return ((p.length>1?p[0][0]+p[1][0]:String(lb||"").slice(0,2))||"·").toUpperCase();};
+        (spec.labels||[]).forEach((lb,i)=>{
+          const y=s.getPixelForTick(i);
+          const cx=s.left+12;
+          c2.save();
+          c2.beginPath(); c2.arc(cx,y,9,0,Math.PI*2);
+          c2.fillStyle=posColor(lb,i); c2.fill();
+          c2.font="600 8px 'JetBrains Mono', monospace"; c2.fillStyle=PAPER;
+          c2.textAlign="center"; c2.textBaseline="middle";
+          c2.fillText(inits(lb),cx,y+0.5);
+          c2.font="500 10.5px Geist, sans-serif";
+          c2.fillStyle=isHl(lb)?ACC:INK3;
+          c2.textAlign="left";
+          let nm=String(lb||""); if(nm.length>13)nm=nm.slice(0,12)+"…";
+          c2.fillText(nm,cx+14,y+0.5);
+          c2.restore();
+        });
+      },
+    };
     const inst = new window.Chart(ctx, {
       type: horizontal ? "bar" : (isDoughnut ? "doughnut" : isLine ? "line" : "bar"),
       data: {labels: spec.labels||[], datasets},
-      plugins: [dataLabelsPlugin],
+      plugins: [dataLabelsPlugin, refPlugin, monoPlugin],
       options: {
         indexAxis: horizontal ? "y" : "x",
         responsive: true, maintainAspectRatio: false,
@@ -2183,18 +3564,20 @@ function ChartCanvas({spec, sources}){
             position: isDoughnut ? "right" : "bottom",
             labels: {
               font:{size:11, family:"Geist, Inter, sans-serif"},
-              color:"#44464d", boxWidth:10, boxHeight:10, padding:14,
+              color:INK2, boxWidth:10, boxHeight:10, padding:14,
               usePointStyle: true, pointStyle: "rect",
             },
           },
           title: {
-            display: !!spec.title, text: spec.title,
+            display: !!spec.title,
+            text: spec.title + (spec.unit ? " · " + spec.unit : ""),
             font: {size:13.5, weight:"600", family:"'Source Serif 4', Georgia, serif"},
-            color: "#16181d", padding: {bottom: 14},
+            color: INK, padding: {bottom: 14},
             align: "start",
           },
           tooltip: {
-            intersect: false, backgroundColor: "#16181d",
+            intersect: false, backgroundColor: INK,
+            titleColor: PAPER, bodyColor: PAPER,
             titleFont:{size:12, weight:"500"},
             bodyFont:{size:11.5, family:"Geist, sans-serif"},
             padding: 10, cornerRadius: 4,
@@ -2205,14 +3588,21 @@ function ChartCanvas({spec, sources}){
         },
         scales: isDoughnut ? {} : {
           x: {
-            ticks: {font:{size:10.5, family:"Geist, sans-serif"}, color:"#707075"},
-            grid: {display: !horizontal, color:"#ebebed", lineWidth: 1, drawTicks: false},
+            ticks: {font:{size:10.5, family:"Geist, sans-serif"},
+                    // категорийная ось снизу (vertical bar): Сбер — акцентом
+                    color: horizontal ? INK3
+                      : (c)=>isHl((spec.labels||[])[c.index]) ? ACC : INK3},
+            grid: {display: !horizontal, color:HAIR, lineWidth: 1, drawTicks: false},
             border: {display: false},
           },
           y: {
             beginAtZero: true,
-            ticks: {font:{size:10.5, family:"Geist, sans-serif"}, color:"#707075"},
-            grid: {display: horizontal, color:"#ebebed", lineWidth: 1, drawTicks: false},
+            // horizontalBar: родные тики скрыты — ось рисует monoPlugin
+            // (бейджи-монограммы банков + имена, Сбер акцентом)
+            afterFit: horizontal ? (sc)=>{sc.width=Math.max(sc.width,118);} : undefined,
+            ticks: horizontal ? {display:false}
+              : {font:{size:10.5, family:"Geist, sans-serif"}, color:INK3},
+            grid: {display: horizontal, color:HAIR, lineWidth: 1, drawTicks: false},
             border: {display: false},
           },
         },
@@ -2222,6 +3612,7 @@ function ChartCanvas({spec, sources}){
   },[spec]);
   return <div className="dr-chart">
     <canvas ref={ref} id={idRef.current}/>
+    {spec.insight&&<div className="dr-chart-insight">{spec.insight}</div>}
     {spec.sourceCitations&&spec.sourceCitations.length>0&&
       <div className="dr-chart-cites">
         Источники:&nbsp;
@@ -2246,6 +3637,13 @@ const TOOL_LABELS = {
   semantic_search:      "Поиск по документам",
   fetch_official:       "Запрос к источнику",
   run_sql:              "SQL-запрос",
+  news_pool:            "Новостной пул дня",
+  execute_code:         "Код и SQL",
+  skill_view:           "Навык агента",
+  terminal:             "Терминал",
+  web_search:           "Веб-поиск",
+  search_complaints:    "Поиск жалоб",
+  get_bank_features:    "Условия банка",
 };
 
 function ToolsTimeline({tools, active}){
@@ -2301,7 +3699,7 @@ function TableOfContents({contentEl, activeId, onClick}){
 }
 
 // ─── Sources rail — sticky right column with bidirectional binding ────────
-function SourcesRail({sources, activeN, onHover, onClick}){
+function SourcesRail({sources, activeN, onHover, onClick, failed}){
   if(!sources||!sources.length)return null;
   const officialN  = sources.filter(s=>s.source_kind==="bank_official").length;
   const regulatorN = sources.filter(s=>s.source_kind==="regulator").length;
@@ -2335,6 +3733,7 @@ function SourcesRail({sources, activeN, onHover, onClick}){
         </li>;
       })}
     </ul>
+    {failed>0&&<div className="dr-rail-failed">⚠ {failed} источник(ов) недоступны — исключены из списка</div>}
   </aside>;
 }
 
@@ -2442,9 +3841,256 @@ function KbdHelp({onClose}){
   </div>;
 }
 
+// ─── История чатов/отчётов: off-canvas drawer (премиальный, лёгкий) ───────────
+function fmtHistTime(s){
+  try{
+    const d=new Date(s), now=new Date();
+    if(d.toDateString()===now.toDateString())
+      return d.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"});
+    return d.toLocaleDateString("ru",{day:"2-digit",month:"2-digit"});
+  }catch{return "";}
+}
+function histGroup(s){
+  try{
+    const d=new Date(s), now=new Date(), day=86400000;
+    const startToday=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+    const t=d.getTime();
+    if(t>=startToday) return "Сегодня";
+    if(t>=startToday-day) return "Вчера";
+    if(t>=startToday-6*day) return "На этой неделе";
+    return "Раньше";
+  }catch{return "Раньше";}
+}
+const CP_CSS=`
+.cp-ov{position:fixed;inset:0;z-index:200;display:grid;place-items:start center;padding:12vh 20px 20px;
+  background:oklch(20% 0.02 260 / .34);backdrop-filter:blur(4px) saturate(1.05);
+  opacity:0;transition:opacity .17s ease;}
+.cp-ov.in{opacity:1;}
+.cp{width:600px;max-width:100%;max-height:74vh;display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--hair);border-radius:16px;overflow:hidden;
+  box-shadow:0 24px 70px oklch(0% 0 0 / .22), 0 3px 10px oklch(0% 0 0 / .08);
+  transform:translateY(10px) scale(.986);opacity:0;
+  transition:transform .22s cubic-bezier(.2,0,0,1),opacity .2s ease;}
+.cp-ov.in .cp{transform:none;opacity:1;}
+.cp-search{display:flex;align-items:center;gap:11px;padding:16px 18px;border-bottom:1px solid var(--hair);}
+.cp-search>svg{color:var(--ink-4);flex:none;}
+.cp-search input{flex:1;border:0;background:none;font-size:16px;line-height:1.3;color:var(--ink);
+  font-family:'Geist','Inter',sans-serif;letter-spacing:-.01em;}
+.cp-search input::placeholder{color:var(--ink-4);}
+.cp-search input:focus{outline:none;}
+.cp-esc{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);
+  border:1px solid var(--hair);border-radius:5px;padding:3px 7px;flex:none;}
+.cp-seg{display:flex;gap:3px;padding:9px 14px 5px;}
+.cp-seg button{font-size:12px;color:var(--ink-3);padding:5px 11px;border-radius:7px;display:flex;
+  align-items:center;gap:7px;transition:background .14s,color .14s;}
+.cp-seg button:hover{color:var(--ink-2);}
+.cp-seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:500;}
+.cp-seg .n{font-family:'JetBrains Mono',monospace;font-size:10px;font-variant-numeric:tabular-nums;opacity:.75;}
+.cp-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:3px 8px 10px;}
+.cp-group{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-4);padding:13px 10px 5px;}
+.cp-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:9px;cursor:pointer;
+  scroll-margin:10px;transition:background .12s;}
+.cp-row:active{transform:scale(.97);}
+.cp-row.sel{background:var(--accent-soft);}
+.cp-ic{width:30px;height:30px;flex:none;border-radius:8px;display:grid;place-items:center;
+  background:var(--paper-2);color:var(--ink-3);border:1px solid var(--hair);transition:color .12s,border-color .12s,background .12s;}
+.cp-row.sel .cp-ic{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 78%);background:var(--surface);}
+.cp-main{flex:1;min-width:0;}
+.cp-t{font-size:13.5px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cp-p{font-size:12px;line-height:1.35;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+.cp-meta{display:flex;align-items:center;gap:9px;flex:none;}
+.cp-time{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.cp-acts{display:none;gap:2px;}
+.cp-row:hover .cp-acts,.cp-row.sel .cp-acts{display:flex;}
+.cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-4);display:grid;place-items:center;
+  transition:background .12s,color .12s;}
+.cp-acts button:hover{background:var(--paper-2);color:var(--ink);}
+.cp-acts button.on{color:var(--accent);}
+.cp-banks{display:flex;gap:4px;}
+.cp-bank{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;}
+.cp-owner{font-size:11px;color:var(--accent);white-space:nowrap;}
+.cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-4);text-align:center;}
+.cp-empty>svg{opacity:.45;}
+.cp-empty .t{font-size:14px;color:var(--ink-3);text-wrap:balance;max-width:320px;line-height:1.5;}
+.cp-empty .h{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);}
+.cp-foot{display:flex;align-items:center;gap:18px;padding:10px 16px;border-top:1px solid var(--hair);
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
+.cp-foot span{display:inline-flex;align-items:center;gap:5px;}
+.cp-foot kbd{border:1px solid var(--hair);border-radius:4px;padding:1px 5px;color:var(--ink-3);
+  min-width:16px;text-align:center;line-height:1.5;}
+/* вход в историю: пилюля рядом с «Новый запрос» и на welcome */
+.hist-btn{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;
+  border:1px solid var(--hair);background:var(--surface);color:var(--ink-2);font-size:12.5px;
+  box-shadow:var(--shadow-1);transition:border-color .14s,color .14s,transform .1s;}
+.hist-btn:hover{border-color:var(--ink-4);color:var(--ink);}
+.hist-btn:active{transform:scale(.97);}
+.hist-btn kbd{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);
+  border:1px solid var(--hair);border-radius:4px;padding:0 4px;}
+/* welcome: «Продолжить» — недавние диалоги */
+.aw-recent{margin-top:30px;width:100%;max-width:640px;}
+.aw-recent-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.aw-recent-h .l{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);}
+.aw-recent-h button{font-size:11.5px;color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;transition:color .12s;}
+.aw-recent-h button:hover{color:var(--accent);}
+.aw-recent-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.aw-rec{text-align:left;padding:11px 13px;border:1px solid var(--hair);background:var(--surface);border-radius:10px;
+  display:flex;flex-direction:column;gap:3px;transition:border-color .14s,transform .12s,box-shadow .14s;min-width:0;}
+.aw-rec:hover{border-color:var(--ink-4);transform:translateY(-2px);box-shadow:var(--shadow-1);}
+.aw-rec .t{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.aw-rec .m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;}
+`;
+
+// SVG-иконки (единый штрих, оптически выверенные)
+const IcSearch = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>;
+const IcChat = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>;
+const IcDoc = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M8 13h8M8 17h6"/></svg>;
+const IcPin = ({on}) => <svg width="14" height="14" viewBox="0 0 24 24" fill={on?"currentColor":"none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l2 3.2H7z"/></svg>;
+const IcTrash = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>;
+
+// Command palette истории (⌘K): диалоги + отчёты, клавиатурная навигация.
+function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
+  const[vis,setVis]=useState(false);
+  const[tab,setTab]=useState("chats");
+  const[query,setQuery]=useState("");
+  const[sessions,setSessions]=useState([]);
+  const[reports,setReports]=useState([]);
+  const[shared,setShared]=useState([]);
+  const[sel,setSel]=useState(0);
+  const[loading,setLoading]=useState(false);
+  const inputRef=useRef();
+  const listRef=useRef();
+
+  const reload=useCallback(()=>{
+    setLoading(true);
+    Promise.all([
+      apiFetch("/api/chat/sessions").then(d=>setSessions(d.sessions||[])).catch(()=>{}),
+      apiFetch("/api/reports").then(d=>{setReports(d.reports||[]);setShared(d.shared||[]);}).catch(()=>{}),
+    ]).finally(()=>setLoading(false));
+  },[]);
+  useEffect(()=>{
+    if(open){ setVis(true); setQuery(""); setSel(0); reload();
+      setTimeout(()=>inputRef.current&&inputRef.current.focus(),70); }
+  },[open,refreshTick,reload]);
+  const close=useCallback(()=>{ setVis(false); setTimeout(onClose,170); },[onClose]);
+
+  const match=(t)=>!query||(t||"").toLowerCase().includes(query.toLowerCase());
+  const fSessions=sessions.filter(s=>match(s.title)||match(s.last_preview));
+  const fReports=reports.filter(r=>match(r.title)||match(r.question));
+  const fShared=shared.filter(r=>match(r.title)||match(r.question));
+  // Плоский nav-список (в порядке отображения) для клавиатуры.
+  const nav = tab==="chats"
+    ? fSessions.map(s=>({kind:"chat",id:s.session_id}))
+    : [...fReports.map(r=>({kind:"report",id:r.report_id})), ...fShared.map(r=>({kind:"report",id:r.report_id}))];
+  useEffect(()=>{ setSel(s=>Math.max(0,Math.min(s,nav.length-1))); },[tab,query,sessions,reports,shared]); // eslint-disable-line
+
+  const activate=(it)=>{ if(!it)return; close();
+    setTimeout(()=>{ it.kind==="chat"?onLoadSession(it.id):onLoadReport(it.id); },60); };
+  useEffect(()=>{
+    if(!open)return;
+    const onKey=(e)=>{
+      if(e.key==="Escape"){e.preventDefault();close();}
+      else if(e.key==="ArrowDown"){e.preventDefault();setSel(s=>Math.min(nav.length-1,s+1));}
+      else if(e.key==="ArrowUp"){e.preventDefault();setSel(s=>Math.max(0,s-1));}
+      else if(e.key==="Enter"){e.preventDefault();activate(nav[sel]);}
+    };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[open,nav,sel]); // eslint-disable-line
+  useEffect(()=>{ // автоскролл выделенной строки
+    const el=listRef.current&&listRef.current.querySelector(".cp-row.sel");
+    if(el)el.scrollIntoView({block:"nearest"});
+  },[sel,tab]);
+
+  const delSession=async(e,sid)=>{ e.stopPropagation();
+    await apiDel(`/api/chat/sessions/${sid}`); setSessions(s=>s.filter(x=>x.session_id!==sid)); };
+  const pinSession=async(e,s)=>{ e.stopPropagation();
+    await apiPost(`/api/chat/sessions/${s.session_id}/pin`,{pinned:!s.pinned}).catch(()=>{}); reload(); };
+
+  if(!open&&!vis)return null;
+  const nChats=sessions.length, nReports=reports.length+shared.length;
+
+  // Рендер списка чатов с группами по времени (порядок = nav-порядок).
+  let navIdx=-1, lastG=null;
+  const chatRows=[];
+  fSessions.forEach((s)=>{
+    navIdx++; const i=navIdx;
+    const g=s.pinned?"Закреплённые":histGroup(s.updated_at);
+    if(g!==lastG){ chatRows.push(<div className="cp-group" key={"g"+i}>{g}</div>); lastG=g; }
+    chatRows.push(
+      <div key={s.session_id} className={"cp-row"+(i===sel?" sel":"")}
+           onMouseEnter={()=>setSel(i)} onClick={()=>activate({kind:"chat",id:s.session_id})}>
+        <div className="cp-ic"><IcChat/></div>
+        <div className="cp-main">
+          <div className="cp-t">{s.title||"Без названия"}</div>
+          <div className="cp-p">{(s.last_preview||"").replace(/[#*|>\n]/g," ").replace(/\s+/g," ").trim().slice(0,70)||"—"}</div>
+        </div>
+        <div className="cp-meta">
+          <span className="cp-time">{fmtHistTime(s.updated_at)}</span>
+          <div className="cp-acts">
+            <button className={s.pinned?"on":""} onClick={(e)=>pinSession(e,s)} title={s.pinned?"Открепить":"Закрепить"}><IcPin on={s.pinned}/></button>
+            <button onClick={(e)=>delSession(e,s.session_id)} title="Удалить"><IcTrash/></button>
+          </div>
+        </div>
+      </div>);
+  });
+
+  const reportRow=(r,i,ownerName)=>(
+    <div key={(ownerName?"s":"r")+r.report_id} className={"cp-row"+(i===sel?" sel":"")}
+         onMouseEnter={()=>setSel(i)} onClick={()=>activate({kind:"report",id:r.report_id})}>
+      <div className="cp-ic"><IcDoc/></div>
+      <div className="cp-main">
+        <div className="cp-t">{r.title||r.question}</div>
+        <div className="cp-p">{ownerName?<span className="cp-owner">от {ownerName}</span>:(r.question||"")}</div>
+      </div>
+      <div className="cp-meta">
+        {(r.banks||[]).slice(0,2).length>0 && <div className="cp-banks">{(r.banks||[]).slice(0,2).map(b=><span key={b} className="cp-bank">{b}</span>)}</div>}
+        <span className="cp-time">{fmtHistTime(r.created_at)}</span>
+      </div>
+    </div>);
+  let ri=-1;
+  const reportRows=[];
+  if(fReports.length){ fReports.forEach(r=>{ ri++; reportRows.push(reportRow(r,ri,null)); }); }
+  if(fShared.length){ reportRows.push(<div className="cp-group" key="shg">Поделились со мной</div>);
+    fShared.forEach(r=>{ ri++; reportRows.push(reportRow(r,ri,r.owner_name||r.owner)); }); }
+
+  const empty=(tab==="chats"?!fSessions.length:!reportRows.length);
+
+  return <div className={"cp-ov"+(vis?" in":"")} onClick={close}>
+    <div className="cp" onClick={e=>e.stopPropagation()}>
+      <div className="cp-search">
+        <IcSearch/>
+        <input ref={inputRef} value={query} onChange={e=>{setQuery(e.target.value);setSel(0);}}
+               placeholder={tab==="chats"?"Поиск по диалогам…":"Поиск по отчётам…"}/>
+        <span className="cp-esc">ESC</span>
+      </div>
+      <div className="cp-seg">
+        <button className={tab==="chats"?"on":""} onClick={()=>{setTab("chats");setSel(0);}}><IcChat/>Диалоги <span className="n">{nChats}</span></button>
+        <button className={tab==="reports"?"on":""} onClick={()=>{setTab("reports");setSel(0);}}><IcDoc/>Отчёты <span className="n">{nReports}</span></button>
+      </div>
+      <div className="cp-list" ref={listRef}>
+        {empty
+          ? <div className="cp-empty">
+              {tab==="chats"?<IcChat/>:<IcDoc/>}
+              <div className="t">{loading?"Загрузка…":(query?"Ничего не найдено":(tab==="chats"?"Здесь появятся ваши диалоги с ИИ-аналитиком":"Здесь появятся ваши аудит-отчёты"))}</div>
+              {!query&&!loading&&<div className="h">задайте вопрос, чтобы начать</div>}
+            </div>
+          : (tab==="chats"?chatRows:reportRows)}
+      </div>
+      <div className="cp-foot">
+        <span><kbd>↑</kbd><kbd>↓</kbd> навигация</span>
+        <span><kbd>↵</kbd> открыть</span>
+        <span><kbd>esc</kbd> закрыть</span>
+      </div>
+    </div>
+  </div>;
+}
+
 function AIPage(){
   // Пустая лента → показывается welcome-экран (он и есть приветствие). Отдельным
   // ai-сообщением «Здравствуйте…» не засоряем диалог после первой отправки.
+  const me=useMe();
   const[msgs,setMsgs]=useState([]);
   const[q,setQ]=useState("");
   const[loading,setLoading]=useState(false);
@@ -2454,12 +4100,26 @@ function AIPage(){
   const[activeCite,setActiveCite]=useState(null);        // подсветка bidirectional
   const[hideRail,setHideRail]=useState(false);
   const[hideToc,setHideToc]=useState(false);
+  const[sessionId,setSessionId]=useState(null);          // текущая сессия истории
+  const[aiFb,setAiFb]=useState(null);                    // мои оценки ответов (ai_answer)
+  useEffect(()=>{apiFetch("/api/feedback?kind=ai_answer").then(d=>setAiFb(d.items||{})).catch(()=>setAiFb({}));},[]);
+  // страница живёт в фоне (Shell держит смонтированной) — сообщаем Shell о ходе
+  // прогона: точка в rail + тост «Отчёт готов», когда пользователь на другой вкладке
+  useEffect(()=>{ try{window.dispatchEvent(new CustomEvent("al-ai-state",
+    {detail:{running:loading}}));}catch{} },[loading]);
+  const[histOpen,setHistOpen]=useState(false);           // command palette истории
+  const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome
   const[elapsed,setElapsed]=useState(0);                 // таймер прогона deep
   const runStartRef=useRef(0);
   const feedRef=useRef();
   const inputRef=useRef();
   const msgsRef=useRef(msgs);
   useEffect(()=>{msgsRef.current=msgs;},[msgs]);
+  // Недавние диалоги для welcome-экрана (обновляются при возврате к пустой ленте).
+  useEffect(()=>{
+    if(!msgs.some(m=>m.role==="user"))
+      apiFetch("/api/chat/sessions").then(d=>setRecent((d.sessions||[]).slice(0,4))).catch(()=>{});
+  },[msgs]);
   // prefill из «Обзора» (✦ Спросить ИИ): композер заполняется, но НЕ отправляется —
   // пользователь видит и правит промпт (контроль + экономия токенов)
   useEffect(()=>{
@@ -2559,7 +4219,7 @@ function AIPage(){
       const res=await fetch("/api/ai/analyze",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({question,history,force_deep:forceDeep}),
+        body:JSON.stringify({question,history,force_deep:forceDeep,session_id:sessionId}),
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({detail:res.statusText}));
@@ -2581,7 +4241,9 @@ function AIPage(){
             if(!line.startsWith("data: "))continue;
             try{
               const data=JSON.parse(line.slice(6));
-              if(data.type==="text"&&data.chunk){
+              if(data.type==="session"){
+                if(data.session_id) setSessionId(data.session_id);
+              }else if(data.type==="text"&&data.chunk){
                 updateLast(last=>({text:(last.text||"")+data.chunk}));
               }else if(data.type==="reasoning"){
                 // Живой ход мысли LLM (delta.reasoning_content). Копим ПО СТАДИЯМ
@@ -2605,10 +4267,12 @@ function AIPage(){
                 // Final merge-pass — синтезатор объединил draft + addendum'ы в
                 // один чистый отчёт. Заменяем весь body, отчёт перерендерится.
                 updateLast(()=>({text:data.text, merged:true}));
+              }else if(data.type==="engine"){
+                updateLast(()=>({engine:data.value}));
               }else if(data.type==="tool_call"){
                 updateLast(last=>({tools:[...(last.tools||[]),data.name]}));
               }else if(data.type==="sources"&&Array.isArray(data.sources)){
-                updateLast(()=>({sources:data.sources}));
+                updateLast(()=>({sources:data.sources,sourcesFailed:data.failed||0}));
               }else if(data.type==="mode"){
                 updateLast(()=>({mode:data.value}));
               }else if(data.type==="phase"){
@@ -2691,6 +4355,8 @@ function AIPage(){
                 updateLast(()=>({ranking:data}));
               }else if(data.type==="insights"&&Array.isArray(data.items)){
                 updateLast(()=>({insights:data.items}));
+              }else if(data.type==="report_saved"){
+                updateLast(()=>({report_id:data.report_id}));   // «Поделиться» сразу после прогона
               }else if(data.type==="done"){
                 break outer;
               }
@@ -2732,6 +4398,9 @@ function AIPage(){
     setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"user",text:t},
                 {role:"pending",label:"Анализирую запрос…"}]);
     setLoading(true);
+    // Уточняющая воронка — только для Deep Research: быстрый режим отвечает сразу,
+    // агент сам делает разумные допущения (фидбек владельца 22.07).
+    if(!deepMode && !forceDeep){ runSend(t,forceDeep); return; }
     let data=null;
     try{ data=await apiPost("/api/ai/clarify",{question:t,deep:!!deepMode}); }catch(e){ data=null; }
     if(!data || data.complete!==false || !(Array.isArray(data.questions)&&data.questions.length)){
@@ -2775,9 +4444,48 @@ function AIPage(){
   const newQuery=()=>{
     if(loading)return;
     setMsgs([]);                                  // → welcome
+    setSessionId(null);                           // новая сессия истории
     setQ(""); setActiveCite(null); setHoverCite(null);
     setTimeout(()=>inputRef.current?.focus(),0);
   };
+
+  // Загрузка сессии из истории → в ленту (продолжение возможно, sessionId сохранён).
+  const openSession=async(sid)=>{
+    if(loading)return;
+    setHistOpen(false);
+    try{
+      const d=await apiFetch(`/api/chat/sessions/${sid}`);
+      const mapped=(d.messages||[]).map(m=>{
+        if(m.role==="user") return {role:"user",text:m.content};
+        const meta=m.meta||{};
+        return {role:"ai",text:m.content,sources:meta.sources||[],
+                mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined};
+      });
+      setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
+      setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
+    }catch{}
+  };
+  // Открыть сохранённый отчёт (свой или расшаренный) в ленте.
+  const openReport=async(rid)=>{
+    if(loading)return;
+    setHistOpen(false);
+    try{
+      const r=await apiFetch(`/api/reports/${rid}`);
+      const p=r.payload||{};
+      setMsgs([{role:"user",text:r.question},
+               {role:"ai",text:r.body,sources:p.sources||[],charts:p.charts||[],
+                mode:p.mode||"deep",phase:"done",
+                report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name}]);
+      setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
+      setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
+    }catch{}
+  };
+  // ⌘K / Ctrl+K — открыть/закрыть историю.
+  useEffect(()=>{
+    const onKey=(e)=>{ if((e.metaKey||e.ctrlKey)&&(e.key==="k"||e.key==="K")){e.preventDefault();setHistOpen(o=>!o);} };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[]);
 
   const isEmpty = !msgs.some(m=>m.role==="user");
   const lastMsg = msgs[msgs.length-1];
@@ -2790,18 +4498,25 @@ function AIPage(){
   const showComposer   = !isRunning && !isClarify;
   const fmtEl = (s)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   return <div className={"fade-in chat-shell"+(isEmpty?" is-welcome":"")}>
+    <style>{CP_CSS}</style>
     {showKbd && <KbdHelp onClose={()=>setShowKbd(false)}/>}
     {hoverCite && hoverCite.source && <CitationTooltip source={hoverCite.source} anchor={hoverCite.anchor}/>}
+    <CommandPalette open={histOpen} onClose={()=>setHistOpen(false)}
+                    onLoadSession={openSession} onLoadReport={openReport}/>
     <div className="chat-stream">
       <div className="chat-feed" ref={feedRef}>
         {showThreadHead &&
-          <div className="al-thread-head">
+          <div className="al-thread-head" style={{display:"flex",gap:8,alignItems:"center"}}>
             <button className="al-newq" onClick={newQuery}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
               Новый запрос
             </button>
+            <button className="hist-btn" onClick={()=>setHistOpen(true)} title="История (⌘K)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/></svg>
+              История <kbd>⌘K</kbd>
+            </button>
           </div>}
-        {isEmpty && <AiWelcome onPick={send}/>}
+        {isEmpty && <AiWelcome onPick={send} recent={recent} onOpenHistory={()=>setHistOpen(true)} onLoadSession={openSession}/>}
         {!isEmpty && msgs.map((m,i)=>{
           if(m.role==="clarify"){
             return <div key={i} className="chat-msg ai">
@@ -2829,6 +4544,10 @@ function AIPage(){
               ) : (<>
                 <div className="dr-doc-toolbar">
                   <span className="who">AuditLens · аналитический отчёт</span>
+                  {m.report_owner&&me&&m.report_owner!==me.username&&
+                    <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
+                  {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!streaming&&
+                    <ShareButton reportId={m.report_id}/>}
                   {showPdfBtn &&
                     <PdfExportButton question={userQ} report={m.text}
                                      sources={m.sources||[]} verification={m.verification}
@@ -2875,9 +4594,11 @@ function AIPage(){
                             Готовый отчёт для аудита · нумерация страниц, источники, A4
                           </span>
                         </div>}
+                      {!streaming&&m.text&&
+                        <AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep" fbMap={aiFb}/>}
                     </article>
                     {!hideRail && <DocRailSlot>
-                      <SourcesRail sources={m.sources||[]} activeN={activeCite}
+                      <SourcesRail sources={m.sources||[]} failed={m.sourcesFailed||0} activeN={activeCite}
                                     onHover={setActiveCite}/>
                     </DocRailSlot>}
                   </div>
@@ -2888,7 +4609,7 @@ function AIPage(){
           // Quick mode — пользовательский пузырь
           if(m.role==="user"){
             return <div key={i} className="chat-msg user">
-              <div className="who">Вы · аудитор</div>
+              <div className="who">Вы{me&&firstName(me.name)?" · "+firstName(me.name):""}</div>
               <div className="chat-bubble">{renderMD(m.text)}</div>
             </div>;
           }
@@ -2896,7 +4617,7 @@ function AIPage(){
           const prevQ = (i>0 && msgs[i-1]?.role==="user") ? msgs[i-1].text : "";
           const thinking = !m.text && loading && i===msgs.length-1;
           return <div key={i} className="chat-msg ai quick-msg">
-            <div className="who">AuditLens AI</div>
+            <div className="who">AuditLens AI{m.engine==="hermes"?" · Hermes ✦":""}</div>
             {m.tools&&m.tools.length>0 &&
               <div className="quick-tools">
                 {m.tools.map((t,ti)=>(
@@ -2925,6 +4646,12 @@ function AIPage(){
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                 </button>
               </div>}
+            {m.report_owner&&me&&m.report_owner!==me.username&&
+              <div style={{marginTop:10}}><span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span></div>}
+            {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!(loading&&i===msgs.length-1)&&
+              <div style={{marginTop:10}}><ShareButton reportId={m.report_id}/></div>}
+            {m.text&&!(loading&&i===msgs.length-1)&&
+              <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb}/>}
           </div>;
         })}
       </div>
@@ -2949,7 +4676,7 @@ function AIPage(){
                 <button className={"seg-btn"+(!deepMode?" on":"")} onClick={()=>setDeepMode(false)} disabled={loading}>Быстрый</button>
                 <button className={"seg-btn"+(deepMode?" on":"")} onClick={()=>setDeepMode(true)} disabled={loading} title="Deep Research: планировщик → мульти-агент → проверка фактов"><span className="seg-dot"/>Deep Research</button>
               </div>
-              <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"ответ из подключённых данных · ~5с"}</span>
+              <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"агент Hermes · БД, новости, веб"}</span>
               <span className="composer-kbd">Enter ↵</span>
               <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()||loading} onClick={()=>send()} aria-label="Отправить">
                 {deepMode?"Запустить research":"Спросить"}
@@ -3093,8 +4820,8 @@ function AlertsStatusBar(){
   </div>;
 }
 
-function SourcesPage(){
-  const[data,setData]=useState({runs:[],captcha_pending:[],configured:[]});
+function SourcesTech({data:extData}){
+  const[data,setData]=useState(extData||{runs:[],captcha_pending:[],configured:[]});
   const[loading,setLoading]=useState(true);
   const[starting,setStarting]=useState({});
   const[runningAll,setRunningAll]=useState(false);
@@ -3152,14 +4879,7 @@ function SourcesPage(){
     ...runs.map(r=>r.source),
   ])];
 
-  return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Источники · OpenClaw</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Запуски сбора и капчи</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Идемпотентный приём данных по sha256 снимка. Капча решается через кнопку ниже — откроется браузер с тем же профилем что используется для парсинга.
-      </p>
-    </header>
+  return <div>
 
     {captchas.map((c,i)=>{
       const st=solving[i];
@@ -3270,76 +4990,219 @@ function SourcesPage(){
 }
 
 // ─── QUALITY PAGE ─────────────────────────────────────────────────────────────
-function QualityPage(){
-  const[data,setData]=useState(null);
-  const[loading,setLoading]=useState(true);
+
+// ─── ИСТОЧНИКИ — карта доверия для аудитора ──────────────────────────────────
+// Была техническая консоль (прогоны сборщиков, капчи). Аудитору нужно понимать,
+// откуда взялась каждая цифра и насколько источнику доверяет инструмент, и уметь
+// предложить свой. Инженерная часть переехала под кат «Техническое состояние».
+
+const SRC_STATUS_RU={pending:"на рассмотрении",approved:"одобрен",rejected:"отклонён"};
+
+function SrcProposeForm({purpose,onDone}){
+  const[url,setUrl]=useState("");
+  const[title,setTitle]=useState("");
+  const[reason,setReason]=useState("");
+  const[check,setCheck]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const[done,setDone]=useState(null);
   const[err,setErr]=useState(null);
 
+  // проверка ДО отправки: занят ли домен, не предлагали ли раньше
   useEffect(()=>{
-    apiFetch("/api/quality").then(d=>{setData(d);setLoading(false);}).catch(e=>{setErr(e.message);setLoading(false);});
-  },[]);
+    if(!url.trim()){setCheck(null);return;}
+    const t=setTimeout(()=>{
+      apiFetch(`/api/sources/check?purpose=${purpose.id}&url=${encodeURIComponent(url.trim())}`)
+        .then(setCheck).catch(()=>setCheck(null));
+    },450);
+    return()=>clearTimeout(t);
+  },[url,purpose.id]);
 
-  if(loading)return <LoadingPage/>;
-  if(err)return <ErrState msg={err}/>;
+  const submit=async()=>{
+    setBusy(true);setErr(null);
+    try{
+      const r=await apiPost("/api/sources/propose",
+        {purpose:purpose.id,url:url.trim(),title:title.trim(),reason:reason.trim()});
+      setDone(r);setUrl("");setTitle("");setReason("");setCheck(null);
+      if(onDone)onDone();
+    }catch(e){ setErr(e.message||"не удалось отправить"); }
+    setBusy(false);
+  };
 
-  const flags=data?.flags||[];
-  const errCount=flags.filter(f=>f.severity==="error").length;
-  const warnCount=flags.filter(f=>f.severity==="warn").length;
+  if(done)return <div className="src-done">
+    <div className="src-done-t">Заявка принята — {done.domain}</div>
+    <p>Команда рассмотрит источник. При одобрении вы увидите его
+      {purpose.id==="ai"?" в новых отчётах ИИ-аналитика"
+        :purpose.id==="digest"?" в новых утренних выпусках"
+        :purpose.id==="reviews"?" в анализе отзывов после следующего сбора"
+        :" в витрине тарифов после следующего сбора"}.
+      Статус заявки виден ниже на этой странице.</p>
+    <button className="btn btn-ghost btn-sm" onClick={()=>setDone(null)}>Предложить ещё один</button>
+  </div>;
 
-  return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Качество данных · 48&nbsp;ч</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Активные флаги и аномалии</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>
-        Правила: устаревшие данные, скачки ставок &gt; 25%, дубли по (банк, категория, external_id), пустые снимки.
-      </p>
-    </header>
-
-    <div className="row row-3" style={{marginBottom:24}}>
-      <div className="surface" style={{padding:"22px 24px"}}>
-        <div className="eyebrow" style={{marginBottom:8}}>Ошибки · 24ч</div>
-        <div className="serif" style={{fontSize:48,color:errCount>0?"var(--neg)":"var(--pos)",lineHeight:1}}>{errCount}</div>
-        <div className="t-cap" style={{marginTop:6}}>{errCount>0?"требуют немедленного разбора":"всё в порядке"}</div>
-      </div>
-      <div className="surface" style={{padding:"22px 24px"}}>
-        <div className="eyebrow" style={{marginBottom:8}}>Предупреждения · 24ч</div>
-        <div className="serif" style={{fontSize:48,color:warnCount>0?"var(--warn)":"var(--pos)",lineHeight:1}}>{warnCount}</div>
-        <div className="t-cap" style={{marginTop:6}}>{warnCount>0?"можно ставить в бэклог":"нет предупреждений"}</div>
-      </div>
-      <div className="surface" style={{padding:"22px 24px"}}>
-        <div className="eyebrow" style={{marginBottom:8}}>Всего флагов · 48ч</div>
-        <div className="serif" style={{fontSize:48,color:flags.length===0?"var(--pos)":"var(--ink)",lineHeight:1}}>{flags.length}</div>
-        <div className="t-cap" style={{marginTop:6}}>в базе quality_flag</div>
-      </div>
+  const bad=check&&!check.ok;
+  return <div className="src-form">
+    <div className="src-form-row">
+      <label>
+        <span>Адрес источника</span>
+        <input className="input" value={url} placeholder="cbr.ru или t.me/канал"
+               onChange={e=>setUrl(e.target.value)}/>
+      </label>
+      <label>
+        <span>Название <i>необязательно</i></span>
+        <input className="input" value={title} placeholder="Как его называть"
+               onChange={e=>setTitle(e.target.value)}/>
+      </label>
     </div>
-
-    <div className="surface" style={{overflow:"hidden"}}>
-      {!flags.length?<EmptyState text="Активных флагов качества нет — всё чисто"/>:
-      <table>
-        <thead><tr>
-          <th>Код</th><th>Тип</th><th>Тяжесть</th><th>Детали</th><th>Когда</th>
-        </tr></thead>
-        <tbody>
-          {flags.map((f,i)=>(
-            <tr key={f.flag_id||i}>
-              <td className="mono" style={{fontWeight:500,fontSize:12.5}}>{str(f.code)}</td>
-              <td className="mono" style={{color:"var(--ink-2)",fontSize:12.5}}>{str(f.entity_type)}</td>
-              <td>
-                <span className={`badge ${f.severity==="error"?"neg":"warn"}`}>
-                  <span className="dot"/>{f.severity==="error"?"ошибка":"предупр."}
-                </span>
-              </td>
-              <td style={{maxWidth:520,fontSize:13}}>{str(f.detail)}</td>
-              <td className="mono tnum" style={{color:"var(--ink-3)",fontSize:12}}>{fmtDate(f.created_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>}
+    {check&&<div className={"src-check "+(bad?"bad":"ok")}>
+      {bad?"⚠ ":"✓ "}{check.message}</div>}
+    <label className="src-form-full">
+      <span>Чем полезен аудиту</span>
+      <textarea className="input" rows={3} value={reason}
+        placeholder="Например: публикует предписания ЦБ раньше агрегаторов; нужен для проверки сроков реагирования"
+        onChange={e=>setReason(e.target.value)}/>
+    </label>
+    {err&&<div className="src-check bad">⚠ {err}</div>}
+    <div className="src-form-foot">
+      <button className="btn btn-primary btn-sm" disabled={busy||!url.trim()||bad}
+              onClick={submit}>{busy?"Отправляю…":"Отправить на рассмотрение"}</button>
+      <span className="t-cap">Перед отправкой сверьтесь с требованиями выше</span>
     </div>
   </div>;
 }
 
-// ─── KNOWLEDGE PAGE: knowledge layer coverage + live semantic search ───────
+function SrcPurpose({p,openForm,setOpenForm,onProposed}){
+  const[showAll,setShowAll]=useState(false);
+  const list=showAll?p.sources:(p.sources||[]).slice(0,8);
+  const open=openForm===p.id;
+  return <section className="surface src-card">
+    <div className="src-head">
+      <div>
+        <div className="eyebrow" style={{marginBottom:4}}>{p.title}</div>
+        <p className="src-lead">{p.lead}</p>
+      </div>
+      <span className="src-count mono">{p.n} источн.</span>
+    </div>
+
+    <div className="src-what"><b>Где используется.</b> {p.what_for}</div>
+    <div className="src-what"><b>Как учитывается доверие.</b> {p.trust_note}</div>
+
+    {(p.sources||[]).length>0&&<div className="src-list">
+      {list.map((s,i)=><a key={i} className="src-item" href={s.url}
+                          target="_blank" rel="noopener noreferrer">
+        <span className="src-dom">{s.domain}
+          {s.weight!=null&&<i className={"src-w "+(s.weight>=0.9?"hi":s.weight>=0.7?"mid":"lo")}>
+            {s.band} · {s.weight}</i>}</span>
+        <span className="src-meta">{s.role}{s.kind?` · ${s.kind}`:""}
+          {s.coverage?` · ${s.coverage}`:""}</span>
+        <span className="src-ttl">{s.title!==s.domain?s.title:""}</span>
+      </a>)}
+      {(p.sources||[]).length>8&&<button className="btn btn-ghost btn-sm src-more"
+        onClick={()=>setShowAll(v=>!v)}>
+        {showAll?"Свернуть":`Показать все ${p.n}`}</button>}
+    </div>}
+
+    <details className="src-req" open={open}>
+      <summary onClick={e=>{e.preventDefault();setOpenForm(open?null:p.id);}}>
+        Требования к источнику для этого раздела
+      </summary>
+      <ul className="src-req-list">
+        {(p.requirements||[]).map((r,i)=><li key={i}>{r}</li>)}
+      </ul>
+      {p.examples&&<div className="t-cap" style={{marginTop:8}}>Примеры подходящих: {p.examples}</div>}
+      <SrcProposeForm purpose={p} onDone={onProposed}/>
+    </details>
+  </section>;
+}
+
+function SourcesPage(){
+  const[cat,setCat]=useState(null);
+  const[props_,setProps]=useState(null);
+  const[openForm,setOpenForm]=useState(null);
+  const[tech,setTech]=useState(null);
+  const[techOpen,setTechOpen]=useState(false);
+  const[err,setErr]=useState(null);
+  const me=useContext(MeCtx);
+
+  const loadProps=()=>apiFetch("/api/sources/proposals").then(setProps).catch(()=>{});
+  useEffect(()=>{
+    apiFetch("/api/sources/catalog").then(setCat).catch(e=>setErr(e.message));
+    loadProps();
+  },[]);
+  useEffect(()=>{ if(techOpen&&!tech)apiFetch("/api/sources").then(setTech).catch(()=>{}); },[techOpen,tech]);
+
+  const review=async(id,status)=>{
+    const note=status==="rejected"?prompt("Причина отклонения (увидит автор):")||"":"";
+    await apiPost(`/api/sources/proposals/${id}/review`,{status,note});
+    loadProps();
+  };
+
+  if(err)return <ErrState msg={err}/>;
+  if(!cat)return <LoadingPage/>;
+
+  const mine=(props_&&props_.proposals)||[];
+  const isAdmin=!!(props_&&props_.is_admin);
+
+  return <div className="fade-in">
+    <header style={{marginBottom:22}}>
+      <div className="eyebrow" style={{marginBottom:6}}>§ Источники · доверие и покрытие</div>
+      <h1 className="t-h" style={{marginBottom:6}}>Откуда инструмент берёт данные</h1>
+      <p className="t-cap" style={{maxWidth:"74ch"}}>
+        Для каждого раздела — свой набор источников и своя планка доверия. Здесь видно,
+        кто участвует в выводах, и можно предложить источник, которого не хватает:
+        требования к нему у каждого раздела отдельные.
+      </p>
+    </header>
+
+    <div className="src-grid">
+      {(cat.purposes||[]).map(p=>
+        <SrcPurpose key={p.id} p={p} openForm={openForm} setOpenForm={setOpenForm}
+                    onProposed={loadProps}/>)}
+    </div>
+
+    {mine.length>0&&<section className="surface src-card" style={{marginTop:18}}>
+      <div className="eyebrow" style={{marginBottom:10}}>
+        {isAdmin?"Заявки на источники — все":"Мои заявки"}</div>
+      <table className="m-cards">
+        <thead><tr><th>Источник</th><th>Раздел</th><th>Статус</th>
+          {isAdmin&&<th>Автор</th>}<th></th></tr></thead>
+        <tbody>{mine.map(p=>{
+          const pur=(cat.purposes||[]).find(x=>x.id===p.purpose);
+          return <tr key={p.proposal_id}>
+            <td className="m-primary" data-label="Источник">
+              <div style={{fontWeight:500}}>{p.domain}</div>
+              {p.title&&<div className="t-cap" style={{fontSize:11}}>{p.title}</div>}
+              {p.review_note&&<div className="t-cap" style={{fontSize:11,color:"var(--accent)"}}>
+                {p.review_note}</div>}
+            </td>
+            <td data-label="Раздел">{pur?pur.title:p.purpose}</td>
+            <td data-label="Статус">
+              <span className={"badge "+(p.status==="approved"?"pos":p.status==="rejected"?"neg":"warn")}>
+                {SRC_STATUS_RU[p.status]||p.status}</span>
+              <div className="t-cap" style={{fontSize:10.5}}>{fmtDateMsk(p.created_at)}</div>
+            </td>
+            {isAdmin&&<td data-label="Автор" className="t-cap">{p.proposer_name||p.proposed_by}</td>}
+            <td className="right">
+              {isAdmin&&p.status==="pending"&&<div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                <button className="btn btn-ghost btn-sm" onClick={()=>review(p.proposal_id,"approved")}>Одобрить</button>
+                <button className="btn btn-ghost btn-sm" onClick={()=>review(p.proposal_id,"rejected")}>Отклонить</button>
+              </div>}
+            </td>
+          </tr>;})}
+        </tbody>
+      </table>
+    </section>}
+
+    <details className="surface src-card src-tech" open={techOpen}
+             onToggle={e=>setTechOpen(e.target.open)} style={{marginTop:18}}>
+      <summary>Техническое состояние сборщиков</summary>
+      <p className="t-cap" style={{margin:"6px 0 12px"}}>
+        Для инженерной проверки: расписание, последние прогоны, ручной запуск.
+        Данные обновляются автоматически — вмешательство обычно не требуется.</p>
+      {!tech?<Skel h={80}/>:<SourcesTech data={tech}/>}
+    </details>
+  </div>;
+}
+
 function KnowledgePage(){
   const[coverage,setCoverage]=useState([]);
   const[recent,setRecent]=useState([]);
@@ -3493,52 +5356,888 @@ function LoopholePage(){
 }
 
 // ─── SHELL ────────────────────────────────────────────────────────────────────
+// ─── «Пульс» — дашборд владельца: аудитория + продукт + техника в одном ───────
+const AD_CSS=`
+.pu-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 22px;}
+.pu-tile{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px 12px;}
+.pu-tile .l{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-4);margin-bottom:7px;display:flex;align-items:center;gap:6px;}
+.pu-tile .v{font-family:'Source Serif 4',Georgia,serif;font-size:27px;line-height:1;}
+.pu-tile .s{font-size:10.5px;color:var(--ink-4);margin-top:5px;font-family:'JetBrains Mono',monospace;}
+.pu-tile.neg .v{color:var(--neg);}
+.pu-live{width:6px;height:6px;border-radius:50%;background:var(--pos);animation:pulse 1.8s ease infinite;}
+.pu-sec{margin-top:24px;}
+.pu-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
+@media(max-width:1000px){.pu-grid2{grid-template-columns:1fr;}}
+.pu-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;}
+.pu-card .h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;}
+.pu-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px;}
+.pu-bar-row .lb{width:110px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pu-bar-row .tr{flex:1;height:16px;background:var(--paper-2);border-radius:4px;overflow:hidden;}
+.pu-bar-row .fl{height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
+  transition:width .5s ease;}
+.pu-bar-row .vv{width:100px;flex:none;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);}
+.pu-kv{display:flex;justify-content:space-between;align-items:baseline;padding:7px 2px;border-top:1px solid var(--hair);font-size:12.5px;}
+.pu-kv:first-of-type{border-top:0;}
+.pu-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;}
+.pu-heat{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:12px;}
+.pu-heat .hl{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--ink-4);align-self:center;}
+.pu-heat .c{aspect-ratio:1;border-radius:2.5px;background:var(--paper-2);min-width:0;}
+.pu-tbl{width:100%;font-size:11.5px;border-collapse:collapse;}
+.pu-tbl th{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-4);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;}
+.pu-tbl th:first-child{text-align:left;}
+.pu-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;text-align:right;color:var(--ink-2);}
+.pu-tbl td:first-child{text-align:left;color:var(--ink);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pu-tbl tr:last-child td{border-bottom:0;}
+.pu-err{display:flex;gap:9px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
+.pu-err:first-of-type{border-top:0;}
+.pu-err .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
+.pu-err .k{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--neg);flex:none;text-transform:uppercase;}
+.pu-err .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
+.pu-feed-row{display:flex;gap:9px;align-items:center;padding:5px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
+.pu-feed-row:first-of-type{border-top:0;}
+.pu-feed-row .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;width:34px;}
+.pu-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+  display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
+.pu-feed-row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
+.pu-chip{font-family:'JetBrains Mono',monospace;font-size:9.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);}
+.pu-chip.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
+.pu-chip.bad{color:var(--neg);border-color:color-mix(in oklab,var(--neg),transparent 70%);}
+.pu-note{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);margin-top:10px;line-height:1.6;}
+.pu-note .acc{color:var(--accent);}
+.pu-u{display:inline-flex;align-items:center;gap:8px;font-family:'Geist','Inter',sans-serif;font-size:12.5px;color:var(--ink);}
+.pu-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+  display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
+.pu-crown{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--accent);white-space:nowrap;
+  border:1px solid color-mix(in oklab,var(--accent),transparent 70%);background:var(--accent-soft);
+  border-radius:999px;padding:2px 7px;}
+.pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
+.pu-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
+.pu-team td:first-child{max-width:260px;}
+`;
+const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
+  ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Лазейки",banks:"Банки",sources:"Источники",
+  quality:"Качество",profile:"Профиль",pulse:"Пульс"};
+const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
+  if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1)+"ч"; };
+
+// area-график: users (заливка) + views (тонкая линия), даты по оси
+function AdArea({data,h=130}){
+  const w=640, vals=(data||[]);
+  if(vals.length<2) return <div style={{color:"var(--ink-4)",fontSize:12,padding:"20px 0"}}>Данные накапливаются — график появится после пары дней жизни телеметрии.</div>;
+  const maxU=Math.max(...vals.map(v=>v.users||0),1);
+  const maxV=Math.max(...vals.map(v=>v.views||0),1);
+  const px=(i)=>i/(vals.length-1)*(w-8)+4;
+  const pyU=(v)=>h-16-((v||0)/maxU)*(h-34);
+  const pyV=(v)=>h-16-((v||0)/maxV)*(h-34);
+  const dU=vals.map((v,i)=>(i?"L":"M")+px(i).toFixed(1)+","+pyU(v.users).toFixed(1)).join("");
+  const dV=vals.map((v,i)=>(i?"L":"M")+px(i).toFixed(1)+","+pyV(v.views).toFixed(1)).join("");
+  const last=vals[vals.length-1];
+  const dd=(s)=>(s||"").slice(8,10)+"."+(s||"").slice(5,7);
+  return <svg width="100%" viewBox={"0 0 "+w+" "+h} style={{display:"block"}}>
+    <path d={dU+"L"+(w-4)+","+(h-14)+"L4,"+(h-14)+"Z"} fill="var(--accent-soft)" opacity=".6"/>
+    <path d={dV} fill="none" stroke="var(--ink-4)" strokeWidth="1" opacity=".55" strokeDasharray="3 3"/>
+    <path d={dU} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round"/>
+    <circle cx={px(vals.length-1)} cy={pyU(last.users)} r="2.6" fill="var(--accent)"/>
+    <text x="4" y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono">{dd(vals[0].d)}</text>
+    <text x={w-4} y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">{dd(last.d)}</text>
+    <text x={w-4} y="10" fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">макс {maxU} польз. · {maxV} просм.</text>
+  </svg>;
+}
+
+function AdHeat({cells}){
+  const map={}; let max=1;
+  (cells||[]).forEach(c=>{ map[c.dow+"-"+c.hour]=c.n; if(c.n>max)max=c.n; });
+  const days=["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+  const out=[];
+  days.forEach((dl,di)=>{
+    out.push(<span key={"l"+di} className="hl">{dl}</span>);
+    for(let hh=0;hh<24;hh++){
+      const n=map[(di+1)+"-"+hh]||0;
+      out.push(<span key={di+"-"+hh} className="c" title={dl+" "+hh+":00 · "+n+" событий"}
+        style={n?{background:"color-mix(in oklab,var(--accent),var(--paper-2) "+Math.round(88-(n/max)*78)+"%)"}:null}/>);
+    }
+  });
+  return <div className="pu-heat">{out}</div>;
+}
+
+// донат-сегментация аудитории (SVG, без библиотек)
+function AdDonut({parts,center,sub}){
+  const total=(parts||[]).reduce((s,p)=>s+(p.value||0),0)||1;
+  const R=40,C=2*Math.PI*R; let cum=0;
+  return <div style={{display:"flex",gap:22,alignItems:"center",flexWrap:"wrap"}}>
+    <svg width="116" height="116" viewBox="0 0 116 116" style={{flex:"none"}}>
+      <circle cx="58" cy="58" r={R} fill="none" stroke="var(--paper-2)" strokeWidth="15"/>
+      {(parts||[]).filter(p=>p.value>0).map((p,i)=>{
+        const frac=p.value/total;
+        const el=<circle key={i} cx="58" cy="58" r={R} fill="none" stroke={p.color} strokeWidth="15"
+          strokeDasharray={Math.max(frac*C-1.6,.6)+" "+(C-Math.max(frac*C-1.6,.6))}
+          transform={"rotate("+(cum*360-90)+" 58 58)"}/>;
+        cum+=frac; return el;})}
+      <text x="58" y="57" textAnchor="middle" fontSize="21" fontWeight="600" fill="var(--ink)"
+        fontFamily="'Source Serif 4',Georgia,serif">{center}</text>
+      <text x="58" y="73" textAnchor="middle" fontSize="7.5" fill="var(--ink-4)"
+        fontFamily="'JetBrains Mono',monospace">{sub}</text>
+    </svg>
+    <div style={{display:"flex",flexDirection:"column",gap:7}}>
+      {(parts||[]).map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,fontSize:12.5}}>
+        <span style={{width:9,height:9,borderRadius:3,background:p.color,flex:"none"}}/>
+        <span style={{color:"var(--ink-2)"}}>{p.label}</span>
+        <b className="tnum" style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11.5}}>{p.value||0}</b>
+      </div>)}
+    </div>
+  </div>;
+}
+
+// парные колонки по дням: ИИ-запросы (accent) + отчёты (ink); ось — дни из dau
+function AdCols({axis,a,b,h=118}){
+  const w=620;
+  const am={};(a||[]).forEach(x=>am[x.d]=+x.n||0);
+  const bm={};(b||[]).forEach(x=>bm[x.d]=+x.n||0);
+  const days=(axis||[]).map(x=>x.d);
+  if(!days.length) return <div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>;
+  const max=Math.max(...days.map(d=>Math.max(am[d]||0,bm[d]||0)),1);
+  const slot=(w-32)/days.length, bw=Math.max(3,Math.min(13,slot/2-2));
+  const dd=(s)=>(s||"").slice(8,10)+"."+(s||"").slice(5,7);
+  return <svg width="100%" viewBox={"0 0 "+w+" "+h} style={{display:"block"}}>
+    {days.map((d,i)=>{
+      const x=16+i*slot+(slot-bw*2-2)/2;
+      const ha=(am[d]||0)/max*(h-32), hb=(bm[d]||0)/max*(h-32);
+      return <g key={d}>
+        {am[d]>0&&<rect x={x} y={h-16-Math.max(ha,2)} width={bw} height={Math.max(ha,2)} rx="2" fill="var(--accent)" opacity=".88"/>}
+        {bm[d]>0&&<rect x={x+bw+2} y={h-16-Math.max(hb,2)} width={bw} height={Math.max(hb,2)} rx="2" fill="var(--ink-3)" opacity=".65"/>}
+      </g>;})}
+    <text x="16" y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono">{dd(days[0])}</text>
+    <text x={w-16} y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">{dd(days[days.length-1])}</text>
+    <text x={w-16} y="10" fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">макс {max}/день</text>
+  </svg>;
+}
+
+function PulsePage(){
+  const me=useMe();
+  const[days,setDays]=useState(14);
+  const[m,setM]=useState(null);
+  const[err,setErr]=useState(false);
+  const[ts,setTs]=useState(null);
+  const load=useCallback(()=>{
+    apiFetch("/api/admin/pulse?days="+days)
+      .then(d=>{setM(d);setErr(false);setTs(new Date());})
+      .catch(()=>setErr(true));
+  },[days]);
+  useEffect(()=>{ load(); const t=setInterval(load,60000); return ()=>clearInterval(t); },[load]);
+
+  if(me&&!me.is_admin) return <div className="fade-in"><ErrState msg="Раздел доступен только владельцу инструмента."/></div>;
+  if(err) return <div className="fade-in"><ErrState msg="Не удалось загрузить метрики."/></div>;
+  if(!m) return <LoadingPage/>;
+
+  const t=m.today||{}, f=m.features||{}, sg=m.segments||{};
+  const maxPage=Math.max(...(m.pages||[]).map(x=>x.views||0),1);
+  const nErr=(m.errors_recent||[]).length;
+  const tokSum=(m.tokens||[]).reduce((a,x)=>a+(+x.tin||0)+(+x.tout||0),0);
+  const team=m.users_table||[];
+  const maxT=Math.max(...team.map(x=>+x.time_s||0),1);
+  return <div className="fade-in">
+    <style>{AD_CSS}</style>
+    <header style={{marginBottom:4}}>
+      <div className="eyebrow-row">
+        <div className="eyebrow">Пульс инструмента · доступ: владелец · <span style={{color:"var(--accent)"}}>автообновление 60с</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          {ts&&<span className="bf-stamp">{ts.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>}
+          <div className="seg">{[7,14,30].map(d=><button key={d} className={"seg-btn"+(days===d?" on":"")}
+            onClick={()=>setDays(d)}>{d} дн</button>)}</div>
+        </div>
+      </div>
+      <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:6}}>Как <em style={{fontStyle:"italic",color:"var(--accent)"}}>живёт</em> AuditLens</h1>
+      <p className="lede">Маркетинг и техника в одном экране: аудитория, вовлечённость, фичи, ошибки, латентность.</p>
+    </header>
+
+    {/* ① сегодня */}
+    <div className="pu-tiles">
+      <div className="pu-tile"><div className="l"><span className="pu-live"/>Онлайн сейчас</div>
+        <div className="v tnum">{t.online||0}</div><div className="s">за 15 минут</div></div>
+      <div className="pu-tile"><div className="l">Активных сегодня</div>
+        <div className="v tnum">{t.active||0}</div><div className="s">из {t.users_total||0} всего</div></div>
+      <div className="pu-tile"><div className="l">Просмотров сегодня</div>
+        <div className="v tnum">{t.views||0}</div><div className="s">страниц</div></div>
+      <div className="pu-tile"><div className="l">ИИ-запросов сегодня</div>
+        <div className="v tnum">{t.ai||0}</div><div className="s">quick + deep</div></div>
+      <div className={"pu-tile"+(t.errors>0?" neg":"")}><div className="l">Ошибок сегодня</div>
+        <div className="v tnum">{t.errors||0}</div><div className="s">{t.errors>0?"см. раздел техники ↓":"чисто ✓"}</div></div>
+    </div>
+
+    {/* ② аудитория */}
+    <div className="pu-card">
+      <div className="h"><span>Аудитория · уникальные в день</span>
+        <span>— пользователи · ‥ просмотры · новых за период: {(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0)}</span></div>
+      <AdArea data={m.dau}/>
+    </div>
+
+    {/* ②b сегменты аудитории + генерация по дням */}
+    <div className="pu-grid2 pu-sec">
+      <div className="pu-card">
+        <div className="h"><span>Кто наша аудитория · {m.days} дн</span></div>
+        <AdDonut center={String(sg.active||0)} sub="активных"
+          parts={[
+            {label:"исследователи · ИИ и отчёты",value:sg.researchers||0,color:"var(--accent)"},
+            {label:"читатели новостей",value:sg.readers||0,color:"var(--warn)"},
+            {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-4)"},
+            {label:"спящие за период",value:sg.sleepers||0,color:"var(--hair-2)"},
+          ]}/>
+        <div className="pu-note">
+          {sg.readers>0
+            ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Обзор»/«Для вас») — точка роста для ИИ-аналитика</>
+            : "читатели ≥60% просмотров в «Обзоре»/«Для вас» без единого ИИ-запроса"}
+        </div>
+      </div>
+      <div className="pu-card">
+        <div className="h"><span>Генерация · по дням</span>
+          <span><span style={{color:"var(--accent)"}}>■</span> ИИ-запросы · <span style={{color:"var(--ink-3)"}}>■</span> отчёты</span></div>
+        <AdCols axis={m.dau} a={m.ai_per_day} b={m.reports_per_day}/>
+        <div className="pu-note">за период: {f.ai_total||0} запросов · {f.reports||0} отчётов создано · {f.report_opens||0} открытий сохранённых · {f.shares||0} шерингов</div>
+      </div>
+    </div>
+
+    {/* ②c команда пофамильно */}
+    {team.length>0&&<div className="pu-card pu-sec">
+      <div className="h"><span>Команда · пофамильно · {m.days} дн</span>
+        <span>скор: время + просмотры + ИИ×15 + отчёты×30 + оценки×5</span></div>
+      <table className="pu-tbl pu-team">
+        <thead><tr><th>пользователь</th><th>время</th><th>дней</th><th>просм.</th><th>ИИ</th><th>отчёты</th><th>оценки</th><th>был(а)</th></tr></thead>
+        <tbody>
+          {team.map((u,i)=><tr key={u.username}>
+            <td><span className="pu-u"><span className="a">{initials(u.name)}</span>{u.name}
+              {i===0&&(+u.views>0)&&<span className="pu-crown">✦ самый активный</span>}</span></td>
+            <td><span className="pu-tm"><span className="bar" style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
+            <td>{u.days_active}</td><td>{u.views}</td><td>{u.ai}</td><td>{u.reports}</td><td>{u.ratings}</td>
+            <td>{u.last_seen||"—"}</td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>}
+
+    {/* ③ вовлечённость + фичи */}
+    <div className="pu-grid2">
+      <div className="pu-card">
+        <div className="h"><span>Страницы · {m.days} дн</span><span>просмотры · время</span></div>
+        {(m.pages||[]).length===0&&<div style={{color:"var(--ink-4)",fontSize:12}}>Пока пусто.</div>}
+        {(m.pages||[]).map(pg=><div key={pg.page} className="pu-bar-row">
+          <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
+          <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxPage)*100)+"%"}}/></span>
+          <span className="vv tnum">{pg.views} · {adFmtS(pg.total_s)}</span>
+        </div>)}
+      </div>
+      <div className="pu-card">
+        <div className="h"><span>Функции · {m.days} дн</span></div>
+        <div className="pu-kv"><span>ИИ-запросы</span><b className="tnum">{f.ai_total||0}</b></div>
+        <div className="pu-kv"><span>Аудит-отчёты создано</span><b className="tnum">{f.reports||0}</b></div>
+        <div className="pu-kv"><span>Шеринги отчётов</span><b className="tnum">{f.shares||0}</b></div>
+        <div className="pu-kv"><span>Оценки контента 👍/👎</span>
+          <b className="tnum"><span style={{color:"var(--pos)"}}>{f.fb_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.fb_dislikes||0}</span></b></div>
+        <div className="pu-kv"><span>Оценки ответов ИИ 👍/👎</span>
+          <b className="tnum"><span style={{color:"var(--pos)"}}>{f.ai_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.ai_dislikes||0}</span></b></div>
+        <div className="pu-kv"><span>Профилей заполнено</span><b className="tnum">{f.profiles||0} из {t.users_total||0}</b></div>
+      </div>
+    </div>
+
+    {/* ④ тепловая карта */}
+    <div className="pu-card pu-sec">
+      <div className="h"><span>Когда пользуются · час × день недели (МСК)</span><span>{m.days} дн</span></div>
+      <AdHeat cells={m.heatmap}/>
+    </div>
+
+    {/* ⑤ техника */}
+    <div className="pu-grid2 pu-sec">
+      <div className="pu-card">
+        <div className="h"><span>Латентность API · 7 дн</span><span>мс</span></div>
+        {(m.latency||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>
+          :<table className="pu-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
+            <tbody>{(m.latency||[]).map((r,i)=><tr key={i}>
+              <td title={r.path}>{(r.path||"").replace("/api/","")}</td>
+              <td>{r.n}</td><td>{r.p50}</td>
+              <td style={r.p95>3000?{color:"var(--warn)"}:null}>{r.p95}</td>
+              <td style={r.errs>0?{color:"var(--neg)"}:null}>{r.errs||0}</td>
+            </tr>)}</tbody></table>}
+      </div>
+      <div className="pu-card">
+        <div className="h"><span>Ошибки · последние</span>
+          <span className={"pu-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
+        {nErr===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
+          :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="pu-err">
+            <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"js":"api"}</span>
+            <span className="m" title={e.msg||""}>{e.page||"—"}{e.status?" · "+e.status:""}{e.msg?" · "+e.msg:""}</span>
+          </div>)}
+      </div>
+    </div>
+
+    <div className="pu-grid2 pu-sec">
+      <div className="pu-card">
+        <div className="h"><span>Дайджест · последний выпуск</span>
+          <span>LLM-токены за период: {tokSum.toLocaleString("ru")}</span></div>
+        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+          {(m.digest||[]).map(s=><span key={s.section}
+            className={"pu-chip "+(s.status==="ok"?"ok":s.status==="failed"?"bad":"")}
+            title={(s.error||"")+(s.gen_ms?" · "+s.gen_ms+"мс":"")}>
+            {s.section} · {s.status}{s.at?" · "+s.at:""}</span>)}
+        </div>
+      </div>
+      <div className="pu-card">
+        <div className="h"><span>Живая лента</span><span>последние события</span></div>
+        {(m.feed||[]).map((e,i)=><div key={i} className="pu-feed-row">
+          <span className="t">{e.ts}</span>
+          <span className="a">{initials(e.username||"?")}</span>
+          <span className="w">{e.kind==="page_view"?"открыл "+(AD_PAGE_RU[e.page]||e.page)
+            :e.kind==="page_leave"?((AD_PAGE_RU[e.page]||e.page)+" · "+adFmtS((e.dur_ms||0)/1000))
+            :e.kind==="client_error"?"⚠ JS-ошибка на "+(AD_PAGE_RU[e.page]||e.page)
+            :"⚠ API "+(e.page||"")+(e.status?" · "+e.status:"")}</span>
+        </div>)}
+      </div>
+    </div>
+
+    <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
+                 fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:"var(--ink-4)"}}>
+      телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS
+    </div>
+  </div>;
+}
+
 const NAV=[
   {id:"overview",label:"Обзор",       icon:Ic.grid,   group:"Анализ"},
-  {id:"market",  label:"Рынок",       icon:Ic.market, group:"Анализ"},
-  {id:"sber",    label:"Сбер / Рынок",icon:Ic.scale,  group:"Анализ"},
+  {id:"market",  label:"Рынок · позиция",icon:Ic.market, group:"Анализ"},
   {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
   {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
   {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Анализ"},
-  {id:"loophole",label:"Лазейки",     icon:Ic.shield, group:"Анализ"},
+  {id:"loophole",label:"Лазейки",     icon:Ic.shield, group:"Анализ", badge:"beta"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
-  {id:"quality", label:"Качество",    icon:Ic.shield, group:"Данные"},
 ];
-const PAGES_FN={overview:OverviewPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,quality:QualityPage};
-const PAGE_LABELS={overview:["01","Обзор"],market:["02","Рынок"],sber:["03","Сбер / Рынок"],reviews:["04","Отзывы"],ai:["05","ИИ-аналитик"],knowledge:["06","База знаний"],loophole:["07","Лазейки"],banks:["08","Банки"],sources:["09","Источники"],quality:["10","Качество"]};
+const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,profile:ProfilePage,pulse:PulsePage};
+// Номера синхронизированы с порядком в меню; итог берётся из NAV, а не хардкодом
+const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],
+  market:["02","Рынок · позиция"],sber:["02","Рынок · позиция"],
+  reviews:["03","Отзывы"],ai:["04","ИИ-аналитик"],knowledge:["05","База знаний"],
+  loophole:["06","Лазейки"],banks:["07","Банки"],sources:["08","Источники"],
+  profile:["·","Профиль"],pulse:["09","Пульс"]};
+
+// ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
+const PROFILE_CSS=`
+.pf-wrap{max-width:720px;}
+.pf-hero{display:flex;align-items:center;gap:18px;margin-bottom:24px;}
+.pf-avatar{width:60px;height:60px;flex:none;border-radius:16px;display:grid;place-items:center;
+  font-size:22px;font-weight:600;color:var(--accent);background:var(--accent-soft);
+  border:1px solid color-mix(in oklab,var(--accent),transparent 80%);letter-spacing:-.01em;}
+.pf-hero h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:32px;line-height:1.05;letter-spacing:-.01em;color:var(--ink);margin:3px 0 4px;}
+.pf-sub{font-size:12px;color:var(--ink-3);}
+.pf-card{padding:22px 24px;margin-bottom:16px;position:relative;}
+.pf-card-h{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;}
+.pf-ai-badge{display:inline-flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--accent);}
+.pf-ai-badge .sp{animation:pf-sparkle 3s ease-in-out infinite;}
+@keyframes pf-sparkle{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.86)}}
+.pf-ai{border:1px solid color-mix(in oklab,var(--accent),transparent 84%);
+  background:linear-gradient(180deg,color-mix(in oklab,var(--accent-soft),transparent 62%),transparent 60%);}
+.pf-mini{font-size:11.5px;color:var(--ink-3);border:1px solid var(--hair);border-radius:7px;padding:5px 11px;
+  transition:border-color .14s,color .14s,transform .1s;white-space:nowrap;}
+.pf-mini:hover:not(:disabled){border-color:var(--accent);color:var(--accent);}
+.pf-mini:active:not(:disabled){transform:scale(.96);}
+.pf-mini:disabled{opacity:.55;cursor:default;}
+.pf-hint{font-size:12.5px;line-height:1.5;color:var(--ink-3);margin-bottom:12px;max-width:64ch;text-wrap:pretty;}
+.pf-ta{width:100%;min-height:80px;resize:vertical;border:1px solid var(--hair);border-radius:10px;background:var(--surface);
+  color:var(--ink);font-size:13.5px;line-height:1.55;padding:12px 14px;font-family:'Geist','Inter',sans-serif;transition:border-color .14s;}
+.pf-ta:focus{outline:none;border-color:var(--accent);}
+.pf-ta::placeholder{color:var(--ink-4);}
+.pf-note{font-family:'Source Serif 4',serif;font-size:16.5px;line-height:1.56;color:var(--ink);text-wrap:pretty;}
+.pf-note-empty{font-size:13.5px;line-height:1.55;color:var(--ink-3);text-wrap:pretty;max-width:62ch;}
+.pf-note-gen{display:flex;align-items:center;gap:10px;color:var(--ink-3);font-size:13.5px;}
+.pf-note-gen .dots{display:inline-flex;gap:3px;}
+.pf-note-gen .dots i{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:pf-bounce 1.1s infinite;}
+.pf-note-gen .dots i:nth-child(2){animation-delay:.15s;} .pf-note-gen .dots i:nth-child(3){animation-delay:.3s;}
+@keyframes pf-bounce{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
+.pf-src{font-size:10.5px;color:var(--ink-4);margin-top:12px;font-family:'JetBrains Mono',monospace;display:flex;align-items:center;gap:6px;}
+.pf-src .live{width:5px;height:5px;border-radius:50%;background:var(--pos);}
+.pf-sub-h{font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);margin:16px 0 9px;}
+.pf-sub-h:first-child{margin-top:2px;}
+.pf-topics{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.pf-topic{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;padding:5px 7px 5px 12px;border-radius:9px;
+  background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2);transition:border-color .14s,background .14s,color .14s;}
+.pf-topic.anchor{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 80%);color:var(--accent);font-weight:500;}
+.pf-topic .lock{font-size:9px;opacity:.7;}
+.pf-tacts{display:inline-flex;gap:0;max-width:0;overflow:hidden;transition:max-width .18s ease;}
+.pf-topic:hover .pf-tacts{max-width:28px;}
+.pf-tacts button{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;color:currentColor;opacity:.6;transition:opacity .12s,background .12s;}
+.pf-tacts button:hover{opacity:1;background:color-mix(in oklab,currentColor,transparent 88%);}
+.pf-rec{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.pf-rec-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:5px 12px;border-radius:9px;
+  border:1px dashed color-mix(in oklab,var(--accent),transparent 62%);background:none;color:var(--accent);
+  transition:background .14s,border-style .14s,transform .1s;animation:pf-pop .3s ease-out;}
+.pf-rec-chip:hover{background:var(--accent-soft);border-style:solid;}
+.pf-rec-chip:active{transform:scale(.96);}
+@keyframes pf-pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+.pf-add input{border:1px dashed var(--hair-2);border-radius:9px;background:none;color:var(--ink);font-size:12.5px;
+  padding:5px 12px;width:130px;transition:border-color .16s,border-style .16s,width .2s;font-family:inherit;}
+.pf-add input:focus{outline:none;border-color:var(--accent);border-style:solid;width:210px;}
+.pf-add input::placeholder{color:var(--ink-4);}
+.pf-muted-h{font-size:11px;color:var(--ink-4);margin-top:16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  font-family:'JetBrains Mono',monospace;transition:color .12s;}
+.pf-muted-h:hover{color:var(--ink-3);}
+.pf-muted-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}
+.pf-muted-chip{font-size:11.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--hair);color:var(--ink-4);
+  text-decoration:line-through;cursor:pointer;transition:color .12s,border-color .12s,text-decoration .12s;}
+.pf-muted-chip:hover{color:var(--ink-2);border-color:var(--ink-4);text-decoration:none;}
+.pf-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 0;border-bottom:1px solid var(--hair);}
+.pf-row:last-of-type{border-bottom:0;}
+.pf-row-t{font-size:13.5px;color:var(--ink);}
+.pf-row-d{font-size:12px;color:var(--ink-3);margin-top:2px;max-width:44ch;}
+.pf-row-r{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none;}
+.pf-detected{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);display:inline-flex;align-items:center;gap:5px;}
+.pf-detected .d{width:5px;height:5px;border-radius:50%;background:var(--pos);}
+.pf-select{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
+  font-size:13px;padding:8px 30px 8px 11px;min-width:210px;cursor:pointer;transition:border-color .14s;
+  appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;}
+.pf-select:focus{outline:none;border-color:var(--accent);}
+.pf-input-sm{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
+  font-size:13px;padding:8px;font-family:'JetBrains Mono',monospace;min-width:60px;width:60px;text-align:center;transition:border-color .14s;}
+.pf-input-sm:focus{outline:none;border-color:var(--accent);}
+.pf-toggle{width:42px;height:24px;border-radius:999px;background:var(--hair-2);position:relative;flex:none;transition:background .18s;}
+.pf-toggle.on{background:var(--accent);}
+.pf-toggle span{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--surface);
+  box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.2,0,0,1);}
+.pf-toggle.on span{transform:translateX(18px);}
+.pf-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;}
+.pf-saved{font-size:12px;color:var(--pos);font-family:'JetBrains Mono',monospace;}
+.pf-save{font-size:13px;color:#fff;background:var(--accent);border-radius:9px;padding:9px 20px;font-weight:500;
+  transition:transform .1s,filter .14s;}
+.pf-save:hover{filter:brightness(1.05);}
+.pf-save:active{transform:scale(.97);}
+`;
+const BANK_RU={sberbank:"Сбербанк",vtb:"ВТБ",alfabank:"Альфа-Банк",tinkoff:"Т-Банк",gazprombank:"Газпромбанк",rshb:"Россельхозбанк",domrf:"Банк ДОМ.РФ",psb:"ПСБ",sovcombank:"Совкомбанк",mtsbank:"МТС-Банк",raiffeisen:"Райффайзен",otkritie:"Открытие"};
+const PROD_RU={ipoteka:"Ипотека",deposit:"Вклады",credit_card:"Кредитные карты",debit_card:"Дебетовые карты",consumer_loan:"Потребкредиты",auto:"Автокредиты",rko:"РКО",savings:"Накопит. счета",acquiring:"Эквайринг",premium:"Премиальные пакеты",transfers:"Переводы и комиссии"};
+const topicLabel=(t)=>BANK_RU[t]||PROD_RU[t]||t;
+const TZ_ZONES=[
+  ["Europe/Kaliningrad","Калининград · МСК−1"],["Europe/Moscow","Москва · МСК"],
+  ["Europe/Samara","Самара · МСК+1"],["Asia/Yekaterinburg","Екатеринбург · МСК+2"],
+  ["Asia/Omsk","Омск · МСК+3"],["Asia/Krasnoyarsk","Красноярск · МСК+4"],
+  ["Asia/Irkutsk","Иркутск · МСК+5"],["Asia/Yakutsk","Якутск · МСК+6"],
+  ["Asia/Vladivostok","Владивосток · МСК+7"],["Asia/Magadan","Магадан · МСК+8"],
+  ["Asia/Kamchatka","Камчатка · МСК+9"],
+];
+const IcMuteSm=()=><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>;
+const IcSpark=()=><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6z"/></svg>;
+
+function ProfilePage(){
+  const me=useMe();
+  const[data,setData]=useState(null);
+  const[selfDesc,setSelfDesc]=useState("");
+  const[interests,setInterests]=useState({banks:[],products:[],pinned:[],muted:[],custom:[]});
+  const[recs,setRecs]=useState([]);
+  const[tz,setTz]=useState("");
+  const[detectedTz,setDetectedTz]=useState("");
+  const[personalDigest,setPersonalDigest]=useState(true);
+  const[bandHome,setBandHome]=useState(false);
+  const[morningHour,setMorningHour]=useState(7);
+  const[newTopic,setNewTopic]=useState("");
+  const[showMuted,setShowMuted]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[savedDesc,setSavedDesc]=useState(false);
+  const[savedSet,setSavedSet]=useState(false);
+  const[ps,setPs]=useState(null);              // «сила персонализации» из /api/me
+
+  const applyMe=(d)=>{ setData(d);
+    const p=d.prefs||{}; setSelfDesc(p.self_description||"");
+    setPersonalDigest(p.personal_digest!==false); setBandHome(p.personal_band_home===true);
+    setMorningHour(p.morning_hour||7);
+    setInterests(d.interests||{banks:[],products:[],pinned:[],muted:[],custom:[]});
+    setRecs(d.recommendations||[]); setPs(d.personalization||null); };
+  useEffect(()=>{
+    let dtz=""; try{dtz=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch{}
+    setDetectedTz(dtz);
+    apiFetch("/api/me").then(d=>{applyMe(d); setTz(d.timezone||dtz||"Europe/Moscow");}).catch(()=>{});
+    apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});
+  },[]);
+
+  const saveInterests=async(patch)=>{
+    const next={...interests,...patch}; setInterests(next);
+    try{ const r=await apiPut("/api/me/interests",{pinned:next.pinned,muted:next.muted,custom:next.custom});
+      if(r&&r.interests) setInterests(r.interests); }catch{}
+  };
+  const mute=(t)=>saveInterests({muted:[...new Set([...(interests.muted||[]),t])],
+                                 pinned:(interests.pinned||[]).filter(x=>x!==t),
+                                 custom:(interests.custom||[]).filter(x=>x!==t)});
+  const unmute=(t)=>saveInterests({muted:(interests.muted||[]).filter(x=>x!==t)});
+  const addCustom=()=>{ const t=newTopic.trim(); if(!t)return; setNewTopic("");
+    saveInterests({custom:[...new Set([...(interests.custom||[]),t])]}); };
+  const acceptRec=(slug)=>{ setRecs(r=>r.filter(x=>x!==slug));
+    saveInterests({pinned:[...new Set([...(interests.pinned||[]),slug])]}); };
+
+  const refreshNote=async()=>{ setBusy(true);
+    try{ const r=await apiPost("/api/me/profile/refresh",{}); if(r&&r.note) setData(d=>({...d,profile_note:r.note})); }catch{}
+    setBusy(false); };
+  const saveDesc=async()=>{
+    try{ await apiPut("/api/me",{prefs:{self_description:selfDesc.trim()}}); }catch{}
+    setSavedDesc(true); setTimeout(()=>setSavedDesc(false),1800);
+    // подсказать пересбор нарратива в фоне
+    apiPost("/api/me/profile/refresh",{}).then(r=>{ if(r&&r.note) setData(d=>({...d,profile_note:r.note})); }).catch(()=>{});
+  };
+  const saveSettings=async()=>{
+    try{ await apiPut("/api/me",{timezone:tz||"Europe/Moscow",
+      prefs:{personal_digest:personalDigest,personal_band_home:bandHome,morning_hour:Number(morningHour)||7}}); }catch{}
+    setSavedSet(true); setTimeout(()=>setSavedSet(false),1800);
+  };
+
+  if(!data) return <LoadingPage/>;
+  const products=(interests.products||[]);
+  const custom=(interests.custom||[]);
+  const muted=(interests.muted||[]);
+  const hasTopics=products.length||custom.length;
+  const tzOptions=TZ_ZONES.some(z=>z[0]===tz)?TZ_ZONES:[[tz,tz],...TZ_ZONES];
+  const detectedMatch=detectedTz&&detectedTz===tz;
+
+  return <div className="fade-in pf-wrap">
+    <style>{PROFILE_CSS}</style>
+    <div className="pf-hero">
+      <div className="pf-avatar">{initials(me&&me.name||data.name)}</div>
+      <div>
+        <div className="eyebrow">§ Профиль · персонализация</div>
+        <h1>{data.name||(me&&me.name)||"Аудитор"}</h1>
+        <div className="pf-sub mono">{data.username} · внутренний аудит Сбербанка</div>
+      </div>
+    </div>
+
+    {/* Единственный ручной ввод — зона ответственности */}
+    <div className="surface pf-card">
+      <div className="eyebrow" style={{marginBottom:8}}>Чем вы занимаетесь в Сбере</div>
+      <p className="pf-hint">Опишите своими словами, какие продукты, процессы и риски Сбера вы проверяете. Это единственное, что нужно ввести — остальное система соберёт и настроит сама.</p>
+      <textarea id="pf-desc" className="pf-ta" value={selfDesc} onChange={e=>setSelfDesc(e.target.value)}
+        placeholder="Например: проверяю корректность начисления процентов по вкладам Сбера и комиссии по эквайрингу для ИП; слежу за ипотечными программами и жалобами по кредитным картам."/>
+      <div className="pf-actions">
+        {savedDesc&&<span className="pf-saved">Сохранено · профиль пересобирается ✦</span>}
+        <button className="pf-save" onClick={saveDesc}>Сохранить</button>
+      </div>
+    </div>
+
+    {/* AI-нарратив — центральная «умная» карточка */}
+    <div className="surface pf-card pf-ai">
+      <div className="pf-card-h">
+        <div className="pf-ai-badge"><span className="sp"><IcSpark/></span>Ваш профиль · собран ИИ</div>
+        <button className="pf-mini" onClick={refreshNote} disabled={busy}>{busy?"Собираю…":"Пересобрать"}</button>
+      </div>
+      {busy
+        ? <div className="pf-note-gen"><span className="dots"><i/><i/><i/></span>ИИ анализирует ваши запросы и описание…</div>
+        : data.profile_note
+          ? <><p className="pf-note">{data.profile_note}</p>
+              <div className="pf-src"><span className="live"/>обновляется автоматически по вашим запросам и описанию</div></>
+          : <p className="pf-note-empty">Здесь ИИ соберёт краткий портрет ваших интересов — автоматически, по мере ваших запросов и из описания выше. Задайте пару вопросов ИИ-аналитику или нажмите «Пересобрать».</p>}
+    </div>
+
+    {/* Сила персонализации: сколько система уже знает + что даст больше всего */}
+    {ps&&<div className="surface pf-card">
+      <style>{`
+        .pf-power{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;}
+        .pf-power-list{flex:1;min-width:260px;display:flex;flex-direction:column;}
+        .pf-power-row{display:flex;align-items:baseline;gap:10px;padding:7px 4px;border-top:1px solid var(--hair);
+          font-size:13px;color:var(--ink-2);}
+        .pf-power-row:first-child{border-top:0;}
+        .pf-power-row .tick{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);flex:none;width:14px;}
+        .pf-power-row.done .tick{color:var(--pos);}
+        .pf-power-row.done{color:var(--ink-3);}
+        .pf-power-row:not(.done){cursor:pointer;transition:color .12s;}
+        .pf-power-row:not(.done):hover{color:var(--accent);}
+        .pf-power-row .lbl{flex:1;min-width:0;}
+        .pf-power-row .pts{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);flex:none;}
+        .pf-power-row:not(.done) .pts{color:var(--accent);font-weight:600;}
+        .pf-power-cap{font-size:11.5px;color:var(--ink-4);margin-top:10px;line-height:1.5;}
+      `}</style>
+      <div className="eyebrow" style={{marginBottom:12}}>Сила персонализации · <span style={{color:"var(--accent)"}}>✦ растёт от ваших действий</span></div>
+      <div className="pf-power">
+        <PfRing score={ps.score}/>
+        <div className="pf-power-list">
+          {(ps.parts||[]).filter(x=>x.max>0&&x.key!=="regular")
+            .sort((a,b)=>(a.done?1:0)-(b.done?1:0)||((b.max-b.earned)-(a.max-a.earned)))
+            .map(x=><div key={x.key} className={"pf-power-row"+(x.done?" done":"")}
+              onClick={()=>{ if(x.done)return;
+                if(x.target==="profile"){const el=document.getElementById("pf-desc");
+                  if(el){el.focus();el.scrollIntoView({behavior:"smooth",block:"center"});}}
+                else if(x.target) location.hash=x.target; }}>
+              <span className="tick">{x.done?"✓":"○"}</span>
+              <span className="lbl">{x.done?x.label:x.cta||x.label}</span>
+              <span className="pts">{x.done?"+"+x.max+"%":"+"+Math.max(x.max-x.earned,0)+"%"}</span>
+            </div>)}
+        </div>
+      </div>
+      <div className="pf-power-cap">Оценки 👍/👎 на «Для вас» и полосе учат ВАШИ рекомендации; оценки ответов
+        ИИ-аналитика уходят команде — по ним мы чиним инструмент. Каждый пункт выше показывает свой вклад.</div>
+    </div>}
+
+    {/* Темы в фокусе — определяет система, ручное вторично */}
+    <div className="surface pf-card">
+      <div className="eyebrow" style={{marginBottom:8}}>Темы в фокусе</div>
+      <div className="pf-sub-h">Система определила по вашим запросам</div>
+      {hasTopics
+        ? <div className="pf-topics">
+            <span className="pf-topic anchor">Сбербанк <span className="lock">якорь</span></span>
+            {products.map(t=>(
+              <span key={t} className="pf-topic">{topicLabel(t)}
+                <span className="pf-tacts"><button onClick={()=>mute(t)} title="Заглушить"><IcMuteSm/></button></span>
+              </span>))}
+            {custom.map(t=>(
+              <span key={"c"+t} className="pf-topic">{t}
+                <span className="pf-tacts"><button onClick={()=>mute(t)} title="Убрать"><IcMuteSm/></button></span>
+              </span>))}
+          </div>
+        : <div className="pf-topics"><span className="pf-topic anchor">Сбербанк <span className="lock">якорь</span></span>
+            <span className="t-cap" style={{color:"var(--ink-4)"}}>ваши продукты появятся после нескольких запросов</span></div>}
+
+      {recs.length>0 && <>
+        <div className="pf-sub-h">Рекомендуем добавить</div>
+        <div className="pf-rec">
+          {recs.map(s=><button key={s} className="pf-rec-chip" onClick={()=>acceptRec(s)}>+ {topicLabel(s)}</button>)}
+        </div>
+      </>}
+
+      <div className="pf-sub-h">Добавить своё</div>
+      <div className="pf-add"><input value={newTopic} onChange={e=>setNewTopic(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")addCustom();}} placeholder="+ своя тема"/></div>
+
+      {muted.length>0 && <>
+        <div className="pf-muted-h" onClick={()=>setShowMuted(v=>!v)}>{showMuted?"▾":"▸"} Заглушённые · {muted.length}</div>
+        {showMuted && <div className="pf-muted-list">
+          {muted.map(t=><span key={t} className="pf-muted-chip" onClick={()=>unmute(t)} title="Вернуть">{topicLabel(t)}</span>)}
+        </div>}
+      </>}
+    </div>
+
+    {/* Настройки */}
+    <div className="surface pf-card">
+      <div className="eyebrow" style={{marginBottom:6}}>Настройки</div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Часовой пояс</div><div className="pf-row-d">Приветствие и «утро» вашей главной подстраиваются под него</div></div>
+        <div className="pf-row-r">
+          <select className="pf-select" value={tz} onChange={e=>setTz(e.target.value)}>
+            {tzOptions.map(z=><option key={z[0]} value={z[0]}>{z[1]}</option>)}
+          </select>
+          {detectedMatch&&<span className="pf-detected"><span className="d"/>определён автоматически</span>}
+          {detectedTz&&!detectedMatch&&<span className="pf-detected" style={{cursor:"pointer"}} onClick={()=>setTz(detectedTz)}>ваш пояс: {detectedTz} — применить</span>}
+        </div>
+      </div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Страница «Для вас»</div><div className="pf-row-d">Личный разворот в «Обзоре»: направления, новости и зацепки под ваш профиль, каждое утро</div></div>
+        <button className={"pf-toggle"+(personalDigest?" on":"")} onClick={()=>setPersonalDigest(v=>!v)} aria-label="переключить"><span/></button>
+      </div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Личная полоса в «Общем»</div><div className="pf-row-d">Краткая выжимка из «Для вас» над общим брифингом</div></div>
+        <button className={"pf-toggle"+(bandHome?" on":"")} onClick={()=>setBandHome(v=>!v)} aria-label="переключить"><span/></button>
+      </div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Начало «утра»</div><div className="pf-row-d">С какого часа показывать утренний выпуск (0–12)</div></div>
+        <input className="pf-input-sm" type="number" min="0" max="12" value={morningHour} onChange={e=>setMorningHour(e.target.value)}/>
+      </div>
+      <div className="pf-actions">
+        {savedSet&&<span className="pf-saved">Сохранено ✓</span>}
+        <button className="pf-save" onClick={saveSettings}>Сохранить</button>
+      </div>
+    </div>
+  </div>;
+}
+
+// Любая ошибка рендера страницы → заглушка с кнопкой вместо белого экрана,
+// ошибка уходит в журнал «Пульса» (kind=client_error) даже если трекер страницы мёртв.
+class PageBoundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(e){return{err:e};}
+  componentDidCatch(e,info){
+    try{
+      fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({events:[{kind:"client_error",page:(location.hash||"#").slice(1),
+          payload:{msg:String((e&&e.message)||e).slice(0,300),
+                   stack:String((info&&info.componentStack)||"").slice(0,400)}}]})}).catch(()=>{});
+    }catch{}
+  }
+  componentDidUpdate(prev){ if(prev.pageKey!==this.props.pageKey&&this.state.err)this.setState({err:null}); }
+  render(){
+    if(this.state.err) return <div style={{padding:"64px 24px",textAlign:"center"}}>
+      <div style={{fontSize:26,marginBottom:10,color:"var(--warn)"}}>⚠</div>
+      <div style={{fontWeight:500,marginBottom:6}}>Страница не смогла отрисоваться</div>
+      <div className="t-cap" style={{maxWidth:"46ch",margin:"0 auto 16px"}}>
+        Ошибка записана в журнал «Пульса». Чаще всего в вкладке осталась старая версия
+        приложения — обновление решает.</div>
+      <button className="btn btn-accent" onClick={()=>location.reload()}>Обновить приложение</button>
+    </div>;
+    return this.props.children;
+  }
+}
+
+// hash → {p: id страницы, prm: параметры}. Диплинки несут срез в адресе:
+// #market?cat=deposit&view=changes&change=123. #sber — алиас (вкладки
+// объединены в «Позицию», 07.2026).
+function parseHash(){
+  const h=(location.hash||"").slice(1);
+  const qi=h.indexOf("?");
+  let p=qi>=0?h.slice(0,qi):h, prm={};
+  if(qi>=0){try{prm=Object.fromEntries(new URLSearchParams(h.slice(qi+1)).entries());}catch{}}
+  if(p==="sber")p="market";
+  if(p==="quality")p="sources";   // вкладка «Качество» убрана — техчасть на «Источниках»
+  return{p,prm};
+}
 
 function Shell(){
-  const[page,setPage]=useState(()=>location.hash?.slice(1)||"overview");
-  const[loopholeMounted,setLoopholeMounted]=useState(()=>(location.hash?.slice(1)||"overview")==="loophole");
+  const[page,setPage]=useState(()=>{ const h=parseHash().p;
+    if(h) return h;
+    try{ if(localStorage.getItem("al-ov-mode")==="foryou") return "foryou"; }catch{}
+    return "overview"; });
+  const[pageParams,setPageParams]=useState(()=>parseHash().prm);
+  const[loopholeMounted,setLoopholeMounted]=useState(()=>(parseHash().p||"overview")==="loophole");
+  // ИИ-аналитик живёт в фоне: страница не размонтируется при уходе на другие
+  // вкладки — прогон продолжается, по завершении сигналим точкой в rail и тостом.
+  const[aiMounted,setAiMounted]=useState(()=>(parseHash().p||"overview")==="ai");
+  const[aiBusy,setAiBusy]=useState(false);
+  const[aiReady,setAiReady]=useState(false);
+  const aiPrevRun=useRef(false);
+  const pageCurRef=useRef(null);
   const{theme,setTheme}=useTheme();
   const[banks,setBanks]=useState([]);
-  const[qualityCount,setQualityCount]=useState(0);
   const[hasCaptcha,setHasCaptcha]=useState(false);
   const[navOpen,setNavOpen]=useState(false);
+  const[me,setMe]=useState(null);
+  const[onbSeen,setOnbSeen]=useState(false);
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Load banks for context + sidebar badges
   useEffect(()=>{
     apiFetch("/api/banks").then(d=>{setBanks(d||[]);}).catch(()=>{});
-    apiFetch("/api/quality").then(d=>{setQualityCount((d?.flags||[]).length);}).catch(()=>{});
     apiFetch("/api/sources").then(d=>{setHasCaptcha((d?.captcha_pending||[]).length>0);}).catch(()=>{});
   },[]);
 
+  // Профиль пользователя (+ отдаём серверу свой часовой пояс из браузера).
+  // Ретрай: без me не появляются админ-вкладка и персональные тумблеры.
+  const loadMe=(attempt)=>{
+    let tz=""; try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch{}
+    apiFetch("/api/me"+(tz?"?tz="+encodeURIComponent(tz):"")).then(setMe)
+      .catch(()=>{ const a=typeof attempt==="number"?attempt:0;
+        if(a<2)setTimeout(()=>loadMe(a+1),3000); });
+  };
+  useEffect(()=>{loadMe(0);},[]); // eslint-disable-line
+  // после выхода из «Профиля» перечитываем me: тумблеры (полоса на главной и т.п.)
+  // должны действовать сразу, без F5
+  useEffect(()=>{ if(page!=="profile") return; return loadMe; },[page]);
+
+  // ── телеметрия: page_view / page_leave(время) / клиентские ошибки ──────────
+  const trkQ=useRef([]); const trkPage=useRef({page:null,t:Date.now()});
+  const trkFlush=(beacon)=>{ const evs=trkQ.current.splice(0);
+    if(!evs.length)return;
+    const body=JSON.stringify({events:evs});
+    if(beacon&&navigator.sendBeacon){
+      try{navigator.sendBeacon("/api/journal",new Blob([body],{type:"application/json"}));return;}catch{}
+    }
+    fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},body}).catch(()=>{});
+  };
+  const trk=(ev)=>{ trkQ.current.push(ev); if(trkQ.current.length>=8)trkFlush(); };
   useEffect(()=>{
-    const onHash=()=>setPage(location.hash?.slice(1)||"overview");
+    const prev=trkPage.current;
+    if(prev.page&&prev.page!==page)
+      trk({kind:"page_leave",page:prev.page,dur_ms:Math.min(Date.now()-prev.t,1800000)});
+    trkPage.current={page,t:Date.now()};
+    trk({kind:"page_view",page});
+    const t=setTimeout(trkFlush,1500);
+    return ()=>clearTimeout(t);
+  },[page]); // eslint-disable-line
+  useEffect(()=>{
+    const onVis=()=>{ if(document.visibilityState==="hidden"){
+        const p=trkPage.current;
+        if(p.page) trkQ.current.push({kind:"page_leave",page:p.page,dur_ms:Math.min(Date.now()-p.t,1800000)});
+        trkPage.current={...p,t:Date.now()};
+        trkFlush(true);
+      } else { trkPage.current={...trkPage.current,t:Date.now()}; } };
+    const onErr=(e)=>trk({kind:"client_error",page:(location.hash||"#").slice(1),
+      payload:{msg:String((e&&(e.message||e.reason))||"").slice(0,300)}});
+    document.addEventListener("visibilitychange",onVis);
+    window.addEventListener("error",onErr);
+    window.addEventListener("unhandledrejection",onErr);
+    return ()=>{document.removeEventListener("visibilitychange",onVis);
+      window.removeEventListener("error",onErr);
+      window.removeEventListener("unhandledrejection",onErr);};
+  },[]); // eslint-disable-line
+
+  useEffect(()=>{
+    const onHash=()=>{const{p,prm}=parseHash();setPage(p||"overview");setPageParams(prm);};
     window.addEventListener("hashchange",onHash);
     return ()=>window.removeEventListener("hashchange",onHash);
   },[]);
-  useEffect(()=>{history.replaceState(null,"","#"+page);},[page]);
+  // пишем hash только если сменилась СТРАНИЦА — параметры (#market?cat=…)
+  // зеркалит сама страница, затирать их нельзя
+  useEffect(()=>{
+    const cur=(location.hash||"").slice(1).split("?")[0];
+    if((cur==="sber"?"market":cur)!==page)history.replaceState(null,"","#"+page);
+  },[page]);
   useEffect(()=>{if(page==="loophole")setLoopholeMounted(true);},[page]);
+  useEffect(()=>{if(page==="ai"){setAiMounted(true);setAiReady(false);}
+    pageCurRef.current=page;},[page]);
+  // сигналы от AIPage о ходе прогона (running true/false)
+  useEffect(()=>{
+    const h=(e)=>{ const r=!!(e.detail&&e.detail.running);
+      setAiBusy(r);
+      if(aiPrevRun.current&&!r&&pageCurRef.current!=="ai") setAiReady(true);
+      aiPrevRun.current=r; };
+    window.addEventListener("al-ai-state",h);
+    return ()=>window.removeEventListener("al-ai-state",h);
+  },[]);
+  // запоминаем последний режим «Обзора» (Общий/Для вас) — возвращаем туда же
+  useEffect(()=>{ if(page==="overview"||page==="foryou"){try{localStorage.setItem("al-ov-mode",page);}catch{}} },[page]);
 
-  const groups=useMemo(()=>{const g={};NAV.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[]);
+  const navOrder=useMemo(()=>{
+    const items=(me&&me.is_admin)?[...NAV,{id:"pulse"}]:NAV;
+    const g={};items.forEach(n=>{(g[n.group||"Данные"]=g[n.group||"Данные"]||[]).push(n.id);});
+    return Object.values(g).flat();
+  },[me]);
+  const groups=useMemo(()=>{
+    const items=(me&&me.is_admin)?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
+    const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
+  // Страница есть на сервере, но неизвестна ЭТОМУ бандлу (вкладка держит старую
+  // версию SPA — hash-переход её не перезагружает) → одно само-обновление.
+  useEffect(()=>{
+    if(page&&!PAGES_FN[page]){
+      try{
+        if(sessionStorage.getItem("al-reload-for")!==page){
+          sessionStorage.setItem("al-reload-for",page);
+          location.reload();
+        }
+      }catch{}
+    }
+  },[page]);
   const Page=PAGES_FN[page]||OverviewPage;
   const[idx,label]=PAGE_LABELS[page]||["01","Обзор"];
 
-  return <BanksCtx.Provider value={banks}>
+  return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
     <div id="app">
+      <TipLayer/>
+      <style>{FB_CSS}</style>
+      <style>{`.user-chip:hover{background:var(--surface);} .user-chip.active{background:var(--accent-soft);} .user-chip.active .nm{color:var(--accent);}
+        .nav-dot.ai-run{background:var(--accent);animation:pulse 1.5s ease infinite;}
+        .nav-dot.ai-done{background:var(--pos);}
+        .ai-ready{position:fixed;right:22px;bottom:22px;z-index:300;display:flex;align-items:center;gap:9px;cursor:pointer;
+          background:var(--surface);border:1px solid color-mix(in oklab,var(--accent),transparent 70%);border-radius:12px;
+          padding:12px 16px;font-size:13px;font-weight:500;color:var(--ink);box-shadow:var(--shadow-2);
+          animation:fade-in .3s ease-out;transition:transform .15s,border-color .15s;}
+        .ai-ready:hover{transform:translateY(-2px);border-color:var(--accent);}
+        .ai-ready .sp{color:var(--accent);}
+        .ai-ready .x{color:var(--ink-4);font-size:12px;padding:2px 4px;border-radius:5px;}
+        .ai-ready .x:hover{color:var(--ink);background:var(--paper-2);}
+        @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
+        .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
+        .rail-foot{position:relative;}
+        .onb-callout{position:absolute;left:6px;right:6px;bottom:64px;z-index:60;background:var(--surface);
+          border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:fade-in .3s ease-out;}
+        .onb-callout .t{font-size:12.5px;color:var(--ink);line-height:1.5;margin-bottom:11px;text-wrap:pretty;}
+        .onb-callout .t b{color:var(--accent);font-weight:600;}
+        .onb-callout .b{display:flex;gap:8px;}
+        .onb-callout button{font-size:11.5px;padding:6px 12px;border-radius:8px;transition:transform .1s,filter .12s;}
+        .onb-callout button:active{transform:scale(.96);}
+        .onb-callout .go{background:var(--accent);color:#fff;font-weight:500;}
+        .onb-callout .skip{color:var(--ink-3);border:1px solid var(--hair);}
+        .onb-callout::after{content:"";position:absolute;left:26px;bottom:-6px;width:11px;height:11px;background:var(--surface);
+          border-right:1px solid var(--hair);border-bottom:1px solid var(--hair);transform:rotate(45deg);}`}</style>
       <aside className={"rail"+(navOpen?" open":"")}>
         <div className="rail-brand">
           <svg className="rail-mark" viewBox="0 0 100 100" role="img" aria-label="AuditLens">
@@ -3554,29 +6253,45 @@ function Shell(){
           <div key={gr}>
             <div className="rail-section">{gr}</div>
             {items.map(n=>{
-              const active=page===n.id;
-              const allItems=NAV.filter(x=>x.group===gr);
-              const num=allItems.findIndex(x=>x.id===n.id)+1+(gr==="Анализ"?0:5);
+              const active=page===n.id||(n.id==="overview"&&page==="foryou");
+              // сквозная нумерация по всем группам: раньше был сдвиг «+5» под
+              // фиксированный размер группы «Анализ», из-за чего после
+              // удаления/добавления вкладок номера дублировались (два «06»)
+              const num=navOrder.indexOf(n.id)+1;
               const dot=n.id==="sources"&&hasCaptcha;
-              const count=n.id==="quality"&&qualityCount>0?qualityCount:null;
+              const count=null;
+              // ИИ-аналитик: пульсирующая точка = прогон идёт; зелёная = отчёт готов
+              const aiDot=n.id==="ai"&&(aiBusy||aiReady);
               return <button key={n.id} className={`nav-item ${active?"active":""}`} onClick={()=>{setPage(n.id);setNavOpen(false);}}>
                 <span className="rail-num">{String(num).padStart(2,"0")}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
                 {n.label}
                 {dot&&<span className="nav-dot"/>}
+                {aiDot&&<span className={"nav-dot"+(aiBusy?" ai-run":" ai-done")}/>}
+                {n.badge&&<span className="nav-badge">{n.badge}</span>}
                 {count&&<span className="nav-count">{count}</span>}
               </button>;
             })}
           </div>
         ))}
         <div className="rail-foot">
-          <div className="user-chip">
-            <div className="avatar">А</div>
+          {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile";
+            return showOnb ? <div className="onb-callout">
+              <div className="t">✦ <b>Новое:</b> настройте инструмент под себя — опишите, что проверяете, и получайте персональную подачу и сводки.</div>
+              <div className="b">
+                <button className="go" onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}>Настроить</button>
+                <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
+              </div>
+            </div> : null; })()}
+          <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title="Профиль и персонализация"
+                  onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}
+                  style={{width:"100%",textAlign:"left",transition:"background .14s"}}>
+            <div className="avatar">{me?initials(me.name):"А"}</div>
             <div>
-              <div className="nm">Аудитор</div>
+              <div className="nm">{me?.name||"Аудитор"}</div>
               <div className="role">Внутренний аудит</div>
             </div>
-          </div>
+          </button>
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
@@ -3587,16 +6302,19 @@ function Shell(){
             <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
           </div>
           <div className="crumb">
-            <span className="crumb-idx">{idx} / 10</span>
-            <span style={{color:"var(--hair-2)"}}>—</span>
+            {page!=="profile" && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
+            <span style={{color:"var(--hair-2)"}}>—</span></>}
             <b>{label}</b>
           </div>
+          {(page==="overview"||page==="foryou")&&
+            <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
-          <div className="tb-meta desk-only">
+          {/* на overview/foryou центр занят сегмент-пилюлей — мета убрана, чтобы не перекрывались на ~1024px */}
+          {page!=="overview"&&page!=="foryou"&&<div className="tb-meta desk-only">
             <span className="live">данные актуальны</span>
             <span>{new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК</span>
             <span className="kbd">API</span>
-          </div>
+          </div>}
           <button className="icon-btn" aria-label="обновить" title="Обновить страницу" onClick={()=>setPage(p=>p)}>
             <Ic.refresh/>
           </button>
@@ -3608,11 +6326,19 @@ function Shell(){
           {loopholeMounted&&<div style={{display:page==="loophole"?"block":"none",height:"100%"}}>
             <LoopholePage/>
           </div>}
-          {page!=="loophole"&&<Page key={page}/>}
+          {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
+            <PageBoundary pageKey="ai"><AIPage/></PageBoundary>
+          </div>}
+          {page!=="loophole"&&page!=="ai"&&<PageBoundary pageKey={page}><Page key={page} params={pageParams}/></PageBoundary>}
+          {aiReady&&page!=="ai"&&
+            <div className="ai-ready" onClick={()=>{setAiReady(false);setPage("ai");}}>
+              <span className="sp">✦</span> Отчёт готов — открыть
+              <button className="x" onClick={(e)=>{e.stopPropagation();setAiReady(false);}}>✕</button>
+            </div>}
         </div>
       </div>
     </div>
-  </BanksCtx.Provider>;
+  </BanksCtx.Provider></MeCtx.Provider>;
 }
 
 function App(){
