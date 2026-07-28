@@ -70,16 +70,17 @@ def test_table_constants_defined():
 
 
 def test_migration_011_path_constant_defined():
-    assert db_schema.MIGRATION_011_PATH.name == "011_loophole_agent.sql"
+    # Файл миграции переименован 011 → 013, константа сохранена для совместимости.
+    assert db_schema.MIGRATION_011_PATH.name == "013_loophole_agent.sql"
 
 
-def test_apply_migration_executes_both_migrations():
-    """apply_migration должна выполнять обе миграции (010 + 011)."""
+def test_apply_migration_executes_all_migrations():
+    """apply_migration должна выполнять все миграции (012 + 013 + 014 + 015 + 016)."""
     from unittest.mock import MagicMock
 
     session = MagicMock()
     db_schema.apply_migration(session)
-    assert session.execute.call_count == 2
+    assert session.execute.call_count == 5
     texts = [str(call.args[0].text) for call in session.execute.call_args_list]
     assert any("loophole_record" in t for t in texts), "миграция 010 не выполнена"
     assert any("loophole_agent_task" in t for t in texts), "миграция 011 не выполнена"

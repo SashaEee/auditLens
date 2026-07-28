@@ -48,10 +48,16 @@ async def lifespan(app: FastAPI):
     #  • alerts_background_loop — раз в 30 мин quality_flag → email
     #  • digest_background_loop — выпуск «Обзора» в 07:00 МСК (+catch-up)
     #  • ingest_background_loop — автосбор тарифов в 05:00 МСК (+quality)
+    #  • parser_scheduler_loop — cron-запуск парсеров + self-healing (PARSER_SCHEDULER_ENABLED)
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
     from ..digest.scheduler import (digest_background_loop, ingest_background_loop,
                                     keyrate_background_loop)
     from ..rag import ingest_queue
+    from ..loophole.parsers.scheduler import (
+        ENABLED as PARSER_SCHED_ENABLED,
+        parser_scheduler_loop,
+    )
+    from ..loophole import repository as loophole_repo
     tasks = [
         asyncio.create_task(alerts_background_loop()),
         asyncio.create_task(digest_background_loop()),
@@ -60,12 +66,25 @@ async def lifespan(app: FastAPI):
         # ставку в свой срок — без сторожа новое значение ждало бы утра
         asyncio.create_task(keyrate_background_loop()),
     ]
+    # Планировщик парсеров «Лазеек»: по cron запускает сгенерированный код.
+    # В самом модуле флаг PARSER_SCHEDULER_ENABLED по умолчанию ВКЛЮЧЁН —
+    # на первую выкатку он гасится переменной окружения на проде, включаем
+    # осознанно после проверки, что генерация и запуск ведут себя предсказуемо.
+    if PARSER_SCHED_ENABLED:
+        tasks.append(asyncio.create_task(parser_scheduler_loop()))
     # Воркеры индексации базы знаний. Раньше на каждую прочитанную агентом
     # страницу поднимался свой daemon-поток: при остановке контейнера их
     # убивало на полуслове, документ оставался без фрагментов — и навсегда,
     # потому что повторная загрузка отсекалась как дубль.
     ingest_queue.start()
     try:
+        # Reaper: зависшие 'running' запуски после рестарта → 'error'.
+        # Best-effort: недоступная БД/неприменённые миграции не должны
+        # ронять старт приложения.
+        try:
+            await asyncio.to_thread(loophole_repo.reap_stale_runs)
+        except Exception:
+            log.warning("[lifespan] reap_stale_runs failed", exc_info=True)
         yield
     finally:
         for t in tasks:
@@ -2239,16 +2258,19 @@ LOOPHOLE_STATIC_DIR = Path(__file__).resolve().parent.parent / "loophole" / "sta
 
 
 def _loophole_html_with_bust() -> str:
-    """Cache-bust для loophole.jsx — иначе Babel/браузер держат старый чат-UI."""
+    """Cache-bust для loophole.jsx и loophole.css — иначе Babel/браузер держат
+    старый чат-UI, а браузер — старые стили (StaticFiles не шлёт Cache-Control,
+    css кэшируется эвристически и не ревалидируется)."""
     html_path = LOOPHOLE_STATIC_DIR / "loophole.html"
     html = html_path.read_text(encoding="utf-8")
-    jsx_path = LOOPHOLE_STATIC_DIR / "loophole.jsx"
-    if jsx_path.exists():
-        v = int(jsx_path.stat().st_mtime)
-        html = html.replace(
-            'src="/static/loophole/loophole.jsx"',
-            f'src="/static/loophole/loophole.jsx?v={v}"',
-        )
+    for name, attr in (("loophole.jsx", "src"), ("loophole.css", "href")):
+        asset = LOOPHOLE_STATIC_DIR / name
+        if asset.exists():
+            v = int(asset.stat().st_mtime)
+            html = html.replace(
+                f'{attr}="/static/loophole/{name}"',
+                f'{attr}="/static/loophole/{name}?v={v}"',
+            )
     return html
 
 

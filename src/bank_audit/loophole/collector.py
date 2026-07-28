@@ -20,6 +20,7 @@ from ..hashing import sha256_text
 from ..rag.trust import compute_trust, KNOWN_BANK_DOMAINS
 from . import repository as repo
 from . import keywords as kw_mod
+from . import content_fetch
 from .adapters import search_decorator, fetch_decorator
 from .classify import classify_record
 from .config import LoopholeSettings
@@ -75,10 +76,31 @@ async def collect_once(
             sha = sha256_text(url + "|" + (r.get("snippet") or ""))
             if repo.exists_sha256(sha, session=session):
                 continue
-            # Fetch + parse.
+            # Fetch + parse. Полный текст страницы (не excerpt) — с лимитом
+            # из конфига и честным статусом контента.
             page = fetch_decorator.fetch_and_parse(url, _fetch_impl=fetch_impl)
-            raw_text = page.excerpt if page else (r.get("snippet") or "")
-            title = page.title if page else r.get("title")
+            if page is not None:
+                content = content_fetch.limit_content(
+                    page.text, max_chars=settings.raw_text_max_chars
+                )
+                if content.text is None:
+                    # пустая страница — фиксируем empty, текст со сниппета
+                    content = content_fetch.FullContent(
+                        text=r.get("snippet") or "",
+                        status=content_fetch.STATUS_EMPTY,
+                        length=len(r.get("snippet") or ""),
+                        truncated=False,
+                    )
+                title = page.title
+            else:
+                content = content_fetch.FullContent(
+                    text=r.get("snippet") or "",
+                    status=content_fetch.STATUS_FAILED,
+                    length=len(r.get("snippet") or ""),
+                    truncated=False,
+                )
+                title = r.get("title")
+            raw_text = content.text
             bank_slugs = detect_bank_slugs((r.get("title") or "") + " " + (r.get("snippet") or ""))
             rec = LoopholeRecord(
                 sha256=sha,
@@ -90,6 +112,9 @@ async def collect_once(
                 bank_slug=bank_slugs[0] if bank_slugs else None,
                 keyword=keyword,
                 raw_text=raw_text,
+                content_status=content.status,
+                raw_text_len=content.length,
+                raw_text_truncated=content.truncated,
             )
             rid = repo.insert_record(rec, session=session)
             if rid is None:
