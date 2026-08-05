@@ -313,7 +313,9 @@ _PRODUCT_KEYWORDS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"накопит\w* счёт|накопительн", re.I), "savings"),
     (re.compile(r"эквайринг", re.I), "acquiring"),
     (re.compile(r"премиальн|private|прайм", re.I), "premium"),
-    (re.compile(r"перевод|сбп\b|комисси", re.I), "transfers"),
+    # именные формы: голое «перевод» матчило «переводить экономику на военные
+    # рельсы» — глагольный мусор получал вес продукта (замер 05.08.2026)
+    (re.compile(r"перевод(?:[аеуы]|ов|ам|ами|ах|ом)?\b|сбп\b|\bкомисси", re.I), "transfers"),
 ]
 
 
@@ -323,6 +325,36 @@ def parse_query_signals(question: str) -> dict:
     banks = list(detect_bank_slugs(question or ""))
     products = [slug for rx, slug in _PRODUCT_KEYWORDS if rx.search(question or "")]
     return {"banks": banks, "products": products}
+
+
+# Измерения аудита (dimension новостных источников: compliance/ops/fraud/market
+# + conduct на вырост). Выводятся из свободного текста профиля детерминированно —
+# ровно так же объяснимо, как продуктовые ключи выше. До 05.08.2026 поле
+# dimension размечалось на источниках и протаскивалось через весь пайплайн,
+# но не читалось нигде — фрод-аудитор без слова «карта/вклад» в новости получал
+# пустую сетку «Для вас» (замер: 0 из 40 позиций).
+_DIMENSION_KEYWORDS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"мошенн|фрод|фишинг|соц.?инженер|дроп\w|хищени|антифрод", re.I), "fraud"),
+    (re.compile(r"комплаенс|под[\s/]?фт|115-?фз|отмыв|санкци|регулятор|надзор|лиценз", re.I), "compliance"),
+    (re.compile(r"сбо[йяе]|инцидент|доступност|непрерывност|процессинг|операционн", re.I), "ops"),
+    (re.compile(r"тариф|ставк|конкурент|рын[ок]|ценообраз|продуктов", re.I), "market"),
+    (re.compile(r"мисселинг|навязыван|продаж|жалоб|обслуживан|клиентск", re.I), "conduct"),
+]
+
+
+def dimension_weights(text: str) -> dict[str, float]:
+    """Веса измерений аудита из текста профиля (0 LLM, нормированы к max=1)."""
+    if not (text or "").strip():
+        return {}
+    hits: dict[str, int] = {}
+    for rx, dim in _DIMENSION_KEYWORDS:
+        n = len(rx.findall(text))
+        if n:
+            hits[dim] = hits.get(dim, 0) + n
+    if not hits:
+        return {}
+    mx = max(hits.values())
+    return {d: round(n / mx, 2) for d, n in hits.items()}
 
 
 _DECAY = 0.95  # затухание старого веса на каждый новый запрос

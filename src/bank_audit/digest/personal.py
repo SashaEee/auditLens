@@ -64,6 +64,7 @@ def _candidates(sections: dict) -> list[dict]:
     """Пункты-кандидаты из секций ядра, тегированные банками/продуктами."""
     out: list[dict] = []
     news = (sections.get("news") or {}).get("payload") or {}
+    _grp_dim = {"regulatory": "compliance", "incidents": "ops", "market": "market"}
     for g in (news.get("groups") or []):
         for it in (g.get("items") or []):
             txt = " ".join(str(it.get(k) or "") for k in ("title", "summary", "why"))
@@ -72,6 +73,8 @@ def _candidates(sections: dict) -> list[dict]:
                 "summary": it.get("summary") or it.get("why") or "",
                 "url": it.get("url"), "severity": it.get("severity") or "amber",
                 "group": g.get("title"), "topics": _tag(txt),
+                "dim": _grp_dim.get(str(g.get("key") or "")),
+                "echo": int(it.get("echo") or 1),
             })
     tm = (sections.get("tariff_moves") or {}).get("payload") or {}
     for m in (tm.get("top_changes") or [])[:12]:
@@ -85,7 +88,7 @@ def _candidates(sections: dict) -> list[dict]:
             "kind": "tariff",
             "title": f'{m.get("bank")}: {m.get("title") or m.get("category") or "изменение тарифа"}',
             "summary": f'ставка {m.get("from")}→{m.get("to")}{dstr}',
-            "severity": "amber", "topics": topics,
+            "severity": "amber", "topics": topics, "dim": "market",
         })
     rp = (sections.get("reviews_pulse") or {}).get("payload") or {}
     for th in (rp.get("themes_up") or [])[:8]:
@@ -98,7 +101,7 @@ def _candidates(sections: dict) -> list[dict]:
         out.append({
             "kind": "review", "title": f'Жалобы: {lbl}',
             "summary": f'рост темы жалоб{mstr} по Сберу',
-            "severity": "red", "topics": topics,
+            "severity": "red", "topics": topics, "dim": "conduct",
         })
     return out
 
@@ -118,6 +121,66 @@ def _score(cand: dict, weights: dict, custom: list[str]) -> tuple[float, list[st
     return s, labels, slugs
 
 
+# ── семантический слой ранка (этап 4, 05.08.2026) ─────────────────────────────
+# Замер на живом пуле: чистый keyword-ранк АНТИ-отбирает — фрод-аудитор получал
+# 0 из 40 позиций (пустая сетка), аудитор вкладов — ровно 2, и обе мусор со
+# словом-совпадением («Депозиты банков в Банке России»), а все релевантные
+# новости без продуктовых слов были невидимы. Семантика: косинус вектора
+# профиля (QUERY-префикс bge-m3, та же схема, что в поиске отзывов) × вектора
+# новости + оживлённое поле dimension (fraud/ops/compliance/market) + echo.
+_SEM_W = float(os.getenv("FORYOU_SEM_W", "10"))
+_SEM_FLOOR = float(os.getenv("FORYOU_SEM_FLOOR", "0.38"))
+_DIM_W = float(os.getenv("FORYOU_DIM_W", "1.5"))
+_MIN_TILE_S = float(os.getenv("FORYOU_MIN_SCORE", "0.8"))
+
+# tag новостного пула → измерение аудита (у элементов групп dimension нет)
+_TAG_DIM = {"regulator": "compliance", "incident": "ops", "scheme": "fraud",
+            "market": "market"}
+
+
+def _profile_vec(prof: dict) -> list[float] | None:
+    """Вектор интересов аудитора: self_desc + свои темы + топ продуктов фокуса."""
+    bits = [prof.get("self_desc") or ""]
+    bits += list(prof.get("custom") or [])
+    bits += [_label(t) for t, _w in sorted((prof.get("weights") or {}).items(),
+                                           key=lambda x: -x[1])[:6] if t != "sberbank"]
+    text_ = ". ".join(x for x in bits if x).strip()
+    if len(text_) < 8:
+        return None
+    try:
+        from ..rag import embedder
+        from ..rag.bankiru_reviews import QUERY_PREFIX
+        return embedder.embed_one(
+            QUERY_PREFIX + f"Зона интересов аудитора розничного банка: {text_}")
+    except Exception:  # noqa: BLE001 — семантика best-effort, ранк не падает
+        log.warning("[personal] profile embedding failed", exc_info=True)
+        return None
+
+
+def _item_vecs(texts: list[str]) -> list[list[float]] | None:
+    try:
+        from ..rag import embedder
+        return embedder.embed_batch(texts)
+    except Exception:  # noqa: BLE001
+        log.warning("[personal] item embeddings failed", exc_info=True)
+        return None
+
+
+def _sem_dim_boost(s: float, sem: float | None, dim: str | None,
+                   dims: dict, echo: int) -> tuple[float, bool]:
+    """Общие добавки поверх keyword-очков; True — доминирует семантика профиля."""
+    sem_add = _SEM_W * max(0.0, (sem or 0.0) - _SEM_FLOOR)
+    s += sem_add
+    # буст измерения ТОЛЬКО поверх базового сигнала (ключевые слова / Сбер /
+    # семантика): у общих лент tag=market, и голое совпадение измерения
+    # поднимало пилотов пропавшего самолёта в сетку аудитора вкладов
+    if dim and dims.get(dim) and s > 0:
+        s += _DIM_W * float(dims[dim])
+    if echo > 1:                       # событие продублировали несколько СМИ
+        s += 0.25 * min(echo - 1, 3)
+    return s, sem_add >= max(1.0, s / 2)
+
+
 _COMPETITORS = {"vtb", "alfabank", "tinkoff", "gazprombank", "rshb", "domrf",
                 "psb", "sovcombank", "mtsbank", "raiffeisen", "otkritie"}
 _PRODUCTS = {"ipoteka", "deposit", "credit_card", "debit_card", "consumer_loan",
@@ -125,17 +188,21 @@ _PRODUCTS = {"ipoteka", "deposit", "credit_card", "debit_card", "consumer_loan",
 
 
 def _for_you(cands: list[dict], weights: dict, custom: list[str], k: int = 3,
-             reacts: dict | None = None) -> list[dict]:
-    """Ре-ранк под Сбер-аудитора: Сбер — якорь, конкуренты — только рыночный бенчмарк."""
+             reacts: dict | None = None, pvec: list[float] | None = None,
+             dims: dict | None = None) -> list[dict]:
+    """Ре-ранк под Сбер-аудитора: Сбер — якорь, конкуренты — только рыночный
+    бенчмарк; поверх keyword-очков — семантика профиля и измерение аудита."""
     disliked = (reacts or {}).get("disliked_keys") or set()
+    dims = dims or {}
+    vecs = (_item_vecs([f'{c.get("title") or ""} {c.get("summary") or ""}'
+                        for c in cands])
+            if (pvec and cands) else None)
     scored = []
-    for c in cands:
+    for n, c in enumerate(cands):
         key = c.get("url") or (c.get("title") or "")[:60]
         if key and key in disliked:
             continue                        # дизлайкнутое не возвращается
         s, labels, slugs = _score(c, weights, custom)
-        if s <= 0:
-            continue
         topics = c.get("topics", set()) or set()
         is_sber = "sberbank" in topics
         comp_only = bool(topics & _COMPETITORS) and not is_sber
@@ -143,6 +210,19 @@ def _for_you(cands: list[dict], weights: dict, custom: list[str], k: int = 3,
             s += 1.5                       # якорь: Сбер важнее
         if comp_only:
             s *= 0.3                        # чисто конкурент — только как рыночный контекст
+        sem = None
+        if vecs is not None:
+            try:
+                from ..rag.embedder import cosine_similarity
+                sem = cosine_similarity(pvec, vecs[n])
+            except Exception:  # noqa: BLE001
+                sem = None
+        s, sem_dom = _sem_dim_boost(s, sem, c.get("dim"), dims,
+                                    int(c.get("echo") or 1))
+        if s < _MIN_TILE_S:
+            continue
+        if sem_dom:
+            labels = labels + ["ваша зона"]
         scored.append((s, labels, slugs, is_sber, c))
     scored.sort(key=lambda x: -x[0])
     seen, out = set(), []
@@ -256,11 +336,15 @@ def _focus_cards(slugs: list[str]) -> list[dict]:
 
 
 def _news_tiles(sections: dict, weights: dict, custom: list[str],
-                reacts: dict | None = None, k: int = 8) -> list[dict]:
+                reacts: dict | None = None, k: int = 8,
+                pvec: list[float] | None = None,
+                dims: dict | None = None) -> list[dict]:
     """Персональная новостная сетка: ре-ранк полного пула дня под профиль (0 LLM).
-    Обогащение (summary/severity) подмешиваем из LLM-групп ядра по url.
+    Ранг = keyword-веса + семантика (профиль × новость) + измерение аудита +
+    echo; обогащение (summary/severity) подмешиваем из LLM-групп ядра по url.
     reacts (👍/👎): аффинити к источникам ± и вечное скрытие дизлайкнутого."""
     reacts = reacts or {}
+    dims = dims or {}
     disliked = reacts.get("disliked_keys") or set()
     src_aff = reacts.get("sources") or {}
     news = (sections.get("news") or {}).get("payload") or {}
@@ -275,7 +359,8 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
     if not pool:                        # payload до v-pool — падаем на элементы групп
         pool = [dict(it) for g in (news.get("groups") or [])
                 for it in (g.get("items") or [])]
-    seen, scored = set(), []
+    # проход 1: кандидаты и их тексты (векторизуем одним батчем)
+    seen, cands = set(), []
     for it in pool:
         url, title = it.get("url") or "", it.get("title") or ""
         key = url or title[:60]
@@ -286,6 +371,15 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
             continue                        # дизлайкнутое не возвращается никогда
         e = enrich.get(url) or {}
         txt = " ".join([title, str(it.get("snippet") or ""), str(e.get("summary") or "")])
+        cands.append((it, e, txt))
+    vecs = _item_vecs([c[2] for c in cands]) if (pvec and cands) else None
+
+    scored = []
+    for n, (it, e, txt) in enumerate(cands):
+        url, title = it.get("url") or "", it.get("title") or ""
+        tri = it.get("tri")
+        if tri is not None and int(tri) <= 3:
+            continue        # триаж забраковал для любого аудитора — не поднимаем
         topics = _tag(txt)
         s, _labels, slugs = _score({"topics": topics, "title": title,
                                     "summary": it.get("snippet")}, weights, custom)
@@ -300,17 +394,30 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
         elif e:
             s += 0.25                   # прошла отбор редакции
         s += float(src_aff.get(it.get("source") or "", 0.0))   # 👍/👎 по источнику
-        if s <= 0:
+        sem = None
+        if vecs is not None:
+            try:
+                from ..rag.embedder import cosine_similarity
+                sem = cosine_similarity(pvec, vecs[n])
+            except Exception:  # noqa: BLE001
+                sem = None
+        s, sem_dom = _sem_dim_boost(
+            s, sem, it.get("dimension") or _TAG_DIM.get(it.get("tag") or ""),
+            dims, int(it.get("echo") or 1))
+        if s < _MIN_TILE_S:
             continue
         prod_labels = list(dict.fromkeys(
             _label(sl) for sl in slugs if sl in _PRODUCTS))[:2]
+        reason_parts = (["Сбер"] if is_sber else ["рынок"]) + prod_labels
+        if sem_dom:                     # тянет не ключевое слово, а зона профиля
+            reason_parts.append("ваша зона")
         scored.append((s, {
             "title": title, "url": url or None, "domain": it.get("domain"),
             "source": it.get("source"), "ts": it.get("ts"),
             "image": it.get("image") or e.get("image"),
             "summary": (e.get("summary") or it.get("snippet") or "")[:220],
             "severity": e.get("severity"), "group": e.get("group"),
-            "reason": " · ".join((["Сбер"] if is_sber else ["рынок"]) + prod_labels),
+            "reason": " · ".join(reason_parts),
             "reason_slugs": [sl for sl in slugs if sl in _PRODUCTS][:3],
         }))
     scored.sort(key=lambda x: -x[0])
@@ -468,14 +575,20 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
         log.warning("[personal] reaction profile failed", exc_info=True)
         reacts = {}
 
+    # семантический слой: вектор профиля + веса измерений аудита (оба best-effort)
+    pvec = _profile_vec(prof)
+    dims = userdata.dimension_weights(
+        (prof.get("self_desc") or "") + " " + " ".join(prof.get("custom") or []))
     cands = _candidates(sections)
-    fy = _for_you(cands, prof["weights"], prof["custom"], reacts=reacts)
+    fy = _for_you(cands, prof["weights"], prof["custom"], reacts=reacts,
+                  pvec=pvec, dims=dims)
     focus, default_focus = _focus_slugs(prof["weights"])
     top_topics = [_label(t) for t, _ in
                   sorted(prof["weights"].items(), key=lambda x: -x[1])[:5]]
     name = _first_name(user.get("display_name") or username)
 
-    tiles = _news_tiles(sections, prof["weights"], prof["custom"], reacts=reacts)
+    tiles = _news_tiles(sections, prof["weights"], prof["custom"], reacts=reacts,
+                        pvec=pvec, dims=dims)
     tariffs = _tariff_block(sections, focus)
     rp = (sections.get("reviews_pulse") or {}).get("payload") or {}
     signals = [{k: s.get(k) for k in

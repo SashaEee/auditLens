@@ -331,8 +331,10 @@ def _news_pool(items: list[dict]) -> list[dict]:
              "source": it.get("source"), "ts": it.get("ts"), "tag": it.get("tag"),
              "dimension": it.get("dimension"), "image": it.get("image"),
              # echo — сколько источников продублировали событие (смысловой дедуп);
-             # сигнал значимости для персонального ре-ранка и будущего триажа
+             # tri/event — вердикт триажа (этап 2): персональный ре-ранк отсекает
+             # забракованное и знает тип события
              "echo": int(it.get("echo") or 1),
+             "tri": it.get("tri"), "event": it.get("event"),
              "snippet": (it.get("snippet") or "")[:200]} for it in items]
 
 
@@ -455,6 +457,13 @@ async def news(day: date) -> dict:
             keep += [n for n, ok in zip(border, votes) if ok is True]
         keep.sort(key=lambda n: -verdicts[n]["score"])
         keep = keep[:_MAX_PICKS]
+        # триаж-оценка уезжает в пул: персональный ре-ранк «Для вас» не должен
+        # поднимать то, что триаж забраковал для ЛЮБОГО аудитора (общие ленты
+        # с сильной семантикой профиля всплывали в личной сетке)
+        for n, v in verdicts.items():
+            items[n - 1]["tri"] = v.get("score")
+            if v.get("type"):
+                items[n - 1]["event"] = v["type"]
         if not keep:    # честно тихий день — без добора мусором
             return {"groups": [], "sources": statuses, "raw_count": len(items),
                     "pool": _news_pool(items), "quiet": True,
