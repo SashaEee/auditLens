@@ -157,22 +157,335 @@ def _news_products(txt: str) -> list[str]:
     return [slug for rx, slug in _PRODUCT_KEYWORDS if rx.search(txt or "")][:2]
 
 
+# ── этап 2: триаж → жюри → фетч → редакция ────────────────────────────────────
+# Одновызовный отбор пропускал в выпуск пиар и рутину (замер 05.08.2026: 50
+# процентов мусора), а «why» писались по 160 символам сниппета — вода. Конвейер:
+#   1) триаж: вердикт ПО КАЖДОЙ позиции (score/тип события/причина отказа),
+#      с явными анти-примерами из реального мусора прошлых выпусков;
+#   2) жюри для пограничных (score 4-5): два скептика, задача — ОПРОВЕРГНУТЬ;
+#   3) полный текст статей финалистов (HTTP, без Playwright — дайджест не место
+#      для браузера) — рубричные заголовки ЦБ без контента бессмысленны;
+#   4) редакция: summary/why из фактического текста, без плана-на-12.
+# Любая ступень падает → _news_legacy (старый одновызовный путь), не пустой экран.
+
+_TRIAGE_MIN = int(os.getenv("DIGEST_NEWS_TRIAGE_MIN", "6"))      # порог «в выпуск»
+_JURY_LOW = 4                                                    # низ пограничной зоны
+_MAX_PICKS = int(os.getenv("DIGEST_NEWS_MAX_PICKS", "14"))       # потолок финалистов
+_FETCH_N = int(os.getenv("DIGEST_NEWS_FETCH_N", "12"))           # статей за прогон
+_FETCH_TIMEOUT_S = float(os.getenv("DIGEST_NEWS_FETCH_TIMEOUT_S", "8"))
+_BODY_CHARS = int(os.getenv("DIGEST_NEWS_BODY_CHARS", "2000"))
+
+_EVENT_TYPES = (
+    "rate_decision",      # решение по ключевой ставке
+    "reg_enforcement",    # санкция/предписание/штраф/отзыв лицензии
+    "reg_rulemaking",     # закон/норматив/проект, затрагивающий розничные операции
+    "reg_guidance",       # разъяснения/обзоры/статистика регулятора по рознице
+    "bank_incident",      # сбой/авария в банке
+    "data_leak",          # утечка данных
+    "fraud_scheme",       # схема мошенничества против клиентов банков
+    "fraud_stats",        # статистика/отчёты по мошенничеству
+    "competitor_product", # продукт/тариф/акция банка-конкурента
+    "market_trend",       # динамика рынка розничных продуктов (ставки, просрочка)
+    "legal_precedent",    # суд/практика по банковской рознице
+    "infosec",            # кибербезопасность банковских каналов
+    "sber_news",          # событие самого Сбера
+    "payments_infra",     # платёжная инфраструктура: СБП, карты, банкоматы, НСПК
+    "other_relevant",
+)
+
+# Анти-примеры — РЕАЛЬНЫЙ мусор из выпусков/пулов (аудит 05.08.2026 + жалоба
+# владельца на «задержали в Дубае бизнесмена»). Позитивной рубрики LLM-фильтру
+# мало: без негативных примеров пограничное стабильно просачивается.
+_TRIAGE_SYSTEM = (
+    "Ты — фильтр новостной ленты для аудитора РОЗНИЦЫ Сбербанка. По КАЖДОЙ позиции "
+    "дай вердикт: score 0-10 (насколько это нужно именно аудитору розницы Сбера), "
+    "тип события и, для отвергнутых, короткую причину.\n"
+    "РЕЛЕВАНТНО (6-10): санкции/предписания ЦБ банкам; законы и нормативы по "
+    "розничным банковским операциям; ключевая ставка; сбои/утечки/хищения В БАНКАХ; "
+    "схемы мошенничества против банковских клиентов; продуктовые/тарифные действия "
+    "банков-конкурентов; судебная практика по рознице; платёжная инфраструктура "
+    "(СБП, карты, банкоматы); события самого Сбера.\n"
+    "НЕ РЕЛЕВАНТНО (0-3), реальные примеры пропущенного ранее мусора:\n"
+    "• «задержан бизнесмен в Дубае за взятки» — уголовка вне банковского сектора;\n"
+    "• «Адмирал расторг контракт с экс-игроком НХЛ» — спорт;\n"
+    "• «ПСБ и МЧС окажут поддержку пострадавшим» — пиар банка без продуктовой сути;\n"
+    "• «Ставка RUONIA», «Депозиты банков в Банке России» — ежедневная рутина ЦБ;\n"
+    "• «мошенничество с пособиями в Польше» — зарубежный сюжет без связи с рынком РФ;\n"
+    "• выборы, назначения в министерствах, геополитика, ЧС, шоубиз;\n"
+    "• «3 ошибки при выборе депозита» — потребительские советы;\n"
+    "• «средняя цена авто», «рост зарплат по отраслям» — общая статистика.\n"
+    "ПОГРАНИЧНО (4-5): финансовый сектор без конкретики или связи с розницей.\n"
+    "УСТАРЕВШЕЕ = score 0: если в заголовке/сниппете/URL видна дата старше двух "
+    "суток от сегодняшней — это не новость (реальный прокол: пресс-релиз 2011 "
+    "года о сбое процессинга ушёл в заголовок выпуска). reject: «устаревшее».\n"
+    "Сомнительный домен-агрегатор без первоисточника — снижай score на 2. "
+    "Пустой рубричный заголовок (одно название рубрики без сути) сам по себе "
+    "score не поднимает — оценивай вероятную ценность содержимого.\n"
+    f"type — один из: {', '.join(_EVENT_TYPES)}; для score<=3 ставь null.\n"
+    'Верни СТРОГО JSON без markdown: {"verdicts":[{"n":1,"score":7,'
+    '"type":"reg_enforcement","reject":null}]} — по ВСЕМ позициям, reject — '
+    "до 8 слов только для score<=3."
+)
+
+
+async def _news_triage(items: list[dict]) -> dict[int, dict]:
+    """Один вызов: вердикты по всем позициям пула. Бросает исключение при сбое —
+    news() уходит на _news_legacy."""
+    listing = "\n".join(
+        f'#{i + 1} [{it.get("tag")}] {it["title"]} — {(it.get("snippet") or "")[:180]} '
+        f'({it.get("domain")}{", повторили " + str(it["echo"]) + " ист." if it.get("echo", 1) > 1 else ""})'
+        for i, it in enumerate(items))
+    raw, ti, to = await _chat(insight_model(), today_anchor() + "\n\n" + _TRIAGE_SYSTEM,
+                              f"Лента ({len(items)} позиций):\n{listing}",
+                              max_tokens=4000, temperature=0.0)
+    try:
+        parsed = _loose_json_loads(raw)
+    except ValueError:
+        raw, ti2, to2 = await _chat(insight_model(),
+                                    today_anchor() + "\n\n" + _TRIAGE_SYSTEM,
+                                    f"Лента ({len(items)} позиций):\n{listing}",
+                                    max_tokens=4000, temperature=0.0)
+        ti, to = ti + ti2, to + to2
+        parsed = _loose_json_loads(raw)
+    out: dict[int, dict] = {}
+    for v in (parsed.get("verdicts") or []):
+        try:
+            n = int(v.get("n"))
+            score = max(0, min(10, int(v.get("score"))))
+        except (TypeError, ValueError):
+            continue
+        if not (1 <= n <= len(items)):
+            continue
+        typ = v.get("type")
+        out[n] = {"score": score,
+                  "type": typ if typ in _EVENT_TYPES else None,
+                  "reject": (str(v.get("reject") or "")[:80] or None)}
+    if len(out) < len(items) * 0.7:      # модель размечает не всё → не доверяем
+        raise ValueError(f"триаж покрыл {len(out)} из {len(items)} позиций")
+    out["_tokens"] = {"in": ti, "out": to}  # type: ignore[assignment]
+    return out
+
+
+_JURY_SYSTEM = (
+    "Ты — скептик редакции брифинга аудитора розницы Сбербанка. Тебе дают ОДНУ "
+    "пограничную новость. Твоя задача — ОПРОВЕРГНУТЬ её релевантность: найди, "
+    "почему она аудитору розницы Сбера НЕ нужна (не банковская розница; пиар; "
+    "рутина; нет конкретики; зарубежное без связи с РФ). Если опровергнуть "
+    "честно не получается — так и скажи.\n"
+    'Верни СТРОГО JSON: {"verdict":"drop"|"keep","reason":"до 12 слов"}'
+)
+
+
+async def _news_jury(item: dict) -> bool:
+    """Два скептика по пограничной позиции; выживает при хотя бы одном keep
+    (вместе с «за» триажа это 2 из 3). Сбой голосов → drop: порог честнее."""
+    body = (f'{item["title"]} — {(item.get("snippet") or "")[:300]} '
+            f'({item.get("domain")})')
+
+    async def _vote() -> bool:
+        raw, _ti, _to = await _chat(insight_model(),
+                                    today_anchor() + "\n\n" + _JURY_SYSTEM,
+                                    body, max_tokens=120, temperature=0.3)
+        return str(_loose_json_loads(raw).get("verdict")).strip() == "keep"
+
+    votes = await asyncio.gather(_vote(), _vote(), return_exceptions=True)
+    return any(v is True for v in votes)
+
+
+def _news_bodies(urls: list[str]) -> dict[str, str]:
+    """Полные тексты статей финалистов: HTTP-only (без Playwright — дайджест не
+    место для браузера), параллельно, каждая ошибка = просто нет текста.
+    Рубричные страницы ЦБ («Решения Банка России…») без этого — пустые калории:
+    заголовок у них каждый день один и тот же, суть только в содержимом."""
+    import concurrent.futures as cf
+    import httpx
+    from ..rag.fetcher import CA_BUNDLE_PATH, DEFAULT_HEADERS
+    from ..rag.parsers.html_parser import parse_html
+
+    def _one(url: str) -> tuple[str, str]:
+        try:
+            with httpx.Client(http2=False, headers=DEFAULT_HEADERS,
+                              follow_redirects=True,
+                              verify=CA_BUNDLE_PATH or True,
+                              timeout=_FETCH_TIMEOUT_S) as c:
+                r = c.get(url)
+            if r.status_code != 200 or not r.content:
+                return url, ""
+            doc = parse_html(r.content, url)
+            txt = " ".join((doc.text or "").split())
+            return url, txt[:_BODY_CHARS]
+        except Exception:  # noqa: BLE001
+            return url, ""
+
+    urls = [u for u in urls if u and not u.startswith("https://t.me/")][:_FETCH_N]
+    if not urls:
+        return {}
+    with cf.ThreadPoolExecutor(max_workers=6) as ex:
+        return {u: t for u, t in ex.map(_one, urls) if t}
+
+
 def _news_pool(items: list[dict]) -> list[dict]:
     """Полный сырой пул дня — сырьё для персонального ре-ранка («Для вас»).
     LLM-группы дают ≤12 позиций на всех; персональная сетка ранжирует из всего пула."""
     return [{"title": it.get("title"), "url": it.get("url"), "domain": it.get("domain"),
              "source": it.get("source"), "ts": it.get("ts"), "tag": it.get("tag"),
              "dimension": it.get("dimension"), "image": it.get("image"),
+             # echo — сколько источников продублировали событие (смысловой дедуп);
+             # сигнал значимости для персонального ре-ранка и будущего триажа
+             "echo": int(it.get("echo") or 1),
              "snippet": (it.get("snippet") or "")[:200]} for it in items]
 
 
+_EDIT_SYSTEM = (
+    "Ты — редактор блока «Новости для аудитора» утреннего брифинга службы "
+    "внутреннего аудита Сбербанка (розница). Тебе передают УЖЕ ОТОБРАННЫЕ "
+    "фильтром позиции, у большинства есть полный текст статьи. Твоя работа:\n"
+    "• сгруппировать по рубрикам;\n"
+    "• каждой позиции написать: headline — до 90 знаков (если исходный заголовок "
+    "— пустое название рубрики вроде «Решения Банка России в отношении участников "
+    "финансового рынка», НАПИШИ заголовок заново по сути содержимого текста); "
+    "summary — 1 предложение сути ИЗ ТЕКСТА; why — какой процесс или продукт "
+    "розницы Сбера затронут и ЧТО КОНКРЕТНО проверить аудитору (без пустых "
+    "«требует мониторинга/наблюдать»); severity.\n"
+    "Включи ВСЕ переданные позиции, кроме смысловых дублей друг друга И кроме "
+    "устаревших: если дата события в тексте старше двух суток от сегодняшней — "
+    "позицию НЕ включай (прокол: мартовская статистика сбоя подавалась как "
+    "сегодняшняя). Факты бери ТОЛЬКО из переданного текста, не выдумывай."
+)
+
+
+async def _news_editorial(items: list[dict], picks: list[int],
+                          bodies: dict[str, str],
+                          verdicts: dict[int, dict]) -> tuple[list[dict], tuple[int, int]]:
+    """Редакция по финалистам триажа: группировка + headline/summary/why из
+    фактического текста статьи (не 160 символов сниппета)."""
+    blocks = []
+    for n in picks:
+        it = items[n - 1]
+        v = verdicts.get(n) or {}
+        body = bodies.get(it.get("url") or "")
+        echo = f', повторили {it["echo"]} ист.' if it.get("echo", 1) > 1 else ""
+        blocks.append(
+            f'#{n} [{v.get("type") or it.get("tag")}{echo}] {it["title"]} '
+            f'({it.get("domain")}, {it.get("ts") or "без даты"})\n'
+            + (f'ТЕКСТ: {body}' if body else f'СНИППЕТ: {(it.get("snippet") or "")[:300]}'))
+    group_keys = ", ".join(k for k, _ in _NEWS_GROUPS)
+    user = (
+        f"Дата: {today_ru()}. Позиции ({len(picks)}):\n\n" + "\n---\n".join(blocks)
+        + f"\n\nВерни СТРОГО JSON без markdown. Допустимые key групп: {group_keys}.\n"
+          "Смысл групп: sber — всё про Сбер; regulatory — ЦБ, законы, ставка; "
+          "incidents — сбои, утечки, хищения, мошенничество; market — конкуренты "
+          "и движения рынка; other — важное, не подошедшее выше.\n"
+          'Формат: {"groups":[{"key":"regulatory","items":[{"n":3,'
+          '"headline":"...","summary":"...","why":"...","severity":"amber"}]}]}\n'
+          "severity: red — прямая угроза/инцидент, amber — наблюдать, green — "
+          "благоприятное/нейтральное. Группы без позиций не включай."
+    )
+    raw, ti, to = await _chat(insight_model(), today_anchor() + "\n\n" + _EDIT_SYSTEM,
+                              user, max_tokens=3500, temperature=0.1)
+    try:
+        parsed = _loose_json_loads(raw)
+    except ValueError:          # обрезка/флак парсинга → один дешёвый ретрай
+        raw, ti2, to2 = await _chat(insight_model(),
+                                    today_anchor() + "\n\n" + _EDIT_SYSTEM,
+                                    user, max_tokens=3500, temperature=0.0)
+        ti, to = ti + ti2, to + to2
+        parsed = _loose_json_loads(raw)
+    titles = {k: t for k, t in _NEWS_GROUPS}
+    picks_set = set(picks)
+    groups = []
+    for g in (parsed.get("groups") or []):
+        key = str(g.get("key") or "").strip()
+        if key not in titles:
+            key = next((k for k in titles if k in key), "market")
+        out_items = []
+        for gi in (g.get("items") or [])[:6]:
+            try:
+                n = int(gi.get("n"))
+            except (TypeError, ValueError):
+                continue
+            if n not in picks_set:      # редакция не добавляет отвергнутое триажом
+                continue
+            src = items[n - 1]
+            v = verdicts.get(n) or {}
+            sev = str(gi.get("severity") or "amber")
+            head = str(gi.get("headline") or "").strip()[:120]
+            out_items.append({
+                # headline редакции показываем как title; исходник — рядом
+                "title": head or src["title"],
+                **({"src_title": src["title"]} if head and head != src["title"] else {}),
+                "url": src["url"], "domain": src.get("domain"),
+                "source": src["source"], "ts": src.get("ts"), "tag": src.get("tag"),
+                "image": src.get("image"),
+                "score": v.get("score"), "event": v.get("type"),
+                "echo": int(src.get("echo") or 1),
+                "products": _news_products(
+                    f'{src["title"]} {gi.get("summary") or ""}'),
+                "summary": str(gi.get("summary") or "")[:240],
+                "why": str(gi.get("why") or "")[:240],
+                "severity": sev if sev in ("red", "amber", "green") else "amber",
+            })
+        if out_items:
+            groups.append({"key": key, "title": titles.get(key, key),
+                           "items": out_items})
+    _ord = {k: i for i, (k, _) in enumerate(_NEWS_GROUPS)}
+    groups.sort(key=lambda g: _ord.get(g["key"], 99))
+    return groups, (ti, to)
+
+
 async def news(day: date) -> dict:
+    """Секция новостей: конвейер триаж → жюри → фетч → редакция; любой сбой
+    конвейера → _news_legacy (одновызовный путь, работал до этапа 2)."""
     from . import news as news_mod
     items, statuses = await asyncio.to_thread(news_mod.fetch_all)
     if not items:
         return {"groups": [], "items_raw": [], "sources": statuses,
                 "_status": "degraded"}
+    try:
+        verdicts = await _news_triage(items)
+        tok = verdicts.pop("_tokens", {"in": 0, "out": 0})  # type: ignore[arg-type]
+        ti, to = int(tok.get("in") or 0), int(tok.get("out") or 0)
+        keep = [n for n, v in verdicts.items() if v["score"] >= _TRIAGE_MIN]
+        border = sorted((n for n, v in verdicts.items()
+                         if _JURY_LOW <= v["score"] < _TRIAGE_MIN),
+                        key=lambda n: -verdicts[n]["score"])[:8]
+        if border:      # два скептика на пограничную; выжило — в выпуск
+            votes = await asyncio.gather(*(_news_jury(items[n - 1]) for n in border),
+                                         return_exceptions=True)
+            keep += [n for n, ok in zip(border, votes) if ok is True]
+        keep.sort(key=lambda n: -verdicts[n]["score"])
+        keep = keep[:_MAX_PICKS]
+        if not keep:    # честно тихий день — без добора мусором
+            return {"groups": [], "sources": statuses, "raw_count": len(items),
+                    "pool": _news_pool(items), "quiet": True,
+                    "triage": {"kept": 0, "border": len(border)},
+                    "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
+        bodies = await asyncio.to_thread(
+            _news_bodies, [items[n - 1].get("url") or "" for n in keep])
+        groups, (ei, eo) = await _news_editorial(items, keep, bodies, verdicts)
+        ti, to = ti + ei, to + eo
+        if not groups:
+            raise ValueError("редакция вернула пустые группы")
+        # межднёвная память: опубликованное сегодня завтра в пул не возвращается
+        try:
+            await asyncio.to_thread(
+                news_mod.mark_published,
+                [it["url"] for g in groups for it in g["items"] if it.get("url")])
+        except Exception:  # noqa: BLE001 — память не должна ронять секцию
+            log.warning("news: mark_published failed", exc_info=True)
+        return {"groups": groups, "sources": statuses, "raw_count": len(items),
+                "pool": _news_pool(items),
+                "triage": {"kept": len(keep), "border": len(border),
+                           "fetched": len(bodies)},
+                "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
+    except Exception as e:  # noqa: BLE001 — конвейер сломался, не выпуск
+        log.warning("news conveyor failed (%s) — одновызовный путь", e)
+        return await _news_legacy(items, statuses)
 
+
+async def _news_legacy(items: list[dict], statuses: list[dict]) -> dict:
+    """Одновызовный отбор (до этапа 2) — страховка при сбое конвейера."""
+    from . import news as news_mod
     listing = "\n".join(
         f'#{i + 1} [{it["tag"]}] {it["title"]} — {(it.get("snippet") or "")[:160]} '
         f'({it.get("domain")}, {it.get("ts") or "без даты"})'
@@ -240,6 +553,13 @@ async def news(day: date) -> dict:
             raise ValueError("LLM вернул пустые группы")
         _ord = {k: i for i, (k, _) in enumerate(_NEWS_GROUPS)}
         groups.sort(key=lambda g: _ord.get(g["key"], 99))  # стабильный порядок рубрик
+        # межднёвная память: опубликованное сегодня завтра в пул не возвращается
+        try:
+            await asyncio.to_thread(
+                news_mod.mark_published,
+                [it["url"] for g in groups for it in g["items"] if it.get("url")])
+        except Exception:  # noqa: BLE001 — память не должна ронять секцию
+            log.warning("news: mark_published failed", exc_info=True)
         return {"groups": groups, "sources": statuses, "raw_count": len(items),
                 "pool": _news_pool(items),
                 "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}

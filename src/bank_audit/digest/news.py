@@ -1,17 +1,19 @@
-"""Сбор новостей для дайджеста — БЕЗ LLM (fetch → normalize → dedupe → окно 48ч).
+"""Сбор новостей для дайджеста — БЕЗ LLM-отбора (он в writer.news).
 
-Источники P0 (проверены с cloud.ru IP 2026-07-02):
-  • RSS ЦБ (RssPress/RssNews) — регуляторика из первоисточника
-  • RSS banki.ru / frankmedia.ru — банковская повестка
-  • t.me/s/<канал> — публичные веб-превью Telegram, обычный HTTP GET без API:
-    Банк России, Банкста (инциденты), Киберполиция МВД (схемы мошенничества),
-    Frank Media
-  • SearXNG (bing+dogpile живы) — точечные запросы по хищениям/предписаниям
+Конвейер пула (переработан 05.08.2026 по итогам аудита — судья давал 82
+процента мусора в пуле, половину мусора в публикации):
+  fetch → окно свежести (48ч / 96ч регуляторика) → дедуп заголовков →
+  смысловой дедуп (эмбеддинги, рерайты агентств) → межднёвная память
+  (digest_news_seen: публиковавшееся и трижды отвергнутое не возвращается) →
+  сборка по квотам: рег-квота с приоритетом РЕШЕНИЙ над текучкой (per-item),
+  потолок общих лент (cls=gen) и недатированных.
 
-Капчи НЕ обходим: упавший источник просто выпадает из корзины, его статус
-честно пишется в sources[] (фронт показывает покрытие).
+Источники: RSS ЦБ, banki.ru, frankmedia, Ведомости «Финансы»/«Экономика»,
+Ъ «Экономика», t.me/s/<канал> (ЦБ, Банкста, Киберполиция, Frank Media, РБК),
+РИА (общий, под квотой), SearXNG. Капчи НЕ обходим: упавший источник выпадает
+из корзины, статус честно пишется в sources[] (фронт показывает покрытие).
 
-Отдельно: fetch_key_rate() — ключевая ставка через SOAP ЦБ (кэш 6 ч).
+Отдельно: fetch_key_rate() — ключевая ставка через SOAP ЦБ (кэш 1 ч).
 """
 from __future__ import annotations
 
@@ -43,36 +45,57 @@ _WINDOW_REG_H = int(os.getenv("DIGEST_NEWS_WINDOW_REG_H", "96"))
 # Сколько мест в пуле держим за регуляторикой, чтобы её не вытеснил свежий шум.
 # 10 из 40 — четверть: заметно, но лента остаётся живой.
 _REG_QUOTA = int(os.getenv("DIGEST_NEWS_REG_QUOTA", "10"))
+# Потолок мест для общих лент (cls=gen). Без него общая повестка душила
+# банковскую чистой свежестью (РИА обновляется каждые минуты) — замер
+# 05.08.2026: 57 процентов пула, judge-оценка мусора в пуле 82 процента.
+_GEN_CAP = int(os.getenv("DIGEST_NEWS_GEN_CAP", "8"))
+# Недатированных в пуле НЕ БЫВАЕТ (05.08.2026): выдача поиска без ts обходила
+# окно свежести — пресс-релиз Сбера 2011 года о сбое процессинга ушёл в выпуск
+# и в ЗАГОЛОВОК дня, а страница мониторинга от 24.03.2026 выдала мартовскую
+# статистику за сегодняшнюю. Теперь недатированное датируем (_resolve_undated),
+# недатируемое выбрасываем: «не знаем когда» для новостной ленты = «не новость».
+# Смысловой дедуп пула (эмбеддинги): рерайты агентств («гендиректор пострадал» /
+# «водитель директора…») дедуп заголовков не ловит — 05.08.2026 одно событие
+# вошло в пул тремя формулировками.
+_SEMDEDUP = os.getenv("DIGEST_NEWS_SEMDEDUP", "1") == "1"
+_SEMDEDUP_T = float(os.getenv("DIGEST_NEWS_SEMDEDUP_T", "0.88"))
+# Межднёвная память digest_news_seen (миграция 032).
+_SEEN = os.getenv("DIGEST_NEWS_SEEN", "1") == "1"
 
-# tag — подсказка LLM для группировки (regulator/incident/scheme/market/search)
 # tag — грубая категория (для группировки на UI). dimension — измерение аудита
 # (compliance/conduct/ops/fraud/market) для матчинга новости на интересы пользователя
-# в персональном дайджесте. Новые источники проверены на доступность из контура
-# (httpx-проба 2026-07-21): ФАС/бизнес/взыскание через Telegram-web (t.me/s/, парсится
-# существующим _parse_tg). Гос-RSS (fas.gov.ru/rospotrebnadzor) чистого фида не отдают.
+# в персональном дайджесте. cls — класс источника для квоты пула:
+#   bank — банковская/регуляторная повестка (наполняет пул в первую очередь);
+#   gen  — общие ленты «обо всём» (жёсткий потолок _GEN_CAP мест).
+# Без классовой квоты общие ленты душили банковские по свежести: замер 05.08.2026
+# на живом пуле — РИА 10 + РБК 7 + Ъ 6 = 57 процентов пула, banki.ru выжил с
+# одной позицией, киберполиция (схемы мошенничества) — с нулём.
 SOURCES: list[dict] = [
-    # decisions=True — лента, где ЦБ объявляет РЕШЕНИЯ (ставка, санкции), в отличие
-    # от cbr_news, куда ежедневно валится операционная текучка («Депозиты банков
-    # в Банке России», «Условия РЕПО»). Решения редки и ценны, текучка свежа и
-    # бесполезна — без этого различия текучка вытесняла решение по ключевой ставке.
-    {"key": "cbr_press",     "kind": "rss", "url": "https://www.cbr.ru/rss/RssPress",     "tag": "regulator", "dimension": "compliance", "decisions": True},
-    {"key": "cbr_news",      "kind": "rss", "url": "https://www.cbr.ru/rss/RssNews",      "tag": "regulator", "dimension": "compliance"},
-    {"key": "banki_news",    "kind": "rss", "url": "https://www.banki.ru/xml/news.rss",   "tag": "market",    "dimension": "market"},
-    {"key": "frankmedia",    "kind": "rss", "url": "https://frankmedia.ru/feed",          "tag": "market",    "dimension": "market"},
-    {"key": "tg_cbr",        "kind": "tg",  "url": "https://t.me/s/centralbank_russia",   "tag": "regulator", "dimension": "compliance"},
-    {"key": "tg_banksta",    "kind": "tg",  "url": "https://t.me/s/banksta",              "tag": "incident",  "dimension": "ops"},
-    {"key": "tg_cyberpolice","kind": "tg",  "url": "https://t.me/s/cyberpolice_rus",      "tag": "scheme",    "dimension": "fraud"},
-    {"key": "tg_frankmedia", "kind": "tg",  "url": "https://t.me/s/frank_media",          "tag": "market",    "dimension": "market"},
-    # ── добавлено для персонализации (2026-07-21, проверено из контура) ──
-    # Бизнес-повестка (LLM-секция news отбирает банк-релевантные под аудит).
-    # ФАС/dolg_rf пробовали — @fasrussia общий (телеком/спорт, даты не парсятся),
-    # @dolg_rf пуст → не добавлены. Гос-RSS чистого фида не отдают.
-    {"key": "tg_kommersant", "kind": "tg",  "url": "https://t.me/s/kommersant",           "tag": "market",    "dimension": "market"},
-    {"key": "tg_rbc",        "kind": "tg",  "url": "https://t.me/s/rbc_news",             "tag": "market",    "dimension": "market"},
-    # РИА Новости — госагентство, часто первым сообщает решения ЦБ и предупреждения
-    # о мошенничестве. Секционных фидов РИА больше не отдаёт (economy/politics = 404),
-    # берём общий архивный; _PER_SOURCE_CAP=10 + LLM-отбор оставляют банк-релевантное.
-    {"key": "ria_novosti",   "kind": "rss", "url": "https://ria.ru/export/rss2/archive/index.xml", "tag": "market", "dimension": "market"},
+    # Признак «это РЕШЕНИЕ ЦБ, а не текучка» считается ПО КАЖДОЙ НОВОСТИ
+    # (_DECISION_RE/_ROUTINE_RE в fetch_all), а не флагом источника: флаг на
+    # cbr_press поднимал в топ рег-квоты и «Редкие монеты» с юбилеями —
+    # пресс-релизы без решений (пойман на живом пуле 05.08.2026).
+    {"key": "cbr_press",     "kind": "rss", "url": "https://www.cbr.ru/rss/RssPress",     "tag": "regulator", "dimension": "compliance", "cls": "bank"},
+    {"key": "cbr_news",      "kind": "rss", "url": "https://www.cbr.ru/rss/RssNews",      "tag": "regulator", "dimension": "compliance", "cls": "bank"},
+    {"key": "banki_news",    "kind": "rss", "url": "https://www.banki.ru/xml/news.rss",   "tag": "market",    "dimension": "market",     "cls": "bank"},
+    {"key": "frankmedia",    "kind": "rss", "url": "https://frankmedia.ru/feed",          "tag": "market",    "dimension": "market",     "cls": "bank"},
+    {"key": "tg_cbr",        "kind": "tg",  "url": "https://t.me/s/centralbank_russia",   "tag": "regulator", "dimension": "compliance", "cls": "bank"},
+    {"key": "tg_banksta",    "kind": "tg",  "url": "https://t.me/s/banksta",              "tag": "incident",  "dimension": "ops",        "cls": "bank"},
+    {"key": "tg_cyberpolice","kind": "tg",  "url": "https://t.me/s/cyberpolice_rus",      "tag": "scheme",    "dimension": "fraud",      "cls": "bank"},
+    {"key": "tg_frankmedia", "kind": "tg",  "url": "https://t.me/s/frank_media",          "tag": "market",    "dimension": "market",     "cls": "bank"},
+    # ── деловые СМИ: секционные фиды вместо общих лент (проверены 05.08.2026) ──
+    # Ведомости отдают тематические рубрики — «Финансы» идёт классом bank
+    # (банки/рынки по определению рубрики), «Экономика» — классом gen (макро).
+    # t.me/s/kommersant (лента обо всём: назначения, взрывы, геополитика)
+    # заменён на RSS рубрики «Экономика» Ъ.
+    {"key": "vedomosti_fin", "kind": "rss", "url": "https://www.vedomosti.ru/rss/rubric/finance.xml",   "tag": "market", "dimension": "market", "cls": "bank"},
+    {"key": "vedomosti_econ","kind": "rss", "url": "https://www.vedomosti.ru/rss/rubric/economics.xml", "tag": "market", "dimension": "market", "cls": "gen"},
+    {"key": "kommersant_econ","kind":"rss", "url": "https://www.kommersant.ru/RSS/section-economics.xml","tag": "market", "dimension": "market", "cls": "gen"},
+    # Общие ленты: секционных фидов у РБК/РИА нет (проверено 05.08.2026, 404) —
+    # держим под классовой квотой ради скорости важных сообщений (решения ЦБ,
+    # предупреждения о мошенничестве госагентство часто даёт первым).
+    {"key": "tg_rbc",        "kind": "tg",  "url": "https://t.me/s/rbc_news",             "tag": "market", "dimension": "market", "cls": "gen"},
+    {"key": "ria_novosti",   "kind": "rss", "url": "https://ria.ru/export/rss2/archive/index.xml", "tag": "market", "dimension": "market", "cls": "gen"},
 ]
 
 # Точечные поисковые запросы (SearXNG). У выдачи нет дат → берём мало и метим.
@@ -189,7 +212,7 @@ def _parse_rss_fallback(xml_text: str, src: dict) -> list[dict]:
                       "ts": _parse_dt(_xml_field(block, "pubDate")),
                       "snippet": _strip_html(_xml_field(block, "description"))[:300],
                       "source": src["key"], "tag": src["tag"],
-                      "decisions": bool(src.get("decisions")),
+                      "cls": src.get("cls", "bank"),
                       "dimension": src.get("dimension"),
                       "image": _rss_image_re(block)})
     return items
@@ -216,7 +239,7 @@ def _parse_rss(xml_text: str, src: dict) -> list[dict]:
         snippet = _strip_html(it.findtext("description") or "")[:300]
         items.append({"title": title[:220], "url": link, "ts": _parse_dt(raw_dt),
                       "snippet": snippet, "source": src["key"], "tag": src["tag"],
-                      "decisions": bool(src.get("decisions")),
+                      "cls": src.get("cls", "bank"),
                       "dimension": src.get("dimension"),
                       "image": _rss_image(it) or _img_from_html(desc_raw)})
     return items
@@ -247,7 +270,7 @@ def _parse_tg(html_text: str, src: dict) -> list[dict]:
         items.append({"title": title, "url": f"https://t.me/{post_m.group(1)}",
                       "ts": ts, "snippet": text[:400],
                       "source": src["key"], "tag": src["tag"],
-                      "decisions": bool(src.get("decisions")),
+                      "cls": src.get("cls", "bank"),
                       "dimension": src.get("dimension"),
                       "image": html.unescape(img_m.group(1)) if img_m else None})
     return items
@@ -288,7 +311,7 @@ def _fetch_search() -> tuple[list[dict], dict]:
                 items.append({"title": (r.get("title") or "")[:220],
                               "url": r.get("url") or "", "ts": None,
                               "snippet": (r.get("snippet") or "")[:300],
-                              "source": "web_search", "tag": tag,
+                              "source": "web_search", "tag": tag, "cls": "bank",
                               "dimension": dim.get(tag, "market"), "image": None})
         status.update(ok=True, items=len(items))
     except Exception as e:  # noqa: BLE001
@@ -328,9 +351,266 @@ def _dedupe(items: list[dict]) -> list[dict]:
     return out
 
 
+# ── датировка недатированных (выдача поиска) ─────────────────────────────────
+# Порядок дешёвый → дорогой: дата в пути URL → явная полная дата в заголовке/
+# сниппете → метаданные самой страницы (article:published_time, datePublished,
+# <time datetime>). Голые упоминания года в тексте НЕ считаем датой публикации
+# («в 2024 году ЦБ ввёл…» — обычная фраза в свежей статье). Антибот-заглушки
+# (sberbank.ru по HTTP) метаданных не отдают → страница остаётся недатируемой
+# и выбрасывается — ровно то, что нужно.
+
+_URL_DATE_RE = re.compile(r"/((?:19|20)\d{2})[/\-.](\d{1,2})[/\-.](\d{1,2})(?:/|\b)")
+_URL_YEAR_RE = re.compile(r"/((?:19|20)\d{2})(?:/|\b)")
+_RU_MONTH_N = {"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5,
+               "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10,
+               "ноября": 11, "декабря": 12}
+_TXT_DATE_RE = re.compile(r"\b(\d{1,2})[.](\d{1,2})[.]((?:19|20)\d{2})\b")
+_TXT_RU_DATE_RE = re.compile(
+    r"\b(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|"
+    r"сентября|октября|ноября|декабря)\s+((?:19|20)\d{2})")
+_META_DATE_RES = (
+    re.compile(r'"datePublished"\s*:\s*"([^"]{8,40})"'),
+    re.compile(r'<meta[^>]{0,200}?(?:article:published_time|datePublished|'
+               r'pubdate)[^>]{0,200}?content="([^"]{8,40})"', re.I),
+    re.compile(r'<meta[^>]{0,200}?content="([^"]{8,40})"[^>]{0,200}?'
+               r'(?:article:published_time|datePublished|pubdate)', re.I),
+    re.compile(r'<time[^>]{0,120}?datetime="([^"]{8,40})"', re.I),
+)
+
+
+def _page_date(url: str) -> datetime | None:
+    """Дата публикации из метаданных страницы (только структурные источники)."""
+    try:
+        r = _get(url)
+        if r.status_code != 200:
+            return None
+        # ВЕСЬ документ, не первые N КБ: у forbes.ru datePublished лежит за
+        # пределами первых 60 КБ — обрезка стоила фантомного «сбоя дня» из
+        # апрельской статьи (05.08.2026)
+        head = r.text[:500000]
+        for rx in _META_DATE_RES:
+            m = rx.search(head)
+            if m:
+                ts = _parse_dt(m.group(1))
+                if ts:
+                    return ts
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _resolve_undated(items: list[dict]) -> list[dict]:
+    """Датирует элементы без ts; недатируемые выбрасывает (см. коммент выше)."""
+    undated = [i for i in items if not i.get("ts")]
+    if not undated:
+        return items
+
+    def _try(it: dict) -> None:
+        u = it.get("url") or ""
+        m = _URL_DATE_RE.search(u)
+        if m:
+            try:
+                it["ts"] = datetime(int(m[1]), int(m[2]), int(m[3]),
+                                    tzinfo=timezone.utc)
+                return
+            except ValueError:
+                pass
+        m = _URL_YEAR_RE.search(u)
+        if m and int(m[1]) < datetime.now(timezone.utc).year:
+            # старый год в пути — точный день не важен, в окно всё равно не пройдёт
+            it["ts"] = datetime(int(m[1]), 12, 31, tzinfo=timezone.utc)
+            return
+        txt = f'{it.get("title") or ""} {it.get("snippet") or ""}'
+        m = _TXT_DATE_RE.search(txt)
+        if m:
+            try:
+                it["ts"] = datetime(int(m[3]), int(m[2]), int(m[1]),
+                                    tzinfo=timezone.utc)
+                return
+            except ValueError:
+                pass
+        m = _TXT_RU_DATE_RE.search(txt)
+        if m:
+            try:
+                it["ts"] = datetime(int(m[3]), _RU_MONTH_N[m[2]], int(m[1]),
+                                    tzinfo=timezone.utc)
+                return
+            except (ValueError, KeyError):
+                pass
+        it["ts"] = _page_date(u)
+
+    with cf.ThreadPoolExecutor(max_workers=4) as ex:
+        list(ex.map(_try, undated))
+    kept = [i for i in items if i.get("ts")]
+    if len(kept) < len(items):
+        log.info("выброшено недатируемых: %d (из них поиск: %d)",
+                 len(items) - len(kept),
+                 sum(1 for i in items
+                     if not i.get("ts") and i.get("source") == "web_search"))
+    return kept
+
+
+# ── решение vs текучка (по каждой новости, не по источнику) ──────────────────
+# Раньше флаг decisions стоял на ИСТОЧНИКЕ cbr_press — и юбилейные монеты из
+# пресс-релизов сортировались в рег-квоте выше реальных новостей (замер 05.08.2026).
+_DECISION_RE = re.compile(
+    r"ключев\w+ ставк|санкци|предписани|аннулир\w+ лиценз|отозв\w+ лиценз|"
+    r"отзыв\w* лиценз|штраф|мер\w+ воздействия|решени\w+ совета директоров|"
+    r"ограничени\w+ (на |для )?банк|внепланов\w+ проверк", re.I)
+_ROUTINE_RE = re.compile(
+    r"\bruonia\b|\bрепо\b|валютн\w+ своп|депозиты банков|усреднени|"
+    r"обязательн\w+ резерв|монет\w|юбилейн|100-лети|выставк|"
+    r"инсайдерская информация банка россии", re.I)
+
+# Авторитет источника: при смысловом дубле остаётся самый авторитетный
+# представитель (первоисточник/профильное СМИ выигрывает у перепечатки).
+_AUTHORITY = {"cbr_press": 0, "cbr_news": 0, "tg_cbr": 1,
+              "banki_news": 2, "frankmedia": 2, "vedomosti_fin": 2,
+              "tg_frankmedia": 3, "tg_banksta": 3, "tg_cyberpolice": 3,
+              "kommersant_econ": 4, "vedomosti_econ": 4,
+              "tg_rbc": 5, "ria_novosti": 5, "web_search": 6}
+
+
+def _sem_dedupe(items: list[dict]) -> list[dict]:
+    """Смысловой дедуп: косинус эмбеддингов (заголовок+сниппет) ≥ порога = одно
+    событие. У выжившего копится echo — сколько источников продублировали
+    (сигнал значимости для отбора). Best-effort: эмбеддер упал → пул как есть."""
+    if not _SEMDEDUP or len(items) < 2:
+        return items
+    try:
+        from ..rag import embedder
+        texts = [f'{i.get("title") or ""}. {(i.get("snippet") or "")[:200]}'
+                 for i in items]
+        vecs = embedder.embed_batch(texts)
+
+        def _k(n: int):
+            ts = items[n].get("ts")
+            return (_AUTHORITY.get(items[n]["source"], 9),
+                    -(ts.timestamp() if ts else 0.0))
+        kept: list[int] = []
+        drop: set[int] = set()
+        for n in sorted(range(len(items)), key=_k):
+            twin = next((j for j in kept
+                         if embedder.cosine_similarity(vecs[n], vecs[j]) >= _SEMDEDUP_T),
+                        None)
+            if twin is None:
+                kept.append(n)
+            else:
+                drop.add(n)
+                items[twin]["echo"] = int(items[twin].get("echo") or 1) + 1
+        return [it for n, it in enumerate(items) if n not in drop]
+    except Exception as e:  # noqa: BLE001 — дедуп не должен ронять сбор
+        log.warning("смысловой дедуп пропущен: %s", e)
+        return items
+
+
+# ── межднёвная память (digest_news_seen, миграция 032) ───────────────────────
+
+def _url_hash(u: str) -> str:
+    import hashlib
+    return hashlib.sha256((u or "").encode()).hexdigest()[:32]
+
+
+def _filter_seen(items: list[dict]) -> list[dict]:
+    """Убирает из пула то, что уже публиковалось в ПРОШЛЫЕ дни (по url; для
+    рубричных заголовков ЦБ — одно название каждый день под новыми url — по
+    title_norm с выдержкой 5 дней, кроме настоящих решений), и то, что три
+    разных дня попадало в пул, но ни разу не отбиралось. Сегодняшние публикации
+    не глушим: force-refresh пересобирает тот же выпуск и не должен терять
+    собственные утренние новости. Best-effort: БД недоступна → пул как есть."""
+    if not _SEEN or not items:
+        return items
+    try:
+        from sqlalchemy import bindparam, text as _t
+        from .. import db
+        hs = [_url_hash(i.get("url") or "") for i in items]
+        tn = [_norm_title(i.get("title") or "") for i in items]
+        q = _t("""
+            SELECT url_hash, title_norm, times_pool, picked,
+                   (picked_at AT TIME ZONE 'Europe/Moscow')::date AS picked_day
+              FROM digest_news_seen
+             WHERE url_hash IN :hs OR title_norm IN :tn
+        """).bindparams(bindparam("hs", expanding=True),
+                        bindparam("tn", expanding=True))
+        with db.session() as s:
+            rows = s.execute(q, {"hs": hs, "tn": [x for x in tn if x] or ["-"]
+                                 }).mappings().all()
+        today = datetime.now(timezone(timedelta(hours=3))).date()
+        by_hash = {r["url_hash"]: r for r in rows}
+        picked_titles = {r["title_norm"] for r in rows
+                         if r["picked"] and r["title_norm"] and r["picked_day"]
+                         and r["picked_day"] < today
+                         and (today - r["picked_day"]).days <= 5}
+        out = []
+        for n, it in enumerate(items):
+            r = by_hash.get(hs[n])
+            if r is not None:
+                if r["picked"] and r["picked_day"] and r["picked_day"] < today:
+                    continue
+                if not r["picked"] and int(r["times_pool"] or 0) >= 3:
+                    continue
+            if (tn[n] and tn[n] in picked_titles
+                    and not _DECISION_RE.search(it.get("title") or "")):
+                continue
+            out.append(it)
+        if len(out) < len(items):
+            log.info("память новостей: отфильтровано %d повторов", len(items) - len(out))
+        return out
+    except Exception as e:  # noqa: BLE001
+        log.info("память новостей недоступна (%s) — пул без межднёвного фильтра", e)
+        return items
+
+
+def _record_pool(items: list[dict]) -> None:
+    """Регистрирует состав пула. times_pool растёт по ДНЯМ, не по прогонам
+    (lazy/force собирают пул несколько раз в сутки). Заодно чистит старьё."""
+    if not _SEEN or not items:
+        return
+    try:
+        from sqlalchemy import text as _t
+        from .. import db
+        with db.session() as s:
+            for it in items:
+                s.execute(_t("""
+                    INSERT INTO digest_news_seen (url_hash, url, title, title_norm, source)
+                    VALUES (:h, :u, :t, :tn, :src)
+                    ON CONFLICT (url_hash) DO UPDATE SET
+                        times_pool = digest_news_seen.times_pool
+                                     + CASE WHEN digest_news_seen.last_seen < current_date
+                                            THEN 1 ELSE 0 END,
+                        last_seen = current_date
+                """), {"h": _url_hash(it.get("url") or ""),
+                       "u": (it.get("url") or "")[:800],
+                       "t": (it.get("title") or "")[:300],
+                       "tn": _norm_title(it.get("title") or ""),
+                       "src": it.get("source")})
+            s.execute(_t("DELETE FROM digest_news_seen WHERE last_seen < current_date - 60"))
+    except Exception as e:  # noqa: BLE001
+        log.info("память новостей: запись пропущена (%s)", e)
+
+
+def mark_published(urls: list[str]) -> None:
+    """Отметка «вышло в выпуске» — зовёт writer.news после успешного отбора.
+    Опубликованное в прошлые дни _filter_seen больше в пул не пускает."""
+    if not urls:
+        return
+    try:
+        from sqlalchemy import bindparam, text as _t
+        from .. import db
+        q = _t("""UPDATE digest_news_seen SET picked = TRUE, picked_at = now()
+                   WHERE url_hash IN :hs""").bindparams(
+            bindparam("hs", expanding=True))
+        with db.session() as s:
+            s.execute(q, {"hs": [_url_hash(u) for u in urls]})
+    except Exception as e:  # noqa: BLE001
+        log.warning("память новостей: отметка публикации не записана: %s", e)
+
+
 def fetch_all() -> tuple[list[dict], list[dict]]:
     """Параллельный сбор всех источников. Возвращает (items, sources_status).
-    items: свежие (окно _WINDOW_H), дедуплицированные, топ-MAX_ITEMS."""
+    Конвейер пула: окно свежести → дедуп заголовков → смысловой дедуп →
+    межднёвная память → сборка по квотам (регуляторика с приоритетом решений,
+    потолок общих лент и недатированных)."""
     tasks = [*SOURCES]
     with cf.ThreadPoolExecutor(max_workers=6) as ex:
         results = list(ex.map(_fetch_source, tasks))
@@ -339,6 +619,7 @@ def fetch_all() -> tuple[list[dict], list[dict]]:
     s_items, s_status = _fetch_search()
     items += s_items
     statuses.append(s_status)
+    items = _resolve_undated(items)   # недатированное датируем или выбрасываем
 
     now_utc = datetime.now(timezone.utc)
     cutoff = now_utc - timedelta(hours=_WINDOW_H)
@@ -359,21 +640,57 @@ def fetch_all() -> tuple[list[dict], list[dict]]:
         fresh.append(it)
 
     fresh = _dedupe(fresh)
+    fresh = _sem_dedupe(fresh)     # рерайты агентств: одно событие N формулировок
+    fresh = _filter_seen(fresh)    # публиковалось раньше / трижды отвергнуто
     _newest = lambda x: x["ts"] or datetime.min.replace(tzinfo=timezone.utc)  # noqa: E731
-    fresh.sort(key=_newest, reverse=True)
 
-    # Отсечка по MAX_ITEMS шла чисто по свежести — и решение ЦБ по ставке,
-    # объявленное в пятницу, к понедельнику проигрывало сегодняшнему шуму и не
-    # доходило до модели, хотя окно проходило (проверено 27.07.2026: 68 ч при
-    # окне 96 ч). Держим для регуляторики квоту: такие новости редки, но это
-    # именно то, ради чего аудитор открывает сводку.
+    # решение vs текучка — по каждой новости (для приоритета в рег-квоте)
+    for it in fresh:
+        blob = (it.get("title") or "") + " " + (it.get("snippet") or "")[:200]
+        it["decision"] = bool(_DECISION_RE.search(blob))
+        it["routine"] = (not it["decision"]
+                         and bool(_ROUTINE_RE.search(it.get("title") or "")))
+
+    # ── сборка пула по квотам (не чистой свежестью) ──
+    # Регуляторика: решения → не-текучка → текучка, внутри — по свежести.
+    # Квота нужна, чтобы пятничное решение ЦБ доживало до понедельника
+    # (проверено 27.07.2026: 68 ч при окне 96 ч — чистая свежесть его резала).
     reg = sorted((i for i in fresh if i.get("tag") == "regulator"),
-                 key=lambda i: (bool(i.get("decisions")), _newest(i)),
+                 key=lambda i: (i["decision"], not i["routine"], _newest(i)),
                  reverse=True)[:_REG_QUOTA]
     taken = {id(i) for i in reg}          # по тождеству: одинаковые словари ≠ один элемент
-    rest = [i for i in fresh if id(i) not in taken]
-    fresh = sorted(reg + rest[:max(0, MAX_ITEMS - len(reg))],
-                   key=_newest, reverse=True)
+    rest = sorted((i for i in fresh if id(i) not in taken), key=_newest, reverse=True)
+
+    def _interleave(pool: list[dict], per_src_cap: int | None = None) -> list[dict]:
+        """Round-robin по источникам (внутри источника — по свежести): без него
+        частопишущие душили остальных чистой свежестью — замер 05.08.2026:
+        banksta забрал 10 мест класса bank, РИА — 7 из 8 мест класса gen."""
+        by_src: dict[str, list[dict]] = {}
+        for it in pool:
+            by_src.setdefault(it["source"], []).append(it)
+        out, rnd = [], 0
+        while True:
+            layer = [lst[rnd] for lst in by_src.values() if rnd < len(lst)]
+            if not layer or (per_src_cap is not None and rnd >= per_src_cap):
+                break
+            layer.sort(key=_newest, reverse=True)
+            out.extend(layer)
+            rnd += 1
+        return out
+
+    # текучка/юбилеи ЦБ (routine) за общие места не конкурируют: их место —
+    # только хвост рег-квоты (иначе «Редкие монеты» возвращались через класс bank)
+    bank = _interleave([i for i in rest
+                        if i.get("cls") != "gen" and not i.get("routine")])
+    gen = _interleave([i for i in rest if i.get("cls") == "gen"], per_src_cap=3)
+    room = max(0, MAX_ITEMS - len(reg))
+    take_bank = bank[:max(0, room - min(_GEN_CAP, room))]
+    # общих — не больше потолка ДАЖЕ при недоборе банковских: пул лучше короче,
+    # чем добитый общеполитическим шумом (ровно с него начался мусор в выпусках)
+    take_gen = gen[:min(_GEN_CAP, room - len(take_bank))]
+    fresh = sorted(reg + take_bank + take_gen, key=_newest, reverse=True)
+
+    _record_pool(fresh)
     for it in fresh:                       # ts → isoformat для jsonb
         it["title"] = _EMOJI_RE.sub("", it["title"]).strip() or it["title"]
         it["ts"] = it["ts"].isoformat() if it.get("ts") else None
@@ -381,6 +698,11 @@ def fetch_all() -> tuple[list[dict], list[dict]]:
             it["domain"] = urlparse(it["url"]).netloc.replace("www.", "")
         except Exception:  # noqa: BLE001
             it["domain"] = ""
+    pool_by_src: dict[str, int] = {}
+    for it in fresh:
+        pool_by_src[it["source"]] = pool_by_src.get(it["source"], 0) + 1
+    for st in statuses:                    # прозрачность: сколько дожило до пула
+        st["in_pool"] = pool_by_src.get(st["name"], 0)
     return fresh, statuses
 
 

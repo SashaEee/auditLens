@@ -19,6 +19,9 @@ from . import aggregator, store, writer
 log = logging.getLogger(__name__)
 
 SECTION_TIMEOUT_S = float(os.getenv("DIGEST_SECTION_TIMEOUT_S", "150"))
+# news с этапа 2 — конвейер (триаж → жюри → фетч статей → редакция): дольше
+# остальных секций, но идёт параллельно с ними и держит выпуск не дольше себя
+SECTION_TIMEOUTS = {"news": float(os.getenv("DIGEST_NEWS_TIMEOUT_S", "300"))}
 
 # Реестр: имя → корутина. «Лазейки» соседней команды = ещё одна пара
 # ключ/корутина (+ generic-рендер на фронте), без миграций и перевёрстки.
@@ -37,7 +40,8 @@ async def _run_section(day: date, name: str,
                        fn: Callable[[date], Awaitable[dict]]) -> str:
     t0 = time.monotonic()
     try:
-        payload = await asyncio.wait_for(fn(day), timeout=SECTION_TIMEOUT_S)
+        payload = await asyncio.wait_for(
+            fn(day), timeout=SECTION_TIMEOUTS.get(name, SECTION_TIMEOUT_S))
         status = payload.pop("_status", "ok")
         llm_model = payload.pop("_llm_model", None)
         ti = payload.pop("_tokens_in", None)
