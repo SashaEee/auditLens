@@ -596,6 +596,15 @@ const BF_KIND={
   exploit:{tag:"Лазейки"},          // будущий источник соседней команды
 };
 
+// ── мост телеметрии для компонентов ──────────────────────────────────────────
+// Очередь трекера живёт внутри App (trkQ/trkFlush); страницам нужен способ
+// отправить событие (клик по новости) — App записывает сюда свой push при
+// каждом рендере. До монтирования App событие просто теряется — не страшно.
+// Этап 6 (05.08.2026): до этого платформа не знала, какие новости аудиторы
+// реально открывают — сигнала для оценки отбора не существовало.
+let _trkPush=null;
+function trkEvent(ev){ try{ if(_trkPush)_trkPush(ev); }catch{} }
+
 function bfGoAI(prompt){
   try{sessionStorage.setItem("al-ai-prefill",prompt);}catch{}
   location.hash="ai";
@@ -1344,7 +1353,10 @@ const FY_CSS=`
 function FyTile({t,hero,fb,onFb}){
   const[imgOk,setImgOk]=useState(true);
   const src=fySrcName(t);
-  const open=()=>{if(t.url)window.open(t.url,"_blank","noopener");};
+  const open=()=>{if(!t.url)return;
+    trkEvent({kind:"news_click",page:"foryou",
+      payload:{url:t.url,source:t.source,reason:t.reason}});
+    window.open(t.url,"_blank","noopener");};
   return <div className={"fy-tile"+(hero?" hero":"")+(fb===1?" liked":"")} onClick={open} role="link" tabIndex={0}
               onKeyDown={e=>{if(e.key==="Enter")open();}}>
     {t.image&&imgOk
@@ -1845,7 +1857,9 @@ function OverviewPage(){
             <div className="bf-news-g">{g.title||g.key}</div>
             {(g.items||[]).map((it,i)=>
               <a key={i} className="bf-news-it" data-sev={it.severity} href={it.url}
-                 target="_blank" rel="noopener noreferrer">
+                 target="_blank" rel="noopener noreferrer"
+                 onClick={()=>trkEvent({kind:"news_click",page:"overview",
+                   payload:{url:it.url,source:it.source,group:g.key,severity:it.severity}})}>
                 <div className="bf-news-t">{it.title}</div>
                 {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
                 <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
@@ -6208,6 +6222,41 @@ function PuProposals({p}){
 }
 
 // ── Фоновая индексация ──────────────────────────────────────────────────────
+// Качество новостного выпуска: ночной LLM-судья + клики (этап 6, 05.08.2026).
+// До этого качество отбора не измерялось — деградацию замечал только владелец.
+function PuNewsQuality({q}){
+  const s=q.series||[], today=q.today, clicks=q.clicks||[];
+  const nClicks=clicks.reduce((a,c)=>a+(c.n||0),0);
+  const junkPct=(r)=>r&&r.n_items?Math.round(100*r.junk/r.n_items):null;
+  return <div className="pu-grid2 pu-sec">
+    <div className="pu-card">
+      <div className="h"><span>Новости: LLM-судья выпуска</span>
+        {today&&<span className={"pu-chip "+(junkPct(today)>15?"bad":"ok")}>
+          сегодня мусор {junkPct(today)}%</span>}</div>
+      {s.length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
+          Судья ещё не оценил ни одного выпуска (первый прогон — в {""}
+          {String(8).padStart(2,"0")}:00 МСК).</div>
+        :<table className="pu-tbl">
+          <thead><tr><th>дата</th><th>позиций</th><th>мусор</th><th>погранично</th><th>ср. балл</th></tr></thead>
+          <tbody>{s.slice(-10).map((r,i)=><tr key={i}>
+            <td>{(r.d||"").slice(5)}</td><td>{r.n_items}</td>
+            <td style={r.junk>0?{color:"var(--warn)"}:null}>{r.junk}{r.n_items?` (${junkPct(r)}%)`:""}</td>
+            <td>{r.borderline}</td><td>{r.avg}</td>
+          </tr>)}</tbody></table>}
+    </div>
+    <div className="pu-card">
+      <div className="h"><span>Клики по новостям · {""}14 дн</span>
+        <span className="pu-chip">{nClicks}</span></div>
+      {(q.top_clicked||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
+          Кликов ещё нет — трекинг включён с 05.08.</div>
+        :(q.top_clicked||[]).map((r,i)=><div key={i} className="pu-err">
+          <span className="k">{r.n}×</span>
+          <span className="m" title={r.url||""}>{(r.url||"").replace(/^https?:\/\/(www\.)?/,"").slice(0,70)}</span>
+        </div>)}
+    </div>
+  </div>;
+}
+
 function PuIngest({ing}){
   const q=ing.queue||{}, days=ing.per_day||[];
   const mx=Math.max(1,...days.map(d=>+d.n||0));
@@ -6438,6 +6487,7 @@ function PulsePage(){
     {tab==="data"&&<>
       <PuIngest ing={m.ingest||{}}/>
       <PuCollect c={m.collect||{}}/>
+      <PuNewsQuality q={m.news_quality||{}}/>
     </>}
 
     {tab==="tech"&&<>
@@ -6929,6 +6979,8 @@ function Shell(){
     fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},body}).catch(()=>{});
   };
   const trk=(ev)=>{ trkQ.current.push(ev); if(trkQ.current.length>=8)trkFlush(); };
+  // мост для страниц (клики по новостям): шлём сразу — клик редок и ценен
+  _trkPush=(ev)=>{trk(ev);trkFlush();};
   useEffect(()=>{
     const prev=trkPage.current;
     if(prev.page&&prev.page!==page)

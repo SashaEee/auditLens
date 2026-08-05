@@ -24,7 +24,7 @@ from .. import db
 log = logging.getLogger(__name__)
 
 # kinds, которые принимаем от фронта (всё остальное молча отбрасываем)
-_CLIENT_KINDS = {"page_view", "page_leave", "client_error", "ui"}
+_CLIENT_KINDS = {"page_view", "page_leave", "client_error", "ui", "news_click"}
 _MAX_BATCH = 25
 _MAX_DUR_MS = 30 * 60 * 1000          # страница «висела» дольше 30 мин → кап
 
@@ -326,7 +326,37 @@ def metrics(days: int = 14) -> dict:
             "proposals": _proposals(),
             "ingest": _ingest_health(days),
             "collect": _collect_health(days),
+            "news_quality": _news_quality(days),
             "topics": _team_topics(days)}
+
+
+def _news_quality(days: int) -> dict:
+    """Качество новостного выпуска: ночной LLM-судья (digest_news_judge) +
+    клики по новостям. Появилось этапом 6 переделки новостей (05.08.2026) —
+    до этого качество отбора не измерялось вообще."""
+    p = {"days": days}
+    series = _rows("""
+        SELECT digest_date::text AS d, n_items, junk, borderline, relevant,
+               avg_score::float AS avg
+          FROM digest_news_judge
+         WHERE digest_date > current_date - make_interval(days => :days)
+         ORDER BY digest_date""", p)
+    clicks = _rows("""
+        SELECT (created_at AT TIME ZONE 'Europe/Moscow')::date::text AS d,
+               count(*) AS n, count(DISTINCT username) AS users
+          FROM usage_event
+         WHERE kind = 'news_click'
+           AND created_at > now() - make_interval(days => :days)
+         GROUP BY 1 ORDER BY 1""", p)
+    top_clicked = _rows("""
+        SELECT payload->>'url' AS url, count(*) AS n
+          FROM usage_event
+         WHERE kind = 'news_click'
+           AND created_at > now() - make_interval(days => :days)
+         GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", p)
+    today = series[-1] if series else None
+    return {"series": series, "today": today, "clicks": clicks,
+            "top_clicked": top_clicked}
 
 
 # ── оценки ответов ИИ: «что разбирать» ───────────────────────────────────────

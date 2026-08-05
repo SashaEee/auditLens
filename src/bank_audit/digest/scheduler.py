@@ -329,6 +329,33 @@ def keyrate_watch_status() -> dict:
             "alive": _keyrate_tick is not None}
 
 
+# ── Ночной судья новостного выпуска (этап 6) ─────────────────────────────────
+# Через час после утренней генерации оценивает опубликованное строгой рубрикой →
+# digest_news_judge → график «мусорной доли» в Пульсе. Деградацию отбора ловит
+# метрика, а не глаз владельца (до аудита 05.08.2026 её не существовало вовсе).
+JUDGE_HOUR = int(os.getenv("DIGEST_JUDGE_HOUR_MSK", str(GEN_HOUR + 1)))
+
+
+async def judge_background_loop():
+    from . import judge as judge_mod
+    await asyncio.sleep(240)
+    log.info("судья выпуска: расписание %02d:00 МСК", JUDGE_HOUR)
+    while True:
+        try:
+            now = datetime.now(MSK)
+            if now.hour >= JUDGE_HOUR:      # catch-up: сегодня ещё не оценён
+                r = await judge_mod.judge_issue(_today_msk())
+                if r.get("n"):
+                    log.info("судья выпуска: %s", r)
+            nxt = now.replace(hour=JUDGE_HOUR, minute=5, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            await asyncio.sleep((nxt - datetime.now(MSK)).total_seconds())
+        except Exception as e:  # noqa: BLE001
+            log.warning("судья выпуска: %s", e)
+            await asyncio.sleep(1800)
+
+
 # Корпус отзывов наполняет чужой крон, и мы не знаем его расписания, поэтому
 # догоняем зеркало часто и небольшими порциями, а не раз в сутки: инкремент по
 # водяному знаку почти бесплатен, когда догонять нечего.

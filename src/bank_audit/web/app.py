@@ -51,7 +51,8 @@ async def lifespan(app: FastAPI):
     #  • parser_scheduler_loop — cron-запуск парсеров + self-healing (PARSER_SCHEDULER_ENABLED)
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
     from ..digest.scheduler import (bankiru_fts_background_loop, digest_background_loop,
-                                    ingest_background_loop, keyrate_background_loop)
+                                    ingest_background_loop, judge_background_loop,
+                                    keyrate_background_loop)
     from ..rag import ingest_queue
     from ..loophole.parsers.scheduler import (
         ENABLED as PARSER_SCHED_ENABLED,
@@ -68,6 +69,8 @@ async def lifespan(app: FastAPI):
         # зеркало полнотекста по корпусу отзывов: словесная нога поиска живёт в
         # нашей БД, а корпус наполняет чужой крон — без догона зеркало отстаёт
         asyncio.create_task(bankiru_fts_background_loop()),
+        # ночной судья новостного выпуска → метрика мусора в Пульсе (этап 6)
+        asyncio.create_task(judge_background_loop()),
     ]
     # Планировщик парсеров «Лазеек»: по cron запускает сгенерированный код.
     # В самом модуле флаг PARSER_SCHEDULER_ENABLED по умолчанию ВКЛЮЧЁН —
