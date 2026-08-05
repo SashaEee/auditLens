@@ -327,3 +327,41 @@ def keyrate_watch_status() -> dict:
     return {"every_s": KEYRATE_EVERY_S,
             "last_tick": _keyrate_tick.isoformat() if _keyrate_tick else None,
             "alive": _keyrate_tick is not None}
+
+
+# Корпус отзывов наполняет чужой крон, и мы не знаем его расписания, поэтому
+# догоняем зеркало часто и небольшими порциями, а не раз в сутки: инкремент по
+# водяному знаку почти бесплатен, когда догонять нечего.
+FTS_SYNC_EVERY_S = int(os.getenv("BANKIRU_FTS_SYNC_EVERY_S", "3600"))
+
+
+async def bankiru_fts_background_loop():
+    """Держит полнотекстовое зеркало корпуса отзывов в актуальном состоянии.
+
+    Без него словесная нога поиска отстаёт от источника ровно настолько, сколько
+    приложение не перезапускали, и свежие жалобы находятся только по смыслу.
+    Первый прогон после пустой миграции делает полный бэкфилл (замер на проде —
+    169 тыс. уникальных отзывов за 151 с), поэтому стартует не сразу.
+    """
+    from ..rag import bankiru_fts
+    await asyncio.sleep(90)           # даём приложению подняться
+    log.info("зеркало отзывов: синхронизация раз в %d с", FTS_SYNC_EVERY_S)
+    while True:
+        try:
+            r = await asyncio.to_thread(bankiru_fts.sync)
+            if r.get("written"):
+                log.info("индекс отзывов: из внешнего корпуса %d за %s с",
+                         r["written"], r.get("seconds"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("индекс отзывов, внешний корпус: %s", e)
+        try:
+            # Отзывы наших коллекторов: в индекс и со своими векторами. Идёт
+            # ПОСЛЕ ночного сбора — тот пишет в таблицу review, а здесь
+            # собранное становится видимым на вкладке и находимым поиском.
+            r = await asyncio.to_thread(bankiru_fts.sync_local)
+            if r.get("rows"):
+                log.info("индекс отзывов: своих коллекторов %d, новых векторов %d за %s с",
+                         r["rows"], r.get("embedded"), r.get("seconds"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("индекс отзывов, свои коллекторы: %s", e)
+        await asyncio.sleep(FTS_SYNC_EVERY_S)

@@ -225,6 +225,12 @@ banki_ratings:
 # ── Отзывы: browser-collector с OPENCLAW_BROWSER_PROFILE ──────────────────────
 banki_reviews:
   adapter: bank_audit.sources.banki_reviews:BankiReviewsAdapter
+  # как источник подписан на вкладке «Источники». Держим в конфиге,
+  # а не в коде витрины: новый коллектор приносит своё описание сам
+  display:
+    domain: "banki.ru"
+    url: "https://www.banki.ru/services/responses/"
+    title: "banki.ru — народный рейтинг"
   collector: http
   targets:
     # max_pages: 10 даёт ~80 отзывов/банк, банки.ру не блокирует IP при таком темпе
@@ -233,6 +239,12 @@ banki_reviews:
 
 sravni_reviews:
   adapter: bank_audit.sources.sravni_reviews:SravniReviewsAdapter
+  # как источник подписан на вкладке «Источники». Держим в конфиге,
+  # а не в коде витрины: новый коллектор приносит своё описание сам
+  display:
+    domain: "sravni.ru"
+    url: "https://www.sravni.ru/banki/otzyvy/"
+    title: "Сравни.ру — отзывы о банках"
   collector: browser
   targets:
     - { name: sber_reviews, url: "https://www.sravni.ru/bank/sberbank/otzyvy/", bank_slug: sberbank }
@@ -243,6 +255,12 @@ sravni_reviews:
 # Дополняет banki/sravni — другая аудитория, ~10 свежих отзывов на банк.
 bankiros_reviews:
   adapter: bank_audit.sources.bankiros_reviews:BankirosReviewsAdapter
+  # как источник подписан на вкладке «Источники». Держим в конфиге,
+  # а не в коде витрины: новый коллектор приносит своё описание сам
+  display:
+    domain: "bankiros.ru"
+    url: "https://bankiros.ru/"
+    title: "Bankiros — отзывы о банках"
   collector: http
   targets:
     - name: sber_reviews
@@ -287,3 +305,37 @@ bankiros_reviews:
     - name: rsb_reviews
       url: "https://bankiros.ru/bank/rsb/otzyvy"
       bank_slug: rsb
+
+# ── Finuslugi.ru reviews — JSON API маркетплейса Мосбиржи ────────────────────
+# Второй источник отзывов рядом с корпусом banki.ru. Другая площадка — другая
+# аудитория и другой состав жалоб; плюс здесь есть оценки выше двух звёзд,
+# которых в корпусе banki.ru нет вовсе.
+#
+# ⚠️ Только побанково. Общая лента (без bank_name) перекошена: на 3000 отзывов
+# две трети приходились на один банк, а Сбера было 9 штук. Адаптер намеренно
+# падает, если банк в таргете не указан.
+#
+# bank_name сверяется со справочником площадки по нормализованному имени, id
+# подставляется сам — заводить чужие идентификаторы в конфиг не нужно.
+finuslugi_reviews:
+  adapter: bank_audit.sources.finuslugi_reviews:FinuslugiReviewsAdapter
+  # как источник подписан на вкладке «Источники». Держим в конфиге,
+  # а не в коде витрины: новый коллектор приносит своё описание сам
+  display:
+    domain: "finuslugi.ru"
+    url: "https://finuslugi.ru/banki"
+    title: "Финуслуги — маркетплейс Мосбиржи"
+  collector: http
+  targets:
+    - { name: sber_reviews,        bank_name: "Сбербанк",        max_pages: 8 }
+    - { name: vtb_reviews,         bank_name: "ВТБ",             max_pages: 6 }
+    - { name: alfabank_reviews,    bank_name: "Альфа-Банк",      max_pages: 6 }
+    - { name: tbank_reviews,       bank_name: "Тинькофф",        max_pages: 6 }
+    - { name: sovcombank_reviews,  bank_name: "Совкомбанк",      max_pages: 6 }
+    - { name: gazprombank_reviews, bank_name: "Газпромбанк",     max_pages: 4 }
+    - { name: rshb_reviews,        bank_name: "Россельхозбанк",  max_pages: 4 }
+    - { name: psb_reviews,         bank_name: "Промсвязьбанк",   max_pages: 4 }
+    - { name: otkritie_reviews,    bank_name: "Открытие",        max_pages: 3 }
+    - { name: raiffeisen_reviews,  bank_name: "Райффайзенбанк",  max_pages: 3 }
+    - { name: mtsbank_reviews,     bank_name: "МТС Банк",        max_pages: 3 }
+    - { name: ozonbank_reviews,    bank_name: "Озон Банк",       max_pages: 3 }

@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -16,6 +17,8 @@ from urllib.parse import urlparse
 from sqlalchemy import text
 
 from .. import db
+
+log = logging.getLogger(__name__)
 
 # ── Контуры и требования ─────────────────────────────────────────────────────
 # Требования РАЗНЫЕ по контурам: новостной ленте нужен фид и частота, корпусу
@@ -76,7 +79,7 @@ PURPOSES: list[dict[str, Any]] = [
             "Отзывы пишут клиенты, а не редакция площадки",
             "Есть ссылка на каждый отзыв — она нужна как доказательство",
         ],
-        "examples": "banki.ru, bankiros.ru, отзовики",
+        "examples": "banki.ru, finuslugi.ru, sravni.ru, bankiros.ru, отзовики",
     },
     {
         "id": "tariffs",
@@ -224,30 +227,88 @@ def _tariff_sources() -> list[dict]:
     return rows
 
 
-def _review_sources() -> list[dict]:
-    out = []
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """Русское склонение при числе. «1974 отзывов» и «21 банков» на витрине
+    для аудитора выглядят неряшливо и подрывают доверие к остальным цифрам."""
+    a, b = abs(n) % 100, abs(n) % 10
+    return many if 10 < a < 20 else few if 1 < b < 5 else one if b == 1 else many
+
+
+def _review_display() -> dict[str, dict]:
+    """Подписи источников отзывов из config/sources.yaml.
+
+    Держим их в конфиге, а не в коде витрины: новый коллектор приносит своё
+    описание вместе с собой, и список на вкладке не приходится дописывать руками.
+    """
     try:
-        from ..rag import reviews_dash as rd
-        eng = rd._get_engine()
-        if eng is not None:
-            with eng.connect() as c:
-                n, banks, since = c.execute(text(
-                    'SELECT count(*), count(DISTINCT "bankName"), min("datePublished")::date'
-                    " FROM bankiru.reviews")).one()
-            out.append({
-                "domain": "banki.ru", "url": "https://www.banki.ru/services/responses/",
-                "title": "banki.ru — народный рейтинг",
-                "role": "Корпус отзывов", "kind": "Ежедневный сбор",
-                "coverage": f"{n} отзывов · {banks} банков · с {since}",
-            })
+        from ..config import load_sources
+        cfg = load_sources()
     except Exception:  # noqa: BLE001
-        pass
-    with db.session() as s:
-        n = s.execute(text("SELECT count(*) FROM review")).scalar() or 0
-    if n:
-        out.append({"domain": "bankiros.ru", "url": "https://bankiros.ru/",
-                    "title": "bankiros.ru", "role": "Дополнительный корпус",
-                    "kind": "Сбор по расписанию", "coverage": f"{n} отзывов"})
+        return {}
+    return {k: (v.get("display") or {}) for k, v in (cfg or {}).items()
+            if "review" in str(v.get("adapter", "")).lower()}
+
+
+def _review_sources() -> list[dict]:
+    """Площадки отзывов с РЕАЛЬНЫМ покрытием — по единому индексу.
+
+    Раньше список был зашит: строка banki.ru плюс строка bankiros.ru, которой
+    приписывалось общее число всех локальных отзывов. С появлением нескольких
+    коллекторов это стало прямой неправдой — в её счёт попадали и finuslugi, и
+    sravni. Теперь состав и объёмы берутся из индекса, то есть из данных.
+    """
+    disp = _review_display()
+    # Внешний корпус приходит под своим ключом «bankiru», которого в конфиге
+    # сборщиков нет — он не наш коллектор. Подпись берём у одноимённой площадки.
+    if "bankiru" not in disp and "banki_reviews" in disp:
+        disp = {**disp, "bankiru": disp["banki_reviews"]}
+    rows = []
+    try:
+        with db.session() as s:
+            rows = s.execute(text("""
+                SELECT source, count(*) n, count(DISTINCT bank) banks,
+                       min(dt)::date since, max(dt)::date until
+                FROM review_index
+                WHERE bank IS NOT NULL AND (dt IS NULL OR dt <= now())
+                GROUP BY 1 ORDER BY 2 DESC
+            """)).mappings().all()
+    except Exception as e:  # noqa: BLE001
+        log.warning("sources_catalog: индекс отзывов недоступен (%s)", e)
+        return []
+
+    # внешний корпус banki.ru и наш собственный коллектор той же площадки —
+    # для читателя это ОДИН источник; показывать двумя строками бессмысленно
+    merged: dict[str, dict] = {}
+    for r in rows:
+        key = r["source"]
+        d = disp.get(key) or {}
+        domain = d.get("domain") or ("banki.ru" if key == "bankiru" else key)
+        m = merged.setdefault(domain, {
+            "domain": domain, "url": None, "title": None,
+            "role": "Корпус отзывов", "kind": "Ежедневный сбор",
+            "n": 0, "banks": 0, "since": None, "until": None,
+        })
+        # подпись из конфига всегда важнее запасной: площадку могут наполнять
+        # два ключа сразу (внешний корпус и наш коллектор), и первый из них
+        # не обязан быть тем, у кого описание есть
+        m["url"] = m["url"] or d.get("url")
+        m["title"] = m["title"] or d.get("title")
+        m["n"] += int(r["n"])
+        m["banks"] = max(m["banks"], int(r["banks"] or 0))
+        for fld, val, better in (("since", r["since"], min), ("until", r["until"], max)):
+            if val and (m[fld] is None or better(val, m[fld]) == val):
+                m[fld] = val
+
+    out = []
+    for m in sorted(merged.values(), key=lambda x: -x["n"]):
+        span = f" · с {m['since']}" if m["since"] else ""
+        out.append({"domain": m["domain"],
+                    "url": m["url"] or f"https://{m['domain']}/",
+                    "title": m["title"] or m["domain"],
+                    "role": m["role"], "kind": m["kind"],
+                    "coverage": (f"{m['n']} {_plural(m['n'], 'отзыв', 'отзыва', 'отзывов')}"
+                                 f" · {m['banks']} {_plural(m['banks'], 'банк', 'банка', 'банков')}"
+                                 f"{span}")})
     return out
 
 

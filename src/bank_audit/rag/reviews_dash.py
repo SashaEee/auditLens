@@ -11,15 +11,25 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import re
 import threading
 import time
 
 from sqlalchemy import text
 
+from .. import db
 from .bankiru_reviews import _get_engine, resolve_bank, search_reviews
 
 log = logging.getLogger(__name__)
+
+# Считать панель тем по сохранённой разметке, а не regex-сканом по текстам.
+# Рубильник нужен на время, пока новая таксономия не подтверждена на проде:
+# при выключении и при отсутствии разметки всё считается по-старому.
+TOPICS_FROM_LABELS = os.getenv("REVIEW_TOPICS_AGG", "1").lower() not in ("0", "false", "no")
+# Лента по единому индексу (все источники), а не только по внешней базе banki.ru.
+# Рубильник на случай отката: при выключении вкладка ведёт себя как раньше.
+FEED_FROM_INDEX = os.getenv("REVIEWS_FEED_INDEX", "1").lower() not in ("0", "false", "no")
 
 
 def _safe(default):
@@ -45,15 +55,15 @@ THEMES = [
     {"key": "blocking", "label": "Блокировки счетов · 115/161-ФЗ", "risk": "compliance",
      "patterns": ["115-фз", "115 фз", "161-фз", "161 фз", "заблокир", "блокиров", "разблокир", "приостановил", "ограничил операц", "арест счет", "арестова", "заморозил"]},
     {"key": "escalation", "label": "Эскалация в ЦБ/суд/ФАС", "risk": "compliance",
-     "patterns": ["в цб", "центробанк", "центральный банк", " в суд", "исков", "подам иск", "антимонопольн", " в фас", "прокурат", "роспотреб", "жалобу в", "регулятор"]},
+     "patterns": ["в цб", "центробанк", "центральн банк", " в суд", "исков", "подам иск", "антимонопольн", " в фас", "прокурат", "роспотреб", "жалоб в", "регулятор"]},
     {"key": "fraud", "label": "Мошенничество / компрометация", "risk": "compliance",
      "patterns": ["мошенник", "компромет", "украли деньг", "несанкционир", "списали без", "сняли деньги без"]},
     {"key": "insurance", "label": "Навязанная страховка", "risk": "conduct",
-     "patterns": ["навяз", "страховку без", "страхование без", "без моего согласия"]},
+     "patterns": ["навяз", "страховк без", "страховани без", "без моего согласия"]},
     {"key": "fees", "label": "Скрытые комиссии / рост тарифов", "risk": "conduct",
-     "patterns": ["скрыт комисс", "скрыт плат", "скрыт усл", "повысили комисс", "подняли тариф", "повышение тариф", "комиссия за", "удержали комисс", "навязали комисс"]},
+     "patterns": ["скрыт комисс", "скрыт плат", "скрыт усл", "повысили комисс", "подняли тариф", "повышени тариф", "комисси за", "удержали комисс", "навязали комисс"]},
     {"key": "missell", "label": "Навязывание / подключили без согласия", "risk": "conduct",
-     "patterns": ["подключили без", "оформили без", "без моего ведома", "обманом", "ввели в заблужд", "не предупред"]},
+     "patterns": ["подключил без", "оформил без", "без моего ведома", "обманом", "ввели в заблужд", "не предупред"]},
     {"key": "app", "label": "Сбой приложения / ДБО", "risk": "ops",
      "patterns": ["приложение не работает", "не открывается", "зависает", "вылетает", "сбой в приложении", "не работает онлайн", "не работает приложение"]},
     {"key": "support", "label": "Поддержка / SLA", "risk": "ops",
@@ -70,26 +80,59 @@ THEMES = [
     {"key": "enforcement", "label": "Исполнительные листы · алименты", "risk": "compliance",
      "patterns": ["алимент", "пристав", "исполнительн лист", "229-фз", "229 фз", "прожиточн минимум"]},
     {"key": "bankruptcy", "label": "Банкротство · БКИ", "risk": "compliance",
-     "patterns": ["банкротств", "127-фз", "213.28", "кредитн истори", "в бки ", "финансовый управляющ", "освобожден от долг"]},
+     "patterns": ["банкротств", "127-фз", "213.28", "кредитн истори", "в бки", "финансов управляющ", "освобожден от долг"]},
     {"key": "rate", "label": "Ставка · условия кредита", "risk": "conduct",
-     "patterns": ["повысили ставк", "повышение ставк", "подняли ставк", "снижение ставк", "снизить ставк", "неустойк", "изменили услови"]},
+     "patterns": ["повысили ставк", "повышени ставк", "подняли ставк", "снижени ставк", "снизить ставк", "неустойк", "изменил услови"]},
     {"key": "loyalty", "label": "Бонусы · кэшбэк · СберСпасибо", "risk": "conduct",
      "patterns": ["сберспасибо", "спасибо за покупк", "бонус спасибо", "кэшбэк", "кэшбек", "бонусн балл", "сберпрайм", "сберпремьер"]},
     {"key": "atm", "label": "Банкоматы · наличные", "risk": "ops",
      "patterns": ["банкомат", "зажева", "застрял", "купюр", "внесени наличн", "выдач наличн", "пересчит"]},
     {"key": "deposit", "label": "Вклады · накопительные · ПДС", "risk": "conduct",
-     "patterns": ["вклад", "накопительн счет", "накопительный счет", "депозит", " пдс", "долгосрочные сбережен"]},
+     "patterns": ["вклад", "накопительн счет", "депозит", " пдс", "долгосрочн сбережен"]},
     {"key": "subscription", "label": "Подписки · автосписания", "risk": "conduct",
      "patterns": ["подписк", "сбермобайл", "сберздоров", "яндекс плюс", "автосписани", "автоплатеж"]},
     {"key": "inheritance", "label": "Наследование · счета умерших", "risk": "compliance",
-     "patterns": ["наследств", "наследник", "свидетельство о смерт", "по наследству", "вступлени в наследств"]},
+     "patterns": ["наследств", "наследник", "свидетельств о смерт", "по наследству", "вступлени в наследств"]},
     {"key": "hardship", "label": "Кредитные каникулы · реструктуризация", "risk": "compliance",
-     "patterns": ["кредитн каникул", "ипотечн каникул", "реструктуризац", "неплатежеспособ", "урегулирование задолж"]},
+     "patterns": ["кредитн каникул", "ипотечн каникул", "реструктуризац", "неплатежеспособ", "урегулировани задолж"]},
 ]
 THEME_BY_KEY = {t["key"]: t for t in THEMES}
+
+
+def _stem_rx(pattern: str, boundary: str) -> str:
+    """Паттерн темы → regex с учётом русской морфологии.
+
+    Словарь выше писался ОСНОВАМИ через пробел («скрыт комисс»), но сравнивался
+    буквальной подстрокой — «скрытая комиссия» не совпадала, и тема находила
+    пятую часть своих отзывов. Здесь основа от 4 символов получает произвольное
+    окончание; короткие служебные слова («в», «за», «не») остаются буквальными,
+    иначе «в» съело бы «все» и потянуло ложные срабатывания.
+
+    Ведущий пробел в паттерне означает границу слова (« пдс» → «(ПДС)», «ПДС.»).
+    Короткое последнее слово тоже закрываем границей, иначе «комисси за» ловит
+    «комиссия задолженности».
+
+    boundary — синтаксис границы слова: \\b для Python, \\y для Postgres.
+    Семантика одна, движки разные, поэтому строку собираем дважды.
+    """
+    toks = pattern.split()
+    parts: list[str] = []
+    for i, t in enumerate(toks):
+        parts.append(re.escape(t))
+        if i < len(toks) - 1:
+            parts.append(r"\w*\s+" if len(t) >= 4 else r"\s+")
+    lead = boundary if pattern[:1].isspace() else ""
+    tail = boundary if len(toks[-1]) < 4 else ""
+    return lead + "".join(parts) + tail
+
+
+def _theme_rx(theme: dict, boundary: str) -> str:
+    return "(" + "|".join(_stem_rx(p, boundary) for p in theme["patterns"]) + ")"
+
+
 # Скомпилированные паттерны для пер-отзыв тегирования (Python-side, для сегментов
 # drill-in и LLM-объяснений). Та же таксономия, что и в _theme_sql (SQL-агрегат).
-_THEME_RE = [(t, re.compile("|".join(re.escape(p) for p in t["patterns"]), re.I)) for t in THEMES]
+_THEME_RE = [(t, re.compile(_theme_rx(t, r"\b"), re.I)) for t in THEMES]
 
 
 def _short(label: str) -> str:
@@ -182,8 +225,49 @@ def _theme_sql(theme: dict, prefix: str) -> tuple[str, dict]:
     # ОДИН регистронезависимый regex-скан (~*) на тему вместо N×ILIKE —
     # одна проходка по строке на тему, а не по разу на каждый паттерн.
     k = f"{prefix}rx"
-    rx = "(" + "|".join(re.escape(p) for p in theme["patterns"]) + ")"
-    return f'r."reviewBody" ~* :{k}', {k: rx}
+    # \y — граница слова в POSIX-регэкспах Postgres (аналог \b в Python).
+    return f'r."reviewBody" ~* :{k}', {k: _theme_rx(theme, r"\y")}
+
+
+def _theme_tsquery(theme: dict) -> str:
+    """Паттерны темы → tsquery для единого индекса.
+
+    Индекс хранит tsvector, а не текст, поэтому regex по нему не пройдёт. Основы
+    из словаря тем превращаются в префиксный поиск: «прокурат» → «прокурат:*».
+    Многословные паттерны становятся фразой через оператор следования.
+
+    Нужно ровно для тех метрик, что не переехали на выведенную таксономию —
+    например доли эскалаций: темы «жалоба в ЦБ» в ней нет, а метрика нужна.
+    """
+    parts = []
+    for p in theme["patterns"]:
+        toks = [re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]", "", t) for t in p.split()]
+        toks = [t for t in toks if len(t) >= 2]
+        if not toks:
+            continue
+        parts.append(" <-> ".join(f"{t}:*" for t in toks))
+    return " | ".join(parts)
+
+
+def _idx_clause(bc: str, product: str | None, alias: str = "i") -> tuple[str, dict]:
+    """Общее условие «банк + продукт» для единого индекса."""
+    cl = [f'{alias}.bank = :bank']
+    p: dict = {"bank": bc}
+    if product:
+        cl.append(f'{alias}.product = :product')
+        p["product"] = product
+    # дата из будущего — дефект источника, в статистике ей делать нечего
+    cl.append(f'({alias}.dt IS NULL OR {alias}.dt <= now())')
+    return " AND ".join(cl), p
+
+
+def _index_ready() -> bool:
+    """Наполнен ли единый индекс. Пока нет — агрегаты считаются по-старому."""
+    try:
+        from . import bankiru_fts
+        return bankiru_fts.is_ready()
+    except Exception:
+        return False
 
 
 def _bank_clause(bank_canon, product):
@@ -198,23 +282,90 @@ def _bank_clause(bank_canon, product):
 # ── Агрегаты ────────────────────────────────────────────────────────────────
 @_safe([])
 def banks(top: int = 60) -> list[dict]:
-    """Список банков корпуса banki.ru по объёму жалоб — для фильтра вкладки.
+    """Список банков по объёму жалоб — для фильтра вкладки. Считается по единому
+    индексу, поэтому банк, которого нет во внешнем корпусе, но который собрали
+    наши коллекторы, тоже попадает в список.
     Сбер первым (даже если по объёму не №1), дальше по убыванию."""
     eng = _get_engine()
-    if eng is None:
-        return []
 
     def _compute():
-        with eng.connect() as c:
-            rows = c.execute(text(
-                'SELECT "bankName", count(DISTINCT url) n FROM bankiru.reviews'
-                ' GROUP BY 1 ORDER BY 2 DESC LIMIT :top'),
-                {"top": top}).all()
+        rows = None
+        if _index_ready():
+            try:
+                with db.session() as s:
+                    rows = s.execute(text(
+                        "SELECT i.bank, count(*) n FROM review_index i"
+                        " WHERE i.bank IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT :top"),
+                        {"top": top}).all()
+            except Exception as e:
+                log.warning("reviews_dash.banks: индекс не сработал (%s)", e)
+                rows = None
+        if rows is None:
+            if eng is None:
+                return []
+            with eng.connect() as c:
+                rows = c.execute(text(
+                    'SELECT "bankName", count(DISTINCT url) n FROM bankiru.reviews'
+                    ' GROUP BY 1 ORDER BY 2 DESC LIMIT :top'),
+                    {"top": top}).all()
         items = [{"bank": r[0], "n": int(r[1])} for r in rows]
         sber = [x for x in items if x["bank"] == "Сбербанк"]
         rest = [x for x in items if x["bank"] != "Сбербанк"]
         return sber + rest
     return _cached(f"banks:{top}", _compute, ttl=6 * 3600)
+
+
+@_safe(None)
+def corpus_stats(bank: str | None = None) -> dict | None:
+    """Реальный состав корпуса: сколько отзывов, откуда и за какой период.
+
+    Нужна подзаголовку вкладки. Раньше там стояла зашитая строка «негативные
+    отзывы banki.ru (1-2 звезды)» — она перестала быть правдой, как только
+    источников стало несколько, и никак не отражала объём. Числа берём из
+    индекса, а не пишем руками: добавится источник — подпись обновится сама.
+    """
+    if not _index_ready():
+        return None
+    bc = resolve_bank(bank) if bank else None
+    where, p = ("WHERE i.bank = :bank AND (i.dt IS NULL OR i.dt <= now())",
+                {"bank": bc}) if bc else ("WHERE (i.dt IS NULL OR i.dt <= now())", {})
+    with db.session() as s:
+        rows = s.execute(text(f"""
+            SELECT i.source, count(*) n, min(i.dt)::date, max(i.dt)::date,
+                   count(*) FILTER (WHERE i.rating IS NOT NULL) rated,
+                   round(avg(i.rating)::numeric, 2) avg_rating
+            FROM review_index i {where}
+            GROUP BY 1 ORDER BY 2 DESC
+        """), p).mappings().all()
+        # Размер всего корпуса — отдельно от чисел по выбранному банку. Одной
+        # цифрой их показывать нельзя: «18 603 по 220 банкам» читается так,
+        # будто 18 603 это весь корпус, хотя это только выбранный банк.
+        banks_n, all_n = s.execute(text(
+            "SELECT count(DISTINCT i.bank), count(*) FROM review_index i"
+            " WHERE i.bank IS NOT NULL AND (i.dt IS NULL OR i.dt <= now())")).one()
+    items = [{"source": _SOURCE_LABEL.get(r["source"], r["source"]),
+              "key": r["source"], "n": int(r["n"]),
+              "from": r["min"].isoformat() if r["min"] else None,
+              "to": r["max"].isoformat() if r["max"] else None,
+              "avg_rating": float(r["avg_rating"]) if r["avg_rating"] is not None else None}
+             for r in rows]
+    # площадки схлопываем по подписи: внешний корпус и наш коллектор banki.ru
+    # для аудитора одна площадка, и показывать её двумя строками бессмысленно
+    merged: dict[str, dict] = {}
+    for it in items:
+        m = merged.setdefault(it["source"], {"source": it["source"], "n": 0,
+                                             "from": it["from"], "to": it["to"]})
+        m["n"] += it["n"]
+        if it["from"] and (not m["from"] or it["from"] < m["from"]):
+            m["from"] = it["from"]
+        if it["to"] and (not m["to"] or it["to"] > m["to"]):
+            m["to"] = it["to"]
+    out = sorted(merged.values(), key=lambda x: -x["n"])
+    return {"bank": bc,
+            # total — по ВЫБРАННОМУ банку; corpus_* — весь индекс
+            "total": sum(x["n"] for x in out),
+            "corpus_total": int(all_n or 0), "banks": int(banks_n or 0),
+            "sources": out, "raw": items}
 
 
 @_safe(None)
@@ -226,7 +377,57 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
     if not bc:
         return None
 
+    def _compute_index():
+        """Обзор по ЕДИНОМУ индексу: числа включают все источники, а не только
+        внешний корпус. Дедуп не нужен — url это первичный ключ индекса, поэтому
+        count(*) вместо count(DISTINCT url), и это заметно дешевле."""
+        idx, ip = _idx_clause(bc, product)
+        with db.session() as s:
+            cur = s.execute(text(f"""
+                SELECT count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d)),
+                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d2)
+                                          AND i.dt <  now() - make_interval(days => :d))
+                FROM review_index i WHERE {idx}
+            """), {**ip, "d": days, "d2": days * 2}).one()
+            total_cur, total_prev = int(cur[0]), int(cur[1])
+            # признак посчитан при индексации: по tsvector его не выразить,
+            # ограничителем в паттернах служат предлоги, а словарь их выбрасывает
+            esc_cur = int(s.execute(text(f"""
+                SELECT count(*) FROM review_index i
+                WHERE {idx} AND i.dt >= now() - make_interval(days => :d) AND i.esc
+            """), {**ip, "d": days}).scalar() or 0)
+            mk = s.execute(text(
+                "SELECT i.bank, count(*) n FROM review_index i"
+                " WHERE i.dt >= now() - make_interval(days => :d)"
+                " AND (i.dt IS NULL OR i.dt <= now())"
+                + (" AND i.product = :product" if product else "") +
+                " GROUP BY 1 ORDER BY 2 DESC"),
+                {"d": days, **({"product": product} if product else {})}).all()
+            asof = s.execute(text(
+                f"SELECT max(i.dt) FROM review_index i WHERE {idx}"), ip).scalar()
+            by_src = [{"source": r[0], "n": int(r[1])} for r in s.execute(text(
+                f"SELECT i.source, count(*) FROM review_index i WHERE {idx}"
+                f" GROUP BY 1 ORDER BY 2 DESC"), ip).all()]
+        total_market = sum(int(r[1]) for r in mk) or 1
+        delta = round(100.0 * (total_cur - total_prev) / total_prev, 1) if total_prev else None
+        return {
+            "bank": bc, "product": product, "days": days,
+            "total": total_cur, "prev": total_prev, "delta_pct": delta,
+            "delta_low_n": bool(total_prev and min(total_cur, total_prev) < 30),
+            "market_share_pct": round(100.0 * total_cur / total_market, 1),
+            "market_rank": next((i + 1 for i, r in enumerate(mk) if r[0] == bc), None),
+            "market_banks": len(mk),
+            "escalation_pct": round(100.0 * esc_cur / total_cur, 1) if total_cur else 0.0,
+            "as_of": asof.date().isoformat() if asof else None,
+            "by_source": by_src, "src": "index",
+        }
+
     def _compute():
+        if _index_ready():
+            try:
+                return _compute_index()
+            except Exception as e:
+                log.warning("reviews_dash.overview: индекс не сработал (%s) — считаю по корпусу", e)
         bclause, bp = _bank_clause(bc, product)
         esc, ep = _theme_sql(THEME_BY_KEY["escalation"], "e")
         with eng.connect() as c:
@@ -284,15 +485,31 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
         return None
 
     def _compute():
-        bclause, bp = _bank_clause(bc, product)
-        with eng.connect() as c:
-            rows = c.execute(text(
-                f"SELECT to_char(date_trunc('month', r.\"datePublished\"), 'YYYY-MM') ym, count(DISTINCT r.url)"
-                f" FROM bankiru.reviews r WHERE {bclause}"
-                f" AND r.\"datePublished\" >= date_trunc('month', now()) - make_interval(months => :m)"
-                f" GROUP BY 1 ORDER BY 1"),
-                {**bp, "m": months - 1}).all()
-            cur_ym = c.execute(text("SELECT to_char(now(),'YYYY-MM')")).scalar()
+        if _index_ready():
+            try:
+                idx, ip = _idx_clause(bc, product)
+                with db.session() as s:
+                    rows = s.execute(text(
+                        f"SELECT to_char(date_trunc('month', i.dt), 'YYYY-MM') ym, count(*)"
+                        f" FROM review_index i WHERE {idx}"
+                        f" AND i.dt >= date_trunc('month', now()) - make_interval(months => :m)"
+                        f" GROUP BY 1 ORDER BY 1"), {**ip, "m": months - 1}).all()
+                    cur_ym = s.execute(text("SELECT to_char(now(),'YYYY-MM')")).scalar()
+            except Exception as e:
+                log.warning("reviews_dash.trend: индекс не сработал (%s)", e)
+                rows = None
+        else:
+            rows = None
+        if rows is None:
+            bclause, bp = _bank_clause(bc, product)
+            with eng.connect() as c:
+                rows = c.execute(text(
+                    f"SELECT to_char(date_trunc('month', r.\"datePublished\"), 'YYYY-MM') ym, count(DISTINCT r.url)"
+                    f" FROM bankiru.reviews r WHERE {bclause}"
+                    f" AND r.\"datePublished\" >= date_trunc('month', now()) - make_interval(months => :m)"
+                    f" GROUP BY 1 ORDER BY 1"),
+                    {**bp, "m": months - 1}).all()
+                cur_ym = c.execute(text("SELECT to_char(now(),'YYYY-MM')")).scalar()
         series = [{"ym": r[0], "n": int(r[1]), "partial": r[0] == cur_ym} for r in rows]
         # baseline и детект спайка — ТОЛЬКО по завершённым месяцам (текущий неполный
         # занижен и раздувал бы «падение»/смещал среднее). Robust: медиана + MAD,
@@ -312,6 +529,75 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
 
 
 @_safe(None)
+def _themes_from_labels(bc: str, product: str | None) -> dict | None:
+    """Панель тем по СОХРАНЁННОЙ разметке вместо regex-скана по текстам.
+
+    Разметку делает фоновый прогон (review_topics): темы выводит модель из
+    корпуса, раскладывает по ним вектор. Здесь остаётся обычный GROUP BY — а
+    было двадцать с лишним регэкспов по всем текстам рынка за 180 дней на каждое
+    открытие вкладки.
+
+    Всё нужное для среза (банк, продукт, дата) уже лежит в полнотекстовом
+    зеркале, поэтому чужая база в агрегате не участвует вовсе.
+    """
+    from . import review_topics
+    ver = review_topics.active_version()
+    if not ver:
+        return None
+    params = {"bank": bc, "product": product, "ver": ver,
+              "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP}
+    try:
+        with db.session() as s:
+            rows = s.execute(text("""
+                WITH dd AS (
+                    SELECT f.url, f.dt FROM review_index f
+                    WHERE f.bank = :bank
+                      AND f.dt >= now() - make_interval(days => 180)
+                      AND (CAST(:product AS text) IS NULL OR f.product = :product)
+                ), lab AS (
+                    SELECT l.topic_id, dd.dt
+                    FROM review_topic_label l JOIN dd ON dd.url = l.url
+                    WHERE l.z >= :min AND l.rn <= :rank
+                )
+                SELECT d.key, d.label, d.risk,
+                       count(*) FILTER (WHERE lab.dt >= now() - make_interval(days => 90)) AS n,
+                       count(*) FILTER (WHERE lab.dt <  now() - make_interval(days => 90)) AS p
+                FROM lab JOIN review_topic_def d ON d.topic_id = lab.topic_id
+                WHERE d.version = :ver
+                GROUP BY d.key, d.label, d.risk
+            """), params).mappings().all()
+            tot, other = s.execute(text("""
+                WITH dd AS (
+                    SELECT f.url FROM review_index f
+                    WHERE f.bank = :bank
+                      AND f.dt >= now() - make_interval(days => 90)
+                      AND (CAST(:product AS text) IS NULL OR f.product = :product)
+                )
+                SELECT count(*),
+                       count(*) FILTER (WHERE NOT EXISTS (
+                           SELECT 1 FROM review_topic_label l
+                           WHERE l.url = dd.url AND l.z >= :min AND l.rn <= :rank))
+                FROM dd
+            """), params).one()
+    except Exception as e:
+        log.warning("reviews_dash: агрегат по разметке не сработал (%s) — иду regex'ом", e)
+        return None
+    total = int(tot) or 1
+    out = []
+    for r in rows:
+        n, p = int(r["n"]), int(r["p"])
+        out.append({"key": r["key"], "label": r["label"], "risk": r["risk"], "n": n,
+                    "pct": round(100.0 * n / total, 1),
+                    "delta_pct": round(100.0 * (n - p) / p) if p else (None if n == 0 else 100)})
+    out.sort(key=lambda x: x["n"], reverse=True)
+    if other:
+        out.append({"key": "other", "label": "Прочее / без темы", "risk": "other",
+                    "n": int(other), "pct": round(100.0 * int(other) / total, 1),
+                    "delta_pct": None})
+    return {"bank": bc, "product": product, "days": 90, "total": total,
+            "themes": out, "src": "labels"}
+
+
 def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None:
     eng = _get_engine()
     if eng is None:
@@ -321,6 +607,12 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
         return None
 
     def _compute():
+        # Пока разметки нет (первый прогон ещё не отработал) — считаем как раньше.
+        # Панель тем не должна пустеть из-за того, что фоновая задача не успела.
+        if TOPICS_FROM_LABELS:
+            byl = _themes_from_labels(bc, product)
+            if byl and byl["themes"]:
+                return byl
         bclause, bp = _bank_clause(bc, product)
         # Темы для аудита = РИСКИ ПОСЛЕДНИХ 90 дн (n/доля), momentum vs пред. 90.
         # Скан ограничен 180 днями + булев-флаг темы считаем ОДИН раз в CTE
@@ -377,13 +669,28 @@ def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 
         return None
 
     def _compute():
-        with eng.connect() as c:
-            rows = c.execute(text(
-                'SELECT "bankName", count(DISTINCT r.url) n FROM bankiru.reviews r'
-                ' WHERE r."datePublished" >= now() - make_interval(days => :d)'
-                + (' AND r."product" = :product' if product else '') +
-                ' GROUP BY 1 ORDER BY 2 DESC'),
-                {"d": days, **({"product": product} if product else {})}).all()
+        rows = None
+        if _index_ready():
+            try:
+                with db.session() as s:
+                    rows = s.execute(text(
+                        "SELECT i.bank, count(*) n FROM review_index i"
+                        " WHERE i.dt >= now() - make_interval(days => :d)"
+                        " AND (i.dt IS NULL OR i.dt <= now())"
+                        + (" AND i.product = :product" if product else "") +
+                        " GROUP BY 1 ORDER BY 2 DESC"),
+                        {"d": days, **({"product": product} if product else {})}).all()
+            except Exception as e:
+                log.warning("reviews_dash.vs_market: индекс не сработал (%s)", e)
+                rows = None
+        if rows is None:
+            with eng.connect() as c:
+                rows = c.execute(text(
+                    'SELECT "bankName", count(DISTINCT r.url) n FROM bankiru.reviews r'
+                    ' WHERE r."datePublished" >= now() - make_interval(days => :d)'
+                    + (' AND r."product" = :product' if product else '') +
+                    ' GROUP BY 1 ORDER BY 2 DESC'),
+                    {"d": days, **({"product": product} if product else {})}).all()
         total = sum(int(r[1]) for r in rows) or 1
         ranked = [{"bank": r[0], "n": int(r[1]), "pct": round(100.0 * int(r[1]) / total, 1),
                    "is_target": r[0] == bc} for r in rows]
@@ -406,14 +713,30 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
         return None
 
     def _compute():
-        bclause, bp = _bank_clause(bc, product)
-        with eng.connect() as c:
-            rows = c.execute(text(
-                f"SELECT split_part(r.location, ' (', 1) AS city, count(DISTINCT r.url) n"
-                f" FROM bankiru.reviews r WHERE {bclause} AND r.location <> ''"
-                f" AND r.\"datePublished\" >= now() - make_interval(days => :d)"
-                f" GROUP BY 1 ORDER BY 2 DESC LIMIT 40"),
-                {**bp, "d": days}).all()
+        rows = None
+        if _index_ready():
+            try:
+                idx, ip = _idx_clause(bc, product)
+                with db.session() as s:
+                    # город заполнен не у всех источников — считаем по тем, где он
+                    # есть, и не подмешиваем безгородные строки нулями
+                    rows = s.execute(text(
+                        f"SELECT i.city, count(*) n FROM review_index i"
+                        f" WHERE {idx} AND i.city IS NOT NULL AND i.city <> ''"
+                        f" AND i.dt >= now() - make_interval(days => :d)"
+                        f" GROUP BY 1 ORDER BY 2 DESC LIMIT 40"), {**ip, "d": days}).all()
+            except Exception as e:
+                log.warning("reviews_dash.geo: индекс не сработал (%s)", e)
+                rows = None
+        if rows is None:
+            bclause, bp = _bank_clause(bc, product)
+            with eng.connect() as c:
+                rows = c.execute(text(
+                    f"SELECT split_part(r.location, ' (', 1) AS city, count(DISTINCT r.url) n"
+                    f" FROM bankiru.reviews r WHERE {bclause} AND r.location <> ''"
+                    f" AND r.\"datePublished\" >= now() - make_interval(days => :d)"
+                    f" GROUP BY 1 ORDER BY 2 DESC LIMIT 40"),
+                    {**bp, "d": days}).all()
         cities = []
         for city, n in rows:
             n = int(n)
@@ -441,37 +764,292 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
         return None
 
     def _compute():
-        with eng.connect() as c:
-            rows = c.execute(text(
-                'SELECT "product", count(DISTINCT r.url) n FROM bankiru.reviews r'
-                ' WHERE r."bankName" = :bank AND r."datePublished" >= now() - make_interval(days => :d)'
-                ' GROUP BY 1 ORDER BY 2 DESC LIMIT :top'),
-                {"bank": bc, "d": days, "top": top}).all()
+        rows = None
+        if _index_ready():
+            try:
+                with db.session() as s:
+                    rows = s.execute(text(
+                        "SELECT i.product, count(*) n FROM review_index i"
+                        " WHERE i.bank = :bank AND i.product IS NOT NULL"
+                        " AND i.dt >= now() - make_interval(days => :d)"
+                        " AND (i.dt IS NULL OR i.dt <= now())"
+                        " GROUP BY 1 ORDER BY 2 DESC LIMIT :top"),
+                        {"bank": bc, "d": days, "top": top}).all()
+            except Exception as e:
+                log.warning("reviews_dash.products: индекс не сработал (%s)", e)
+                rows = None
+        if rows is None:
+            with eng.connect() as c:
+                rows = c.execute(text(
+                    'SELECT "product", count(DISTINCT r.url) n FROM bankiru.reviews r'
+                    ' WHERE r."bankName" = :bank AND r."datePublished" >= now() - make_interval(days => :d)'
+                    ' GROUP BY 1 ORDER BY 2 DESC LIMIT :top'),
+                    {"bank": bc, "d": days, "top": top}).all()
         return {"bank": bc, "items": [{"product": r[0], "n": int(r[1])} for r in rows]}
     return _cached(f"pr:{bc}:{days}:{top}", _compute)
+
+
+# Как показывать источник аудитору. Ключи приходят из конфига коллекторов;
+# незнакомый ключ показываем как есть — это лучше, чем прятать происхождение.
+_SOURCE_LABEL = {"bankiru": "banki.ru", "banki_reviews": "banki.ru",
+                 "sravni_reviews": "sravni.ru", "bankiros_reviews": "bankiros.ru",
+                 "finuslugi_reviews": "finuslugi.ru"}
+
+
+def _feed_from_index(bc: str, product: str | None, theme: str | None,
+                     days: int | None, city: str | None, month: str | None,
+                     limit: int) -> dict:
+    """Лента по ЕДИНОМУ индексу — все источники в одном списке.
+
+    Раньше лента читала только внешнюю базу banki.ru, поэтому отзывы, собранные
+    нашими коллекторами, лежали в базе и были невидимы. Теперь источник — просто
+    колонка, и аудитор видит их вперемешку по дате, как и просил: не отдельным
+    блоком, а расширением того же списка.
+    """
+    fetch = min(max(limit * 5, 40), 150)
+    p: dict = {"bank": bc, "product": product, "lim": fetch}
+    extra = ""
+    if days:
+        extra += " AND i.dt >= now() - make_interval(days => :d)"
+        p["d"] = days
+    if city:
+        extra += " AND i.city = :city"
+        p["city"] = city
+    if month:
+        extra += " AND date_trunc('month', i.dt) = to_date(:month, 'YYYY-MM')"
+        p["month"] = month
+    if theme:
+        from . import review_topics
+        ver = review_topics.active_version()
+        if not ver:
+            return {"items": [], "mode": "feed", "error": "unknown_theme"}
+        extra += (" AND EXISTS (SELECT 1 FROM review_topic_label l"
+                  " JOIN review_topic_def d ON d.topic_id = l.topic_id"
+                  " WHERE l.url = i.url AND d.version = :ver AND d.key = :tkey"
+                  " AND l.z >= :minz AND l.rn <= :rank)")
+        p.update({"ver": ver, "tkey": theme, "minz": review_topics.MIN_Z,
+                  "rank": review_topics.RANK_CAP})
+    try:
+        with db.session() as s:
+            rows = [dict(r) for r in s.execute(text(f"""
+                SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt,
+                       i.city, i.rating
+                FROM review_index i
+                WHERE i.bank = :bank
+                  -- дата из будущего это дефект источника, а не свежий отзыв:
+                  -- такая строка навсегда встаёт первой в ленте
+                  AND (i.dt IS NULL OR i.dt <= now())
+                  AND (CAST(:product AS text) IS NULL OR i.product = :product){extra}
+                ORDER BY i.dt DESC NULLS LAST
+                LIMIT :lim
+            """), p).mappings().all()]
+    except Exception as e:
+        log.warning("reviews_dash: лента по индексу не собралась (%s)", e)
+        return {"items": [], "mode": "feed", "error": "feed_failed"}
+
+    from . import bankiru_fts
+    bodies = bankiru_fts.bodies_for(rows)
+    seen: dict[str, int] = {}
+    out: list[dict] = []
+    for r in rows:
+        b = bodies.get(r["url"]) or {}
+        body = (b.get("text") or "").strip()
+        if len(body) < 40:
+            continue
+        key = body[:100].lower()
+        if key in seen:                     # массовость считаем, а не прячем
+            out[seen[key]]["similar"] += 1
+            continue
+        seen[key] = len(out)
+        dt = r["dt"]
+        out.append({"bank": r["bank"], "product": r["product"] or b.get("product"),
+                    "date": dt.date().isoformat() if dt else None,
+                    "city": r["city"] or b.get("city"),
+                    "url": r["url"], "text": body, "similar": 0,
+                    "rating": float(r["rating"]) if r["rating"] is not None else None,
+                    "source": r["source"],
+                    "themes": []})
+    out = out[:limit]
+    _attach_themes(out)
+    return {"items": out, "mode": "feed", "error": None}
+
+
+def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None,
+                   city: str | None, month: str | None, limit: int) -> list[str] | None:
+    """Ссылки на отзывы темы из выведенной таксономии — по сохранённой разметке.
+
+    Возвращает None, если такой темы в активном поколении нет: аудитор должен
+    увидеть «тема не найдена», а не молча пустую ленту (её легко принять за
+    «жалоб по теме нет»).
+    """
+    from . import review_topics
+    ver = review_topics.active_version()
+    if not ver:
+        return None
+    p = {"key": key, "ver": ver, "bank": bank, "product": product,
+         "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP, "lim": int(limit)}
+    extra = ""
+    if days:
+        extra += " AND f.dt >= now() - make_interval(days => :d)"
+        p["d"] = days
+    if city:
+        extra += " AND f.city = :city"
+        p["city"] = city
+    if month:
+        extra += " AND date_trunc('month', f.dt) = to_date(:month, 'YYYY-MM')"
+        p["month"] = month
+    try:
+        with db.session() as s:
+            if not s.execute(text(
+                "SELECT 1 FROM review_topic_def WHERE version = :ver AND key = :key"),
+                    p).first():
+                return None
+            return list(s.execute(text(f"""
+                SELECT f.url FROM review_index f
+                JOIN review_topic_label l ON l.url = f.url
+                JOIN review_topic_def  d ON d.topic_id = l.topic_id
+                WHERE d.version = :ver AND d.key = :key AND l.z >= :min AND l.rn <= :rank
+                  AND f.bank = :bank
+                  AND (CAST(:product AS text) IS NULL OR f.product = :product){extra}
+                ORDER BY f.dt DESC LIMIT :lim
+            """), p).scalars().all())
+    except Exception as e:
+        log.warning("reviews_dash: отбор по теме %r не сработал (%s)", key, e)
+        return None
+
+
+def _labels_for(urls: list[str]) -> dict[str, list[dict]]:
+    """Темы показанных отзывов из разметки — одним запросом на всю страницу.
+
+    Пер-отзыв regex-разметка (match_themes) остаётся фолбэком: пока фоновый
+    прогон не отработал, чипы должны быть, пусть и прежние."""
+    if not urls:
+        return {}
+    from . import review_topics  # noqa: F401 — READ_TOP используется ниже
+    ver = review_topics.active_version()
+    if not ver:
+        return {}
+    try:
+        with db.session() as s:
+            rows = s.execute(text("""
+                SELECT l.url, d.key, d.label, d.risk, l.score
+                FROM review_topic_label l
+                JOIN review_topic_def d ON d.topic_id = l.topic_id
+                WHERE d.version = :ver AND l.z >= :min AND l.rn <= :rank AND l.url = ANY(:urls)
+                ORDER BY l.url, l.z DESC
+            """), {"ver": ver, "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP, "urls": urls}).mappings().all()
+    except Exception as e:
+        log.warning("reviews_dash: темы показанных отзывов не забрались (%s)", e)
+        return {}
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["url"], []).append(
+            {"key": r["key"], "label": r["label"], "short": _short(r["label"]),
+             "risk": r["risk"]})
+    return out
+
+
+def _attach_themes(items: list[dict]) -> None:
+    """Темы и человекочитаемый источник — общий финиш для ленты и поиска.
+
+    Обе ветки проходят здесь, поэтому и подпись источника ставится здесь: иначе
+    лента показывала бы «banki.ru», а поиск по тем же данным — служебный ключ
+    «bankiru», и аудитор считал бы их разными площадками."""
+    for r in items:
+        src = r.get("source")
+        if src:
+            r["source"] = _SOURCE_LABEL.get(src, src)
+    from . import review_topics          # ленивый импорт: иначе кольцо модулей
+    ready = review_topics.is_ready()
+    by_url = _labels_for([i["url"] for i in items if i.get("url")])
+    for r in items:
+        lab = by_url.get(r.get("url") or "")
+        if lab:
+            r["themes"] = lab[:review_topics.READ_TOP]
+            r["theme_src"] = "topics"
+        elif ready:
+            # Разметка есть, но этот отзыв ни к чему не отнесён — он и в панели
+            # считается «Прочим». Показывать здесь regex-темы нельзя: в одном
+            # списке оказались бы названия двух разных таксономий, а карточка
+            # спорила бы с панелью. Пустой список фронт рисует как «Прочее».
+            r["themes"] = []
+            r["theme_src"] = "topics"
+        else:
+            r["themes"] = match_themes(r.get("text", ""))
 
 
 def list_reviews(bank: str, product: str | None = None, theme: str | None = None,
                  q: str | None = None, days: int | None = None,
                  city: str | None = None, month: str | None = None,
                  limit: int = 20) -> list[dict]:
+    """Лента доказательной базы. Тонкая обёртка над list_reviews_ex для тех
+    вызывающих, кому нужен только список (сегменты, LLM-объяснения)."""
+    return list_reviews_ex(bank, product, theme, q, days, city, month, limit)["items"]
+
+
+def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = None,
+                    q: str | None = None, days: int | None = None,
+                    city: str | None = None, month: str | None = None,
+                    limit: int = 20) -> dict:
     """Лента доказательной базы. q → семантика; иначе свежие с фильтрами
     тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
-    массовость это аудит-сигнал → поле `similar`."""
+    массовость это аудит-сигнал → поле `similar`.
+
+    Возвращает {items, mode, error}. Признак error нужен вкладке: раньше упавший
+    поиск и честное «ничего не нашлось» выглядели одинаково — пустым списком,
+    и аудитор делал вывод, что жалоб по теме нет."""
     bc = resolve_bank(bank) if bank else None
     if q and q.strip():
-        res = search_reviews(q, bank=bank, product=product, since_days=days, k=limit)
-        for r in res:
-            r["themes"] = match_themes(r.get("text", ""))   # пер-отзыв темы (regex baseline)
-        return res
+        if bank and not bc:
+            # банка нет в корпусе — это не «жалоб не нашлось», а другой ответ
+            return {"items": [], "mode": "search", "error": "unknown_bank"}
+        # тема/город/месяц раньше здесь терялись — теперь уезжают в сам поиск
+        th = THEME_BY_KEY.get(theme or "")
+        meta: dict = {}
+        try:
+            res = search_reviews(q, bank=bc, product=product, since_days=days,
+                                 theme_rx=_theme_rx(th, r"\y") if th else None,
+                                 city=city, month=month, k=limit, strict=True,
+                                 _meta=meta)
+        except Exception as e:
+            log.warning("reviews_dash: поиск по %r упал: %s", q, e)
+            return {"items": [], "mode": "search", "error": "search_failed"}
+        _attach_themes(res)
+        return {"items": res, "mode": "search", "error": None, "search": meta}
+    if not bc:
+        return {"items": [], "mode": "feed", "error": "unknown_bank"}
+    # Единый индекс — основной путь: в нём и внешний корпус, и наши коллекторы.
+    # Старая ветка по внешней базе остаётся страховкой на случай, если индекс
+    # ещё не наполнен (первый запуск) или его отключили рубильником.
+    if FEED_FROM_INDEX:
+        from . import bankiru_fts
+        if bankiru_fts.is_ready():
+            res = _feed_from_index(bc, product, theme, days, city, month, limit)
+            if res["items"] or res["error"]:
+                return res
     eng = _get_engine()
-    if eng is None or not bc:
-        return []
+    if eng is None:
+        return {"items": [], "mode": "feed", "error": None}
     bclause, bp = _bank_clause(bc, product)
     # тянем с запасом, чтобы счётчик «ещё N похожих» был осмысленным после дедупа
     fetch = min(max(limit * 5, 40), 120)
     params = {**bp, "lim": fetch}
     clause = ""
+    # Тема из выведенной таксономии живёт разметкой в НАШЕЙ базе, а лента читает
+    # чужую — join между ними невозможен. Поэтому сначала берём отобранные url
+    # у себя, потом добираем по ним тексты: та же двухфазность, что и в
+    # словесной ноге поиска. Ключи старой regex-таксономии продолжают работать
+    # прежним путём, пока разметки нет.
+    if theme and theme not in THEME_BY_KEY:
+        urls = _urls_by_topic(theme, bc, product, days=days, city=city,
+                              month=month, limit=fetch)
+        if urls is None:
+            return {"items": [], "mode": "feed", "error": "unknown_theme"}
+        if not urls:
+            return {"items": [], "mode": "feed", "error": None}
+        clause += " AND r.url = ANY(:turls)"
+        params["turls"] = urls
+        theme = None                      # дальше по regex-ветке не идём
     if theme and theme in THEME_BY_KEY:
         ts, tp = _theme_sql(THEME_BY_KEY[theme], "lt")
         clause += f" AND {ts}"
@@ -500,7 +1078,7 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
                 f' ORDER BY dt DESC LIMIT :lim'), params).mappings().all()
     except Exception as e:
         log.warning("reviews_dash.list_reviews failed: %s", e)
-        return []
+        return {"items": [], "mode": "feed", "error": "feed_failed"}
     seen: dict[str, int] = {}
     out: list[dict] = []
     for r in rows:
@@ -515,8 +1093,10 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
                     "date": dt.date().isoformat() if dt else None,
                     "city": (r["location"] or "").split(" (")[0],
                     "url": r["url"], "text": body, "similar": 0,
-                    "themes": match_themes(body)})   # пер-отзыв темы (regex baseline)
-    return out[:limit]
+                    "themes": []})
+    out = out[:limit]
+    _attach_themes(out)
+    return {"items": out, "mode": "feed", "error": None}
 
 
 @_safe(None)

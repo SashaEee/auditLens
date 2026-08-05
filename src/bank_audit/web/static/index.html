@@ -1400,6 +1400,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 /* ─── REVIEWS · риск-радар голоса клиента ─────────────────────────────────── */
 .rv{max-width:1320px;margin:0 auto}
 .rv-src{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);letter-spacing:.01em;margin-bottom:20px}
+/* размер всего корпуса — контекст, а не главное число: приглушаем,
+   чтобы не спорил с цифрами по выбранному банку */
+.rv-src-all{color:var(--ink-4);padding-left:10px;border-left:1px solid var(--hair)}
 .rv-up{color:var(--neg);font-weight:600}
 .rv-down{color:var(--pos);font-weight:600}
 .rv-flat{color:var(--ink-4)}
@@ -1514,6 +1517,23 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-disclaimer{font-size:11.5px;line-height:1.5;color:var(--ink-2);background:color-mix(in oklab,var(--warn),var(--surface) 90%);border:1px solid color-mix(in oklab,var(--warn),transparent 70%);border-radius:8px;padding:9px 12px;margin:0 0 18px}
 .rv-disclaimer b{color:var(--ink);font-weight:600}
 .rv-lown{color:var(--ink-4);font-family:'JetBrains Mono',monospace;font-size:10px}
+
+/* объяснение выдачи поиска: по каким словам искали и откуда взялся отзыв.
+   Тот же язык, что и в базе знаний (.kb-summary / .kb-hl) — намеренно. */
+.rv-sum{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);
+  padding:2px 2px 12px;display:flex;gap:14px;flex-wrap:wrap;align-items:baseline}
+.rv-sum b{color:var(--ink-2);font-weight:500}
+.rv-sum-x{padding-left:14px;border-left:1px solid var(--hair)}
+.rv-via{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.03em;
+  color:var(--accent);background:var(--accent-soft);border-radius:3px;padding:2px 6px;cursor:help}
+/* «по смыслу» — совпадения слов нет, отзыв подобран моделью: приглушаем,
+   чтобы дословное попадание читалось как более надёжное */
+.rv-via-soft{color:var(--ink-4);background:var(--paper-2);border:1px solid var(--hair-2)}
+/* полоса-предупреждение над лентой. Не .rv-note: тот — блок пустого состояния
+   с отступом 26px по центру, над списком он выглядел бы как обрыв вёрстки */
+.rv-warn{font-size:11.5px;line-height:1.45;color:var(--ink-2);
+  background:color-mix(in oklab,var(--warn),transparent 90%);
+  border-left:2px solid var(--warn);border-radius:0 4px 4px 0;padding:7px 10px;margin:0 0 12px}
 
 /* массовость / клик-аффордансы ленты */
 .rv-sim{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent);background:var(--accent-soft);border-radius:3px;padding:2px 6px}

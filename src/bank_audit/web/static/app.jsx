@@ -326,12 +326,12 @@ function EmptyOverviewCta(){
   </div>;
 }
 
-function EmptyState({text="Данных нет"}){
+function EmptyState({text="Данных нет",title="Ничего не найдено"}){
   return <div style={{padding:"64px 24px",textAlign:"center"}}>
     <div style={{display:"inline-flex",width:48,height:48,borderRadius:8,background:"var(--paper-2)",border:"1px solid var(--hair)",alignItems:"center",justifyContent:"center",marginBottom:12,color:"var(--ink-3)"}}>
       <Ic.search width="20" height="20"/>
     </div>
-    <div style={{fontWeight:500,marginBottom:4}}>Ничего не найдено</div>
+    <div style={{fontWeight:500,marginBottom:4}}>{title}</div>
     <div className="t-cap" style={{maxWidth:"42ch",margin:"0 auto"}}>{text}</div>
   </div>;
 }
@@ -398,7 +398,17 @@ function trustTier(score){
   return 3;
 }
 
-  // Экранирование + inline-markdown. Вынесено из renderMD в общую область:
+// Экранирование значения для HTML-атрибута. Живёт в ОБЩЕЙ области, а не внутри
+// renderMD: при выносе _inlineHTML наверх эта функция осталась вложенной, и
+// _inlineHTML обращался к имени, которого в его области нет. Ошибка молчала до
+// первой markdown-ссылки в ответе ИИ-аналитика, а потом валила вкладку целиком
+// («Can't find variable: escAttr»). Второй такой случай подряд, см. комментарий
+// ниже — при выносе функции наверх надо тащить и всё, на что она ссылается.
+function escAttr(v){
+  return v==null?"":String(v).replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// Экранирование + inline-markdown. Вынесено из renderMD в общую область:
 // разбор «Анализа жалоб недели» в карточки использует ту же санитизацию,
 // а вложенная функция была недоступна снаружи (ReferenceError на проде).
 function _inlineHTML(s, renderCitation=(n)=>`[${n}]`){
@@ -437,7 +447,6 @@ function renderMD(text, sources, charts){
   const chartsArr = Array.isArray(charts) ? charts : [];
   const srcByN={};
   if(Array.isArray(sources)){for(const s of sources){if(s&&s.n!=null)srcByN[s.n]=s;}}
-  const escAttr=(v)=>(v==null?"":String(v).replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
   const renderCitation=(n)=>{
     const s=srcByN[n];
     if(!s||!s.url){
@@ -2459,6 +2468,9 @@ function ReviewsPage(){
   const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
   const[vm,setVm]=useState(null),[ge,setGe]=useState(null),[prods,setProds]=useState([]);
   const[feed,setFeed]=useState(null);
+  const[feedErr,setFeedErr]=useState(null);                // упал поиск ≠ ничего не нашлось
+  const[feedMeta,setFeedMeta]=useState(null);              // по каким словам искали на самом деле
+  const[corp,setCorp]=useState(null);                      // реальный состав корпуса для подписи
   const[busy,setBusy]=useState(true),[feedBusy,setFeedBusy]=useState(false);
   const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
   const[modalRev,setModalRev]=useState(null);            // полный текст отзыва
@@ -2499,6 +2511,13 @@ function ReviewsPage(){
     }).catch(()=>{});
   },[]);
 
+  // состав корпуса зависит от выбранного банка: подпись должна отвечать на
+  // вопрос «сколько отзывов и откуда ИМЕННО по нему», а не по всему рынку
+  useEffect(()=>{
+    apiFetch(`/api/reviews/corpus?bank=${enc(bank)}`)
+      .then(d=>setCorp(d&&d.sources?d:null)).catch(()=>setCorp(null));
+  },[bank]);
+
   useEffect(()=>{
     setBusy(true);
     // allSettled: падение одной панели не должно стирать остальные четыре.
@@ -2528,7 +2547,8 @@ function ReviewsPage(){
   useEffect(()=>{ setFeedBusy(true);setClsOn(false);
     const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
     apiFetch(`/api/reviews/feed?bank=${enc(bank)}${pq()}${tq}${qq}&limit=20`)
-      .then(d=>{setFeed(d.items||[]);setFeedBusy(false);}).catch(()=>{setFeed([]);setFeedBusy(false);});
+      .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);setFeedBusy(false);})
+      .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedBusy(false);});
   },[bank,product,theme,q]);
 
   // on-demand: уточнить темы показанных отзывов через LLM (по кнопке)
@@ -2536,7 +2556,8 @@ function ReviewsPage(){
     setClsBusy(true);
     const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
     apiFetch(`/api/reviews/feed-classified?bank=${enc(bank)}${pq()}${tq}${qq}&limit=20`)
-      .then(d=>{if(d&&d.items)setFeed(d.items);setClsOn(!!(d&&d.llm));setClsBusy(false);})
+      .then(d=>{if(d&&d.items)setFeed(d.items);if(d&&d.search)setFeedMeta(d.search);
+                setClsOn(!!(d&&d.llm));setClsBusy(false);})
       .catch(()=>setClsBusy(false));
   };
 
@@ -2562,7 +2583,21 @@ function ReviewsPage(){
   return <div className="fade-in rv">
     <div className="eyebrow" style={{marginBottom:6}}>§ Отзывы · аудит-сигналы</div>
     <h1 className="t-h" style={{marginBottom:4,fontFamily:"'Source Serif 4',Georgia,serif",fontWeight:600,letterSpacing:"-.015em"}}>Голос клиента — риск-радар</h1>
-    <div className="rv-src">banki.ru · ~390 тыс. жалоб · 217 банков{ov&&ov.as_of?<> · данные по {ov.as_of}</>:""}</div>
+    {/* Состав корпуса берётся из индекса, а не пишется в вёрстке: площадок
+        теперь несколько, и зашитая строка про одну из них была бы неправдой */}
+    <div className="rv-src">
+      {corp&&corp.sources&&corp.sources.length
+        ? <>{/* сначала — по выбранному банку, потом размер всего корпуса.
+               Одной цифрой нельзя: «18 603 по 220 банкам» читается так, будто
+               это весь корпус, хотя относится только к выбранному банку */}
+           <b>{bank}</b>{": "}
+           {corp.sources.map((s,i)=><span key={i}>{i?" · ":""}
+             <b title={s.from&&s.to?`отзывы с ${s.from} по ${s.to}`:""}>{s.source}</b> {fmtNum(s.n)}</span>)}
+           {" — "}{fmtNum(corp.total)}{" отзыв"}{plural(corp.total,"","а","ов")}
+           {corp.corpus_total?<span className="rv-src-all">{" · корпус: "}{fmtNum(corp.corpus_total)}{" по "}{corp.banks}{" банкам"}</span>:""}</>
+        : "источники загружаются…"}
+      {ov&&ov.as_of?<> · данные по {ov.as_of}</>:""}
+    </div>
     <div className="rv-disclaimer">⚠ Корпус — <b>только негатив (1–2★)</b>. Все метрики — динамика и структура <b>внутри жалоб</b>, а не доля недовольных клиентов. «Доля рынка» и «место» отражают объём выгрузки banki.ru, <b>не нормированы на клиентскую базу</b> банка.</div>
 
     <div className="rv-filters">
@@ -2750,8 +2785,30 @@ function ReviewsPage(){
           placeholder="Найти жалобы по смыслу: «не зачисляют выручку по эквайрингу», «навязали страховку»… (Enter)"/>
         {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}>✕</span>}
       </div>
+      {/* По каким словам искали на самом деле. Аудитор должен видеть, что запрос
+          расширили и что часть его слов архив счёл общеупотребительными — иначе
+          выдача выглядит необъяснимой, и поиску перестают доверять. */}
+      {!feedBusy&&!feedErr&&q&&feedMeta&&<div className="rv-sum">
+        <span>искали по: <b>{(feedMeta.terms||[]).join(" · ")||q}</b></span>
+        {feedMeta.added&&feedMeta.added.length>0&&
+          <span className="rv-sum-x" title="раскрыто автоматически: сокращения и то, как об этом пишут клиенты">
+            добавлено: {feedMeta.added.join(" · ")}</span>}
+        {feedMeta.common&&feedMeta.common.length>0&&
+          <span className="rv-sum-x" title="эти слова встречаются почти в каждой жалобе и только размывают выдачу">
+            не учитывали: {feedMeta.common.join(" · ")}</span>}
+        <span className="rv-sum-x">дословных {feedMeta.n_words||0}, по смыслу {feedMeta.n_sense||0}</span>
+      </div>}
+      {!feedBusy&&!feedErr&&q&&feedMeta&&feedMeta.n_words===0&&feed&&feed.length>0&&
+        <div className="rv-warn">Слов запроса в текстах нет — все отзывы ниже подобраны по смыслу.
+          Это не значит, что жалоб по теме не было: возможно, клиенты называют её иначе.</div>}
       {feedBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
-       !feed||!feed.length?<EmptyState text="Нет жалоб по выбранным фильтрам — попробуйте другой банк/продукт/тему."/>:
+       feedErr?<EmptyState title={feedErr==="unknown_bank"?"Банка нет в корпусе":q?"Поиск не отработал":"Лента не загрузилась"}
+         text={feedErr==="unknown_bank"?"Отзывов banki.ru по этому банку у нас нет — выберите другой банк в списке выше.":
+               feedErr==="network"?"Не удалось получить ответ сервера. Обновите страницу или повторите запрос.":
+               "Запрос к корпусу отзывов не выполнился — это сбой, а не отсутствие жалоб по теме. Повторите; если повторяется, сообщите нам."}/>:
+       !feed||!feed.length?<EmptyState text={q
+         ?`По запросу «${q}» жалоб не нашлось — искали и по смыслу, и по словам, включая раскрытие сокращений. Возможно, по этой теме на банк действительно не жаловались; попробуйте снять фильтры или сузить формулировку.`
+         :"Нет жалоб по выбранным фильтрам — попробуйте другой банк/продукт/тему."}/>:
        feed.map((r,i)=>(
         <div key={i} className="rv-rev">
           <div className="rv-rh">
@@ -2759,10 +2816,19 @@ function ReviewsPage(){
             <RvThemes list={r.themes} src={r.theme_src}/>
             {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
             {r.city&&<span className="rv-pill">{r.city}</span>}
+            {/* Источник виден на каждой карточке: площадок теперь несколько, и
+                аудитор должен понимать, откуда жалоба, не открывая ссылку */}
+            {r.source&&<span className="rv-pill rv-pill-dim" title="площадка-источник отзыва">{r.source}</span>}
+            {r.rating!=null&&<span className="rv-pill rv-pill-dim" title="оценка автора">{"★".repeat(Math.max(1,Math.round(r.rating)))}</span>}
             {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
+            {r.via&&<span className={"rv-via"+(r.via==="смысл"?" rv-via-soft":"")}
+              title={r.via==="смысл"
+                ?"слов запроса в тексте нет — отзыв подобран по смыслу, проверьте глазами"
+                :"слова запроса встречаются в тексте дословно (подсвечены)"}>
+              {r.via==="смысл"?"по смыслу":r.via==="слова"?"дословно":"дословно и по смыслу"}</span>}
           </div>
           <div className="rv-rq rv-rq-click" role="button" tabIndex={0} onClick={()=>setModalRev(r)} onKeyDown={onKey(()=>setModalRev(r))}>
-            {(r.text||"").slice(0,420)}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
+            {kbMark(cutMark(r.marked||r.text,420))}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
           </div>
           <div className="rv-rf">
             {r.url&&<a href={r.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
@@ -2779,7 +2845,9 @@ function ReviewsPage(){
         <RvThemes list={modalRev.themes} src={modalRev.theme_src}/>
         {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
       </div>
-      <div className="rv-modal-text">{modalRev.text}</div>
+      {/* полный текст — с той же подсветкой, что и в карточке: аудитор открывает
+          отзыв именно чтобы проверить совпадение, терять его тут нельзя */}
+      <div className="rv-modal-text">{kbMark(modalRev.marked||modalRev.text)}</div>
       <div className="rv-rf" style={{marginTop:16}}>
         {modalRev.url&&<a href={modalRev.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
         <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(modalRev)} onKeyDown={onKey(()=>addCase(modalRev))}>＋ в аудит-дело</span>
@@ -5239,6 +5307,16 @@ function kbMark(s){
   if(!s)return null;
   return s.split(/(⟦[^⟧]*⟧)/g).map((p,i)=>
     p.startsWith("⟦")?<mark key={i} className="kb-hl">{p.slice(1,-1)}</mark>:<span key={i}>{p}</span>);
+}
+
+// Обрезка размеченного текста. Резать вслепую нельзя: срез посреди ⟦…⟧ оставляет
+// непарный маркер, и kbMark отдаёт его как обычный текст — на карточке вылезает
+// сырая скобка. Поэтому огрызок подсветки отбрасываем целиком.
+function cutMark(s,n){
+  let t=(s||"").slice(0,n);
+  const a=t.lastIndexOf("⟦"), b=t.lastIndexOf("⟧");
+  if(a>b)t=t.slice(0,a);
+  return t;
 }
 
 function KbDoc({g,onOpen}){

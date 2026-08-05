@@ -50,8 +50,8 @@ async def lifespan(app: FastAPI):
     #  • ingest_background_loop — автосбор тарифов в 05:00 МСК (+quality)
     #  • parser_scheduler_loop — cron-запуск парсеров + self-healing (PARSER_SCHEDULER_ENABLED)
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
-    from ..digest.scheduler import (digest_background_loop, ingest_background_loop,
-                                    keyrate_background_loop)
+    from ..digest.scheduler import (bankiru_fts_background_loop, digest_background_loop,
+                                    ingest_background_loop, keyrate_background_loop)
     from ..rag import ingest_queue
     from ..loophole.parsers.scheduler import (
         ENABLED as PARSER_SCHED_ENABLED,
@@ -65,6 +65,9 @@ async def lifespan(app: FastAPI):
         # сторож ключевой ставки: выпуск собирается раз в сутки, а ЦБ меняет
         # ставку в свой срок — без сторожа новое значение ждало бы утра
         asyncio.create_task(keyrate_background_loop()),
+        # зеркало полнотекста по корпусу отзывов: словесная нога поиска живёт в
+        # нашей БД, а корпус наполняет чужой крон — без догона зеркало отстаёт
+        asyncio.create_task(bankiru_fts_background_loop()),
     ]
     # Планировщик парсеров «Лазеек»: по cron запускает сгенерированный код.
     # В самом модуле флаг PARSER_SCHEDULER_ENABLED по умолчанию ВКЛЮЧЁН —
@@ -944,6 +947,13 @@ def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None):
 def reviews_products(bank: str = "Сбербанк"):
     return _rd().products(bank) or {}
 
+@app.get("/api/reviews/corpus")
+def reviews_corpus(bank: Optional[str] = None):
+    """Реальный состав корпуса для подписи вкладки: сколько отзывов, с каких
+    площадок и за какой период. Раньше подпись была зашита в вёрстку и врала,
+    как только источников стало несколько."""
+    return _rd().corpus_stats(bank or None) or {}
+
 @app.get("/api/reviews/theme-defs")
 def reviews_theme_defs():
     from ..rag.reviews_dash import THEMES
@@ -953,9 +963,13 @@ def reviews_theme_defs():
 def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  theme: Optional[str] = None, q: Optional[str] = None,
                  city: Optional[str] = None, month: Optional[str] = None, limit: int = 20):
-    items = _rd().list_reviews(bank, product or None, theme or None, q or None,
-                               city=city or None, month=month or None, limit=limit)
-    return {"items": items, "count": len(items)}
+    res = _rd().list_reviews_ex(bank, product or None, theme or None, q or None,
+                                city=city or None, month=month or None, limit=limit)
+    # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
+    # search — по каким словам искали на самом деле и сколько попаданий дословных
+    return {"items": res["items"], "count": len(res["items"]),
+            "mode": res["mode"], "error": res["error"],
+            "search": res.get("search") or None}
 
 @app.get("/api/reviews/feed-classified")
 async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,
@@ -966,10 +980,14 @@ async def reviews_feed_classified(bank: str = "Сбербанк", product: Optio
     Regex-темы остаются fallback'ом, если LLM не разобрал строку."""
     import asyncio
     from ..rag import reviews_llm
-    items = await asyncio.to_thread(_rd().list_reviews, bank, product or None, theme or None,
-                                    q or None, None, city or None, month or None, limit)
+    # через _ex, а не list_reviews: иначе уточнение тем перезаписывает ленту
+    # объектами без подсветки и признака «дословно/по смыслу», и аудитор молча
+    # теряет объяснение выдачи, нажав соседнюю кнопку
+    res = await asyncio.to_thread(_rd().list_reviews_ex, bank, product or None, theme or None,
+                                  q or None, None, city or None, month or None, limit)
+    items = res["items"]
     if not items:
-        return {"items": [], "count": 0, "llm": False}
+        return {"items": [], "count": 0, "llm": False, "search": res.get("search") or None}
     cls = await reviews_llm.classify_reviews(items)
     llm_ok = False
     for it, c in zip(items, cls):
@@ -977,7 +995,8 @@ async def reviews_feed_classified(bank: str = "Сбербанк", product: Optio
             it["themes"] = c["themes"]
             it["theme_src"] = "llm"
             llm_ok = True
-    return {"items": items, "count": len(items), "llm": llm_ok}
+    return {"items": items, "count": len(items), "llm": llm_ok,
+            "search": res.get("search") or None}
 
 @app.get("/api/reviews/anomalies")
 async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[str] = None):
