@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from datetime import date
 
 from openai import AsyncOpenAI
@@ -324,6 +325,58 @@ def _news_bodies(urls: list[str]) -> dict[str, str]:
         return {u: t for u, t in ex.map(_one, urls) if t}
 
 
+# Порог «это продолжение того же сюжета» (косинус заголовков). Сравниваем
+# ИСХОДНЫЕ заголовки (src_title), а не переписанные редакцией — в памяти лежат
+# исходники пула.
+_STORY_T = float(os.getenv("DIGEST_NEWS_STORY_T", "0.70"))
+
+
+def _news_stories(groups: list[dict]) -> int:
+    """Сюжеты: сегодняшняя публикация — продолжение публиковавшегося в прошлые
+    дни (эмбеддинг-близость заголовков к digest_news_seen за 14 дн). Пишет в
+    item["story"] прошлые эпизоды; headline получает пометку «продолжение
+    сюжета». Best-effort: сбой — просто без сюжетов."""
+    try:
+        from sqlalchemy import text as _t
+        from .. import db
+        from ..rag import embedder
+        with db.session() as s:
+            prev = s.execute(_t("""
+                SELECT title, url,
+                       (picked_at AT TIME ZONE 'Europe/Moscow')::date AS d
+                FROM digest_news_seen
+                WHERE picked
+                  AND picked_at >= now() - interval '14 days'
+                  AND (picked_at AT TIME ZONE 'Europe/Moscow')::date
+                      < (now() AT TIME ZONE 'Europe/Moscow')::date
+                  AND coalesce(title, '') <> ''
+            """)).all()
+        if not prev:
+            return 0
+        cur = [it for g in groups for it in (g.get("items") or [])]
+        if not cur:
+            return 0
+        v_prev = embedder.embed_batch([p[0] for p in prev])
+        v_cur = embedder.embed_batch(
+            [it.get("src_title") or it.get("title") or "" for it in cur])
+        n_st = 0
+        for k, it in enumerate(cur):
+            eps = [{"title": p[0][:140], "url": p[1], "date": str(p[2]),
+                    "sim": round(embedder.cosine_similarity(v_cur[k], v_prev[j]), 3)}
+                   for j, p in enumerate(prev)
+                   if embedder.cosine_similarity(v_cur[k], v_prev[j]) >= _STORY_T]
+            if eps:
+                eps.sort(key=lambda e: e["date"])
+                it["story"] = eps[-3:]      # последние три эпизода
+                n_st += 1
+        if n_st:
+            log.info("news: сюжетов-продолжений %d", n_st)
+        return n_st
+    except Exception as e:  # noqa: BLE001
+        log.info("news: сюжеты пропущены (%s)", e)
+        return 0
+
+
 def _news_pool(items: list[dict]) -> list[dict]:
     """Полный сырой пул дня — сырьё для персонального ре-ранка («Для вас»).
     LLM-группы дают ≤12 позиций на всех; персональная сетка ранжирует из всего пула."""
@@ -475,6 +528,9 @@ async def news(day: date) -> dict:
         ti, to = ti + ei, to + eo
         if not groups:
             raise ValueError("редакция вернула пустые группы")
+        # сюжеты СНАЧАЛА (по прошлым дням памяти), отметка публикации — потом:
+        # иначе сегодняшняя запись сматчилась бы сама с собой
+        await asyncio.to_thread(_news_stories, groups)
         # межднёвная память: опубликованное сегодня завтра в пул не возвращается
         try:
             await asyncio.to_thread(
@@ -590,7 +646,11 @@ _HEAD_SYSTEM = (
     "скобках). Твоя работа: выбрать главное, написать заголовок дня и 3–6 "
     "карточек-инсайтов ЧЕЛОВЕЧЕСКИМ языком. Числа бери ТОЛЬКО из сигналов, ничего "
     "не выдумывай. Рекомендации — внутренние действия по Сберу (конкуренты — "
-    "бенчмарк и ранний сигнал, НЕ «перейти/закупить у них»). Без эмодзи."
+    "бенчмарк и ранний сигнал, НЕ «перейти/закупить у них»). Особо ценны СВЯЗКИ "
+    "(ref link:*) — внешняя новость, подтверждённая нашими данными: если связка "
+    "есть, обязательно включи её карточкой и объясни, что совпало. Пометка "
+    "«продолжение сюжета» у новости — событие развивается несколько дней, скажи "
+    "об этом. Без эмодзи."
 )
 
 # Раньше здесь жила локальная копия с битыми ключами (autocredit/credit_card
@@ -600,6 +660,98 @@ from ..categories import CAT_RU as _CAT_RU
 
 def _cat_ru(c: str) -> str:
     return _CAT_RU.get(c or "", c or "")
+
+
+# ── связки «новость ↔ наши данные» (этап 5) ──────────────────────────────────
+# Кандидатов ищет детерминированный код (матчинг по типам событий триажа и
+# категориям), человеческий текст пишет headline-LLM обычной инсайт-карточкой —
+# фронт не меняется. Это главное преимущество платформы: внешняя нейросеть
+# новость перескажет, но у неё нет наших тарифных рядов и жалоб.
+
+_PROD_CAT = {"deposit": "deposit", "savings": "deposit", "ipoteka": "mortgage",
+             "credit_card": "card_credit", "debit_card": "card_debit",
+             "auto": "auto_loan", "consumer_loan": "credit"}
+
+
+def _connection_candidates(secs: dict) -> tuple[list[str], dict[str, dict]]:
+    lines: list[str] = []
+    reg: dict[str, dict] = {}
+    nw = (secs.get("news") or {}).get("payload") or {}
+    tm = (secs.get("tariff_moves") or {}).get("payload") or {}
+    rp = (secs.get("reviews_pulse") or {}).get("payload") or {}
+    news_items = [it for g in (nw.get("groups") or [])
+                  for it in (g.get("items") or [])]
+    mass_by_cat = {m.get("category"): m for m in (tm.get("mass_updates") or [])}
+    kr = tm.get("key_rate") or {}
+    spread = tm.get("dep_spread_pp")
+
+    def _add(ref: str, line: str, data: dict) -> None:
+        if ref not in reg and len(reg) < 3:      # максимум 3 связки на выпуск
+            reg[ref] = {"kind": "connection", "data": data}
+            lines.append(f"({ref}) {line}")
+
+    # 1) решение по ставке ↔ рынок переставляет вклады / наш спред
+    rate_news = next((it for it in news_items
+                      if it.get("event") == "rate_decision"), None)
+    if rate_news and (mass_by_cat.get("deposit") or spread is not None):
+        m = mass_by_cat.get("deposit")
+        bits = []
+        if m:
+            bits.append(f'{m["n_banks"]} банков переставили вклады за 48 ч')
+        if spread is not None:
+            bits.append(f'спред макс.вклад Сбера − КС {spread:+} пп')
+        _add("link:rate",
+             f'СВЯЗКА новость×данные: «{(rate_news.get("title") or "")[:70]}» ↔ '
+             + "; ".join(bits)
+             + (f' (КС {kr.get("current")}%)' if kr.get("current") is not None else ""),
+             {"news": {k: rate_news.get(k) for k in ("title", "url", "domain")},
+              "category": "deposit", "mass": m, "spread": spread,
+              "key_rate": kr.get("current")})
+
+    # 2) продуктовая новость ↔ массовое движение той же категории тарифов
+    for it in news_items:
+        if it is rate_news:
+            continue
+        for p in (it.get("products") or []):
+            cat = _PROD_CAT.get(p)
+            m = mass_by_cat.get(cat)
+            if not m:
+                continue
+            _add(f"link:cat:{cat}",
+                 f'СВЯЗКА новость×данные: «{(it.get("title") or "")[:70]}» ↔ '
+                 f'{m["n_banks"]} банков изменили «{_cat_ru(cat)}» за 48 ч '
+                 f'({", ".join(m["banks"][:4])})',
+                 {"news": {k: it.get(k) for k in ("title", "url", "domain")},
+                  "category": cat, "mass": m})
+            break
+
+    # 3) сбой/утечка в новостях ↔ ведущее расхождение жалоб с рынком
+    inc = next((it for it in news_items
+                if it.get("event") in ("bank_incident", "data_leak")), None)
+    dv = next((d for d in (rp.get("diverge") or [])
+               if (d.get("gap") or 0) >= 1.25), None)
+    if inc and dv:
+        _add("link:incident",
+             f'СВЯЗКА новость×данные: «{(inc.get("title") or "")[:70]}» ↔ жалобы '
+             f'«{dv["label"]}»: {dv["week"]} за 7 дн, ×{dv.get("gap")} к рынку',
+             {"news": {k: inc.get(k) for k in ("title", "url", "domain")},
+              "theme": dv})
+
+    # 4) платёжная инфраструктура ↔ темы жалоб про переводы/банкоматы/СБП
+    pay = next((it for it in news_items
+                if it.get("event") == "payments_infra"), None)
+    if pay:
+        th = next((d for d in (rp.get("diverge") or [])
+                   if re.search(r"перевод|банкомат|сбп|плат[её]ж",
+                                d.get("label") or "", re.I)), None)
+        if th:
+            _add("link:pay",
+                 f'СВЯЗКА новость×данные: «{(pay.get("title") or "")[:70]}» ↔ жалобы '
+                 f'«{th["label"]}»: {th["week"]} за 7 дн'
+                 + (f', ×{th["gap"]} к рынку' if th.get("gap") else ""),
+                 {"news": {k: pay.get(k) for k in ("title", "url", "domain")},
+                  "theme": th})
+    return lines, reg
 
 
 def _build_candidates(secs: dict) -> tuple[list[str], dict[str, dict]]:
@@ -653,13 +805,24 @@ def _build_candidates(secs: dict) -> tuple[list[str], dict[str, dict]]:
         for it in g.get("items") or []:
             ref = f"news:{ni}"
             reg[ref] = {"kind": "news_alert", "data": it, "group": g.get("key")}
+            story = it.get("story") or []
             lines.append(f'({ref}) новость [{g.get("key")}/{it.get("severity")}]: '
-                         f'{it["title"]} — {it.get("why") or it.get("summary") or ""}')
+                         f'{it["title"]} — {it.get("why") or it.get("summary") or ""}'
+                         + (f' [продолжение сюжета: {len(story)} эп. ранее,'
+                            f' с {story[0].get("date")}]' if story else ""))
             ni += 1
             if ni >= 10:
                 break
         if ni >= 10:
             break
+
+    # связки «новость ↔ наши данные» — детерминированный матчинг (этап 5)
+    try:
+        c_lines, c_reg = _connection_candidates(secs)
+        lines += c_lines
+        reg.update(c_reg)
+    except Exception:  # noqa: BLE001 — связки не должны ронять передовицу
+        log.warning("connection candidates failed", exc_info=True)
 
     qo = (secs.get("quality_ops") or {}).get("payload") or {}
     if qo.get("flags_err"):
@@ -697,6 +860,20 @@ def _ai_prompt(kind: str, d: dict) -> str:
         return (f'Проанализируй новость для аудита розничного бизнеса Сбера: '
                 f'«{d.get("title")}» ({d.get("url")}). Какие риски и какие действия '
                 f'стоит предпринять?')
+    if kind == "connection":
+        n = d.get("news") or {}
+        if d.get("theme"):
+            t = d["theme"]
+            return (f'Внешняя новость «{n.get("title")}» совпала с нашими данными: '
+                    f'жалобы «{t.get("label")}» — {t.get("week")} за 7 дней, '
+                    f'×{t.get("gap")} к рынку. Разбери связь: одно ли это событие, '
+                    f'какова причинность, какие шаги аудита розницы Сбера.')
+        m = d.get("mass") or {}
+        return (f'Внешняя новость «{n.get("title")}» совпала с движением рынка: '
+                f'{m.get("n_banks") or "несколько"} банков изменили '
+                f'«{_cat_ru(d.get("category"))}» за 48 ч'
+                + (f', ключевая ставка {d.get("key_rate")}%' if d.get("key_rate") is not None else "")
+                + '. Оцени связь, позицию Сбера и действия аудита.')
     return ""
 
 
@@ -718,6 +895,11 @@ def _drill(kind: str, d: dict) -> dict:
         return {"page": "market", "params": {"view": "changes"}}
     if kind == "news_alert":
         return {"url": d.get("url")}
+    if kind == "connection":
+        if d.get("theme"):
+            return {"page": "reviews", "params": {"theme": (d["theme"] or {}).get("key")}}
+        return {"page": "market",
+                "params": {"category": d.get("category"), "view": "changes"}}
     return {}
 
 
@@ -730,6 +912,10 @@ def _provenance(kind: str, d: dict) -> str:
         return f'ЦБ РФ · официально · на {d.get("as_of")}'
     if kind == "news_alert":
         return f'{d.get("domain") or d.get("source") or "пресса"}'
+    if kind == "connection":
+        src = ((d.get("news") or {}).get("domain")) or "пресса"
+        inside = "жалобы клиентов" if d.get("theme") else "журнал тарифов"
+        return f'связка: {src} × наши данные ({inside})'
     return ""
 
 
@@ -751,6 +937,10 @@ def _fallback_headline(reg: dict[str, dict]) -> dict:
         elif kind == "rate_move":
             title = f'Ключевая ставка {d.get("current")}%'
             sev = "neutral"
+        elif kind == "connection":
+            title = (f'Связка: {((d.get("news") or {}).get("title") or "")[:60]}'
+                     f' ↔ наши данные')
+            sev = "watch"
         else:
             title = d.get("title") or ""
             sev = {"red": "risk", "amber": "watch", "green": "good"}.get(
