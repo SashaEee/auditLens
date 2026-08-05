@@ -399,6 +399,102 @@ def assign(version: int | None = None) -> dict:
             "version": ver, "seconds": round(dt, 1)}
 
 
+def label_new(batch: int = 4000) -> dict:
+    """Инкрементальная разметка: только отзывы БЕЗ меток, свежие первыми.
+
+    Полный assign() перегоняет весь корпус (DELETE + все куски) и запускается
+    вручную при смене поколения; между поколениями новые отзывы оставались без
+    меток — 05.08.2026 это было 36 процентов недельного окна, и сигналы главной
+    на такой разметке врут. Вдобавок assign() ходит ТОЛЬКО во внешний корпус:
+    отзывы наших коллекторов (finuslugi/sravni/bankiros, вектора в
+    review_embedding) он не видит вовсе — здесь размечаются обе стороны.
+
+    z считаем по СНИМКУ текущей статистики темы (avg/std сохранённых меток):
+    корпус большой, статистика дрейфует медленно; полный пересчёт остаётся за
+    rebuild()/assign(). rn — ранг по z внутри меток отзыва, как в _normalize."""
+    ver = active_version()
+    if not ver:
+        return {"ok": False, "reason": "нет активной таксономии"}
+    with db.session() as s:
+        defs = s.execute(text(
+            "SELECT topic_id, embedding FROM review_topic_def"
+            " WHERE version = :v AND embedding IS NOT NULL ORDER BY topic_id"),
+            {"v": ver}).all()
+        stats = {int(r[0]): (float(r[1]), float(r[2])) for r in s.execute(text("""
+            SELECT topic_id, avg(score), coalesce(nullif(stddev_samp(score), 0), 1)
+            FROM review_topic_label GROUP BY topic_id"""))}
+        todo = s.execute(text("""
+            SELECT i.url, i.review_id, i.source FROM review_index i
+            WHERE NOT EXISTS (SELECT 1 FROM review_topic_label l WHERE l.url = i.url)
+              AND i.dt IS NOT NULL AND i.dt <= now()
+            ORDER BY i.dt DESC LIMIT :lim"""), {"lim": batch}).all()
+    if not defs or not todo:
+        return {"ok": True, "labeled": 0, "backlog": 0}
+    values = ", ".join(f"({d[0]}, CAST(:t{i} AS vector))" for i, d in enumerate(defs))
+    tparams = {f"t{i}": str(d[1]) for i, d in enumerate(defs)}
+
+    # score-кандидаты по каждой стороне: считает Postgres той БД, где вектора
+    scored: dict[str, list[tuple[int, float]]] = {}   # url -> [(topic_id, score)]
+
+    loc_urls = [u for u, _rid, src_ in todo if src_ != "bankiru"]
+    if loc_urls:
+        with db.session() as s:
+            for r in s.execute(text(f"""
+                WITH t(topic_id, vec) AS (VALUES {values})
+                SELECT re.url, t.topic_id, (re.embedding <=> t.vec) AS d
+                FROM review_embedding re CROSS JOIN t
+                WHERE re.url = ANY(:us)
+            """), {**tparams, "us": loc_urls}):
+                scored.setdefault(r[0], []).append(
+                    (int(r[1]), max(0.0, 1.0 - float(r[2]))))
+
+    ext = [(u, int(rid)) for u, rid, src_ in todo if src_ == "bankiru"]
+    if ext:
+        src_eng = _source_engine()
+        if src_eng is not None:
+            url_by_id = {rid: u for u, rid in ext}
+            with src_eng.connect() as c:
+                for r in c.execute(text(f"""
+                    WITH t(topic_id, vec) AS (VALUES {values})
+                    SELECT e.review_id, t.topic_id, (e.embedding <=> t.vec) AS d
+                    FROM bankiru.review_embeddings e CROSS JOIN t
+                    WHERE e.review_id = ANY(:ids)
+                """), {**tparams, "ids": list(url_by_id)}):
+                    u = url_by_id.get(int(r[0]))
+                    if u:
+                        scored.setdefault(u, []).append(
+                            (int(r[1]), max(0.0, 1.0 - float(r[2]))))
+
+    payload = []
+    for url, cand in scored.items():
+        cand.sort(key=lambda x: -x[1])
+        top = cand[:_TOP_N]
+        zs = []
+        for tid, sc in top:
+            m, sd = stats.get(tid, (0.55, 1.0))
+            zs.append((tid, sc, (sc - m) / sd))
+        zs.sort(key=lambda x: -x[2])
+        for rn, (tid, sc, z) in enumerate(zs, start=1):
+            payload.append({"u": url, "t": tid, "s": round(sc, 6),
+                            "z": round(z, 4), "r": rn})
+    if payload:
+        with db.session() as s:
+            s.execute(text("""
+                INSERT INTO review_topic_label (url, topic_id, score, z, rn)
+                VALUES (:u, :t, :s, :z, :r)
+                ON CONFLICT (url, topic_id) DO UPDATE SET
+                    score = EXCLUDED.score, z = EXCLUDED.z, rn = EXCLUDED.rn
+            """), payload)
+    # отзывы без вектора (эмбеддинг ещё не посчитан) остаются в бэклоге —
+    # embed_missing() их догонит, разметим следующим тиком
+    backlog = len(todo) - len(scored)
+    if scored:
+        log.info("review_topics: инкрементально размечено %d (меток %d), без вектора %d",
+                 len(scored), len(payload), backlog)
+    return {"ok": True, "labeled": len(scored), "labels": len(payload),
+            "backlog": backlog, "version": ver}
+
+
 def _normalize() -> None:
     """Приводит оценки тем к сопоставимому виду.
 

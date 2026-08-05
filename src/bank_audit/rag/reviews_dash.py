@@ -1121,6 +1121,91 @@ def segment_reviews(bank: str, product: str | None = None, city: str | None = No
     return {"n": len(revs), "themes": themes, "samples": samples, "texts": texts}
 
 
+def _topic_week_counts(bank_canon: str | None, product: str | None):
+    """Понедельные счётчики по темам LLM-таксономии из сохранённой разметки
+    (review_index × review_topic_label) — сырьё сигналов главной. До 05.08.2026
+    сигналы считались regex-темами THEMES и ТОЛЬКО по banki.ru: вкладка
+    «Отзывы» уже жила на новой таксономии и всех источниках, а передовица — на
+    старой. bank=None — рынок целиком. Возвращает (topics, counts) или None
+    (нет таксономии/разметки → вызывающий падает на THEMES-путь):
+      topics: [{key,label,risk}] активного поколения;
+      counts: {<key>_w0/_w1/_b, _tw0, _tb, _lab_w0/_lab_b (размечено),
+               _unc_w0/_unc_b (размечено, но ни одна тема не прошла порог)}.
+    Слепая зона честная: неразмеченный ещё бэклог в неё не пишется — иначе
+    отставание разметки выглядело бы как «вал жалоб вне тем»."""
+    from . import review_topics
+    ver = review_topics.active_version()
+    if not ver:
+        return None
+    p = {"ver": ver, "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP,
+         "bank": bank_canon, "product": product}
+    try:
+        with db.session() as s:
+            topics = [dict(r) for r in s.execute(text(
+                "SELECT key, label, risk FROM review_topic_def"
+                " WHERE version = :ver ORDER BY topic_id"), p).mappings()]
+            if not topics:
+                return None
+            rows = s.execute(text("""
+                WITH dd AS (
+                    SELECT i.url, i.dt FROM review_index i
+                    WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)
+                      AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                      AND i.dt >= now() - make_interval(days => 63)
+                      AND i.dt <= now())
+                SELECT d.key,
+                       count(*) FILTER (WHERE dd.dt >= now()-make_interval(days=>7)) AS w0,
+                       count(*) FILTER (WHERE dd.dt <  now()-make_interval(days=>7)
+                                          AND dd.dt >= now()-make_interval(days=>14)) AS w1,
+                       count(*) FILTER (WHERE dd.dt <  now()-make_interval(days=>14)) AS b
+                FROM dd
+                JOIN review_topic_label l ON l.url = dd.url
+                     AND l.z >= :min AND l.rn <= :rank
+                JOIN review_topic_def d ON d.topic_id = l.topic_id AND d.version = :ver
+                GROUP BY d.key
+            """), p).mappings().all()
+            tot = s.execute(text("""
+                WITH dd AS (
+                    SELECT i.dt,
+                           EXISTS (SELECT 1 FROM review_topic_label l
+                                   WHERE l.url = i.url) AS lab,
+                           EXISTS (SELECT 1 FROM review_topic_label l
+                                   JOIN review_topic_def d ON d.topic_id = l.topic_id
+                                        AND d.version = :ver
+                                   WHERE l.url = i.url
+                                     AND l.z >= :min AND l.rn <= :rank) AS clf
+                    FROM review_index i
+                    WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)
+                      AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                      AND i.dt >= now() - make_interval(days => 63)
+                      AND i.dt <= now())
+                SELECT count(*) FILTER (WHERE dt >= now()-make_interval(days=>7)),
+                       count(*) FILTER (WHERE dt <  now()-make_interval(days=>14)),
+                       count(*) FILTER (WHERE dt >= now()-make_interval(days=>7) AND lab),
+                       count(*) FILTER (WHERE dt <  now()-make_interval(days=>14) AND lab),
+                       count(*) FILTER (WHERE dt >= now()-make_interval(days=>7)
+                                          AND lab AND NOT clf),
+                       count(*) FILTER (WHERE dt <  now()-make_interval(days=>14)
+                                          AND lab AND NOT clf)
+                FROM dd
+            """), p).one()
+    except Exception as e:  # noqa: BLE001
+        log.warning("topic_week_counts: %s — фолбэк на regex-темы", e)
+        return None
+    counts: dict = {}
+    for t in topics:
+        for sfx in ("w0", "w1", "b"):
+            counts[f'{t["key"]}_{sfx}'] = 0
+    for r in rows:
+        counts[f'{r["key"]}_w0'] = int(r["w0"])
+        counts[f'{r["key"]}_w1'] = int(r["w1"])
+        counts[f'{r["key"]}_b'] = int(r["b"])
+    counts.update({"_tw0": int(tot[0]), "_tb": int(tot[1]),
+                   "_lab_w0": int(tot[2]), "_lab_b": int(tot[3]),
+                   "_unc_w0": int(tot[4]), "_unc_b": int(tot[5])})
+    return topics, counts
+
+
 def _theme_week_counts(eng, where_sql: str, params_extra: dict) -> dict:
     """Помесячно→понедельно: по каждой теме счёт за окна w0[0-7д], w1[7-14д],
     base[14-63д] + общие. where_sql — bank-scoped или 'TRUE' (рынок)."""
@@ -1172,17 +1257,24 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
     bc = resolve_bank(bank)
     if not bc:
         return None
-    bclause, bp = _bank_clause(bc, product)
-    brow = _theme_week_counts(eng, bclause, bp)
-    try:
-        mrow = _theme_week_counts(eng, "TRUE", {})
-    except Exception as e:  # noqa: BLE001
-        log.warning("week_pulse: рыночный срез не посчитан: %s", e)
-        mrow = None
+    lab = _topic_week_counts(bc, product)
+    if lab:
+        theme_defs, brow = lab
+        mlab = _topic_week_counts(None, product)     # рынок = все банки индекса
+        mrow = mlab[1] if mlab else None
+    else:                       # разметки ещё нет — старый regex-путь по banki.ru
+        theme_defs = THEMES
+        bclause, bp = _bank_clause(bc, product)
+        brow = _theme_week_counts(eng, bclause, bp)
+        try:
+            mrow = _theme_week_counts(eng, "TRUE", {})
+        except Exception as e:  # noqa: BLE001
+            log.warning("week_pulse: рыночный срез не посчитан: %s", e)
+            mrow = None
 
     BASE_W = 7.0
     diverge = []
-    for t in THEMES:
+    for t in theme_defs:
         k = t["key"]
         w0, b = int(brow[f"{k}_w0"]), int(brow[f"{k}_b"])
         bw = b / BASE_W
@@ -1212,6 +1304,7 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
         "diverge": diverge[:5],
         "week_total": tw0,
         "baseline_total": round(tb / BASE_W, 1),
+        **({"src": "labels"} if lab else {}),
     }
 
 
@@ -1226,6 +1319,18 @@ def unclassified_week(bank: str, product: str | None = None) -> dict | None:
     bc = resolve_bank(bank)
     if not bc:
         return None
+    lab = _topic_week_counts(bc, product)
+    if lab:
+        # слепая зона НОВОГО классификатора: отзыв размечен, но ни одна тема не
+        # прошла порог z/rn; неразмеченный бэклог в знаменатель не входит
+        _t, c_ = lab
+        w_unc, w_tot, b_unc = c_["_unc_w0"], c_["_lab_w0"], c_["_unc_b"]
+        base_week = round(b_unc / 7.0, 1)
+        return {"week": w_unc, "week_total": w_tot,
+                "pct": round(100 * w_unc / w_tot) if w_tot else 0,
+                "baseline_week": base_week,
+                "ratio": round(w_unc / base_week, 2) if base_week >= 1 else None,
+                "src": "labels"}
     bclause, bp = _bank_clause(bc, product)
     with eng.connect() as c:
         rows = c.execute(text(
@@ -1273,15 +1378,22 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
     BASE_W = 7.0   # недель в базлайне (49 дн: окно 14–63)
 
     def _compute():
-        bclause, bp = _bank_clause(bc, product)
-        brow = _theme_week_counts(eng, bclause, bp)
-        try:
-            mrow = _theme_week_counts(eng, "TRUE", {})     # рынок (все банки)
-        except Exception as e:
-            log.warning("weekly_signals: рыночный срез не посчитан: %s", e)
-            mrow = None
+        lab = _topic_week_counts(bc, product)
+        if lab:
+            theme_defs, brow = lab
+            mlab = _topic_week_counts(None, product)   # рынок = все банки индекса
+            mrow = mlab[1] if mlab else None
+        else:                   # разметки ещё нет — старый regex-путь по banki.ru
+            theme_defs = THEMES
+            bclause, bp = _bank_clause(bc, product)
+            brow = _theme_week_counts(eng, bclause, bp)
+            try:
+                mrow = _theme_week_counts(eng, "TRUE", {})     # рынок (все банки)
+            except Exception as e:
+                log.warning("weekly_signals: рыночный срез не посчитан: %s", e)
+                mrow = None
         out = []
-        for t in THEMES:
+        for t in theme_defs:
             k = t["key"]
             w0, w1, b = int(brow[f"{k}_w0"]), int(brow[f"{k}_w1"]), int(brow[f"{k}_b"])
             bw = b / BASE_W
@@ -1312,13 +1424,34 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
         if out:
             top = out[0]
             try:
-                ts, tp = _theme_sql(THEME_BY_KEY[top["key"]], "g")
-                with eng.connect() as c:
-                    grows = c.execute(text(
-                        f"SELECT split_part(r.location, ' (', 1) city, count(DISTINCT r.url) n"
-                        f" FROM bankiru.reviews r WHERE {bclause} AND {ts} AND r.location <> ''"
-                        f" AND r.\"datePublished\" >= now()-make_interval(days=>7)"
-                        f" GROUP BY 1 ORDER BY 2 DESC LIMIT 3"), {**bp, **tp}).all()
+                if lab:
+                    from . import review_topics as _rt
+                    with db.session() as s:
+                        grows = s.execute(text("""
+                            SELECT split_part(i.city, ' (', 1) AS city,
+                                   count(DISTINCT i.url) AS n
+                            FROM review_index i
+                            JOIN review_topic_label l ON l.url = i.url
+                                 AND l.z >= :min AND l.rn <= :rank
+                            JOIN review_topic_def d ON d.topic_id = l.topic_id
+                                 AND d.version = :ver AND d.key = :key
+                            WHERE i.bank = :bank
+                              AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                              AND i.dt >= now() - make_interval(days => 7)
+                              AND i.dt <= now() AND coalesce(i.city, '') <> ''
+                            GROUP BY 1 ORDER BY 2 DESC LIMIT 3
+                        """), {"min": _rt.MIN_Z, "rank": _rt.RANK_CAP,
+                               "ver": _rt.active_version(), "key": top["key"],
+                               "bank": bc, "product": product}).all()
+                else:
+                    bclause, bp = _bank_clause(bc, product)
+                    ts, tp = _theme_sql(THEME_BY_KEY[top["key"]], "g")
+                    with eng.connect() as c:
+                        grows = c.execute(text(
+                            f"SELECT split_part(r.location, ' (', 1) city, count(DISTINCT r.url) n"
+                            f" FROM bankiru.reviews r WHERE {bclause} AND {ts} AND r.location <> ''"
+                            f" AND r.\"datePublished\" >= now()-make_interval(days=>7)"
+                            f" GROUP BY 1 ORDER BY 2 DESC LIMIT 3"), {**bp, **tp}).all()
                 tot = sum(int(x[1]) for x in grows) or 1
                 if grows and int(grows[0][1]) >= 4 and int(grows[0][1]) / tot >= 0.4:
                     top["geo"] = {"city": grows[0][0], "share": round(100 * int(grows[0][1]) / tot)}
@@ -1339,5 +1472,6 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
             mtw0, mtb = int(mrow["_tw0"]), int(mrow["_tb"])
             mtbw = mtb / BASE_W
             overall["market_ratio"] = round(mtw0 / mtbw, 2) if mtbw >= 0.5 else None
-        return {"bank": bc, "product": product, "signals": out[:6], "overall": overall}
+        return {"bank": bc, "product": product, "signals": out[:6], "overall": overall,
+                **({"src": "labels"} if lab else {})}
     return _cached(f"wk:{bc}:{product}", _compute, ttl=1800)
