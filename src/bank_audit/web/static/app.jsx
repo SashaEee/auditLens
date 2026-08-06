@@ -1284,6 +1284,23 @@ const FY_CSS=`
 .fy-link .lp{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:7px;letter-spacing:.03em;}
 .fy-story{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--accent);border:1px solid color-mix(in oklab,var(--accent),transparent 75%);border-radius:4px;padding:1px 5px;flex:none;}
+.fy-ob{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:20px 22px;margin-bottom:24px;}
+.fy-ob .q{font-size:13.5px;font-weight:500;color:var(--ink);margin:14px 0 2px;}
+.fy-ob .q:first-of-type{margin-top:10px;}
+.fy-ob-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px;}
+.fy-ob-chip{border:1px solid var(--hair-2);border-radius:999px;padding:6px 14px;font-size:12.5px;color:var(--ink-2);
+  cursor:pointer;transition:border-color .12s,color .12s,background .12s;user-select:none;}
+.fy-ob-chip:hover{border-color:var(--accent);}
+.fy-ob-chip.on{background:color-mix(in oklab,var(--accent),transparent 88%);border-color:var(--accent);color:var(--accent);}
+.fy-ob-foot{display:flex;align-items:center;gap:14px;margin-top:18px;}
+.fy-ob-skip{font-size:12px;color:var(--ink-4);cursor:pointer;}
+.fy-ob-skip:hover{color:var(--ink-2);}
+.fy-check .src-chip{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);border:1px solid var(--hair-2);border-radius:4px;padding:1px 5px;margin-right:7px;cursor:pointer;}
+.fy-check .src-chip:hover{color:var(--accent);border-color:var(--accent);}
+.fy-check.taken{opacity:.62;}
+.fy-check.taken .t{text-decoration:none;}
+.fy-check .taken-mark{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--pos);margin-right:6px;}
 .fy-check{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);
   padding:14px 16px;transition:border-color .15s,box-shadow .15s;}
 .fy-check:hover{border-color:color-mix(in oklab,var(--accent),transparent 78%);box-shadow:var(--shadow-1);}
@@ -1378,6 +1395,9 @@ function FyTile({t,hero,fb,onFb}){
         title:t.title,slugs:t.reason_slugs||[]}});
     window.open(t.url,"_blank","noopener");};
   return <div className={"fy-tile"+(hero?" hero":"")+(fb===1?" liked":"")} onClick={open} role="link" tabIndex={0}
+              title={t.reason?("Почему вам: "+t.reason
+                +(t.echo>1?" · подтвердили "+t.echo+" источника":"")
+                +(t.story_n?" · продолжение сюжета":"")):undefined}
               onKeyDown={e=>{if(e.key==="Enter")open();}}>
     {t.image&&imgOk
       ?<div className="img" style={{backgroundImage:"url("+JSON.stringify(t.image)+")"}}>
@@ -1403,6 +1423,45 @@ function FyTile({t,hero,fb,onFb}){
   </div>;
 }
 
+// Onboarding холодного старта (этап D): два вопроса чипами вместо пустой
+// страницы. Продукты → закреплённые темы, риски → custom-фразы (их парсят
+// dimension_weights и вектор профиля) — новых хранилищ не заводится.
+const OB_PRODUCTS=[["deposit","Вклады"],["ipoteka","Ипотека"],["credit_card","Кредитные карты"],
+  ["debit_card","Дебетовые карты"],["consumer_loan","Потребкредиты"],["auto","Автокредиты"],
+  ["savings","Накопительные счета"],["transfers","Переводы и СБП"],["acquiring","Эквайринг"],["premium","Премиум"]];
+const OB_RISKS=[["fraud","Мошенничество"],["ops","Сбои и доступность"],["compliance","Комплаенс и ЦБ"],
+  ["market","Тарифы и конкуренты"],["conduct","Продажи и жалобы"]];
+function FyOnboarding({onDone,onSkip}){
+  const[prods,setProds]=useState({});
+  const[risks,setRisks]=useState({});
+  const[busy,setBusy]=useState(false);
+  const tog=(set)=>(k)=>set(m=>({...m,[k]:!m[k]}));
+  const submit=async()=>{
+    if(busy)return; setBusy(true);
+    try{
+      const d=await apiPost("/api/me/onboarding",{
+        products:Object.keys(prods).filter(k=>prods[k]),
+        risks:Object.keys(risks).filter(k=>risks[k])});
+      onDone(d.foryou||null);
+    }catch{ setBusy(false); }
+  };
+  const nSel=Object.values(prods).filter(Boolean).length+Object.values(risks).filter(Boolean).length;
+  return <div className="fy-ob">
+    <div className="eyebrow">30 секунд — и страница станет вашей</div>
+    <div className="q">Какие направления вы проверяете?</div>
+    <div className="fy-ob-chips">{OB_PRODUCTS.map(([k,l])=>
+      <span key={k} className={"fy-ob-chip"+(prods[k]?" on":"")} onClick={tog(setProds)(k)}>{l}</span>)}</div>
+    <div className="q">Какие риски ближе к вашей работе?</div>
+    <div className="fy-ob-chips">{OB_RISKS.map(([k,l])=>
+      <span key={k} className={"fy-ob-chip"+(risks[k]?" on":"")} onClick={tog(setRisks)(k)}>{l}</span>)}</div>
+    <div className="fy-ob-foot">
+      <button className="btn btn-accent" disabled={busy||nSel===0} onClick={submit}>
+        {busy?"Собираю вашу страницу… ~15 сек":"Собрать мою страницу"}</button>
+      <span className="fy-ob-skip" onClick={onSkip}>пропустить — показывать общее</span>
+    </div>
+  </div>;
+}
+
 function ForYouPage(){
   const me=useMe();
   const[p,setP]=useState(undefined);          // undefined=грузится, null=выкл/ошибка
@@ -1412,12 +1471,15 @@ function ForYouPage(){
   const[goneChk,setGoneChk]=useState({});
   const[fb,setFb]=useState({});               // {key: verdict} — оценки плиток
   const[cfb,setCfb]=useState({});             // оценки зацепок
+  const[tk,setTk]=useState({});               // зацепки «в работе»
+  const[obGone,setObGone]=useState(false);    // onboarding скрыт в этой сессии
   const load=()=>apiFetch("/api/overview/foryou")
     .then(d=>{setP(d.foryou||null);setErr(false);})
     .catch(()=>{setP(null);setErr(true);});
   useEffect(()=>{load();
     apiFetch("/api/feedback?kind=news").then(d=>setFb(d.items||{})).catch(()=>{});
     apiFetch("/api/feedback?kind=check").then(d=>setCfb(d.items||{})).catch(()=>{});
+    apiFetch("/api/feedback?kind=check_taken").then(d=>setTk(d.items||{})).catch(()=>{});
   },[]);
   const refresh=async()=>{ if(busy)return; setBusy(true);
     try{const d=await apiPost("/api/overview/foryou/refresh",{});setP(d.foryou||null);}catch{}
@@ -1442,6 +1504,14 @@ function ForYouPage(){
       fbToast("Понял — не то. Научимся предлагать точнее",true); }
     if(verdict===1&&nv===1) fbToast("Учтём — таких зацепок будет больше",true);
     apiPost("/api/feedback",{kind:"check",item_key:key,verdict,
+      payload:{title:c.title,why:c.why}}).catch(()=>{});
+  };
+  const onCheckTake=(c)=>{
+    const key=c.title; if(!key)return;
+    const nv=(tk[key]||0)===1?0:1;
+    setTk(m=>({...m,[key]:nv}));
+    if(nv===1) fbToast("Взято в работу — не будем предлагать заново",true);
+    apiPost("/api/feedback",{kind:"check_taken",item_key:key,verdict:1,
       payload:{title:c.title,why:c.why}}).catch(()=>{});
   };
   const goProfile=()=>{location.hash="profile";};
@@ -1509,21 +1579,35 @@ function ForYouPage(){
         <span className="fy-tune" onClick={goProfile}>настроить →</span>
       </div>}
       {(()=>{ const ps=me&&me.personalization;
-        if(!ps||ps.score>=60) return null;
+        if(!ps) return null;
         const next=(ps.parts||[]).find(x=>!x.done&&x.cta);
         return <div className="fy-pshint" onClick={goProfile} title="Открыть профиль">
-          ✦ персонализация <span className="pc">{ps.score}%</span> · {next?next.cta:"уточните профиль"} →
+          ✦ персонализация <span className="pc">{ps.score}%</span>
+          {ps.score<100&&next?<> · {next.cta} →</>:null}
         </div>; })()}
     </header>
+
+    {/* ①b onboarding холодного старта (этап D) */}
+    {p&&!p.has_profile&&!obGone&&!(me&&me.prefs&&me.prefs.onboarded)&&
+      <FyOnboarding
+        onDone={(np)=>{setObGone(true);if(np)setP(np);}}
+        onSkip={async()=>{setObGone(true);
+          try{await apiPut("/api/me",{prefs:{onboarded:true}});}catch{}}}/>}
 
     {/* ② что проверить сегодня (ИИ-зацепки) */}
     {checks.filter(c=>!goneChk[c.title]).length>0&&<section className="fy-sec">
       <div className="eyebrow">Что проверить сегодня · <span className="fy-ai">✦ по сигналам дня</span></div>
       <div className="fy-checks-row">
-        {checks.filter(c=>!goneChk[c.title]).map((c,i)=><div key={c.title} className="fy-check">
-          <span className="n">{String(i+1).padStart(2,"0")}</span>
-          <div className="t">{c.title}{c.why&&<div className="w">{c.why}</div>}</div>
+        {checks.filter(c=>!goneChk[c.title]).map((c,i)=><div key={c.title} className={"fy-check"+(tk[c.title]?" taken":"")}>
+          <span className="n">{tk[c.title]?<span className="taken-mark">✓</span>:String(i+1).padStart(2,"0")}</span>
+          <div className="t">
+            {c.src&&<span className="src-chip" title="Открыть источник сигнала"
+              onClick={()=>{location.hash={reviews:"reviews",news:"overview",tariffs:"market"}[c.src]||"overview";}}>
+              {{reviews:"жалобы",news:"новости",tariffs:"тарифы"}[c.src]}</span>}
+            {c.title}{c.why&&<div className="w">{c.why}</div>}</div>
           <span className="acts2">
+            <button className={tk[c.title]?"on":""} title={tk[c.title]?"В работе — снять":"Взять в работу"}
+                    onClick={()=>onCheckTake(c)}>▸</button>
             <button title="Составить план проверки с ИИ"
                     onClick={()=>bfGoAI("Проверка в Сбере: "+c.title+". "+(c.why||"")+" Составь детальный план аудиторской проверки по этому пункту.")}>✦</button>
             <button className={cfb[c.title]===1?"on":""} title="Полезная зацепка" onClick={()=>onCheckFb(c,1)}><IcTUp s={12}/></button>
@@ -6276,6 +6360,24 @@ function PuProposals({p}){
 }
 
 // ── Фоновая индексация ──────────────────────────────────────────────────────
+// Персонализация по пользователям: сила профиля, просмотры/клики «Для вас»,
+// оценки (этап F, 05.08.2026). Владелец видит, у кого персонализация пустая.
+function PuPersonalization({pz}){
+  const us=pz.users||[];
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>Персонализация «Для вас» · по людям</span>
+      {pz.ctr!=null&&<span className="pu-chip">CTR плиток {pz.ctr}%</span>}</div>
+    {us.length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Данные копятся.</div>
+      :<table className="pu-tbl">
+        <thead><tr><th>кто</th><th>сила профиля</th><th>просмотры</th><th>клики</th><th>оценок</th></tr></thead>
+        <tbody>{us.map((u,i)=><tr key={i}>
+          <td>{u.username}</td>
+          <td style={u.score!=null&&u.score<40?{color:"var(--warn)"}:null}>{u.score!=null?u.score+"%":"—"}</td>
+          <td>{u.views}</td><td>{u.clicks}</td><td>{u.fb}</td>
+        </tr>)}</tbody></table>}
+  </div>;
+}
+
 // Качество новостного выпуска: ночной LLM-судья + клики (этап 6, 05.08.2026).
 // До этого качество отбора не измерялось — деградацию замечал только владелец.
 function PuNewsQuality({q}){
@@ -6506,6 +6608,7 @@ function PulsePage(){
           <AdHeat cells={m.heatmap}/>
         </div>
 
+      <PuPersonalization pz={m.personalization||{}}/>
     </>}
 
     {tab==="ai"&&<>

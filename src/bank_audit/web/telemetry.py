@@ -341,7 +341,47 @@ def metrics(days: int = 14) -> dict:
             "ingest": _ingest_health(days),
             "collect": _collect_health(days),
             "news_quality": _news_quality(days),
+            "personalization": _personalization(days),
             "topics": _team_topics(days)}
+
+
+def _personalization(days: int) -> dict:
+    """Персонализация по людям (этап F): сила профиля, трафик и клики «Для
+    вас», оценки. Владелец видит, у кого профиль пустой и работает ли обучение."""
+    out: dict = {"users": [], "ctr": None}
+    try:
+        from . import userdata as ud
+        p = {"days": days}
+        views = {r["username"]: int(r["n"]) for r in _rows("""
+            SELECT username, count(*) AS n FROM usage_event
+             WHERE kind = 'page_view' AND page = 'foryou'
+               AND created_at > now() - make_interval(days => :days)
+             GROUP BY 1""", p)}
+        clicks = {r["username"]: int(r["n"]) for r in _rows("""
+            SELECT username, count(*) AS n FROM usage_event
+             WHERE kind = 'news_click'
+               AND created_at > now() - make_interval(days => :days)
+             GROUP BY 1""", p)}
+        fb = {r["username"]: int(r["n"]) for r in _rows("""
+            SELECT username, count(*) AS n FROM item_feedback
+             WHERE kind IN ('news', 'for_you', 'check')
+             GROUP BY 1""")}
+        for r in _rows("""SELECT username FROM app_user
+                          WHERE last_seen_at > now() - interval '30 days'
+                          ORDER BY last_seen_at DESC LIMIT 20"""):
+            u = r["username"]
+            try:
+                score = int((ud.personalization_score(u) or {}).get("score") or 0)
+            except Exception:  # noqa: BLE001
+                score = None
+            out["users"].append({"username": u, "score": score,
+                                 "views": views.get(u, 0),
+                                 "clicks": clicks.get(u, 0), "fb": fb.get(u, 0)})
+        tv, tc = sum(views.values()), sum(clicks.values())
+        out["ctr"] = round(100.0 * tc / tv, 1) if tv else None
+    except Exception:  # noqa: BLE001
+        log.warning("[telemetry] personalization metrics failed", exc_info=True)
+    return out
 
 
 def _news_quality(days: int) -> dict:

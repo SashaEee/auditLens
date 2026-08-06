@@ -450,6 +450,7 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
             "summary": (e.get("summary") or it.get("snippet") or "")[:220],
             "severity": e.get("severity"), "group": e.get("group"),
             "story_n": int(e.get("story_n") or 0),
+            "echo": int(it.get("echo") or 1),
             "reason": " · ".join(reason_parts),
             "reason_slugs": [sl for sl in slugs if sl in _PRODUCTS][:3],
         }))
@@ -599,7 +600,8 @@ _PAGE_SYS = (
 async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
                    signals: list[dict], tariffs: dict,
                    avoid: list[str] | None = None,
-                   prev_checks: list[str] | None = None) -> dict:
+                   prev_checks: list[str] | None = None,
+                   taken: list[str] | None = None) -> dict:
     """Один LLM-вызов на весь разворот: headline + hot + lead + checks.
     avoid — отклонённые пользователем зацепки (не предлагать похожие);
     prev_checks — вчерашние (не повторять дословно): до этапа A страница могла
@@ -634,6 +636,9 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
     if prev_checks:
         ctx.append("\nВчера уже предлагалось (не повторяй, если сигнал не усилился):\n"
                    + "\n".join(f"- {t}" for t in prev_checks[:5]))
+    if taken:
+        ctx.append("\nУже В РАБОТЕ у аудитора (не предлагай заново):\n"
+                   + "\n".join(f"- {t}" for t in taken[:8]))
     msgs = [{"role": "system", "content": _PAGE_SYS},
             {"role": "user", "content": "\n".join(ctx)}]
     try:
@@ -658,8 +663,10 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
         for c in (parsed.get("checks") or [])[:3]:
             t = str((c or {}).get("title") or "").strip()
             if t:
+                src_ = str((c or {}).get("src") or "").strip()
                 checks.append({"title": t[:120],
-                               "why": str((c or {}).get("why") or "").strip()[:160]})
+                               "why": str((c or {}).get("why") or "").strip()[:160],
+                               "src": src_ if src_ in ("reviews", "news", "tariffs") else None})
         return {"headline": headline, "hot": hot, "lead": lead, "checks": checks}
     except Exception:
         log.warning("[personal] page LLM failed", exc_info=True)
@@ -752,9 +759,10 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
         log.warning("[personal] focus cards failed", exc_info=True)
         cards = []
 
-    avoid, prev_checks = [], []
+    avoid, prev_checks, taken = [], [], []
     try:
         avoid = userdata.recent_check_dislikes(username)
+        taken = userdata.recent_checks_taken(username)
         from datetime import timedelta as _td
         y = userdata.get_personal_digest(username, local_date - _td(days=1))
         prev_checks = [str((c or {}).get("title") or "")
@@ -762,7 +770,8 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
     except Exception:
         log.warning("[personal] avoid-lists failed", exc_info=True)
     ai = (await _page_ai(prof["self_desc"], cards, tiles, signals, tariffs,
-                         avoid=avoid, prev_checks=[t for t in prev_checks if t])
+                         avoid=avoid, prev_checks=[t for t in prev_checks if t],
+                         taken=taken)
           if (has_profile or cards or tiles)
           else {"headline": None, "hot": None, "lead": None, "checks": []})
 

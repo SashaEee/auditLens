@@ -273,11 +273,50 @@ class FeedbackIn(BaseModel):
     payload: dict = {}
 
 
+class OnboardingIn(BaseModel):
+    products: list[str] = []
+    risks: list[str] = []
+
+
+# ключ риска → фраза в custom-темы: её же парсят dimension_weights (регекспы
+# измерений) и вектор профиля — onboarding не заводит новых хранилищ вовсе
+_RISK_PHRASES = {
+    "fraud": "противодействие мошенничеству и фрод",
+    "ops": "операционные сбои и доступность сервисов",
+    "compliance": "комплаенс и требования регулятора",
+    "market": "тарифы и позиции конкурентов",
+    "conduct": "качество продаж и жалобы клиентов",
+}
+_OB_PRODUCTS = {"deposit", "ipoteka", "credit_card", "debit_card", "consumer_loan",
+                "auto", "rko", "savings", "acquiring", "premium", "transfers"}
+
+
+@app.post("/api/me/onboarding")
+async def me_onboarding(body: OnboardingIn,
+                        user: CurrentUser = Depends(get_current_user)):
+    """Холодный старт «Для вас» (этап D): два вопроса чипами вместо пустой
+    страницы. Продукты — в закреплённые, риски — фразами в custom; сразу
+    собираем разворот и возвращаем его (один раз подождать ~15 с честнее,
+    чем каждый день смотреть на дефолтный набор)."""
+    prods = [p for p in body.products if p in _OB_PRODUCTS][:8]
+    phrases = [_RISK_PHRASES[r] for r in body.risks if r in _RISK_PHRASES]
+    cur = userdata.top_interests(user.username)
+    userdata.set_interest_overrides(
+        user.username,
+        pinned=list(dict.fromkeys((cur.get("pinned") or []) + prods)),
+        custom=list(dict.fromkeys((cur.get("custom") or []) + phrases)))
+    userdata.update_prefs(user.username, {"onboarded": True})
+    from ..digest import personal
+    p = await personal.build_foryou(user.username, force=True)
+    return {"ok": True, "foryou": p}
+
+
 @app.post("/api/feedback")
 def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user)):
     """Единая точка оценок 👍/👎. Контентные (news/for_you/check) учат ЕГО
-    рекомендации; ai_answer — контур качества (разбор командой)."""
-    if body.kind not in ("news", "for_you", "check", "ai_answer") \
+    рекомендации; ai_answer — контур качества (разбор командой);
+    check_taken — «взял в работу» (влияет на генерацию зацепок, не на ранк)."""
+    if body.kind not in ("news", "for_you", "check", "ai_answer", "check_taken") \
             or body.verdict not in (1, -1) or not body.item_key:
         raise HTTPException(400, "bad feedback")
     res = userdata.save_feedback(user.username, body.kind, body.item_key[:500],
@@ -297,7 +336,7 @@ def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user
 @app.get("/api/feedback")
 def get_feedback(kind: str, user: CurrentUser = Depends(get_current_user)):
     """Карта оценок пользователя по kind — для рендера уже проставленных."""
-    if kind not in ("news", "for_you", "check", "ai_answer"):
+    if kind not in ("news", "for_you", "check", "ai_answer", "check_taken"):
         raise HTTPException(400, "bad kind")
     return {"items": userdata.feedback_map(user.username, kind)}
 

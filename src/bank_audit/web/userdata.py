@@ -681,6 +681,17 @@ def _update_taste(username: str, payload: dict, verdict: int) -> None:
         log.warning("[userdata] taste update failed", exc_info=True)
 
 
+def recent_checks_taken(username: str, limit: int = 8) -> list[str]:
+    """Зацепки «в работе» (kind=check_taken, 14 дн) — генератор не должен
+    предлагать их заново как новые."""
+    rows = _rows("""SELECT payload->>'title' AS t FROM item_feedback
+                    WHERE username = :u AND kind = 'check_taken' AND verdict = 1
+                      AND created_at > now() - interval '14 days'
+                    ORDER BY created_at DESC LIMIT :n""",
+                 {"u": username, "n": limit}) or []
+    return [r["t"] for r in rows if r.get("t")]
+
+
 def recent_check_dislikes(username: str, limit: int = 10) -> list[str]:
     """Заголовки недавно отклонённых зацепок — в промпт page_ai («не предлагай
     похожие»). До этого дизлайк зацепки никак не влиял на следующие генерации."""
