@@ -1206,6 +1206,44 @@ def _topic_week_counts(bank_canon: str | None, product: str | None):
     return topics, counts
 
 
+@_safe(None)
+def top_topic(bank: str, product: str | None, days: int = 90) -> dict | None:
+    """Ведущая тема жалоб по продукту из label-таксономии + momentum к прошлому
+    окну. Для стат-карт «Для вас»: раньше «горячая тема» искалась через
+    _THEME_SLUG по СТАРЫМ regex-ключам (deposit/mortgage/transfer) — после
+    перехода на LLM-таксономию лукап молча возвращал пусто (аудит 05.08.2026)."""
+    from . import review_topics
+    ver = review_topics.active_version()
+    bc = resolve_bank(bank)
+    if not ver or not bc:
+        return None
+    p = {"ver": ver, "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP,
+         "bank": bc, "product": product, "days": days}
+    with db.session() as s:
+        row = s.execute(text("""
+            WITH dd AS (
+                SELECT i.url, i.dt FROM review_index i
+                WHERE i.bank = :bank
+                  AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                  AND i.dt >= now() - make_interval(days => :days * 2)
+                  AND i.dt <= now())
+            SELECT d.key, d.label, d.risk,
+                   count(*) FILTER (WHERE dd.dt >= now() - make_interval(days => :days)) AS n,
+                   count(*) FILTER (WHERE dd.dt <  now() - make_interval(days => :days)) AS p
+            FROM dd
+            JOIN review_topic_label l ON l.url = dd.url
+                 AND l.z >= :min AND l.rn <= :rank
+            JOIN review_topic_def d ON d.topic_id = l.topic_id AND d.version = :ver
+            GROUP BY d.key, d.label, d.risk
+            ORDER BY n DESC LIMIT 1
+        """), p).mappings().first()
+    if not row or not int(row["n"]):
+        return None
+    n, prev = int(row["n"]), int(row["p"])
+    return {"key": row["key"], "label": row["label"], "risk": row["risk"], "n": n,
+            "delta_pct": (round(100.0 * (n - prev) / prev) if prev else None)}
+
+
 def _theme_week_counts(eng, where_sql: str, params_extra: dict) -> dict:
     """Помесячно→понедельно: по каждой теме счёт за окна w0[0-7д], w1[7-14д],
     base[14-63д] + общие. where_sql — bank-scoped или 'TRUE' (рынок)."""

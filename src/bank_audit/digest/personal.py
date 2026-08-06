@@ -305,8 +305,6 @@ _SLUG_PRODUCT_CANDIDATES = {
     "savings":       ("накопительный счёт", "накопительные счета"),
     "premium":       ("премиальное обслуживание",),
 }
-# ключ темы reviews_dash.THEMES → интерес-слаг (для «горячей темы» карточки)
-_THEME_SLUG = {"deposit": "deposit", "mortgage": "ipoteka", "transfer": "transfers"}
 # категория тарифного трекера → интерес-слаг
 _TARIFF_CAT_SLUG = {"deposit": "deposit", "mortgage": "ipoteka",
                     "card_credit": "credit_card", "card_debit": "debit_card",
@@ -330,8 +328,6 @@ def _focus_cards(slugs: list[str]) -> list[dict]:
     # нишевые продукты (РКО, премиум) в топ-10 Сбера не попадают
     plist = [(p.get("product") or "", int(p.get("n") or 0))
              for p in ((rd.products("Сбербанк", top=100) or {}).get("items") or [])]
-    theme_by_key = {t.get("key"): t
-                    for t in ((rd.themes("Сбербанк") or {}).get("themes") or [])}
 
     def db_label(slug: str) -> str | None:
         for cand in _SLUG_PRODUCT_CANDIDATES.get(slug, ()):
@@ -345,8 +341,9 @@ def _focus_cards(slugs: list[str]) -> list[dict]:
         label = db_label(slug)
         ov = rd.overview("Сбербанк", label) if label else None
         tr = rd.trend("Сбербанк", label) if label else None
-        tkey = next((k for k, s in _THEME_SLUG.items() if s == slug), None)
-        theme = theme_by_key.get(tkey) if tkey else None
+        # ведущая тема продукта — из label-таксономии (старый лукап по regex-ключам
+        # THEMES после миграции тем молча возвращал пусто — аудит 05.08.2026)
+        theme = rd.top_topic("Сбербанк", label) if label else None
         if not ov and not theme:
             continue                     # ни product-метки, ни темы — карточку не рисуем
         cards.append({
@@ -384,7 +381,9 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
             if it.get("url"):
                 enrich[it["url"]] = {"summary": it.get("summary") or it.get("why") or "",
                                      "severity": it.get("severity"),
-                                     "group": g.get("title"), "image": it.get("image")}
+                                     "group": g.get("title"), "image": it.get("image"),
+                                     # сюжет (этап 5) — до B на плитки не доходил
+                                     "story_n": len(it.get("story") or [])}
     pool = news.get("pool") or news.get("items_raw") or []
     if not pool:                        # payload до v-pool — падаем на элементы групп
         pool = [dict(it) for g in (news.get("groups") or [])
@@ -450,11 +449,109 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
             "image": it.get("image") or e.get("image"),
             "summary": (e.get("summary") or it.get("snippet") or "")[:220],
             "severity": e.get("severity"), "group": e.get("group"),
+            "story_n": int(e.get("story_n") or 0),
             "reason": " · ".join(reason_parts),
             "reason_slugs": [sl for sl in slugs if sl in _PRODUCTS][:3],
         }))
     scored.sort(key=lambda x: -x[0])
     return [t for _s, t in scored[:k]]
+
+
+# риск темы (из таксономии) → измерение аудита профиля
+_RISK_DIM = {"compliance": "compliance", "conduct": "conduct", "ops": "ops"}
+
+
+def _my_signals(pvec: list[float] | None, dims: dict,
+                prof: dict | None, k: int = 4) -> list[dict]:
+    """«Сигналы недели по вашим темам»: weekly_signals + расхождения с рынком,
+    отранжированные близостью к профилю (семантика метки темы × вектор профиля,
+    риск темы × измерения аудитора, вкус). До этапа B сигналы клались в payload
+    сырым срезом [:3] и на странице вообще не рендерились."""
+    try:
+        from ..rag import reviews_dash as rd
+        ws = rd.weekly_signals("Сбербанк") or {}
+        wp = rd.week_pulse("Сбербанк") or {}
+    except Exception:  # noqa: BLE001
+        return []
+    cands: dict[str, dict] = {}
+    for s_ in (ws.get("signals") or []):
+        cands[s_["key"]] = dict(s_)
+    for d in (wp.get("diverge") or []):
+        cands.setdefault(d["key"], dict(d))
+    if not cands:
+        return []
+    items = list(cands.values())
+    vecs = _item_vecs([c.get("label") or "" for c in items]) if (pvec or prof) else None
+    scored = []
+    for n, c in enumerate(items):
+        score = 0.0
+        why = []
+        if vecs is not None and pvec:
+            try:
+                from ..rag.embedder import cosine_similarity
+                sem = cosine_similarity(pvec, vecs[n])
+                if sem > 0.42:
+                    score += 10 * (sem - 0.42)
+                    why.append("ваша зона")
+            except Exception:  # noqa: BLE001
+                pass
+        dm = _RISK_DIM.get(c.get("risk") or "")
+        if dm and dims.get(dm):
+            score += 1.2 * float(dims[dm])
+            why.append({"compliance": "комплаенс", "conduct": "продажи/клиенты",
+                        "ops": "операционка"}[dm])
+        t = _taste_of(prof, vecs[n] if vecs is not None else None)
+        if t:
+            score += 2 * t
+        if c.get("level") == "high":
+            score += 1.0
+        if (c.get("gap") or 0) >= 1.5:
+            score += 0.5
+        if c.get("bank_specific"):
+            score += 0.5
+        scored.append((score, why, c))
+    scored.sort(key=lambda x: -x[0])
+    out = []
+    for score, why, c in scored[:k]:
+        if score < 0.4:
+            break
+        out.append({**{k2: c.get(k2) for k2 in
+                       ("key", "label", "short", "risk", "week", "baseline_week",
+                        "ratio", "gap", "level", "new", "accel", "bank_specific")},
+                    "why_you": " · ".join(dict.fromkeys(why))[:60] or None})
+    return out
+
+
+def _my_links(sections: dict, focus: list[str],
+              pvec: list[float] | None, k: int = 2) -> list[dict]:
+    """Связки «новость ↔ данные» из передовицы, касающиеся зоны пользователя
+    (фокус-категория или семантическая близость). До этапа B связки этапа 5
+    жили только на общем «Обзоре»."""
+    hd = (sections.get("headline") or {}).get("payload") or {}
+    conns = [i for i in (hd.get("insights") or []) if i.get("kind") == "connection"]
+    if not conns:
+        return []
+    fset = set(focus)
+    out = []
+    vecs = (_item_vecs([f'{c.get("title") or ""} {c.get("so_what") or ""}'
+                        for c in conns]) if pvec else None)
+    for n, c in enumerate(conns):
+        d = c.get("data") or {}
+        cat_slug = _TARIFF_CAT_SLUG.get(str(d.get("category") or ""))
+        hit = bool(cat_slug and cat_slug in fset)
+        if not hit and vecs is not None and pvec:
+            try:
+                from ..rag.embedder import cosine_similarity
+                hit = cosine_similarity(pvec, vecs[n]) > 0.45
+            except Exception:  # noqa: BLE001
+                hit = False
+        if hit:
+            out.append({"title": c.get("title"), "so_what": c.get("so_what"),
+                        "severity": c.get("severity"), "drill": c.get("drill"),
+                        "provenance": c.get("provenance")})
+        if len(out) >= k:
+            break
+    return out
 
 
 def _tariff_block(sections: dict, focus: list[str]) -> dict:
@@ -634,10 +731,17 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
     tiles = _news_tiles(sections, prof["weights"], prof["custom"], reacts=reacts,
                         pvec=pvec, dims=dims, prof=prof)
     tariffs = _tariff_block(sections, focus)
-    rp = (sections.get("reviews_pulse") or {}).get("payload") or {}
-    signals = [{k: s.get(k) for k in
-                ("key", "label", "short", "risk", "week", "ratio", "new", "accel", "level")}
-               for s in (rp.get("signals") or [])[:3]]
+    signals = _my_signals(pvec, dims, prof)
+    if not signals:                     # профиль пуст → общий срез, как раньше
+        rp = (sections.get("reviews_pulse") or {}).get("payload") or {}
+        signals = [{k: s.get(k) for k in
+                    ("key", "label", "short", "risk", "week", "ratio", "new", "accel", "level")}
+                   for s in (rp.get("signals") or [])[:3]]
+    links = []
+    try:
+        links = _my_links(sections, focus, pvec)
+    except Exception:
+        log.warning("[personal] links failed", exc_info=True)
     try:
         cards = await asyncio.to_thread(_focus_cards, focus)
     except Exception:
@@ -667,7 +771,7 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
         # разворот
         "headline": ai["headline"], "hot": ai["hot"], "checks": ai["checks"],
         "focus": cards, "default_focus": default_focus,
-        "news": tiles, "tariffs": tariffs, "signals": signals,
+        "news": tiles, "tariffs": tariffs, "signals": signals, "links": links,
         "feedback_used": int(reacts.get("n_total") or 0),
         "generated_at": datetime.now(MSK).isoformat(),
     }

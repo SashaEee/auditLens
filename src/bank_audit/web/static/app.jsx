@@ -1000,7 +1000,9 @@ function PersonalBand(){
     if(verdict===-1){ setGone(g=>({...g,[x.title]:1}));
       fbToast("Понял — такого будет меньше",true); }
     else fbToast("Учтём в вашей подборке",true);
-    apiPost("/api/feedback",{kind:"for_you",item_key:key,verdict,
+    // kind=news: та же новость на полосе и в сетке «Для вас» должна учить ОДИН
+    // профиль (раньше сигнал раздваивался на for_you/news по месту клика)
+    apiPost("/api/feedback",{kind:"news",item_key:key,verdict,
       topics:x.reason_slugs||[],payload:{title:x.title,kind_src:x.kind}}).catch(()=>{}); };
   const g=greetWord(me&&me.timezone);
   return <div className="pl">
@@ -1265,6 +1267,23 @@ const FY_CSS=`
 .fy-hint a{color:var(--accent);cursor:pointer;}
 .fy-sec{margin-top:30px;}
 .fy-checks-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-top:12px;}
+.fy-sig{margin-top:10px;}
+.fy-sig-row{display:flex;align-items:baseline;gap:11px;padding:9px 3px;border-top:1px solid var(--hair);cursor:pointer;transition:background .12s;}
+.fy-sig-row:last-child{border-bottom:1px solid var(--hair);}
+.fy-sig-row:hover{background:color-mix(in oklab,var(--surface),transparent 30%);}
+.fy-sig-dot{width:6px;height:6px;border-radius:50%;flex:none;align-self:center;background:var(--warn);}
+.fy-sig-dot.high{background:var(--neg);}
+.fy-sig-l{flex:1;min-width:0;font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.fy-sig-n{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-3);white-space:nowrap;flex:none;}
+.fy-sig-why{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);white-space:nowrap;flex:none;}
+.fy-link{display:flex;gap:13px;align-items:flex-start;background:var(--surface);border:1px solid var(--hair);
+  border-left:3px solid var(--accent);border-radius:var(--r-lg);padding:14px 16px;margin-top:12px;cursor:pointer;transition:box-shadow .12s;}
+.fy-link:hover{box-shadow:var(--shadow-2);}
+.fy-link .lt{font-size:14px;font-weight:500;color:var(--ink);line-height:1.4;}
+.fy-link .lw{font-size:12.5px;color:var(--ink-3);margin-top:5px;line-height:1.5;}
+.fy-link .lp{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:7px;letter-spacing:.03em;}
+.fy-story{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--accent);border:1px solid color-mix(in oklab,var(--accent),transparent 75%);border-radius:4px;padding:1px 5px;flex:none;}
 .fy-check{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);
   padding:14px 16px;transition:border-color .15s,box-shadow .15s;}
 .fy-check:hover{border-color:color-mix(in oklab,var(--accent),transparent 78%);box-shadow:var(--shadow-1);}
@@ -1369,6 +1388,7 @@ function FyTile({t,hero,fb,onFb}){
       <div className="src">
         {t.severity&&<span className={"sev "+t.severity}/>}
         {src}
+        {t.story_n>0&&<span className="fy-story">сюжет · эп. {t.story_n+1}</span>}
         {t.ts&&<span className="dt">{new Date(t.ts).toLocaleDateString("ru",{day:"numeric",month:"short"})}</span>}
       </div>
       <div className="tt">{t.title}</div>
@@ -1511,6 +1531,38 @@ function ForYouPage(){
           </span>
         </div>)}
       </div>
+    </section>}
+
+    {/* ②b сигналы недели по темам профиля (weekly_signals × профиль) */}
+    {(p.signals||[]).filter(s=>s&&s.label).length>0&&<section className="fy-sec">
+      <div className="eyebrow">Сигналы недели по вашим темам · жалобы Сбера</div>
+      <div className="fy-sig">
+        {(p.signals||[]).filter(s=>s&&s.label).map(s=>
+          <div key={s.key} className="fy-sig-row" title="Открыть тему в «Отзывах»"
+               onClick={()=>bfGoDrill({page:"reviews",params:{theme:s.key}})}>
+            <span className={"fy-sig-dot"+(s.level==="high"?" high":"")}/>
+            <span className="fy-sig-l">{s.label}</span>
+            <span className="fy-sig-n">{s.week!=null?s.week+" за 7 дн":""}
+              {s.ratio!=null?" · ×"+s.ratio+" к норме":""}
+              {s.gap!=null?" · ×"+s.gap+" к рынку":""}
+              {s.bank_specific?" · только у Сбера":""}</span>
+            {s.why_you&&<span className="fy-sig-why">{s.why_you}</span>}
+          </div>)}
+      </div>
+    </section>}
+
+    {/* ②c связка дня, касающаяся зоны пользователя (новость × наши данные) */}
+    {(p.links||[]).length>0&&<section className="fy-sec">
+      <div className="eyebrow">Связка дня · <span className="fy-ai">✦ новость × данные по вашей зоне</span></div>
+      {(p.links||[]).map((l,i)=>
+        <div key={i} className="fy-link" onClick={()=>l.drill&&bfGoDrill(l.drill)}
+             title={l.drill?"Открыть данные":""}>
+          <div style={{minWidth:0}}>
+            <div className="lt">{l.title}</div>
+            {l.so_what&&<div className="lw">{l.so_what}</div>}
+            {l.provenance&&<div className="lp">{l.provenance}</div>}
+          </div>
+        </div>)}
     </section>}
 
     {/* ③ стат-карты направлений */}
