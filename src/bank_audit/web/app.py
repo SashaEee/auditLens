@@ -298,6 +298,9 @@ async def me_onboarding(body: OnboardingIn,
     страницы. Продукты — в закреплённые, риски — фразами в custom; сразу
     собираем разворот и возвращаем его (один раз подождать ~15 с честнее,
     чем каждый день смотреть на дефолтный набор)."""
+    # строка app_user обязана существовать: set_interest_overrides делает UPDATE
+    # и на новом пользователе молча писал в никуда (пойман тестом 05.08)
+    userdata.touch_user(user.username, user.name)
     prods = [p for p in body.products if p in _OB_PRODUCTS][:8]
     phrases = [_RISK_PHRASES[r] for r in body.risks if r in _RISK_PHRASES]
     cur = userdata.top_interests(user.username)
