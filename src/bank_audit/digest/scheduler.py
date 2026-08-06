@@ -329,6 +329,59 @@ def keyrate_watch_status() -> dict:
             "alive": _keyrate_tick is not None}
 
 
+# ── Предгенерация «Для вас» (этап C персонализации) ──────────────────────────
+# Первый заход дня стоил ~21 с синхронного LLM-вызова (замер 05.08.2026) —
+# юзер смотрел на скелетон. Теперь после утреннего выпуска (и после любой
+# интрадей-пересборки ядра — кэш инвалидируется по generated_at) страница
+# собирается фоном для всех активных за 7 дней. build_foryou сам no-op'ится
+# по валидному кэшу, поэтому часовой цикл не жжёт лишних вызовов.
+FORYOU_PREGEN = os.getenv("FORYOU_PREGEN", "1") == "1"
+FORYOU_PREGEN_EVERY_S = int(os.getenv("FORYOU_PREGEN_EVERY_S", "3600"))
+
+
+def _active_usernames(days: int = 7) -> list[str]:
+    with db.session() as s:
+        rows = s.execute(text("""
+            SELECT username FROM app_user
+             WHERE last_seen_at > now() - make_interval(days => :d)
+               AND coalesce(prefs->>'personal_digest', 'true') <> 'false'
+             ORDER BY last_seen_at DESC LIMIT 40
+        """), {"d": days}).all()
+    return [r[0] for r in rows]
+
+
+async def foryou_pregen_loop():
+    if not FORYOU_PREGEN:
+        log.info("предгенерация «Для вас»: выключена (FORYOU_PREGEN=0)")
+        return
+    from . import personal, pipeline as _pipe
+    await asyncio.sleep(420)          # после старта — дать ядру собраться первым
+    log.info("предгенерация «Для вас»: активные за 7 дн, тик раз в %d с",
+             FORYOU_PREGEN_EVERY_S)
+    while True:
+        try:
+            now = datetime.now(MSK)
+            if now.hour >= GEN_HOUR and await asyncio.to_thread(
+                    store.day_complete, _today_msk(), _pipe.REQUIRED):
+                users = await asyncio.to_thread(_active_usernames)
+                built = 0
+                for u in users:
+                    try:
+                        t0 = datetime.now(MSK)
+                        await asyncio.wait_for(personal.build_foryou(u), timeout=90)
+                        if (datetime.now(MSK) - t0).total_seconds() > 3:
+                            built += 1          # реально собирали (не кэш-хит)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("предгенерация «Для вас» %s: %s", u, e)
+                    await asyncio.sleep(2)      # не долбить LLM очередью
+                if built:
+                    log.info("предгенерация «Для вас»: собрано %d из %d активных",
+                             built, len(users))
+        except Exception as e:  # noqa: BLE001
+            log.warning("предгенерация «Для вас»: %s", e)
+        await asyncio.sleep(FORYOU_PREGEN_EVERY_S)
+
+
 # ── Ночной судья новостного выпуска (этап 6) ─────────────────────────────────
 # Через час после утренней генерации оценивает опубликованное строгой рубрикой →
 # digest_news_judge → график «мусорной доли» в Пульсе. Деградацию отбора ловит

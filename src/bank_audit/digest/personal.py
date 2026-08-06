@@ -697,10 +697,14 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
     if not force:
         cached = userdata.get_personal_digest(username, local_date)
         payload = (cached or {}).get("payload") or {}
-        # кэш валиден, только пока ядро не сменилось: разворот, собранный в 06:50
-        # из вчерашнего выпуска, инвалидируется появлением свежего ядра в 07:0x
+        # кэш валиден, только пока ядро не сменилось: и по Дате (разворот из
+        # вчерашнего выпуска умирает в 07:0x), и по generated_at (этап C —
+        # интрадей-пересборка секций, например сторожем ставки, раньше
+        # оставляла личную страницу на утренней версии до конца дня)
+        core_gen = ((doc.get("meta") or {}).get("generated_at") or "")
         if (payload.get("v") == _PAGE_V and payload.get("digest_date")
-                and payload.get("digest_date") == doc.get("date")):
+                and payload.get("digest_date") == doc.get("date")
+                and (not payload.get("core_gen") or payload["core_gen"] == core_gen)):
             return payload              # старый payload без v — пересоберём разворотом
 
     prof = userdata.interest_weight_profile(username)
@@ -768,6 +772,7 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
         "name": name, "lead": ai["lead"], "for_you": fy, "top_topics": top_topics,
         "quiet": (not fy and not ai["lead"]), "has_profile": has_profile,
         "digest_date": doc.get("date"),
+        "core_gen": ((meta or {}).get("generated_at") or ""),
         # разворот
         "headline": ai["headline"], "hot": ai["hot"], "checks": ai["checks"],
         "focus": cards, "default_focus": default_focus,
