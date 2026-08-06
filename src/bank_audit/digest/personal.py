@@ -132,6 +132,9 @@ _SEM_W = float(os.getenv("FORYOU_SEM_W", "10"))
 _SEM_FLOOR = float(os.getenv("FORYOU_SEM_FLOOR", "0.38"))
 _DIM_W = float(os.getenv("FORYOU_DIM_W", "1.5"))
 _MIN_TILE_S = float(os.getenv("FORYOU_MIN_SCORE", "0.8"))
+# нога вкуса (этап A): cos(центроид лайкнутого) − cos(центроид дизлайкнутого);
+# разность в −0.4..0.4 → вклад до ±1.6 — сопоставимо с продуктовым весом
+_TASTE_W = float(os.getenv("FORYOU_TASTE_W", "4"))
 
 # tag новостного пула → измерение аудита (у элементов групп dimension нет)
 _TAG_DIM = {"regulator": "compliance", "incident": "ops", "scheme": "fraud",
@@ -139,8 +142,10 @@ _TAG_DIM = {"regulator": "compliance", "incident": "ops", "scheme": "fraud",
 
 
 def _profile_vec(prof: dict) -> list[float] | None:
-    """Вектор интересов аудитора: self_desc + свои темы + топ продуктов фокуса."""
-    bits = [prof.get("self_desc") or ""]
+    """Вектор интересов аудитора: self_desc + ИИ-нарратив профиля (выжимка его
+    реальных запросов — до этапа A генерился, но нигде не читался) + свои темы
+    + топ продуктов фокуса."""
+    bits = [prof.get("self_desc") or "", (prof.get("note") or "")[:300]]
     bits += list(prof.get("custom") or [])
     bits += [_label(t) for t, _w in sorted((prof.get("weights") or {}).items(),
                                            key=lambda x: -x[1])[:6] if t != "sberbank"]
@@ -167,10 +172,13 @@ def _item_vecs(texts: list[str]) -> list[list[float]] | None:
 
 
 def _sem_dim_boost(s: float, sem: float | None, dim: str | None,
-                   dims: dict, echo: int) -> tuple[float, bool]:
+                   dims: dict, echo: int,
+                   taste: float | None = None) -> tuple[float, bool]:
     """Общие добавки поверх keyword-очков; True — доминирует семантика профиля."""
     sem_add = _SEM_W * max(0.0, (sem or 0.0) - _SEM_FLOOR)
     s += sem_add
+    if taste is not None:              # вкус из оценок 👍/👎 (может и топить)
+        s += _TASTE_W * taste
     # буст измерения ТОЛЬКО поверх базового сигнала (ключевые слова / Сбер /
     # семантика): у общих лент tag=market, и голое совпадение измерения
     # поднимало пилотов пропавшего самолёта в сетку аудитора вкладов
@@ -181,6 +189,25 @@ def _sem_dim_boost(s: float, sem: float | None, dim: str | None,
     return s, sem_add >= max(1.0, s / 2)
 
 
+def _taste_of(prof_or_none: dict | None, vec: list[float] | None) -> float | None:
+    """cos(вкус+) − cos(вкус−) для вектора материала; None если вкуса ещё нет."""
+    if not prof_or_none or vec is None:
+        return None
+    pos, neg = prof_or_none.get("taste_pos"), prof_or_none.get("taste_neg")
+    if not pos and not neg:
+        return None
+    try:
+        from ..rag.embedder import cosine_similarity
+        t = 0.0
+        if pos:
+            t += cosine_similarity(pos, vec)
+        if neg:
+            t -= cosine_similarity(neg, vec)
+        return t
+    except Exception:  # noqa: BLE001
+        return None
+
+
 _COMPETITORS = {"vtb", "alfabank", "tinkoff", "gazprombank", "rshb", "domrf",
                 "psb", "sovcombank", "mtsbank", "raiffeisen", "otkritie"}
 _PRODUCTS = {"ipoteka", "deposit", "credit_card", "debit_card", "consumer_loan",
@@ -189,14 +216,15 @@ _PRODUCTS = {"ipoteka", "deposit", "credit_card", "debit_card", "consumer_loan",
 
 def _for_you(cands: list[dict], weights: dict, custom: list[str], k: int = 3,
              reacts: dict | None = None, pvec: list[float] | None = None,
-             dims: dict | None = None) -> list[dict]:
+             dims: dict | None = None, prof: dict | None = None) -> list[dict]:
     """Ре-ранк под Сбер-аудитора: Сбер — якорь, конкуренты — только рыночный
-    бенчмарк; поверх keyword-очков — семантика профиля и измерение аудита."""
+    бенчмарк; поверх keyword-очков — семантика профиля, вкус и измерение аудита."""
     disliked = (reacts or {}).get("disliked_keys") or set()
     dims = dims or {}
+    has_taste = bool(prof and (prof.get("taste_pos") or prof.get("taste_neg")))
     vecs = (_item_vecs([f'{c.get("title") or ""} {c.get("summary") or ""}'
                         for c in cands])
-            if (pvec and cands) else None)
+            if ((pvec or has_taste) and cands) else None)
     scored = []
     for n, c in enumerate(cands):
         key = c.get("url") or (c.get("title") or "")[:60]
@@ -211,14 +239,15 @@ def _for_you(cands: list[dict], weights: dict, custom: list[str], k: int = 3,
         if comp_only:
             s *= 0.3                        # чисто конкурент — только как рыночный контекст
         sem = None
-        if vecs is not None:
+        if vecs is not None and pvec:
             try:
                 from ..rag.embedder import cosine_similarity
                 sem = cosine_similarity(pvec, vecs[n])
             except Exception:  # noqa: BLE001
                 sem = None
         s, sem_dom = _sem_dim_boost(s, sem, c.get("dim"), dims,
-                                    int(c.get("echo") or 1))
+                                    int(c.get("echo") or 1),
+                                    taste=_taste_of(prof, vecs[n] if vecs is not None else None))
         if s < _MIN_TILE_S:
             continue
         if sem_dom:
@@ -338,7 +367,8 @@ def _focus_cards(slugs: list[str]) -> list[dict]:
 def _news_tiles(sections: dict, weights: dict, custom: list[str],
                 reacts: dict | None = None, k: int = 8,
                 pvec: list[float] | None = None,
-                dims: dict | None = None) -> list[dict]:
+                dims: dict | None = None,
+                prof: dict | None = None) -> list[dict]:
     """Персональная новостная сетка: ре-ранк полного пула дня под профиль (0 LLM).
     Ранг = keyword-веса + семантика (профиль × новость) + измерение аудита +
     echo; обогащение (summary/severity) подмешиваем из LLM-групп ядра по url.
@@ -372,7 +402,9 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
         e = enrich.get(url) or {}
         txt = " ".join([title, str(it.get("snippet") or ""), str(e.get("summary") or "")])
         cands.append((it, e, txt))
-    vecs = _item_vecs([c[2] for c in cands]) if (pvec and cands) else None
+    has_taste = bool(prof and (prof.get("taste_pos") or prof.get("taste_neg")))
+    vecs = (_item_vecs([c[2] for c in cands])
+            if ((pvec or has_taste) and cands) else None)
 
     scored = []
     for n, (it, e, txt) in enumerate(cands):
@@ -395,7 +427,7 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
             s += 0.25                   # прошла отбор редакции
         s += float(src_aff.get(it.get("source") or "", 0.0))   # 👍/👎 по источнику
         sem = None
-        if vecs is not None:
+        if vecs is not None and pvec:
             try:
                 from ..rag.embedder import cosine_similarity
                 sem = cosine_similarity(pvec, vecs[n])
@@ -403,7 +435,8 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
                 sem = None
         s, sem_dom = _sem_dim_boost(
             s, sem, it.get("dimension") or _TAG_DIM.get(it.get("tag") or ""),
-            dims, int(it.get("echo") or 1))
+            dims, int(it.get("echo") or 1),
+            taste=_taste_of(prof, vecs[n] if vecs is not None else None))
         if s < _MIN_TILE_S:
             continue
         prod_labels = list(dict.fromkeys(
@@ -467,8 +500,13 @@ _PAGE_SYS = (
 
 
 async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
-                   signals: list[dict], tariffs: dict) -> dict:
-    """Один LLM-вызов на весь разворот: headline + hot + lead + checks."""
+                   signals: list[dict], tariffs: dict,
+                   avoid: list[str] | None = None,
+                   prev_checks: list[str] | None = None) -> dict:
+    """Один LLM-вызов на весь разворот: headline + hot + lead + checks.
+    avoid — отклонённые пользователем зацепки (не предлагать похожие);
+    prev_checks — вчерашние (не повторять дословно): до этапа A страница могла
+    предлагать одну и ту же зацепку неделю подряд, а дизлайк ни на что не влиял."""
     empty = {"headline": None, "hot": None, "lead": None, "checks": []}
     ctx = [f"Сегодня: {today_ru()}", "Банк (объект аудита): СБЕРБАНК",
            f"Зона ответственности аудитора (его словами): {self_desc or '— (не описана)'}"]
@@ -493,6 +531,12 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
         ctx.append("\nТарифные движения: " + "; ".join(
             f"{m.get('bank')} · {m.get('title') or m.get('category')}: "
             f"{m.get('from')}→{m.get('to')}" for m in tariffs["moves"][:4]))
+    if avoid:
+        ctx.append("\nЭти зацепки пользователь ОТКЛОНИЛ (не предлагай похожие):\n"
+                   + "\n".join(f"- {t}" for t in avoid[:10]))
+    if prev_checks:
+        ctx.append("\nВчера уже предлагалось (не повторяй, если сигнал не усилился):\n"
+                   + "\n".join(f"- {t}" for t in prev_checks[:5]))
     msgs = [{"role": "system", "content": _PAGE_SYS},
             {"role": "user", "content": "\n".join(ctx)}]
     try:
@@ -581,14 +625,14 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
         (prof.get("self_desc") or "") + " " + " ".join(prof.get("custom") or []))
     cands = _candidates(sections)
     fy = _for_you(cands, prof["weights"], prof["custom"], reacts=reacts,
-                  pvec=pvec, dims=dims)
+                  pvec=pvec, dims=dims, prof=prof)
     focus, default_focus = _focus_slugs(prof["weights"])
     top_topics = [_label(t) for t, _ in
                   sorted(prof["weights"].items(), key=lambda x: -x[1])[:5]]
     name = _first_name(user.get("display_name") or username)
 
     tiles = _news_tiles(sections, prof["weights"], prof["custom"], reacts=reacts,
-                        pvec=pvec, dims=dims)
+                        pvec=pvec, dims=dims, prof=prof)
     tariffs = _tariff_block(sections, focus)
     rp = (sections.get("reviews_pulse") or {}).get("payload") or {}
     signals = [{k: s.get(k) for k in
@@ -600,7 +644,17 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
         log.warning("[personal] focus cards failed", exc_info=True)
         cards = []
 
-    ai = (await _page_ai(prof["self_desc"], cards, tiles, signals, tariffs)
+    avoid, prev_checks = [], []
+    try:
+        avoid = userdata.recent_check_dislikes(username)
+        from datetime import timedelta as _td
+        y = userdata.get_personal_digest(username, local_date - _td(days=1))
+        prev_checks = [str((c or {}).get("title") or "")
+                       for c in ((y or {}).get("payload") or {}).get("checks") or []]
+    except Exception:
+        log.warning("[personal] avoid-lists failed", exc_info=True)
+    ai = (await _page_ai(prof["self_desc"], cards, tiles, signals, tariffs,
+                         avoid=avoid, prev_checks=[t for t in prev_checks if t])
           if (has_profile or cards or tiles)
           else {"headline": None, "hot": None, "lead": None, "checks": []})
 

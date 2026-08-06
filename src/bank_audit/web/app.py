@@ -658,7 +658,18 @@ def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = No
 @app.get("/api/market")
 def market(category: str = "deposit", limit: int = 100, offset: int = 0,
            q_text: Optional[str] = Query(None, alias="q"),
-           term: Optional[str] = None):
+           term: Optional[str] = None,
+           user: CurrentUser = Depends(get_current_user)):
+    # выбор категории на «Рынке» — сигнал интереса (этап A); дефолтная
+    # категория (deposit при первом заходе) тоже осмысленна, но слабее шумит:
+    # считаем только НЕдефолтные, по симметрии с «Отзывами»
+    if category and category != "deposit":
+        _cat_slug = {"deposit": "deposit", "mortgage": "ipoteka",
+                     "card_credit": "credit_card", "card_debit": "debit_card",
+                     "auto_loan": "auto", "credit": "consumer_loan"}.get(category)
+        if _cat_slug:
+            userdata.update_interests_from_signal(
+                user.username, products=[_cat_slug], weight=0.3)
     """Витрина категории: чистая база (без псевдо-офферов рейтингов), серверный
     поиск и пагинация — раньше limit=100 молча усекал категорию, а поиск шарил
     только по загруженной сотне."""
@@ -927,7 +938,14 @@ def reviews_banks():
     return {"items": _rd().banks()}
 
 @app.get("/api/reviews/overview")
-def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
+def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90,
+                     user: CurrentUser = Depends(get_current_user)):
+    # выбор НЕдефолтного среза — сигнал интереса (этап A): дефолтный заход
+    # (Сбербанк без продукта) профиль не двигает, якорь и так у всех
+    if product or (bank and bank != "Сбербанк"):
+        userdata.update_interests_from_signal(
+            user.username, text_=f"{bank if bank != 'Сбербанк' else ''} {product or ''}",
+            weight=0.3)
     return _rd().overview(bank, product or None, days) or {}
 
 @app.get("/api/reviews/trend")

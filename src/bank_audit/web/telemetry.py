@@ -86,6 +86,20 @@ def track_batch(username: str, events: list[dict]) -> int:
     except Exception:
         log.warning("[telemetry] track_batch failed", exc_info=True)
         return 0
+    # клик по новости — сигнал интереса (этап A): заголовок и продуктовые слаги
+    # плитки учат профиль с весом 0.5 (между фильтром 0.3 и вопросом ИИ 1.0)
+    try:
+        from . import userdata
+        for ev in (events or []):
+            if str(ev.get("kind")) != "news_click":
+                continue
+            pl = ev.get("payload") or {}
+            userdata.update_interests_from_signal(
+                username, text_=str(pl.get("title") or ""),
+                products=[s_ for s_ in (pl.get("slugs") or []) if s_][:5],
+                weight=0.5)
+    except Exception:  # noqa: BLE001
+        log.debug("[telemetry] news_click interests failed", exc_info=True)
     return accepted
 
 

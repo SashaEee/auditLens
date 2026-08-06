@@ -1355,7 +1355,8 @@ function FyTile({t,hero,fb,onFb}){
   const src=fySrcName(t);
   const open=()=>{if(!t.url)return;
     trkEvent({kind:"news_click",page:"foryou",
-      payload:{url:t.url,source:t.source,reason:t.reason}});
+      payload:{url:t.url,source:t.source,reason:t.reason,
+        title:t.title,slugs:t.reason_slugs||[]}});
     window.open(t.url,"_blank","noopener");};
   return <div className={"fy-tile"+(hero?" hero":"")+(fb===1?" liked":"")} onClick={open} role="link" tabIndex={0}
               onKeyDown={e=>{if(e.key==="Enter")open();}}>
@@ -1859,7 +1860,8 @@ function OverviewPage(){
               <a key={i} className="bf-news-it" data-sev={it.severity} href={it.url}
                  target="_blank" rel="noopener noreferrer"
                  onClick={()=>trkEvent({kind:"news_click",page:"overview",
-                   payload:{url:it.url,source:it.source,group:g.key,severity:it.severity}})}>
+                   payload:{url:it.url,source:it.source,group:g.key,severity:it.severity,
+                     title:it.title,slugs:it.products||[]}})}>
                 <div className="bf-news-t">{it.title}</div>
                 {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
                 <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}

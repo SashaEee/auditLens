@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import date
 from typing import Any
@@ -360,33 +361,59 @@ def dimension_weights(text: str) -> dict[str, float]:
 _DECAY = 0.95  # затухание старого веса на каждый новый запрос
 
 
-def update_interests_from_query(username: str, question: str) -> dict:
-    """Обновляет счётчики интересов с затуханием. Возвращает signals."""
-    signals = parse_query_signals(question)
+def _bump_interest_counters(username: str, signals: dict, weight: float = 1.0) -> None:
+    """Ядро обучения счётчиков: затухание, взвешенное СИЛОЙ сигнала.
+
+    weight — насколько событие говорит об интересе: вопрос ИИ-аналитику 1.0,
+    клик по новости 0.5, фильтр вкладки 0.3. Затухание масштабируем той же
+    силой (_DECAY в степени weight): иначе частая навигация с малым весом
+    вымывала бы профиль, накопленный из редких сильных сигналов."""
+    if not any(signals.get(d) for d in ("banks", "products")):
+        return
+    decay = _DECAY ** weight
     try:
-        user = get_user(username) or {}
-        interests = user.get("interests") or {}
-        if isinstance(interests, str):
-            import json
-            interests = json.loads(interests or "{}")
+        import json
+        interests = _load_interests(username)
         counters = interests.get("counters") or {"banks": {}, "products": {}}
         for dim in ("banks", "products"):
             bucket = counters.setdefault(dim, {})
-            # Затухание всех + инкремент попавших.
             for k in list(bucket):
-                bucket[k] = round(bucket[k] * _DECAY, 4)
+                bucket[k] = round(bucket[k] * decay, 4)
             for k in signals.get(dim, []):
-                bucket[k] = round(bucket.get(k, 0.0) * _DECAY + 1.0, 4)
-            # Чистим шум.
+                bucket[k] = round(bucket.get(k, 0.0) + weight, 4)
             counters[dim] = {k: v for k, v in bucket.items() if v >= 0.05}
         interests["counters"] = counters
-        import json
         with db.session() as s:
             s.execute(text("UPDATE app_user SET interests = CAST(:i AS jsonb) WHERE username = :u"),
                       {"i": json.dumps(interests, ensure_ascii=False), "u": username})
     except Exception:
-        log.warning("[userdata] update_interests failed", exc_info=True)
+        log.warning("[userdata] bump_interests failed", exc_info=True)
+
+
+def update_interests_from_query(username: str, question: str) -> dict:
+    """Обновляет счётчики интересов из вопроса ИИ-аналитику. Возвращает signals."""
+    signals = parse_query_signals(question)
+    _bump_interest_counters(username, signals, weight=1.0)
     return signals
+
+
+def update_interests_from_signal(username: str, *, text_: str = "",
+                                 products: list[str] | None = None,
+                                 banks: list[str] | None = None,
+                                 weight: float = 0.3) -> None:
+    """Обучение из ПОВЕДЕНИЯ (этап A, 05.08.2026): фильтры вкладок, клики по
+    новостям, drill-ы. До этого профиль рос ТОЛЬКО от вопросов ИИ-аналитику —
+    а «читатели» (сегмент из Пульса) не спрашивают ИИ вовсе, и их «Для вас»
+    оставалась дефолтной навсегда. Best-effort, никогда не кидает."""
+    try:
+        signals = parse_query_signals(text_) if text_ else {"banks": [], "products": []}
+        if products:
+            signals["products"] = list(dict.fromkeys(signals["products"] + products))
+        if banks:
+            signals["banks"] = list(dict.fromkeys(signals["banks"] + banks))
+        _bump_interest_counters(username, signals, weight=weight)
+    except Exception:
+        log.warning("[userdata] interests_from_signal failed", exc_info=True)
 
 
 def _load_interests(username: str) -> dict:
@@ -478,8 +505,13 @@ def interest_weight_profile(username: str) -> dict:
     # Сбер — якорь для всех: пользователи это аудиторы Сбербанка.
     if "sberbank" not in muted:
         weights["sberbank"] = max(weights.get("sberbank", 0.0), 2.5)
+    taste = interests.get("taste") or {}
     return {"weights": weights, "self_desc": self_desc, "custom": custom,
-            "pinned": list(pinned), "muted": list(muted)}
+            "pinned": list(pinned), "muted": list(muted),
+            # нарратив профиля (LLM-выжимка запросов) и вектор вкуса — в
+            # семантический слой «Для вас» (этап A; раньше оба не читались)
+            "note": (user.get("profile_note") or "").strip(),
+            "taste_pos": taste.get("pos"), "taste_neg": taste.get("neg")}
 
 
 # Соседние продукты (для AI-рекомендаций «в фокус»).
@@ -601,7 +633,63 @@ def save_feedback(username: str, kind: str, item_key: str, verdict: int,
     n = _scalar("""SELECT count(*) FROM item_feedback
                    WHERE username=:u AND kind IN ('news','for_you','check')""",
                 {"u": username}) or 0
+    # вектор вкуса: лайк/дизлайк НОВОСТНОГО материала двигает центроиды
+    if kind in ("news", "for_you") and new_v != 0:
+        _update_taste(username, payload or {}, new_v)
     return {"verdict": new_v, "content_ratings": int(n)}
+
+
+# ── вектор вкуса (этап A, 05.08.2026) ────────────────────────────────────────
+# Раньше 👍 учил только продуктовые слаги плитки (лайк новости без слова
+# «вклад/карта» давал лишь ±0.3 к ИСТОЧНИКУ), а семантическая нога ранка от
+# оценок не училась вовсе. Теперь оценка двигает EMA-центроид эмбеддингов
+# лайкнутого (pos) и дизлайкнутого (neg); ранк добавляет cos(pos)−cos(neg).
+# Хранение — interests.taste (jsonb), альфа даёт «полураспад» ~10-15 оценок:
+# при их сегодняшнем количестве (единицы) важнее отзывчивость, чем инерция.
+_TASTE_ALPHA = float(os.getenv("TASTE_ALPHA", "0.2"))
+
+
+def _update_taste(username: str, payload: dict, verdict: int) -> None:
+    """EMA-обновление центроида вкуса. Best-effort: сбой ничего не ломает."""
+    try:
+        text_ = " ".join(str(payload.get(k) or "")
+                         for k in ("title", "summary", "reason")).strip()
+        if len(text_) < 12:
+            return
+        from ..rag import embedder
+        vec = embedder.embed_one(text_[:400])
+        import json
+        interests = _load_interests(username)
+        taste = interests.get("taste") or {}
+        key = "pos" if verdict > 0 else "neg"
+        cur = taste.get(key)
+        if cur and len(cur) == len(vec):
+            a = _TASTE_ALPHA
+            mixed = [(1 - a) * c + a * v for c, v in zip(cur, vec)]
+        else:
+            mixed = list(vec)
+        import math
+        n = math.sqrt(sum(x * x for x in mixed)) or 1.0
+        taste[key] = [round(x / n, 6) for x in mixed]
+        taste[f"n_{key}"] = int(taste.get(f"n_{key}") or 0) + 1
+        interests["taste"] = taste
+        with db.session() as s:
+            s.execute(text("UPDATE app_user SET interests = CAST(:i AS jsonb)"
+                           " WHERE username = :u"),
+                      {"i": json.dumps(interests, ensure_ascii=False), "u": username})
+    except Exception:
+        log.warning("[userdata] taste update failed", exc_info=True)
+
+
+def recent_check_dislikes(username: str, limit: int = 10) -> list[str]:
+    """Заголовки недавно отклонённых зацепок — в промпт page_ai («не предлагай
+    похожие»). До этого дизлайк зацепки никак не влиял на следующие генерации."""
+    rows = _rows("""SELECT payload->>'title' AS t FROM item_feedback
+                    WHERE username = :u AND kind = 'check' AND verdict = -1
+                      AND created_at > now() - interval '30 days'
+                    ORDER BY created_at DESC LIMIT :n""",
+                 {"u": username, "n": limit}) or []
+    return [r["t"] for r in rows if r.get("t")]
 
 
 def feedback_map(username: str, kind: str) -> dict:
