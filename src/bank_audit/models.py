@@ -60,6 +60,13 @@ class OfferDraft(BaseModel):
     replenishable: Optional[bool] = None
     conditions: Optional[str] = None
     raw: dict[str, Any] = Field(default_factory=dict)
+    # Значимые для истории поля, которых нет среди тарифных колонок (они живут
+    # в raw). Версию SCD2 определяет дайджест по NORMALIZE_FIELDS, и всё, что
+    # лежало только в raw, не обновлялось НИКОГДА, пока не менялась ставка:
+    # у рейтингов banki.ru так замерли число отзывов, место и доля решённых
+    # (аудит 07.08.2026 — у части банков данные стояли с июня). Адаптер сам
+    # перечисляет здесь то, изменение чего обязано порождать новую версию.
+    digest_extra: Optional[dict[str, Any]] = None
 
 class ReviewDraft(BaseModel):
     source: str

@@ -138,4 +138,8 @@ class BankiRatingsAdapter(SourceAdapter):
                     "products": r.get("products", {}),
                     "date": r.get("date"),
                 },
+                # без этого новая версия рождалась только при смене средней
+                # оценки, и число отзывов/место/доля решённых замирали месяцами
+                digest_extra={"reviews": checked, "solved": solved_pct,
+                              "place": r.get("place"), "score": r.get("rating")},
             )

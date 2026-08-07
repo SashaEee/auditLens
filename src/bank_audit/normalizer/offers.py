@@ -80,6 +80,11 @@ def resolve_bank(session, raw_name: str) -> int:
 
 def _digest(d: OfferDraft) -> str:
     payload = {f: getattr(d, f) for f in NORMALIZE_FIELDS}
+    # см. OfferDraft.digest_extra: поля из raw, изменение которых обязано
+    # создавать новую версию (иначе витрина показывает вечно старые числа)
+    extra = getattr(d, "digest_extra", None)
+    if extra:
+        payload["_extra"] = extra
     return stable_digest(payload)
 
 def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
