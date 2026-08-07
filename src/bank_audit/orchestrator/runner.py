@@ -52,7 +52,13 @@ def _store_snapshot(s, page_id: int, run_id: int, fetched_at, http_status: int,
     return row[0] if row else None
 
 def ingest(source_key: str, target_name: str | None = None,
-           openclaw_job: str | None = None) -> dict:
+           openclaw_job: str | None = None, force: bool = False) -> dict:
+    """force=True — разбирать контент, даже если он не изменился.
+
+    Обычно совпадение content_sha256 значит «нечего нормализовать». Но когда
+    меняется САМ ПАРСЕР (07.08.2026 — исправлены поля рейтингов banki.ru),
+    старый контент нужно перечитать заново: иначе исправление доедет до витрины
+    только когда источник сам что-нибудь поменяет."""
     settings = Settings.load()
     db.init(settings)
     cls, cfg = load_adapter(source_key)
@@ -99,12 +105,19 @@ def ingest(source_key: str, target_name: str | None = None,
                     res.snapshot.http_status, res.snapshot.content_sha256,
                     res.snapshot.storage_path, res.snapshot.bytes,
                 )
-            if snap_id is None:
+            if snap_id is None and not force:
                 # контент не изменился -> нормализация не нужна
                 with db.session() as s:
                     _finish_run(s, run_id, "ok", 0, 0)
                 continue
-            totals["snapshots_new"] += 1
+            if snap_id is None:        # force: берём уже сохранённый снапшот
+                with db.session() as s:
+                    snap_id = s.execute(text("""
+                        SELECT snapshot_id FROM source_snapshot
+                         WHERE source_page_id = :p AND content_sha256 = :sh
+                    """), {"p": page_id, "sh": res.snapshot.content_sha256}).scalar()
+            else:
+                totals["snapshots_new"] += 1
 
             offers = list(adapter.parse_offers(res.html, tgt))
             reviews = list(adapter.parse_reviews(res.html, tgt))
