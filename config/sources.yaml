@@ -218,8 +218,11 @@ banki_ratings:
   adapter: bank_audit.sources.banki_ratings:BankiRatingsAdapter
   collector: http
   targets:
+    # {page} подставляет адаптер: страница отдаёт максимум 50 банков,
+    # обходим все (~6 страниц, ~292 банка). До 07.08.2026 брали page=1 — и
+    # рейтинг знали лишь для 50 банков.
     - name: all_banks_ratings
-      url: "https://www.banki.ru/services/responses/ajax/?count=300&page=1"
+      url: "https://www.banki.ru/services/responses/ajax/?count=300&page={page}"
 
 
 # ── Отзывы: browser-collector с OPENCLAW_BROWSER_PROFILE ──────────────────────

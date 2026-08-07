@@ -1110,18 +1110,61 @@ async def reviews_explain(bank: str = "Сбербанк", product: Optional[str]
 
 @app.get("/api/banks")
 def banks():
-    return q("""
+    """Витрина «Банки»: народный рейтинг banki.ru + НАШ корпус отзывов.
+
+    Собственный корпус (review_index) добавлен 07.08.2026: витрина показывала
+    только чужие агрегаты, хотя своих отзывов у нас 174 тыс. по 220 банкам —
+    и именно их аудитор может открыть и прочитать. Соответствие имён идёт
+    через resolve_bank (алиасы/слаги/фаззи), а не по точному совпадению:
+    точное давало 62 пары из 692.
+    """
+    rows = q("""
         SELECT b.bank_id, b.slug, b.name, b.is_sber,
                t.rate_pct avg_grade,
                (t.raw->>'total_reviews')::int total_reviews,
+               (t.raw->>'total_reviews_year')::int reviews_year,
+               (t.raw->>'responses_all')::int responses_all,
                round((t.raw->>'solved_pct')::numeric,1) solved_pct,
-               (t.raw->>'place')::int place
+               (t.raw->>'place')::int place,
+               round((t.raw->>'rating_score')::numeric,1) rating_score,
+               (t.raw->>'problem_count')::int problem_count,
+               t.valid_from AS rating_at
           FROM bank b
           LEFT JOIN product_offer o ON o.bank_id=b.bank_id AND o.category='other'
           LEFT JOIN product_terms t  ON t.offer_id=o.offer_id AND t.valid_to IS NULL
                                     AND t.rate_kind='avg_grade'
          ORDER BY COALESCE((t.raw->>'total_reviews')::int, 0) DESC
     """)
+    # свой корпус: имя канона → (число отзывов, свежесть, средняя оценка)
+    own: dict = {}
+    try:
+        for r in q("""
+            SELECT bank, count(*) n, max(dt)::date last_dt,
+                   round(avg(rating)::numeric, 2) avg_rating
+              FROM review_index
+             WHERE bank IS NOT NULL AND (dt IS NULL OR dt <= now())
+             GROUP BY bank
+        """):
+            own[r["bank"]] = r
+    except Exception as e:  # noqa: BLE001 — витрина живёт и без своего корпуса
+        log.info("banks: свой корпус недоступен (%s)", e)
+    if own:
+        from ..rag.bankiru_reviews import resolve_bank
+        cache: dict = {}
+        for row in rows:
+            key = row.get("name") or row.get("slug") or ""
+            canon = cache.get(key)
+            if canon is None:
+                try:
+                    canon = resolve_bank(key) or ""
+                except Exception:  # noqa: BLE001
+                    canon = ""
+                cache[key] = canon
+            hit = own.get(canon) if canon else None
+            row["own_reviews"] = int(hit["n"]) if hit else 0
+            row["own_last_dt"] = hit["last_dt"].isoformat() if hit and hit["last_dt"] else None
+            row["own_avg_rating"] = float(hit["avg_rating"]) if hit and hit["avg_rating"] is not None else None
+    return rows
 
 
 # ── quality ───────────────────────────────────────────────────────────────────

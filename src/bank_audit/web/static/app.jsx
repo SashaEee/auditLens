@@ -4929,17 +4929,31 @@ function BanksPage(){
     apiFetch("/api/banks").then(d=>{setBanks(d||[]);setLoading(false);}).catch(e=>{setErr(e.message);setLoading(false);});
   },[]);
 
+  const[showRest,setShowRest]=useState(false);
   const filtered=(banks||[]).filter(b=>!q||(b.name||"").toLowerCase().includes(q.toLowerCase())||(b.slug||"").toLowerCase().includes(q.toLowerCase()));
-  const sorted=[...filtered].sort((a,b)=>(b.total_reviews||0)-(a.total_reviews||0));
+  // Строки без рейтинга (в справочнике их большинство: 641 из 692 на 07.08.2026)
+  // раньше шли в общей таблице сплошными прочерками. Теперь основная таблица —
+  // только банки с данными, остальные прячутся за раскрывающийся список.
+  const rated=filtered.filter(b=>b.total_reviews||b.avg_grade||b.own_reviews);
+  const rest=filtered.filter(b=>!(b.total_reviews||b.avg_grade||b.own_reviews));
+  const sorted=[...rated].sort((a,b)=>(b.total_reviews||0)-(a.total_reviews||0));
+  // свежесть рейтинга: строка старше 3 суток — источник её больше не отдаёт
+  const dayMs=864e5, now=Date.now();
+  const ratedAt=sorted.map(b=>b.rating_at?new Date(b.rating_at).getTime():0).filter(Boolean);
+  const freshest=ratedAt.length?Math.max(...ratedAt):0;
+  const openReviews=(b)=>{ try{sessionStorage.setItem("al-rv-prefilter",
+      JSON.stringify({bank:b.name||""}));}catch{} location.hash="reviews"; };
 
   if(loading)return <LoadingPage/>;
   if(err)return <ErrState msg={err}/>;
 
   return <div className="fade-in">
     <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Банки · {banks.length} организаций</div>
+      <div className="eyebrow" style={{marginBottom:6}}>§ Банки · рейтинг у {rated.length} из {banks.length} в справочнике</div>
       <h1 className="t-h" style={{marginBottom:6}}>Рейтинги и репутация</h1>
-      <p className="t-cap" style={{maxWidth:"68ch"}}>Агрегировано с banki.ru — средние оценки, объёмы отзывов, доля решённых обращений.</p>
+      <p className="t-cap" style={{maxWidth:"72ch"}}>Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
+        по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать во вкладке «Отзывы».
+        {freshest>0&&<> Данные рейтинга на {fmtDateMsk(new Date(freshest).toISOString())}.</>}</p>
     </header>
     <div className="filter-row">
       <div className="search-wrap">
@@ -4951,46 +4965,74 @@ function BanksPage(){
       {!sorted.length?<EmptyState text="Нет данных о банках. Запустите сбор данных."/>:
       <table className="m-cards">
         <thead><tr>
-          <th style={{width:"6%"}} className="right">№</th>
+          <th style={{width:"5%"}} className="right">№</th>
           <th>Банк</th>
+          <th className="right">Балл · место</th>
           <th className="right">Ср. оценка</th>
-          <th>Распределение</th>
           <th className="right">Отзывов</th>
           <th className="right">Решено</th>
+          <th className="right">У нас</th>
         </tr></thead>
         <tbody>
           {sorted.map((b,idx)=>{
             const grade=parseFloat(b.avg_grade)||0;
             const solved=parseFloat(b.solved_pct)||0;
-            return <tr key={b.bank_id||b.slug} className={b.is_sber?"is-sber":""}>
+            const score=parseFloat(b.rating_score)||0;
+            const at=b.rating_at?new Date(b.rating_at).getTime():0;
+            const stale=at>0&&(now-at)>3*dayMs;
+            return <tr key={b.bank_id||b.slug} className={b.is_sber?"is-sber":""}
+                       onClick={()=>b.own_reviews?openReviews(b):null}
+                       style={b.own_reviews?{cursor:"pointer"}:null}
+                       title={b.own_reviews?"Открыть отзывы этого банка":""}>
               <td data-label="" className="right mono tnum" style={{color:"var(--ink-3)",fontSize:12}}>{String(idx+1).padStart(2,"0")}</td>
               <td className="m-primary">
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                   <BankAvatar slug={b.slug} name={b.name} isSber={b.is_sber}/>
-                  <div>
+                  <div style={{minWidth:0}}>
                     <div style={{fontWeight:500}}>{b.name||b.slug}</div>
-                    <div className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{b.slug}</div>
+                    {/* технический слаг-заглушку (unknown_…) не показываем */}
+                    {b.slug&&!/^unknown_/.test(b.slug)&&
+                      <div className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{b.slug}</div>}
+                    {stale&&<div className="mono" style={{fontSize:10,color:"var(--warn)"}}
+                      title="Банк выпал из выдачи рейтинга — показано последнее известное значение">
+                      рейтинг на {fmtDateMsk(b.rating_at)}</div>}
                   </div>
                 </div>
+              </td>
+              <td data-label="БАЛЛ · МЕСТО" className="right mono tnum">
+                {score>0?<>{score.toFixed(1)}
+                  {b.place?<span style={{color:"var(--ink-3)"}}> · №{b.place}</span>:null}</>
+                  :<span style={{color:"var(--ink-4)"}}>—</span>}
               </td>
               <td data-label="СР. ОЦЕНКА" className="right">
                 <span className="serif" style={{fontSize:22,fontWeight:400,color:grade>=4?"var(--pos)":grade>=3.5?"var(--warn)":"var(--neg)"}}>
                   {grade>0?grade.toFixed(2):"—"}
                 </span>
               </td>
-              <td data-label="РАСПРЕДЕЛЕНИЕ">
-                {grade>0?<div style={{display:"flex",gap:2,height:6,maxWidth:160}}>
-                  <div style={{flex:Math.round(grade*18),background:"var(--pos)",borderRadius:2}}/>
-                  <div style={{flex:Math.round((5-grade)*15),background:"var(--accent)",borderRadius:2}}/>
-                </div>:<span style={{color:"var(--ink-4)",fontSize:12}}>нет данных</span>}
+              <td data-label="ОТЗЫВОВ" className="right mono tnum">
+                {b.total_reviews?<>{fmtNum(b.total_reviews)}
+                  {b.reviews_year?<div style={{fontSize:10.5,color:"var(--ink-4)"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
+                  :<span style={{color:"var(--ink-4)"}}>—</span>}
               </td>
-              <td data-label="ОТЗЫВОВ" className="right mono tnum">{fmtNum(b.total_reviews)}</td>
               <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${solved}%`:"—"}</td>
+              <td data-label="У НАС" className="right mono tnum">
+                {b.own_reviews?<span style={{color:"var(--accent)"}} title={b.own_last_dt?`свежий отзыв ${fmtDateMsk(b.own_last_dt)}`:""}>
+                  {fmtNum(b.own_reviews)}</span>:<span style={{color:"var(--ink-4)"}}>—</span>}
+              </td>
             </tr>;
           })}
         </tbody>
       </table>}
     </div>
+    {rest.length>0&&<div style={{marginTop:14}}>
+      <div className="t-cap" style={{cursor:"pointer",display:"inline-flex",gap:7,alignItems:"center"}}
+           onClick={()=>setShowRest(v=>!v)}>
+        {showRest?"▾":"▸"} Ещё {rest.length} организаций в справочнике без рейтинга и отзывов
+      </div>
+      {showRest&&<div className="surface" style={{marginTop:8,padding:"12px 14px",display:"flex",flexWrap:"wrap",gap:8}}>
+        {rest.map(b=><span key={b.bank_id||b.slug} className="badge" style={{fontSize:11.5}}>{b.name||b.slug}</span>)}
+      </div>}
+    </div>}
   </div>;
 }
 
