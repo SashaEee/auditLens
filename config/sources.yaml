@@ -342,3 +342,17 @@ finuslugi_reviews:
     - { name: raiffeisen_reviews,  bank_name: "Райффайзенбанк",  max_pages: 3 }
     - { name: mtsbank_reviews,     bank_name: "МТС Банк",        max_pages: 3 }
     - { name: ozonbank_reviews,    bank_name: "Озон Банк",       max_pages: 3 }
+
+# Каталог продуктов banki.ru — широкое ежедневное покрытие тарифов и, главное,
+# продукты Сбера: на Сравни их нет (11.08.2026 у Сбера было 0 активных ипотек).
+# Один таргет = один раздел; внутри адаптер обходит каталог с пагинацией и
+# разделы банков (/products/<раздел>/<слаг>/), где лежат все программы банка.
+banki_products:
+  adapter: bank_audit.sources.banki_products:BankiProductsAdapter
+  collector: http
+  targets:
+    - { name: bp_hypothec,    section: hypothec,    category: mortgage }
+    - { name: bp_credits,     section: credits,     category: credit }
+    - { name: bp_creditcards, section: creditcards, category: card_credit }
+    - { name: bp_debitcards,  section: debitcards,  category: card_debit }
+    - { name: bp_deposits,    section: deposits,    category: deposit }
