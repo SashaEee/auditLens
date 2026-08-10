@@ -869,6 +869,12 @@ def market_atlas(term: Optional[str] = None):
         if cat_meta.is_non_bank(r["bank_name"]):
             non_bank[r["category"]] = non_bank.get(r["category"], 0) + 1
             continue                       # застройщик/сервис подбора — не банк
+        if (r["category"] in ("deposit", "savings_account")
+                and float(val) <= 0.01):
+            # ставка вклада 0 — это не «худшее предложение рынка», а пустое
+            # значение источника; в ранге такой оффер занижает позицию банка
+            no_metric[r["category"]] = no_metric.get(r["category"], 0) + 1
+            continue
         if cat_meta.is_subsidized(r["title"], r["category"], float(val), key_rate):
             # Господдержка (семейная/IT/военная/образовательный с субсидией):
             # ставка установлена государством и ОДИНАКОВА у всех банков —
@@ -924,7 +930,19 @@ def market_atlas(term: Optional[str] = None):
         groups_by_cat[cid_].sort(
             key=lambda g: (any(b["is_sber"] for b in g[2]), len(g[2])), reverse=True)
     for cid_, gs in groups_by_cat.items():
-        by_cat[cid_] = {b["slug"]: b for _s, _u, bl in gs for b in bl}
+        # Банк может быть в нескольких группах (у Сбера вклады есть в массовом,
+        # пенсионном и молодёжном сегментах). В общий ранг категории берём его
+        # ЛУЧШИЙ оффер, а не последний по порядку обхода: иначе позиция банка
+        # определялась тем, в каком порядке перебирались группы.
+        lower_ = (cat_meta.CAT_META.get(cid_) or {}).get("metric_lower_is_better")
+        merged: dict = {}
+        for _s, _u, bl in gs:
+            for b in bl:
+                cur_ = merged.get(b["slug"])
+                if cur_ is None or (b["rate"] < cur_["rate"] if lower_
+                                    else b["rate"] > cur_["rate"]):
+                    merged[b["slug"]] = b
+        by_cat[cid_] = merged
 
     out = []
     for c in cat_meta.CATEGORIES:
