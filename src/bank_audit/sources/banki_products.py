@@ -353,16 +353,22 @@ class BankiProductsAdapter(SourceAdapter):
         data = json.loads(html.decode("utf-8"))
         section = data.get("section") or target.get("section") or "hypothec"
         cat = CATEGORIES[section]["category"]
-        # у вклада «лучше» = выше ставка, у кредита — ниже: кладём в rate_pct ту
-        # границу диапазона, по которой продукт сравнивают на витрине
-        take_max = cat == "deposit"
         for it in data.get("offers", []):
             bank, product = it.get("bank"), it.get("product")
             if not bank or not product:
                 continue
-            rate = it.get("rate_max") if take_max else it.get("rate_min")
-            if rate is None:
-                rate = it.get("rate_max") if it.get("rate_max") is not None else it.get("rate_min")
+            # У кредитных продуктов сравнивают нижнюю границу вилки («ставка от»).
+            # У ВКЛАДОВ ставку отсюда НЕ берём вовсе: карточка вклада на banki.ru
+            # верстается в двух вариантах, и регексп собирает все проценты блока —
+            # промо-максимум («Выгодный старт +»: 40 проц. на 91 день для суммы
+            # 10-100 тыс. руб.) вставал в один ряд с годовыми ставками. 11.08.2026
+            # это дало «Сбер #1 из 141 со ставкой 40 проц.» при честной позиции
+            # #55 с базовыми 13.5 проц. — и ровно 40.00 у 18 банков сразу.
+            # Ставки вкладов остаются за sravni (1747 офферов), отсюда берём
+            # только состав полки: названия, сроки, суммы.
+            rate = None if cat == "deposit" else it.get("rate_min")
+            if rate is None and cat != "deposit":
+                rate = it.get("rate_max")
             ext = it.get("product_id") or f'{_canon(bank)[:24]}|{_canon(product)[:40]}'
             yield OfferDraft(
                 bank_name_raw=bank,
