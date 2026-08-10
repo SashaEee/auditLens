@@ -123,3 +123,70 @@ def is_non_bank(name: str | None) -> bool:
 NON_BANK_SQL_RE = (r"подбор\s+квартир|онлайн[- ]заявк|заявка\s+в\s+несколько|"
                    r"^пик$|^самолет$|^а101$|застройщик|яндекс\s+вертикал|"
                    r"агентство\s+недвижимост|^дом[- ]?клик|маркетплейс|сервис\s+подбор")
+
+
+# ── Сегменты и подсегменты (аудит вкладки «Рынок» 11.08.2026) ────────────────
+# В одном ранжире лежали премиальная карта за 47 880 руб./год и детская за 0,
+# беззалоговый кредит и кредит под залог недвижимости, новостройка и вторичка.
+# Сравнение внутри такой смеси даёт аудитору неверный вывод о позиции банка,
+# поэтому ранг считается внутри (категория, сегмент, подсегмент).
+import re as _re2
+
+SEGMENTS = (("premium", "Премиальный"), ("private", "Private"),
+            ("kids", "Детские"), ("youth", "Молодёжные"),
+            ("pension", "Пенсионные"), ("mass", "Массовый"))
+
+_SEGMENT_RULES: list[tuple] = [
+    ("private", _re2.compile(r"private|приват", _re2.I)),
+    ("premium", _re2.compile(r"привилег|премьер|премиал|premium|only\b|signature|"
+                             r"infinite|supreme|первый|прайм|world elite|platinum", _re2.I)),
+    ("kids", _re2.compile(r"детск|юниор|junior|подростк|kids", _re2.I)),
+    ("youth", _re2.compile(r"молод[её]жн|студен|teen", _re2.I)),
+    ("pension", _re2.compile(r"пенсион", _re2.I)),
+]
+
+# Подсегмент — «что именно за продукт» внутри категории. Ключ словаря — наша
+# категория, значение — правила по названию (порядок важен: первое совпадение).
+_SUBSEGMENT_RULES: dict[str, list[tuple]] = {
+    "mortgage": [
+        ("refin",     _re2.compile(r"рефинанс", _re2.I)),
+        ("subsidized", _re2.compile(r"семейн|господдержк|it[- ]?специал|ит[- ]?специал|"
+                                    r"дальневосточн|арктическ|сельск|военн|материнск", _re2.I)),
+        ("pledge",    _re2.compile(r"под залог|залог недвиж|нецелев", _re2.I)),
+        ("house",     _re2.compile(r"строительств|\bижс\b|частн\w+ дом|таунхаус|коттедж", _re2.I)),
+        ("new",       _re2.compile(r"новостройк|первичн|строящ", _re2.I)),
+        ("secondary", _re2.compile(r"вторичн|готов\w+ жиль", _re2.I)),
+        ("commercial", _re2.compile(r"коммерческ|апартамент|гараж|машино", _re2.I)),
+    ],
+    "credit": [
+        ("refin",  _re2.compile(r"рефинанс", _re2.I)),
+        ("pledge", _re2.compile(r"под залог|залог", _re2.I)),
+        ("auto",   _re2.compile(r"авто", _re2.I)),
+        ("cash",   _re2.compile(r"наличны|на любые цели|потребит", _re2.I)),
+    ],
+    "card_credit": [
+        ("installment", _re2.compile(r"рассрочк|халва|свобода|совесть", _re2.I)),
+        ("classic",     _re2.compile(r".", _re2.I)),
+    ],
+}
+
+
+def classify_segment(title: str | None) -> str:
+    """Сегмент клиента по названию продукта (mass — по умолчанию)."""
+    t = title or ""
+    for seg, rx in _SEGMENT_RULES:
+        if rx.search(t):
+            return seg
+    return "mass"
+
+
+def classify_sub_segment(category: str | None, title: str | None) -> str | None:
+    """Вид продукта внутри категории: новостройка/вторичка/залог/рефинанс…"""
+    rules = _SUBSEGMENT_RULES.get(category or "")
+    if not rules:
+        return None
+    t = title or ""
+    for sub, rx in rules:
+        if rx.search(t):
+            return sub
+    return None

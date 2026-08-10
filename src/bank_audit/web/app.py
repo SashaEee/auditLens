@@ -703,6 +703,8 @@ def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = No
 def market(category: str = "deposit", limit: int = 100, offset: int = 0,
            q_text: Optional[str] = Query(None, alias="q"),
            term: Optional[str] = None,
+           segment: Optional[str] = None,
+           sub: Optional[str] = None,
            user: CurrentUser = Depends(get_current_user)):
     # выбор категории на «Рынке» — сигнал интереса (этап A); дефолтная
     # категория (deposit при первом заходе) тоже осмысленна, но слабее шумит:
@@ -728,6 +730,12 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
         params["qq"] = f"%{q_text.strip()}%"
     if term:
         cond.append("term_bucket = :tb"); params["tb"] = term
+    # сегмент и вид продукта: премиальная карта не должна ранжироваться рядом
+    # с детской, а залоговый кредит — рядом с наличными (аудит 11.08.2026)
+    if segment:
+        cond.append("coalesce(segment, 'mass') = :seg"); params["seg"] = segment
+    if sub:
+        cond.append("sub_segment = :sub"); params["sub"] = sub
     # сортировка по СОПОСТАВИМОЙ метрике категории (у карт это не ставка)
     meta = cat_meta.CAT_META.get(category)
     m_field = meta["metric"] if meta else "rate_pct"
@@ -736,7 +744,9 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
              else f"{m_field} DESC NULLS LAST")
     return q(f"""
         SELECT bank_slug, bank_name, is_sber, offer_id, title, url,
-               primary_source, rate_pct, rate_kind, term_bucket,
+               primary_source, segment, sub_segment,
+               rate_min, rate_max, psk_min, psk_max,
+               rate_pct, rate_kind, term_bucket,
                amount_min, amount_max, term_months_min, term_months_max,
                fee_open, fee_service, grace_days, cashback_pct,
                early_withdraw, capitalization,
@@ -774,7 +784,23 @@ def meta_categories():
     out = []
     for c in cat_meta.CATEGORIES:
         cc = counts.get(c["id"], {})
-        out.append({**c, "n": cc.get("n", 0), "n_sber": cc.get("n_sber", 0)})
+        # какие сегменты и виды продукта реально есть в категории — фронт рисует
+        # чипы только по существующим, а не по всему словарю
+        segs = q("""
+            SELECT coalesce(segment, 'mass') AS seg, count(*) AS n
+              FROM v_market_rub_offer
+             WHERE category = :c AND bank_name !~* :nonbank
+             GROUP BY 1 ORDER BY 2 DESC
+        """, {"c": c["id"], "nonbank": cat_meta.NON_BANK_SQL_RE})
+        subs = q("""
+            SELECT sub_segment AS sub, count(*) AS n
+              FROM v_market_rub_offer
+             WHERE category = :c AND sub_segment IS NOT NULL
+               AND bank_name !~* :nonbank
+             GROUP BY 1 ORDER BY 2 DESC
+        """, {"c": c["id"], "nonbank": cat_meta.NON_BANK_SQL_RE})
+        out.append({**c, "n": cc.get("n", 0), "n_sber": cc.get("n_sber", 0),
+                    "segments": segs, "sub_segments": subs})
     return out
 
 

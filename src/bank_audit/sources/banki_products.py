@@ -382,6 +382,8 @@ class BankiProductsAdapter(SourceAdapter):
                 title=product[:200],
                 url=it.get("url") or it.get("page_url"),
                 rate_pct=_dec(rate),
+                rate_min=_dec(it.get("rate_min")), rate_max=_dec(it.get("rate_max")),
+                psk_min=_dec(it.get("psk_min")), psk_max=_dec(it.get("psk_max")),
                 rate_kind="rate" if rate is not None else None,
                 amount_max=_dec(_money_max(it.get("amount") or "")),
                 term_months_max=(int(_term_months(it.get("term") or "") or 0) or None),

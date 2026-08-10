@@ -59,6 +59,13 @@ class OfferDraft(BaseModel):
     capitalization: Optional[bool] = None
     replenishable: Optional[bool] = None
     conditions: Optional[str] = None
+    # Диапазон ставки и ПСК: в rate_pct лежит ОДНА граница (по ней ранжируем),
+    # но аудитору нужна вилка целиком и полная стоимость кредита — единственная
+    # величина, которую банк обязан раскрывать по 353-ФЗ (аудит 11.08.2026).
+    rate_min: Optional[Decimal] = None
+    rate_max: Optional[Decimal] = None
+    psk_min: Optional[Decimal] = None
+    psk_max: Optional[Decimal] = None
     raw: dict[str, Any] = Field(default_factory=dict)
     # Значимые для истории поля, которых нет среди тарифных колонок (они живут
     # в raw). Версию SCD2 определяет дайджест по NORMALIZE_FIELDS, и всё, что

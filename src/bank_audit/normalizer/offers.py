@@ -156,6 +156,14 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
         RETURNING offer_id
     """), {"b": bank_id, "c": d.category, "e": d.external_id,
            "s": source_name, "t": d.title, "u": d.url}).scalar_one()
+    # сегмент клиента и вид продукта — ранг считается ВНУТРИ них, иначе
+    # премиальная карта сравнивается с детской, а залоговый кредит с наличными
+    from ..categories import classify_segment, classify_sub_segment
+    session.execute(text("""
+        UPDATE product_offer SET segment = :seg, sub_segment = :sub
+         WHERE offer_id = :o
+    """), {"seg": classify_segment(d.title),
+           "sub": classify_sub_segment(d.category, d.title), "o": row})
     offer_id = row
 
     new_digest = _digest(d)
@@ -182,9 +190,11 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
             amount_min, amount_max, term_months_min, term_months_max,
             fee_open, fee_service, grace_days, cashback_pct,
             early_withdraw, capitalization, replenishable,
-            conditions, raw, source_snapshot_id, filter_context_id, digest)
+            conditions, raw, source_snapshot_id, filter_context_id, digest,
+            rate_min, rate_max, psk_min, psk_max)
         VALUES (:o,:r,:rk,:cur,:amn,:amx,:tmn,:tmx,:fo,:fs,:gd,:cb,:ew,:cap,:rep,
-                :cond, CAST(:raw AS jsonb), :ssid, :fid, :dg)
+                :cond, CAST(:raw AS jsonb), :ssid, :fid, :dg,
+                :rmin,:rmax,:pmin,:pmax)
         RETURNING terms_id
     """), {
         "o": offer_id, "r": d.rate_pct, "rk": d.rate_kind, "cur": d.currency,
@@ -195,6 +205,8 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
         "ew": d.early_withdraw, "cap": d.capitalization, "rep": d.replenishable,
         "cond": d.conditions, "raw": json.dumps(d.raw, ensure_ascii=False, default=str),
         "ssid": snapshot_id, "fid": source_page_id, "dg": new_digest,
+        "rmin": d.rate_min, "rmax": d.rate_max,
+        "pmin": d.psk_min, "pmax": d.psk_max,
     }).scalar_one()
 
     if cur:
