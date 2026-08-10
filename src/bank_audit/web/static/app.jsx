@@ -2184,7 +2184,7 @@ function MkTraffic({cells,onPick}){
     {cells.map(c=><button key={c.category} className={"mk-tcell"+tone(c.percentile)}
       onClick={()=>onPick&&onPick(c.category)}
       title={`${c.label} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
-        +(c.gap_median!=null?` · ${mkGap(c.gap_median,null)}${c.metric_unit||""} к медиане`:"")
+        +(c.gap_median!=null?` · ${mkGap(c.gap_median,null)}${c.gap_unit||c.metric_unit||""} к медиане`:"")
         +(c.tied>1?` · наравне с ${c.tied} банками`:"")}>
       <span className="v serif">{c.percentile!=null?c.percentile:"—"}</span>
       <span className="l">{c.label}</span>
