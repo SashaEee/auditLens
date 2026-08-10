@@ -818,7 +818,8 @@ def market_atlas(term: Optional[str] = None):
         cond += " AND term_bucket = :tb"; params["tb"] = term
     rows = q(f"""
         SELECT category, bank_slug, bank_name, is_sber, offer_id, title,
-               rate_pct, rate_kind, term_bucket,
+               rate_pct, rate_kind, term_bucket, segment, sub_segment,
+               rate_min, rate_max, psk_min, psk_max,
                fee_service, grace_days, cashback_pct
           FROM v_market_rub_offer WHERE {cond}
     """, params)
@@ -832,12 +833,16 @@ def market_atlas(term: Optional[str] = None):
         pass
     by_cat: dict[str, dict] = {}
     subsidized: dict[str, int] = {}
+    no_metric: dict[str, int] = {}       # метрика пуста — оффер молча выпадал
     for r in rows:
         meta = cat_meta.CAT_META.get(r["category"])
         if not meta:                       # не витринная категория (рейтинги и пр.)
             continue
         val = r.get(meta["metric"])
         if val is None:
+            # 113 дебетовых карт (треть рынка) не имели fee_service и просто
+            # исчезали из сравнения — теперь это видимое число в паспорте выборки
+            no_metric[r["category"]] = no_metric.get(r["category"], 0) + 1
             continue
         if cat_meta.is_non_bank(r["bank_name"]):
             continue                       # застройщик/сервис подбора — не банк
@@ -864,6 +869,10 @@ def market_atlas(term: Optional[str] = None):
                 "secondary": (float(r[meta["secondary"]])
                               if meta.get("secondary") and r.get(meta["secondary"]) is not None
                               else None),
+                "segment": r.get("segment"), "sub_segment": r.get("sub_segment"),
+                "rate_min": (float(r["rate_min"]) if r.get("rate_min") is not None else None),
+                "rate_max": (float(r["rate_max"]) if r.get("rate_max") is not None else None),
+                "psk_min": (float(r["psk_min"]) if r.get("psk_min") is not None else None),
             }
 
     def _pct(sorted_vals: list[float], p: float) -> Optional[float]:
@@ -896,6 +905,10 @@ def market_atlas(term: Optional[str] = None):
             "status": "ok", "n_banks": len(banks),
             "small_n": len(banks) < 5,
             "subsidized_excluded": subsidized.get(cid, 0),
+            "no_metric": no_metric.get(cid, 0),
+            # сколько банков стоит ровно на лучшем значении: «#1» при 70 таких
+            # банках означает не лидерство, а что метрика не различает игроков
+            "at_best": sum(1 for b in banks if b["rate"] == banks[0]["rate"]),
             "points": banks,
             "median": _pct(vals, 0.5), "p25": _pct(vals, 0.25),
             "p75": _pct(vals, 0.75),
@@ -911,12 +924,91 @@ def market_atlas(term: Optional[str] = None):
                            else b["rate"] > sber["rate"])) + 1
             n_tied = sum(1 for b in banks if b["rate"] == sber["rate"])
             entry["sber"] = {**sber, "rank": rank, "tied": n_tied,
+                             # перцентиль честнее ранга: «#1 из 125» при 70
+                             # одинаковых значениях вводит в заблуждение
+                             "percentile": round(100 * (len(banks) - rank) / max(len(banks) - 1, 1)),
+                             "tied_share": round(n_tied / max(len(banks), 1), 2),
                              "gap_leader": round(sber["rate"] - banks[0]["rate"], 2),
                              "gap_median": round(sber["rate"] - entry["median"], 2),
                              # доля рынка, которую Сбер опережает (1.0 = лидер)
                              "beats_share": round(1 - (rank - 1) / max(len(banks) - 1, 1), 2)}
         out.append(entry)
     return {"term": term, "categories": out}
+
+
+@app.get("/api/market/verdict")
+def market_verdict(term: Optional[str] = None):
+    """Ответ вкладки за НОЛЬ кликов: где мы отстаём и что с этим делать.
+
+    Считается детерминированными правилами поверх атласа — никакого LLM: число
+    в аудиторском выводе должно быть воспроизводимо. Отдаём и прозу, и разбор
+    по категориям, чтобы фронт мог рисовать светофор.
+    """
+    atlas = market_atlas(term=term)
+    cats = [c for c in atlas["categories"] if c.get("status") == "ok" and c.get("sber")]
+    cells, weak, strong = [], [], []
+    for c in cats:
+        sb = c["sber"]
+        pct = sb.get("percentile")
+        gap = sb.get("gap_median")
+        cell = {
+            "category": c["category"], "label": c["label"],
+            "percentile": pct, "rank": sb.get("rank"), "n_banks": c["n_banks"],
+            "tied": sb.get("tied"), "tied_share": sb.get("tied_share"),
+            "gap_median": gap, "gap_leader": sb.get("gap_leader"),
+            "metric_label": c["metric_label"], "metric_unit": c["metric_unit"],
+            "value": sb.get("rate"), "title": sb.get("title"),
+            "lower_is_better": c["lower_is_better"],
+            # доверие к выборке: по этим числам фронт рисует бейджи
+            "no_metric": c.get("no_metric", 0),
+            "subsidized_excluded": c.get("subsidized_excluded", 0),
+            "at_best": c.get("at_best", 0), "small_n": c.get("small_n", False),
+        }
+        cells.append(cell)
+        if pct is not None and pct < 40:
+            weak.append(cell)
+        elif pct is not None and pct >= 75:
+            strong.append(cell)
+    # самое острое — наверх: сначала по перцентилю, при равенстве по разрыву
+    weak.sort(key=lambda x: (x["percentile"] or 0, -abs(x["gap_median"] or 0)))
+    cells.sort(key=lambda x: (x["percentile"] if x["percentile"] is not None else 999))
+
+    def _phrase(c: dict) -> str:
+        unit = c["metric_unit"]
+        val = c["value"]
+        gap = c["gap_median"]
+        worse = "хуже" if (gap or 0) * (1 if c["lower_is_better"] else -1) > 0 else "лучше"
+        return (f'{c["label"].lower()}: {val}{unit} против медианы рынка '
+                f'{round((val or 0) - (gap or 0), 2)}{unit} — '
+                f'{worse} на {abs(gap or 0)}{unit}, место {c["rank"]} из {c["n_banks"]}')
+
+    if weak:
+        lead = "Отстаём — " + "; ".join(_phrase(c) for c in weak[:2]) + "."
+    elif strong:
+        lead = ("Слабых позиций нет. Лучше рынка — "
+                + "; ".join(_phrase(c) for c in strong[:2]) + ".")
+    else:
+        lead = "Позиция около медианы рынка во всех категориях с сопоставимой метрикой."
+    # честная оговорка о качестве выборки — сразу в вердикте, а не мелким шрифтом
+    doubts = []
+    tie = next((c for c in cells if (c["tied"] or 0) > 1
+                and (c["tied_share"] or 0) > 0.2), None)
+    if tie:
+        doubts.append(f'в категории «{tie["label"].lower()}» с нами наравне '
+                      f'{tie["tied"]} банков — метрика их не различает')
+    nm = max(cells, key=lambda c: c["no_metric"]) if cells else None
+    if nm and nm["no_metric"] >= 20:
+        doubts.append(f'у {nm["no_metric"]} предложений в «{nm["label"].lower()}» '
+                      f'метрика не заполнена — они вне сравнения')
+    sub = max(cells, key=lambda c: c["subsidized_excluded"]) if cells else None
+    if sub and sub["subsidized_excluded"] >= 10:
+        doubts.append(f'{sub["subsidized_excluded"]} льготных программ в '
+                      f'«{sub["label"].lower()}» исключены: ставка там установлена '
+                      f'государством и у всех одинакова')
+    return {"term": term, "lead": lead, "cells": cells,
+            "weak": [c["category"] for c in weak],
+            "doubts": doubts,
+            "as_of": scalar("SELECT max(valid_from) FROM product_terms WHERE valid_to IS NULL")}
 
 
 @app.get("/api/market/offer/{offer_id}/history")

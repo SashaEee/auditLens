@@ -2138,17 +2138,69 @@ function mkPointTitle(p,c){
 }
 
 function MkStrip({c,big}){
+  // Домен по перцентилям, а не [min,max]: у дебетовых карт max = 100 000 руб./год,
+  // и прежняя линейная шкала укладывала 125 банков в первые 1.2 проц. полосы —
+  // главный визуальный дефект вкладки (аудит 11.08.2026). Выбросы уводим в
+  // «поле переполнения» по краям, деньги сжимаем логарифмом, а ориентацию
+  // всегда держим «лучше — вправо»: раньше направление менялось от категории к
+  // категории, и одинаковое положение точки означало разное.
   if(c.status!=="ok")return null;
-  const rng=(c.max-c.min)||1;
-  const X=v=>((v-c.min)/rng)*94+3;
-  return <div className={"mk-strip"+(big?" mk-strip-big":"")}>
-    <i className="mk-iqr" style={{left:X(c.p25)+"%",width:Math.max(X(c.p75)-X(c.p25),.6)+"%"}}
-       title={`середина рынка: ${mkMetric(c.p25,c.metric)} – ${mkMetric(c.p75,c.metric)}`}/>
+  const pts=(c.points||[]).map(p=>p.rate).filter(v=>v!=null).sort((a,b)=>a-b);
+  if(!pts.length)return null;
+  const qAt=(arr,q)=>{const i=(arr.length-1)*q,lo=Math.floor(i),hi=Math.min(lo+1,arr.length-1);
+    return arr[lo]+(arr[hi]-arr[lo])*(i-lo);};
+  let lo=qAt(pts,0.05), hi=qAt(pts,0.95);
+  if(hi-lo<1e-9){lo=pts[0];hi=pts[pts.length-1];}
+  if(hi-lo<1e-9){hi=lo+1;}
+  const isMoney=c.metric==="fee_service"||c.metric==="grace_days";
+  const f=v=>isMoney?Math.log1p(Math.max(v,0)):v;
+  const flo=f(lo),fhi=f(hi),frng=(fhi-flo)||1;
+  const PAD=6;                                  // поля переполнения, проц.
+  const raw=v=>((f(Math.min(Math.max(v,lo),hi))-flo)/frng)*(100-2*PAD)+PAD;
+  // «лучше вправо»: для метрик, где меньше = лучше, ось инвертируется
+  const X=v=>c.lower_is_better?100-raw(v):raw(v);
+  const over=v=>v<lo||v>hi;
+  const sb=(c.points||[]).find(p=>p.is_sber);
+  return <div className={"mk-strip"+(big?" mk-strip-big":"")}
+              title={`${c.lower_is_better?"левее — хуже, правее — лучше":"правее — лучше"} · середина рынка ${mkMetric(c.p25,c.metric)} – ${mkMetric(c.p75,c.metric)}`}>
+    <i className="mk-over" style={{left:0}}/>
+    <i className="mk-over" style={{right:0}}/>
+    <i className="mk-iqr" style={{left:Math.min(X(c.p25),X(c.p75))+"%",
+         width:Math.max(Math.abs(X(c.p75)-X(c.p25)),.8)+"%"}}/>
     <i className="mk-med" style={{left:X(c.median)+"%"}} title={`медиана ${mkMetric(c.median,c.metric)}`}/>
     {(c.points||[]).map((p,i)=>
-      <i key={i} className={"mk-dot"+(p.is_sber?" sber":"")} style={{left:X(p.rate)+"%"}}
-         title={mkPointTitle(p,c)}/>)}
+      <i key={i} className={"mk-dot"+(p.is_sber?" sber":"")+(over(p.rate)?" out":"")}
+         style={{left:X(p.rate)+"%"}} title={mkPointTitle(p,c)}/>)}
+    {sb&&<i className="mk-sber-line" style={{left:X(sb.rate)+"%"}}/>}
   </div>;
+}
+
+// Светофор категорий: перцентиль вместо голого ранга. «#1 из 125» при 70
+// одинаковых значениях — бесполезное утверждение, перцентиль честнее.
+function MkTraffic({cells,onPick}){
+  if(!cells||!cells.length)return null;
+  const tone=p=>p==null?"":p>=75?" good":p>=40?"":p>=20?" warn":" bad";
+  return <div className="mk-traffic">
+    {cells.map(c=><button key={c.category} className={"mk-tcell"+tone(c.percentile)}
+      onClick={()=>onPick&&onPick(c.category)}
+      title={`${c.label} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
+        +(c.gap_median!=null?` · ${mkGap(c.gap_median,null)}${c.metric_unit||""} к медиане`:"")
+        +(c.tied>1?` · наравне с ${c.tied} банками`:"")}>
+      <span className="v serif">{c.percentile!=null?c.percentile:"—"}</span>
+      <span className="l">{c.label}</span>
+    </button>)}
+  </div>;
+}
+
+// Бейджи достоверности: аудитор должен видеть, из чего посчитан ранг.
+function MkTrust({c}){
+  const b=[];
+  if(c.at_best>2) b.push([`наравне ${c.at_best}`,"метрика не различает банки на лучшем значении"]);
+  if(c.no_metric>0) b.push([`нет метрики ${c.no_metric}`,"столько предложений вне сравнения — поле не заполнено источником"]);
+  if(c.subsidized_excluded>0) b.push([`исключено ${c.subsidized_excluded}`,"льготные программы: ставка установлена государством и одинакова у всех"]);
+  if(c.small_n) b.push(["малая база","банков меньше пяти — ранг неустойчив"]);
+  if(!b.length)return null;
+  return <span className="mk-trust">{b.map(([t,ttl],i)=><i key={i} title={ttl}>{t}</i>)}</span>;
 }
 
 // ступенчатая история ставки оффера (SCD2-версии условий)
@@ -2197,6 +2249,7 @@ function MarketPage({params}){
   const hlChange=useRef(P.change?parseInt(P.change):null);
   const[meta,setMeta]=useState(null);
   const[atlas,setAtlas]=useState(null);
+  const[verdict,setVerdict]=useState(null);
   const[sum,setSum]=useState(null);
   const[sch,setSch]=useState(null);
   const[offers,setOffers]=useState(null);
@@ -2235,8 +2288,9 @@ function MarketPage({params}){
   useEffect(()=>{
     Promise.all([apiFetch("/api/meta/categories"),apiFetch("/api/market/atlas"),
                  apiFetch("/api/summary").catch(()=>null),
-                 apiFetch("/api/meta/schedule").catch(()=>null)])
-      .then(([m,a,s,sc])=>{setMeta(m);setAtlas(a);setSum(s);setSch(sc);})
+                 apiFetch("/api/meta/schedule").catch(()=>null),
+                 apiFetch("/api/market/verdict").catch(()=>null)])
+      .then(([m,a,s,sc,v])=>{setMeta(m);setAtlas(a);setSum(s);setSch(sc);setVerdict(v);})
       .catch(e=>setErr(e.message));
   },[]);
 
@@ -2324,6 +2378,18 @@ function MarketPage({params}){
 
     {err&&<ErrState msg={err}/>}
 
+    {/* ── СЛОЙ 0 · ВЕРДИКТ: ответ за ноль кликов ─────────────────────── */}
+    {!cat&&view!=="changes"&&!err&&verdict&&(verdict.cells||[]).length>0&&
+      <div className="mk-verdict">
+        <div className="mk-vtext">
+          <div className="eyebrow" style={{marginBottom:8}}>Где мы относительно рынка</div>
+          <p className="mk-vlead">{verdict.lead}</p>
+          {(verdict.doubts||[]).length>0&&
+            <p className="mk-vdoubt">{verdict.doubts.join(" · ")}</p>}
+        </div>
+        <MkTraffic cells={verdict.cells} onPick={setCat}/>
+      </div>}
+
     {/* ── СЛОЙ 1 · АТЛАС ─────────────────────────────────────────────── */}
     {!cat&&view!=="changes"&&!err&&<div className="surface" style={{overflow:"hidden"}}>
       <div style={{padding:"18px 24px",borderBottom:"1px solid var(--hair)"}}>
@@ -2343,9 +2409,12 @@ function MarketPage({params}){
               <div className="mk-anote">{c.status==="no_metric"?((M[c.category]||{}).caveat||"сопоставимой метрики нет")+" — доступна витрина":"нет данных"}</div>}
             <div className="mk-apos">
               {sb?<>
-                <b className={"serif"+(sb.beats_share<0.5?" bad":"")}
-                   title={`лучший оффер Сбера против лучших офферов ${c.n_banks} банков${c.small_n?" · малая база!":""}`}>#{sb.rank}</b>
-                <span className="mk-an" title={sb.title||""}>{mkMetric(sb.rate,c.metric)} · {mkGap(sb.gap_median,c.metric)} к медиане{c.small_n?" · малая база":""}</span>
+                <b className={"serif"+(sb.percentile!=null&&sb.percentile<40?" bad":"")}
+                   title={`перцентиль: доля рынка, которую мы опережаем. Место ${sb.rank} из ${c.n_banks}${sb.tied>1?`, наравне с ${sb.tied}`:""}`}>
+                  {sb.percentile!=null?sb.percentile:"—"}<span className="pctl">‰</span></b>
+                <span className="mk-an" title={sb.title||""}>
+                  #{sb.rank} из {c.n_banks} · {mkMetric(sb.rate,c.metric)} · {mkGap(sb.gap_median,c.metric)} к медиане</span>
+                <MkTrust c={c}/>
               </>:c.status==="ok"?<span className="mk-an">Сбера нет в выборке</span>:null}
             </div>
             <div className="mk-ago" aria-hidden>→</div>
