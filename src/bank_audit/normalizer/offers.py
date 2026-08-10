@@ -87,9 +87,65 @@ def _digest(d: OfferDraft) -> str:
         payload["_extra"] = extra
     return stable_digest(payload)
 
+# ── сторож правдоподобия (аудит вкладки «Рынок» 11.08.2026) ──────────────────
+# Витрина показала «Сбер #1 из 141 по вкладам, ставка 40 проц.» — промо-максимум,
+# который парсер принял за ставку вклада; ровно 40.00 стояло у 18 банков сразу.
+# Числа с такими признаками больше не попадают в сравнение молча: оффер
+# сохраняется (история нужна), но помечается флагом качества и выключается из
+# ранга, пока человек не подтвердит. Коридор привязан к ключевой ставке ЦБ —
+# единственному эталону, который у нас есть ежедневно.
+_GUARD_DEPOSIT_OVER_KEY = 5.0     # вклад выше ключевой на столько пп — подозрительно
+_GUARD_CREDIT_UNDER_KEY = 3.0     # кредит ниже ключевой на столько пп — субсидия/тизер
+_GUARD_GRACE_MAX_DAYS = 200       # больше — это рассрочка, а не грейс
+_GUARD_FEE_MAX = 60000            # обслуживание дороже — проверить руками
+
+
+def _key_rate() -> float | None:
+    try:
+        from ..digest.news import key_rate_from_db
+        kr = key_rate_from_db(3) or {}
+        return float(kr.get("current")) if kr.get("current") is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def implausible(d: OfferDraft, key_rate: float | None) -> str | None:
+    """Причина, по которой числу нельзя верить, либо None."""
+    r = float(d.rate_pct) if d.rate_pct is not None else None
+    if r is not None and key_rate:
+        if d.category in ("deposit", "savings_account") and r > key_rate + _GUARD_DEPOSIT_OVER_KEY:
+            return f"ставка вклада {r} при ключевой {key_rate}"
+        if d.category in ("credit", "mortgage", "auto_loan") and r < key_rate - _GUARD_CREDIT_UNDER_KEY:
+            # у ипотеки это чаще всего господдержка — она отсекается отдельно,
+            # но пометить стоит: в ранг такие ставки идти не должны
+            return f"ставка кредита {r} при ключевой {key_rate}"
+    if d.grace_days and int(d.grace_days) > _GUARD_GRACE_MAX_DAYS:
+        return f"грейс {d.grace_days} дн — вероятно рассрочка"
+    if d.fee_service and float(d.fee_service) > _GUARD_FEE_MAX:
+        return f"обслуживание {d.fee_service} руб/год"
+    return None
+
+
+def _flag_quality(session, offer_id: int, code: str, detail: str) -> None:
+    try:
+        session.execute(text("""
+            INSERT INTO quality_flag(entity_type, entity_id, severity, code, detail)
+            VALUES ('offer', :e, 'warn', :c, CAST(:d AS jsonb))
+        """), {"e": offer_id, "c": code,
+               "d": json.dumps({"reason": detail}, ensure_ascii=False)})
+    except Exception:  # noqa: BLE001 — флаг не должен ломать нормализацию
+        log.debug("quality_flag не записан", exc_info=True)
+
+
 def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
-                 source_page_id: int | None) -> tuple[int, bool]:
+                 source_page_id: int | None,
+                 source_name: str = "sravni_aggregator") -> tuple[int, bool]:
+    """source_name — КТО принёс оффер. Раньше здесь стояла константа
+    «sravni_aggregator», и все 530 предложений с banki.ru подписывались чужим
+    именем: аудитор видел ссылку на banki.ru и подпись «источник sravni»,
+    а происхождение числа доказать было нечем (аудит 11.08.2026)."""
     bank_id = resolve_bank(session, d.bank_name_raw)
+    doubt = implausible(d, _key_rate())
     row = session.execute(text("""
         INSERT INTO product_offer(bank_id, category, external_id, primary_source, title, url)
         VALUES (:b,:c,:e,:s,:t,:u)
@@ -99,7 +155,7 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
               is_active=true    -- вернувшийся из протухания оффер оживает
         RETURNING offer_id
     """), {"b": bank_id, "c": d.category, "e": d.external_id,
-           "s": "sravni_aggregator", "t": d.title, "u": d.url}).scalar_one()
+           "s": source_name, "t": d.title, "u": d.url}).scalar_one()
     offer_id = row
 
     new_digest = _digest(d)
@@ -108,6 +164,9 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
          WHERE offer_id=:o AND valid_to IS NULL
          ORDER BY valid_from DESC LIMIT 1
     """), {"o": offer_id}).first()
+
+    if doubt:
+        _flag_quality(session, offer_id, "implausible_value", doubt)
 
     if cur and cur[1] == new_digest:
         return offer_id, False  # без изменений
@@ -241,13 +300,14 @@ def validate_offer_urls(limit: int = 80) -> dict:
 
 
 def normalize_batch(drafts: Iterable[OfferDraft], snapshot_id: int | None,
-                    source_page_id: int | None) -> dict:
+                    source_page_id: int | None,
+                    source_name: str = "sravni_aggregator") -> dict:
     written = 0
     seen = 0
     with db.session() as s:
         for d in drafts:
             seen += 1
-            _, changed = upsert_offer(s, d, snapshot_id, source_page_id)
+            _, changed = upsert_offer(s, d, snapshot_id, source_page_id, source_name)
             if changed:
                 written += 1
     return {"seen": seen, "written": written}

@@ -124,7 +124,8 @@ def ingest(source_key: str, target_name: str | None = None,
 
             seen = written = 0
             if offers:
-                r = offers_norm.normalize_batch(offers, snap_id, page_id)
+                r = offers_norm.normalize_batch(offers, snap_id, page_id,
+                                                source_name=source_key)
                 seen += r["seen"]; written += r["written"]
             if reviews:
                 r = reviews_norm.normalize_reviews(reviews, snap_id)

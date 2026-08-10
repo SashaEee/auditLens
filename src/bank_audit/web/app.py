@@ -736,7 +736,7 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
              else f"{m_field} DESC NULLS LAST")
     return q(f"""
         SELECT bank_slug, bank_name, is_sber, offer_id, title, url,
-               rate_pct, rate_kind, term_bucket,
+               primary_source, rate_pct, rate_kind, term_bucket,
                amount_min, amount_max, term_months_min, term_months_max,
                fee_open, fee_service, grace_days, cashback_pct,
                early_withdraw, capitalization,

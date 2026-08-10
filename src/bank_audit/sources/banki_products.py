@@ -298,6 +298,7 @@ class BankiProductsAdapter(SourceAdapter):
             prev_keys = keys
             for it in items:
                 it["scope"] = "catalog"
+                it.setdefault("page_url", url)
             out.extend(items)
         return out
 
@@ -316,6 +317,10 @@ class BankiProductsAdapter(SourceAdapter):
             items = _parse_page(html_text, section)
             for it in items:
                 it["scope"] = f"bank:{slug}"
+                # у карточек на странице банка нет кнопки-ссылки: без url
+                # наблюдение аудитора невоспроизводимо — некуда кликнуть,
+                # поэтому ставим адрес самого раздела (аудит 11.08.2026)
+                it.setdefault("page_url", f"{BASE}/{section}/{slug}/")
             out.extend(items)
         return out
 
@@ -375,7 +380,7 @@ class BankiProductsAdapter(SourceAdapter):
                 category=cat,
                 external_id=f"bp_{section}_{ext}",
                 title=product[:200],
-                url=it.get("url"),
+                url=it.get("url") or it.get("page_url"),
                 rate_pct=_dec(rate),
                 rate_kind="rate" if rate is not None else None,
                 amount_max=_dec(_money_max(it.get("amount") or "")),
