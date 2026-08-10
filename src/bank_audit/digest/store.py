@@ -98,6 +98,29 @@ def _read_day_rows(day: date) -> dict[str, dict]:
     return out
 
 
+def recent_headlines(day: date, limit: int = 5) -> list[dict]:
+    """Заголовки прошлых выпусков + их ведущие сигналы — чтобы передовица не
+    повторялась. 07-10.08.2026 один и тот же ведущий сигнал (скачок ставки
+    автокредита от 05.08) держался в заголовке пять дней подряд."""
+    with db.session() as s:
+        rows = s.execute(text("""
+            SELECT digest_date, payload::text FROM daily_digest
+             WHERE section = 'headline' AND digest_date < :d
+             ORDER BY digest_date DESC LIMIT :n
+        """), {"d": day, "n": limit}).all()
+    out = []
+    for d, payload_txt in rows:
+        try:
+            doc = json.loads(payload_txt)
+        except Exception:  # noqa: BLE001
+            continue
+        ins = doc.get("insights") or []
+        out.append({"date": d, "headline": doc.get("headline") or "",
+                    "lead_ref": (ins[0] or {}).get("ref") if ins else None,
+                    "refs": [i.get("ref") for i in ins if i.get("ref")]})
+    return out
+
+
 def latest_day(upto: date) -> date | None:
     with db.session() as s:
         row = s.execute(text(

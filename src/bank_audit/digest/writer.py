@@ -650,7 +650,12 @@ _HEAD_SYSTEM = (
     "(ref link:*) — внешняя новость, подтверждённая нашими данными: если связка "
     "есть, обязательно включи её карточкой и объясни, что совпало. Пометка "
     "«продолжение сюжета» у новости — событие развивается несколько дней, скажи "
-    "об этом. Без эмодзи."
+    "об этом. Без эмодзи.\n"
+    "ВЫПУСК ЕЖЕДНЕВНЫЙ: заголовок — про то, что изменилось СЕГОДНЯ. Сигнал с "
+    "пометкой «уже был главным в прошлых выпусках» заголовком не делай — веди "
+    "выпуск другим, даже если тот по абсолютной величине крупнее. Исключение "
+    "одно: сигнал заметно усилился со вчера — тогда заголовок про САМО "
+    "ИЗМЕНЕНИЕ, а не про исходный факт."
 )
 
 # Раньше здесь жила локальная копия с битыми ключами (autocredit/credit_card
@@ -754,6 +759,28 @@ def _connection_candidates(secs: dict) -> tuple[list[str], dict[str, dict]]:
     return lines, reg
 
 
+# Тарифное движение попадает в кандидаты передовицы, только пока оно СВЕЖЕЕ.
+# Таблица «Тарифные движения недели» живёт окном в 7 дней — это её смысл, но
+# для заголовка дня недельное окно означало, что самое крупное движение
+# доминирует всю неделю: скачок ставки автокредита Сбера от 05.08.2026 стоял
+# в заголовке 07, 08, 09 и 10 августа. Новость живёт сутки-двое, дальше это
+# уже история, и её место — в журнале изменений, а не в передовице.
+_TARIFF_FRESH_H = float(os.getenv("DIGEST_TARIFF_FRESH_H", "48"))
+
+
+def _age_hours(iso_ts: str | None) -> float | None:
+    if not iso_ts:
+        return None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        ts = _dt.fromisoformat(str(iso_ts))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=_tz.utc)
+        return (_dt.now(_tz.utc) - ts).total_seconds() / 3600.0
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _build_candidates(secs: dict) -> tuple[list[str], dict[str, dict]]:
     """Кандидаты-сигналы для LLM + реестр ref → данные (для обогащения)."""
     lines, reg = [], {}
@@ -787,11 +814,19 @@ def _build_candidates(secs: dict) -> tuple[list[str], dict[str, dict]]:
         lines.append(f'({ref}) массовое движение: {m["n_banks"]} банков изменили '
                      f'ставки «{_cat_ru(m["category"])}» за 48 ч'
                      f' ({", ".join(m["banks"][:4])}){note}')
-    for i, c in enumerate((tm.get("top_changes") or [])[:5]):
-        ref = f"chg:{i}"
+    n_chg = 0
+    for c in (tm.get("top_changes") or []):
+        age = _age_hours(c.get("changed_at"))
+        if age is not None and age > _TARIFF_FRESH_H:
+            continue                    # уже история — живёт в журнале изменений
+        ref = f"chg:{n_chg}"
         reg[ref] = {"kind": "tariff_move", "data": c}
         lines.append(f'({ref}) {c["bank"]}: «{c["title"]}» ({_cat_ru(c["category"])}) '
-                     f'{c["from"]}% → {c["to"]}% (Δ{c["delta"]:+})')
+                     f'{c["from"]}% → {c["to"]}% (Δ{c["delta"]:+})'
+                     + (f', {round(age)} ч назад' if age is not None else ''))
+        n_chg += 1
+        if n_chg >= 5:
+            break
     kr = tm.get("key_rate") or {}
     if kr.get("current") is not None:
         reg["rate"] = {"kind": "rate_move", "data": kr}
@@ -956,10 +991,27 @@ async def headline(day: date) -> dict:
     lines, reg = _build_candidates(secs)
     brief_md = ((secs.get("reviews_brief") or {}).get("payload") or {}).get("markdown")
 
+    # чем был занят заголовок в прошлые дни: сигнал, уже побывавший главным,
+    # не должен становиться заголовком снова без нового поворота
+    prev = await asyncio.to_thread(store.recent_headlines, day, 5)
+    lead_before = {p["lead_ref"] for p in prev if p.get("lead_ref")}
+    if lead_before:
+        lines = [ln + "  [УЖЕ БЫЛ ГЛАВНЫМ В ПРОШЛЫХ ВЫПУСКАХ]"
+                 if any(ln.startswith(f"({r})") for r in lead_before) else ln
+                 for ln in lines]
+    prev_block = ""
+    if prev:
+        prev_block = ("\n\nЗАГОЛОВКИ ПРОШЛЫХ ВЫПУСКОВ (не повторяй их тему и "
+                      "формулировку; если сигнал тот же и не усилился — веди "
+                      "выпуск ДРУГИМ сигналом):\n"
+                      + "\n".join(f'- {p["date"]}: {p["headline"]}'
+                                  for p in prev if p.get("headline")))
+
     result, ti, to, model, degraded = None, 0, 0, None, False
     if lines:
         user = (
             f"Дата выпуска: {today_ru()}.\nСИГНАЛЫ ДНЯ:\n" + "\n".join(lines)
+            + prev_block
             + (f"\n\nАНАЛИЗ ЖАЛОБ (для контекста):\n{brief_md[:1200]}" if brief_md else "")
             + "\n\nВерни СТРОГО JSON без markdown:\n"
               '{"headline":"заголовок дня, до 90 знаков, самый сильный сигнал",'
