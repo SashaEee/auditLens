@@ -133,6 +133,36 @@ def _money_max(text: str) -> float | None:
     return max(vals) if vals else None
 
 
+# «бесплатно» — это цена 0, а не отсутствие данных. Прежний код возвращал None,
+# и 113 карт из 318 (треть рынка) молча выпадали из сравнения — среди них ВСЕ
+# восемь флагманских СберКарт, из-за чего лицом банка на витрине стала
+# благотворительная карта за 550 руб. (аудит 11.08.2026).
+_FREE_RE = re.compile(r"беспл|\bнет\b|\b0\s*(?:руб|₽)|не взимается|отсутств", re.I)
+
+
+def _fee_value(text: str | None) -> float | None:
+    """Стоимость обслуживания: «бесплатно» → 0, вилка «0–35 880 ₽» → НИЖНЯЯ
+    граница. Верхняя граница — цена при невыполнении условий пакета, и брать её
+    как цену продукта неверно: так ВТБ «Привилегия» попадала в витрину как
+    47 880 руб./год, хотя на сайте написано «0 – 47 880»."""
+    if text is None:
+        return None
+    vals = _nums(text)
+    if vals:
+        return min(vals)
+    return 0.0 if _FREE_RE.search(text) else None
+
+
+def _grace_value(text: str | None) -> int | None:
+    """Льготный период: «нет» → 0 (это честный ноль, а не пропуск)."""
+    if text is None:
+        return None
+    vals = _nums(text)
+    if vals:
+        return int(max(vals))
+    return 0 if _FREE_RE.search(text) else None
+
+
 def _term_months(text: str) -> float | None:
     """«до 5 лет» → 60; «91 дн.» → 3; «до 15 мес.» → 15."""
     vals = _nums(text)
@@ -186,6 +216,26 @@ def _is_promo(bank: str, product: str) -> bool:
     b = _canon(bank).lower()
     return ("сложно выбрать" in b or "заполните" in _canon(product).lower()
             or not b or len(b) < 2)
+
+
+# Раздел банка показывает и чужие продукты «вам может подойти»: в автокредитах
+# так оказалось 11 потребкредитов, причём сберовский «На любые цели» был снят
+# со страницы ВТБ. Категорию продукта выдаёт сам tracking-url источника.
+_URL_CATEGORY = {"autocredits": "auto_loan", "mortgages": "mortgage",
+                 "credits": "credit", "creditcards": "card_credit",
+                 "debitcards": "card_debit", "deposits": "deposit"}
+_RE_URL_CAT = re.compile(r"[?&]category=([a-z]+)")
+
+
+def _is_cross_promo(item: dict, section: str) -> bool:
+    """True — карточка не из этого раздела (реклама соседнего продукта)."""
+    url = item.get("url") or ""
+    m = _RE_URL_CAT.search(url)
+    if not m:
+        return False
+    own = CATEGORIES.get(section, {}).get("category")
+    other = _URL_CATEGORY.get(m.group(1))
+    return bool(own and other and own != other)
 
 
 def _parse_labeled(page: str, section: str) -> list[dict]:
@@ -290,6 +340,7 @@ class BankiProductsAdapter(SourceAdapter):
             if not html_text:
                 break
             items = _parse_page(html_text, section)
+            items = [i for i in items if not _is_cross_promo(i, section)]
             if not items:
                 break
             keys = {(i["bank"], i["product"]) for i in items}
@@ -318,6 +369,7 @@ class BankiProductsAdapter(SourceAdapter):
                                 section, slug)
                 continue
             items = _parse_page(html_text, section)
+            items = [i for i in items if not _is_cross_promo(i, section)]
             for it in items:
                 it["scope"] = f"bank:{slug}"
                 # у карточек на странице банка нет кнопки-ссылки: без url
@@ -390,9 +442,8 @@ class BankiProductsAdapter(SourceAdapter):
                 rate_kind="rate" if rate is not None else None,
                 amount_max=_dec(_money_max(it.get("amount") or "")),
                 term_months_max=(int(_term_months(it.get("term") or "") or 0) or None),
-                fee_service=_dec(_money_max(it.get("fee") or "")) if it.get("fee") else None,
-                grace_days=(int(_money_max(it.get("grace") or "") or 0) or None
-                            if it.get("grace") else None),
+                fee_service=_dec(_fee_value(it.get("fee"))),
+                grace_days=_grace_value(it.get("grace")),
                 conditions=" · ".join(x for x in (it.get("payment"), it.get("initial"),
                                                   it.get("cashback")) if x) or None,
                 raw={k: it.get(k) for k in

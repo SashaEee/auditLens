@@ -142,9 +142,22 @@ _SAVINGS_RE = re.compile(r"накопительн|сберегательн\s+с�
 
 def _fix_category(d: OfferDraft) -> None:
     """Накопительный счёт — не срочный вклад: ставка плавающая, срока нет,
-    условия начисления другие. Источники кладут их вперемешку с вкладами, и
-    55 таких счетов ранжировались как депозиты (аудит 11.08.2026)."""
-    if d.category == "deposit" and _SAVINGS_RE.search(d.title or ""):
+    условия начисления другие.
+
+    Тип продукта берём из данных источника (depositType='accumulative'), а не
+    из слова в названии: по названию 42 настоящих накопительных счёта 28 банков
+    (включая два сберовских и лидера рынка МТС) оставались во «Вкладах», а
+    12 срочных вкладов с «накопительным» в имени уезжали в накопительные
+    (аудит 11.08.2026). Название — только запасной признак."""
+    if d.category != "deposit":
+        return
+    dtype = str((d.raw or {}).get("deposit_type") or "").lower()
+    if dtype in ("accumulative", "saving", "savings"):
+        d.category = "savings_account"
+        return
+    if dtype in ("classic", "grow", "deal", "term", "urgent"):
+        return                      # источник прямо говорит: это срочный вклад
+    if _SAVINGS_RE.search(d.title or ""):
         d.category = "savings_account"
 
 

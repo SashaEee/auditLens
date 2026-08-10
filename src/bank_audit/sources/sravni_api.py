@@ -477,8 +477,15 @@ class SravniApiAdapter(SourceAdapter):
             # из product.minTerm / maxTerm если есть. Также сумма max — из
             # prod.maxAmount если задана, иначе fc.amount как min.
             period_q  = _to_int(fc.get("period_months"))
-            term_min  = _to_int(prod.get("minTerm")) or period_q
-            term_max  = _to_int(prod.get("maxTerm")) or period_q
+            # Поля minTerm в ответе API НЕТ вообще, поэтому фолбэк на параметр
+            # калькулятора срабатывал всегда: 506 из 543 вкладов получали «24
+            # месяца», хотя реально короче года. Витрина сравнивала 32-дневную
+            # промо-ставку с годовой как однородные (аудит 11.08.2026).
+            # Настоящий срок лежит в seedPeriodDays — берём его первым.
+            seed_days = _to_int(prod.get("seedPeriodDays"))
+            seed_months = round(seed_days / 30.0) if seed_days else None
+            term_min  = (_to_int(prod.get("minTerm")) or seed_months or period_q)
+            term_max  = (_to_int(prod.get("maxTerm")) or seed_months or period_q)
             amount_min_v = _dec(prod.get("minAmount")) or _dec(fc.get("amount"))
             amount_max_v = _dec(prod.get("maxAmount"))
 
@@ -507,6 +514,10 @@ class SravniApiAdapter(SourceAdapter):
                     "is_sber": is_sber,
                     "details": details,
                     "deposit_type": prod.get("depositType"),
+                    # реальный срок в днях: по нему ранг строит окно
+                    # сопоставимости (32-дневный вклад против годового — разные
+                    # продукты, сравнивать их ставки нельзя)
+                    "term_days": seed_days,
                     "filter_context": fc,
                 },
             )
