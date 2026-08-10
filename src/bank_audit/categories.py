@@ -30,10 +30,15 @@ CATEGORIES: list[dict] = [
      "rate_label": "Ставка",     "show_rate": True,  "show_bar": True,  "show_terms": False,
      "caveat": "Ставка накопительного счёта плавающая и часто зависит от остатка и трат — "
                "сравнивайте базовую, а не промо на первые месяцы"},
+    # ПСК вместо ставки «от»: у 17 из 30 лидеров рынка разрыв ПСК−ставка больше
+    # 5 пп при медианном разрыве 0 — рекламная граница давала фору тизерам
+    # (аудит 11.08.2026). Фолбэк на rate_pct задан в market_atlas.
     {"id": "credit",      "label": "Кредиты",         "ru": "кредиты",
-     "metric": "rate_pct",   "metric_label": "Ставка от",  "metric_unit": "%",
+     "metric": "psk_min",    "metric_label": "ПСК от",     "metric_unit": "%",
      "metric_lower_is_better": True,
-     "rate_label": "Ставка от",  "show_rate": True,  "show_bar": True,  "show_terms": True},
+     "rate_label": "Ставка от",  "show_rate": True,  "show_bar": True,  "show_terms": True,
+     "caveat": "Сравнение по полной стоимости кредита (353-ФЗ): ставка «от» — рекламная "
+               "граница, у 17 из 30 лидеров рынка ПСК выше неё более чем на 5 пп"},
     {"id": "mortgage",    "label": "Ипотека",         "ru": "ипотека",
      "metric": "rate_pct",   "metric_label": "Ставка от",  "metric_unit": "%",
      "metric_lower_is_better": True,
@@ -52,9 +57,11 @@ CATEGORIES: list[dict] = [
      "secondary": "cashback_pct",
      "caveat": "Сравнение по безусловной стоимости обслуживания (руб./год); разовая плата за выпуск — отдельно"},
     {"id": "auto_loan",   "label": "Автокредиты",     "ru": "автокредиты",
-     "metric": "rate_pct",   "metric_label": "Ставка от",  "metric_unit": "%",
+     "metric": "psk_min",    "metric_label": "ПСК от",     "metric_unit": "%",
      "metric_lower_is_better": True,
-     "rate_label": "Ставка от",  "show_rate": True,  "show_bar": True,  "show_terms": False},
+     "rate_label": "Ставка от",  "show_rate": True,  "show_bar": True,  "show_terms": False,
+     "caveat": "Сравнение по полной стоимости кредита: у Сбера ставка «от» 16,4 проц. при "
+               "ПСК 23,3 проц., и ранг по ставке давал фору банкам с тизерными условиями"},
 ]
 
 # Категории, снятые с витрины (нет источника/сопоставимой метрики) — чтобы в

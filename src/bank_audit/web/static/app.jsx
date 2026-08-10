@@ -2177,6 +2177,12 @@ function MkStrip({c,big}){
 
 // Светофор категорий: перцентиль вместо голого ранга. «#1 из 125» при 70
 // одинаковых значениях — бесполезное утверждение, перцентиль честнее.
+const SUBSEG_RU={new:"новостройка",secondary:"вторичка",refin:"рефинанс",pledge:"под залог",
+  house:"ИЖС",commercial:"коммерческая",subsidized:"господдержка",cash:"наличными",
+  auto:"авто",installment:"рассрочка",classic:"классические"};
+const SEG_RU={premium:"премиум",private:"private",kids:"детские",youth:"молодёжные",
+  pension:"пенсионные",mass:"массовые"};
+
 function MkTraffic({cells,onPick}){
   if(!cells||!cells.length)return null;
   // вырожденная метрика — нейтральная клетка: цветом нельзя утверждать то,
@@ -2426,6 +2432,11 @@ function MarketPage({params}){
                 <span className="mk-an" title={sb.title||""}>
                   #{sb.rank} из {c.n_banks} · {mkMetric(sb.rate,c.metric)} · {mkGap(sb.gap_median,c.metric)} к медиане</span>
                 <MkTrust c={c}/>
+                {(c.comparable||[]).length>0&&
+                  <span className="mk-comp" title="Позиция среди сопоставимых продуктов — честнее общей по категории">
+                    {c.comparable.slice(0,2).map((g,i)=>
+                      <i key={i}>{SUBSEG_RU[g.sub_segment]||g.segment&&SEG_RU[g.segment]||"свой вид"}: #{g.rank}/{g.n_banks}</i>)}
+                  </span>}
               </>:c.status==="ok"?<span className="mk-an">Сбера нет в выборке</span>:null}
             </div>
             <div className="mk-ago" aria-hidden>→</div>

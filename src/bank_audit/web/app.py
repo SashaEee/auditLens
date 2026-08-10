@@ -834,9 +834,11 @@ def market_atlas(term: Optional[str] = None):
     except Exception:  # noqa: BLE001 — без КС работает только текстовый фильтр
         pass
     by_cat: dict[str, dict] = {}
+    by_group: dict[tuple, dict] = {}     # (категория, сегмент, подсегмент) → банки
     subsidized: dict[str, int] = {}
     no_metric: dict[str, int] = {}       # метрика пуста — оффер молча выпадал
     teaser: dict[str, int] = {}          # ПСК сильно выше заявленной ставки
+    psk_fallback: dict[str, int] = {}    # ПСК не раскрыта — сравниваем по ставке
     non_bank: dict[str, int] = {}        # застройщики и сервисы подбора
     seen_banks: dict[str, set] = {}      # все банки категории до отсева
     for r in rows:
@@ -853,6 +855,12 @@ def market_atlas(term: Optional[str] = None):
         except (TypeError, ValueError):
             pass
         val = r.get(meta["metric"])
+        if val is None and meta["metric"] == "psk_min":
+            # ПСК раскрыта не у всех — берём ставку, но помечаем, что сравнение
+            # для этого банка идёт по рекламной границе
+            val = r.get("rate_pct")
+            if val is not None:
+                psk_fallback[r["category"]] = psk_fallback.get(r["category"], 0) + 1
         if val is None:
             # 113 дебетовых карт (треть рынка) не имели fee_service и просто
             # исчезали из сравнения — теперь это видимое число в паспорте выборки
@@ -869,7 +877,15 @@ def market_atlas(term: Optional[str] = None):
             subsidized[r["category"]] = subsidized.get(r["category"], 0) + 1
             continue
         val = float(val)
-        best = by_cat.setdefault(r["category"], {})
+        # Ранг считается ВНУТРИ сопоставимой группы. Раньше группировка шла
+        # только по категории, и в одном ранжире оказывались новостройка и
+        # машино-место, беззалоговый кредит и кредит под залог недвижимости,
+        # классическая кредитка и карта рассрочки (Халва с грейсом 1825 дней
+        # стояла лидером). Группа = (категория, сегмент, подсегмент).
+        seg = r.get("segment") or "mass"
+        sub = r.get("sub_segment") or "_"
+        gkey = (r["category"], seg, sub)
+        best = by_group.setdefault(gkey, {})
         lower = meta["metric_lower_is_better"]
         cur = best.get(r["bank_slug"])
         if cur is None or (val < cur["rate"] if lower else val > cur["rate"]):
@@ -897,6 +913,19 @@ def market_atlas(term: Optional[str] = None):
         lo, hi = int(i), min(int(i) + 1, len(sorted_vals) - 1)
         return round(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (i - lo), 2)
 
+    # Из групп собираем «главную» группу категории — самую массовую среди тех,
+    # где вообще есть Сбер (иначе аудитор увидел бы ранг по нише из трёх
+    # банков). Остальные группы отдаём отдельным списком: по ним считается
+    # позиция в сопоставимом продукте.
+    groups_by_cat: dict[str, list] = {}
+    for (cid_, seg_, sub_), banks_ in by_group.items():
+        groups_by_cat.setdefault(cid_, []).append((seg_, sub_, list(banks_.values())))
+    for cid_ in groups_by_cat:
+        groups_by_cat[cid_].sort(
+            key=lambda g: (any(b["is_sber"] for b in g[2]), len(g[2])), reverse=True)
+    for cid_, gs in groups_by_cat.items():
+        by_cat[cid_] = {b["slug"]: b for _s, _u, bl in gs for b in bl}
+
     out = []
     for c in cat_meta.CATEGORIES:
         cid = c["id"]
@@ -922,6 +951,7 @@ def market_atlas(term: Optional[str] = None):
             "subsidized_excluded": subsidized.get(cid, 0),
             "no_metric": no_metric.get(cid, 0),
             "teaser": teaser.get(cid, 0),
+            "psk_fallback": psk_fallback.get(cid, 0),
             "non_bank_excluded": non_bank.get(cid, 0),
             "banks_total": len(seen_banks.get(cid, ())),
             "banks_dropped": max(len(seen_banks.get(cid, ())) - len(banks), 0),
@@ -934,6 +964,29 @@ def market_atlas(term: Optional[str] = None):
             "min": vals[0], "max": vals[-1],
             "leader": {k: banks[0][k] for k in ("slug", "name", "rate", "title")},
         }
+        # позиция в СОПОСТАВИМЫХ группах: главный ответ для аудитора —
+        # «где мы среди новостроек», а не «где мы среди всей ипотеки»
+        comp = []
+        for seg_, sub_, bl in groups_by_cat.get(cid, []):
+            if len(bl) < 5:
+                continue                 # ниша из трёх банков — ранг неустойчив
+            sb_ = next((b for b in bl if b["is_sber"]), None)
+            if not sb_:
+                continue
+            vals_ = sorted(b["rate"] for b in bl)
+            rank_ = sum(1 for b in bl
+                        if (b["rate"] < sb_["rate"] if lower else b["rate"] > sb_["rate"])) + 1
+            comp.append({
+                "segment": seg_, "sub_segment": None if sub_ == "_" else sub_,
+                "n_banks": len(bl), "rank": rank_,
+                "percentile": round(100 * (len(bl) - rank_) / max(len(bl) - 1, 1)),
+                "value": sb_["rate"], "title": sb_["title"],
+                "median": _pct(vals_, 0.5),
+                "leader": min(vals_) if lower else max(vals_),
+            })
+        comp.sort(key=lambda x: -x["n_banks"])
+        if comp:
+            entry["comparable"] = comp[:4]
         # Метрика вырождена, если на лучшем значении стоит больше трети рынка:
         # «#1 из 140» при 115 банках на нуле — не лидерство, а отсутствие
         # сигнала, и показывать такой ранг как факт нельзя (аудит 11.08.2026).
@@ -990,6 +1043,9 @@ def market_verdict(term: Optional[str] = None):
             "at_best": c.get("at_best", 0), "small_n": c.get("small_n", False),
             "teaser": c.get("teaser", 0), "banks_dropped": c.get("banks_dropped", 0),
             "degenerate": degenerate,
+            "psk_fallback": c.get("psk_fallback", 0),
+            # позиция внутри сопоставимого продукта — честнее общей по категории
+            "comparable": c.get("comparable") or [],
         }
         cells.append(cell)
         # из выводов исключаем категории, где метрика не различает банки:

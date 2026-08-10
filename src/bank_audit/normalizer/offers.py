@@ -379,3 +379,37 @@ def dedup_active_offers(session=None) -> int:
     if n:
         log.info("дедуп витрины: погашено повторов %d", n)
     return n
+
+# Ссылка источника прямо называет категорию продукта: /tracking-url?category=...
+# Если она не совпадает с категорией, в которую оффер положен, это карточка
+# кросс-промо («вам может подойти») — в автокредитах так жили 11 потребкредитов,
+# и сберовский «На любые цели» был снят со страницы ВТБ (аудит 11.08.2026).
+# Ждать expire_stale_offers нельзя: он держит оффер трое суток, защищая от
+# временных сбоев источника, а чужой продукт неверен с первой секунды.
+_URL_CAT_MAP = {"autocredits": "auto_loan", "mortgages": "mortgage",
+                "credits": "credit", "creditcards": "card_credit",
+                "debitcards": "card_debit", "deposits": "deposit"}
+
+
+def expire_cross_promo() -> int:
+    """Гасит офферы, чья ссылка указывает на другую категорию."""
+    n = 0
+    with db.session() as s:
+        rows = s.execute(text("""
+            SELECT offer_id, category, url FROM product_offer
+             WHERE is_active AND url LIKE '%%category=%%'
+        """)).all()
+        bad = []
+        for offer_id, category, url in rows:
+            m = re.search(r"[?&]category=([a-z]+)", url or "")
+            if not m:
+                continue
+            other = _URL_CAT_MAP.get(m.group(1))
+            if other and other != category:
+                bad.append(offer_id)
+        if bad:
+            n = s.execute(text("UPDATE product_offer SET is_active = false"
+                               " WHERE offer_id = ANY(:ids)"), {"ids": bad}).rowcount
+    if n:
+        log.info("[expire] погашено кросс-промо чужой категории: %d", n)
+    return n

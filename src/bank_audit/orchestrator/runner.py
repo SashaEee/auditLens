@@ -146,6 +146,7 @@ def ingest(source_key: str, target_name: str | None = None,
         # повторы одного продукта из разных срезов фильтра гасим сразу после
         # сбора — иначе витрина снова расползается (см. dedup_active_offers)
         offers_norm.dedup_active_offers()
+        offers_norm.expire_cross_promo()
     except Exception as e:  # noqa: BLE001 — дедуп не должен ронять сбор
         print(f"дедуп после сбора не выполнен: {e}")
     return totals
