@@ -311,3 +311,34 @@ def normalize_batch(drafts: Iterable[OfferDraft], snapshot_id: int | None,
             if changed:
                 written += 1
     return {"seen": seen, "written": written}
+
+def dedup_active_offers(session=None) -> int:
+    """Гасит повторы одного продукта (банк + название в категории), оставляя
+    самую свежую версию. Один вклад собирается семью таргетами sravni (регионы
+    и суммы), каждый срез даёт свой external_id — для сравнения это один и тот
+    же продукт, а в витрине он занимал семь строк (аудит 11.08.2026: 1378
+    лишних строк, 1177 из них во вкладах). Зовётся после каждого сбора."""
+    sql = text("""
+        WITH live AS (
+            SELECT o.offer_id, o.bank_id, o.category,
+                   lower(regexp_replace(coalesce(o.title, ''), '[^[:alnum:]]', '', 'g')) AS k,
+                   t.valid_from
+              FROM product_offer o
+              JOIN product_terms t ON t.offer_id = o.offer_id AND t.valid_to IS NULL
+             WHERE o.is_active
+        ), ranked AS (
+            SELECT offer_id,
+                   row_number() OVER (PARTITION BY bank_id, category, k
+                                      ORDER BY valid_from DESC, offer_id DESC) AS rn
+              FROM live WHERE k <> ''
+        )
+        UPDATE product_offer o SET is_active = false
+          FROM ranked r WHERE o.offer_id = r.offer_id AND r.rn > 1
+    """)
+    if session is not None:
+        return int(session.execute(sql).rowcount or 0)
+    with db.session() as s:
+        n = int(s.execute(sql).rowcount or 0)
+    if n:
+        log.info("дедуп витрины: погашено повторов %d", n)
+    return n
