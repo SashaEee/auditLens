@@ -24,6 +24,12 @@ CATEGORIES: list[dict] = [
      "metric": "rate_pct",   "metric_label": "Ставка",     "metric_unit": "%",
      "metric_lower_is_better": False,
      "rate_label": "Ставка",     "show_rate": True,  "show_bar": True,  "show_terms": True},
+    {"id": "savings_account", "label": "Накопительные счета", "ru": "накопительные счета",
+     "metric": "rate_pct",   "metric_label": "Ставка",     "metric_unit": "%",
+     "metric_lower_is_better": False,
+     "rate_label": "Ставка",     "show_rate": True,  "show_bar": True,  "show_terms": False,
+     "caveat": "Ставка накопительного счёта плавающая и часто зависит от остатка и трат — "
+               "сравнивайте базовую, а не промо на первые месяцы"},
     {"id": "credit",      "label": "Кредиты",         "ru": "кредиты",
      "metric": "rate_pct",   "metric_label": "Ставка от",  "metric_unit": "%",
      "metric_lower_is_better": True,

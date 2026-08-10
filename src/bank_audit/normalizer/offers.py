@@ -137,6 +137,17 @@ def _flag_quality(session, offer_id: int, code: str, detail: str) -> None:
         log.debug("quality_flag не записан", exc_info=True)
 
 
+_SAVINGS_RE = re.compile(r"накопительн|сберегательн\s+сч[её]т|\bнакопит\b", re.I)
+
+
+def _fix_category(d: OfferDraft) -> None:
+    """Накопительный счёт — не срочный вклад: ставка плавающая, срока нет,
+    условия начисления другие. Источники кладут их вперемешку с вкладами, и
+    55 таких счетов ранжировались как депозиты (аудит 11.08.2026)."""
+    if d.category == "deposit" and _SAVINGS_RE.search(d.title or ""):
+        d.category = "savings_account"
+
+
 def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
                  source_page_id: int | None,
                  source_name: str = "sravni_aggregator") -> tuple[int, bool]:
@@ -144,6 +155,7 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
     «sravni_aggregator», и все 530 предложений с banki.ru подписывались чужим
     именем: аудитор видел ссылку на banki.ru и подпись «источник sravni»,
     а происхождение числа доказать было нечем (аудит 11.08.2026)."""
+    _fix_category(d)
     bank_id = resolve_bank(session, d.bank_name_raw)
     doubt = implausible(d, _key_rate())
     row = session.execute(text("""

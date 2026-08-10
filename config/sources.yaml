@@ -356,3 +356,4 @@ banki_products:
     - { name: bp_creditcards, section: creditcards, category: card_credit }
     - { name: bp_debitcards,  section: debitcards,  category: card_debit }
     - { name: bp_deposits,    section: deposits,    category: deposit }
+    - { name: bp_autocredits, section: autocredits, category: auto_loan }

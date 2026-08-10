@@ -48,6 +48,9 @@ CATEGORIES: dict[str, dict] = {
     "credits":     {"category": "credit",      "pages": 4,  "engine": "labeled"},
     "creditcards": {"category": "card_credit", "pages": 4,  "engine": "labeled"},
     "debitcards":  {"category": "card_debit",  "pages": 11, "engine": "labeled"},
+    # автокредиты: самая тонкая категория витрины (19 банков), из-за чего самая
+    # слабая позиция Сбера считалась по ненадёжной выборке (аудит 11.08.2026)
+    "autocredits": {"category": "auto_loan",   "pages": 3,  "engine": "labeled"},
     # каталог вкладов — витрина из 10 промо без пагинации: page=40 отдаёт те же
     # карточки байт-в-байт. Объём даёт только обход банков.
     "deposits":    {"category": "deposit",     "pages": 1,  "engine": "deposits"},
