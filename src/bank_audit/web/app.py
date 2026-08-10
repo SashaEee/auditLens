@@ -810,10 +810,12 @@ def market_atlas(term: Optional[str] = None):
     (одна точка = один банк, чтобы банк с 15 витринными вкладами не перетягивал
     медиану), позиция Сбера в нём (ранг/перцентиль), квартили, лидер.
     Для lower_is_better «лучший» = минимальная ставка и ранг по возрастанию."""
-    # фильтр по СВОЕЙ метрике каждой категории: у карт rate_pct пуст by design
-    metrics = {c["metric"] for c in cat_meta.CATEGORIES}
-    cond = "(" + " OR ".join(f"{m} IS NOT NULL" for m in sorted(metrics)) + ")"
-    params: dict = {}
+    # Берём ВСЕ офферы витринных категорий и отсеиваем по СВОЕЙ метрике внутри
+    # цикла. Прежний глобальный фильтр «есть хоть какая-то метрика» скрывал
+    # выбывших: оффер без своей метрики просто не доходил до подсчёта, и
+    # паспорт выборки показывал ноль потерь там, где терялась треть рынка.
+    cond = "category = ANY(:cats)"
+    params: dict = {"cats": [c["id"] for c in cat_meta.CATEGORIES]}
     if term:
         cond += " AND term_bucket = :tb"; params["tb"] = term
     rows = q(f"""
@@ -834,10 +836,22 @@ def market_atlas(term: Optional[str] = None):
     by_cat: dict[str, dict] = {}
     subsidized: dict[str, int] = {}
     no_metric: dict[str, int] = {}       # метрика пуста — оффер молча выпадал
+    teaser: dict[str, int] = {}          # ПСК сильно выше заявленной ставки
+    non_bank: dict[str, int] = {}        # застройщики и сервисы подбора
+    seen_banks: dict[str, set] = {}      # все банки категории до отсева
     for r in rows:
         meta = cat_meta.CAT_META.get(r["category"])
         if not meta:                       # не витринная категория (рейтинги и пр.)
             continue
+        seen_banks.setdefault(r["category"], set()).add(r["bank_slug"])
+        # тизер: минимальная ставка рекламная, полная стоимость много выше.
+        # Медианный разрыв по рынку — ноль, поэтому 5 пп это уже сигнал.
+        try:
+            if (r.get("psk_min") is not None and r.get("rate_pct") is not None
+                    and float(r["psk_min"]) - float(r["rate_pct"]) > 5):
+                teaser[r["category"]] = teaser.get(r["category"], 0) + 1
+        except (TypeError, ValueError):
+            pass
         val = r.get(meta["metric"])
         if val is None:
             # 113 дебетовых карт (треть рынка) не имели fee_service и просто
@@ -845,6 +859,7 @@ def market_atlas(term: Optional[str] = None):
             no_metric[r["category"]] = no_metric.get(r["category"], 0) + 1
             continue
         if cat_meta.is_non_bank(r["bank_name"]):
+            non_bank[r["category"]] = non_bank.get(r["category"], 0) + 1
             continue                       # застройщик/сервис подбора — не банк
         if cat_meta.is_subsidized(r["title"], r["category"], float(val), key_rate):
             # Господдержка (семейная/IT/военная/образовательный с субсидией):
@@ -906,6 +921,10 @@ def market_atlas(term: Optional[str] = None):
             "small_n": len(banks) < 5,
             "subsidized_excluded": subsidized.get(cid, 0),
             "no_metric": no_metric.get(cid, 0),
+            "teaser": teaser.get(cid, 0),
+            "non_bank_excluded": non_bank.get(cid, 0),
+            "banks_total": len(seen_banks.get(cid, ())),
+            "banks_dropped": max(len(seen_banks.get(cid, ())) - len(banks), 0),
             # сколько банков стоит ровно на лучшем значении: «#1» при 70 таких
             # банках означает не лидерство, а что метрика не различает игроков
             "at_best": sum(1 for b in banks if b["rate"] == banks[0]["rate"]),
@@ -915,6 +934,10 @@ def market_atlas(term: Optional[str] = None):
             "min": vals[0], "max": vals[-1],
             "leader": {k: banks[0][k] for k in ("slug", "name", "rate", "title")},
         }
+        # Метрика вырождена, если на лучшем значении стоит больше трети рынка:
+        # «#1 из 140» при 115 банках на нуле — не лидерство, а отсутствие
+        # сигнала, и показывать такой ранг как факт нельзя (аудит 11.08.2026).
+        entry["degenerate"] = bool(entry["at_best"] / max(len(banks), 1) > 0.3)
         if sber:
             # ранг с учётом РАВНЫХ значений: 91 карта с «0 ₽/год» — это один
             # уровень, а не 91 разных мест (иначе Сбер выглядел «#39» с лучшей
@@ -950,6 +973,7 @@ def market_verdict(term: Optional[str] = None):
     for c in cats:
         sb = c["sber"]
         pct = sb.get("percentile")
+        degenerate = bool(c.get("degenerate"))
         gap = sb.get("gap_median")
         cell = {
             "category": c["category"], "label": c["label"],
@@ -964,15 +988,22 @@ def market_verdict(term: Optional[str] = None):
             "no_metric": c.get("no_metric", 0),
             "subsidized_excluded": c.get("subsidized_excluded", 0),
             "at_best": c.get("at_best", 0), "small_n": c.get("small_n", False),
+            "teaser": c.get("teaser", 0), "banks_dropped": c.get("banks_dropped", 0),
+            "degenerate": degenerate,
         }
         cells.append(cell)
+        # из выводов исключаем категории, где метрика не различает банки:
+        # утверждать «отстаём» или «лидируем» по такой метрике нельзя
+        if degenerate:
+            continue
         if pct is not None and pct < 40:
             weak.append(cell)
         elif pct is not None and pct >= 75:
             strong.append(cell)
     # самое острое — наверх: сначала по перцентилю, при равенстве по разрыву
     weak.sort(key=lambda x: (x["percentile"] or 0, -abs(x["gap_median"] or 0)))
-    cells.sort(key=lambda x: (x["percentile"] if x["percentile"] is not None else 999))
+    cells.sort(key=lambda x: (bool(x.get("degenerate")),
+                              x["percentile"] if x["percentile"] is not None else 999))
 
     def _phrase(c: dict) -> str:
         unit = c["metric_unit"]
@@ -1002,6 +1033,17 @@ def market_verdict(term: Optional[str] = None):
         lead = "Сравнивать нечем: ни в одной категории нет сопоставимой метрики."
     # честная оговорка о качестве выборки — сразу в вердикте, а не мелким шрифтом
     doubts = []
+    deg = [c for c in cells if c.get("degenerate")]
+    if deg:
+        d0 = deg[0]
+        doubts.append(f'в «{d0["label"].lower()}» ранг не показываем: на лучшем '
+                      f'значении стоит {d0["at_best"]} банков из {d0["n_banks"]} — '
+                      f'метрика их не различает')
+    tsr = max(cells, key=lambda c: c.get("teaser", 0)) if cells else None
+    if tsr and tsr.get("teaser", 0) >= 5:
+        doubts.append(f'в «{tsr["label"].lower()}» у {tsr["teaser"]} предложений полная '
+                      f'стоимость выше заявленной ставки более чем на 5 пп — '
+                      f'рекламная «ставка от» завышает их позицию')
     tie = next((c for c in cells if (c["tied"] or 0) > 1
                 and (c["tied_share"] or 0) > 0.2), None)
     if tie:

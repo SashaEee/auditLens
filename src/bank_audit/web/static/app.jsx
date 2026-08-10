@@ -2179,14 +2179,18 @@ function MkStrip({c,big}){
 // одинаковых значениях — бесполезное утверждение, перцентиль честнее.
 function MkTraffic({cells,onPick}){
   if(!cells||!cells.length)return null;
-  const tone=p=>p==null?"":p>=75?" good":p>=40?"":p>=20?" warn":" bad";
+  // вырожденная метрика — нейтральная клетка: цветом нельзя утверждать то,
+  // чего данные не показывают
+  const tone=(p,d)=>d?" flat":p==null?"":p>=75?" good":p>=40?"":p>=20?" warn":" bad";
   return <div className="mk-traffic">
-    {cells.map(c=><button key={c.category} className={"mk-tcell"+tone(c.percentile)}
+    {cells.map(c=><button key={c.category} className={"mk-tcell"+tone(c.percentile,c.degenerate)}
       onClick={()=>onPick&&onPick(c.category)}
-      title={`${c.label} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
+      title={c.degenerate
+        ? `${c.label} · ранг не показываем: на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`
+        : `${c.label} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
         +(c.gap_median!=null?` · ${mkGap(c.gap_median,null)}${c.gap_unit||c.metric_unit||""} к медиане`:"")
         +(c.tied>1?` · наравне с ${c.tied} банками`:"")}>
-      <span className="v serif">{c.percentile!=null?c.percentile:"—"}</span>
+      <span className="v serif">{c.degenerate?"–":(c.percentile!=null?c.percentile:"—")}</span>
       <span className="l">{c.label}</span>
     </button>)}
   </div>;
@@ -2195,7 +2199,10 @@ function MkTraffic({cells,onPick}){
 // Бейджи достоверности: аудитор должен видеть, из чего посчитан ранг.
 function MkTrust({c}){
   const b=[];
-  if(c.at_best>2) b.push([`наравне ${c.at_best}`,"метрика не различает банки на лучшем значении"]);
+  if(c.degenerate) b.push([`ранг скрыт`,`на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`]);
+  else if(c.at_best>2) b.push([`наравне ${c.at_best}`,"метрика не различает банки на лучшем значении"]);
+  if(c.teaser>0) b.push([`тизер ${c.teaser}`,"у стольких предложений полная стоимость выше заявленной ставки более чем на 5 пп"]);
+  if(c.banks_dropped>0) b.push([`выбыло ${c.banks_dropped}`,"банков не попало в сравнение: нет метрики, не банк или льготная программа"]);
   if(c.no_metric>0) b.push([`нет метрики ${c.no_metric}`,"столько предложений вне сравнения — поле не заполнено источником"]);
   if(c.subsidized_excluded>0) b.push([`исключено ${c.subsidized_excluded}`,"льготные программы: ставка установлена государством и одинакова у всех"]);
   if(c.small_n) b.push(["малая база","банков меньше пяти — ранг неустойчив"]);
@@ -2408,7 +2415,11 @@ function MarketPage({params}){
             {c.status==="ok"?<MkStrip c={c}/>:
               <div className="mk-anote">{c.status==="no_metric"?((M[c.category]||{}).caveat||"сопоставимой метрики нет")+" — доступна витрина":"нет данных"}</div>}
             <div className="mk-apos">
-              {sb?<>
+              {sb&&c.degenerate?<>
+                <b className="serif" style={{color:"var(--ink-3)"}} title={`на лучшем значении ${c.at_best} банков из ${c.n_banks}`}>–</b>
+                <span className="mk-an">метрика не различает банки: {c.at_best} из {c.n_banks} на одном значении</span>
+                <MkTrust c={c}/>
+              </>:sb?<>
                 <b className={"serif"+(sb.percentile!=null&&sb.percentile<40?" bad":"")}
                    title={`перцентиль: доля рынка, которую мы опережаем. Место ${sb.rank} из ${c.n_banks}${sb.tied>1?`, наравне с ${sb.tied}`:""}`}>
                   {sb.percentile!=null?sb.percentile:"—"}<span className="pctl">‰</span></b>
