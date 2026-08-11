@@ -812,7 +812,6 @@ def meta_categories():
     return out
 
 
-@app.get("/api/market/atlas")
 def _jsonb(v):
     """jsonb из драйвера приходит то dict/list, то строкой — приводим к python."""
     if v is None or isinstance(v, (list, dict)):
@@ -823,6 +822,7 @@ def _jsonb(v):
         return None
 
 
+@app.get("/api/market/atlas")
 def market_atlas(term: Optional[str] = None):
     """Атлас позиций: по каждой категории — распределение ЛУЧШИХ офферов банков
     (одна точка = один банк, чтобы банк с 15 витринными вкладами не перетягивал
