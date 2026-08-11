@@ -129,6 +129,9 @@ CHECKS = [
              WHERE o.is_active
                AND e.payload->>'client_segment' NOT IN ('unknown', '')
                AND e.payload->>'client_segment' IS DISTINCT FROM COALESCE(o.segment, 'mass')
+               -- у модели нет отдельного «детского» сегмента, детские карты она
+               -- относит к молодёжным: это разница таксономий, а не дефект
+               AND NOT (o.segment = 'kids' AND e.payload->>'client_segment' = 'youth')
         """,
     },
     {

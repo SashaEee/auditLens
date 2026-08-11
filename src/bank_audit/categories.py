@@ -158,7 +158,10 @@ SEGMENTS = (("premium", "Премиальный"), ("private", "Private"),
 
 _SEGMENT_RULES: list[tuple] = [
     ("private", _re2.compile(r"private|приват", _re2.I)),
-    ("premium", _re2.compile(r"привилег|премьер|премиал|premium|only\b|signature|"
+    # «Премиум» без «премиальная»: сверка с текстом тарифа (SEGMENT_MISMATCH)
+    # показала 9 продуктов, которые правило по названию не относило к премиуму —
+    # «Пакет услуг "Премиум"», «На новый автомобиль — Премиум»
+    ("premium", _re2.compile(r"привилег|премьер|премиум|премиал|premium|only\b|signature|"
                              r"infinite|supreme|первый|прайм|world elite|platinum", _re2.I)),
     ("kids", _re2.compile(r"детск|юниор|junior|подростк|kids", _re2.I)),
     ("youth", _re2.compile(r"молод[её]жн|студен|teen", _re2.I)),
