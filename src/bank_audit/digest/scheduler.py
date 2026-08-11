@@ -205,6 +205,20 @@ def _run_ingest_all() -> None:
             log.info("daily ingest: url-check %s", validate_offer_urls())
         except Exception as e:  # noqa: BLE001
             log.warning("url-check failed: %s", e)
+        try:
+            # Смысл условий («бесплатно ВСЕГДА» или «при остатке 2,5 млн»)
+            # регекспом не берётся, а без него ранг карт вырожден: 124 банка
+            # из 163 стоят на нуле. Порция в сутки: модуль сам выбирает, у кого
+            # разбора нет или он устарел. Здесь, а НЕ внутри ingest: суточный
+            # цикл зовёт ingest по разу на источник, и обогащение шло бы
+            # шесть раз подряд.
+            import os as _os
+            if _os.getenv("ENRICH_ENABLED", "1") not in ("0", "false", "no"):
+                from ..normalizer.enrich_llm import enrich
+                log.info("daily ingest: обогащение %s",
+                         enrich(limit=int(_os.getenv("ENRICH_LIMIT", "150"))))
+        except Exception as e:  # noqa: BLE001 — обогащение не валит цикл
+            log.warning("обогащение не выполнено: %s", e)
         try:    # протухание: пропавшие из выдачи офферы гаснут (is_active=false)
             from ..normalizer.offers import expire_stale_offers
             expire_stale_offers()
