@@ -816,6 +816,16 @@ def meta_categories():
 _FREE_RANK = {"unconditional": 2, "conditional": 1, "paid": 0}
 
 
+def _prem_key(p: dict):
+    """Насколько дёшево обходится премиум: сначала безусловные, потом по
+    порогу, в конце — платные. Меньше значит мягче."""
+    if p.get("free_kind") == "unconditional":
+        return (0, 0.0)
+    if p.get("free_kind") == "conditional":
+        return (1, p.get("threshold") if p.get("threshold") is not None else float("inf"))
+    return (2, p.get("fee") if p.get("fee") is not None else float("inf"))
+
+
 def _jsonb(v):
     """jsonb из драйвера приходит то dict/list, то строкой — приводим к python."""
     if v is None or isinstance(v, (list, dict)):
@@ -873,6 +883,11 @@ def market_atlas(term: Optional[str] = None):
     # бесплатны» — подменять вопрос. Здесь у каждого банка берём лучший
     # ответ по САМОЙ бесплатности среди всех его карт категории.
     free_by_bank: dict[str, dict[str, dict]] = {}
+    # Премиальные карты — отдельный разговор. По ЦЕНЕ они неразличимы: у всех
+    # ноль. Разница в том, ЧЕМ этот ноль куплен: у Сбера порог 2 млн руб. на
+    # счетах, у ВТБ Привилегии — 10 млн, у ИНГО — 15 млн. Порог и есть
+    # настоящая цена премиума, и сравнивать банки нужно по нему.
+    premium: dict[str, dict[str, dict]] = {}
     subsidized: dict[str, int] = {}
     no_metric: dict[str, int] = {}       # метрика пуста — оффер молча выпадал
     teaser: dict[str, int] = {}          # ПСК сильно выше заявленной ставки
@@ -887,6 +902,28 @@ def market_atlas(term: Optional[str] = None):
         if (r["category"] in ("card_debit", "card_credit")
                 and r.get("free_kind") in _FREE_RANK
                 and not cat_meta.is_non_bank(r["bank_name"])):
+            if (r.get("segment") == "premium"
+                    and r.get("free_kind") in ("unconditional", "conditional", "paid")):
+                conds = _jsonb(r.get("free_conditions")) or []
+                thr = None
+                for cnd in conds:
+                    if not isinstance(cnd, dict):
+                        continue
+                    # порогом премиума считаем ОСТАТОК на счетах: обороты и
+                    # покупки — другая природа обязательства, в один ряд с
+                    # неснижаемым остатком их ставить нельзя
+                    if cnd.get("type") in ("balance", "turnover") and cnd.get("threshold_rub"):
+                        v = float(cnd["threshold_rub"])
+                        thr = v if thr is None else min(thr, v)
+                pslot = premium.setdefault(r["category"], {})
+                prev = pslot.get(r["bank_slug"])
+                fee_ = (float(r["fee_service"]) if r.get("fee_service") is not None else None)
+                cand = {"slug": r["bank_slug"], "name": r["bank_name"],
+                        "is_sber": bool(r["is_sber"]), "title": r["title"],
+                        "fee": fee_, "free_kind": r["free_kind"], "threshold": thr}
+                # банк представляет САМОЕ МЯГКОЕ его премиальное предложение
+                if prev is None or _prem_key(cand) < _prem_key(prev):
+                    pslot[r["bank_slug"]] = cand
             slot = free_by_bank.setdefault(r["category"], {})
             prev = slot.get(r["bank_slug"])
             if prev is None or _FREE_RANK[r["free_kind"]] > _FREE_RANK[prev["free_kind"]]:
@@ -1099,6 +1136,30 @@ def market_atlas(term: Optional[str] = None):
                 "sber": (mine or {}).get("free_kind"),
                 "sber_conditions": (mine or {}).get("conditions") or [],
             }
+        prem = premium.get(cid, {})
+        if cid in ("card_debit", "card_credit") and len(prem) >= 5:
+            thrs = sorted(p["threshold"] for p in prem.values()
+                          if p.get("threshold") is not None)
+            mine = next((p for p in prem.values() if p["is_sber"]), None)
+            block = {
+                "n_banks": len(prem),
+                "unconditional": sum(1 for p in prem.values()
+                                     if p["free_kind"] == "unconditional"),
+                "with_threshold": len(thrs),
+                "median_threshold": (_pct(thrs, 0.5) if thrs else None),
+                "min_threshold": (thrs[0] if thrs else None),
+                "max_threshold": (thrs[-1] if thrs else None),
+                # самые жёсткие пороги рынка — их аудитор и хочет видеть рядом
+                "hardest": sorted(
+                    [{"name": p["name"], "threshold": p["threshold"], "title": p["title"]}
+                     for p in prem.values() if p.get("threshold") is not None],
+                    key=lambda x: -x["threshold"])[:3],
+            }
+            if mine:
+                block["sber"] = mine
+                if mine.get("threshold") is not None and thrs:
+                    block["sber_rank"] = sum(1 for t in thrs if t < mine["threshold"]) + 1
+            entry["premium"] = block
         # Минимальная ставка кредита часто достижима не всем: у Сбера «от
         # 18,4 проц.» — строка «для зарплатных клиентов», общая ставка 20,4.
         # Сравнивать банк по такой границе с банком без оговорок нельзя.

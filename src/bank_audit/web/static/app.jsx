@@ -2292,6 +2292,40 @@ function OfferTerms({o}){
   return null;
 }
 
+// ── Паспорт премиума ──────────────────────────────────────────────────────
+// У премиальных карт цена у всех одна — ноль. Настоящая цена премиума — порог,
+// который надо держать на счетах: у Сбера 2 млн, у ВТБ Привилегии 10 млн.
+// Ранг по плате тут бессмыслен, ранг по порогу — единственный честный.
+function MkPremium({c}){
+  const p=c.premium;
+  if(!p||p.n_banks<5) return null;
+  const mine=p.sber;
+  return <div className="mk-prem">
+    <div className="mk-premhead">
+      <span className="eyebrow">Премиальный сегмент · {p.n_banks} банков</span>
+      <i title="плата за обслуживание у премиальных карт почти всегда ноль — сравнивать надо по тому, чем этот ноль куплен">
+        цена не различает: бесплатны {p.unconditional+p.with_threshold} из {p.n_banks}</i>
+    </div>
+    <div className="mk-premrow">
+      <div><b className="serif">{p.median_threshold!=null?fmtNum(p.median_threshold)+" ₽":"—"}</b>
+        <span>медианный порог рынка</span></div>
+      <div><b className="serif">{p.min_threshold!=null?fmtNum(p.min_threshold)+" ₽":"—"}</b>
+        <span>самый мягкий</span></div>
+      {mine&&<div className={mine.threshold!=null&&p.median_threshold!=null&&mine.threshold>p.median_threshold?"bad":""}>
+        <b className="serif">{mine.threshold!=null?fmtNum(mine.threshold)+" ₽":(mine.free_kind==="unconditional"?"без условий":"—")}</b>
+        <span>у нас{p.sber_rank?` · ${p.sber_rank}-й по мягкости из ${p.with_threshold}`:""}</span></div>}
+    </div>
+    {mine&&<div className="mk-premmine">
+      «{mine.title}»{mine.fee!=null?` · плата ${fmtNum(mine.fee)} ₽`:""}
+      {mine.threshold!=null?` · бесплатно при остатке от ${fmtNum(mine.threshold)} ₽`:""}
+    </div>}
+    {(p.hardest||[]).length>0&&<div className="mk-premhard">
+      Самые жёсткие пороги: {p.hardest.map((h,i)=>
+        <span key={i}>{i?" · ":""}{h.name} — {fmtNum(h.threshold)} ₽</span>)}
+    </div>}
+  </div>;
+}
+
 // ступенчатая история ставки оффера (SCD2-версии условий)
 function MkStep({series}){
   const pts=(series||[]).filter(p=>p.rate_pct!=null);
@@ -2537,6 +2571,7 @@ function MarketPage({params}){
       {ac&&ac.status==="ok"&&<div className="surface" style={{padding:"14px 20px",marginBottom:14}}>
         <MkStrip c={ac} big/>
         <MkTerms c={ac}/>
+        <MkPremium c={ac}/>
       </div>}
 
       <div className="filter-row" style={{marginBottom:14}}>
