@@ -41,7 +41,8 @@ def bank_slug_for(session, raw_name: str) -> str:
     писать следующий сбор» и оставить именно ту строку. Иначе слитый дубль
     воскресает на следующий день под тем же именем.
     """
-    key = normalize_bank_key((raw_name or "").strip())
+    raw_name = (raw_name or "").strip()
+    key = normalize_bank_key(raw_name)
     slug = BANK_ALIASES.get(key)
     if not slug and key:
         # fuzzy: топ-5 кандидатов, а не единственный лучший — иначе короткий
@@ -61,6 +62,19 @@ def bank_slug_for(session, raw_name: str) -> str:
         # 105 офферов были слиты миграцией 22.07.2026).
         row = session.execute(text("SELECT slug FROM bank WHERE slug=:s"),
                               {"s": key}).first()
+        if row:
+            return row[0]
+    if not slug and key:
+        # Написания, которые нормализатор не сводит к одному ключу («Банк
+        # Оренбург» → «оренбург», «БАНКОРЕНБУРГ» → «банкоренбург»), сводит
+        # справочник: слияние дублей складывает прежние написания в bank.aliases.
+        # Без этой проверки колонка была мёртвой, а слитый дубль воскресал.
+        row = session.execute(text("""
+            SELECT slug FROM bank
+             WHERE EXISTS (SELECT 1 FROM unnest(aliases) a
+                            WHERE lower(a) = lower(:raw))
+             LIMIT 1
+        """), {"raw": (raw_name or "").strip()}).first()
         if row:
             return row[0]
     if not slug:

@@ -1818,7 +1818,10 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 /* Чем куплено лучшее значение: разбор условий из offer_enrichment */
 .mk-terms{display:block;margin-top:4px;font-size:10px;line-height:1.35;color:var(--ink-3);
   border-bottom:1px dotted var(--hair-2)}
-.mk-terms b{font-family:'JetBrains Mono',monospace;color:var(--ink-2);font-weight:500}
+/* Специфичность выше, чем у .mk-apos b (19px serif в колонке ранга): иначе
+   доля из компактного бейджа рисовалась крупным числом поверх позиции. */
+.mk-apos .mk-terms b, .mk-terms b{font-family:'JetBrains Mono',monospace;
+  font-size:10px;line-height:1.35;color:var(--ink-2);font-weight:500}
 .mk-termbox{margin-top:12px;padding-top:11px;border-top:1px solid var(--hair)}
 .mk-termrow{display:flex;flex-wrap:wrap;gap:14px;align-items:baseline}
 .mk-termrow i{font-style:normal;font-size:10.5px;letter-spacing:.02em;color:var(--ink-3);

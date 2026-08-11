@@ -867,6 +867,12 @@ def market_atlas(term: Optional[str] = None):
         pass
     by_cat: dict[str, dict] = {}
     by_group: dict[tuple, dict] = {}     # (категория, сегмент, подсегмент) → банки
+    # Разбор бесплатности собираем ОТДЕЛЬНО от ранга. У кредиток метрика —
+    # грейс-период, и банк на витрине представляет карта с самым длинным грейсом,
+    # которая вполне может быть платной; считать по ней «сколько банков
+    # бесплатны» — подменять вопрос. Здесь у каждого банка берём лучший
+    # ответ по САМОЙ бесплатности среди всех его карт категории.
+    free_by_bank: dict[str, dict[str, dict]] = {}
     subsidized: dict[str, int] = {}
     no_metric: dict[str, int] = {}       # метрика пуста — оффер молча выпадал
     teaser: dict[str, int] = {}          # ПСК сильно выше заявленной ставки
@@ -878,6 +884,17 @@ def market_atlas(term: Optional[str] = None):
         if not meta:                       # не витринная категория (рейтинги и пр.)
             continue
         seen_banks.setdefault(r["category"], set()).add(r["bank_slug"])
+        if (r["category"] in ("card_debit", "card_credit")
+                and r.get("free_kind") in _FREE_RANK
+                and not cat_meta.is_non_bank(r["bank_name"])):
+            slot = free_by_bank.setdefault(r["category"], {})
+            prev = slot.get(r["bank_slug"])
+            if prev is None or _FREE_RANK[r["free_kind"]] > _FREE_RANK[prev["free_kind"]]:
+                slot[r["bank_slug"]] = {
+                    "free_kind": r["free_kind"],
+                    "conditions": _jsonb(r.get("free_conditions")) or [],
+                    "is_sber": bool(r["is_sber"]),
+                }
         # тизер: минимальная ставка рекламная, полная стоимость много выше.
         # Медианный разрыв по рынку — ноль, поэтому 5 пп это уже сигнал.
         try:
@@ -986,8 +1003,14 @@ def market_atlas(term: Optional[str] = None):
         for _s, _u, bl in gs:
             for b in bl:
                 cur_ = merged.get(b["slug"])
-                if cur_ is None or (b["rate"] < cur_["rate"] if lower_
-                                    else b["rate"] > cur_["rate"]):
+                # то же правило, что и внутри группы: при равной метрике банк
+                # представляет оффер с лучшими условиями, иначе доля
+                # «бесплатных без условий» зависела бы от порядка групп
+                tie_ = (cur_ is not None and b["rate"] == cur_["rate"]
+                        and _FREE_RANK.get(b.get("free_kind"), -1)
+                        > _FREE_RANK.get(cur_.get("free_kind"), -1))
+                if cur_ is None or tie_ or (b["rate"] < cur_["rate"] if lower_
+                                            else b["rate"] > cur_["rate"]):
                     merged[b["slug"]] = b
         by_cat[cid_] = merged
 
@@ -1063,17 +1086,18 @@ def market_atlas(term: Optional[str] = None):
         # Разбор берём из offer_enrichment; долю покрытия отдаём честно —
         # пока обогащена половина рынка, вывод «мы среди безусловно
         # бесплатных» подписывается числом, на скольких он посчитан.
-        known = [b for b in banks
-                 if b.get("free_kind") in ("unconditional", "conditional", "paid")]
+        known = free_by_bank.get(cid, {})
         if cid in ("card_debit", "card_credit") and known:
-            uncond = [b for b in known if b["free_kind"] == "unconditional"]
+            mine = next((v for v in known.values() if v["is_sber"]), None)
             entry["free_split"] = {
-                "covered": len(known), "of": len(banks),
-                "unconditional": len(uncond),
-                "conditional": sum(1 for b in known if b["free_kind"] == "conditional"),
-                "paid": sum(1 for b in known if b["free_kind"] == "paid"),
-                "sber": (sber or {}).get("free_kind"),
-                "sber_conditions": (sber or {}).get("free_conditions") or [],
+                "covered": len(known), "of": len(seen_banks.get(cid, ())),
+                "unconditional": sum(1 for v in known.values()
+                                     if v["free_kind"] == "unconditional"),
+                "conditional": sum(1 for v in known.values()
+                                   if v["free_kind"] == "conditional"),
+                "paid": sum(1 for v in known.values() if v["free_kind"] == "paid"),
+                "sber": (mine or {}).get("free_kind"),
+                "sber_conditions": (mine or {}).get("conditions") or [],
             }
         # Минимальная ставка кредита часто достижима не всем: у Сбера «от
         # 18,4 проц.» — строка «для зарплатных клиентов», общая ставка 20,4.

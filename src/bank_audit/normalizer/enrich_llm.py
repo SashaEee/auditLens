@@ -57,6 +57,8 @@ _BATCH = int(os.getenv("ENRICH_BATCH", "6"))
 # девяти полных страниц бюджет ответа уходил в рассуждения — приходил
 # пустой content вместо JSON
 _TEXT_CHARS = int(os.getenv("ENRICH_TEXT_CHARS", "3200"))
+# сколько неудачных загрузок подряд считаем отказом источника
+_FAIL_STREAK = int(os.getenv("ENRICH_FAIL_STREAK", "8"))
 _LLM_TIMEOUT = float(os.getenv("ENRICH_LLM_TIMEOUT_S", "120"))
 
 # раздел banki.ru → сегмент пути детальной страницы
@@ -144,8 +146,14 @@ def _fetch(section: str, pid: str, sess: requests.Session) -> tuple[str | None, 
     except requests.RequestException as e:
         log.warning("обогащение: %s не открылась (%s)", url, e)
         return None, "net"
+    if r.status_code in (404, 410):
+        return None, "gone"          # страницы больше нет — свойство, не сбой
     if r.status_code != 200 or len(r.text) < 5000:
-        return None, "http"
+        # 429 антибота, 403 Cloudflare, 502/503, короткая заглушка со статусом
+        # 200 — всё это ВРЕМЕННО. Помечать такой оффер «нечего разбирать» нельзя:
+        # он выпадет из повторов на две недели, а при массовом троттлинге так
+        # обнулилась бы вся таблица разбора за один прогон.
+        return None, "busy"
     txt = _conditions_text(r.text)
     return (txt, "ok") if txt else (None, "no_anchor")
 
@@ -282,6 +290,12 @@ def _parse_array(raw: str) -> list:
                 return data
         except ValueError:
             pass
+    # Ответ мог оборваться на лимите токенов: «[{...},{...},{"i":7,» — тогда
+    # json.loads падает. _loose_json_loads вернул бы ОДИН объект (самый длинный),
+    # и остальные разобранные продукты молча терялись. Собираем все целые.
+    objs = _balanced_objects(s)
+    if objs:
+        return objs
     try:
         data = _loose_json_loads(s)
     except Exception:  # noqa: BLE001 — пустой/битый ответ не должен ронять сбор
@@ -289,6 +303,37 @@ def _parse_array(raw: str) -> list:
     if isinstance(data, dict):
         data = data.get("items") or data.get("products") or [data]
     return data if isinstance(data, list) else []
+
+
+def _balanced_objects(s: str) -> list:
+    """Все верхнеуровневые {...}, которые разбираются как JSON."""
+    out, depth, start, in_str, esc = [], 0, -1, False, False
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    out.append(json.loads(s[start:i + 1]))
+                except ValueError:
+                    pass
+                start = -1
+            elif depth < 0:
+                depth = 0
+    return out
 
 
 # Детерминированный дожим по картам. Модель осторожна и на трети карт отвечает
@@ -393,6 +438,25 @@ def _pending(cats: Iterable[str], limit: int, force: bool = False) -> list[dict]
     return [dict(r) for r in rows]
 
 
+def _save_stub(offer_id: int, payload: dict, model: str) -> None:
+    """Отметка «разбирать нечего» — но НИКОГДА поверх удачного разбора.
+
+    Прежняя версия писала заглушку через тот же ON CONFLICT DO UPDATE, и один
+    прогон при троттлинге источника заменил бы пустышками уже разобранные
+    карточки, а updated_at увёл бы их из выборки на две недели.
+    """
+    with db.session() as s:
+        s.execute(text("""
+            INSERT INTO offer_enrichment (offer_id, src_digest, payload, model, updated_at)
+            VALUES (:o, '', CAST(:p AS jsonb), :m, now())
+            ON CONFLICT (offer_id) DO UPDATE
+               SET payload = EXCLUDED.payload, model = EXCLUDED.model,
+                   src_digest = '', updated_at = now()
+             WHERE offer_enrichment.payload ? 'no_text'
+                OR offer_enrichment.payload ? 'no_answer'
+        """), {"o": offer_id, "p": json.dumps(payload, ensure_ascii=False), "m": model})
+
+
 def _save(offer_id: int, digest: str, payload: dict, model: str) -> None:
     with db.session() as s:
         s.execute(text("""
@@ -422,6 +486,7 @@ def enrich(limit: int = 120, categories: Iterable[str] | None = None,
         return stats
     sess = requests.Session()
     batch: list[dict] = []
+    fails = 0
     model = fast_model()
 
     def _flush() -> None:
@@ -441,10 +506,13 @@ def enrich(limit: int = 120, categories: Iterable[str] | None = None,
                 # Вызов прошёл, но объекта с этим номером в ответе нет. Пишем
                 # пустой разбор с тем же хешем: иначе такой оффер качался бы
                 # заново каждый прогон и вечно съедал бы квоту обхода.
-                _save(it["offer_id"], it["digest"],
-                      {"free_kind": "unknown", "rate_attainability": "unknown",
-                       "client_segment": "unknown", "free_conditions": [],
-                       "rate_requires": [], "no_answer": True}, model)
+                # digest НЕ сохраняем (пустая строка): иначе при неизменном
+                # тексте оффер попадал бы в ветку skipped_same и модель не
+                # спросили бы по нему больше НИКОГДА
+                _save_stub(it["offer_id"],
+                           {"free_kind": "unknown", "rate_attainability": "unknown",
+                            "client_segment": "unknown", "free_conditions": [],
+                            "rate_requires": [], "no_answer": True}, model)
                 stats["no_answer"] += 1
                 continue
             _save(it["offer_id"], it["digest"], payload, model)
@@ -461,15 +529,27 @@ def enrich(limit: int = 120, categories: Iterable[str] | None = None,
         time.sleep(_PAUSE_S)
         if not txt:
             stats["no_text"] += 1
-            if why in ("no_anchor", "no_path", "http"):
-                # свойство страницы, а не сбой сети: помечаем, чтобы не качать
-                # её заново каждый прогон (иначе такие офферы съедают квоту)
-                _save(row["offer_id"], "", {"free_kind": "unknown",
-                                            "rate_attainability": "unknown",
-                                            "client_segment": "unknown",
-                                            "free_conditions": [], "rate_requires": [],
-                                            "no_text": why}, model)
+            if why in ("no_anchor", "no_path", "gone"):
+                # свойство страницы, а не сбой: помечаем, чтобы не качать её
+                # заново каждый прогон (иначе такие офферы съедают квоту обхода)
+                _save_stub(row["offer_id"], {"free_kind": "unknown",
+                                             "rate_attainability": "unknown",
+                                             "client_segment": "unknown",
+                                             "free_conditions": [], "rate_requires": [],
+                                             "no_text": why}, model)
+                fails = 0
+            else:
+                # временный сбой: ничего не пишем и следим за серией — источник
+                # мог включить троттлинг, и дальше идти бессмысленно и вредно
+                fails += 1
+                stats["busy"] = stats.get("busy", 0) + 1
+                if fails >= _FAIL_STREAK:
+                    log.warning("обогащение остановлено: %d подряд неудачных "
+                                "загрузок — источник недоступен", fails)
+                    stats["aborted"] = True
+                    break
             continue
+        fails = 0
         stats["fetched"] += 1
         digest = hashlib.sha256(txt.encode("utf-8")).hexdigest()
         if not force and known.get(row["offer_id"]) == digest:

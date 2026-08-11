@@ -38,6 +38,15 @@ check("одиночный объект", len(_parse_array('{"i":0,"free_kind":"p
 check("пустой ответ не падает", _parse_array(""), [])
 check("мусор не падает", _parse_array("не могу ответить"), [])
 
+# ответ мог оборваться на лимите токенов — целые объекты обязаны уцелеть
+trunc = '[{"i":0,"free_kind":"paid"},{"i":1,"free_kind":"unconditional"},{"i":2,"free_ki'
+check("обрезанный массив: спасаем целые", [o.get("i") for o in _parse_array(trunc)], [0, 1])
+check("вложенный объект не считается отдельным",
+      [o.get("i") for o in _parse_array('[{"i":0,"free_conditions":[{"type":"balance"}]},{"i":1}]')],
+      [0, 1])
+check("скобка внутри строки не ломает разбор",
+      [o.get("i") for o in _parse_array('[{"i":0,"note":"а {это} не объект"},{"i":1}]')], [0, 1])
+
 print("нормализация полей")
 raw = {"i": 0, "free_kind": "БЕСПЛАТНО", "rate_attainability": "very narrow",
        "client_segment": "vip", "rate_requires": ["payroll", "магия", "insurance"],

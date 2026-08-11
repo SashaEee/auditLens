@@ -2233,7 +2233,7 @@ function MkTerms({c,compact}){
   const f=c.free_split, a=c.attainability;
   if(f&&f.covered>=3){
     const share=`${f.unconditional} из ${f.covered}`;
-    const mine=f.sber?FREE_RU[f.sber]:null;
+    const mine=FREE_RU[f.sber]||null;
     const cond=(f.sber_conditions||[]).map(x=>
       `${COND_RU[x.type]||"условие"}${x.threshold_rub?" от "+fmtNum(x.threshold_rub)+" ₽":""}`).join(" или ");
     if(compact) return <span className="mk-terms" title={`обогащено ${f.covered} из ${f.of} банков категории`}>
@@ -2246,7 +2246,7 @@ function MkTerms({c,compact}){
         <i className="mk-termsrc" title="условия разобраны по детальным страницам тарифов">
           разобрано {f.covered} из {f.of}</i>
       </div>
-      {f.sber&&<div className="mk-termmine">Сбер — <b>{FREE_RU[f.sber]}</b>{cond?`: ${cond}`:""}</div>}
+      {FREE_RU[f.sber]&&<div className="mk-termmine">Сбер — <b>{FREE_RU[f.sber]}</b>{cond?`: ${cond}`:""}</div>}
     </div>;
   }
   if(a&&a.covered>=3){
@@ -2265,8 +2265,8 @@ function MkTerms({c,compact}){
       {(a.top_requires||[]).length>0&&<div className="mk-termmine" style={{opacity:.85}}>
         Чем куплен минимум: {a.top_requires.map(([k,n],i)=>
           <span key={k}>{i?", ":""}{REQ_RU[k]||k} — {n}</span>)}</div>}
-      {(a.sber||lreq)&&<div className="mk-termmine">
-        {a.sber?<>Ставка Сбера — <b>{ATT_RU[a.sber]||a.sber}</b>{req?`: ${req}`:""}. </>:null}
+      {(ATT_RU[a.sber]||lreq)&&<div className="mk-termmine">
+        {ATT_RU[a.sber]?<>Ставка Сбера — <b>{ATT_RU[a.sber]}</b>{req?`: ${req}`:""}. </>:null}
         {lreq?<>У лидера минимум требует: {lreq}.</>:null}</div>}
     </div>;
   }

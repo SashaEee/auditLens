@@ -50,6 +50,36 @@ _ROW = """
 """
 
 
+_FK_REFS = """
+    SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+      FROM pg_constraint c
+      JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON TRUE
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+     WHERE c.contype = 'f' AND c.confrelid = 'bank'::regclass
+"""
+
+
+def _repoint_all(s, drop_id: int, keep_id: int) -> int:
+    """Перевести на канонический банк ВСЕ ссылки по внешним ключам.
+
+    Возвращает число ссылок, которые перенести не удалось (уникальные ключи:
+    у канонического банка уже есть своя строка профиля или сводки). Такие
+    строки остаются на месте, и тогда банк не удаляем — данные дороже чистоты
+    справочника.
+    """
+    stuck = 0
+    for tbl, col in s.execute(text(_FK_REFS)).all():
+        try:
+            with s.begin_nested():
+                s.execute(text(f"UPDATE {tbl} SET {col} = :k WHERE {col} = :d"),
+                          {"k": keep_id, "d": drop_id})
+        except Exception as e:  # noqa: BLE001 — конфликт уникальности ожидаем
+            print(f"        {tbl}.{col}: перенос не удался ({str(e).splitlines()[0][:60]})")
+        stuck += s.execute(text(f"SELECT count(*) FROM {tbl} WHERE {col} = :d"),
+                           {"d": drop_id}).scalar() or 0
+    return stuck
+
+
 def _rank(r, target: str | None) -> tuple:
     """Канонический — прежде всего ТОТ, КУДА БУДЕТ ПИСАТЬ СЛЕДУЮЩИЙ СБОР.
 
@@ -64,7 +94,7 @@ def _rank(r, target: str | None) -> tuple:
 
 def main(apply: bool = False) -> int:
     db.init(Settings.load())
-    merged = moved_offers = moved_reviews = 0
+    merged = moved_offers = moved_reviews = revived = 0
     with db.session() as s:
         groups = s.execute(text(_GROUPS)).mappings().all()
         print(f"групп с одинаковым названием: {len(groups)}")
@@ -89,7 +119,7 @@ def main(apply: bool = False) -> int:
                 if not apply:
                     continue
                 # Уникальный ключ оффера — (bank_id, category, external_id):
-                # при столкновении переносить нельзя, дубль гасим как неактивный.
+                # при столкновении перенести строку нельзя.
                 moved_offers += s.execute(text("""
                     UPDATE product_offer o SET bank_id = :keep
                      WHERE o.bank_id = :drop
@@ -97,6 +127,21 @@ def main(apply: bool = False) -> int:
                                         WHERE x.bank_id = :keep
                                           AND x.category = o.category
                                           AND x.external_id = o.external_id)
+                """), {"keep": keep["bank_id"], "drop": d["bank_id"]}).rowcount
+                # Столкнувшиеся: живой продукт мог остаться именно у сливаемой
+                # строки, а на канонической лежать её потухшая копия (источник
+                # сменил написание имени, и пять дней всё писалось в дубль).
+                # Слепое гашение убило бы ЖИВЫЕ предложения — сначала поднимаем
+                # канонический двойник, и только потом гасим дубль.
+                revived += s.execute(text("""
+                    UPDATE product_offer c
+                       SET is_active = TRUE,
+                           last_seen = GREATEST(c.last_seen, d.last_seen)
+                      FROM product_offer d
+                     WHERE c.bank_id = :keep AND d.bank_id = :drop
+                       AND c.category = d.category
+                       AND c.external_id = d.external_id
+                       AND d.is_active AND NOT c.is_active
                 """), {"keep": keep["bank_id"], "drop": d["bank_id"]}).rowcount
                 s.execute(text("UPDATE product_offer SET is_active = FALSE "
                                "WHERE bank_id = :drop"), {"drop": d["bank_id"]})
@@ -113,11 +158,16 @@ def main(apply: bool = False) -> int:
                      WHERE bank_id = :keep
                 """), {"keep": keep["bank_id"], "sber": bool(d["is_sber"]),
                        "add": list({d["name"], *(d["aliases"] or [])})})
-                left = s.execute(text("""
-                    SELECT (SELECT count(*) FROM product_offer WHERE bank_id = :d)
-                         + (SELECT count(*) FROM review WHERE bank_id = :d)
-                """), {"d": d["bank_id"]}).scalar()
-                if left == 0:
+                # На банк ссылаются не только офферы и отзывы: есть профиль с
+                # адресом сайта и картой страниц, признаки, сводки отзывов,
+                # документы. DELETE увёл бы их каскадом, а проверка «ссылок не
+                # осталось» по двум таблицам этого не заметила бы. Поэтому
+                # переносим ВСЕ ссылки по внешним ключам, а удаляем строку
+                # только если после этого на неё никто не ссылается.
+                left = _repoint_all(s, d["bank_id"], keep["bank_id"])
+                if left:
+                    print(f"        строка оставлена: ссылок осталось {left}")
+                else:
                     s.execute(text("DELETE FROM bank WHERE bank_id = :d"),
                               {"d": d["bank_id"]})
                 merged += 1
@@ -129,7 +179,7 @@ def main(apply: bool = False) -> int:
                               {"s": target, "b": keep["bank_id"]})
     print(f"\n{'СЛИТО' if apply else 'СУХОЙ ПРОГОН'}: групп {len(groups)}, "
           f"строк слито {merged}, перенесено офферов {moved_offers}, "
-          f"отзывов {moved_reviews}")
+          f"отзывов {moved_reviews}, поднято потухших двойников {revived}")
     if not apply:
         print("записи не было — повторите с --apply")
     return 0
