@@ -1112,6 +1112,37 @@ def market_atlas(term: Optional[str] = None):
         comp.sort(key=lambda x: -x["n_banks"])
         if comp:
             entry["comparable"] = comp[:4]
+        # ПОЛНЫЙ разрез категории — по нему фронт даёт выбрать подвид продукта
+        # и показывает ранг ВНУТРИ него. Без этого пользователь выбирал
+        # «премиальные карты», а место видел по всей категории — «#1 из 145»
+        # рядом с двадцатью семью премиальными карточками.
+        groups_out = []
+        for seg_, sub_, bl in groups_by_cat.get(cid, []):
+            vals_ = sorted(b["rate"] for b in bl)
+            sb_ = next((b for b in bl if b["is_sber"]), None)
+            g = {"segment": seg_, "sub_segment": None if sub_ == "_" else sub_,
+                 "n_banks": len(bl),
+                 "median": _pct(vals_, 0.5),
+                 "leader": (vals_[0] if lower else vals_[-1]),
+                 "min": vals_[0], "max": vals_[-1],
+                 "at_best": sum(1 for v in vals_ if v == (vals_[0] if lower else vals_[-1])),
+                 "small_n": len(bl) < 5}
+            if sb_:
+                rank_ = sum(1 for b in bl
+                            if (b["rate"] < sb_["rate"] if lower
+                                else b["rate"] > sb_["rate"])) + 1
+                g["sber"] = {
+                    "rank": rank_, "value": sb_["rate"], "title": sb_["title"],
+                    "offer_id": sb_["offer_id"],
+                    "tied": sum(1 for b in bl if b["rate"] == sb_["rate"]),
+                    "percentile": round(100 * (len(bl) - rank_) / max(len(bl) - 1, 1)),
+                    "gap_median": (round(sb_["rate"] - g["median"], 2)
+                                   if g["median"] is not None else None),
+                    "gap_leader": round(sb_["rate"] - g["leader"], 2),
+                }
+            groups_out.append(g)
+        if groups_out:
+            entry["groups"] = sorted(groups_out, key=lambda x: -x["n_banks"])
         # Метрика вырождена, если на лучшем значении стоит больше трети рынка:
         # «#1 из 140» при 115 банках на нуле — не лидерство, а отсутствие
         # сигнала, и показывать такой ранг как факт нельзя (аудит 11.08.2026).

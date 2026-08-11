@@ -2364,8 +2364,13 @@ function MarketPage({params}){
   }catch{legacy.current={};}}
   const L=legacy.current;
   const[cat,setCat]=useState(P.cat||P.category||L.category||null);
+  const prevCat=useRef(cat);
   const[view,setView]=useState(P.view||L.view||"vitrina");
   const[term,setTerm]=useState(P.term||null);
+  // подвид продукта: сегмент клиента (премиум/детские) и вид продукта
+  // (новостройка/под залог/для ИП). Данные были всегда, выбрать их было нельзя
+  const[seg,setSeg]=useState(P.seg||null);
+  const[sub,setSub]=useState(P.sub||null);
   const[qLive,setQLive]=useState(P.q||L.q||"");
   const[q,setQ]=useState(P.q||L.q||"");
   const[bank,setBank]=useState(P.bank||L.bank||null);
@@ -2388,10 +2393,17 @@ function MarketPage({params}){
   useEffect(()=>{const s=JSON.stringify(P);
     if(s!==lastP.current){lastP.current=s;
       setCat(P.cat||P.category||null);setView(P.view||"vitrina");
-      setTerm(P.term||null);setQLive(P.q||"");setQ(P.q||"");setBank(P.bank||null);
+      setTerm(P.term||null);setSeg(P.seg||null);setSub(P.sub||null);
+      setQLive(P.q||"");setQ(P.q||"");setBank(P.bank||null);
       hlChange.current=P.change?parseInt(P.change):null;
       if(P.offer)setDrawer(parseInt(P.offer));}
   },[params]); // eslint-disable-line
+
+  // при смене категории подвид сбрасываем: «премиум» в ипотеке не существует,
+  // а зависший фильтр давал бы пустую витрину без объяснения
+  useEffect(()=>{
+    if(prevCat.current!==cat){prevCat.current=cat;setSeg(null);setSub(null);}
+  },[cat]);
 
   // debounce поиска (серверный q — не дёргаем API на каждую букву)
   useEffect(()=>{const t=setTimeout(()=>setQ(qLive),350);return()=>clearTimeout(t);},[qLive]);
@@ -2404,9 +2416,11 @@ function MarketPage({params}){
     if(term)sp.set("term",term);
     if(q)sp.set("q",q);
     if(bank)sp.set("bank",bank);
+    if(seg)sp.set("seg",seg);
+    if(sub)sp.set("sub",sub);
     const s=sp.toString();
     history.replaceState(null,"","#market"+(s?"?"+s:""));
-  },[cat,view,term,q,bank]);
+  },[cat,view,term,q,bank,seg,sub]);
 
   useEffect(()=>{
     Promise.all([apiFetch("/api/meta/categories"),apiFetch("/api/market/atlas"),
@@ -2423,8 +2437,10 @@ function MarketPage({params}){
     const sp=new URLSearchParams({category:cat,limit:"100"});
     if(term)sp.set("term",term);
     if(q)sp.set("q",q);
+    if(seg)sp.set("segment",seg);
+    if(sub)sp.set("sub",sub);
     apiFetch("/api/market?"+sp).then(setOffers).catch(e=>setErr(e.message));
-  },[cat,term,q,view]);
+  },[cat,term,q,view,seg,sub]);
 
   useEffect(()=>{ // журнал
     if(view!=="changes")return;
@@ -2448,8 +2464,22 @@ function MarketPage({params}){
     hlRef.current.scrollIntoView({block:"center",behavior:"smooth"});},[changes]);
 
   const A=atlas?Object.fromEntries((atlas.categories||[]).map(c=>[c.category,c])):{};
+  // Чипы строим по тому, что РЕАЛЬНО есть в категории (счётчики приходят с
+  // бэка). Массовый сегмент чипом не показываем: он и есть «весь рынок».
+  const _mc=cat?(meta||[]).find(m=>m.id===cat):null;
+  const segChips=((_mc&&_mc.segments)||[]).filter(x=>x.seg&&x.seg!=="mass"&&x.n>=3);
+  const subChips=((_mc&&_mc.sub_segments)||[]).filter(x=>x.sub&&x.n>=3);
   const M=meta?Object.fromEntries(meta.map(m=>[m.id,m])):{};
   const ac=cat?A[cat]:null;
+  // Ранг ВНУТРИ выбранного подвида. Иначе аудитор смотрит на 27 премиальных
+  // карт, а место видит по всем 145 — «#1 из 145» рядом с премиальной полкой.
+  const gsel=(()=>{
+    if(!ac||(!seg&&!sub))return null;
+    const gs=(ac.groups||[]).filter(g=>
+      (seg?g.segment===seg:true)&&(sub?g.sub_segment===sub:true));
+    if(!gs.length)return null;
+    return gs.slice().sort((a,b)=>b.n_banks-a.n_banks)[0];
+  })();
   const total=offers&&offers.length?offers[0].total:null;
   const loadMore=()=>{
     if(!offers||moreBusy)return;
@@ -2457,6 +2487,8 @@ function MarketPage({params}){
     const sp=new URLSearchParams({category:cat,limit:"100",offset:String(offers.length)});
     if(term)sp.set("term",term);
     if(q)sp.set("q",q);
+    if(seg)sp.set("segment",seg);
+    if(sub)sp.set("sub",sub);
     apiFetch("/api/market?"+sp).then(d=>{setOffers([...offers,...(d||[])]);setMoreBusy(false);})
       .catch(()=>setMoreBusy(false));
   };
@@ -2556,7 +2588,21 @@ function MarketPage({params}){
 
     {/* ── СЛОЙ 2 · КАТЕГОРИЯ (журнал доступен и без категории) ───────── */}
     {(cat||view==="changes")&&!err&&<>
-      {ac&&ac.status==="ok"&&<div className="mk-kpis">
+      {ac&&ac.status==="ok"&&gsel&&<div className="mk-kpis">
+        {gsel.sber?<div className="surface mk-kpi bf-tip" data-tip={`место среди ${gsel.n_banks} банков этого подвида${gsel.sber.tied>1?`; наравне ${gsel.sber.tied}`:""}`}>
+          <b className={gsel.sber.percentile<40?"bad":""}>#{gsel.sber.rank}<small> из {gsel.n_banks}</small></b>
+          <span>ранг в подвиде{gsel.small_n?" · малая база":""}</span></div>
+        :<div className="surface mk-kpi"><b>—</b><span>Сбера в этом подвиде нет</span></div>}
+        {gsel.sber&&<div className="surface mk-kpi bf-tip" data-tip={gsel.sber.title||""}>
+          <b>{mkMetric(gsel.sber.value,ac.metric)}</b>
+          <span>{gsel.sber.title?String(gsel.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
+        <div className="surface mk-kpi bf-tip" data-tip={`медиана подвида · разброс ${mkMetric(gsel.min,ac.metric)}–${mkMetric(gsel.max,ac.metric)}`}>
+          <b>{mkMetric(gsel.median,ac.metric)}</b><span>медиана подвида</span></div>
+        {gsel.sber&&<div className="surface mk-kpi bf-tip" data-tip="разрыв с лучшим значением подвида">
+          <b className={Math.abs(gsel.sber.gap_leader)>=1?"bad":""}>{mkGap(gsel.sber.gap_leader,ac.metric)}</b>
+          <span>до лидера подвида</span></div>}
+      </div>}
+      {ac&&ac.status==="ok"&&!gsel&&<div className="mk-kpis">
         {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков${ac.sber.tied>1?`; ${ac.sber.tied} банков с тем же значением делят это место`:""}${ac.small_n?" · малая база!":""}`}>
           <b className={ac.sber.beats_share<0.5?"bad":""}>#{ac.sber.rank}<small> из {ac.n_banks}</small></b>
           <span>ранг Сбера{ac.sber.tied>1?` · ${ac.sber.tied} наравне`:""}{ac.small_n?" · малая база":""}</span></div>}
@@ -2583,6 +2629,22 @@ function MarketPage({params}){
           {MK_TERMS.map(([id,l])=><button key={id} className={`tab ${term===id?"active":""}`}
             onClick={()=>setTerm(term===id?null:id)}>{l}</button>)}
         </div>}
+        {view==="vitrina"&&(segChips.length>0||subChips.length>0)&&
+          <div className="mk-kind" role="group" aria-label="Подвид продукта">
+            <span className="mk-kindlbl">Подвид:</span>
+            <button className={`chip ${!seg&&!sub?"active":""}`}
+              onClick={()=>{setSeg(null);setSub(null);}}>весь рынок</button>
+            {subChips.map(x=><button key={"s"+x.sub}
+              className={`chip ${sub===x.sub?"active":""}`}
+              title={`предложений: ${x.n}`}
+              onClick={()=>{setSub(sub===x.sub?null:x.sub);setSeg(null);}}>
+              {SUBSEG_RU[x.sub]||x.sub}<i>{x.n}</i></button>)}
+            {segChips.map(x=><button key={"g"+x.seg}
+              className={`chip ${seg===x.seg?"active":""}`}
+              title={`предложений: ${x.n}`}
+              onClick={()=>{setSeg(seg===x.seg?null:x.seg);setSub(null);}}>
+              {SEG_RU[x.seg]||x.seg}<i>{x.n}</i></button>)}
+          </div>}
         {view==="changes"&&<label className="mk-noise">
           <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум
         </label>}
@@ -2590,6 +2652,9 @@ function MarketPage({params}){
       </div>
 
       {/* ВИТРИНА */}
+      {(seg||sub)&&!gsel&&<p className="mk-disc" style={{margin:"0 0 12px"}}>
+        Подвид выбран, но ранг по нему не считаем: в этом срезе меньше пяти банков
+        или он не образует сопоставимой группы. Список ниже отфильтрован.</p>}
       {mcat.caveat&&<p className="mk-disc" style={{margin:"0 0 12px"}}>⚠ {mcat.caveat}.</p>}
       {ac&&ac.subsidized_excluded>0&&<p className="mk-disc" style={{margin:"0 0 12px"}}>
         Из рыночного сравнения исключено программ с господдержкой: {ac.subsidized_excluded} — их ставку задаёт государство, она одинакова у всех банков. В витрине ниже они присутствуют.</p>}

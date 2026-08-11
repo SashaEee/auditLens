@@ -1851,6 +1851,18 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .mk-premrow span{font-size:10px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.03em}
 .mk-premmine{margin-top:8px;font-size:11.5px;color:var(--ink-2)}
 .mk-premhard{margin-top:4px;font-size:10.5px;color:var(--ink-3)}
+/* Выбор подвида продукта: сегмент клиента и вид продукта */
+.mk-kind{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mk-kindlbl{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);
+  margin-right:2px}
+.mk-kind .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
+  border:1px solid var(--hair);background:transparent;color:var(--ink-2);font:inherit;
+  font-size:12px;cursor:pointer;transition:background .12s,border-color .12s}
+.mk-kind .chip:hover{background:var(--surface);border-color:var(--hair-2)}
+.mk-kind .chip i{font-style:normal;font-family:'JetBrains Mono',monospace;font-size:9.5px;
+  color:var(--ink-3)}
+.mk-kind .chip.active{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.mk-kind .chip.active i{color:var(--ink-2)}
 /* Поле переполнения и маркер объекта аудита на шкале */
 .mk-over{position:absolute;top:0;bottom:0;width:6%;
   background:repeating-linear-gradient(45deg,var(--hair) 0 2px,transparent 2px 5px);opacity:.5;pointer-events:none}
@@ -2033,6 +2045,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260811-2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260811-3"></script>
 </body>
 </html>
