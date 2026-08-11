@@ -103,20 +103,51 @@ def _conditions_text(page: str) -> str | None:
     return chunk if len(chunk) > 200 else None
 
 
-def _fetch(section: str, pid: str, sess: requests.Session) -> str | None:
+# Решающие строки («Обслуживание карты бесплатно», «Для зарплатных клиентов»)
+# лежат в разных местах страницы: у дебетовой карты в начале блока, у кредитной
+# — после лимита и грейса. Слепая обрезка окна под бюджет промпта их теряла, и
+# один и тот же продукт получал то «бесплатно», то «неизвестно». Поэтому в
+# промпт кладём начало блока плюс все фрагменты с ключевыми словами.
+_KEY_RE = re.compile(
+    r"обслуживан|бесплатн|беспл\.|зарплатн|страхов|полис|кэшб|кешб|"
+    r"остаток|остатк|оборот|покупк|подписк|пакет услуг|льготн|акци|"
+    r"первый год|первые|комисси", re.I)
+_HEAD_CHARS = 900
+
+
+def _focus(text: str, budget: int) -> str:
+    """Сжать блок условий до бюджета, сохранив решающие фрагменты."""
+    if len(text) <= budget:
+        return text
+    head, rest = text[:_HEAD_CHARS], text[_HEAD_CHARS:]
+    out, size = [head], len(head)
+    for part in re.split(r"(?<=[.;])\s+|\s+(?=[А-ЯЁ][а-яё]{4,}\s)", rest):
+        if size >= budget:
+            break
+        if _KEY_RE.search(part):
+            piece = part[:400]
+            out.append(piece)
+            size += len(piece) + 1
+    return " ".join(out)
+
+
+def _fetch(section: str, pid: str, sess: requests.Session) -> tuple[str | None, str]:
+    """(текст условий, причина). Причину различаем не для красоты: сетевой сбой
+    надо повторить завтра, а страницу без блока условий — не дёргать неделями."""
     path = _DETAIL_PATH.get(section)
     if not path:
-        return None
+        return None, "no_path"
     url = f"{BASE}/{section}/{path}/{pid}/"
     try:
         r = sess.get(url, timeout=40, headers={"User-Agent": _UA,
                                                "Accept-Language": "ru-RU,ru;q=0.9"})
     except requests.RequestException as e:
         log.warning("обогащение: %s не открылась (%s)", url, e)
-        return None
+        return None, "net"
     if r.status_code != 200 or len(r.text) < 5000:
-        return None
-    return _conditions_text(r.text)
+        return None, "http"
+    txt = _conditions_text(r.text)
+    return (txt, "ok") if txt else (None, "no_anchor")
 
 
 # ── извлечение смысла ────────────────────────────────────────────────────────
@@ -265,7 +296,7 @@ def _ask(batch: list[dict]) -> dict[int, dict]:
     parts = []
     for it in batch:
         parts.append(f'### {it["i"]}. {it["bank"]} — {it["title"]} '
-                     f'(категория: {it["category"]})\n{it["text"][:_TEXT_CHARS]}')
+                     f'(категория: {it["category"]})\n{_focus(it["text"], _TEXT_CHARS)}')
     user = _FIELDS + "\n\nПРОДУКТЫ:\n\n" + "\n\n".join(parts)
     resp = _client().chat.completions.create(
         model=fast_model(),
@@ -384,10 +415,18 @@ def enrich(limit: int = 120, categories: Iterable[str] | None = None) -> dict:
             "SELECT offer_id, src_digest FROM offer_enrichment")).all())
 
     for n, row in enumerate(todo):
-        txt = _fetch(row["section"], row["product_id"], sess)
+        txt, why = _fetch(row["section"], row["product_id"], sess)
         time.sleep(_PAUSE_S)
         if not txt:
             stats["no_text"] += 1
+            if why in ("no_anchor", "no_path", "http"):
+                # свойство страницы, а не сбой сети: помечаем, чтобы не качать
+                # её заново каждый прогон (иначе такие офферы съедают квоту)
+                _save(row["offer_id"], "", {"free_kind": "unknown",
+                                            "rate_attainability": "unknown",
+                                            "client_segment": "unknown",
+                                            "free_conditions": [], "rate_requires": [],
+                                            "no_text": why}, model)
             continue
         stats["fetched"] += 1
         digest = hashlib.sha256(txt.encode("utf-8")).hexdigest()
