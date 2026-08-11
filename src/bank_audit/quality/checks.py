@@ -101,6 +101,25 @@ CHECKS = [
         """,
     },
     {
+        # Сегмент продукта витрина определяет по названию («Премиальная»,
+        # «Детская»), и на непрозрачных именах правило молчит. LLM читает сам
+        # тариф — расхождение показывает, какие названия правило не берёт.
+        # Это не ошибка данных, а материал для методологии: чинить регулярку.
+        "code": "SEGMENT_MISMATCH",
+        "severity": "info",
+        "sql": """
+            SELECT 'offer' as et, o.offer_id as eid,
+                   jsonb_build_object('title', o.title,
+                                      'by_rule', COALESCE(o.segment, 'mass'),
+                                      'by_text', e.payload->>'client_segment') as detail
+              FROM product_offer o
+              JOIN offer_enrichment e ON e.offer_id = o.offer_id
+             WHERE o.is_active
+               AND e.payload->>'client_segment' NOT IN ('unknown', '')
+               AND e.payload->>'client_segment' IS DISTINCT FROM COALESCE(o.segment, 'mass')
+        """,
+    },
+    {
         "code": "DUP_REVIEW_BY_TEXT",
         "severity": "info",
         "sql": """

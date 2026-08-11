@@ -757,6 +757,7 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
                e.payload->'free_conditions'     AS free_conditions,
                e.payload->>'rate_attainability' AS attain,
                e.payload->'rate_requires'       AS rate_requires,
+               e.payload->>'product_kind'       AS product_kind,
                count(*) OVER () AS total
           FROM v_market_rub_offer m
           LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id

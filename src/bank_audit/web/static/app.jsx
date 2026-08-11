@@ -2588,7 +2588,8 @@ function MarketPage({params}){
                   <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
                     {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
-                <td data-label="Продукт">{r.title}<OfferTerms o={r}/></td>
+                <td data-label="Продукт">{r.title}<OfferTerms o={r}/>
+                  {r.product_kind&&<div className="ofkind" title="что это за продукт на самом деле — разобрано по тексту тарифа">{r.product_kind}</div>}</td>
                 <td className="right mono tnum" data-label={mcat.metric_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>{mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
                 {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12.5}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
                 {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
