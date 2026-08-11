@@ -413,6 +413,23 @@ def admin_reports(days: int = 30, limit: int = 200, q: Optional[str] = None,
                                  username=username, only_bad=only_bad)
 
 
+@app.get("/api/admin/session/{sid}")
+def admin_session(sid: int, user: CurrentUser = Depends(get_current_user)):
+    """Чужая переписка целиком — чтобы разобрать жалобу на быстрый ответ."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    data = telemetry.session_view(sid)
+    if not data:
+        raise HTTPException(404, "session not found")
+    try:
+        userdata.log_event(user.username, "admin_session_open",
+                           {"session_id": sid,
+                            "owner": (data.get("session") or {}).get("username")})
+    except Exception:
+        pass
+    return data
+
+
 @app.get("/api/admin/complaints")
 def admin_complaints(days: int = 30, limit: int = 60,
                      user: CurrentUser = Depends(get_current_user)):

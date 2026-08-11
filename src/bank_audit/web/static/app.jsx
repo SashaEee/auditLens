@@ -6458,6 +6458,12 @@ const AD_CSS=`
 .pu-cmpwhy span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--neg);
   border:1px solid color-mix(in oklab,var(--neg),transparent 72%);border-radius:3px;padding:1px 5px}
 .pu-cmpnote{font-size:12px;color:var(--ink-3);font-style:italic;margin-top:4px}
+.pu-msg{padding:10px 0;border-bottom:1px solid var(--hair)}
+.pu-msg:last-child{border-bottom:0}
+.pu-msghead{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-4);
+  margin-bottom:4px}
+.pu-msg.user .pu-msgbody{font-size:13px;font-weight:500;color:var(--ink)}
+.pu-msg.assistant .pu-msgbody{font-size:12.5px;line-height:1.6;color:var(--ink-2)}
 
 
 /* ── новые разделы «Пульса» ── */
@@ -6967,7 +6973,7 @@ function PuPeople({days,onOpenUser}){
   </>;
 }
 
-function PuUserCard({username,days,onClose,onOpenReport}){
+function PuUserCard({username,days,onClose,onOpenReport,onOpenSession}){
   const[c,setC]=useState(null);
   const[tab,setTab]=useState("act");
   useEffect(()=>{setC(null);
@@ -7056,6 +7062,7 @@ function PuUserCard({username,days,onClose,onOpenReport}){
               {x.comment&&<em className="pu-cmt"> «{x.comment}»</em>}</span>
             <span className={x.verdict<0?"pu-vd neg":"pu-vd pos"}>{x.verdict<0?"👎":"👍"}</span>
             {x.report_id&&<button className="pu-link" onClick={()=>onOpenReport(x.report_id)}>отчёт →</button>}
+            {!x.report_id&&x.session_id&&<button className="pu-link" onClick={()=>onOpenSession(x.session_id)}>диалог →</button>}
           </div>)}
           {(c.ratings||[]).length===0&&<div className="pu-empty">Ничего не оценивал.</div>}
         </div>}
@@ -7096,6 +7103,34 @@ function PuReportView({rid,onClose}){
       {!r?<div style={{padding:24}}><Skel h={140}/></div>
         :r.error?<ErrState msg="Отчёт не найден."/>
         :<div className="pu-drsec pu-report">{renderMD(r.body||"")}</div>}
+    </div>
+  </div>;
+}
+
+function PuSessionView({sid,onClose}){
+  const[d,setD]=useState(null);
+  useEffect(()=>{setD(null);
+    apiFetch(`/api/admin/session/${sid}`).then(setD).catch(()=>setD({error:true}));},[sid]);
+  useEffect(()=>{const k=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[onClose]);
+  const se=(d&&d.session)||{};
+  return <div className="pu-drawer" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div className="pu-dr">
+      <div className="pu-drhead">
+        <div><div className="pu-drname">{se.title||"Диалог"}</div>
+          <div className="pu-drsub">{d&&!d.error&&<>автор: {se.name} · начат {se.at}
+            <span className="pu-badge adm" title="служебный просмотр владельца; действие записано в журнал">служебный доступ</span></>}</div></div>
+        <button className="pu-x" onClick={onClose} aria-label="Закрыть">✕</button>
+      </div>
+      {!d?<div style={{padding:24}}><Skel h={140}/></div>
+        :d.error?<ErrState msg="Диалог не найден."/>
+        :<div className="pu-drsec">
+          {(d.messages||[]).map((m,i)=><div key={i} className={"pu-msg "+m.role}>
+            <div className="pu-msghead">{m.role==="user"?"вопрос":"ответ"} · {m.at}
+              {m.meta&&m.meta.mode?<> · {m.meta.mode==="deep"?"глубокий":"быстрый"}</>:null}</div>
+            <div className="pu-msgbody">{m.role==="user"?m.content:renderMD(m.content||"")}</div>
+          </div>)}
+        </div>}
     </div>
   </div>;
 }
@@ -7147,7 +7182,7 @@ function PuReports({days,onOpenReport,onOpenUser}){
   </div>;
 }
 
-function PuComplaints({days,onOpenReport,onOpenUser}){
+function PuComplaints({days,onOpenReport,onOpenUser,onOpenSession}){
   const[d,setD]=useState(null);
   useEffect(()=>{setD(null);
     apiFetch("/api/admin/complaints?days="+days).then(setD).catch(()=>setD({items:[]}));
@@ -7164,6 +7199,7 @@ function PuComplaints({days,onOpenReport,onOpenUser}){
         <span className="md">{PU_KIND_RU[x.kind]||x.kind}</span>
         <span className="at">{x.at}</span>
         {x.report_id&&<button className="pu-link" onClick={()=>onOpenReport(x.report_id)}>открыть отчёт →</button>}
+        {!x.report_id&&x.session_id&&<button className="pu-link" onClick={()=>onOpenSession(x.session_id)}>показать диалог →</button>}
       </div>
       <div className="pu-cmpbody">{x.question||x.title||x.item_key}</div>
       {(x.reasons||[]).length>0&&<div className="pu-cmpwhy">
@@ -7186,6 +7222,7 @@ function PulsePage(){
   // контекст разбора: пришёл из жалобы → открыл отчёт → вернулся в список
   const[card,setCard]=useState(null);
   const[rep,setRep]=useState(null);
+  const[sess,setSess]=useState(null);
   const load=useCallback(()=>{
     apiFetch("/api/admin/pulse?days="+days)
       .then(d=>{setM(d);setErr(false);setTs(new Date());})
@@ -7277,7 +7314,7 @@ function PulsePage(){
 
         {/* ②c все люди поимённо + карточка по клику */}
         <PuPeople days={days} onOpenUser={setCard}/>
-        <PuComplaints days={days} onOpenReport={setRep} onOpenUser={setCard}/>
+        <PuComplaints days={days} onOpenReport={setRep} onOpenUser={setCard} onOpenSession={setSess}/>
 
         {/* ④ тепловая карта */}
         <div className="pu-card pu-sec">
@@ -7378,8 +7415,9 @@ function PulsePage(){
 
 
     {card&&<PuUserCard username={card} days={days}
-      onClose={()=>setCard(null)} onOpenReport={setRep}/>}
+      onClose={()=>setCard(null)} onOpenReport={setRep} onOpenSession={setSess}/>}
     {rep&&<PuReportView rid={rep} onClose={()=>setRep(null)}/>}
+    {sess&&<PuSessionView sid={sess} onClose={()=>setSess(null)}/>}
 
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
                  fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:"var(--ink-4)"}}>

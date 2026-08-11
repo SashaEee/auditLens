@@ -791,7 +791,7 @@ def user_card(username: str, days: int = 30) -> dict:
                    to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
                    payload->>'question' AS question, payload->>'comment' AS comment,
                    payload->>'title' AS title, payload->>'report_id' AS report_id,
-                   payload->'reasons' AS reasons
+                   payload->>'session_id' AS session_id, payload->'reasons' AS reasons
               FROM item_feedback WHERE username = :u
              ORDER BY created_at DESC LIMIT 40""", p),
         "errors": _rows("""
@@ -871,8 +871,9 @@ def complaints(days: int = 30, limit: int = 60) -> list[dict]:
                f.payload->>'comment'   AS comment,
                f.payload->>'title'     AS title,
                f.payload->>'mode'      AS mode,
-               f.payload->>'report_id' AS report_id,
-               f.payload->'reasons'    AS reasons
+               f.payload->>'report_id'  AS report_id,
+               f.payload->>'session_id' AS session_id,
+               f.payload->'reasons'     AS reasons
           FROM item_feedback f
           LEFT JOIN app_user au ON au.username = f.username
          WHERE f.verdict < 0 AND f.created_at > now() - (:days || ' days')::interval
@@ -886,3 +887,27 @@ def complaints(days: int = 30, limit: int = 60) -> list[dict]:
                 rs = []
         r["reasons"] = [AIFB_REASON_RU.get(x, x) for x in (rs or []) if x]
     return rows
+
+
+def session_view(session_id: int) -> dict:
+    """Переписка целиком — служебный просмотр владельцем.
+
+    Жалоба на БЫСТРЫЙ ответ отчёта не создаёт, и без диалога видно только
+    вопрос: на что именно человек пожаловался — неизвестно. В оценке лежит
+    session_id, по нему и открываем.
+    """
+    head = _rows("""SELECT cs.session_id, cs.title, cs.username,
+                           COALESCE(au.display_name, cs.username) AS name,
+                           to_char(cs.created_at AT TIME ZONE 'Europe/Moscow',
+                                   'DD.MM.YYYY HH24:MI') AS at
+                      FROM chat_session cs
+                      LEFT JOIN app_user au ON au.username = cs.username
+                     WHERE cs.session_id = :s""", {"s": session_id})
+    if not head:
+        return {}
+    msgs = _rows("""SELECT role, content, meta,
+                           to_char(created_at AT TIME ZONE 'Europe/Moscow',
+                                   'DD.MM HH24:MI') AS at
+                      FROM chat_message WHERE session_id = :s
+                     ORDER BY created_at""", {"s": session_id})
+    return {"session": head[0], "messages": msgs}
