@@ -2270,6 +2270,25 @@ function MkTerms({c,compact}){
   return null;
 }
 
+// Бейдж на строке витрины: чем куплен ноль в цене / кому доступна ставка.
+// Без него две строки с «0 ₽/год» выглядят одинаково, хотя у одной это
+// безусловный ноль, а у другой — остаток 2,5 млн на счетах.
+function OfferTerms({o}){
+  const f=o.free_kind, a=o.attain;
+  if(f==="conditional"){
+    const c=(o.free_conditions||[]).map(x=>
+      `${COND_RU[x.type]||"условие"}${x.threshold_rub?" от "+fmtNum(x.threshold_rub)+" ₽":""}${x.note?" — "+x.note:""}`).join("; ");
+    return <span className="ofc cond" title={c||"бесплатно только при выполнении условий"}>бесплатно при условии</span>;
+  }
+  if(f==="unconditional") return <span className="ofc free" title="плата не взимается ни при каких условиях">бесплатно без условий</span>;
+  if(a==="narrow"||a==="promo_only"){
+    const req=(o.rate_requires||[]).map(x=>REQ_RU[x]||x).join(", ");
+    return <span className="ofc cond" title={req?`минимальная ставка требует: ${req}`:"минимальная ставка доступна не всем"}>
+      {a==="promo_only"?"ставка только по акции":"ставка не всем"}</span>;
+  }
+  return null;
+}
+
 // ступенчатая история ставки оффера (SCD2-версии условий)
 function MkStep({series}){
   const pts=(series||[]).filter(p=>p.rate_pct!=null);
@@ -2569,7 +2588,7 @@ function MarketPage({params}){
                   <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
                     {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
-                <td data-label="Продукт">{r.title}</td>
+                <td data-label="Продукт">{r.title}<OfferTerms o={r}/></td>
                 <td className="right mono tnum" data-label={mcat.metric_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>{mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
                 {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12.5}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
                 {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}

@@ -721,21 +721,21 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     только по загруженной сотне."""
     limit = max(1, min(limit, 200))
     # не-банки (сервисы подбора, застройщики) не показываем в банковской витрине
-    cond, params = ["category = :c",
-                    "bank_name !~* :nonbank"], {
+    cond, params = ["m.category = :c",
+                    "m.bank_name !~* :nonbank"], {
         "c": category, "l": limit, "off": max(0, offset),
         "nonbank": cat_meta.NON_BANK_SQL_RE}
     if q_text:
-        cond.append("(bank_name ILIKE :qq OR title ILIKE :qq)")
+        cond.append("(m.bank_name ILIKE :qq OR m.title ILIKE :qq)")
         params["qq"] = f"%{q_text.strip()}%"
     if term:
-        cond.append("term_bucket = :tb"); params["tb"] = term
+        cond.append("m.term_bucket = :tb"); params["tb"] = term
     # сегмент и вид продукта: премиальная карта не должна ранжироваться рядом
     # с детской, а залоговый кредит — рядом с наличными (аудит 11.08.2026)
     if segment:
-        cond.append("coalesce(segment, 'mass') = :seg"); params["seg"] = segment
+        cond.append("coalesce(m.segment, 'mass') = :seg"); params["seg"] = segment
     if sub:
-        cond.append("sub_segment = :sub"); params["sub"] = sub
+        cond.append("m.sub_segment = :sub"); params["sub"] = sub
     # сортировка по СОПОСТАВИМОЙ метрике категории (у карт это не ставка)
     meta = cat_meta.CAT_META.get(category)
     m_field = meta["metric"] if meta else "rate_pct"
@@ -743,18 +743,25 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     order = (f"{m_field} ASC NULLS LAST" if m_lower
              else f"{m_field} DESC NULLS LAST")
     return q(f"""
-        SELECT bank_slug, bank_name, is_sber, offer_id, title, url,
-               primary_source, segment, sub_segment,
-               rate_min, rate_max, psk_min, psk_max,
-               rate_pct, rate_kind, term_bucket,
-               amount_min, amount_max, term_months_min, term_months_max,
-               fee_open, fee_service, grace_days, cashback_pct,
-               early_withdraw, capitalization,
-               replenishable, conditions, valid_from,
+        SELECT m.bank_slug, m.bank_name, m.is_sber, m.offer_id, m.title, m.url,
+               m.primary_source, m.segment, m.sub_segment,
+               m.rate_min, m.rate_max, m.psk_min, m.psk_max,
+               m.rate_pct, m.rate_kind, m.term_bucket,
+               m.amount_min, m.amount_max, m.term_months_min, m.term_months_max,
+               m.fee_open, m.fee_service, m.grace_days, m.cashback_pct,
+               m.early_withdraw, m.capitalization,
+               m.replenishable, m.conditions, m.valid_from,
+               -- разбор условий: «0 руб.» в цене без пояснения, чем этот ноль
+               -- куплен, аудитору не говорит ничего (см. enrich_llm)
+               e.payload->>'free_kind'          AS free_kind,
+               e.payload->'free_conditions'     AS free_conditions,
+               e.payload->>'rate_attainability' AS attain,
+               e.payload->'rate_requires'       AS rate_requires,
                count(*) OVER () AS total
-          FROM v_market_rub_offer
+          FROM v_market_rub_offer m
+          LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
          WHERE {' AND '.join(cond)}
-         ORDER BY {order}
+         ORDER BY m.{order}
          LIMIT :l OFFSET :off
     """, params)
 

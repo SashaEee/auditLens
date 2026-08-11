@@ -344,7 +344,7 @@ def enrich(limit: int = 120, categories: Iterable[str] | None = None) -> dict:
     cats = list(categories or CATEGORIES)
     todo = _pending(cats, limit)
     stats = {"selected": len(todo), "fetched": 0, "no_text": 0,
-             "enriched": 0, "llm_calls": 0, "skipped_same": 0}
+             "enriched": 0, "no_answer": 0, "llm_calls": 0, "skipped_same": 0}
     if not todo:
         return stats
     sess = requests.Session()
@@ -365,6 +365,14 @@ def enrich(limit: int = 120, categories: Iterable[str] | None = None) -> dict:
         for it in batch:
             payload = got.get(it["i"])
             if payload is None:
+                # Вызов прошёл, но объекта с этим номером в ответе нет. Пишем
+                # пустой разбор с тем же хешем: иначе такой оффер качался бы
+                # заново каждый прогон и вечно съедал бы квоту обхода.
+                _save(it["offer_id"], it["digest"],
+                      {"free_kind": "unknown", "rate_attainability": "unknown",
+                       "client_segment": "unknown", "free_conditions": [],
+                       "rate_requires": [], "no_answer": True}, model)
+                stats["no_answer"] += 1
                 continue
             _save(it["offer_id"], it["digest"], payload, model)
             stats["enriched"] += 1
