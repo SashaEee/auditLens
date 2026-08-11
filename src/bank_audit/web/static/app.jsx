@@ -2177,7 +2177,7 @@ function MkStrip({c,big}){
 
 // Светофор категорий: перцентиль вместо голого ранга. «#1 из 125» при 70
 // одинаковых значениях — бесполезное утверждение, перцентиль честнее.
-const SUBSEG_RU={new:"новостройка",secondary:"вторичка",refin:"рефинанс",pledge:"под залог",
+const SUBSEG_RU={ip:"для ИП",ooo:"для ООО",any:"ИП и ООО",new:"новостройка",secondary:"вторичка",refin:"рефинанс",pledge:"под залог",
   house:"ИЖС",commercial:"коммерческая",subsidized:"господдержка",cash:"наличными",
   auto:"авто",installment:"рассрочка",classic:"классические"};
 const SEG_RU={premium:"премиум",private:"private",kids:"детские",youth:"молодёжные",

@@ -357,3 +357,14 @@ banki_products:
     - { name: bp_debitcards,  section: debitcards,  category: card_debit }
     - { name: bp_deposits,    section: deposits,    category: deposit }
     - { name: bp_autocredits, section: autocredits, category: auto_loan }
+
+
+# ── Sravni.ru РКО (служебный API /proxy-msb-rko/offers) ───────────────────────
+# Единственный источник, где расчётно-кассовое обслуживание отдаётся рынком, а
+# не рекламой: 523 тарифа 136 банков, Сбер присутствует. Проверено 11.08.2026;
+# banki.ru по РКО отдаёт только тарифы ВТБ (см. sources/sravni_rko.py).
+sravni_rko:
+  adapter: bank_audit.sources.sravni_rko:SravniRkoAdapter
+  collector: http
+  targets:
+    - { name: rko_all, category: rko }

@@ -202,11 +202,19 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
     # сегмент клиента и вид продукта — ранг считается ВНУТРИ них, иначе
     # премиальная карта сравнивается с детской, а залоговый кредит с наличными
     from ..categories import classify_segment, classify_sub_segment
+    sub = classify_sub_segment(d.category, d.title)
+    if d.category == "rko" and not sub:
+        # Форма бизнеса в названии тарифа обычно не написана («Модуль РКО ВВВ»),
+        # а цена от неё зависит вдвое: у Сбера тот же пакет стоит 2 870 руб. ИП
+        # и 5 170 руб. ООО. Форму отдаёт сам источник — берём её оттуда.
+        types = [str(x).lower() for x in ((d.raw or {}).get("org_types") or [])]
+        if types:
+            sub = "any" if ("ip" in types and "ooo" in types) else (
+                "ip" if "ip" in types else ("ooo" if "ooo" in types else None))
     session.execute(text("""
         UPDATE product_offer SET segment = :seg, sub_segment = :sub
          WHERE offer_id = :o
-    """), {"seg": classify_segment(d.title),
-           "sub": classify_sub_segment(d.category, d.title), "o": row})
+    """), {"seg": classify_segment(d.title), "sub": sub, "o": row})
     offer_id = row
 
     new_digest = _digest(d)

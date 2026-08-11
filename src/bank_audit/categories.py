@@ -56,6 +56,14 @@ CATEGORIES: list[dict] = [
      "rate_label": None,         "show_rate": False, "show_bar": False, "show_terms": False,
      "secondary": "cashback_pct",
      "caveat": "Сравнение по безусловной стоимости обслуживания (руб./год); разовая плата за выпуск — отдельно"},
+    {"id": "rko",         "label": "РКО для бизнеса", "ru": "расчётно-кассовое обслуживание",
+     "metric": "fee_service", "metric_label": "Обслуживание", "metric_unit": " ₽/мес",
+     "metric_lower_is_better": True,
+     "rate_label": None, "show_rate": False, "show_bar": True, "show_terms": False,
+     "caveat": "Сравнение по ежемесячной плате за пакет (именно в месяц — так "
+               "устроен рынок РКО). Лимиты бесплатных платежей и комиссии за "
+               "переводы физлицам смотрите в условиях тарифа: ноль в цене часто "
+               "компенсируется процентом за перевод"},
     {"id": "auto_loan",   "label": "Автокредиты",     "ru": "автокредиты",
      "metric": "psk_min",    "metric_label": "ПСК от",     "metric_unit": "%",
      "metric_lower_is_better": True,
@@ -171,6 +179,9 @@ _SEGMENT_RULES: list[tuple] = [
 # Подсегмент — «что именно за продукт» внутри категории. Ключ словаря — наша
 # категория, значение — правила по названию (порядок важен: первое совпадение).
 _SUBSEGMENT_RULES: dict[str, list[tuple]] = {
+    "rko": [
+        ("ip",  _re2.compile(r"\bдля ип\b|\bип\b", _re2.I)),
+    ],
     "mortgage": [
         ("refin",     _re2.compile(r"рефинанс", _re2.I)),
         ("subsidized", _re2.compile(r"семейн|господдержк|it[- ]?специал|ит[- ]?специал|"
