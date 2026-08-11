@@ -30,6 +30,7 @@ from sqlalchemy import text  # noqa: E402
 
 from bank_audit import db  # noqa: E402
 from bank_audit.config import Settings  # noqa: E402
+from bank_audit.normalizer.offers import bank_slug_for  # noqa: E402
 
 _GROUPS = """
     SELECT lower(regexp_replace(name, '[^[:alnum:]]', '', 'g')) AS key,
@@ -49,9 +50,16 @@ _ROW = """
 """
 
 
-def _rank(r) -> tuple:
-    """Канонический — тот, у кого читаемый slug, а при равенстве больше данных."""
-    return (0 if str(r["slug"]).startswith("unknown_") else 1, r["offers"], r["reviews"])
+def _rank(r, target: str | None) -> tuple:
+    """Канонический — прежде всего ТОТ, КУДА БУДЕТ ПИСАТЬ СЛЕДУЮЩИЙ СБОР.
+
+    Иначе слияние бессмысленно: нормализатор заводит строку по своему правилу
+    (алиасы + fuzzy + unknown_<хеш ключа>), и уже завтра дубль воскресает под
+    тем же именем. При прочих равных берём читаемый slug и больше данных.
+    """
+    return (1 if r["slug"] == target else 0,
+            0 if str(r["slug"]).startswith("unknown_") else 1,
+            r["offers"], r["reviews"])
 
 
 def main(apply: bool = False) -> int:
@@ -62,10 +70,19 @@ def main(apply: bool = False) -> int:
         print(f"групп с одинаковым названием: {len(groups)}")
         for g in groups:
             rows = s.execute(text(_ROW), {"ids": list(g["ids"])}).mappings().all()
-            keep = max(rows, key=_rank)
+            # куда попадёт следующий сбор с таким именем
+            targets = {bank_slug_for(s, r["name"]) for r in rows}
+            target = next(iter(targets)) if len(targets) == 1 else None
+            keep = max(rows, key=lambda r: _rank(r, target))
             drop = [r for r in rows if r["bank_id"] != keep["bank_id"]]
+            note = ""
+            if target and target != keep["slug"]:
+                # Целевого slug нет ни у одной строки (например «Дальневосточный
+                # Банк» лежит под чужим slug vostochny). Переименовываем ту,
+                # что оставляем, — иначе завтра появится третья.
+                note = f" · slug → {target}"
             print(f"  {keep['name']}  ← оставляем {keep['slug']} "
-                  f"({keep['offers']} офферов, {keep['reviews']} отзывов)")
+                  f"({keep['offers']} офферов, {keep['reviews']} отзывов){note}")
             for d in drop:
                 print(f"      сливаем {d['slug']}: {d['offers']} офферов, "
                       f"{d['reviews']} отзывов")
@@ -104,6 +121,12 @@ def main(apply: bool = False) -> int:
                     s.execute(text("DELETE FROM bank WHERE bank_id = :d"),
                               {"d": d["bank_id"]})
                 merged += 1
+            if apply and target and target != keep["slug"]:
+                free = s.execute(text("SELECT 1 FROM bank WHERE slug = :s"),
+                                 {"s": target}).first() is None
+                if free:
+                    s.execute(text("UPDATE bank SET slug = :s WHERE bank_id = :b"),
+                              {"s": target, "b": keep["bank_id"]})
     print(f"\n{'СЛИТО' if apply else 'СУХОЙ ПРОГОН'}: групп {len(groups)}, "
           f"строк слито {merged}, перенесено офферов {moved_offers}, "
           f"отзывов {moved_reviews}")

@@ -34,16 +34,14 @@ def _fuzzy_ok(key: str, alias: str) -> bool:
     return kt <= at or at <= kt or fuzz.ratio(key, alias) >= 85
 
 
-def resolve_bank(session, raw_name: str) -> int:
-    """Резолвит raw-имя банка в bank_id (создаёт строку при необходимости).
-    Логика:
-      1. Нормализуем имя (lower, без кавычек, без префиксов «ПАО/АО/...»)
-      2. Прямой lookup в BANK_ALIASES
-      3. Fuzzy-match по тем же ключам (порог 88)
-      4. Иначе — slug = unknown_<digest>
+def bank_slug_for(session, raw_name: str) -> str:
+    """Какой slug получит это написание имени — БЕЗ создания строки.
+
+    Вынесено из resolve_bank, чтобы слияние дублей могло спросить «куда будет
+    писать следующий сбор» и оставить именно ту строку. Иначе слитый дубль
+    воскресает на следующий день под тем же именем.
     """
-    raw_name = (raw_name or "").strip()
-    key = normalize_bank_key(raw_name)
+    key = normalize_bank_key((raw_name or "").strip())
     slug = BANK_ALIASES.get(key)
     if not slug and key:
         # fuzzy: топ-5 кандидатов, а не единственный лучший — иначе короткий
@@ -61,14 +59,20 @@ def resolve_bank(session, raw_name: str) -> int:
         # «psb») — до unknown_-фолбэка пробуем прямое совпадение со слагом уже
         # известного банка. Иначе плодятся латинские двойники (фидбек аналитиков;
         # 105 офферов были слиты миграцией 22.07.2026).
-        row = session.execute(text("SELECT bank_id FROM bank WHERE slug=:s"),
+        row = session.execute(text("SELECT slug FROM bank WHERE slug=:s"),
                               {"s": key}).first()
         if row:
             return row[0]
     if not slug:
-        # Пустое имя или "?" → bank_id из placeholder-банка "unknown_empty"
-        slug_key = key if key else "_empty_"
-        slug = "unknown_" + stable_digest({"n": slug_key})[:10]
+        # Пустое имя или "?" → placeholder-банк
+        slug = "unknown_" + stable_digest({"n": key if key else "_empty_"})[:10]
+    return slug
+
+
+def resolve_bank(session, raw_name: str) -> int:
+    """Резолвит raw-имя банка в bank_id (создаёт строку при необходимости)."""
+    raw_name = (raw_name or "").strip()
+    slug = bank_slug_for(session, raw_name)
     row = session.execute(text("SELECT bank_id FROM bank WHERE slug=:s"), {"s": slug}).first()
     if row:
         return row[0]
