@@ -812,6 +812,10 @@ def meta_categories():
     return out
 
 
+# «бесплатно всегда» лучше «бесплатно при условии», а то — лучше платного
+_FREE_RANK = {"unconditional": 2, "conditional": 1, "paid": 0}
+
+
 def _jsonb(v):
     """jsonb из драйвера приходит то dict/list, то строкой — приводим к python."""
     if v is None or isinstance(v, (list, dict)):
@@ -922,7 +926,16 @@ def market_atlas(term: Optional[str] = None):
         best = by_group.setdefault(gkey, {})
         lower = meta["metric_lower_is_better"]
         cur = best.get(r["bank_slug"])
-        if cur is None or (val < cur["rate"] if lower else val > cur["rate"]):
+        # При РАВНОЙ метрике банк представляет оффер с лучшими условиями. У карт
+        # это не придирка: десятки банков стоят на «0 руб./год», и если у банка
+        # есть и безусловно бесплатная карта, и бесплатная «при остатке 2,5 млн»,
+        # то без этого правила банк представляла та, что попалась первой, —
+        # и доля «бесплатных без условий» на витрине зависела бы от порядка
+        # обхода строк, а не от рынка.
+        tie_better = (cur is not None and val == cur["rate"]
+                      and _FREE_RANK.get(r.get("free_kind"), -1)
+                      > _FREE_RANK.get(cur.get("free_kind"), -1))
+        if cur is None or tie_better or (val < cur["rate"] if lower else val > cur["rate"]):
             best[r["bank_slug"]] = {
                 "slug": r["bank_slug"], "name": r["bank_name"],
                 "is_sber": bool(r["is_sber"]), "rate": val,
