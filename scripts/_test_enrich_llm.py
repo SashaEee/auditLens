@@ -90,7 +90,9 @@ check("оговорка «при остатке» не проходит", _free_
 check("«первый год, далее» не проходит", _free_by_rule(YEAR, 0.0), None)
 check("чужая плата рядом не мешает", _free_by_rule(NOISE, 0.0), "unconditional")
 check("цена больше нуля не проходит", _free_by_rule(FREE, 7000.0), None)
-check("цена неизвестна не проходит", _free_by_rule(FREE, None), None)
+check("цена не разобрана — подписи достаточно", _free_by_rule(FREE, None), "unconditional")
+check("«для новых клиентов» — это условие",
+      _free_by_rule("Обслуживание карты бесплатно для новых клиентов банка", None), None)
 check("нет строки обслуживания", _free_by_rule("Ставка 20 проц. Сумма до 1 млн", 0.0), None)
 
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
