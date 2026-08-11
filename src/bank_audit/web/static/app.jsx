@@ -2216,6 +2216,60 @@ function MkTrust({c}){
   return <span className="mk-trust">{b.map(([t,ttl],i)=><i key={i} title={ttl}>{t}</i>)}</span>;
 }
 
+// ── Чем куплено лучшее значение ───────────────────────────────────────────
+// Цена обслуживания карты вырождена: у большинства банков ноль. Но «бесплатно
+// всегда» и «бесплатно при остатке 2,5 млн» — разные продукты, и разница
+// написана прозой; её достаёт offer_enrichment. Здесь она становится ответом
+// там, где раньше был прочерк «метрика не различает банки».
+const FREE_RU={unconditional:"без условий",conditional:"при условии",paid:"платно"};
+const REQ_RU={payroll:"зарплатный проект",insurance:"страхование",new_client:"новый клиент",
+  online:"онлайн-заявка",promo_period:"акция или первый период",category_spend:"траты в категориях",
+  large_amount:"крупная сумма",collateral:"залог",subsidy:"господдержка",other:"особые условия"};
+const ATT_RU={broad:"доступна всем",narrow:"нужны условия",promo_only:"только по акции"};
+const COND_RU={turnover:"оборот",balance:"остаток",payroll:"зарплата",purchases:"покупки",
+  package:"пакет услуг",age:"возраст",other:"условие"};
+
+function MkTerms({c,compact}){
+  const f=c.free_split, a=c.attainability;
+  if(f&&f.covered>=3){
+    const share=`${f.unconditional} из ${f.covered}`;
+    const mine=f.sber?FREE_RU[f.sber]:null;
+    const cond=(f.sber_conditions||[]).map(x=>
+      `${COND_RU[x.type]||"условие"}${x.threshold_rub?" от "+fmtNum(x.threshold_rub)+" ₽":""}`).join(" или ");
+    if(compact) return <span className="mk-terms" title={`обогащено ${f.covered} из ${f.of} банков категории`}>
+      бесплатны без условий: <b>{share}</b>{mine?` · Сбер — ${mine}`:""}</span>;
+    return <div className="mk-termbox">
+      <div className="mk-termrow">
+        <i title="плата не взимается ни при каких условиях">без условий <b>{f.unconditional}</b></i>
+        <i title="ноль в цене куплен оборотом, остатком или пакетом услуг">при условии <b>{f.conditional}</b></i>
+        <i title="обслуживание платное всегда">платно <b>{f.paid}</b></i>
+        <i className="mk-termsrc" title="условия разобраны по детальным страницам тарифов">
+          разобрано {f.covered} из {f.of}</i>
+      </div>
+      {f.sber&&<div className="mk-termmine">Сбер — <b>{FREE_RU[f.sber]}</b>{cond?`: ${cond}`:""}</div>}
+    </div>;
+  }
+  if(a&&a.covered>=3){
+    const req=(a.sber_requires||[]).map(r=>REQ_RU[r]||r).join(", ");
+    const lreq=(a.leader_requires||[]).map(r=>REQ_RU[r]||r).join(", ");
+    if(compact) return <span className="mk-terms" title={`разобрано ${a.covered} из ${a.of} банков`}>
+      минимум доступен всем: <b>{a.broad} из {a.covered}</b></span>;
+    return <div className="mk-termbox">
+      <div className="mk-termrow">
+        <i title="минимальная ставка доступна обычному клиенту">доступна всем <b>{a.broad}</b></i>
+        <i title="минимум только при зарплатном проекте, страховке или крупной сумме">нужны условия <b>{a.narrow}</b></i>
+        <i title="минимум действует только в акции или первый период">только акция <b>{a.promo_only}</b></i>
+        <i className="mk-termsrc" title="условия разобраны по детальным страницам тарифов">
+          разобрано {a.covered} из {a.of}</i>
+      </div>
+      {(a.sber||lreq)&&<div className="mk-termmine">
+        {a.sber?<>Ставка Сбера — <b>{ATT_RU[a.sber]||a.sber}</b>{req?`: ${req}`:""}. </>:null}
+        {lreq?<>У лидера минимум требует: {lreq}.</>:null}</div>}
+    </div>;
+  }
+  return null;
+}
+
 // ступенчатая история ставки оффера (SCD2-версии условий)
 function MkStep({series}){
   const pts=(series||[]).filter(p=>p.rate_pct!=null);
@@ -2424,6 +2478,7 @@ function MarketPage({params}){
               {sb&&c.degenerate?<>
                 <b className="serif" style={{color:"var(--ink-3)"}} title={`на лучшем значении ${c.at_best} банков из ${c.n_banks}`}>–</b>
                 <span className="mk-an">метрика не различает банки: {c.at_best} из {c.n_banks} на одном значении</span>
+                <MkTerms c={c} compact/>
                 <MkTrust c={c}/>
               </>:sb?<>
                 <b className={"serif"+(sb.percentile!=null&&sb.percentile<40?" bad":"")}
@@ -2459,6 +2514,7 @@ function MarketPage({params}){
       </div>}
       {ac&&ac.status==="ok"&&<div className="surface" style={{padding:"14px 20px",marginBottom:14}}>
         <MkStrip c={ac} big/>
+        <MkTerms c={ac}/>
       </div>}
 
       <div className="filter-row" style={{marginBottom:14}}>

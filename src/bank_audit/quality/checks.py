@@ -84,6 +84,23 @@ CHECKS = [
         """,
     },
     {
+        # Один банк двумя строками (например «ОТП Банк» с каноническим slug и
+        # «ОТП БАНК» со slug unknown_…) расщепляет его предложения и завышает
+        # «банков в категории» на витрине «Рынок»: ранг Сбера считается по
+        # знаменателю, в котором один игрок посчитан дважды.
+        "code": "DUP_BANK_BY_NAME",
+        "severity": "warn",
+        "sql": """
+            SELECT 'bank' as et, MIN(bank_id) as eid,
+                   jsonb_build_object('count', COUNT(*),
+                                      'names', array_agg(DISTINCT name),
+                                      'slugs', array_agg(DISTINCT slug)) as detail
+              FROM bank
+             GROUP BY lower(regexp_replace(name, '[^[:alnum:]]', '', 'g'))
+            HAVING COUNT(*) > 1
+        """,
+    },
+    {
         "code": "DUP_REVIEW_BY_TEXT",
         "severity": "info",
         "sql": """

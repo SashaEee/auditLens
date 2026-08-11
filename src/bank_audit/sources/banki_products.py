@@ -54,6 +54,15 @@ CATEGORIES: dict[str, dict] = {
     # каталог вкладов — витрина из 10 промо без пагинации: page=40 отдаёт те же
     # карточки байт-в-байт. Объём даёт только обход банков.
     "deposits":    {"category": "deposit",     "pages": 1,  "engine": "deposits"},
+    # РКО и эквайринг НЕ собираем (разведка 11.08.2026). На странице
+    # /products/rko/ сайт заявляет «201 тариф, 23 банка», но в HTML отдаёт
+    # ТОЛЬКО рекламу: таблица из 10 строк — все десять тарифы ВТБ, плюс 11
+    # промо-карточек других банков. Пагинации нет (page=2 отдаёт 0 строк),
+    # JSON-состояния на странице нет, по-банковая /products/rko/sberbank/ не
+    # содержит НИ ОДНОГО тарифа Сбера — только чужие промо. Полка из такой
+    # выборки дала бы аудитору ранг «Сбер #N из 11» по рекламному набору,
+    # то есть ровно ту ложь, ради устранения которой переделан «Рынок».
+    # Путь к полке — рендер браузером (collectors/browser.py), отдельная задача.
 }
 
 # Банки, чьи разделы обходим всегда. Сбер — обязателен: ради него всё и затеяно.
@@ -444,8 +453,9 @@ class BankiProductsAdapter(SourceAdapter):
                 term_months_max=(int(_term_months(it.get("term") or "") or 0) or None),
                 fee_service=_dec(_fee_value(it.get("fee"))),
                 grace_days=_grace_value(it.get("grace")),
-                conditions=" · ".join(x for x in (it.get("payment"), it.get("initial"),
-                                                  it.get("cashback")) if x) or None,
+                conditions=(it.get("conditions")
+                            or " · ".join(x for x in (it.get("payment"), it.get("initial"),
+                                                      it.get("cashback")) if x) or None),
                 raw={k: it.get(k) for k in
                      ("rate_min", "rate_max", "psk_min", "psk_max", "amount", "term",
                       "fee", "grace", "cashback", "payment", "initial", "scope",

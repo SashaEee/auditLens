@@ -805,6 +805,16 @@ def meta_categories():
 
 
 @app.get("/api/market/atlas")
+def _jsonb(v):
+    """jsonb из драйвера приходит то dict/list, то строкой — приводим к python."""
+    if v is None or isinstance(v, (list, dict)):
+        return v
+    try:
+        return json.loads(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def market_atlas(term: Optional[str] = None):
     """Атлас позиций: по каждой категории — распределение ЛУЧШИХ офферов банков
     (одна точка = один банк, чтобы банк с 15 витринными вкладами не перетягивал
@@ -814,16 +824,26 @@ def market_atlas(term: Optional[str] = None):
     # цикла. Прежний глобальный фильтр «есть хоть какая-то метрика» скрывал
     # выбывших: оффер без своей метрики просто не доходил до подсчёта, и
     # паспорт выборки показывал ноль потерь там, где терялась треть рынка.
-    cond = "category = ANY(:cats)"
+    cond = "m.category = ANY(:cats)"
     params: dict = {"cats": [c["id"] for c in cat_meta.CATEGORIES]}
     if term:
-        cond += " AND term_bucket = :tb"; params["tb"] = term
+        cond += " AND m.term_bucket = :tb"; params["tb"] = term
+    # offer_enrichment — извлечённый LLM смысл условий. Именно он отличает
+    # «бесплатно всегда» от «бесплатно при остатке 2,5 млн»: по цене оба стоят
+    # на нуле, и без этого поля ранг карт вырожден (124 банка из 163 на лучшем
+    # значении). Джойн левый: не обогащённый оффер участвует как раньше.
     rows = q(f"""
-        SELECT category, bank_slug, bank_name, is_sber, offer_id, title,
-               rate_pct, rate_kind, term_bucket, segment, sub_segment,
-               rate_min, rate_max, psk_min, psk_max,
-               fee_service, grace_days, cashback_pct
-          FROM v_market_rub_offer WHERE {cond}
+        SELECT m.category, m.bank_slug, m.bank_name, m.is_sber, m.offer_id, m.title,
+               m.rate_pct, m.rate_kind, m.term_bucket, m.segment, m.sub_segment,
+               m.rate_min, m.rate_max, m.psk_min, m.psk_max,
+               m.fee_service, m.grace_days, m.cashback_pct,
+               e.payload->>'free_kind'          AS free_kind,
+               e.payload->>'rate_attainability' AS attain,
+               e.payload->'free_conditions'     AS free_conditions,
+               e.payload->'rate_requires'       AS rate_requires
+          FROM v_market_rub_offer m
+          LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
+         WHERE {cond}
     """, params)
     # ключевая ставка ЦБ — база числового стража субсидий (кэш SOAP ЦБ)
     key_rate = None
@@ -910,6 +930,12 @@ def market_atlas(term: Optional[str] = None):
                 "rate_min": (float(r["rate_min"]) if r.get("rate_min") is not None else None),
                 "rate_max": (float(r["rate_max"]) if r.get("rate_max") is not None else None),
                 "psk_min": (float(r["psk_min"]) if r.get("psk_min") is not None else None),
+                # смысл условий (см. normalizer/enrich_llm): чем именно куплен
+                # ноль в цене и чем — минимальная ставка
+                "free_kind": r.get("free_kind"),
+                "free_conditions": _jsonb(r.get("free_conditions")),
+                "attain": r.get("attain"),
+                "rate_requires": _jsonb(r.get("rate_requires")) or [],
             }
 
     def _pct(sorted_vals: list[float], p: float) -> Optional[float]:
@@ -1009,6 +1035,40 @@ def market_atlas(term: Optional[str] = None):
         # «#1 из 140» при 115 банках на нуле — не лидерство, а отсутствие
         # сигнала, и показывать такой ранг как факт нельзя (аудит 11.08.2026).
         entry["degenerate"] = bool(entry["at_best"] / max(len(banks), 1) > 0.3)
+        # ── чем куплено лучшее значение ──────────────────────────────────
+        # Цена обслуживания карты вырождена: 124 банка из 163 стоят на нуле.
+        # Но у одних ноль безусловный, у других — «при остатке 2,5 млн руб.»
+        # (ВТБ Привилегия) или «при неснижаемом остатке 100 тыс.» (Т-Банк).
+        # Разбор берём из offer_enrichment; долю покрытия отдаём честно —
+        # пока обогащена половина рынка, вывод «мы среди безусловно
+        # бесплатных» подписывается числом, на скольких он посчитан.
+        known = [b for b in banks
+                 if b.get("free_kind") in ("unconditional", "conditional", "paid")]
+        if cid in ("card_debit", "card_credit") and known:
+            uncond = [b for b in known if b["free_kind"] == "unconditional"]
+            entry["free_split"] = {
+                "covered": len(known), "of": len(banks),
+                "unconditional": len(uncond),
+                "conditional": sum(1 for b in known if b["free_kind"] == "conditional"),
+                "paid": sum(1 for b in known if b["free_kind"] == "paid"),
+                "sber": (sber or {}).get("free_kind"),
+                "sber_conditions": (sber or {}).get("free_conditions") or [],
+            }
+        # Минимальная ставка кредита часто достижима не всем: у Сбера «от
+        # 18,4 проц.» — строка «для зарплатных клиентов», общая ставка 20,4.
+        # Сравнивать банк по такой границе с банком без оговорок нельзя.
+        att = [b for b in banks if b.get("attain") in ("broad", "narrow", "promo_only")]
+        if cid in ("credit", "auto_loan", "mortgage") and att:
+            entry["attainability"] = {
+                "covered": len(att), "of": len(banks),
+                "broad": sum(1 for b in att if b["attain"] == "broad"),
+                "narrow": sum(1 for b in att if b["attain"] == "narrow"),
+                "promo_only": sum(1 for b in att if b["attain"] == "promo_only"),
+                "leader": banks[0].get("attain"),
+                "leader_requires": banks[0].get("rate_requires") or [],
+                "sber": (sber or {}).get("attain"),
+                "sber_requires": (sber or {}).get("rate_requires") or [],
+            }
         if sber:
             # ранг с учётом РАВНЫХ значений: 91 карта с «0 ₽/год» — это один
             # уровень, а не 91 разных мест (иначе Сбер выглядел «#39» с лучшей
@@ -1028,6 +1088,15 @@ def market_atlas(term: Optional[str] = None):
                              "beats_share": round(1 - (rank - 1) / max(len(banks) - 1, 1), 2)}
         out.append(entry)
     return {"term": term, "categories": out}
+
+
+# требования к минимальной ставке — по-русски (совпадает со словарём фронта)
+_REQ_RU = {"payroll": "зарплатный проект", "insurance": "страхование",
+           "new_client": "новый клиент", "online": "онлайн-заявка",
+           "promo_period": "акция или первый период",
+           "category_spend": "траты в категориях", "large_amount": "крупная сумма",
+           "collateral": "залог", "subsidy": "господдержка",
+           "other": "особые условия"}
 
 
 @app.get("/api/market/verdict")
@@ -1055,6 +1124,10 @@ def market_verdict(term: Optional[str] = None):
             "gap_unit": (" пп" if c["metric_unit"].strip() == "%" else c["metric_unit"]),
             "value": sb.get("rate"), "title": sb.get("title"),
             "lower_is_better": c["lower_is_better"],
+            # разбор условий (offer_enrichment): чем куплен ноль в цене и
+            # кому доступна минимальная ставка
+            "free_split": c.get("free_split"),
+            "attainability": c.get("attainability"),
             # доверие к выборке: по этим числам фронт рисует бейджи
             "no_metric": c.get("no_metric", 0),
             "subsidized_excluded": c.get("subsidized_excluded", 0),
@@ -1113,6 +1186,27 @@ def market_verdict(term: Optional[str] = None):
         doubts.append(f'в «{d0["label"].lower()}» ранг не показываем: на лучшем '
                       f'значении стоит {d0["at_best"]} банков из {d0["n_banks"]} — '
                       f'метрика их не различает')
+    # Вырожденную метрику цены разбирает смысл условий: там, где ранга нет,
+    # аудитору всё равно нужен ответ «сколько банков бесплатны по-настоящему».
+    fs = next((c for c in cells if (c.get("free_split") or {}).get("covered", 0) >= 5), None)
+    if fs:
+        f = fs["free_split"]
+        mine = {"unconditional": "у нас — без условий",
+                "conditional": "у нас — при условии",
+                "paid": "у нас — платно"}.get(f.get("sber"))
+        doubts.append(f'в категории «{fs["label"].lower()}» бесплатны без условий '
+                      f'{f["unconditional"]} банков из {f["covered"]} разобранных'
+                      + (f'; {mine}' if mine else ""))
+    at = next((c for c in cells
+               if (c.get("attainability") or {}).get("covered", 0) >= 5
+               and (c.get("attainability") or {}).get("leader") in ("narrow", "promo_only")), None)
+    if at:
+        a = at["attainability"]
+        req = ", ".join(_REQ_RU.get(x, x) for x in (a.get("leader_requires") or []))
+        doubts.append(f'лидер категории «{at["label"].lower()}» показывает минимальную ставку '
+                      f'{"только по акции" if a["leader"] == "promo_only" else "не всем"}'
+                      + (f' ({req})' if req else "")
+                      + ' — сравнение с ним по нижней границе завышает разрыв')
     tsr = max(cells, key=lambda c: c.get("teaser", 0)) if cells else None
     if tsr and tsr.get("teaser", 0) >= 5:
         doubts.append(f'в «{tsr["label"].lower()}» у {tsr["teaser"]} предложений полная '

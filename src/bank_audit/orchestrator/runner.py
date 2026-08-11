@@ -2,6 +2,8 @@
    сохранённые drafts. Идемпотентно через хеш контента и дедупликацию по уникальным
    ключам в БД."""
 from __future__ import annotations
+
+import os
 import json
 from datetime import datetime, timezone
 from sqlalchemy import text
@@ -149,4 +151,14 @@ def ingest(source_key: str, target_name: str | None = None,
         offers_norm.expire_cross_promo()
     except Exception as e:  # noqa: BLE001 — дедуп не должен ронять сбор
         print(f"дедуп после сбора не выполнен: {e}")
+    # Смысл условий («бесплатно ВСЕГДА» или «при остатке 2,5 млн») регекспом не
+    # берётся, а без него ранг карт вырожден: 124 банка на нуле. Обогащаем
+    # порцией после сбора — модуль сам выбирает, у кого данные устарели.
+    if os.getenv("ENRICH_ENABLED", "1") not in ("0", "false", "no"):
+        try:
+            from ..normalizer import enrich_llm
+            st = enrich_llm.enrich(limit=int(os.getenv("ENRICH_LIMIT", "120")))
+            print(f"обогащение LLM: {st}")
+        except Exception as e:  # noqa: BLE001 — обогащение не должно ронять сбор
+            print(f"обогащение не выполнено: {e}")
     return totals

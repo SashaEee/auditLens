@@ -21,6 +21,16 @@ def ingest(source: str, target: str | None, openclaw_job: str | None):
     click.echo(json.dumps(res, ensure_ascii=False))
 
 @cli.command()
+@click.option("--limit", default=120, help="сколько офферов обогатить за прогон")
+@click.option("--category", "categories", multiple=True,
+              help="ограничить категориями (по умолчанию карты и кредиты)")
+def enrich(limit: int, categories: tuple[str, ...]):
+    """Обогатить офферы структурой условий (LLM по детальным страницам)."""
+    from .normalizer import enrich_llm
+    res = enrich_llm.enrich(limit=limit, categories=categories or None)
+    click.echo(json.dumps(res, ensure_ascii=False))
+
+@cli.command()
 def quality():
     """Прогнать data-quality чеки и записать отчёт."""
     res = run_quality()
