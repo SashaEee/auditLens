@@ -91,12 +91,24 @@ CHECKS = [
         "code": "DUP_BANK_BY_NAME",
         "severity": "warn",
         "sql": """
+            -- Считаем только ЖИВЫЕ строки: после слияния часть пустых остаётся
+            -- намеренно (на них ссылается история, и удалять её дороже, чем
+            -- держать пустую строку справочника). Такие дубли витрине не мешают
+            -- и поднимать по ним тревогу каждый день незачем.
+            WITH live AS (
+                SELECT b.bank_id, b.slug, b.name,
+                       lower(regexp_replace(b.name, '[^[:alnum:]]', '', 'g')) AS k
+                  FROM bank b
+                 WHERE EXISTS (SELECT 1 FROM product_offer o
+                                WHERE o.bank_id = b.bank_id AND o.is_active)
+                    OR EXISTS (SELECT 1 FROM review r WHERE r.bank_id = b.bank_id)
+            )
             SELECT 'bank' as et, MIN(bank_id) as eid,
                    jsonb_build_object('count', COUNT(*),
                                       'names', array_agg(DISTINCT name),
                                       'slugs', array_agg(DISTINCT slug)) as detail
-              FROM bank
-             GROUP BY lower(regexp_replace(name, '[^[:alnum:]]', '', 'g'))
+              FROM live
+             GROUP BY k
             HAVING COUNT(*) > 1
         """,
     },
