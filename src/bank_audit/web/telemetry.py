@@ -426,16 +426,18 @@ AIFB_REASON_RU = {"offtopic": "не по делу", "shallow": "мало кон�
 def _ai_feedback(days: int, limit: int = 20) -> dict:
     p = {"days": days, "lim": limit}
     rows = _rows("""
-        SELECT username, verdict, created_at,
-               payload->>'question'   AS question,
-               payload->>'comment'    AS comment,
-               payload->>'mode'       AS mode,
-               payload->'reasons'     AS reasons,
-               payload->>'report_id'  AS report_id
-          FROM item_feedback
-         WHERE kind = 'ai_answer'
-           AND created_at > now() - (:days || ' days')::interval
-         ORDER BY created_at DESC LIMIT :lim""", p)
+        SELECT f.username, COALESCE(au.display_name, f.username) AS name,
+               f.verdict, f.created_at,
+               f.payload->>'question'   AS question,
+               f.payload->>'comment'    AS comment,
+               f.payload->>'mode'       AS mode,
+               f.payload->'reasons'     AS reasons,
+               f.payload->>'report_id'  AS report_id
+          FROM item_feedback f
+          LEFT JOIN app_user au ON au.username = f.username
+         WHERE f.kind = 'ai_answer'
+           AND f.created_at > now() - (:days || ' days')::interval
+         ORDER BY f.created_at DESC LIMIT :lim""", p)
     out = []
     counts: dict[str, int] = {}
     for r in rows:
@@ -449,7 +451,8 @@ def _ai_feedback(days: int, limit: int = 20) -> dict:
         for x in reasons:
             counts[x] = counts.get(x, 0) + 1
         out.append({
-            "username": r.get("username"), "verdict": int(r.get("verdict") or 0),
+            "username": r.get("username"), "name": r.get("name"),
+            "verdict": int(r.get("verdict") or 0),
             "question": (r.get("question") or "")[:300],
             "comment": (r.get("comment") or "")[:300],
             "mode": r.get("mode"), "report_id": r.get("report_id"),
@@ -609,3 +612,266 @@ def _team_topics(days: int) -> dict:
          WHERE created_at > now() - (:days || ' days')::interval
          GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", {"days": days})
     return {"banks": banks}
+
+
+# ── Люди: директория и карточка ──────────────────────────────────────────────
+# «Сегодня зашло 30 человек» — бесполезное число, если нельзя посмотреть, КТО
+# именно и что делал. Таблица «Команда» показывала 15 строк и восемь колонок;
+# здесь — все пользователи и полный разрез по каждому.
+
+_DIRECTORY = """
+    SELECT au.username,
+           COALESCE(au.display_name, au.username) AS name,
+           au.display_name IS NOT NULL            AS named,
+           to_char(au.created_at   AT TIME ZONE 'Europe/Moscow', 'DD.MM.YYYY') AS first_seen,
+           to_char(au.last_seen_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS last_seen,
+           EXTRACT(epoch FROM now() - au.last_seen_at)::bigint AS last_seen_ago_s,
+           au.profile_note IS NOT NULL AS has_note,
+           COALESCE(e.days_active, 0) AS days_active,
+           COALESCE(e.views, 0)       AS views,
+           COALESCE(e.time_s, 0)      AS time_s,
+           COALESCE(vs.visits, 0)     AS visits,
+           COALESCE(e.errors, 0)      AS errors,
+           COALESCE(q.ai, 0)          AS ai,
+           COALESCE(q.deep, 0)        AS deep,
+           COALESCE(r.reports, 0)     AS reports,
+           COALESCE(sh.shares, 0)     AS shares,
+           COALESCE(fb.likes, 0)      AS likes,
+           COALESCE(fb.dislikes, 0)   AS dislikes,
+           COALESCE(t.today_views, 0) AS today_views,
+           top.pages                  AS top_pages
+      FROM app_user au
+      LEFT JOIN (SELECT username,
+                        count(DISTINCT date_trunc('day', created_at AT TIME ZONE 'Europe/Moscow')) AS days_active,
+                        count(*) FILTER (WHERE kind = 'page_view') AS views,
+                        count(*) FILTER (WHERE kind IN ('api_error', 'client_error')) AS errors,
+                        round(COALESCE(sum(dur_ms) FILTER (WHERE kind = 'page_leave'), 0) / 1000.0) AS time_s
+                   FROM usage_event
+                  WHERE created_at > now() - (:days || ' days')::interval
+                    AND username IS NOT NULL
+                  GROUP BY 1) e USING (username)
+      -- «визит» = приход после паузы больше получаса. Паузу считаем ТОЛЬКО по
+      -- просмотрам страниц: между ними идут фоновые api_request, и по всем
+      -- событиям подряд пауза никогда не набиралась — у человека с 1198
+      -- просмотрами за 19 дней выходило два визита.
+      LEFT JOIN (SELECT username, count(*) AS visits
+                   FROM (SELECT username,
+                                created_at - lag(created_at) OVER (PARTITION BY username
+                                                                   ORDER BY created_at) AS gap
+                           FROM usage_event
+                          WHERE kind = 'page_view' AND username IS NOT NULL
+                            AND created_at > now() - (:days || ' days')::interval) v
+                  WHERE gap IS NULL OR gap > interval '30 minutes'
+                  GROUP BY 1) vs USING (username)
+      LEFT JOIN (SELECT username, count(*) AS ai,
+                        count(*) FILTER (WHERE payload->>'mode' = 'deep') AS deep
+                   FROM user_event
+                  WHERE kind = 'ai_query' AND ts > now() - (:days || ' days')::interval
+                  GROUP BY 1) q USING (username)
+      LEFT JOIN (SELECT username, count(*) AS reports FROM report
+                  WHERE created_at > now() - (:days || ' days')::interval GROUP BY 1) r USING (username)
+      LEFT JOIN (SELECT username, count(*) AS shares FROM user_event
+                  WHERE kind = 'share' AND ts > now() - (:days || ' days')::interval
+                  GROUP BY 1) sh USING (username)
+      LEFT JOIN (SELECT username,
+                        count(*) FILTER (WHERE verdict > 0) AS likes,
+                        count(*) FILTER (WHERE verdict < 0) AS dislikes
+                   FROM item_feedback
+                  WHERE created_at > now() - (:days || ' days')::interval
+                  GROUP BY 1) fb USING (username)
+      LEFT JOIN (SELECT username, count(*) AS today_views FROM usage_event
+                  WHERE kind = 'page_view'
+                    AND created_at >= date_trunc('day', now() AT TIME ZONE 'Europe/Moscow')
+                                      AT TIME ZONE 'Europe/Moscow'
+                  GROUP BY 1) t USING (username)
+      LEFT JOIN (SELECT username, string_agg(page, ',' ORDER BY n DESC) AS pages
+                   FROM (SELECT username, page, count(*) AS n,
+                                row_number() OVER (PARTITION BY username ORDER BY count(*) DESC) AS rn
+                           FROM usage_event
+                          WHERE kind = 'page_view' AND page IS NOT NULL
+                            AND created_at > now() - (:days || ' days')::interval
+                          GROUP BY 1, 2) x
+                  WHERE rn <= 3 GROUP BY 1) top USING (username)
+"""
+
+
+def users_directory(days: int = 30) -> dict:
+    """ВСЕ пользователи со сводкой по каждому — основа вкладки «Люди»."""
+    days = max(1, min(int(days or 30), 365))
+    rows = _rows(_DIRECTORY + """
+        ORDER BY (COALESCE(e.time_s, 0) / 60.0 + COALESCE(e.views, 0) * 2
+                  + COALESCE(q.ai, 0) * 15 + COALESCE(r.reports, 0) * 30
+                  + COALESCE(fb.likes, 0) * 5 + COALESCE(fb.dislikes, 0) * 5) DESC,
+                 au.last_seen_at DESC""", {"days": days})
+    for r in rows:
+        r["top_pages"] = [x for x in (r.get("top_pages") or "").split(",") if x]
+        r["online"] = (r.get("last_seen_ago_s") or 10 ** 9) < 900
+        r["today"] = bool(r.get("today_views"))
+    return {"days": days, "users": rows,
+            "total": len(rows),
+            "today": sum(1 for r in rows if r["today"]),
+            "online": sum(1 for r in rows if r["online"]),
+            "silent": sum(1 for r in rows if not r["days_active"])}
+
+
+def user_card(username: str, days: int = 30) -> dict:
+    """Полный разрез одного человека: чем пользуется, что спрашивал, что оценил.
+
+    Это внутренний инструмент со служебным доступом владельца, поэтому карточка
+    показывает фактические действия, а не обезличенные счётчики: разбирать
+    жалобу «отчёты плохие» иначе невозможно.
+    """
+    days = max(1, min(int(days or 30), 365))
+    p = {"u": username, "days": days}
+    head = _rows(_DIRECTORY + " WHERE au.username = :u", p)
+    if not head:
+        return {}
+    u = head[0]
+    u["top_pages"] = [x for x in (u.get("top_pages") or "").split(",") if x]
+    u["online"] = (u.get("last_seen_ago_s") or 10 ** 9) < 900
+
+    profile = _rows("""SELECT prefs->>'role_desc' AS role_desc, profile_note,
+                              to_char(profile_note_at AT TIME ZONE 'Europe/Moscow',
+                                      'DD.MM.YYYY') AS note_at,
+                              interests, timezone
+                         FROM app_user WHERE username = :u""", p)
+    return {
+        "user": u,
+        "profile": (profile[0] if profile else {}),
+        "by_day": _rows("""
+            SELECT to_char(d, 'YYYY-MM-DD') AS d,
+                   count(*) FILTER (WHERE kind = 'page_view') AS views,
+                   round(COALESCE(sum(dur_ms) FILTER (WHERE kind = 'page_leave'), 0)
+                         / 1000.0) AS time_s
+              FROM (SELECT date_trunc('day', created_at AT TIME ZONE 'Europe/Moscow') AS d,
+                           kind, dur_ms
+                      FROM usage_event
+                     WHERE username = :u
+                       AND created_at > now() - (:days || ' days')::interval) z
+             GROUP BY 1 ORDER BY 1""", p),
+        "pages": _rows("""
+            SELECT v.page, v.views, COALESCE(l.total_s, 0) AS total_s
+              FROM (SELECT page, count(*) AS views FROM usage_event
+                     WHERE username = :u AND kind = 'page_view' AND page IS NOT NULL
+                       AND created_at > now() - (:days || ' days')::interval
+                     GROUP BY 1) v
+              LEFT JOIN (SELECT page, round(sum(dur_ms) / 1000.0) AS total_s
+                           FROM usage_event
+                          WHERE username = :u AND kind = 'page_leave'
+                            AND created_at > now() - (:days || ' days')::interval
+                          GROUP BY 1) l USING (page)
+             ORDER BY v.views DESC LIMIT 20""", p),
+        "questions": _rows("""
+            SELECT to_char(ts AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
+                   payload->>'question' AS question, payload->>'mode' AS mode,
+                   payload->>'report_id' AS report_id
+              FROM user_event
+             WHERE username = :u AND kind = 'ai_query'
+               AND ts > now() - (:days || ' days')::interval
+             ORDER BY ts DESC LIMIT 60""", p),
+        "reports": _rows("""
+            SELECT report_id, question, title,
+                   to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
+                   length(body) AS body_len
+              FROM report WHERE username = :u
+             ORDER BY created_at DESC LIMIT 40""", p),
+        "ratings": _rows("""
+            SELECT kind, verdict, item_key,
+                   to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
+                   payload->>'question' AS question, payload->>'comment' AS comment,
+                   payload->>'title' AS title, payload->>'report_id' AS report_id,
+                   payload->'reasons' AS reasons
+              FROM item_feedback WHERE username = :u
+             ORDER BY created_at DESC LIMIT 40""", p),
+        "errors": _rows("""
+            SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
+                   kind, page, status, payload->>'message' AS message
+              FROM usage_event
+             WHERE username = :u AND kind IN ('api_error', 'client_error')
+               AND created_at > now() - (:days || ' days')::interval
+             ORDER BY created_at DESC LIMIT 20""", p),
+        "trail": _rows("""
+            SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI:SS') AS at,
+                   kind, page, dur_ms, status
+              FROM usage_event
+             WHERE username = :u
+               AND created_at > now() - (:days || ' days')::interval
+             ORDER BY created_at DESC LIMIT 200""", p),
+    }
+
+
+# ── Отчёты всех пользователей (служебный доступ владельца) ───────────────────
+# Жалоба «отчёты плохие» неразбираема, если нельзя открыть тот самый отчёт.
+# Владелец инструмента видит все; каждое открытие чужого пишется в след.
+
+def reports_all(days: int = 30, limit: int = 200, q: str | None = None,
+                username: str | None = None, only_bad: bool = False) -> dict:
+    p = {"days": max(1, min(int(days or 30), 365)), "lim": max(1, min(int(limit or 200), 500))}
+    cond = ["r.created_at > now() - (:days || ' days')::interval"]
+    if q:
+        cond.append("(r.question ILIKE :q OR r.title ILIKE :q OR r.body ILIKE :q)")
+        p["q"] = f"%{q.strip()}%"
+    if username:
+        cond.append("r.username = :u")
+        p["u"] = username
+    if only_bad:
+        cond.append("fb.dislikes > 0")
+    rows = _rows(f"""
+        SELECT r.report_id, r.username,
+               COALESCE(au.display_name, r.username) AS name,
+               r.question, r.title, r.banks,
+               length(r.body) AS body_len,
+               to_char(r.created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
+               COALESCE(fb.likes, 0) AS likes, COALESCE(fb.dislikes, 0) AS dislikes,
+               fb.comment, fb.reasons,
+               COALESCE(sh.shares, 0) AS shares,
+               COALESCE(op.opens, 0)  AS opens
+          FROM report r
+          LEFT JOIN app_user au ON au.username = r.username
+          LEFT JOIN (SELECT (payload->>'report_id')::bigint AS rid,
+                            count(*) FILTER (WHERE verdict > 0) AS likes,
+                            count(*) FILTER (WHERE verdict < 0) AS dislikes,
+                            max(payload->>'comment') AS comment,
+                            max(payload->>'reasons') AS reasons
+                       FROM item_feedback
+                      WHERE payload ? 'report_id' AND payload->>'report_id' ~ '^[0-9]+$'
+                      GROUP BY 1) fb ON fb.rid = r.report_id
+          LEFT JOIN (SELECT report_id, count(*) AS shares FROM report_share
+                      WHERE revoked_at IS NULL GROUP BY 1) sh ON sh.report_id = r.report_id
+          LEFT JOIN (SELECT (payload->>'report_id')::bigint AS rid, count(*) AS opens
+                       FROM user_event
+                      WHERE kind = 'report_open' AND payload->>'report_id' ~ '^[0-9]+$'
+                      GROUP BY 1) op ON op.rid = r.report_id
+         WHERE {' AND '.join(cond)}
+         ORDER BY (COALESCE(fb.dislikes, 0) > 0) DESC, r.created_at DESC
+         LIMIT :lim""", p)
+    return {"reports": rows, "total": len(rows),
+            "bad": sum(1 for r in rows if (r.get("dislikes") or 0) > 0)}
+
+
+def complaints(days: int = 30, limit: int = 60) -> list[dict]:
+    """Все недовольные оценки с ФИО и ссылкой на предмет жалобы."""
+    p = {"days": max(1, min(int(days or 30), 365)), "lim": max(1, min(int(limit or 60), 300))}
+    rows = _rows("""
+        SELECT f.username, COALESCE(au.display_name, f.username) AS name,
+               f.kind, f.item_key, f.verdict,
+               to_char(f.created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
+               f.payload->>'question'  AS question,
+               f.payload->>'comment'   AS comment,
+               f.payload->>'title'     AS title,
+               f.payload->>'mode'      AS mode,
+               f.payload->>'report_id' AS report_id,
+               f.payload->'reasons'    AS reasons
+          FROM item_feedback f
+          LEFT JOIN app_user au ON au.username = f.username
+         WHERE f.verdict < 0 AND f.created_at > now() - (:days || ' days')::interval
+         ORDER BY f.created_at DESC LIMIT :lim""", p)
+    for r in rows:
+        rs = r.get("reasons")
+        if isinstance(rs, str):
+            try:
+                rs = json.loads(rs)
+            except Exception:  # noqa: BLE001
+                rs = []
+        r["reasons"] = [AIFB_REASON_RU.get(x, x) for x in (rs or []) if x]
+    return rows

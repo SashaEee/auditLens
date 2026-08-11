@@ -218,8 +218,14 @@ def report_access(report_id: int, username: str) -> bool:
     return bool(n)
 
 
-def get_report(report_id: int, username: str) -> dict | None:
-    if not report_access(report_id, username):
+def get_report(report_id: int, username: str, as_admin: bool = False) -> dict | None:
+    """as_admin — служебный доступ владельца инструмента к ЧУЖОМУ отчёту.
+
+    Без него жалобу «отчёты плохие» невозможно разобрать: видно, что человек
+    недоволен, а чем именно — нет. Каждое такое открытие пишется в след
+    (см. /api/reports/{id} → admin_report_open), чтобы доступ был не тихим.
+    """
+    if not as_admin and not report_access(report_id, username):
         return None
     return _one("""SELECT r.report_id, r.username AS owner, r.session_id, r.question,
                           r.title, r.body, r.payload, r.banks, r.created_at,

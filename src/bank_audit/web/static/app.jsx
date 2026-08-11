@@ -6378,6 +6378,87 @@ const AD_CSS=`
 .pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
 .pu-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
 .pu-team td:first-child{max-width:260px;}
+/* ── Люди: директория, карточка, отчёты, жалобы ─────────────────────────── */
+.pu-people-ctl{display:flex;align-items:center;gap:8px}
+.pu-search{font:inherit;font-size:11.5px;padding:3px 9px;border-radius:6px;
+  border:1px solid var(--hair);background:var(--paper);color:var(--ink);width:210px}
+.pu-search:focus{outline:none;border-color:var(--accent)}
+.pu-sel{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:6px;
+  border:1px solid var(--hair);background:var(--paper);color:var(--ink-2)}
+.pu-tblwrap{overflow-x:auto;max-height:560px;overflow-y:auto}
+.pu-rowclick{cursor:pointer}
+.pu-rowclick:hover{background:var(--surface)}
+.pu-nm{display:block;font-weight:500}
+.pu-login{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4)}
+.pu-badge{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;
+  padding:1px 5px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-3);margin-left:6px}
+.pu-badge.on{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
+.pu-badge.tod{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
+.pu-badge.off{color:var(--ink-4);border:0}
+.pu-badge.adm{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
+.pu-pages{color:var(--ink-3);font-size:10.5px;max-width:210px}
+.pu-deep{font-style:normal;color:var(--ink-4);font-size:9.5px;margin-left:2px}
+.pu-badrow{background:color-mix(in oklab,var(--neg),transparent 94%)}
+.pu-qcell{max-width:420px}
+.pu-empty{color:var(--ink-4);font-size:12px;padding:10px 0}
+.pu-link{background:none;border:0;padding:0;font:inherit;font-size:11px;color:var(--accent);
+  cursor:pointer;white-space:nowrap}
+.pu-link:hover{text-decoration:underline}
+.pu-link.strong{font-weight:500;font-size:12px}
+.pu-cmt{color:var(--ink-3);font-style:italic}
+/* карточка человека и отчёт — выдвижная панель */
+.pu-drawer{position:fixed;inset:0;background:color-mix(in oklab,#000,transparent 45%);
+  z-index:60;display:flex;justify-content:flex-end}
+.pu-dr{width:min(860px,96vw);height:100%;overflow-y:auto;background:var(--paper);
+  border-left:1px solid var(--hair);box-shadow:var(--shadow-2);animation:pudr .18s ease-out}
+@keyframes pudr{from{transform:translateX(24px);opacity:.6}to{transform:none;opacity:1}}
+.pu-drhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:18px 22px;border-bottom:1px solid var(--hair);position:sticky;top:0;
+  background:var(--paper);z-index:2}
+.pu-drname{font-size:17px;font-weight:500}
+.pu-drsub{font-size:11px;color:var(--ink-3);margin-top:2px}
+.pu-x{background:none;border:0;font-size:16px;color:var(--ink-3);cursor:pointer;padding:2px 6px}
+.pu-x:hover{color:var(--ink)}
+.pu-u .a.big{width:38px;height:38px;font-size:13px}
+.pu-drtiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:1px;
+  background:var(--hair);border-bottom:1px solid var(--hair)}
+.pu-drtiles>div{background:var(--paper);padding:11px 13px;display:flex;flex-direction:column;gap:1px}
+.pu-drtiles b{font-size:17px;font-weight:500}
+.pu-drtiles span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
+.pu-drtiles .neg b{color:var(--neg)}
+.pu-drsec{padding:16px 22px;border-bottom:1px solid var(--hair)}
+.pu-drh{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);margin-bottom:8px}
+.pu-drp{font-size:12.5px;line-height:1.55;color:var(--ink-2);margin:0 0 6px}
+.pu-drtabs{display:flex;gap:4px;padding:12px 22px 0;flex-wrap:wrap}
+.pu-days{display:flex;align-items:flex-end;gap:3px;height:56px}
+.pu-dbar{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:9px}
+.pu-dbar i{display:block;width:100%;background:var(--accent);border-radius:2px 2px 0 0;opacity:.75}
+.pu-dbar span{font-size:8.5px;color:var(--ink-4);font-family:'JetBrains Mono',monospace}
+.pu-qrow{display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:1px solid var(--hair);
+  font-size:12px}
+.pu-qrow:last-child{border-bottom:0}
+.pu-qrow .at{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);flex-shrink:0}
+.pu-qrow .qq{flex:1;color:var(--ink-2)}
+.pu-qrow .md{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-4);flex-shrink:0}
+.pu-qrow.bad{background:color-mix(in oklab,var(--neg),transparent 95%)}
+.pu-vd{flex-shrink:0}
+.pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:'JetBrains Mono',monospace}
+.pu-trail .at{color:var(--ink-4)}
+.pu-trail .k{color:var(--ink-3);width:96px}
+.pu-trail .p{color:var(--ink-2);flex:1}
+.pu-trail .d{color:var(--ink-4)}
+.pu-report{font-size:13px;line-height:1.6}
+.pu-cmp{padding:10px 0;border-bottom:1px solid var(--hair)}
+.pu-cmp:last-child{border-bottom:0}
+.pu-cmphead{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.pu-cmphead .md{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-4)}
+.pu-cmphead .at{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4)}
+.pu-cmpbody{font-size:12.5px;color:var(--ink-2);margin-top:3px}
+.pu-cmpwhy{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+.pu-cmpwhy span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--neg);
+  border:1px solid color-mix(in oklab,var(--neg),transparent 72%);border-radius:3px;padding:1px 5px}
+.pu-cmpnote{font-size:12px;color:var(--ink-3);font-style:italic;margin-top:4px}
+
 
 /* ── новые разделы «Пульса» ── */
 .pu-guard{margin:0 0 14px;padding:11px 15px;border-radius:10px;font-size:12.5px;
@@ -6572,7 +6653,7 @@ function PuGuard({m}){
 // ── Оценки ответов ИИ ───────────────────────────────────────────────────────
 // Проценты сознательно не показываем: на десятке оценок доля — генератор
 // ложных выводов. Абсолютные числа и сырой журнал честнее.
-function PuAiFeedback({fb}){
+function PuAiFeedback({fb,onOpenReport,onOpenUser}){
   const[only,setOnly]=useState("all");
   const items=(fb.items||[]).filter(x=>only==="all"?true:x.verdict<0);
   const rated=(fb.likes||0)+(fb.dislikes||0);
@@ -6796,7 +6877,299 @@ function PuTopics({t}){
   </div>;
 }
 
-const PU_TABS=[["people","Люди"],["ai","Качество ИИ"],["data","Данные"],["tech","Техника"]];
+const PU_TABS=[["people","Люди"],["reports","Отчёты"],["ai","Качество ИИ"],
+  ["data","Данные"],["tech","Техника"]];
+
+
+// ══ ЛЮДИ: директория, карточка человека, отчёты и жалобы ═══════════════════
+// «Сегодня зашло 30 человек» — бесполезная цифра, если не видно, КТО и что
+// делал. Ниже — все пользователи поимённо, полный разрез по каждому и
+// служебный доступ владельца к чужим отчётам: иначе жалобу «отчёты плохие»
+// разобрать нечем.
+
+const PU_KIND_RU={ai_answer:"ответ ИИ",news:"новость",for_you:"«Для вас»",check:"проверка"};
+
+function PuPeople({days,onOpenUser}){
+  const[d,setD]=useState(null);
+  const[qq,setQq]=useState("");
+  const[sort,setSort]=useState("score");
+  useEffect(()=>{setD(null);
+    apiFetch("/api/admin/users?days="+days).then(setD).catch(()=>setD({users:[]}));
+  },[days]);
+  if(!d)return <div className="pu-card pu-sec"><Skel h={160}/></div>;
+  const all=d.users||[];
+  const ql=qq.trim().toLowerCase();
+  let rows=ql?all.filter(u=>(u.name||"").toLowerCase().includes(ql)||
+                            (u.username||"").toLowerCase().includes(ql)):all;
+  const num=k=>(a,b)=>(+b[k]||0)-(+a[k]||0);
+  if(sort!=="score")rows=[...rows].sort(sort==="last"
+    ?(a,b)=>(a.last_seen_ago_s||1e12)-(b.last_seen_ago_s||1e12):num(sort));
+  const maxT=Math.max(...all.map(x=>+x.time_s||0),1);
+  return <>
+    <div className="pu-tiles pu-sec">
+      <div className="pu-tile"><div className="l"><span className="pu-live"/>Онлайн</div>
+        <div className="v tnum">{d.online||0}</div><div className="s">за 15 минут</div></div>
+      <div className="pu-tile"><div className="l">Заходили сегодня</div>
+        <div className="v tnum">{d.today||0}</div><div className="s">из {d.total||0} всего</div></div>
+      <div className="pu-tile"><div className="l">Всего людей</div>
+        <div className="v tnum">{d.total||0}</div><div className="s">заходили хоть раз</div></div>
+      <div className="pu-tile"><div className="l">Молчат</div>
+        <div className="v tnum">{d.silent||0}</div><div className="s">ни дня за {days} дн</div></div>
+    </div>
+    <div className="pu-card pu-sec">
+      <div className="h">
+        <span>Все пользователи · {rows.length} из {all.length} · клик по строке — полная карточка</span>
+        <span className="pu-people-ctl">
+          <input className="pu-search" placeholder="поиск по ФИО или логину"
+                 value={qq} onChange={e=>setQq(e.target.value)}/>
+          <select className="pu-sel" value={sort} onChange={e=>setSort(e.target.value)}>
+            <option value="score">по активности</option>
+            <option value="last">по последнему визиту</option>
+            <option value="views">по просмотрам</option>
+            <option value="time_s">по времени</option>
+            <option value="ai">по ИИ-запросам</option>
+            <option value="reports">по отчётам</option>
+            <option value="dislikes">по жалобам</option>
+          </select>
+        </span>
+      </div>
+      <div className="pu-tblwrap">
+        <table className="pu-tbl pu-team">
+          <thead><tr>
+            <th>пользователь</th><th>статус</th><th>время</th><th>визитов</th><th>дней</th>
+            <th>просм.</th><th>ИИ</th><th>отчёты</th><th>оценки</th><th>разделы</th><th>был(а)</th>
+          </tr></thead>
+          <tbody>
+            {rows.map(u=><tr key={u.username} className="pu-rowclick"
+                            onClick={()=>onOpenUser(u.username)}>
+              <td><span className="pu-u"><span className="a">{initials(u.name)}</span>
+                <span><span className="pu-nm">{u.name}</span>
+                  <span className="pu-login">@{u.username}</span></span></span></td>
+              <td>{u.online?<span className="pu-badge on">онлайн</span>
+                   :u.today?<span className="pu-badge tod">сегодня</span>
+                   :<span className="pu-badge off">—</span>}</td>
+              <td><span className="pu-tm"><span className="bar"
+                    style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
+              <td className="tnum">{u.visits}</td><td className="tnum">{u.days_active}</td>
+              <td className="tnum">{u.views}</td>
+              <td className="tnum">{u.ai}{+u.deep>0&&<i className="pu-deep" title="из них глубоких">·{u.deep}</i>}</td>
+              <td className="tnum">{u.reports}</td>
+              <td className="tnum">{+u.likes>0&&<span style={{color:"var(--pos)"}}>+{u.likes}</span>}
+                {+u.dislikes>0&&<span style={{color:"var(--neg)"}}> −{u.dislikes}</span>}
+                {!+u.likes&&!+u.dislikes&&"—"}</td>
+              <td className="pu-pages">{(u.top_pages||[]).map(x=>AD_PAGE_RU[x]||x).join(" · ")||"—"}</td>
+              <td>{u.last_seen||"—"}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </>;
+}
+
+function PuUserCard({username,days,onClose,onOpenReport}){
+  const[c,setC]=useState(null);
+  const[tab,setTab]=useState("act");
+  useEffect(()=>{setC(null);
+    apiFetch(`/api/admin/users/${encodeURIComponent(username)}?days=${days}`)
+      .then(setC).catch(()=>setC({error:true}));
+  },[username,days]);
+  useEffect(()=>{const k=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[onClose]);
+  const u=(c&&c.user)||{}, pr=(c&&c.profile)||{};
+  const maxV=Math.max(...((c&&c.by_day)||[]).map(x=>+x.views||0),1);
+  const maxP=Math.max(...((c&&c.pages)||[]).map(x=>+x.views||0),1);
+  return <div className="pu-drawer" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div className="pu-dr">
+      <div className="pu-drhead">
+        <div className="pu-u"><span className="a big">{initials(u.name)}</span>
+          <div><div className="pu-drname">{u.name||username}</div>
+            <div className="pu-drsub">@{username}
+              {u.online?<span className="pu-badge on">онлайн</span>
+                :u.today?<span className="pu-badge tod">был сегодня</span>:null}
+              {u.first_seen&&<> · первый визит {u.first_seen}</>}
+              {u.last_seen&&<> · последний {u.last_seen}</>}</div></div></div>
+        <button className="pu-x" onClick={onClose} aria-label="Закрыть">✕</button>
+      </div>
+      {!c?<div style={{padding:24}}><Skel h={120}/></div>:c.error?<ErrState msg="Не удалось загрузить карточку."/>:<>
+        <div className="pu-drtiles">
+          <div><b className="tnum">{adFmtS(u.time_s)}</b><span>в системе</span></div>
+          <div><b className="tnum">{u.visits}</b><span>визитов</span></div>
+          <div><b className="tnum">{u.days_active}</b><span>дней активности</span></div>
+          <div><b className="tnum">{u.views}</b><span>просмотров</span></div>
+          <div><b className="tnum">{u.ai}</b><span>вопросов ИИ</span></div>
+          <div><b className="tnum">{u.reports}</b><span>отчётов</span></div>
+          <div><b className="tnum">{u.likes}/{u.dislikes}</b><span>оценок 👍/👎</span></div>
+          <div className={+u.errors>0?"neg":""}><b className="tnum">{u.errors}</b><span>ошибок</span></div>
+        </div>
+        {(pr.role_desc||pr.profile_note)&&<div className="pu-drsec">
+          <div className="pu-drh">Профиль</div>
+          {pr.role_desc&&<p className="pu-drp"><b>Зона ответственности:</b> {pr.role_desc}</p>}
+          {pr.profile_note&&<p className="pu-drp"><b>Чем интересуется</b>
+            {pr.note_at?` (собрано ${pr.note_at})`:""}: {pr.profile_note}</p>}
+        </div>}
+        <div className="pu-drtabs">
+          {[["act","Активность"],["q","Вопросы ИИ"],["r","Отчёты"],
+            ["fb","Оценки"],["err","Ошибки"],["trail","Хронология"]].map(([k,l])=>
+            <button key={k} className={"seg-btn"+(tab===k?" on":"")} onClick={()=>setTab(k)}>{l}</button>)}
+        </div>
+        {tab==="act"&&<div className="pu-drsec">
+          <div className="pu-drh">По дням · {days} дн</div>
+          <div className="pu-days">
+            {(c.by_day||[]).map(x=><div key={x.d} className="pu-dbar" title={`${x.d}: ${x.views} просмотров, ${adFmtS(x.time_s)}`}>
+              <i style={{height:Math.max(3,(+x.views||0)/maxV*46)+"px"}}/>
+              <span>{x.d.slice(8,10)}</span></div>)}
+            {(c.by_day||[]).length===0&&<div className="pu-empty">Нет активности за период.</div>}
+          </div>
+          <div className="pu-drh" style={{marginTop:14}}>Разделы</div>
+          {(c.pages||[]).map(pg=><div key={pg.page} className="pu-bar-row">
+            <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
+            <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxP)*100)+"%"}}/></span>
+            <span className="vv tnum">{pg.views} · {adFmtS(pg.total_s)}</span></div>)}
+          {(c.pages||[]).length===0&&<div className="pu-empty">Страниц не открывал.</div>}
+        </div>}
+        {tab==="q"&&<div className="pu-drsec">
+          {(c.questions||[]).map((x,i)=><div key={i} className="pu-qrow">
+            <span className="at">{x.at}</span>
+            <span className="qq">{x.question||"—"}</span>
+            {x.mode&&<span className="md">{x.mode==="deep"?"глубокий":"быстрый"}</span>}
+            {x.report_id&&<button className="pu-link" onClick={()=>onOpenReport(x.report_id)}>отчёт →</button>}
+          </div>)}
+          {(c.questions||[]).length===0&&<div className="pu-empty">Вопросов не задавал.</div>}
+        </div>}
+        {tab==="r"&&<div className="pu-drsec">
+          {(c.reports||[]).map(r=><div key={r.report_id} className="pu-qrow">
+            <span className="at">{r.at}</span>
+            <span className="qq">{r.title||r.question}</span>
+            <span className="md">{Math.round((+r.body_len||0)/1000)} тыс. знаков</span>
+            <button className="pu-link" onClick={()=>onOpenReport(r.report_id)}>открыть →</button>
+          </div>)}
+          {(c.reports||[]).length===0&&<div className="pu-empty">Отчётов не строил.</div>}
+        </div>}
+        {tab==="fb"&&<div className="pu-drsec">
+          {(c.ratings||[]).map((x,i)=><div key={i} className={"pu-qrow"+(x.verdict<0?" bad":"")}>
+            <span className="at">{x.at}</span>
+            <span className="md">{PU_KIND_RU[x.kind]||x.kind}</span>
+            <span className="qq">{x.question||x.title||x.item_key}
+              {x.comment&&<em className="pu-cmt"> «{x.comment}»</em>}</span>
+            <span className={x.verdict<0?"pu-vd neg":"pu-vd pos"}>{x.verdict<0?"👎":"👍"}</span>
+            {x.report_id&&<button className="pu-link" onClick={()=>onOpenReport(x.report_id)}>отчёт →</button>}
+          </div>)}
+          {(c.ratings||[]).length===0&&<div className="pu-empty">Ничего не оценивал.</div>}
+        </div>}
+        {tab==="err"&&<div className="pu-drsec">
+          {(c.errors||[]).map((x,i)=><div key={i} className="pu-qrow bad">
+            <span className="at">{x.at}</span><span className="md">{x.kind}</span>
+            <span className="qq">{AD_PAGE_RU[x.page]||x.page||"—"} {x.status?`· ${x.status}`:""} {x.message||""}</span>
+          </div>)}
+          {(c.errors||[]).length===0&&<div className="pu-empty">Ошибок не было.</div>}
+        </div>}
+        {tab==="trail"&&<div className="pu-drsec">
+          <div className="pu-drh">Последние действия · {(c.trail||[]).length}</div>
+          {(c.trail||[]).map((x,i)=><div key={i} className="pu-trail">
+            <span className="at">{x.at}</span><span className="k">{x.kind}</span>
+            <span className="p">{AD_PAGE_RU[x.page]||x.page||""}</span>
+            <span className="d">{x.dur_ms?adFmtS(x.dur_ms/1000):""}{x.status?` · ${x.status}`:""}</span>
+          </div>)}
+        </div>}
+      </>}
+    </div>
+  </div>;
+}
+
+function PuReportView({rid,onClose}){
+  const[r,setR]=useState(null);
+  useEffect(()=>{setR(null);
+    apiFetch(`/api/reports/${rid}`).then(setR).catch(()=>setR({error:true}));},[rid]);
+  useEffect(()=>{const k=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[onClose]);
+  return <div className="pu-drawer" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div className="pu-dr">
+      <div className="pu-drhead">
+        <div><div className="pu-drname">{r&&!r.error?(r.title||r.question):"Отчёт"}</div>
+          <div className="pu-drsub">{r&&!r.error&&<>автор: {r.owner_name||r.owner}
+            {r.admin_view&&<span className="pu-badge adm" title="открыто служебным доступом владельца; действие записано в журнал">служебный доступ</span>}</>}</div></div>
+        <button className="pu-x" onClick={onClose} aria-label="Закрыть">✕</button>
+      </div>
+      {!r?<div style={{padding:24}}><Skel h={140}/></div>
+        :r.error?<ErrState msg="Отчёт не найден."/>
+        :<div className="pu-drsec pu-report">{renderMD(r.body||"")}</div>}
+    </div>
+  </div>;
+}
+
+function PuReports({days,onOpenReport,onOpenUser}){
+  const[d,setD]=useState(null);
+  const[qq,setQq]=useState("");
+  const[bad,setBad]=useState(false);
+  useEffect(()=>{setD(null);
+    const sp=new URLSearchParams({days:String(days),limit:"200"});
+    if(bad)sp.set("only_bad","true");
+    apiFetch("/api/admin/reports?"+sp).then(setD).catch(()=>setD({reports:[]}));
+  },[days,bad]);
+  if(!d)return <div className="pu-card pu-sec"><Skel h={160}/></div>;
+  const ql=qq.trim().toLowerCase();
+  const rows=(d.reports||[]).filter(r=>!ql||
+    (r.question||"").toLowerCase().includes(ql)||(r.name||"").toLowerCase().includes(ql));
+  return <div className="pu-card pu-sec">
+    <div className="h">
+      <span>Отчёты всех пользователей · {rows.length} из {d.total||0}
+        {d.bad>0?<> · с жалобами {d.bad}</>:""}</span>
+      <span className="pu-people-ctl">
+        <input className="pu-search" placeholder="поиск по вопросу или автору"
+               value={qq} onChange={e=>setQq(e.target.value)}/>
+        <button className={"seg-btn"+(bad?" on":"")} onClick={()=>setBad(!bad)}>только с жалобами</button>
+      </span>
+    </div>
+    <div className="pu-tblwrap">
+      <table className="pu-tbl">
+        <thead><tr><th>автор</th><th>вопрос</th><th>создан</th><th>объём</th>
+          <th>оценки</th><th>открытий</th><th></th></tr></thead>
+        <tbody>
+          {rows.map(r=><tr key={r.report_id} className={+r.dislikes>0?"pu-badrow":""}>
+            <td><button className="pu-link" onClick={()=>onOpenUser(r.username)}>{r.name}</button></td>
+            <td className="pu-qcell">{r.title||r.question}
+              {r.comment&&<em className="pu-cmt"> «{r.comment}»</em>}</td>
+            <td>{r.at}</td>
+            <td className="tnum">{Math.round((+r.body_len||0)/1000)}т</td>
+            <td className="tnum">{+r.likes>0&&<span style={{color:"var(--pos)"}}>+{r.likes}</span>}
+              {+r.dislikes>0&&<span style={{color:"var(--neg)"}}> −{r.dislikes}</span>}
+              {!+r.likes&&!+r.dislikes&&"—"}</td>
+            <td className="tnum">{r.opens}{+r.shares>0?` · ${r.shares}⇗`:""}</td>
+            <td><button className="pu-link" onClick={()=>onOpenReport(r.report_id)}>открыть →</button></td>
+          </tr>)}
+        </tbody>
+      </table>
+      {rows.length===0&&<div className="pu-empty">Отчётов нет.</div>}
+    </div>
+  </div>;
+}
+
+function PuComplaints({days,onOpenReport,onOpenUser}){
+  const[d,setD]=useState(null);
+  useEffect(()=>{setD(null);
+    apiFetch("/api/admin/complaints?days="+days).then(setD).catch(()=>setD({items:[]}));
+  },[days]);
+  if(!d)return <div className="pu-card pu-sec"><Skel h={120}/></div>;
+  const items=d.items||[];
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>Жалобы · кто и на что · {days} дн</span>
+      <span>{items.length} за период</span></div>
+    {items.length===0&&<div className="pu-empty">Никто не жаловался.</div>}
+    {items.map((x,i)=><div key={i} className="pu-cmp">
+      <div className="pu-cmphead">
+        <button className="pu-link strong" onClick={()=>onOpenUser(x.username)}>{x.name}</button>
+        <span className="md">{PU_KIND_RU[x.kind]||x.kind}</span>
+        <span className="at">{x.at}</span>
+        {x.report_id&&<button className="pu-link" onClick={()=>onOpenReport(x.report_id)}>открыть отчёт →</button>}
+      </div>
+      <div className="pu-cmpbody">{x.question||x.title||x.item_key}</div>
+      {(x.reasons||[]).length>0&&<div className="pu-cmpwhy">
+        {x.reasons.map((r,j)=><span key={j}>{r}</span>)}</div>}
+      {x.comment&&<div className="pu-cmpnote">«{x.comment}»</div>}
+    </div>)}
+  </div>;
+}
 
 function PulsePage(){
   const me=useMe();
@@ -6807,6 +7180,10 @@ function PulsePage(){
   const[m,setM]=useState(null);
   const[err,setErr]=useState(false);
   const[ts,setTs]=useState(null);
+  // карточка человека и просмотр отчёта — поверх страницы, чтобы не терять
+  // контекст разбора: пришёл из жалобы → открыл отчёт → вернулся в список
+  const[card,setCard]=useState(null);
+  const[rep,setRep]=useState(null);
   const load=useCallback(()=>{
     apiFetch("/api/admin/pulse?days="+days)
       .then(d=>{setM(d);setErr(false);setTs(new Date());})
@@ -6896,23 +7273,9 @@ function PulsePage(){
           </div>
         </div>
 
-        {/* ②c команда пофамильно */}
-        {team.length>0&&<div className="pu-card pu-sec">
-          <div className="h"><span>Команда · пофамильно · {m.days} дн</span>
-            <span>скор: время + просмотры + ИИ×15 + отчёты×30 + оценки×5</span></div>
-          <table className="pu-tbl pu-team">
-            <thead><tr><th>пользователь</th><th>время</th><th>дней</th><th>просм.</th><th>ИИ</th><th>отчёты</th><th>оценки</th><th>был(а)</th></tr></thead>
-            <tbody>
-              {team.map((u,i)=><tr key={u.username}>
-                <td><span className="pu-u"><span className="a">{initials(u.name)}</span>{u.name}
-                  {i===0&&(+u.views>0)&&<span className="pu-crown">✦ самый активный</span>}</span></td>
-                <td><span className="pu-tm"><span className="bar" style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
-                <td>{u.days_active}</td><td>{u.views}</td><td>{u.ai}</td><td>{u.reports}</td><td>{u.ratings}</td>
-                <td>{u.last_seen||"—"}</td>
-              </tr>)}
-            </tbody>
-          </table>
-        </div>}
+        {/* ②c все люди поимённо + карточка по клику */}
+        <PuPeople days={days} onOpenUser={setCard}/>
+        <PuComplaints days={days} onOpenReport={setRep} onOpenUser={setCard}/>
 
         {/* ④ тепловая карта */}
         <div className="pu-card pu-sec">
@@ -6923,8 +7286,10 @@ function PulsePage(){
       <PuPersonalization pz={m.personalization||{}}/>
     </>}
 
+    {tab==="reports"&&<PuReports days={days} onOpenReport={setRep} onOpenUser={setCard}/>}
+
     {tab==="ai"&&<>
-      <PuAiFeedback fb={m.ai_feedback||{}}/>
+      <PuAiFeedback fb={m.ai_feedback||{}} onOpenReport={setRep} onOpenUser={setCard}/>
       <PuPersona p={m.persona||{}}/>
       <PuTopics t={m.topics}/>
         {/* ③ вовлечённость + фичи */}
@@ -7010,9 +7375,14 @@ function PulsePage(){
     </>}
 
 
+    {card&&<PuUserCard username={card} days={days}
+      onClose={()=>setCard(null)} onOpenReport={setRep}/>}
+    {rep&&<PuReportView rid={rep} onClose={()=>setRep(null)}/>}
+
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
                  fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:"var(--ink-4)"}}>
-      телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS
+      телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS ·
+      открытие чужого отчёта пишется в журнал (admin_report_open)
     </div>
   </div>;
 }

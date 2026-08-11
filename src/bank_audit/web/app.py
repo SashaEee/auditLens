@@ -382,6 +382,46 @@ def admin_metrics(days: int = 14, user: CurrentUser = Depends(get_current_user))
     return telemetry.metrics(days)
 
 
+@app.get("/api/admin/users")
+def admin_users(days: int = 30, user: CurrentUser = Depends(get_current_user)):
+    """Все пользователи со сводкой по каждому — вкладка «Люди»."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    return telemetry.users_directory(days)
+
+
+@app.get("/api/admin/users/{username}")
+def admin_user_card(username: str, days: int = 30,
+                    user: CurrentUser = Depends(get_current_user)):
+    """Полный разрез одного человека: страницы, вопросы, отчёты, оценки, след."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    card = telemetry.user_card(username, days)
+    if not card:
+        raise HTTPException(404, "user not found")
+    return card
+
+
+@app.get("/api/admin/reports")
+def admin_reports(days: int = 30, limit: int = 200, q: Optional[str] = None,
+                  username: Optional[str] = None, only_bad: bool = False,
+                  user: CurrentUser = Depends(get_current_user)):
+    """Отчёты ВСЕХ пользователей: недовольные — первыми."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    return telemetry.reports_all(days=days, limit=limit, q=q,
+                                 username=username, only_bad=only_bad)
+
+
+@app.get("/api/admin/complaints")
+def admin_complaints(days: int = 30, limit: int = 60,
+                     user: CurrentUser = Depends(get_current_user)):
+    """Все дизлайки с ФИО и ссылкой на предмет жалобы."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    return {"days": days, "items": telemetry.complaints(days, limit)}
+
+
 @app.get("/api/overview/foryou")
 async def overview_foryou(user: CurrentUser = Depends(get_current_user)):
     """Персональный разворот «Для вас»: полноценная страница под профиль аудитора.
@@ -464,11 +504,21 @@ def get_reports(user: CurrentUser = Depends(get_current_user)):
 @app.get("/api/reports/{rid}")
 def get_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
     r = userdata.get_report(rid, user.username)
+    admin_view = False
+    if r is None and telemetry.is_admin(user.username):
+        # Владелец инструмента разбирает жалобы на отчёты — без доступа к самому
+        # отчёту это невозможно. Доступ НЕ тихий: помечаем ответ и пишем след.
+        r = userdata.get_report(rid, user.username, as_admin=True)
+        admin_view = r is not None
     if r is None:
         raise HTTPException(404, "report not found")
+    if admin_view:
+        r = {**r, "admin_view": True}
     try:    # телеметрия чтений отчётов (свой/расшаренный) — для «Пульса»
-        userdata.log_event(user.username, "report_open",
-                           {"report_id": rid, "own": r.get("owner") == user.username})
+        userdata.log_event(user.username,
+                           "admin_report_open" if admin_view else "report_open",
+                           {"report_id": rid, "own": r.get("owner") == user.username,
+                            "owner": r.get("owner")})
     except Exception:
         pass
     return r
