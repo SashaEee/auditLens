@@ -24,10 +24,12 @@ def ingest(source: str, target: str | None, openclaw_job: str | None):
 @click.option("--limit", default=120, help="сколько офферов обогатить за прогон")
 @click.option("--category", "categories", multiple=True,
               help="ограничить категориями (по умолчанию карты и кредиты)")
-def enrich(limit: int, categories: tuple[str, ...]):
+@click.option("--force", is_flag=True,
+              help="перечитать уже разобранное (после правки промпта или правил)")
+def enrich(limit: int, categories: tuple[str, ...], force: bool):
     """Обогатить офферы структурой условий (LLM по детальным страницам)."""
     from .normalizer import enrich_llm
-    res = enrich_llm.enrich(limit=limit, categories=categories or None)
+    res = enrich_llm.enrich(limit=limit, categories=categories or None, force=force)
     click.echo(json.dumps(res, ensure_ascii=False))
 
 @cli.command()

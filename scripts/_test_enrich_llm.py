@@ -11,7 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from bank_audit.normalizer.enrich_llm import _clean_item, _parse_array  # noqa: E402
+from bank_audit.normalizer.enrich_llm import (_clean_item, _free_by_rule,  # noqa: E402
+                                              _parse_array)
 
 ok = fail = 0
 
@@ -68,6 +69,20 @@ keep = _clean_item({"free_kind": "conditional",
 check("«ноль при условии» цифрой не ломается", keep["free_kind"], "conditional")
 loan = _clean_item({"free_kind": "unconditional"}, "credit")
 check("у кредита платы за обслуживание нет", loan["free_kind"], "unknown")
+
+print("детерминированный дожим по картам")
+FREE = "Общие условия Выпуск карты бесплатно Обслуживание карты бесплатно Процент на остаток 11%"
+COND = ("Общие условия Обслуживание карты бесплатно при неснижаемом остатке от "
+        "100 000 ₽ за расчётный период, иначе 299 ₽/мес.")
+YEAR = "Обслуживание карты бесплатно первый год, далее — 7 000 ₽ ежегодно"
+NOISE = "Обслуживание карты бесплатно 900 ₽ — изменение даты платежа по кредиту"
+check("прямое «бесплатно» при цене 0", _free_by_rule(FREE, 0.0), "unconditional")
+check("оговорка «при остатке» не проходит", _free_by_rule(COND, 0.0), None)
+check("«первый год, далее» не проходит", _free_by_rule(YEAR, 0.0), None)
+check("чужая плата рядом не мешает", _free_by_rule(NOISE, 0.0), "unconditional")
+check("цена больше нуля не проходит", _free_by_rule(FREE, 7000.0), None)
+check("цена неизвестна не проходит", _free_by_rule(FREE, None), None)
+check("нет строки обслуживания", _free_by_rule("Ставка 20 проц. Сумма до 1 млн", 0.0), None)
 
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)

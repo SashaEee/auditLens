@@ -291,6 +291,35 @@ def _parse_array(raw: str) -> list:
     return data if isinstance(data, list) else []
 
 
+# Детерминированный дожим по картам. Модель осторожна и на трети карт отвечает
+# «неизвестно», хотя страница прямо пишет «Обслуживание карты бесплатно», а наш
+# собственный парсер каталога дал ноль. Два независимых сигнала, совпавших между
+# собой, — это не догадка, поэтому такой случай закрываем правилом, а не LLM.
+# Условие срабатывания намеренно узкое: сразу после «бесплатно» не должно быть
+# ни оговорки, ни срока («при», «если», «первый год», «далее», «в течение»).
+_FREE_LINE_RE = re.compile(r"обслуживание\s+карты\s+бесплатн\w*(.{0,40})", re.I | re.S)
+# Оговорку выдаёт СОЮЗ («при», «если», «в случае»), а не само слово «остаток»:
+# строка «Обслуживание карты бесплатно Процент на остаток 11 проц.» — это два
+# независимых пункта тарифа, и по слову «остаток» правило молча промахивалось.
+# Окно после «бесплатно» узкое (40 знаков): оговорка всегда стоит вплотную
+# («бесплатно ПРИ выполнении…», «бесплатно ПЕРВЫЙ ГОД…»), а на широком окне
+# в него попадал союз из СЛЕДУЮЩЕГО пункта тарифа — «проценты начисляются…
+# ПРИ зачислении», и безусловно бесплатная карта отбраковывалась.
+_CAVEAT_RE = re.compile(r"\bпри\b|\bесли\b|в\s+случае|услови|"
+                        r"перв\w*\s+(?:год|мес)|дал(?:ее|ьше)|в\s+течени|"
+                        r"иначе|подписк\w*\s+(?:на|обязат)|за\s+первый", re.I)
+
+
+def _free_by_rule(text: str, fee: float | None) -> str | None:
+    """«unconditional», если и текст тарифа, и разобранная цена говорят одно."""
+    if fee is None or fee > 0:
+        return None
+    m = _FREE_LINE_RE.search(text or "")
+    if not m or _CAVEAT_RE.search(m.group(1)):
+        return None
+    return "unconditional"
+
+
 def _ask(batch: list[dict]) -> dict[int, dict]:
     """batch: [{i, category, title, bank, text}] → {i: payload}."""
     parts = []
@@ -320,7 +349,14 @@ def _ask(batch: list[dict]) -> dict[int, dict]:
             continue
         src = by_i.get(i)
         if src:
-            out[i] = _clean_item(o, src["category"], src.get("fee"))
+            item = _clean_item(o, src["category"], src.get("fee"))
+            if (item["free_kind"] == "unknown"
+                    and src["category"] in ("card_debit", "card_credit")):
+                by_rule = _free_by_rule(src.get("text", ""), src.get("fee"))
+                if by_rule:
+                    item["free_kind"] = by_rule
+                    item["free_source"] = "rule"
+            out[i] = item
     return out
 
 
@@ -339,7 +375,8 @@ _SELECT = """
        AND o.is_active
        AND t.raw->>'product_id' IS NOT NULL
        AND t.raw->>'section'    = ANY(:sections)
-       AND (e.offer_id IS NULL
+       AND (:force
+            OR e.offer_id IS NULL
             OR e.updated_at < now() - make_interval(days => :max_age)
             OR e.updated_at < t.valid_from)
      ORDER BY (e.offer_id IS NULL) DESC, o.offer_id
@@ -347,11 +384,11 @@ _SELECT = """
 """
 
 
-def _pending(cats: Iterable[str], limit: int) -> list[dict]:
+def _pending(cats: Iterable[str], limit: int, force: bool = False) -> list[dict]:
     with db.session() as s:
         rows = s.execute(text(_SELECT), {
             "cats": list(cats), "sections": list(_DETAIL_PATH),
-            "max_age": _MAX_AGE_D, "lim": limit,
+            "max_age": _MAX_AGE_D, "lim": limit, "force": force,
         }).mappings().all()
     return [dict(r) for r in rows]
 
@@ -370,10 +407,15 @@ def _save(offer_id: int, digest: str, payload: dict, model: str) -> None:
                "m": model})
 
 
-def enrich(limit: int = 120, categories: Iterable[str] | None = None) -> dict:
-    """Обогатить до limit офферов. Возвращает счётчики для лога сбора."""
+def enrich(limit: int = 120, categories: Iterable[str] | None = None,
+           force: bool = False) -> dict:
+    """Обогатить до limit офферов. Возвращает счётчики для лога сбора.
+
+    force=True перечитывает уже разобранное — нужен после правки промпта или
+    правил, иначе старый разбор живёт до истечения ENRICH_MAX_AGE_DAYS.
+    """
     cats = list(categories or CATEGORIES)
-    todo = _pending(cats, limit)
+    todo = _pending(cats, limit, force)
     stats = {"selected": len(todo), "fetched": 0, "no_text": 0,
              "enriched": 0, "no_answer": 0, "llm_calls": 0, "skipped_same": 0}
     if not todo:
@@ -430,7 +472,7 @@ def enrich(limit: int = 120, categories: Iterable[str] | None = None) -> dict:
             continue
         stats["fetched"] += 1
         digest = hashlib.sha256(txt.encode("utf-8")).hexdigest()
-        if known.get(row["offer_id"]) == digest:
+        if not force and known.get(row["offer_id"]) == digest:
             # текст тот же — только двигаем отметку свежести
             _touch(row["offer_id"])
             stats["skipped_same"] += 1
