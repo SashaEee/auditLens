@@ -2262,6 +2262,9 @@ function MkTerms({c,compact}){
         <i className="mk-termsrc" title="условия разобраны по детальным страницам тарифов">
           разобрано {a.covered} из {a.of}</i>
       </div>
+      {(a.top_requires||[]).length>0&&<div className="mk-termmine" style={{opacity:.85}}>
+        Чем куплен минимум: {a.top_requires.map(([k,n],i)=>
+          <span key={k}>{i?", ":""}{REQ_RU[k]||k} — {n}</span>)}</div>}
       {(a.sber||lreq)&&<div className="mk-termmine">
         {a.sber?<>Ставка Сбера — <b>{ATT_RU[a.sber]||a.sber}</b>{req?`: ${req}`:""}. </>:null}
         {lreq?<>У лидера минимум требует: {lreq}.</>:null}</div>}

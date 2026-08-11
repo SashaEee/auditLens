@@ -1080,6 +1080,14 @@ def market_atlas(term: Optional[str] = None):
         # Сравнивать банк по такой границе с банком без оговорок нельзя.
         att = [b for b in banks if b.get("attain") in ("broad", "narrow", "promo_only")]
         if cid in ("credit", "auto_loan", "mortgage") and att:
+            # Чем именно куплена минимальная ставка. Без этой раскладки число
+            # «нужны условия: 38» вводит в заблуждение: в кредитах под залог
+            # залог — свойство продукта, а не барьер, и смотреть надо на долю
+            # страховки и зарплатного проекта.
+            req_freq: dict[str, int] = {}
+            for b in att:
+                for x in (b.get("rate_requires") or []):
+                    req_freq[x] = req_freq.get(x, 0) + 1
             entry["attainability"] = {
                 "covered": len(att), "of": len(banks),
                 "broad": sum(1 for b in att if b["attain"] == "broad"),
@@ -1089,6 +1097,7 @@ def market_atlas(term: Optional[str] = None):
                 "leader_requires": banks[0].get("rate_requires") or [],
                 "sber": (sber or {}).get("attain"),
                 "sber_requires": (sber or {}).get("rate_requires") or [],
+                "top_requires": sorted(req_freq.items(), key=lambda kv: -kv[1])[:3],
             }
         if sber:
             # ранг с учётом РАВНЫХ значений: 91 карта с «0 ₽/год» — это один
