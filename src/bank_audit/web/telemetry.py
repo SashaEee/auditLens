@@ -761,14 +761,25 @@ def user_card(username: str, days: int = 30) -> dict:
                             AND created_at > now() - (:days || ' days')::interval
                           GROUP BY 1) l USING (page)
              ORDER BY v.views DESC LIMIT 20""", p),
+        # Вопросы берём из истории чата, а не из user_event: там рядом лежит
+        # ФАКТИЧЕСКИЙ режим ответа и номер отчёта, а в событии запроса режима
+        # ещё нет — его выбирает маршрутизатор уже в процессе.
         "questions": _rows("""
-            SELECT to_char(ts AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
-                   payload->>'question' AS question, payload->>'mode' AS mode,
-                   payload->>'report_id' AS report_id
-              FROM user_event
-             WHERE username = :u AND kind = 'ai_query'
-               AND ts > now() - (:days || ' days')::interval
-             ORDER BY ts DESC LIMIT 60""", p),
+            SELECT to_char(m.created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
+                   m.content AS question,
+                   a.meta->>'mode'      AS mode,
+                   a.meta->>'report_id' AS report_id,
+                   length(COALESCE(a.content, '')) AS answer_len
+              FROM chat_message m
+              JOIN chat_session cs ON cs.session_id = m.session_id
+              LEFT JOIN LATERAL (
+                    SELECT meta, content FROM chat_message x
+                     WHERE x.session_id = m.session_id AND x.role = 'assistant'
+                       AND x.created_at > m.created_at
+                     ORDER BY x.created_at LIMIT 1) a ON TRUE
+             WHERE cs.username = :u AND m.role = 'user'
+               AND m.created_at > now() - (:days || ' days')::interval
+             ORDER BY m.created_at DESC LIMIT 60""", p),
         "reports": _rows("""
             SELECT report_id, question, title,
                    to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,

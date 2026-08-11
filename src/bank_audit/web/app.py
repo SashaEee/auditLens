@@ -2788,7 +2788,12 @@ async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_u
         userdata.add_message(session_id, "user", req.question,
                              {"force_deep": req.force_deep})
         signals = userdata.update_interests_from_query(username, req.question)
-        userdata.log_event(username, "ai_query", {"question": req.question, **signals})
+        # Режим здесь ещё НЕ известен: «глубоко или быстро» решает маршрутизатор
+        # уже в процессе, а флаг запроса — только пожелание. Фактический режим
+        # ложится в chat_message.meta, оттуда его и читает карточка человека.
+        userdata.log_event(username, "ai_query",
+                           {"question": req.question, "session_id": session_id,
+                            "deep_requested": bool(req.force_deep), **signals})
     except Exception:
         log.warning("[ai_analyze] pre-persist failed", exc_info=True)
 

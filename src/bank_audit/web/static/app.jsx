@@ -7033,6 +7033,8 @@ function PuUserCard({username,days,onClose,onOpenReport}){
             <span className="at">{x.at}</span>
             <span className="qq">{x.question||"—"}</span>
             {x.mode&&<span className="md">{x.mode==="deep"?"глубокий":"быстрый"}</span>}
+            {+x.answer_len>0&&<span className="md">{Math.round(+x.answer_len/1000)||1}т зн.</span>}
+            {!x.answer_len&&<span className="md" title="ответа в истории нет — вопрос остался без ответа">без ответа</span>}
             {x.report_id&&<button className="pu-link" onClick={()=>onOpenReport(x.report_id)}>отчёт →</button>}
           </div>)}
           {(c.questions||[]).length===0&&<div className="pu-empty">Вопросов не задавал.</div>}
