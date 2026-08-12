@@ -9,8 +9,8 @@
 Если critic находит проблемы → orchestrator просит Analyst переписать с
 конкретными замечаниями (одна итерация).
 
-Переиспользует anti-hallucination guards из narrative_generators/base.py
-(verify_numbers, NPA-проверка) — детерминированная сантехника.
+Числовая сверка — детерминированная сантехника на общем разборе чисел
+(numbers.py): один парсер и для отчёта, и для фактов bundle.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from openai import AsyncOpenAI
 
 from ...ai.llm_utils import deep_reasoning_extra
 from ...clock import today_anchor
+from . import numbers as _num
 from .knowledge_bundle import KnowledgeBundle, Fact
 
 log = logging.getLogger(__name__)
@@ -211,87 +212,39 @@ def _cited_sources_block(report_md: str, bundle: KnowledgeBundle,
 
 
 def _check_numbers(report_md: str, bundle: KnowledgeBundle) -> list[float]:
-    """Извлекает числа из отчёта, сверяет с фактами. Возвращает галлюцинации.
+    """Числа отчёта, которых нет в фактах bundle (кандидаты в выдумки).
 
-    Строго: только числа С ЕДИНИЦЕЙ (₽, %, лет), в безопасных диапазонах
-    (годы 1990-2050, малые 1-100) — пропускаем.
+    Берём только числа С ЕДИНИЦЕЙ (₽, %, п.п., лет). Год определяется ЕДИНИЦЕЙ
+    измерения, а не диапазоном: прежняя проверка пропускала как «год» всё в
+    интервале 1990-2050, из-за чего выдуманная комиссия «2 000 ₽» считалась
+    безопасной. Разбор общий с оркестратором (numbers.py) — раньше два конца
+    сверки читали числа по-разному, и дробные значения не совпадали никогда.
     """
-    try:
-        from ...research.narrative_generators.base import (
-            verify_numbers_in_text as _verify, _extract_unit_numbers,
-        )
-    except Exception:
-        # base.py moved/unavailable — лёгкая встроенная проверка
-        return _check_numbers_lite(report_md, bundle)
-
-    # Сначала соберём ВСЕ числа из фактов (включая conditions/verbatim)
     fact_nums = _collect_fact_numbers(bundle.facts)
     if not fact_nums:
         return []
-
-    text_nums = _extract_unit_numbers(report_md)
-    safe_years = {float(y) for y in range(1990, 2050)}
     halluc = []
-    for n in text_nums:
-        if n in safe_years:
+    for value, unit in _num.parse_with_units(report_md):
+        if _num.is_year(value, unit) or _num.matches_fact(value, fact_nums):
             continue
-        if any(abs(n - fn) < 0.001 for fn in fact_nums):
-            continue
-        # приближённое (относительная погрешность < 2%)
-        if any(fn and abs(n - fn) / abs(fn) < 0.02 for fn in fact_nums if fn):
-            continue
-        halluc.append(n)
+        halluc.append(value)
     return halluc[:10]
 
 
 def _collect_fact_numbers(facts: list[Fact]) -> set[float]:
-    """Все числа из фактов (value, conditions, verbatim, qualifications)."""
-    try:
-        from ...research.narrative_generators.base import (
-            _facts_numbers as _collect,
-        )
-        return _collect(facts)
-    except Exception:
-        return _collect_fact_numbers_lite(facts)
+    """База сверки из фактов — единым разбором (см. numbers.py).
 
-
-def _check_numbers_lite(text: str, bundle: KnowledgeBundle) -> list[float]:
-    """Лёгкая встроенная проверка если base.py недоступен."""
-    fact_nums = _collect_fact_numbers_lite(bundle.facts)
-    if not fact_nums:
-        return []
-    nums = set()
-    for m in re.finditer(r"(\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,](\d+))?\s*"
-                          r"(?:₽|руб|%|процент|тыс|млн|лет|год|дн|мес)",
-                          text, re.IGNORECASE):
-        raw = re.sub(r"[ \u00a0\u202f]", "", m.group(1))
-        frac = m.group(2)
-        try:
-            nums.add(float(raw + ("." + frac if frac else "")))
-        except ValueError:
-            continue
-    safe_years = {float(y) for y in range(1990, 2050)}
-    halluc = []
-    for n in nums:
-        if n in safe_years:
-            continue
-        if any(abs(n - fn) < 0.001 for fn in fact_nums):
-            continue
-        if any(fn and abs(n - fn) / abs(fn) < 0.02 for fn in fact_nums if fn):
-            continue
-        halluc.append(n)
-    return halluc[:10]
+    Прежде здесь звался narrative_generators.base._facts_numbers, который ждёт
+    полей value_numeric/exceptions/qualifications. У v2-Fact их нет — вызов
+    всегда падал с AttributeError, и работал запасной разбор, выбрасывавший
+    десятичную запятую: факт «27,608%» попадал в базу как 27608.
+    """
+    return _num.numbers_from_facts(facts)
 
 
 def _collect_fact_numbers_lite(facts: list[Fact]) -> set[float]:
-    nums: set[float] = set()
-    for f in facts:
-        for txt in [f.value, " ".join(f.conditions), f.verbatim]:
-            for m in re.finditer(r"\d[\d .,]*", txt or ""):
-                raw = re.sub(r"[ .,]", "", m.group(0))
-                if raw.isdigit():
-                    nums.add(float(raw))
-    return nums
+    """Оставлено для совместимости вызовов: разбор теперь один на всех."""
+    return _num.numbers_from_facts(facts)
 
 
 def _parse_json(raw: str) -> dict | None:

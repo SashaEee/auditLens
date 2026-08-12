@@ -33,6 +33,7 @@ from .knowledge_bundle import KnowledgeBundle
 from .base_agent import AgentMission
 from .agents import AGENT_REGISTRY
 from .analyst import write_report
+from . import numbers as _num
 from .critic import critique_report, Critique
 from .llm_throttle_v2 import patch_client_throttle
 
@@ -323,16 +324,24 @@ async def stream_deep_research_v2(question: str,
     unverified_set = set(unverified_nums)
     for h in critique.numeric_hallucinations:
         unverified_set.add(round(float(h), 3))
-    # verified = числа отчёта, сверенные с фактами (позитивный сигнал доверия).
-    verified_count = len(report_nums) - len(unverified_set)
+    # Считаем ВХОЖДЕНИЯ, а не уникальные значения. Прежняя формула
+    # «len(список) − len(множество несверенных)» поднимала счётчик доверия на
+    # каждом повторе неподтверждённого числа: отчёт, где одна и та же выдумка
+    # упомянута в TL;DR, таблице и рекомендациях, показывал «верифицировано 2».
+    verified_count = sum(1 for v, _u in report_nums
+                         if round(v, 3) not in unverified_set)
     # «Требуют ручной проверки» — КУРИРУЕМЫЙ список {claim, issue} С ПРИЧИНАМИ
     # (расхождение с источником + единственный источник низкого доверия), а НЕ
     # дамп всех несопоставленных чисел (раньше туда падали производные дельты/
     # проценты/годы → перегруз и бесполезность).
     manual_flags = _build_manual_check(report_md, bundle, critique)
-    # «Отфильтровано» — только реально пойманные критиком выдумки, а не
-    # производные числа (иначе счётчик раздувается и вводит в заблуждение).
-    dropped_count = len(critique.numeric_hallucinations)
+    # «Отфильтровано» — числа, которые критик назвал выдумкой И которых после
+    # переписи в отчёте действительно НЕ ОСТАЛОСЬ. Раньше сюда шёл весь список
+    # критика, и плашка «N отфильтровано (защита от галлюцинаций)» появлялась
+    # над отчётом, где эти числа преспокойно стояли в таблице.
+    _still_in_report = {round(v, 3) for v, _u in report_nums}
+    dropped_count = sum(1 for h in critique.numeric_hallucinations
+                        if round(float(h), 3) not in _still_in_report)
     yield _evt({"type": "verification",
                 "method": "curated_audit_flags",
                 "numeric_checked": len(report_nums),
@@ -814,62 +823,36 @@ def _build_manual_check(report_md: str, bundle: KnowledgeBundle,
     return [{"claim": fl["claim"], "issue": fl["issue"]} for fl in flags[:6]]
 
 
-def _extract_all_numbers(text: str) -> list[float]:
-    """Все числа с единицами (для счётчика верификации)."""
-    import re
-    nums = []
-    for m in re.finditer(r"(\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,](\d+))?\s*"
-                          r"(?:₽|руб|%|процент|тыс|млн|млрд|лет|год|дн|мес)",
-                          text or "", re.IGNORECASE):
-        raw = re.sub(r"[ \u00a0\u202f]", "", m.group(1))
-        frac = m.group(2)
-        try:
-            nums.append(float(raw + ("." + frac if frac else "")))
-        except ValueError:
-            continue
-    return nums
+def _extract_all_numbers(text: str) -> list[tuple[float, str]]:
+    """Числа отчёта С ЕДИНИЦАМИ: [(значение, единица), …], с повторами.
+
+    Повторы важны: счётчик «сверено N из M» обязан считать вхождения. Раньше он
+    вычитал из длины СПИСКА размер МНОЖЕСТВА несверенных, и каждое повторное
+    упоминание неподтверждённого числа поднимало «верифицировано».
+    """
+    return _num.parse_with_units(text)
 
 
 def _collect_fact_numbers(bundle: KnowledgeBundle) -> set[float]:
-    """Все числа из bundle.facts (value/conditions/verbatim) — реальная база
-    для сверки. Переиспользует critic._collect_fact_numbers когда доступно,
-    иначе лёгкий встроенный сбор."""
-    try:
-        from .critic import _collect_fact_numbers as _collect
-        return _collect(bundle.facts)
-    except Exception:
-        pass
-    import re
-    nums: set[float] = set()
-    for f in bundle.facts:
-        for txt in [f.value, " ".join(f.conditions), f.verbatim]:
-            for m in re.finditer(r"\d[\d .,]*", txt or ""):
-                raw = re.sub(r"[ .,]", "", m.group(0))
-                if raw.isdigit():
-                    nums.add(float(raw))
-    return nums
+    """База сверки из bundle.facts — единым разбором (см. numbers.py).
+
+    Прежний путь вёл в critic._collect_fact_numbers, который пытался позвать
+    narrative_generators.base._facts_numbers; тот падал на v2-Fact
+    (AttributeError: нет value_numeric), и всегда работал запасной вариант,
+    выбрасывавший десятичную запятую: «27,608%» превращалось в 27608.
+    """
+    return _num.numbers_from_facts(bundle.facts)
 
 
-def _split_verified(report_nums: list[float],
+def _split_verified(report_nums: list[tuple[float, str]],
                        fact_nums: set[float]) -> tuple[list[float], list[float]]:
-    """Разносит числа отчёта на (сопоставленные с фактами, не сопоставленные).
-    Сопоставление как в critic: точное совпадение либо относительная
-    погрешность < 2%. Годы (1990-2050) считаются safe и идут в verified."""
-    safe_years = {float(y) for y in range(1990, 2050)}
-    verified: list[float] = []
-    unverified: list[float] = []
-    for n in report_nums:
-        if n in safe_years:
-            verified.append(n)
-            continue
-        if any(abs(n - fn) < 0.001 for fn in fact_nums):
-            verified.append(n)
-            continue
-        if any(fn and abs(n - fn) / abs(fn) < 0.02 for fn in fact_nums if fn):
-            verified.append(n)
-            continue
-        unverified.append(n)
-    return verified, unverified
+    """Разносит числа отчёта на сверенные и несверенные.
+
+    Год определяется ЕДИНИЦЕЙ измерения, а не диапазоном: прежняя проверка
+    «1990 <= n < 2050» объявляла годом рублёвую сумму, и выдуманная комиссия
+    2 000 ₽ уходила в «проверено».
+    """
+    return _num.split_verified(report_nums, fact_nums)
 
 
 def _coverage_pct(bundle: KnowledgeBundle) -> float:

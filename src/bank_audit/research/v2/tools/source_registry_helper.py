@@ -44,7 +44,16 @@ _BANK_DOMAIN_MAP = {
 
 
 def _bank_slug_from_domain(domain: str) -> str | None:
+    """Слаг банка по домену.
+
+    Поддомен, ведущий чужой бизнес (hotels.tinkoff.ru — бронирование отелей),
+    банку НЕ приписываем: иначе он становится «источником о Т-Банке» и попадает
+    в отчёт про автокредиты.
+    """
     d = (domain or "").lower().removeprefix("www.")
+    from .web_tools import is_offtopic_source
+    if is_offtopic_source(d):
+        return None
     for dom, slug in _BANK_DOMAIN_MAP.items():
         if d == dom or d.endswith("." + dom):
             return slug

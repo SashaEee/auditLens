@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from urllib.parse import urlparse
 
 from .source_registry_helper import register_source
@@ -26,10 +27,47 @@ def _domain(url: str) -> str:
         return ""
 
 
+# ── Источники, которые не могут быть основанием для аудиторского вывода ──────
+# Поддомены банка, ведущие ЧУЖОЙ бизнес: бронирование отелей, билеты, вакансии.
+# Формально это домен банка, по сути — другой сайт. Из-за суффиксного правила
+# hotels.tinkoff.ru приписывался Т-Банку и попадал в отчёты про автокредиты
+# (пять раз в 125 отчётах).
+_OFFTOPIC_SUB = ("hotels", "travel", "avia", "tickets", "turizm", "otel",
+                 "job", "jobs", "career", "vacancy", "hr", "try", "promo",
+                 "market", "shop", "store")
+# Доски объявлений и рекламные платформы: тарифы банка там не публикуются.
+_OFFTOPIC_HOSTS = ("avito.ru", "youla.ru", "farpost.ru", "elama.ru",
+                   "irecommend.ru", "otzovik.com", "pikabu.ru", "dzen.ru",
+                   "livejournal.com")
+# Пользовательские разделы: запись частного лица — не источник для аудита.
+_UGC_PATH_RE = re.compile(r"/(?:user|users|profile|blogs?/[^/]*user)/", re.I)
+
+
+def is_offtopic_source(domain: str, url: str = "") -> str | None:
+    """Причина, по которой источник не годится для аудита, либо None."""
+    d = (domain or "").lower().removeprefix("www.")
+    if any(d == h or d.endswith("." + h) for h in _OFFTOPIC_HOSTS):
+        return "доска объявлений или рекламная площадка"
+    head = d.split(".")[0]
+    if head in _OFFTOPIC_SUB and d.count(".") >= 2:
+        return f"поддомен «{head}» — другой бизнес, не продукты банка"
+    if _UGC_PATH_RE.search(url or ""):
+        return "запись частного пользователя, а не редакционный материал"
+    return None
+
+
 def _trust_for(domain: str, url: str) -> float:
     """Эвристика доверия по домену/URL (для SourceRegistry)."""
-    d = domain.lower()
+    # www. отрезаем: ниже банки и агрегаторы сверялись ТОЧНЫМ совпадением, а
+    # домен почти всегда приходит как www.sberbank.ru — официальный сайт банка
+    # получал вес неизвестного сайта (0.55 вместо 0.92), агрегатор 0.55 вместо
+    # 0.7. Регуляторы не пострадали только потому, что у них суффиксная проверка.
+    d = domain.lower().removeprefix("www.")
     url_l = url.lower()
+    # Офтоп-поддомен банка и площадки объявлений — не первоисточник ни в каком
+    # смысле; ставим низко, чтобы forced-read и ранжирование их не поднимали.
+    if is_offtopic_source(d, url):
+        return 0.2
     # Регуляторные
     reg = ("cbr.ru", "pravo.gov.ru", "consultant.ru", "garant.ru", "fas.gov.ru",
            "nalog.gov.ru", "minfin.gov.ru", "kremlin.ru", "government.ru",
@@ -49,14 +87,19 @@ def _trust_for(domain: str, url: str) -> float:
                     "psbank.ru", "rosbank.ru", "mtsbank.ru", "ozon.ru",
                     "uralsib.ru", "akbars.ru", "homecredit.ru", "otpbank.ru",
                     "unicreditbank.ru", "absolutbank.ru", "zenit.ru", "rencredit.ru")
-    if any(bd == d for bd in bank_domains):
+    if any(d == bd or d.endswith("." + bd) for bd in bank_domains):
         return 0.92
     # Агрегаторы (высокая, но не первоисточник)
     agg = ("banki.ru", "sravni.ru", "bankiros.ru", "sravni.com")
-    if any(a == d for a in agg):
+    if any(d == a or d.endswith("." + a) for a in agg):
         return 0.7
-    if any(a == d for a in ("vc.ru", "forbes.ru", "rbc.ru", "tass.ru", "vedomosti.ru")):
+    media = ("forbes.ru", "rbc.ru", "tass.ru", "vedomosti.ru", "kommersant.ru",
+             "frankmedia.ru", "interfax.ru")
+    if any(d == m or d.endswith("." + m) for m in media):
         return 0.6
+    # vc.ru — площадка пользовательских блогов, а не редакция: ниже медиа
+    if d == "vc.ru" or d.endswith(".vc.ru"):
+        return 0.35
     # Отзовики/пользовательский контент
     if any(d.endswith(x) for x in ("irecommend.ru", "otzovik.com", "vk.com")):
         return 0.5
@@ -154,12 +197,33 @@ def tool_read_url(args: dict, bundle) -> str:
             return json.dumps({"error": f"fetch failed: {e2}"},
                               ensure_ascii=False)
 
+    # СТАТУС ОТВЕТА — ДО текста. Раньше статус смотрели только когда текст
+    # пуст, а страница «404 Страница не найдена» или заглушка антибота пустой
+    # не бывает: она уходила в источники как полноценный документ. В отчёте 88
+    # так появились три источника вида «Страница не найдена — banki.ru/.../cbr/».
+    status = idx.get("status")
+    if isinstance(status, int) and status >= 400:
+        if status in (401, 403, 429, 503):
+            _note_blocked_source(bundle, url, dom, bank_slug_hint)
+            return json.dumps({"error": f"источник недоступен (HTTP {status}) — "
+                               "помечено в пробелах покрытия",
+                               "url": url, "blocked": True}, ensure_ascii=False)
+        return json.dumps({"error": f"страницы нет (HTTP {status})", "url": url},
+                          ensure_ascii=False)
+    if text and _looks_like_stub(title, text):
+        # Статус 200, но содержимое — «страница не найдена» или проверка
+        # браузера. Такой текст в отчёте выглядит как факт с ссылкой [N].
+        _note_blocked_source(bundle, url, dom, bank_slug_hint)
+        return json.dumps({"error": "страница-заглушка (404/антибот при HTTP 200) — "
+                           "помечено в пробелах покрытия",
+                           "url": url, "blocked": True}, ensure_ascii=False)
+
     if not text:
         # Различаем «просто нет данных» и «заблокировано антиботом/капчей».
         # Блок → фиксируем в coverage_notes, чтобы источник честно попал в
         # «Пробелы покрытия», а не молча урезал отчёт.
         blocked = (bool(idx.get("captcha")) or idx.get("fetch_via") == "failed"
-                   or idx.get("status") in (403, 429, 503))
+                   or status in (403, 429, 503))
         if blocked:
             _note_blocked_source(bundle, url, dom, bank_slug_hint)
             return json.dumps({"error": "источник заблокирован антиботом/капчей — "
@@ -177,6 +241,26 @@ def tool_read_url(args: dict, bundle) -> str:
         "text": text[:budget], "trust": round(trust, 2),
         "source_n": src_n,
     }, ensure_ascii=False)
+
+
+# Заглушки, которые сайты отдают с кодом 200: «страница не найдена», проверка
+# браузера, доступ ограничен. Признак — короткий текст И характерный заголовок.
+_STUB_RE = re.compile(
+    r"страниц\w*\s+не\s+найден|not\s+found|ошибка\s*40[34]|"
+    r"доступ\s+(?:ограничен|запрещ)|access\s+denied|forbidden|"
+    r"проверка\s+браузера|checking\s+your\s+browser|just\s+a\s+moment|"
+    r"включите\s+javascript|enable\s+javascript|подтвердите,\s+что\s+запросы",
+    re.IGNORECASE)
+_STUB_MAX_CHARS = 1200
+
+
+def _looks_like_stub(title: str, text: str) -> bool:
+    """Страница-заглушка при HTTP 200: короткая и с характерной фразой."""
+    head = f"{title or ''} {(text or '')[:400]}"
+    if not _STUB_RE.search(head):
+        return False
+    # Длинная статья, где фраза встретилась в тексте, заглушкой не считается.
+    return len(text or "") <= _STUB_MAX_CHARS
 
 
 def _kind_for(domain: str, url: str) -> str:

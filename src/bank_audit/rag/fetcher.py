@@ -106,7 +106,7 @@ def fetch(url: str, *, prefer_browser: bool = False,
     # 2. Pure HTTP (если не prefer_browser)
     if not prefer_browser:
         result = _fetch_http(url)
-        if result and _looks_valid(result.content, result.content_type):
+        if result and _looks_valid(result.content, result.content_type, result.status):
             _cache_result(url, prefer_browser, result, cache_ttl_seconds)
             return result
         log.info("fetch %s: HTTP didn't yield valid content (%s bytes), trying browser",
@@ -114,7 +114,7 @@ def fetch(url: str, *, prefer_browser: bool = False,
 
     # 3. Playwright fallback (или primary path)
     result = _fetch_browser(url, browser=browser)
-    if result and _looks_valid(result.content, result.content_type):
+    if result and _looks_valid(result.content, result.content_type, result.status):
         _cache_result(url, prefer_browser, result, cache_ttl_seconds)
         return result
 
@@ -125,8 +125,16 @@ def fetch(url: str, *, prefer_browser: bool = False,
                                   content=b"", content_type=None, via="failed")
 
 
-def _looks_valid(content: bytes, content_type: str | None) -> bool:
-    """Эвристика: контент годен для индексирования."""
+def _looks_valid(content: bytes, content_type: str | None,
+                 status: int | None = None) -> bool:
+    """Эвристика: контент годен для индексирования.
+
+    СТАТУС — первым делом. Раньше его не смотрели вовсе, и страница 404 или
+    «Access denied» проходила проверку, кэшировалась на сутки и попадала в базу
+    знаний как документ: дальше semantic_search выдавал её как источник.
+    """
+    if isinstance(status, int) and status >= 400:
+        return False
     if not content or len(content) < _MIN_VALID_BYTES:
         # Маленькие файлы могут быть валидны (PDF metadata, JSON-API), не отбрасываем
         if content_type and ("pdf" in content_type or "json" in content_type
