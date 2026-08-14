@@ -106,20 +106,46 @@ def is_year(value: float, unit: str) -> bool:
     return bool(_YEAR_UNIT_RE.match((unit or "").strip())) and 1900 <= value <= 2100
 
 
-def matches_fact(value: float, fact_nums: set[float], rel_tol: float = 0.02) -> bool:
-    """Совпадение с базой: точное либо в пределах относительной погрешности."""
+# Относительный допуск нужен там, где округление законно (крупные суммы:
+# «1 499 900 ₽» и «1,5 млн ₽» — одно и то же). На процентах и пунктах он лжёт:
+# «30,1%» подтверждается числом 30, «8,9 п.п.» — числом 9. Для аудитора это
+# РАЗНЫЕ величины, и 0,1 пп по ставке — не округление, а другая цифра.
+_TOL_MIN_VALUE = 1000.0     # ниже — только точное совпадение
+_REL_TOL = 0.02
+
+
+def matches_fact(value: float, fact_nums: set[float], *, strict: bool = False,
+                 rel_tol: float = _REL_TOL) -> bool:
+    """Совпадение числа отчёта с базой фактов.
+
+    strict=True — только точное совпадение. Используется там, где ценой ошибки
+    является ЛОЖНОЕ ДОВЕРИЕ (счётчик «сверено N фактов»): показать аудитору
+    зелёную плашку на числе, которого в фактах нет, хуже, чем не показать её.
+
+    strict=False — допускается округление крупных сумм. Используется там, где
+    ценой ошибки является РАЗРУШЕНИЕ: по этому решению критик объявляет число
+    выдумкой, а директива ремонта приказывает писателю его убрать. Ошибиться
+    здесь — значит своими руками вычистить из отчёта верную цифру.
+    """
     if any(abs(value - fn) < 0.001 for fn in fact_nums):
         return True
+    if strict or abs(value) < _TOL_MIN_VALUE:
+        return False
     return any(fn and abs(value - fn) / abs(fn) < rel_tol for fn in fact_nums if fn)
 
 
 def split_verified(pairs: list[tuple[float, str]],
                    fact_nums: set[float]) -> tuple[list[float], list[float]]:
-    """Разносит числа отчёта на сверенные и несверенные (по вхождениям)."""
+    """Разносит числа отчёта на сверенные и несверенные (по вхождениям).
+
+    Здесь сверка СТРОГАЯ: счётчик доверия не должен зеленеть на числе, которое
+    лишь похоже на факт. Восемь процентов прежних «подтверждений» держались на
+    допуске против постороннего числа.
+    """
     verified: list[float] = []
     unverified: list[float] = []
     for value, unit in pairs:
-        if is_year(value, unit) or matches_fact(value, fact_nums):
+        if is_year(value, unit) or matches_fact(value, fact_nums, strict=True):
             verified.append(value)
         else:
             unverified.append(value)

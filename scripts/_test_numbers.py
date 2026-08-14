@@ -69,6 +69,19 @@ y_pairs = N.parse_with_units("с 2025 года ставка 12,5%")
 vy, uy = N.split_verified(y_pairs, {12.5})
 check("год не попадает в несверенные", uy, [])
 
+print("допуск: строгий для доверия, мягкий для удаления")
+base = {30.0, 9.0, 1499900.0, 17.7}
+check("«30,1%» не подтверждается числом 30", N.matches_fact(30.1, base, strict=True), False)
+check("«8,9 п.п.» не подтверждается числом 9", N.matches_fact(8.9, base, strict=True), False)
+check("точное совпадение проходит строгую сверку", N.matches_fact(17.7, base, strict=True), True)
+check("округление крупной суммы прощается при мягкой проверке",
+      N.matches_fact(1500000.0, base), True)
+check("но не при строгой", N.matches_fact(1500000.0, base, strict=True), False)
+check("мелкое число мягкая проверка тоже не прощает",
+      N.matches_fact(30.1, base), False)
+vv, uu = N.split_verified([(30.1, "%"), (17.7, "%")], base)
+check("в счётчик доверия попадает только точное", (vv, uu), ([17.7], [30.1]))
+
 print("устойчивость")
 check("пустой текст", N.all_numbers(""), set())
 check("текст без чисел", N.parse_with_units("никаких цифр"), [])
