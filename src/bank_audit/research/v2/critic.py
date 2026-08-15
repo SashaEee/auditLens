@@ -37,6 +37,10 @@ class Critique:
     missing_aspects: list[str] = field(default_factory=list)  # части вопроса без ответа
     numeric_hallucinations: list[float] = field(default_factory=list)
     citation_errors: list[dict] = field(default_factory=list)  # claim ↔ источник [N] не бьются
+    subject_mismatch: str = ""   # отчёт отвечает НЕ на тот вопрос (подмена предмета)
+    # Части вопроса, которых НЕТ в bundle: переписывание их не вернёт, поэтому
+    # это единственные замечания, которые честно показать аудитору как есть.
+    unanswered: list[str] = field(default_factory=list)
     repair_directive: str = ""  # инструкция для переписывания
 
 
@@ -45,9 +49,26 @@ SYSTEM_PROMPT = """Ты — критик аудиторских отчётов. 
 
 Проверяешь 4 аспекта:
 
+0. ПРЕДМЕТ ВОПРОСА (проверяй ПЕРВЫМ). Определи, о чём спросил аудитор: о
+   сравнении банков, о документе/данных регулятора, о жалобах, о процессе.
+   Затем определи, о чём НА САМОМ ДЕЛЕ написан отчёт. Если это разные вещи —
+   заполни subject_mismatch одной фразой: «спросили <X>, отчёт про <Y>».
+   Классический случай: спросили таблицу значений ЦБ — отчёт сравнивает ставки
+   банков по витринам. Для аудитора это «неверные данные», даже когда каждое
+   отдельное число верное. Подмена предмета — всегда blocking_issue.
+   Если предмет совпадает — subject_mismatch пустая строка.
+
 1. ОТВЕЧАЕТ ЛИ НА ВОПРОС: разбей вопрос аудитора на части. Каждая часть
    должна быть освещена. Если что-то пропущено (напр. просили рейтинг — нет
    рейтинга) — это blocking_issue.
+   ВАЖНО разделять две причины пропуска:
+     • данные ЕСТЬ в bundle, но писатель их не использовал → это чинится
+       переписыванием, пиши в blocking_issues / repair_directive;
+     • данных в bundle НЕТ вообще → переписывание не поможет, никакая
+       директива их не создаст. Такое пиши в unanswered — коротко и по-русски,
+       чего именно не хватает («предельные значения ПСК на II квартал 2026 —
+       в источниках нет ни одной категории»). Это увидит аудитор, поэтому
+       формулируй как честную оговорку, а не как упрёк писателю.
 
 2. CLAIM-GROUNDING: каждое сильное утверждение («Сбер дороже», «Т-Банк
    надёжнее») должно опираться на конкретные факты из bundle. Голословные
@@ -69,6 +90,8 @@ SYSTEM_PROMPT = """Ты — критик аудиторских отчётов. 
 ВЫХОД (строгий JSON):
 {
   "ok": false,                      // true только если серьёзных проблем нет
+  "subject_mismatch": "",           // «спросили X, отчёт про Y» либо пустая строка
+  "unanswered": ["предельные значения ПСК на II квартал 2026 — в источниках нет"],
   "blocking_issues": ["Нет рейтинга, хотя аудитор просил"],
   "weak_claims": ["«Сбер надёжнее» — голословно, нет опоры"],
   "missing_aspects": ["рейтинг"],
@@ -79,7 +102,8 @@ SYSTEM_PROMPT = """Ты — критик аудиторских отчётов. 
   "repair_directive": "Добавь рейтинг-таблицу (он есть в bundle). Замени голословное утверждение на «Сбер дороже на 1,5% [3]». ИСПРАВЬ/УБЕРИ утверждение про SWIFT [42] — оно противоречит источнику."
 }
 
-Если отчёт хороший — верни {"ok":true,"blocking_issues":[],...} с пустым repair_directive.
+Если отчёт хороший — верни {"ok":true,"blocking_issues":[],...} с пустым
+repair_directive, пустым subject_mismatch и пустым unanswered.
 """
 
 
@@ -158,6 +182,17 @@ async def critique_report(client: AsyncOpenAI, report_md: str,
     # Citation-ошибки — серьёзные: ok=False и обязательно в repair_directive,
     # чтобы Analyst переписал/убрал утверждения, противоречащие источникам.
     repair = str(data.get("repair_directive") or "")
+    # Подмена предмета — самая дорогая ошибка: отчёт может быть безупречен по
+    # числам и всё равно бесполезен. Ставим директиву ПЕРВОЙ, чтобы писатель
+    # начал с возврата к заданному вопросу, а не с косметики формулировок.
+    mismatch = str(data.get("subject_mismatch") or "").strip()
+    if mismatch:
+        repair = (f"ГЛАВНОЕ: отчёт отвечает не на тот вопрос ({mismatch}). "
+                  "Перестрой отчёт вокруг заданного вопроса: сначала прямой "
+                  "ответ по фактам bundle, и только потом смежный контекст. "
+                  "Если прямого ответа в bundle нет — так и напиши первой "
+                  "строкой, не заменяя его сравнением банков. "
+                  + repair)
     if cit_errs:
         ce_txt = "; ".join(
             f"«{c['claim']}»" + (f" [{c['source_n']}]" if c['source_n'] else "")
@@ -167,7 +202,10 @@ async def critique_report(client: AsyncOpenAI, report_md: str,
             f"противоречащие своим источникам: {ce_txt}.")
 
     return Critique(
-        ok=bool(data.get("ok")) and len(all_halluc) == 0 and not cit_errs,
+        ok=(bool(data.get("ok")) and len(all_halluc) == 0
+            and not cit_errs and not mismatch),
+        subject_mismatch=mismatch[:300],
+        unanswered=[str(x).strip() for x in (data.get("unanswered") or []) if str(x).strip()][:5],
         blocking_issues=[str(x) for x in (data.get("blocking_issues") or [])][:6],
         weak_claims=[str(x) for x in (data.get("weak_claims") or [])][:8],
         missing_aspects=[str(x) for x in (data.get("missing_aspects") or [])][:5],

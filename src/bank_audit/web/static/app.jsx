@@ -3852,20 +3852,43 @@ function CoverageBanner({coverage}){
 function VerificationBanner({verification}){
   if(!verification)return null;
   const u=verification.unverified||[];
+  // Чего аудитор спрашивал, но в источниках не нашлось. Отдельный блок, а не
+  // строка в списке «требует проверки»: там утверждения, которые НАПИСАНЫ и
+  // сомнительны, здесь — то, чего в отчёте НЕТ. Молчать об этом нельзя: без
+  // такой пометки аудитор считает, что получил ответ, и находит пробел уже
+  // после того, как построил на отчёте свои выводы.
+  const gaps=(verification.unanswered||[]).filter(Boolean);
+  const gapBlock = gaps.length>0 && <div className="dr-verify dr-verify-gap">
+    <div className="dr-verify-head">
+      {gaps.length===1?"На часть вопроса ответа нет":"На части вопроса ответа нет"}
+    </div>
+    <ul className="dr-verify-list">
+      {gaps.map((g,i)=><li key={i}>{g}</li>)}
+    </ul>
+    <div className="dr-verify-foot">
+      Этого не было в собранных источниках — остальной текст отвечает на смежные части вопроса.
+    </div>
+  </div>;
   if(!u.length){
-    return <div className="dr-verify dr-verify-ok">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flex:"none"}}><path d="M20 6L9 17l-5-5"/></svg>
-      Автопроверка достоверности пройдена — утверждений, требующих ручной сверки, не выявлено.
-    </div>;
+    return <React.Fragment>
+      {gapBlock}
+      <div className="dr-verify dr-verify-ok">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flex:"none"}}><path d="M20 6L9 17l-5-5"/></svg>
+        Автопроверка достоверности пройдена — утверждений, требующих ручной сверки, не выявлено.
+      </div>
+    </React.Fragment>;
   }
   const word = u.length===1?"утверждение требует":(u.length<5?"утверждения требуют":"утверждений требуют");
-  return <div className="dr-verify dr-verify-warn">
-    <div className="dr-verify-head">{u.length} {word} ручной проверки</div>
-    <ul className="dr-verify-list">
-      {u.map((it,i)=><li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>)}
-    </ul>
-  </div>;
+  return <React.Fragment>
+    {gapBlock}
+    <div className="dr-verify dr-verify-warn">
+      <div className="dr-verify-head">{u.length} {word} ручной проверки</div>
+      <ul className="dr-verify-list">
+        {u.map((it,i)=><li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>)}
+      </ul>
+    </div>
+  </React.Fragment>;
 }
 
 // ─── Ranking widget — v2 §5c: рейтинг субъектов как first-class артефакт ──

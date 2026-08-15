@@ -746,6 +746,13 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
   border-color:color-mix(in oklab,var(--warn),transparent 60%);
   background:color-mix(in oklab,var(--warn),transparent 94%);color:#7c5a14;
 }
+/* Пробел в ответе — нейтрально-серьёзный, не «ошибка» и не «всё хорошо»:
+   отчёт корректен, но части вопроса в источниках не нашлось. */
+.dr-verify-gap{
+  border-color:color-mix(in oklab,var(--ink-2),transparent 72%);
+  background:color-mix(in oklab,var(--ink-2),transparent 96%);color:var(--ink-1);
+}
+.dr-verify-foot{margin-top:6px;font-size:12px;color:var(--ink-3)}
 .dr-verify-head{font-weight:600;margin-bottom:6px}
 .dr-verify-list{margin:0;padding-left:20px;font-size:12.5px}
 .dr-verify-list li{margin-bottom:3px}
@@ -2045,6 +2052,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260811-6"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260815-1"></script>
 </body>
 </html>
