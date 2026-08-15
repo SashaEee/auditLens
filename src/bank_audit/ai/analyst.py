@@ -336,6 +336,13 @@ TOOLS = [
 
 # ── run_sql safety: разрешены только SELECT на whitelist таблиц/вью ─────────
 _ALLOWED_RELATIONS = {
+    # ВЫВЕРЕННАЯ витрина «Рынок» — то же, что видит аудитор на экране: ПСК,
+    # сегменты и подсегменты, без господдержки и не-банков. Раньше агенту были
+    # доступны только v_offer_current и v_sber_vs_market, где ранг считается по
+    # рекламной ставке, внутрь попадает льготная ипотека «от 2 проц.» и
+    # застройщики. Из-за этого ИИ и вкладка «Рынок» отвечали РАЗНЫМИ числами на
+    # один вопрос: по ипотеке витрина «Сбер 17,7 проц.», ИИ «Сбер 2,0-20,0».
+    "v_market_rub_offer", "offer_enrichment",
     "v_offer_current", "v_sber_vs_market", "v_offer_top_by_rate",
     "v_review_topics", "v_review_sentiment_share", "v_bank_coverage",
     "bank", "review", "review_topic", "review_sentiment",

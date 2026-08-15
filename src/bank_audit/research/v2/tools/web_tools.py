@@ -518,3 +518,77 @@ def tool_run_sql(args: dict, bundle) -> str:
     if not sql:
         return json.dumps({"error": "sql пустой"}, ensure_ascii=False)
     return _run_sql_safe(sql)
+
+
+# ── ПОЗИЦИЯ НА РЫНКЕ: тот же ответ, что на вкладке «Рынок» ───────────────────
+# Пересчитывать ранг самому агенту нельзя: методология витрины — это ПСК вместо
+# рекламной ставки, сегменты, отсев господдержки и не-банков, защита от
+# вырожденной метрики. Повторить это запросом агент не сможет, а разойтись с
+# экраном — сможет, и аудитор увидит два разных числа на один вопрос.
+
+def tool_market_position(args: dict, bundle) -> str:
+    """Готовая позиция Сбера в категории — ровно как показывает витрина."""
+    category = (args.get("category") or "").strip()
+    segment = (args.get("segment") or "").strip() or None
+    sub = (args.get("sub_segment") or "").strip() or None
+    try:
+        from ....web.app import market_atlas
+        atlas = market_atlas()
+    except Exception as e:  # noqa: BLE001 — витрина не должна ронять исследование
+        return json.dumps({"error": f"витрина недоступна: {str(e)[:120]}"},
+                          ensure_ascii=False)
+
+    cats = [c for c in (atlas.get("categories") or []) if c.get("status") == "ok"]
+    if category:
+        cats = [c for c in cats if c.get("category") == category]
+        if not cats:
+            avail = [c.get("category") for c in (atlas.get("categories") or [])]
+            return json.dumps({"error": f"категории «{category}» на витрине нет",
+                               "available": avail}, ensure_ascii=False)
+
+    out = []
+    for c in cats:
+        sb = c.get("sber") or {}
+        item = {
+            "category": c["category"], "label": c.get("label"),
+            "metric": c.get("metric"), "metric_label": c.get("metric_label"),
+            "metric_unit": c.get("metric_unit"),
+            "lower_is_better": c.get("lower_is_better"),
+            "banks_in_comparison": c.get("n_banks"),
+            "median": c.get("median"), "p25": c.get("p25"), "p75": c.get("p75"),
+            "leader": c.get("leader"),
+            # паспорт выборки: без него ранг нельзя цитировать честно
+            "sample": {k: c.get(k) for k in
+                       ("banks_total", "banks_dropped", "no_metric", "teaser",
+                        "subsidized_excluded", "non_bank_excluded", "at_best",
+                        "psk_fallback", "small_n", "degenerate")},
+        }
+        if sb:
+            item["sber"] = {k: sb.get(k) for k in
+                            ("rank", "rate", "title", "percentile",
+                             "tied", "gap_median", "gap_leader")}
+            # «value» — понятное имя для агента: это значение метрики категории
+            # (ПСК для кредитов, плата для карт, грейс для кредиток)
+            item["sber"]["value"] = sb.get("rate")
+        if c.get("degenerate"):
+            item["warning"] = ("метрика не различает банки: на лучшем значении "
+                               f"{c.get('at_best')} из {c.get('n_banks')} — "
+                               "ранг цитировать нельзя")
+        # разрезы: ответ «где мы среди новостроек» честнее общего по категории
+        groups = c.get("groups") or []
+        if segment or sub:
+            groups = [g for g in groups
+                      if (not segment or g.get("segment") == segment)
+                      and (not sub or g.get("sub_segment") == sub)]
+        if groups:
+            item["groups"] = [
+                {k: g.get(k) for k in ("segment", "sub_segment", "n_banks",
+                                       "median", "leader", "small_n", "sber")}
+                for g in groups[:6]]
+        if c.get("free_split"):
+            item["free_split"] = c["free_split"]
+        if c.get("attainability"):
+            item["rate_attainability"] = c["attainability"]
+        out.append(item)
+    return json.dumps({"as_of": atlas.get("as_of"), "categories": out},
+                      ensure_ascii=False, default=str)
