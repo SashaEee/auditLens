@@ -121,6 +121,34 @@ _BLOCKLIKE = {"div", "section", "article", "main", "aside", "li", "td"}
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
 
+def _tables_to_markdown(root) -> list[str]:
+    """<table> → markdown. Самые доказательные данные страницы (тарифные
+    сетки, лимиты, ПСК по категориям) живут в таблицах, а извлечение по
+    селекторам p/li/h* рассыпало их в кашу без строк и колонок — агент брал
+    число из рекламного абзаца «ставка от…» вместо ячейки таблицы."""
+    out: list[str] = []
+    for tbl in root.css("table"):
+        rows = []
+        for tr in tbl.css("tr")[:40]:
+            cells = [re.sub(r"\s+", " ", (c.text(separator=" ") or "").strip())
+                     for c in tr.css("th,td")[:12]]
+            if any(cells):
+                rows.append(cells)
+        # Отсекаем layout-таблицы: смысловая имеет ≥2 строк и ≥2 колонок.
+        if len(rows) < 2 or max(len(r) for r in rows) < 2:
+            continue
+        width = max(len(r) for r in rows)
+        norm = [r + [""] * (width - len(r)) for r in rows]
+        md = ["| " + " | ".join(norm[0]) + " |",
+              "|" + "---|" * width]
+        md += ["| " + " | ".join(r) + " |" for r in norm[1:]]
+        # Подпись таблицы (caption) — контекст колонок, без неё «23,4» безлика
+        cap = tbl.css_first("caption")
+        cap_txt = re.sub(r"\s+", " ", (cap.text() or "").strip()) if cap else ""
+        out.append((f"**{cap_txt}**\n" if cap_txt else "") + "\n".join(md))
+    return out
+
+
 def parse_html(content: bytes, url: str = "") -> ParsedDoc:
     text = content.decode("utf-8", errors="ignore")
     tree = HTMLParser(text)
@@ -152,6 +180,15 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
             or tree.body)
     if root is None:
         return ParsedDoc(doc_type="html", title=title)
+
+    # Таблицы: конвертируем в markdown и УДАЛЯЕМ из дерева до основного
+    # прохода, чтобы ячейки не дублировались бесструктурной кашей.
+    tables_md = _tables_to_markdown(root)
+    for tbl in root.css("table"):
+        try:
+            tbl.decompose()
+        except Exception:
+            pass
 
     # Простая и надёжная стратегия:
     # 1. Сначала в порядке появления собираем заголовки и блоки текста
@@ -197,6 +234,9 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
         fallback = re.sub(r"\n{3,}", "\n\n", fallback)
         if len(fallback) > len(body):
             body = fallback
+
+    if tables_md:
+        body = body + "\n\n# Таблицы страницы\n\n" + "\n\n".join(tables_md[:12])
 
     # Дописываем JSON-LD reviews (отзывы клиентов — самое ценное на banki.ru)
     if jsonld_reviews:

@@ -633,7 +633,7 @@ class BaseAgent:
             # контекста — запас есть. web_search/semantic_search остаются 12000.
             cap = 18000 if name == "read_url" else 12000
             if len(result) > cap:
-                result = result[:cap] + "\n…[обрезано]…"
+                result = _shrink_tool_result(result, cap)
             return result
         except Exception as e:
             log.warning("[agent:%s] tool %s failed: %s",
@@ -726,3 +726,69 @@ class BaseAgent:
         Базовая реализация ничего не делает (агент только собрал данные).
         Подклассы (Researcher, Reviews) переопределяют."""
         pass
+
+
+def _shrink_tool_result(result: str, cap: int) -> str:
+    """Структурное сжатие длинного tool-результата вместо среза посимвольно.
+
+    `result[:cap]` резал JSON посреди второго элемента: search_reviews_db в
+    per_bank-режиме отдаёт ~13k на ОДИН банк — при пяти банках модель видела
+    только первый, а спека инструмента при этом обещала «банки не вытесняют
+    друг друга». Теперь бюджет делится честно: списки укорачиваются РАВНОМЕРНО
+    (по банкам, по строкам), длинные строки подрезаются, и в ответе явно
+    написано, сколько показано из скольких.
+    """
+    try:
+        data = json.loads(result)
+    except Exception:
+        # не-JSON (текст страницы) — честный срез с пометкой
+        return result[:cap] + "\n…[обрезано: показана часть текста]…"
+
+    def measure(obj) -> int:
+        return len(json.dumps(obj, ensure_ascii=False))
+
+    def shrink(obj, budget: int):
+        """Рекурсивно ужимает объект под бюджет, отмечая усечения."""
+        if measure(obj) <= budget:
+            return obj
+        if isinstance(obj, str):
+            keep = max(120, budget - 40)
+            return obj[:keep] + f" …[+{len(obj) - keep} симв.]"
+        if isinstance(obj, list):
+            if not obj:
+                return obj
+            # Равномерно: каждому элементу — равная доля, лишние элементы
+            # заменяются счётчиком, а не молча исчезают.
+            n_keep = max(1, min(len(obj), budget // 400))
+            per = max(300, budget // n_keep)
+            out = [shrink(x, per) for x in obj[:n_keep]]
+            if len(obj) > n_keep:
+                out.append(f"…показано {n_keep} из {len(obj)}…")
+            return out
+        if isinstance(obj, dict):
+            keys = list(obj.keys())
+            per = max(250, budget // max(1, len(keys)))
+            out = {}
+            for k in keys:
+                v = obj[k]
+                out[k] = shrink(v, per) if measure(v) > per else v
+            return out
+        return obj
+
+    # Подбираем бюджет: вложенные словари дробят его в квадрат, поэтому
+    # первый проход часто пережимает. Несколько итераций вверх/вниз до
+    # максимального заполнения, не превышающего cap.
+    best = None
+    budget = cap
+    for _ in range(5):
+        txt = json.dumps(shrink(data, budget), ensure_ascii=False)
+        if len(txt) <= cap:
+            best = txt
+            if len(txt) > cap * 0.6:
+                break
+            budget *= 2
+        else:
+            budget = int(budget * 0.6)
+    if best is None:
+        best = json.dumps(shrink(data, cap // 2), ensure_ascii=False)[:cap]                + "\n…[обрезано]…"
+    return best

@@ -461,7 +461,22 @@ class KnowledgeBundle:
         text = "\n\n".join(parts)
         budget = max(0, max_chars - len(tail))
         if len(text) > budget:
-            text = text[:budget] + "\n\n[…контекст сокращён из-за объёма…]"
+            # Волна 5: срез по склеенной строке выбрасывал ПОСЛЕДНИХ субъектов
+            # целиком — писатель честно выводил «нет данных» по банку, чьи
+            # факты агенты собрали. Ужимаем РАВНОМЕРНО: каждая секция получает
+            # долю бюджета, урезание помечается в самой секции.
+            n = max(1, len(parts))
+            per = max(400, budget // n)
+            cut = []
+            for part in parts:
+                if len(part) > per:
+                    part = (part[:per]
+                            + "\n[…секция сокращена: не хватило бюджета "
+                              "контекста, часть фактов не показана…]")
+                cut.append(part)
+            text = "\n\n".join(cut)
+            if len(text) > budget:
+                text = text[:budget] + "\n\n[…контекст сокращён из-за объёма…]"
         return text + tail
 
     def _used_source_excerpts(self, max_sources: int = 24,
