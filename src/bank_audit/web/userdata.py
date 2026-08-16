@@ -842,6 +842,7 @@ def ai_feedback_stats(limit: int = 10) -> dict:
                     "question": (p.get("question") or "")[:200],
                     "reasons": p.get("reasons") or [],
                     "comment": (p.get("comment") or "")[:300],
+                    "quote": (p.get("quote") or "")[:600],
                     "mode": p.get("mode"),
                     "created_at": str(r.get("created_at") or "")})
     return {"likes_7d": likes, "dislikes_7d": dislikes, "recent_dislikes": out}

@@ -158,7 +158,12 @@ async def stream_deep_research_v2(question: str,
                 "detail": plan.intent_summary[:120],
                 "estimate_s": 0})
     # plan event для UI (шаги = миссии агентов)
-    yield _evt({"type": "plan", "steps": plan.to_ui_plan()})
+    yield _evt({"type": "plan", "steps": plan.to_ui_plan(),
+                # Машиночитаемая рамка плана: golden-прогон и наблюдаемость
+                # проверяют её, а не догадываются по тексту отчёта.
+                "question_nature": plan.question_nature,
+                "intent": plan.intent,
+                "subjects": list(plan.subjects)})
 
     # ── Stage 2: EXPERT AGENTS ───────────────────────────────────────────
     yield _evt({"type": "phase", "value": "research"})

@@ -1,0 +1,68 @@
+{
+  "_": "Golden-набор: по 1-2 вопроса на класс таксономии. Прогонщик: scripts/golden_run.py. Каждая правка конвейера прогоняется здесь ДО деплоя; ожидания — детерминированные (не LLM), чтобы регрессия ловилась бесплатно.",
+  "cases": [
+    {
+      "id": "compare_deposits",
+      "class": "сравнение продуктов",
+      "question": "Сравни вклады на 6 месяцев: Сбер, ВТБ, Альфа — ставки, минимальная сумма, пополнение",
+      "expect": {
+        "min_report_chars": 2500,
+        "must_mention_any": [["Сбер"], ["ВТБ"], ["Альф"]],
+        "min_verified_ratio": 0.6,
+        "must_have_table": true
+      }
+    },
+    {
+      "id": "regulatory_psk",
+      "class": "документ регулятора",
+      "question": "Какие предельные значения ПСК установил ЦБ на текущий квартал для потребительских кредитов?",
+      "expect": {
+        "plan_nature": "regulatory",
+        "plan_subjects_max": 1,
+        "forbid_phrases": ["banki.ru/products"],
+        "honest_gap_ok": true,
+        "min_verified_ratio": 0.8
+      }
+    },
+    {
+      "id": "reviews_mobile",
+      "class": "жалобы клиентов",
+      "question": "На что жалуются клиенты Сбера в мобильном приложении за последние месяцы?",
+      "expect": {
+        "min_report_chars": 2000,
+        "must_mention_any": [["жалоб", "отзыв", "клиент"]],
+        "forbid_phrases": ["не удалось собрать данные"]
+      }
+    },
+    {
+      "id": "dynamics_key_rate",
+      "class": "динамика показателя",
+      "question": "Как менялась ключевая ставка ЦБ за последние два года и как на это реагировали ставки по вкладам Сбера?",
+      "expect": {
+        "min_report_chars": 2000,
+        "must_mention_any": [["ключев"], ["вклад"]],
+        "min_years_mentioned": 2
+      }
+    },
+    {
+      "id": "mixed_compare_plus_reviews",
+      "class": "смешанный",
+      "question": "Сравни дебетовые карты Сбера и Т-Банка по стоимости обслуживания и покажи жалобы клиентов по картам Сбера",
+      "expect": {
+        "min_report_chars": 2500,
+        "must_mention_any": [["Сбер"], ["Т-Банк", "Тинькофф"]],
+        "must_have_table": true
+      }
+    },
+    {
+      "id": "process_internal",
+      "class": "внутренний процесс",
+      "question": "Какие регуляторные требования к раскрытию полной стоимости кредита обязан соблюдать Сбер при выдаче потребкредитов?",
+      "expect": {
+        "min_report_chars": 1500,
+        "must_mention_any": [["353", "закон", "ЦБ", "указан"]],
+        "forbid_phrases": ["Рейтинг банков"]
+      }
+    }
+  ]
+}

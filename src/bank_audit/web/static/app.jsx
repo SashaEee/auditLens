@@ -1134,6 +1134,44 @@ function AiFbBar({q,text,sessionId,mode,fbMap,reportId}){
   </div>;
 }
 
+// Клейм-фидбек (волна 10): дизлайк на 40 страниц — сигнал «где-то что-то не
+// так», по которому нельзя ни диагностировать, ни починить. Выделение
+// фрагмента в отчёте → кнопка «Ошибка в этом фрагменте» → в payload уезжает
+// ЦИТАТА + report_id: владелец видит в Пульсе не «ошибка в данных», а какое
+// именно утверждение аудитор счёл неверным.
+function ClaimFlagWrap({q,sessionId,mode,reportId,children}){
+  const boxRef=useRef(null);
+  const[flag,setFlag]=useState(null);   // {x,y,quote}
+  const onUp=()=>{
+    try{
+      const sel=window.getSelection();
+      const txt=(sel&&sel.toString()||"").trim();
+      if(!txt||txt.length<10||txt.length>600){setFlag(null);return;}
+      const r=sel.getRangeAt(0).getBoundingClientRect();
+      const host=boxRef.current&&boxRef.current.getBoundingClientRect();
+      if(!host||r.bottom<host.top||r.top>host.bottom){setFlag(null);return;}
+      setFlag({x:Math.max(8,r.left-host.left),y:r.bottom-host.top+6,quote:txt});
+    }catch{setFlag(null);}
+  };
+  const send=()=>{
+    const key="s"+(sessionId||0)+":claim:"+fyHash(flag.quote.slice(0,120));
+    apiPost("/api/feedback",{kind:"ai_answer",item_key:key,verdict:-1,
+      payload:{question:(q||"").slice(0,300),mode:mode||"deep",
+        session_id:sessionId,claim_feedback:true,quote:flag.quote.slice(0,600),
+        reasons:["wrong"],...(reportId?{report_id:reportId}:{})}}).catch(()=>{});
+    setFlag(null);
+    try{window.getSelection().removeAllRanges();}catch{}
+    fbToast("Передано на разбор — фрагмент приложен ✓");
+  };
+  return <div ref={boxRef} style={{position:"relative"}} onMouseUp={onUp}>
+    {children}
+    {flag&&<button className="claim-flag" style={{left:flag.x,top:flag.y}}
+      onMouseDown={e=>e.preventDefault()} onClick={send}>
+      ⚑ Ошибка в этом фрагменте
+    </button>}
+  </div>;
+}
+
 // шеринг отчёта (Фаза 5): владелец открывает доступ всем или адресно, с отзывом
 const IcShare=()=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>;
 function ShareButton({reportId}){
@@ -5104,7 +5142,10 @@ function AIPage(){
                         <ClaimCheckRow claimCheck={m.claimCheck}
                                         verification={m.verification}
                                         sourcesCount={(m.sources||[]).length}/>}
-                      {renderMD(m.text, m.sources, m.charts)}
+                      <ClaimFlagWrap q={msgs[0]&&msgs[0].text} sessionId={sessionId}
+                                      mode={m.mode} reportId={m.report_id}>
+                        {renderMD(m.text, m.sources, m.charts)}
+                      </ClaimFlagWrap>
                       {streaming && m.text && <span className="dr-type-caret"/>}
                       {/* Charts-wrap внизу: только графики БЕЗ [[CHART:N]] маркера. */}
                       {(()=>{
@@ -6743,6 +6784,8 @@ function PuAiFeedback({fb,onOpenReport,onOpenUser}){
             {x.reasons.map((r,j)=><span key={j} className="pu-reason sm">{r}</span>)}
           </div>}
           {x.comment&&<p className="pu-fb-c">«{x.comment}»</p>}
+          {x.quote&&<p className="pu-fb-c" title="выделенный аудитором фрагмент отчёта">
+            ⚑ фрагмент: «{String(x.quote).slice(0,220)}{String(x.quote).length>220?"…":""}»</p>}
           {x.verdict<0&&!x.comment&&!(x.reasons||[]).length&&
             <p className="pu-fb-c t-cap">без причины — панель не отправлена</p>}
         </div>)}
