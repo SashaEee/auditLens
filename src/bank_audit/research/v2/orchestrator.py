@@ -176,11 +176,20 @@ async def stream_deep_research_v2(question: str,
                 "label": "Сбор данных агентами",
                 "detail": f"{_n_missions} агент(ов) ищут и читают источники параллельно",
                 "estimate_s": min(180, 40 + 22 * _n_missions)})
+    # Follow-up: последний ответ ассистента из истории — писатель и критик
+    # видят, ЧТО аудитор уже читал (класс «уточни пункт 3 из вчерашнего»
+    # раньше отвечался в вакууме, с другими числами, чем в разосланном отчёте).
+    _prior = ""
+    for _h in reversed(history or []):
+        if (_h.get("role") == "assistant") and (_h.get("content") or "").strip():
+            _prior = str(_h["content"])[:9000]
+            break
     bundle = KnowledgeBundle(
         question=question,
         intent=plan.intent_summary or plan.intent,
         subjects=list(plan.subjects),
         subject_labels=dict(plan.subject_labels),
+        prior_report=_prior,
     )
 
     async for progress_evt in _run_missions_streaming(client, agents_model, plan,

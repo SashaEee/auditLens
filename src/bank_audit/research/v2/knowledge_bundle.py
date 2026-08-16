@@ -249,6 +249,9 @@ class KnowledgeBundle:
     """Всё, что собрали агенты. Analyst пишет отчёт из bundle,
     Critic верифицирует отчёт против bundle."""
     question: str = ""
+    # Предыдущий отчёт сессии (follow-up): писатель отвечает В ПРОДОЛЖЕНИЕ
+    # разговора, а не «в вакууме», и обязан сверять новые числа со старыми.
+    prior_report: str = ""
     intent: str = ""            # conductor-classified
     subjects: list[str] = field(default_factory=list)  # банки/объекты сравнения
     subject_labels: dict[str, str] = field(default_factory=dict)  # slug→human

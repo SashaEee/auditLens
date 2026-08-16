@@ -255,8 +255,20 @@ async def write_report(client: AsyncOpenAI, bundle: KnowledgeBundle,
     # Сигнализируем структуру из плана
     sections_hint = ", ".join(plan.output_sections) if plan.output_sections else "по умолчанию"
 
+    prior_block = ""
+    if getattr(bundle, "prior_report", ""):
+        prior_block = (
+            "# ПРЕДЫДУЩИЙ ОТВЕТ ЭТОЙ СЕССИИ (follow-up-контекст)\n"
+            "Аудитор уже читал текст ниже. Твой отчёт — ПРОДОЛЖЕНИЕ разговора: "
+            "не пересказывай его заново, отвечай на новый вопрос; если новые "
+            "данные РАСХОДЯТСЯ с прежними числами — скажи об этом явно "
+            "(«в прошлом ответе было X, по свежим данным Y, причина — …»), "
+            "молчаливое расхождение аудитор читает как ошибку.\n"
+            f"{bundle.prior_report[:8000]}\n\n"
+        )
     user_msg = (
         f"# ВОПРОС АУДИТОРА\n{bundle.question}\n\n"
+        f"{prior_block}"
         f"# ИНТЕНТ\n{plan.intent_summary or bundle.intent}\n\n"
         f"# РЕКОМЕНДУЕМЫЕ СЕКЦИИ\n{sections_hint}\n\n"
         f"{context}\n\n"

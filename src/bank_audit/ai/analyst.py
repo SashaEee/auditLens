@@ -1073,7 +1073,14 @@ async def stream_analysis(question: str, history: list[dict],
     # По умолчанию DEEP_V2=1 — агентская архитектура v2 (conductor → автономные
     # агенты → analyst → critic). При DEEP_V2=0 откат на старый EAV-pipeline.
     from .llm_utils import is_deep_question
-    if force_deep is True or (force_deep is None and is_deep_question(question)):
+    # Follow-up-роутинг (волна 11): «а по ВТБ?» после глубокого отчёта — это
+    # продолжение исследования, а не быстрый вопрос. Раньше текстовая эвристика
+    # не видела историю, и follow-up падал в quick — без вчерашнего контекста.
+    _prior_deep = any((h.get("role") == "assistant"
+                       and len(h.get("content") or "") > 2500)
+                      for h in (history or [])[-4:])
+    if force_deep is True or (force_deep is None
+                              and (is_deep_question(question) or _prior_deep)):
         if os.getenv("DEEP_V2", "1").lower() in ("1", "true", "yes"):
             yielded = False          # §4d: анти «двойной стрим» — откат только если
             # НИЧЕГО ещё не стримили. Если v2 упала ПОСЛЕ части SSE-событий, откат на
