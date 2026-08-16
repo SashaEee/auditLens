@@ -352,6 +352,10 @@ def tool_semantic_search(args: dict, bundle) -> str:
     doc_types = args.get("doc_types")
     trust_min = float(args.get("trust_min", 0.5))
     top_k = int(args.get("top_k", 6))
+    try:
+        max_age_days = int(args["max_age_days"]) if args.get("max_age_days") else None
+    except (TypeError, ValueError):
+        max_age_days = None
 
     try:
         # Гибрид (вектор + полнотекст, RRF) вместо чистого вектора: точные
@@ -360,7 +364,8 @@ def tool_semantic_search(args: dict, bundle) -> str:
         # вкладки «База знаний» — агентам он был просто не подключён.
         from ....rag.retriever import hybrid_search as _hs
         _h = _hs(query, limit=top_k, bank_slugs=bank_slugs,
-                  doc_types=doc_types, trust_min=trust_min)
+                  doc_types=doc_types, trust_min=trust_min,
+                  max_age_days=max_age_days)
         # Гибрид группирует по документам ({groups:[{hits:[...]}]}) — плоское
         # представление для агента: фрагмент + атрибуты его документа.
         results = []
@@ -383,6 +388,7 @@ def tool_semantic_search(args: dict, bundle) -> str:
             from ....rag.retriever import semantic_search as _ss
             results = _ss(query, top_k=top_k, bank_slugs=bank_slugs,
                            doc_types=doc_types, trust_min=trust_min,
+                           max_age_days=max_age_days,
                            exclude_sponsored=True)
         except Exception:
             return json.dumps({"error": f"semantic_search failed: {e}"},

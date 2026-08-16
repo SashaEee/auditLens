@@ -83,6 +83,11 @@ SEMANTIC_SEARCH = ToolSpec(
                           "description": "Фильтр: html|pdf (опционально)"},
             "trust_min": {"type": "number", "default": 0.5},
             "top_k": {"type": "integer", "default": 6},
+            "max_age_days": {"type": "integer",
+                             "description": "Только документы, скачанные за "
+                             "последние N дней. ОБЯЗАТЕЛЬНО для вопросов о "
+                             "текущих ставках/тарифах (90) и событиях (30): "
+                             "кэш хранит и прошлогодние поколения страниц."},
         },
         "required": ["query"],
     },

@@ -270,6 +270,14 @@ def hybrid_search(
         k = (g["bank_slug"], (g["title"] or "").strip().lower())
         if k in seen:
             seen[k]["duplicates"] = seen[k].get("duplicates", 0) + 1
+            # Волна 8: зеркала — это ПОКОЛЕНИЯ одной страницы. Побеждать должен
+            # свежескачанный документ, а не тот, что чуть лучше сматчился:
+            # прошлогодняя копия тарифной страницы выигрывала по score и уезжала
+            # в отчёт как текущая ставка.
+            _old_ts, _new_ts = seen[k].get("fetched_at"), g.get("fetched_at")
+            if _old_ts and _new_ts and _new_ts > _old_ts:
+                g["duplicates"] = seen[k]["duplicates"]
+                seen[k] = g
             continue
         seen[k] = g
     out = list(seen.values())[:limit]

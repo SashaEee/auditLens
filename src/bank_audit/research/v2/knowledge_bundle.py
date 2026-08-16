@@ -560,6 +560,16 @@ class KnowledgeBundle:
         факта + [N]. Пусто = «нет данных»."""
         if not self.facts or not self.subjects:
             return ""
+        # Волна 8: ряд «2024=16% / 2025=21% / 2026=18%» — это ТРИ факта одного
+        # атрибута с разными as_of. Прежний grid держал одну ячейку на
+        # (субъект, атрибут) и показывал случайную точку ряда как «значение».
+        # Атрибуты с несколькими датированными значениями разносим по периодам:
+        # «ставка (2024)» и «ставка (2025)» — разные строки таблицы.
+        _periods: dict[tuple[str, str], set[str]] = {}
+        for f in self.facts:
+            k = (self.canonical_subject(f.subject), _norm(f.attribute))
+            _periods.setdefault(k, set()).add((f.as_of or "").strip())
+
         # subject(slug) → {норм.атрибут: лучшая Fact} (по confidence)
         grid: dict[str, dict[str, Fact]] = {s: {} for s in self.subjects}
         for f in self.facts:
@@ -567,6 +577,9 @@ class KnowledgeBundle:
             if subj not in grid:
                 grid[subj] = {}
             attr = _norm(f.attribute)
+            _dates = _periods.get((subj, attr)) or set()
+            if len({d for d in _dates if d}) > 1 and (f.as_of or "").strip():
+                attr = f"{attr} ({f.as_of.strip()})"
             cur = grid[subj].get(attr)
             if cur is None or f.confidence > cur.confidence:
                 grid[subj][attr] = f
