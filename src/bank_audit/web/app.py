@@ -2697,6 +2697,14 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     charts: list = []
     mode: Optional[str] = None
     persisted = False
+    # Волна 9: артефакты верификации живут в payload, а не один прогон.
+    # Сохранённый/расшаренный отчёт показывал те же числа БЕЗ плашек «требует
+    # ручной проверки» и без «на часть вопроса ответа нет» — коллега по ссылке
+    # видел отчёт «чище», чем автор в момент прогона.
+    verification: Optional[dict] = None
+    gaps: Optional[dict] = None
+    ranking: Optional[dict] = None
+    insights: Optional[list] = None
 
     def _persist() -> int | None:
         """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
@@ -2710,7 +2718,10 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             if is_report:
                 report_id = userdata.save_report(
                     username, session_id, question, body,
-                    payload={"sources": sources, "mode": mode, "charts": charts},
+                    payload={"sources": sources, "mode": mode, "charts": charts,
+                             "verification": verification, "gaps": gaps,
+                             "ranking": ranking, "insights": insights,
+                             "payload_v": 2},
                     banks=banks)
                 # Само-дополняющийся профиль: каждый 3-й отчёт обновляем
                 # LLM-нарратив интересов (в фоне, не блокируя ответ).
@@ -2754,6 +2765,14 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     sources = data["sources"]
                 elif t == "chart" and isinstance(data.get("spec"), dict):
                     charts.append(data["spec"])   # графики — в payload отчёта
+                elif t == "verification":
+                    verification = {k: v for k, v in data.items() if k != "type"}
+                elif t == "gaps":
+                    gaps = {k: v for k, v in data.items() if k != "type"}
+                elif t == "ranking" and isinstance(data.get("entries"), list):
+                    ranking = {k: v for k, v in data.items() if k != "type"}
+                elif t == "insights" and isinstance(data.get("items"), list):
+                    insights = data["items"]
                 elif t == "mode":
                     mode = data.get("value")
                 elif t == "done" and not persisted:

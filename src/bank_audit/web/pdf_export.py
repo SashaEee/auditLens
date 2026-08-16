@@ -652,6 +652,22 @@ def build_pdf_html(*, question: str, report_md: str,
     sources_html = _render_sources_section(sources)
     unverified = (verification or {}).get("unverified") or []
     verification_html = _render_verification_section(unverified)
+    # Волна 9: PDF в аудит-деле обязан нести ограничения отчёта — пробелы
+    # ответа и несостоявшуюся смысловую проверку. Печатная копия без них
+    # выглядела чище живого прогона, и пробел обнаруживался после выводов.
+    _limits: list[str] = []
+    for g in ((verification or {}).get("unanswered") or [])[:5]:
+        _limits.append(f"Нет ответа в источниках: {g}")
+    if (verification or {}).get("critic_failed"):
+        _limits.append("Смысловая проверка (LLM-критик) на этом прогоне не "
+                       "выполнялась — числа сверены автоматически, цитаты и "
+                       "полнота ответа не проверены.")
+    if _limits:
+        _items = "".join(f"<li>{_esc(x)}</li>" for x in _limits)
+        verification_html = (
+            '<div class="verify-section"><div class="verify-head">'
+            'Ограничения отчёта</div><ul>' + _items + "</ul></div>"
+        ) + verification_html
     # Графики по местам: [[CHART:i]]-маркеры из тела → inline-фигуры;
     # непривязанные — хвостовой секцией. JS рендерит все канвасы.
     charts = charts or []

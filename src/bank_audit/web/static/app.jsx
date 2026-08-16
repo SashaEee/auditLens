@@ -3499,6 +3499,8 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
               ? verification.unverified : []).map(u => ({
                 claim: u.claim, issue: u.issue
               })),
+            unanswered: verification.unanswered || [],
+            critic_failed: verification.critic_failed === true,
           } : null,
           // Графики — передаём specs как они пришли через SSE, бэкенд
           // отрендерит их в PDF тем же Chart.js через offscreen Chromium.
@@ -3857,6 +3859,14 @@ function VerificationBanner({verification}){
   // сомнительны, здесь — то, чего в отчёте НЕТ. Молчать об этом нельзя: без
   // такой пометки аудитор считает, что получил ответ, и находит пробел уже
   // после того, как построил на отчёте свои выводы.
+  const criticFailed = verification.critic_failed === true;
+  const criticNote = criticFailed && <div className="dr-verify dr-verify-gap">
+    <div className="dr-verify-head">Смысловая проверка не выполнялась</div>
+    <div className="dr-verify-foot">
+      Числа сверены с источниками автоматически, но проверка цитат и полноты
+      ответа (LLM-критик) на этом прогоне упала — вычитайте выводы внимательнее.
+    </div>
+  </div>;
   const gaps=(verification.unanswered||[]).filter(Boolean);
   const gapBlock = gaps.length>0 && <div className="dr-verify dr-verify-gap">
     <div className="dr-verify-head">
@@ -3871,6 +3881,7 @@ function VerificationBanner({verification}){
   </div>;
   if(!u.length){
     return <React.Fragment>
+      {criticNote}
       {gapBlock}
       <div className="dr-verify dr-verify-ok">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -3881,6 +3892,7 @@ function VerificationBanner({verification}){
   }
   const word = u.length===1?"утверждение требует":(u.length<5?"утверждения требуют":"утверждений требуют");
   return <React.Fragment>
+    {criticNote}
     {gapBlock}
     <div className="dr-verify dr-verify-warn">
       <div className="dr-verify-head">{u.length} {word} ручной проверки</div>
@@ -4995,6 +5007,10 @@ function AIPage(){
       setMsgs([{role:"user",text:r.question},
                {role:"ai",text:r.body,sources:p.sources||[],charts:p.charts||[],
                 mode:p.mode||"deep",phase:"done",
+                // Волна 9: артефакты верификации восстанавливаются из payload —
+                // сохранённый отчёт больше не «чище» живого прогона.
+                verification:p.verification||null,gaps:p.gaps||null,
+                ranking:p.ranking||null,insights:p.insights||null,
                 report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);

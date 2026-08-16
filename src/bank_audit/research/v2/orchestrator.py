@@ -279,6 +279,7 @@ async def stream_deep_research_v2(question: str,
                 "estimate_s": 12})
     try:
         critique = None
+        _critic_failed = False
         async for _k, _v in _emit_stage("critic",
                 lambda onr: critique_report(client, report_md, bundle, question,
                                             on_reasoning=onr), _stream_on):
@@ -289,6 +290,7 @@ async def stream_deep_research_v2(question: str,
     except Exception as e:
         log.warning("[v2] critic failed: %s — skip repair", e)
         critique = Critique(ok=True)
+        _critic_failed = True
 
     # Если critic нашёл blocking issues — одна перепись
     if not critique.ok and critique.repair_directive:
@@ -383,6 +385,10 @@ async def stream_deep_research_v2(question: str,
                 # текст, который аудитор видит сейчас. Пробел же переписыванием
                 # не закрывается: данных нет ни до, ни после.
                 "unanswered": (critique.unanswered or [])[:5],
+                # Числа сверены детерминированно всегда; critic_failed=True
+                # значит LLM-проверка (grounding цитат, подмена предмета) НЕ
+                # состоялась — фронт обязан показать это, а не зелёную плашку.
+                "critic_failed": _critic_failed,
                 "checked": True})
     yield _evt({"type": "claim_check",
                 "verified": max(0, verified_count),
