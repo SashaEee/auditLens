@@ -130,6 +130,9 @@ SYSTEM_PROMPT = """Ты — conductor (режиссёр) аудиторског�
   • ranking зависит от researcher (+reviews если есть). Укажи depends_on.
   • Если в вопросе «сравни и покажи жалобы» — researcher + reviews ОБЯЗАТЕЛЬНО.
   • В задании researcher-у укажи КОНКРЕТНЫЕ параметры для этой темы.
+  • Миссия может иметь СВОЙ "subjects" (подмножество глобальных): «сравни
+    банки и покажи жалобы по Сберу» → у reviews "subjects":["sberbank"],
+    остальные агенты работают по всем. Не задан — берутся глобальные.
   • Если продуктов/услуг несколько («ипотека + автокредит») — это mixed,
     researcher может собрать по обоим, но раздели в задании.
 
@@ -344,10 +347,16 @@ def _build_plan_from_dict(data: dict, question: str) -> ResearchPlan:
         agent_id = str(m.get("agent_id") or "").strip()
         if not agent_id:
             continue
+        # Per-mission subjects: «сравни 5 банков и покажи жалобы по Сберу» —
+        # reviews обязан крыть один банк, а не размазывать бюджет на пять.
+        # Свои субъекты миссии валидируем против глобальных (незнакомые слаги
+        # выбрасываем), пустой список = глобальные, как раньше.
+        m_subj = [str(x).strip() for x in (m.get("subjects") or []) if str(x).strip()]
+        m_subj = [x for x in m_subj if x in subjects] or list(subjects)
         missions.append(AgentMission(
             agent_id=agent_id,
             goal=str(m.get("goal") or "").strip(),
-            subjects=list(subjects),
+            subjects=m_subj,
             focus=str(m.get("focus") or "").strip(),
             constraints=[str(c) for c in (m.get("constraints") or []) if c],
             context="",
@@ -465,6 +474,13 @@ def attach_banki_sources(plan: ResearchPlan) -> ResearchPlan:
     """Детерминированно даёт researcher-миссиям приоритетный источник тарифов —
     banki.ru/products/{cat}/{bank}/. Тюнится V2_BANKI_PRODUCT_HINT (1=вкл, 0=выкл)."""
     if os.getenv("V2_BANKI_PRODUCT_HINT", "1") == "0":
+        return plan
+    # Витрины уместны для вопросов о ТАРИФАХ/ПРОДУКТАХ банков. Вопросу о
+    # документе регулятора они меняли предмет: агенту навязывалось «прочитай
+    # banki.ru ПЕРВЫМ», и вместо таблицы ЦБ отчёт сравнивал витринные ставки.
+    if (plan.question_nature or "").strip().lower() in ("regulatory", "process", "event"):
+        return plan
+    if not plan.subjects:
         return plan
     hay = (f"{plan.product} {plan.intent_summary} "
            + " ".join(m.goal for m in plan.missions if m.agent_id == "researcher"))

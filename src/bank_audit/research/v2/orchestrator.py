@@ -718,7 +718,7 @@ async def _rewrite_with_critique(client: AsyncOpenAI, draft: str,
 
     preview_emitted — таблица уже отдана ранним preview; просим НЕ вставлять её
     обратно и НЕ дублировать заголовок (контракт ранней отдачи §5a)."""
-    from .analyst import SYSTEM_PROMPT, _clean_citations
+    from .analyst import SYSTEM_PROMPT, _clean_citations, profile_addendum
     issues_block = ""
     if critique.blocking_issues:
         issues_block += "БЛОКИРУЮЩИЕ:\n- " + "\n- ".join(critique.blocking_issues)
@@ -751,7 +751,8 @@ async def _rewrite_with_critique(client: AsyncOpenAI, draft: str,
     # что и analyst (LLM_MODEL_ANALYST), а не быстрый SMART.
     model = (os.getenv("LLM_MODEL_ANALYST") or os.getenv("LLM_MODEL_SMART")
              or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
-    _msgs = [{"role": "system", "content": SYSTEM_PROMPT},
+    _msgs = [{"role": "system", "content": SYSTEM_PROMPT
+                                            + profile_addendum(plan, bundle)},
              {"role": "user", "content": user_msg}]
     try:
         if on_reasoning is not None:

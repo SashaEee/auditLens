@@ -434,6 +434,25 @@ class KnowledgeBundle:
                         lines.append(f'      «{q[:qlen]}»')
             parts.append("\n".join(lines))
 
+        # Факты СУБЪЕКТОВ ВНЕ plan.subjects: при subjects=[] (вопрос о документе
+        # регулятора) или когда агент принёс данные о непредвиденном субъекте
+        # (ЦБ, НСПК, платёжная система) цикл выше их НЕ сериализовал — писатель
+        # выводил «не удалось собрать данные», хотя bundle был полон.
+        _known = {self.canonical_subject(x) for x in self.subjects}
+        _extra: dict[str, list] = {}
+        for f in self.facts:
+            if self.canonical_subject(f.subject) not in _known:
+                _extra.setdefault(f.subject, []).append(f)
+        if _extra:
+            lines = ["### Прочие субъекты (вне списка сравнения — используй, "
+                     "если отвечают на вопрос)"]
+            for subj, fs in list(_extra.items())[:8]:
+                lines.append(f"**{subj}**")
+                for f in fs[:20]:
+                    cond = f" ({'; '.join(f.conditions)})" if f.conditions else ""
+                    lines.append(f"  • {f.attribute}: {f.value}{cond} [{f.source_n}]")
+            parts.append("\n".join(lines))
+
         # Выдержки реально использованных источников — заземление нарратива.
         if rich:
             ex = self._used_source_excerpts()
