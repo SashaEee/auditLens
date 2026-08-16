@@ -41,6 +41,10 @@ def _fleet_searxng_url() -> str | None:
     return os.getenv("FLEET_SEARXNG_URL") or None
 def _fleet_searxng_engines() -> str:
     return os.getenv("FLEET_SEARXNG_ENGINES") or "google cse,yandex,duckduckgo"
+def _fleet_searxng_token() -> str | None:
+    # С августа 2026 перед fleet-гейтвеем стоит SearxngAuthGate: без Bearer-токена
+    # любой запрос получает 401 и конвейер молча деградирует на ddgs.
+    return os.getenv("FLEET_SEARXNG_TOKEN") or None
 def _brave_key() -> str | None:
     return os.getenv("BRAVE_SEARCH_API_KEY") or None
 BRAVE_API_ENDPOINT   = "https://api.search.brave.com/res/v1/web/search"
@@ -220,7 +224,8 @@ def _search_ddgs(query: str, *, max_results: int = 8,
 # ── Backend 1: SearXNG (общий хелпер + fleet/локальный враппер) ────────────
 def _searxng_query(base: str, query: str, *, max_results: int,
                    site_filter: list[str] | None, engines: str | None,
-                   read_timeout: float, label: str) -> list[dict]:
+                   read_timeout: float, label: str,
+                   bearer: str | None = None) -> list[dict]:
     """Общий вызов SearXNG JSON API (для fleet-гейтвея и локального инстанса).
 
     Движки (bing/dogpile локально; google cse/yandex на fleet) ПЛОХО отрабатывают
@@ -243,9 +248,11 @@ def _searxng_query(base: str, query: str, *, max_results: int,
     if engines:
         params["engines"] = engines
     try:
+        headers = {"Authorization": f"Bearer {bearer}"} if bearer else None
         with httpx.Client(timeout=httpx.Timeout(connect=5, read=read_timeout,
                                                   write=5, pool=5)) as c:
-            resp = c.get(f"{base.rstrip('/')}/search", params=params)
+            resp = c.get(f"{base.rstrip('/')}/search", params=params,
+                         headers=headers)
         if resp.status_code != 200:
             log.warning("%s %s: HTTP %s", label, q_send[:50], resp.status_code)
             return []
@@ -294,7 +301,8 @@ def _search_fleet(query: str, *, max_results: int = 8,
     return _searxng_query(base, query, max_results=max_results,
                           site_filter=site_filter,
                           engines=_fleet_searxng_engines(),
-                          read_timeout=60, label="fleet-searxng")
+                          read_timeout=60, label="fleet-searxng",
+                          bearer=_fleet_searxng_token())
 
 
 def _search_searxng(query: str, *, max_results: int = 8,
