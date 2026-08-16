@@ -239,6 +239,7 @@ class BaseAgent:
         # а не по всем попыткам: SPA/404/captcha-страницы офиц.сайтов отдают пусто,
         # и раньше каждая такая попытка жгла слот из ~5 → банк оставался без данных.
         self._successful_reads = 0
+        self._successful_searches = 0
 
     def _emit_status(self, **kw):
         """Живой статус агента наружу (если подключён emit). Никогда не роняет
@@ -310,11 +311,15 @@ class BaseAgent:
             # качество-нейтрально). После лимита убираем web_search из доступных
             # инструментов → агент обязан читать/финалить. Кэп ≈1 поиск на субъект
             # + 1 кросс-источник (env V2_WEB_SEARCH_CAP_MIN — нижняя граница).
-            n_websearch = sum(1 for t in used if t == "web_search")
+            # Кэп — по РЕЗУЛЬТАТИВНЫМ поискам: упавший бэкенд (401/таймаут)
+            # съедал лимит, и после трёх ошибок агент навсегда терял поиск,
+            # финаля пустым. Потолок попыток отдельно (+3) — от зацикливания.
+            n_websearch = self._successful_searches
+            _n_search_attempts = sum(1 for t in used if t == "web_search")
             search_cap = max(int(os.getenv("V2_WEB_SEARCH_CAP_MIN", "3")),
                               int(os.getenv("V2_WEB_SEARCH_PER_SUBJECT", "2")) * n_subj)
             iter_tools = tools_schema
-            if n_websearch >= search_cap:
+            if n_websearch >= search_cap or _n_search_attempts >= search_cap + 3:
                 iter_tools = [t for t in tools_schema
                               if t["function"]["name"] != "web_search"]
                 if not self._search_capped_notified:
@@ -474,7 +479,10 @@ class BaseAgent:
                 self._emit_status(tool=tool_name)
                 # Копим URL'ы из результативных web_search — для forced-read.
                 if tool_name == "web_search":
-                    for u in _extract_urls_from_search_result(result):
+                    _found = _extract_urls_from_search_result(result)
+                    if _found:
+                        self._successful_searches += 1
+                    for u in _found:
                         if u not in self._pending_read_urls:
                             self._pending_read_urls.append(u)
         else:

@@ -633,6 +633,55 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
         if _capped:
             break
 
+    # ── Волна 7: gate перепланирования ──────────────────────────────────
+    # План стрелял один раз: если по субъекту сбор вернулся ПУСТЫМ (антибот,
+    # мёртвые ссылки, не тот продукт) — конвейер этого не замечал и уверенно
+    # писал отчёт по мусору. Теперь: детерминированная проверка «у каждого
+    # субъекта плана есть хоть один факт», и для пустых — ОДНА добор-волна
+    # точечных researcher-миссий. Без рекурсии: добор не перепроверяется.
+    if not _capped and os.getenv("V2_REPLAN_GATE", "1") != "0":
+        _missing = [sj for sj in plan.subjects
+                    if not bundle.facts_for(sj) and not bundle.complaints_for(sj)]
+        if _missing and len(_missing) < max(2, len(plan.subjects)):
+            _tmpl = next((m for m in plan.missions
+                          if m.agent_id == "researcher"), None)
+            if _tmpl is not None:
+                _labels = ", ".join(bundle.subject_labels.get(x, x)
+                                    for x in _missing)
+                yield _evt({"type": "stage_status", "stage": "research",
+                            "label": f"Добор: нет данных по {_labels}",
+                            "detail": "точечная повторная миссия по пустым "
+                                      "субъектам", "estimate_s": 60})
+                _redo = AgentMission(
+                    agent_id="researcher",
+                    goal=(f"ПОВТОРНЫЙ ТОЧЕЧНЫЙ СБОР. Первая волна не принесла "
+                          f"НИ ОДНОГО факта по: {_labels}. Исходное задание: "
+                          f"{_tmpl.goal}\nИщи ДРУГИМИ запросами и на других "
+                          f"источниках (агрегаторы, СМИ, кэш), чем обычно."),
+                    subjects=list(_missing),
+                    focus=_tmpl.focus,
+                    constraints=list(_tmpl.constraints),
+                    context="",
+                )
+                try:
+                    _r = await _run_one_agent(client, model, _redo, bundle)
+                    _got = sum(1 for sj in _missing if bundle.facts_for(sj))
+                    yield _evt({"type": "stage_status", "stage": "research",
+                                "label": f"Добор завершён: закрыто {_got} из "
+                                         f"{len(_missing)}",
+                                "detail": (_r.get("summary") or "")[:100]})
+                except Exception as _e:  # noqa: BLE001
+                    log.warning("[v2] добор-миссия упала: %s", _e)
+                _still = [sj for sj in _missing if not bundle.facts_for(sj)]
+                if _still:
+                    from .knowledge_bundle import CoverageNote
+                    bundle.coverage_notes.append(CoverageNote(
+                        what="Данные не найдены и повторным точечным сбором",
+                        subjects=[bundle.subject_labels.get(x, x) for x in _still],
+                        reason="обе волны сбора вернулись пустыми (вероятно, "
+                               "антибот или отсутствие публичных данных)",
+                        recommendation="проверить источники вручную"))
+
     # Кап сработал → честно фиксируем неполноту сбора (аналитик упомянет в отчёте,
     # виджет «Пробелы покрытия» покажет), а не молча выдаём частичный отчёт.
     if _capped:
