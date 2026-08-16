@@ -258,15 +258,13 @@ def _check_numbers(report_md: str, bundle: KnowledgeBundle) -> list[float]:
     безопасной. Разбор общий с оркестратором (numbers.py) — раньше два конца
     сверки читали числа по-разному, и дробные значения не совпадали никогда.
     """
-    fact_nums = _collect_fact_numbers(bundle.facts)
-    if not fact_nums:
+    if not bundle.facts:
         return []
-    halluc = []
-    for value, unit in _num.parse_with_units(report_md):
-        if _num.is_year(value, unit) or _num.matches_fact(value, fact_nums):
-            continue
-        halluc.append(value)
-    return halluc[:10]
+    # Волна 3: сверка знает единицы, множители и производные. Кандидат на
+    # удаление — только то, что не совпало даже с допуском округления крупных
+    # сумм И не является дельтой/кратным (их пересчитывают, а не вычищают).
+    audit = _num.audit_report_numbers(report_md, bundle.facts)
+    return audit["removal_candidates"][:10]
 
 
 def _collect_fact_numbers(facts: list[Fact]) -> set[float]:

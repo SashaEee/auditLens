@@ -150,3 +150,183 @@ def split_verified(pairs: list[tuple[float, str]],
         else:
             unverified.append(value)
     return verified, unverified
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Волна 3: единицы, множители, производные числа.
+#
+# Прежняя сверка сравнивала голые float: «комиссия 1,5%» Сбера считалась
+# подтверждённой, потому что у другого банка есть лимит «1,5 млн ₽» — совпали
+# полторашки. Ниже число носит КЛАСС ЕДИНИЦЫ, множители раскрываются
+# («1,5 млн» ↔ 1 500 000), а дельты и кратные («на 8,9 п.п.», «в 3 раза»),
+# которых в фактах нет по построению, не объявляются выдумкой, а ПЕРЕСЧИТЫВАЮТСЯ
+# по парам фактов.
+# ════════════════════════════════════════════════════════════════════════
+
+_MULT = {"тыс": 1_000.0, "млн": 1_000_000.0, "млрд": 1_000_000_000.0}
+
+
+def unit_class(unit: str) -> str:
+    """Класс единицы: pct / rub / time / ratio / score, '' — неизвестно."""
+    u = (unit or "").strip().lower()
+    if not u:
+        return ""
+    if u.startswith("%") or u.startswith("процент") or u.replace(".", "").replace(" ", "") in ("пп",):
+        return "pct"
+    if u.startswith("₽") or u.startswith("руб"):
+        return "rub"
+    if _YEAR_UNIT_RE.match(u) or u.startswith("дн") or u.startswith("мес"):
+        return "time"
+    if u.startswith("раз"):
+        return "ratio"
+    if u.startswith("балл"):
+        return "score"
+    return ""
+
+
+def _compatible(report_cls: str, fact_cls: str) -> bool:
+    return report_cls == "" or fact_cls == "" or report_cls == fact_cls
+
+
+def expand_pairs(pairs: list[tuple[float, str]]) -> list[tuple[float, str]]:
+    """Раскрывает множители: (1.5, «млн») → (1_500_000, ''). Прочие — как есть."""
+    out: list[tuple[float, str]] = []
+    for v, u in pairs:
+        m = _MULT.get((u or "").strip().lower())
+        out.append((v * m, "") if m else (v, u))
+    return out
+
+
+def fact_base(facts) -> dict[float, set[str]]:
+    """База сверки: значение → классы единиц, в которых оно встречалось.
+
+    Числа без единицы получают класс '' (совместим с любым): база должна быть
+    ШИРЕ отчёта — недостающее в базе обвиняет отчёт во лжи.
+    """
+    base: dict[float, set[str]] = {}
+
+    def _add(v: float, cls: str) -> None:
+        base.setdefault(round(v, 3), set()).add(cls)
+
+    for f in facts or []:
+        parts = [getattr(f, "value", "") or "",
+                 " ".join(getattr(f, "conditions", None) or []),
+                 getattr(f, "verbatim", "") or "",
+                 getattr(f, "as_of", "") or ""]
+        for txt in parts:
+            for v, u in parse_with_units(txt):
+                cls = unit_class(u)
+                m = _MULT.get((u or "").strip().lower())
+                if m:
+                    _add(v * m, "")
+                    _add(v, "")
+                else:
+                    _add(v, cls)
+            for v in all_numbers(txt):
+                _add(v, "")
+    return base
+
+
+def _match_base(value: float, cls: str, base: dict[float, set[str]],
+                *, strict: bool) -> bool:
+    for fv, classes in base.items():
+        ok_cls = any(_compatible(cls, fc) for fc in classes)
+        if not ok_cls:
+            continue
+        if abs(value - fv) < 0.001:
+            return True
+        if (not strict and abs(value) >= _TOL_MIN_VALUE and fv
+                and abs(value - fv) / abs(fv) < _REL_TOL):
+            return True
+    return False
+
+
+# Производные числа: «в N раз», «на X п.п.», «на X ₽» — писатель ОБЯЗАН их
+# приводить (так требует промпт), в фактах их нет по построению.
+_NUMG = rf"(?:{_NUM})(?:[.,]\d+)?"
+_DERIVED_RES = [
+    (re.compile(rf"в\s+({_NUMG})\s+раза?\b", re.IGNORECASE), "ratio"),
+    (re.compile(rf"на\s+({_NUMG})\s*п\.?\s?п\.?(?![а-яё])", re.IGNORECASE), "pct"),
+    (re.compile(rf"на\s+({_NUMG})\s*(?:тыс\w*|млн|млрд)?\s*(?:₽|руб\w*)", re.IGNORECASE), "rub"),
+]
+
+
+def derived_numbers(text: str) -> dict[float, str]:
+    """Числа-производные из текста отчёта: {значение: вид}."""
+    out: dict[float, str] = {}
+    for rx, kind in _DERIVED_RES:
+        for m in rx.finditer(text or ""):
+            raw = m.group(1)
+            nm = _NUM_RE.match(raw)
+            if not nm:
+                continue
+            v = _to_float(nm.group(1), nm.group(2))
+            if v is not None:
+                out[round(v, 3)] = kind
+    return out
+
+
+def _recompute_derived(value: float, kind: str,
+                       base: dict[float, set[str]]) -> bool:
+    """Дельта/кратное подтверждается ПАРОЙ фактов, а не одним числом."""
+    want_cls = {"pct": "pct", "rub": "rub"}.get(kind, "")
+    vals = [fv for fv, cls in base.items()
+            if any(_compatible(want_cls, fc) for fc in cls)]
+    if kind == "ratio":
+        for a in vals:
+            for b in vals:
+                if b and a != b and abs(a / b - value) <= max(0.06, value * 0.05):
+                    return True
+        return False
+    tol = 0.06 if kind == "pct" else max(1.0, value * 0.01)
+    for a in vals:
+        for b in vals:
+            if a > b and abs((a - b) - value) <= tol:
+                return True
+    return False
+
+
+def audit_report_numbers(report_text: str, facts) -> dict:
+    """Единая сверка чисел отчёта с фактами (для критика и оркестратора).
+
+    Возвращает вхождения по корзинам:
+      verified          — совпало с фактом (значение + класс единицы) или год
+      derived_ok        — дельта/кратное, подтверждённое парой фактов
+      derived_unchecked — производное, для которого пары не нашлось: НЕ выдумка
+                          (пересчитать нельзя ≠ неверно), но и не зелёная плашка —
+                          отдаётся в ручную проверку
+      unverified        — не совпало строго (счётчик доверия)
+      removal_candidates— не совпало даже с допуском округления крупных сумм:
+                          только их можно приказывать убрать при ремонте
+    """
+    base = fact_base(facts)
+    derived = derived_numbers(report_text)
+    verified: list[float] = []
+    derived_ok: list[float] = []
+    derived_unchecked: list[tuple[float, str]] = []
+    unverified: list[float] = []
+    removal: list[float] = []
+    for value, unit in expand_pairs(parse_with_units(report_text)):
+        cls = unit_class(unit)
+        if is_year(value, unit):
+            verified.append(value)
+            continue
+        kind = derived.get(round(value, 3))
+        if kind and cls in ("", kind, "ratio"):
+            if _match_base(value, cls, base, strict=True) \
+                    or _recompute_derived(value, kind, base):
+                derived_ok.append(value)
+            else:
+                derived_unchecked.append((value, kind))
+            continue
+        if _match_base(value, cls, base, strict=True):
+            verified.append(value)
+        else:
+            unverified.append(value)
+            if not _match_base(value, cls, base, strict=False):
+                removal.append(value)
+    return {"verified": verified, "derived_ok": derived_ok,
+            "derived_unchecked": derived_unchecked,
+            "unverified": unverified, "removal_candidates": removal,
+            "checked": len(verified) + len(derived_ok)
+                       + len(derived_unchecked) + len(unverified)}

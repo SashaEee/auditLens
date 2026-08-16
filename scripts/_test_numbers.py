@@ -87,5 +87,55 @@ check("пустой текст", N.all_numbers(""), set())
 check("текст без чисел", N.parse_with_units("никаких цифр"), [])
 check("число без единицы в отчёт не идёт", N.parse_with_units("просто 42"), [])
 
+# ── Волна 3: классы единиц, множители, производные ───────────────────────
+print("волна 3: классы единиц")
+
+
+class F3(F):
+    pass
+
+
+facts3 = [F3(value="1,5%", verbatim="комиссия 1,5% от суммы"),
+          F3(value="1,5 млн ₽", conditions=["лимит на месяц"]),
+          F3(value="27,608%"), F3(value="18,7%")]
+base3 = N.fact_base(facts3)
+check("процент и рубли различимы: 1.5% в базе с классом pct",
+      "pct" in base3.get(1.5, set()), True)
+check("множитель раскрыт: 1 500 000 в базе", 1500000.0 in base3, True)
+
+a = N.audit_report_numbers("Комиссия 1,5% [1]. Лимит 1 500 000 ₽ [2].", facts3)
+check("оба вхождения сверены", (len(a["verified"]), len(a["unverified"])), (2, 0))
+
+a = N.audit_report_numbers("Комиссия 2 500 000 ₽ [1].", facts3)
+check("чужая сумма не проходит", a["unverified"], [2500000.0])
+check("и попадает в кандидаты на удаление", a["removal_candidates"], [2500000.0])
+
+facts_pct_only = [F3(value="27,608%"), F3(value="18,7%")]
+a = N.audit_report_numbers("Взнос 27 608 ₽.", facts_pct_only)
+check("27608 ₽ не подтверждается процентом 27,608 даже численно",
+      a["unverified"], [27608.0])
+
+print("волна 3: производные числа")
+a = N.audit_report_numbers("Ставка выше на 8,9 п.п. [1]", facts3)
+check("дельта 27,608−18,7≈8,9 п.п. пересчитана и подтверждена",
+      (a["derived_ok"], a["derived_unchecked"]), ([8.9], []))
+
+facts_ratio = [F3(value="30%"), F3(value="10%")]
+a = N.audit_report_numbers("Дороже в 3 раза.", facts_ratio)
+check("кратное 30/10=3 подтверждено", a["derived_ok"], [3.0])
+
+a = N.audit_report_numbers("Дороже в 7 раз.", facts_ratio)
+check("кратное без пары — в ручную проверку, НЕ в выдумки",
+      (a["derived_unchecked"], a["removal_candidates"]), ([(7.0, "ratio")], []))
+
+a = N.audit_report_numbers("Разница составила на 500 000 ₽ больше.",
+                           [F3(value="2 000 000 ₽"), F3(value="1 500 000 ₽")])
+check("рублёвая дельта пересчитана", a["derived_ok"], [500000.0])
+
+print("волна 3: обратная совместимость")
+a = N.audit_report_numbers("с 2025 года ставка 12,5%", [F3(value="12,5%")])
+check("год и точное значение — verified", len(a["verified"]), 2)
+check("checked считает вхождения", a["checked"], 2)
+
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)

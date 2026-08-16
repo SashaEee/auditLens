@@ -316,35 +316,37 @@ async def stream_deep_research_v2(question: str,
     # только числа, которые нашлись в bundle.facts. Делаем честно:
     # verified = числа отчёта, сопоставленные с числами фактов; unverified =
     # есть в отчёте, но НЕ найдены в фактах (включая, но не только, галлюц.).
-    report_nums = _extract_all_numbers(report_md)
-    fact_nums = _collect_fact_numbers(bundle)
-    verified_nums, unverified_nums = _split_verified(report_nums, fact_nums)
-    # numeric_hallucinations (от Critic) — подмножество unverified, гарантируем
-    # что они учтены (не потеряются, если детерм. чек их не словил).
-    unverified_set = set(unverified_nums)
-    for h in critique.numeric_hallucinations:
-        unverified_set.add(round(float(h), 3))
-    # Считаем ВХОЖДЕНИЯ, а не уникальные значения. Прежняя формула
-    # «len(список) − len(множество несверенных)» поднимала счётчик доверия на
-    # каждом повторе неподтверждённого числа: отчёт, где одна и та же выдумка
-    # упомянута в TL;DR, таблице и рекомендациях, показывал «верифицировано 2».
-    verified_count = sum(1 for v, _u in report_nums
-                         if round(v, 3) not in unverified_set)
+    # Волна 3: единая сверка с классами единиц, множителями и производными
+    # (дельты/кратные пересчитываются по парам фактов, а не объявляются
+    # выдумкой). Вхождения, не уникальные значения.
+    _audit = _num.audit_report_numbers(report_md, bundle.facts)
+    _halluc_set = {round(float(h), 3) for h in critique.numeric_hallucinations}
+    verified_count = sum(1 for v in _audit["verified"] + _audit["derived_ok"]
+                         if round(v, 3) not in _halluc_set)
+    report_nums_count = _audit["checked"]
     # «Требуют ручной проверки» — КУРИРУЕМЫЙ список {claim, issue} С ПРИЧИНАМИ
     # (расхождение с источником + единственный источник низкого доверия), а НЕ
     # дамп всех несопоставленных чисел (раньше туда падали производные дельты/
     # проценты/годы → перегруз и бесполезность).
     manual_flags = _build_manual_check(report_md, bundle, critique)
+    # Производные без пары для пересчёта: не выдумка (пересчитать нельзя ≠
+    # неверно), но и не зелёная плашка — честное «сверить вручную».
+    for _dv, _dk in _audit["derived_unchecked"][:4]:
+        manual_flags.append({
+            "claim": f"{_dv:g} ({'в N раз' if _dk == 'ratio' else 'дельта, ' + ('п.п.' if _dk == 'pct' else '₽')})",
+            "issue": "производное число: пары фактов для пересчёта не нашлось — "
+                     "сверить арифметику вручную"})
     # «Отфильтровано» — числа, которые критик назвал выдумкой И которых после
     # переписи в отчёте действительно НЕ ОСТАЛОСЬ. Раньше сюда шёл весь список
     # критика, и плашка «N отфильтровано (защита от галлюцинаций)» появлялась
     # над отчётом, где эти числа преспокойно стояли в таблице.
-    _still_in_report = {round(v, 3) for v, _u in report_nums}
+    _still_in_report = {round(v, 3) for v, _u in
+                        _num.expand_pairs(_num.parse_with_units(report_md))}
     dropped_count = sum(1 for h in critique.numeric_hallucinations
                         if round(float(h), 3) not in _still_in_report)
     yield _evt({"type": "verification",
                 "method": "curated_audit_flags",
-                "numeric_checked": len(report_nums),
+                "numeric_checked": report_nums_count,
                 "verified": max(0, verified_count),
                 "unverified": manual_flags,
                 "unverified_count": len(manual_flags),

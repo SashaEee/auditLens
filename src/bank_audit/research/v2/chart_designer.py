@@ -55,6 +55,7 @@ _SYS = (
 
 def _facts_digest(bundle) -> tuple[str, set[float]]:
     """Компактный нумерованный дамп числовых фактов + множество допустимых чисел."""
+    from . import numbers as _n
     lines: list[str] = []
     nums: set[float] = set()
     for f in bundle.facts:
@@ -64,6 +65,11 @@ def _facts_digest(bundle) -> tuple[str, set[float]]:
         subj = bundle.subject_labels.get(bundle.canonical_subject(f.subject),
                                          f.subject)
         lines.append(f"- {subj} | {f.attribute} | {num} {unit or ''} | src={f.source_n}")
+        # Волна 3: в белый список — ВСЕ числа значения, а не только первое.
+        # «0,5–1,5%» давал только 0.5, и корректный график со второй границей
+        # браковался валидатором как «число не из фактов».
+        for v, _u in _n.expand_pairs(_n.parse_with_units(f.value)):
+            nums.add(round(float(v), 6))
         nums.add(round(float(num), 6))
         if len(lines) >= 140:
             break
