@@ -233,8 +233,12 @@ def tool_read_url(args: dict, bundle) -> str:
             return json.dumps({"error": "источник заблокирован антиботом/капчей — "
                                "данные недоступны, помечено в пробелах покрытия",
                                "url": url, "blocked": True}, ensure_ascii=False)
-        return json.dumps({"error": "пустой текст (404/пустая SPA)", "url": url},
-                          ensure_ascii=False)
+        # Честная причина вместо дежурной «пустой страницы»: агент, знающий
+        # что «формат .doc не поддержан», не будет ретраить URL и запишет
+        # осмысленный пробел покрытия.
+        reason = (idx.get("skipped_reason") or "").strip()
+        return json.dumps({"error": reason or "пустой текст (404/пустая SPA)",
+                           "url": url}, ensure_ascii=False)
 
     # Регистрируем источник в bundle
     src_n = register_source(bundle, url=url, title=title, domain=dom,

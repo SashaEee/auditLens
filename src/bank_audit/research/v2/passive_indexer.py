@@ -48,7 +48,15 @@ def _should_render(url: str) -> bool:
     if os.getenv("V2_BROWSER_RENDER", "1") == "0":
         return False
     try:
-        d = urlparse(url).netloc.lower()
+        parsed = urlparse(url)
+        # Файл (pdf/xlsx/docx/…) браузером не рендерят: навигация превращается
+        # в download, Playwright возвращает пустоту, и живой файл на SPA-домене
+        # умирал с ложным диагнозом «пустая страница».
+        if parsed.path.lower().endswith(
+                (".pdf", ".xlsx", ".xls", ".xlsm", ".docx", ".doc",
+                 ".pptx", ".ppt", ".zip", ".csv")):
+            return False
+        d = parsed.netloc.lower()
         if d.startswith("www."):
             d = d[4:]
         return any(d == x or d.endswith("." + x) for x in _SPA_RENDER_DOMAINS)
@@ -75,6 +83,7 @@ def index_and_get_text(url: str, *,
     (document_id=None — на горячем пути его никто не использует)."""
     # 1. Быстрый путь: fetch + parse → текст немедленно (без ожидания эмбеддинга).
     text, title = "", ""
+    skipped_reason = ""
     _fetch_via, _captcha, _status = "", False, 0
     _render = _should_render(url)
     _content, _ctype, _final = None, None, None
@@ -91,6 +100,8 @@ def index_and_get_text(url: str, *,
                                 content_type=fr.content_type)
             full = parsed.text or ""
             title = parsed.title or ""
+            skipped_reason = (parsed.meta or {}).get("skipped_reason", "") \
+                if getattr(parsed, "meta", None) else ""
             text = (_relevant_excerpt(full, query_hint, budget)
                     if query_hint and len(full) > budget else full[:budget])
     except Exception as e:
@@ -111,7 +122,8 @@ def index_and_get_text(url: str, *,
                         origin=_origin_ctx())
 
     return {"title": title, "text": text, "document_id": None, "indexed": False,
-            "fetch_via": _fetch_via, "captcha": _captcha, "status": _status}
+            "fetch_via": _fetch_via, "captcha": _captcha, "status": _status,
+            "skipped_reason": skipped_reason}
 
 
 # Происхождение текущего чтения: кто и ради какого вопроса читает страницу.
