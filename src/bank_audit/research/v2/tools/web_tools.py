@@ -238,7 +238,8 @@ def tool_read_url(args: dict, bundle) -> str:
 
     # Регистрируем источник в bundle
     src_n = register_source(bundle, url=url, title=title, domain=dom,
-                              trust=trust, kind=kind, excerpt=text[:600])
+                              trust=trust, kind=kind, excerpt=text[:600],
+                              fulltext=text[:40000])
 
     return json.dumps({
         "url": url, "title": title, "domain": dom,

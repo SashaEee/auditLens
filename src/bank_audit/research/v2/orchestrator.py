@@ -299,6 +299,7 @@ async def stream_deep_research_v2(question: str,
                     "detail": critique.repair_directive[:120],
                     "estimate_s": 15})
         try:
+            _draft_before = report_md
             async for _k, _v in _emit_stage("repair",
                     lambda onr: _rewrite_with_critique(
                         client, report_md, critique, bundle, plan,
@@ -308,6 +309,28 @@ async def stream_deep_research_v2(question: str,
                     yield _evt(_v)
                 else:
                     report_md = _v
+            # Волна 4: ремонт никто не перепроверял — переписыватель мог внести
+            # СВЕЖИЕ ошибки, а плашки строились так, будто ремонт безгрешен.
+            # Детерминированная пере-сверка: стало хуже по числам без опоры или
+            # отчёт скукожился вдвое — откатываемся к черновику.
+            try:
+                _b = _num.audit_report_numbers(_draft_before, bundle.facts)
+                _a = _num.audit_report_numbers(report_md, bundle.facts)
+                _worse_nums = len(_a["removal_candidates"]) > len(_b["removal_candidates"])
+                _shrunk = len(report_md) < len(_draft_before) * 0.5
+                if _worse_nums or _shrunk:
+                    log.warning("[v2] repair ухудшил отчёт (числа: %s→%s, длина: "
+                                "%s→%s) — откат к черновику",
+                                len(_b["removal_candidates"]),
+                                len(_a["removal_candidates"]),
+                                len(_draft_before), len(report_md))
+                    report_md = _draft_before
+                    yield _evt({"type": "stage_status", "stage": "repair",
+                                "label": "Доработка отклонена: черновик был точнее",
+                                "detail": "переписывание внесло новые несверенные "
+                                          "числа — оставлен исходный текст"})
+            except Exception:
+                pass
         except Exception as e:
             log.warning("[v2] repair failed: %s", e)
 
@@ -717,10 +740,10 @@ async def _rewrite_with_critique(client: AsyncOpenAI, draft: str,
         )
 
     user_msg = (
-        f"# ЧЕРНОВИК\n{draft[:10000]}\n\n"
+        f"# ЧЕРНОВИК\n{draft[:26000]}\n\n"
         f"# ЗАМЕЧАНИЯ КРИТИКА\n{issues_block}\n\n"
         f"# ДИРЕКТИВА\n{critique.repair_directive}\n\n"
-        f"# BUNDLE\n{bundle.to_prompt_context(max_chars=14000)}{preview_note}\n\n"
+        f"# BUNDLE\n{bundle.to_prompt_context(max_chars=24000)}{preview_note}\n\n"
         f"Перепиши отчёт, исправив ВСЕ замечания критика. "
         f"Структура и стиль — из системного промпта."
     )

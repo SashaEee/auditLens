@@ -117,16 +117,32 @@ class ResearcherAgent(BaseAgent):
             value = str(f.get("value") or "").strip()
             if not subject or not attr or not value:
                 continue
+            verbatim = str(f.get("verbatim") or "")[:400]
+            confidence = float(f.get("confidence") or 0.7)
+            tags = [str(t) for t in (f.get("tags") or [])][:5]
+            # Волна 4: «дословная цитата» проверяется ДЕТЕРМИНИРОВАННО против
+            # текста СВОЕГО источника. Раньше verbatim и source_n принимались
+            # на веру: галлюцинированная цитата выглядела дословной, а ссылка
+            # могла вести на страницу другого банка — аудитор открывал источник
+            # и не находил ни цитаты, ни числа.
+            if verbatim:
+                src = self.bundle.sources.by_n(source_n)
+                hay = ((getattr(src, "fulltext", "") or "")
+                       + " " + (getattr(src, "excerpt", "") or "")) if src else ""
+                if hay.strip() and not _text_in_source(verbatim, hay):
+                    confidence = min(confidence, 0.45)
+                    if "verbatim_unverified" not in tags:
+                        tags.append("verbatim_unverified")
             self.bundle.add_fact(Fact(
                 subject=subject,
                 attribute=attr,
                 value=value,
                 source_n=source_n,
-                verbatim=str(f.get("verbatim") or "")[:400],
+                verbatim=verbatim,
                 conditions=[str(c) for c in (f.get("conditions") or [])][:6],
                 as_of=str(f.get("as_of") or ""),
-                confidence=float(f.get("confidence") or 0.7),
-                tags=[str(t) for t in (f.get("tags") or [])][:5],
+                confidence=confidence,
+                tags=tags,
             ))
 
         # insights (аналитические наблюдения — меняют рамку сравнения)
@@ -160,3 +176,32 @@ class ResearcherAgent(BaseAgent):
                 reason=str(g.get("reason") or "не найдено в открытых источниках"),
                 recommendation=str(g.get("recommendation") or ""),
             ))
+
+
+def _text_in_source(needle: str, haystack: str) -> bool:
+    """Нечёткое вхождение цитаты в текст источника.
+
+    Нормализуем пробелы/регистр/ё и «умные» кавычки; сначала прямое вхождение,
+    затем перекрытие по словам ≥ 70% (цитату могли слегка перефразировать при
+    извлечении — это ещё не враньё, в отличие от цитаты, которой нет вовсе).
+    """
+    import re as _re
+
+    def norm(t: str) -> str:
+        t = (t or "").lower().replace("ё", "е")
+        t = _re.sub(r"[«»\"\'\u00a0\u202f]", " ", t)
+        return _re.sub(r"\s+", " ", t).strip()
+
+    nd, hs = norm(needle), norm(haystack)
+    if not nd:
+        return True
+    if nd in hs:
+        return True
+    # Сравниваем ОСНОВЫ слов (первые 6 букв): русская морфология ломает
+    # точное вхождение («комиссия» ≠ «комиссией», хотя цитата та же).
+    words = [w for w in _re.findall(r"[а-яa-z0-9]{3,}", nd)]
+    if len(words) < 3:
+        return nd in hs
+    stems = {w[:6] for w in words}
+    hit = sum(1 for st in stems if st in hs)
+    return hit / len(stems) >= 0.7

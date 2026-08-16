@@ -53,6 +53,10 @@ class Source:
     trust: float = 0.6
     kind: str = "web"  # bank_official | aggregator | regulatory | review | news | web
     excerpt: str = ""  # короткая выдержка для контекста в промпте
+    # Полный (оконный) текст источника НА ВРЕМЯ прогона — база для проверки
+    # цитат: verbatim факта обязан находиться в тексте СВОЕГО источника.
+    # В промпты и UI не сериализуется (см. to_ui/to_prompt).
+    fulltext: str = ""
 
     def trust_marker(self) -> str:
         if self.trust >= 0.9:
@@ -80,6 +84,8 @@ class SourceRegistry:
             existing = self._items[self._by_url[key] - 1]
             if src.excerpt and not existing.excerpt:
                 existing.excerpt = src.excerpt
+            if src.fulltext and len(src.fulltext) > len(existing.fulltext):
+                existing.fulltext = src.fulltext
             if src.title and (not existing.title or len(existing.title) < len(src.title)):
                 existing.title = src.title
             existing.trust = max(existing.trust, src.trust)
@@ -94,6 +100,9 @@ class SourceRegistry:
 
     def all(self) -> list[Source]:
         return list(self._items)
+
+    def by_n(self, n: int) -> Source | None:
+        return self._items[n - 1] if 1 <= n <= len(self._items) else None
 
     def to_ui(self) -> list[dict]:
         out = []

@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 def register_source(bundle, *, url: str, title: str, domain: str,
                      trust: float, kind: str, excerpt: str = "",
+                     fulltext: str = "",
                      bank_slug: str | None = None) -> int:
     """Регистрирует источник в bundle.sources и возвращает его n-маркер [N].
 
@@ -27,6 +28,7 @@ def register_source(bundle, *, url: str, title: str, domain: str,
     src = Source(
         url=url, title=title or url[:80], domain=domain,
         bank_slug=bank_slug, trust=trust, kind=kind, excerpt=excerpt,
+        fulltext=fulltext,
     )
     return bundle.sources.add(src)
 

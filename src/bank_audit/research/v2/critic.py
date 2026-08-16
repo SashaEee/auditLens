@@ -121,14 +121,17 @@ async def critique_report(client: AsyncOpenAI, report_md: str,
     # Сначала детерминированная проверка чисел (быстро, без LLM)
     halluc_nums = _check_numbers(report_md, bundle)
 
-    context = bundle.to_prompt_context(max_chars=14000)
+    # Волна 4: критик обязан видеть ВЕСЬ отчёт и богатый контекст — раньше
+    # report_md[:12000]+bundle 14k против 44k у писателя: хвостовые секции
+    # (риски, рекомендации — ради них отчёт и читают) не проверялись вовсе.
+    context = bundle.to_prompt_context(max_chars=24000)
     # Grounding цитат: даём критику excerpt'ы ТОЛЬКО реально процитированных в
     # отчёте источников [N] (фокус + лимит контекста), чтобы он сверил утверждения
     # с первоисточником и поймал «враньё со ссылкой» (claim ↔ источник расходятся).
     src_block = _cited_sources_block(report_md, bundle)
     user_msg = (
         f"# ВОПРОС АУДИТОРА\n{question}\n\n"
-        f"# ЧЕРНОВИК ОТЧЁТА\n{report_md[:12000]}\n\n"
+        f"# ЧЕРНОВИК ОТЧЁТА\n{report_md[:30000]}\n\n"
         f"# KNOWLEDGE BUNDLE\n{context}\n\n"
         + (f"# ИСТОЧНИКИ (excerpt'ы для проверки цитат [N])\n{src_block}\n\n"
            if src_block else "")
@@ -142,12 +145,12 @@ async def critique_report(client: AsyncOpenAI, report_md: str,
             raw, _r, _t = await stream_completion(
                 client, on_reasoning=on_reasoning,
                 model=model, messages=_msgs, temperature=0.0,
-                max_tokens=1500, extra_body=deep_reasoning_extra())
+                max_tokens=2200, extra_body=deep_reasoning_extra())
             raw = (raw or "").strip()
         else:
             resp = await client.chat.completions.create(
                 model=model, messages=_msgs,
-                temperature=0.0, max_tokens=1500,
+                temperature=0.0, max_tokens=2200,
                 extra_body=deep_reasoning_extra(),  # верификация/grounding — reasoning: effort=high
             )
             raw = (resp.choices[0].message.content or "").strip()
