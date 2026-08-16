@@ -43,6 +43,24 @@ _SPA_RENDER_DOMAINS = (
 )
 
 
+def _learned_render_domain(domain: str) -> bool:
+    """Домен, где браузерный добор уже побеждал HTTP (самообучение)."""
+    try:
+        from ...rag import cache as rag_cache
+        return bool(rag_cache.get("render_hint", domain))
+    except Exception:
+        return False
+
+
+def _learn_render_domain(domain: str) -> None:
+    try:
+        from ...rag import cache as rag_cache
+        rag_cache.put("render_hint", True, 30 * 24 * 3600, domain)
+        log.info("[render-hint] домен %s выучен: SPA, рендерим сразу", domain)
+    except Exception:
+        pass
+
+
 def _should_render(url: str) -> bool:
     """SPA офиц. сайта банка → рендерим браузером (httpx отдаёт пустой каркас)."""
     if os.getenv("V2_BROWSER_RENDER", "1") == "0":
@@ -59,7 +77,10 @@ def _should_render(url: str) -> bool:
         d = parsed.netloc.lower()
         if d.startswith("www."):
             d = d[4:]
-        return any(d == x or d.endswith("." + x) for x in _SPA_RENDER_DOMAINS)
+        if any(d == x or d.endswith("." + x) for x in _SPA_RENDER_DOMAINS):
+            return True
+        # Выученные домены: браузерный добор здесь уже побеждал HTTP.
+        return _learned_render_domain(d)
     except Exception:
         return False
 
@@ -102,6 +123,36 @@ def index_and_get_text(url: str, *,
             title = parsed.title or ""
             skipped_reason = (parsed.meta or {}).get("skipped_reason", "") \
                 if getattr(parsed, "meta", None) else ""
+            # RENDER-ON-DEMAND (универсально, без ручных списков): большой
+            # HTML, из которого извлеклись крохи текста, — сигнатура SPA-
+            # каркаса. Ручной список _SPA_RENDER_DOMAINS не масштабируется
+            # (domrfbank.ru в нём не было — и «ИЖС-Подряд» превратился в
+            # «условия недоступны»). Добираем браузером ОДИН раз и запоминаем
+            # домен: дальше он рендерится сразу.
+            if (not _render and _status == 200 and len(full) < 600
+                    and len(fr.content) > 15000
+                    and "html" in (fr.content_type or "html").lower()
+                    and os.getenv("V2_BROWSER_RENDER", "1") != "0"):
+                try:
+                    fr2 = fetcher.fetch(url, prefer_browser=True)
+                    if fr2 is not None and fr2.content:
+                        parsed2 = parse_auto(fr2.content, url=fr2.final_url,
+                                             content_type=fr2.content_type)
+                        full2 = parsed2.text or ""
+                        if len(full2) > max(len(full) * 2, 800):
+                            log.warning("[render-on-demand] %s: HTTP дал %s "
+                                        "симв., браузер — %s; домен выучен",
+                                        url[:70], len(full), len(full2))
+                            full, title = full2, (parsed2.title or title)
+                            _content, _ctype = fr2.content, fr2.content_type
+                            _final = fr2.final_url
+                            _render = True
+                            from urllib.parse import urlparse as _up
+                            _dom = (_up(url).netloc or "").lower().removeprefix("www.")
+                            if _dom:
+                                _learn_render_domain(_dom)
+                except Exception as _e:  # noqa: BLE001 — добор не роняет чтение
+                    log.info("[render-on-demand] %s: %s", url[:60], _e)
             text = (_relevant_excerpt(full, query_hint, budget)
                     if query_hint and len(full) > budget else full[:budget])
     except Exception as e:
