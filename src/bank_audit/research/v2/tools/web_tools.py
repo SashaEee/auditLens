@@ -78,8 +78,6 @@ def _trust_for(domain: str, url: str) -> float:
         return 0.98
     if d.endswith(".gov.ru") or d.endswith(".mil.ru"):
         return 0.95
-    if url_l.endswith(".pdf"):
-        return 0.9
     # Офиц. сайты банков (по домену 2 уровня)
     bank_domains = ("sberbank.ru", "vtb.ru", "alfabank.ru", "tbank.ru", "tinkoff.ru",
                     "sovcombank.ru", "gazprombank.ru", "rshb.ru", "domrfbank.ru",
@@ -103,6 +101,12 @@ def _trust_for(domain: str, url: str) -> float:
     # Отзовики/пользовательский контент
     if any(d.endswith(x) for x in ("irecommend.ru", "otzovik.com", "vk.com")):
         return 0.5
+    # PDF — модификатор ВНУТРИ класса неизвестного домена, а не ранний return:
+    # прежний глобальный «*.pdf → 0.9» делал PDF с vc.ru доверием почти как
+    # офсайт банка. Официальный документ на неизвестном домене — чуть выше
+    # безвестной страницы, но никак не уровень регулятора.
+    if url_l.endswith(".pdf"):
+        return 0.65
     return 0.55
 
 
@@ -345,13 +349,39 @@ def tool_semantic_search(args: dict, bundle) -> str:
     top_k = int(args.get("top_k", 6))
 
     try:
-        from ....rag.retriever import semantic_search as _ss
-        results = _ss(query, top_k=top_k, bank_slugs=bank_slugs,
-                       doc_types=doc_types, trust_min=trust_min,
-                       exclude_sponsored=True)
+        # Гибрид (вектор + полнотекст, RRF) вместо чистого вектора: точные
+        # токены «ПСК 24,7%», «п. 4.2», «указание 6960-У» полнотекст находит
+        # дословно, а вектор размазывает. Гибрид уже жил в retriever для
+        # вкладки «База знаний» — агентам он был просто не подключён.
+        from ....rag.retriever import hybrid_search as _hs
+        _h = _hs(query, limit=top_k, bank_slugs=bank_slugs,
+                  doc_types=doc_types, trust_min=trust_min)
+        # Гибрид группирует по документам ({groups:[{hits:[...]}]}) — плоское
+        # представление для агента: фрагмент + атрибуты его документа.
+        results = []
+        for g in (_h.get("groups") or [])[:top_k]:
+            for hit in (g.get("hits") or [])[:2]:
+                results.append({
+                    "url": g.get("url"), "title": g.get("title") or g.get("text_head"),
+                    "trust_score": g.get("trust_score"),
+                    "text": hit.get("text") or hit.get("snippet"),
+                    "headings_path": hit.get("headings_path"),
+                    "bank_slug": g.get("bank_slug"),
+                    "doc_type": g.get("doc_type"),
+                    "fetched_at": str(g.get("fetched_at") or ""),
+                })
+        results = results[:max(top_k, 8)]
+        if not results:
+            raise RuntimeError("hybrid: пусто, пробуем вектор")
     except Exception as e:
-        return json.dumps({"error": f"semantic_search failed: {e}"},
-                          ensure_ascii=False)
+        try:
+            from ....rag.retriever import semantic_search as _ss
+            results = _ss(query, top_k=top_k, bank_slugs=bank_slugs,
+                           doc_types=doc_types, trust_min=trust_min,
+                           exclude_sponsored=True)
+        except Exception:
+            return json.dumps({"error": f"semantic_search failed: {e}"},
+                              ensure_ascii=False)
 
     out = []
     for r in results:
@@ -380,6 +410,31 @@ def tool_semantic_search(args: dict, bundle) -> str:
 # ════════════════════════════════════════════════════════════════════════
 # TOOL: search_reviews_db — семантический поиск жалоб в корпусе banki.ru
 # ════════════════════════════════════════════════════════════════════════
+
+
+def _sentiment_stats_from_db(banks: list[str]) -> dict:
+    """Полнокорпусные агрегаты по банкам (v_review_sentiment_share).
+
+    Вьюха отдаёт total и ДОЛЮ НЕГАТИВА — корпус banki.ru смещён в жалобы,
+    поэтому pos/neu из него не выводимы вовсе; это тоже часть правды, которую
+    агент обязан знать, а не досочинять.
+    """
+    from sqlalchemy import text as _t
+    from .... import db as _db
+    out: dict = {}
+    with _db.session() as s:
+        rows = s.execute(_t(
+            "SELECT bank_name, neg_share, total "
+            "FROM v_review_sentiment_share")).mappings().all()
+    want = {b.lower() for b in banks}
+    for r in rows:
+        name = r["bank_name"] or ""
+        if want and not any(w in name.lower() or name.lower() in w for w in want):
+            continue
+        out[name] = {"total": int(r["total"] or 0),
+                     "neg_share": round(float(r["neg_share"] or 0), 3),
+                     "note": "pos/neu по корпусу не определимы (корпус жалоб)"}
+    return out
 
 
 def tool_search_reviews_db(args: dict, bundle) -> str:
@@ -446,6 +501,20 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
         empties = [b for b, v in counts.items() if not v]
         resp = {"mode": "per_bank", "query": query, "by_bank": out_by,
                 "counts": counts, "total": total}
+        # НАСТОЯЩИЕ агрегаты из БД. Раньше схема финала reviews-агента требовала
+        # total и доли pos/neu/neg, и модель экстраполировала их по 12-15
+        # отзывам чисто негативного корпуса — отчёт публиковал выдуманную
+        # «статистику». Даём посчитанное по всему корпусу, чтобы копировала.
+        try:
+            db_stats = _sentiment_stats_from_db(banks)
+            if db_stats:
+                resp["db_sentiment_stats"] = db_stats
+                resp["db_stats_note"] = (
+                    "Агрегаты (total/доли) в sentiment_profiles бери ТОЛЬКО "
+                    "отсюда — это полный корпус БД, а не твоя выборка. Выборка "
+                    "выше — для цитат и тем, по ней доли НЕ оценивать.")
+        except Exception:
+            pass
         if empties:
             resp["empty_banks_note"] = ("Без жалоб в корпусе по этой теме: " + ", ".join(empties) +
                                         " (возможно, банк вне корпуса banki.ru или нет данных по теме).")
@@ -517,7 +586,28 @@ def tool_run_sql(args: dict, bundle) -> str:
     sql = (args.get("sql") or "").strip()
     if not sql:
         return json.dumps({"error": "sql пустой"}, ensure_ascii=False)
-    return _run_sql_safe(sql)
+    raw = _run_sql_safe(sql)
+    # БД платформы — полноценный источник. Без [N] researcher._integrate
+    # ВЫБРАСЫВАЕТ факт (source_n<=0 → continue): самые доверенные числа —
+    # из собственной структурной базы — не доезжали до отчёта, либо агент
+    # приписывал им ссылку чужой веб-страницы.
+    n = register_source(
+        bundle, url=f"internal://auditlens/sql?q={sql[:120]}",
+        title="База данных AuditLens (структурные тарифы и отзывы)",
+        domain="auditlens.internal", trust=0.95, kind="internal_db",
+        excerpt=raw[:600])
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw
+    if isinstance(data, dict):
+        data["source_n"] = n
+        data["source_note"] = (f"Данные БД AuditLens. Для фактов из этого "
+                               f"ответа указывай source_n={n}.")
+        return json.dumps(data, ensure_ascii=False)
+    return json.dumps({"rows": data, "source_n": n,
+                       "source_note": f"Для фактов из этого ответа указывай source_n={n}."},
+                      ensure_ascii=False)
 
 
 # ── ПОЗИЦИЯ НА РЫНКЕ: тот же ответ, что на вкладке «Рынок» ───────────────────
@@ -590,5 +680,17 @@ def tool_market_position(args: dict, bundle) -> str:
         if c.get("attainability"):
             item["rate_attainability"] = c["attainability"]
         out.append(item)
-    return json.dumps({"as_of": atlas.get("as_of"), "categories": out},
+    # Витрина — источник с максимальным доверием: её числа аудитор видит на
+    # экране. Без [N] факты агента из этого ответа выбрасывались в _integrate.
+    n = register_source(
+        bundle, url="internal://auditlens/market-atlas",
+        title="Витрина «Рынок» AuditLens (ПСК-методология, сегменты)",
+        domain="auditlens.internal", trust=0.95, kind="internal_view",
+        excerpt=json.dumps({"as_of": atlas.get("as_of"),
+                            "categories": [c.get("category") for c in cats]},
+                           ensure_ascii=False, default=str)[:400])
+    return json.dumps({"as_of": atlas.get("as_of"), "categories": out,
+                       "source_n": n,
+                       "source_note": (f"Числа витрины AuditLens. Для фактов "
+                                       f"из этого ответа указывай source_n={n}.")},
                       ensure_ascii=False, default=str)

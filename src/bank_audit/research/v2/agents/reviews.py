@@ -77,7 +77,10 @@ SYSTEM_PROMPT = """Ты — reviews-агент для аудиторской п�
   "sentiment_profiles": [
     {"subject":"Сбербанк","total":325,"pos":0.31,"neu":0.20,"neg":0.49,
      "avg_rating":2.8,"source_ns":[2]}
-  ],
+  ],   // total/доли — ТОЛЬКО из db_sentiment_stats ответа search_reviews_db
+       // (полный корпус). По своей выборке из 12-15 отзывов доли НЕ оценивать:
+       // корпус смещён в негатив, экстраполяция = выдуманная статистика.
+       // Нет db_sentiment_stats по субъекту → НЕ включай его профиль вовсе.
   "index_reviews": [
     {"source":"banki_reviews","source_url":"https://...",
      "bank_name_raw":"Сбербанк","text":"полный текст отзыва",

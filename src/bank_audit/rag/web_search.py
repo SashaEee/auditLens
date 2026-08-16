@@ -281,6 +281,11 @@ def _searxng_query(base: str, query: str, *, max_results: int,
                             for dd in domains):
             matched.append(item)
         else:
+            if domains:
+                # Агент просил site:домен, а это добивка с чужих сайтов —
+                # без флага она выглядит как выдача с целевого домена, и
+                # числа «с cbr.ru» приезжают с произвольного сайта.
+                item["off_domain"] = True
             extra.append(item)
     # Домен-совпадения первыми; если их мало (движок не всегда поднимает узкий
     # site:-домен) — добиваем широкими результатами, чтобы НЕ отдавать 0.
