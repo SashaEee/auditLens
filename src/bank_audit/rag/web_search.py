@@ -303,11 +303,85 @@ def _search_fleet(query: str, *, max_results: int = 8,
     base = _fleet_searxng_url()
     if not base:
         return []
-    return _searxng_query(base, query, max_results=max_results,
-                          site_filter=site_filter,
-                          engines=_fleet_searxng_engines(),
-                          read_timeout=60, label="fleet-searxng",
-                          bearer=_fleet_searxng_token())
+    return _fleet_v1_query(base, query, max_results=max_results,
+                           site_filter=site_filter)
+
+
+def _fleet_v1_query(base: str, query: str, *, max_results: int,
+                    site_filter: list[str] | None) -> list[dict]:
+    """POST /v1/search — версионированный агентский контракт гейтвея (гайд
+    оператора, август 2026). Отличия от сырого /search: JSON-body, серверная
+    фильтрация include_domains (site: больше не вырезается молча), лимиты
+    query≤512 / max_results≤20, 403 = исчерпана предоплаченная квота трафика —
+    НЕ ретраить, а громко сказать оператору."""
+    import re as _re
+    token = _fleet_searxng_token()
+    sites_in_q = _re.findall(r"site:(\S+)", query, flags=_re.IGNORECASE)
+    clean = _re.sub(r"site:\S+", " ", query, flags=_re.IGNORECASE)
+    clean = _re.sub(r"\s+", " ", clean).strip().strip("()").strip()
+    domains: list[str] = []
+    for d in list(sites_in_q) + list(site_filter or []):
+        host = d.split("/")[0].lower().removeprefix("www.")
+        if host and host not in domains:
+            domains.append(host)
+    engines = [e.strip() for e in _fleet_searxng_engines().split(",") if e.strip()][:10]
+    body: dict = {"query": (clean or query)[:512], "language": "ru",
+                  "max_results": max(1, min(int(max_results or 8), 20))}
+    if engines:
+        body["engines"] = engines
+    if domains:
+        body["include_domains"] = domains[:10]
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    def _call(payload: dict) -> tuple[int, dict | None]:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(connect=5, read=60,
+                                                      write=5, pool=5)) as c:
+                r = c.post(f"{base.rstrip('/')}/v1/search", json=payload,
+                           headers=headers)
+            if r.status_code != 200:
+                return r.status_code, None
+            return 200, r.json()
+        except Exception as e:
+            log.info("fleet-v1 %s: %s", payload.get("query", "")[:50],
+                     type(e).__name__)
+            return 0, None
+
+    status, data = _call(body)
+    if status == 403:
+        log.error("fleet-searxng: КВОТА ТРАФИКА ИСЧЕРПАНА (403) — пополнить "
+                  "у оператора гейтвея; поиск деградирует на запасные бэкенды")
+        return []
+    if status == 401:
+        log.error("fleet-searxng: токен не принят (401) — проверить "
+                  "FLEET_SEARXNG_TOKEN")
+        return []
+    # Домен-фильтр может дать честный ноль (движок не поднял узкий сайт) —
+    # добираем широким запросом, помечая чужие домены (контракт off_domain).
+    broad_used = False
+    if data is not None and not (data.get("results") or []) and domains:
+        status, data = _call({k: v for k, v in body.items()
+                              if k != "include_domains"})
+        broad_used = True
+    if status != 200 or data is None:
+        if status not in (0, 200):
+            log.warning("fleet-searxng %s: HTTP %s", (clean or query)[:50], status)
+        return []
+    out: list[dict] = []
+    for r in (data.get("results") or [])[:body["max_results"]]:
+        url = r.get("url") or ""
+        if not url.startswith("http"):
+            continue
+        dom = (r.get("domain") or "").lower().removeprefix("www.")
+        item = {"title": (r.get("title") or "")[:200], "url": url,
+                "snippet": (r.get("content") or "")[:400], "domain": dom}
+        if broad_used and domains and not any(
+                dom == dd or dom.endswith("." + dd) for dd in domains):
+            item["off_domain"] = True
+        out.append(item)
+    return out
 
 
 def _search_searxng(query: str, *, max_results: int = 8,
