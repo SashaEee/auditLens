@@ -50,6 +50,10 @@ class ResearchPlan:
     dependencies: dict[str, list[str]] = field(default_factory=dict)
     # Структура отчёта
     output_sections: list[str] = field(default_factory=list)
+    # Сегмент клиента: retail (физлица) | business (ИП/юрлица/подрядчики/МСБ).
+    # Определяет, какие разделы сайтов и витрины уместны: B2B-вопросу розничный
+    # каталог banki.ru не источник, а увод в сторону.
+    client_segment: str = "retail"
     # Метаданные
     needs_ranking: bool = False
     needs_complaints: bool = False
@@ -108,6 +112,12 @@ SYSTEM_PROMPT = """Ты — conductor (режиссёр) аудиторског�
     «рейтинг/лучший/худший/ранжируй» или сравнивает ≥3 субъекта с целью выбора.
   • market — рыночный контекст (доли, тренды, реформы). Опционально.
 
+СЕГМЕНТ КЛИЕНТА (обязательное поле client_segment: retail | business).
+Вопрос про кредитование юрлиц/ИП/подрядчиков/застройщиков, РКО, эквайринг,
+гарантии, факторинг — это business: у банков такие продукты живут в разделах
+«для бизнеса» (/sme/, /s_m_business/, «малому бизнесу») и называются ИНАЧЕ, чем
+розничные; розничные витрины и ипотечные каталоги для них НЕ источник.
+
 ПРАВИЛА:
   • ТОЧКА ЗРЕНИЯ — СБЕР. Отчёт всегда пишется глазами аудитора Сбера. Если тема
     про рынок/продукт, а Сбер явно не назван в вопросе — добавляй sberbank
@@ -159,6 +169,7 @@ SYSTEM_PROMPT = """Ты — conductor (режиссёр) аудиторског�
   "intent": "compare_feature_with_sentiment_and_ranking",
   "intent_summary": "Аудитор Сбера хочет оценить позицию Сбера по автопереводу против рынка и клиентские риски (через жалобы), чтобы проверить конкурентоспособность и надёжность продукта внутри Сбера.",
   "question_nature": "feature",
+  "client_segment": "retail",
   "subjects": ["sberbank", "tinkoff", "alfabank", "vtb", "gazprombank"],
   "subject_labels": {"sberbank":"Сбербанк", "tinkoff":"Т-Банк", ...},
   "product": "автоперевод",
@@ -180,6 +191,27 @@ SYSTEM_PROMPT = """Ты — conductor (режиссёр) аудиторског�
                        "ranking", "complaints", "risks", "methodology", "sources"],
   "needs_ranking": true, "needs_complaints": true, "needs_regulatory": false
 }"""
+
+
+_BUSINESS_MARKERS = (
+    "подрядчик", "юрлиц", "юридическ", "ип ", " ип", "b2b", "бизнес",
+    "мсб", "малому бизнесу", "малого бизнеса", "корпоратив", "застройщик",
+    "девелопер", "эквайринг", "рко", "расчетн", "расчётн", "зарплатн",
+    "проектное финансирование", "кредитная линия", "оборотн", "факторинг",
+    "лизинг", "гарантия", "тендер", "госзакуп", "самозанят",
+)
+
+
+def detect_client_segment(text: str) -> str:
+    """Сегмент клиента по тексту вопроса: business | retail.
+
+    Детерминированный страхующий слой поверх LLM-классификации: провал
+    отчёта 199 начался с того, что B2B-вопрос («подрядчики ИЖС») получил
+    розничную обвязку — каталоги ипотеки banki.ru «обязательным первым
+    источником» и розничные поисковые запросы.
+    """
+    t = (text or "").lower()
+    return "business" if any(m in t for m in _BUSINESS_MARKERS) else "retail"
 
 
 async def plan_research(client: AsyncOpenAI, model: str,
@@ -229,6 +261,9 @@ async def plan_research(client: AsyncOpenAI, model: str,
         return _fallback_plan(q, hinted_banks)
 
     plan = _build_plan_from_dict(data, q)
+    # Страхующий слой: LLM могла проспать сегмент, маркеры в вопросе — нет.
+    if detect_client_segment(q) == "business":
+        plan.client_segment = "business"
     log.warning("[conductor] intent=%s, nature=%s, %s subjects, %s missions",
                  plan.intent, plan.question_nature,
                  len(plan.subjects), len(plan.missions))
@@ -378,6 +413,8 @@ def _build_plan_from_dict(data: dict, question: str) -> ResearchPlan:
         intent=str(data.get("intent") or "general").strip(),
         intent_summary=str(data.get("intent_summary") or "").strip(),
         question_nature=str(data.get("question_nature") or "mixed").strip(),
+        client_segment=(str(data.get("client_segment") or "").strip().lower()
+                        or detect_client_segment(question)),
         subjects=subjects,
         subject_labels=subject_labels,
         product=str(data.get("product") or "").strip(),
@@ -450,7 +487,9 @@ def _banki_category_paths(text: str) -> list[str]:
     отчёт может охватывать несколько продуктов). 404 по URL обрабатывается мягко."""
     t = (text or "").lower()
     out: list[str] = []
-    if any(k in t for k in ("ипотек", "ipotek", "hypothec", "жилищн")):
+    # «жилищн» убран: «жилищное строительство» в B2B-вопросе матчило
+    # розничную ипотеку. Ипотека — это когда спрашивают про ипотеку.
+    if any(k in t for k in ("ипотек", "ipotek", "hypothec")):
         out.append("hypothec")
     if "автокредит" in t or ("auto" in t and "кредит" in t) or "автокред" in t:
         out.append("autocredits")
@@ -481,6 +520,12 @@ def attach_banki_sources(plan: ResearchPlan) -> ResearchPlan:
     if (plan.question_nature or "").strip().lower() in ("regulatory", "process", "event"):
         return plan
     if not plan.subjects:
+        return plan
+    # B2B-вопросу розничный каталог не источник: у banki.ru вообще НЕТ
+    # каталога кредитов юрлицам (/products/businesscredits/ → 404), и инжект
+    # физически может подсовывать только ипотеку/вклады/потребкредиты. Ровно
+    # так отчёт 199 получил 8 розничных страниц «обязательным первым чтением».
+    if (plan.client_segment or "").strip().lower() == "business":
         return plan
     hay = (f"{plan.product} {plan.intent_summary} "
            + " ".join(m.goal for m in plan.missions if m.agent_id == "researcher"))
@@ -515,6 +560,7 @@ def _fallback_plan(question: str, hinted_banks: list[str]) -> ResearchPlan:
         intent="general_comparison",
         intent_summary="Сравнительный анализ по вопросу аудитора",
         question_nature="mixed",
+        client_segment=detect_client_segment(question),
         subjects=subjects,
         subject_labels=labels,
         product="",

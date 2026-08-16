@@ -190,6 +190,8 @@ async def stream_deep_research_v2(question: str,
         subjects=list(plan.subjects),
         subject_labels=dict(plan.subject_labels),
         prior_report=_prior,
+        client_segment=(plan.client_segment or "retail"),
+        product_synonyms=list(plan.product_synonyms or []),
     )
 
     async for progress_evt in _run_missions_streaming(client, agents_model, plan,
@@ -367,6 +369,26 @@ async def stream_deep_research_v2(question: str,
     # (расхождение с источником + единственный источник низкого доверия), а НЕ
     # дамп всех несопоставленных чисел (раньше туда падали производные дельты/
     # проценты/годы → перегруз и бесполезность).
+    # ── Гейт полноты ────────────────────────────────────────────────────
+    _unanswered_final = list((critique.unanswered or [])[:5])
+    _coverage_failed = False
+    if plan.subjects:
+        _no_nums = []
+        for _sj in plan.subjects:
+            _has_num = any(_num.parse_with_units(f.value) or _num.all_numbers(f.value)
+                           for f in bundle.facts_for(_sj))
+            if not _has_num:
+                _no_nums.append(bundle.subject_labels.get(_sj, _sj))
+        if len(_no_nums) * 2 > len(plan.subjects):
+            _coverage_failed = True
+            _msg = (f"Профильные условия ({plan.product or 'запрошенный продукт'}) "
+                    f"не найдены по: {', '.join(_no_nums)} — раскладка не "
+                    f"собрана. Возможные причины: продукт называется у банков "
+                    f"иначе, данные в закрытых тарифах. Попробуйте уточнить "
+                    f"формулировку или сегмент.")
+            if not any("не найдены" in u or "не собрана" in u
+                       for u in _unanswered_final):
+                _unanswered_final = ([_msg] + _unanswered_final)[:5]
     manual_flags = _build_manual_check(report_md, bundle, critique)
     # Производные без пары для пересчёта: не выдумка (пересчитать нельзя ≠
     # неверно), но и не зелёная плашка — честное «сверить вручную».
@@ -398,7 +420,11 @@ async def stream_deep_research_v2(question: str,
                 # починило, и показывать пред-ремонтные претензии — врать про
                 # текст, который аудитор видит сейчас. Пробел же переписыванием
                 # не закрывается: данных нет ни до, ни после.
-                "unanswered": (critique.unanswered or [])[:5],
+                "unanswered": _unanswered_final,
+                # Гейт полноты (пост-мортем 199): если по большинству субъектов
+                # вопроса нет ни одного ЧИСЛОВОГО факта — раскладка не собрана,
+                # и отчёт не имеет права выглядеть успешным.
+                "coverage_failed": _coverage_failed,
                 # Числа сверены детерминированно всегда; critic_failed=True
                 # значит LLM-проверка (grounding цитат, подмена предмета) НЕ
                 # состоялась — фронт обязан показать это, а не зелёную плашку.
@@ -672,12 +698,25 @@ async def _run_missions_streaming(client: AsyncOpenAI, model: str,
                             "label": f"Добор: нет данных по {_labels}",
                             "detail": "точечная повторная миссия по пустым "
                                       "субъектам", "estimate_s": 60})
+                # Добор обязан менять СТРАТЕГИЮ, а не повторять провальную:
+                # в отчёте 199 добор искал теми же словами и так же промахнулся.
+                _syn = ", ".join((plan.product_synonyms or [])[:6]) or "нет"
+                _seg_hint = ""
+                if (plan.client_segment or "") == "business":
+                    _seg_hint = ("Сегмент — БИЗНЕС: ищи в разделах «для бизнеса» "
+                                 "(/sme/, /s_m_business/, «малому бизнесу») и "
+                                 "пресс-релизах банков; розница не считается. ")
                 _redo = AgentMission(
                     agent_id="researcher",
                     goal=(f"ПОВТОРНЫЙ ТОЧЕЧНЫЙ СБОР. Первая волна не принесла "
                           f"НИ ОДНОГО факта по: {_labels}. Исходное задание: "
-                          f"{_tmpl.goal}\nИщи ДРУГИМИ запросами и на других "
-                          f"источниках (агрегаторы, СМИ, кэш), чем обычно."),
+                          f"{_tmpl.goal}\n"
+                          f"СМЕНИ СТРАТЕГИЮ: {_seg_hint}"
+                          f"переформулируй запросы через синонимы продукта "
+                          f"({_syn}) и название банка + «пресс-релиз» / "
+                          f"«запустил» / «условия»; отраслевые СМИ (ЕРЗ, "
+                          f"Frank Media, РБК) тоже источник. НЕ повторяй "
+                          f"дословно прежние запросы."),
                     subjects=list(_missing),
                     focus=_tmpl.focus,
                     constraints=list(_tmpl.constraints),

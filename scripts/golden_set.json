@@ -7,7 +7,17 @@
       "question": "Сравни вклады на 6 месяцев: Сбер, ВТБ, Альфа — ставки, минимальная сумма, пополнение",
       "expect": {
         "min_report_chars": 2500,
-        "must_mention_any": [["Сбер"], ["ВТБ"], ["Альф"]],
+        "must_mention_any": [
+          [
+            "Сбер"
+          ],
+          [
+            "ВТБ"
+          ],
+          [
+            "Альф"
+          ]
+        ],
         "min_verified_ratio": 0.6,
         "must_have_table": true
       }
@@ -19,7 +29,9 @@
       "expect": {
         "plan_nature": "regulatory",
         "plan_subjects_max": 1,
-        "forbid_phrases": ["banki.ru/products"],
+        "forbid_phrases": [
+          "banki.ru/products"
+        ],
         "honest_gap_ok": true,
         "min_verified_ratio": 0.8
       }
@@ -30,8 +42,16 @@
       "question": "На что жалуются клиенты Сбера в мобильном приложении за последние месяцы?",
       "expect": {
         "min_report_chars": 2000,
-        "must_mention_any": [["жалоб", "отзыв", "клиент"]],
-        "forbid_phrases": ["не удалось собрать данные"]
+        "must_mention_any": [
+          [
+            "жалоб",
+            "отзыв",
+            "клиент"
+          ]
+        ],
+        "forbid_phrases": [
+          "не удалось собрать данные"
+        ]
       }
     },
     {
@@ -40,7 +60,14 @@
       "question": "Как менялась ключевая ставка ЦБ за последние два года и как на это реагировали ставки по вкладам Сбера?",
       "expect": {
         "min_report_chars": 2000,
-        "must_mention_any": [["ключев"], ["вклад"]],
+        "must_mention_any": [
+          [
+            "ключев"
+          ],
+          [
+            "вклад"
+          ]
+        ],
         "min_years_mentioned": 2
       }
     },
@@ -50,7 +77,15 @@
       "question": "Сравни дебетовые карты Сбера и Т-Банка по стоимости обслуживания и покажи жалобы клиентов по картам Сбера",
       "expect": {
         "min_report_chars": 2500,
-        "must_mention_any": [["Сбер"], ["Т-Банк", "Тинькофф"]],
+        "must_mention_any": [
+          [
+            "Сбер"
+          ],
+          [
+            "Т-Банк",
+            "Тинькофф"
+          ]
+        ],
         "must_have_table": true
       }
     },
@@ -60,8 +95,43 @@
       "question": "Какие регуляторные требования к раскрытию полной стоимости кредита обязан соблюдать Сбер при выдаче потребкредитов?",
       "expect": {
         "min_report_chars": 1500,
-        "must_mention_any": [["353", "закон", "ЦБ", "указан"]],
-        "forbid_phrases": ["Рейтинг банков"]
+        "must_mention_any": [
+          [
+            "353",
+            "закон",
+            "ЦБ",
+            "указан"
+          ]
+        ],
+        "forbid_phrases": [
+          "Рейтинг банков"
+        ]
+      }
+    },
+    {
+      "id": "b2b_izhs_contractors",
+      "class": "B2B-продукт (провал отчёта 199)",
+      "question": "сравни условия проектного финансирования подрядчиков на ижс в сбербанке дом рф втб",
+      "expect": {
+        "min_report_chars": 2500,
+        "must_mention_any": [
+          [
+            "эскроу"
+          ],
+          [
+            "подрядчик"
+          ],
+          [
+            "ИЖС"
+          ]
+        ],
+        "forbid_phrases": [
+          "ипотека для IT",
+          "семейная ипотека",
+          "вклады для физических"
+        ],
+        "min_verified_ratio": 0.5,
+        "honest_gap_ok": true
       }
     }
   ]

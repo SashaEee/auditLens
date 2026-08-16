@@ -252,6 +252,10 @@ class KnowledgeBundle:
     # Предыдущий отчёт сессии (follow-up): писатель отвечает В ПРОДОЛЖЕНИЕ
     # разговора, а не «в вакууме», и обязан сверять новые числа со старыми.
     prior_report: str = ""
+    # Сегмент клиента из плана (retail | business) и синонимы продукта:
+    # агенты-сборщики строят по ним запросы и отличают «не тот сегмент».
+    client_segment: str = "retail"
+    product_synonyms: list[str] = field(default_factory=list)
     intent: str = ""            # conductor-classified
     subjects: list[str] = field(default_factory=list)  # банки/объекты сравнения
     subject_labels: dict[str, str] = field(default_factory=dict)  # slug→human

@@ -3918,6 +3918,12 @@ function VerificationBanner({verification}){
     </div>
   </div>;
   if(!u.length){
+    // Гейт полноты: раскладка не собрана — «автопроверка пройдена» не рисуем,
+    // даже если каждое отдельное число формально сверено. Зелёная плашка на
+    // таблице из прочерков — ровно то, что взбесило владельца в отчёте 199.
+    if(verification.coverage_failed){
+      return <React.Fragment>{criticNote}{gapBlock}</React.Fragment>;
+    }
     return <React.Fragment>
       {criticNote}
       {gapBlock}
