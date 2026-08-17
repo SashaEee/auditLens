@@ -255,11 +255,37 @@ def tool_read_url(args: dict, bundle) -> str:
                               trust=trust, kind=kind, excerpt=text[:600],
                               fulltext=text[:40000])
 
-    return json.dumps({
+    resp = {
         "url": url, "title": title, "domain": dom,
         "text": text[:budget], "trust": round(trust, 2),
         "source_n": src_n,
-    }, ensure_ascii=False)
+    }
+    # НАВИГАЦИЯ НА ШАГ ГЛУБЖЕ. Регуляторы и банки публикуют первоисточники
+    # ФАЙЛАМИ, а страница-каталог несёт только ссылки: её текст пуст по сути,
+    # и агент объявлял «данных нет», хотя нужный xlsx лежал в разметке. Даём
+    # ему ссылки-кандидаты — приоритет файлам и разделам, чьи анкоры пересекаются
+    # со словами задания.
+    _q = (query_hint or "") + " " + (getattr(bundle, "question", "") or "")
+    _words = {w for w in re.findall(r"[а-яёa-z0-9]{4,}", _q.lower())}
+
+    def _score(item: dict) -> int:
+        a = (item.get("anchor") or "").lower()
+        return sum(1 for w in _words if w in a)
+
+    _files = sorted(idx.get("file_links") or [], key=_score, reverse=True)[:8]
+    _secs = [x for x in (idx.get("section_links") or []) if _score(x) > 0]
+    _secs = sorted(_secs, key=_score, reverse=True)[:8]
+    if _files:
+        resp["file_links"] = _files
+    if _secs:
+        resp["section_links"] = _secs
+    if _files or _secs:
+        resp["navigation_hint"] = (
+            "Если ответа в тексте страницы нет — это может быть оглавление. "
+            "Значения и таблицы часто лежат в ФАЙЛАХ по ссылкам выше "
+            "(read_url читает xlsx/pdf/docx) или на подстранице раздела. "
+            "Открой самый подходящий по названию, а не пиши «данных нет».")
+    return json.dumps(resp, ensure_ascii=False)
 
 
 # Заглушки, которые сайты отдают с кодом 200: «страница не найдена», проверка

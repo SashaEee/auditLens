@@ -149,6 +149,45 @@ def _tables_to_markdown(root) -> list[str]:
     return out
 
 
+# Расширения файлов, в которых регуляторы и банки публикуют ПЕРВОИСТОЧНИКИ:
+# таблицы значений, тарифные сетки, формы отчётности. Текст страницы-каталога
+# их не содержит — там только ссылки.
+_FILE_EXT = (".xlsx", ".xls", ".pdf", ".docx", ".doc", ".csv", ".zip", ".xlsm")
+
+
+def _collect_links(root, base_url: str) -> tuple[list[dict], list[dict]]:
+    """Ссылки страницы: (файлы, подразделы того же сайта).
+
+    ЗАЧЕМ. Агент читал страницу-оглавление, не находил ответа и объявлял
+    «данных нет», хотя ссылка на нужный файл была прямо в разметке. Текст
+    оглавления бесполезен — ценность в ССЫЛКАХ, и их надо отдать агенту,
+    чтобы он мог пойти на шаг глубже вместо капитуляции.
+    """
+    from urllib.parse import urljoin, urlparse
+    host = (urlparse(base_url).hostname or "").lower().removeprefix("www.")
+    files: list[dict] = []
+    sections: list[dict] = []
+    seen: set[str] = set()
+    for a in root.css("a[href]")[:800]:
+        href = (a.attributes.get("href") or "").strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        full = urljoin(base_url, href)
+        if not full.startswith("http") or full in seen:
+            continue
+        seen.add(full)
+        anchor = re.sub(r"\s+", " ", (a.text() or "").strip())[:120]
+        path = (urlparse(full).path or "").lower()
+        if path.endswith(_FILE_EXT):
+            files.append({"url": full, "anchor": anchor,
+                          "ext": path.rsplit(".", 1)[-1]})
+        else:
+            h = (urlparse(full).hostname or "").lower().removeprefix("www.")
+            if h == host and len(anchor) >= 4:
+                sections.append({"url": full, "anchor": anchor})
+    return files[:40], sections[:120]
+
+
 def parse_html(content: bytes, url: str = "") -> ParsedDoc:
     text = content.decode("utf-8", errors="ignore")
     tree = HTMLParser(text)
@@ -242,8 +281,10 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
     if jsonld_reviews:
         body = body + "\n\n# Отзывы клиентов\n\n" + "\n\n---\n\n".join(jsonld_reviews)
 
+    files, sections = _collect_links(root, url)
     return ParsedDoc(
         title=title, text=body, doc_type="html",
         meta={"url": url, "char_count": len(body),
-              "jsonld_reviews": len(jsonld_reviews)},
+              "jsonld_reviews": len(jsonld_reviews),
+              "file_links": files, "section_links": sections},
     )

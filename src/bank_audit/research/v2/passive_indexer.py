@@ -105,6 +105,8 @@ def index_and_get_text(url: str, *,
     # 1. Быстрый путь: fetch + parse → текст немедленно (без ожидания эмбеддинга).
     text, title = "", ""
     skipped_reason = ""
+    file_links: list = []
+    section_links: list = []
     _fetch_via, _captcha, _status = "", False, 0
     _render = _should_render(url)
     _content, _ctype, _final = None, None, None
@@ -121,8 +123,10 @@ def index_and_get_text(url: str, *,
                                 content_type=fr.content_type)
             full = parsed.text or ""
             title = parsed.title or ""
-            skipped_reason = (parsed.meta or {}).get("skipped_reason", "") \
-                if getattr(parsed, "meta", None) else ""
+            _meta = getattr(parsed, "meta", None) or {}
+            skipped_reason = _meta.get("skipped_reason", "")
+            file_links = _meta.get("file_links") or []
+            section_links = _meta.get("section_links") or []
             # RENDER-ON-DEMAND (универсально, без ручных списков): большой
             # HTML, из которого извлеклись крохи текста, — сигнатура SPA-
             # каркаса. Ручной список _SPA_RENDER_DOMAINS не масштабируется
@@ -174,7 +178,8 @@ def index_and_get_text(url: str, *,
 
     return {"title": title, "text": text, "document_id": None, "indexed": False,
             "fetch_via": _fetch_via, "captcha": _captcha, "status": _status,
-            "skipped_reason": skipped_reason}
+            "skipped_reason": skipped_reason,
+            "file_links": file_links, "section_links": section_links}
 
 
 # Происхождение текущего чтения: кто и ради какого вопроса читает страницу.

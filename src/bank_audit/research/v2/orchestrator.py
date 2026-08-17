@@ -372,6 +372,17 @@ async def stream_deep_research_v2(question: str,
     # ── Гейт полноты ────────────────────────────────────────────────────
     _unanswered_final = list((critique.unanswered or [])[:5])
     _coverage_failed = False
+    # Бессубъектные вопросы (документ регулятора, процесс) прежний гейт не
+    # покрывал: цикл по plan.subjects просто не запускался, и отчёт-заглушка
+    # «не удалось собрать данные» уезжал аудитору без единой пометки.
+    if not bundle.facts and not bundle.complaints and not bundle.regulations:
+        _coverage_failed = True
+        _msg = (f"Данные по вопросу не собраны: ни одного факта из источников. "
+                f"Возможные причины: документ опубликован файлом в разделе, "
+                f"куда не удалось дойти, либо источник закрыт защитой от "
+                f"роботов. Попробуйте уточнить формулировку или назвать "
+                f"конкретный документ/раздел.")
+        _unanswered_final = ([_msg] + _unanswered_final)[:5]
     if plan.subjects:
         _no_nums = []
         for _sj in plan.subjects:
