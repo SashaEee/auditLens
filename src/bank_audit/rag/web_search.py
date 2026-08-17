@@ -369,6 +369,17 @@ def _fleet_v1_query(base: str, query: str, *, max_results: int,
         if status not in (0, 200):
             log.warning("fleet-searxng %s: HTTP %s", (clean or query)[:50], status)
         return []
+    # Гейтвей может ответить 200 с ok:true и ПУСТЫМ списком: это не «ничего не
+    # нашлось», а падение движков на стороне резидентских прокси. Молчать об
+    # этом нельзя — иначе деградация выглядит как «в интернете нет данных».
+    _meta = data.get("meta") or {}
+    if not (data.get("results") or []) and _meta.get("partial"):
+        _failed = _meta.get("failed_engines") or []
+        log.error("fleet-searxng: движки не отработали (%s) — выдача пуста, "
+                  "уходим на запасной бэкенд; если повторяется, вопрос к "
+                  "оператору гейтвея",
+                  "; ".join(f"{f.get('engine')}: {f.get('reason')}"
+                            for f in _failed[:4]) or "причина не указана")
     out: list[dict] = []
     for r in (data.get("results") or [])[:body["max_results"]]:
         url = r.get("url") or ""
