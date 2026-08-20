@@ -74,10 +74,69 @@ def _patch_client_reasoning_effort(client):
         model = str(kwargs.get("model") or (args[0] if args else ""))
         if "gpt-5" in model and kwargs.get("temperature") not in (None, 1):
             kwargs.pop("temperature", None)   # gpt-5* → только дефолтная temperature
-        return await orig(*args, **kwargs)
+        return await _resilient_create(orig, model, args, kwargs)
 
     client.chat.completions.create = patched
     return client
+
+
+# ── Защита от «модель молчит» ────────────────────────────────────────────────
+# 20.08.2026 провайдер перестал отдавать ответы на моделях Google (гео-блок
+# «User location is not supported»), а часть моделей (gpt-oss, mimo) пишет
+# текст в reasoning_content вместо content. Конвейер этого НЕ замечал: пустой
+# ответ аналитика молча превращался в пустой отчёт, и аудиторы получали
+# «ИИ-аналитик сломался». Здесь три уровня страховки на КАЖДЫЙ вызов LLM.
+def _extract_text(resp) -> str:
+    try:
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+
+def _salvage_reasoning(resp) -> bool:
+    """Текст ушёл в reasoning_content — переносим его в content."""
+    try:
+        msg = resp.choices[0].message
+        rc = (getattr(msg, "reasoning_content", "") or "").strip()
+        if rc:
+            msg.content = rc
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def _resilient_create(orig, model: str, args, kwargs):
+    stream = bool(kwargs.get("stream"))
+    try:
+        resp = await orig(*args, **kwargs)
+    except Exception as e:
+        # Модель недоступна целиком (гео-блок, снятие с обслуживания) — пробуем
+        # резервную, иначе стадия рушится и отчёт выходит пустым.
+        fb = os.getenv("LLM_MODEL_FALLBACK", "").strip()
+        if fb and fb != model and not stream:
+            log.error("[llm] %s недоступна (%s) → резервная %s",
+                      model, type(e).__name__, fb)
+            return await orig(*args, **{**kwargs, "model": fb})
+        raise
+    if stream:
+        return resp
+    if _extract_text(resp):
+        return resp
+    if _salvage_reasoning(resp):
+        log.warning("[llm] %s вернула текст в reasoning_content — подставили", model)
+        return resp
+    # Пустой ответ: один повтор той же моделью, затем резервная.
+    log.error("[llm] %s вернула ПУСТОЙ ответ — повтор", model)
+    resp = await orig(*args, **kwargs)
+    if _extract_text(resp) or _salvage_reasoning(resp):
+        return resp
+    fb = os.getenv("LLM_MODEL_FALLBACK", "").strip()
+    if fb and fb != model:
+        log.error("[llm] %s молчит и после повтора → резервная %s", model, fb)
+        resp = await orig(*args, **{**kwargs, "model": fb})
+        _salvage_reasoning(resp)
+    return resp
 
 
 def deep_reasoning_extra(base: dict | None = None) -> dict:
