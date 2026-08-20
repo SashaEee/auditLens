@@ -137,6 +137,11 @@ def _fit_kwargs(target_model: str, kwargs: dict) -> dict:
 
 
 _MISSING_RC = "missing `reasoning_content`"
+# Модели, про которые уже известно: требуют reasoning_content в истории.
+# Лечение «по факту ошибки» стоит лишнего round-trip на КАЖДЫЙ ход агента
+# (112 повторов за прогон — это удвоенное время навигации). Узнав требование
+# один раз, дальше выполняем его превентивно.
+_NEEDS_RC: set[str] = set()
 
 
 def _add_reasoning_content(kwargs: dict) -> bool:
@@ -164,12 +169,16 @@ def _add_reasoning_content(kwargs: dict) -> bool:
 
 async def _resilient_create(orig, model: str, args, kwargs):
     stream = bool(kwargs.get("stream"))
+    if model in _NEEDS_RC:
+        _add_reasoning_content(kwargs)      # знаем требование — выполняем сразу
     try:
         resp = await orig(*args, **kwargs)
     except Exception as e:
         if _MISSING_RC in str(e).lower() and _add_reasoning_content(kwargs):
-            log.warning("[llm] %s требует reasoning_content в истории — "
-                        "дописали и повторяем", model)
+            if model not in _NEEDS_RC:
+                _NEEDS_RC.add(model)
+                log.warning("[llm] %s требует reasoning_content в истории — "
+                            "запомнили, дальше добавляем сразу", model)
             return await orig(*args, **kwargs)
         # Модель недоступна целиком (гео-блок, снятие с обслуживания) — пробуем
         # резервную, иначе стадия рушится и отчёт выходит пустым.
