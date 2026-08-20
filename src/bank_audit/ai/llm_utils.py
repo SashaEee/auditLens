@@ -67,12 +67,23 @@ def _patch_client_reasoning_effort(client):
     orig = client.chat.completions.create
 
     async def patched(*args, **kwargs):
-        if add_reasoning and "reasoning_effort" not in kwargs:
+        model = str(kwargs.get("model") or (args[0] if args else ""))
+        # gpt-5.x: reasoning_effort НЕСОВМЕСТИМ с function tools в
+        # /v1/chat/completions — эндпоинт отвечает 400 и агент теряет ход.
+        # Инструменты важнее «глубины раздумий», поэтому при tools просто не
+        # шлём effort этому семейству.
+        _tools_call = bool(kwargs.get("tools") or kwargs.get("functions"))
+        _gpt5 = "gpt-5" in model
+        if add_reasoning and "reasoning_effort" not in kwargs and not (_gpt5 and _tools_call):
             extra = kwargs.get("extra_body") or {}
             if "reasoning_effort" not in extra:
                 kwargs["extra_body"] = {**extra, "reasoning_effort": effort}
-        model = str(kwargs.get("model") or (args[0] if args else ""))
-        if "gpt-5" in model and kwargs.get("temperature") not in (None, 1):
+        if _gpt5 and _tools_call:
+            extra = dict(kwargs.get("extra_body") or {})
+            extra.pop("reasoning_effort", None)   # мог прийти от deep_reasoning_extra()
+            kwargs["extra_body"] = extra or None
+            kwargs.pop("reasoning_effort", None)
+        if _gpt5 and kwargs.get("temperature") not in (None, 1):
             kwargs.pop("temperature", None)   # gpt-5* → только дефолтная temperature
         return await _resilient_create(orig, model, args, kwargs)
 
@@ -106,6 +117,25 @@ def _salvage_reasoning(resp) -> bool:
     return False
 
 
+def _fit_kwargs(target_model: str, kwargs: dict) -> dict:
+    """Подгоняет параметры вызова под ОГРАНИЧЕНИЯ резервной модели.
+
+    Резерв — другая модель с другими правилами: слепой перенос kwargs даёт
+    новый 400 и отказ уже без страховки (так regulatory-агент потерял ход:
+    ушёл на gpt-5.4-mini с reasoning_effort и temperature=0).
+    """
+    out = {**kwargs, "model": target_model}
+    if "gpt-5" in target_model:
+        if out.get("temperature") not in (None, 1):
+            out.pop("temperature", None)
+        if out.get("tools") or out.get("functions"):
+            extra = dict(out.get("extra_body") or {})
+            extra.pop("reasoning_effort", None)
+            out["extra_body"] = extra or None
+            out.pop("reasoning_effort", None)
+    return out
+
+
 async def _resilient_create(orig, model: str, args, kwargs):
     stream = bool(kwargs.get("stream"))
     try:
@@ -117,7 +147,7 @@ async def _resilient_create(orig, model: str, args, kwargs):
         if fb and fb != model and not stream:
             log.error("[llm] %s недоступна (%s) → резервная %s",
                       model, type(e).__name__, fb)
-            return await orig(*args, **{**kwargs, "model": fb})
+            return await orig(*args, **_fit_kwargs(fb, kwargs))
         raise
     if stream:
         return resp
@@ -134,7 +164,7 @@ async def _resilient_create(orig, model: str, args, kwargs):
     fb = os.getenv("LLM_MODEL_FALLBACK", "").strip()
     if fb and fb != model:
         log.error("[llm] %s молчит и после повтора → резервная %s", model, fb)
-        resp = await orig(*args, **{**kwargs, "model": fb})
+        resp = await orig(*args, **_fit_kwargs(fb, kwargs))
         _salvage_reasoning(resp)
     return resp
 
