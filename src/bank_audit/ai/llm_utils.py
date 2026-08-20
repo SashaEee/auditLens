@@ -136,17 +136,50 @@ def _fit_kwargs(target_model: str, kwargs: dict) -> dict:
     return out
 
 
+_MISSING_RC = "missing `reasoning_content`"
+
+
+def _add_reasoning_content(kwargs: dict) -> bool:
+    """Дописывает пустой reasoning_content в assistant-сообщения истории.
+
+    Reasoning-модели у провайдера (семейство DeepSeek-V4) ТРЕБУЮТ это поле в
+    каждом assistant-сообщении диалога и отвечают 400 «Missing reasoning_content
+    field in the assistant message at index N». Агент хранит в истории только
+    tool_calls, поэтому первый ход проходил, а все следующие падали — навигация
+    целиком уезжала на медленный резерв (91 переход за прогон, +6 минут).
+    Лечим по факту ошибки, а не по списку моделей: завтра требование появится
+    у другой — починится само.
+    """
+    msgs = kwargs.get("messages")
+    if not isinstance(msgs, list):
+        return False
+    fixed = False
+    for m in msgs:
+        if isinstance(m, dict) and m.get("role") == "assistant" \
+                and "reasoning_content" not in m:
+            m["reasoning_content"] = ""
+            fixed = True
+    return fixed
+
+
 async def _resilient_create(orig, model: str, args, kwargs):
     stream = bool(kwargs.get("stream"))
     try:
         resp = await orig(*args, **kwargs)
     except Exception as e:
+        if _MISSING_RC in str(e).lower() and _add_reasoning_content(kwargs):
+            log.warning("[llm] %s требует reasoning_content в истории — "
+                        "дописали и повторяем", model)
+            return await orig(*args, **kwargs)
         # Модель недоступна целиком (гео-блок, снятие с обслуживания) — пробуем
         # резервную, иначе стадия рушится и отчёт выходит пустым.
         fb = os.getenv("LLM_MODEL_FALLBACK", "").strip()
         if fb and fb != model and not stream:
-            log.error("[llm] %s недоступна (%s) → резервная %s",
-                      model, type(e).__name__, fb)
+            # Пишем ТЕКСТ ошибки, а не только её класс: без него причина
+            # деградации не восстанавливается по логам (91 переход на резерв
+            # с одним лишь «BadRequestError» — и непонятно, что чинить).
+            log.error("[llm] %s недоступна (%s: %s) → резервная %s",
+                      model, type(e).__name__, str(e)[:300], fb)
             return await orig(*args, **_fit_kwargs(fb, kwargs))
         raise
     if stream:
