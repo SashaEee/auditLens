@@ -1,0 +1,48 @@
+- id: "1"
+  title: "Создать ядро агента и allowlisted SkillRegistry"
+  description: "Реализовать CAP-5: Agent, неизменяемые AgentRunContext и AgentResult, AgentFactory, конфигурацию лимита и allowlisted реестр с проверкой manifest."
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Работать через TDD; после каждого изменения запускать релевантный pytest и ruff; не создавать коммиты; при ошибке фиксировать проблему и решение в контексте проекта."
+- id: "2"
+  title: "Перенести шесть skills и доменные адаптеры"
+  description: "Реализовать шесть packages skills из CAP-5 и CAP-6 с валидными SKILL.md, статическими factory, доменными адаптерами и контрактными тестами."
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Работать через TDD; после каждого изменения запускать релевантный pytest и ruff; не создавать коммиты; при ошибке фиксировать проблему и решение в контексте проекта."
+- id: "3"
+  title: "Перевести chat-адаптер на Agent с SSE parity"
+  description: "Подключить graph.py к AgentFactory без изменения HTTP/SSE контрактов, сохранив tools_nanobot.py временным shim до успешной parity suite."
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Работать через TDD; после каждого изменения запускать релевантный pytest и ruff; не создавать коммиты; при ошибке фиксировать проблему и решение в контексте проекта."
+- id: "4"
+  title: "Добавить fail-closed авторизацию и транзакционный аудит"
+  description: "Реализовать boundary authorization и миграцию agent_audit_log с redacted lifecycle events, run_id и транзакционной гарантией mutating operations."
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Работать через TDD; после каждого изменения запускать релевантный pytest и ruff; не создавать коммиты; при ошибке фиксировать проблему и решение в контексте проекта."
+- id: "5"
+  title: "Реализовать безопасный classifier skill"
+  description: "Реализовать CAP-6 через classify.py и loophole-classifier: один кейс и фильтрованные batch размером 50 с атомарной защитой ручного verdict."
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Работать через TDD; после каждого изменения запускать релевантный pytest и ruff; не создавать коммиты; при ошибке фиксировать проблему и решение в контексте проекта."
+- id: "6"
+  title: "Унифицировать фильтры и экспорты"
+  description: "Реализовать общий ReportFilter и экспорт CSV/XLSX/PDF для CAP-2 с лимитом 10 000 синхронных записей и graceful fallback PDF."
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Работать через TDD; после каждого изменения запускать релевантный pytest и ruff; не создавать коммиты; при ошибке фиксировать проблему и решение в контексте проекта."
+- id: "7"
+  title: "Привести iframe UI к UX-контракту"
+  description: "Реализовать CAP-1--CAP-4 в static-адаптере: русские подписи, темы, responsive iframe, доступность и явные состояния ошибок поверх стабильных DTO."
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Работать через TDD; после каждого изменения запускать релевантный pytest и ruff; не создавать коммиты; при ошибке фиксировать проблему и решение в контексте проекта."
+- id: "8"
+  title: "Выполнить проверяемый cutover и удалить legacy shim"
+  description: "После прохождения parity suite, full regression и no-import check удалить shim и прямые импорты, сохранив документированный rollback."
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: "Работать через TDD; после каждого изменения запускать релевантный pytest и ruff; не создавать коммиты; при ошибке фиксировать проблему и решение в контексте проекта."

@@ -2,6 +2,7 @@
 id: SPEC-loophole-module-refactor
 companions:
   - functional-refactoring-brief.md
+  - ../../planning-artifacts/architecture/architecture-auditLens-2026-08-26/ARCHITECTURE-SPINE.md
 sources:
   - ../../planning-artifacts/loophole-agent-refactor-plan.md
   - ../../planning-artifacts/prds/prd-auditLens-2026-08-24/prd.md
@@ -40,7 +41,8 @@ sources:
 - Стандартный лимит агента — 20 итераций; при его достижении возвращается объяснённый частичный результат.
 - Telegram-учётные данные передаются только через переменные окружения.
 - PDF-экспорт имеет graceful fallback при недоступном браузере; XLSX ограничен 10 000 записями.
-- Решения верификации, публикации и запуски агента аудируются.
+- Решения верификации, публикации и запуски агента аудируются в `agent_audit_log`; события содержат redacted структурированные данные и `run_id`.
+- Пакетный classifier использует конфигурируемый размер batch 50 по умолчанию.
 
 ## Non-goals
 
@@ -60,5 +62,5 @@ sources:
 
 ## Open Questions
 
-- Где хранится аудит-лог агента?
-- Какой лимит батча classifier применяется по умолчанию и как он конфигурируется?
+- Как назначается роль ЦККС пяти экспертам и требуется ли двухэтапная проверка?
+- Каковы политика хранения событий `agent_audit_log` и роли их просмотра?
