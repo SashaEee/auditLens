@@ -1,0 +1,103 @@
+# generated: 2026-07-27T20:48:54.620454
+# last_updated: 2026-07-27T20:48:54.620454
+# project: auditLens
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: {project-root}/_bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog -> in-progress: Automatically when first story is created (via create-story)
+#   - in-progress -> done: Manually when all stories reach 'done' status
+#
+# Story Status Flow:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; sprint-status surfaces open ones
+generated: '2026-07-27T20:48:54.620454'
+last_updated: '2026-07-27T20:48:54.620454'
+project: auditLens
+project_key: NOKEY
+tracking_system: file-system
+story_location: '{project-root}/_bmad-output/implementation-artifacts'
+development_status:
+  epic-1: backlog
+  1-1-add-dependency-and-basic-config: backlog
+  1-2-discover-nanobot-custom-tool-registration-api: backlog
+  1-3-implement-read-only-db-query-tool: backlog
+  1-4-implement-remaining-custom-tools: backlog
+  1-5-create-nanobot-harness: backlog
+  1-6-implement-run-chat-adapter: backlog
+  1-7-implement-streaming-adapter: backlog
+  1-8-cleanup-old-react-files: backlog
+  1-9-fix-imports-and-run-full-test-suite: backlog
+  1-10-update-map-md: backlog
+  1-11-manual-integration-checks: backlog
+  epic-1-retrospective: optional
+  epic-2: backlog
+  2-1-migration-014-db-schema-registration: backlog
+  2-2-repository-record-id-helpers: backlog
+  2-3-kb-repository-record-id-and-graceful-fallback: backlog
+  2-4-verdict-endpoint: backlog
+  2-5-ui-verdict-marking: backlog
+  2-6-final-verification: backlog
+  epic-2-retrospective: optional
+  epic-3: backlog
+  3-1-dependency-and-migration-015: backlog
+  3-2-conftest-schema-and-parser-repository-extension: backlog
+  3-3-parser-run-crud-and-reaper: backlog
+  3-4-models-and-deduplication: backlog
+  3-5-parsers-dedup-py-key-normalization: backlog
+  3-6-registry-list-catalog-and-find-conflicts: backlog
+  3-7-generator-shared-catalog-code: backlog
+  3-8-runner-with-records-and-dedup: backlog
+  3-9-scheduler-cron-validation-and-ticker: backlog
+  3-10-web-endpoints-for-catalog: backlog
+  3-11-app-lifespan-scheduler-and-reaper: backlog
+  3-12-nanobot-tools-fetch-target-and-patch-parser: backlog
+  3-13-healer-self-recovery: backlog
+  3-14-ui-catalog-and-editor: backlog
+  3-15-final-verification: backlog
+  epic-3-retrospective: optional
+  epic-4: backlog
+  4-1-migration-016-and-db-schema: backlog
+  4-2-model-and-repository-updates: backlog
+  4-3-config-and-content-fetch-py: backlog
+  4-4-guarantee-point-in-save-loophole: backlog
+  4-5-auto-collector: backlog
+  4-6-api-get-records-id-content: backlog
+  4-7-api-post-records-backfill-content: backlog
+  4-8-csv-export-content-columns: backlog
+  4-9-ui-expandable-rows: backlog
+  4-10-final-verification-and-context-update: backlog
+  epic-4-retrospective: optional
+  epic-5: backlog
+  5-1-helpers-env-py-and-generator-files: backlog
+  5-2-generator-isolated-directory-and-requirements: backlog
+  5-3-runner-venv-json-logs-and-results-json: backlog
+  5-4-validation-loop-and-web-endpoint: backlog
+  5-5-healer-requirements-reinstall: backlog
+  5-6-registry-delete-directory: backlog
+  5-7-frontend-validation-run-id: backlog
+  5-8-integration-and-final-checks: backlog
+  epic-5-retrospective: optional
