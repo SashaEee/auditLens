@@ -7901,6 +7901,9 @@ function Shell(){
     return "overview"; });
   const[pageParams,setPageParams]=useState(()=>parseHash().prm);
   const[loopholeMounted,setLoopholeMounted]=useState(()=>(parseHash().p||"overview")==="loophole");
+  // Тик явного обновления «Лазеек»: кнопка ⟳ инкрементирует его только на этой
+  // странице, ремаунт по key перезагружает iframe модуля.
+  const[refreshTick,setRefreshTick]=useState(0);
   // ИИ-аналитик живёт в фоне: страница не размонтируется при уходе на другие
   // вкладки — прогон продолжается, по завершении сигналим точкой в rail и тостом.
   const[aiMounted,setAiMounted]=useState(()=>(parseHash().p||"overview")==="ai");
@@ -8129,7 +8132,8 @@ function Shell(){
             <span>{new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК</span>
             <span className="kbd">API</span>
           </div>}
-          <button className="icon-btn" aria-label="обновить" title="Обновить страницу" onClick={()=>setPage(p=>p)}>
+          {/* на «Лазейках» ⟳ ремаунтит iframe модуля; на остальных страницах поведение прежнее */}
+          <button className="icon-btn" aria-label="обновить" title="Обновить страницу" onClick={()=>page==="loophole"&&setRefreshTick(t=>t+1)}>
             <Ic.refresh/>
           </button>
           <button className="icon-btn" aria-label="тема" onClick={()=>setTheme(theme==="dark"?"light":"dark")} title="Сменить тему">
@@ -8138,7 +8142,7 @@ function Shell(){
         </div>
         <div className="content">
           {loopholeMounted&&<div style={{display:page==="loophole"?"block":"none",height:"100%"}}>
-            <LoopholePage/>
+            <LoopholePage key={refreshTick}/>
           </div>}
           {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
             <PageBoundary pageKey="ai"><AIPage/></PageBoundary>
