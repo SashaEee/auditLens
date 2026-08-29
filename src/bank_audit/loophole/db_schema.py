@@ -31,6 +31,12 @@ T_KB_DOC = "loophole_kb_doc"
 T_PARSER = "loophole_parser"
 T_PARSER_RUN = "loophole_parser_run"
 
+# Авторизация модуля (миграция 042_loophole_authorization.sql).
+T_PRINCIPAL = "loophole_principal"
+T_MEMBERSHIP = "loophole_workspace_membership"
+T_ROLE_ASSIGNMENT = "loophole_role_assignment"
+T_AUTH_AUDIT = "loophole_auth_audit"
+
 
 def migration_sql() -> str:
     """Возвращает текст миграции 012_loophole.sql."""

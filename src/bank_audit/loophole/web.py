@@ -1,23 +1,25 @@
 """FastAPI APIRouter модуля loophole: эндпоинты + SSE-чат.
 
-Префикс /api/loophole (монтируется в web/app.py). Авторизация внешняя —
-user_id из заголовка X-User-Id (fallback "anonymous").
+Префикс /api/loophole (монтируется в web/app.py). Авторизация — server-side:
+trusted principal из X-Authentik-* (web/auth.py) + active membership и роли
+из БД (loophole/authorization.py), перечитываемые на каждом запросе.
+X-User-Id от клиента больше не доверяем.
 """
 from __future__ import annotations
 
 import logging
 import os
 from datetime import date
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 from .. import db
+from ..web.auth import CurrentUser, get_current_user
+from . import authorization, logging_audit
 from . import collector as collector_mod
-from . import logging_audit
 from . import refine as refine_mod
 from . import repository as repo
 from . import workspace as ws_mod
@@ -28,8 +30,6 @@ from .models import ExportRequest, SearchQuery, WorkspaceCreate
 
 log = logging.getLogger(__name__)
 
-router = APIRouter()
-
 
 # ── Dependencies ────────────────────────────────────────────────────────────
 def get_session():
@@ -39,8 +39,156 @@ def get_session():
         yield s
 
 
-def get_user_id(x_user_id: Annotated[str | None, Header()] = None) -> str:
-    return x_user_id or "anonymous"
+def get_user_id(
+    user: CurrentUser = Depends(get_current_user),  # noqa: B008
+    session=Depends(get_session),  # noqa: B008
+) -> str:
+    """Единая граница авторизации модуля: trusted principal (X-Authentik-*
+    от nginx) + active membership из БД. Возвращает username principal.
+    401 — без аутентифицированного principal, 403 — без членства.
+    Переопределяется в тестах через app.dependency_overrides."""
+    principal = authorization.require_member(user, session=session)
+    return principal.username
+
+
+# Router-level guard: ВСЕ эндпоинты модуля требуют trusted principal +
+# membership до чтения данных. Endpoint-level Depends(get_user_id) — тот же
+# callable, FastAPI выполняет его один раз на запрос.
+router = APIRouter(dependencies=[Depends(get_user_id)])
+
+
+def _require_workspace_owner(workspace_id: int, user_id: str, *, session) -> None:
+    """Ownership workspace: 404 — не существует, 403 — чужой."""
+    ws = repo.get_workspace(workspace_id, session=session)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Рабочая область не найдена")
+    if ws["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Нет доступа к чужому workspace")
+
+
+# ── Рабочие контексты и очередь верификации (story 1.1) ─────────────────────
+@router.get("/contexts")
+def list_contexts(
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008
+):
+    """Доступные principal рабочие контексты: каталог и создание
+    AI-исследования — любому члену, очередь — только эксперту ЦК КС."""
+    return {"contexts": authorization.available_contexts(user_id, session=session)}
+
+
+@router.get("/queue")
+def verification_queue(
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008
+):
+    """Очередь верификации ЦК КС. Роль перечитывается из БД на каждый запрос:
+    при отказе данные очереди не возвращаются."""
+    authorization.require_role(
+        user_id, authorization.ROLE_CCKS_EXPERT, action="queue_access", session=session,
+    )
+    records = repo.list_verification_queue(session=session)
+    return {"records": records, "count": len(records)}
+
+
+# ── Администрирование (story 1.5): роль ЦК КС, Telegram-цели, сводный аудит ──
+def _require_admin(user_id: str, *, action: str, session) -> None:
+    """Граница capability module_admin на КАЖДОМ админ-endpoint: 403 без
+    активного назначения, отказ аудируется. Данные не возвращаются."""
+    authorization.require_role(
+        user_id, authorization.ROLE_MODULE_ADMIN, action=action, session=session,
+        detail="Нет доступа к администрированию модуля",
+    )
+
+
+@router.get("/admin/roles")
+def admin_roles(
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008
+):
+    """Управление ролью ЦК КС: назначения + счётчик активных экспертов."""
+    _require_admin(user_id, action="admin_roles_read", session=session)
+    return {
+        "roles": authorization.list_ccks_assignments(session=session),
+        "active_experts": authorization.count_active_ccks_experts(session=session),
+        "max_experts": authorization.MAX_ACTIVE_CCKS_EXPERTS,
+    }
+
+
+class RoleChangeRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=150)
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("username не может быть пустым")
+        return normalized
+
+@router.post("/admin/roles/grant")
+def admin_grant_role(
+    body: RoleChangeRequest,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008
+):
+    """Назначение роли ЦК КС. 409 — лимит пяти активных экспертов исчерпан.
+    Изменение аудируется обезличенно (actor + действие + решение)."""
+    _require_admin(user_id, action="role_grant", session=session)
+    try:
+        authorization.grant_ccks_expert(user_id, body.username, session=session)
+    except authorization.ExpertLimitError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return {
+        "username": body.username,
+        "role": authorization.ROLE_CCKS_EXPERT,
+        "status": "active",
+        "active_experts": authorization.count_active_ccks_experts(session=session),
+    }
+
+
+@router.post("/admin/roles/revoke")
+def admin_revoke_role(
+    body: RoleChangeRequest,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008
+):
+    """Отзыв роли ЦК КС: действует на следующий запрос очереди.
+    404 — активного назначения нет. Изменение аудируется обезличенно."""
+    _require_admin(user_id, action="role_revoke", session=session)
+    revoked = authorization.revoke_ccks_expert(user_id, body.username, session=session)
+    if not revoked:
+        raise HTTPException(
+            status_code=404, detail="Активное назначение роли ЦК КС не найдено",
+        )
+    return {
+        "username": body.username,
+        "role": authorization.ROLE_CCKS_EXPERT,
+        "status": "revoked",
+    }
+
+
+@router.get("/admin/telegram-targets")
+def admin_telegram_targets(
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008
+):
+    """Статус Telegram-целей: цель + операционный статус парсера,
+    без технических payload."""
+    _require_admin(user_id, action="admin_telegram_read", session=session)
+    return {"targets": repo.list_telegram_targets(session=session)}
+
+
+@router.get("/admin/audit")
+def admin_audit(
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008
+):
+    """Сводный обезличенный аудит: агрегаты action/decision/count без
+    username и payload. Само чтение аудита фиксируется в журнале."""
+    _require_admin(user_id, action="admin_audit_read", session=session)
+    authorization.log_auth_event(user_id, "admin_audit_read", "allow", session=session)
+    return {"events": authorization.audit_summary(session=session)}
 
 
 # ── Эндпоинты ───────────────────────────────────────────────────────────────
@@ -275,7 +423,12 @@ def create_workspace(
 
 
 @router.get("/history/{workspace_id}")
-def history(workspace_id: int, session=Depends(get_session)):
+def history(
+    workspace_id: int,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    _require_workspace_owner(workspace_id, user_id, session=session)
     return {"messages": ws_mod.history(workspace_id, session=session)}
 
 
@@ -297,6 +450,7 @@ async def chat(
     session=Depends(get_session),
 ):
     """SSE-чат: стримит token/tool_call/tool_result/record события."""
+    _require_workspace_owner(body.workspace_id, user_id, session=session)
     state: ChatState = {
         "query": body.message,
         "messages": body.history,

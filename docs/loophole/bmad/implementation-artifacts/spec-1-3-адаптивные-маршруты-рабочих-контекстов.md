@@ -45,20 +45,57 @@ context:
 
 ## Code Map
 
-Этот документ намеренно остаётся draft: перед переводом в eady-for-dev нужно исследовать текущие файлы, точки расширения, миграции и тестовые fixtures именно для этой истории. Нельзя подменять эту проверку предположениями из эпика.
+Этот документ намеренно остаётся draft: перед переводом в 
+eady-for-dev нужно исследовать текущие файлы, точки расширения, миграции и тестовые fixtures именно для этой истории. Нельзя подменять эту проверку предположениями из эпика.
+
+Исследовано перед реализацией. Дизайн-контракт адаптивности —
+`docs/loophole/bmad/planning-artifacts/ux-designs/ux-auditLens-2026-08-25/ADAPTIVE-CHAT-SPEC.md`
+(брейкпоинты 1400/1100px; панель агента существует только на экране
+AI-исследования; «Собрано» и URL скрываются первыми, URL — в деталях строки).
+
+**Изменяемые файлы:**
+
+- `src/bank_audit/loophole/static/loophole.jsx` — `LoopholeApp`: стейт `view`
+  (расширен маршрутом `ai_research`), `chatOpen` (off-canvas чат, дефолт по
+  `window.innerWidth >= 1100`), `openContext` (маршрут = id контекста),
+  per-context заголовок и действия, поверхность `lp-research-surface`,
+  классы приоритета колонок `lp-col-narrow1/2` в таблицах каталога и очереди,
+  раскрывающиеся детали строки очереди через существующий `renderRecordContent`
+  (URL доступен в деталях).
+- `src/bank_audit/loophole/static/loophole.css` — `#loophole-root` / `.lp-layout`
+  (высота 100%, без `100vh` и корневого `overflow: hidden`), `.lp-layout-chat`,
+  `.lp-main-header` / `.lp-header-actions` (перенос действий на вторую строку),
+  медиа-правила `max-width: 1399px` / `1099px` (приоритет колонок, off-canvas
+  `.lp-sidebar`), `.lp-research-surface`, `.lp-chat-close`.
+- `tests/loophole/test_adaptive_context_routes.py` — новые текстовые тесты
+  (без сети и БД, по образцу `test_iframe_shell_theme.py`).
+
+**Read-only (точки интеграции, не менять):**
+
+- `src/bank_audit/loophole/authorization.py` — `available_contexts()` отдаёт id
+  `catalog` / `ai_research` / `queue`; UI только следует этим id.
+- `src/bank_audit/loophole/web.py` — `/contexts`, `/queue`: серверная
+  fail-closed авторизация (история 1.1), deny-экраны уже на клиенте.
+- `src/bank_audit/loophole/static/loophole.html` — оболочка iframe и
+  синхронизация темы (история 1.2).
+- Токены `:root` / `html.dark` и алиасы в `loophole.css` — verbatim из 1.2,
+  переиспользуются без изменений.
+- HTTP/SSE-контракт чата, эндпоинты данных, миграции — вне скоупа истории.
 
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] Исследовать существующий код и обновить Code Map конкретными путями, символами и read-only ограничениями.
-- [ ] Написать минимальный failing test на основной сценарий и каждый критичный отказ из критериев приёмки.
-- [ ] Наблюдать ожидаемое RED-падение; только затем внести минимальную production-реализацию.
-- [ ] Запустить целевые тесты, полный набор тестов модуля и линтер; при необходимости уточнить границы до начала реализации.
+- [x] Исследовать существующий код и обновить Code Map конкретными путями, символами и read-only ограничениями.
+- [x] Написать минимальный failing test на основной сценарий и каждый критичный отказ из критериев приёмки.
+- [x] Наблюдать ожидаемое RED-падение; только затем внести минимальную production-реализацию.
+- [x] Запустить целевые тесты, полный набор тестов модуля и линтер; при необходимости уточнить границы до начала реализации.
 
 **Acceptance Criteria:**
 - Критерии приёмки внутри frozen Intent являются обязательным контрактом этой истории и должны быть преобразованы в наблюдаемые тесты до реализации.
 
 ## Spec Change Log
+
+- 2026-08-29: реализация по TDD — Code Map заполнен, тесты `tests/loophole/test_adaptive_context_routes.py` (18 шт.) зелёные, регресс `pytest tests/loophole -q` — 378 passed, ruff чист.
 
 ## Verification
 

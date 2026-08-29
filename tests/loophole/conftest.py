@@ -152,6 +152,44 @@ CREATE TABLE loophole_parser_run (
     log_tail     TEXT,
     heal_report  TEXT
 );
+
+-- Авторизация модуля (миграция 042): principal / membership / роли / аудит.
+CREATE TABLE loophole_principal (
+    principal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username     TEXT NOT NULL,
+    display_name TEXT,
+    status       TEXT DEFAULT 'active',
+    created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TEXT
+);
+
+CREATE TABLE loophole_workspace_membership (
+    membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL,
+    workspace_id  INTEGER,
+    status        TEXT DEFAULT 'active',
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TEXT,
+    revoked_at    TEXT
+);
+
+CREATE TABLE loophole_role_assignment (
+    assignment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL,
+    role          TEXT NOT NULL,
+    status        TEXT DEFAULT 'active',
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TEXT,
+    revoked_at    TEXT
+);
+
+CREATE TABLE loophole_auth_audit (
+    audit_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    decision   TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 

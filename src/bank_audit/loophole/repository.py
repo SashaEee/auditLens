@@ -373,6 +373,39 @@ def list_workspaces(user_id: str, *, session=None) -> list[dict]:
         ]
 
 
+def get_workspace(workspace_id: int, *, session=None) -> dict | None:
+    """Workspace по id — для server-side проверки ownership."""
+    with _session(session) as s:
+        row = s.execute(
+            text(
+                f"SELECT workspace_id, user_id, name, created_at, last_active_at "
+                f"FROM {schema.T_WORKSPACE} WHERE workspace_id = :id"
+            ),
+            {"id": workspace_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+
+def list_verification_queue(*, limit: int = 200, session=None) -> list[dict]:
+    """Очередь верификации ЦК КС: записи, помеченные лазейкой (LLM/сборщиком),
+    по которым ещё нет ручного вердикта (verdict_model != 'manual').
+
+    Вызывается только после server-side проверки роли ccks_expert. raw_text
+    не отдаётся (payload) — как и в list_records.
+    """
+    with _session(session) as s:
+        sql = (
+            f"SELECT record_id, title, url, snippet, domain, trust_score, "
+            "bank_slug, keyword, verdict_confidence, verdict_reason, status, "
+            "collected_at, classified_at "
+            f"FROM {schema.T_RECORD} "
+            "WHERE is_loophole = TRUE "
+            "AND (verdict_model IS NULL OR verdict_model != 'manual') "
+            "ORDER BY collected_at DESC LIMIT :limit"
+        )
+        return [dict(r) for r in s.execute(text(sql), {"limit": limit}).mappings().all()]
+
+
 def touch_workspace(workspace_id: int, *, session=None) -> None:
     with _session(session) as s:
         s.execute(
@@ -835,6 +868,36 @@ def list_parsers_with_source_keys(*, session=None) -> list[dict]:
                 )
             ).mappings().all()
         ]
+
+
+def list_telegram_targets(*, session=None) -> list[dict]:
+    """Статус Telegram-целей (source_keys вида «t.me/<name>») для админ-экрана
+    (story 1.5): цель + операционный статус парсера. Технические payload
+    (config, code_path) и обычные web-источники в поверхность не попадают."""
+    with _session(session) as s:
+        rows = s.execute(
+            text(
+                f"SELECT parser_id, name, status, last_run_at, source_keys "
+                f"FROM {schema.T_PARSER} WHERE source_keys LIKE '%t.me/%' "
+                "ORDER BY parser_id"
+            )
+        ).mappings().all()
+    targets: list[dict] = []
+    for row in rows:
+        try:
+            keys = json.loads(row["source_keys"] or "[]")
+        except (TypeError, ValueError):
+            keys = []
+        for key in keys:
+            if isinstance(key, str) and key.startswith("t.me/"):
+                targets.append({
+                    "target": key,
+                    "parser_id": row["parser_id"],
+                    "parser_name": row["name"],
+                    "status": row["status"],
+                    "last_run_at": _dt_str(row["last_run_at"]),
+                })
+    return targets
 
 
 def list_auto_parsers(*, session=None) -> list[dict]:

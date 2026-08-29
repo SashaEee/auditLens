@@ -147,8 +147,11 @@ def test_search_logs_action(client, app_session):
 
 def test_chat_sse(client):
     """SSE-чат: стримит события. /команда не используется → plain answer."""
+    # Story 1.1: /chat проверяет ownership — workspace должен существовать
+    # и принадлежать текущему пользователю (override → "test-user").
+    wid = client.post("/api/loophole/workspace", json={"name": "ws"}).json()["workspace_id"]
     r = client.post("/api/loophole/chat", json={
-        "workspace_id": 1, "message": "вопрос", "history": []
+        "workspace_id": wid, "message": "вопрос", "history": []
     })
     assert r.status_code == 200
     # EventSourceResponse отдаёт text/event-stream.
