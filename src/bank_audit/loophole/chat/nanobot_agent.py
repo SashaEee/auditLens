@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config import ROOT
-from ..config import LoopholeSettings
+from ..config import LoopholeSettings, validate_nanobot_max_iterations
 from .tools_nanobot import NANOBOT_TOOLS
 
 log = logging.getLogger(__name__)
@@ -44,7 +44,11 @@ def build_nanobot_config(
     """Строит inline JSON-конфиг для `nanobot.Nanobot.from_config`."""
     settings = LoopholeSettings.load()
     effective_model = model or settings.effective_nanobot_model()
-    max_iter = max_iterations or settings.nanobot_max_iterations
+    max_iter = (
+        settings.nanobot_max_iterations
+        if max_iterations is None
+        else validate_nanobot_max_iterations(max_iterations)
+    )
 
     return {
         "providers": {provider: _default_provider_config()},
@@ -104,6 +108,8 @@ def create_nanobot(
     max_iterations: int | None = None,
     workspace: str | Path | None = None,
     extra_tools: tuple = (),
+    tool_classes: tuple[type, ...] | None = None,
+    tool_context: Any = None,
 ) -> Any:
     """Создаёт Nanobot, отключает встроенные tools, регистрирует кастомные.
 
@@ -117,20 +123,29 @@ def create_nanobot(
         model=model, provider=provider, temperature=temperature, max_iterations=max_iterations
     )
     fd, config_path = tempfile.mkstemp(suffix=".json")
-    os.close(fd)
     config_path_obj = Path(config_path)
-    config_path_obj.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+    created = False
+    try:
+        os.close(fd)
+        config_path_obj.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
 
-    ws = workspace or (ROOT / "workspace" / "loophole" / "nanobot")
-    ws = Path(ws).expanduser().resolve()
-    ws.mkdir(parents=True, exist_ok=True)
+        ws = workspace or (ROOT / "workspace" / "loophole" / "nanobot")
+        ws = Path(ws).expanduser().resolve()
+        ws.mkdir(parents=True, exist_ok=True)
 
-    bot = Nanobot.from_config(config_path=config_path, workspace=str(ws))
-    for tool_cls in (*NANOBOT_TOOLS, *extra_tools):
-        bot._loop.tools.register(tool_cls())
-    _patch_registry_for_gemini(bot._loop.tools)
-
-    return bot, config_path
+        bot = Nanobot.from_config(config_path=config_path, workspace=str(ws))
+        selected_tools = NANOBOT_TOOLS if tool_classes is None else tool_classes
+        for tool_cls in (*selected_tools, *extra_tools):
+            if tool_context is not None and getattr(tool_cls, "requires_context", False):
+                bot._loop.tools.register(tool_cls(context=tool_context))
+            else:
+                bot._loop.tools.register(tool_cls())
+        _patch_registry_for_gemini(bot._loop.tools)
+        created = True
+        return bot, config_path
+    finally:
+        if not created:
+            config_path_obj.unlink(missing_ok=True)
 
 
 def build_prompt(query: str, history: list[dict[str, str]] | None = None) -> str:

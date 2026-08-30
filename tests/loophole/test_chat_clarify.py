@@ -46,6 +46,29 @@ async def test_generate_clarifications_complete_true(patched_client, monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["", "я"])
+async def test_short_query_is_fail_closed_even_when_llm_says_complete(
+    patched_client,
+    monkeypatch,
+    query,
+):
+    """Серверный guard не принимает пустой/короткий запрос по ответу LLM."""
+    monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
+    patched_client.chat.completions.create.return_value = _mock_openai_response(
+        json.dumps({"complete": True, "questions": []})
+    )
+
+    result = await clarify_mod.generate_clarifications(query)
+
+    assert result == {
+        "complete": False,
+        "questions": [],
+        "reason": "query_too_short",
+    }
+    patched_client.chat.completions.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_generate_clarifications_with_questions(patched_client, monkeypatch):
     monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
     payload = {
@@ -75,31 +98,113 @@ async def test_generate_clarifications_with_questions(patched_client, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_generate_clarifications_fail_open_on_llm_error(patched_client, monkeypatch):
+async def test_clarification_prompts_mask_query_history_and_answers(patched_client, monkeypatch):
+    """В clarification и rewrite не уходят credential и телефон из пользовательских данных."""
     monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
-    patched_client.chat.completions.create.side_effect = RuntimeError("network")
-    result = await clarify_mod.generate_clarifications("вопрос")
-    assert result["complete"] is True
-    assert result["reason"] == "llm_error"
+    secret = "sk-clarify-secret"
+    phone = "+7 999 123-45-67"
+    patched_client.chat.completions.create.return_value = _mock_openai_response(
+        json.dumps(
+            {
+                "complete": False,
+                "reason": "нужно уточнение",
+                "questions": [{"id": "scope", "question": "Что исследовать?", "type": "text"}],
+            }
+        )
+    )
+
+    await clarify_mod.generate_clarifications(
+        f"Проверь запрос {phone}, credential={secret}",
+        history=[{"role": "user", "content": f"Ранее: {phone}, {secret}"}],
+    )
+    clarification_messages = patched_client.chat.completions.create.call_args.kwargs["messages"]
+    clarification_prompt = json.dumps(clarification_messages, ensure_ascii=False)
+
+    assert secret not in clarification_prompt
+    assert phone not in clarification_prompt
+    assert "[PHONE_" in clarification_prompt
+    assert "История диалога" in clarification_prompt
+
+    patched_client.chat.completions.create.return_value = _mock_openai_response(
+        "Проверь запрос с выбранным банком и периодом"
+    )
+    await clarify_mod.build_enriched_question(
+        f"Проверь запрос {phone}",
+        [{"question": "Credential", "selected": [secret]}],
+    )
+    rewrite_messages = patched_client.chat.completions.create.call_args.kwargs["messages"]
+    rewrite_prompt = json.dumps(rewrite_messages, ensure_ascii=False)
+
+    assert secret not in rewrite_prompt
+    assert phone not in rewrite_prompt
+    assert "[PHONE_" in rewrite_prompt
 
 
 @pytest.mark.asyncio
-async def test_generate_clarifications_fail_open_on_bad_json(patched_client, monkeypatch):
+async def test_generate_clarifications_fail_closed_on_llm_error(patched_client, monkeypatch):
+    monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
+    patched_client.chat.completions.create.side_effect = RuntimeError("network")
+    result = await clarify_mod.generate_clarifications("вопрос")
+    assert result["complete"] is False
+    assert result["reason"] == "clarification_unavailable"
+    assert result["questions"] == []
+
+
+@pytest.mark.asyncio
+async def test_generate_clarifications_fail_closed_on_bad_json(patched_client, monkeypatch):
     monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
     patched_client.chat.completions.create.return_value = _mock_openai_response(
         "это не JSON вообще"
     )
     result = await clarify_mod.generate_clarifications("вопрос")
-    assert result["complete"] is True
-    assert result["reason"] == "parse_fail"
+    assert result["complete"] is False
+    assert result["reason"] == "clarification_unavailable"
+    assert result["questions"] == []
 
 
 @pytest.mark.asyncio
-async def test_generate_clarifications_disabled(monkeypatch):
+async def test_generate_clarifications_disabled_does_not_bypass_contract(
+    patched_client,
+    monkeypatch,
+):
+    """Отключённый флаг не должен обходить обязательную clarification-воронку."""
     monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "0")
+    patched_client.chat.completions.create.return_value = _mock_openai_response(
+        json.dumps(
+            {
+                "complete": False,
+                "reason": "не указан банк",
+                "questions": [{"id": "bank", "question": "Какой банк?", "type": "text"}],
+            }
+        )
+    )
+
     result = await clarify_mod.generate_clarifications("что угодно")
-    assert result["complete"] is True
-    assert result["reason"] == "disabled"
+
+    assert result["complete"] is False
+    assert result["questions"]
+
+
+@pytest.mark.asyncio
+async def test_short_query_does_not_bypass_clarification(patched_client, monkeypatch):
+    """Короткий запрос блокируется до LLM и не разрешает execution."""
+    monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
+    patched_client.chat.completions.create.return_value = _mock_openai_response(
+        json.dumps(
+            {
+                "complete": False,
+                "reason": "нужно уточнение",
+                "questions": [{"id": "scope", "question": "Что исследовать?", "type": "text"}],
+            }
+        )
+    )
+
+    result = await clarify_mod.generate_clarifications("я")
+
+    assert result["complete"] is False
+    assert result["questions"] == []
+    assert result["reason"] == "query_too_short"
+    patched_client.chat.completions.create.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -122,15 +227,39 @@ async def test_build_enriched_question(patched_client):
 
 @pytest.mark.asyncio
 async def test_build_enriched_question_no_answers():
-    # Без ответов — возвращается исходный запрос без вызова LLM.
+    """Пустые ответы не превращаются в разрешённый исходный запрос."""
     enriched = await clarify_mod.build_enriched_question("просто запрос", [])
-    assert enriched == "просто запрос"
+
+    assert enriched == {
+        "complete": False,
+        "questions": [],
+        "reason": "answers_required",
+    }
 
 
 @pytest.mark.asyncio
 async def test_build_enriched_question_fallback_on_error(patched_client):
+    """Ошибка rewrite блокирует execution вместо template fallback."""
     patched_client.chat.completions.create.side_effect = RuntimeError("boom")
     answers = [{"question": "Банк?", "selected": ["ВТБ"], "other": None}]
     enriched = await clarify_mod.build_enriched_question("вопрос", answers)
-    # template fallback содержит уточнение
-    assert "ВТБ" in enriched
+    assert enriched == {
+        "complete": False,
+        "questions": [],
+        "reason": "clarification_unavailable",
+    }
+
+
+@pytest.mark.asyncio
+async def test_build_enriched_question_returns_typed_fail_closed_result_on_exception(
+    patched_client,
+):
+    """Rewrite exception не выдаёт строку, которую можно передать агенту."""
+    patched_client.chat.completions.create.side_effect = RuntimeError("raw rewrite")
+
+    result = await clarify_mod.build_enriched_question(
+        "проверь вклад", [{"question": "Банк?", "selected": ["ВТБ"]}]
+    )
+
+    assert result["complete"] is False
+    assert result["reason"] == "clarification_unavailable"

@@ -80,7 +80,7 @@ def test_apply_migration_executes_all_migrations():
 
     session = MagicMock()
     db_schema.apply_migration(session)
-    assert session.execute.call_count == 5
+    assert session.execute.call_count == 6
     texts = [str(call.args[0].text) for call in session.execute.call_args_list]
     assert any("loophole_record" in t for t in texts), "миграция 010 не выполнена"
     assert any("loophole_agent_task" in t for t in texts), "миграция 011 не выполнена"

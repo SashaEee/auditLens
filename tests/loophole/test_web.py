@@ -174,18 +174,41 @@ def test_clarify_endpoint(client, monkeypatch):
 
 
 def test_clarify_answer_endpoint(client, monkeypatch):
-    """POST /clarify/answer — мок build_enriched_question."""
+    """POST /clarify/answer — token clarification превращается в execution token."""
     from bank_audit.loophole.chat import clarify as clarify_mod
+
+    async def fake_generate(question, history=None):
+        return {
+            "complete": False,
+            "reason": "не указан банк",
+            "questions": [{"id": "bank", "question": "Какой банк?"}],
+        }
 
     async def fake_build(question, answers):
         return f"{question} + enriched"
 
+    monkeypatch.setattr(clarify_mod, "generate_clarifications", fake_generate)
     monkeypatch.setattr(clarify_mod, "build_enriched_question", fake_build)
-    r = client.post("/api/loophole/clarify/answer", json={
-        "question": "лазейка", "answers": [{"question": "банк?", "selected": ["sberbank"]}]
-    })
+    workspace_id = client.post(
+        "/api/loophole/workspace", json={"name": "clarification"}
+    ).json()["workspace_id"]
+    challenge = client.post(
+        "/api/loophole/clarify",
+        json={"question": "лазейка", "history": [], "workspace_id": workspace_id},
+    )
+    token = challenge.json().get("clarification_token")
+    r = client.post(
+        "/api/loophole/clarify/answer",
+        json={
+            "workspace_id": workspace_id,
+            "question": "лазейка",
+            "answers": [{"question": "банк?", "selected": ["sberbank"]}],
+            "clarification_token": token,
+        },
+    )
     assert r.status_code == 200
-    assert r.json() == {"enriched_question": "лазейка + enriched"}
+    assert r.json()["enriched_question"] == "лазейка + enriched"
+    assert r.json().get("execution_token")
 
 
 def test_table_load_empty(client):

@@ -10,9 +10,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from bank_audit.loophole.web import router, get_session, get_user_id
 from bank_audit.loophole import repository as repo
 from bank_audit.loophole.parsers import runner as runner_mod
+from bank_audit.loophole.web import get_session, get_user_id, router
 
 from .conftest import SCHEMA_SQL
 
@@ -92,6 +92,7 @@ def test_create_without_target_422(client):
 
 # ── PATCH расписания ─────────────────────────────────────────────────────────
 def test_patch_schedule_valid(client, app_session, parser_id):
+    repo.update_parser_status(parser_id, "ready", session=app_session)
     r = client.patch(f"/api/loophole/parsers/{parser_id}", json={
         "cron_expr": "0 5 * * *", "auto_enabled": True, "name": "renamed",
     })
@@ -102,6 +103,18 @@ def test_patch_schedule_valid(client, app_session, parser_id):
     assert p["next_run_at"] is not None
     assert p["name"] == "renamed"
     assert p["last_edited_by"] == "test-user"
+
+
+def test_patch_schedule_rejects_parser_with_failed_validation(client, app_session, parser_id):
+    """Расписание доступно только после успешной валидации."""
+    repo.update_parser_status(parser_id, "validation_failed", session=app_session)
+
+    r = client.patch(f"/api/loophole/parsers/{parser_id}", json={
+        "cron_expr": "0 5 * * *", "auto_enabled": True,
+    })
+
+    assert r.status_code == 409
+    assert "валидац" in r.json()["detail"].lower()
 
 
 def test_patch_invalid_cron_422(client, parser_id):
@@ -119,6 +132,7 @@ def test_patch_not_found_404(client):
 
 def test_patch_clear_cron(client, app_session, parser_id):
     """Пустая строка cron_expr очищает расписание (NULL), поле не залипает."""
+    repo.update_parser_status(parser_id, "ready", session=app_session)
     r = client.patch(f"/api/loophole/parsers/{parser_id}", json={
         "cron_expr": "0 5 * * *", "auto_enabled": True,
     })

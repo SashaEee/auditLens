@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from bank_audit.loophole.chat.hooks import AuditHook
@@ -39,3 +41,25 @@ async def test_audit_hook_records_tools():
 
     await hook.after_iteration(Ctx())
     assert "audit_db_query" in hook.tools_used
+
+
+@pytest.mark.asyncio
+async def test_audit_hook_collects_real_failed_tool_event_shape():
+    """nanobot event использует name и status=error/failed, а не tool_name."""
+    hook = AuditHook()
+
+    context = SimpleNamespace(
+        tool_calls=[],
+        tool_events=[
+            {
+                "name": "audit_web_fetch",
+                "status": "error",
+                "error": "не удалось загрузить источник",
+            }
+        ],
+    )
+
+    await hook.after_iteration(context)
+
+    assert hook.tools_used == ["audit_web_fetch"]
+    assert hook.tool_errors == ["skill_failed"]

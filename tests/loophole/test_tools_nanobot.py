@@ -1,6 +1,8 @@
 import json
+from types import SimpleNamespace
 
 import pytest
+
 from bank_audit.loophole.chat.tools_nanobot import (
     NANOBOT_TOOLS,
     _tool_result,
@@ -67,6 +69,31 @@ async def test_save_loophole_persists_record(session):
     assert result2["is_new"] is False
     assert result2["record_id"] == result["record_id"]
     assert result2["sha256"] == result["sha256"]
+
+
+def test_save_loophole_accepts_legacy_page_without_text(monkeypatch, session):
+    """Старый page-double без text использует безопасный excerpt fallback."""
+    from bank_audit.loophole import content_fetch
+    from bank_audit.loophole import repository as repo
+    from bank_audit.loophole.chat.tools_nanobot import save_loophole
+
+    legacy_page = SimpleNamespace(excerpt="Текст старого fetch double")
+    monkeypatch.setattr(
+        content_fetch.fetch_decorator,
+        "fetch_and_parse",
+        lambda *args, **kwargs: legacy_page,
+    )
+
+    result = save_loophole(
+        title="legacy",
+        url="https://example.ru/legacy",
+        snippet="Текст старого fetch double",
+        session=session,
+    )
+
+    assert result["is_new"] is True
+    record = repo.get_record(result["record_id"], session=session)
+    assert record["raw_text"] == "Текст старого fetch double"
 
 
 @pytest.mark.asyncio
@@ -150,8 +177,8 @@ def test_fetch_target_failure(monkeypatch):
 
 
 def test_patch_parser_validates_syntax(session):
-    from bank_audit.loophole.chat import tools_nanobot
     from bank_audit.loophole import repository as repo
+    from bank_audit.loophole.chat import tools_nanobot
 
     wid = repo.create_workspace("u", "ws", session=session)
     pid = repo.save_parser(wid, "p", "", session=session)
@@ -161,8 +188,8 @@ def test_patch_parser_validates_syntax(session):
 
 
 def test_patch_parser_writes_atomically(session, tmp_path):
-    from bank_audit.loophole.chat import tools_nanobot
     from bank_audit.loophole import repository as repo
+    from bank_audit.loophole.chat import tools_nanobot
 
     code = tmp_path / "parser_1_x.py"
     code.write_text("OLD = 1\n", encoding="utf-8")

@@ -91,7 +91,7 @@ async def test_generate_saves_to_catalog(session, workspace_id, catalog_dir):
 async def test_generate_strips_code_fences(session, workspace_id, catalog_dir):
     fenced = "```python\n" + VALID_SPIDER_CODE + "\n```"
     result = await generator.generate_parser(
-        "test-user", workspace_id, "тест https://t.me/bank_group",
+        "test-user", workspace_id, "тест https://bank-example.ru/group",
         llm=_llm_mock(fenced), session=session,
     )
     content = Path(result["code_path"]).read_text(encoding="utf-8")
@@ -107,6 +107,26 @@ async def test_generate_rejects_query_without_target(session, workspace_id, cata
             "test-user", workspace_id, "скрытые комиссии по вкладам",
             llm=llm, session=session,
         )
+    llm.ainvoke.assert_not_called()
+    assert repo.list_all_parsers(session=session) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target",
+    ["https://t.me/bank_news", "https://telegram.me/bank_news", "@bank_news"],
+)
+async def test_generate_rejects_telegram_target_before_llm_and_storage(
+    session, workspace_id, catalog_dir, target,
+):
+    """Telegram обслуживается отдельным контуром и не доходит до генератора."""
+    llm = _llm_mock()
+
+    with pytest.raises(ValueError, match="Telegram"):
+        await generator.generate_parser(
+            "test-user", workspace_id, f"проверь источник {target}", llm=llm, session=session,
+        )
+
     llm.ainvoke.assert_not_called()
     assert repo.list_all_parsers(session=session) == []
 
@@ -198,3 +218,31 @@ async def test_validation_success_sets_ready_status(
     assert validation_run_id > 0
     run = repo.get_run(validation_run_id, session=session)
     assert run["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_validation_failure_keeps_parser_and_validation_run(session, workspace_id, catalog_dir, monkeypatch):
+    """Неуспешная проверка сохраняет parser и наблюдаемый итоговый run."""
+    class _FailingRunner:
+        def __init__(self, parser_id, code_path, *, workspace_id=None, session=None, run_id=None, trigger="validation"):
+            self.parser_id, self.session, self.run_id = parser_id, session, run_id
+            self._returncode = 1
+
+        async def start(self):
+            return None
+
+        async def wait(self, timeout=None, finalize=True):
+            return 0
+
+        def _finalize(self, status, found, new, dup, err, *, update_parser_status=True):
+            repo.finish_run(self.run_id, status, error_text=err, session=self.session)
+
+    monkeypatch.setattr(generator.runner_mod, "ParserRunner", _FailingRunner)
+    monkeypatch.setattr(generator, "_MAX_FIX_ATTEMPTS", 1)
+    pid = repo.save_parser(workspace_id, "failed", str(catalog_dir / "parser.py"), session=session)
+    run_id = repo.create_run(pid, "validation", session=session)
+
+    await generator._validate(pid, str(catalog_dir / "parser.py"), run_id, session=session)
+
+    assert repo.get_parser(pid, session=session)["status"] == "validation_failed"
+    assert repo.get_run(run_id, session=session)["status"] == "error"

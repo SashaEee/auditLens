@@ -183,6 +183,7 @@ function LoopholeApp() {
   const [subtasks, setSubtasks] = useState([]);            // [{title, status}]
   const [pendingQuestions, setPendingQuestions] = useState(null); // null | array
   const [pendingQuery, setPendingQuery] = useState("");           // исходный запрос, вызвавший clarify
+  const [clarificationToken, setClarificationToken] = useState(null); // одноразовый token сервера
   const [answersByQ, setAnswersByQ] = useState({});        // {qid: {selected:[], other:""}}
   const [clarifySubmitting, setClarifySubmitting] = useState(false); // идёт /clarify/answer
   const [toolEvents, setToolEvents] = useState([]);        // badges tool_call/tool_result
@@ -821,9 +822,12 @@ function LoopholeApp() {
 
   // ── Чат: отправка + полный SSE-парсер ──────────────────────────────────────
   const sendChat = useCallback(async (overrideMessage, opts) => {
-    const skipClarify = !!(opts && opts.skipClarify);
+    const serverClarificationToken = opts && opts.clarificationToken;
+    const skipClarify = !!serverClarificationToken;
     const userMsg = overrideMessage != null ? overrideMessage : chatInput;
     if (!userMsg || !userMsg.trim() || !workspaceId) return;
+    // Token одноразовый: новый challenge принимаем только из server-side SSE.
+    setClarificationToken(null);
     // запоминаем ИСХОДНЫЙ запрос (не enriched) — из него build_enriched_question
     // соберёт обогащённый вопрос после ответов на уточнения
     if (!skipClarify) {
@@ -840,7 +844,12 @@ function LoopholeApp() {
     try {
       const resp = await fetch(`${API}/chat`, {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({workspace_id: workspaceId, message: userMsg, history: chat, skip_clarify: skipClarify}),
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          message: userMsg,
+          history: chat,
+          clarify_token: serverClarificationToken || null,
+        }),
       });
       if (!resp.ok || !resp.body) {
         throw new Error(!resp.ok ? `HTTP ${resp.status}` : "Пустой ответ сервера");
@@ -900,6 +909,22 @@ function LoopholeApp() {
                 });
                 break;
               }
+              case "partial": {
+                const message = payload && payload.message;
+                if (typeof message !== "string" || !message) break;
+                assistantMsg += (assistantMsg ? "\n\n" : "") + message;
+                gotAnyToken = true;
+                setChat(prev => {
+                  const copy = [...prev];
+                  if (copy.length && copy[copy.length - 1].role === "assistant" && copy[copy.length - 1]._live) {
+                    copy[copy.length - 1] = {...copy[copy.length - 1], content: assistantMsg};
+                  } else {
+                    copy.push({role: "assistant", content: assistantMsg, _live: true});
+                  }
+                  return copy;
+                });
+                break;
+              }
               case "phase": {
                 const p = (payload && payload.phase) || payload;
                 if (typeof p === "string") setPhase(p);
@@ -911,6 +936,7 @@ function LoopholeApp() {
                   gotQuestions = true;
                   setPendingQuestions(payload.questions);
                   setAnswersByQ({});
+                  setClarificationToken(payload.clarification_token || null);
                 } else if (payload && typeof payload === "object" && payload.question) {
                   gotQuestions = true;
                   setPendingQuestions(prev => {
@@ -1015,9 +1041,16 @@ function LoopholeApp() {
   };
 
   const submitAnswers = async () => {
-    if (!pendingQuestions || !pendingQuestions.length || clarifySubmitting) return;
+    if (
+      !pendingQuestions
+      || !pendingQuestions.length
+      || !clarificationToken
+      || clarifySubmitting
+    ) return;
     setClarifySubmitting(true);
     const q = pendingQuestions[0];
+    const questionsForRetry = pendingQuestions;
+    const clarificationTokenForRetry = clarificationToken;
     const answersPayload = pendingQuestions.map(pq => {
       const a = answersByQ[pq.id] || {selected: [], other: ""};
       return {
@@ -1035,14 +1068,33 @@ function LoopholeApp() {
         method: "POST", headers: {"Content-Type": "application/json"},
         // ИСХОДНЫЙ запрос пользователя (pendingQuery), НЕ текст уточняющего
         // вопроса — иначе enriched строится из вопроса и агент ищет ерунду
-        body: JSON.stringify({question: pendingQuery || q.question, answers: answersPayload}),
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          question: pendingQuery || q.question,
+          answers: answersPayload,
+          clarification_token: clarificationToken,
+        }),
       });
       const d = await r.json();
+      if (d && d.reason === "answers_required") {
+        setPendingQuestions(questionsForRetry);
+        setClarificationToken(clarificationTokenForRetry);
+        setAnswersByQ({});
+        return;
+      }
+      if (d && d.reason === "clarification_unavailable" && d.clarification_token) {
+        setPendingQuestions(d.questions);
+        setClarificationToken(d.clarification_token);
+        setAnswersByQ({});
+        return;
+      }
       const enriched = (d && d.enriched_question) || (typeof d === "string" ? d : "");
-      if (enriched) {
-        // clarify уже пройден → просим бэкенд пропустить гейт (не зацикливаться)
-        // отправляем обогащённый вопрос как новое сообщение в чат
-        await sendChat(enriched, {skipClarify: true});
+      const executionToken = d && d.execution_token;
+      if (enriched && executionToken) {
+        // Только server-side execution token разрешает продолжить после clarify.
+        await sendChat(enriched, {clarificationToken: executionToken});
+      } else if (!r.ok || !executionToken) {
+        throw new Error("Не удалось подтвердить уточнение");
       }
     } catch (e) {
       setChat(prev => [...prev, {role: "assistant", content: "Ошибка отправки ответа: " + String(e)}]);
@@ -1772,14 +1824,22 @@ function LoopholeApp() {
             </div>
           )}
 
-          {/* Tool-бейджи: маленькие метки tool_call/tool_result */}
+          {/* Список использованных инструментов без аргументов и результатов */}
           {toolEvents.length > 0 && (
             <div className="lp-tool-events">
+              <div className="lp-subtasks-title">Использованные инструменты</div>
               {toolEvents.slice(-8).map((ev, i) => (
                 <span key={i}
                       className={"lp-tool-badge lp-tool-" + ev.kind}
                       title={ev.kind === "call" ? "вызов инструмента" : "результат"}>
-                  {ev.kind === "call" ? "🔧" : "📦"} {ev.name}
+                  {ev.kind === "call" ? "🔧" : "📦"} {({
+                    audit_web_search: "Веб-поиск",
+                    audit_web_fetch: "Чтение источника",
+                    audit_extract_loopholes: "Извлечение признаков",
+                    audit_db_query: "Запрос к базе",
+                    audit_table_load: "Загрузка таблицы",
+                    audit_export: "Подготовка выгрузки",
+                  })[ev.name] || "Инструмент"}
                 </span>
               ))}
             </div>

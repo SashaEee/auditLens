@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from contextlib import contextmanager
 from datetime import date, datetime
 from typing import Any, Iterator
@@ -16,6 +17,7 @@ from sqlalchemy import text
 from .. import db
 from . import db_schema as schema
 from .models import LoopholeRecord
+from .pii_mask import mask as pii_mask
 
 log = logging.getLogger(__name__)
 
@@ -499,6 +501,75 @@ def log_action(
             {
                 "u": user_id, "ws": workspace_id, "act": action,
                 "det": json.dumps(detail or {}, ensure_ascii=False), "ip": ip,
+            },
+        ).scalar_one()
+        return row
+
+
+_SECRET_VALUE = re.compile(
+    r"""
+    (?:
+        ["']?authorization["']?\s*[:=]\s*["']?(?:bearer|basic)\s+[^"',;\s}]+["']?
+        |["']?(?:bearer|jwt)["']?\s*[:=]\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^,;\s}]+)
+        |["']?(?:api[_-]?(?:key|token)|access[_-]?(?:key|token)|refresh[_-]?token)["']?
+          \s*[:=]\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^,;\s}]+)
+        |["']?cloud[_-]?(?:access[_-]?)?(?:api[_-]?)?(?:key|token|secret)["']?
+          \s*[:=]\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^,;\s}]+)
+        |["']?(?:client[_-]?secret|credential(?:s)?|password|secret|token|private[_-]?key)["']?
+          \s*[:=]\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^,;\s}]+)
+        |eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+
+        |(?:sk|rk|gsk|gh[pousr]|xox[baprs]|hf|AIza|ya29)[_-][A-Za-z0-9._~-]+
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _redact_audit_text(value: Any, *, limit: int = 2000) -> str:
+    """Маскирует ПДн и типовые секреты перед записью в audit log."""
+    masked, _ = pii_mask(str(value or ""))
+    return _SECRET_VALUE.sub("[SECRET]", masked)[:limit]
+
+
+def redact_audit_text(value: Any, *, limit: int = 200) -> str:
+    """Публичный helper для redacted detail во всех audit sinks."""
+    return _redact_audit_text(value, limit=limit)
+
+
+def create_agent_audit(
+    *,
+    run_id: str,
+    user_id: str,
+    workspace_id: int | None,
+    query: str,
+    tools_used: list[str] | tuple[str, ...],
+    duration_ms: int,
+    result: str,
+    status: str,
+    error_code: str | None = None,
+    session=None,
+) -> int:
+    """Сохраняет только redacted метаданные запуска управляемого агента."""
+    names = [name for name in dict.fromkeys(tools_used) if isinstance(name, str)]
+    with _session(session) as s:
+        row = s.execute(
+            text(
+                f"INSERT INTO {schema.T_AGENT_AUDIT_LOG} "
+                "(run_id, user_id, workspace_id, query_redacted, tools_used, "
+                "duration_ms, result_redacted, status, error_code) "
+                "VALUES (:run, :user, :ws, :query, :tools, :duration, :result, :status, :error) "
+                "RETURNING audit_id"
+            ),
+            {
+                "run": run_id,
+                "user": user_id,
+                "ws": workspace_id,
+                "query": _redact_audit_text(query),
+                "tools": json.dumps(names, ensure_ascii=False),
+                "duration": max(0, int(duration_ms)),
+                "result": _redact_audit_text(result),
+                "status": status,
+                "error": error_code,
             },
         ).scalar_one()
         return row

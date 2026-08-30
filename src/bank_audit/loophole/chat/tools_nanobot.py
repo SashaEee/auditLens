@@ -3,18 +3,19 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
 
+from ...hashing import sha256_text
 from .. import content_fetch
 from .. import repository as repo
 from ..adapters import fetch_decorator, search_decorator
 from ..config import LoopholeSettings
 from ..models import LoopholeRecord
 from ..pii_mask import mask as pii_mask
-from ...hashing import sha256_text
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,69 @@ _FORBIDDEN = re.compile(
     r"\b(DROP|INSERT|UPDATE|DELETE|ALTER|CREATE|TRUNCATE|GRANT|EXEC|UNION)\b",
     re.IGNORECASE,
 )
+_QUERY_SHAPE = re.compile(
+    r"^\s*SELECT\s+(?P<columns>[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)"
+    r"\s+FROM\s+(?P<table>[A-Za-z_][A-Za-z0-9_]*)(?P<tail>.*)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_QUERY_UNSAFE = re.compile(
+    r"\b(JOIN|WITH|RETURNING|INTO|COPY|WINDOW|UNION|INTERSECT|EXCEPT|SELECT|FROM)\b",
+    re.IGNORECASE,
+)
+_QUERY_LITERAL = re.compile(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"")
+_QUERY_WORDS = {
+    "and", "asc", "between", "by", "desc", "false", "in", "is", "like", "limit",
+    "not", "null", "offset", "or", "order", "true", "where",
+}
+
+_DB_QUERY_COLUMNS = {
+    "loophole_record": {
+        "record_id", "title", "url", "snippet", "domain", "trust_score", "fetched_at",
+        "collected_at", "bank_slug", "keyword", "is_loophole", "verdict_confidence",
+        "verdict_reason", "verdict_model", "classified_at", "status",
+    },
+    "loophole_keyword": {
+        "keyword_id", "keyword", "category", "source", "weight", "created_at", "is_active",
+    },
+    "loophole_workspace": {"workspace_id", "name", "created_at", "last_active_at"},
+    "loophole_result": {
+        "result_id", "workspace_id", "query_text", "period_from", "period_to", "bank_slugs",
+        "created_at", "updated_at",
+    },
+    "loophole_chat_message": {
+        "message_id", "workspace_id", "role", "content", "tool_name", "created_at",
+    },
+    "loophole_agent_task": {
+        "task_id", "workspace_id", "query_text", "enriched_query", "phase", "status",
+        "iterations", "created_at", "updated_at",
+    },
+}
+_WORKSPACE_SCOPED_TABLES = {
+    "loophole_workspace", "loophole_result", "loophole_chat_message", "loophole_agent_task",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ToolContext:
+    """Доверенный server-side контекст одного запуска managed agent."""
+
+    user_id: str | None
+    workspace_id: int | None
+    session: Any | None
+
+
+def _context_owns_workspace(context: ToolContext | None) -> bool:
+    """Проверяет ownership workspace перед любым context-bound tool вызовом."""
+    if context is None or not context.user_id:
+        return False
+    if not isinstance(context.workspace_id, int) or context.session is None:
+        return False
+    try:
+        workspace = repo.get_workspace(context.workspace_id, session=context.session)
+    except Exception:  # noqa: BLE001 — ошибка проверки = fail-closed
+        log.warning("[tool_context] не удалось проверить ownership workspace")
+        return False
+    return bool(workspace and workspace.get("user_id") == context.user_id)
 
 
 def _is_read_only_select(sql: str) -> bool:
@@ -39,9 +103,20 @@ def _is_read_only_select(sql: str) -> bool:
         return False
     if ";" in sql or "--" in sql or "/*" in sql or "*/" in sql:
         return False
-    if _FORBIDDEN.search(sql):
-        return False
-    return True
+    return not _FORBIDDEN.search(sql)
+
+
+def _redact_tool_value(value: Any) -> Any:
+    """Рекурсивно маскирует данные перед возвратом результата tool в LLM."""
+    if isinstance(value, str):
+        return repo.redact_audit_text(value, limit=10000)
+    if isinstance(value, dict):
+        return {key: _redact_tool_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_tool_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_tool_value(item) for item in value)
+    return value
 
 
 # ── web / export ───────────────────────────────────────────────────────────
@@ -57,21 +132,22 @@ def web_fetch(url: str, *, _impl: Any = None) -> dict | None:
     page = fetch_decorator.fetch_and_parse(url, excerpt_len=4000, _fetch_impl=_impl)
     if page is None:
         return None
-    return {
+    return _redact_tool_value({
         "url": page.url,
         "final_url": page.final_url,
         "status": page.status,
         "title": page.title,
         "excerpt": page.excerpt,
         "via": page.via,
-    }
+    })
 
 
 # ── LLM helpers (extract_loopholes) ─────────────────────────────────────────
 def _default_llm() -> Any:
     """ChatOpenAI с теми же env, что и остальные модули loophole."""
-    from langchain_openai import ChatOpenAI
     import os
+
+    from langchain_openai import ChatOpenAI
 
     from ..config import LoopholeSettings
 
@@ -107,7 +183,7 @@ async def extract_loopholes(
         resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
         raw = _llm_content(resp)
         data = _loose_json_loads(raw)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — граница LLM должна вернуть безопасный пустой список
         log.warning("[extract_loopholes] failed: %s", e)
         return []
     if isinstance(data, dict):
@@ -132,7 +208,12 @@ async def extract_loopholes(
 
 
 # ── db / table / export ─────────────────────────────────────────────────────
-def db_query(sql: str, *, session: Any = None) -> dict:
+def db_query(
+    sql: str,
+    *,
+    session: Any = None,
+    context: ToolContext | None = None,
+) -> dict:
     """READ-ONLY SQL-запрос к БД лазеек.
 
     Возвращает {"columns": [...], "rows": [...], "row_count": int}.
@@ -141,23 +222,77 @@ def db_query(sql: str, *, session: Any = None) -> dict:
     if not _is_read_only_select(sql):
         return {"error": "only SELECT queries are allowed"}
 
+    if context is None and isinstance(session, ToolContext):
+        context = session
+    if context is None:
+        return {"error": "db_query_unauthorized"}
+    if not context.user_id or not isinstance(context.workspace_id, int) or context.session is None:
+        return {"error": "db_query_unauthorized"}
+
+    match = _QUERY_SHAPE.match(sql)
+    if match is None:
+        return {"error": "db_query_not_allowlisted"}
+    table = match.group("table").lower()
+    columns = [column.strip().lower() for column in match.group("columns").split(",")]
+    allowed_columns = _DB_QUERY_COLUMNS.get(table)
+    if allowed_columns is None or any(column not in allowed_columns for column in columns):
+        return {"error": "db_query_not_allowlisted"}
+
+    tail = match.group("tail").strip()
+    if _QUERY_UNSAFE.search(tail) or ";" in tail or "--" in tail or "/*" in tail:
+        return {"error": "db_query_not_allowlisted"}
+    limit_match = re.search(r"\bLIMIT\s+([+-]?\s*\d+)\b", tail, re.IGNORECASE)
+    if re.search(r"\bLIMIT\b", tail, re.IGNORECASE) and limit_match is None:
+        return {"error": "db_query_limit_exceeded"}
+    if limit_match:
+        raw_limit = limit_match.group(1).replace(" ", "")
+        if raw_limit.startswith(("+", "-")) or int(raw_limit) > 500:
+            return {"error": "db_query_limit_exceeded"}
+    clean_tail = _QUERY_LITERAL.sub("", tail)
+    identifiers = {
+        word.lower() for word in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", clean_tail)
+    }
+    if identifiers - allowed_columns - _QUERY_WORDS:
+        return {"error": "db_query_not_allowlisted"}
+    if table in _WORKSPACE_SCOPED_TABLES and re.search(r"\bworkspace_id\b", tail, re.IGNORECASE):
+        return {"error": "workspace_scope_denied"}
+    if not _context_owns_workspace(context):
+        return {"error": "workspace_unauthorized"}
+
     normalized = " ".join(sql.split())
-    if "LIMIT" not in normalized.upper():
-        sql = f"{sql} LIMIT 500"
+    params = {}
+    if table in _WORKSPACE_SCOPED_TABLES:
+        anchor = re.search(r"\b(?:ORDER\s+BY|LIMIT|OFFSET)\b", normalized, re.IGNORECASE)
+        head = normalized[:anchor.start()].rstrip() if anchor else normalized
+        tail_after_head = normalized[anchor.start():] if anchor else ""
+        separator = " AND " if re.search(r"\bWHERE\b", head, re.IGNORECASE) else " WHERE "
+        normalized = f"{head}{separator}workspace_id = :_managed_workspace_id"
+        if tail_after_head:
+            normalized = f"{normalized} {tail_after_head}"
+        params["_managed_workspace_id"] = context.workspace_id
+    if not re.search(r"\bLIMIT\b", normalized, re.IGNORECASE):
+        offset = re.search(r"\bOFFSET\b", normalized, re.IGNORECASE)
+        if offset:
+            normalized = (
+                f"{normalized[:offset.start()].rstrip()} LIMIT 500 "
+                f"{normalized[offset.start():].lstrip()}"
+            )
+        else:
+            normalized = f"{normalized} LIMIT 500"
 
     try:
-        with repo._session(session) as s:
-            result = s.execute(text(sql))
+        with repo._session(context.session) as s:
+            result = s.execute(text(normalized), params)
             columns = list(result.keys())
             rows = result.mappings().all()
-            return {
+            return _redact_tool_value({
                 "columns": columns,
                 "rows": [list(row.values()) for row in rows],
                 "row_count": len(rows),
-            }
-    except Exception as e:
+            })
+    except Exception as e:  # noqa: BLE001 — ошибка БД превращается в безопасный результат tool
         log.warning("[db_query] failed: %s", e)
-        return {"error": str(e)}
+        return _redact_tool_value({"error": str(e)})
 
 
 def table_load(
@@ -172,6 +307,8 @@ def table_load(
     session=None,
 ) -> list[dict]:
     """Записи для таблицы фронта (only_loophole=True по умолчанию)."""
+    if limit > 500:
+        raise ValueError("table_load_limit_exceeded")
     return repo.list_records(
         bank_slugs=bank_slugs,
         period_from=period_from,
@@ -189,7 +326,7 @@ def _domain_of(url: str) -> str:
 
     try:
         return (urlparse(url).hostname or "").lower().replace("www.", "")
-    except Exception:
+    except ValueError:
         return ""
 
 
@@ -256,7 +393,7 @@ def save_loophole(
             "sha256": sha,
             "is_new": is_new,
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — граница repository сохраняет совместимый результат
         log.warning("[save_loophole] failed: %s", e)
         return {"error": str(e), "sha256": sha, "record_id": None, "is_new": False}
 
@@ -288,7 +425,7 @@ def fetch_target(url: str, *, timeout: float = 20.0) -> dict:
             "status": status,
             "excerpt": content[:4000].decode("utf-8", errors="replace"),
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — network/tool boundary не должна бросать raw error
         return {"url": url, "ok": False, "error": str(e)}
     finally:
         c.close()
@@ -331,11 +468,12 @@ def _tool_result(value: Any) -> str:
     что приводит к ``Missing 'type' field in multimodal part`` при следующем
     запросе. ``None`` сериализуем как ``"null"``.
     """
+    value = _redact_tool_value(value)
     if isinstance(value, str):
         return value
     try:
         return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return str(value)
 
 
@@ -429,6 +567,11 @@ try:
         "required": ["sql"],
     })
     class AuditDbQueryTool(Tool):
+        requires_context = True
+
+        def __init__(self, context: ToolContext | None = None):
+            self._context = context
+
         @property
         def name(self) -> str:
             return _tool_name("db_query")
@@ -445,7 +588,7 @@ try:
             return True
 
         async def execute(self, sql: str) -> str:
-            return _tool_result(db_query(sql))
+            return _tool_result(db_query(sql, context=self._context))
 
     @tool_parameters({
         "type": "object",
@@ -461,6 +604,11 @@ try:
         "required": [],
     })
     class AuditTableLoadTool(Tool):
+        requires_context = True
+
+        def __init__(self, context: ToolContext | None = None):
+            self._context = context
+
         @property
         def name(self) -> str:
             return _tool_name("table_load")
@@ -487,6 +635,16 @@ try:
             limit: int = 200,
         ) -> str:
             try:
+                context = self._context
+                if (
+                    context is None
+                    or not context.user_id
+                    or not isinstance(context.workspace_id, int)
+                    or context.session is None
+                ):
+                    return _tool_result({"error": "table_load_unauthorized"})
+                if not _context_owns_workspace(context):
+                    return _tool_result({"error": "workspace_unauthorized"})
                 return _tool_result(
                     table_load(
                         bank_slugs=bank_slugs,
@@ -496,9 +654,10 @@ try:
                         only_loophole=only_loophole,
                         status=status,
                         limit=limit,
+                        session=context.session,
                     )
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — table tool возвращает безопасный error result
                 log.warning("[table_load] failed: %s", e)
                 return _tool_result({"error": str(e)})
 
@@ -656,7 +815,7 @@ try:
         AuditTableLoadTool,
         AuditExportTool,
     )
-except Exception as _exc:  # pragma: no cover - nanobot optional
+except Exception as _exc:  # noqa: BLE001 — nanobot является необязательной зависимостью
     NANOBOT_TOOLS: tuple[type, ...] = ()  # type: ignore[no-redef]
     NANOBOT_HEAL_TOOLS: tuple[type, ...] = ()  # type: ignore[no-redef]
     log.debug("nanobot tools not available: %s", _exc)

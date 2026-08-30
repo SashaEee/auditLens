@@ -7,6 +7,32 @@ from pathlib import Path
 
 from ..config import ROOT
 
+NANOBOT_MAX_ITERATIONS_DEFAULT = 20
+NANOBOT_MAX_ITERATIONS_MIN = 1
+NANOBOT_MAX_ITERATIONS_MAX = 500
+
+
+def validate_nanobot_max_iterations(value: object) -> int:
+    """Проверяет безопасный диапазон лимита итераций managed agent."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("max_iterations должен быть целым числом от 1 до 500")
+    if not NANOBOT_MAX_ITERATIONS_MIN <= value <= NANOBOT_MAX_ITERATIONS_MAX:
+        raise ValueError("max_iterations должен быть в диапазоне от 1 до 500")
+    return value
+
+
+def _load_nanobot_max_iterations() -> int:
+    """Читает env-лимит и fail-closed отклоняет нечисловые значения."""
+    raw = os.getenv(
+        "LOOPHOLE_NANOBOT_MAX_ITERATIONS",
+        str(NANOBOT_MAX_ITERATIONS_DEFAULT),
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_iterations должен быть целым числом от 1 до 500") from exc
+    return validate_nanobot_max_iterations(value)
+
 
 @dataclass
 class LoopholeSettings:
@@ -15,7 +41,7 @@ class LoopholeSettings:
     classify_model: str = ""
     chat_model: str = ""
     nanobot_model: str = ""
-    nanobot_max_iterations: int = 20
+    nanobot_max_iterations: int = NANOBOT_MAX_ITERATIONS_DEFAULT
     trust_min: float = 0.5
     raw_text_max_chars: int = 200_000
     workspace_dir: Path = field(default_factory=lambda: ROOT / "workspace" / "loophole")
@@ -29,7 +55,7 @@ class LoopholeSettings:
             classify_model=os.getenv("LOOPHOLE_CLASSIFY_MODEL", ""),
             chat_model=os.getenv("LOOPHOLE_CHAT_MODEL", ""),
             nanobot_model=os.getenv("LOOPHOLE_NANOBOT_MODEL", ""),
-            nanobot_max_iterations=int(os.getenv("LOOPHOLE_NANOBOT_MAX_ITERATIONS", "20")),
+            nanobot_max_iterations=_load_nanobot_max_iterations(),
             trust_min=float(os.getenv("LOOPHOLE_TRUST_MIN", "0.5")),
             raw_text_max_chars=int(os.getenv("LOOPHOLE_RAW_TEXT_MAX_CHARS", "200000")),
             workspace_dir=Path(ws_env).resolve() if ws_env else (ROOT / "workspace" / "loophole"),

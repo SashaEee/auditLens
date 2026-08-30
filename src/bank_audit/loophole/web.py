@@ -23,6 +23,7 @@ from . import collector as collector_mod
 from . import refine as refine_mod
 from . import repository as repo
 from . import workspace as ws_mod
+from .chat import clarify as clarify_mod
 from .chat import graph as chat_graph
 from .chat.state import ChatState
 from .kb import repository as kb_repo
@@ -439,7 +440,8 @@ class ChatRequest(BaseModel):
     # true → уточнение уже пройдено (сообщение — обогащённый запрос после
     # /clarify/answer). Пропускаем clarify-гейт и идём выполнять. Без этого
     # /chat заново гонял бы generate_clarifications на КАЖДЫЙ вызов → петля.
-    skip_clarify: bool = False
+    # Одноразовый server-side token, выданный после ответа на clarification.
+    clarify_token: str | None = None
 
 
 @router.post("/chat")
@@ -451,33 +453,51 @@ async def chat(
 ):
     """SSE-чат: стримит token/tool_call/tool_result/record события."""
     _require_workspace_owner(body.workspace_id, user_id, session=session)
+    clarification_verified = clarify_mod.consume_execution_token(
+        body.clarify_token,
+        user_id=user_id,
+        workspace_id=body.workspace_id,
+        query=body.message,
+    )
     state: ChatState = {
         "query": body.message,
         "messages": body.history,
         "workspace_id": body.workspace_id,
         "user_id": user_id,
         "session": session,
-        "skip_clarify": body.skip_clarify,
+        "clarification_verified": clarification_verified,
     }
     # Сохраняем сообщение пользователя.
     repo.add_chat_message(body.workspace_id, "user", body.message, session=session)
     logging_audit.log_action(
         user_id, "chat", workspace_id=body.workspace_id,
-        detail={"message": body.message[:200]}, session=session,
+        detail={"message": repo.redact_audit_text(body.message, limit=200)}, session=session,
     )
 
     async def event_generator():
         import json as _json
-        async for ev in chat_graph.stream_chat(state, session=session):
-            yield {"event": ev["event"], "data": _json.dumps(ev["data"], ensure_ascii=False, default=str)}
-        # Сохраняем ответ (если есть).
         try:
-            if state.get("answer"):
-                repo.add_chat_message(
-                    body.workspace_id, "assistant", state["answer"], session=session
-                )
-        except Exception:
-            pass
+            stream = chat_graph.stream_chat(state, session=session)
+            async for ev in stream:
+                yield {
+                    "event": ev["event"],
+                    "data": _json.dumps(ev["data"], ensure_ascii=False, default=str),
+                }
+            # Сохраняем ответ (если есть).
+            try:
+                if state.get("answer"):
+                    repo.add_chat_message(
+                        body.workspace_id, "assistant", state["answer"], session=session
+                    )
+            except Exception:
+                pass
+        finally:
+            close_stream = getattr(locals().get("stream"), "aclose", None)
+            if callable(close_stream):
+                try:
+                    await close_stream()
+                except Exception:  # noqa: BLE001 — закрытие stream не должно менять исходную отмену
+                    log.warning("[chat] закрытие graph stream завершилось ошибкой")
 
     return EventSourceResponse(event_generator())
 
@@ -637,27 +657,53 @@ async def collect_run(
 class ClarifyRequest(BaseModel):
     question: str
     history: list[dict] = Field(default_factory=list)
+    workspace_id: int | None = None
 
 
 class ClarifyAnswerRequest(BaseModel):
+    workspace_id: int
     question: str
     answers: list[dict] = Field(default_factory=list)
+    clarification_token: str
 
 
 @router.post("/clarify")
 async def clarify(
     body: ClarifyRequest,
     user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008 — FastAPI dependency declaration
 ):
     """Генерация уточняющих вопросов по запросу аудитора."""
-    from .chat import clarify as clarify_mod
+    if body.workspace_id is not None:
+        _require_workspace_owner(body.workspace_id, user_id, session=session)
 
     result = await clarify_mod.generate_clarifications(
         body.question, history=body.history
     )
+    questions = clarify_mod.clarification_questions(result)
+    if questions:
+        result = {**result, "questions": questions}
+    if (
+        body.workspace_id is not None
+        and not result.get("complete")
+        and questions
+    ):
+        result = {
+            **result,
+            "clarification_token": clarify_mod.issue_clarification_token(
+                user_id=user_id,
+                workspace_id=body.workspace_id,
+                query=body.question,
+            ),
+        }
     logging_audit.log_action(
         user_id, "clarify",
-        detail={"question": body.question[:200], "complete": result.get("complete")},
+        detail={
+            "question": repo.redact_audit_text(body.question, limit=200),
+            "complete": result.get("complete"),
+        },
+        workspace_id=body.workspace_id,
+        session=session,
     )
     return result
 
@@ -666,16 +712,76 @@ async def clarify(
 async def clarify_answer(
     body: ClarifyAnswerRequest,
     user_id: str = Depends(get_user_id),
+    session=Depends(get_session),  # noqa: B008 — FastAPI dependency declaration
 ):
     """Сборка обогащённого запроса из исходного вопроса и ответов воронки."""
-    from .chat import clarify as clarify_mod
+    _require_workspace_owner(body.workspace_id, user_id, session=session)
+    if not clarify_mod._answers_summary(body.answers):
+        logging_audit.log_action(
+            user_id,
+            "clarify_answer",
+            workspace_id=body.workspace_id,
+            detail={
+                "question": repo.redact_audit_text(body.question, limit=200),
+                "complete": False,
+                "reason": "answers_required",
+            },
+            session=session,
+        )
+        return clarify_mod._clarification_answers_required()
+    if not clarify_mod.consume_clarification_token(
+        body.clarification_token,
+        user_id=user_id,
+        workspace_id=body.workspace_id,
+        query=body.question,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Уточнение устарело или не принадлежит этому запросу",
+        )
 
-    enriched = await clarify_mod.build_enriched_question(body.question, body.answers)
+    try:
+        enriched = await clarify_mod.build_enriched_question(body.question, body.answers)
+    except Exception:  # noqa: BLE001 — rewrite должен быть fail-closed
+        log.warning("[clarify_answer] rewrite failed — fail-closed")
+        enriched = clarify_mod._clarification_unavailable()
+    if isinstance(enriched, dict):
+        retry = {
+            **enriched,
+            "questions": clarify_mod.clarification_questions(enriched),
+            "clarification_token": clarify_mod.issue_clarification_token(
+                user_id=user_id,
+                workspace_id=body.workspace_id,
+                query=body.question,
+            ),
+        }
+        logging_audit.log_action(
+            user_id,
+            "clarify_answer",
+            workspace_id=body.workspace_id,
+            detail={
+                "question": repo.redact_audit_text(body.question, limit=200),
+                "complete": False,
+                "reason": enriched.get("reason", "clarification_unavailable"),
+            },
+            session=session,
+        )
+        return retry
+    execution_token = clarify_mod.issue_execution_token(
+        user_id=user_id,
+        workspace_id=body.workspace_id,
+        query=enriched,
+    )
     logging_audit.log_action(
         user_id, "clarify_answer",
-        detail={"question": body.question[:200], "enriched_len": len(enriched)},
+        workspace_id=body.workspace_id,
+        detail={
+            "question": repo.redact_audit_text(body.question, limit=200),
+            "enriched_len": len(enriched),
+        },
+        session=session,
     )
-    return {"enriched_question": enriched}
+    return {"enriched_question": enriched, "execution_token": execution_token}
 
 
 # ── Парсеры: общий каталог ──────────────────────────────────────────────────
@@ -778,6 +884,11 @@ def patch_parser(
         if body.auto_enabled is not None
         else bool(row.get("auto_enabled"))
     )
+    if auto_enabled and row.get("status") != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail="Расписание доступно только после успешной валидации парсера",
+        )
     nxt = None
     if cron_expr:
         try:

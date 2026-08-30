@@ -21,7 +21,7 @@ async def test_run_chat_await_clarify(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_chat_complete_does_not_crash(monkeypatch):
+async def test_run_chat_complete_does_not_crash(monkeypatch, session):
     from bank_audit.loophole.chat import clarify as clarify_mod
 
     monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
@@ -32,7 +32,7 @@ async def test_run_chat_complete_does_not_crash(monkeypatch):
     monkeypatch.setattr(clarify_mod, "generate_clarifications", fake_gen)
 
     state: ChatState = {"query": "сколько записей в базе", "workspace_id": 1, "user_id": "u1"}
-    out = await run_chat(state)
+    out = await run_chat(state, session=session)
     assert out["phase"] == "done"
     assert "answer" in out
 
