@@ -301,6 +301,28 @@ async def extract_page(client, model: str, *, url: str, text: str,
     return [i for i in items if isinstance(i, dict)]
 
 
+def _top_by_similarity(pages: dict[str, str], attributes: list[str],
+                       limit: int) -> dict[str, str]:
+    """Самые близкие к контракту страницы из набора."""
+    if len(pages) <= limit:
+        return dict(pages)
+    try:
+        from ...rag.embedder import embed_batch
+        urls = list(pages)
+        vecs = embed_batch(["; ".join(attributes)[:2000]]
+                           + [pages[u][:3000] for u in urls])
+        q = vecs[0]
+        qn = sum(x * x for x in q) ** 0.5 or 1.0
+        def sim(v):
+            n = sum(x * x for x in v) ** 0.5 or 1.0
+            return sum(a * b for a, b in zip(q, v)) / (qn * n)
+        ranked = sorted(zip(urls, vecs), key=lambda p: -sim(p[1]))
+        return {u: pages[u] for u, _ in ranked[:limit]}
+    except Exception:
+        top = sorted(pages, key=lambda u: -len(pages[u]))[:limit]
+        return {u: pages[u] for u in top}
+
+
 def select_pages(pages: dict[str, str], attributes: list[str],
                  subject_domains: dict[str, str], limit: int) -> dict[str, str]:
     """Отбор страниц под извлечение по близости к КОНТРАКТУ.
@@ -310,19 +332,27 @@ def select_pages(pages: dict[str, str], attributes: list[str],
     фактов из семисот. Отбираем страницы, семантически близкие к
     характеристикам, которые обязаны закрыть.
 
-    Сайты самих объектов сохраняем всегда, независимо от близости: без
-    первоисточника отчёт теряет заявленную сторону, а это дороже любой
-    экономии. Порог не по словам — по эмбеддингам, поэтому работает для
-    любого вопроса.
+    Отбираем ОБЕ стороны с гарантированными долями. Первый заход отдал всё
+    место сайтам банков (47 официальных страниц при пределе 35), и наблюдаемая
+    сторона исчезла целиком — раздел пробелов честно написал «взгляд со стороны
+    отсутствует». Поэтому под непервоисточники резервируется доля: без них
+    отчёт снова станет пересказом обещаний.
+
+    Порог не по словам — по эмбеддингам, поэтому работает для любого вопроса.
     """
     if len(pages) <= limit:
         return pages
     own = [d for d in subject_domains.values() if d]
-    must, rest = {}, {}
+    declared, observed = {}, {}
     for url, text in pages.items():
         host = urlparse(url).netloc.lower().removeprefix("www.")
-        (must if any(host == d or host.endswith("." + d) for d in own)
-         else rest)[url] = text
+        (declared if any(host == d or host.endswith("." + d) for d in own)
+         else observed)[url] = text
+    # Треть места — наблюдаемой стороне, но не больше, чем её есть.
+    obs_room = min(len(observed), max(1, limit // 3))
+    dec_room = max(1, limit - obs_room)
+    must = _top_by_similarity(declared, attributes, dec_room)
+    rest = observed
     room = max(0, limit - len(must))
     if room <= 0 or not rest:
         return must or pages
@@ -346,8 +376,8 @@ def select_pages(pages: dict[str, str], attributes: list[str],
         chosen = sorted(rest, key=lambda u: -len(rest[u]))[:room]
     out = dict(must)
     out.update({u: rest[u] for u in chosen})
-    log.info("извлечение: %d страниц из %d (%d первоисточников + %d по близости)",
-             len(out), len(pages), len(must), len(chosen))
+    log.info("извлечение: %d страниц из %d (%d заявленной стороны + %d "
+             "наблюдаемой)", len(out), len(pages), len(must), len(chosen))
     return out
 
 
