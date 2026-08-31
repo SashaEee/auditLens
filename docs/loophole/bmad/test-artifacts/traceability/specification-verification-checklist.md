@@ -18,6 +18,18 @@
   показывает старые «Создать и проверить» и «Подключение Telegram».
 - [ ] Quality gate: **FAIL** — 14/28 спецификаций завершены; P0 coverage 45%, P1 coverage 53%.
 
+## Удаление Telegram-контура
+
+- [x] RED-контракт подтвердил исходное наличие endpoint/runtime/UI, затем
+  `tests/loophole/test_telegram_contour_removed.py` прошёл: 3 passed.
+- [x] Целевая регрессия обычных функций прошла: 78 passed (RBAC, parser request,
+  dedup, generator и отсутствие Telegram-контура).
+- [x] Browser-smoke изменённого UI прошёл: 2 passed; безопасны только HTTP(S)-ссылки
+  parser targets, админ-поверхность не делает Telegram-запросов.
+- [ ] Полный модульный pytest, scoped Ruff и `git diff --check` — ожидают этого
+  implementation-cycle. Миграции `046`, `054`–`057` сохранены исторически и не
+  применялись повторно.
+
 ## Статусы спецификаций
 
 | Статус | Спецификации | Основание |

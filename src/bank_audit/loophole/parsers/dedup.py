@@ -7,7 +7,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 from ...hashing import sha256_text
 
 _TRACKING_PARAMS = {"gclid", "yclid", "fbclid", "_openstat"}
-_TG_HANDLE_RE = re.compile(r"^@(?P<name>[A-Za-z][A-Za-z0-9_]{4,31})$")
 _WS_RE = re.compile(r"\s+")
 
 
@@ -16,16 +15,11 @@ def normalize_target(target: str) -> str:
 
     Схема отбрасывается (http/https — один источник), host в lowercase без
     «www.», дефолтные порты убраны, trailing slash и fragment убраны,
-    utm_*/gclid/yclid/fbclid/_openstat выкинуты из query. Telegram-хендлы
-    (@name), ссылки (t.me/name) и bare-формы приводятся к «t.me/<name>».
-    Пустой ввод → "".
+    utm_*/gclid/yclid/fbclid/_openstat выкинуты из query. Пустой ввод → "".
     """
     t = (target or "").strip().rstrip(".,);]")
     if not t:
         return ""
-    m = _TG_HANDLE_RE.match(t)
-    if m:
-        return f"t.me/{m.group('name').lower()}"
     if "://" not in t:
         t = "https://" + t
     try:
@@ -34,10 +28,6 @@ def normalize_target(target: str) -> str:
         return t.lower()
     host = (parts.hostname or "").lower()
     host = host.removeprefix("www.")
-    if host in ("t.me", "telegram.me"):
-        path = (parts.path or "").strip("/")
-        name = path.split("/")[0] if path else ""
-        return f"t.me/{name.lower()}" if name else "t.me"
     try:
         port = parts.port
     except ValueError:

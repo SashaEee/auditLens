@@ -11,25 +11,26 @@ from bank_audit.loophole.web import SubmitResearchCandidateRequest, submit_resea
 
 def _create_submission_schema(session) -> None:
     session.connection().connection.executescript("""
-        CREATE TABLE loophole_research (
+        CREATE TABLE IF NOT EXISTS loophole_research (
             research_id INTEGER PRIMARY KEY AUTOINCREMENT,
             workspace_id INTEGER NOT NULL,
             run_id TEXT NOT NULL,
             query_text TEXT NOT NULL,
             search_params TEXT NOT NULL
         );
-        CREATE TABLE loophole_research_source (
+        CREATE TABLE IF NOT EXISTS loophole_research_source (
             source_id INTEGER PRIMARY KEY AUTOINCREMENT,
             research_id INTEGER NOT NULL,
             url TEXT NOT NULL,
             title TEXT,
             extracted_text TEXT,
+            published_at TEXT,
             status TEXT NOT NULL,
             limitation_message TEXT,
             access_status TEXT NOT NULL DEFAULT 'active',
             revision INTEGER NOT NULL DEFAULT 1
         );
-        CREATE TABLE loophole_research_candidate (
+        CREATE TABLE IF NOT EXISTS loophole_research_candidate (
             candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
             research_id INTEGER NOT NULL,
             source_id INTEGER NOT NULL,
@@ -47,7 +48,7 @@ def _create_submission_schema(session) -> None:
             ccks_decision TEXT,
             draft_version INTEGER NOT NULL DEFAULT 1
         );
-        CREATE TABLE loophole_verification_snapshot (
+        CREATE TABLE IF NOT EXISTS loophole_verification_snapshot (
             snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
             candidate_id INTEGER NOT NULL,
             research_id INTEGER NOT NULL,

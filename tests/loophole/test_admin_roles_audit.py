@@ -7,8 +7,8 @@ spec-1-5-администрирование-роли-цк-кс-и-сводног
 - назначение/отзыв роли ЦК КС только с capability module_admin (server-side
   проверка на каждом админ-endpoint), изменение аудируемо;
 - одновременно активны не более пяти экспертов ЦК КС;
-- админ-поверхность ограничена управлением ролями, статусом Telegram-целей
-  и сводным обезличенным аудитом (без payload и рабочих данных);
+- админ-поверхность ограничена управлением ролями и сводным обезличенным
+  аудитом (без payload и рабочих данных);
 - прямой URL без административного права → fail-closed 403 без данных в ответе.
 
 Без сети и реальной БД: in-memory SQLite (паттерн test_authorization.py),
@@ -121,17 +121,6 @@ def _grant_role(
 def _grant_admin(session, username: str) -> None:
     _grant_membership(session, username)
     _grant_role(session, username, role="module_admin")
-
-
-def _seed_telegram_parser(session) -> None:
-    session.execute(
-        text(
-            "INSERT INTO loophole_parser "
-            "(workspace_id, name, code_path, status, source_keys, last_run_at) "
-            "VALUES (1, 'tg-parser', 'p.py', 'ok', "
-            "'[\"t.me/bank_news\", \"example.com/x\"]', '2026-08-01T10:00:00')"
-        )
-    )
 
 
 def _auth(username: str) -> dict:
@@ -538,41 +527,6 @@ def test_admin_audit_requires_admin(client, app_session):
     r = client.get("/api/loophole/admin/audit", headers=_auth("analyst"))
     assert r.status_code == 403
     assert "events" not in r.json()
-
-
-# ── Статус Telegram-целей ────────────────────────────────────────────────────
-def test_telegram_targets_status(client, app_session):
-    _grant_admin(app_session, "boss")
-    _seed_telegram_parser(app_session)
-    r = client.get("/api/loophole/admin/telegram-targets", headers=_auth("boss"))
-    assert r.status_code == 200
-    targets = r.json()["targets"]
-    assert len(targets) == 1
-    t = targets[0]
-    assert t["target"] == "t.me/bank_news"
-    assert t["status"] == "ok"
-    assert t["last_run_at"]
-    # Обычные web-источники и технические поля не смешиваются в поверхность.
-    assert "example.com" not in r.text
-    assert "code_path" not in t
-    assert "config" not in t
-
-
-def test_telegram_targets_casts_jsonb_before_like():
-    """PostgreSQL jsonb нельзя сравнивать оператором LIKE без text-cast."""
-    from inspect import getsource
-
-    from bank_audit.loophole import repository
-
-    assert "CAST(source_keys AS TEXT) LIKE" in getsource(repository.list_telegram_targets)
-
-
-def test_telegram_targets_requires_admin(client, app_session):
-    _grant_membership(app_session, "analyst")
-    _seed_telegram_parser(app_session)
-    r = client.get("/api/loophole/admin/telegram-targets", headers=_auth("analyst"))
-    assert r.status_code == 403
-    assert "t.me/bank_news" not in r.text
 
 
 # ── Фронт: админ-экран (текстовые проверки, фронт без сборки) ───────────────

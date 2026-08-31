@@ -85,6 +85,7 @@ class ToolContext:
     query: str = ""
     pending_records: list[dict] = field(default_factory=list)
     source_publication_dates: dict[str, str | None] = field(default_factory=dict)
+    fetched_sources: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 _RU_MONTHS = {
@@ -175,6 +176,13 @@ def _remember_source_publication_date(
     for source_url in (requested_url, result.get("url"), result.get("final_url")):
         if source_url:
             context.source_publication_dates[str(source_url)] = published_at
+            if result.get("excerpt"):
+                context.fetched_sources[str(source_url)] = {
+                    "url": str(result.get("final_url") or result.get("url") or requested_url),
+                    "title": str(result.get("title") or "") or None,
+                    "extracted_text": str(result["excerpt"]),
+                    "published_at": published_at,
+                }
 
 
 def _context_owns_workspace(context: ToolContext | None) -> bool:
@@ -317,6 +325,9 @@ def _queue_confirmed_findings(
     """
     if context is None or not source_url.startswith(("https://", "http://")):
         return
+    source = context.fetched_sources.get(source_url)
+    if source is None:
+        return
     for finding in findings:
         if not finding.get("is_loophole"):
             continue
@@ -326,10 +337,15 @@ def _queue_confirmed_findings(
             continue
         context.pending_records.append({
             "title": title,
-            "url": source_url,
+            "url": source["url"],
             "snippet": snippet,
             "bank_slug": bank_slug,
-            "raw_text": raw_text,
+            "raw_text": source["extracted_text"],
+            "source_title": source["title"],
+            "published_at": source["published_at"],
+            "description": str(finding.get("description") or ""),
+            "category": str(finding.get("category") or "") or None,
+            "severity": str(finding.get("severity") or "medium"),
             "is_loophole": True,
         })
 
@@ -714,7 +730,10 @@ try:
             period_error = _source_publication_period_error(self._context, source_url)
             if period_error is not None:
                 return _tool_result({"error": period_error})
-            findings = await extract_loopholes(text)
+            source = self._context.fetched_sources.get(source_url) if self._context else None
+            if source is None:
+                return _tool_result({"error": "source_not_fetched"})
+            findings = await extract_loopholes(source["extracted_text"])
             _queue_confirmed_findings(
                 self._context,
                 findings,
