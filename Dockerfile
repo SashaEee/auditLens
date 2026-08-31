@@ -54,8 +54,8 @@ RUN playwright install --with-deps chromium \
 #     `from typing import Any`, и пакет не импортируется вовсе (NameError при
 #     разборе аннотаций типов). Правка — ровно одна строка. Когда апстрим
 #     исправит, условие просто не сработает и сборка не изменится.
-RUN F=$(find / -name query_processing.py -path '*gpt_researcher/actions*' 2>/dev/null | head -1); \
-    if [ -n "$F" ] && ! grep -q "^from typing import" "$F"; then \
+RUN F="$(python -c 'import site; print(site.getsitepackages()[0])')/gpt_researcher/actions/query_processing.py"; \
+    if [ -f "$F" ] && ! head -3 "$F" | grep -q "typing import Any"; then \
         sed -i "1i from typing import Any, Dict, List, Optional" "$F"; \
         echo "gpt-researcher: импорт typing добавлен"; \
     fi; \
