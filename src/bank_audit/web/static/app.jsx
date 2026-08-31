@@ -8132,11 +8132,8 @@ function Shell(){
             <span>{new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК</span>
             <span className="kbd">API</span>
           </div>}
-          {/* на «Лазейках» ⟳ ремаунтит iframe модуля; на остальных страницах —
-              прежний перерендер (в PR #2 вторая ветка потерялась, и кнопка
-              становилась мёртвой везде, кроме лазеек) */}
-          <button className="icon-btn" aria-label="обновить" title="Обновить страницу"
-                  onClick={()=>{ if(page==="loophole") setRefreshTick(t=>t+1); else setPage(p=>p); }}>
+          {/* на «Лазейках» ⟳ ремаунтит iframe модуля; на остальных страницах поведение прежнее */}
+          <button className="icon-btn" aria-label="обновить" title="Обновить страницу" onClick={()=>page==="loophole"&&setRefreshTick(t=>t+1)}>
             <Ic.refresh/>
           </button>
           <button className="icon-btn" aria-label="тема" onClick={()=>setTheme(theme==="dark"?"light":"dark")} title="Сменить тему">
