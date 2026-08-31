@@ -19,6 +19,7 @@ from typing import Any
 
 from .. import repository as repo
 from ..config import LoopholeSettings
+from ..direct_transport import child_env
 from . import dedup as dedup_mod
 from . import runner as runner_mod
 
@@ -83,11 +84,14 @@ def _default_llm() -> Any:
     """ChatOpenAI с теми же env, что и остальные модули loophole."""
     from langchain_openai import ChatOpenAI
 
+    from ..direct_transport import async_client, sync_client
+
     base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     api_key = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
     model = LoopholeSettings.load().effective_classify_model()
     return ChatOpenAI(
-        model=model, base_url=base_url, api_key=api_key, temperature=0.3
+        model=model, base_url=base_url, api_key=api_key, temperature=0.3,
+        http_client=sync_client(), http_async_client=async_client(),
     )
 
 
@@ -206,6 +210,7 @@ async def install_requirements(dir_path: Path, *, timeout: int = 300) -> None:
     req_path = dir_path / "requirements.txt"
     proc = await asyncio.create_subprocess_exec(
         str(venv_python(dir_path)), "-m", "pip", "install", "-r", str(req_path),
+        env=child_env(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

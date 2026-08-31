@@ -10,11 +10,13 @@ import json
 import logging
 import os
 import tempfile
+import types
 from pathlib import Path
 from typing import Any
 
 from ...config import ROOT
 from ..config import LoopholeSettings, validate_nanobot_max_iterations
+from ..direct_transport import async_client
 from .tools_nanobot import NANOBOT_TOOLS
 
 log = logging.getLogger(__name__)
@@ -100,6 +102,52 @@ def _patch_registry_for_gemini(registry: Any) -> None:
     registry.get_definitions = sanitized
 
 
+def _configure_direct_provider(bot: Any) -> None:
+    """Подменяет транспорт нерасширяемого nanobot-провайдера локально.
+
+    Nanobot создаёт OpenAI SDK лениво и по умолчанию разрешает proxy-env.
+    Патч применяется только к экземпляру этого Loophole-бота, не меняя
+    ``os.environ`` и не затрагивая остальных потребителей nanobot/httpx.
+    """
+    provider = bot._loop.provider
+    if not hasattr(provider, "_build_client"):
+        raise RuntimeError("Nanobot provider не поддерживает локальную direct policy")
+
+    def build_direct_client(self: Any) -> None:
+        import httpx
+
+        module = __import__(type(self).__module__, fromlist=["AsyncOpenAI"])
+        client_factory = module.AsyncOpenAI
+        if client_factory is None:
+            from openai import AsyncOpenAI as client_factory
+            module.AsyncOpenAI = client_factory
+        timeout_s = module._openai_compat_timeout_s()
+        self._client = client_factory(
+            api_key=self._api_key_for_client,
+            base_url=self._effective_base,
+            default_headers=self._default_headers,
+            default_query=self._extra_query or None,
+            max_retries=0,
+            timeout=timeout_s,
+            http_client=async_client(timeout=httpx.Timeout(timeout_s)),
+        )
+
+    provider._build_client = types.MethodType(build_direct_client, provider)
+
+    original_close = bot.aclose
+
+    async def close_direct(self: Any) -> None:
+        try:
+            await original_close()
+        finally:
+            client = getattr(provider, "_client", None)
+            close = getattr(client, "close", None)
+            if callable(close):
+                await close()
+
+    bot.aclose = types.MethodType(close_direct, bot)
+
+
 def create_nanobot(
     *,
     model: str | None = None,
@@ -134,6 +182,7 @@ def create_nanobot(
         ws.mkdir(parents=True, exist_ok=True)
 
         bot = Nanobot.from_config(config_path=config_path, workspace=str(ws))
+        _configure_direct_provider(bot)
         selected_tools = NANOBOT_TOOLS if tool_classes is None else tool_classes
         for tool_cls in (*selected_tools, *extra_tools):
             if tool_context is not None and getattr(tool_cls, "requires_context", False):

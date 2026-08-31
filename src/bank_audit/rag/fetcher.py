@@ -82,7 +82,7 @@ class FetchResult:
 def fetch(url: str, *, prefer_browser: bool = False,
           cache_ttl_seconds: int = 6 * 3600,
           force_refresh: bool = False,
-          browser=None) -> FetchResult:
+          browser=None, direct: bool = False) -> FetchResult:
     """Главная точка входа. Возвращает FetchResult.
 
     prefer_browser=True — сразу через Playwright (для SPA вроде sravni.ru/banki.ru,
@@ -105,7 +105,7 @@ def fetch(url: str, *, prefer_browser: bool = False,
 
     # 2. Pure HTTP (если не prefer_browser)
     if not prefer_browser:
-        result = _fetch_http(url)
+        result = _fetch_http(url, direct=direct)
         if result and _looks_valid(result.content, result.content_type, result.status):
             _cache_result(url, prefer_browser, result, cache_ttl_seconds)
             return result
@@ -113,7 +113,7 @@ def fetch(url: str, *, prefer_browser: bool = False,
                  url[:80], len(result.content) if result else 0)
 
     # 3. Playwright fallback (или primary path)
-    result = _fetch_browser(url, browser=browser)
+    result = _fetch_browser(url, browser=browser, direct=direct)
     if result and _looks_valid(result.content, result.content_type, result.status):
         _cache_result(url, prefer_browser, result, cache_ttl_seconds)
         return result
@@ -148,13 +148,14 @@ def _looks_valid(content: bytes, content_type: str | None,
     return not invalid
 
 
-def _fetch_http(url: str) -> FetchResult | None:
+def _fetch_http(url: str, *, direct: bool = False) -> FetchResult | None:
     try:
         # CA bundle: подключаем русский корневой CA для sberbank.ru и др.
         verify_arg = CA_BUNDLE_PATH if CA_BUNDLE_PATH else True
         with httpx.Client(http2=False, headers=DEFAULT_HEADERS,
                           follow_redirects=True,
                           verify=verify_arg,
+                          trust_env=not direct,
                           timeout=httpx.Timeout(connect=10, read=30,
                                                 write=10, pool=10)) as client:
             resp = client.get(url)
@@ -169,7 +170,7 @@ def _fetch_http(url: str) -> FetchResult | None:
         return None
 
 
-def _fetch_browser(url: str, browser=None) -> FetchResult | None:
+def _fetch_browser(url: str, browser=None, *, direct: bool = False) -> FetchResult | None:
     """Через BrowserCollector (Playwright). Возвращает FetchResult или None.
     Если browser не передан — создаём временный.
 
@@ -180,9 +181,12 @@ def _fetch_browser(url: str, browser=None) -> FetchResult | None:
     в десятки минут. Меньше nav-таймаут → зависший сайт отваливается быстрее."""
     from ..collectors.browser import BrowserCollector, CaptchaRequired
     own_browser = browser
+    if direct and own_browser is not None and not getattr(own_browser, "direct", False):
+        log.warning("direct browser fetch rejected: supplied collector is not direct")
+        return None
     if own_browser is None:
         own_browser = BrowserCollector(
-            nav_timeout_s=float(os.getenv("FETCH_BROWSER_NAV_S", "22")))
+            nav_timeout_s=float(os.getenv("FETCH_BROWSER_NAV_S", "22")), direct=direct)
 
     try:
         status, content = own_browser.fetch_html(url)

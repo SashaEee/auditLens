@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import re
@@ -155,7 +156,15 @@ def fetch_and_parse(
         from ...rag import fetcher
         fimpl = fetcher.fetch
     try:
-        result = fimpl(url, prefer_browser=prefer_browser)
+        parameters = inspect.signature(fimpl).parameters.values()
+        supports_direct = any(
+            parameter.name == "direct" or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if supports_direct:
+            result = fimpl(url, prefer_browser=prefer_browser, direct=True)
+        else:
+            result = fimpl(url, prefer_browser=prefer_browser)
     except Exception as e:
         log.warning("[fetch_decorator] fetch failed %s: %s", url[:80], e)
         return None

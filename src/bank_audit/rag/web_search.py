@@ -90,6 +90,7 @@ def search(
     site_filter: list[str] | None = None,    # ['cbr.ru', 'sberbank.ru'] — узкий список
     region: str = "ru-ru",
     cache_ttl_seconds: int = 3600,
+    direct: bool = False,
 ) -> list[dict]:
     """Multi-backend web search:
       1. SearXNG (если SEARXNG_URL задан) — приоритет, безлимит
@@ -128,11 +129,11 @@ def search(
     for name, fn in backends:
         try:
             r = fn(query, max_results=max_results,
-                   site_filter=site_filter, region=region)
+                   site_filter=site_filter, region=region, direct=direct)
         except TypeError:
             # backend не принимает region (yandex)
             try:
-                r = fn(query, max_results=max_results, site_filter=site_filter)
+                r = fn(query, max_results=max_results, site_filter=site_filter, direct=direct)
             except Exception as e:
                 log.info("%s search failed: %s", name, type(e).__name__)
                 r = []
@@ -159,12 +160,15 @@ _DDGS_BACKEND_CHAIN = "brave, yandex, duckduckgo, mojeek, google"
 
 def _search_ddgs(query: str, *, max_results: int = 8,
                   site_filter: list[str] | None = None,
-                  region: str = "ru-ru") -> list[dict]:
+                  region: str = "ru-ru", direct: bool = False) -> list[dict]:
     """ddgs-пакет: ротация Bing/Brave/Yandex/DDG/Mojeek с обработкой токенов.
 
     Главный рабочий backend когда SearXNG не запущен. Каждый движок пробуется
     по очереди (backend="bing, brave, ..."), первый отдавший результат — берётся.
     """
+    if direct and os.getenv("DDGS_PROXY"):
+        log.warning("ddgs direct search rejected: DDGS_PROXY is configured")
+        return []
     try:
         from ddgs import DDGS
     except Exception:
@@ -186,6 +190,8 @@ def _search_ddgs(query: str, *, max_results: int = 8,
     out: list[dict] = []
     for attempt, backend in enumerate(backend_orders):
         try:
+            # DDGS не читает HTTP(S)_PROXY/ALL_PROXY: его единственная proxy-
+            # настройка — отдельный DDGS_PROXY, который Loophole не задаёт.
             with DDGS() as ddgs:
                 rows = ddgs.text(
                     full_query,
@@ -225,7 +231,7 @@ def _search_ddgs(query: str, *, max_results: int = 8,
 def _searxng_query(base: str, query: str, *, max_results: int,
                    site_filter: list[str] | None, engines: str | None,
                    read_timeout: float, label: str,
-                   bearer: str | None = None) -> list[dict]:
+                   bearer: str | None = None, direct: bool = False) -> list[dict]:
     """Общий вызов SearXNG JSON API (для fleet-гейтвея и локального инстанса).
 
     Движки (bing/dogpile локально; google cse/yandex на fleet) ПЛОХО отрабатывают
@@ -250,7 +256,7 @@ def _searxng_query(base: str, query: str, *, max_results: int,
     try:
         headers = {"Authorization": f"Bearer {bearer}"} if bearer else None
         with httpx.Client(timeout=httpx.Timeout(connect=5, read=read_timeout,
-                                                  write=5, pool=5)) as c:
+                                                  write=5, pool=5), trust_env=not direct) as c:
             resp = c.get(f"{base.rstrip('/')}/search", params=params,
                          headers=headers)
         if resp.status_code != 200:
@@ -295,7 +301,7 @@ def _searxng_query(base: str, query: str, *, max_results: int,
 
 def _search_fleet(query: str, *, max_results: int = 8,
                   site_filter: list[str] | None = None,
-                  region: str = "ru-ru") -> list[dict]:
+                  region: str = "ru-ru", direct: bool = False) -> list[dict]:
     """Fleet SearXNG на резидентских прокси (FLEET_SEARXNG_URL) — ОСНОВНОЙ backend.
     google cse/yandex/duckduckgo доступны без капчи → первоисточники (cbr.ru/
     garant.ru/sberbank), где локальный bing тащил букмекеров/аптеки. Таймаут выше
@@ -304,11 +310,11 @@ def _search_fleet(query: str, *, max_results: int = 8,
     if not base:
         return []
     return _fleet_v1_query(base, query, max_results=max_results,
-                           site_filter=site_filter)
+                           site_filter=site_filter, direct=direct)
 
 
 def _fleet_v1_query(base: str, query: str, *, max_results: int,
-                    site_filter: list[str] | None) -> list[dict]:
+                    site_filter: list[str] | None, direct: bool = False) -> list[dict]:
     """POST /v1/search — версионированный агентский контракт гейтвея (гайд
     оператора, август 2026). Отличия от сырого /search: JSON-body, серверная
     фильтрация include_domains (site: больше не вырезается молча), лимиты
@@ -338,7 +344,7 @@ def _fleet_v1_query(base: str, query: str, *, max_results: int,
     def _call(payload: dict) -> tuple[int, dict | None]:
         try:
             with httpx.Client(timeout=httpx.Timeout(connect=5, read=60,
-                                                      write=5, pool=5)) as c:
+                                                      write=5, pool=5), trust_env=not direct) as c:
                 r = c.post(f"{base.rstrip('/')}/v1/search", json=payload,
                            headers=headers)
             if r.status_code != 200:
@@ -397,7 +403,7 @@ def _fleet_v1_query(base: str, query: str, *, max_results: int,
 
 def _search_searxng(query: str, *, max_results: int = 8,
                      site_filter: list[str] | None = None,
-                     region: str = "ru-ru") -> list[dict]:
+                     region: str = "ru-ru", direct: bool = False) -> list[dict]:
     """Локальный self-hosted SearXNG (SEARXNG_URL) — FALLBACK при недоступности
     fleet-гейтвея. С IP дата-центра cloud.ru живы только bing+dogpile; bing
     деградировал в шум → `SEARXNG_ENGINES=dogpile` сужает fallback до здорового
@@ -407,13 +413,13 @@ def _search_searxng(query: str, *, max_results: int = 8,
         return []
     return _searxng_query(base, query, max_results=max_results,
                           site_filter=site_filter, engines=_searxng_engines(),
-                          read_timeout=20, label="searxng")
+                          read_timeout=20, label="searxng", direct=direct)
 
 
 # ── Backend 2: Brave Search API ──────────────────────────────────────────
 def _search_brave(query: str, *, max_results: int = 8,
                    site_filter: list[str] | None = None,
-                   region: str = "ru-ru") -> list[dict]:
+                   region: str = "ru-ru", direct: bool = False) -> list[dict]:
     """Brave Search API. Бесплатный тариф 2k/мес.
     Регистрация: https://api.search.brave.com/app/keys"""
     api_key = _brave_key()
@@ -432,7 +438,7 @@ def _search_brave(query: str, *, max_results: int = 8,
     }
     try:
         with httpx.Client(timeout=httpx.Timeout(connect=5, read=15,
-                                                  write=5, pool=5)) as c:
+                                                  write=5, pool=5), trust_env=not direct) as c:
             resp = c.get(BRAVE_API_ENDPOINT,
                          headers=headers,
                          params={"q": full_query, "country": brave_country,
@@ -469,7 +475,7 @@ def _search_brave(query: str, *, max_results: int = 8,
 
 
 def _search_ddg(query: str, *, max_results: int, site_filter: list[str] | None,
-                region: str) -> list[dict]:
+                region: str, direct: bool = False) -> list[dict]:
     """DuckDuckGo HTML SERP."""
 
     full_query = query
@@ -481,7 +487,8 @@ def _search_ddg(query: str, *, max_results: int, site_filter: list[str] | None,
 
     try:
         with httpx.Client(headers=_HEADERS, follow_redirects=True,
-                          timeout=httpx.Timeout(connect=8, read=18, write=8, pool=8)) as c:
+                          timeout=httpx.Timeout(connect=8, read=18, write=8, pool=8),
+                          trust_env=not direct) as c:
             resp = c.post(DDG_HTML, data={"q": full_query, "kl": region})
         if resp.status_code != 200:
             log.warning("ddg search %s: HTTP %s", query[:60], resp.status_code)
@@ -537,7 +544,7 @@ def _search_ddg(query: str, *, max_results: int, site_filter: list[str] | None,
 
 def _search_yandex(query: str, *, max_results: int = 8,
                     site_filter: list[str] | None = None,
-                    region: str = "ru-ru") -> list[dict]:
+                    region: str = "ru-ru", direct: bool = False) -> list[dict]:
     """Yandex SERP HTML scraping fallback. Менее надёжен (могут банить),
     но иногда даёт лучшую RU-релевантность чем DDG."""
     full_query = query
@@ -547,7 +554,8 @@ def _search_yandex(query: str, *, max_results: int = 8,
 
     try:
         with httpx.Client(headers=_HEADERS, follow_redirects=True,
-                          timeout=httpx.Timeout(connect=8, read=18, write=8, pool=8)) as c:
+                          timeout=httpx.Timeout(connect=8, read=18, write=8, pool=8),
+                          trust_env=not direct) as c:
             # Yandex search XML-like serp HTML version
             resp = c.get("https://yandex.ru/search/",
                          params={"text": full_query, "lr": 213})

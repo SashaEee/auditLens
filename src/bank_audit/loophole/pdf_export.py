@@ -9,6 +9,8 @@ import logging
 from html import escape
 from io import BytesIO
 
+from .direct_transport import chromium_args
+
 log = logging.getLogger(__name__)
 
 
@@ -71,7 +73,7 @@ async def export_pdf(records: list[dict], *, output_path: str = "") -> bytes:
     except Exception as e:
         raise RuntimeError(f"Playwright недоступен: {e}") from e
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
+        browser = await p.chromium.launch(args=chromium_args())
         page = await browser.new_page()
         await page.set_content(html, wait_until="networkidle")
         pdf = await page.pdf(format="A4", print_background=True)
@@ -118,7 +120,7 @@ async def export_research_report_pdf(report: dict) -> bytes:
     except Exception as exc:
         raise RuntimeError(f"Playwright недоступен: {exc}") from exc
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch()
+        browser = await playwright.chromium.launch(args=chromium_args())
         try:
             page = await browser.new_page()
             await page.set_content(render_research_report_html(report), wait_until="networkidle")

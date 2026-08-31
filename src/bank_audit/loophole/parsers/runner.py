@@ -20,6 +20,7 @@ from typing import Any
 from ...ai.llm_utils import _loose_json_loads
 from ...hashing import sha256_text
 from .. import repository as repo
+from ..direct_transport import child_env
 from ..models import LoopholeRecord
 from . import dedup as dedup_mod
 from . import env
@@ -253,6 +254,7 @@ class ParserRunner:
                 # в рабочий каталог uvicorn (/app), валидация видит «пусто»
                 # и в конце удаляет рабочий парсер как несостоявшийся.
                 cwd=str(Path(self.code_path).parent),
+                env=child_env(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 # Парсеры печатают весь JSON одной строкой — лимит readline

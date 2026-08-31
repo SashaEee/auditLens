@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import Any
@@ -43,16 +44,24 @@ def search(
     cached = _CACHE.get(key)
     if cached and (now - cached[0]) < cache_ttl_seconds:
         return cached[1][:max_results]
-    try:
+    supports_direct = any(
+        parameter.name == "direct" or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in inspect.signature(impl).parameters.values()
+    )
+    if supports_direct:
         results = impl(
             query,
             max_results=max_results,
             site_filter=site_filter,
             region=region,
+            direct=True,
         )
-    except TypeError:
-        # Старая сигнатура без region.
-        results = impl(query, max_results=max_results, site_filter=site_filter)
+    else:
+        try:
+            results = impl(query, max_results=max_results, site_filter=site_filter, region=region)
+        except TypeError:
+            # Устаревшая injected-сигнатура без region и direct.
+            results = impl(query, max_results=max_results, site_filter=site_filter)
     results = [_normalize(r) for r in (results or [])]
     _CACHE[key] = (now, results)
     return results[:max_results]

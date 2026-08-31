@@ -118,12 +118,20 @@ class BrowserCollector:
 
     def __init__(self, headless: bool = True, profile_dir: str | None = None,
                  nav_timeout_s: float = 45.0, scroll_pause_ms: int = 800,
-                 max_scrolls: int = 40):
+                 max_scrolls: int = 40, direct: bool = False):
         self.headless = headless
         self.profile_dir = profile_dir or os.getenv("OPENCLAW_BROWSER_PROFILE")
         self.nav_timeout_ms = int(nav_timeout_s * 1000)
         self.scroll_pause_ms = scroll_pause_ms
         self.max_scrolls = max_scrolls
+        self.direct = direct
+
+    @property
+    def _launch_args(self) -> list[str]:
+        if not self.direct:
+            return self._LAUNCH_ARGS
+        from ..loophole.direct_transport import chromium_args
+        return [*self._LAUNCH_ARGS, *chromium_args()]
 
     @contextmanager
     def _ctx(self, headless: bool | None = None):
@@ -134,7 +142,7 @@ class BrowserCollector:
                 ctx = p.chromium.launch_persistent_context(
                     user_data_dir=self.profile_dir,
                     headless=use_headless,
-                    args=self._LAUNCH_ARGS,
+                    args=self._launch_args,
                     viewport={"width": 1440, "height": 900},
                     locale="ru-RU",
                     timezone_id="Europe/Moscow",
@@ -143,7 +151,7 @@ class BrowserCollector:
                 )
                 browser = None
             else:
-                browser = p.chromium.launch(headless=use_headless, args=self._LAUNCH_ARGS)
+                browser = p.chromium.launch(headless=use_headless, args=self._launch_args)
                 ctx = browser.new_context(
                     viewport={"width": 1440, "height": 900},
                     locale="ru-RU",

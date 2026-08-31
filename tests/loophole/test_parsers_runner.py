@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from datetime import UTC
 from unittest.mock import AsyncMock
@@ -293,6 +294,29 @@ async def test_start_uses_venv_python(
     await r.start()
     assert called_with["cmd"][0] == str(venv_py)
     assert called_with["cmd"][1] == code_path
+
+
+@pytest.mark.asyncio
+async def test_start_passes_sanitized_proxy_env_without_mutating_process(
+    monkeypatch, session, parser_id, clean_registries,
+):
+    code_path = "C:/parsers/proxy-contract/parser.py"
+    captured = {}
+
+    async def fake_exec(*_cmd, **kwargs):
+        captured.update(kwargs)
+        return _FakeProc(stdout=b"[]")
+
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    await ParserRunner(parser_id, code_path, workspace_id=1, session=session).start()
+
+    assert "HTTP_PROXY" not in captured["env"]
+    assert "HTTPS_PROXY" not in captured["env"]
+    assert os.environ["HTTP_PROXY"] == "http://127.0.0.1:9"
+    assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:9"
 
 
 @pytest.mark.asyncio

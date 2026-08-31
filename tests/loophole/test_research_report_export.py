@@ -148,3 +148,9 @@ def test_report_pdf_failure_is_typed_and_word_remains_available(monkeypatch, ses
     }
     response = asyncio.run(export_research_report(report_id, "docx", user_id="analyst", session=session))
     assert response.media_type.startswith("application/vnd.openxmlformats-officedocument")
+
+
+def test_export_research_report_pdf_uses_direct_chromium_args():
+    import inspect
+
+    assert "args=chromium_args()" in inspect.getsource(pdf_export.export_research_report_pdf)
