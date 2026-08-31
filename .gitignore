@@ -107,3 +107,6 @@ _bmad
 node_modules/
 package-lock.json
 package.json
+.pytest*
+.worktrees
+.qa*

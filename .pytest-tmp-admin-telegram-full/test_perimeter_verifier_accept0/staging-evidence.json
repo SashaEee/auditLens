@@ -1,1 +1,0 @@
-{"checks": {"principal_allow_deny": "VERIFIED", "oidc_denials": "VERIFIED", "lease_fencing": "VERIFIED", "pii_sanitation": "VERIFIED", "cleanup": "VERIFIED", "secret_rotation": "VERIFIED", "firewall": "VERIFIED", "alert_ownership": "VERIFIED"}}
