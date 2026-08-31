@@ -48,6 +48,7 @@ CREATE TABLE loophole_record (
     domain        TEXT,
     trust_score   REAL,
     fetched_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    published_at  TEXT,
     collected_at  TEXT DEFAULT CURRENT_TIMESTAMP,
     bank_slug     TEXT,
     keyword       TEXT,
@@ -220,6 +221,20 @@ CREATE TABLE loophole_auth_audit (
     decision   TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Результат AI-исследования (миграция 059), нужен route-тестам общего stream-пути.
+CREATE TABLE loophole_research_report (
+    report_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id      INTEGER NOT NULL,
+    run_id            TEXT NOT NULL,
+    query_text        TEXT NOT NULL,
+    result_text       TEXT NOT NULL,
+    evidence_snapshot TEXT NOT NULL DEFAULT '[]',
+    created_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (workspace_id, run_id)
+);
+CREATE INDEX idx_loophole_research_report_workspace
+    ON loophole_research_report (workspace_id, report_id DESC);
 """
 
 
@@ -239,3 +254,9 @@ def session():
     s = SessionLocal()
     yield s
     s.close()
+
+
+@pytest.fixture(name="sqlite_session")
+def _sqlite_session(session):
+    """Явный алиас SQLite-сессии для тестов, где нужна локальная fixture."""
+    return session

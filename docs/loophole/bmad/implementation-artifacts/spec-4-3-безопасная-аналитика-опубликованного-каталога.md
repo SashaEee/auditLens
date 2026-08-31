@@ -2,7 +2,7 @@
 title: 'Безопасная аналитика опубликованного каталога'
 type: 'feature'
 created: '2026-08-29'
-status: 'draft'
+status: 'in-progress'
 review_loop_iteration: 0
 context: []
 ---

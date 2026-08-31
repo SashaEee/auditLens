@@ -14,9 +14,9 @@ import os
 from typing import Any
 
 from ..ai.llm_utils import _loose_json_loads
+from . import repository as repo
 from .config import LoopholeSettings
 from .models import Verdict
-from . import repository as repo
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def _build_prompt(text: str) -> list:
     """Сообщения для LLM. Использует langchain-сообщения, если доступен langchain,
     иначе — простые dict'ы (для мок-тестов)."""
     try:
-        from langchain_core.messages import SystemMessage, HumanMessage
+        from langchain_core.messages import HumanMessage, SystemMessage
         return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=text)]
     except Exception:
         return [

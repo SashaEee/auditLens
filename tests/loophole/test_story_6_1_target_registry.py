@@ -55,7 +55,14 @@ def test_repeat_registration_returns_existing_target_without_duplicate(telegram_
 
 @pytest.mark.parametrize(
     "address",
-    ["", "https://example.com/channel", "@bad", "t.me/joinchat/", "t.me/+bad!"],
+    [
+        "",
+        "https://example.com/channel",
+        "@bad",
+        "t.me/joinchat/",
+        "t.me/+bad!",
+        "https://t.me:99999/bank_news",
+    ],
 )
 def test_register_rejects_unsupported_target_fail_closed(telegram_targets_table, address):
     with pytest.raises(InvalidTelegramTarget):

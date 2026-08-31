@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date, datetime
-from typing import Any, Iterator
+from datetime import date, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import text
 
@@ -125,9 +126,9 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 f"INSERT INTO {schema.T_RECORD} "
                 "(sha256, title, url, snippet, domain, trust_score, bank_slug, keyword, "
                 "raw_text, status, is_loophole, parser_id, text_sha256, "
-                "content_status, raw_text_len, raw_text_truncated) "
+                "content_status, raw_text_len, raw_text_truncated, published_at) "
                 "VALUES (:sha, :title, :url, :snip, :dom, :trust, :bank, :kw, :raw, "
-                ":status, :loop, :pid, :tsha, :cs, :rlen, :rtrunc) "
+                ":status, :loop, :pid, :tsha, :cs, :rlen, :rtrunc, :published) "
                 "RETURNING record_id"
             ),
             {
@@ -138,6 +139,7 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 "pid": rec.parser_id, "tsha": rec.text_sha256,
                 "cs": rec.content_status, "rlen": rec.raw_text_len,
                 "rtrunc": rec.raw_text_truncated,
+                "published": rec.published_at,
             },
         ).scalar_one()
         return row
@@ -218,13 +220,21 @@ def count_records_needing_content(*, session=None) -> int:
         ).scalar_one()
 
 
+def _record_dict(row) -> dict:
+    """Нормализует DB-типы записи для одинакового JSON в PostgreSQL и SQLite."""
+    record = dict(row)
+    if record.get("is_loophole") is not None:
+        record["is_loophole"] = bool(record["is_loophole"])
+    return record
+
+
 def get_record(record_id: int, *, session=None) -> dict | None:
     with _session(session) as s:
         row = s.execute(
             text(f"SELECT * FROM {schema.T_RECORD} WHERE record_id = :id"),
             {"id": record_id},
         ).mappings().first()
-        return dict(row) if row else None
+        return _record_dict(row) if row else None
 
 
 def list_records(
@@ -255,11 +265,11 @@ def list_records(
             for i, b in enumerate(bank_slugs):
                 params[f"b{i}"] = b
         if period_from:
-            clauses.append("collected_at >= :pf")
+            clauses.append("published_at >= :pf")
             params["pf"] = period_from
         if period_to:
-            clauses.append("collected_at <= :pt")
-            params["pt"] = period_to
+            clauses.append("published_at < :pt_exclusive")
+            params["pt_exclusive"] = period_to + timedelta(days=1)
         if only_loophole is True:
             clauses.append("is_loophole = TRUE")
         elif only_loophole is False:
@@ -279,7 +289,7 @@ def list_records(
             "record_id, title, url, snippet, domain, trust_score, "
             "bank_slug, keyword, is_loophole, verdict_confidence, "
             "verdict_reason, verdict_model, status, "
-            "collected_at, classified_at, content_status, raw_text_len"
+            "published_at, collected_at, classified_at, content_status, raw_text_len"
         )
         if include_content:
             columns += ", raw_text, raw_text_truncated"
@@ -289,7 +299,23 @@ def list_records(
             "ORDER BY COALESCE(verdict_confidence, 0) DESC, collected_at DESC "
             "LIMIT :limit OFFSET :offset"
         )
-        return [dict(r) for r in s.execute(text(sql), params).mappings().all()]
+        return [_record_dict(r) for r in s.execute(text(sql), params).mappings().all()]
+
+
+def list_published_cases(*, limit: int = 500, session=None) -> list[dict]:
+    """Возвращает только финально опубликованные подтверждённые кейсы."""
+    with _session(session) as s:
+        rows = s.execute(
+            text(
+                f"SELECT record_id, title, url, snippet, domain, trust_score, bank_slug, "
+                f"keyword, is_loophole, verdict_confidence, verdict_reason, verdict_model, "
+                f"status, published_at, collected_at, classified_at FROM {schema.T_RECORD} "
+                "WHERE status = 'published' AND is_loophole = TRUE "
+                "ORDER BY collected_at DESC, record_id DESC LIMIT :limit"
+            ),
+            {"limit": limit},
+        ).mappings().all()
+        return [_record_dict(row) for row in rows]
 
 
 def list_bank_slugs(*, session=None) -> list[str]:
@@ -326,11 +352,11 @@ def search_relevant(
             for i, b in enumerate(bank_slugs):
                 params[f"b{i}"] = b
         if period_from:
-            clauses.append("collected_at >= :pf")
+            clauses.append("published_at >= :pf")
             params["pf"] = period_from
         if period_to:
-            clauses.append("collected_at <= :pt")
-            params["pt"] = period_to
+            clauses.append("published_at < :pt_exclusive")
+            params["pt_exclusive"] = period_to + timedelta(days=1)
         # Текстовый поиск по title/snippet/raw_text (кросс-БД: LOWER LIKE).
         if query_text:
             clauses.append(
@@ -399,7 +425,7 @@ def list_verification_queue(*, limit: int = 200, session=None) -> list[dict]:
         sql = (
             f"SELECT record_id, title, url, snippet, domain, trust_score, "
             "bank_slug, keyword, verdict_confidence, verdict_reason, status, "
-            "collected_at, classified_at "
+            "published_at, collected_at, classified_at "
             f"FROM {schema.T_RECORD} "
             "WHERE is_loophole = TRUE "
             "AND (verdict_model IS NULL OR verdict_model != 'manual') "
@@ -949,7 +975,7 @@ def list_telegram_targets(*, session=None) -> list[dict]:
         rows = s.execute(
             text(
                 f"SELECT parser_id, name, status, last_run_at, source_keys "
-                f"FROM {schema.T_PARSER} WHERE source_keys LIKE '%t.me/%' "
+                f"FROM {schema.T_PARSER} WHERE CAST(source_keys AS TEXT) LIKE '%t.me/%' "
                 "ORDER BY parser_id"
             )
         ).mappings().all()
@@ -978,7 +1004,7 @@ def list_auto_parsers(*, session=None) -> list[dict]:
             dict(r) for r in s.execute(
                 text(
                     f"SELECT {_PARSER_COLS} FROM {schema.T_PARSER} "
-                    "WHERE auto_enabled = TRUE AND cron_expr IS NOT NULL"
+                    "WHERE auto_enabled = TRUE AND cron_expr IS NOT NULL AND status = 'ready'"
                 )
             ).mappings().all()
         ]

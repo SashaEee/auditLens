@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from bank_audit.loophole import workspace as ws_mod
 from bank_audit.loophole import repository as repo
+from bank_audit.loophole import workspace as ws_mod
 from bank_audit.loophole.config import LoopholeSettings
-
-
-from tests.loophole.conftest import session as sqlite_session  # noqa: E402
 
 
 @pytest.fixture

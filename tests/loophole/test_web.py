@@ -7,19 +7,17 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from bank_audit.loophole.web import router, get_session, get_user_id
-from bank_audit.loophole import repository as repo
-from bank_audit.loophole import keywords as kw_mod
-from bank_audit.loophole.models import LoopholeRecord
 from bank_audit.hashing import sha256_text
-
-from fastapi import FastAPI
-
+from bank_audit.loophole import keywords as kw_mod
+from bank_audit.loophole import repository as repo
+from bank_audit.loophole.models import LoopholeRecord
+from bank_audit.loophole.web import get_session, get_user_id, router
 
 from .conftest import SCHEMA_SQL
 
@@ -99,7 +97,13 @@ def test_history_empty(client):
 
 
 def test_export_json(client, app_session):
-    rec = LoopholeRecord(sha256=sha256_text("e1"), title="лазейка", bank_slug="sberbank")
+    rec = LoopholeRecord(
+        sha256=sha256_text("e1"),
+        title="лазейка",
+        bank_slug="sberbank",
+        status="published",
+        is_loophole=True,
+    )
     rid = repo.insert_record(rec, session=app_session)
     r = client.post("/api/loophole/export", json={"records": [rid], "format": "json"})
     assert r.status_code == 200
@@ -109,7 +113,13 @@ def test_export_json(client, app_session):
 
 
 def test_export_csv(client, app_session):
-    rec = LoopholeRecord(sha256=sha256_text("e2"), title="лазейка", bank_slug="sberbank")
+    rec = LoopholeRecord(
+        sha256=sha256_text("e2"),
+        title="лазейка",
+        bank_slug="sberbank",
+        status="published",
+        is_loophole=True,
+    )
     rid = repo.insert_record(rec, session=app_session)
     r = client.post("/api/loophole/export", json={"records": [rid], "format": "csv"})
     assert r.status_code == 200
@@ -119,8 +129,20 @@ def test_export_csv(client, app_session):
 
 def test_export_csv_only_selected(client, app_session):
     """Выгружаются ТОЛЬКО переданные ids, а не все записи таблицы."""
-    rec1 = LoopholeRecord(sha256=sha256_text("s1"), title="лазейка выделенная", bank_slug="sberbank")
-    rec2 = LoopholeRecord(sha256=sha256_text("s2"), title="лазейка невыделенная", bank_slug="vtb")
+    rec1 = LoopholeRecord(
+        sha256=sha256_text("s1"),
+        title="лазейка выделенная",
+        bank_slug="sberbank",
+        status="published",
+        is_loophole=True,
+    )
+    rec2 = LoopholeRecord(
+        sha256=sha256_text("s2"),
+        title="лазейка невыделенная",
+        bank_slug="vtb",
+        status="published",
+        is_loophole=True,
+    )
     rid1 = repo.insert_record(rec1, session=app_session)
     repo.insert_record(rec2, session=app_session)
     r = client.post("/api/loophole/export", json={"records": [rid1], "format": "csv"})
@@ -269,14 +291,23 @@ def test_parser_run_not_found(client, monkeypatch):
     assert r.status_code == 404
 
 
-def test_parser_run_ok(client, monkeypatch):
+def test_parser_run_ok(client, app_session, monkeypatch):
     """POST /parsers/{id}/run — запуск через мок runner.run, возвращает run_id."""
     from bank_audit.loophole.parsers import runner as runner_mod
 
+    workspace_id = repo.create_workspace("test-user", session=app_session)
+    parser_id = repo.save_parser(
+        workspace_id,
+        "готовый",
+        "/tmp/ready.py",
+        config={"query": "q", "targets": ["https://example.test"]},
+        session=app_session,
+    )
+    repo.update_parser_status(parser_id, "ready", session=app_session)
     monkeypatch.setattr(runner_mod, "run", AsyncMock(return_value=99))
-    r = client.post("/api/loophole/parsers/7/run")
+    r = client.post(f"/api/loophole/parsers/{parser_id}/run")
     assert r.status_code == 200
-    assert r.json() == {"parser_id": 7, "run_id": 99}
+    assert r.json() == {"parser_id": parser_id, "run_id": 99}
 
 
 def test_parser_stop_not_running(client, monkeypatch):
@@ -308,8 +339,8 @@ def test_parser_stop_ok(client, monkeypatch):
 
 def test_parser_status_not_found(client, monkeypatch):
     """GET /parsers/{id}/status — 404 если нет нигде."""
-    from bank_audit.loophole.parsers import runner as runner_mod
     from bank_audit.loophole.parsers import registry as parser_registry
+    from bank_audit.loophole.parsers import runner as runner_mod
 
     monkeypatch.setattr(runner_mod, "_RUNNING", {})
     monkeypatch.setattr(parser_registry, "get_parser", lambda pid, session=None: None)
@@ -319,8 +350,8 @@ def test_parser_status_not_found(client, monkeypatch):
 
 def test_parser_status_from_db(client, monkeypatch):
     """GET /parsers/{id}/status — статус из БД (не running)."""
-    from bank_audit.loophole.parsers import runner as runner_mod
     from bank_audit.loophole.parsers import registry as parser_registry
+    from bank_audit.loophole.parsers import runner as runner_mod
 
     monkeypatch.setattr(runner_mod, "_RUNNING", {})
     monkeypatch.setattr(parser_registry, "get_parser", lambda pid, session=None: {
@@ -430,7 +461,8 @@ def test_backfill_content_fetch_failed_keeps_text(client, app_session, monkeypat
 def test_export_csv_contains_content_columns(client, app_session):
     rec = LoopholeRecord(sha256=sha256_text("csv1"), title="t", url="https://x.ru",
                          snippet="s", raw_text="ПОЛНЫЙ ТЕКСТ В CSV",
-                         content_status="full", raw_text_len=17)
+                         content_status="full", raw_text_len=17,
+                         status="published", is_loophole=True)
     rid = repo.insert_record(rec, session=app_session)
     r = client.post("/api/loophole/export",
                     json={"records": [rid], "format": "csv"})
@@ -447,7 +479,8 @@ def test_export_csv_filtered_contains_content(client, app_session):
     rec = LoopholeRecord(sha256=sha256_text("csv2"), title="t2",
                          url="https://x.ru/2", snippet="s2",
                          raw_text="КОНТЕНТ ФИЛЬТРОВАННОГО CSV",
-                         content_status="full", raw_text_len=25)
+                         content_status="full", raw_text_len=25,
+                         status="published", is_loophole=True)
     repo.insert_record(rec, session=app_session)
     r = client.post("/api/loophole/export/csv", json={})
     assert r.status_code == 200

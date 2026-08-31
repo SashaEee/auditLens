@@ -22,6 +22,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -48,7 +49,23 @@ def _sanitize_ca_bundle_env() -> None:
         if mod is not None and getattr(mod, "CA_BUNDLE_PATH", None) == path:
             mod.CA_BUNDLE_PATH = None
 
-_CHARSET_RE = re.compile(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_-]+)", re.I)
+_CHARSET_RE = re.compile(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_-]+)", re.IGNORECASE)
+_PUBLISHED_AT_RES = (
+    re.compile(r'"datePublished"\s*:\s*"([^"]{8,80})"', re.IGNORECASE),
+    re.compile(
+        r"<meta\b[^>]*(?:property|name|itemprop)=[\"']"
+        r"(?:article:published_time|datePublished|datepublished|pubdate)[\"']"
+        r"[^>]*\bcontent=[\"']([^\"']{8,80})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"<meta\b[^>]*\bcontent=[\"']([^\"']{8,80})[\"']"
+        r"[^>]*(?:property|name|itemprop)=[\"']"
+        r"(?:article:published_time|datePublished|datepublished|pubdate)[\"']",
+        re.IGNORECASE,
+    ),
+    re.compile(r"<time\b[^>]*\bdatetime=[\"']([^\"']{8,80})", re.IGNORECASE),
+)
 
 
 def _normalize_to_utf8(content: bytes, content_type: str | None) -> bytes:
@@ -61,7 +78,7 @@ def _normalize_to_utf8(content: bytes, content_type: str | None) -> bytes:
         return content
     declared: str | None = None
     if content_type:
-        m = re.search(r"charset=([A-Za-z0-9_\-]+)", content_type, re.I)
+        m = re.search(r"charset=([A-Za-z0-9_\-]+)", content_type, re.IGNORECASE)
         if m:
             declared = m.group(1)
     ct = (content_type or "").lower()
@@ -85,6 +102,29 @@ def _normalize_to_utf8(content: bytes, content_type: str | None) -> bytes:
         return content
 
 
+def _exact_published_at(content: bytes) -> str | None:
+    """Извлекает только точный timezone-aware timestamp первоисточника.
+
+    Дата в сниппете поиска, год в тексте и naive дата не подходят: при жёстком
+    периоде они не доказывают, что публикация действительно попадает в окно.
+    """
+    markup = content.decode("utf-8", errors="replace")
+    for pattern in _PUBLISHED_AT_RES:
+        match = pattern.search(markup)
+        if match is None:
+            continue
+        raw = match.group(1).strip()
+        normalized = raw.removesuffix("Z") + ("+00:00" if raw.endswith("Z") else "")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            continue
+        return parsed.isoformat()
+    return None
+
+
 @dataclass
 class FetchedPage:
     url: str
@@ -95,6 +135,7 @@ class FetchedPage:
     excerpt: str
     via: str
     content_type: str | None = None
+    published_at: str | None = None
 
 
 def fetch_and_parse(
@@ -141,4 +182,5 @@ def fetch_and_parse(
         excerpt=excerpt,
         via=getattr(result, "via", "unknown"),
         content_type=content_type,
+        published_at=_exact_published_at(content),
     )

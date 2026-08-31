@@ -147,7 +147,8 @@ def test_patch_clear_cron(client, app_session, parser_id):
 
 
 # ── run / runs / stop ────────────────────────────────────────────────────────
-def test_manual_run_returns_run_id(client, parser_id, monkeypatch):
+def test_manual_run_returns_run_id(client, app_session, parser_id, monkeypatch):
+    repo.update_parser_status(parser_id, "ready", session=app_session)
     run_mock = AsyncMock(return_value=42)
     monkeypatch.setattr(runner_mod, "run", run_mock)
     r = client.post(f"/api/loophole/parsers/{parser_id}/run")
@@ -155,6 +156,18 @@ def test_manual_run_returns_run_id(client, parser_id, monkeypatch):
     assert r.json()["run_id"] == 42
     # Контракт: без request-session — фон коммитит через свои db.session().
     run_mock.assert_awaited_once_with(parser_id, "manual")
+
+
+def test_manual_run_rejects_parser_without_successful_validation(client, parser_id, monkeypatch):
+    """Невалидный парсер нельзя запустить ни вручную, ни в обход UI."""
+    run_mock = AsyncMock(return_value=42)
+    monkeypatch.setattr(runner_mod, "run", run_mock)
+
+    response = client.post(f"/api/loophole/parsers/{parser_id}/run")
+
+    assert response.status_code == 409
+    assert "валидац" in response.json()["detail"].lower()
+    run_mock.assert_not_awaited()
 
 
 def test_manual_run_conflict_409(client, parser_id, monkeypatch):

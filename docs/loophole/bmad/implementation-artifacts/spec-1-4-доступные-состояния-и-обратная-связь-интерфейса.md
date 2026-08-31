@@ -2,7 +2,7 @@
 title: 'Доступные состояния и обратная связь интерфейса'
 type: 'feature'
 created: '2026-08-29'
-status: 'draft'
+status: 'done'
 review_loop_iteration: 0
 context:
   - 'docs/loophole/bmad/implementation-artifacts/epic-1-context.md'

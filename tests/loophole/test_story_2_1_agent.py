@@ -901,22 +901,15 @@ def test_ui_uses_server_side_clarification_tokens():
     assert "skip_clarify" not in source
 
 
-def test_ui_restores_clarification_state_on_answers_required():
-    """answers_required возвращает карточку вопросов, а не оставляет UI без неё."""
+def test_ui_restores_answer_without_requesting_a_rewrite_retry_challenge():
+    """Typed error восстанавливает текущий ответ без ветви второго challenge."""
     source = Path("src/bank_audit/loophole/static/loophole.jsx").read_text(encoding="utf-8")
 
-    assert 'd && d.reason === "answers_required"' in source
+    assert 'd && d.reason === "answers_required"' not in source
+    assert 'd && d.reason === "clarification_unavailable"' not in source
     assert "setPendingQuestions(questionsForRetry);" in source
     assert "setClarificationToken(clarificationTokenForRetry);" in source
-
-
-def test_ui_restores_clarification_state_on_unavailable_retry():
-    """UI принимает новый server-side challenge после недоступного rewrite."""
-    source = Path("src/bank_audit/loophole/static/loophole.jsx").read_text(encoding="utf-8")
-
-    assert 'd && d.reason === "clarification_unavailable"' in source
-    assert "setPendingQuestions(d.questions);" in source
-    assert "setClarificationToken(d.clarification_token);" in source
+    assert "setChatInput(inputForRetry);" in source
 
 
 @pytest.mark.asyncio
@@ -993,8 +986,8 @@ async def test_clarification_error_refuses_without_agent_or_iteration(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_enrichment_error_restores_clarification_retry(monkeypatch):
-    """Сбой rewrite возвращает retry clarification без разрешения на агента."""
+async def test_enrichment_error_returns_typed_error_without_repeated_question(monkeypatch):
+    """Сбой детерминированной сборки не повторяет уже отвеченный challenge."""
     from bank_audit.loophole.chat import clarify as clarify_mod
     from bank_audit.loophole.chat.graph import run_chat
 
@@ -1019,57 +1012,52 @@ async def test_enrichment_error_restores_clarification_retry(monkeypatch):
             "workspace_id": 17,
             "user_id": "analyst-1",
             "iterations": 0,
+            "clarify_answers": [{"question": "Банк?", "selected": ["Сбербанк"]}],
         }
     )
 
-    assert result["phase"] == "await_clarify"
+    assert result["phase"] == "error"
+    assert result["error"] == "clarification_assembly_failed"
     assert result["iterations"] == 0
-    assert result["clarify_questions"]
-    assert result["clarification_token"]
-    assert "answer" not in result
-    assert "error" not in result
+    assert "clarify_questions" not in result
+    assert "clarification_token" not in result
 
 
 @pytest.mark.asyncio
-async def test_rewrite_exception_restores_run_chat_clarification_retry(monkeypatch):
-    """Сбой rewrite возвращает локализованный вопрос и challenge для повтора."""
+async def test_verified_run_chat_skips_clarification_gate(monkeypatch):
+    """Проверенный execution token не запускает второй LLM-gate."""
+    from bank_audit.loophole.agent import AgentResult
     from bank_audit.loophole.chat import clarify as clarify_mod
-    from bank_audit.loophole.chat.graph import run_chat
+    from bank_audit.loophole.chat import graph as graph_mod
 
-    async def complete(question, history=None):
-        return {"complete": True, "questions": []}
+    async def forbidden_gate(question, history=None):
+        raise AssertionError("повторный clarification gate запрещён")
 
-    async def broken(question, answers):
-        raise RuntimeError("raw rewrite provider payload")
+    async def successful_agent(*args, **kwargs):
+        return AgentResult(answer="Готово", run_id="verified-run")
 
-    monkeypatch.setattr(clarify_mod, "generate_clarifications", complete)
-    monkeypatch.setattr(clarify_mod, "build_enriched_question", broken)
+    monkeypatch.setattr(clarify_mod, "generate_clarifications", forbidden_gate)
+    monkeypatch.setattr(graph_mod, "_run_nanobot", successful_agent)
+    monkeypatch.setattr(graph_mod, "_save_agent_audit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(graph_mod.repo, "add_chat_message", lambda *args, **kwargs: None)
 
-    class ForbiddenFactory:
-        def create(self, *args, **kwargs):
-            raise AssertionError("AgentFactory нельзя запускать при retry clarification")
-
-    monkeypatch.setattr("bank_audit.loophole.chat.graph.AgentFactory", ForbiddenFactory)
-
-    result = await run_chat(
+    result = await graph_mod.run_chat(
         {
             "query": "проверь вклад",
             "workspace_id": 17,
             "user_id": "analyst-1",
-            "iterations": 0,
-        }
+            "clarification_verified": True,
+        },
+        session=object(),
     )
 
-    assert result["phase"] == "await_clarify"
-    assert result["clarify_questions"]
-    assert result["clarification_token"]
-    assert "answer" not in result
-    assert "error" not in result
+    assert result["phase"] == "done"
+    assert result["answer"] == "Готово"
 
 
 @pytest.mark.asyncio
-async def test_rewrite_exception_restores_stream_clarification_retry(monkeypatch):
-    """SSE после сбоя rewrite ждёт clarification и не запускает агента."""
+async def test_assembly_exception_emits_stream_error_without_new_challenge(monkeypatch):
+    """SSE после сбоя сборки возвращает error и не выдаёт новый вопрос."""
     from bank_audit.loophole.chat import clarify as clarify_mod
     from bank_audit.loophole.chat.graph import stream_chat
 
@@ -1099,16 +1087,19 @@ async def test_rewrite_exception_restores_stream_clarification_retry(monkeypatch
                 "workspace_id": 17,
                 "user_id": "analyst-1",
                 "iterations": 0,
+                "clarify_answers": [{"question": "Банк?", "selected": ["Сбербанк"]}],
             }
         )
     ]
 
     assert factory_called is False
-    assert any(event["data"].get("phase") == "await_clarify" for event in events)
+    assert any(
+        event["data"].get("phase") == "error"
+        and event["data"].get("error") == "clarification_assembly_failed"
+        for event in events
+    )
     question_events = [event for event in events if event.get("event") == "question"]
-    assert question_events
-    assert question_events[-1]["data"]["questions"]
-    assert question_events[-1]["data"]["clarification_token"]
+    assert question_events == []
     assert not any(event["data"].get("phase") == "execute" for event in events)
 
 
@@ -1517,6 +1508,61 @@ async def test_stream_factory_error_emits_safe_terminal_event_and_audit(session,
 
 
 @pytest.mark.asyncio
+async def test_provider_connection_error_emits_safe_retry_state_and_audit(session, monkeypatch):
+    """Транспортный текст nanobot не попадает в SSE, чат или audit как готовый ответ."""
+    from sqlalchemy import text
+
+    from bank_audit.loophole.chat.graph import stream_chat
+
+    class ProviderErrorAgent:
+        async def stream(self, prompt, *, hook):
+            await hook.after_run(
+                SimpleNamespace(
+                    final_content="Error calling LLM: Connection error.",
+                    stop_reason="error",
+                    tools_used=[],
+                )
+            )
+            if False:
+                yield None
+
+        async def aclose(self):
+            return None
+
+    class FakeFactory:
+        def create(self, context, *, llm=None, session=None):
+            return ProviderErrorAgent()
+
+    monkeypatch.setattr("bank_audit.loophole.chat.graph.AgentFactory", FakeFactory)
+    events = [
+        event
+        async for event in stream_chat(
+            {
+                "query": "кредитные карты за август 2026 года",
+                "workspace_id": 17,
+                "user_id": "analyst-1",
+                "clarification_verified": True,
+            },
+            session=session,
+        )
+    ]
+    audit = session.execute(text("SELECT * FROM agent_audit_log")).mappings().one()
+    serialized = json.dumps(events, ensure_ascii=False)
+
+    terminal = next(
+        event for event in events
+        if event["event"] == "phase" and event["data"].get("phase") == "error"
+    )
+    assert terminal["data"]["error"] == "agent_unavailable"
+    assert "повторите" in terminal["data"]["message"].lower()
+    assert "Error calling LLM" not in serialized
+    assert "Connection error" not in serialized
+    assert audit["status"] == "partial"
+    assert audit["error_code"] == "agent_error"
+    assert "Connection error" not in (audit["result_redacted"] or "")
+
+
+@pytest.mark.asyncio
 async def test_stream_failure_events_mark_hook_and_audit_partial(session, monkeypatch):
     """Прямые nanobot tool/run failure events не дают completed audit."""
     from nanobot.sdk.types import (
@@ -1914,7 +1960,7 @@ async def test_table_load_rejects_limit_over_500_before_database(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_web_fetch_tool_redacts_sensitive_excerpt_before_llm():
+async def test_web_fetch_tool_redacts_sensitive_excerpt_before_llm(monkeypatch):
     """Результат web_fetch маскируется на границе возврата tool."""
     from bank_audit.loophole.chat import tools_nanobot
 
@@ -1928,7 +1974,11 @@ async def test_web_fetch_tool_redacts_sensitive_excerpt_before_llm():
         via="http",
     )
 
-    tools_nanobot.fetch_decorator.fetch_and_parse = lambda *args, **kwargs: page
+    monkeypatch.setattr(
+        tools_nanobot.fetch_decorator,
+        "fetch_and_parse",
+        lambda *args, **kwargs: page,
+    )
     result = json.loads(await tools_nanobot.AuditWebFetchTool().execute("https://example.test"))
 
     serialized = json.dumps(result, ensure_ascii=False)

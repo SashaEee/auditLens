@@ -5,16 +5,12 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import text
 
+from bank_audit.hashing import sha256_text
+from bank_audit.loophole import keywords as kw_mod
 from bank_audit.loophole import refine
 from bank_audit.loophole import repository as repo
-from bank_audit.loophole import keywords as kw_mod
 from bank_audit.loophole.models import LoopholeRecord
-from bank_audit.hashing import sha256_text
-
-
-from tests.loophole.conftest import session as sqlite_session  # noqa: E402
 
 
 @pytest.fixture

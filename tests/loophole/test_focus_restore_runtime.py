@@ -21,10 +21,13 @@ def _runtime_html() -> str:
           status,
           headers: {"Content-Type": "application/json"},
         });
-        if (url.endsWith("/contexts")) return json({contexts: []});
+        if (url.endsWith("/contexts")) return json({contexts: [
+          {id: "catalog", title: "Общая база"},
+          {id: "sources", title: "Добавить источник"},
+        ]});
         if (url.endsWith("/workspace")) return json({workspace_id: 1});
         if (url.endsWith("/banks")) return json({banks: []});
-        if (url.endsWith("/records")) return json({records: []});
+        if (url.includes("/catalog")) return json({records: []});
         if (url.endsWith("/parsers") && method === "GET") {
           return json({parsers: [{
             parser_id: 1, name: "Тестовый парсер", is_running: false,
@@ -47,9 +50,9 @@ def _runtime_html() -> str:
     )
 
 
-def test_confirmed_delete_restores_focus_to_enabled_parser_dialog_fallback():
+def test_confirmed_delete_restores_focus_to_enabled_sources_tab_fallback():
     """После подтверждения delete исходная кнопка становится disabled, поэтому
-    фокус должен оказаться на доступном контроле родительского диалога."""
+    фокус должен оказаться на стабильной вкладке рабочей поверхности."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -57,12 +60,9 @@ def test_confirmed_delete_restores_focus_to_enabled_parser_dialog_fallback():
             page.set_default_timeout(10_000)
             page.set_default_navigation_timeout(10_000)
             page.set_content(_runtime_html(), wait_until="load")
-            parser_button = page.locator('button[title="Управление парсерами"]')
-            parser_button.wait_for(state="visible")
-            page.wait_for_function(
-                "() => !document.querySelector('button[title=\"Управление парсерами\"]').disabled"
-            )
-            parser_button.click()
+            sources_tab = page.get_by_role("tab", name="Добавить источник")
+            sources_tab.wait_for(state="visible")
+            sources_tab.click()
             parser_row = page.locator(".lp-parser-row")
             parser_row.wait_for(state="visible")
             parser_row.get_by_role("button", name="Удалить").click()
@@ -73,9 +73,9 @@ def test_confirmed_delete_restores_focus_to_enabled_parser_dialog_fallback():
                 """() => {
                   const active = document.activeElement;
                   return active instanceof HTMLButtonElement
-                    && active.getAttribute("aria-label") === "Закрыть"
-                    && !active.disabled
-                    && Boolean(active.closest(".lp-parsers-dialog"));
+                    && active.getAttribute("role") === "tab"
+                    && active.textContent.includes("Добавить источник")
+                    && !active.disabled;
                 }"""
             )
         finally:

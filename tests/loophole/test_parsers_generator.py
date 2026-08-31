@@ -63,6 +63,14 @@ def _llm_mock(code: str = VALID_SPIDER_CODE):
     return llm
 
 
+def test_prompt_requires_exact_source_publication_timestamp_or_null():
+    prompt = generator.PROMPT_TEMPLATE.lower()
+    assert "published_at" in prompt
+    assert "iso 8601" in prompt
+    assert "null" in prompt
+    assert "не подставляй дату сбора" in prompt
+
+
 @pytest.mark.asyncio
 async def test_generate_saves_to_catalog(session, workspace_id, catalog_dir):
     result = await generator.generate_parser(
@@ -114,7 +122,12 @@ async def test_generate_rejects_query_without_target(session, workspace_id, cata
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "target",
-    ["https://t.me/bank_news", "https://telegram.me/bank_news", "@bank_news"],
+    [
+        "https://t.me/bank_news",
+        "https://telegram.me/bank_news",
+        "https://t.me:443/bank_news",
+        "@bank_news",
+    ],
 )
 async def test_generate_rejects_telegram_target_before_llm_and_storage(
     session, workspace_id, catalog_dir, target,

@@ -7,15 +7,11 @@ JSONB→TEXT, TEXT[]→TEXT, TIMESTAMPTZ→TEXT). Это проверяет SQL-
 """
 from __future__ import annotations
 
-import sqlite3
-from datetime import date
-
-import pytest
 from sqlalchemy import text
 
+from bank_audit.hashing import sha256_text
 from bank_audit.loophole import repository as repo
 from bank_audit.loophole.models import LoopholeRecord
-from bank_audit.hashing import sha256_text
 
 
 # SQLite не знает ILIKE — регистрируем функцию-заглушку (lower-case сравнение).
@@ -24,17 +20,17 @@ def _ilike_pattern(pattern: str) -> str:
 
 
 def _make_record(**kw) -> LoopholeRecord:
-    base = dict(
-        sha256=sha256_text("test"),
-        title="лазейка в кредитном договоре",
-        url="https://example.ru/doc",
-        snippet="скрытая комиссия",
-        domain="example.ru",
-        trust_score=0.8,
-        bank_slug="sberbank",
-        keyword="лазейка",
-        raw_text="текст договора со скрытой комиссией",
-    )
+    base = {
+        "sha256": sha256_text("test"),
+        "title": "лазейка в кредитном договоре",
+        "url": "https://example.ru/doc",
+        "snippet": "скрытая комиссия",
+        "domain": "example.ru",
+        "trust_score": 0.8,
+        "bank_slug": "sberbank",
+        "keyword": "лазейка",
+        "raw_text": "текст договора со скрытой комиссией",
+    }
     base.update(kw)
     return LoopholeRecord(**base)
 

@@ -14,7 +14,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-
 _PUBLIC_HANDLE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 _INVITE_TOKEN = re.compile(r"^[A-Za-z0-9_-]{5,128}$")
 _TELEGRAM_HOSTS = {"t.me", "telegram.me"}
@@ -114,13 +113,17 @@ def normalize_telegram_target(address: str) -> tuple[str, str]:
         parts = urlsplit(candidate)
     except ValueError as exc:
         raise InvalidTelegramTarget("Некорректная Telegram-ссылка") from exc
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise InvalidTelegramTarget("Некорректная Telegram-ссылка") from exc
     if (
         parts.scheme not in {"http", "https"}
         or parts.hostname is None
         or parts.hostname.lower() not in _TELEGRAM_HOSTS
         or parts.username is not None
         or parts.password is not None
-        or parts.port is not None
+        or port is not None
         or parts.query
         or parts.fragment
     ):

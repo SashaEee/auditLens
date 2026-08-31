@@ -47,9 +47,10 @@ class ExpertLimitError(Exception):
 
 # Рабочие контексты модуля. Заголовки русские — отдаются в UI как есть.
 _CONTEXT_CATALOG = {"id": "catalog", "title": "Общая база"}
+_CONTEXT_SOURCES = {"id": "sources", "title": "Добавить источник"}
 _CONTEXT_AI_RESEARCH = {"id": "ai_research", "title": "Новое AI-исследование"}
 _CONTEXT_QUEUE = {"id": "queue", "title": "Очередь верификации"}
-_CONTEXT_ADMIN = {"id": "admin", "title": "Администрирование"}
+_CONTEXT_ADMIN = {"id": "admin", "title": "Управление доступом"}
 
 
 def is_active_member(username: str, *, session) -> bool:
@@ -136,10 +137,10 @@ def require_role(
 
 
 def available_contexts(username: str, *, session) -> list[dict]:
-    """Рабочие контексты, доступные члену модуля: каталог и AI-исследование —
+    """Рабочие контексты, доступные члену модуля: каталог, источники и AI-исследование —
     всегда, очередь верификации — только активному эксперту ЦК КС,
     администрирование — только активному module_admin."""
-    contexts = [dict(_CONTEXT_CATALOG), dict(_CONTEXT_AI_RESEARCH)]
+    contexts = [dict(_CONTEXT_CATALOG), dict(_CONTEXT_SOURCES), dict(_CONTEXT_AI_RESEARCH)]
     if has_active_role(username, ROLE_CCKS_EXPERT, session=session):
         contexts.append(dict(_CONTEXT_QUEUE))
     if has_active_role(username, ROLE_MODULE_ADMIN, session=session):

@@ -171,14 +171,14 @@ def test_focus_layer_hook_exists():
 
 
 def test_focus_layer_used_by_all_layers():
-    """Ловушку фокуса используют off-canvas чат и все модалки."""
+    """Ловушку фокуса используют off-canvas чат и оставшиеся модалки."""
     jsx = _norm(JSX)
-    # чат (off-canvas), парсеры, вердикт, подтверждение удаления.
+    # Чат (off-canvas), вердикт, подтверждения удаления и отзыва роли.
     assert jsx.count("useFocusLayer(") >= 5  # объявление + 4 слоя
     assert _norm("useFocusLayer(chatModalOpen,") in jsx
-    assert _norm("useFocusLayer(parsersOpen,") in jsx
     assert _norm("useFocusLayer(!!verdictModal,") in jsx
     assert _norm("useFocusLayer(!!deleteConfirm,") in jsx
+    assert _norm("useFocusLayer(!!revokeConfirm,") in jsx
 
 
 def test_chat_panel_modal_semantics_are_limited_to_compact_mode():
@@ -205,12 +205,13 @@ def test_chat_open_focuses_heading_not_textarea():
 
 
 def test_modals_dialog_semantics():
-    """Все модалки имеют role=dialog, aria-modal и подпись."""
-    assert JSX.count('role="dialog"') >= 4  # чат + 3 модалки
-    assert JSX.count('aria-modal="true"') >= 4
-    for labelledby in ("lp-parsers-title", "lp-verdict-title", "lp-confirm-title"):
+    """Все оставшиеся модалки имеют role=dialog, aria-modal и подпись."""
+    assert JSX.count('role="dialog"') >= 3
+    assert JSX.count('aria-modal="true"') >= 3
+    for labelledby in ("lp-verdict-title", "lp-confirm-title", "lp-revoke-title"):
         assert f'aria-labelledby="{labelledby}"' in JSX
         assert f'id="{labelledby}"' in JSX
+    assert 'aria-labelledby="lp-parsers-title"' not in JSX
 
 
 def test_focus_visible_ring_for_interactive_controls():
@@ -268,14 +269,17 @@ def test_table_sort_keyboard_accessible():
 
 # ── Инварианты quality-ревью 1.4 ─────────────────────────────────────────────
 def test_record_details_use_native_buttons_not_interactive_rows():
-    """Каталог и очередь открывают детали нативной кнопкой без интерактивных строк."""
+    """Каталог раскрывает детали, а queue master-detail выбирается нативной кнопкой."""
     assert not re.search(r"<tr\b[^>]*\bon(?:Click|KeyDown)=", JSX)
-    assert JSX.count('className="lp-row-details"') >= 2
-    assert JSX.count("aria-expanded={expanded.has(r.record_id)}") >= 2
+    assert JSX.count('className="lp-row-details"') >= 1
+    assert JSX.count("aria-expanded={expanded.has(r.record_id)}") >= 1
     assert JSX.count(
         "aria-controls={expanded.has(r.record_id) ? `lp-record-details-${r.record_id}` : undefined}"
-    ) >= 2
-    assert JSX.count("onClick={() => toggleContent(r.record_id)}") >= 2
+    ) >= 1
+    assert JSX.count("onClick={() => toggleContent(r.record_id)}") >= 1
+    assert "lp-queue-card-active" in JSX
+    assert 'aria-current={active ? "true" : undefined}' in JSX
+    assert "onClick={() => setQueueSelectedId(record.record_id)}" in JSX
     # Вложенные checkbox, кнопка вердикта и ссылки не поднимают click выше себя.
     assert JSX.count("onClick={e => e.stopPropagation()}") >= 3
 
@@ -316,7 +320,7 @@ def test_clickable_backdrops_are_named_non_tabstop_native_buttons():
         r'(?=[^>]*tabIndex=\{-1\})[^>]*>',
         JSX,
     )
-    assert len(modal_buttons) >= 4
+    assert len(modal_buttons) >= 3
 
 
 def test_parser_running_badge_is_russian_without_changing_machine_predicate():
@@ -332,15 +336,14 @@ def test_parser_running_badge_is_russian_without_changing_machine_predicate():
 
 
 def test_collapsed_row_button_omits_controls_for_absent_details_region():
-    """При свёрнутой строке aria-controls не указывает на ещё не существующий
-    details-region; aria-expanded при этом остаётся на кнопке."""
+    """При свёрнутой строке каталога aria-controls не указывает на отсутствующий region."""
     controls = (
         "aria-controls={expanded.has(r.record_id) "
         "? `lp-record-details-${r.record_id}` : undefined}"
     )
-    assert JSX.count(controls) >= 2
-    assert JSX.count("aria-expanded={expanded.has(r.record_id)}") >= 2
-    assert JSX.count('id={`lp-record-details-${r.record_id}`}') >= 2
+    assert JSX.count(controls) >= 1
+    assert JSX.count("aria-expanded={expanded.has(r.record_id)}") >= 1
+    assert JSX.count('id={`lp-record-details-${r.record_id}`}') >= 1
 
 
 def _load_records_body() -> str:
@@ -407,7 +410,7 @@ def _load_parsers_body() -> str:
 
 
 def test_parser_loading_empty_and_error_states_are_distinguishable():
-    """Диалог парсеров не маскирует ошибку под пустой список."""
+    """Рабочая поверхность парсеров не маскирует ошибку под пустой список."""
     jsx = _norm(JSX)
     assert _norm("const[parsersLoading,setParsersLoading]=useState(false);") in jsx
     assert _norm("const[parsersError,setParsersError]=useState(null);") in jsx
@@ -416,17 +419,14 @@ def test_parser_loading_empty_and_error_states_are_distinguishable():
     assert "if (!r.ok)" in body
     assert "catch" in body and "setParsersError(" in body
     assert not re.search(r"catch\s*\{\s*\}", body)
-    surface = re.search(
-        r'<div className="lp-parsers-list">(.*?)\{parsers\.map', JSX, re.DOTALL
-    )
-    assert surface, "не найдены поверхности списка парсеров"
-    markup = surface.group(1)
+    start = JSX.index('<section className="lp-source-list"')
+    end = JSX.index("{logPanel && (", start)
+    markup = JSX[start:end]
     assert "Загрузка парсеров…" in markup
     assert "Не удалось загрузить парсеры" in markup
     assert "Повторить" in markup
-    empty = re.search(r"Парсеры не созданы\.(.{0,300})", markup, re.DOTALL)
-    assert empty and "Сбросить" in empty.group(1)
-    assert "onClick={loadParsers}" in empty.group(1)
+    assert "Парсеры не созданы." in markup
+    assert "onClick={loadParsers}" in markup
 
 
 def test_export_csv_reports_network_failures_in_error_toast():
@@ -459,24 +459,23 @@ def test_icon_controls_and_inputs_have_russian_accessible_names():
         "lp-filter-text",
         "lp-filter-from",
         "lp-filter-to",
-        "lp-filter-verdict",
-        "lp-filter-status",
-        "lp-bulk-comment",
         "lp-chat-input",
-        "lp-parser-query",
+        "lp-parser-url",
+        "lp-parser-description",
     ):
         assert f'htmlFor="{control_id}"' in JSX
         assert f'id="{control_id}"' in JSX
+    assert 'id="lp-filter-verdict"' not in JSX
+    assert 'id="lp-filter-status"' not in JSX
+    assert 'aria-label="Каталог показывает только лазейки"' in JSX
+    assert 'aria-label="Каталог показывает только опубликованные записи"' in JSX
+    assert "lp-bulk-comment" not in JSX
     assert 'htmlFor="lp-select-all"' in JSX
     assert 'id="lp-select-all"' in JSX
     assert 'htmlFor={`lp-select-record-${r.record_id}`}' in JSX
     assert 'id={`lp-select-record-${r.record_id}`}' in JSX
-    for value, label in (
-        ("new", "Новый"),
-        ("classified", "Классифицирован"),
-        ("exported", "Выгружен"),
-    ):
-        assert f'<option value="{value}">{label}</option>' in JSX
+    for value in ("new", "classified", "exported"):
+        assert f'<option value="{value}">' not in JSX
 
 
 def test_new_controls_and_links_have_hit_targets_and_visible_focus():
@@ -485,12 +484,18 @@ def test_new_controls_and_links_have_hit_targets_and_visible_focus():
         ".lp-row-details",
         ".lp-sort-button",
         ".lp-cell-url a",
-        ".lp-parser-targets a",
         ".lp-content-head a",
     ):
         block = _block(CSS, selector)
         assert "min-width: 28px" in block
         assert "min-height: 28px" in block
+    parser_targets = re.search(
+        r"\.lp-parser-targets a,\s*\.lp-parser-target-plain\s*\{([^}]*)\}",
+        CSS,
+    )
+    assert parser_targets
+    assert "min-width: 28px" in parser_targets.group(1)
+    assert "min-height: 28px" in parser_targets.group(1)
     for selector in (
         ".lp-question-other textarea",
         ".lp-parsers-create input",
@@ -503,8 +508,14 @@ def test_new_controls_and_links_have_hit_targets_and_visible_focus():
 
 def test_toast_timer_cleared_on_unmount():
     """Таймер toast очищается при размонтировании (setState после unmount)."""
-    assert _norm("useEffect(() => () => clearTimeout(toastTimerRef.current), []);") \
-        in _norm(JSX)
+    effects = re.findall(
+        r"useEffect\(\(\) => \(\) => \{(.*?)\}, \[\]\);",
+        JSX,
+        re.DOTALL,
+    )
+    effect = next((body for body in effects if "clearTimeout(toastTimerRef.current)" in body), None)
+    assert effect
+    assert "URL.revokeObjectURL(csvUrlRef.current)" in effect
 
 
 def _theme_token(selector: str, token: str) -> str:
@@ -661,13 +672,15 @@ def test_parser_actions_emit_one_typed_toast_for_each_remote_outcome():
     assert "if (!r.ok)" in stop, "stopParser должен проверять не-OK ответ"
 
 
-def test_trust_sort_button_has_russian_visible_label():
-    """Сортировка trust_score не оставляет пользователю английскую подпись."""
+def test_internal_trust_is_absent_and_publication_date_is_sortable():
+    """Внутренний trust не виден, а дата публикации остаётся сортируемой."""
+    assert "trust_score" not in JSX
+    assert "Надёжность" not in JSX
+    assert "Trust" not in JSX
     button = re.search(
-        r'toggleSort\("trust_score"\)\}>(.*?)</button>',
+        r'toggleSort\("published_at"\)\}>(.*?)</button>',
         JSX,
         re.DOTALL,
     )
-    assert button, "не найдена кнопка сортировки trust_score"
-    assert "Надёжность" in button.group(1)
-    assert "Trust" not in button.group(1)
+    assert button, "не найдена кнопка сортировки published_at"
+    assert "Дата публикации" in button.group(1)

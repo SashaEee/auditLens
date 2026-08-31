@@ -67,7 +67,7 @@ def test_migration_is_idempotent_if_not_exists():
     # Каждый CREATE TABLE / CREATE INDEX должен сопровождаться IF NOT EXISTS.
     import re
 
-    creates = re.findall(r"CREATE\s+(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?", sql, re.I)
+    creates = re.findall(r"CREATE\s+(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?", sql, re.IGNORECASE)
     assert creates, "нет CREATE-инструкций"
     for kind, ifne in creates:
         assert ifne.strip().upper() == "IF NOT EXISTS", (

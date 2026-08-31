@@ -68,6 +68,7 @@ def client(app_session, monkeypatch):
     engine = app_session.get_bind()
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     monkeypatch.setattr(db_mod, "session", lambda: _engine_session(SessionLocal))
+    monkeypatch.delenv("LOOPHOLE_DEV_AUTH_ENABLED", raising=False)
 
     def override_session():
         yield app_session
@@ -137,6 +138,19 @@ def test_contexts_without_principal_401(client):
     assert r.status_code == 401
 
 
+def test_local_dev_auth_enabled_by_explicit_env(client, app_session, monkeypatch):
+    """Локальный bypass доступен только по явному dev-флагу."""
+    _grant_membership(app_session, "local-dev")
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "1")
+
+    r = client.get("/api/loophole/contexts")
+
+    assert r.status_code == 200
+    assert {context["id"] for context in r.json()["contexts"]} == {
+        "catalog", "sources", "ai_research",
+    }
+
+
 def test_x_user_id_header_not_trusted(client):
     """Never: X-User-Id от клиента не является identity."""
     r = client.get("/api/loophole/contexts", headers={"X-User-Id": "admin"})
@@ -175,7 +189,7 @@ def test_contexts_member_gets_catalog_and_research(client, app_session):
     assert r.status_code == 200
     contexts = r.json()["contexts"]
     ids = {c["id"] for c in contexts}
-    assert ids == {"catalog", "ai_research"}
+    assert ids == {"catalog", "sources", "ai_research"}
     titles = {c["title"] for c in contexts}
     assert "Общая база" in titles
     assert "Новое AI-исследование" in titles
@@ -188,7 +202,7 @@ def test_contexts_expert_also_gets_queue(client, app_session):
     assert r.status_code == 200
     contexts = r.json()["contexts"]
     ids = {c["id"] for c in contexts}
-    assert ids == {"catalog", "ai_research", "queue"}
+    assert ids == {"catalog", "sources", "ai_research", "queue"}
     queue = next(c for c in contexts if c["id"] == "queue")
     assert queue["title"] == "Очередь верификации"
 
@@ -276,7 +290,9 @@ def test_revoked_role_denies_next_request(client, app_session):
     assert _SECRET_TITLE not in r2.text
     # Контексты тоже пересчитываются: очередь пропадает.
     r3 = client.get("/api/loophole/contexts", headers=_auth("expert"))
-    assert {c["id"] for c in r3.json()["contexts"]} == {"catalog", "ai_research"}
+    assert {c["id"] for c in r3.json()["contexts"]} == {
+        "catalog", "sources", "ai_research",
+    }
 
 
 # ── Workspace не создаётся до авторизации ───────────────────────────────────

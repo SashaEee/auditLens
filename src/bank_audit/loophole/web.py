@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date
+import uuid
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 from .. import db
@@ -28,6 +29,7 @@ from .chat import graph as chat_graph
 from .chat.state import ChatState
 from .kb import repository as kb_repo
 from .models import ExportRequest, SearchQuery, WorkspaceCreate
+from .research_cases import ResearchCaseService
 
 log = logging.getLogger(__name__)
 
@@ -41,8 +43,8 @@ def get_session():
 
 
 def get_user_id(
-    user: CurrentUser = Depends(get_current_user),  # noqa: B008
-    session=Depends(get_session),  # noqa: B008
+    user: CurrentUser = Depends(get_current_user),
+    session=Depends(get_session),
 ) -> str:
     """Единая граница авторизации модуля: trusted principal (X-Authentik-*
     от nginx) + active membership из БД. Возвращает username principal.
@@ -71,7 +73,7 @@ def _require_workspace_owner(workspace_id: int, user_id: str, *, session) -> Non
 @router.get("/contexts")
 def list_contexts(
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008
+    session=Depends(get_session),
 ):
     """Доступные principal рабочие контексты: каталог и создание
     AI-исследования — любому члену, очередь — только эксперту ЦК КС."""
@@ -81,7 +83,7 @@ def list_contexts(
 @router.get("/queue")
 def verification_queue(
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008
+    session=Depends(get_session),
 ):
     """Очередь верификации ЦК КС. Роль перечитывается из БД на каждый запрос:
     при отказе данные очереди не возвращаются."""
@@ -90,6 +92,125 @@ def verification_queue(
     )
     records = repo.list_verification_queue(session=session)
     return {"records": records, "count": len(records)}
+
+
+class SubmitResearchCandidateRequest(BaseModel):
+    """Явный выбор evidence для неизменяемой передачи в ЦК КС."""
+
+    evidence_source_ids: list[int] = Field(min_length=1)
+    run_id: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/research/candidates/{candidate_id}/submit")
+def submit_research_candidate(
+    candidate_id: int,
+    body: SubmitResearchCandidateRequest,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Передаёт выбранную версию исследовательского кейса в очередь ЦК КС."""
+    service = ResearchCaseService(session)
+    workspace_id = service.candidate_workspace_id(candidate_id)
+    if workspace_id is None:
+        raise HTTPException(status_code=404, detail="Кандидат исследования не найден")
+    _require_workspace_owner(workspace_id, user_id, session=session)
+    snapshot = service.submit_for_verification(
+        candidate_id,
+        evidence_source_ids=body.evidence_source_ids,
+        submitted_by=user_id,
+        correlation_run_id=body.run_id,
+    )
+    if snapshot is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Выбранный источник недоступен. Вернитесь к разрешённым источникам.",
+        )
+    logging_audit.log_action(
+        user_id,
+        "submit_research_candidate",
+        detail={"candidate_id": candidate_id, "snapshot_id": snapshot["snapshot_id"]},
+        session=session,
+    )
+    return {**snapshot, "status_label": "Ожидает решения ЦК КС"}
+
+
+@router.get("/research/reports/{report_id}/export/{format}")
+async def export_research_report(
+    report_id: int,
+    format: str,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Скачивает PDF/DOCX только из server-side результата текущего workspace/run."""
+    if format not in {"pdf", "docx"}:
+        raise HTTPException(status_code=404, detail="Формат отчёта не поддерживается")
+    report = ResearchCaseService(session).get_report_result(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Отчёт исследования не найден")
+    _require_workspace_owner(int(report["workspace_id"]), user_id, session=session)
+    from . import pdf_export
+
+    try:
+        if format == "pdf":
+            payload = await pdf_export.export_research_report_pdf(report)
+            media_type = "application/pdf"
+            filename = f"research-report-{report_id}.pdf"
+        else:
+            payload = pdf_export.export_research_report_docx(report)
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            filename = f"research-report-{report_id}.docx"
+    except Exception as exc:
+        log.warning("Экспорт отчёта исследования недоступен: %s", exc)
+        code = "pdf_unavailable" if format == "pdf" else "docx_unavailable"
+        message = "PDF-экспорт недоступен. Выберите Word или повторите PDF." if format == "pdf" else "Word-экспорт недоступен"
+        raise HTTPException(status_code=503, detail={"code": code, "message": message}) from exc
+    logging_audit.log_action(
+        user_id,
+        "research_report_export",
+        workspace_id=int(report["workspace_id"]),
+        detail={"report_id": report_id, "format": format},
+        session=session,
+    )
+    return Response(
+        content=payload,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+class VerificationDecisionRequest(BaseModel):
+    decision: str = Field(pattern="^(vulnerability|fraud_scheme|not_confirmed)$")
+    comment: str = Field(min_length=1, max_length=4000)
+    run_id: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/verification/snapshots/{snapshot_id}/decision")
+def decide_verification_snapshot(
+    snapshot_id: int,
+    body: VerificationDecisionRequest,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Фиксирует единственное решение эксперта для submitted snapshot."""
+    authorization.require_role(
+        user_id, authorization.ROLE_CCKS_EXPERT, action="verification_decide", session=session,
+    )
+    decision = ResearchCaseService(session).decide_snapshot(
+        snapshot_id,
+        decision=body.decision,
+        comment=body.comment,
+        decided_by=user_id,
+        run_id=body.run_id,
+    )
+    if decision is None:
+        raise HTTPException(status_code=409, detail="Итог по кейсу уже зафиксирован или недоступен")
+    logging_audit.log_action(
+        user_id,
+        "verification_decision",
+        detail={"snapshot_id": snapshot_id, "decision": decision["decision"]},
+        session=session,
+    )
+    return decision
 
 
 # ── Администрирование (story 1.5): роль ЦК КС, Telegram-цели, сводный аудит ──
@@ -105,7 +226,7 @@ def _require_admin(user_id: str, *, action: str, session) -> None:
 @router.get("/admin/roles")
 def admin_roles(
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008
+    session=Depends(get_session),
 ):
     """Управление ролью ЦК КС: назначения + счётчик активных экспертов."""
     _require_admin(user_id, action="admin_roles_read", session=session)
@@ -131,7 +252,7 @@ class RoleChangeRequest(BaseModel):
 def admin_grant_role(
     body: RoleChangeRequest,
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008
+    session=Depends(get_session),
 ):
     """Назначение роли ЦК КС. 409 — лимит пяти активных экспертов исчерпан.
     Изменение аудируется обезличенно (actor + действие + решение)."""
@@ -152,7 +273,7 @@ def admin_grant_role(
 def admin_revoke_role(
     body: RoleChangeRequest,
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008
+    session=Depends(get_session),
 ):
     """Отзыв роли ЦК КС: действует на следующий запрос очереди.
     404 — активного назначения нет. Изменение аудируется обезличенно."""
@@ -172,7 +293,7 @@ def admin_revoke_role(
 @router.get("/admin/telegram-targets")
 def admin_telegram_targets(
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008
+    session=Depends(get_session),
 ):
     """Статус Telegram-целей: цель + операционный статус парсера,
     без технических payload."""
@@ -183,7 +304,7 @@ def admin_telegram_targets(
 @router.get("/admin/audit")
 def admin_audit(
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008
+    session=Depends(get_session),
 ):
     """Сводный обезличенный аудит: агрегаты action/decision/count без
     username и payload. Само чтение аудита фиксируется в журнале."""
@@ -248,6 +369,32 @@ def list_records(
         query_text=q,
         only_loophole=only_loophole,
         status=status,
+        limit=limit,
+        offset=offset,
+        session=session,
+    )
+    return {"records": records, "count": len(records)}
+
+
+@router.get("/catalog")
+def list_published_catalog(
+    bank_slugs: str | None = None,
+    period_from: date | None = None,
+    period_to: date | None = None,
+    q: str | None = None,
+    limit: int = 500,
+    offset: int = 0,
+    session=Depends(get_session),
+):
+    """Общий каталог: только опубликованные подтверждённые кейсы."""
+    slugs = [item.strip() for item in bank_slugs.split(",") if item.strip()] if bank_slugs else None
+    records = repo.list_records(
+        bank_slugs=slugs,
+        period_from=period_from,
+        period_to=period_to,
+        query_text=q,
+        only_loophole=True,
+        status="published",
         limit=limit,
         offset=offset,
         session=session,
@@ -436,7 +583,7 @@ def history(
 class ChatRequest(BaseModel):
     workspace_id: int
     message: str
-    history: list[dict] = []
+    history: list[dict] = Field(default_factory=list)
     # true → уточнение уже пройдено (сообщение — обогащённый запрос после
     # /clarify/answer). Пропускаем clarify-гейт и идём выполнять. Без этого
     # /chat заново гонял бы generate_clarifications на КАЖДЫЙ вызов → петля.
@@ -459,6 +606,15 @@ async def chat(
         workspace_id=body.workspace_id,
         query=body.message,
     )
+    if body.clarify_token is not None and not clarification_verified:
+        logging_audit.log_action(
+            user_id,
+            "chat_rejected",
+            workspace_id=body.workspace_id,
+            detail={"reason": "invalid_execution_token"},
+            session=session,
+        )
+        raise HTTPException(status_code=400, detail="Недействительный execution token")
     state: ChatState = {
         "query": body.message,
         "messages": body.history,
@@ -466,9 +622,12 @@ async def chat(
         "user_id": user_id,
         "session": session,
         "clarification_verified": clarification_verified,
+        "run_id": uuid.uuid4().hex,
     }
-    # Сохраняем сообщение пользователя.
-    repo.add_chat_message(body.workspace_id, "user", body.message, session=session)
+    # Обогащённый execution input уже представлен в истории исходным запросом
+    # и ответом на clarification, поэтому не сохраняем его третьим user-message.
+    if not clarification_verified:
+        repo.add_chat_message(body.workspace_id, "user", body.message, session=session)
     logging_audit.log_action(
         user_id, "chat", workspace_id=body.workspace_id,
         detail={"message": repo.redact_audit_text(body.message, limit=200)}, session=session,
@@ -476,13 +635,28 @@ async def chat(
 
     async def event_generator():
         import json as _json
+        report_chunks: list[str] = []
         try:
             stream = chat_graph.stream_chat(state, session=session)
             async for ev in stream:
+                if ev["event"] in {"token", "partial"}:
+                    data = ev["data"]
+                    piece = data if isinstance(data, str) else data.get("text", data.get("message", ""))
+                    if isinstance(piece, str):
+                        report_chunks.append(piece)
                 yield {
                     "event": ev["event"],
                     "data": _json.dumps(ev["data"], ensure_ascii=False, default=str),
                 }
+            result_text = state.get("answer") or "".join(report_chunks)
+            if result_text and state.get("run_id"):
+                report_id = ResearchCaseService(session).save_report_result(
+                    workspace_id=body.workspace_id,
+                    run_id=str(state["run_id"]),
+                    query=body.message,
+                    result=str(result_text),
+                )
+                yield {"event": "report", "data": _json.dumps({"report_id": report_id})}
             # Сохраняем ответ (если есть).
             try:
                 if state.get("answer"):
@@ -496,7 +670,7 @@ async def chat(
             if callable(close_stream):
                 try:
                     await close_stream()
-                except Exception:  # noqa: BLE001 — закрытие stream не должно менять исходную отмену
+                except Exception:
                     log.warning("[chat] закрытие graph stream завершилось ошибкой")
 
     return EventSourceResponse(event_generator())
@@ -505,6 +679,13 @@ async def chat(
 EXPORT_LIMIT = 10000  # максимум записей в одной выгрузке
 # Сколько знаков текста страницы кладём в CSV на одну запись.
 _CSV_TEXT_LIMIT = int(os.getenv("LOOPHOLE_CSV_TEXT_LIMIT", "10000"))
+
+
+def _csv_safe_cell(value: object) -> object:
+    """Закрывает строковую ячейку от интерпретации как формулы Excel."""
+    if isinstance(value, str) and value.lstrip(" \t").startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
 
 
 @router.post("/export")
@@ -525,7 +706,7 @@ def export(
     if body.records:
         for rid in body.records:
             r = repo.get_record(rid, session=session)
-            if r:
+            if r and r.get("status") == "published" and r.get("is_loophole") is True:
                 records.append(r)
     logging_audit.log_action(
         user_id, "export", detail={"format": body.format, "count": len(records)},
@@ -540,25 +721,25 @@ def export(
         writer = _csv.writer(buf)
         writer.writerow([
             "record_id", "title", "url", "domain", "bank_slug", "keyword",
-            "trust_score", "is_loophole", "verdict_confidence",
+            "is_loophole", "verdict_confidence",
             "verdict_reason", "verdict_model", "status",
-            "collected_at", "classified_at",
+            "published_at", "collected_at", "classified_at",
             "content_status", "raw_text_len", "raw_text",
         ])
         for r in records:
-            writer.writerow([
+            row = [
                 r.get("record_id"), r.get("title"), r.get("url"),
                 r.get("domain"), r.get("bank_slug"), r.get("keyword"),
-                r.get("trust_score"), r.get("is_loophole"),
-                r.get("verdict_confidence"), r.get("verdict_reason"),
+                r.get("is_loophole"), r.get("verdict_confidence"), r.get("verdict_reason"),
                 r.get("verdict_model"), r.get("status"),
-                r.get("collected_at"), r.get("classified_at"),
+                r.get("published_at"), r.get("collected_at"), r.get("classified_at"),
                 r.get("content_status"), r.get("raw_text_len"),
                 # текст страницы обрезаем: полный (до 200 000 знаков на запись)
                 # ×  тысячи записей строится в памяти единственного процесса —
                 # выгрузка ронял бы весь AuditLens, а не только «Лазейки».
                 (r.get("raw_text") or "")[:_CSV_TEXT_LIMIT],
-            ])
+            ]
+            writer.writerow([_csv_safe_cell(value) for value in row])
         # BOM для корректного открытия в Excel (Windows).
         return Response(
             content="\ufeff" + buf.getvalue(),
@@ -569,7 +750,9 @@ def export(
     return JSONResponse({"error": "pdf export requires Playwright"}, status_code=501)
 
 
-class FilteredExportRequest(BaseModel):
+class ReportFilterV1(BaseModel):
+    """Единый фильтр опубликованного каталога и его выгрузок."""
+
     bank_slugs: list[str] = Field(default_factory=list)
     period_from: date | None = None
     period_to: date | None = None
@@ -578,9 +761,30 @@ class FilteredExportRequest(BaseModel):
     status: str | None = None
 
 
+# Обратная совместимость прежнего имени request-модели.
+FilteredExportRequest = ReportFilterV1
+
+
+class AnalyticsQueryRequest(BaseModel):
+    sql: str = Field(min_length=1, max_length=2000)
+    params: dict[str, object] = Field(default_factory=dict)
+
+
+class ScheduledAnalyticsRequest(BaseModel):
+    """Запрос содержит только имя серверной задачи, но не raw SQL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query_id: str = Field(min_length=1, max_length=100)
+    workspace_id: int = Field(gt=0)
+    recipient_username: str = Field(min_length=1, max_length=200)
+    cron_expr: str = Field(min_length=1, max_length=100)
+    expires_at: datetime
+
+
 @router.post("/export/csv")
 def export_csv_filtered(
-    body: FilteredExportRequest,
+    body: ReportFilterV1,
     user_id: str = Depends(get_user_id),
     session=Depends(get_session),
 ):
@@ -591,8 +795,8 @@ def export_csv_filtered(
         period_from=body.period_from,
         period_to=body.period_to,
         query_text=body.query_text or None,
-        only_loophole=body.only_loophole,
-        status=body.status,
+        only_loophole=True,
+        status="published",
         limit=10000,
         include_content=True,
         session=session,
@@ -626,6 +830,164 @@ def export_csv_filtered(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=loopholes.csv"},
     )
+
+
+@router.post("/export/xlsx")
+def export_xlsx_filtered(
+    body: ReportFilterV1,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Выгружает published-каталог в XLSX без неполных файлов."""
+    records = repo.list_records(
+        bank_slugs=body.bank_slugs or None,
+        period_from=body.period_from,
+        period_to=body.period_to,
+        query_text=body.query_text or None,
+        only_loophole=True,
+        status="published",
+        limit=10_001,
+        include_content=True,
+        session=session,
+    )
+    if len(records) > 10_000:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Найдено {len(records)} записей. Сузьте фильтры до 10000 для XLSX.",
+        )
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    workbook = Workbook(write_only=True)
+    sheet = workbook.create_sheet("Опубликованные кейсы")
+    columns = ("record_id", "title", "url", "bank_slug", "snippet", "status")
+    sheet.append(list(columns))
+    for record in records:
+        sheet.append([record.get(column) for column in columns])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    logging_audit.log_action(user_id, "export_xlsx", detail={"count": len(records)}, session=session)
+    return Response(
+        content=buffer.getvalue(),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": "attachment; filename=loopholes.xlsx"},
+    )
+
+
+@router.post("/export/pdf")
+async def export_pdf_filtered(
+    body: ReportFilterV1,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Рендерит PDF того же published-каталога, что таблица и CSV/XLSX."""
+    records = repo.list_records(
+        bank_slugs=body.bank_slugs or None,
+        period_from=body.period_from,
+        period_to=body.period_to,
+        query_text=body.query_text or None,
+        only_loophole=True,
+        status="published",
+        limit=10_000,
+        include_content=False,
+        session=session,
+    )
+    from .pdf_export import export_pdf
+
+    try:
+        payload = await export_pdf(records)
+    except Exception as exc:
+        log.warning("PDF-экспорт недоступен: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "pdf_unavailable", "message": "PDF-экспорт недоступен"},
+        ) from exc
+    logging_audit.log_action(user_id, "export_pdf", detail={"count": len(records)}, session=session)
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=loopholes.pdf"},
+    )
+
+
+@router.post("/analytics/query")
+def analytics_query(
+    body: AnalyticsQueryRequest,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Выполняет allowlisted параметризованный SELECT published view."""
+    from .analytics import AnalyticsQueryError, execute_analytics_query
+
+    try:
+        result = execute_analytics_query(body.sql, body.params, session=session)
+    except AnalyticsQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logging_audit.log_action(user_id, "analytics_query", detail={"rows": len(result["rows"])}, session=session)
+    return result
+
+
+@router.get("/analytics/tasks")
+def list_analytics_tasks():
+    """Именованные задачи, которые можно включить по расписанию."""
+    from .scheduled_analytics import available_named_queries
+
+    return {"tasks": available_named_queries()}
+
+
+@router.post("/analytics/schedules")
+def enable_analytics_schedule(
+    body: ScheduledAnalyticsRequest,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Создаёт версионированный внутренний ScheduledQueryContract v1."""
+    from .scheduled_analytics import ScheduledAnalyticsService
+
+    _require_workspace_owner(body.workspace_id, user_id, session=session)
+    if not authorization.is_active_member(body.recipient_username, session=session):
+        raise HTTPException(status_code=422, detail="Получатель не является активным членом модуля")
+    try:
+        contract = ScheduledAnalyticsService(session).enable(
+            query_id=body.query_id,
+            workspace_id=body.workspace_id,
+            owner_username=user_id,
+            recipient_username=body.recipient_username,
+            cron_expr=body.cron_expr,
+            expires_at=body.expires_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    logging_audit.log_action(
+        user_id,
+        "analytics_schedule_enabled",
+        workspace_id=body.workspace_id,
+        detail={"scheduled_query_id": contract["scheduled_query_id"], "query_id": body.query_id},
+        session=session,
+    )
+    return contract
+
+
+@router.get("/analytics/schedules/{scheduled_query_id}/results")
+def scheduled_analytics_results(
+    scheduled_query_id: int,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Чтение внутреннего результата только владельцем либо указанным получателем."""
+    from .scheduled_analytics import ScheduledAnalyticsService
+
+    try:
+        results = ScheduledAnalyticsService(session).list_results(
+            scheduled_query_id,
+            username=user_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"results": results}
 
 
 @router.post("/refine")
@@ -671,7 +1033,7 @@ class ClarifyAnswerRequest(BaseModel):
 async def clarify(
     body: ClarifyRequest,
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008 — FastAPI dependency declaration
+    session=Depends(get_session),
 ):
     """Генерация уточняющих вопросов по запросу аудитора."""
     if body.workspace_id is not None:
@@ -680,7 +1042,7 @@ async def clarify(
     result = await clarify_mod.generate_clarifications(
         body.question, history=body.history
     )
-    questions = clarify_mod.clarification_questions(result)
+    questions = clarify_mod.clarification_questions(result, query=body.question)
     if questions:
         result = {**result, "questions": questions}
     if (
@@ -712,11 +1074,12 @@ async def clarify(
 async def clarify_answer(
     body: ClarifyAnswerRequest,
     user_id: str = Depends(get_user_id),
-    session=Depends(get_session),  # noqa: B008 — FastAPI dependency declaration
+    session=Depends(get_session),
 ):
     """Сборка обогащённого запроса из исходного вопроса и ответов воронки."""
     _require_workspace_owner(body.workspace_id, user_id, session=session)
-    if not clarify_mod._answers_summary(body.answers):
+    answered = clarify_mod._answers_summary(body.answers)
+    if not answered:
         logging_audit.log_action(
             user_id,
             "clarify_answer",
@@ -729,7 +1092,7 @@ async def clarify_answer(
             session=session,
         )
         return clarify_mod._clarification_answers_required()
-    if not clarify_mod.consume_clarification_token(
+    if not clarify_mod.validate_clarification_token(
         body.clarification_token,
         user_id=user_id,
         workspace_id=body.workspace_id,
@@ -742,19 +1105,27 @@ async def clarify_answer(
 
     try:
         enriched = await clarify_mod.build_enriched_question(body.question, body.answers)
-    except Exception:  # noqa: BLE001 — rewrite должен быть fail-closed
-        log.warning("[clarify_answer] rewrite failed — fail-closed")
-        enriched = clarify_mod._clarification_unavailable()
+    except Exception:
+        log.warning("[clarify_answer] deterministic assembly failed — fail-closed")
+        logging_audit.log_action(
+            user_id,
+            "clarify_answer",
+            workspace_id=body.workspace_id,
+            detail={
+                "question": repo.redact_audit_text(body.question, limit=200),
+                "complete": False,
+                "reason": "clarification_assembly_failed",
+            },
+            session=session,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "clarification_assembly_failed",
+                "message": "Не удалось подготовить исследование. Повторите отправку ответа.",
+            },
+        ) from None
     if isinstance(enriched, dict):
-        retry = {
-            **enriched,
-            "questions": clarify_mod.clarification_questions(enriched),
-            "clarification_token": clarify_mod.issue_clarification_token(
-                user_id=user_id,
-                workspace_id=body.workspace_id,
-                query=body.question,
-            ),
-        }
         logging_audit.log_action(
             user_id,
             "clarify_answer",
@@ -766,7 +1137,35 @@ async def clarify_answer(
             },
             session=session,
         )
-        return retry
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "clarification_assembly_failed",
+                "message": "Не удалось подготовить исследование. Повторите отправку ответа.",
+            },
+        )
+    # Поглощаем challenge только после успешной детерминированной сборки:
+    # внутренний 503 оставляет тот же ownership-bound token пригодным для retry.
+    if not clarify_mod.consume_clarification_token(
+        body.clarification_token,
+        user_id=user_id,
+        workspace_id=body.workspace_id,
+        query=body.question,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Уточнение устарело или не принадлежит этому запросу",
+        )
+    answer_message = "; ".join(
+        ", ".join(answer["vals"])
+        for answer in answered
+    )
+    repo.add_chat_message(
+        body.workspace_id,
+        "user",
+        answer_message,
+        session=session,
+    )
     execution_token = clarify_mod.issue_execution_token(
         user_id=user_id,
         workspace_id=body.workspace_id,
@@ -781,7 +1180,11 @@ async def clarify_answer(
         },
         session=session,
     )
-    return {"enriched_question": enriched, "execution_token": execution_token}
+    return {
+        "enriched_question": enriched,
+        "execution_token": execution_token,
+        "answer_message": answer_message,
+    }
 
 
 # ── Парсеры: общий каталог ──────────────────────────────────────────────────
@@ -925,6 +1328,14 @@ async def run_parser(
     """Ручной запуск парсера. Возвращает run_id для SSE-подписки на лог."""
     from .parsers import runner as runner_mod
 
+    parser = repo.get_parser(parser_id, session=session)
+    if parser is None:
+        raise HTTPException(status_code=404, detail="parser not found")
+    if parser.get("status") != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail="Парсер не прошёл успешную валидацию и не может быть запущен",
+        )
     try:
         # session=None: фоновая wait() переживает запрос; repo-функции сами
         # открывают db.session() с commit (request-session не коммитит фон).

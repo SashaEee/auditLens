@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import logging
+from html import escape
+from io import BytesIO
 
 log = logging.getLogger(__name__)
 
@@ -78,3 +80,76 @@ async def export_pdf(records: list[dict], *, output_path: str = "") -> bytes:
         from pathlib import Path
         Path(output_path).write_bytes(pdf)
     return pdf
+
+
+def render_research_report_html(report: dict) -> str:
+    """Собирает отдельный безопасный HTML для immutable отчёта исследования."""
+    def paragraph(value: object) -> str:
+        return "<br>".join(escape(line) for line in str(value or "").splitlines()) or "—"
+
+    evidence = report.get("evidence") or []
+    if evidence:
+        evidence_html = "".join(
+            "<li><strong>{title}</strong><br><span class=\"url\">{url}</span>"
+            "<p>{text}</p></li>".format(
+                title=paragraph(item.get("title") or "Источник без названия"),
+                url=paragraph(item.get("url")),
+                text=paragraph(item.get("extracted_text")),
+            )
+            for item in evidence
+            if isinstance(item, dict)
+        ) or "<p>Проверенные доказательства отсутствуют.</p>"
+    else:
+        evidence_html = "<p>Проверенные доказательства отсутствуют.</p>"
+    return """<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\"><style>
+body {{ font-family: Arial, sans-serif; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 32px; }}
+h1 {{ font-size: 24px; }} h2 {{ margin-top: 24px; }} .url {{ word-break: break-all; color: #555; }}
+</style></head><body><h1>Отчёт AI-исследования</h1><h2>Тема</h2><p>{query}</p>
+<h2>Итог</h2><p>{result}</p><h2>Проверенные доказательства и источники</h2><ul>{evidence}</ul>
+</body></html>""".format(
+        query=paragraph(report.get("query")), result=paragraph(report.get("result")), evidence=evidence_html
+    )
+
+
+async def export_research_report_pdf(report: dict) -> bytes:
+    """Рендерит PDF отчёта исследования, не используя небезопасный catalog renderer."""
+    try:
+        from playwright.async_api import async_playwright
+    except Exception as exc:
+        raise RuntimeError(f"Playwright недоступен: {exc}") from exc
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        try:
+            page = await browser.new_page()
+            await page.set_content(render_research_report_html(report), wait_until="networkidle")
+            return await page.pdf(format="A4", print_background=True)
+        finally:
+            await browser.close()
+
+
+def export_research_report_docx(report: dict) -> bytes:
+    """Создаёт Word-документ из тех же immutable данных, что и PDF."""
+    try:
+        from docx import Document
+    except Exception as exc:
+        raise RuntimeError(f"Word-экспорт недоступен: {exc}") from exc
+    document = Document()
+    document.add_heading("Отчёт AI-исследования", level=0)
+    document.add_heading("Тема", level=1)
+    document.add_paragraph(str(report.get("query") or ""))
+    document.add_heading("Итог", level=1)
+    document.add_paragraph(str(report.get("result") or ""))
+    document.add_heading("Проверенные доказательства и источники", level=1)
+    evidence = report.get("evidence") or []
+    if not evidence:
+        document.add_paragraph("Проверенные доказательства отсутствуют.")
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        document.add_paragraph(str(item.get("title") or "Источник без названия"), style="List Bullet")
+        document.add_paragraph(str(item.get("url") or ""))
+        if item.get("extracted_text"):
+            document.add_paragraph(str(item["extracted_text"]))
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()

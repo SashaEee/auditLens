@@ -155,13 +155,15 @@ def test_contexts_admin_gets_admin_surface(client, app_session):
     ids = {c["id"] for c in contexts}
     assert "admin" in ids
     admin = next(c for c in contexts if c["id"] == "admin")
-    assert admin["title"] == "Администрирование"
+    assert admin["title"] == "Управление доступом"
 
 
 def test_contexts_member_without_admin_role_has_no_admin(client, app_session):
     _grant_membership(app_session, "analyst")
     r = client.get("/api/loophole/contexts", headers=_auth("analyst"))
-    assert {c["id"] for c in r.json()["contexts"]} == {"catalog", "ai_research"}
+    assert {c["id"] for c in r.json()["contexts"]} == {
+        "catalog", "sources", "ai_research",
+    }
 
 
 def test_contexts_expert_has_queue_but_not_admin(client, app_session):
@@ -556,6 +558,15 @@ def test_telegram_targets_status(client, app_session):
     assert "config" not in t
 
 
+def test_telegram_targets_casts_jsonb_before_like():
+    """PostgreSQL jsonb нельзя сравнивать оператором LIKE без text-cast."""
+    from inspect import getsource
+
+    from bank_audit.loophole import repository
+
+    assert "CAST(source_keys AS TEXT) LIKE" in getsource(repository.list_telegram_targets)
+
+
 def test_telegram_targets_requires_admin(client, app_session):
     _grant_membership(app_session, "analyst")
     _seed_telegram_parser(app_session)
@@ -574,13 +585,13 @@ def test_admin_route_and_title():
     """Маршрут admin — отдельный рабочий экран с русским заголовком."""
     jsx = _jsx = JSX
     assert 'view === "admin"' in jsx
-    assert "Администрирование" in jsx
+    assert "Управление доступом" in jsx
     # Админ-экран — собственная ветка разметки, не смешанная с каталогом.
     assert _norm('{view==="admin"&&(') in _norm(jsx)
 
 
-def test_admin_fail_closed_screen_clears_data():
-    """401/403 админ-endpoint'ов: ранее загруженные данные очищаются,
+def test_admin_fail_closed_screen_clears_visible_data():
+    """401/403 видимых админ-endpoint'ов: ранее загруженные данные очищаются,
     показывается fail-closed экран без деталей отказа."""
     _norm(JSX)
     assert "Нет доступа к администрированию" in JSX
@@ -591,7 +602,6 @@ def test_admin_fail_closed_screen_clears_data():
     assert denied, "loadAdmin не обрабатывает 401/403 как fail-closed"
     branch = denied.group(0)
     assert "setAdminRoles(null)" in branch
-    assert "setAdminTargets(null)" in branch
     assert "setAdminAudit(null)" in branch
 
 
@@ -615,10 +625,11 @@ def test_admin_expert_limit_displayed():
 
 
 def test_admin_sections_and_states():
-    """Три раздела админ-поверхности; ошибка загрузки — поверхность
+    """Два нужных раздела админ-поверхности; ошибка загрузки — поверхность
     с «Повторить», а не toast и не пустое состояние."""
     assert "Роль ЦК КС" in JSX
-    assert "Статус Telegram-целей" in JSX
+    assert "Статус Telegram-целей" not in JSX
+    assert "Telegram-цели не зарегистрированы" not in JSX
     assert "Сводный аудит" in JSX
     m = re.search(r"adminError\s*\?\s*\((.{0,600})", JSX, re.DOTALL)
     assert m, "нет ветки поверхности ошибки админ-экрана"

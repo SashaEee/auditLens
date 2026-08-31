@@ -35,9 +35,10 @@ async def test_audit_hook_records_tools():
         name = "audit_db_query"
 
     class Ctx:
-        tool_calls = [ToolCall()]
-        tool_events = []
-        usage = {}
+        def __init__(self):
+            self.tool_calls = [ToolCall()]
+            self.tool_events = []
+            self.usage = {}
 
     await hook.after_iteration(Ctx())
     assert "audit_db_query" in hook.tools_used

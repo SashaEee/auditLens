@@ -2,7 +2,7 @@
 title: 'Устойчивый Telegram worker и наблюдаемый SLO'
 type: 'feature'
 created: '2026-08-29'
-status: 'draft'
+status: 'done'
 review_loop_iteration: 0
 context: []
 ---

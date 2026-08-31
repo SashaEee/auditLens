@@ -53,7 +53,7 @@ def test_migration_011_no_primary_key_or_unique():
 def test_migration_011_is_idempotent_if_not_exists():
     """Все CREATE — с IF NOT EXISTS (повторное применение не падает)."""
     sql = db_schema.migration_011_sql()
-    creates = re.findall(r"CREATE\s+(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?", sql, re.I)
+    creates = re.findall(r"CREATE\s+(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?", sql, re.IGNORECASE)
     assert creates, "нет CREATE-инструкций в 011"
     for kind, ifne in creates:
         assert ifne.strip().upper() == "IF NOT EXISTS", (

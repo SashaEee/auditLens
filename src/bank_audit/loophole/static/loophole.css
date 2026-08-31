@@ -23,8 +23,8 @@
   --on-danger-solid: oklch(100% 0 0);
   --shadow-offcanvas: oklch(0% 0 0 / 0.35);
   --phase-done-bg: oklch(48% 0.10 150 / 0.18);
-  --tool-events-bg: oklch(100% 0 0 / 0.04);
-  --option-selected-bg: oklch(58% 0.18 25 / 0.18);
+  --tool-events-bg: var(--paper-2);
+  --option-selected-bg: var(--accent-soft);
   --modal-overlay: oklch(15% 0.008 260 / 0.55);
   --shadow-dialog: oklch(0% 0 0 / 0.25);
   --verdict-neg-border: oklch(58% 0.18 25 / 0.35);
@@ -57,8 +57,8 @@ html.dark {
   --on-danger-solid: oklch(15% 0.008 260);
   --shadow-offcanvas: oklch(0% 0 0 / 0.35);
   --phase-done-bg: oklch(72% 0.14 150 / 0.18);
-  --tool-events-bg: oklch(100% 0 0 / 0.04);
-  --option-selected-bg: oklch(68% 0.18 25 / 0.18);
+  --tool-events-bg: var(--paper-2);
+  --option-selected-bg: var(--accent-soft);
   --modal-overlay: oklch(0% 0 0 / 0.55);
   --shadow-dialog: oklch(0% 0 0 / 0.25);
   --verdict-neg-border: oklch(70% 0.18 25 / 0.35);
@@ -87,22 +87,19 @@ html.dark {
   --panel: var(--surface);
   --ok: var(--pos);
   --bad: var(--neg);
-  /* Sidebar-чат — всегда тёмная поверхность (значения dark-темы AuditLens);
-     контраст текста держится ≥ 4.5:1 в обеих темах. */
-  --sidebar-bg: oklch(18% 0.008 260);
-  --sidebar-fg: oklch(96% 0.005 80);
-  --sidebar-muted: oklch(76% 0.008 260);
-  --sidebar-border: oklch(32% 0.008 260);
-  --sidebar-input: oklch(26% 0.008 260);
-  /* Пузырь пользователя в тёмном сайдбаре — «ink» dark-темы (светлый),
-     текст на нём — «paper» dark-темы (тёмный), как в чате основного сайта. */
-  --user-bubble: oklch(96% 0.005 80);
-  --on-user-bubble: oklch(15% 0.008 260);
-  --accent-deep: oklch(42% 0.18 325);
-  --on-accent: oklch(100% 0 0);
-  --sidebar-tool-call: oklch(82% 0.13 80);
-  --sidebar-tool-result: oklch(82% 0.12 150);
-  --sidebar-border-hover: oklch(40% 0.01 260);
+  /* Панель агента использует те же semantic tokens, что и оболочка AuditLens:
+     light/dark переключаются только через html.dark. */
+  --sidebar-bg: var(--surface);
+  --sidebar-fg: var(--ink);
+  --sidebar-muted: var(--ink-2);
+  --sidebar-border: var(--hair);
+  --sidebar-input: var(--paper-2);
+  --user-bubble: var(--paper-2);
+  --on-user-bubble: var(--ink);
+  --on-accent: var(--on-accent-solid);
+  --sidebar-tool-call: var(--warn);
+  --sidebar-tool-result: var(--pos);
+  --sidebar-border-hover: var(--hair-2);
   --status-ok-bg: var(--accent-soft);
   --status-ok-fg: var(--pos);
   --status-error-bg: var(--paper-2);
@@ -127,6 +124,8 @@ html.dark {
 html, body {
   margin: 0;
   height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
@@ -135,7 +134,7 @@ html, body {
 }
 
 /* Высота — от геометрии iframe (100%), без viewport-единиц (story 1.3). */
-#loophole-root { height: 100%; }
+#loophole-root { height: 100%; min-width: 0; }
 
 /* ── Layout: main + опциональная панель чата ─────────────────────────────── */
 /* Корневой overflow: hidden запрещён эпиком: прокрутку держат внутренние
@@ -144,6 +143,8 @@ html, body {
   display: grid;
   grid-template-columns: 1fr;
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 /* Панель чата открыта (маршрут AI-исследования, широкий iframe): две колонки. */
 .lp-layout-chat {
@@ -170,7 +171,7 @@ html, body {
 .lp-agent-avatar {
   width: 36px; height: 36px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  background: var(--accent);
   color: var(--on-accent);
   display: flex; align-items: center; justify-content: center;
   font-weight: 600; font-size: 0.8rem;
@@ -225,12 +226,14 @@ html, body {
   align-self: flex-end;
   background: var(--user-bubble);
   color: var(--on-user-bubble);
+  border: 1px solid var(--accent);
   border-bottom-right-radius: 4px;
 }
 .lp-bubble-assistant {
   align-self: flex-start;
   background: var(--sidebar-input);
   color: var(--sidebar-fg);
+  border: 1px solid var(--sidebar-border);
   border-bottom-left-radius: 4px;
 }
 .lp-bubble-role {
@@ -310,7 +313,7 @@ html, body {
 }
 .lp-main-header h1 {
   font-family: var(--serif);
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 600;
   margin: 0;
 }
@@ -320,12 +323,36 @@ html, body {
   flex-wrap: wrap;
   gap: 10px;
 }
-/* Рабочие контексты модуля (story 1.1): переключатель каталог/исследование/очередь. */
+/* Рабочие контексты финального макета: спокойная линейная навигация с
+   доступным активным состоянием, без конкурирующих акцентных кнопок. */
 .lp-context-nav {
   display: flex;
-  gap: 8px;
+  gap: 22px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+.lp-context-tab {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: 500 0.84rem var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lp-context-tab:hover { color: var(--fg); }
+.lp-context-tab-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.lp-context-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .lp-count-badge {
   background: var(--accent-soft);
@@ -410,8 +437,20 @@ html, body {
   flex-shrink: 0;
   align-items: flex-end;
 }
+.lp-context-panel {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+}
 .lp-filter { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
 .lp-filter label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.lp-filter-label {
   font-size: 0.75rem;
   color: var(--muted);
   font-weight: 500;
@@ -427,6 +466,27 @@ html, body {
 }
 .lp-filter input:focus, .lp-filter select:focus {
   outline: none; border-color: var(--accent);
+}
+.lp-scope-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 31px;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--paper-2);
+  color: var(--fg);
+  font-size: 0.85rem;
+}
+.lp-scope-indicator::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .lp-period { display: flex; align-items: center; gap: 6px; }
 .lp-period input { width: 130px; }
@@ -485,6 +545,7 @@ html, body {
 }
 .lp-table {
   width: 100%;
+  min-width: 1040px;
   border-collapse: collapse;
   background: var(--panel);
   font-size: 0.85rem;
@@ -525,6 +586,7 @@ html, body {
 }
 .lp-checkbox-hit input {
   margin: 0;
+  accent-color: var(--accent);
 }
 .lp-cell-title { min-width: 240px; max-width: 420px; }
 .lp-title-text { font-weight: 500; }
@@ -613,10 +675,8 @@ html, body {
 .lp-chat-messages::-webkit-scrollbar-thumb { background: var(--sidebar-border); }
 
 /* ── Адаптивность (story 1.3) — от ширины iframe ─────────────────────────── */
-/* Приоритет колонок: ниже 1400px первыми скрываются «Собрано» и URL
-   (URL остаётся доступен в деталях строки), ниже 1100px — остальные
-   второстепенные. Горизонтальная прокрутка разрешена только контейнеру
-   таблицы/очереди (.lp-table-wrap), не странице. */
+/* Две даты остаются в таблице на каждой ширине; при недостатке места
+   горизонтально прокручивается только контейнер таблицы. */
 @media (max-width: 1399px) {
   .lp-col-narrow1 { display: none; }
   /* Закреплённая панель чата при 1100–1399px — 300px (контракт §4/§5). */
@@ -646,25 +706,325 @@ html, body {
   }
 }
 
-/* Поверхность маршрута AI-исследования (без данных общей базы и очереди). */
+/* Поверхность маршрута AI-исследования: параметры, прогресс и evidence
+   собираются только из существующего chat/SSE-state. */
 .lp-research-surface {
   flex: 1;
-  padding: 48px 24px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 0.95rem;
-  line-height: 1.6;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 24px 32px;
+  color: var(--fg);
 }
-.lp-research-surface h2 {
+.lp-research-board {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.lp-research-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.lp-research-card h2 {
   font-family: var(--serif);
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 600;
   color: var(--fg);
-  margin: 0 0 8px;
+  margin: 3px 0 14px;
 }
-.lp-research-surface p { max-width: 560px; margin: 0 auto; }
+.lp-research-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.lp-research-card-head strong {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+.lp-research-kv {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.lp-research-kv div {
+  display: grid;
+  gap: 3px;
+}
+.lp-research-kv dt,
+.lp-queue-detail-grid span {
+  color: var(--muted-2);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lp-research-kv dd {
+  margin: 0;
+  line-height: 1.45;
+}
+.lp-research-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border-soft);
+}
+.lp-research-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+.lp-research-task-summary {
+  margin: 12px 0 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.lp-research-task-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lp-research-task-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+.lp-research-task-list li > span {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border: 1px solid var(--muted-2);
+  border-radius: 50%;
+}
+.lp-research-task-done > span { border-color: var(--pos); background: var(--pos); }
+.lp-research-task-running > span { border-color: var(--accent); background: var(--accent); }
+.lp-research-task-error > span { border-color: var(--neg); background: var(--neg); }
+.lp-research-evidence { grid-column: 1 / -1; }
+.lp-research-evidence p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.lp-safe-markdown h3, .lp-safe-markdown h4, .lp-safe-markdown h5 { margin: 12px 0 6px; }
+.lp-safe-markdown ul { margin: 8px 0; padding-left: 20px; }
+.lp-research-downloads { position: relative; }
+.lp-research-downloads summary { list-style: none; cursor: pointer; }
+.lp-research-downloads summary::-webkit-details-marker { display: none; }
+.lp-research-download-options {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.lp-research-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 14px;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+.lp-research-chat-note {
+  max-width: 960px;
+  margin: 14px auto 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
 
-/* Кнопка закрытия панели чата (тёмная поверхность сайдбара). */
+/* ── Очередь верификации: master-detail без новых API/действий ──────────── */
+.lp-queue-review {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.72fr) minmax(0, 1.28fr);
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+  padding: 18px 24px 24px;
+}
+.lp-queue-list,
+.lp-queue-detail {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.lp-queue-list { overflow-y: auto; }
+.lp-queue-list-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lp-queue-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  width: 100%;
+  gap: 9px;
+  align-items: start;
+  padding: 13px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.lp-queue-card:last-child { border-bottom: 0; }
+.lp-queue-card:hover { background: var(--row-hover); }
+.lp-queue-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.lp-queue-card-active {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--accent-soft);
+}
+.lp-queue-index { color: var(--accent); font-family: var(--mono); font-size: 0.72rem; }
+.lp-queue-card-copy { display: grid; gap: 5px; min-width: 0; }
+.lp-queue-card-copy strong { font-size: 0.83rem; line-height: 1.35; }
+.lp-queue-card-copy small { color: var(--muted); font-size: 0.7rem; }
+.lp-queue-confidence {
+  display: grid;
+  gap: 2px;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  text-align: right;
+}
+.lp-queue-confidence small { color: var(--muted-2); font-size: 0.58rem; }
+.lp-queue-detail {
+  align-self: start;
+  padding: 18px;
+  overflow-y: auto;
+}
+.lp-queue-detail h2 {
+  margin: 4px 0 16px;
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  line-height: 1.35;
+}
+.lp-queue-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.lp-queue-detail-grid div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+.lp-queue-detail-grid strong { font-size: 0.8rem; font-weight: 500; }
+.lp-queue-reason {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 7px;
+  background: var(--accent-soft);
+}
+.lp-queue-reason h3 { margin: 0 0 6px; font-size: 0.78rem; }
+.lp-queue-reason p { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
+.lp-queue-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ── Добавление источника: самостоятельная рабочая поверхность ──────────── */
+.lp-sources-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 24px 32px;
+}
+.lp-source-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+  gap: 16px;
+  max-width: 1120px;
+}
+.lp-source-card,
+.lp-source-list {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.lp-source-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 18px;
+}
+.lp-source-card h2,
+.lp-source-list h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.lp-source-card p { margin: 0 0 4px; }
+.lp-source-card label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.lp-source-card input,
+.lp-source-card textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+}
+.lp-source-card textarea { resize: vertical; min-height: 96px; }
+.lp-source-card input:focus-visible,
+.lp-source-card textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.lp-source-card .lp-btn-primary { align-self: flex-start; margin-top: 4px; }
+.lp-source-card .lp-parser-error { margin: 0; }
+.lp-source-note {
+  align-self: start;
+  border-left: 3px solid var(--accent);
+}
+.lp-source-list {
+  max-width: 1120px;
+  margin-top: 16px;
+  overflow: hidden;
+}
+.lp-source-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.lp-source-list .lp-parser-row { padding: 12px 18px; }
+.lp-sources-surface > .lp-log-panel { max-width: 1120px; }
+
+/* Кнопка закрытия панели чата. */
 .lp-chat-close {
   margin-left: auto;
   flex: none;
@@ -805,7 +1165,7 @@ html, body {
 /* ── Questions card (уточняющие вопросы) ─────────────────────────────────── */
 .lp-questions-card {
   border-top: 1px solid var(--sidebar-border);
-  background: var(--sidebar-input);
+  background: var(--sidebar-bg);
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -892,6 +1252,18 @@ html, body {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+.lp-clarify-hint,
+.lp-clarify-error {
+  color: var(--sidebar-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.lp-clarify-error {
+  padding: 8px 16px;
+  border-top: 1px solid var(--sidebar-border);
+  background: var(--verdict-neg-bg);
+  color: var(--neg);
 }
 
 /* ── Кнопка маленькая ────────────────────────────────────────────────────── */
@@ -1010,7 +1382,8 @@ html, body {
   gap: 4px 10px;
   margin: 2px 0;
 }
-.lp-parser-targets a {
+.lp-parser-targets a,
+.lp-parser-target-plain {
   display: inline-flex;
   align-items: center;
   min-width: 28px;
@@ -1020,6 +1393,7 @@ html, body {
   text-decoration: none;
   word-break: break-all;
 }
+.lp-parser-target-plain { color: var(--muted); }
 .lp-parser-targets a:hover { text-decoration: underline; }
 .lp-parser-error {
   margin: 0 18px 8px;
@@ -1094,6 +1468,14 @@ html, body {
 }
 .lp-log-header span:first-child { flex: 1; }
 .lp-log-done { color: var(--log-success); }
+.lp-log-running { color: var(--log-fg); }
+.lp-log-error {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--neg);
+  background: var(--accent-soft);
+  color: var(--neg);
+  font-size: 13px;
+}
 .lp-log-body {
   margin: 0;
   padding: 10px;
@@ -1421,6 +1803,9 @@ html, body {
   font-size: 0.83rem;
   line-height: 1.45;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 .lp-toast::before {
   content: "";
@@ -1435,6 +1820,21 @@ html, body {
 .lp-toast-info::before { background: var(--accent); }
 .lp-toast-success::before { background: var(--pos); }
 .lp-toast-error::before { background: var(--neg); }
+.lp-toast-action {
+  flex: none;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: var(--accent);
+  font: 600 0.78rem var(--sans);
+  cursor: pointer;
+}
+.lp-toast-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* Модал подтверждения деструктивного действия (story 1.4). */
 .lp-confirm-dialog { width: min(440px, 92vw); }
@@ -1458,6 +1858,46 @@ html, body {
   .lp-verdict-options { grid-template-columns: 1fr; }
   .lp-mark-panel { flex-wrap: wrap; }
   .lp-mark-comment { flex-basis: 100%; order: 3; }
+}
+
+@media (max-width: 991px) {
+  .lp-research-board,
+  .lp-queue-review,
+  .lp-admin { grid-template-columns: 1fr; }
+  .lp-source-grid { grid-template-columns: 1fr; }
+  .lp-source-note { align-self: stretch; }
+  .lp-parser-row { align-items: flex-start; flex-direction: column; }
+  .lp-parser-actions { flex-wrap: wrap; }
+}
+
+@media (max-width: 735px) {
+  .lp-main-header { align-items: flex-start; padding: 14px 16px; }
+  .lp-main-header h1 { font-size: 1.25rem; }
+  .lp-header-actions { width: 100%; }
+  .lp-context-nav { gap: 14px; padding: 0 16px; }
+  .lp-context-tab { min-height: 38px; }
+  .lp-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px 16px;
+  }
+  .lp-filter { min-width: 0; }
+  .lp-period { align-items: stretch; flex-direction: column; }
+  .lp-period > span { display: none; }
+  .lp-period input { width: 100%; }
+  .lp-sources-surface { padding: 16px; }
+  .lp-source-list-header { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 479px) {
+  .lp-main-header { padding: 12px; }
+  .lp-header-actions { gap: 6px; }
+  .lp-context-nav { gap: 10px 14px; padding: 0 12px; }
+  .lp-context-tab { font-size: 0.78rem; }
+  .lp-filters { grid-template-columns: 1fr; padding: 10px 12px; }
+  .lp-sources-surface { padding: 12px; }
+  .lp-source-card { padding: 14px; }
+  .lp-toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1533,12 +1973,29 @@ html, body {
   padding: 8px 12px;
 }
 
-/* ── Администрирование (story 1.5): роль ЦК КС, Telegram-цели, аудит ─────── */
+/* ── Администрирование (story 1.5): роль ЦК КС и аудит ──────────────────── */
 .lp-admin {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px 24px;
 }
+.lp-admin-section {
+  min-width: 0;
+  align-self: start;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.lp-admin .lp-col-narrow1,
+.lp-admin .lp-col-narrow2 { display: table-cell; }
+.lp-admin .lp-table { min-width: 0; font-size: 0.78rem; }
+.lp-admin .lp-table th,
+.lp-admin .lp-table td { padding: 8px 10px; }
 .lp-admin-section h2 { margin: 0 0 8px; font-size: 16px; }
 .lp-admin-form {
   display: flex;

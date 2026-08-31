@@ -17,11 +17,18 @@ from typing import Any
 from uuid import uuid4
 
 from .. import repository as repo
-from ..agent import AgentFactory, AgentResult, AgentRunContext, _safe_run_id
+from ..agent import (
+    AGENT_UNAVAILABLE_MESSAGE,
+    AgentFactory,
+    AgentResult,
+    AgentRunContext,
+    _safe_run_id,
+)
 from . import clarify as clarify_mod
 from .hooks import AuditHook, public_tool_name
 from .nanobot_agent import build_prompt
 from .state import ChatState
+from .tools_nanobot import save_loophole
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +38,9 @@ class AgentAuditError(RuntimeError):
 
 
 _SESSION_UNAVAILABLE_MESSAGE = "Исследование недоступно: отсутствует серверная сессия."
+_CLARIFICATION_ASSEMBLY_MESSAGE = (
+    "Не удалось подготовить исследование. Повторите отправку ответа."
+)
 
 
 def _normalized_run_id(value: Any, fallback: Any = None) -> str:
@@ -41,25 +51,6 @@ def _normalized_run_id(value: Any, fallback: Any = None) -> str:
         except (TypeError, ValueError):
             continue
     raise RuntimeError("Не удалось сформировать безопасный run_id")
-
-
-def _clarification_is_unavailable(value: Any) -> bool:
-    """Проверяет typed fail-closed результат clarification без запуска агента."""
-    return isinstance(value, dict) and value.get("reason") in {
-        "clarification_unavailable",
-        "answers_required",
-    }
-
-
-def _clarification_retry_state(state: ChatState, value: Any) -> tuple[list[dict], str]:
-    """Восстанавливает challenge после сбоя rewrite без перехода к execution."""
-    questions = clarify_mod.clarification_questions(value)
-    token = clarify_mod.issue_clarification_token(
-        user_id=state.get("user_id") or "unknown",
-        workspace_id=state.get("workspace_id"),
-        query=state.get("query", ""),
-    )
-    return questions, token
 
 
 def _state_history(state: ChatState) -> list[dict[str, str]]:
@@ -125,6 +116,34 @@ def _save_agent_audit(
         raise AgentAuditError("Аудит запуска недоступен") from None
 
 
+def _persist_confirmed_findings(findings: list[dict], *, session: Any) -> list[dict]:
+    """Сохраняет находки после managed-запуска через доверенную сессию сервера."""
+    if session is None:
+        return []
+    records: list[dict] = []
+    for finding in findings:
+        if not finding.get("is_loophole"):
+            continue
+        try:
+            saved = save_loophole(
+                title=str(finding["title"]),
+                url=str(finding["url"]),
+                snippet=str(finding["snippet"]),
+                bank_slug=finding.get("bank_slug"),
+                raw_text=finding.get("raw_text"),
+                is_loophole=True,
+                session=session,
+            )
+            record_id = saved.get("record_id")
+            if isinstance(record_id, int):
+                record = repo.get_record(record_id, session=session)
+                if record:
+                    records.append(record)
+        except (KeyError, TypeError, ValueError):
+            log.warning("[loophole_persistence] пропущена некорректная находка")
+    return records
+
+
 async def run_chat(
     state: ChatState,
     *,
@@ -138,51 +157,53 @@ async def run_chat(
     run_id = _normalized_run_id(state.get("run_id"))
     state = {**state, "run_id": run_id, "iterations": state.get("iterations", 0)}
 
-    # Clarify-воронка.
-    clarification = await clarify_mod.generate_clarifications(
-        state.get("query", ""),
-        history=state.get("messages"),
-    )
-    if not clarification.get("complete"):
-        questions = clarify_mod.clarification_questions(clarification)
-        token = (
-            clarify_mod.issue_clarification_token(
-                user_id=state.get("user_id") or "unknown",
-                workspace_id=workspace_id,
-                query=state.get("query", ""),
+    query = state.get("query", "")
+    if state.get("clarification_verified") is True:
+        enriched = query
+    else:
+        clarification = await clarify_mod.generate_clarifications(
+            query,
+            history=state.get("messages"),
+        )
+        if not clarification.get("complete"):
+            questions = clarify_mod.clarification_questions(clarification, query=query)
+            token = (
+                clarify_mod.issue_clarification_token(
+                    user_id=state.get("user_id") or "unknown",
+                    workspace_id=workspace_id,
+                    query=query,
+                )
+                if questions
+                else None
             )
-            if questions
-            else None
-        )
-        return {
-            **state,
-            "phase": "await_clarify",
-            "clarify_questions": questions,
-            "clarification_token": token,
-        }
+            return {
+                **state,
+                "phase": "await_clarify",
+                "clarify_questions": questions,
+                "clarification_token": token,
+            }
 
-    clarify_answers = state.get("clarify_answers") or []
-    try:
-        enriched = await clarify_mod.build_enriched_question(
-            state.get("query", ""), clarify_answers
-        )
-    except Exception:  # noqa: BLE001 — rewrite должен быть fail-closed
-        log.warning("[run_chat] clarification rewrite failed — fail-closed")
-        enriched = clarify_mod._clarification_unavailable()
-    if (
-        not clarify_answers
-        and isinstance(enriched, dict)
-        and enriched.get("reason") == "answers_required"
-    ):
-        enriched = state.get("query", "")
-    if _clarification_is_unavailable(enriched):
-        questions, token = _clarification_retry_state(state, enriched)
-        return {
-            **state,
-            "phase": "await_clarify",
-            "clarify_questions": questions,
-            "clarification_token": token,
-        }
+        clarify_answers = state.get("clarify_answers") or []
+        if clarify_answers:
+            try:
+                enriched = await clarify_mod.build_enriched_question(query, clarify_answers)
+            except Exception:  # noqa: BLE001 - fail-closed boundary перед агентом
+                log.warning("[run_chat] deterministic clarification assembly failed")
+                return {
+                    **state,
+                    "phase": "error",
+                    "error": "clarification_assembly_failed",
+                    "answer": _CLARIFICATION_ASSEMBLY_MESSAGE,
+                }
+            if not isinstance(enriched, str) or not enriched.strip():
+                return {
+                    **state,
+                    "phase": "error",
+                    "error": "clarification_assembly_failed",
+                    "answer": _CLARIFICATION_ASSEMBLY_MESSAGE,
+                }
+        else:
+            enriched = query
     state = {**state, "query": enriched}
     if session is None:
         return {
@@ -232,7 +253,14 @@ async def run_chat(
         )
     answer = result.answer
     tools_used = list(result.tools_used)
-    records = list(result.records)
+    records = _persist_confirmed_findings(list(result.records), session=session)
+    agent_unavailable = (
+        result.stop_reason == "error"
+        and "agent_error" in result.errors
+        and not records
+    )
+    if agent_unavailable:
+        answer = AGENT_UNAVAILABLE_MESSAGE
 
     # Сохраняем ответ в БД.
     if workspace_id and answer:
@@ -244,7 +272,8 @@ async def run_chat(
     return {
         **state,
         "answer": answer,
-        "phase": "done",
+        "phase": "error" if agent_unavailable else "done",
+        "error": "agent_unavailable" if agent_unavailable else None,
         "tools_used": tools_used,
         "records": records,
         "pending_table_records": records,
@@ -280,7 +309,7 @@ async def stream_chat(
         )
         if not clarification.get("complete"):
             yield {"event": "phase", "data": {"phase": "await_clarify"}}
-            questions = clarify_mod.clarification_questions(clarification)
+            questions = clarify_mod.clarification_questions(clarification, query=query)
             if questions:
                 token = clarify_mod.issue_clarification_token(
                     user_id=state.get("user_id") or "unknown",
@@ -293,25 +322,32 @@ async def stream_chat(
                 }
             return
         clarify_answers = state.get("clarify_answers") or []
-        try:
-            enriched = await clarify_mod.build_enriched_question(query, clarify_answers)
-        except Exception:  # noqa: BLE001 — rewrite должен быть fail-closed
-            log.warning("[stream_chat] clarification rewrite failed — fail-closed")
-            enriched = clarify_mod._clarification_unavailable()
-        if (
-            not clarify_answers
-            and isinstance(enriched, dict)
-            and enriched.get("reason") == "answers_required"
-        ):
+        if not clarify_answers:
             enriched = query
-    if _clarification_is_unavailable(enriched):
-        questions, token = _clarification_retry_state(state, enriched)
-        yield {"event": "phase", "data": {"phase": "await_clarify"}}
-        yield {
-            "event": "question",
-            "data": {"questions": questions, "clarification_token": token},
-        }
-        return
+        else:
+            try:
+                enriched = await clarify_mod.build_enriched_question(query, clarify_answers)
+            except Exception:  # noqa: BLE001 - fail-closed boundary SSE
+                log.warning("[stream_chat] deterministic clarification assembly failed")
+                yield {
+                    "event": "phase",
+                    "data": {
+                        "phase": "error",
+                        "error": "clarification_assembly_failed",
+                        "message": _CLARIFICATION_ASSEMBLY_MESSAGE,
+                    },
+                }
+                return
+            if not isinstance(enriched, str) or not enriched.strip():
+                yield {
+                    "event": "phase",
+                    "data": {
+                        "phase": "error",
+                        "error": "clarification_assembly_failed",
+                        "message": _CLARIFICATION_ASSEMBLY_MESSAGE,
+                    },
+                }
+                return
     state = {**state, "query": enriched}
     if session is None:
         yield {
@@ -366,16 +402,26 @@ async def stream_chat(
                 yield {"event": "token", "data": tail}
 
         answer = hook.final_answer or ""
-        records = hook.records
+        records = _persist_confirmed_findings(context.pending_records, session=session)
+        if not records:
+            records = hook.records
         errors = list(hook.tool_errors)
+        provider_failed = hook.stop_reason == "error"
+        if provider_failed:
+            answer = ""
+            if "agent_error" not in errors:
+                errors.append("agent_error")
         if hook.stop_reason == "max_iterations" and "max_iterations" not in errors:
             errors.append("max_iterations")
         if factory_failed and "agent_error" not in errors:
             errors.append("agent_error")
         if stream_failed and "agent_stream_error" not in errors:
             errors.append("agent_stream_error")
+        terminal_provider_error = provider_failed and not streamed_any and not records
         partial_explanation = ""
-        if errors:
+        if terminal_provider_error:
+            answer = AGENT_UNAVAILABLE_MESSAGE
+        elif errors:
             partial_explanation = (
                 "Исследование завершено частично: достигнут лимит итераций."
                 if "max_iterations" in errors
@@ -419,6 +465,16 @@ async def stream_chat(
 
         if records:
             yield {"event": "records", "data": records}
+        if terminal_provider_error:
+            yield {
+                "event": "phase",
+                "data": {
+                    "phase": "error",
+                    "error": "agent_unavailable",
+                    "message": AGENT_UNAVAILABLE_MESSAGE,
+                },
+            }
+            return
         yield {
             "event": "phase",
             "data": {"phase": "answer", "partial": bool(errors)},

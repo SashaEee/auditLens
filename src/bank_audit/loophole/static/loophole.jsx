@@ -13,10 +13,62 @@ const PHASES = ["clarify", "execute", "answer", "done"];
 
 const PHASE_LABELS = {
   clarify: "Уточнение",
+  await_clarify: "Ожидает уточнения",
   execute: "Выполнение",
   answer: "Ответ",
   done: "Готово",
+  error: "Ошибка",
 };
+
+function parserTargetHref(target) {
+  const value = String(target || "").trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:" ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  if (/^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(value)) {
+    return `https://t.me/${value.slice(1)}`;
+  }
+  if (/^t\.me\/\S+$/i.test(value)) {
+    return `https://${value}`;
+  }
+  return null;
+}
+
+function publicChatErrorMessage(value) {
+  const message = String(value || "").trim();
+  if (
+    !message
+    || /error calling llm|connection error|apiconnectionerror|connecterror/i.test(message)
+    || /http 5\d\d|failed to fetch|networkerror/i.test(message)
+  ) {
+    return "Аналитик временно недоступен. Повторите запрос через несколько секунд.";
+  }
+  return message;
+}
+
+function SafeMarkdown({content}) {
+  const lines = String(content || "").split(/\r?\n/);
+  const blocks = [];
+  let list = [];
+  const flushList = () => { if (list.length) { blocks.push(<ul key={`list-${blocks.length}`}>{list.map((item, i) => <li key={i}>{item}</li>)}</ul>); list = []; } };
+  lines.forEach((raw) => {
+    const line = raw.trim();
+    if (!line) { flushList(); return; }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    const bullet = /^[-*]\s+(.+)$/.exec(line);
+    if (heading) { flushList(); const Tag = `h${heading[1].length + 2}`; blocks.push(<Tag key={`h-${blocks.length}`}>{heading[2]}</Tag>); }
+    else if (bullet) list.push(bullet[1]);
+    else { flushList(); blocks.push(<p key={`p-${blocks.length}`}>{raw}</p>); }
+  });
+  flushList();
+  return <div className="lp-safe-markdown">{blocks}</div>;
+}
 
 // ── Активный слой: focus-trap / Escape / возврат фокуса (story 1.4) ─────────
 // Общий механизм для модалок и off-canvas панели чата. Фокус циклирует внутри
@@ -104,8 +156,6 @@ function LoopholeApp() {
   const [fBanks, setFBanks] = useState([]);          // выбранные slug
   const [fFrom, setFFrom] = useState("");
   const [fTo, setFTo] = useState("");
-  const [fVerdict, setFVerdict] = useState("all");   // all | loophole | not | null
-  const [fStatus, setFStatus] = useState("");
   // Сортировка
   const [sortKey, setSortKey] = useState("verdict_confidence");
   const [sortDir, setSortDir] = useState("desc");
@@ -120,11 +170,12 @@ function LoopholeApp() {
   // ── Ручная маркировка вердиктов ───────────────────────────────────────────
   const [verdictModal, setVerdictModal] = useState(null); // {record} | null
   const [markComment, setMarkComment] = useState("");
-  const [bulkComment, setBulkComment] = useState("");
   const [markBusy, setMarkBusy] = useState(false);
   // Единственный toast (story 1.4): {text, kind} — info | success | error.
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
+  const [lastCsvDownload, setLastCsvDownload] = useState(null); // {url, filename}
+  const csvUrlRef = useRef(null);
 
   // ── Чат ────────────────────────────────────────────────────────────────────
   const [chat, setChat] = useState([]);
@@ -138,7 +189,7 @@ function LoopholeApp() {
   // "error" = сетевая ошибка загрузки контекстов, иначе {contexts}.
   const [authz, setAuthz] = useState(null);
   const [contextsRetry, setContextsRetry] = useState(0);  // +1 = повторить /contexts
-  const [view, setView] = useState("catalog");        // catalog | ai_research | queue
+  const [view, setView] = useState("catalog"); // catalog | sources | ai_research | queue | admin
   // Панель агента живёт только в контексте AI-исследования (story 1.3): на
   // широком iframe закреплена справа, ниже 1100px — off-canvas поверх контента,
   // по умолчанию скрыта (открывается кнопкой «Открыть чат» в заголовке).
@@ -148,6 +199,7 @@ function LoopholeApp() {
   );
   const previousCompactViewportRef = useRef(isCompactViewport);
   const [queueRecords, setQueueRecords] = useState([]);
+  const [queueSelectedId, setQueueSelectedId] = useState(null);
   const [queueDenied, setQueueDenied] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState(false);
@@ -156,9 +208,8 @@ function LoopholeApp() {
   const [adminDenied, setAdminDenied] = useState(false);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState(false);
-  const [adminRoles, setAdminRoles] = useState(null);     // {roles, active_experts, max_experts}
-  const [adminTargets, setAdminTargets] = useState(null); // статус Telegram-целей
-  const [adminAudit, setAdminAudit] = useState(null);     // сводный обезличенный аудит
+  const [adminRoles, setAdminRoles] = useState(null); // {roles, active_experts, max_experts}
+  const [adminAudit, setAdminAudit] = useState(null); // сводный обезличенный аудит
   const [grantName, setGrantName] = useState("");
   const [adminBusy, setAdminBusy] = useState(false);
   // Отзыв роли — модальное подтверждение вместо системного диалога (story 1.4).
@@ -169,8 +220,7 @@ function LoopholeApp() {
   // Слои с focus-trap (story 1.4): панель чата, модалки, подтверждение удаления.
   const chatPanelRef = useRef(null);
   const chatTitleRef = useRef(null);
-  const parsersDialogRef = useRef(null);
-  const parsersCloseRef = useRef(null);
+  const sourcesTabRef = useRef(null);
   const verdictDialogRef = useRef(null);
   const confirmDialogRef = useRef(null);
   const confirmCancelRef = useRef(null);
@@ -186,21 +236,22 @@ function LoopholeApp() {
   const [clarificationToken, setClarificationToken] = useState(null); // одноразовый token сервера
   const [answersByQ, setAnswersByQ] = useState({});        // {qid: {selected:[], other:""}}
   const [clarifySubmitting, setClarifySubmitting] = useState(false); // идёт /clarify/answer
+  const [clarifyError, setClarifyError] = useState("");    // inline-ошибка с восстановлением ответа
   const [toolEvents, setToolEvents] = useState([]);        // badges tool_call/tool_result
 
   // ── Парсеры ───────────────────────────────────────────────────────────────
-  const [parsersOpen, setParsersOpen] = useState(false);
   const [parsers, setParsers] = useState([]);
   const parsersRequestRef = useRef(0);
   const [parsersLoading, setParsersLoading] = useState(false);
   const [parsersError, setParsersError] = useState(null);
-  const [newParserQuery, setNewParserQuery] = useState("");
+  const [newParserUrl, setNewParserUrl] = useState("");
+  const [newParserDescription, setNewParserDescription] = useState("");
   const [parsersBusy, setParsersBusy] = useState(false);
   const [parserError, setParserError] = useState("");
   const [editParserId, setEditParserId] = useState(null);     // id открытой формы
   const [editForm, setEditForm] = useState({name: "", cron_expr: "", auto_enabled: false});
   const [editError, setEditError] = useState("");
-  const [logPanel, setLogPanel] = useState(null);  // {parserId, runId, lines, done}
+  const [logPanel, setLogPanel] = useState(null);  // {parserId, runId, lines, done, error}
   const logRef = useRef(null);
   const logEsRef = useRef(null);  // активный EventSource live-лога
 
@@ -252,10 +303,7 @@ function LoopholeApp() {
       if (fBanks.length) params.set("bank_slugs", fBanks.join(","));
       if (fFrom) params.set("period_from", fFrom);
       if (fTo) params.set("period_to", fTo);
-      if (fVerdict === "loophole") params.set("only_loophole", "true");
-      else if (fVerdict === "not") params.set("only_loophole", "false");
-      if (fStatus) params.set("status", fStatus);
-      const url = `${API}/records${params.toString() ? "?" + params.toString() : ""}`;
+      const url = `${API}/catalog${params.toString() ? "?" + params.toString() : ""}`;
       const r = await fetch(url);
       if (requestGeneration !== recordsRequestRef.current) return;
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -274,12 +322,16 @@ function LoopholeApp() {
         setLoading(false);
       }
     }
-  }, [fText, fBanks, fFrom, fTo, fVerdict, fStatus]);
+  }, [fText, fBanks, fFrom, fTo]);
 
-  useEffect(() => { if (authz && authz.contexts) loadRecords(); }, [loadRecords, authz]);
+  useEffect(() => {
+    if (!authz || !authz.contexts) return undefined;
+    const timer = setTimeout(() => loadRecords(), 350);
+    return () => clearTimeout(timer);
+  }, [loadRecords, authz, fText]);
 
   // Сброс выделения и развёрнутых строк при смене фильтров.
-  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo, fVerdict, fStatus]);
+  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo]);
 
   // ── Сортировка на клиенте ──────────────────────────────────────────────────
   const sortedRecords = useMemo(() => {
@@ -331,10 +383,26 @@ function LoopholeApp() {
   // Сброс фильтров каталога — действие «Сбросить» (фильтры + пустая выборка).
   const resetFilters = () => {
     setFText(""); setFBanks([]); setFFrom(""); setFTo("");
-    setFVerdict("all"); setFStatus("");
   };
 
   // ── CSV-экспорт выделенных записей ─────────────────────────────────────────
+  const recordWord = (count) => {
+    const mod100 = count % 100;
+    const mod10 = count % 10;
+    if (mod100 >= 11 && mod100 <= 14) return "записей";
+    if (mod10 === 1) return "запись";
+    if (mod10 >= 2 && mod10 <= 4) return "записи";
+    return "записей";
+  };
+
+  const triggerCsvDownload = (download) => {
+    if (!download) return;
+    const a = document.createElement("a");
+    a.href = download.url;
+    a.download = download.filename;
+    a.click();
+  };
+
   const exportCSV = useCallback(async () => {
     if (selected.size === 0) {
       showToast("Сначала выделите перечень лазеек для выгрузки в CSV.", "info");
@@ -356,10 +424,12 @@ function LoopholeApp() {
       }
       const blob = new Blob([await r.text()], {type: "text/csv;charset=utf-8"});
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = "loopholes.csv"; a.click();
-      URL.revokeObjectURL(url);
-      showToast(`Выгружено записей: ${selected.size}.`, "success");
+      if (csvUrlRef.current) URL.revokeObjectURL(csvUrlRef.current);
+      csvUrlRef.current = url;
+      const download = {url, filename: "loopholes.csv"};
+      setLastCsvDownload(download);
+      triggerCsvDownload(download);
+      showToast(`CSV сформирован · ${selected.size} ${recordWord(selected.size)}`, "success");
     } catch (e) {
       showToast("Не удалось выгрузить CSV: " + String(e), "error");
     }
@@ -373,7 +443,10 @@ function LoopholeApp() {
   };
 
   // Таймер toast очищается при размонтировании (нет setState после unmount).
-  useEffect(() => () => clearTimeout(toastTimerRef.current), []);
+  useEffect(() => () => {
+    clearTimeout(toastTimerRef.current);
+    if (csvUrlRef.current) URL.revokeObjectURL(csvUrlRef.current);
+  }, []);
 
   // ── Ручная маркировка: POST /records/verdict + toast результата ──────────
   const markVerdict = async (ids, isLoophole, comment) => {
@@ -417,6 +490,7 @@ function LoopholeApp() {
         // Нет роли или роль отозвана: очищаем ранее загруженные защищённые
         // данные и показываем fail-closed экран без карточек и источников.
         setQueueRecords([]);
+        setQueueSelectedId(null);
         setQueueDenied(true);
         setQueueError(false);
         return;
@@ -426,7 +500,11 @@ function LoopholeApp() {
       if (requestGeneration !== queueRequestRef.current) return;
       setQueueDenied(false);
       setQueueError(false);
-      setQueueRecords(d.records || []);
+      const nextRecords = d.records || [];
+      setQueueRecords(nextRecords);
+      setQueueSelectedId(prev => nextRecords.some(r => r.record_id === prev)
+        ? prev
+        : (nextRecords[0] ? nextRecords[0].record_id : null));
     } catch (e) {
       if (requestGeneration !== queueRequestRef.current) return;
       // Сетевая/серверная ошибка — отдельная поверхность с «Повторить»,
@@ -435,6 +513,8 @@ function LoopholeApp() {
       // поверхность ошибки, а не устаревший fail-closed экран.
       setQueueDenied(false);
       setQueueError(true);
+      setQueueRecords([]);
+      setQueueSelectedId(null);
     } finally {
       if (requestGeneration === queueRequestRef.current) {
         setQueueLoading(false);
@@ -462,33 +542,51 @@ function LoopholeApp() {
     setView(id);
   };
 
-  // ── Администрирование (story 1.5): роль ЦК КС, Telegram-цели, аудит ──────
+  const onContextTabKeyDown = (event) => {
+    const tablist = event.currentTarget.closest('[role="tablist"]');
+    if (!tablist) return;
+    const tabs = [...tablist.querySelectorAll('[role="tab"]')];
+    const currentIndex = tabs.indexOf(event.currentTarget);
+    if (currentIndex < 0 || tabs.length === 0) return;
+    let nextIndex = null;
+    if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = tabs.length - 1;
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    } else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIndex = (currentIndex + 1) % tabs.length;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    nextTab.focus();
+    openContext(nextTab.dataset.contextId);
+  };
+
+  // ── Администрирование (story 1.5): роль ЦК КС и аудит ───────────────────
   const loadAdmin = useCallback(async () => {
     setAdminLoading(true);
     try {
-      const [rRoles, rTargets, rAudit] = await Promise.all([
+      const [rRoles, rAudit] = await Promise.all([
         fetch(`${API}/admin/roles`),
-        fetch(`${API}/admin/telegram-targets`),
         fetch(`${API}/admin/audit`),
       ]);
-      if ([rRoles, rTargets, rAudit].some(r => r.status === 401 || r.status === 403)) {
+      if ([rRoles, rAudit].some(r => r.status === 401 || r.status === 403)) {
         // Нет capability module_admin или она отозвана: очищаем ранее
         // загруженные данные и показываем fail-closed экран без деталей.
         setAdminRoles(null);
-        setAdminTargets(null);
         setAdminAudit(null);
         setAdminDenied(true);
         setAdminError(false);
         return;
       }
-      if (!rRoles.ok || !rTargets.ok || !rAudit.ok) throw new Error("HTTP");
-      const [dRoles, dTargets, dAudit] = await Promise.all([
-        rRoles.json(), rTargets.json(), rAudit.json(),
+      if (!rRoles.ok || !rAudit.ok) throw new Error("HTTP");
+      const [dRoles, dAudit] = await Promise.all([
+        rRoles.json(), rAudit.json(),
       ]);
       setAdminDenied(false);
       setAdminError(false);
       setAdminRoles(dRoles);
-      setAdminTargets(dTargets.targets || []);
       setAdminAudit(dAudit.events || []);
     } catch (e) {
       // Сетевая/серверная ошибка — отдельная поверхность с «Повторить».
@@ -571,11 +669,10 @@ function LoopholeApp() {
   // Состояние разговора и черновик при закрытии не сбрасываются (закрытие не
   // отменяет запущенное исследование).
   useFocusLayer(chatModalOpen, chatPanelRef, () => setChatOpen(false), chatTitleRef);
-  useFocusLayer(parsersOpen, parsersDialogRef, () => setParsersOpen(false));
   useFocusLayer(!!verdictModal, verdictDialogRef, () => setVerdictModal(null));
   // Деструктивное действие: начальный фокус — «Отмена», а не «Удалить».
   useFocusLayer(
-    !!deleteConfirm, confirmDialogRef, () => setDeleteConfirm(null), confirmCancelRef, parsersCloseRef
+    !!deleteConfirm, confirmDialogRef, () => setDeleteConfirm(null), confirmCancelRef, sourcesTabRef
   );
   // Отзыв роли ЦК КС (story 1.5): начальный фокус — «Отмена».
   useFocusLayer(!!revokeConfirm, revokeDialogRef, () => setRevokeConfirm(null), revokeCancelRef);
@@ -607,28 +704,33 @@ function LoopholeApp() {
   }, []);
 
   useEffect(() => {
-    if (!parsersOpen) return;
+    if (view !== "sources") return;
     loadParsers();
     const t = setInterval(loadParsers, 5000);
     return () => clearInterval(t);
-  }, [parsersOpen, loadParsers]);
+  }, [view, loadParsers]);
 
   // Автопрокрутка live-лога к последней строке.
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logPanel && logPanel.lines.length]);
 
-  // URL ресурса или группа мессенджера — обязательны для создания парсера.
-  const TARGET_RE = /(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\/\S+|https?:\/\/\S+|@[A-Za-z][A-Za-z0-9_]{4,31}\b/i;
-  const hasTarget = (q) => TARGET_RE.test(q || "");
+  const WEB_TARGET_RE = /^https?:\/\/\S+$/i;
+  const TELEGRAM_TARGET_RE = /^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\/\S+|^@[A-Za-z][A-Za-z0-9_]{4,31}$/i;
 
   const createParser = async () => {
-    const q = newParserQuery.trim();
-    if (!q || !workspaceId) return;
-    if (!hasTarget(q)) {
-      setParserError("Укажите URL ресурса или группу мессенджера (например: https://example.com или https://t.me/group_name)");
+    const url = newParserUrl.trim();
+    const description = newParserDescription.trim();
+    if (!url || !description || !workspaceId) return;
+    if (TELEGRAM_TARGET_RE.test(url)) {
+      setParserError("Telegram-источники подключаются через защищённый контур. Обратитесь к администратору модуля.");
       return;
     }
+    if (!WEB_TARGET_RE.test(url)) {
+      setParserError("Укажите полный URL веб-источника, начиная с http:// или https://");
+      return;
+    }
+    const q = `${description}\nИсточник: ${url}`;
     setParsersBusy(true);
     setParserError("");
     try {
@@ -649,12 +751,16 @@ function LoopholeApp() {
           );
         }
       }
-      setNewParserQuery("");
+      setNewParserUrl("");
+      setNewParserDescription("");
       const warning = d && d.warnings && d.warnings.length
         ? ` Частичное пересечение источников с парсером id ${d.warnings[0].conflict_with}.`
         : "";
       showToast(`Парсер создан.${warning}`, "success");
       await loadParsers();
+      if (d && d.parser_id && d.validation_run_id) {
+        openLog(d.parser_id, d.validation_run_id);
+      }
       return d;
     } catch (e) {
       const message = e instanceof Error && e.message ? e.message : "Сеть недоступна, парсер не создан";
@@ -675,23 +781,34 @@ function LoopholeApp() {
   };
 
   const openLog = (parserId, runId) => {
-    setLogPanel({parserId, runId, lines: [], done: null});
+    setLogPanel({parserId, runId, lines: [], done: null, error: null});
     closeLogEs();  // закрываем предыдущее соединение, чтобы не плодить утечки
     const es = new EventSource(`${API}/parsers/${parserId}/log/stream?run_id=${runId}`);
+    let terminal = false;
     logEsRef.current = es;
     es.addEventListener("log", (e) => {
       setLogPanel(prev => prev && prev.runId === runId
         ? {...prev, lines: [...prev.lines, e.data]} : prev);
     });
     es.addEventListener("done", (e) => {
+      terminal = true;
       es.close();
-      logEsRef.current = null;
+      if (logEsRef.current === es) logEsRef.current = null;
       let payload = null;
       try { payload = JSON.parse(e.data); } catch {}
-      setLogPanel(prev => prev && prev.runId === runId ? {...prev, done: payload} : prev);
+      setLogPanel(prev => prev && prev.runId === runId
+        ? {...prev, done: payload || {status: "завершено"}, error: null} : prev);
       loadParsers();
     });
-    es.onerror = () => { es.close(); logEsRef.current = null; };
+    es.onerror = () => {
+      if (terminal) return;
+      terminal = true;
+      es.close();
+      if (logEsRef.current === es) logEsRef.current = null;
+      setLogPanel(prev => prev && prev.runId === runId && !prev.done
+        ? {...prev, error: "Соединение с журналом прервано. Повторите запуск или обновите список."}
+        : prev);
+    };
   };
 
   const startParser = async (pid) => {
@@ -825,7 +942,7 @@ function LoopholeApp() {
     const serverClarificationToken = opts && opts.clarificationToken;
     const skipClarify = !!serverClarificationToken;
     const userMsg = overrideMessage != null ? overrideMessage : chatInput;
-    if (!userMsg || !userMsg.trim() || !workspaceId) return;
+    if (!userMsg || !userMsg.trim() || !workspaceId) return false;
     // Token одноразовый: новый challenge принимаем только из server-side SSE.
     setClarificationToken(null);
     // запоминаем ИСХОДНЫЙ запрос (не enriched) — из него build_enriched_question
@@ -834,13 +951,41 @@ function LoopholeApp() {
       setPendingQuery(userMsg);
       setPhase(null);
       setSubtasks([]);
+      setChat(prev => [...prev, {role: "user", content: userMsg}]);
     }
-    setChat(prev => [...prev, {role: "user", content: userMsg}]);
     if (overrideMessage == null) setChatInput("");
     setChatLoading(true);
+    setClarifyError("");
     setToolEvents([]);
     setPendingQuestions(null);
     let gotQuestions = false;
+    let terminalError = false;
+    let terminalErrorMessage = "";
+    const acceptQuestions = (questions, token) => {
+      const normalized = Array.isArray(questions) ? questions.filter(Boolean) : [];
+      if (!normalized.length) return;
+      gotQuestions = true;
+      setPendingQuestions(normalized);
+      setAnswersByQ({});
+      setClarificationToken(token || null);
+      const textQuestions = normalized.filter(q => q && q.type === "text" && q.question);
+      if (textQuestions.length) {
+        setChat(prev => {
+          const copy = [...prev];
+          textQuestions.forEach(q => {
+            const marker = `${token || "no-token"}:${q.id || q.question}`;
+            if (!copy.some(m => m._clarificationQuestion === marker)) {
+              copy.push({
+                role: "assistant",
+                content: q.question,
+                _clarificationQuestion: marker,
+              });
+            }
+          });
+          return copy;
+        });
+      }
+    };
     try {
       const resp = await fetch(`${API}/chat`, {
         method: "POST", headers: {"Content-Type": "application/json"},
@@ -860,6 +1005,9 @@ function LoopholeApp() {
       let assistantMsg = "";
       let sseEventType = "";
       let gotAnyToken = false;
+      // Идентификатор приходит только в server-side SSE и относится к
+      // immutable evidence snapshot, а не к данным, собранным браузером.
+      let reportId = null;
 
       const flushAssistant = () => {
         if (!gotAnyToken && !assistantMsg) return;
@@ -868,9 +1016,19 @@ function LoopholeApp() {
           const copy = [...prev];
           // если последнее сообщение ассистента — дописываем, иначе добавляем
           if (copy.length && copy[copy.length - 1].role === "assistant" && copy[copy.length - 1]._live) {
-            copy[copy.length - 1] = {...copy[copy.length - 1], content: finalText, _live: false};
+            copy[copy.length - 1] = {
+              ...copy[copy.length - 1],
+              content: finalText,
+              _live: false,
+              ...(reportId ? {report_id: reportId} : {}),
+            };
           } else {
-            copy.push({role: "assistant", content: finalText, _live: false});
+            copy.push({
+              role: "assistant",
+              content: finalText,
+              _live: false,
+              ...(reportId ? {report_id: reportId} : {}),
+            });
           }
           return copy;
         });
@@ -927,27 +1085,27 @@ function LoopholeApp() {
               }
               case "phase": {
                 const p = (payload && payload.phase) || payload;
-                if (typeof p === "string") setPhase(p);
+                if (typeof p === "string") {
+                  setPhase(p);
+                  if (p === "error") {
+                    terminalError = true;
+                    terminalErrorMessage = publicChatErrorMessage(
+                      payload && typeof payload.message === "string"
+                        ? payload.message
+                        : "Исследование не запустилось."
+                    );
+                  }
+                }
                 break;
               }
               case "question": {
                 // payload: {questions:[...]} | один объект вопроса | массив вопросов
                 if (payload && Array.isArray(payload.questions)) {
-                  gotQuestions = true;
-                  setPendingQuestions(payload.questions);
-                  setAnswersByQ({});
-                  setClarificationToken(payload.clarification_token || null);
+                  acceptQuestions(payload.questions, payload.clarification_token);
                 } else if (payload && typeof payload === "object" && payload.question) {
-                  gotQuestions = true;
-                  setPendingQuestions(prev => {
-                    const arr = prev || [];
-                    if (arr.some(q => q.id === payload.id)) return arr;
-                    return [...arr, payload];
-                  });
+                  acceptQuestions([payload], payload.clarification_token);
                 } else if (Array.isArray(payload)) {
-                  gotQuestions = true;
-                  setPendingQuestions(payload);
-                  setAnswersByQ({});
+                  acceptQuestions(payload, null);
                 }
                 break;
               }
@@ -985,8 +1143,25 @@ function LoopholeApp() {
               case "done": {
                 // финализация — закрываем "живое" сообщение ассистента
                 flushAssistant();
-                if (sseEventType === "done") {
+                if (sseEventType === "done" && !terminalError) {
                   setPhase("done");
+                }
+                break;
+              }
+              case "report": {
+                if (payload && Number.isInteger(payload.report_id) && payload.report_id > 0) {
+                  reportId = payload.report_id;
+                  setChat(prev => {
+                    const copy = [...prev];
+                    for (let index = copy.length - 1; index >= 0; index -= 1) {
+                      if (copy[index].role === "assistant" && !copy[index]._clarificationQuestion) {
+                        copy[index] = {...copy[index], report_id: reportId};
+                        break;
+                      }
+                    }
+                    return copy;
+                  });
+                  flushAssistant();
                 }
                 break;
               }
@@ -998,6 +1173,14 @@ function LoopholeApp() {
         }
       }
       flushAssistant();
+      if (terminalError) {
+        if (!skipClarify) setChatInput(userMsg);
+        setChat(prev => [...prev, {
+          role: "assistant",
+          content: `Ошибка: ${terminalErrorMessage}`,
+        }]);
+        return false;
+      }
       if (!gotQuestions) {
         setPhase("done");
         // Заглушку показываем ТОЛЬКО если ассистент так и не добавил ни одного
@@ -1013,18 +1196,26 @@ function LoopholeApp() {
           return prev;
         });
       }
+      return true;
     } catch (e) {
-      setChat(prev => [...prev, {role: "assistant", content: "Ошибка: " + String(e)}]);
+      const message = publicChatErrorMessage(
+        e instanceof Error && e.message ? e.message : String(e)
+      );
+      setPhase("error");
+      if (!skipClarify) setChatInput(userMsg);
+      setChat(prev => [...prev, {role: "assistant", content: "Ошибка: " + message}]);
+      return false;
     } finally {
       setChatLoading(false);
-      // Подтягиваем в таблицу лазейки, которые агент сохранил за этот ход
-      // (audit_save_loophole пишет в loophole_record во время стрима).
+      // Подтягиваем в таблицу подтверждённые находки, сохранённые серверным
+      // этапом после завершения managed-запуска.
       loadRecords();
     }
   }, [chatInput, workspaceId, chat, loadRecords]);
 
   // ── Уточняющие вопросы: helpers ──────────────────────────────────────────
   const toggleAnswer = (qid, value, multi) => {
+    setClarifyError("");
     setAnswersByQ(prev => {
       const cur = prev[qid] || {selected: [], other: ""};
       const sel = cur.selected;
@@ -1037,6 +1228,7 @@ function LoopholeApp() {
   };
 
   const setOtherText = (qid, text) => {
+    setClarifyError("");
     setAnswersByQ(prev => ({...prev, [qid]: {...(prev[qid] || {selected: [], other: ""}), other: text}}));
   };
 
@@ -1047,21 +1239,44 @@ function LoopholeApp() {
       || !clarificationToken
       || clarifySubmitting
     ) return;
-    setClarifySubmitting(true);
     const q = pendingQuestions[0];
     const questionsForRetry = pendingQuestions;
     const clarificationTokenForRetry = clarificationToken;
+    const answersForRetry = answersByQ;
+    const inputForRetry = chatInput;
     const answersPayload = pendingQuestions.map(pq => {
-      const a = answersByQ[pq.id] || {selected: [], other: ""};
+      const a = pq.type === "text"
+        ? {selected: [], other: chatInput.trim()}
+        : (answersByQ[pq.id] || {selected: [], other: ""});
       return {
         question: pq.question,
-        selected: a.selected,
-        other: a.other,
+        selected: (a.selected || []).filter(Boolean),
+        other: (a.other || "").trim(),
       };
     });
-    // Закрываем окно ДО запроса: /clarify/answer ждёт LLM до ~70с, иначе
-    // пользователь видит «зависшую» карточку без какой-либо реакции.
+    const missingAnswer = answersPayload.some(a => !a.selected.length && !a.other);
+    if (missingAnswer) {
+      setClarifyError("Ответьте на уточняющий вопрос перед запуском исследования.");
+      return;
+    }
+
+    const optimisticContent = answersPayload
+      .map(a => [...a.selected, a.other].filter(Boolean).join(", "))
+      .filter(Boolean)
+      .join("; ");
+    const optimisticId = `clarify-answer-${Date.now()}-${Math.random()}`;
+    setClarifySubmitting(true);
+    setClarifyError("");
+    setChat(prev => [...prev, {
+      role: "user",
+      content: optimisticContent,
+      _clarificationAnswer: optimisticId,
+    }]);
+    setChatInput("");
+    // Optimistic-state: ответ виден сразу, controls скрыты, busy остаётся
+    // непрерывным до окончания следующего /chat с execution token.
     setPendingQuestions(null);
+    setClarificationToken(null);
     setAnswersByQ({});
     try {
       const r = await fetch(`${API}/clarify/answer`, {
@@ -1075,29 +1290,63 @@ function LoopholeApp() {
           clarification_token: clarificationToken,
         }),
       });
-      const d = await r.json();
-      if (d && d.reason === "answers_required") {
-        setPendingQuestions(questionsForRetry);
-        setClarificationToken(clarificationTokenForRetry);
-        setAnswersByQ({});
-        return;
-      }
-      if (d && d.reason === "clarification_unavailable" && d.clarification_token) {
-        setPendingQuestions(d.questions);
-        setClarificationToken(d.clarification_token);
-        setAnswersByQ({});
-        return;
+      const d = await r.json().catch(() => null);
+      if (!r.ok) {
+        const detail = d && d.detail;
+        const message = typeof detail === "string"
+          ? detail
+          : (detail && detail.message) || "Не удалось отправить ответ.";
+        const requestError = new Error(message);
+        requestError.status = r.status;
+        throw requestError;
       }
       const enriched = (d && d.enriched_question) || (typeof d === "string" ? d : "");
       const executionToken = d && d.execution_token;
       if (enriched && executionToken) {
+        const confirmedContent = d && typeof d.answer_message === "string"
+          ? d.answer_message
+          : optimisticContent;
+        setChat(prev => prev.map(message => (
+          message._clarificationAnswer === optimisticId
+            ? {...message, content: confirmedContent}
+            : message
+        )));
         // Только server-side execution token разрешает продолжить после clarify.
-        await sendChat(enriched, {clarificationToken: executionToken});
-      } else if (!r.ok || !executionToken) {
+        const chatStarted = await sendChat(enriched, {clarificationToken: executionToken});
+        if (!chatStarted) {
+          setChatInput(enriched);
+          setClarifyError(
+            "Ответ на уточнение сохранён, но исследование не запустилось. "
+            + "Подготовленный запрос оставлен в поле — отправьте его ещё раз."
+          );
+        }
+      } else {
         throw new Error("Не удалось подтвердить уточнение");
       }
     } catch (e) {
-      setChat(prev => [...prev, {role: "assistant", content: "Ошибка отправки ответа: " + String(e)}]);
+      setChat(prev => prev.filter(message => message._clarificationAnswer !== optimisticId));
+      if (e && e.status === 400) {
+        const originalQuery = (pendingQuery || q.question || "").trim();
+        setPendingQuestions(null);
+        setClarificationToken(null);
+        setAnswersByQ({});
+        setChatInput(
+          `${originalQuery}\n\nОтвет на уточнение: ${optimisticContent}`.trim()
+        );
+        setPhase("error");
+        setClarifyError(
+          "Уточнение истекло или уже использовано. "
+          + "Исходный запрос и ответ оставлены в поле — отправьте их заново."
+        );
+        return;
+      }
+      setPendingQuestions(questionsForRetry);
+      setClarificationToken(clarificationTokenForRetry);
+      setAnswersByQ(answersForRetry);
+      setChatInput(inputForRetry);
+      setClarifyError(e instanceof Error && e.message
+        ? e.message
+        : "Не удалось отправить ответ.");
     } finally {
       setClarifySubmitting(false);
     }
@@ -1110,8 +1359,45 @@ function LoopholeApp() {
     }
   }, [chat, chatLoading, pendingQuestions, subtasks, toolEvents]);
 
-  const fmtDate = (v) => v ? new Date(v).toLocaleDateString("ru-RU") : "—";
+  const fmtDate = (v) => {
+    if (!v) return "—";
+    const date = new Date(v);
+    if (Number.isNaN(date.getTime())) return "—";
+    const hasTime = /[T ]\d{2}:\d{2}/.test(String(v));
+    return hasTime
+      ? date.toLocaleString("ru-RU", {
+          day: "2-digit", month: "2-digit", year: "numeric",
+          hour: "2-digit", minute: "2-digit",
+        })
+      : date.toLocaleDateString("ru-RU");
+  };
   const fmtNum = (v) => v != null ? Number(v).toFixed(2) : "—";
+
+  const RECORD_STATUS_LABELS = {
+    published: "подтверждено",
+    verified: "подтверждено",
+    pending: "на проверке",
+    classified: "классифицировано",
+    monitoring: "мониторинг",
+    rejected: "отклонено",
+    new: "новая",
+  };
+  const recordStatusLabel = (status) => status ? (RECORD_STATUS_LABELS[status] || "—") : "—";
+
+  const queueSelected = queueRecords.find(r => r.record_id === queueSelectedId)
+    || queueRecords[0]
+    || null;
+  const lastResearchQuery = [...chat].reverse().find(
+    message => message.role === "user" && !message._clarificationAnswer
+  );
+  const lastResearchAnswer = [...chat].reverse().find(
+    message => message.role === "assistant" && !message._clarificationQuestion
+  );
+  const phasePosition = phase ? PHASES.indexOf(phase) : -1;
+  const researchProgress = phase === "done"
+    ? 100
+    : (phasePosition >= 0 ? Math.round(((phasePosition + 1) / PHASES.length) * 100) : 0);
+  const completedSubtasks = subtasks.filter(task => task.status === "done").length;
 
   const verdictLabel = (r) => {
     if (r.is_loophole === true) return "лазейка";
@@ -1202,6 +1488,15 @@ function LoopholeApp() {
 
   // Фаза: индекс в PHASES для подсветки. await_clarify показываем на шаге clarify.
   const phaseIdx = phase === "await_clarify" ? 0 : (phase ? PHASES.indexOf(phase) : -1);
+  const currentQuestions = pendingQuestions || [];
+  const pendingTextQuestion = currentQuestions.find(q => q && q.type === "text") || null;
+  const selectionQuestions = currentQuestions.filter(q => q && q.type !== "text");
+  const textClarification = !!pendingTextQuestion && selectionQuestions.length === 0;
+  const selectionAnswersComplete = selectionQuestions.length > 0 && selectionQuestions.every(q => {
+    const answer = answersByQ[q.id] || {selected: [], other: ""};
+    return answer.selected.length > 0 || !!answer.other.trim();
+  });
+  const agentBusy = clarifySubmitting || chatLoading;
 
   // ── Авторизация: fail-closed поверхности без защищённых данных ────────────
   if (authz === null) {
@@ -1235,8 +1530,9 @@ function LoopholeApp() {
         <header className="lp-main-header">
           <h1>
             {view === "ai_research" ? "Новое AI-исследование"
+              : view === "sources" ? "Новый парсер веб-источника"
               : view === "queue" ? "Очередь верификации"
-              : view === "admin" ? "Администрирование"
+              : view === "admin" ? "Управление доступом"
               : "Лазейки и уязвимости в продуктах банка"}
           </h1>
           <div className="lp-header-actions">
@@ -1246,37 +1542,38 @@ function LoopholeApp() {
               </button>
             )}
             {view === "catalog" && (<>
-            <span className="lp-count-badge">
-              {loading ? "…" : sortedRecords.length} записей
-            </span>
-            <button className="lp-btn" onClick={() => setParsersOpen(true)}
-                    disabled={!workspaceId} title="Управление парсерами">
-              ⚙ Парсеры
-            </button>
-            <button className="lp-btn lp-btn-primary" onClick={exportCSV}
+            <button className={"lp-btn" + (selected.size > 0 ? " lp-btn-primary" : "")}
+                    onClick={exportCSV}
                     disabled={loading || sortedRecords.length === 0}
                     title="Выгрузить выделенные записи в CSV (не более 10000)">
-              ⬇ CSV
+              CSV{selected.size > 0 ? ` · ${selected.size} ${recordWord(selected.size)}` : ""}
             </button>
             </>)}
             {view !== "ai_research" && (
             <button className="lp-btn"
                     onClick={view === "queue" ? loadQueue
-                      : view === "admin" ? loadAdmin : loadRecords}
-                    disabled={loading || queueLoading || adminLoading}>
-              {(loading || queueLoading || adminLoading) ? "…" : "↻ Обновить"}
+                      : view === "admin" ? loadAdmin
+                      : view === "sources" ? loadParsers : loadRecords}
+                    disabled={loading || queueLoading || adminLoading || parsersLoading}>
+              {(loading || queueLoading || adminLoading || parsersLoading) ? "…" : "Обновить"}
             </button>
             )}
           </div>
         </header>
 
         {/* Рабочие контексты, доступные principal (список пришёл с сервера) */}
-        <nav className="lp-context-nav" aria-label="Рабочие контексты">
+        <nav className="lp-context-nav" role="tablist" aria-label="Рабочие контексты"
+             aria-orientation="horizontal">
           {authz.contexts.map(c => {
             const active = c.id === view;
             return (
-              <button key={c.id} type="button"
-                      className={"lp-btn" + (active ? " lp-btn-primary" : "")}
+              <button key={c.id} type="button" role="tab"
+                      id={`lp-tab-${c.id}`} aria-selected={active}
+                      aria-controls={`lp-panel-${c.id}`} tabIndex={active ? 0 : -1}
+                      data-context-id={c.id}
+                      ref={c.id === "sources" ? sourcesTabRef : null}
+                      className={"lp-context-tab" + (active ? " lp-context-tab-active" : "")}
+                      onKeyDown={onContextTabKeyDown}
                       onClick={() => openContext(c.id)}>
                 {c.title}
               </button>
@@ -1284,7 +1581,14 @@ function LoopholeApp() {
           })}
         </nav>
 
-        {view === "catalog" && (<>
+        {authz.contexts.filter(c => c.id !== view).map(c => (
+          <section key={`lp-panel-placeholder-${c.id}`} id={`lp-panel-${c.id}`}
+                   role="tabpanel" aria-labelledby={`lp-tab-${c.id}`} hidden />
+        ))}
+
+        {view === "catalog" && (
+        <section className="lp-context-panel lp-catalog-panel" id="lp-panel-catalog"
+                 role="tabpanel" aria-labelledby="lp-tab-catalog">
         {/* Фильтры */}
         <div className="lp-filters">
           <div className="lp-filter">
@@ -1311,71 +1615,32 @@ function LoopholeApp() {
             </div>
           </div>
           <div className="lp-filter">
-            <label htmlFor="lp-filter-from">Период сбора</label>
+            <label htmlFor="lp-filter-from">Дата публикации — с</label>
             <div className="lp-period">
               <input id="lp-filter-from" type="date" value={fFrom}
                      onChange={e => setFFrom(e.target.value)}/>
               <span>—</span>
-              <label className="lp-sr-only" htmlFor="lp-filter-to">Конец периода сбора</label>
+              <label className="lp-sr-only" htmlFor="lp-filter-to">Дата публикации — по</label>
               <input id="lp-filter-to" type="date" value={fTo}
                      onChange={e => setFTo(e.target.value)}/>
             </div>
           </div>
-          <div className="lp-filter">
-            <label htmlFor="lp-filter-verdict">Вердикт</label>
-            <select id="lp-filter-verdict" value={fVerdict} onChange={e => setFVerdict(e.target.value)}>
-              <option value="all">все</option>
-              <option value="loophole">лазейка</option>
-              <option value="not">не лазейка</option>
-            </select>
+          <div className="lp-filter lp-filter-scope">
+            <span className="lp-filter-label">Тип данных</span>
+            <span className="lp-scope-indicator"
+                  aria-label="Каталог показывает только лазейки">лазейки</span>
           </div>
-          <div className="lp-filter">
-            <label htmlFor="lp-filter-status">Статус</label>
-            <select id="lp-filter-status" value={fStatus} onChange={e => setFStatus(e.target.value)}>
-              <option value="">любой</option>
-              <option value="new">Новый</option>
-              <option value="classified">Классифицирован</option>
-              <option value="exported">Выгружен</option>
-            </select>
+          <div className="lp-filter lp-filter-scope">
+            <span className="lp-filter-label">Статус публикации</span>
+            <span className="lp-scope-indicator"
+                  aria-label="Каталог показывает только опубликованные записи">
+              опубликованные
+            </span>
           </div>
           <div className="lp-filter lp-filter-reset">
             <button className="lp-btn" onClick={resetFilters}>Сбросить</button>
           </div>
         </div>
-
-        {/* Панель массовой маркировки */}
-        {selected.size > 0 && (
-          <div className="lp-mark-panel">
-            <div className="lp-mark-meta">
-              <span className="lp-mark-eyebrow">Массовая маркировка</span>
-              <span className="lp-mark-count">{selected.size}</span>
-            </div>
-            <label className="lp-sr-only" htmlFor="lp-bulk-comment">Комментарий аудитора</label>
-            <input id="lp-bulk-comment" type="text" className="lp-mark-comment" value={bulkComment}
-                   onChange={e => setBulkComment(e.target.value)}
-                   placeholder="Комментарий аудитора (необязательно)"/>
-            <div className="lp-mark-actions">
-              <button className="lp-mark-btn lp-mark-btn-bad" disabled={markBusy}
-                      onClick={async () => {
-                        const ok = await markVerdict([...selected], true, bulkComment.trim());
-                        if (ok) setBulkComment("");
-                      }}>
-                <span className="lp-verdict-dot"></span>Лазейка
-              </button>
-              <button className="lp-mark-btn lp-mark-btn-ok" disabled={markBusy}
-                      onClick={async () => {
-                        const ok = await markVerdict([...selected], false, bulkComment.trim());
-                        if (ok) setBulkComment("");
-                      }}>
-                <span className="lp-verdict-dot"></span>Обычный запрос
-              </button>
-              <button className="lp-btn lp-btn-sm" disabled={markBusy}
-                      onClick={() => setSelected(new Set())}>
-                Снять выбор
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Таблица: три разные поверхности — загрузка, пусто, ошибка (1.4) */}
         <div className="lp-table-wrap">
@@ -1421,12 +1686,6 @@ function LoopholeApp() {
                       Доверие{sortArrow("verdict_confidence")}
                     </button>
                   </th>
-                  <th className="lp-col-narrow2" {...sortableThProps("trust_score")}>
-                    <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("trust_score")}>
-                      Надёжность{sortArrow("trust_score")}
-                    </button>
-                  </th>
                   <th {...sortableThProps("is_loophole")}>
                     <button type="button" className="lp-sort-button"
                             onClick={() => toggleSort("is_loophole")}>
@@ -1439,7 +1698,13 @@ function LoopholeApp() {
                       Статус{sortArrow("status")}
                     </button>
                   </th>
-                  <th className="lp-col-narrow1" {...sortableThProps("collected_at")}>
+                  <th {...sortableThProps("published_at")}>
+                    <button type="button" className="lp-sort-button"
+                            onClick={() => toggleSort("published_at")}>
+                      Дата публикации{sortArrow("published_at")}
+                    </button>
+                  </th>
+                  <th {...sortableThProps("collected_at")}>
                     <button type="button" className="lp-sort-button"
                             onClick={() => toggleSort("collected_at")}>
                       Собрано{sortArrow("collected_at")}
@@ -1482,7 +1747,6 @@ function LoopholeApp() {
                       </td>
                       <td className="lp-col-narrow2">{r.bank_slug || "—"}</td>
                       <td className="lp-col-narrow2">{fmtNum(r.verdict_confidence)}</td>
-                      <td className="lp-col-narrow2">{fmtNum(r.trust_score)}</td>
                       <td onClick={e => e.stopPropagation()}>
                         <button type="button"
                                 className={"lp-verdict-chip " +
@@ -1500,9 +1764,10 @@ function LoopholeApp() {
                         )}
                       </td>
                       <td className="lp-col-narrow2">
-                        <span className="lp-status">{r.status || "—"}</span>
+                        <span className="lp-status">{recordStatusLabel(r.status)}</span>
                       </td>
-                      <td className="lp-cell-date lp-col-narrow1">{fmtDate(r.collected_at)}</td>
+                      <td className="lp-cell-date lp-cell-published">{fmtDate(r.published_at)}</td>
+                      <td className="lp-cell-date lp-cell-collected">{fmtDate(r.collected_at)}</td>
                       <td className="lp-cell-url lp-col-narrow1">
                         {r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer"
                                      onClick={e => e.stopPropagation()}>открыть ↗</a>
@@ -1522,24 +1787,265 @@ function LoopholeApp() {
             </table>
           )}
         </div>
-        </>)}
+        </section>)}
+
+        {/* ── Добавление веб-источника: создание, проверка, статус и лог
+               находятся на отдельной рабочей поверхности, а не в модальном окне. ── */}
+        {view === "sources" && (
+          <section className="lp-sources-surface" id="lp-panel-sources"
+                   role="tabpanel" aria-labelledby="lp-tab-sources">
+            <div className="lp-source-grid">
+              <form className="lp-source-card" onSubmit={e => { e.preventDefault(); createParser(); }}>
+                <div className="lp-eyebrow">Веб-источник</div>
+                <h2>Параметры веб-источника</h2>
+                <p className="lp-muted">
+                  Укажите страницу и опишите, какие условия, тарифы или исключения нужно собирать.
+                </p>
+                <label htmlFor="lp-parser-url">URL веб-источника</label>
+                <input id="lp-parser-url" type="url" value={newParserUrl}
+                       onChange={e => { setNewParserUrl(e.target.value); setParserError(""); }}
+                       placeholder="https://bank.example/tariffs" />
+                <label htmlFor="lp-parser-description">Что собирать</label>
+                <textarea id="lp-parser-description" rows={4} value={newParserDescription}
+                          onChange={e => { setNewParserDescription(e.target.value); setParserError(""); }}
+                          placeholder="Тарифы, комиссии и условия обслуживания" />
+                {parserError && <div className="lp-parser-error" role="alert">{parserError}</div>}
+                <button type="submit" className="lp-btn lp-btn-primary"
+                        disabled={parsersBusy || !workspaceId
+                          || !newParserUrl.trim() || !newParserDescription.trim()}>
+                  {parsersBusy ? "Проверяем…" : "Создать и проверить"}
+                </button>
+              </form>
+              <aside className="lp-source-card lp-source-note" aria-label="Подключение Telegram">
+                <div className="lp-eyebrow">Отдельный контур</div>
+                <h2>Telegram-источники</h2>
+                <p>
+                  Telegram-источники подключаются администратором через защищённый контур.
+                  Веб-форма не принимает токены, приватные приглашения и учётные данные.
+                </p>
+                <p className="lp-muted">
+                  После создания веб-парсер сразу проходит проверочный запуск; журнал появляется ниже.
+                </p>
+              </aside>
+            </div>
+
+            <section className="lp-source-list" aria-labelledby="lp-source-list-title">
+              <div className="lp-source-list-header">
+                <div>
+                  <div className="lp-eyebrow">Контроль источников</div>
+                  <h2 id="lp-source-list-title">Подключённые веб-парсеры</h2>
+                </div>
+                <button type="button" className="lp-btn" onClick={loadParsers}
+                        disabled={parsersLoading}>Обновить список</button>
+              </div>
+              {parsersLoading ? (
+                <div className="lp-empty-state">Загрузка парсеров…</div>
+              ) : parsersError ? (
+                <div className="lp-empty-state">
+                  <p>Не удалось загрузить парсеры. Проверьте соединение и повторите.</p>
+                  <button className="lp-btn" onClick={loadParsers}>Повторить</button>
+                </div>
+              ) : parsers.length === 0 ? (
+                <div className="lp-empty-state">Парсеры не созданы.</div>
+              ) : parsers.map(p => {
+                const st = p.last_run && p.last_run.status;
+                return (
+                  <article key={p.parser_id} className="lp-parser-row">
+                    <div className="lp-parser-info">
+                      <div className="lp-parser-name">
+                        {p.name || `Парсер #${p.parser_id}`}
+                        {p.is_running && <span className="lp-badge lp-badge-run">выполняется</span>}
+                        {!p.is_running && st === "success" && <span className="lp-badge lp-badge-ok">успех</span>}
+                        {!p.is_running && st === "error" && <span className="lp-badge lp-badge-err">ошибка</span>}
+                        {!p.is_running && st === "empty" && <span className="lp-badge lp-badge-empty">0 результатов</span>}
+                        {p.needs_attention && <span className="lp-badge lp-badge-attn">требует вмешательства</span>}
+                      </div>
+                      {p.targets && p.targets.length > 0 && (
+                        <div className="lp-parser-targets">
+                          {p.targets.map((target, i) => (
+                            parserTargetHref(target) ? (
+                              <a key={i} href={parserTargetHref(target)} target="_blank"
+                                 rel="noopener noreferrer">{target}</a>
+                            ) : (
+                              <span key={i} className="lp-parser-target-plain">{target}</span>
+                            )
+                          ))}
+                        </div>
+                      )}
+                      <div className="lp-parser-meta">
+                        Источников в базе: {p.records_count ?? 0}
+                        {p.created_by && ` · автор: ${p.created_by}`}
+                      </div>
+                      {editParserId === p.parser_id && (
+                        <div className="lp-parser-edit">
+                          <label htmlFor={`lp-parser-name-${p.parser_id}`}>Название
+                            <input id={`lp-parser-name-${p.parser_id}`} type="text"
+                                   value={editForm.name}
+                                   onChange={e => setEditForm({...editForm, name: e.target.value})} />
+                          </label>
+                          <label htmlFor={`lp-parser-cron-${p.parser_id}`}>Расписание (cron)
+                            <input id={`lp-parser-cron-${p.parser_id}`} type="text"
+                                   placeholder="0 5 * * *" value={editForm.cron_expr}
+                                   disabled={!editForm.auto_enabled}
+                                   onChange={e => setEditForm({...editForm, cron_expr: e.target.value})} />
+                          </label>
+                          <label className="lp-parser-edit-toggle"
+                                 htmlFor={`lp-parser-auto-${p.parser_id}`}>
+                            <input id={`lp-parser-auto-${p.parser_id}`} type="checkbox"
+                                   checked={editForm.auto_enabled}
+                                   onChange={e => setEditForm({...editForm, auto_enabled: e.target.checked})} />
+                            Автозапуск включён
+                          </label>
+                          {editError && <div className="lp-parser-error">{editError}</div>}
+                          <div className="lp-parser-edit-actions">
+                            <button className="lp-btn lp-btn-sm lp-btn-primary"
+                                    onClick={saveEdit} disabled={parsersBusy}>Сохранить</button>
+                            <button className="lp-btn lp-btn-sm"
+                                    onClick={() => setEditParserId(null)}>Отмена</button>
+                            <button className="lp-btn lp-btn-sm"
+                                    onClick={() => healParser(p.parser_id)} disabled={parsersBusy}>
+                              Анализ и восстановление
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="lp-parser-actions">
+                      <button className="lp-btn lp-btn-sm" onClick={() => startParser(p.parser_id)}
+                              disabled={parsersBusy || p.is_running}>Запустить</button>
+                      <button className="lp-btn lp-btn-sm" onClick={() => stopParser(p.parser_id)}
+                              disabled={parsersBusy || !p.is_running}
+                              aria-label="Остановить парсер">Остановить</button>
+                      <button className="lp-btn lp-btn-sm" onClick={() => openEdit(p)}
+                              disabled={parsersBusy}>Настроить</button>
+                      <button className="lp-btn lp-btn-sm" onClick={() => setDeleteConfirm(p)}
+                              disabled={parsersBusy || p.is_running}>Удалить</button>
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
+
+            {logPanel && (
+              <div className="lp-log-panel">
+                <div className="lp-log-header">
+                  <span>Журнал проверки #{logPanel.runId}</span>
+                  {logPanel.done && (
+                    <span className="lp-log-done">
+                      {logPanel.done.status}
+                      {logPanel.done.items_new != null && ` · новых: ${logPanel.done.items_new}`}
+                    </span>
+                  )}
+                  {!logPanel.done && !logPanel.error && (
+                    <span className="lp-log-running">идёт</span>
+                  )}
+                  <button type="button" className="lp-btn lp-btn-sm"
+                          onClick={() => { closeLogEs(); setLogPanel(null); }}
+                          aria-label="Закрыть журнал запуска">
+                    Закрыть журнал
+                  </button>
+                </div>
+                {logPanel.error && (
+                  <div className="lp-log-error" role="alert">{logPanel.error}</div>
+                )}
+                <pre className="lp-log-body" ref={logRef}>{logPanel.lines.join("\n")}</pre>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* ── AI-исследование: работа идёт в панели чата, общая база и очередь
                на этой поверхности не показываются ─────────────────────────── */}
         {view === "ai_research" && (
-          <div className="lp-research-surface">
-            <h2>Исследование выполняется в чате аналитика</h2>
-            <p>
-              Сформулируйте задачу в панели чата: аналитик уточнит параметры,
-              выполнит исследование и покажет ход выполнения и результаты
-              с первоисточниками.
-              {!chatOpen && " Панель скрыта — откройте её кнопкой «Открыть чат» в заголовке."}
-            </p>
-          </div>
+          <section className="lp-research-surface" id="lp-panel-ai_research"
+                   role="tabpanel" aria-labelledby="lp-tab-ai_research"
+                   aria-label="Ход AI-исследования">
+            <div className="lp-research-board">
+              <section className="lp-research-card" aria-labelledby="lp-research-params-title">
+                <div className="lp-eyebrow">Параметры исследования</div>
+                <h2 id="lp-research-params-title">Текущий запрос</h2>
+                <dl className="lp-research-kv">
+                  <div>
+                    <dt>Тема</dt>
+                    <dd>{lastResearchQuery ? lastResearchQuery.content : "Запрос ещё не задан"}</dd>
+                  </div>
+                  <div>
+                    <dt>Режим</dt>
+                    <dd>Поиск лазеек с проверкой первоисточников</dd>
+                  </div>
+                  <div>
+                    <dt>Данные</dt>
+                    <dd>{records.length} {recordWord(records.length)} в общей базе</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section className="lp-research-card" aria-labelledby="lp-research-progress-title">
+                <div className="lp-research-card-head">
+                  <div>
+                    <div className="lp-eyebrow">Прогресс исследования</div>
+                    <h2 id="lp-research-progress-title">
+                      {phase ? (PHASE_LABELS[phase] || phase) : "Ожидает запуска"}
+                    </h2>
+                  </div>
+                  <strong>{researchProgress}%</strong>
+                </div>
+                <div className="lp-research-progress" aria-label={`Выполнено ${researchProgress}%`}>
+                  <span style={{width: `${researchProgress}%`}}></span>
+                </div>
+                <div className="lp-research-task-summary">
+                  Выполнено подзадач: {completedSubtasks} из {subtasks.length}
+                </div>
+                {subtasks.length > 0 ? (
+                  <ul className="lp-research-task-list">
+                    {subtasks.map((task, index) => (
+                      <li key={index} className={`lp-research-task-${task.status}`}>
+                        <span aria-hidden="true"></span>{task.title}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="lp-muted">Подзадачи появятся после запуска исследования.</p>
+                )}
+              </section>
+
+              <section className="lp-research-card lp-research-evidence"
+                       aria-labelledby="lp-research-evidence-title">
+                <div className="lp-eyebrow">Доказательства и источники</div>
+                <h2 id="lp-research-evidence-title">Промежуточный результат</h2>
+                <div className="lp-research-card-head">
+                  <div><SafeMarkdown content={lastResearchAnswer
+                    ? lastResearchAnswer.content
+                    : "После запуска здесь появится проверенный промежуточный вывод аналитика."} /></div>
+                  {lastResearchAnswer && lastResearchAnswer.report_id && (
+                    <details className="lp-research-downloads">
+                      <summary className="lp-btn lp-btn-sm">Скачать исследование</summary>
+                      <div className="lp-research-download-options" aria-label="Формат скачивания">
+                        <a className="lp-btn lp-btn-sm" href={`${API}/research/reports/${lastResearchAnswer.report_id}/export/pdf`}>PDF</a>
+                        <a className="lp-btn lp-btn-sm" href={`${API}/research/reports/${lastResearchAnswer.report_id}/export/docx`}>Word</a>
+                      </div>
+                    </details>
+                  )}
+                </div>
+                <div className="lp-research-meta">
+                  <span>Событий инструментов: {toolEvents.length}</span>
+                  <span>Фаза: {phase ? (PHASE_LABELS[phase] || phase) : "не запущено"}</span>
+                </div>
+              </section>
+            </div>
+            {!chatOpen && (
+              <p className="lp-research-chat-note">
+                Панель аналитика скрыта. Откройте её кнопкой в заголовке, чтобы продолжить.
+              </p>
+            )}
+          </section>
         )}
 
         {/* ── Очередь верификации ЦК КС (fail-closed при 403/отзыве роли) ── */}
         {view === "queue" && (
+          <section className="lp-context-panel lp-queue-panel" id="lp-panel-queue"
+                   role="tabpanel" aria-labelledby="lp-tab-queue">
+          {
           queueDenied ? (
             <div className="lp-empty-state" style={{padding: 48}}>
               <h2>Нет доступа к очереди верификации</h2>
@@ -1565,62 +2071,72 @@ function LoopholeApp() {
                   </button>
                 </div>
               ) : (
-                <table className="lp-table">
-                  <thead>
-                    <tr>
-                      <th>Запись</th>
-                      <th className="lp-col-narrow2">Банк</th>
-                      <th className="lp-col-narrow2">Доверие</th>
-                      <th>Статус</th>
-                      <th className="lp-col-narrow1">Собрано</th>
-                      <th className="lp-col-narrow1">URL</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {queueRecords.map(r => (
-                      <React.Fragment key={r.record_id}>
-                        <tr>
-                          <td className="lp-cell-title">
-                            <div className="lp-title-text">
-                              <button type="button" className="lp-row-details"
-                                      aria-expanded={expanded.has(r.record_id)}
-                                      aria-controls={expanded.has(r.record_id) ? `lp-record-details-${r.record_id}` : undefined}
-                                      onClick={() => toggleContent(r.record_id)}>
-                                <span className="lp-row-details-icon" aria-hidden="true">
-                                  {expanded.has(r.record_id) ? "▾" : "▸"}
-                                </span>
-                                <span>{r.title || r.snippet || "—"}</span>
-                              </button>
-                            </div>
-                          </td>
-                          <td className="lp-col-narrow2">{r.bank_slug || "—"}</td>
-                          <td className="lp-col-narrow2">{fmtNum(r.verdict_confidence)}</td>
-                          <td><span className="lp-status">{r.status || "—"}</span></td>
-                          <td className="lp-cell-date lp-col-narrow1">{fmtDate(r.collected_at)}</td>
-                          <td className="lp-cell-url lp-col-narrow1">
-                            {r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer"
-                                       onClick={e => e.stopPropagation()}>открыть ↗</a> : "—"}
-                          </td>
-                        </tr>
-                        {expanded.has(r.record_id) && (
-                          <tr className="lp-content-row">
-                            <td id={`lp-record-details-${r.record_id}`} colSpan={6}>
-                              {renderRecordContent(r)}
-                            </td>
-                          </tr>
+                <div className="lp-queue-review">
+                  <section className="lp-queue-list" aria-label="Записи на проверку">
+                    <div className="lp-queue-list-head">
+                      <span>Очередь ({queueRecords.length})</span>
+                      <span>по доверию</span>
+                    </div>
+                    {queueRecords.map((record, index) => {
+                      const active = queueSelected && queueSelected.record_id === record.record_id;
+                      return (
+                        <button key={record.record_id} type="button"
+                                className={`lp-queue-card${active ? " lp-queue-card-active" : ""}`}
+                                aria-current={active ? "true" : undefined}
+                                onClick={() => setQueueSelectedId(record.record_id)}>
+                          <span className="lp-queue-index">{index + 1}.</span>
+                          <span className="lp-queue-card-copy">
+                            <strong>{record.title || record.snippet || "—"}</strong>
+                            <small>{record.bank_slug || "—"} · {fmtDate(record.published_at)}</small>
+                          </span>
+                          <span className="lp-queue-confidence">
+                            <small>Доверие</small>{fmtNum(record.verdict_confidence)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </section>
+
+                  {queueSelected && (
+                    <article className="lp-queue-detail" aria-live="polite">
+                      <div className="lp-eyebrow">Карточка проверки</div>
+                      <h2>{queueSelected.title || queueSelected.snippet || "—"}</h2>
+                      <div className="lp-queue-detail-grid">
+                        <div><span>Банк</span><strong>{queueSelected.bank_slug || "—"}</strong></div>
+                        <div><span>Доверие</span><strong>{fmtNum(queueSelected.verdict_confidence)}</strong></div>
+                        <div><span>Статус</span><strong>{recordStatusLabel(queueSelected.status)}</strong></div>
+                        <div><span>Дата публикации</span><strong>{fmtDate(queueSelected.published_at)}</strong></div>
+                        <div><span>Собрано</span><strong>{fmtDate(queueSelected.collected_at)}</strong></div>
+                      </div>
+                      <section className="lp-queue-reason" aria-labelledby="lp-queue-reason-title">
+                        <h3 id="lp-queue-reason-title">Комментарий классификатора</h3>
+                        <p>{queueSelected.verdict_reason || "Комментарий не указан."}</p>
+                      </section>
+                      <div className="lp-queue-detail-actions">
+                        {queueSelected.url && (
+                          <a className="lp-btn" href={queueSelected.url} target="_blank"
+                             rel="noopener noreferrer">Открыть источник</a>
                         )}
-                      </React.Fragment>
-                    ))}
-                  </tbody>
-                </table>
+                        <button type="button" className="lp-btn lp-btn-primary"
+                                onClick={() => { setMarkComment(""); setVerdictModal({record: queueSelected}); }}>
+                          Проверить вердикт
+                        </button>
+                      </div>
+                    </article>
+                  )}
+                </div>
               )}
             </div>
-          )
+          )}
+          </section>
         )}
-        {/* ── Администрирование (story 1.5): роль ЦК КС, статус Telegram-целей,
-               сводный обезличенный аудит. Черновики исследований, очередь,
+        {/* ── Администрирование (story 1.5): роль ЦК КС и сводный обезличенный
+               аудит. Черновики исследований, очередь,
                каталог и технические payload на этой поверхности не показываются ── */}
         {view === "admin" && (
+          <section className="lp-context-panel lp-admin-panel" id="lp-panel-admin"
+                   role="tabpanel" aria-labelledby="lp-tab-admin">
+          {
           adminDenied ? (
             <div className="lp-empty-state" style={{padding: 48}}>
               <h2>Нет доступа к администрированию</h2>
@@ -1695,37 +2211,6 @@ function LoopholeApp() {
                 )}
               </section>
 
-              {/* Статус Telegram-целей: цель + операционный статус парсера */}
-              <section className="lp-admin-section" aria-labelledby="lp-admin-tg-title">
-                <h2 id="lp-admin-tg-title">Статус Telegram-целей</h2>
-                {!adminTargets || adminTargets.length === 0 ? (
-                  <div className="lp-empty-state">Telegram-цели не зарегистрированы.</div>
-                ) : (
-                  <div className="lp-table-wrap">
-                    <table className="lp-table">
-                      <thead>
-                        <tr>
-                          <th>Цель</th>
-                          <th>Парсер</th>
-                          <th>Статус</th>
-                          <th className="lp-col-narrow1">Последний запуск</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {adminTargets.map(t => (
-                          <tr key={t.target}>
-                            <td>{t.target}</td>
-                            <td>{t.parser_name || `Парсер #${t.parser_id}`}</td>
-                            <td><span className="lp-status">{t.status || "—"}</span></td>
-                            <td className="lp-cell-date lp-col-narrow1">{fmtDate(t.last_run_at)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-
               {/* Сводный обезличенный аудит: только агрегаты, без username */}
               <section className="lp-admin-section" aria-labelledby="lp-admin-audit-title">
                 <h2 id="lp-admin-audit-title">Сводный аудит</h2>
@@ -1760,7 +2245,8 @@ function LoopholeApp() {
                 )}
               </section>
             </div>
-          )
+          )}
+          </section>
         )}
       </main>
 
@@ -1779,8 +2265,8 @@ function LoopholeApp() {
           <div style={{flex: 1, minWidth: 0}}>
             <div ref={chatTitleRef} className="lp-agent-name" id="lp-chat-title" tabIndex={-1}>Аналитик лазеек</div>
             <div className="lp-agent-status">
-              <span className={"lp-dot " + (chatLoading ? "lp-dot-busy" : "lp-dot-online")}></span>
-              {chatLoading ? "думает…" : "готов"}
+              <span className={"lp-dot " + (agentBusy ? "lp-dot-busy" : "lp-dot-online")}></span>
+              {agentBusy ? "Обдумывает ответ" : "Готов"}
             </div>
           </div>
           <button type="button" className="lp-chat-close"
@@ -1818,9 +2304,8 @@ function LoopholeApp() {
         <div className="lp-chat-messages" ref={chatScrollRef}>
           {chat.length === 0 && (
             <div className="lp-chat-empty">
-              Задайте вопрос аналитику по найденным лазейкам.
-              Доступны команды: <code>/web_search</code>, <code>/web_fetch</code>,
-              <code>/retrieve</code>, <code>/export</code>.
+              Задайте вопрос по найденным лазейкам — аналитик уточнит контекст
+              и подготовит исследование по доступным источникам.
             </div>
           )}
 
@@ -1868,7 +2353,7 @@ function LoopholeApp() {
               <div className="lp-bubble-content">{m.content}</div>
             </div>
           ))}
-          {chatLoading && (
+          {agentBusy && (
             <div className="lp-bubble lp-bubble-assistant lp-typing">
               <div className="lp-bubble-role">Аналитик</div>
               <div className="lp-typing-dots">
@@ -1879,59 +2364,69 @@ function LoopholeApp() {
         </div>
 
         {/* Карточка уточняющих вопросов — между сообщениями и input-area */}
-        {pendingQuestions && pendingQuestions.length > 0 && (() => {
-          const q = pendingQuestions[0];
-          const a = answersByQ[q.id] || {selected: [], other: ""};
-          const multi = q.type === "multi";
-          return (
-            <div className="lp-questions-card">
-              <div className="lp-questions-header">Уточняющий вопрос</div>
-              <div className="lp-question">
-                <div className="lp-question-text">{q.question}</div>
-                <div className="lp-question-options">
-                  {(q.options || []).map((opt, i) => {
-                    const checked = a.selected.includes(opt.value);
-                    const optionInputId = `lp-question-${q.id}-${i}`;
-                    return (
-                      <label key={i} htmlFor={optionInputId}
-                             className={"lp-option " + (checked ? "lp-option-on" : "")}>
-                        <input
-                          id={optionInputId}
-                          type={multi ? "checkbox" : "radio"}
-                          name={"q-" + q.id}
-                          checked={checked}
-                          onChange={() => toggleAnswer(q.id, opt.value, multi)}
-                        />
-                        <span className="lp-option-label">
-                          {opt.label || opt.value}
-                          {opt.recommended ? <span className="lp-option-rec"> рекомендуем</span> : null}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-                {q.allow_other && (
-                  <div className="lp-question-other">
-                    <label htmlFor={`lp-question-other-${q.id}`}>Свой вариант</label>
-                    <textarea id={`lp-question-other-${q.id}`}
-                      rows={2}
-                      value={a.other || ""}
-                      onChange={e => setOtherText(q.id, e.target.value)}
-                      placeholder="Опишите иначе…"
-                    />
+        {selectionQuestions.length > 0 && (
+          <div className="lp-questions-card">
+            <div className="lp-questions-header">Уточняющие вопросы</div>
+            {selectionQuestions.map(q => {
+              const answer = answersByQ[q.id] || {selected: [], other: ""};
+              const multi = q.type === "multi";
+              return (
+                <div className="lp-question" key={q.id || q.question}>
+                  <div className="lp-question-text">{q.question}</div>
+                  <div className="lp-question-options">
+                    {(q.options || []).map((opt, i) => {
+                      const checked = answer.selected.includes(opt.value);
+                      const optionInputId = `lp-question-${q.id}-${i}`;
+                      return (
+                        <label key={opt.value || i} htmlFor={optionInputId}
+                               className={"lp-option " + (checked ? "lp-option-on" : "")}>
+                          <input
+                            id={optionInputId}
+                            type={multi ? "checkbox" : "radio"}
+                            name={"q-" + q.id}
+                            checked={checked}
+                            onChange={() => toggleAnswer(q.id, opt.value, multi)}
+                          />
+                          <span className="lp-option-label">
+                            {opt.label || opt.value}
+                            {opt.recommended
+                              ? <span className="lp-option-rec"> рекомендуем</span>
+                              : null}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
-                )}
-                <div className="lp-question-actions">
-                  <button className="lp-btn lp-btn-primary lp-btn-sm"
-                          disabled={clarifySubmitting}
-                          onClick={submitAnswers}>
-                    {clarifySubmitting ? "Отправляю…" : "Ответить"}
-                  </button>
+                  {q.allow_other && (
+                    <div className="lp-question-other">
+                      <label htmlFor={`lp-question-other-${q.id}`}>Свой вариант</label>
+                      <textarea id={`lp-question-other-${q.id}`}
+                        rows={2}
+                        value={answer.other || ""}
+                        onChange={e => setOtherText(q.id, e.target.value)}
+                        placeholder="Опишите иначе…"
+                      />
+                    </div>
+                  )}
                 </div>
-              </div>
+              );
+            })}
+            {!selectionAnswersComplete && (
+              <div className="lp-clarify-hint">Ответьте на все вопросы перед запуском.</div>
+            )}
+            <div className="lp-question-actions">
+              <button className="lp-btn lp-btn-primary lp-btn-sm"
+                      disabled={clarifySubmitting || !selectionAnswersComplete}
+                      onClick={submitAnswers}>
+                {clarifySubmitting ? "Отправляю…" : "Ответить"}
+              </button>
             </div>
-          );
-        })()}
+          </div>
+        )}
+
+        {clarifyError && (
+          <div className="lp-clarify-error" role="alert">{clarifyError}</div>
+        )}
 
         <div className="lp-chat-input-area">
           <label className="lp-sr-only" htmlFor="lp-chat-input">Сообщение аналитику</label>
@@ -1940,205 +2435,35 @@ function LoopholeApp() {
             className="lp-chat-input"
             rows={2}
             value={chatInput}
-            onChange={e => setChatInput(e.target.value)}
+            onChange={e => {
+              setChatInput(e.target.value);
+              if (clarifyError) setClarifyError("");
+            }}
             onKeyDown={e => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (!(pendingQuestions && pendingQuestions.length > 0) && chatInput.trim()) sendChat();
+                if (textClarification && chatInput.trim()) submitAnswers();
+                else if (!currentQuestions.length && chatInput.trim()) sendChat();
               }
             }}
-            placeholder={(pendingQuestions && pendingQuestions.length > 0)
-              ? "Сначала ответьте на уточняющий вопрос…"
-              : "Сообщение аналитику…"}
-            disabled={chatLoading || !workspaceId || (pendingQuestions && pendingQuestions.length > 0)}
+            placeholder={textClarification
+              ? "Ответ на уточняющий вопрос…"
+              : (selectionQuestions.length
+                ? "Сначала ответьте на уточняющие вопросы…"
+                : "Сообщение аналитику…")}
+            disabled={agentBusy || !workspaceId || selectionQuestions.length > 0}
           />
           <button
             className="lp-chat-send"
             type="button"
             aria-label="Отправить сообщение"
-            onClick={() => sendChat()}
-            disabled={chatLoading || !workspaceId || !chatInput.trim() || (pendingQuestions && pendingQuestions.length > 0)}
+            onClick={() => textClarification ? submitAnswers() : sendChat()}
+            disabled={agentBusy || !workspaceId || !chatInput.trim() || selectionQuestions.length > 0}
           >
-            {chatLoading ? "…" : "➤"}
+            {agentBusy ? "…" : "➤"}
           </button>
         </div>
       </aside>)}
-
-      {/* ── Модал парсеров ──────────────────────────────────────────────────── */}
-      {parsersOpen && (
-        <div className="lp-parsers-modal">
-          <button type="button" className="lp-modal-backdrop"
-                  aria-label="Закрыть диалог" tabIndex={-1}
-                  onClick={() => setParsersOpen(false)} />
-          <div className="lp-parsers-dialog" ref={parsersDialogRef}
-               role="dialog" aria-modal="true" aria-labelledby="lp-parsers-title">
-            <div className="lp-parsers-header">
-              <h2 id="lp-parsers-title">Парсеры</h2>
-              <button className="lp-btn" ref={parsersCloseRef} aria-label="Закрыть"
-                      onClick={() => setParsersOpen(false)}>✕</button>
-            </div>
-
-            <div className="lp-parsers-create">
-              <label className="lp-sr-only" htmlFor="lp-parser-query">Источник для нового парсера</label>
-              <input id="lp-parser-query"
-                type="text"
-                value={newParserQuery}
-                onChange={e => { setNewParserQuery(e.target.value); setParserError(""); }}
-                placeholder="URL ресурса или группа мессенджера (например: https://t.me/group_name)"
-                onKeyDown={e => { if (e.key === "Enter") createParser(); }}
-              />
-              <button className="lp-btn lp-btn-primary"
-                      onClick={createParser}
-                      disabled={parsersBusy || !newParserQuery.trim()}>
-                Создать
-              </button>
-            </div>
-            {parserError && <div className="lp-parser-error">{parserError}</div>}
-
-            <div className="lp-parsers-list">
-              {parsersLoading ? (
-                <div className="lp-empty-state">Загрузка парсеров…</div>
-              ) : parsersError ? (
-                <div className="lp-empty-state">
-                  <p>Не удалось загрузить парсеры. Проверьте соединение и повторите.</p>
-                  <button className="lp-btn" onClick={loadParsers}>Повторить</button>
-                </div>
-              ) : parsers.length === 0 ? (
-                <div className="lp-empty-state">
-                  <p>Парсеры не созданы.</p>
-                  <button className="lp-btn" onClick={loadParsers}>Сбросить</button>
-                </div>
-              ) : (
-                <>
-                  {parsers.map(p => {
-                const st = p.last_run && p.last_run.status;
-                const fmtDt = (v) => {
-                  if (!v) return null;
-                  const d = new Date(v);
-                  return isNaN(d) ? String(v) : d.toLocaleString("ru-RU");
-                };
-                return (
-                  <div key={p.parser_id} className="lp-parser-row">
-                    <div className="lp-parser-info">
-                      <div className="lp-parser-name">
-                        {p.name || `Парсер #${p.parser_id}`}
-                        {p.is_running && <span className="lp-badge lp-badge-run">⏳ выполняется</span>}
-                        {!p.is_running && st === "success" && <span className="lp-badge lp-badge-ok">✅ успех</span>}
-                        {!p.is_running && st === "error" && <span className="lp-badge lp-badge-err">❌ ошибка</span>}
-                        {!p.is_running && st === "empty" && <span className="lp-badge lp-badge-empty">⚪ 0 результатов</span>}
-                        {p.needs_attention && <span className="lp-badge lp-badge-attn">🔧 требует вмешательства</span>}
-                      </div>
-                      {(p.targets && p.targets.length > 0) && (
-                        <div className="lp-parser-targets">
-                          {p.targets.map((t, i) => {
-                            const href = /^https?:\/\//i.test(t) ? t
-                              : (t.startsWith("@") ? `https://t.me/${t.slice(1)}` : `https://${t}`);
-                            return <a key={i} href={href} target="_blank" rel="noopener noreferrer">{t}</a>;
-                          })}
-                        </div>
-                      )}
-                      <div className="lp-parser-meta">
-                        <span>источников в БД: {p.records_count ?? 0}</span>
-                        {p.last_run && p.last_run.finished_at && (
-                          <span> · последний запуск: {fmtDt(p.last_run.finished_at)}</span>
-                        )}
-                        {p.last_run && st === "success" && (
-                          <span> · новых: {p.last_run.items_new}</span>
-                        )}
-                        {p.auto_enabled && p.next_run_at && (
-                          <span> · след. запуск: {fmtDt(p.next_run_at)}</span>
-                        )}
-                        {p.created_by && <span> · автор: {p.created_by}</span>}
-                      </div>
-
-                      {editParserId === p.parser_id && (
-                        <div className="lp-parser-edit">
-                          <label htmlFor={`lp-parser-name-${p.parser_id}`}>Название
-                            <input id={`lp-parser-name-${p.parser_id}`} type="text" value={editForm.name}
-                                   onChange={e => setEditForm({...editForm, name: e.target.value})} />
-                          </label>
-                          <label htmlFor={`lp-parser-cron-${p.parser_id}`}>Расписание (cron)
-                            <input id={`lp-parser-cron-${p.parser_id}`} type="text" placeholder="0 5 * * *"
-                                   value={editForm.cron_expr}
-                                   disabled={!editForm.auto_enabled}
-                                   onChange={e => setEditForm({...editForm, cron_expr: e.target.value})} />
-                          </label>
-                          <label className="lp-parser-edit-toggle" htmlFor={`lp-parser-auto-${p.parser_id}`}>
-                            <input id={`lp-parser-auto-${p.parser_id}`} type="checkbox" checked={editForm.auto_enabled}
-                                   onChange={e => setEditForm({...editForm, auto_enabled: e.target.checked})} />
-                            Автозапуск включён
-                          </label>
-                          {editError && <div className="lp-parser-error">{editError}</div>}
-                          <div className="lp-parser-edit-actions">
-                            <button className="lp-btn lp-btn-sm lp-btn-primary"
-                                    onClick={saveEdit} disabled={parsersBusy}>
-                              Сохранить
-                            </button>
-                            <button className="lp-btn lp-btn-sm"
-                                    onClick={() => setEditParserId(null)}>
-                              Отмена
-                            </button>
-                            <button className="lp-btn lp-btn-sm"
-                                    onClick={() => healParser(p.parser_id)}
-                                    disabled={parsersBusy}>
-                              🔧 Анализ и восстановление
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <div className="lp-parser-actions">
-                      <button className="lp-btn lp-btn-sm"
-                              onClick={() => startParser(p.parser_id)}
-                              disabled={parsersBusy || p.is_running}>
-                        ▶ Запустить
-                      </button>
-                      <button className="lp-btn lp-btn-sm"
-                              onClick={() => stopParser(p.parser_id)}
-                              disabled={parsersBusy || !p.is_running}
-                              aria-label="Остановить парсер">
-                        ■
-                      </button>
-                      <button className="lp-btn lp-btn-sm"
-                              onClick={() => openEdit(p)}
-                              disabled={parsersBusy}>
-                        Редактировать
-                      </button>
-                      <button className="lp-btn lp-btn-sm"
-                              onClick={() => setDeleteConfirm(p)}
-                              disabled={parsersBusy || p.is_running}>
-                        Удалить
-                      </button>
-                    </div>
-                  </div>
-                );
-                  })}
-                </>
-              )}
-            </div>
-
-            {logPanel && (
-              <div className="lp-log-panel">
-                <div className="lp-log-header">
-                  <span>Лог запуска #{logPanel.runId}</span>
-                  {logPanel.done && (
-                    <span className="lp-log-done">
-                      {logPanel.done.status}
-                      {logPanel.done.items_new != null && ` · новых: ${logPanel.done.items_new}`}
-                    </span>
-                  )}
-                  <button type="button" className="lp-btn lp-btn-sm"
-                          onClick={() => { closeLogEs(); setLogPanel(null); }}
-                          aria-label="Закрыть журнал запуска">✕</button>
-                </div>
-                <pre className="lp-log-body" ref={logRef}>
-                  {logPanel.lines.join("\n")}
-                </pre>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* ── Модал ручной маркировки вердикта ────────────────────────────────── */}
       {verdictModal && (() => {
@@ -2171,6 +2496,7 @@ function LoopholeApp() {
                   <div className="lp-verdict-meta">
                     <span>{rec.bank_slug || "банк не указан"}</span>
                     <span>доверие {fmtNum(rec.verdict_confidence)}</span>
+                    <span>опубликовано {fmtDate(rec.published_at)}</span>
                     <span>собрано {fmtDate(rec.collected_at)}</span>
                   </div>
                 </div>
@@ -2297,7 +2623,14 @@ function LoopholeApp() {
       {toast && (
         <div className={"lp-toast lp-toast-" + toast.kind}
              role={toast.kind === "error" ? "alert" : "status"}>
-          {toast.text}
+          <span>{toast.text}</span>
+          {toast.kind === "success" && toast.text.startsWith("CSV сформирован")
+            && lastCsvDownload && (
+            <button type="button" className="lp-toast-action"
+                    onClick={() => triggerCsvDownload(lastCsvDownload)}>
+              Скачать повторно
+            </button>
+          )}
         </div>
       )}
     </div>

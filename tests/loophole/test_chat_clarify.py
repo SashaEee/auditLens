@@ -32,6 +32,30 @@ def patched_client(monkeypatch):
     return client
 
 
+def test_client_uses_short_timeout_without_transport_retries(monkeypatch):
+    """FAST-gate не возвращается к 70-секундному timeout и transport retry."""
+    captured: dict = {}
+    sentinel = object()
+
+    def fake_openai(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setenv("LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setattr(clarify_mod, "AsyncOpenAI", fake_openai)
+
+    client = clarify_mod._client()
+
+    assert client is sentinel
+    assert captured == {
+        "base_url": "https://llm.example/v1",
+        "api_key": "test-key",
+        "timeout": 15,
+        "max_retries": 0,
+    }
+
+
 @pytest.mark.asyncio
 async def test_generate_clarifications_complete_true(patched_client, monkeypatch):
     monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
@@ -43,6 +67,35 @@ async def test_generate_clarifications_complete_true(patched_client, monkeypatch
     )
     assert result["complete"] is True
     assert result["questions"] == []
+
+
+@pytest.mark.asyncio
+async def test_product_and_period_make_research_actionable_without_llm(patched_client):
+    """Явный продукт и период не должны повторно уточняться при недоступном FAST-gate."""
+    query = (
+        "Найди лазейки по продукту кредитная карта за август 2026 года. "
+        "Не показывай публикации, созданные раньше августа 2026 года."
+    )
+
+    result = await clarify_mod.generate_clarifications(query)
+
+    assert result["complete"] is True
+    assert result["questions"] == []
+    assert result["reason"] == "actionable_product_period_scope"
+    patched_client.chat.completions.create.assert_not_awaited()
+
+
+def test_fail_closed_question_asks_only_for_missing_period():
+    """Fallback не повторяет уже указанный продукт и не требует необязательный банк."""
+    questions = clarify_mod.clarification_questions(
+        clarify_mod._clarification_unavailable(),
+        query="Найди лазейки по продукту кредитная карта",
+    )
+
+    assert [question["id"] for question in questions] == ["period"]
+    assert "период" in questions[0]["question"].lower()
+    assert "банк" not in questions[0]["question"].lower()
+    assert "продукт" not in questions[0]["question"].lower()
 
 
 @pytest.mark.asyncio
@@ -98,8 +151,37 @@ async def test_generate_clarifications_with_questions(patched_client, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_gate_keeps_only_the_first_useful_question_and_uses_fast_model(
+    patched_client,
+    monkeypatch,
+):
+    """Лишние вопросы модели не должны растягивать clarification-воронку."""
+    monkeypatch.delenv("LOOPHOLE_ASKING_MODEL", raising=False)
+    monkeypatch.setenv("LLM_MODEL_FAST", "fast-clarification-model")
+    patched_client.chat.completions.create.return_value = _mock_openai_response(
+        json.dumps(
+            {
+                "complete": False,
+                "reason": "нужно уточнение",
+                "questions": [
+                    {"id": "scope", "question": "Что исследовать?", "type": "text"},
+                    {"id": "period", "question": "За какой период?", "type": "text"},
+                ],
+            }
+        )
+    )
+
+    result = await clarify_mod.generate_clarifications("найди лазейки")
+
+    assert [question["id"] for question in result["questions"]] == ["scope"]
+    call = patched_client.chat.completions.create.call_args.kwargs
+    assert call["model"] == "fast-clarification-model"
+    assert "extra_body" not in call
+
+
+@pytest.mark.asyncio
 async def test_clarification_prompts_mask_query_history_and_answers(patched_client, monkeypatch):
-    """В clarification и rewrite не уходят credential и телефон из пользовательских данных."""
+    """В единственный LLM-gate не уходят credential и телефон пользователя."""
     monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
     secret = "sk-clarify-secret"
     phone = "+7 999 123-45-67"
@@ -125,19 +207,16 @@ async def test_clarification_prompts_mask_query_history_and_answers(patched_clie
     assert "[PHONE_" in clarification_prompt
     assert "История диалога" in clarification_prompt
 
-    patched_client.chat.completions.create.return_value = _mock_openai_response(
-        "Проверь запрос с выбранным банком и периодом"
-    )
-    await clarify_mod.build_enriched_question(
+    llm_calls_before_answer = patched_client.chat.completions.create.await_count
+    enriched = await clarify_mod.build_enriched_question(
         f"Проверь запрос {phone}",
         [{"question": "Credential", "selected": [secret]}],
     )
-    rewrite_messages = patched_client.chat.completions.create.call_args.kwargs["messages"]
-    rewrite_prompt = json.dumps(rewrite_messages, ensure_ascii=False)
 
-    assert secret not in rewrite_prompt
-    assert phone not in rewrite_prompt
-    assert "[PHONE_" in rewrite_prompt
+    assert patched_client.chat.completions.create.await_count == llm_calls_before_answer
+    assert enriched == (
+        f"Проверь запрос {phone} (уточнения — Credential: {secret})"
+    )
 
 
 @pytest.mark.asyncio
@@ -208,10 +287,7 @@ async def test_short_query_does_not_bypass_clarification(patched_client, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_build_enriched_question(patched_client):
-    patched_client.chat.completions.create.return_value = _mock_openai_response(
-        "Проверь скрытые комиссии по вкладам Сбербанка за 2025 год"
-    )
+async def test_build_enriched_question_is_deterministic_without_llm(patched_client):
     answers = [
         {
             "question": "Какой банк?",
@@ -222,7 +298,11 @@ async def test_build_enriched_question(patched_client):
     enriched = await clarify_mod.build_enriched_question(
         "Проверь скрытые комиссии по вкладам", answers
     )
-    assert "Сбербанк" in enriched or "сбербанк" in enriched.lower()
+    assert enriched == (
+        "Проверь скрытые комиссии по вкладам "
+        "(уточнения — Какой банк: Сбербанк)"
+    )
+    patched_client.chat.completions.create.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -238,28 +318,16 @@ async def test_build_enriched_question_no_answers():
 
 
 @pytest.mark.asyncio
-async def test_build_enriched_question_fallback_on_error(patched_client):
-    """Ошибка rewrite блокирует execution вместо template fallback."""
-    patched_client.chat.completions.create.side_effect = RuntimeError("boom")
-    answers = [{"question": "Банк?", "selected": ["ВТБ"], "other": None}]
-    enriched = await clarify_mod.build_enriched_question("вопрос", answers)
-    assert enriched == {
-        "complete": False,
-        "questions": [],
-        "reason": "clarification_unavailable",
-    }
-
-
-@pytest.mark.asyncio
-async def test_build_enriched_question_returns_typed_fail_closed_result_on_exception(
-    patched_client,
-):
-    """Rewrite exception не выдаёт строку, которую можно передать агенту."""
-    patched_client.chat.completions.create.side_effect = RuntimeError("raw rewrite")
-
+async def test_build_enriched_question_combines_selected_and_other_answers():
     result = await clarify_mod.build_enriched_question(
-        "проверь вклад", [{"question": "Банк?", "selected": ["ВТБ"]}]
+        "проверь вклад",
+        [
+            {
+                "question": "Банк?",
+                "selected": ["ВТБ"],
+                "other": "Альфа-Банк",
+            }
+        ],
     )
 
-    assert result["complete"] is False
-    assert result["reason"] == "clarification_unavailable"
+    assert result == "проверь вклад (уточнения — Банк: ВТБ, Альфа-Банк)"

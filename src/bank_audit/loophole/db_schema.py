@@ -220,3 +220,55 @@ def verify_migration_044_postgres(staging_url: str | None = None) -> dict[str, s
         }
     finally:
         connection.close()
+
+
+def verify_lifecycle_postgres(staging_url: str | None = None) -> dict[str, str]:
+    """Проверяет lifecycle DDL на явно выделенном PostgreSQL staging.
+
+    SQLite не подтверждает конкурентные unique-инварианты, поэтому без staging
+    функция возвращает только честный ``UNVERIFIED``.
+    """
+    url = staging_url or os.getenv("AUDITLENS_POSTGRES_STAGING_URL")
+    if not url:
+        return {"status": "UNVERIFIED", "reason": "Не задан PostgreSQL staging lifecycle"}
+    scheme = url.partition("://")[0].lower()
+    if scheme not in {"postgres", "postgresql", "postgresql+psycopg"}:
+        return {"status": "UNVERIFIED", "reason": "Для lifecycle нужен PostgreSQL staging"}
+    try:
+        import psycopg
+    except ImportError:
+        return {"status": "UNVERIFIED", "reason": "Драйвер psycopg недоступен"}
+    connect_url = url.replace("postgresql+psycopg://", "postgresql://", 1)
+    try:
+        connection = psycopg.connect(connect_url)
+    except Exception as exc:  # noqa: BLE001 — staging недоступен, не маскируем успехом
+        return {"status": "UNVERIFIED", "reason": f"PostgreSQL staging недоступен: {type(exc).__name__}"}
+    try:
+        scripts = [
+            ROOT / "migrations" / f"{number:03d}_{name}.sql"
+            for number, name in (
+                (45, "loophole_research_cases"),
+                (47, "loophole_research_classification"),
+                (48, "loophole_verification_snapshot"),
+                (49, "loophole_verification_decision"),
+                (50, "loophole_publication_mapping"),
+                (51, "loophole_lifecycle_constraints"),
+            )
+        ]
+        with connection.cursor() as cursor:
+            for script in scripts:
+                cursor.execute(script.read_text(encoding="utf-8"))
+            cursor.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() "
+                "AND indexname IN ('uq_lvs_candidate_draft', 'uq_lvd_snapshot', 'uq_lpm_decision')"
+            )
+            indexes = {row[0] for row in cursor.fetchall()}
+        connection.commit()
+        if indexes != {"uq_lvs_candidate_draft", "uq_lvd_snapshot", "uq_lpm_decision"}:
+            raise RuntimeError("lifecycle unique indexes не созданы")
+        return {"status": "VERIFIED", "reason": "PostgreSQL staging подтвердил lifecycle DDL"}
+    except Exception as exc:  # noqa: BLE001 — staging доступен, ошибка должна быть видна
+        connection.rollback()
+        return {"status": "FAILED", "reason": f"Lifecycle staging завершился ошибкой: {type(exc).__name__}"}
+    finally:
+        connection.close()

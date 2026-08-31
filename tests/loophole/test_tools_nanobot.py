@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from bank_audit.loophole.chat.tools_nanobot import (
     NANOBOT_TOOLS,
     _tool_result,
+    load_prompt,
     web_fetch,
     web_search,
 )
@@ -31,11 +33,180 @@ def test_web_fetch_with_bad_url_returns_none(monkeypatch):
     assert web_fetch("http://bad.url") is None
 
 
+def test_web_fetch_returns_source_publication_timestamp(monkeypatch):
+    page = SimpleNamespace(
+        url="https://example.test/source",
+        final_url="https://example.test/source",
+        status=200,
+        title="Источник",
+        excerpt="Текст",
+        via="http",
+        published_at="2026-08-27T09:25:00+03:00",
+    )
+    monkeypatch.setattr(
+        "bank_audit.loophole.adapters.fetch_decorator.fetch_and_parse",
+        lambda *args, **kwargs: page,
+    )
+
+    assert web_fetch("https://example.test/source")["published_at"] == page.published_at
+
+
+def test_nanobot_prompt_forbids_widening_a_hard_publication_period():
+    prompt = load_prompt("07_nanobot_system")
+
+    assert "published_at" in prompt
+    assert "не расширяй период" in prompt
+    assert "не подставляй Сбербанк" in prompt
+    assert "закрытый календарный интервал" in prompt
+    assert "службы внутреннего аудита Сбербанка" not in prompt
+
+
+def test_publication_window_understands_user_month_constraint():
+    from bank_audit.loophole.chat import tools_nanobot
+
+    assert tools_nanobot._publication_window(
+        "Найди лазейки по продукту кредитная карта за август 2026 года. "
+        "Если дата поста раньше августа 2026 года, не выводи её."
+    ) == (date(2026, 8, 1), date(2026, 9, 1))
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_tool_hides_source_outside_requested_publication_month(monkeypatch):
+    from bank_audit.loophole.chat import tools_nanobot
+
+    page = SimpleNamespace(
+        url="https://example.test/july",
+        final_url="https://example.test/july",
+        status=200,
+        title="Июльский источник",
+        excerpt="Схема",
+        via="http",
+        published_at="2026-07-31T23:59:00+03:00",
+    )
+    monkeypatch.setattr(tools_nanobot.fetch_decorator, "fetch_and_parse", lambda *a, **k: page)
+    context = tools_nanobot.ToolContext(
+        user_id="analyst",
+        workspace_id=1,
+        session=object(),
+        query="Найди лазейки по кредитной карте за август 2026 года",
+    )
+
+    result = json.loads(
+        await tools_nanobot.AuditWebFetchTool(context=context).execute(page.url)
+    )
+
+    assert result["error"] == "source_outside_publication_period"
+    assert result["published_at"] == page.published_at
+    assert "excerpt" not in result
+
+
+@pytest.mark.asyncio
+async def test_extract_tool_denies_unverified_or_outside_source_date(monkeypatch):
+    from bank_audit.loophole.chat import tools_nanobot
+
+    async def forbidden_extract(_text):
+        raise AssertionError("внепериодный источник не должен попасть в LLM extraction")
+
+    monkeypatch.setattr(tools_nanobot, "extract_loopholes", forbidden_extract)
+    source_url = "https://example.test/july"
+    context = tools_nanobot.ToolContext(
+        user_id="analyst",
+        workspace_id=1,
+        session=object(),
+        query="Найди лазейки по кредитной карте за август 2026 года",
+        source_publication_dates={source_url: "2026-07-31T23:59:00+03:00"},
+    )
+
+    result = json.loads(
+        await tools_nanobot.AuditExtractLoopholesTool(context=context).execute(
+            "Текст источника",
+            source_url=source_url,
+        )
+    )
+
+    assert result == {"error": "source_outside_publication_period"}
+
+
+@pytest.mark.asyncio
+async def test_table_load_tool_applies_month_from_original_query(monkeypatch):
+    from bank_audit.loophole.chat import tools_nanobot
+
+    captured = {}
+    monkeypatch.setattr(tools_nanobot, "_context_owns_workspace", lambda _context: True)
+    monkeypatch.setattr(
+        tools_nanobot,
+        "table_load",
+        lambda **kwargs: captured.update(kwargs) or [],
+    )
+    context = tools_nanobot.ToolContext(
+        user_id="analyst",
+        workspace_id=1,
+        session=object(),
+        query="Найди лазейки по кредитной карте за август 2026 года",
+    )
+
+    await tools_nanobot.AuditTableLoadTool(context=context).execute()
+
+    assert captured["period_from"] == date(2026, 8, 1)
+    assert captured["period_to"] == date(2026, 8, 31)
+
+
 @pytest.mark.asyncio
 async def test_extract_loopholes_returns_empty_on_empty_text():
     from bank_audit.loophole.chat.tools_nanobot import extract_loopholes
 
     assert await extract_loopholes("") == []
+
+
+@pytest.mark.asyncio
+async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monkeypatch, session):
+    """Инструмент извлечения передаёт подтверждённую находку серверу, не записывая БД сам."""
+    from bank_audit.loophole.chat import tools_nanobot
+
+    async def fake_extract(_text):
+        return [
+            {
+                "title": "Обход комиссии",
+                "description": "Описание механизма",
+                "category": "Комиссии",
+                "severity": "high",
+                "evidence_quote": "Подтверждающая цитата",
+                "is_loophole": True,
+            },
+            {
+                "title": "Не лазейка",
+                "description": "Штатная функция",
+                "category": "",
+                "severity": "low",
+                "evidence_quote": "",
+                "is_loophole": False,
+            },
+        ]
+
+    monkeypatch.setattr(tools_nanobot, "extract_loopholes", fake_extract)
+    context = tools_nanobot.ToolContext(
+        user_id="analyst",
+        workspace_id=1,
+        session=session,
+    )
+
+    result = await tools_nanobot.AuditExtractLoopholesTool(context=context).execute(
+        "Текст источника",
+        source_url="https://example.ru/source",
+        bank_slug="sberbank",
+    )
+
+    assert json.loads(result)[0]["title"] == "Обход комиссии"
+    assert context.pending_records == [
+        {
+            "title": "Обход комиссии",
+            "url": "https://example.ru/source",
+            "snippet": "Подтверждающая цитата",
+            "bank_slug": "sberbank",
+            "raw_text": "Текст источника",
+            "is_loophole": True,
+        }
+    ]
 
 
 def test_tool_result_serializes_non_strings():
@@ -129,7 +300,7 @@ async def test_tool_executes_return_strings(monkeypatch):
 
     assert isinstance(await web_search_tool.execute("q"), str)
     assert isinstance(await web_fetch_tool.execute("http://x"), str)
-    assert isinstance(await extract_tool.execute("text"), str)
+    assert isinstance(await extract_tool.execute("text", "https://x"), str)
     assert isinstance(await save_tool.execute("t", "http://x", "s"), str)
     assert isinstance(await db_query_tool.execute("SELECT 1"), str)
     assert isinstance(await table_load_tool.execute(), str)

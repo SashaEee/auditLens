@@ -2,7 +2,7 @@
 title: 'Идемпотентная регистрация Telegram-цели'
 type: 'feature'
 created: '2026-08-29'
-status: 'draft'
+status: 'done'
 review_loop_iteration: 0
 context: []
 ---

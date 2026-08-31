@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .. import repository as repo
 from ..config import LoopholeSettings
@@ -47,7 +48,9 @@ _BASE_REQUIREMENTS = [
 PROMPT_TEMPLATE = (
     "Сгенерируй Scrapy-паука на Python для поиска лазеек в банковских "
     "продуктах по запросу: {query}. Используй playwright-stealth для "
-    "рендеринга JS. Паук должен собирать title, url, snippet, text. "
+    "рендеринга JS. Паук должен собирать title, url, snippet, text и published_at. "
+    "published_at — только точная дата публикации первоисточника в ISO 8601; "
+    "если первоисточник её не сообщает, записывай null и никогда не подставляй дату сбора. "
     "Код должен писать JSON-логи в stdout и сохранять результаты в файл "
     "results.json рядом с parser.py. "
     "Верни ДВА блока кода: сначала parser.py внутри ```python ... ```, "
@@ -87,7 +90,13 @@ def extract_targets(query: str) -> list[str]:
 
 def _is_telegram_target(target: str) -> bool:
     """Определяет Telegram-цель, обслуживаемую отдельным контуром."""
-    return bool(TG_LINK_RE.fullmatch(target) or TG_HANDLE_RE.fullmatch(target))
+    if TG_HANDLE_RE.fullmatch(target):
+        return True
+    candidate = target if "://" in target else f"https://{target}"
+    try:
+        return urlsplit(candidate).hostname in {"t.me", "telegram.me"}
+    except ValueError:
+        return False
 
 
 def _default_llm() -> Any:

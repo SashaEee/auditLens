@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,7 @@ _QUERY_WORDS = {
 _DB_QUERY_COLUMNS = {
     "loophole_record": {
         "record_id", "title", "url", "snippet", "domain", "trust_score", "fetched_at",
-        "collected_at", "bank_slug", "keyword", "is_loophole", "verdict_confidence",
+        "published_at", "collected_at", "bank_slug", "keyword", "is_loophole", "verdict_confidence",
         "verdict_reason", "verdict_model", "classified_at", "status",
     },
     "loophole_keyword": {
@@ -81,6 +82,99 @@ class ToolContext:
     user_id: str | None
     workspace_id: int | None
     session: Any | None
+    query: str = ""
+    pending_records: list[dict] = field(default_factory=list)
+    source_publication_dates: dict[str, str | None] = field(default_factory=dict)
+
+
+_RU_MONTHS = {
+    "январ": 1,
+    "феврал": 2,
+    "март": 3,
+    "апрел": 4,
+    "ма": 5,
+    "июн": 6,
+    "июл": 7,
+    "август": 8,
+    "сентябр": 9,
+    "октябр": 10,
+    "ноябр": 11,
+    "декабр": 12,
+}
+_RU_MONTH_PATTERN = "|".join(f"{stem}\\w*" for stem in _RU_MONTHS)
+_QUERY_MONTH_WINDOW_RE = re.compile(
+    rf"\bза\s+(?P<month>{_RU_MONTH_PATTERN})\s+(?P<year>(?:19|20)\d{{2}})\b",
+    re.IGNORECASE,
+)
+_QUERY_LOWER_BOUND_RE = re.compile(
+    rf"\b(?:не\s+)?(?:раньше|ранее|с)\s+(?P<month>{_RU_MONTH_PATTERN})\s+"
+    rf"(?P<year>(?:19|20)\d{{2}})\b",
+    re.IGNORECASE,
+)
+
+
+def _publication_window(query: str) -> tuple[date, date | None] | None:
+    """Возвращает строгий window даты первоисточника из понятного month/year scope."""
+    text_query = str(query or "")
+    match = _QUERY_MONTH_WINDOW_RE.search(text_query)
+    exact = match is not None
+    if match is None:
+        match = _QUERY_LOWER_BOUND_RE.search(text_query)
+    if match is None:
+        return None
+    month_word = match.group("month").lower()
+    month = next(
+        (number for stem, number in _RU_MONTHS.items() if month_word.startswith(stem)),
+        None,
+    )
+    if month is None:
+        return None
+    year = int(match.group("year"))
+    start = date(year, month, 1)
+    if not exact:
+        return start, None
+    end_exclusive = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return start, end_exclusive
+
+
+def _source_publication_period_error(context: ToolContext | None, source_url: str) -> str | None:
+    """Fail-closed проверка источника при заданном пользователем publication window."""
+    if context is None:
+        return None
+    window = _publication_window(context.query)
+    if window is None:
+        return None
+    raw_published_at = context.source_publication_dates.get(source_url)
+    if not raw_published_at:
+        return "source_publication_date_unverified"
+    normalized = raw_published_at.removesuffix("Z") + (
+        "+00:00" if raw_published_at.endswith("Z") else ""
+    )
+    try:
+        published_at = datetime.fromisoformat(normalized)
+    except ValueError:
+        return "source_publication_date_unverified"
+    if published_at.tzinfo is None or published_at.utcoffset() is None:
+        return "source_publication_date_unverified"
+    start, end_exclusive = window
+    published_date = published_at.date()
+    if published_date < start or (end_exclusive is not None and published_date >= end_exclusive):
+        return "source_outside_publication_period"
+    return None
+
+
+def _remember_source_publication_date(
+    context: ToolContext | None,
+    requested_url: str,
+    result: dict | None,
+) -> None:
+    """Связывает canonical/original URL с timestamp, полученным при fetch."""
+    if context is None or not result:
+        return
+    published_at = result.get("published_at")
+    for source_url in (requested_url, result.get("url"), result.get("final_url")):
+        if source_url:
+            context.source_publication_dates[str(source_url)] = published_at
 
 
 def _context_owns_workspace(context: ToolContext | None) -> bool:
@@ -126,7 +220,7 @@ def web_search(query: str, *, max_results: int = 12, _impl: Any = None) -> list[
 
 
 def web_fetch(url: str, *, _impl: Any = None) -> dict | None:
-    """Загрузка страницы: возвращает {url, final_url, title, excerpt, status, via}."""
+    """Загрузка страницы с проверяемой датой публикации первоисточника."""
     # excerpt_len=4000 (вместо дефолтных 1000): механизм лазейки в длинном
     # форумном треде часто описан не в первых 1000 символов — даём extract больше.
     page = fetch_decorator.fetch_and_parse(url, excerpt_len=4000, _fetch_impl=_impl)
@@ -139,6 +233,7 @@ def web_fetch(url: str, *, _impl: Any = None) -> dict | None:
         "title": page.title,
         "excerpt": page.excerpt,
         "via": page.via,
+        "published_at": getattr(page, "published_at", None),
     })
 
 
@@ -205,6 +300,38 @@ async def extract_loopholes(
             "is_loophole": bool(item.get("is_loophole", False)),
         })
     return out
+
+
+def _queue_confirmed_findings(
+    context: ToolContext | None,
+    findings: list[dict],
+    *,
+    source_url: str,
+    bank_slug: str | None,
+    raw_text: str,
+) -> None:
+    """Передаёт подтверждённые находки серверному этапу сохранения.
+
+    Инструмент остаётся read-only для модели: запись выполняется только после
+    завершения managed-запуска в ``chat.graph`` с доверенной сессией.
+    """
+    if context is None or not source_url.startswith(("https://", "http://")):
+        return
+    for finding in findings:
+        if not finding.get("is_loophole"):
+            continue
+        title = str(finding.get("title") or "").strip()
+        snippet = str(finding.get("evidence_quote") or finding.get("description") or "").strip()
+        if not title or not snippet:
+            continue
+        context.pending_records.append({
+            "title": title,
+            "url": source_url,
+            "snippet": snippet,
+            "bank_slug": bank_slug,
+            "raw_text": raw_text,
+            "is_loophole": True,
+        })
 
 
 # ── db / table / export ─────────────────────────────────────────────────────
@@ -515,6 +642,11 @@ try:
         "required": ["url"],
     })
     class AuditWebFetchTool(Tool):
+        requires_context = True
+
+        def __init__(self, context: ToolContext | None = None):
+            self._context = context
+
         @property
         def name(self) -> str:
             return _tool_name("web_fetch")
@@ -522,8 +654,8 @@ try:
         @property
         def description(self) -> str:
             return (
-                "Загружает страницу по URL и возвращает title, excerpt, status. "
-                "Используй после web_search, чтобы получить детали."
+                "Загружает страницу по URL и возвращает title, excerpt, status, published_at. "
+                "Используй после web_search, чтобы получить детали и проверить период."
             )
 
         @property
@@ -531,16 +663,32 @@ try:
             return True
 
         async def execute(self, url: str) -> str:
-            return _tool_result(web_fetch(url))
+            result = web_fetch(url)
+            _remember_source_publication_date(self._context, url, result)
+            period_error = _source_publication_period_error(self._context, url)
+            if period_error is not None:
+                return _tool_result({
+                    "url": url,
+                    "published_at": result.get("published_at") if result else None,
+                    "error": period_error,
+                })
+            return _tool_result(result)
 
     @tool_parameters({
         "type": "object",
         "properties": {
             "text": {"type": "string", "description": "Текст для анализа"},
+            "source_url": {"type": "string", "description": "URL анализируемого источника"},
+            "bank_slug": {"type": "string", "description": "Slug банка (опционально)"},
         },
-        "required": ["text"],
+        "required": ["text", "source_url"],
     })
     class AuditExtractLoopholesTool(Tool):
+        requires_context = True
+
+        def __init__(self, context: ToolContext | None = None):
+            self._context = context
+
         @property
         def name(self) -> str:
             return _tool_name("extract_loopholes")
@@ -549,15 +697,32 @@ try:
         def description(self) -> str:
             return (
                 "Анализирует текст (например, загруженной страницы) и извлекает "
-                "потенциальные лазейки. Перед LLM маскирует ПДн."
+                "потенциальные лазейки. Перед LLM маскирует ПДн. Передай URL "
+                "того же источника в source_url."
             )
 
         @property
         def read_only(self) -> bool:
             return True
 
-        async def execute(self, text: str) -> str:
-            return _tool_result(await extract_loopholes(text))
+        async def execute(
+            self,
+            text: str,
+            source_url: str,
+            bank_slug: str | None = None,
+        ) -> str:
+            period_error = _source_publication_period_error(self._context, source_url)
+            if period_error is not None:
+                return _tool_result({"error": period_error})
+            findings = await extract_loopholes(text)
+            _queue_confirmed_findings(
+                self._context,
+                findings,
+                source_url=source_url,
+                bank_slug=bank_slug,
+                raw_text=text,
+            )
+            return _tool_result(findings)
 
     @tool_parameters({
         "type": "object",
@@ -645,6 +810,11 @@ try:
                     return _tool_result({"error": "table_load_unauthorized"})
                 if not _context_owns_workspace(context):
                     return _tool_result({"error": "workspace_unauthorized"})
+                window = _publication_window(context.query)
+                if window is not None:
+                    period_from, end_exclusive = window
+                    if end_exclusive is not None:
+                        period_to = end_exclusive - timedelta(days=1)
                 return _tool_result(
                     table_load(
                         bank_slugs=bank_slugs,

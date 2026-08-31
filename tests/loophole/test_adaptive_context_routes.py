@@ -100,12 +100,13 @@ def test_header_titles_follow_context():
     assert "Очередь верификации" in jsx
 
 
-def test_catalog_actions_scoped_to_catalog_route():
-    """Действия каталога (парсеры, CSV, счётчик) не показываются на других
-    маршрутах: рендерятся только при view === "catalog"."""
+def test_catalog_actions_are_scoped_and_parser_is_a_separate_route():
+    """CSV принадлежит каталогу, а парсер — отдельной вкладке."""
     jsx = _norm(_jsx())
     assert jsx.count(_norm('{view==="catalog"&&(')) >= 2  # действия + таблица
-    assert "⚙ Парсеры" in _jsx()
+    assert "Новый парсер веб-источника" in _jsx()
+    assert _norm('{view==="sources"&&(') in jsx
+    assert "⚙ Парсеры" not in _jsx()
 
 
 def test_chat_toggle_button_in_header():
@@ -194,12 +195,12 @@ def test_catalog_table_columns_tagged_by_priority():
 
 
 def test_url_available_in_row_details():
-    """Скрытый адаптивом URL доступен в деталях строки — и в каталоге, и в
-    очереди верификации (детали раскрываются в обеих таблицах)."""
+    """URL доступен в деталях каталога и в master-detail очереди."""
     jsx = _jsx()
     assert "открыть источник ↗" in jsx
-    # renderRecordContent вызывается минимум дважды: каталог и очередь.
-    assert jsx.count("renderRecordContent(r)") >= 2
+    assert jsx.count("renderRecordContent(r)") >= 1
+    assert "queueSelected.url" in jsx
+    assert "Открыть источник" in jsx
 
 
 def test_chat_offcanvas_below_1100px():
@@ -332,6 +333,7 @@ def test_pipeline_phase_labels_are_russian():
         "execute": "Выполнение",
         "answer": "Ответ",
         "done": "Готово",
+        "error": "Ошибка",
     }
     for phase_name, label in expected.items():
         assert re.search(rf'{phase_name}:\s*"{label}"', source)
@@ -347,11 +349,15 @@ def test_fresh_ai_run_resets_previous_phase_and_subtasks():
 
 
 def test_normal_sse_eof_marks_pipeline_done():
-    """Нормальное завершение SSE без event: done завершает фазу pipeline."""
+    """Только normal EOF без questions/error завершает фазу pipeline."""
     body = _send_chat_body()
     eof_tail = body[body.rfind("flushAssistant();"):]
+    terminal_guard = eof_tail.index("if (terminalError)")
+    normal_eof = eof_tail.index("if (!gotQuestions)")
+    assert terminal_guard < normal_eof
+    assert "return false;" in eof_tail[terminal_guard:normal_eof]
     assert re.search(
-        r'flushAssistant\(\);\s*if \(!gotQuestions\) \{\s*setPhase\("done"\);',
+        r'if \(!gotQuestions\) \{\s*setPhase\("done"\);',
         eof_tail,
     )
 
@@ -370,7 +376,9 @@ def test_chat_http_or_missing_stream_enters_error_before_reader():
     assert guard.start() < reader_at
     error_surface = re.search(r"\} catch \(e\) \{(.*?)\} finally", body, re.DOTALL)
     assert error_surface, "нет ветки ошибки sendChat"
-    assert 'content: "Ошибка: " + String(e)' in error_surface.group(1)
+    assert 'setPhase("error")' in error_surface.group(1)
+    assert 'content: "Ошибка: " + message' in error_surface.group(1)
+    assert "return false;" in error_surface.group(1)
 
 
     """Поздний 200 старого запроса не может отменить свежий fail-closed отказ."""
@@ -390,16 +398,18 @@ def test_latest_queue_request_wins_over_stale_success():
 
 
 def test_table_details_button_opens_details_without_stealing_controls():
-    """Нативная кнопка раскрывает детали, а checkbox и URL не всплывают."""
+    """Каталог раскрывает детали, queue выбирает card; вложенные controls не всплывают."""
     source = _jsx()
     assert not re.search(r"<tr\b[^>]*\bon(?:Click|KeyDown)=", source)
-    assert source.count('className="lp-row-details"') >= 2
-    assert source.count("onClick={() => toggleContent(r.record_id)}") >= 2
-    assert source.count("aria-expanded={expanded.has(r.record_id)}") >= 2
+    assert source.count('className="lp-row-details"') >= 1
+    assert source.count("onClick={() => toggleContent(r.record_id)}") >= 1
+    assert source.count("aria-expanded={expanded.has(r.record_id)}") >= 1
     assert source.count(
         "aria-controls={expanded.has(r.record_id) ? `lp-record-details-${r.record_id}` : undefined}"
-    ) >= 2
+    ) >= 1
+    assert "onClick={() => setQueueSelectedId(record.record_id)}" in source
+    assert 'aria-current={active ? "true" : undefined}' in source
     assert source.count("onClick={e => e.stopPropagation()}") >= 3
-    assert source.count('onClick={e => e.stopPropagation()}>открыть ↗</a>') >= 2
+    assert source.count('onClick={e => e.stopPropagation()}>открыть ↗</a>') >= 1
     assert 'onChange={() => toggleRow(r.record_id)}' in source
 

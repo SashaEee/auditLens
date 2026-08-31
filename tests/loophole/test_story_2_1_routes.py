@@ -239,10 +239,72 @@ def test_chat_route_legal_clarification_flow_has_safe_sse_and_audit(
     assert audit[-1]["user_id"] == "test-user"
     assert audit[-1]["workspace_id"] == workspace_id
     assert audit[-1]["status"] == "partial"
+    history = client.get(f"/api/loophole/history/{workspace_id}").json()["messages"]
+    assert [message["content"] for message in history if message["role"] == "user"] == [
+        "проверь вклад",
+        "Сбербанк",
+    ]
 
 
-def test_clarify_answer_rewrite_error_restores_retry_challenge(route_context, monkeypatch):
-    """Ошибка rewrite сохраняет обязательное clarification с новым challenge."""
+def test_clarify_answer_uses_real_builder_token_and_history(
+    route_context,
+    monkeypatch,
+):
+    """Route передаёт реальные answers в детерминированную сборку без LLM-mock."""
+    client, _session = route_context
+    workspace_id = client.post(
+        "/api/loophole/workspace", json={"name": "исследование"}
+    ).json()["workspace_id"]
+
+    async def incomplete(question, history=None):
+        return {
+            "complete": False,
+            "questions": [
+                {"id": "bank", "question": "Какой банк?", "type": "text"}
+            ],
+        }
+
+    monkeypatch.setattr(clarify_mod, "generate_clarifications", incomplete)
+    first = client.post(
+        "/api/loophole/chat",
+        json={"workspace_id": workspace_id, "message": "проверь вклад"},
+    )
+    challenge_token = _sse_question_token(first.text)
+    assert challenge_token
+
+    answer = client.post(
+        "/api/loophole/clarify/answer",
+        json={
+            "workspace_id": workspace_id,
+            "question": "проверь вклад",
+            "answers": [{"question": "Какой банк?", "selected": ["Сбербанк"]}],
+            "clarification_token": challenge_token,
+        },
+    )
+
+    expected = "проверь вклад (уточнения — Какой банк: Сбербанк)"
+    payload = answer.json()
+    assert answer.status_code == 200
+    assert payload["enriched_question"] == expected
+    assert payload["answer_message"] == "Сбербанк"
+    assert clarify_mod.consume_execution_token(
+        payload["execution_token"],
+        user_id="test-user",
+        workspace_id=workspace_id,
+        query=expected,
+    )
+    history = client.get(f"/api/loophole/history/{workspace_id}").json()["messages"]
+    assert [message["content"] for message in history if message["role"] == "user"] == [
+        "проверь вклад",
+        "Сбербанк",
+    ]
+
+
+def test_clarify_answer_internal_failure_does_not_repeat_answered_question(
+    route_context,
+    monkeypatch,
+):
+    """Внутренняя ошибка сборки завершается typed error без нового challenge."""
     client, _session = route_context
     workspace_id = client.post(
         "/api/loophole/workspace", json={"name": "исследование"}
@@ -274,13 +336,75 @@ def test_clarify_answer_rewrite_error_restores_retry_challenge(route_context, mo
         },
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["complete"] is False
-    assert payload["reason"] == "clarification_unavailable"
-    assert payload["questions"]
-    assert payload["clarification_token"]
-    assert "execution_token" not in payload
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail == {
+        "code": "clarification_assembly_failed",
+        "message": "Не удалось подготовить исследование. Повторите отправку ответа.",
+    }
+    assert "questions" not in response.json()
+    assert "clarification_token" not in response.json()
+
+    async def recovered(question, answers):
+        return "проверь вклад (банк: Сбербанк)"
+
+    monkeypatch.setattr(clarify_mod, "build_enriched_question", recovered)
+    retry = client.post(
+        "/api/loophole/clarify/answer",
+        json={
+            "workspace_id": workspace_id,
+            "question": "проверь вклад",
+            "answers": [{"question": "банк?", "selected": ["Сбербанк"]}],
+            "clarification_token": challenge,
+        },
+    )
+    assert retry.status_code == 200
+    assert retry.json()["execution_token"]
+
+
+def test_chat_route_rejects_invalid_execution_token_before_sse_and_history(
+    route_context,
+    monkeypatch,
+):
+    """Поддельный execution token не запускает graph и не создаёт user-message."""
+    client, session = route_context
+    workspace_id = client.post(
+        "/api/loophole/workspace", json={"name": "исследование"}
+    ).json()["workspace_id"]
+    graph_called = False
+
+    async def forbidden_stream(*args, **kwargs):
+        nonlocal graph_called
+        graph_called = True
+        if False:
+            yield None
+
+    monkeypatch.setattr(chat_graph, "stream_chat", forbidden_stream)
+
+    response = client.post(
+        "/api/loophole/chat",
+        json={
+            "workspace_id": workspace_id,
+            "message": "внутренний enriched-запрос",
+            "clarify_token": "invalid-execution-token",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Недействительный execution token"
+    assert graph_called is False
+    history = client.get(f"/api/loophole/history/{workspace_id}").json()["messages"]
+    assert history == []
+    rejected = session.execute(
+        text(
+            "SELECT user_id, workspace_id, action, detail "
+            "FROM loophole_action_log ORDER BY log_id DESC LIMIT 1"
+        )
+    ).mappings().one()
+    assert rejected["user_id"] == "test-user"
+    assert rejected["workspace_id"] == workspace_id
+    assert rejected["action"] == "chat_rejected"
+    assert json.loads(rejected["detail"]) == {"reason": "invalid_execution_token"}
 
 
 def test_clarify_answer_rejects_empty_answers_and_keeps_challenge(

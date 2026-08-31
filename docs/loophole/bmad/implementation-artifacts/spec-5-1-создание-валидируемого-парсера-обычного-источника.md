@@ -2,7 +2,7 @@
 title: 'Создание валидируемого парсера обычного источника'
 type: 'feature'
 created: '2026-08-29'
-status: 'draft'
+status: 'superseded'
 review_loop_iteration: 0
 context: []
 ---
@@ -53,6 +53,10 @@ context: []
 - Критерии приёмки внутри frozen Intent являются обязательным контрактом этой истории и должны быть преобразованы в наблюдаемые тесты до реализации.
 
 ## Spec Change Log
+
+- 2026-08-31: пользователь заменил создание и валидацию parser из формы на pending-заявку на
+  разработку в `source_proposal`. Новая работа ведётся в
+  `spec-register-parser-development-request.md`; эта спецификация помечена `superseded`.
 
 ## Verification
 

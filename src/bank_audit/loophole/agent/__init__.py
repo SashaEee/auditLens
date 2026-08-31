@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,9 @@ from ..config import LoopholeSettings
 from .registry import DEFAULT_ALLOWED_SKILLS, SkillRegistry, UnknownSkillError
 
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,127})$")
+AGENT_UNAVAILABLE_MESSAGE = (
+    "Аналитик временно недоступен. Повторите запрос через несколько секунд."
+)
 
 
 def _safe_run_id(value: str) -> str:
@@ -33,6 +36,7 @@ class AgentRunContext:
     query: str
     run_id: str
     max_iterations: int | None = None
+    pending_records: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +67,8 @@ def _public_partial_answer(
             "Исследование завершено частично: достигнут лимит итераций"
             f"{suffix}."
         )
+    elif "agent_error" in errors:
+        explanation = AGENT_UNAVAILABLE_MESSAGE
     else:
         explanation = "Исследование завершено частично: один из инструментов недоступен."
     if explanation in answer:
@@ -101,6 +107,8 @@ class ManagedAgent:
         finally:
             await self.aclose()
 
+        hook.records = list(self.context.pending_records)
+
         stop_reason = getattr(result, "stop_reason", None) or getattr(hook, "stop_reason", None)
         metadata = getattr(result, "metadata", None)
         metadata_iterations = metadata.get("iterations") if isinstance(metadata, dict) else None
@@ -110,6 +118,10 @@ class ManagedAgent:
                 errors.append("max_iterations")
             if not iterations:
                 iterations = self.context.max_iterations or LoopholeSettings.load().nanobot_max_iterations
+        if stop_reason == "error":
+            if "agent_error" not in errors:
+                errors.append("agent_error")
+            answer = ""
         if getattr(result, "error", None) and "agent_error" not in errors:
             errors.append("agent_error")
         errors_tuple = tuple(dict.fromkeys(errors))
@@ -137,6 +149,7 @@ class ManagedAgent:
             ):
                 yield event
         finally:
+            hook.records = list(self.context.pending_records)
             await self.aclose()
 
     async def aclose(self) -> None:
@@ -196,6 +209,8 @@ class AgentFactory:
                 user_id=context.user_id,
                 workspace_id=context.workspace_id,
                 session=session,
+                query=context.query,
+                pending_records=context.pending_records,
             ),
         )
         return ManagedAgent(
@@ -205,6 +220,7 @@ class AgentFactory:
                 query=context.query,
                 run_id=run_id,
                 max_iterations=context.max_iterations,
+                pending_records=context.pending_records,
             ),
             bot,
             config_path,
@@ -212,6 +228,7 @@ class AgentFactory:
 
 
 __all__ = [
+    "AGENT_UNAVAILABLE_MESSAGE",
     "DEFAULT_ALLOWED_SKILLS",
     "AgentFactory",
     "AgentResult",

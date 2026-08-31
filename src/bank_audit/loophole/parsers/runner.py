@@ -13,12 +13,13 @@ import collections
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .. import repository as repo
 from ...ai.llm_utils import _loose_json_loads
 from ...hashing import sha256_text
+from .. import repository as repo
 from ..models import LoopholeRecord
 from . import dedup as dedup_mod
 from . import env
@@ -26,7 +27,7 @@ from . import env
 log = logging.getLogger(__name__)
 
 # Реестры: запущенные парсеры и лог-шина (run_id → подписчики/хвост/финал).
-_RUNNING: dict[int, "ParserRunner"] = {}
+_RUNNING: dict[int, ParserRunner] = {}
 _LOG_BUS: dict[int, list[asyncio.Queue]] = {}
 _LOG_TAIL: dict[int, collections.deque] = {}
 _FINISHED: dict[int, dict] = {}
@@ -51,6 +52,31 @@ def _format_log_line(line: str) -> str:
     except Exception:
         pass
     return line
+
+
+def _exact_published_at(value: Any) -> datetime | None:
+    """Принимает только точный ISO timestamp первоисточника с часовым поясом.
+
+    Дата без времени/пояса и произвольный текст не превращаются в синтетическое
+    значение: для них контрактом остаётся NULL.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.strip())
+        except ValueError:
+            log.warning("[parsers.runner] published_at отброшен: не ISO timestamp")
+            return None
+    else:
+        log.warning("[parsers.runner] published_at отброшен: неподдерживаемый тип")
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        log.warning("[parsers.runner] published_at отброшен: нет часового пояса")
+        return None
+    return parsed
 
 
 # ── лог-шина (публичный API для web.py и healer.py) ─────────────────────────
@@ -305,7 +331,7 @@ class ParserRunner:
         ]
         try:
             await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("[parsers.runner] timeout parser_id=%s", self.parser_id)
             try:
                 self._proc.kill()
@@ -369,6 +395,7 @@ class ParserRunner:
                 snippet=r.get("snippet"),
                 domain=r.get("domain"),
                 trust_score=r.get("trust_score"),
+                published_at=_exact_published_at(r.get("published_at")),
                 bank_slug=r.get("bank_slug"),
                 keyword=r.get("keyword"),
                 raw_text=raw_text,

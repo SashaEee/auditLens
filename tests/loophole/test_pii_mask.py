@@ -44,7 +44,7 @@ def test_email_simple() -> None:
 
 def test_email_with_subdomain_and_plus() -> None:
     text = "Обратная связь: i.petrov+bank@sub.example.co.uk"
-    masked, repl = mask(text)
+    _masked, repl = mask(text)
     assert repl["[EMAIL_1]"] == "i.petrov+bank@sub.example.co.uk"
 
 
@@ -60,7 +60,7 @@ def test_fio_three_words() -> None:
 
 def test_fio_hyphenated_surname() -> None:
     text = "Ответственный: Петрова-Водкина Анна Сергеевна."
-    masked, repl = mask(text)
+    _masked, repl = mask(text)
     assert repl["[NAME_1]"] == "Петрова-Водкина Анна Сергеевна"
 
 
@@ -84,7 +84,7 @@ def test_passport_two_pairs() -> None:
 
 def test_passport_single_series() -> None:
     text = "Документ № 4507 123456."
-    masked, repl = mask(text)
+    _masked, repl = mask(text)
     assert repl["[PASSPORT_1]"] == "4507 123456"
 
 
@@ -103,13 +103,13 @@ def test_snils() -> None:
 # ---------------------------------------------------------------------------
 def test_inn_12_digits() -> None:
     text = "ИНН физлица: 771234567890."
-    masked, repl = mask(text)
+    _masked, repl = mask(text)
     assert repl["[INN_1]"] == "771234567890"
 
 
 def test_inn_10_digits() -> None:
     text = "ИНН организации 7712345678."
-    masked, repl = mask(text)
+    _masked, repl = mask(text)
     assert repl["[INN_1]"] == "7712345678"
 
 
@@ -125,13 +125,13 @@ def test_card_with_spaces() -> None:
 
 def test_card_solid() -> None:
     text = "Номер карты 4111111111111111."
-    masked, repl = mask(text)
+    _masked, repl = mask(text)
     assert repl["[CARD_1]"] == "4111111111111111"
 
 
 def test_card_with_dashes() -> None:
     text = "Карта-клиента 5555-5555-5555-5555."
-    masked, repl = mask(text)
+    _masked, repl = mask(text)
     assert repl["[CARD_1]"] == "5555-5555-5555-5555"
 
 
@@ -148,7 +148,7 @@ def test_address_simple() -> None:
 
 def test_address_prospect_with_corpus() -> None:
     text = "Адрес: пр. Мира, д. 10, корп. 2."
-    masked, repl = mask(text)
+    masked, _repl = mask(text)
     assert "[ADDRESS_1]" in masked
     assert "Мира, д. 10" not in masked
 
@@ -159,7 +159,7 @@ def test_address_prospect_with_corpus() -> None:
 def test_phone_before_card() -> None:
     # Телефон не должен быть захвачен как 16-значная карта.
     text = "Тел. +7 999 123 45 67, карта 4111 1111 1111 1111."
-    masked, repl = mask(text)
+    _masked, repl = mask(text)
     assert repl["[PHONE_1]"] == "+7 999 123 45 67"
     assert repl["[CARD_1]"] == "4111 1111 1111 1111"
 
@@ -209,7 +209,7 @@ def test_idempotent() -> None:
         "карта 4111 1111 1111 1111, ИНН 771234567890, "
         "СНИЛС 112-233-445-95, адрес ул. Ленина, д. 5."
     )
-    masked_once, repl = mask(text)
+    masked_once, _repl = mask(text)
     masked_twice, repl2 = mask(masked_once)
     assert masked_twice == masked_once
     assert repl2 == {}
