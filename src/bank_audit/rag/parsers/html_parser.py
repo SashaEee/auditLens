@@ -116,7 +116,34 @@ _NOISE_SELECTORS = [
     ".advertising", ".banner", ".promo-banner",
     ".comments", ".related", ".recommended",
     "[id*=cookie]", "[class*=cookie-]",
+    # Элементы управления каталогом. Именно они порождают «По сумме: от 100000
+    # рублей / от 200000 рублей…» и «- 1 месяц - 2 месяца…»: числа оттуда
+    # структурно неотличимы от условий продукта и создают ложные факты.
+    "form", "select", "option", "label", "fieldset",
+    "[class*=filter]", "[class*=facet]", "[class*=chips]", "[class*=tabs]",
+    "[role=tablist]", "[role=search]", "[class*=range-]", "[class*=slider]",
+    "[aria-hidden=true]",
 ]
+
+# Числовая единица: строка с ней несёт условие продукта и НИКОГДА не режется
+# правилами длины/плотности — иначе «Ставка 16,5% годовых» (24 символа)
+# исчезнет вместе с меню.
+_UNIT_RE = re.compile(r"\d[\d\s\u00a0]*(?:[.,]\d+)?\s*(?:%|₽|руб|коп|мес|год|лет|дн|шт)",
+                      re.IGNORECASE)
+_MIN_LINE = 40          # ниже этой длины строка без числа считается элементом UI
+
+
+def _link_density(node) -> float:
+    """Доля текста внутри ссылок. У меню и списков категорий ≈1, у абзаца ≈0."""
+    try:
+        total = len((node.text(separator=" ") or "").strip())
+        if total < 20:
+            return 0.0
+        inside = sum(len((a.text(separator=" ") or "").strip())
+                     for a in node.css("a"))
+        return min(1.0, inside / total)
+    except Exception:
+        return 0.0
 _BLOCKLIKE = {"div", "section", "article", "main", "aside", "li", "td"}
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
@@ -204,19 +231,41 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
     # ВАЖНО: извлекаем JSON-LD ДО удаления шума (script удаляется в _NOISE_SELECTORS)
     jsonld_reviews = _extract_jsonld_reviews(tree)
 
-    # Удаляем шум
+    # Удаляем шум. КРИТИЧНО: узел с числом-единицей не удаляем никогда — у
+    # части банков условия свёрстаны вкладками и чипами ([class*=tabs],
+    # [class*=chips]), и слепое удаление по селектору выбрасывает настоящие
+    # ставки вместе с меню. Проверено замером: без этой оговорки digit-recall
+    # у Т-Банка падал со 100% до 62%.
+    _KEEP_IF_NUMBER = ("form", "select", "label", "fieldset", "[class*=filter]",
+                       "[class*=facet]", "[class*=chips]", "[class*=tabs]",
+                       "[role=tablist]", "[class*=range-]", "[class*=slider]")
     for sel in _NOISE_SELECTORS:
+        guard = sel in _KEEP_IF_NUMBER
         for node in tree.css(sel):
             try:
+                if guard and _UNIT_RE.search(node.text(separator=" ") or ""):
+                    continue          # внутри есть условие — оставляем блок
                 node.decompose()
             except Exception:
                 pass
 
-    # Главный контейнер контента — пробуем main → article → body
-    root = (tree.css_first("main")
-            or tree.css_first("article")
-            or tree.css_first("[role=main]")
-            or tree.body)
+    # Главный контейнер контента. ВАЖНО: выбираем по объёму текста, а не по
+    # первому найденному тегу. На реальных страницах банков встречается пустой
+    # декоративный <article> (39 символов при 25 000 рядом) — прежний код брал
+    # его и выбрасывал всю страницу: из 919 КБ HTML модель получала 40 символов.
+    body = tree.body
+    body_len = len((body.text(separator=" ") if body else "") or "")
+    root, root_len = body, body_len
+    for sel in ("main", "article", "[role=main]"):
+        cand = tree.css_first(sel)
+        if cand is None:
+            continue
+        cand_len = len((cand.text(separator=" ") or ""))
+        # Кандидат должен нести ЗАМЕТНУЮ долю текста страницы, иначе это
+        # обёртка-пустышка, а содержимое лежит снаружи.
+        if cand_len > root_len or (cand_len >= body_len * 0.4 and cand_len > 500):
+            root, root_len = cand, cand_len
+            break
     if root is None:
         return ParsedDoc(doc_type="html", title=title)
 
@@ -240,6 +289,8 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
     # selectolax garentirует document order для css().
     selectors = "h1,h2,h3,h4,h5,h6,p,li,blockquote,article header,article > div,section > div"
     seen_node_ids = set()
+    seen_text: set[str] = set()      # дедуп повторяющихся строк
+    ui_lines: list[str] = []         # отсеянные элементы интерфейса
     for el in root.css(selectors):
         # Пропускаем дубль если родитель уже взят (li > p) — селектор может дать оба
         nid = id(el)
@@ -250,6 +301,26 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
         text = (el.text(separator=" ") or "").strip()
         text = re.sub(r"\s+", " ", text)
         if not text or len(text) < 3:
+            continue
+        has_number = bool(_UNIT_RE.search(text))
+        # 1) Дедупликация: шапка, хлебные крошки и подписи повторяются десятками
+        #    строк и едут в модель на каждом ходу диалога.
+        key = text.lower()
+        if key in seen_text:
+            continue
+        seen_text.add(key)
+        # 2) Короткая строка без числа — почти всегда пункт меню, чип, ярлык.
+        #    Строку с числом не трогаем никогда (защита условий продукта).
+        # Короткая строка — признак меню/чипа ТОЛЬКО в списках и ячейках.
+        # Абзац (p/blockquote) короткой быть имеет право: «Ставка фиксированная.»
+        # — это содержание, а не элемент интерфейса.
+        if (len(text) < _MIN_LINE and not has_number
+                and tag not in _HEADING_TAGS and tag not in ("p", "blockquote")):
+            ui_lines.append(text)
+            continue
+        # 3) Блок, где текст почти целиком в ссылках, — навигация, не контент.
+        if not has_number and _link_density(el) > 0.6:
+            ui_lines.append(text)
             continue
         if tag in _HEADING_TAGS:
             level = int(tag[1])
@@ -264,18 +335,62 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
             if len(text) > 50 and len(text) < 1500 and not el.css_first("p,h1,h2,h3,h4,h5,h6,li"):
                 out_lines.append("\n" + text + "\n")
 
+    # Карточки продуктов в современных SPA — это div/span со сгенерированными
+    # классами (sc-dSCufp autolayout-item), а не p/li/h*. Наш селектор их не
+    # видел, и ставки «14,8%», «12,65%» из каталога терялись целиком. Добираем
+    # ЛИСТЬЯ (без вложенных блоков), в которых есть число с единицей.
+    # Идём от самых глубоких узлов к внешним: сначала конкретное значение
+    # («14,8%»), потом его контейнер. Дедуп по подстроке не даёт продублировать
+    # одно и то же значение внутри вложенных блоков.
+    _cards = [re.sub(r"\s+", " ", (el.text(separator=" ") or "").strip())
+              for el in root.css("span,td,dd,strong,b,div")]
+    for text in _cards:
+        if not text or len(text) > 300 or not _UNIT_RE.search(text):
+            continue
+        key = text.lower()
+        if key in seen_text:
+            continue
+        # значение уже вошло в состав более полной, ранее взятой строки
+        if any(key in prev for prev in seen_text if len(prev) > len(key)):
+            continue
+        seen_text.add(key)
+        out_lines.append(text)
+
     body = "\n".join(out_lines)
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
 
-    # Fallback: если всё равно пусто — берём весь текст root (грубый, но рабочий)
-    if len(body) < 200:
-        fallback = (root.text(separator="\n", strip=True) or "").strip()
-        fallback = re.sub(r"\n{3,}", "\n\n", fallback)
+    # Fallback: если всё равно пусто — берём весь текст root. Раньше он шёл
+    # СЫРЫМ, мимо дедупа и отсева, и на бедных страницах модель получала
+    # полный дубль меню. Прогоняем через те же правила.
+    # Порог 100, а не 200: после дедупликации нормально собранная страница
+    # может стать короткой, и прежний порог отправлял её на аварийный путь,
+    # где абзацы неотличимы от пунктов меню.
+    if len(body) < 100:
+        raw = (root.text(separator="\n", strip=True) or "").strip()
+        kept, seen_fb = [], set()
+        for line in raw.split("\n"):
+            line = re.sub(r"\s+", " ", line).strip()
+            if not line or line.lower() in seen_fb:
+                continue
+            seen_fb.add(line.lower())
+            if len(line) < _MIN_LINE and not _UNIT_RE.search(line):
+                ui_lines.append(line)
+                continue
+            kept.append(line)
+        fallback = "\n".join(kept)
         if len(fallback) > len(body):
             body = fallback
 
     if tables_md:
         body = body + "\n\n# Таблицы страницы\n\n" + "\n\n".join(tables_md[:12])
+
+    # Отсеянное не пропадает: складываем компактным хвостом с явной пометкой.
+    # Так агент видит, что на странице был фильтр по сумме или список городов,
+    # но не может принять «от 100 000 ₽» за условие вклада.
+    if ui_lines:
+        uniq = list(dict.fromkeys(ui_lines))[:40]
+        body = body + "\n\n# Элементы интерфейса (не условия продукта)\n" \
+             + " · ".join(uniq)
 
     # Дописываем JSON-LD reviews (отзывы клиентов — самое ценное на banki.ru)
     if jsonld_reviews:
