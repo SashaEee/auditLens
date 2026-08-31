@@ -56,6 +56,10 @@ chk("сторонний разбор = наблюдается",
     stance_for("https://brobank.ru/obzor", "sberbank", DOM) == "observed")
 chk("чужой банк про наш субъект = наблюдается",
     stance_for("https://www.tbank.ru/x", "sberbank", DOM) == "observed")
+chk("сайт ЦБ = норма регулятора",
+    stance_for("https://cbr.ru/press/1", "sberbank", DOM) == "regulatory")
+chk("любой gov.ru = норма регулятора",
+    stance_for("https://minfin.gov.ru/a", "sberbank", DOM) == "regulatory")
 
 print("реестр: якоря, матрица, реально использованные источники")
 reg = FactRegistry()
@@ -85,6 +89,29 @@ chk("обе стороны различимы в контексте",
 chk("цитата доезжает до писателя дословно",
     "Ставка на остаток — 16,5% годовых" in ctx)
 
+
+print("ранжирование считается по контракту, а не сочиняется")
+from types import SimpleNamespace as _NS  # noqa: E402
+from bank_audit.research.gptr import ranking as _rank  # noqa: E402
+_r = FactRegistry()
+for _s, _a, _st in [("sberbank", "ставка", "declared"),
+                    ("sberbank", "жалобы", "observed"),
+                    ("sberbank", "нормы", "regulatory"),
+                    ("tinkoff", "ставка", "declared")]:
+    _r.add(subject=_s, attribute=_a, value="x", unit="",
+           verbatim="достаточно длинная цитата", url=f"https://{_s}.ru",
+           stance=_st)
+_rows = _rank.build(_NS(subjects=["sberbank", "tinkoff"],
+                        subject_labels={"sberbank": "Сбербанк",
+                                        "tinkoff": "Т-Банк"}),
+                    _r, ["ставка", "жалобы", "нормы"])
+chk("полнее раскрывший идёт первым", _rows[0].subject == "sberbank")
+chk("считается доля закрытых характеристик",
+    _rows[0].closed == 3 and _rows[1].closed == 1)
+chk("стороны доказательства разнесены",
+    _rows[0].regulatory == 1 and _rows[0].observed == 1)
+chk("в таблице для писателя есть критерий",
+    "ПОЛНОТА РАСКРЫТИЯ" in _rank.render(_rows))
 
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)

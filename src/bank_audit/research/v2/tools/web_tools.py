@@ -56,6 +56,18 @@ def is_offtopic_source(domain: str, url: str = "") -> str | None:
     return None
 
 
+# Реестр регуляторов и официальных публикаторов норм. Один на систему: по нему
+# и считается доверие, и наводится регуляторный поиск (research/gptr/planner).
+# Это справочные данные, а не эвристика: перечень органов, а не догадка о том,
+# какой вопрос задаст аудитор.
+REGULATOR_DOMAINS = (
+    "cbr.ru", "pravo.gov.ru", "consultant.ru", "garant.ru", "fas.gov.ru",
+    "nalog.gov.ru", "minfin.gov.ru", "kremlin.ru", "government.ru",
+    "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru",
+    "rospotrebnadzor.ru", "fedsfm.ru", "rosstat.gov.ru", "gks.ru",
+    "fincult.info")
+
+
 def _trust_for(domain: str, url: str) -> float:
     """Эвристика доверия по домену/URL (для SourceRegistry)."""
     # www. отрезаем: ниже банки и агрегаторы сверялись ТОЧНЫМ совпадением, а
@@ -69,11 +81,7 @@ def _trust_for(domain: str, url: str) -> float:
     if is_offtopic_source(d, url):
         return 0.2
     # Регуляторные
-    reg = ("cbr.ru", "pravo.gov.ru", "consultant.ru", "garant.ru", "fas.gov.ru",
-           "nalog.gov.ru", "minfin.gov.ru", "kremlin.ru", "government.ru",
-           "notariat.ru", "sfr.gov.ru", "mil.ru", "asv.org.ru", "sbp.nspk.ru",
-           "rospotrebnadzor.ru", "fedsfm.ru", "rosstat.gov.ru", "gks.ru",
-           "fincult.info")
+    reg = REGULATOR_DOMAINS
     if any(r == d or d.endswith("." + r) for r in reg):
         return 0.98
     if d.endswith(".gov.ru") or d.endswith(".mil.ru"):

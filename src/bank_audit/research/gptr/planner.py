@@ -17,13 +17,19 @@ from __future__ import annotations
 import logging
 
 from ..entity_extractor import _BANK_DOMAINS
+from ..v2.tools.web_tools import REGULATOR_DOMAINS
 
 log = logging.getLogger(__name__)
 
 
-def plan_to_subqueries(plan, question: str, *, attributes: list[str] | None = None,
+# Куда целиться за нормами. Первые три покрывают подавляющее большинство:
+# указания и положения ЦБ, официальные тексты ФЗ, толкования правовых баз.
+_REG_SITES = ("cbr.ru", "pravo.gov.ru", "consultant.ru")
+
+
+def plan_to_subqueries(plan, question: str, *, attributes=None,
                        per_subject: int = 1,
-                       max_queries: int = 14) -> tuple[list[str], list[str]]:
+                       max_queries: int = 16) -> tuple[list[str], list[str]]:
     """План Кондуктора → (подзапросы, доверенные домены).
 
     Возвращаем и домены: гейтвей умеет фильтровать их на своей стороне, а
@@ -71,12 +77,24 @@ def plan_to_subqueries(plan, question: str, *, attributes: list[str] | None = No
     if len(subjects) > 1:
         names = ", ".join(labels.get(s, s) for s in subjects[:4])
         queries.append(f"{topic} сравнение {names}")
+    # Нормативная рамка ищется ТАМ, ГДЕ ЖИВЁТ. Прежде миссия regulatory
+    # схлопывалась в обычную поисковую строку, и запрос «Сбербанк требования к
+    # идентификации» уводил на страницы банка: за весь прогон 31.08 в отчёт не
+    # попало ни одного регуляторного источника. Наводим на публикаторов норм
+    # тем же механизмом site:, что и на сайты банков.
+    reg_attr = getattr(attributes, "regulatory", "") if attributes else ""
+    if reg_attr:
+        for site in _REG_SITES:
+            queries.append(f"{reg_attr} {topic} site:{site}"[:300])
+        queries.append(f"{reg_attr} {topic} закон требования"[:300])
+
     # Запросы по ХАРАКТЕРИСТИКАМ контракта, без доменного фильтра. Это и есть
     # способ добыть наблюдаемую сторону, не заводя в коде списка слов про
     # отзывы: характеристику «с чем сталкиваются клиенты на практике» называет
     # план под конкретный вопрос, а поиск сам приводит туда, где об этом пишут
     # (сайта банка среди таких источников по определению нет).
-    for attr in (attributes or [])[:3]:
+    attr_list = list(attributes) if attributes else []
+    for attr in attr_list[:3]:
         for slug in subjects[:3]:
             queries.append(f"{labels.get(slug, slug)} {attr}".strip()[:300])
 

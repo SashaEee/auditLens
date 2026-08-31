@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from ..entity_extractor import _BANK_DOMAINS
+from ..v2.tools.web_tools import REGULATOR_DOMAINS
 
 log = logging.getLogger(__name__)
 
@@ -103,13 +104,18 @@ def verbatim_found(quote: str, page_text: str) -> bool:
 # ── Сторона доказательства ────────────────────────────────────────────────
 
 def stance_for(url: str, subject: str, subject_domains: dict[str, str]) -> str:
-    """declared — если это сайт самой организации; иначе observed.
+    """Чей это голос: организации, регулятора или взгляд со стороны.
 
-    Признак структурный: чей домен, тот и «заявляет». Никаких слов про отзывы
-    и жалобы — сторонний разбор условий и жалоба клиента одинаково являются
-    взглядом со стороны, и для аудита это одна категория.
+    Признак структурный — по владельцу домена. Норма регулятора это не мнение
+    и не обещание банка, а третье измерение аудита: чем предмет обязан
+    соответствовать. Без него отчёт сравнивает игроков между собой, но не с
+    требованием.
     """
     host = urlparse(url).netloc.lower().removeprefix("www.")
+    if any(host == d or host.endswith("." + d) for d in REGULATOR_DOMAINS):
+        return "regulatory"
+    if host.endswith(".gov.ru"):
+        return "regulatory"
     own = subject_domains.get(subject)
     if own and (host == own or host.endswith("." + own)):
         return "declared"
@@ -163,9 +169,13 @@ class FactRegistry:
         for facts in self.by_cell().values():
             declared = [f for f in facts if f.stance == "declared"]
             observed = [f for f in facts if f.stance == "observed"]
-            take = declared[:per_cell]
+            regulatory = [f for f in facts if f.stance == "regulatory"]
+            take = list(regulatory[:per_cell])       # норму не теряем никогда
+            room = max(1, per_cell - len(take))
             if observed:
-                take = declared[:max(1, per_cell - 1)] + observed[:max(1, per_cell - 1)]
+                take += declared[:max(1, room - 1)] + observed[:max(1, room - 1)]
+            else:
+                take += declared[:room]
             out.extend(take)
         return sorted(out, key=lambda f: f.id)
 
@@ -181,12 +191,15 @@ class FactRegistry:
             "напиши; не додумывай и не обобщай сверх фактов.",
             "",
             "Поле «сторона»: «заявлено» — со слов самой организации, "
-            "«наблюдается» — взгляд со стороны (жалобы, отзывы, разборы). "
-            "Где есть обе стороны, показывай обе и называй расхождение.",
+            "«наблюдается» — взгляд со стороны (жалобы, отзывы, разборы), "
+            "«норма регулятора» — требование закона или ЦБ. Показывай все, "
+            "какие есть, и называй расхождения: заявленное против практики и "
+            "заявленное против нормы.",
             "",
         ]
         for f in self.select_for_writer(per_cell):
-            side = "заявлено" if f.stance == "declared" else "наблюдается"
+            side = {"declared": "заявлено", "regulatory": "норма регулятора"
+                    }.get(f.stance, "наблюдается")
             subj = labels.get(f.subject, f.subject) or "—"
             unit = f" {f.unit}" if f.unit else ""
             lines.append(
@@ -210,11 +223,33 @@ _ATTRS_SYSTEM = """Ты готовишь список характеристик
 на практике, какие расхождения с заявленным, на что жалуются). Она обязательна:
 аудит сопоставляет заявленное с наблюдаемым.
 
+Ещё отдельно — ОДНА характеристика нормативной рамки: какие требования
+регулятора или закона действуют на предмет вопроса (что обязаны раскрывать,
+какие пределы и сроки установлены, какая ответственность). Если предмет
+вопроса ничем не регулируется — верни для неё пустую строку, не выдумывай.
+
 Пиши коротко, по-русски, существительными. Ответ строго JSON:
-{"attributes": ["...", "..."], "observed": "..."}"""
+{"attributes": ["...", "..."], "observed": "...", "regulatory": "..."}"""
 
 
-async def plan_attributes(client, model: str, question: str, plan) -> list[str]:
+@dataclass
+class Contract:
+    """Что отчёт обязан закрыть. Три измерения аудита в одной структуре."""
+    attributes: list[str]          # все характеристики, включая две ниже
+    observed: str = ""             # взгляд со стороны (жалобы, разборы)
+    regulatory: str = ""           # нормативная рамка, если предмет регулируется
+
+    def __iter__(self):            # чтобы вести себя как список характеристик
+        return iter(self.attributes)
+
+    def __len__(self):
+        return len(self.attributes)
+
+    def __getitem__(self, i):
+        return self.attributes[i]
+
+
+async def plan_attributes(client, model: str, question: str, plan) -> Contract:
     """План + вопрос → матрица характеристик, которую обязан закрыть отчёт.
 
     Это контракт: по нему считается покрытие и пробелы. Список приходит от
@@ -240,7 +275,7 @@ async def plan_attributes(client, model: str, question: str, plan) -> list[str]:
     except Exception as e:
         log.warning("характеристики плана: %s — берём предмет как единственную",
                     type(e).__name__)
-        return [product or "условия"]
+        return Contract([product or "условия"])
     attrs = [str(a).strip()[:120] for a in (data.get("attributes") or []) if a]
     attrs = attrs[:8]
     # Наблюдаемая сторона добавляется ВСЕГДА: без неё отчёт пересказывает
@@ -249,7 +284,14 @@ async def plan_attributes(client, model: str, question: str, plan) -> list[str]:
     observed = str(data.get("observed") or "").strip()[:120]
     if observed and observed not in attrs:
         attrs.append(observed)
-    return attrs or [product or "условия"]
+    # Нормативная рамка — третье измерение аудита рядом с заявленным и
+    # наблюдаемым. Пустую строку модель возвращает, когда предмет ничем не
+    # регулируется («дизайн карты»), и тогда мы её не навязываем.
+    regulatory = str(data.get("regulatory") or "").strip()[:120]
+    if regulatory and regulatory not in attrs:
+        attrs.append(regulatory)
+    return Contract(attrs or [product or "условия"],
+                    observed=observed, regulatory=regulatory)
 
 
 _EXTRACT_SYSTEM = """Ты извлекаешь ПРОВЕРЯЕМЫЕ факты со страницы для аудита.
@@ -343,15 +385,23 @@ def select_pages(pages: dict[str, str], attributes: list[str],
     if len(pages) <= limit:
         return pages
     own = [d for d in subject_domains.values() if d]
-    declared, observed = {}, {}
+    declared, observed, regulatory = {}, {}, {}
     for url, text in pages.items():
         host = urlparse(url).netloc.lower().removeprefix("www.")
-        (declared if any(host == d or host.endswith("." + d) for d in own)
-         else observed)[url] = text
-    # Треть места — наблюдаемой стороне, но не больше, чем её есть.
+        if any(host == d or host.endswith("." + d)
+               for d in REGULATOR_DOMAINS) or host.endswith(".gov.ru"):
+            regulatory[url] = text
+        elif any(host == d or host.endswith("." + d) for d in own):
+            declared[url] = text
+        else:
+            observed[url] = text
+    # Квоты по сторонам: норм всегда мало и они дороги, поэтому берём их все
+    # до пятой части места; треть — наблюдаемой стороне; остальное заявленной.
+    reg_room = min(len(regulatory), max(1, limit // 5))
     obs_room = min(len(observed), max(1, limit // 3))
-    dec_room = max(1, limit - obs_room)
+    dec_room = max(1, limit - reg_room - obs_room)
     must = _top_by_similarity(declared, attributes, dec_room)
+    must.update(_top_by_similarity(regulatory, attributes, reg_room))
     rest = observed
     room = max(0, limit - len(must))
     if room <= 0 or not rest:
@@ -376,8 +426,8 @@ def select_pages(pages: dict[str, str], attributes: list[str],
         chosen = sorted(rest, key=lambda u: -len(rest[u]))[:room]
     out = dict(must)
     out.update({u: rest[u] for u in chosen})
-    log.info("извлечение: %d страниц из %d (%d заявленной стороны + %d "
-             "наблюдаемой)", len(out), len(pages), len(must), len(chosen))
+    log.info("извлечение: %d из %d (заявлено %d, норм %d, со стороны %d)",
+             len(out), len(pages), len(declared), len(regulatory), len(chosen))
     return out
 
 

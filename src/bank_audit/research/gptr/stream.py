@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, facts as al_facts
+from . import ranking as al_rank
 from . import gaps as al_gaps, planner as al_planner
 from . import scraper as al_scraper, verify as al_verify
 from .engine import _role_prompt, install, report_prompt
@@ -147,14 +148,25 @@ async def stream_deep_research_gptr(question: str,
                 "detail": "Аналитик собирает разделы, заказанные планом",
                 "estimate_s": 90})
     labels = dict(getattr(plan, "subject_labels", None) or {})
+    rank_rows = al_rank.build(plan, registry, attributes)
+    if rank_rows:
+        yield _evt({"type": "ranking",
+                    "criterion": "полнота раскрытия характеристик контракта",
+                    "rows": [r.to_ui() for r in rank_rows]})
     try:
         # Писатель получает НЕ ком контекста, а реестр фактов с якорями.
         ext = registry.render_for_writer(labels) if registry.facts else None
+        if ext and rank_rows:
+            ext = ext + "\n\n" + al_rank.render(rank_rows)
         # custom_prompt заменяет шаблон gpt-researcher целиком: иначе его
         # собственные правила цитирования перебивают наши якоря.
         report = await researcher.write_report(
             ext_context=ext,
-            custom_prompt=report_prompt(plan, question) if ext else "")
+            custom_prompt=report_prompt(
+                plan, question,
+                has_ranking=bool(rank_rows),
+                has_regulatory=any(f.stance == "regulatory"
+                                   for f in registry.facts)) if ext else "")
     except Exception as e:
         log.exception("gptr: написание")
         yield _evt({"type": "text",
