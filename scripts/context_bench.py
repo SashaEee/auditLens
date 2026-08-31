@@ -17,6 +17,7 @@
 Запуск:  docker exec auditlens-app python3 /tmp/context_bench.py [--json]
 """
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -25,7 +26,8 @@ from pathlib import Path
 sys.path.insert(0, "/app/src")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-FIX = Path("/tmp/fixtures/pages")
+FIX = Path(os.getenv("FIXTURES_DIR",
+                     "/home/amzenkovskiy-2127124/auditlens-workspace/fixtures/pages"))
 NUM_RE = re.compile(r"\d[\d\s ]*(?:[.,]\d+)?\s*(?:%|₽|руб\w*|мес\w*|год\w*|лет|дн\w*)",
                     re.IGNORECASE)
 # Контейнеры, которые по смыслу являются элементами управления, а не контентом.

@@ -15,7 +15,10 @@ from pathlib import Path
 sys.path.insert(0, "/app/src")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-OUT = Path(os.getenv("FIXTURES_DIR", "/tmp/fixtures/pages"))
+# Постоянный том: /tmp внутри контейнера умирает при каждом рестарте,
+# и измерительный контур терялся ровно тогда, когда нужен для сверки.
+OUT = Path(os.getenv("FIXTURES_DIR",
+                     "/home/amzenkovskiy-2127124/auditlens-workspace/fixtures/pages"))
 
 # Страницы подобраны так, чтобы покрыть РАЗНЫЕ типы вёрстки, а не один сайт:
 # карточка продукта, каталог с фильтрами, тарифы таблицей, регуляторный документ.

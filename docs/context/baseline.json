@@ -120,5 +120,13 @@
   "chars_per_num": 655,
   "digit_recall_pct": 63,
   "filter_leak": 6
+ },
+ "после_этапов_3_4": {
+  "chars": 7708,
+  "short_lines_pct": 49,
+  "dup_lines": 5,
+  "chars_per_num": 364,
+  "digit_recall_pct": 68,
+  "filter_leak": 6
  }
 }
