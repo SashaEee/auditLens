@@ -130,7 +130,16 @@ _NOISE_SELECTORS = [
 # исчезнет вместе с меню.
 _UNIT_RE = re.compile(r"\d[\d\s\u00a0]*(?:[.,]\d+)?\s*(?:%|₽|руб|коп|мес|год|лет|дн|шт)",
                       re.IGNORECASE)
-_MIN_LINE = 40          # ниже этой длины строка без числа считается элементом UI
+_MIN_LINE = 40          # ниже этой длины строка без смысла считается элементом UI
+
+# Слова, по которым короткая строка опознаётся как условие/шаг процесса, а не
+# как пункт меню. Нужны для вопросов вида «как оформить карту, где проще» —
+# там цифр мало, а ценность в требованиях и порядке действий.
+_MEANING_RE = re.compile(
+    r"(нужн|необходим|потребует|требует|заявк|документ|паспорт|анкет|подпис|"
+    r"рассмотр|решени|одобрен|отказ|доставк|курьер|активац|бесплатн|платн|"
+    r"без комисси|комисси|лимит|срок|условия|можно|нельзя|только|при усл)",
+    re.IGNORECASE)
 
 
 def _link_density(node) -> float:
@@ -303,6 +312,11 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
         if not text or len(text) < 3:
             continue
         has_number = bool(_UNIT_RE.search(text))
+        # Содержательной короткую строку делает не только число: «Нужен
+        # паспорт», «Решение за 2 минуты», «Доставка курьером» — это условия
+        # процесса. Ориентируемся на слова-маркеры, иначе описание оформления
+        # карты вычищается наравне с пунктами меню.
+        has_meaning = has_number or bool(_MEANING_RE.search(text))
         # 1) Дедупликация: шапка, хлебные крошки и подписи повторяются десятками
         #    строк и едут в модель на каждом ходу диалога.
         key = text.lower()
@@ -314,12 +328,12 @@ def parse_html(content: bytes, url: str = "") -> ParsedDoc:
         # Короткая строка — признак меню/чипа ТОЛЬКО в списках и ячейках.
         # Абзац (p/blockquote) короткой быть имеет право: «Ставка фиксированная.»
         # — это содержание, а не элемент интерфейса.
-        if (len(text) < _MIN_LINE and not has_number
+        if (len(text) < _MIN_LINE and not has_meaning
                 and tag not in _HEADING_TAGS and tag not in ("p", "blockquote")):
             ui_lines.append(text)
             continue
         # 3) Блок, где текст почти целиком в ссылках, — навигация, не контент.
-        if not has_number and _link_density(el) > 0.6:
+        if not has_meaning and _link_density(el) > 0.6:
             ui_lines.append(text)
             continue
         if tag in _HEADING_TAGS:
