@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
@@ -300,16 +301,70 @@ async def extract_page(client, model: str, *, url: str, text: str,
     return [i for i in items if isinstance(i, dict)]
 
 
+def select_pages(pages: dict[str, str], attributes: list[str],
+                 subject_domains: dict[str, str], limit: int) -> dict[str, str]:
+    """Отбор страниц под извлечение по близости к КОНТРАКТУ.
+
+    Читаем мы широко (80+ страниц), а извлекать из всего дорого: замер 31.08 —
+    196 секунд, 58% времени прогона, при том что писателю уходит около сотни
+    фактов из семисот. Отбираем страницы, семантически близкие к
+    характеристикам, которые обязаны закрыть.
+
+    Сайты самих объектов сохраняем всегда, независимо от близости: без
+    первоисточника отчёт теряет заявленную сторону, а это дороже любой
+    экономии. Порог не по словам — по эмбеддингам, поэтому работает для
+    любого вопроса.
+    """
+    if len(pages) <= limit:
+        return pages
+    own = [d for d in subject_domains.values() if d]
+    must, rest = {}, {}
+    for url, text in pages.items():
+        host = urlparse(url).netloc.lower().removeprefix("www.")
+        (must if any(host == d or host.endswith("." + d) for d in own)
+         else rest)[url] = text
+    room = max(0, limit - len(must))
+    if room <= 0 or not rest:
+        return must or pages
+    try:
+        from ...rag.embedder import embed_batch
+        probe = "; ".join(attributes)[:2000]
+        urls = list(rest)
+        vecs = embed_batch([probe] + [rest[u][:3000] for u in urls])
+        q = vecs[0]
+        qn = sum(x * x for x in q) ** 0.5 or 1.0
+
+        def sim(v):
+            n = sum(x * x for x in v) ** 0.5 or 1.0
+            return sum(a * b for a, b in zip(q, v)) / (qn * n)
+
+        ranked = sorted(zip(urls, vecs), key=lambda p: -sim(p[1]))
+        chosen = [u for u, _ in ranked[:room]]
+    except Exception as e:
+        log.info("отбор страниц: эмбеддинги недоступны (%s) — берём длиннейшие",
+                 type(e).__name__)
+        chosen = sorted(rest, key=lambda u: -len(rest[u]))[:room]
+    out = dict(must)
+    out.update({u: rest[u] for u in chosen})
+    log.info("извлечение: %d страниц из %d (%d первоисточников + %d по близости)",
+             len(out), len(pages), len(must), len(chosen))
+    return out
+
+
 async def build_registry(client, model: str, *, pages: dict[str, str],
                          attributes: list[str], plan,
-                         concurrency: int = 6) -> FactRegistry:
-    """Страницы → реестр фактов, прошедших дословную проверку."""
+                         concurrency: int = 10,
+                         page_limit: int | None = None) -> FactRegistry:
+    """Страницы → реестр фактов."""
     subjects = list(getattr(plan, "subjects", None) or [])
     labels = dict(getattr(plan, "subject_labels", None) or {})
     domains = {s: _BANK_DOMAINS.get(s, "") for s in subjects}
     reg = FactRegistry()
     if not attributes:
         return reg
+    limit = page_limit if page_limit is not None else int(
+        os.getenv("GPTR_EXTRACT_PAGES", "35"))
+    pages = select_pages(pages, attributes, domains, limit)
 
     sem = asyncio.Semaphore(concurrency)
 
