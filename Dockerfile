@@ -50,6 +50,17 @@ RUN mkdir -p src/bank_audit && touch src/bank_audit/__init__.py \
 RUN playwright install --with-deps chromium \
     && chmod -R a+rx /ms-playwright
 
+# 2b) Заплатка к gpt-researcher 0.16.0: в actions/query_processing.py забыт
+#     `from typing import Any`, и пакет не импортируется вовсе (NameError при
+#     разборе аннотаций типов). Правка — ровно одна строка. Когда апстрим
+#     исправит, условие просто не сработает и сборка не изменится.
+RUN F=$(find / -name query_processing.py -path '*gpt_researcher/actions*' 2>/dev/null | head -1); \
+    if [ -n "$F" ] && ! grep -q "^from typing import" "$F"; then \
+        sed -i "1i from typing import Any, Dict, List, Optional" "$F"; \
+        echo "gpt-researcher: импорт typing добавлен"; \
+    fi; \
+    python -c "import gpt_researcher; print('gpt-researcher импортируется')"
+
 # 3) Только теперь код: правка Python пересобирает ТОЛЬКО этот слой и лёгкую
 #    editable-установку — секунды вместо минут. --no-deps: зависимости уже стоят.
 COPY src ./src
