@@ -44,6 +44,15 @@ dependencies = [
   # (websockets>=16) ломал docker-сборку (ResolutionImpossible). langchain-openai
   # тянет только langchain-core (без websockets) — конфликта нет.
   "langchain-openai>=0.2",
+  # ── Движок исследования ───────────────────────────────────────────────
+  # gpt-researcher: цикл план → поиск → чтение → сжатие → писатель. Наши
+  # части подставляются в его точки расширения (research/gptr/). Тянет
+  # langchain 1.x — прежний конфликт по websockets снят (langgraph-sdk его
+  # больше не ограничивает, в образе websockets 16.x).
+  "gpt-researcher>=0.16,<0.17",
+  # nanobot-ai (модуль лазеек) требует pypdf<6, а gpt-researcher поднимает
+  # его до 6.x. Пин обязателен, иначе лазейки перестанут импортироваться.
+  "pypdf>=5.0,<6.0",
   # ── Embeddings ────────────────────────────────────────────────────────
   # torch + sentence-transformers вынесены в [project.optional-dependencies]
   # → local-embeddings (см. ниже). В контейнере/проде EMBEDDING_MODE=api →

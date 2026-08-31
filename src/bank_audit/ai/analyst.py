@@ -1087,7 +1087,8 @@ async def stream_analysis(question: str, history: list[dict],
             # EAV даст склееный двойной отчёт (mode/plan/отчёт ×2 в один поток) →
             # вместо этого честно завершаем с ошибкой.
             try:
-                from ..research.v2.orchestrator import stream_deep_research_v2
+                from ..research.gptr.stream import (
+                    stream_deep_research_gptr as stream_deep_research_v2)
                 # _with_heartbeat тикает progress_elapsed во время длинных
                 # await'ов pipeline — таймер в UI идёт, а не «висит на ~30s».
                 async for ev in _with_heartbeat(
