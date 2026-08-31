@@ -7,6 +7,7 @@ from inspect import isawaitable
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from ..hashing import sha256_text
 from . import repository as repo
@@ -428,6 +429,105 @@ class ResearchCaseService:
             {"candidate_id": candidate_id},
         ).scalar_one_or_none()
 
+    def research_workspace_id(self, research_id: int) -> int | None:
+        """Возвращает workspace исследования, не раскрывая его источники."""
+        return self._session.execute(
+            text("SELECT workspace_id FROM loophole_research WHERE research_id = :research_id"),
+            {"research_id": research_id},
+        ).scalar_one_or_none()
+
+    def research_id_for_run(self, *, workspace_id: int, run_id: str) -> int | None:
+        """Связывает отчёт с research run только внутри того же workspace."""
+        return self._session.execute(
+            text(
+                "SELECT research_id FROM loophole_research "
+                "WHERE workspace_id = :workspace_id AND run_id = :run_id "
+                "ORDER BY research_id DESC LIMIT 1"
+            ),
+            {"workspace_id": workspace_id, "run_id": run_id},
+        ).scalar_one_or_none()
+
+    def import_preliminary_sources(self, research_id: int, *, imported_by: str) -> dict[str, Any]:
+        """Явно переносит новые подозрительные источники в общий каталог.
+
+        Исходный research source остаётся неизменяемым provenance. В каталог
+        попадает только успешно прочитанная страница с кандидатной оценкой;
+        повторный перенос source_id идемпотентно возвращается как skipped.
+        """
+        workspace_id = self.research_workspace_id(research_id)
+        if workspace_id is None:
+            return {"imported": 0, "skipped": 0, "record_ids": []}
+        rows = self._session.execute(
+            text(
+                "SELECT source.source_id, source.url, source.title AS source_title, "
+                "source.extracted_text, candidate.title AS candidate_title, "
+                "MAX(COALESCE(candidate.model_confidence, 0.0)) AS confidence "
+                "FROM loophole_research_source AS source "
+                "JOIN loophole_research_candidate AS candidate "
+                "ON candidate.source_id = source.source_id "
+                "WHERE source.research_id = :research_id "
+                "AND source.status = 'fetched' AND source.access_status = 'active' "
+                "AND source.extracted_text IS NOT NULL AND source.extracted_text != '' "
+                "AND (candidate.model_is_loophole = TRUE "
+                "OR (candidate.model_is_loophole IS NULL AND candidate.is_loophole = TRUE)) "
+                "GROUP BY source.source_id, source.url, source.title, source.extracted_text, candidate.title "
+                "ORDER BY source.source_id"
+            ),
+            {"research_id": research_id},
+        ).mappings().all()
+        imported_ids: list[int] = []
+        skipped = 0
+        for row in rows:
+            source_id = int(row["source_id"])
+            already_imported = self._session.execute(
+                text("SELECT 1 FROM loophole_preliminary_import WHERE source_id = :source_id"),
+                {"source_id": source_id},
+            ).scalar_one_or_none()
+            content = str(row["extracted_text"])
+            source_url = str(row["url"])
+            source_sha = sha256_text(f"research-source:{source_url}\n{content}")
+            if already_imported or repo.exists_url(source_url, session=self._session) or repo.exists_sha256(
+                source_sha, session=self._session
+            ):
+                skipped += 1
+                continue
+            record_id = repo.insert_record(
+                LoopholeRecord(
+                    sha256=source_sha,
+                    title=str(row["source_title"] or row["candidate_title"] or source_url),
+                    url=source_url,
+                    snippet=content[:1000],
+                    raw_text=content,
+                    content_status="full",
+                    raw_text_len=len(content),
+                    status="preliminary",
+                    is_loophole=True,
+                    verdict_confidence=float(row["confidence"]),
+                    verdict_reason="Предварительная оценка из AI-исследования",
+                    verdict_model="research_preliminary",
+                ),
+                session=self._session,
+            )
+            if record_id is None:
+                skipped += 1
+                continue
+            self._session.execute(
+                text(
+                    "INSERT INTO loophole_preliminary_import "
+                    "(research_id, source_id, workspace_id, record_id, imported_by) "
+                    "VALUES (:research_id, :source_id, :workspace_id, :record_id, :imported_by)"
+                ),
+                {
+                    "research_id": research_id,
+                    "source_id": source_id,
+                    "workspace_id": workspace_id,
+                    "record_id": record_id,
+                    "imported_by": imported_by,
+                },
+            )
+            imported_ids.append(int(record_id))
+        return {"imported": len(imported_ids), "skipped": skipped, "record_ids": imported_ids}
+
     def get_report_snapshot(self, snapshot_id: int) -> dict[str, Any] | None:
         """Возвращает канонические данные отчёта только из immutable snapshot.
 
@@ -468,6 +568,20 @@ class ResearchCaseService:
         result: str,
     ) -> int:
         """Сохраняет результат текущего agent run без клиентских доказательств."""
+        try:
+            evidence_row = self._session.execute(
+                text(
+                    "SELECT snapshot.evidence_snapshot "
+                    "FROM loophole_verification_snapshot AS snapshot "
+                    "JOIN loophole_research AS research ON research.research_id = snapshot.research_id "
+                    "WHERE research.workspace_id = :workspace_id AND research.run_id = :run_id "
+                    "ORDER BY snapshot.snapshot_id DESC LIMIT 1"
+                ),
+                {"workspace_id": workspace_id, "run_id": run_id},
+            ).mappings().one_or_none()
+        except OperationalError:
+            evidence_row = None
+        evidence_snapshot = evidence_row["evidence_snapshot"] if evidence_row else "[]"
         report_id = self._session.execute(
             text(
                 "INSERT INTO loophole_research_report "
@@ -480,7 +594,7 @@ class ResearchCaseService:
                 "run_id": run_id,
                 "query": query,
                 "result": result,
-                "evidence": "[]",
+                "evidence": evidence_snapshot,
             },
         ).scalar_one()
         return int(report_id)

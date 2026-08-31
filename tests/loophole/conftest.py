@@ -141,6 +141,24 @@ CREATE TABLE loophole_action_log (
 );
 CREATE INDEX idx_lal_user ON loophole_action_log(user_id, created_at);
 
+CREATE TABLE source_proposal (
+    proposal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    purpose TEXT NOT NULL,
+    url TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    title TEXT,
+    reason TEXT,
+    proposed_by TEXT NOT NULL,
+    proposer_name TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    review_note TEXT,
+    reviewed_by TEXT,
+    reviewed_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX source_proposal_pending_uniq
+    ON source_proposal (purpose, domain) WHERE status = 'pending';
+
 CREATE TABLE loophole_kb_example (
     example_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     title         TEXT,
@@ -235,6 +253,20 @@ CREATE TABLE loophole_research_report (
 );
 CREATE INDEX idx_loophole_research_report_workspace
     ON loophole_research_report (workspace_id, report_id DESC);
+
+-- Provenance предварительных импортов (миграция 060). Таблица создаётся и в
+-- общих SQLite-fixtures, поскольку /catalog всегда делает LEFT JOIN к ней.
+CREATE TABLE loophole_preliminary_import (
+    import_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    research_id INTEGER NOT NULL,
+    source_id INTEGER NOT NULL UNIQUE,
+    workspace_id INTEGER NOT NULL,
+    record_id INTEGER NOT NULL,
+    imported_by TEXT NOT NULL,
+    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_loophole_preliminary_import_record
+    ON loophole_preliminary_import (record_id);
 """
 
 

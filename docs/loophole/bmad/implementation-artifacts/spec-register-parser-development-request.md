@@ -2,7 +2,7 @@
 title: 'Заявка на разработку парсера вместо автогенерации'
 type: 'feature-change'
 created: '2026-08-31'
-status: 'draft'
+status: 'done'
 review_loop_iteration: 0
 context:
   - 'migrations/019_source_proposals.sql'
@@ -47,10 +47,10 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] RED: `201` пишет только заявку; generator/runner/healer/scheduler не вызваны; старый POST=`405`; дубли/Telegram/invalid=`409/422`.
-- [ ] Реализовать repository + route: ownership, server-fixed `purpose/status`, target/domain-дедуп, атомарный audit/rollback.
-- [ ] Переписать форму: отдельные URL/описание, честные success/error, очистка только после `201`; удалить Telegram-card и legacy copy.
-- [ ] Сделать каталог этой вкладки read-only; не обновлять его заявкой, API управления не удалять.
+- [x] RED: `201` пишет только заявку; generator/runner/healer/scheduler не вызваны; старый POST=`405`; дубли/Telegram/invalid=`409/422`.
+- [x] Реализовать repository + route: ownership, server-fixed `purpose/status`, target/domain-дедуп, атомарный audit/rollback.
+- [x] Переписать форму: отдельные URL/описание, честные success/error, очистка только после `201`; удалить Telegram-card и legacy copy.
+- [x] Сделать каталог этой вкладки read-only; не обновлять его заявкой, API управления не удалять.
 
 **Acceptance Criteria:**
 - Валидный submit даёт номер одной `pending`-заявки; parser/run/files/processes неизменны.
@@ -69,3 +69,10 @@ context:
 - `.venv/Scripts/python.exe -m pytest tests/loophole -q`
 - `.venv/Scripts/ruff.exe check src/bank_audit/loophole tests/loophole`
 - In-app Browser: light/dark, `201` и `409/503`, console=0, screenshots + comparison.
+
+## Результат проверки
+
+- API-регрессия: `55 passed` (`test_web.py`, `test_parsers_web.py`); финальный набор маршрута и интерфейса — без падений.
+- Browser-runtime: заявка, read-only каталог и отсутствие EventSource — `3 passed`.
+- Живой локальный Browser: обновлённый заголовок и форма видны; Telegram-card и кнопки управления парсером отсутствуют; console error = 0.
+- Ruff по изменённым production и тестовым файлам: `All checks passed!`.

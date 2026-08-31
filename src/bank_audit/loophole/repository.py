@@ -126,9 +126,11 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 f"INSERT INTO {schema.T_RECORD} "
                 "(sha256, title, url, snippet, domain, trust_score, bank_slug, keyword, "
                 "raw_text, status, is_loophole, parser_id, text_sha256, "
-                "content_status, raw_text_len, raw_text_truncated, published_at) "
+                "content_status, raw_text_len, raw_text_truncated, published_at, "
+                "verdict_confidence, verdict_reason, verdict_model) "
                 "VALUES (:sha, :title, :url, :snip, :dom, :trust, :bank, :kw, :raw, "
-                ":status, :loop, :pid, :tsha, :cs, :rlen, :rtrunc, :published) "
+                ":status, :loop, :pid, :tsha, :cs, :rlen, :rtrunc, :published, "
+                ":confidence, :reason, :model) "
                 "RETURNING record_id"
             ),
             {
@@ -140,6 +142,9 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 "cs": rec.content_status, "rlen": rec.raw_text_len,
                 "rtrunc": rec.raw_text_truncated,
                 "published": rec.published_at,
+                "confidence": rec.verdict_confidence,
+                "reason": rec.verdict_reason,
+                "model": rec.verdict_model,
             },
         ).scalar_one()
         return row
@@ -316,6 +321,80 @@ def list_published_cases(*, limit: int = 500, session=None) -> list[dict]:
             {"limit": limit},
         ).mappings().all()
         return [_record_dict(row) for row in rows]
+
+
+def list_catalog_cases(
+    *,
+    bank_slugs: list[str] | None = None,
+    period_from: date | None = None,
+    period_to: date | None = None,
+    query_text: str | None = None,
+    verification_status: str = "all",
+    limit: int = 500,
+    offset: int = 0,
+    session=None,
+) -> list[dict]:
+    """Общая база: подтверждённые и предварительные подозрения.
+
+    ``verified`` показывает только опубликованные положительные решения;
+    ``pending`` — только предварительные записи, ещё ожидающие ЦК КС.
+    """
+    if verification_status not in {"all", "verified", "pending"}:
+        raise ValueError("Неизвестный статус верификации")
+    with _session(session) as s:
+        clauses = ["record.is_loophole = TRUE", "record.status IN ('published', 'preliminary')"]
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if verification_status == "verified":
+            clauses.append("record.status = 'published'")
+        elif verification_status == "pending":
+            clauses.append("record.status = 'preliminary'")
+        if bank_slugs:
+            placeholders = ", ".join(f":b{i}" for i in range(len(bank_slugs)))
+            clauses.append(f"record.bank_slug IN ({placeholders})")
+            params.update({f"b{i}": value for i, value in enumerate(bank_slugs)})
+        if period_from:
+            clauses.append("record.published_at >= :period_from")
+            params["period_from"] = period_from
+        if period_to:
+            clauses.append("record.published_at < :period_to")
+            params["period_to"] = period_to + timedelta(days=1)
+        if query_text:
+            clauses.append(
+                "(LOWER(COALESCE(record.title, '')) LIKE :query "
+                "OR LOWER(COALESCE(record.snippet, '')) LIKE :query)"
+            )
+            params["query"] = f"%{query_text.lower()}%"
+        rows = s.execute(
+            text(
+                "SELECT record.record_id, record.title, record.url, record.snippet, record.domain, "
+                "record.trust_score, record.bank_slug, record.keyword, record.is_loophole, "
+                "record.verdict_confidence, record.verdict_reason, record.verdict_model, record.status, "
+                "record.published_at, record.collected_at, record.classified_at, "
+                "record.content_status, record.raw_text_len, imported.research_id AS provenance_research_id, "
+                "imported.source_id AS provenance_source_id, imported.imported_at AS provenance_imported_at "
+                f"FROM {schema.T_RECORD} AS record "
+                "LEFT JOIN loophole_preliminary_import AS imported ON imported.record_id = record.record_id "
+                f"WHERE {' AND '.join(clauses)} "
+                "ORDER BY record.collected_at DESC, record.record_id DESC LIMIT :limit OFFSET :offset"
+            ),
+            params,
+        ).mappings().all()
+        catalog: list[dict] = []
+        for row in rows:
+            record = _record_dict(row)
+            research_id = record.pop("provenance_research_id", None)
+            source_id = record.pop("provenance_source_id", None)
+            imported_at = record.pop("provenance_imported_at", None)
+            if research_id is not None:
+                record["provenance"] = {
+                    "research_id": research_id,
+                    "source_id": source_id,
+                    "imported_at": str(imported_at) if imported_at is not None else None,
+                }
+            else:
+                record["provenance"] = None
+            catalog.append(record)
+        return catalog
 
 
 def list_bank_slugs(*, session=None) -> list[str]:
@@ -530,6 +609,51 @@ def log_action(
             },
         ).scalar_one()
         return row
+
+
+def create_parser_development_request(
+    *,
+    workspace_id: int,
+    url: str,
+    domain: str,
+    description: str,
+    user_id: str,
+    session=None,
+) -> int:
+    """Сохраняет заявку на разработку парсера и её audit в одной транзакции."""
+    with _session(session) as s:
+        proposal_id = s.execute(
+            text(
+                "INSERT INTO source_proposal "
+                "(purpose, url, domain, reason, proposed_by, status) "
+                "VALUES (:purpose, :url, :domain, :reason, :user_id, :status) "
+                "RETURNING proposal_id"
+            ),
+            {
+                "purpose": "loophole_parser",
+                "url": url,
+                "domain": domain,
+                "reason": description,
+                "user_id": user_id,
+                "status": "pending",
+            },
+        ).scalar_one()
+        s.execute(
+            text(
+                f"INSERT INTO {schema.T_ACTION_LOG} "
+                "(user_id, workspace_id, action, detail) "
+                "VALUES (:user_id, :workspace_id, :action, :detail)"
+            ),
+            {
+                "user_id": user_id,
+                "workspace_id": workspace_id,
+                "action": "parser_development_request_create",
+                "detail": json.dumps(
+                    {"proposal_id": proposal_id, "domain": domain}, ensure_ascii=False
+                ),
+            },
+        )
+        return proposal_id
 
 
 _SECRET_VALUE = re.compile(

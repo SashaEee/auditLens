@@ -156,6 +156,7 @@ function LoopholeApp() {
   const [fBanks, setFBanks] = useState([]);          // выбранные slug
   const [fFrom, setFFrom] = useState("");
   const [fTo, setFTo] = useState("");
+  const [fVerification, setFVerification] = useState("all");
   // Сортировка
   const [sortKey, setSortKey] = useState("verdict_confidence");
   const [sortDir, setSortDir] = useState("desc");
@@ -303,6 +304,7 @@ function LoopholeApp() {
       if (fBanks.length) params.set("bank_slugs", fBanks.join(","));
       if (fFrom) params.set("period_from", fFrom);
       if (fTo) params.set("period_to", fTo);
+      params.set("verification_status", fVerification);
       const url = `${API}/catalog${params.toString() ? "?" + params.toString() : ""}`;
       const r = await fetch(url);
       if (requestGeneration !== recordsRequestRef.current) return;
@@ -322,7 +324,7 @@ function LoopholeApp() {
         setLoading(false);
       }
     }
-  }, [fText, fBanks, fFrom, fTo]);
+  }, [fText, fBanks, fFrom, fTo, fVerification]);
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
@@ -331,7 +333,7 @@ function LoopholeApp() {
   }, [loadRecords, authz, fText]);
 
   // Сброс выделения и развёрнутых строк при смене фильтров.
-  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo]);
+  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo, fVerification]);
 
   // ── Сортировка на клиенте ──────────────────────────────────────────────────
   const sortedRecords = useMemo(() => {
@@ -382,7 +384,7 @@ function LoopholeApp() {
 
   // Сброс фильтров каталога — действие «Сбросить» (фильтры + пустая выборка).
   const resetFilters = () => {
-    setFText(""); setFBanks([]); setFFrom(""); setFTo("");
+    setFText(""); setFBanks([]); setFFrom(""); setFTo(""); setFVerification("all");
   };
 
   // ── CSV-экспорт выделенных записей ─────────────────────────────────────────
@@ -716,54 +718,32 @@ function LoopholeApp() {
   }, [logPanel && logPanel.lines.length]);
 
   const WEB_TARGET_RE = /^https?:\/\/\S+$/i;
-  const TELEGRAM_TARGET_RE = /^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\/\S+|^@[A-Za-z][A-Za-z0-9_]{4,31}$/i;
-
-  const createParser = async () => {
+  const createParserRequest = async () => {
     const url = newParserUrl.trim();
     const description = newParserDescription.trim();
     if (!url || !description || !workspaceId) return;
-    if (TELEGRAM_TARGET_RE.test(url)) {
-      setParserError("Telegram-источники подключаются через защищённый контур. Обратитесь к администратору модуля.");
-      return;
-    }
     if (!WEB_TARGET_RE.test(url)) {
       setParserError("Укажите полный URL веб-источника, начиная с http:// или https://");
       return;
     }
-    const q = `${description}\nИсточник: ${url}`;
     setParsersBusy(true);
     setParserError("");
     try {
-      const r = await fetch(`${API}/parsers`, {
+      const r = await fetch(`${API}/parser-requests`, {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({workspace_id: workspaceId, query: q}),
+        body: JSON.stringify({workspace_id: workspaceId, url, description}),
       });
       const d = await r.json().catch(() => null);
       if (!r.ok) {
         const det = d && d.detail;
-        if (r.status === 409 && det && det.conflict_with) {
-          throw new Error(
-            `Такой источник уже парсит «${det.conflict_with.name || det.conflict_with.parser_id}» (id ${det.conflict_with.parser_id})`
-          );
-        } else {
-          throw new Error(
-            typeof det === "string" ? det : `Ошибка создания парсера (HTTP ${r.status})`
-          );
-        }
+        throw new Error(typeof det === "string" ? det : `Не удалось зарегистрировать заявку (HTTP ${r.status})`);
       }
       setNewParserUrl("");
       setNewParserDescription("");
-      const warning = d && d.warnings && d.warnings.length
-        ? ` Частичное пересечение источников с парсером id ${d.warnings[0].conflict_with}.`
-        : "";
-      showToast(`Парсер создан.${warning}`, "success");
-      await loadParsers();
-      if (d && d.parser_id && d.validation_run_id) {
-        openLog(d.parser_id, d.validation_run_id);
-      }
+      showToast(`Заявка №${d.request_id} зарегистрирована`, "success");
       return d;
     } catch (e) {
-      const message = e instanceof Error && e.message ? e.message : "Сеть недоступна, парсер не создан";
+      const message = e instanceof Error && e.message ? e.message : "Сеть недоступна, заявка не зарегистрирована";
       setParserError(message);
       showToast(message, "error");
       return null;
@@ -1381,6 +1361,7 @@ function LoopholeApp() {
     monitoring: "мониторинг",
     rejected: "отклонено",
     new: "новая",
+    preliminary: "предварительно",
   };
   const recordStatusLabel = (status) => status ? (RECORD_STATUS_LABELS[status] || "—") : "—";
 
@@ -1403,6 +1384,23 @@ function LoopholeApp() {
     if (r.is_loophole === true) return "лазейка";
     if (r.is_loophole === false) return "не лазейка";
     return "не размечено";
+  };
+
+  const importResearchSources = async (reportId) => {
+    if (!reportId) return;
+    try {
+      const r = await fetch(`${API}/research/reports/${reportId}/import-sources`, {method: "POST"});
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((d && d.detail) || "Не удалось перенести источники.");
+      if (d.imported) {
+        showToast(`В общую базу добавлено предварительных записей: ${d.imported}.`, "success");
+        await loadRecords();
+      } else {
+        showToast("Новых пригодных источников для переноса нет.", "info");
+      }
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Не удалось перенести источники.", "error");
+    }
   };
 
   // Ленивая загрузка полного контента записи (кэш — без повторных запросов).
@@ -1530,7 +1528,7 @@ function LoopholeApp() {
         <header className="lp-main-header">
           <h1>
             {view === "ai_research" ? "Новое AI-исследование"
-              : view === "sources" ? "Новый парсер веб-источника"
+              : view === "sources" ? "Заявка на разработку парсера"
               : view === "queue" ? "Очередь верификации"
               : view === "admin" ? "Управление доступом"
               : "Лазейки и уязвимости в продуктах банка"}
@@ -1625,16 +1623,25 @@ function LoopholeApp() {
                      onChange={e => setFTo(e.target.value)}/>
             </div>
           </div>
+          <div className="lp-filter">
+            <label htmlFor="lp-filter-verification">Проверка ЦК КС</label>
+            <select id="lp-filter-verification" value={fVerification}
+                    onChange={e => setFVerification(e.target.value)}>
+              <option value="all">Все</option>
+              <option value="verified">Верифицировано ЦК</option>
+              <option value="pending">Ожидает верификации</option>
+            </select>
+          </div>
           <div className="lp-filter lp-filter-scope">
             <span className="lp-filter-label">Тип данных</span>
             <span className="lp-scope-indicator"
                   aria-label="Каталог показывает только лазейки">лазейки</span>
           </div>
           <div className="lp-filter lp-filter-scope">
-            <span className="lp-filter-label">Статус публикации</span>
+            <span className="lp-filter-label">Состояния базы</span>
             <span className="lp-scope-indicator"
-                  aria-label="Каталог показывает только опубликованные записи">
-              опубликованные
+                  aria-label="Каталог показывает подтверждённые и предварительные записи">
+              подтверждённые и предварительные
             </span>
           </div>
           <div className="lp-filter lp-filter-reset">
@@ -1764,7 +1771,9 @@ function LoopholeApp() {
                         )}
                       </td>
                       <td className="lp-col-narrow2">
-                        <span className="lp-status">{recordStatusLabel(r.status)}</span>
+                        <span className={"lp-status" + (r.status === "preliminary" ? " lp-status-preliminary" : "")}>
+                          {recordStatusLabel(r.status)}
+                        </span>
                       </td>
                       <td className="lp-cell-date lp-cell-published">{fmtDate(r.published_at)}</td>
                       <td className="lp-cell-date lp-cell-collected">{fmtDate(r.collected_at)}</td>
@@ -1789,17 +1798,16 @@ function LoopholeApp() {
         </div>
         </section>)}
 
-        {/* ── Добавление веб-источника: создание, проверка, статус и лог
-               находятся на отдельной рабочей поверхности, а не в модальном окне. ── */}
+        {/* ── Заявка на разработку веб-парсера и read-only каталог источников. ── */}
         {view === "sources" && (
           <section className="lp-sources-surface" id="lp-panel-sources"
                    role="tabpanel" aria-labelledby="lp-tab-sources">
             <div className="lp-source-grid">
-              <form className="lp-source-card" onSubmit={e => { e.preventDefault(); createParser(); }}>
+              <form className="lp-source-card" onSubmit={e => { e.preventDefault(); createParserRequest(); }}>
                 <div className="lp-eyebrow">Веб-источник</div>
-                <h2>Параметры веб-источника</h2>
+                <h2>Заявка на разработку парсера</h2>
                 <p className="lp-muted">
-                  Укажите страницу и опишите, какие условия, тарифы или исключения нужно собирать.
+                  Укажите страницу и требования. После рассмотрения команда разработки создаст парсер отдельно.
                 </p>
                 <label htmlFor="lp-parser-url">URL веб-источника</label>
                 <input id="lp-parser-url" type="url" value={newParserUrl}
@@ -1813,20 +1821,9 @@ function LoopholeApp() {
                 <button type="submit" className="lp-btn lp-btn-primary"
                         disabled={parsersBusy || !workspaceId
                           || !newParserUrl.trim() || !newParserDescription.trim()}>
-                  {parsersBusy ? "Проверяем…" : "Создать и проверить"}
+                  {parsersBusy ? "Отправляем…" : "Отправить заявку"}
                 </button>
               </form>
-              <aside className="lp-source-card lp-source-note" aria-label="Подключение Telegram">
-                <div className="lp-eyebrow">Отдельный контур</div>
-                <h2>Telegram-источники</h2>
-                <p>
-                  Telegram-источники подключаются администратором через защищённый контур.
-                  Веб-форма не принимает токены, приватные приглашения и учётные данные.
-                </p>
-                <p className="lp-muted">
-                  После создания веб-парсер сразу проходит проверочный запуск; журнал появляется ниже.
-                </p>
-              </aside>
             </div>
 
             <section className="lp-source-list" aria-labelledby="lp-source-list-title">
@@ -1910,47 +1907,10 @@ function LoopholeApp() {
                         </div>
                       )}
                     </div>
-                    <div className="lp-parser-actions">
-                      <button className="lp-btn lp-btn-sm" onClick={() => startParser(p.parser_id)}
-                              disabled={parsersBusy || p.is_running}>Запустить</button>
-                      <button className="lp-btn lp-btn-sm" onClick={() => stopParser(p.parser_id)}
-                              disabled={parsersBusy || !p.is_running}
-                              aria-label="Остановить парсер">Остановить</button>
-                      <button className="lp-btn lp-btn-sm" onClick={() => openEdit(p)}
-                              disabled={parsersBusy}>Настроить</button>
-                      <button className="lp-btn lp-btn-sm" onClick={() => setDeleteConfirm(p)}
-                              disabled={parsersBusy || p.is_running}>Удалить</button>
-                    </div>
                   </article>
                 );
               })}
             </section>
-
-            {logPanel && (
-              <div className="lp-log-panel">
-                <div className="lp-log-header">
-                  <span>Журнал проверки #{logPanel.runId}</span>
-                  {logPanel.done && (
-                    <span className="lp-log-done">
-                      {logPanel.done.status}
-                      {logPanel.done.items_new != null && ` · новых: ${logPanel.done.items_new}`}
-                    </span>
-                  )}
-                  {!logPanel.done && !logPanel.error && (
-                    <span className="lp-log-running">идёт</span>
-                  )}
-                  <button type="button" className="lp-btn lp-btn-sm"
-                          onClick={() => { closeLogEs(); setLogPanel(null); }}
-                          aria-label="Закрыть журнал запуска">
-                    Закрыть журнал
-                  </button>
-                </div>
-                {logPanel.error && (
-                  <div className="lp-log-error" role="alert">{logPanel.error}</div>
-                )}
-                <pre className="lp-log-body" ref={logRef}>{logPanel.lines.join("\n")}</pre>
-              </div>
-            )}
           </section>
         )}
 
@@ -2018,13 +1978,19 @@ function LoopholeApp() {
                     ? lastResearchAnswer.content
                     : "После запуска здесь появится проверенный промежуточный вывод аналитика."} /></div>
                   {lastResearchAnswer && lastResearchAnswer.report_id && (
-                    <details className="lp-research-downloads">
-                      <summary className="lp-btn lp-btn-sm">Скачать исследование</summary>
-                      <div className="lp-research-download-options" aria-label="Формат скачивания">
-                        <a className="lp-btn lp-btn-sm" href={`${API}/research/reports/${lastResearchAnswer.report_id}/export/pdf`}>PDF</a>
-                        <a className="lp-btn lp-btn-sm" href={`${API}/research/reports/${lastResearchAnswer.report_id}/export/docx`}>Word</a>
-                      </div>
-                    </details>
+                    <div className="lp-research-result-actions">
+                      <details className="lp-research-downloads">
+                        <summary className="lp-btn lp-btn-sm">Скачать исследование</summary>
+                        <div className="lp-research-download-options" aria-label="Формат скачивания">
+                          <a className="lp-btn lp-btn-sm" href={`${API}/research/reports/${lastResearchAnswer.report_id}/export/pdf`}>PDF</a>
+                          <a className="lp-btn lp-btn-sm" href={`${API}/research/reports/${lastResearchAnswer.report_id}/export/docx`}>Word</a>
+                        </div>
+                      </details>
+                      <button type="button" className="lp-btn lp-btn-sm"
+                              onClick={() => importResearchSources(lastResearchAnswer.report_id)}>
+                        Добавить в общую базу
+                      </button>
+                    </div>
                   )}
                 </div>
                 <div className="lp-research-meta">

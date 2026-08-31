@@ -104,7 +104,7 @@ def test_catalog_actions_are_scoped_and_parser_is_a_separate_route():
     """CSV принадлежит каталогу, а парсер — отдельной вкладке."""
     jsx = _norm(_jsx())
     assert jsx.count(_norm('{view==="catalog"&&(')) >= 2  # действия + таблица
-    assert "Новый парсер веб-источника" in _jsx()
+    assert "Заявка на разработку парсера" in _jsx()
     assert _norm('{view==="sources"&&(') in jsx
     assert "⚙ Парсеры" not in _jsx()
 

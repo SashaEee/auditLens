@@ -420,7 +420,7 @@ def test_parser_loading_empty_and_error_states_are_distinguishable():
     assert "catch" in body and "setParsersError(" in body
     assert not re.search(r"catch\s*\{\s*\}", body)
     start = JSX.index('<section className="lp-source-list"')
-    end = JSX.index("{logPanel && (", start)
+    end = JSX.index("</section>\n          </section>", start)
     markup = JSX[start:end]
     assert "Загрузка парсеров…" in markup
     assert "Не удалось загрузить парсеры" in markup
@@ -451,10 +451,6 @@ def test_icon_controls_and_inputs_have_russian_accessible_names():
     """Иконки и поля имеют русские доступные имена через label или aria-label."""
     chat_send = re.search(r'<button\s+className="lp-chat-send"(.*?)</button>', JSX, re.DOTALL)
     assert chat_send and 'aria-label="Отправить сообщение"' in chat_send.group(1)
-    stop = re.search(r"onClick=\{\(\) => stopParser\(p\.parser_id\)\}(.*?)</button>", JSX, re.DOTALL)
-    assert stop and 'aria-label="Остановить парсер"' in stop.group(1)
-    log_close = re.search(r"closeLogEs\(\); setLogPanel\(null\); \}\}(.*?)</button>", JSX, re.DOTALL)
-    assert log_close and 'aria-label="Закрыть журнал запуска"' in log_close.group(1)
     for control_id in (
         "lp-filter-text",
         "lp-filter-from",
@@ -468,7 +464,7 @@ def test_icon_controls_and_inputs_have_russian_accessible_names():
     assert 'id="lp-filter-verdict"' not in JSX
     assert 'id="lp-filter-status"' not in JSX
     assert 'aria-label="Каталог показывает только лазейки"' in JSX
-    assert 'aria-label="Каталог показывает только опубликованные записи"' in JSX
+    assert 'aria-label="Каталог показывает подтверждённые и предварительные записи"' in JSX
     assert "lp-bulk-comment" not in JSX
     assert 'htmlFor="lp-select-all"' in JSX
     assert 'id="lp-select-all"' in JSX
@@ -659,17 +655,14 @@ def _parser_action_body(name: str) -> str:
     return m.group(1)
 
 
-def test_parser_actions_emit_one_typed_toast_for_each_remote_outcome():
-    """Каждое удалённое действие парсера сообщает ровно один success или
-    error toast; локальная валидация может остаться inline."""
-    for action in ("createParser", "saveEdit", "startParser", "healParser", "stopParser"):
-        body = _parser_action_body(action)
-        assert body.count("showToast(") == 2, f"{action}: не ровно два outcome-вызова"
-        assert '"success"' in body, f"{action}: нет success-toast"
-        assert '"error"' in body, f"{action}: нет error-toast"
-        assert "catch (e)" in body, f"{action}: сеть не даёт error-toast"
-    stop = _parser_action_body("stopParser")
-    assert "if (!r.ok)" in stop, "stopParser должен проверять не-OK ответ"
+def test_parser_request_emits_one_typed_toast_for_each_remote_outcome():
+    """Заявка на источник сообщает об успешной регистрации либо ошибке сети/API."""
+    body = _parser_action_body("createParserRequest")
+    assert body.count("showToast(") == 2
+    assert '"success"' in body
+    assert '"error"' in body
+    assert "if (!r.ok)" in body
+    assert "catch (e)" in body
 
 
 def test_internal_trust_is_absent_and_publication_date_is_sortable():
