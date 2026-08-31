@@ -1,13 +1,15 @@
 """Тест server-side авторизации модуля «Лазейки» (story 1.1).
 
 Граница доверия: identity — только trusted nginx-заголовки X-Authentik-*
-(get_current_user), membership и роль ccks_expert — авторитетные данные БД
-(миграция 042), перечитываемые на КАЖДОМ запросе. X-User-Id не доверяем.
+(get_current_user). Отсутствие membership-истории даёт default base access;
+любая существующая история без active-строки означает explicit revoke.
+Привилегированные queue/admin требуют active membership и active role,
+перечитываемые из БД на каждом запросе. X-User-Id не доверяем.
 
-Покрывает I/O-матрицу спеки: видимость контекстов по роли, server-side 403
-на очередь без роли, отзыв роли на следующий запрос, отсутствие защищённых
-данных в ответе при deny, 401/403 без trusted principal, workspace не
-создаётся до авторизации. Плюс structural contract-тест миграции 042.
+Покрывает I/O-матрицу спеки: базовые и привилегированные контексты, 403 без
+active membership+role, active-first исторические строки, отсутствие утечки
+защищённых данных при deny, explicit dev bypass, 401 без trusted principal и
+запрет создания workspace до авторизации. Плюс contract-тест миграции 042.
 
 Без сети и реальной БД: in-memory SQLite (паттерн test_web.py), авторизация
 НЕ переопределяется — ходим реальными заголовками X-Authentik-Username.
@@ -82,7 +84,7 @@ def client(app_session, monkeypatch):
 
 
 # ── Сидирование membership / ролей (админ-назначение — история 1.5, здесь SQL) ──
-def _grant_membership(session, username: str, status: str = "active") -> None:
+def _grant_membership(session, username: str, status: str | None = "active") -> None:
     session.execute(
         text(
             "INSERT INTO loophole_workspace_membership (username, status) "
@@ -156,12 +158,19 @@ def test_dev_grant_all_gives_any_principal_all_module_contexts(client, monkeypat
     """Только явный dev-флаг снимает membership и role gates локального модуля."""
     monkeypatch.setenv("LOOPHOLE_DEV_GRANT_ALL", "1")
 
-    r = client.get("/api/loophole/contexts", headers=_auth("temporary-user"))
+    headers = _auth("temporary-user")
+    r = client.get("/api/loophole/contexts", headers=headers)
+    queue = client.get("/api/loophole/queue", headers=headers)
+    admin = client.get("/api/loophole/admin/roles", headers=headers)
 
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
         "catalog", "sources", "ai_research", "queue", "admin",
     }
+    assert queue.status_code == 200
+    assert queue.json() == {"records": [], "count": 0}
+    assert admin.status_code == 200
+    assert admin.json() == {"roles": [], "active_experts": 0, "max_experts": 5}
 
 
 def test_dev_grant_all_authenticates_local_user_without_sso(client, monkeypatch):
@@ -182,7 +191,12 @@ def test_dev_grant_all_requires_exactly_one(client, monkeypatch):
 
     r = client.get("/api/loophole/contexts", headers=_auth("temporary-user"))
 
-    assert r.status_code == 403
+    assert r.status_code == 200
+    assert {context["id"] for context in r.json()["contexts"]} == {
+        "catalog",
+        "sources",
+        "ai_research",
+    }
 
 
 def test_x_user_id_header_not_trusted(client):
@@ -197,23 +211,42 @@ def test_data_endpoint_without_principal_401(client):
     assert r.status_code == 401
 
 
-def test_contexts_authenticated_without_membership_403(client, app_session):
+def test_contexts_authenticated_without_membership_gets_base_access(client):
     r = client.get("/api/loophole/contexts", headers=_auth("stranger"))
-    assert r.status_code == 403
-    # Отказ фиксируется в обезличенном аудите.
-    rows = app_session.execute(
-        text(
-            "SELECT action, decision FROM loophole_auth_audit "
-            "WHERE username = 'stranger'"
-        )
-    ).all()
-    assert ("membership_check", "deny") in [(row[0], row[1]) for row in rows]
+    queue = client.get("/api/loophole/queue", headers=_auth("stranger"))
+
+    assert r.status_code == 200
+    assert {context["id"] for context in r.json()["contexts"]} == {
+        "catalog",
+        "sources",
+        "ai_research",
+    }
+    assert queue.status_code == 403
+    assert "records" not in queue.json()
 
 
-def test_contexts_revoked_membership_403(client, app_session):
-    _grant_membership(app_session, "ex-member", status="revoked")
+@pytest.mark.parametrize(
+    "status",
+    [
+        pytest.param("revoked", id="revoked"),
+        pytest.param(None, id="null"),
+        pytest.param("suspended", id="unknown"),
+    ],
+)
+def test_existing_non_active_membership_denies_contexts_and_queue(
+    client, app_session, status
+):
+    _grant_membership(app_session, "ex-member", status=status)
+    _seed_queue_record(app_session)
+
     r = client.get("/api/loophole/contexts", headers=_auth("ex-member"))
+    queue = client.get("/api/loophole/queue", headers=_auth("ex-member"))
+
     assert r.status_code == 403
+    assert queue.status_code == 403
+    assert "records" not in queue.json()
+    assert _SECRET_TITLE not in queue.text
+    assert "https://x.ru/case" not in queue.text
 
 
 # ── Видимость контекстов по роли ────────────────────────────────────────────
@@ -239,6 +272,89 @@ def test_contexts_expert_also_gets_queue(client, app_session):
     assert ids == {"catalog", "sources", "ai_research", "queue"}
     queue = next(c for c in contexts if c["id"] == "queue")
     assert queue["title"] == "Очередь верификации"
+
+
+def test_role_without_active_membership_gets_base_contexts_and_queue_403(
+    client, app_session
+):
+    _grant_role(app_session, "role-only")
+    _seed_queue_record(app_session)
+
+    contexts = client.get("/api/loophole/contexts", headers=_auth("role-only"))
+    queue = client.get("/api/loophole/queue", headers=_auth("role-only"))
+
+    assert contexts.status_code == 200
+    assert {context["id"] for context in contexts.json()["contexts"]} == {
+        "catalog",
+        "sources",
+        "ai_research",
+    }
+    assert queue.status_code == 403
+    assert "records" not in queue.json()
+    assert _SECRET_TITLE not in queue.text
+
+
+def test_admin_role_without_active_membership_gets_base_contexts_and_admin_403(
+    client, app_session
+):
+    _grant_role(app_session, "admin-role-only", role="module_admin")
+    _grant_role(app_session, "secret-expert")
+
+    contexts = client.get("/api/loophole/contexts", headers=_auth("admin-role-only"))
+    admin = client.get("/api/loophole/admin/roles", headers=_auth("admin-role-only"))
+
+    assert contexts.status_code == 200
+    assert {context["id"] for context in contexts.json()["contexts"]} == {
+        "catalog",
+        "sources",
+        "ai_research",
+    }
+    assert admin.status_code == 403
+    assert "roles" not in admin.json()
+    assert "secret-expert" not in admin.text
+
+
+def test_active_membership_wins_history_but_queue_requires_active_role(
+    client, app_session
+):
+    _grant_membership(app_session, "returning-expert", status="revoked")
+    _grant_membership(app_session, "returning-expert", status="active")
+    _grant_role(app_session, "returning-expert", status="revoked")
+    record_id = _seed_queue_record(app_session)
+
+    contexts_without_role = client.get(
+        "/api/loophole/contexts", headers=_auth("returning-expert")
+    )
+    queue_without_role = client.get(
+        "/api/loophole/queue", headers=_auth("returning-expert")
+    )
+
+    assert contexts_without_role.status_code == 200
+    assert {context["id"] for context in contexts_without_role.json()["contexts"]} == {
+        "catalog",
+        "sources",
+        "ai_research",
+    }
+    assert queue_without_role.status_code == 403
+    assert "records" not in queue_without_role.json()
+    assert _SECRET_TITLE not in queue_without_role.text
+
+    _grant_role(app_session, "returning-expert", status="active")
+    contexts_with_role = client.get(
+        "/api/loophole/contexts", headers=_auth("returning-expert")
+    )
+    queue_with_role = client.get(
+        "/api/loophole/queue", headers=_auth("returning-expert")
+    )
+
+    assert {context["id"] for context in contexts_with_role.json()["contexts"]} == {
+        "catalog",
+        "sources",
+        "ai_research",
+        "queue",
+    }
+    assert queue_with_role.status_code == 200
+    assert any(record["record_id"] == record_id for record in queue_with_role.json()["records"])
 
 
 # ── Очередь: server-side deny без утечки данных ─────────────────────────────
@@ -283,6 +399,8 @@ def test_deny_audit_survives_request_session_rollback(app_session, monkeypatch):
     """
     engine = app_session.get_bind()
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    _grant_membership(app_session, "stranger", status="revoked")
+    app_session.commit()
     # Аудит (db.session() внутри authorization) направляем в тестовую БД.
     monkeypatch.setattr(db_mod, "session", lambda: _engine_session(SessionLocal))
 

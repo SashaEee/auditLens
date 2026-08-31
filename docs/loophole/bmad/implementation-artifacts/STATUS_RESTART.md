@@ -5,6 +5,21 @@
 Этот файл нужен для безопасного продолжения после перезапуска. Базовый checkpoint
 зафиксирован коммитом `0e17177`; все изменения текущего продолжения остаются незакоммиченными.
 
+## Удаление Telegram-контура — 2026-08-31
+
+- `spec-remove-telegram-contour-from-loophole.md` остаётся `in-progress` до полного
+  модульного прогона и review. Удалены runtime-boundaries регистрации цели, доступа,
+  ingestion, worker, SQLite-adapter и perimeter, а также старый endpoint
+  `/admin/telegram-targets`, repository hook и Telegram UI-ссылки.
+- Удалены module-only contracts Story 6.1–6.5 и migration-структурный тест. Новая
+  регрессия подтверждает 404 старого URL, отсутствие importable runtime-модулей и
+  отсутствие Telegram actions/links в UI; обычные parser request, RBAC и каталог
+  остаются покрыты целевыми тестами.
+- Миграции `046`, `054`, `055`, `056`, `057` и исторические таблицы намеренно
+  сохранены: DDL не выполнялся, существующая БД не изменялась и runtime к ним не
+  обращается. Story 6.1–6.5 считаются исторически superseded этим removal, а не
+  доступной продуктовой функцией.
+
 ## Текущий checkpoint — 2026-08-31
 
 ### Читаемый отчёт AI-исследования и экспорт доказательств

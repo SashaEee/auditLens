@@ -110,3 +110,4 @@ package.json
 .pytest*
 .worktrees
 .qa*
+.tmp*

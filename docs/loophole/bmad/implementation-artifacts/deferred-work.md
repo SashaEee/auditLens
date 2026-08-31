@@ -122,3 +122,15 @@
   summary: Добавить route-level интеграционный тест фильтров `/catalog` на published, draft и `is_loophole=false`.
   evidence: Verification-gap review 2026-08-31 подтвердило, что текущие тесты проверяют repository и статическую строку JSX, но не фактическую комбинацию route-фильтров.
 
+- source_spec: `docs/loophole/bmad/implementation-artifacts/spec-authenticated-roleless-loophole-access.md`
+  summary: Синхронизировать runtime-селектор подписи публикации каталога с текущей доступной разметкой.
+  evidence: Полный `tests/loophole` на baseline текущей истории стабильно падает в `test_catalog_exposes_read_only_published_loophole_scope_without_false_query_params`, тогда как roleless RBAC-код эту разметку не меняет.
+
+- source_spec: `docs/loophole/bmad/implementation-artifacts/spec-authenticated-roleless-loophole-access.md`
+  summary: Устранить strict collision одинаковых заголовков страницы и inline-формы заявки на парсер.
+  evidence: Полный `tests/loophole` падает в `test_parser_request_is_inline_and_catalog_is_read_only`: locator заголовка разрешается одновременно в `h1` и `h2`; текущий RBAC-дифф JSX не затрагивает.
+
+- source_spec: `docs/loophole/bmad/implementation-artifacts/spec-authenticated-roleless-loophole-access.md`
+  summary: Восстановить deployment contract Telegram worker или синхронизировать ожидающий его тест.
+  evidence: `test_deployment_contract_has_no_listener_and_restricts_egress` падает с `FileNotFoundError` для `deploy/telegram-worker/perimeter.yaml`, отсутствующего в baseline-коммите этой истории.
+

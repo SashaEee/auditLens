@@ -107,12 +107,23 @@ def test_parser_request_creates_pending_proposal_only(
     llm_spy.assert_not_awaited()
 
 
-@pytest.mark.parametrize("url", ["telegram.me/channel", "https://t.me/channel", "ftp://bank.example/tariffs"])
-def test_parser_request_rejects_telegram_and_non_web_url(client, workspace_id, url):
+@pytest.mark.parametrize("url", ["ftp://bank.example/tariffs", "mailto:info@bank.example"])
+def test_parser_request_rejects_non_web_url(client, workspace_id, url):
     r = client.post("/api/loophole/parser-requests", json={
         "workspace_id": workspace_id, "url": url, "description": "Тарифы",
     })
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize("url", ["https://t.me/bank_news", "https://telegram.me/bank_news"])
+def test_parser_request_rejects_messenger_url_without_branding(client, app_session, workspace_id, url):
+    r = client.post("/api/loophole/parser-requests", json={
+        "workspace_id": workspace_id, "url": url, "description": "Тарифы",
+    })
+
+    assert r.status_code == 422
+    assert "telegram" not in r.text.lower()
+    assert app_session.execute(text("SELECT COUNT(*) FROM source_proposal")).scalar_one() == 0
 
 
 def test_parser_request_rejects_existing_pending_domain(client, workspace_id):

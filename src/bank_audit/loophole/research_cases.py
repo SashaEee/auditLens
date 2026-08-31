@@ -14,6 +14,16 @@ from . import repository as repo
 from .models import LoopholeRecord
 
 
+def _decode_json_value(value: Any) -> Any:
+    """Принимает JSONB от PostgreSQL и текст SQLite без двойного декодирования."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class CaseContractV1:
     """Структурированный, но ещё не опубликованный кандидат исследования."""
@@ -54,13 +64,19 @@ class ResearchCaseService:
         ).scalar_one()
 
     def record_source(
-        self, research_id: int, *, url: str, title: str | None, extracted_text: str | None
+        self,
+        research_id: int,
+        *,
+        url: str,
+        title: str | None,
+        extracted_text: str | None,
+        published_at: str | None = None,
     ) -> int:
         return self._session.execute(
             text(
                 "INSERT INTO loophole_research_source "
-                "(research_id, url, title, extracted_text, status, limitation_message) "
-                "VALUES (:research_id, :url, :title, :extracted_text, 'fetched', NULL) "
+                "(research_id, url, title, extracted_text, published_at, status, limitation_message) "
+                "VALUES (:research_id, :url, :title, :extracted_text, :published_at, 'fetched', NULL) "
                 "RETURNING source_id"
             ),
             {
@@ -68,8 +84,86 @@ class ResearchCaseService:
                 "url": url,
                 "title": title,
                 "extracted_text": extracted_text,
+                "published_at": published_at,
             },
         ).scalar_one()
+
+    def persist_managed_run(
+        self,
+        *,
+        workspace_id: int,
+        run_id: str,
+        query: str,
+        findings: list[dict[str, Any]],
+        sources: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Фиксирует server-side результат managed run вне общего каталога.
+
+        ``findings`` формируются только read-only tools после успешного fetch.
+        Метод намеренно не вызывает repository.insert_record: перенос в каталог
+        возможен исключительно через ``import_preliminary_sources``.
+        """
+        research_id = self.research_id_for_run(workspace_id=workspace_id, run_id=run_id)
+        if research_id is not None:
+            candidate_ids = self._session.execute(
+                text(
+                    "SELECT candidate_id FROM loophole_research_candidate "
+                    "WHERE research_id = :research_id ORDER BY candidate_id"
+                ),
+                {"research_id": research_id},
+            ).scalars().all()
+            return {"research_id": int(research_id), "candidate_ids": [int(item) for item in candidate_ids]}
+
+        research_id = self.start_research(
+            workspace_id=workspace_id,
+            run_id=run_id,
+            query=query,
+            search_params={"origin": "managed_agent"},
+        )
+
+        source_ids: dict[str, int] = {}
+        for source in sources or []:
+            if not isinstance(source, dict):
+                continue
+            url = str(source.get("url") or "").strip()
+            extracted_text = str(source.get("extracted_text") or "").strip()
+            if not url or not extracted_text or url in source_ids:
+                continue
+            source_ids[url] = self.record_source(
+                research_id,
+                url=url,
+                title=str(source.get("title") or "") or None,
+                extracted_text=extracted_text,
+                published_at=source.get("published_at"),
+            )
+
+        candidate_ids: list[int] = []
+        candidate_urls: list[str] = []
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            url = str(finding.get("url") or "").strip()
+            source_id = source_ids.get(url)
+            if source_id is None:
+                continue
+            candidate_id = self.add_candidate(
+                research_id,
+                source_id=source_id,
+                title=str(finding.get("title") or "").strip(),
+                evidence=str(finding.get("snippet") or "").strip(),
+                category=str(finding.get("category") or "") or None,
+                description=str(finding.get("description") or finding.get("snippet") or "").strip(),
+                severity=str(finding.get("severity") or "medium"),
+                is_loophole=bool(finding.get("is_loophole")),
+            )
+            if candidate_id is not None:
+                candidate_ids.append(candidate_id)
+                candidate_urls.append(url)
+        return {
+            "research_id": int(research_id),
+            "candidate_ids": candidate_ids,
+            "candidate_urls": candidate_urls,
+        }
 
     def record_source_failure(
         self, research_id: int, *, url: str, limitation_message: str
@@ -361,7 +455,8 @@ class ResearchCaseService:
         }
         evidence_rows = self._session.execute(
             text(
-                "SELECT source_id, revision, url, title, extracted_text FROM loophole_research_source "
+                "SELECT source_id, revision, url, title, extracted_text, published_at "
+                "FROM loophole_research_source "
                 "WHERE research_id = :research_id AND access_status = 'active' "
                 f"AND source_id IN ({placeholders}) ORDER BY source_id"
             ),
@@ -460,7 +555,7 @@ class ResearchCaseService:
         rows = self._session.execute(
             text(
                 "SELECT source.source_id, source.url, source.title AS source_title, "
-                "source.extracted_text, candidate.title AS candidate_title, "
+                "source.extracted_text, source.published_at, candidate.title AS candidate_title, "
                 "MAX(COALESCE(candidate.model_confidence, 0.0)) AS confidence "
                 "FROM loophole_research_source AS source "
                 "JOIN loophole_research_candidate AS candidate "
@@ -470,7 +565,8 @@ class ResearchCaseService:
                 "AND source.extracted_text IS NOT NULL AND source.extracted_text != '' "
                 "AND (candidate.model_is_loophole = TRUE "
                 "OR (candidate.model_is_loophole IS NULL AND candidate.is_loophole = TRUE)) "
-                "GROUP BY source.source_id, source.url, source.title, source.extracted_text, candidate.title "
+                "GROUP BY source.source_id, source.url, source.title, source.extracted_text, "
+                "source.published_at, candidate.title "
                 "ORDER BY source.source_id"
             ),
             {"research_id": research_id},
@@ -500,6 +596,7 @@ class ResearchCaseService:
                     raw_text=content,
                     content_status="full",
                     raw_text_len=len(content),
+                    published_at=row["published_at"],
                     status="preliminary",
                     is_loophole=True,
                     verdict_confidence=float(row["confidence"]),
@@ -547,14 +644,16 @@ class ResearchCaseService:
         ).mappings().one_or_none()
         if row is None:
             return None
-        case = json.loads(row["case_snapshot"])
-        evidence = json.loads(row["evidence_snapshot"])
+        case = _decode_json_value(row["case_snapshot"])
+        evidence = _decode_json_value(row["evidence_snapshot"])
         return {
             "snapshot_id": row["snapshot_id"],
             "workspace_id": row["workspace_id"],
             "submitted_at": row["submitted_at"],
             "query": row["query_text"],
-            "result": case.get("description") or case.get("evidence") or "",
+            "result": case.get("description") or case.get("evidence") or ""
+            if isinstance(case, dict)
+            else "",
             "case": case,
             "evidence": evidence if isinstance(evidence, list) else [],
         }
@@ -569,19 +668,24 @@ class ResearchCaseService:
     ) -> int:
         """Сохраняет результат текущего agent run без клиентских доказательств."""
         try:
-            evidence_row = self._session.execute(
+            evidence_rows = self._session.execute(
                 text(
-                    "SELECT snapshot.evidence_snapshot "
-                    "FROM loophole_verification_snapshot AS snapshot "
-                    "JOIN loophole_research AS research ON research.research_id = snapshot.research_id "
+                    "SELECT source.source_id, source.url, source.title, source.extracted_text, "
+                    "source.published_at, source.created_at "
+                    "FROM loophole_research_source AS source "
+                    "JOIN loophole_research AS research ON research.research_id = source.research_id "
                     "WHERE research.workspace_id = :workspace_id AND research.run_id = :run_id "
-                    "ORDER BY snapshot.snapshot_id DESC LIMIT 1"
+                    "AND source.status = 'fetched' AND source.access_status = 'active' "
+                    "AND source.extracted_text IS NOT NULL AND source.extracted_text != '' "
+                    "ORDER BY source.source_id"
                 ),
                 {"workspace_id": workspace_id, "run_id": run_id},
-            ).mappings().one_or_none()
+            ).mappings().all()
         except OperationalError:
-            evidence_row = None
-        evidence_snapshot = evidence_row["evidence_snapshot"] if evidence_row else "[]"
+            evidence_rows = []
+        evidence_snapshot = json.dumps(
+            [dict(row) for row in evidence_rows], ensure_ascii=False, default=str
+        )
         report_id = self._session.execute(
             text(
                 "INSERT INTO loophole_research_report "
@@ -610,10 +714,11 @@ class ResearchCaseService:
         ).mappings().one_or_none()
         if row is None:
             return None
-        evidence = json.loads(row["evidence_snapshot"])
+        evidence = _decode_json_value(row["evidence_snapshot"])
         return {
             "report_id": row["report_id"],
             "workspace_id": row["workspace_id"],
+            "run_id": row["run_id"],
             "query": row["query_text"],
             "result": row["result_text"],
             "evidence": evidence if isinstance(evidence, list) else [],

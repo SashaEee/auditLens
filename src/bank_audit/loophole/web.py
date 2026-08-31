@@ -1,8 +1,10 @@
 """FastAPI APIRouter модуля loophole: эндпоинты + SSE-чат.
 
 Префикс /api/loophole (монтируется в web/app.py). Авторизация — server-side:
-trusted principal из X-Authentik-* (web/auth.py) + active membership и роли
-из БД (loophole/authorization.py), перечитываемые на каждом запросе.
+trusted principal из X-Authentik-* (web/auth.py), membership и роли из БД
+(loophole/authorization.py), перечитываемые на каждом запросе. Отсутствие
+истории membership даёт базовый доступ, explicit revoke запрещает модуль,
+а privileged endpoints требуют active membership вместе с ролью.
 X-User-Id от клиента больше не доверяем.
 """
 from __future__ import annotations
@@ -48,16 +50,17 @@ def get_user_id(
     user: CurrentUser = Depends(get_current_user),
     session=Depends(get_session),
 ) -> str:
-    """Единая граница авторизации модуля: trusted principal (X-Authentik-*
-    от nginx) + active membership из БД. Возвращает username principal.
-    401 — без аутентифицированного principal, 403 — без членства.
+    """Единая граница базового доступа: trusted principal (X-Authentik-*
+    от nginx) и отсутствие explicit revoke в membership. Возвращает username.
+    401 — без principal, 403 — при явно неактивной membership.
     Переопределяется в тестах через app.dependency_overrides."""
     principal = authorization.require_member(user, session=session)
     return principal.username
 
 
-# Router-level guard: ВСЕ эндпоинты модуля требуют trusted principal +
-# membership до чтения данных. Endpoint-level Depends(get_user_id) — тот же
+# Router-level guard: ВСЕ эндпоинты требуют trusted principal и блокируют
+# explicit revoke до чтения данных. Active membership + role перепроверяются
+# внутри privileged endpoints. Endpoint-level Depends(get_user_id) — тот же
 # callable, FastAPI выполняет его один раз на запрос.
 router = APIRouter(dependencies=[Depends(get_user_id)])
 
@@ -258,7 +261,7 @@ def decide_verification_snapshot(
     return decision
 
 
-# ── Администрирование (story 1.5): роль ЦК КС, Telegram-цели, сводный аудит ──
+# ── Администрирование (story 1.5): роль ЦК КС и сводный аудит ────────────────
 def _require_admin(user_id: str, *, action: str, session) -> None:
     """Граница capability module_admin на КАЖДОМ админ-endpoint: 403 без
     активного назначения, отказ аудируется. Данные не возвращаются."""
@@ -333,17 +336,6 @@ def admin_revoke_role(
         "role": authorization.ROLE_CCKS_EXPERT,
         "status": "revoked",
     }
-
-
-@router.get("/admin/telegram-targets")
-def admin_telegram_targets(
-    user_id: str = Depends(get_user_id),
-    session=Depends(get_session),
-):
-    """Статус Telegram-целей: цель + операционный статус парсера,
-    без технических payload."""
-    _require_admin(user_id, action="admin_telegram_read", session=session)
-    return {"targets": repo.list_telegram_targets(session=session)}
 
 
 @router.get("/admin/audit")
@@ -684,9 +676,13 @@ async def chat(
     async def event_generator():
         import json as _json
         report_chunks: list[str] = []
+        completed = True
         try:
             stream = chat_graph.stream_chat(state, session=session)
             async for ev in stream:
+                if ev["event"] == "phase" and isinstance(ev["data"], dict):
+                    completed = completed and not bool(ev["data"].get("partial"))
+                    completed = completed and ev["data"].get("phase") != "error"
                 if ev["event"] in {"token", "partial"}:
                     data = ev["data"]
                     piece = data if isinstance(data, str) else data.get("text", data.get("message", ""))
@@ -697,7 +693,7 @@ async def chat(
                     "data": _json.dumps(ev["data"], ensure_ascii=False, default=str),
                 }
             result_text = state.get("answer") or "".join(report_chunks)
-            if result_text and state.get("run_id"):
+            if completed and result_text and state.get("run_id"):
                 report_id = ResearchCaseService(session).save_report_result(
                     workspace_id=body.workspace_id,
                     run_id=str(state["run_id"]),
@@ -1266,7 +1262,7 @@ def _parser_request_domain(url: str) -> str:
     if parsed.scheme not in {"http", "https"} or not domain:
         raise HTTPException(status_code=422, detail="Укажите URL веб-источника с http:// или https://")
     if domain in {"t.me", "telegram.me"}:
-        raise HTTPException(status_code=422, detail="Telegram-адреса не принимаются в этой форме")
+        raise HTTPException(status_code=422, detail="Укажите URL поддерживаемого публичного веб-источника")
     return domain
 
 

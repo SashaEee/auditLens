@@ -16,6 +16,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from .. import repository as repo
 from ..agent import (
     AGENT_UNAVAILABLE_MESSAGE,
@@ -24,11 +26,11 @@ from ..agent import (
     AgentRunContext,
     _safe_run_id,
 )
+from ..research_cases import ResearchCaseService
 from . import clarify as clarify_mod
 from .hooks import AuditHook, public_tool_name
 from .nanobot_agent import build_prompt
 from .state import ChatState
-from .tools_nanobot import save_loophole
 
 log = logging.getLogger(__name__)
 
@@ -116,32 +118,43 @@ def _save_agent_audit(
         raise AgentAuditError("Аудит запуска недоступен") from None
 
 
-def _persist_confirmed_findings(findings: list[dict], *, session: Any) -> list[dict]:
-    """Сохраняет находки после managed-запуска через доверенную сессию сервера."""
-    if session is None:
+def _persist_confirmed_findings(
+    findings: list[dict],
+    *,
+    sources: list[dict] | None,
+    workspace_id: int | None,
+    run_id: str,
+    query: str,
+    session: Any,
+) -> list[dict]:
+    """Сохраняет находки только в изолированное исследование.
+
+    Общий каталог намеренно не меняется: его пополняет только явный endpoint
+    переноса предварительных источников аналитиком.
+    """
+    if session is None or not isinstance(workspace_id, int) or (not findings and not sources):
         return []
-    records: list[dict] = []
-    for finding in findings:
-        if not finding.get("is_loophole"):
-            continue
-        try:
-            saved = save_loophole(
-                title=str(finding["title"]),
-                url=str(finding["url"]),
-                snippet=str(finding["snippet"]),
-                bank_slug=finding.get("bank_slug"),
-                raw_text=finding.get("raw_text"),
-                is_loophole=True,
-                session=session,
-            )
-            record_id = saved.get("record_id")
-            if isinstance(record_id, int):
-                record = repo.get_record(record_id, session=session)
-                if record:
-                    records.append(record)
-        except (KeyError, TypeError, ValueError):
-            log.warning("[loophole_persistence] пропущена некорректная находка")
-    return records
+    try:
+        persisted = ResearchCaseService(session).persist_managed_run(
+            workspace_id=workspace_id,
+            run_id=run_id,
+            query=query,
+            findings=findings,
+            sources=sources,
+        )
+    except (AttributeError, KeyError, SQLAlchemyError, TypeError, ValueError):
+        rollback = getattr(session, "rollback", None)
+        if callable(rollback):
+            rollback()
+        log.warning("[research_persistence] пропущена некорректная находка")
+        return []
+    research_id = persisted["research_id"]
+    candidate_urls = set(persisted.get("candidate_urls", ()))
+    return [
+        {**finding, "research_id": research_id, "status": "preliminary"}
+        for finding in findings
+        if finding.get("is_loophole") and str(finding.get("url") or "") in candidate_urls
+    ]
 
 
 async def run_chat(
@@ -253,7 +266,14 @@ async def run_chat(
         )
     answer = result.answer
     tools_used = list(result.tools_used)
-    records = _persist_confirmed_findings(list(result.records), session=session)
+    records = _persist_confirmed_findings(
+        list(result.records),
+        sources=None,
+        workspace_id=workspace_id,
+        run_id=_normalized_run_id(result.run_id, run_id),
+        query=state["query"],
+        session=session,
+    )
     agent_unavailable = (
         result.stop_reason == "error"
         and "agent_error" in result.errors
@@ -402,9 +422,6 @@ async def stream_chat(
                 yield {"event": "token", "data": tail}
 
         answer = hook.final_answer or ""
-        records = _persist_confirmed_findings(context.pending_records, session=session)
-        if not records:
-            records = hook.records
         errors = list(hook.tool_errors)
         provider_failed = hook.stop_reason == "error"
         if provider_failed:
@@ -417,6 +434,22 @@ async def stream_chat(
             errors.append("agent_error")
         if stream_failed and "agent_stream_error" not in errors:
             errors.append("agent_stream_error")
+        records = []
+        if not errors:
+            records = _persist_confirmed_findings(
+                context.pending_records,
+                sources=list({
+                    str(source.get("url")): source
+                    for source in context.fetched_sources.values()
+                    if isinstance(source, dict) and source.get("url")
+                }.values()),
+                workspace_id=workspace_id,
+                run_id=run_id,
+                query=state["query"],
+                session=session,
+            )
+        if not records and not errors:
+            records = hook.records
         terminal_provider_error = provider_failed and not streamed_any and not records
         partial_explanation = ""
         if terminal_provider_error:

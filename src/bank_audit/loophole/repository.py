@@ -336,18 +336,42 @@ def list_catalog_cases(
 ) -> list[dict]:
     """Общая база: подтверждённые и предварительные подозрения.
 
-    ``verified`` показывает только опубликованные положительные решения;
-    ``pending`` — только предварительные записи, ещё ожидающие ЦК КС.
+    ``verified`` показывает только записи с положительным append-only решением
+    ЦК КС; ``pending`` — только предварительные записи без решения.
     """
     if verification_status not in {"all", "verified", "pending"}:
         raise ValueError("Неизвестный статус верификации")
     with _session(session) as s:
         clauses = ["record.is_loophole = TRUE", "record.status IN ('published', 'preliminary')"]
         params: dict[str, Any] = {"limit": limit, "offset": offset}
+        positive_decision = (
+            "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
+            "JOIN loophole_research_candidate AS candidate "
+            "ON candidate.research_id = verification_import.research_id "
+            "AND candidate.source_id = verification_import.source_id "
+            "JOIN loophole_verification_snapshot AS snapshot "
+            "ON snapshot.candidate_id = candidate.candidate_id "
+            "JOIN loophole_verification_decision AS decision "
+            "ON decision.snapshot_id = snapshot.snapshot_id "
+            "WHERE verification_import.record_id = record.record_id "
+            "AND decision.decision IN ('vulnerability', 'fraud_scheme'))"
+        )
+        any_decision = (
+            "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
+            "JOIN loophole_research_candidate AS candidate "
+            "ON candidate.research_id = verification_import.research_id "
+            "AND candidate.source_id = verification_import.source_id "
+            "JOIN loophole_verification_snapshot AS snapshot "
+            "ON snapshot.candidate_id = candidate.candidate_id "
+            "JOIN loophole_verification_decision AS decision "
+            "ON decision.snapshot_id = snapshot.snapshot_id "
+            "WHERE verification_import.record_id = record.record_id)"
+        )
         if verification_status == "verified":
-            clauses.append("record.status = 'published'")
+            clauses.append(positive_decision)
         elif verification_status == "pending":
             clauses.append("record.status = 'preliminary'")
+            clauses.append(f"NOT {any_decision}")
         if bank_slugs:
             placeholders = ", ".join(f":b{i}" for i in range(len(bank_slugs)))
             clauses.append(f"record.bank_slug IN ({placeholders})")
@@ -1089,36 +1113,6 @@ def list_parsers_with_source_keys(*, session=None) -> list[dict]:
                 )
             ).mappings().all()
         ]
-
-
-def list_telegram_targets(*, session=None) -> list[dict]:
-    """Статус Telegram-целей (source_keys вида «t.me/<name>») для админ-экрана
-    (story 1.5): цель + операционный статус парсера. Технические payload
-    (config, code_path) и обычные web-источники в поверхность не попадают."""
-    with _session(session) as s:
-        rows = s.execute(
-            text(
-                f"SELECT parser_id, name, status, last_run_at, source_keys "
-                f"FROM {schema.T_PARSER} WHERE CAST(source_keys AS TEXT) LIKE '%t.me/%' "
-                "ORDER BY parser_id"
-            )
-        ).mappings().all()
-    targets: list[dict] = []
-    for row in rows:
-        try:
-            keys = json.loads(row["source_keys"] or "[]")
-        except (TypeError, ValueError):
-            keys = []
-        for key in keys:
-            if isinstance(key, str) and key.startswith("t.me/"):
-                targets.append({
-                    "target": key,
-                    "parser_id": row["parser_id"],
-                    "parser_name": row["name"],
-                    "status": row["status"],
-                    "last_run_at": _dt_str(row["last_run_at"]),
-                })
-    return targets
 
 
 def list_auto_parsers(*, session=None) -> list[dict]:
