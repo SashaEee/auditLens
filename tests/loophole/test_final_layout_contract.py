@@ -303,6 +303,12 @@ def test_contexts_follow_final_order_and_keep_protected_tabs_role_gated(session)
 
     session.execute(
         text(
+            "INSERT INTO loophole_workspace_membership (username, status) "
+            "VALUES ('expert-admin', 'active')"
+        )
+    )
+    session.execute(
+        text(
             "INSERT INTO loophole_role_assignment (username, role, status) "
             "VALUES ('expert-admin', 'ccks_expert', 'active'), "
             "('expert-admin', 'module_admin', 'active')"

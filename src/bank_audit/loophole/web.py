@@ -1,8 +1,10 @@
 """FastAPI APIRouter модуля loophole: эндпоинты + SSE-чат.
 
 Префикс /api/loophole (монтируется в web/app.py). Авторизация — server-side:
-trusted principal из X-Authentik-* (web/auth.py) + active membership и роли
-из БД (loophole/authorization.py), перечитываемые на каждом запросе.
+trusted principal из X-Authentik-* (web/auth.py), membership и роли из БД
+(loophole/authorization.py), перечитываемые на каждом запросе. Отсутствие
+истории membership даёт базовый доступ, explicit revoke запрещает модуль,
+а privileged endpoints требуют active membership вместе с ролью.
 X-User-Id от клиента больше не доверяем.
 """
 from __future__ import annotations
@@ -48,16 +50,17 @@ def get_user_id(
     user: CurrentUser = Depends(get_current_user),
     session=Depends(get_session),
 ) -> str:
-    """Единая граница авторизации модуля: trusted principal (X-Authentik-*
-    от nginx) + active membership из БД. Возвращает username principal.
-    401 — без аутентифицированного principal, 403 — без членства.
+    """Единая граница базового доступа: trusted principal (X-Authentik-*
+    от nginx) и отсутствие explicit revoke в membership. Возвращает username.
+    401 — без principal, 403 — при явно неактивной membership.
     Переопределяется в тестах через app.dependency_overrides."""
     principal = authorization.require_member(user, session=session)
     return principal.username
 
 
-# Router-level guard: ВСЕ эндпоинты модуля требуют trusted principal +
-# membership до чтения данных. Endpoint-level Depends(get_user_id) — тот же
+# Router-level guard: ВСЕ эндпоинты требуют trusted principal и блокируют
+# explicit revoke до чтения данных. Active membership + role перепроверяются
+# внутри privileged endpoints. Endpoint-level Depends(get_user_id) — тот же
 # callable, FastAPI выполняет его один раз на запрос.
 router = APIRouter(dependencies=[Depends(get_user_id)])
 

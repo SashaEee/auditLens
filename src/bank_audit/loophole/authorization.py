@@ -2,10 +2,12 @@
 
 Граница доверия: identity приходит только от trusted nginx (заголовки
 X-Authentik-*, см. web/auth.py) и устанавливает лишь ЛИЧНОСТЬ principal.
-Membership и роли (ccks_expert, module_admin) — авторитетные данные БД
-(миграция 042) и перечитываются на КАЖДОМ защищённом запросе: отзыв роли
-действует на следующий запрос, без перевыпуска токена. Роль/workspace/
-capability из клиентских заголовков не принимаются никогда.
+Отсутствие membership-истории означает default base access к каталогу,
+источникам и AI-исследованию; существующая история без active-строки —
+explicit revoke и fail-closed 403. Привилегированные queue/admin требуют
+одновременно active membership и active role (ccks_expert/module_admin),
+которые перечитываются из БД на каждом запросе. Роль/workspace/capability
+из клиентских заголовков не принимаются никогда.
 
 module_admin (story 1.5) — прикладная роль, не DB-superuser: даёт только
 управление назначениями ЦК КС (не более пяти активных), статус Telegram-целей
@@ -69,6 +71,17 @@ def is_active_member(username: str, *, session) -> bool:
     )
 
 
+def has_membership_record(username: str, *, session) -> bool:
+    """Есть ли у principal явная история membership с любым статусом."""
+    return (
+        session.execute(
+            text(f"SELECT 1 FROM {schema.T_MEMBERSHIP} WHERE username = :u LIMIT 1"),
+            {"u": username},
+        ).scalar_one_or_none()
+        is not None
+    )
+
+
 def has_active_role(username: str, role: str, *, session) -> bool:
     """Активное назначение роли (отзыв = status='revoked')."""
     if dev_grant_all_enabled() and role in (ROLE_CCKS_EXPERT, ROLE_MODULE_ADMIN):
@@ -107,9 +120,10 @@ def log_auth_event(username: str, action: str, decision: str, *, session=None) -
 
 
 def require_member(user: CurrentUser, *, session) -> CurrentUser:
-    """Граница членства: 401 без trusted principal, 403 без active membership.
+    """Граница базового доступа: trusted principal без истории допущен по умолчанию.
 
-    Вызывается ДО чтения любых данных модуля (router-level dependency).
+    Явная membership без active-строки означает revoke и даёт 403. Вызывается
+    ДО чтения любых данных модуля (router-level dependency).
     """
     if not user.authenticated:
         # Заголовков Authentik нет: прямой доступ в обход nginx или локалка.
@@ -117,7 +131,9 @@ def require_member(user: CurrentUser, *, session) -> CurrentUser:
             status_code=401,
             detail="Требуется аутентификация через корпоративный SSO",
         )
-    if not is_active_member(user.username, session=session):
+    if not is_active_member(user.username, session=session) and has_membership_record(
+        user.username, session=session
+    ):
         log_auth_event(user.username, "membership_check", "deny")
         raise HTTPException(
             status_code=403,
@@ -134,20 +150,24 @@ def require_role(
     session,
     detail: str = "Нет доступа к очереди верификации",
 ) -> None:
-    """Граница роли: 403 без активного назначения. Данные не возвращаются."""
-    if not has_active_role(username, role, session=session):
+    """Привилегированная граница: нужны active membership и active role."""
+    if not is_active_member(username, session=session) or not has_active_role(
+        username, role, session=session
+    ):
         log_auth_event(username, action, "deny")
         raise HTTPException(status_code=403, detail=detail)
 
 
 def available_contexts(username: str, *, session) -> list[dict]:
-    """Рабочие контексты, доступные члену модуля: каталог, источники и AI-исследование —
-    всегда, очередь верификации — только активному эксперту ЦК КС,
-    администрирование — только активному module_admin."""
+    """Базовые контексты доступны без истории membership.
+
+    Очередь и администрирование требуют одновременно active membership и роль.
+    """
     contexts = [dict(_CONTEXT_CATALOG), dict(_CONTEXT_SOURCES), dict(_CONTEXT_AI_RESEARCH)]
-    if has_active_role(username, ROLE_CCKS_EXPERT, session=session):
+    active_member = is_active_member(username, session=session)
+    if active_member and has_active_role(username, ROLE_CCKS_EXPERT, session=session):
         contexts.append(dict(_CONTEXT_QUEUE))
-    if has_active_role(username, ROLE_MODULE_ADMIN, session=session):
+    if active_member and has_active_role(username, ROLE_MODULE_ADMIN, session=session):
         contexts.append(dict(_CONTEXT_ADMIN))
     return contexts
 

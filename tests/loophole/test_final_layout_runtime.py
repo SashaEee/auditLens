@@ -20,6 +20,12 @@ ALL_CONTEXTS = [
     {"id": "admin", "title": "Управление доступом"},
 ]
 
+ROLELESS_CONTEXTS = [
+    {"id": "catalog", "title": "Общая база"},
+    {"id": "sources", "title": "Добавить источник"},
+    {"id": "ai_research", "title": "Новое AI-исследование"},
+]
+
 RECORDS = [
     {
         "record_id": 1,
@@ -873,6 +879,25 @@ def test_every_tab_controls_one_labelled_panel_including_denied_states(browser: 
             assert panel.get_attribute("aria-labelledby") == f"lp-tab-{context_id}"
     finally:
         denied_page.close()
+
+
+def test_roleless_base_contexts_switch_without_queue_or_admin(browser: Browser):
+    page = _open(browser, contexts=ROLELESS_CONTEXTS)
+    try:
+        catalog = page.get_by_role("tab", name="Общая база")
+        research = page.get_by_role("tab", name="Новое AI-исследование")
+
+        catalog.click()
+        page.locator(".lp-table").wait_for(state="visible")
+        research.click()
+        page.get_by_role("heading", name="Новое AI-исследование").wait_for(state="visible")
+
+        assert page.get_by_role("tab", name="Очередь верификации").count() == 0
+        assert page.get_by_role("tab", name="Управление доступом").count() == 0
+        assert page.locator("#lp-panel-queue").count() == 0
+        assert page.locator("#lp-panel-admin").count() == 0
+    finally:
+        page.close()
 
 
 def test_catalog_exposes_read_only_published_loophole_scope_without_false_query_params(
