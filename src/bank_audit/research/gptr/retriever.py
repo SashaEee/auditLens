@@ -24,31 +24,41 @@ log = logging.getLogger(__name__)
 _HARD_MIN = 0.35
 # Первоисточник (сайт организации, регулятор) — по нашей же шкале.
 _PRIMARY = 0.85
-# Пересказ на незнакомом сайте: 0.55 у любого домена не из реестра.
-_RETELLING = 0.60
+# Сколько непервоисточных оставляем, когда первоисточник найден: они несут
+# наблюдаемую сторону (жалобы, разборы), без которой аудит однобок.
+_KEEP_OTHER = 3
 
 
 def _prefer_primary(results: list[dict]) -> list[dict]:
-    """Отсев по доверию, адаптивный к тому, что нашлось по ЭТОМУ запросу.
+    """Отсев мусора с СОХРАНЕНИЕМ обеих сторон доказательства.
 
-    Мусор (форумы, объявления) выбрасываем всегда. Пересказ на незнакомом
-    сайте — только если по тому же запросу нашёлся первоисточник: тогда
-    zaimi.ru и 1000bankov.ru не нужны, у нас есть сайт банка. Если
-    первоисточника нет, пересказ остаётся — лучше он, чем пустой отчёт.
-    Списка «плохих доменов» здесь нет: решает состав выдачи.
+    Прошлая версия при наличии первоисточника выбрасывала всё остальное — и
+    вместе с SEO-блогами уносила жалобы клиентов и сторонние разборы. В отчёте
+    31.08 это дало «взгляд только со слов банков»: три собранные жалобы не
+    дожили даже до писателя.
+
+    Теперь: мусор (форумы, доски объявлений) выбрасываем всегда, а из
+    непервоисточных оставляем несколько лучших — они несут наблюдаемую
+    сторону, которой на сайте банка по определению нет. Списка «плохих
+    доменов» по-прежнему нет: решают оценка доверия и состав выдачи.
     """
+    from urllib.parse import urlparse
     scored = []
     for r in results:
         url = r.get("href") or ""
-        from urllib.parse import urlparse
         dom = urlparse(url).netloc.removeprefix("www.")
         scored.append((_trust_for(dom, url), r))
     kept = [(t, r) for t, r in scored if t >= _HARD_MIN]
-    if any(t >= _PRIMARY for t, _ in kept):
-        kept = [(t, r) for t, r in kept if t >= _RETELLING]
+    primary = [(t, r) for t, r in kept if t >= _PRIMARY]
+    other = sorted([(t, r) for t, r in kept if t < _PRIMARY],
+                   key=lambda p: -p[0])
+    if primary:
+        other = other[:_KEEP_OTHER]   # оставляем взгляд со стороны, но немного
+    kept = primary + other
     dropped = len(results) - len(kept)
     if dropped:
-        log.info("fleet: отсеяно %d из %d по доверию", dropped, len(results))
+        log.info("fleet: отсеяно %d из %d (первоисточников %d, со стороны %d)",
+                 dropped, len(results), len(primary), len(other))
     kept.sort(key=lambda p: -p[0])
     return [r for _t, r in kept]
 

@@ -21,8 +21,9 @@ from ..entity_extractor import _BANK_DOMAINS
 log = logging.getLogger(__name__)
 
 
-def plan_to_subqueries(plan, question: str, *, per_subject: int = 1,
-                       max_queries: int = 12) -> tuple[list[str], list[str]]:
+def plan_to_subqueries(plan, question: str, *, attributes: list[str] | None = None,
+                       per_subject: int = 1,
+                       max_queries: int = 14) -> tuple[list[str], list[str]]:
     """План Кондуктора → (подзапросы, доверенные домены).
 
     Возвращаем и домены: гейтвей умеет фильтровать их на своей стороне, а
@@ -70,6 +71,15 @@ def plan_to_subqueries(plan, question: str, *, per_subject: int = 1,
     if len(subjects) > 1:
         names = ", ".join(labels.get(s, s) for s in subjects[:4])
         queries.append(f"{topic} сравнение {names}")
+    # Запросы по ХАРАКТЕРИСТИКАМ контракта, без доменного фильтра. Это и есть
+    # способ добыть наблюдаемую сторону, не заводя в коде списка слов про
+    # отзывы: характеристику «с чем сталкиваются клиенты на практике» называет
+    # план под конкретный вопрос, а поиск сам приводит туда, где об этом пишут
+    # (сайта банка среди таких источников по определению нет).
+    for attr in (attributes or [])[:3]:
+        for slug in subjects[:3]:
+            queries.append(f"{labels.get(slug, slug)} {attr}".strip()[:300])
+
     queries.extend(mission_queries)
     if not queries:
         queries.append(question)
@@ -88,11 +98,12 @@ def plan_to_subqueries(plan, question: str, *, per_subject: int = 1,
     return out, domains
 
 
-def install(plan, question: str) -> None:
+def install(plan, question: str, attributes: list[str] | None = None) -> None:
     """Подменяет планировщик gpt-researcher нашим планом на этот прогон."""
     from gpt_researcher.skills.researcher import ResearchConductor
 
-    subqueries, domains = plan_to_subqueries(plan, question)
+    subqueries, domains = plan_to_subqueries(plan, question,
+                                             attributes=attributes)
 
     async def plan_research(self, query, query_domains=None):
         log.info("gptr-planner: %d подзапросов из плана Кондуктора, "

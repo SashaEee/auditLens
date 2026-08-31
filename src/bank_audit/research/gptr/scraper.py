@@ -24,12 +24,32 @@ log = logging.getLogger(__name__)
 # Ниже этого объёма страница считается подозрительно пустой: у настоящей
 # продуктовой страницы после очистки остаются сотни символов условий.
 _TOO_SHORT = 400
+# Строка такой длины — это уже проза, а не заголовок и не пункт меню.
+_PROSE_LINE = 120
 
-# Что реально прочитано за прогон: url → текст. Нужно для сверки чисел отчёта
-# (см. verify.py) — у движка gpt-researcher нет нашего KnowledgeBundle, и
-# доказательной базой служат сами собранные страницы.
+# Что реально прочитано за прогон: url → текст.
 READ_PAGES: dict[str, str] = {}
+# Почему страница НЕ дала пригодного текста: url → причина. Нужно, чтобы
+# отчёт различал «организация не раскрывает» и «мы не смогли прочитать»:
+# на странице ВТБ «Сколько делается карта» есть заголовки «Что влияет на время
+# изготовления» и «Доставка в цифрах», а самих цифр нет — их подгружает скрипт.
+# Прежний конвейер объявлял это непрозрачностью банка. Это ложный вывод.
+UNREADABLE: dict[str, str] = {}
 
+
+def _is_skeleton(text: str) -> bool:
+    """Каркас страницы: заголовки есть, содержания нет.
+
+    Признак структурный и не знает ни сайта, ни языка: в тексте нет ни одной
+    строки прозаической длины, зато есть несколько коротких строк-заголовков.
+    Так выглядит SPA, отдавшая разметку без данных.
+    """
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    if len(text or "") > 4000:
+        return False                 # длинная страница — точно не каркас
+    prose = sum(1 for l in lines if len(l) >= _PROSE_LINE)
+    headings = sum(1 for l in lines if l.startswith("#"))
+    return prose == 0 and (headings >= 3 or len(lines) >= 6)
 
 class AuditLensScraper:
     """Забор страницы нашим fetcher-ом с эскалацией до браузера."""
@@ -62,6 +82,16 @@ class AuditLensScraper:
             btext, btitle = self._read(browser=True)
             if len(btext) > len(text):
                 text, title = btext, btitle
+        # Причину фиксируем ВСЕГДА, даже если текст всё же вернули: отчёт
+        # обязан отличать «нет данных» от «не смогли прочитать».
+        if not text:
+            UNREADABLE[self.link] = "пустой ответ"
+        elif _looks_like_stub(title, text):
+            UNREADABLE[self.link] = "защита от ботов"
+        elif len(text) < _TOO_SHORT:
+            UNREADABLE[self.link] = "почти пустая страница"
+        elif _is_skeleton(text):
+            UNREADABLE[self.link] = "каркас без содержимого (данные грузит скрипт)"
         if text:
             READ_PAGES[self.link] = text
         return text, [], title
