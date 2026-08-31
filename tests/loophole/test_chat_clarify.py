@@ -48,12 +48,13 @@ def test_client_uses_short_timeout_without_transport_retries(monkeypatch):
     client = clarify_mod._client()
 
     assert client is sentinel
-    assert captured == {
+    assert {key: value for key, value in captured.items() if key != "http_client"} == {
         "base_url": "https://llm.example/v1",
         "api_key": "test-key",
         "timeout": 15,
         "max_retries": 0,
     }
+    assert captured["http_client"].trust_env is False
 
 
 @pytest.mark.asyncio

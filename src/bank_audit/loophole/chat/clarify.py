@@ -26,6 +26,7 @@ from ...ai.llm_utils import (
     normalize_question,
 )
 from .. import repository as repo
+from ..direct_transport import async_client
 from ..pii_mask import mask as pii_mask
 from .tools_nanobot import load_prompt
 
@@ -311,7 +312,13 @@ def _clarify_model() -> str:
 def _client() -> AsyncOpenAI:
     base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     api_key = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-    return AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=15, max_retries=0)
+    return AsyncOpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=15,
+        max_retries=0,
+        http_client=async_client(timeout=15),
+    )
 
 
 def _validate(data: Any) -> dict:

@@ -253,11 +253,15 @@ def _default_llm() -> Any:
     from langchain_openai import ChatOpenAI
 
     from ..config import LoopholeSettings
+    from ..direct_transport import async_client, sync_client
 
     base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     api_key = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
     model = LoopholeSettings.load().effective_chat_model()
-    return ChatOpenAI(model=model, base_url=base_url, api_key=api_key, temperature=0.3)
+    return ChatOpenAI(
+        model=model, base_url=base_url, api_key=api_key, temperature=0.3,
+        http_client=sync_client(), http_async_client=async_client(),
+    )
 
 
 def _llm_content(resp: Any) -> str:
@@ -559,7 +563,7 @@ def fetch_target(url: str, *, timeout: float = 20.0) -> dict:
 
     Возвращает {url, ok, status?, excerpt?} или {url, ok: False, error}.
     """
-    c = _http_collector(timeout=timeout, delay_ms=0)
+    c = _http_collector(timeout=timeout, delay_ms=0, direct=True)
     try:
         status, content = c.fetch(url)
         return {

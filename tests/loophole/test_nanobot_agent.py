@@ -6,6 +6,14 @@ from bank_audit.loophole.chat.nanobot_agent import (
 )
 
 
+def _transport_uses_proxy(client):
+    """Возвращает True, если httpx transport содержит proxy-пул."""
+    transport = client._transport
+    return "Proxy" in type(transport).__name__ or hasattr(transport, "_pool") and (
+        "Proxy" in type(transport._pool).__name__
+    )
+
+
 def test_load_system_prompt_contains_tools():
     prompt = load_system_prompt()
     assert "audit_web_search" in prompt
@@ -36,6 +44,27 @@ def test_create_nanobot_registers_custom_tools():
         from pathlib import Path
 
         Path(config_path).unlink(missing_ok=True)
+
+
+def test_create_nanobot_ignores_proxy_env(monkeypatch):
+    """Фактический SDK nanobot не должен строить proxy transport из env."""
+    import asyncio
+    from pathlib import Path
+
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+    bot, config_path = create_nanobot()
+    http_client = None
+    try:
+        provider = bot._loop.provider
+        asyncio.run(provider._ensure_client())
+        http_client = provider._client._client
+        assert not _transport_uses_proxy(http_client)
+    finally:
+        asyncio.run(bot.aclose())
+        Path(config_path).unlink(missing_ok=True)
+    assert http_client is not None and http_client.is_closed
 
 
 def _find_type_arrays(node, path=""):

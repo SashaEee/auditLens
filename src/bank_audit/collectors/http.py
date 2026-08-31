@@ -1,14 +1,18 @@
 from __future__ import annotations
-import os, time
+
+import os
+import time
+
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
 
 class HttpCollector:
     def __init__(self, user_agent: str | None = None, timeout: float = 30.0,
-                 delay_ms: int = 1500):
+                 delay_ms: int = 1500, direct: bool = False):
         self.client = httpx.Client(
             headers={"User-Agent": user_agent or os.getenv("HTTP_USER_AGENT", "BankAuditBot/0.1")},
-            timeout=timeout, follow_redirects=True,
+            timeout=timeout, follow_redirects=True, trust_env=not direct,
         )
         self.delay_s = delay_ms / 1000.0
 

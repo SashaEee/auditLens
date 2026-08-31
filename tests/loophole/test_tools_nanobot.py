@@ -61,6 +61,29 @@ def test_nanobot_prompt_forbids_widening_a_hard_publication_period():
     assert "службы внутреннего аудита Сбербанка" not in prompt
 
 
+def test_nanobot_prompt_requires_wide_separate_fraud_research():
+    from bank_audit.loophole.chat.nanobot_agent import load_system_prompt
+
+    prompt = load_prompt("07_nanobot_system")
+
+    assert "независимым кластерам запросов" in prompt
+    assert "разным площадкам" in prompt
+    assert "дедуплицируй URL" in prompt
+    assert "финальный URL для исключения повторов" in prompt
+    assert "насколько позволяет агентский контекст" in prompt
+    assert "В пределах доступного лимита итераций" in prompt
+    assert "до покрытия нескольких независимых кластеров и разных доступных площадок" in prompt
+    assert "честно отметь это ограничение" in prompt
+    assert "Мошеннические схемы" in prompt
+    assert "релевантного проверенного источника" in prompt
+    assert "не объявляй форум первоисточником" in prompt
+    assert "не передавай мошеннические материалы" in prompt
+    assert "audit_extract_loopholes" in prompt
+    assert "published_at" in prompt
+    assert "не расширяй период" in prompt
+    assert load_system_prompt() == prompt
+
+
 def test_publication_window_understands_user_month_constraint():
     from bank_audit.loophole.chat import tools_nanobot
 

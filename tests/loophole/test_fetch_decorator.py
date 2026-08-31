@@ -30,6 +30,52 @@ def test_fetch_and_parse_returns_page():
     assert len(page.excerpt) > 0
 
 
+def test_fetch_and_parse_requests_direct_transport_without_changing_default():
+    received = {}
+    result = MagicMock()
+    result.content = "<html><body>текст</body></html>".encode()
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    def impl(url, *, prefer_browser=False, direct=False):
+        received.update(prefer_browser=prefer_browser, direct=direct)
+        return result
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/doc", prefer_browser=True, _fetch_impl=impl
+    )
+
+    assert page is not None
+    assert received == {"prefer_browser": True, "direct": True}
+
+
+def test_fetch_and_parse_keeps_legacy_injected_fetcher_working():
+    result = MagicMock()
+    result.content = "<html><body>текст</body></html>".encode()
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    def legacy_impl(url, prefer_browser=False):
+        return result
+
+    assert fetch_decorator.fetch_and_parse("https://example.ru/doc", _fetch_impl=legacy_impl)
+
+
+def test_fetch_and_parse_does_not_retry_internal_typeerror_without_direct():
+    calls = []
+
+    def impl(url, *, prefer_browser=False, direct=False):
+        calls.append(direct)
+        raise TypeError("internal failure")
+
+    assert fetch_decorator.fetch_and_parse("https://example.ru/doc", _fetch_impl=impl) is None
+    assert calls == [True]
+
+
 def test_fetch_and_parse_excerpt_len():
     page = fetch_decorator.fetch_and_parse(
         "https://example.ru/doc", excerpt_len=10, _fetch_impl=_fetch_impl_ok()

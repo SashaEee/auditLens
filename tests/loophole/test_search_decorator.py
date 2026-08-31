@@ -17,6 +17,31 @@ def test_search_delegates_to_impl():
     assert "лазейка" in results[0]["title"]
 
 
+def test_search_requests_direct_transport_from_shared_boundary():
+    received = {}
+
+    def impl(query, **kwargs):
+        received.update(kwargs)
+        return []
+
+    search_decorator.clear_cache()
+    assert search_decorator.search("прямая сеть", _impl=impl) == []
+    assert received["direct"] is True
+
+
+def test_search_does_not_retry_internal_typeerror_without_direct():
+    calls = []
+
+    def impl(query, **kwargs):
+        calls.append(kwargs.get("direct"))
+        raise TypeError("internal failure")
+
+    search_decorator.clear_cache()
+    with __import__("pytest").raises(TypeError, match="internal failure"):
+        search_decorator.search("прямая сеть", _impl=impl)
+    assert calls == [True]
+
+
 def test_search_normalizes_fields():
     long_title = "x" * 500
     def impl(q, **kw):

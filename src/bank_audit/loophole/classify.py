@@ -16,6 +16,7 @@ from typing import Any
 from ..ai.llm_utils import _loose_json_loads
 from . import repository as repo
 from .config import LoopholeSettings
+from .direct_transport import async_client, sync_client
 from .models import Verdict
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,10 @@ def _default_llm():
     base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     api_key = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
     model = LoopholeSettings.load().effective_classify_model()
-    return ChatOpenAI(model=model, base_url=base_url, api_key=api_key, temperature=0.0)
+    return ChatOpenAI(
+        model=model, base_url=base_url, api_key=api_key, temperature=0.0,
+        http_client=sync_client(), http_async_client=async_client(),
+    )
 
 
 def _build_prompt(text: str) -> list:
