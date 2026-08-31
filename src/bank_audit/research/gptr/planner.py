@@ -40,6 +40,20 @@ def plan_to_subqueries(plan, question: str, *, per_subject: int = 1,
     domains: list[str] = []
     queries: list[str] = []
 
+    # Миссии Кондуктора — источник ДОПОЛНИТЕЛЬНЫХ разрезов темы: жалобы,
+    # регуляторные требования, рейтинг. Что именно искать, решает план, а не
+    # список тем в коде: для вопроса про ПСК тут окажется миссия regulatory,
+    # для вопроса про качество обслуживания — reviews.
+    mission_queries: list[str] = []
+    for m in (getattr(plan, "missions", None) or []):
+        goal = (getattr(m, "focus", "") or getattr(m, "goal", "") or "").strip()
+        if not goal or getattr(m, "agent_id", "") == "researcher":
+            continue          # основной сбор уже покрыт адресными запросами
+        m_subjects = list(getattr(m, "subjects", None) or subjects)
+        for slug in (m_subjects[:3] or [None]):
+            name = labels.get(slug, slug) if slug else ""
+            mission_queries.append(f"{name} {goal}".strip()[:300])
+
     for slug in subjects:
         name = labels.get(slug) or slug
         dom = _BANK_DOMAINS.get(slug)
@@ -56,6 +70,7 @@ def plan_to_subqueries(plan, question: str, *, per_subject: int = 1,
     if len(subjects) > 1:
         names = ", ".join(labels.get(s, s) for s in subjects[:4])
         queries.append(f"{topic} сравнение {names}")
+    queries.extend(mission_queries)
     if not queries:
         queries.append(question)
 
