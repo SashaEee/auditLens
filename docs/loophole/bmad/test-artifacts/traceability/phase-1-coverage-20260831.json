@@ -1,0 +1,104 @@
+{
+  "phase": "PHASE_1_COMPLETE",
+  "generated_at": "2026-08-31",
+  "trace_target": {
+    "type": "module",
+    "id": "loophole",
+    "label": "Модуль Лазейки — 28 активных спецификаций"
+  },
+  "collection_mode": "sequential",
+  "collection_status": "COLLECTED",
+  "allow_gate": true,
+  "coverage_basis": "acceptance_criteria",
+  "summary_confidence": "high",
+  "oracle": {
+    "resolution_mode": "formal_requirements",
+    "confidence": "high",
+    "sources": ["docs/loophole/bmad/implementation-artifacts/spec-*.md"],
+    "external_pointer_status": "not_used",
+    "synthetic": false
+  },
+  "requirements": [
+    {"id":"1.1","title":"Авторизованный выбор рабочего контекста","priority":"P0","coverage":"FULL","tests":[{"id":"tests/loophole/test_authorization.py::test_queue_member_without_role_403_no_protected_data","file":"tests/loophole/test_authorization.py","line":211,"title":"test_queue_member_without_role_403_no_protected_data","level":"api","status":"active"}]},
+    {"id":"1.2","title":"Единая оболочка iframe и синхронизация темы","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_iframe_shell_theme.py::test_theme_sync_mutation_observer_on_parent","file":"tests/loophole/test_iframe_shell_theme.py","line":187,"title":"test_theme_sync_mutation_observer_on_parent","level":"unit","status":"active"}]},
+    {"id":"1.3","title":"Адаптивные маршруты рабочих контекстов","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_adaptive_context_routes.py::test_chat_offcanvas_below_1100px","file":"tests/loophole/test_adaptive_context_routes.py","line":206,"title":"test_chat_offcanvas_below_1100px","level":"unit","status":"active"}]},
+    {"id":"1.4","title":"Доступные состояния и обратная связь интерфейса","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_accessible_states_feedback.py::test_focus_trap_cycles_from_programmatic_title_on_shift_tab","file":"tests/loophole/test_accessible_states_feedback.py","line":577,"title":"test_focus_trap_cycles_from_programmatic_title_on_shift_tab","level":"unit","status":"active"}]},
+    {"id":"1.5","title":"Администрирование роли ЦК КС и сводного аудита","priority":"P1","coverage":"SUPERSEDED","tests":[{"id":"tests/loophole/test_admin_roles_audit.py::test_admin_sections_and_states","file":"tests/loophole/test_admin_roles_audit.py","line":627,"title":"test_admin_sections_and_states","level":"api","status":"active"}],"gaps":["Карточка Telegram-целей удалена поздним утверждённым требованием; исходный критерий не должен возвращаться."]},
+    {"id":"2.1","title":"Управляемый агент исследования","priority":"P0","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_2_1_routes.py::test_chat_and_clarify_action_audit_redacts_sensitive_text","file":"tests/loophole/test_story_2_1_routes.py","line":465,"title":"test_chat_and_clarify_action_audit_redacts_sensitive_text","level":"api","status":"active"}]},
+    {"id":"2.2","title":"Поиск источников и извлечение кейсов","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_2_2_research_cases.py::test_collect_research_continues_after_unavailable_source","file":"tests/loophole/test_story_2_2_research_cases.py","line":161,"title":"test_collect_research_continues_after_unavailable_source","level":"api","status":"active"}]},
+    {"id":"2.3","title":"Модельная классификация результатов исследования","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_2_2_research_cases.py::test_classification_reports_partial_failure_and_keeps_success","file":"tests/loophole/test_story_2_2_research_cases.py","line":319,"title":"test_classification_reports_partial_failure_and_keeps_success","level":"api","status":"active"}]},
+    {"id":"2.4","title":"Наблюдаемый и адаптивный ход исследования","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_2_4_research_progress.py::test_first_localized_research_status_arrives_before_fifteen_seconds","file":"tests/loophole/test_story_2_4_research_progress.py","line":12,"title":"test_first_localized_research_status_arrives_before_fifteen_seconds","level":"api","status":"active"}]},
+    {"id":"2.5","title":"Передача выбранного кейса на верификацию","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_2_5_submission_route.py::test_submit_route_requires_workspace_owner_and_returns_waiting_status","file":"tests/loophole/test_story_2_5_submission_route.py","line":93,"title":"test_submit_route_requires_workspace_owner_and_returns_waiting_status","level":"api","status":"active"}]},
+    {"id":"3.1","title":"Рассмотрение кейса и единственное решение ЦК КС","priority":"P0","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_story_2_2_research_cases.py::test_ccks_decision_is_append_only_and_idempotent_for_submitted_snapshot","file":"tests/loophole/test_story_2_2_research_cases.py","line":486,"title":"test_ccks_decision_is_append_only_and_idempotent_for_submitted_snapshot","level":"api","status":"active"}],"gaps":["Нет route-level denied test для решения без роли.","Нет конкурентного route-теста и RED/GREEN для пустого комментария."]},
+    {"id":"3.2","title":"Идемпотентная публикация подтверждённого кейса","priority":"P1","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_story_2_2_research_cases.py::test_positive_decision_publishes_catalog_case_once_and_negative_never_publishes","file":"tests/loophole/test_story_2_2_research_cases.py","line":544,"title":"test_positive_decision_publishes_catalog_case_once_and_negative_never_publishes","level":"api","status":"active"}],"gaps":["Нет failure/retry state machine и UI-проверки publishing/error/published."]},
+    {"id":"3.3","title":"Миграции и ограничения lifecycle кейса","priority":"P0","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_db_schema_051.py::test_lifecycle_postgres_verifier_is_honest_without_staging","file":"tests/loophole/test_db_schema_051.py","line":17,"title":"test_lifecycle_postgres_verifier_is_honest_without_staging","level":"unit","status":"active"}],"gaps":["PostgreSQL staging acceptance не предоставлен; verifier возвращает UNVERIFIED."]},
+    {"id":"4.1","title":"Поиск и фильтрация опубликованного каталога","priority":"P1","coverage":"SUPERSEDED","tests":[{"id":"tests/loophole/test_story_4_1_published_catalog.py::test_published_catalog_excludes_research_and_pending_cases","file":"tests/loophole/test_story_4_1_published_catalog.py","line":11,"title":"test_published_catalog_excludes_research_and_pending_cases","level":"api","status":"active"}],"gaps":["Published-only модель заменена требованием показывать preliminary records в общей базе."]},
+    {"id":"4.2","title":"Экспорт отфильтрованных данных","priority":"P1","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_story_4_2_filtered_export.py::test_filtered_export_uses_published_catalog_only","file":"tests/loophole/test_story_4_2_filtered_export.py","line":14,"title":"test_filtered_export_uses_published_catalog_only","level":"api","status":"active"}],"gaps":["Исследовательский export не содержит проверенные snapshots/cases/URLs."]},
+    {"id":"4.3","title":"Безопасная аналитика опубликованного каталога","priority":"P0","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_story_4_3_safe_analytics.py::test_analytics_blocks_unsafe_sql_before_db_access","file":"tests/loophole/test_story_4_3_safe_analytics.py","line":38,"title":"test_analytics_blocks_unsafe_sql_before_db_access","level":"api","status":"active"}],"gaps":["Нет PostgreSQL role/timeout integration proof."]},
+    {"id":"4.4","title":"Управляемое расписание аналитических запросов","priority":"P1","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_story_4_4_scheduled_analytics.py::test_schedule_skips_once_without_query_when_recipient_membership_revoked","file":"tests/loophole/test_story_4_4_scheduled_analytics.py","line":93,"title":"test_schedule_skips_once_without_query_when_recipient_membership_revoked","level":"api","status":"active"}],"gaps":["Не покрыты owner membership, capabilities и expiry skip paths."]},
+    {"id":"5.1","title":"Создание валидируемого parser обычного источника","priority":"P1","coverage":"SUPERSEDED","tests":[{"id":"tests/loophole/test_parsers_generator.py::test_generate_saves_to_catalog","file":"tests/loophole/test_parsers_generator.py","line":75,"title":"test_generate_saves_to_catalog","level":"api","status":"active"}],"gaps":["Форма должна создавать заявку, а не parser; старое покрытие не подтверждает новое требование."]},
+    {"id":"5.2","title":"Запуск и наблюдение обычного parser","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_parsers_runner.py::test_wait_success_creates_run_record","file":"tests/loophole/test_parsers_runner.py","line":112,"title":"test_wait_success_creates_run_record","level":"api","status":"active"}]},
+    {"id":"5.3","title":"Расписание и lifecycle обычного parser","priority":"P1","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_parsers_scheduler.py::test_tick_runs_due_parser","file":"tests/loophole/test_parsers_scheduler.py","line":57,"title":"test_tick_runs_due_parser","level":"api","status":"active"}],"gaps":["Нет отдельного audit-toggle и negative Telegram-side-effect test."]},
+    {"id":"6.1","title":"Идемпотентная регистрация Telegram-цели","priority":"P1","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_6_1_target_registry.py::test_repeat_registration_returns_existing_target_without_duplicate","file":"tests/loophole/test_story_6_1_target_registry.py","line":43,"title":"test_repeat_registration_returns_existing_target_without_duplicate","level":"api","status":"active"}]},
+    {"id":"6.2","title":"Управление доступом и lifecycle Telegram-цели","priority":"P0","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_6_2_target_access.py::test_deactivation_fences_active_lease_without_deleting_checkpoint","file":"tests/loophole/test_story_6_2_target_access.py","line":205,"title":"test_deactivation_fences_active_lease_without_deleting_checkpoint","level":"api","status":"active"}]},
+    {"id":"6.3","title":"Независимый безопасный Telegram ingestion","priority":"P0","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_6_3_telegram_ingestion.py::test_uncertain_content_is_metadata_only_quarantine_without_raw_body_or_attachments","file":"tests/loophole/test_story_6_3_telegram_ingestion.py","line":198,"title":"test_uncertain_content_is_metadata_only_quarantine_without_raw_body_or_attachments","level":"api","status":"active"}]},
+    {"id":"6.4","title":"Устойчивый Telegram worker и наблюдаемый SLO","priority":"P0","coverage":"FULL","tests":[{"id":"tests/loophole/test_story_6_4_telegram_worker.py::test_reaper_terminalizes_expired_attempt_once_and_new_owner_resumes_checkpoint","file":"tests/loophole/test_story_6_4_telegram_worker.py","line":246,"title":"test_reaper_terminalizes_expired_attempt_once_and_new_owner_resumes_checkpoint","level":"api","status":"active"}]},
+    {"id":"6.5","title":"Защищённый perimeter и evidence готовности worker","priority":"P0","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_story_6_5_telegram_perimeter.py::test_perimeter_verifier_is_honest_without_external_evidence","file":"tests/loophole/test_story_6_5_telegram_perimeter.py","line":71,"title":"test_perimeter_verifier_is_honest_without_external_evidence","level":"unit","status":"active"}],"gaps":["Нет production-like external evidence; current verifier returns UNVERIFIED."]},
+    {"id":"preliminary-source-import","title":"Перенос найденных research-source как Предварительных","priority":"P0","coverage":"NONE","tests":[],"gaps":["Нет route, service, migration и tests."]},
+    {"id":"parser-development-request","title":"Заявка на разработку parser вместо автогенерации","priority":"P0","coverage":"NONE","tests":[],"gaps":["Текущая вкладка всё ещё показывает Создать и проверить и Telegram-card."]},
+    {"id":"research-report","title":"Читаемый отчёт AI-исследования и export доказательств","priority":"P1","coverage":"PARTIAL","tests":[{"id":"tests/loophole/test_final_layout_runtime.py::test_research_result_renders_safe_markdown_and_exposes_snapshot_downloads","file":"tests/loophole/test_final_layout_runtime.py","line":758,"title":"test_research_result_renders_safe_markdown_and_exposes_snapshot_downloads","level":"e2e","status":"active"}],"gaps":["Safe Markdown и PDF/DOCX endpoint есть, но report всегда сохраняет пустой evidence snapshot."]}
+  ],
+  "coverage_statistics": {
+    "total_requirements": 28,
+    "fully_covered": 14,
+    "partially_covered": 9,
+    "uncovered": 2,
+    "superseded": 3,
+    "overall_coverage_percentage": 50,
+    "priority_breakdown": {
+      "P0": {"total":11,"covered":5,"percentage":45},
+      "P1": {"total":17,"covered":9,"percentage":53},
+      "P2": {"total":0,"covered":0,"percentage":100},
+      "P3": {"total":0,"covered":0,"percentage":100}
+    }
+  },
+  "gap_analysis": {
+    "critical_gaps":["preliminary-source-import","parser-development-request"],
+    "high_gaps":["3.1","3.3","4.3","6.5"],
+    "medium_gaps":["3.2","4.2","4.4","5.3","research-report"],
+    "superseded":["1.5","4.1","5.1"]
+  },
+  "coverage_heuristics": {
+    "endpoint_gaps":["3.1 decision denial","preliminary-source-import","parser-development-request"],
+    "auth_negative_path_gaps":["3.1 decision route","preliminary-source-import ownership"],
+    "happy_path_only_gaps":["3.2 retry states","4.3 timeout","4.4 owner/capability/expiry","5.3 Telegram isolation","research-report evidence"],
+    "ui_journey_gaps":["parser-development-request"],
+    "ui_state_gaps":["parser-development-request DB/network failure"],
+    "counts":{"endpoints_without_tests":3,"auth_missing_negative_paths":2,"happy_path_only_criteria":5,"ui_journeys_without_e2e":1,"ui_states_missing_coverage":1}
+  },
+  "live_evidence": {
+    "present": true,
+    "freshness": "manual_not_counted",
+    "counted": 0,
+    "notes": [
+      "In-app Browser: AI-research initial surface rendered, chat open/close restored focus to Open chat, console errors 0.",
+      "In-app Browser: Add source still shows Create and check plus Telegram card; this confirms parser-development-request remains unimplemented."
+    ]
+  },
+  "test_inventory": {
+    "summary": {"files":70,"cases":723,"skipped_cases":1,"fixme_cases":0,"pending_cases":0,"executed_cases":723,"passed":722,"skipped":1,"warnings":21},
+    "skipped_case":"tests/loophole/test_db_schema_024.py::test_migration_044_verifies_explicit_postgres_staging_or_marks_unverified"
+  },
+  "blockers":[
+    {"id":"preliminary-source-import","severity":"critical","reason":"Нет реализации и тестов прямого пользовательского требования."},
+    {"id":"parser-development-request","severity":"critical","reason":"UI и backend продолжают создавать parser вместо pending-заявки."},
+    {"id":"research-report-evidence","severity":"high","reason":"Экспорт не может содержать реальные verified evidence, потому что snapshot всегда пуст."},
+    {"id":"external-staging","severity":"high","reason":"PostgreSQL lifecycle и Telegram perimeter остаются UNVERIFIED без внешнего evidence."}
+  ],
+  "recommendations":[
+    {"priority":"URGENT","action":"Реализовать и покрыть тестами перенос preliminary source и заявку parser-development-request до изменения статусов этих спецификаций."},
+    {"priority":"HIGH","action":"Добавить route/auth/concurrency tests Story 3.1, retry state tests Story 3.2 и PostgreSQL evidence gates Stories 3.3/4.3/6.5."},
+    {"priority":"HIGH","action":"Сохранять immutable verified evidence snapshot в report и доказать PDF/DOCX URL/source-content тестом."},
+    {"priority":"MEDIUM","action":"Добавить owner/capability/expiry coverage schedule analytics и audit/Telegram-isolation coverage parser schedule."}
+  ]
+}

@@ -137,6 +137,7 @@ def delete_parser(parser_id: int, *, session: Any = None) -> bool:
     # Удаляем запись из БД напрямую (в repository нет delete_parser).
     try:
         from sqlalchemy import text
+
         from ... import db
         from .. import db_schema as schema
 

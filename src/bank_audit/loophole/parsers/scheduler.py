@@ -14,8 +14,8 @@ from datetime import datetime
 from ... import db
 from ...clock import MSK
 from .. import repository as repo
-from . import runner as runner_mod
 from . import healer as healer_mod
+from . import runner as runner_mod
 
 log = logging.getLogger(__name__)
 

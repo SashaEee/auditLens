@@ -6395,10 +6395,10 @@ function KnowledgePage({params}){
 
 // ─── Loophole page (встраивает frontend модуля loophole) ─────────────────────
 function LoopholePage(){
-  return <section className="surface" style={{padding:0,overflow:"hidden"}}>
+  return <section className="surface loophole-page" style={{padding:0,overflow:"hidden"}}>
     <iframe src="/static/loophole/loophole.html"
             title="Лазейки и уязвимости"
-            style={{width:"100%",height:"calc(100vh - 120px)",border:"none",display:"block"}}/>
+            style={{width:"100%",height:"100%",border:"none",display:"block"}}/>
   </section>;
 }
 
@@ -7901,6 +7901,9 @@ function Shell(){
     return "overview"; });
   const[pageParams,setPageParams]=useState(()=>parseHash().prm);
   const[loopholeMounted,setLoopholeMounted]=useState(()=>(parseHash().p||"overview")==="loophole");
+  // Тик явного обновления «Лазеек»: кнопка ⟳ инкрементирует его только на этой
+  // странице, ремаунт по key перезагружает iframe модуля.
+  const[refreshTick,setRefreshTick]=useState(0);
   // ИИ-аналитик живёт в фоне: страница не размонтируется при уходе на другие
   // вкладки — прогон продолжается, по завершении сигналим точкой в rail и тостом.
   const[aiMounted,setAiMounted]=useState(()=>(parseHash().p||"overview")==="ai");
@@ -8129,7 +8132,8 @@ function Shell(){
             <span>{new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК</span>
             <span className="kbd">API</span>
           </div>}
-          <button className="icon-btn" aria-label="обновить" title="Обновить страницу" onClick={()=>setPage(p=>p)}>
+          {/* на «Лазейках» ⟳ ремаунтит iframe модуля; на остальных страницах поведение прежнее */}
+          <button className="icon-btn" aria-label="обновить" title="Обновить страницу" onClick={()=>page==="loophole"&&setRefreshTick(t=>t+1)}>
             <Ic.refresh/>
           </button>
           <button className="icon-btn" aria-label="тема" onClick={()=>setTheme(theme==="dark"?"light":"dark")} title="Сменить тему">
@@ -8137,8 +8141,8 @@ function Shell(){
           </button>
         </div>
         <div className="content">
-          {loopholeMounted&&<div style={{display:page==="loophole"?"block":"none",height:"100%"}}>
-            <LoopholePage/>
+          {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
+            <LoopholePage key={refreshTick}/>
           </div>}
           {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
             <PageBoundary pageKey="ai"><AIPage/></PageBoundary>

@@ -1,26 +1,119 @@
 /* loophole — стили: правый sidebar-чат (AI-agent) + основная область с таблицей.
-   Шрифты: Source Serif 4 / Geist / JetBrains Mono. */
+   Шрифты: Source Serif 4 / Geist / JetBrains Mono (саморазмещённые, /static/vendor/). */
 
+/* Токены AuditLens (story 1.2) — единая визуальная система с основным сайтом,
+   значения verbatim из index.html. Класс html.dark переключается скриптом
+   синхронизации темы в loophole.html (MutationObserver / prefers-color-scheme). */
 :root {
-  --bg: #fafaf7;
-  --fg: #1a1a1a;
-  --ink: #20242c;
-  --muted: #6b6b6b;
-  --muted-2: #9a9a93;
-  --accent: #b03a2e;
-  --accent-soft: #f5e8e6;
-  --border: #d8d8d2;
-  --border-soft: #ececea;
-  --panel: #ffffff;
-  --sidebar-bg: #1e1f22;
-  --sidebar-fg: #e6e6e6;
-  --sidebar-muted: #9a9b9d;
-  --sidebar-border: #34353a;
-  --sidebar-input: #2a2b2e;
-  --user-bubble: #3b5bdb;
-  --ok: #2f9e44;
-  --warn: #f08c00;
-  --bad: #e03131;
+  --paper:        oklch(98.5% 0.004 80);
+  --paper-2:      oklch(96.8% 0.005 80);
+  --surface:      oklch(100% 0 0);
+  --ink:          oklch(17% 0.01 260);
+  --ink-2:        oklch(38% 0.01 260);
+  --ink-3:        oklch(58% 0.012 260);
+  --ink-4:        oklch(76% 0.012 260);
+  --hair:         oklch(91% 0.005 80);
+  --hair-2:       oklch(86% 0.005 80);
+  --accent:       oklch(58% 0.18 25);
+  --on-accent-solid: oklch(100% 0 0);
+  --accent-soft:  oklch(58% 0.18 25 / 0.08);
+  --pos:          oklch(48% 0.10 150);
+  --warn:         oklch(64% 0.13 75);
+  --neg:          oklch(58% 0.18 25);
+  --on-danger-solid: oklch(100% 0 0);
+  --shadow-offcanvas: oklch(0% 0 0 / 0.35);
+  --phase-done-bg: oklch(48% 0.10 150 / 0.18);
+  --tool-events-bg: var(--paper-2);
+  --option-selected-bg: var(--accent-soft);
+  --modal-overlay: oklch(15% 0.008 260 / 0.55);
+  --shadow-dialog: oklch(0% 0 0 / 0.25);
+  --verdict-neg-border: oklch(58% 0.18 25 / 0.35);
+  --verdict-neg-bg: oklch(58% 0.18 25 / 0.07);
+  --verdict-neg-hover: oklch(58% 0.18 25 / 0.60);
+  --verdict-pos-border: oklch(48% 0.10 150 / 0.35);
+  --verdict-pos-bg: oklch(48% 0.10 150 / 0.07);
+  --verdict-pos-hover: oklch(48% 0.10 150 / 0.60);
+  --shadow-subtle: oklch(0% 0 0 / 0.04);
+  --focus-shadow: oklch(17% 0.01 260 / 0.12);
+  --shadow-toast: oklch(0% 0 0 / 0.10);
+  color-scheme: light;
+}
+html.dark {
+  --paper:        oklch(15% 0.008 260);
+  --paper-2:      oklch(18% 0.008 260);
+  --surface:      oklch(20% 0.008 260);
+  --ink:          oklch(96% 0.005 80);
+  --ink-2:        oklch(76% 0.008 260);
+  --ink-3:        oklch(58% 0.01 260);
+  --ink-4:        oklch(40% 0.012 260);
+  --hair:         oklch(26% 0.008 260);
+  --hair-2:       oklch(32% 0.008 260);
+  --accent:       oklch(68% 0.18 25);
+  --on-accent-solid: oklch(15% 0.008 260);
+  --accent-soft:  oklch(68% 0.18 25 / 0.14);
+  --pos:          oklch(72% 0.14 150);
+  --warn:         oklch(80% 0.14 75);
+  --neg:          oklch(70% 0.18 25);
+  --on-danger-solid: oklch(15% 0.008 260);
+  --shadow-offcanvas: oklch(0% 0 0 / 0.35);
+  --phase-done-bg: oklch(72% 0.14 150 / 0.18);
+  --tool-events-bg: var(--paper-2);
+  --option-selected-bg: var(--accent-soft);
+  --modal-overlay: oklch(0% 0 0 / 0.55);
+  --shadow-dialog: oklch(0% 0 0 / 0.25);
+  --verdict-neg-border: oklch(70% 0.18 25 / 0.35);
+  --verdict-neg-bg: oklch(70% 0.18 25 / 0.07);
+  --verdict-neg-hover: oklch(70% 0.18 25 / 0.60);
+  --verdict-pos-border: oklch(72% 0.14 150 / 0.35);
+  --verdict-pos-bg: oklch(72% 0.14 150 / 0.07);
+  --verdict-pos-hover: oklch(72% 0.14 150 / 0.60);
+  --shadow-subtle: oklch(0% 0 0 / 0.04);
+  --focus-shadow: oklch(96% 0.005 80 / 0.12);
+  --shadow-toast: oklch(0% 0 0 / 0.10);
+  color-scheme: dark;
+}
+
+/* Алиасы наследия модуля на единые токены: правила ниже не переопределяют
+   палитру, поэтому тёмная тема подхватывается автоматически. Оба muted-уровня
+   ведут на --ink-2: --ink-3 даёт контраст ниже 4.5:1 на светлых поверхностях,
+   а история требует 4.5:1 для текста. */
+:root {
+  --bg: var(--paper);
+  --fg: var(--ink);
+  --muted: var(--ink-2);
+  --muted-2: var(--ink-2);
+  --border: var(--hair-2);
+  --border-soft: var(--hair);
+  --panel: var(--surface);
+  --ok: var(--pos);
+  --bad: var(--neg);
+  /* Панель агента использует те же semantic tokens, что и оболочка AuditLens:
+     light/dark переключаются только через html.dark. */
+  --sidebar-bg: var(--surface);
+  --sidebar-fg: var(--ink);
+  --sidebar-muted: var(--ink-2);
+  --sidebar-border: var(--hair);
+  --sidebar-input: var(--paper-2);
+  --user-bubble: var(--paper-2);
+  --on-user-bubble: var(--ink);
+  --on-accent: var(--on-accent-solid);
+  --sidebar-tool-call: var(--warn);
+  --sidebar-tool-result: var(--pos);
+  --sidebar-border-hover: var(--hair-2);
+  --status-ok-bg: var(--accent-soft);
+  --status-ok-fg: var(--pos);
+  --status-error-bg: var(--paper-2);
+  --status-error-fg: var(--ink);
+  --status-empty-bg: var(--paper-2);
+  --status-empty-fg: var(--muted);
+  --status-running-bg: var(--paper-2);
+  --status-running-fg: var(--ink);
+  --status-warning-bg: var(--paper-2);
+  --status-warning-fg: var(--ink);
+  --log-surface: var(--sidebar-bg);
+  --log-header-surface: var(--sidebar-input);
+  --log-fg: var(--sidebar-fg);
+  --log-success: var(--sidebar-tool-result);
   --mono: "JetBrains Mono", ui-monospace, monospace;
   --sans: "Geist", system-ui, sans-serif;
   --serif: "Source Serif 4", Georgia, serif;
@@ -31,6 +124,8 @@
 html, body {
   margin: 0;
   height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
@@ -38,14 +133,22 @@ html, body {
   line-height: 1.5;
 }
 
-#loophole-root { height: 100vh; }
+/* Высота — от геометрии iframe (100%), без viewport-единиц (story 1.3). */
+#loophole-root { height: 100%; min-width: 0; }
 
-/* ── Layout: main + sidebar ──────────────────────────────────────────────── */
+/* ── Layout: main + опциональная панель чата ─────────────────────────────── */
+/* Корневой overflow: hidden запрещён эпиком: прокрутку держат внутренние
+   контейнеры (.lp-table-wrap, .lp-chat-messages). */
 .lp-layout {
   display: grid;
+  grid-template-columns: 1fr;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+/* Панель чата открыта (маршрут AI-исследования, широкий iframe): две колонки. */
+.lp-layout-chat {
   grid-template-columns: 1fr 340px;
-  height: 100vh;
-  overflow: hidden;
 }
 
 /* ── Sidebar (чат) ───────────────────────────────────────────────────────── */
@@ -68,8 +171,8 @@ html, body {
 .lp-agent-avatar {
   width: 36px; height: 36px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #7b2d8f);
-  color: #fff;
+  background: var(--accent);
+  color: var(--on-accent);
   display: flex; align-items: center; justify-content: center;
   font-weight: 600; font-size: 0.8rem;
   flex-shrink: 0;
@@ -122,13 +225,15 @@ html, body {
 .lp-bubble-user {
   align-self: flex-end;
   background: var(--user-bubble);
-  color: #fff;
+  color: var(--on-user-bubble);
+  border: 1px solid var(--accent);
   border-bottom-right-radius: 4px;
 }
 .lp-bubble-assistant {
   align-self: flex-start;
   background: var(--sidebar-input);
   color: var(--sidebar-fg);
+  border: 1px solid var(--sidebar-border);
   border-bottom-left-radius: 4px;
 }
 .lp-bubble-role {
@@ -176,7 +281,7 @@ html, body {
 .lp-chat-send {
   align-self: flex-end;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent-solid);
   border: none;
   border-radius: 8px;
   width: 38px; height: 38px;
@@ -199,6 +304,8 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;      /* действия переносятся на вторую строку (story 1.3) */
+  row-gap: 8px;
   padding: 16px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
@@ -206,14 +313,46 @@ html, body {
 }
 .lp-main-header h1 {
   font-family: var(--serif);
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 600;
   margin: 0;
 }
 .lp-header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
+}
+/* Рабочие контексты финального макета: спокойная линейная навигация с
+   доступным активным состоянием, без конкурирующих акцентных кнопок. */
+.lp-context-nav {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+.lp-context-tab {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: 500 0.84rem var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lp-context-tab:hover { color: var(--fg); }
+.lp-context-tab-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.lp-context-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .lp-count-badge {
   background: var(--accent-soft);
@@ -225,6 +364,7 @@ html, body {
 }
 
 /* ── Кнопки ──────────────────────────────────────────────────────────────── */
+/* Мишень не меньше 28px (story 1.4). */
 .lp-btn {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -234,15 +374,57 @@ html, body {
   font-family: var(--sans);
   font-size: 0.85rem;
   color: var(--fg);
+  min-height: 28px;
 }
 .lp-btn:hover { background: var(--border-soft); }
 .lp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .lp-btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent-solid);
   border-color: var(--accent);
 }
 .lp-btn-primary:hover { opacity: 0.9; background: var(--accent); }
+/* Деструктивное действие (подтверждение удаления). */
+.lp-btn-danger {
+  background: var(--neg);
+  color: var(--on-danger-solid);
+  border-color: var(--neg);
+}
+.lp-btn-danger:hover { opacity: 0.9; background: var(--neg); }
+
+/* Видимое кольцо фокуса accent 2px для интерактивных контролов (story 1.4). */
+.lp-btn:focus-visible,
+.lp-chat-send:focus-visible,
+.lp-chat-close:focus-visible,
+.lp-dialog-x:focus-visible,
+.lp-content-toggle:focus-visible,
+.lp-row-details:focus-visible,
+.lp-sort-button:focus-visible,
+.lp-filter input:focus-visible,
+.lp-filter select:focus-visible,
+.lp-chat-input:focus-visible,
+.lp-question-other textarea:focus-visible,
+.lp-parsers-create input:focus-visible,
+.lp-parser-edit input:focus-visible,
+.lp-mark-comment:focus-visible,
+.lp-verdict-field textarea:focus-visible,
+.lp-layout a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Текстовая подпись остаётся доступна экранным читателям, не меняя макет. */
+.lp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* ── Фильтры ─────────────────────────────────────────────────────────────── */
 .lp-filters {
@@ -255,8 +437,20 @@ html, body {
   flex-shrink: 0;
   align-items: flex-end;
 }
+.lp-context-panel {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+}
 .lp-filter { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
 .lp-filter label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.lp-filter-label {
   font-size: 0.75rem;
   color: var(--muted);
   font-weight: 500;
@@ -272,6 +466,27 @@ html, body {
 }
 .lp-filter input:focus, .lp-filter select:focus {
   outline: none; border-color: var(--accent);
+}
+.lp-scope-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 31px;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--paper-2);
+  color: var(--fg);
+  font-size: 0.85rem;
+}
+.lp-scope-indicator::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .lp-period { display: flex; align-items: center; gap: 6px; }
 .lp-period input { width: 130px; }
@@ -296,8 +511,23 @@ html, body {
   user-select: none;
   color: var(--muted);
   background: var(--panel);
+  position: relative;
+  min-height: 28px;   /* мишень не меньше 28px (story 1.4) */
 }
-.lp-chip input { display: none; }
+/* Чекбокс скрыт визуально, но остаётся в Tab-последовательности (story 1.4):
+   display: none делал чип недоступным с клавиатуры. */
+.lp-chip input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+.lp-chip:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .lp-chip-on {
   background: var(--accent-soft);
   border-color: var(--accent);
@@ -315,6 +545,7 @@ html, body {
 }
 .lp-table {
   width: 100%;
+  min-width: 1040px;
   border-collapse: collapse;
   background: var(--panel);
   font-size: 0.85rem;
@@ -331,25 +562,71 @@ html, body {
   vertical-align: top;
 }
 .lp-table th {
-  background: #f4f4f0;
+  background: var(--paper-2);
   font-weight: 600;
   color: var(--fg);
-  cursor: pointer;
+  cursor: default;
   white-space: nowrap;
   user-select: none;
 }
-.lp-table th:hover { background: #ededea; }
-.lp-table th.lp-col-sort, .lp-table th.lp-col-check {
-  cursor: default;
-}
-.lp-table th.lp-col-check:hover { background: #f4f4f0; }
-.lp-table tbody tr { cursor: pointer; }
-.lp-table tbody tr:hover { background: #faf9f5; }
+.lp-table th:hover { background: var(--hair); }
+.lp-table th.lp-col-check:hover { background: var(--paper-2); }
+.lp-table tbody tr { cursor: default; }
+.lp-table tbody tr:hover { background: var(--paper); }
 .lp-row-sel { background: var(--accent-soft) !important; }
 
 .lp-col-check { width: 32px; text-align: center; }
+.lp-checkbox-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  cursor: pointer;
+}
+.lp-checkbox-hit input {
+  margin: 0;
+  accent-color: var(--accent);
+}
 .lp-cell-title { min-width: 240px; max-width: 420px; }
 .lp-title-text { font-weight: 500; }
+.lp-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lp-row-details {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lp-row-details-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  color: var(--accent);
+}
 .lp-reason {
   font-size: 0.75rem;
   color: var(--muted);
@@ -361,6 +638,10 @@ html, body {
 }
 .lp-cell-date { white-space: nowrap; color: var(--muted); }
 .lp-cell-url a {
+  display: inline-flex;
+  align-items: center;
+  min-width: 28px;
+  min-height: 28px;
   font-family: var(--mono);
   font-size: 0.78rem;
   color: var(--accent);
@@ -372,6 +653,13 @@ html, body {
   font-family: var(--mono);
   font-size: 0.74rem;
   color: var(--muted);
+}
+.lp-status-preliminary {
+  display: inline-flex;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
 }
 
 .lp-empty-state {
@@ -393,21 +681,381 @@ html, body {
 .lp-table-wrap::-webkit-scrollbar-track { background: transparent; }
 .lp-chat-messages::-webkit-scrollbar-thumb { background: var(--sidebar-border); }
 
-/* ── Адаптивность ────────────────────────────────────────────────────────── */
-@media (max-width: 900px) {
-  .lp-layout { grid-template-columns: 1fr; grid-template-rows: 1fr 240px; }
-  .lp-sidebar { border-left: none; border-top: 1px solid var(--sidebar-border); }
+/* ── Адаптивность (story 1.3) — от ширины iframe ─────────────────────────── */
+/* Две даты остаются в таблице на каждой ширине; при недостатке места
+   горизонтально прокручивается только контейнер таблицы. */
+@media (max-width: 1399px) {
+  .lp-col-narrow1 { display: none; }
+  /* Закреплённая панель чата при 1100–1399px — 300px (контракт §4/§5). */
+  .lp-layout-chat { grid-template-columns: 1fr 300px; }
 }
+@media (max-width: 1099px) {
+  .lp-col-narrow2 { display: none; }
+  /* Чат уходит в off-canvas панель поверх контента, контент занимает всю
+     ширину; открытие — кнопкой «Открыть чат» в заголовке. */
+  .lp-layout-chat { grid-template-columns: 1fr; }
+  .lp-chat-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 899;
+    border: 0;
+    padding: 0;
+    background: var(--modal-overlay);
+  }
+  .lp-sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 100%);
+    z-index: 900;
+    box-shadow: -8px 0 24px var(--shadow-offcanvas);
+  }
+}
+
+/* Поверхность маршрута AI-исследования: параметры, прогресс и evidence
+   собираются только из существующего chat/SSE-state. */
+.lp-research-surface {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 24px 32px;
+  color: var(--fg);
+}
+.lp-research-board {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.lp-research-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.lp-research-card h2 {
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 3px 0 14px;
+}
+.lp-research-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.lp-research-card-head strong {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+.lp-research-kv {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.lp-research-kv div {
+  display: grid;
+  gap: 3px;
+}
+.lp-research-kv dt,
+.lp-queue-detail-grid span {
+  color: var(--muted-2);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lp-research-kv dd {
+  margin: 0;
+  line-height: 1.45;
+}
+.lp-research-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border-soft);
+}
+.lp-research-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+.lp-research-task-summary {
+  margin: 12px 0 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.lp-research-task-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lp-research-task-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+.lp-research-task-list li > span {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border: 1px solid var(--muted-2);
+  border-radius: 50%;
+}
+.lp-research-task-done > span { border-color: var(--pos); background: var(--pos); }
+.lp-research-task-running > span { border-color: var(--accent); background: var(--accent); }
+.lp-research-task-error > span { border-color: var(--neg); background: var(--neg); }
+.lp-research-evidence { grid-column: 1 / -1; }
+.lp-research-evidence p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.lp-safe-markdown h3, .lp-safe-markdown h4, .lp-safe-markdown h5 { margin: 12px 0 6px; }
+.lp-safe-markdown ul { margin: 8px 0; padding-left: 20px; }
+.lp-research-downloads { position: relative; }
+.lp-research-result-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.lp-research-downloads summary { list-style: none; cursor: pointer; }
+.lp-research-downloads summary::-webkit-details-marker { display: none; }
+.lp-research-download-options {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.lp-research-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 14px;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+.lp-research-chat-note {
+  max-width: 960px;
+  margin: 14px auto 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* ── Очередь верификации: master-detail без новых API/действий ──────────── */
+.lp-queue-review {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.72fr) minmax(0, 1.28fr);
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+  padding: 18px 24px 24px;
+}
+.lp-queue-list,
+.lp-queue-detail {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.lp-queue-list { overflow-y: auto; }
+.lp-queue-list-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lp-queue-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  width: 100%;
+  gap: 9px;
+  align-items: start;
+  padding: 13px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.lp-queue-card:last-child { border-bottom: 0; }
+.lp-queue-card:hover { background: var(--row-hover); }
+.lp-queue-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.lp-queue-card-active {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--accent-soft);
+}
+.lp-queue-index { color: var(--accent); font-family: var(--mono); font-size: 0.72rem; }
+.lp-queue-card-copy { display: grid; gap: 5px; min-width: 0; }
+.lp-queue-card-copy strong { font-size: 0.83rem; line-height: 1.35; }
+.lp-queue-card-copy small { color: var(--muted); font-size: 0.7rem; }
+.lp-queue-confidence {
+  display: grid;
+  gap: 2px;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  text-align: right;
+}
+.lp-queue-confidence small { color: var(--muted-2); font-size: 0.58rem; }
+.lp-queue-detail {
+  align-self: start;
+  padding: 18px;
+  overflow-y: auto;
+}
+.lp-queue-detail h2 {
+  margin: 4px 0 16px;
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  line-height: 1.35;
+}
+.lp-queue-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.lp-queue-detail-grid div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+.lp-queue-detail-grid strong { font-size: 0.8rem; font-weight: 500; }
+.lp-queue-reason {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 7px;
+  background: var(--accent-soft);
+}
+.lp-queue-reason h3 { margin: 0 0 6px; font-size: 0.78rem; }
+.lp-queue-reason p { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
+.lp-queue-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ── Добавление источника: самостоятельная рабочая поверхность ──────────── */
+.lp-sources-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 24px 32px;
+}
+.lp-source-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+  gap: 16px;
+  max-width: 1120px;
+}
+.lp-source-card,
+.lp-source-list {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.lp-source-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 18px;
+}
+.lp-source-card h2,
+.lp-source-list h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.lp-source-card p { margin: 0 0 4px; }
+.lp-source-card label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.lp-source-card input,
+.lp-source-card textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+}
+.lp-source-card textarea { resize: vertical; min-height: 96px; }
+.lp-source-card input:focus-visible,
+.lp-source-card textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.lp-source-card .lp-btn-primary { align-self: flex-start; margin-top: 4px; }
+.lp-source-card .lp-parser-error { margin: 0; }
+.lp-source-note {
+  align-self: start;
+  border-left: 3px solid var(--accent);
+}
+.lp-source-list {
+  max-width: 1120px;
+  margin-top: 16px;
+  overflow: hidden;
+}
+.lp-source-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.lp-source-list .lp-parser-row { padding: 12px 18px; }
+.lp-sources-surface > .lp-log-panel { max-width: 1120px; }
+
+/* Кнопка закрытия панели чата. */
+.lp-chat-close {
+  margin-left: auto;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--sidebar-border);
+  background: none;
+  color: var(--sidebar-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.lp-chat-close:hover { color: var(--sidebar-fg); }
 
 /* ── Phase bar (индикатор фаз пайплайна) ─────────────────────────────────── */
 .lp-phase-bar {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--sidebar-border);
-  background: #16171a;
-  overflow-x: auto;
+  background: var(--sidebar-bg);
   flex-shrink: 0;
 }
 .lp-phase-bar-done {
@@ -442,20 +1090,20 @@ html, body {
 .lp-phase-active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent-solid);
 }
 .lp-phase-active .lp-phase-dot {
-  background: #fff;
+  background: var(--on-accent);
   color: var(--accent);
 }
 .lp-phase-done {
-  background: rgba(47, 158, 68, 0.18);
+  background: var(--phase-done-bg);
   border-color: var(--ok);
-  color: #b6e6c3;
+  color: var(--sidebar-tool-result);
 }
 .lp-phase-done .lp-phase-dot {
   background: var(--ok);
-  color: #fff;
+  color: var(--on-accent);
 }
 .lp-phase-label {
   font-family: var(--sans);
@@ -469,7 +1117,7 @@ html, body {
   gap: 4px;
   padding: 6px 10px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--tool-events-bg);
   border: 1px dashed var(--sidebar-border);
   align-self: stretch;
 }
@@ -485,8 +1133,8 @@ html, body {
   color: var(--sidebar-muted);
   border: 1px solid var(--sidebar-border);
 }
-.lp-tool-call { color: #f0c674; }
-.lp-tool-result { color: #b6e6c3; }
+.lp-tool-call { color: var(--sidebar-tool-call); }
+.lp-tool-result { color: var(--sidebar-tool-result); }
 
 /* ── Subtasks block ──────────────────────────────────────────────────────── */
 .lp-subtasks {
@@ -525,7 +1173,7 @@ html, body {
 /* ── Questions card (уточняющие вопросы) ─────────────────────────────────── */
 .lp-questions-card {
   border-top: 1px solid var(--sidebar-border);
-  background: #202126;
+  background: var(--sidebar-bg);
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -560,6 +1208,7 @@ html, body {
 .lp-option {
   display: flex;
   align-items: flex-start;
+  min-height: 28px;
   gap: 8px;
   padding: 6px 10px;
   border: 1px solid var(--sidebar-border);
@@ -570,11 +1219,11 @@ html, body {
   color: var(--sidebar-fg);
   transition: border-color 0.15s, background 0.15s;
 }
-.lp-option:hover { border-color: #4a4b50; }
+.lp-option:hover { border-color: var(--sidebar-border-hover); }
 .lp-option input { margin-top: 3px; accent-color: var(--accent); }
 .lp-option-on {
   border-color: var(--accent);
-  background: rgba(176, 58, 46, 0.18);
+  background: var(--option-selected-bg);
 }
 .lp-option-label { flex: 1; line-height: 1.4; }
 .lp-option-rec {
@@ -612,30 +1261,53 @@ html, body {
   gap: 8px;
   margin-top: 4px;
 }
+.lp-clarify-hint,
+.lp-clarify-error {
+  color: var(--sidebar-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.lp-clarify-error {
+  padding: 8px 16px;
+  border-top: 1px solid var(--sidebar-border);
+  background: var(--verdict-neg-bg);
+  color: var(--neg);
+}
 
 /* ── Кнопка маленькая ────────────────────────────────────────────────────── */
 .lp-btn-sm {
   padding: 4px 10px;
   font-size: 0.78rem;
+  min-height: 28px;   /* мишень не меньше 28px (story 1.4) */
 }
 
 /* ── Модал парсеров ──────────────────────────────────────────────────────── */
 .lp-parsers-modal {
   position: fixed;
   inset: 0;
-  background: rgba(20, 20, 24, 0.55);
+  background: var(--modal-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
   backdrop-filter: blur(2px);
 }
+.lp-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
 .lp-parsers-dialog {
+  position: relative;
+  z-index: 1;
   width: min(720px, 92vw);
   max-height: 80vh;
   background: var(--panel);
   border-radius: 10px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 16px 48px var(--shadow-dialog);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
@@ -648,7 +1320,7 @@ html, body {
   justify-content: space-between;
   padding: 14px 18px;
   border-bottom: 1px solid var(--border);
-  background: #f4f4f0;
+  background: var(--paper-2);
 }
 .lp-parsers-header h2 {
   margin: 0;
@@ -704,7 +1376,7 @@ html, body {
 .lp-parser-meta code {
   font-family: var(--mono);
   font-size: 0.72rem;
-  background: #f0efe9;
+  background: var(--paper-2);
   padding: 1px 5px;
   border-radius: 3px;
 }
@@ -718,20 +1390,26 @@ html, body {
   gap: 4px 10px;
   margin: 2px 0;
 }
-.lp-parser-targets a {
+.lp-parser-targets a,
+.lp-parser-target-plain {
+  display: inline-flex;
+  align-items: center;
+  min-width: 28px;
+  min-height: 28px;
   font-size: 0.78rem;
-  color: var(--accent, #2f6fed);
+  color: var(--accent);
   text-decoration: none;
   word-break: break-all;
 }
+.lp-parser-target-plain { color: var(--muted); }
 .lp-parser-targets a:hover { text-decoration: underline; }
 .lp-parser-error {
   margin: 0 18px 8px;
   padding: 6px 10px;
   font-size: 0.8rem;
-  color: #b3261e;
-  background: #fdecea;
-  border: 1px solid #f5c6c0;
+  color: var(--neg);
+  background: var(--accent-soft);
+  border: 1px solid var(--neg);
   border-radius: 6px;
 }
 .lp-parser-actions {
@@ -750,16 +1428,16 @@ html, body {
   font-weight: 500;
   vertical-align: middle;
 }
-.lp-badge-ok { background: #e6f4ea; color: #137333; }
-.lp-badge-err { background: #fce8e6; color: #c5221f; }
-.lp-badge-empty { background: #f1f3f4; color: #5f6368; }
-.lp-badge-run { background: #e8f0fe; color: #1a73e8; }
-.lp-badge-attn { background: #fef7e0; color: #b06000; }
+.lp-badge-ok { background: var(--status-ok-bg); color: var(--status-ok-fg); }
+.lp-badge-err { background: var(--status-error-bg); color: var(--status-error-fg); }
+.lp-badge-empty { background: var(--status-empty-bg); color: var(--status-empty-fg); }
+.lp-badge-run { background: var(--status-running-bg); color: var(--status-running-fg); }
+.lp-badge-attn { background: var(--status-warning-bg); color: var(--status-warning-fg); }
 
 .lp-parser-edit {
   margin-top: 8px;
   padding: 10px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
@@ -770,11 +1448,11 @@ html, body {
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
-  color: #5f6368;
+  color: var(--muted);
 }
 .lp-parser-edit input[type="text"] {
   padding: 6px 8px;
-  border: 1px solid #dadce0;
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
 }
@@ -783,7 +1461,7 @@ html, body {
 
 .lp-log-panel {
   margin-top: 12px;
-  border: 1px solid #2d2d2d;
+  border: 1px solid var(--log-header-surface);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -792,19 +1470,27 @@ html, body {
   align-items: center;
   gap: 12px;
   padding: 6px 10px;
-  background: #2d2d2d;
-  color: #e8eaed;
+  background: var(--log-header-surface);
+  color: var(--log-fg);
   font-size: 13px;
 }
 .lp-log-header span:first-child { flex: 1; }
-.lp-log-done { color: #81c995; }
+.lp-log-done { color: var(--log-success); }
+.lp-log-running { color: var(--log-fg); }
+.lp-log-error {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--neg);
+  background: var(--accent-soft);
+  color: var(--neg);
+  font-size: 13px;
+}
 .lp-log-body {
   margin: 0;
   padding: 10px;
   max-height: 260px;
   overflow-y: auto;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--log-surface);
+  color: var(--log-fg);
   font-family: monospace;
   font-size: 12px;
   white-space: pre-wrap;
@@ -820,7 +1506,7 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 20px;
+  min-height: 28px;   /* мишень не меньше 28px (story 1.4) */
   padding: 0 7px;
   border-radius: 3px;
   border: 1px solid var(--border);
@@ -845,16 +1531,16 @@ html, body {
 }
 .lp-verdict-chip-bad {
   color: var(--bad);
-  border-color: rgba(224, 49, 49, 0.35);
-  background: rgba(224, 49, 49, 0.07);
+  border-color: var(--verdict-neg-border);
+  background: var(--verdict-neg-bg);
 }
-.lp-verdict-chip-bad:hover { border-color: rgba(224, 49, 49, 0.6); }
+.lp-verdict-chip-bad:hover { border-color: var(--verdict-neg-hover); }
 .lp-verdict-chip-ok {
   color: var(--ok);
-  border-color: rgba(47, 158, 68, 0.35);
-  background: rgba(47, 158, 68, 0.07);
+  border-color: var(--verdict-pos-border);
+  background: var(--verdict-pos-bg);
 }
-.lp-verdict-chip-ok:hover { border-color: rgba(47, 158, 68, 0.6); }
+.lp-verdict-chip-ok:hover { border-color: var(--verdict-pos-hover); }
 .lp-verdict-chip-na { border-style: dashed; }
 
 /* Признак ручного вердикта рядом с чипом. */
@@ -886,7 +1572,7 @@ html, body {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 2px var(--shadow-subtle);
 }
 .lp-mark-meta {
   display: flex;
@@ -926,7 +1612,7 @@ html, body {
 .lp-mark-comment:focus {
   outline: none;
   border-color: var(--ink);
-  box-shadow: 0 0 0 3px rgba(32, 36, 44, 0.12);
+  box-shadow: 0 0 0 3px var(--focus-shadow);
 }
 .lp-mark-comment::placeholder { color: var(--muted-2); }
 .lp-mark-actions {
@@ -951,7 +1637,7 @@ html, body {
 }
 .lp-mark-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .lp-mark-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.lp-mark-btn-bad { background: var(--accent); color: #fff; }
+.lp-mark-btn-bad { background: var(--accent); color: var(--on-accent-solid); }
 .lp-mark-btn-bad:not(:disabled):hover { filter: brightness(1.06); }
 .lp-mark-btn-ok {
   background: transparent;
@@ -960,7 +1646,7 @@ html, body {
 }
 .lp-mark-btn-ok:not(:disabled):hover { background: var(--border-soft); }
 .lp-mark-btn-ok .lp-verdict-dot { background: var(--ok); }
-.lp-mark-btn-bad .lp-verdict-dot { background: #fff; }
+.lp-mark-btn-bad .lp-verdict-dot { background: var(--on-accent); }
 
 /* Модал маркировки: eyebrow → запись → комментарий → вердикт-карточки. */
 .lp-verdict-dialog { width: min(520px, 92vw); }
@@ -995,7 +1681,7 @@ html, body {
 }
 .lp-verdict-record {
   border: 1px solid var(--border-soft);
-  background: #faf9f5;
+  background: var(--paper);
   border-radius: 8px;
   padding: 10px 12px;
 }
@@ -1041,7 +1727,7 @@ html, body {
 .lp-verdict-field textarea:focus {
   outline: none;
   border-color: var(--ink);
-  box-shadow: 0 0 0 3px rgba(32, 36, 44, 0.12);
+  box-shadow: 0 0 0 3px var(--focus-shadow);
 }
 .lp-verdict-field textarea::placeholder { color: var(--muted-2); }
 .lp-verdict-options {
@@ -1087,13 +1773,13 @@ html, body {
 }
 .lp-verdict-option-bad .lp-verdict-dot { background: var(--bad); }
 .lp-verdict-option-bad:not(:disabled):hover {
-  border-color: rgba(224, 49, 49, 0.5);
-  background: rgba(224, 49, 49, 0.04);
+  border-color: var(--verdict-neg-hover);
+  background: var(--verdict-neg-bg);
 }
 .lp-verdict-option-ok .lp-verdict-dot { background: var(--ok); }
 .lp-verdict-option-ok:not(:disabled):hover {
-  border-color: rgba(47, 158, 68, 0.5);
-  background: rgba(47, 158, 68, 0.04);
+  border-color: var(--verdict-pos-hover);
+  background: var(--verdict-pos-bg);
 }
 .lp-verdict-foot {
   display: flex;
@@ -1121,10 +1807,13 @@ html, body {
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 16px var(--shadow-toast);
   font-size: 0.83rem;
   line-height: 1.45;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 .lp-toast::before {
   content: "";
@@ -1135,11 +1824,88 @@ html, body {
   width: 3px;
   background: var(--bad);
 }
+/* Типы toast (story 1.4): информационный, успешный, ошибочный. */
+.lp-toast-info::before { background: var(--accent); }
+.lp-toast-success::before { background: var(--pos); }
+.lp-toast-error::before { background: var(--neg); }
+.lp-toast-action {
+  flex: none;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: var(--accent);
+  font: 600 0.78rem var(--sans);
+  cursor: pointer;
+}
+.lp-toast-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Модал подтверждения деструктивного действия (story 1.4). */
+.lp-confirm-dialog { width: min(440px, 92vw); }
+.lp-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 18px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.lp-confirm-body p { margin: 0; }
+.lp-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 
 @media (max-width: 640px) {
   .lp-verdict-options { grid-template-columns: 1fr; }
   .lp-mark-panel { flex-wrap: wrap; }
   .lp-mark-comment { flex-basis: 100%; order: 3; }
+}
+
+@media (max-width: 991px) {
+  .lp-research-board,
+  .lp-queue-review,
+  .lp-admin { grid-template-columns: 1fr; }
+  .lp-source-grid { grid-template-columns: 1fr; }
+  .lp-source-note { align-self: stretch; }
+  .lp-parser-row { align-items: flex-start; flex-direction: column; }
+  .lp-parser-actions { flex-wrap: wrap; }
+}
+
+@media (max-width: 735px) {
+  .lp-main-header { align-items: flex-start; padding: 14px 16px; }
+  .lp-main-header h1 { font-size: 1.25rem; }
+  .lp-header-actions { width: 100%; }
+  .lp-context-nav { gap: 14px; padding: 0 16px; }
+  .lp-context-tab { min-height: 38px; }
+  .lp-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px 16px;
+  }
+  .lp-filter { min-width: 0; }
+  .lp-period { align-items: stretch; flex-direction: column; }
+  .lp-period > span { display: none; }
+  .lp-period input { width: 100%; }
+  .lp-sources-surface { padding: 16px; }
+  .lp-source-list-header { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 479px) {
+  .lp-main-header { padding: 12px; }
+  .lp-header-actions { gap: 6px; }
+  .lp-context-nav { gap: 10px 14px; padding: 0 12px; }
+  .lp-context-tab { font-size: 0.78rem; }
+  .lp-filters { grid-template-columns: 1fr; padding: 10px 12px; }
+  .lp-sources-surface { padding: 12px; }
+  .lp-source-card { padding: 14px; }
+  .lp-toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1155,11 +1921,13 @@ html, body {
   font-size: 13px;
   padding: 0 6px 0 0;
   line-height: 1;
+  min-width: 28px;    /* мишень не меньше 28px (story 1.4) */
+  min-height: 28px;
 }
-.lp-content-toggle:hover { color: #c55a50; }
+.lp-content-toggle:hover { color: var(--accent); }
 .lp-content-badge { margin-left: 6px; font-size: 12px; }
 .lp-content-row > td {
-  background: rgba(0, 0, 0, 0.01);
+  background: var(--paper-2);
   padding: 0 16px 12px 40px;
 }
 .lp-content-block {
@@ -1175,7 +1943,16 @@ html, body {
   color: var(--muted);
   margin-bottom: 6px;
 }
-.lp-content-head a { color: var(--accent); }
+/* Ссылка — --fg + underline: --accent на --paper-2 даёт 4.27:1 в light-теме
+   (ниже порога 4.5:1 из AC3 story 1.2); токены менять нельзя (verbatim). */
+.lp-content-head a {
+  display: inline-flex;
+  align-items: center;
+  min-width: 28px;
+  min-height: 28px;
+  color: var(--fg);
+  text-decoration: underline;
+}
 .lp-content-body {
   white-space: pre-wrap;
   word-break: break-word;
@@ -1196,9 +1973,56 @@ html, body {
 }
 .lp-content-body-full { max-height: 70vh; overflow-y: auto; }
 .lp-content-more { margin-top: 6px; }
-.lp-content-note { margin-top: 6px; font-size: 12px; color: var(--warn); }
+/* --warn на --paper-2 = 3.13:1 в light-теме (ниже 4.5:1 из AC3) → --muted. */
+.lp-content-note { margin-top: 6px; font-size: 12px; color: var(--muted); }
 .lp-content-loading, .lp-content-error {
   font-size: 13px;
   color: var(--muted);
   padding: 8px 12px;
+}
+
+/* ── Администрирование (story 1.5): роль ЦК КС и аудит ──────────────────── */
+.lp-admin {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px 24px;
+}
+.lp-admin-section {
+  min-width: 0;
+  align-self: start;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.lp-admin .lp-col-narrow1,
+.lp-admin .lp-col-narrow2 { display: table-cell; }
+.lp-admin .lp-table { min-width: 0; font-size: 0.78rem; }
+.lp-admin .lp-table th,
+.lp-admin .lp-table td { padding: 8px 10px; }
+.lp-admin-section h2 { margin: 0 0 8px; font-size: 16px; }
+.lp-admin-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 12px;
+}
+.lp-admin-form input {
+  font-family: var(--sans);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 0.85rem;
+  background: var(--panel);
+  color: var(--fg);
+  min-width: 240px;
+}
+.lp-admin-form input:focus { outline: none; border-color: var(--accent); }
+.lp-admin-form input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

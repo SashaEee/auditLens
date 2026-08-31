@@ -9,8 +9,8 @@ import pytest
 
 from bank_audit.clock import MSK
 from bank_audit.loophole import repository as repo
-from bank_audit.loophole.parsers import scheduler
 from bank_audit.loophole.parsers import runner as runner_mod
+from bank_audit.loophole.parsers import scheduler
 
 
 # ── next_run ─────────────────────────────────────────────────────────────────
@@ -57,6 +57,7 @@ def db_session_cm(session, monkeypatch):
 async def test_tick_runs_due_parser(session, db_session_cm, monkeypatch):
     wid = repo.create_workspace("u", "ws", session=session)
     pid = repo.save_parser(wid, "p", "/tmp/p.py", session=session)
+    repo.update_parser_status(pid, "ready", session=session)
     past = datetime.now(MSK) - timedelta(minutes=5)
     repo.update_parser_schedule(
         pid, cron_expr="*/5 * * * *", auto_enabled=True,
@@ -116,6 +117,7 @@ async def test_tick_run_failure_advances_next_run(session, db_session_cm, monkey
     """Падение run() не откатывает пересчёт next_run_at (иначе ретрай каждый тик)."""
     wid = repo.create_workspace("u", "ws", session=session)
     pid = repo.save_parser(wid, "p", "/tmp/p.py", session=session)
+    repo.update_parser_status(pid, "ready", session=session)
     past = datetime.now(MSK) - timedelta(minutes=5)
     repo.update_parser_schedule(
         pid, cron_expr="0 5 * * *", auto_enabled=True,

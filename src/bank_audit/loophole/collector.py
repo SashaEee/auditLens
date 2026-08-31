@@ -17,11 +17,11 @@ from urllib.parse import urlparse
 
 from ..ai.llm_utils import detect_bank_slugs
 from ..hashing import sha256_text
-from ..rag.trust import compute_trust, KNOWN_BANK_DOMAINS
-from . import repository as repo
-from . import keywords as kw_mod
+from ..rag.trust import KNOWN_BANK_DOMAINS, compute_trust
 from . import content_fetch
-from .adapters import search_decorator, fetch_decorator
+from . import keywords as kw_mod
+from . import repository as repo
+from .adapters import fetch_decorator, search_decorator
 from .classify import classify_record
 from .config import LoopholeSettings
 from .models import LoopholeRecord

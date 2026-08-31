@@ -2,9 +2,22 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from bank_audit.loophole.chat.tools_nanobot import _is_read_only_select, db_query
+from bank_audit.loophole.chat.tools_nanobot import (
+    ToolContext,
+    _is_read_only_select,
+    db_query,
+)
 
 SCHEMA_SQL = """
+CREATE TABLE loophole_workspace (
+    workspace_id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT,
+    created_at TEXT,
+    last_active_at TEXT
+);
+INSERT INTO loophole_workspace (workspace_id, user_id) VALUES (17, 'test-user');
+
 CREATE TABLE loophole_record (
     record_id INTEGER PRIMARY KEY AUTOINCREMENT,
     title     TEXT,
@@ -51,9 +64,10 @@ def test_db_query_rejects_non_select():
 
 
 def test_db_query_enforces_limit(session):
+    context = ToolContext(user_id="test-user", workspace_id=17, session=session)
     result = db_query(
         sql="SELECT record_id, title FROM loophole_record LIMIT 1",
-        session=session,
+        context=context,
     )
     assert "error" not in result
     assert result["columns"] == ["record_id", "title"]

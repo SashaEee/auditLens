@@ -1,7 +1,7 @@
 """Логирование действий пользователя в loophole_action_log.
 
 Каждый эндпоинт web.py вызывает log_action() через dependency. user_id —
-из заголовка X-User-Id (fallback "anonymous" для тестов).
+username trusted principal (X-Authentik-* от nginx, см. loophole/web.py).
 """
 from __future__ import annotations
 

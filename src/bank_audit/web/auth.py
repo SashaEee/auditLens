@@ -46,6 +46,16 @@ class CurrentUser:
 _DEV_USER = os.getenv("DEV_USER", "local-dev")
 
 
+def _dev_auth_enabled() -> bool:
+    """Разрешает local-dev только при явном локальном opt-in флаге."""
+    return os.getenv("LOOPHOLE_DEV_AUTH_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+
+
+def dev_grant_all_enabled() -> bool:
+    """Включает только локальную заглушку полного доступа модуля «Лазейки»."""
+    return os.getenv("LOOPHOLE_DEV_GRANT_ALL", "").strip() == "1"
+
+
 def _fix_header_encoding(s: str) -> str:
     """HTTP-заголовки Starlette декодирует как latin-1, а Authentik кладёт имя
     в UTF-8 → кириллица приходит мохибейком. Восстанавливаем: latin-1→bytes→utf-8.
@@ -71,5 +81,10 @@ def get_current_user(
     if username:
         name = _fix_header_encoding((x_authentik_name or "").strip()) or username
         return CurrentUser(username=username, name=name, authenticated=True)
-    # Заголовка нет → локалка или прямой доступ к :8000 в обход nginx.
-    return CurrentUser(username=_DEV_USER, name=_DEV_USER, authenticated=False)
+    # Заголовка нет → локалка или прямой доступ к :8000 в обход nginx. По умолчанию
+    # остаёмся fail-closed; opt-in разрешён только для локальной разработки.
+    return CurrentUser(
+        username=_DEV_USER,
+        name=_DEV_USER,
+        authenticated=_dev_auth_enabled() or dev_grant_all_enabled(),
+    )

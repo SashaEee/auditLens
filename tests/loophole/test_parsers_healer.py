@@ -28,6 +28,7 @@ def db_cm(session, monkeypatch):
 def parser_id(session) -> int:
     wid = repo.create_workspace("u", "ws", session=session)
     pid = repo.save_parser(wid, "p", "/tmp/p.py", session=session)
+    repo.update_parser_status(pid, "ready", session=session)
     repo.update_parser_schedule(
         pid, cron_expr="* * * * *", auto_enabled=True,
         next_run_at=datetime.now(MSK), last_edited_by="u", session=session,

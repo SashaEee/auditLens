@@ -45,10 +45,10 @@ def test_migration_016_path_constant_defined():
     assert db_schema.MIGRATION_026_PATH.name == "026_loophole_content.sql"
 
 
-def test_apply_migration_executes_five_migrations():
-    """apply_migration выполняет 012 + 013 + 014 + 015 + 016."""
+def test_apply_migration_executes_six_migrations():
+    """apply_migration выполняет 012 + 013 + 024 + 025 + 026 + 044."""
     session = MagicMock()
     db_schema.apply_migration(session)
-    assert session.execute.call_count == 5
+    assert session.execute.call_count == 6
     texts = [str(call.args[0].text) for call in session.execute.call_args_list]
     assert any("idx_lr_content_status" in t for t in texts), "миграция 016 не выполнена"

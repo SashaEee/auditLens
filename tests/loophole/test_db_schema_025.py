@@ -44,5 +44,5 @@ def test_apply_migration_includes_015():
             calls.append(str(clause))
 
     schema.apply_migration(_FakeSession())
-    assert len(calls) == 5
+    assert len(calls) == 6
     assert "loophole_parser_run" in calls[3]

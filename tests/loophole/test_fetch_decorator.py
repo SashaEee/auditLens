@@ -9,7 +9,7 @@ from bank_audit.loophole.adapters import fetch_decorator
 
 def _fetch_impl_ok():
     result = MagicMock()
-    result.content = "<html><body><h1>договор</h1><p>скрытая комиссия 500 руб</p></body></html>".encode("utf-8")
+    result.content = "<html><body><h1>договор</h1><p>скрытая комиссия 500 руб</p></body></html>".encode()
     result.final_url = "https://example.ru/doc"
     result.status = 200
     result.content_type = "text/html"
@@ -57,17 +57,17 @@ def test_normalize_to_utf8_from_meta_charset():
         "<body><p>договор</p></body></html>"
     ).encode("cp1251")
     out = fetch_decorator._normalize_to_utf8(html, "text/html")
-    assert "договор".encode("utf-8") in out
+    assert "договор".encode() in out
 
 
 def test_normalize_to_utf8_from_content_type():
     text = "Привет, мир!".encode("cp1251")
     out = fetch_decorator._normalize_to_utf8(text, "text/plain; charset=windows-1251")
-    assert out == "Привет, мир!".encode("utf-8")
+    assert out == "Привет, мир!".encode()
 
 
 def test_normalize_to_utf8_keeps_utf8():
-    data = "<html><body>уже utf-8</body></html>".encode("utf-8")
+    data = "<html><body>уже utf-8</body></html>".encode()
     assert fetch_decorator._normalize_to_utf8(data, "text/html; charset=utf-8") == data
 
 
@@ -93,6 +93,43 @@ def test_fetch_and_parse_decodes_cp1251():
     page = fetch_decorator.fetch_and_parse("https://example.ru/doc", _fetch_impl=impl)
     assert page is not None
     assert "скрытая комиссия" in page.text
+
+
+def test_fetch_and_parse_exposes_exact_source_publication_timestamp():
+    result = MagicMock()
+    result.content = (
+        '<html><head><meta property="article:published_time" '
+        'content="2026-08-27T09:25:00+03:00"></head><body>текст</body></html>'
+    ).encode()
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/doc",
+        _fetch_impl=lambda _url, prefer_browser=False: result,
+    )
+
+    assert page is not None
+    assert page.published_at == "2026-08-27T09:25:00+03:00"
+
+
+def test_fetch_and_parse_keeps_naive_publication_date_unknown():
+    result = MagicMock()
+    result.content = b'<script>{"datePublished":"2026-08-27"}</script>'
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/doc",
+        _fetch_impl=lambda _url, prefer_browser=False: result,
+    )
+
+    assert page is not None
+    assert page.published_at is None
 
 
 def test_sanitize_ca_bundle_env_drops_invalid(monkeypatch):

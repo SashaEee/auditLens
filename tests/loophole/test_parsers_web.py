@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from bank_audit.loophole.web import router, get_session, get_user_id
 from bank_audit.loophole import repository as repo
 from bank_audit.loophole.parsers import runner as runner_mod
+from bank_audit.loophole.web import get_session, get_user_id, router
 
 from .conftest import SCHEMA_SQL
 
@@ -54,6 +54,11 @@ def parser_id(app_session) -> int:
     )
 
 
+@pytest.fixture
+def workspace_id(app_session) -> int:
+    return repo.create_workspace("test-user", "Заявка на источник", session=app_session)
+
+
 # ── каталог ──────────────────────────────────────────────────────────────────
 def test_catalog_lists_all_users_parsers(client, parser_id):
     # Парсер создан "другим" пользователем — виден всем (общий каталог).
@@ -68,30 +73,108 @@ def test_catalog_lists_all_users_parsers(client, parser_id):
     assert p["created_by"] == "other-user"
 
 
-# ── создание с дедупом ───────────────────────────────────────────────────────
-def test_create_duplicate_returns_409(client, app_session, parser_id, monkeypatch):
+# ── заявки на разработку парсера ─────────────────────────────────────────────
+def test_parser_request_creates_pending_proposal_only(
+    client, app_session, workspace_id, monkeypatch,
+):
     from bank_audit.loophole.parsers import generator
+
     llm_spy = AsyncMock(side_effect=AssertionError("LLM не должен вызываться"))
     monkeypatch.setattr(generator, "generate_parser", llm_spy)
 
-    r = client.post("/api/loophole/parsers", json={
-        "workspace_id": 1, "query": "лазейки https://www.a.ru/x/?utm_source=y",
+    r = client.post("/api/loophole/parser-requests", json={
+        "workspace_id": workspace_id,
+        "url": "https://www.a.ru/x/?utm_source=y",
+        "description": "Собирать тарифы и комиссии",
     })
-    assert r.status_code == 409
-    detail = r.json()["detail"]
-    assert detail["error"] == "duplicate"
-    assert detail["conflict_with"]["parser_id"] == parser_id
+    assert r.status_code == 201
+    assert r.json()["status"] == "pending"
+    proposal = app_session.execute(
+        text(
+            "SELECT purpose, url, domain, reason, proposed_by, status FROM source_proposal"
+        )
+    ).mappings().one()
+    assert dict(proposal) == {
+        "purpose": "loophole_parser",
+        "url": "https://www.a.ru/x/?utm_source=y",
+        "domain": "a.ru",
+        "reason": "Собирать тарифы и комиссии",
+        "proposed_by": "test-user",
+        "status": "pending",
+    }
+    assert app_session.execute(text("SELECT COUNT(*) FROM loophole_parser")).scalar_one() == 0
+    assert app_session.execute(text("SELECT COUNT(*) FROM loophole_parser_run")).scalar_one() == 0
+    llm_spy.assert_not_awaited()
 
 
-def test_create_without_target_422(client):
-    r = client.post("/api/loophole/parsers", json={
-        "workspace_id": 1, "query": "просто текст без ссылок",
+@pytest.mark.parametrize("url", ["telegram.me/channel", "https://t.me/channel", "ftp://bank.example/tariffs"])
+def test_parser_request_rejects_telegram_and_non_web_url(client, workspace_id, url):
+    r = client.post("/api/loophole/parser-requests", json={
+        "workspace_id": workspace_id, "url": url, "description": "Тарифы",
     })
     assert r.status_code == 422
 
 
+def test_parser_request_rejects_existing_pending_domain(client, workspace_id):
+    body = {"workspace_id": workspace_id, "url": "https://bank.example/tariffs", "description": "Тарифы"}
+    assert client.post("/api/loophole/parser-requests", json=body).status_code == 201
+    r = client.post("/api/loophole/parser-requests", json={**body, "url": "https://www.bank.example/fees"})
+    assert r.status_code == 409
+
+
+def test_parser_request_requires_workspace_owner(client, app_session):
+    other_workspace_id = repo.create_workspace("other-user", "Чужая область", session=app_session)
+    r = client.post("/api/loophole/parser-requests", json={
+        "workspace_id": other_workspace_id,
+        "url": "https://bank.example/tariffs",
+        "description": "Тарифы",
+    })
+    assert r.status_code == 403
+    assert app_session.execute(text("SELECT COUNT(*) FROM source_proposal")).scalar_one() == 0
+
+
+def test_parser_request_writes_audit_in_same_request(client, app_session, workspace_id):
+    r = client.post("/api/loophole/parser-requests", json={
+        "workspace_id": workspace_id,
+        "url": "https://bank.example/tariffs",
+        "description": "Тарифы",
+    })
+    assert r.status_code == 201
+    audit = app_session.execute(
+        text(
+            "SELECT user_id, workspace_id, action, detail FROM loophole_action_log"
+        )
+    ).mappings().one()
+    assert audit["user_id"] == "test-user"
+    assert audit["workspace_id"] == workspace_id
+    assert audit["action"] == "parser_development_request_create"
+
+
+def test_legacy_parser_create_is_not_available(client, workspace_id):
+    r = client.post("/api/loophole/parsers", json={
+        "workspace_id": workspace_id, "query": "https://bank.example/tariffs",
+    })
+    assert r.status_code == 405
+
+
+def test_parser_request_rejects_existing_parser(client, app_session, workspace_id):
+    repo.save_parser(
+        workspace_id, "Тарифы", "/tmp/parser.py", config={}, created_by="test-user",
+        source_keys=["bank.example/tariffs"], session=app_session,
+    )
+    r = client.post("/api/loophole/parser-requests", json={
+        "workspace_id": workspace_id,
+        "url": "https://www.bank.example/tariffs",
+        "description": "Тарифы",
+    })
+    assert r.status_code == 409
+
+
+
+
 # ── PATCH расписания ─────────────────────────────────────────────────────────
 def test_patch_schedule_valid(client, app_session, parser_id):
+    repo.update_parser_status(parser_id, "ready", session=app_session)
     r = client.patch(f"/api/loophole/parsers/{parser_id}", json={
         "cron_expr": "0 5 * * *", "auto_enabled": True, "name": "renamed",
     })
@@ -102,6 +185,18 @@ def test_patch_schedule_valid(client, app_session, parser_id):
     assert p["next_run_at"] is not None
     assert p["name"] == "renamed"
     assert p["last_edited_by"] == "test-user"
+
+
+def test_patch_schedule_rejects_parser_with_failed_validation(client, app_session, parser_id):
+    """Расписание доступно только после успешной валидации."""
+    repo.update_parser_status(parser_id, "validation_failed", session=app_session)
+
+    r = client.patch(f"/api/loophole/parsers/{parser_id}", json={
+        "cron_expr": "0 5 * * *", "auto_enabled": True,
+    })
+
+    assert r.status_code == 409
+    assert "валидац" in r.json()["detail"].lower()
 
 
 def test_patch_invalid_cron_422(client, parser_id):
@@ -119,6 +214,7 @@ def test_patch_not_found_404(client):
 
 def test_patch_clear_cron(client, app_session, parser_id):
     """Пустая строка cron_expr очищает расписание (NULL), поле не залипает."""
+    repo.update_parser_status(parser_id, "ready", session=app_session)
     r = client.patch(f"/api/loophole/parsers/{parser_id}", json={
         "cron_expr": "0 5 * * *", "auto_enabled": True,
     })
@@ -133,7 +229,8 @@ def test_patch_clear_cron(client, app_session, parser_id):
 
 
 # ── run / runs / stop ────────────────────────────────────────────────────────
-def test_manual_run_returns_run_id(client, parser_id, monkeypatch):
+def test_manual_run_returns_run_id(client, app_session, parser_id, monkeypatch):
+    repo.update_parser_status(parser_id, "ready", session=app_session)
     run_mock = AsyncMock(return_value=42)
     monkeypatch.setattr(runner_mod, "run", run_mock)
     r = client.post(f"/api/loophole/parsers/{parser_id}/run")
@@ -141,6 +238,18 @@ def test_manual_run_returns_run_id(client, parser_id, monkeypatch):
     assert r.json()["run_id"] == 42
     # Контракт: без request-session — фон коммитит через свои db.session().
     run_mock.assert_awaited_once_with(parser_id, "manual")
+
+
+def test_manual_run_rejects_parser_without_successful_validation(client, parser_id, monkeypatch):
+    """Невалидный парсер нельзя запустить ни вручную, ни в обход UI."""
+    run_mock = AsyncMock(return_value=42)
+    monkeypatch.setattr(runner_mod, "run", run_mock)
+
+    response = client.post(f"/api/loophole/parsers/{parser_id}/run")
+
+    assert response.status_code == 409
+    assert "валидац" in response.json()["detail"].lower()
+    run_mock.assert_not_awaited()
 
 
 def test_manual_run_conflict_409(client, parser_id, monkeypatch):

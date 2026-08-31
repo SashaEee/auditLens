@@ -55,6 +55,7 @@ dependencies = [
   "pdfminer.six>=20231228", # экстракция текста из тариф-PDF
   "openpyxl>=3.1",
   "python-pptx>=0.6",
+  "python-docx>=1.2",
   # ── Common utilities ──────────────────────────────────────────────────
   "pydantic>=2.7",
   "pyyaml>=6.0",
@@ -109,3 +110,23 @@ bank_audit = ["web/static/*", "web/static/**/*", "analytics/*.sql"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# В «Лазейках» ошибки внешних источников, LLM и фоновых парсеров намеренно
+# перехватываются fail-safe: задача не должна останавливать аудит целиком.
+# FastAPI использует Depends(...) в сигнатурах роутов по своему контракту.
+"src/bank_audit/loophole/adapters/fetch_decorator.py" = ["BLE001"]
+"src/bank_audit/loophole/classify.py" = ["BLE001"]
+"src/bank_audit/loophole/collector.py" = ["BLE001"]
+"src/bank_audit/loophole/content_fetch.py" = ["BLE001"]
+"src/bank_audit/loophole/kb/repository.py" = ["BLE001"]
+"src/bank_audit/loophole/kb/seed.py" = ["BLE001", "ISC004"]
+"src/bank_audit/loophole/logging_audit.py" = ["BLE001"]
+"src/bank_audit/loophole/parsers/healer.py" = ["BLE001", "S110"]
+"src/bank_audit/loophole/parsers/registry.py" = ["BLE001"]
+"src/bank_audit/loophole/parsers/runner.py" = ["BLE001", "S110"]
+"src/bank_audit/loophole/parsers/scheduler.py" = ["BLE001"]
+"src/bank_audit/loophole/refine.py" = ["BLE001"]
+"src/bank_audit/loophole/repository.py" = ["BLE001", "PLR1704"]
+"src/bank_audit/loophole/web.py" = ["B008", "BLE001", "S110"]
+"src/bank_audit/loophole/workspace.py" = ["BLE001"]

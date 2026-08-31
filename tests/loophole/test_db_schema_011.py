@@ -53,7 +53,7 @@ def test_migration_011_no_primary_key_or_unique():
 def test_migration_011_is_idempotent_if_not_exists():
     """Все CREATE — с IF NOT EXISTS (повторное применение не падает)."""
     sql = db_schema.migration_011_sql()
-    creates = re.findall(r"CREATE\s+(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?", sql, re.I)
+    creates = re.findall(r"CREATE\s+(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?", sql, re.IGNORECASE)
     assert creates, "нет CREATE-инструкций в 011"
     for kind, ifne in creates:
         assert ifne.strip().upper() == "IF NOT EXISTS", (
@@ -80,7 +80,7 @@ def test_apply_migration_executes_all_migrations():
 
     session = MagicMock()
     db_schema.apply_migration(session)
-    assert session.execute.call_count == 5
+    assert session.execute.call_count == 6
     texts = [str(call.args[0].text) for call in session.execute.call_args_list]
     assert any("loophole_record" in t for t in texts), "миграция 010 не выполнена"
     assert any("loophole_agent_task" in t for t in texts), "миграция 011 не выполнена"

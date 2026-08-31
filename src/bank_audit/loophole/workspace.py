@@ -1,7 +1,8 @@
 """Per-user workspace: путь на ФС + история + результаты.
 
 Workspace-директория: <LOOPHOLE_WORKSPACE_DIR>/<user_id>/<workspace_id>/.
-Изоляция per-user — по user_id (из заголовка X-User-Id).
+Изоляция per-user — по user_id (username trusted principal из X-Authentik-*,
+проверка membership/ownership — в loophole/web.py и loophole/authorization.py).
 """
 from __future__ import annotations
 

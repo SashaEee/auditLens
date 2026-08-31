@@ -1,0 +1,84 @@
+{
+  "schema_version": "0.2.0",
+  "snapshot_at": "2026-08-31",
+  "repo": "auditLens",
+  "collection_mode": "sequential",
+  "collection_status": "COLLECTED",
+  "inventory_basis": "acceptance_criteria",
+  "gate_basis": "priority_thresholds",
+  "source_sha": "0e17177799d123ebc01995bc743cdffbfe8357ed",
+  "working_tree": "dirty",
+  "target": {
+    "type": "module",
+    "id": "loophole",
+    "label": "Модуль Лазейки — 28 активных спецификаций"
+  },
+  "decision_mode": "deterministic",
+  "evaluator": "Kirill",
+  "confidence": "high",
+  "oracle": {
+    "resolution_mode": "formal_requirements",
+    "confidence": "high",
+    "sources": ["docs/loophole/bmad/implementation-artifacts/spec-*.md"],
+    "external_pointer_status": "not_used",
+    "synthetic": false
+  },
+  "coverage": {
+    "inventory": {"covered":14,"total":28,"pct":50},
+    "priority_breakdown": {
+      "P0": {"total":11,"covered":5,"pct":45},
+      "P1": {"total":17,"covered":9,"pct":53},
+      "P2": {"total":0,"covered":0,"pct":100},
+      "P3": {"total":0,"covered":0,"pct":100}
+    },
+    "by_level": {
+      "e2e":{"tests":1,"criteria_covered":1},
+      "api":{"tests":20,"criteria_covered":20},
+      "component":{"tests":0,"criteria_covered":0},
+      "unit":{"tests":7,"criteria_covered":7},
+      "live":{"tests":0,"criteria_covered":0},
+      "other":{"tests":0,"criteria_covered":0}
+    }
+  },
+  "tests": {"files":70,"cases":723,"skipped_cases":1,"fixme_cases":0,"pending_cases":0,"passed":722,"warnings":21},
+  "risk_summary": {"critical_open":2,"high_open":4,"medium_open":5,"low_open":0},
+  "heuristics": {"endpoint_gaps":3,"auth_negative_path_status":"partial","error_path_status":"none","ui_journey_status":"not_applicable","ui_state_status":"not_applicable"},
+  "live_evidence": {
+    "present": true,
+    "freshness": "manual_not_counted",
+    "counted": 0,
+    "requirements_live_only": 0,
+    "notes": [
+      "В браузере исследовательская поверхность и focus restore панели чата проверены без console errors.",
+      "В браузере подтверждено, что вкладка Добавить источник всё ещё содержит старую форму parser и Telegram-card."
+    ]
+  },
+  "gate_status": "FAIL",
+  "gate_criteria": {
+    "p0_coverage_required": "100%",
+    "p0_coverage_actual": "45%",
+    "p0_status": "NOT_MET",
+    "p1_coverage_target": "90%",
+    "p1_coverage_minimum": "80%",
+    "p1_coverage_actual": "53%",
+    "p1_status": "NOT_MET",
+    "overall_coverage_minimum": "80%",
+    "overall_coverage_actual": "50%",
+    "overall_status": "NOT_MET"
+  },
+  "blockers": [
+    {"id":"preliminary-source-import","severity":"critical","reason":"Нет реализации и тестов прямого пользовательского требования."},
+    {"id":"parser-development-request","severity":"critical","reason":"Форма продолжает создавать parser вместо pending-заявки."},
+    {"id":"research-report-evidence","severity":"high","reason":"Immutable report snapshot всегда пуст, поэтому PDF/DOCX не содержит реальные verified sources."},
+    {"id":"external-staging","severity":"high","reason":"PostgreSQL lifecycle и Telegram perimeter остаются UNVERIFIED без staging evidence."}
+  ],
+  "recommendations": [
+    "Реализовать перенос preliminary research-source и pending parser-development request с API, RBAC, migration и browser/runtime tests.",
+    "Добавить route/auth/concurrency/retry тесты жизненного цикла и PostgreSQL integration evidence.",
+    "Сохранять и экспортировать immutable verified evidence snapshot с URL и тестом PDF/DOCX."
+  ],
+  "links": {
+    "trace_report_path": "docs/loophole/bmad/test-artifacts/traceability/traceability-matrix.md",
+    "phase_1_path": "docs/loophole/bmad/test-artifacts/traceability/phase-1-coverage-20260831.json"
+  }
+}

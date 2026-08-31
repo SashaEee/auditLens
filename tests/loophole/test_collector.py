@@ -7,13 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from bank_audit.loophole import collector
-from bank_audit.loophole import repository as repo
 from bank_audit.loophole import keywords as kw_mod
+from bank_audit.loophole import repository as repo
 from bank_audit.loophole.config import LoopholeSettings
-from bank_audit.hashing import sha256_text
-
-
-from tests.loophole.conftest import session as sqlite_session  # noqa: E402
 
 
 @pytest.fixture

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Целевая архитектура модуля «Уязвимости»</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { max-width: 980px; margin: 32px auto; padding: 0 20px 40px; font: 17px/1.55 system-ui, sans-serif; color: #18212b; background: #f6f4ef; }
+    main { background: #fff; border: 1px solid #cbd2d9; }
+    header, section, footer { padding: 24px; border-bottom: 1px solid #cbd2d9; }
+    footer { border-bottom: 0; }
+    h1, h2 { margin: 0 0 12px; font-family: Georgia, serif; letter-spacing: 0; }
+    h1 { font-size: 32px; }
+    h2 { font-size: 23px; }
+    p { margin: 0 0 12px; }
+    .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
+    .box { padding: 10px 12px; border: 1px solid #7d8996; background: #eef5f5; }
+    .arrow { font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { padding: 9px; text-align: left; vertical-align: top; border: 1px solid #cbd2d9; }
+    th { background: #e7ecef; }
+    code { padding: 1px 4px; background: #eef0f2; }
+    @media (max-width: 640px) { body { margin: 12px auto; padding: 0 12px 24px; font-size: 16px; } h1 { font-size: 27px; } header, section, footer { padding: 18px; } }
+    @media (prefers-color-scheme: dark) { body { color: #e9edf0; background: #1d252d; } main { background: #26313a; border-color: #657381; } header, section, footer, th, td { border-color: #657381; } th { background: #34424e; } .box, code { background: #31424a; color: #f1f5f7; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Целевая архитектура модуля «Уязвимости»</h1>
+      <p>Материал для утверждения владельцами продукта. Это TO-BE дизайн: миграции, RBAC, worker и runtime evidence пока UNVERIFIED.</p>
+    </header>
+
+    <section>
+      <h2>1. Управляемый путь кейса</h2>
+      <div class="flow">
+        <div class="box">Источник или AI-поиск</div><span class="arrow">→</span>
+        <div class="box">Изолированное исследование</div><span class="arrow">→</span>
+        <div class="box">Очередь ЦК КС</div><span class="arrow">→</span>
+        <div class="box">Детерминированная публикация</div><span class="arrow">→</span>
+        <div class="box">Общая база</div>
+      </div>
+      <p>Кандидат не появляется в каталоге до положительного решения эксперта. Повтор публикации безопасен и не создаёт дубль.</p>
+    </section>
+
+    <section>
+      <h2>2. Telegram отделён от приложения</h2>
+      <p>Один внешне развёрнутый worker владеет Telegram-сессией, обходом и checkpoint. Fail-closed sanitizer либо создаёт masked ingress object, либо карантинирует только метаданные без persistence body и LLM. AuditLens создаёт revisioned evidence, а аналитик явно выбирает его для исследования. Прямая публикация запрещена.</p>
+      <div class="flow">
+        <div class="box">Telegram</div><span class="arrow">→</span>
+        <div class="box">Внешний worker</div><span class="arrow">→</span>
+        <div class="box">Masked ingress</div><span class="arrow">→</span>
+        <div class="box">Evidence</div><span class="arrow">→</span>
+        <div class="box">Явное исследование</div>
+      </div>
+      <p>Для каждой активной цели attempt начинается не реже одного раза в 24 часа. Global session lease, target fence, versioned source key и checkpoint обеспечивают один обход и безопасный failover. При деактивации registry сам закрывает попытку и создаёт audit relay; при crash это делает ограниченный reaper. Stale worker только останавливается.</p>
+    </section>
+
+    <section>
+      <h2>3. Доступ и ответственность</h2>
+      <table>
+        <thead><tr><th>Роль</th><th>Разрешённое действие</th></tr></thead>
+        <tbody>
+          <tr><td>Аналитик</td><td>Каталог, новое исследование, экспорт и передача кандидата на верификацию.</td></tr>
+          <tr><td>Эксперт ЦК КС</td><td>Просмотр очереди и одно неизменяемое решение с комментарием.</td></tr>
+          <tr><td>Администратор модуля</td><td>Назначение роли ЦК КС, управление target lifecycle и единоличный просмотр аудита.</td></tr>
+          <tr><td>Telegram worker</td><td>Только target read, fenced resolver promotion, lease, sanitizer-approved ingress, checkpoint и attempt journal.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>4. Контроль качества и безопасности</h2>
+      <p>OIDC JWT идентифицирует subject, а workspace membership и role assignment перепроверяются в БД до любой команды. Все mutating действия имеют actor, <code>run_id</code>, payload-bound idempotency key и immutable evidence snapshot. <code>agent_audit_log</code> хранится 14 дней и читается только администратором; worker journal, inbox/outbox и dead-letter сохраняют exactly-once audit delivery в отдельный 30-day horizon. DB skill остаётся read-only.</p>
+    </section>
+
+    <section>
+      <h2>5. Условия запуска</h2>
+      <p>До запуска требуются UX-маршруты для исследования и очереди, DCL allow/deny для пяти database principals, OIDC verification, worker perimeter, fencing/reaper/revoke tests, sanitizer/quarantine tests, 24-hour SLO и parity tests перед удалением legacy shim.</p>
+    </section>
+
+    <footer>
+      <p>Подробности: <code>ARCHITECTURE-SPINE.md</code>, <code>C4.md</code>, <code>SOLUTION-DESIGN.md</code>, <code>IMPLEMENTATION-MAP.md</code> и <code>SECURITY-AND-OPERATIONS.md</code>. Версия решения: 2026-08-27.</p>
+    </footer>
+  </main>
+</body>
+</html>
