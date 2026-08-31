@@ -23,6 +23,7 @@ def _create_research_schema(session) -> None:
             url TEXT NOT NULL,
             title TEXT,
             extracted_text TEXT,
+            published_at TEXT,
             status TEXT NOT NULL,
             limitation_message TEXT,
             access_status TEXT NOT NULL DEFAULT 'active',
@@ -125,6 +126,35 @@ def test_research_case_service_keeps_candidate_and_source_outside_catalog(sessio
     assert candidate["is_loophole"] is True
     assert candidate["search_params"] == {"max_results": 12}
     assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 0
+
+
+def test_managed_run_persists_fetched_source_even_without_candidate(session):
+    """Прочитанный источник входит в evidence, даже если лазейка не подтверждена."""
+    from bank_audit.loophole.research_cases import ResearchCaseService
+
+    _create_research_schema(session)
+    service = ResearchCaseService(session)
+    persisted = service.persist_managed_run(
+        workspace_id=1,
+        run_id="managed-without-candidate",
+        query="проверь тариф",
+        findings=[],
+        sources=[{
+            "url": "https://example.ru/rules",
+            "title": "Правила",
+            "extracted_text": "Полный серверный текст",
+            "published_at": "2026-08-01T00:00:00+03:00",
+        }],
+    )
+
+    assert persisted["candidate_ids"] == []
+    source = session.execute(
+        text("SELECT url, published_at FROM loophole_research_source")
+    ).mappings().one()
+    assert source == {
+        "url": "https://example.ru/rules",
+        "published_at": "2026-08-01T00:00:00+03:00",
+    }
 
 
 def test_unavailable_source_keeps_limitation_and_rejects_candidate(session):
@@ -432,10 +462,11 @@ def test_submit_selected_case_creates_idempotent_immutable_snapshot(session):
     assert snapshot["evidence"] == [{
         "source_id": source_id,
         "revision": 1,
-        "url": "https://example.ru/terms",
-        "title": "Условия v1",
-        "extracted_text": "Комиссия скрыта в условии.",
-    }]
+            "url": "https://example.ru/terms",
+            "title": "Условия v1",
+            "extracted_text": "Комиссия скрыта в условии.",
+            "published_at": None,
+        }]
     assert session.execute(text(
         "SELECT count(*) FROM loophole_verification_snapshot"
     )).scalar_one() == 1

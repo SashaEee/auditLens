@@ -1,0 +1,116 @@
+{
+ "snapshot": "2026-08-31",
+ "как_снят": "scripts/context_bench.py по фикстурам scripts/context_fixtures.py (11 страниц банков и ЦБ)",
+ "среднее": {
+  "chars": 6820,
+  "short_lines_pct": 64,
+  "dup_lines": 26,
+  "chars_per_num": 534,
+  "digit_recall_pct": 48,
+  "filter_leak": 0
+ },
+ "цели_после_этапа_3": {
+  "chars_per_num": "≤140",
+  "short_lines_pct": "≤20",
+  "dup_lines": 0,
+  "digit_recall_pct": "≥70 (не ниже базы)"
+ },
+ "страницы": {
+  "alfa_deposits": {
+   "chars": 29345,
+   "short_lines_pct": 91,
+   "dup_lines": 236,
+   "chars_per_num": 497,
+   "digit_recall": 74,
+   "filter_leak": 0
+  },
+  "banki_credits_sber": {
+   "chars": 10822,
+   "short_lines_pct": 30,
+   "dup_lines": 3,
+   "chars_per_num": 113,
+   "digit_recall": 93,
+   "filter_leak": 0
+  },
+  "banki_deposits_sber": {
+   "chars": 10443,
+   "short_lines_pct": 55,
+   "dup_lines": 60,
+   "chars_per_num": 166,
+   "digit_recall": 42,
+   "filter_leak": 1
+  },
+  "cbr_psk_page": {
+   "chars": 1289,
+   "short_lines_pct": 0,
+   "dup_lines": 0,
+   "chars_per_num": 1289,
+   "digit_recall": 100,
+   "filter_leak": 0
+  },
+  "domrf_izhs_sme": {
+   "chars": 379,
+   "short_lines_pct": 50,
+   "dup_lines": 0,
+   "chars_per_num": 190,
+   "digit_recall": 50,
+   "filter_leak": 0
+  },
+  "gazprom_deposits": {
+   "chars": 40,
+   "short_lines_pct": 100,
+   "dup_lines": 0,
+   "chars_per_num": 40,
+   "digit_recall": 0,
+   "filter_leak": 0
+  },
+  "sber_credit_cash": {
+   "chars": 4543,
+   "short_lines_pct": 48,
+   "dup_lines": 0,
+   "chars_per_num": 267,
+   "digit_recall": 61,
+   "filter_leak": 0
+  },
+  "sber_deposit_6m": {
+   "chars": 13468,
+   "short_lines_pct": 64,
+   "dup_lines": 21,
+   "chars_per_num": 264,
+   "digit_recall": 45,
+   "filter_leak": 0
+  },
+  "sber_deposits_catalog": {
+   "chars": 2940,
+   "short_lines_pct": 94,
+   "dup_lines": 1,
+   "chars_per_num": 147,
+   "digit_recall": 13,
+   "filter_leak": 0
+  },
+  "tbank_deposits": {
+   "chars": 5477,
+   "short_lines_pct": 57,
+   "dup_lines": 2,
+   "chars_per_num": 342,
+   "digit_recall": 100,
+   "filter_leak": 0
+  },
+  "vtb_credit_cash": {
+   "chars": 1548,
+   "short_lines_pct": 90,
+   "dup_lines": 0,
+   "chars_per_num": 1548,
+   "digit_recall": 0,
+   "filter_leak": 0
+  },
+  "vtb_deposits": {
+   "chars": 1548,
+   "short_lines_pct": 90,
+   "dup_lines": 0,
+   "chars_per_num": 1548,
+   "digit_recall": 0,
+   "filter_leak": 0
+  }
+ }
+}

@@ -119,37 +119,10 @@ async def test_generate_rejects_query_without_target(session, workspace_id, cata
     assert repo.list_all_parsers(session=session) == []
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "target",
-    [
-        "https://t.me/bank_news",
-        "https://telegram.me/bank_news",
-        "https://t.me:443/bank_news",
-        "@bank_news",
-    ],
-)
-async def test_generate_rejects_telegram_target_before_llm_and_storage(
-    session, workspace_id, catalog_dir, target,
-):
-    """Telegram обслуживается отдельным контуром и не доходит до генератора."""
-    llm = _llm_mock()
-
-    with pytest.raises(ValueError, match="Telegram"):
-        await generator.generate_parser(
-            "test-user", workspace_id, f"проверь источник {target}", llm=llm, session=session,
-        )
-
-    llm.ainvoke.assert_not_called()
-    assert repo.list_all_parsers(session=session) == []
-
-
-def test_extract_targets_urls_and_telegram():
+def test_extract_targets_urls_only():
     assert generator.extract_targets(
-        "смотри https://bank.ru/promo и t.me/bank_loopholes"
-    ) == ["t.me/bank_loopholes", "https://bank.ru/promo"]
-    assert generator.extract_targets("группа @bank_secrets") == ["@bank_secrets"]
-    assert generator.extract_targets("https://t.me/g1 https://t.me/g1") == ["https://t.me/g1"]
+        "смотри https://bank.ru/promo и https://bank.ru/tariffs"
+    ) == ["https://bank.ru/promo", "https://bank.ru/tariffs"]
     assert generator.extract_targets("просто текст") == []
 
 

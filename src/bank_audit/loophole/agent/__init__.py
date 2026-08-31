@@ -37,6 +37,7 @@ class AgentRunContext:
     run_id: str
     max_iterations: int | None = None
     pending_records: list[dict] = field(default_factory=list)
+    fetched_sources: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +212,7 @@ class AgentFactory:
                 session=session,
                 query=context.query,
                 pending_records=context.pending_records,
+                fetched_sources=context.fetched_sources,
             ),
         )
         return ManagedAgent(
@@ -221,6 +223,7 @@ class AgentFactory:
                 run_id=run_id,
                 max_iterations=context.max_iterations,
                 pending_records=context.pending_records,
+                fetched_sources=context.fetched_sources,
             ),
             bot,
             config_path,

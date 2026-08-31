@@ -35,11 +35,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 1) Зависимости + сам пакет (editable: статика *.jsx/index.html и analytics/views.sql
-#    берутся прямо из /app/src). БЕЗ extra local-embeddings → без torch.
+# 1) СНАЧАЛА только зависимости — слой не зависит от кода и переживает любые
+#    правки src. Раньше `COPY src` стоял ДО установки: каждая правка одной
+#    строки Python инвалидировала слой, и заново ставились все пакеты плюс
+#    Chromium — сборка на 10-15 минут вместо секунд.
+#    Пустой пакет-заглушка нужен, чтобы `pip install .` отработал без исходников.
 COPY pyproject.toml README.md ./
-COPY src ./src
-RUN pip install -e .
+RUN mkdir -p src/bank_audit && touch src/bank_audit/__init__.py \
+    && pip install . && pip uninstall -y auditlens bank-audit 2>/dev/null || true
 
 # 2) Chromium + системные libs для него (отдельный слой — кэшируется независимо).
 #    Браузер кладётся в /ms-playwright (PLAYWRIGHT_BROWSERS_PATH) и делается читаемым
@@ -47,13 +50,18 @@ RUN pip install -e .
 RUN playwright install --with-deps chromium \
     && chmod -R a+rx /ms-playwright
 
-# 3) Конфиги (settings.yaml, sources.yaml, CA-сертификаты Минцифры), миграции, entrypoint.
+# 3) Только теперь код: правка Python пересобирает ТОЛЬКО этот слой и лёгкую
+#    editable-установку — секунды вместо минут. --no-deps: зависимости уже стоят.
+COPY src ./src
+RUN pip install -e . --no-deps
+
+# 4) Конфиги (settings.yaml, sources.yaml, CA-сертификаты Минцифры), миграции, entrypoint.
 COPY config ./config
 COPY migrations ./migrations
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# 4) Non-root пользователь + папка эфемерных артефактов (для постоянства смонтировать
+# 5) Non-root пользователь + папка эфемерных артефактов (для постоянства смонтировать
 #    volume на /app/workspace или вынести выгрузки в OBS).
 RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /app/workspace \

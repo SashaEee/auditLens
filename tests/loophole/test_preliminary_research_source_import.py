@@ -42,6 +42,7 @@ def _research_with_candidate(session, *, workspace_id: int = 1, url: str = "http
         url=url,
         title="Условия продукта",
         extracted_text="Комиссия указана только в примечании.",
+        published_at="2026-08-27T09:25:00+03:00",
     )
     candidate_id = service.add_candidate(
         research_id,
@@ -73,7 +74,7 @@ def test_imports_only_fetched_new_suspected_sources_idempotently(session):
     assert record["status"] == "preliminary"
     assert record["is_loophole"] is True
     assert record["verdict_confidence"] == pytest.approx(0.82)
-    assert record["published_at"] is None
+    assert str(record["published_at"]).startswith("2026-08-27 09:25:00")
     provenance = session.execute(text("""
         SELECT research_id, source_id, workspace_id FROM loophole_preliminary_import
         WHERE record_id = :record_id
@@ -102,23 +103,34 @@ def test_import_skips_existing_url_and_unavailable_or_non_suspicious_sources(ses
     assert repo.get_record(existing_id, session=session)["status"] == "published"
 
 
-def test_catalog_filter_separates_verified_and_waiting_preliminary_records(session):
-    service, research_id, _ = _research_with_candidate(session)
+def test_catalog_filter_requires_positive_ccks_decision_for_verified_records(session):
+    service, research_id, source_id = _research_with_candidate(session)
     service.import_preliminary_sources(research_id, imported_by="analyst")
-    repo.insert_record(
-        __import__("bank_audit.loophole.models", fromlist=["LoopholeRecord"]).LoopholeRecord(
-            sha256="published", title="Подтверждённая лазейка", url="https://bank.example/verified",
-            status="published", is_loophole=True,
-        ),
-        session=session,
+    candidate_id = session.execute(
+        text("SELECT candidate_id FROM loophole_research_candidate WHERE source_id = :source_id"),
+        {"source_id": source_id},
+    ).scalar_one()
+    snapshot = service.submit_for_verification(
+        candidate_id,
+        evidence_source_ids=[source_id],
+        submitted_by="analyst",
+        correlation_run_id="verified-import",
+    )
+    assert snapshot is not None
+    service.decide_snapshot(
+        snapshot["snapshot_id"],
+        decision="vulnerability",
+        comment="Подтверждено ЦК КС",
+        decided_by="expert",
+        run_id="verified-import",
     )
 
     waiting = repo.list_catalog_cases(verification_status="pending", session=session)
     verified = repo.list_catalog_cases(verification_status="verified", session=session)
 
-    assert [item["status"] for item in waiting] == ["preliminary"]
-    assert [item["status"] for item in verified] == ["published"]
-    assert waiting[0]["provenance"]["research_id"] == research_id
+    assert waiting == []
+    assert [item["status"] for item in verified] == ["preliminary"]
+    assert verified[0]["provenance"]["research_id"] == research_id
 
 
 def test_import_route_requires_research_workspace_owner_and_audits(session):

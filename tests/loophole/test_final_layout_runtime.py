@@ -116,7 +116,6 @@ def _runtime_html(
       window.__downloads = [];
       window.__catalogUrls = [];
       window.__eventSources = [];
-      window.__adminTelegramTargetFetches = 0;
       window.__chatBodies = [];
       window.__clarifyAnswerBodies = [];
       window.__clarifyAnswerResolved = false;
@@ -183,10 +182,6 @@ def _runtime_html(
           roles: [{{username: "expert.ivanova", status: "active", created_at: "2026-08-30T09:15:00+08:00"}}],
           active_experts: 1, max_experts: 5,
         }}, window.__denyProtected ? 403 : 200);
-        if (url.endsWith("/admin/telegram-targets")) {{
-          window.__adminTelegramTargetFetches += 1;
-          return jsonResponse({{detail: "unused admin data"}}, 500);
-        }}
         if (url.endsWith("/admin/audit")) return jsonResponse({{events: [{{
           action: "role_assign", decision: "allow", count: 3,
           last_at: "2026-08-30T10:14:00+08:00",
@@ -272,6 +267,12 @@ def _runtime_html(
           return new Response("record_id,published_at,collected_at\\n1,2026-08-26,2026-08-30", {{
             status: 200,
             headers: {{"Content-Type": "text/csv"}},
+          }});
+        }}
+        if (url.includes("/research/reports/") && url.includes("/export/")) {{
+          return new Response("research snapshot", {{
+            status: 200,
+            headers: {{"Content-Type": "application/pdf"}},
           }});
         }}
         return jsonResponse({{}});
@@ -772,10 +773,11 @@ def test_research_result_renders_safe_markdown_and_exposes_snapshot_downloads(br
         assert report.get_by_role("listitem").inner_text() == "Проверенный источник"
         menu = report.get_by_text("Скачать исследование", exact=True)
         menu.click()
-        pdf = report.get_by_role("link", name="PDF")
-        word = report.get_by_role("link", name="Word")
-        assert pdf.get_attribute("href").endswith("/research/reports/73/export/pdf")
-        assert word.get_attribute("href").endswith("/research/reports/73/export/docx")
+        pdf = report.get_by_role("button", name="PDF")
+        word = report.get_by_role("button", name="Word")
+        pdf.click()
+        assert word.is_enabled()
+        page.wait_for_function("() => window.__downloads.length === 1")
     finally:
         page.close()
 
@@ -909,8 +911,10 @@ def test_catalog_exposes_read_only_published_loophole_scope_without_false_query_
         assert page.locator("#lp-filter-verdict").count() == 0
         assert page.locator("#lp-filter-status").count() == 0
         assert page.get_by_label("Каталог показывает только лазейки").inner_text() == "лазейки"
-        assert page.get_by_label("Каталог показывает только опубликованные записи").inner_text() == (
-            "опубликованные"
+        assert page.get_by_label(
+            "Каталог показывает подтверждённые и предварительные записи"
+        ).inner_text() == (
+            "подтверждённые и предварительные"
         )
 
         page.get_by_label("Поиск по тексту").fill("комиссия")
@@ -971,7 +975,7 @@ def test_parser_request_is_inline_and_catalog_is_read_only(browser: Browser):
     page = _open(browser)
     try:
         page.get_by_role("tab", name="Добавить источник").click()
-        page.get_by_role("heading", name="Заявка на разработку парсера").wait_for(state="visible")
+        page.get_by_role("heading", name="Параметры заявки").wait_for(state="visible")
         assert page.locator('[role="dialog"][aria-labelledby="lp-parsers-title"]').count() == 0
         assert page.locator(".lp-source-note").count() == 0
         assert page.get_by_text("Telegram-источники", exact=True).count() == 0
@@ -1004,13 +1008,11 @@ def test_parser_request_does_not_open_event_source(browser: Browser):
         page.close()
 
 
-def test_parser_targets_link_only_safe_supported_addresses(browser: Browser):
+def test_parser_targets_link_only_safe_web_addresses(browser: Browser):
     """Ломается, если target попадает в href без нормализации схемы."""
     targets = [
         "https://bank.example/tariffs",
         "http://bank.example/archive",
-        "@bank_secrets",
-        "t.me/bank_public/news",
         "javascript:alert(1)",
         "ftp://bank.example/dump",
     ]
@@ -1027,8 +1029,6 @@ def test_parser_targets_link_only_safe_supported_addresses(browser: Browser):
         assert links == [
             {"text": "https://bank.example/tariffs", "href": "https://bank.example/tariffs"},
             {"text": "http://bank.example/archive", "href": "http://bank.example/archive"},
-            {"text": "@bank_secrets", "href": "https://t.me/bank_secrets"},
-            {"text": "t.me/bank_public/news", "href": "https://t.me/bank_public/news"},
         ]
         assert target_list.get_by_text("javascript:alert(1)", exact=True).is_visible()
         assert target_list.get_by_text("ftp://bank.example/dump", exact=True).is_visible()
@@ -1072,7 +1072,6 @@ def test_secondary_surfaces_use_final_board_composition(browser: Browser):
         assert admin.get_by_role("heading", name="Статус Telegram-целей").count() == 0
         assert admin.get_by_role("heading", name="Роль ЦК КС").is_visible()
         assert admin.get_by_role("heading", name="Сводный аудит").is_visible()
-        assert page.evaluate("window.__adminTelegramTargetFetches") == 0
         assert page.locator(".lp-admin-section").first.evaluate(
             "element => getComputedStyle(element).gridRowEnd"
         ) == "auto"

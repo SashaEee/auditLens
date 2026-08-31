@@ -16,7 +16,6 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from .. import repository as repo
 from ..config import LoopholeSettings
@@ -66,37 +65,18 @@ def sanitize_filename(name: str) -> str:
     return cleaned or "parser"
 
 
-# Цели парсинга: URL ресурса или группа в мессенджере (Telegram).
-TG_LINK_RE = re.compile(
-    r"(?:https?://)?(?:www\.)?(?:t|telegram)\.me/[^\s<>\"']+", re.IGNORECASE
-)
+# Цели парсинга: публичные веб-URL.
 URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
-TG_HANDLE_RE = re.compile(r"@[A-Za-z][A-Za-z0-9_]{4,31}\b")
 
 
 def extract_targets(query: str) -> list[str]:
-    """Извлекает из запроса URL ресурсов и группы мессенджеров.
-
-    Возвращает дедуплицированный список целей (Telegram-ссылки первыми).
-    """
+    """Извлекает из запроса дедуплицированный список публичных веб-URL."""
     targets: list[str] = []
-    for pattern in (TG_LINK_RE, URL_RE, TG_HANDLE_RE):
-        for match in pattern.findall(query or ""):
-            match = match.rstrip(".,);]")
-            if match not in targets:
-                targets.append(match)
+    for match in URL_RE.findall(query or ""):
+        match = match.rstrip(".,);]")
+        if match not in targets:
+            targets.append(match)
     return targets
-
-
-def _is_telegram_target(target: str) -> bool:
-    """Определяет Telegram-цель, обслуживаемую отдельным контуром."""
-    if TG_HANDLE_RE.fullmatch(target):
-        return True
-    candidate = target if "://" in target else f"https://{target}"
-    try:
-        return urlsplit(candidate).hostname in {"t.me", "telegram.me"}
-    except ValueError:
-        return False
 
 
 def _default_llm() -> Any:
@@ -252,18 +232,12 @@ async def generate_parser(
     """Генерирует Scrapy-паука, сохраняет код в catalog/ и запись в БД.
 
     Возвращает {"parser_id", "code_path", "venv_path", "name", "targets"}.
-    Бросает ValueError, если в запросе нет URL ресурса или группы мессенджера.
+    Бросает ValueError, если в запросе нет URL ресурса.
     """
     targets = extract_targets(query)
     if not targets:
         raise ValueError(
-            "В запросе не указан URL ресурса или группа мессенджера "
-            "(например: https://example.com/page или https://t.me/group_name)"
-        )
-    if any(_is_telegram_target(target) for target in targets):
-        raise ValueError(
-            "Telegram-источники обслуживаются отдельным контуром и не создаются "
-            "как обычные парсеры"
+            "В запросе не указан URL ресурса (например: https://example.com/page)"
         )
     if llm is None:
         llm = _default_llm()
