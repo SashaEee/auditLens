@@ -104,6 +104,7 @@ def index_and_get_text(url: str, *,
     (document_id=None — на горячем пути его никто не использует)."""
     # 1. Быстрый путь: fetch + parse → текст немедленно (без ожидания эмбеддинга).
     text, title = "", ""
+    full_text = ""
     skipped_reason = ""
     file_links: list = []
     section_links: list = []
@@ -157,8 +158,14 @@ def index_and_get_text(url: str, *,
                                 _learn_render_domain(_dom)
                 except Exception as _e:  # noqa: BLE001 — добор не роняет чтение
                     log.info("[render-on-demand] %s: %s", url[:60], _e)
+            # Два РАЗНЫХ бюджета. `text` уходит в диалог модели и может быть
+            # сколь угодно урезан. `full` — доказательная база: по нему идёт
+            # сверка дословных цитат (антигаллюцинации). Раньше это была одна
+            # и та же строка, поэтому любое сжатие контекста автоматически
+            # урезало базу сверки и честные цитаты становились «неподтверждёнными».
             text = (_relevant_excerpt(full, query_hint, budget)
                     if query_hint and len(full) > budget else full[:budget])
+            full_text = full
     except Exception as e:
         log.info("fetch+parse failed for %s: %s", url[:80], e)
 
@@ -179,6 +186,9 @@ def index_and_get_text(url: str, *,
     return {"title": title, "text": text, "document_id": None, "indexed": False,
             "fetch_via": _fetch_via, "captcha": _captcha, "status": _status,
             "skipped_reason": skipped_reason,
+            # full — полный очищенный текст страницы: НЕ для промпта, а для
+            # проверки цитат и будущего recall по требованию.
+            "full": full_text,
             "file_links": file_links, "section_links": section_links}
 
 

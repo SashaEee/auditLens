@@ -251,9 +251,13 @@ def tool_read_url(args: dict, bundle) -> str:
                            "url": url}, ensure_ascii=False)
 
     # Регистрируем источник в bundle
+    # Доказательная база — полный текст страницы, а НЕ то, что увидела модель.
+    # Объём ограничиваем отдельной ручкой: это память процесса, не токены.
+    _full = idx.get("full") or text
     src_n = register_source(bundle, url=url, title=title, domain=dom,
                               trust=trust, kind=kind, excerpt=text[:600],
-                              fulltext=text[:40000])
+                              fulltext=_full[:int(os.getenv(
+                                  "V2_SOURCE_FULLTEXT_CHARS", "120000"))])
 
     resp = {
         "url": url, "title": title, "domain": dom,
@@ -435,9 +439,13 @@ def tool_semantic_search(args: dict, bundle) -> str:
         url = r.get("url") or ""
         dom = _domain(url)
         # Регистрируем источник
+        # Сверка цитат идёт по fulltext: без него цитата из хвоста фрагмента
+        # (модель видит 1500 символов, база сверки была 600) объявлялась
+        # неподтверждённой — ложные срабатывания антигаллюцинаций.
         src_n = register_source(bundle, url=url,
                                   title=r.get("title", "") or url[:80],
                                   domain=dom,
+                                  fulltext=(r.get("text") or "")[:8000],
                                   trust=float(r.get("trust_score") or 0.6),
                                   kind=_kind_for(dom, url),
                                   excerpt=(r.get("text") or "")[:600])
@@ -537,7 +545,8 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
                                                r.get("product"), r.get("date")] if x)
                 src_n = register_source(bundle, url=r.get("url") or "", title=title,
                                         domain="banki.ru", trust=0.55, kind="review",
-                                        excerpt=(r.get("text") or "")[:600])
+                                        excerpt=(r.get("text") or "")[:600],
+                                        fulltext=(r.get("text") or "")[:8000])
                 arr.append({"product": r.get("product"), "date": r.get("date"),
                             "url": r.get("url"), "source_n": src_n,
                             "text": (r.get("text") or "")[:900],
@@ -594,6 +603,7 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
         title = " · ".join(x for x in ["banki.ru", r.get("bank"),
                                         r.get("product"), r.get("date")] if x)
         src_n = register_source(bundle, url=r.get("url") or "",
+                                 fulltext=(r.get("text") or "")[:8000],
                                  title=title, domain="banki.ru",
                                  trust=0.55, kind="review",
                                  excerpt=(r.get("text") or "")[:600])
