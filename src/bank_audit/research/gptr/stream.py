@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, facts as al_facts
-from . import ranking as al_rank
+from . import ranking as al_rank, reviews as al_reviews
 from . import gaps as al_gaps, planner as al_planner
 from . import scraper as al_scraper, verify as al_verify
 from .engine import _role_prompt, install, report_prompt
@@ -130,6 +130,17 @@ async def stream_deep_research_gptr(question: str,
     pages = dict(al_scraper.READ_PAGES)
     unreadable = dict(al_scraper.UNREADABLE)
 
+    # Наблюдаемая сторона в первую очередь из собственного корпуса отзывов:
+    # там живые жалобы с датами и ссылками, тогда как веб отдаёт обзоры.
+    review_records = al_reviews.collect(plan, attributes)
+    review_pages = al_reviews.as_pages(review_records)
+    if review_pages:
+        pages.update(review_pages)
+        yield _evt({"type": "stage_status", "stage": "reviews",
+                    "label": f"Жалоб из корпуса: {len(review_pages)}",
+                    "detail": "отзывы клиентов с датами и ссылками",
+                    "estimate_s": 0})
+
     # ── Факты ────────────────────────────────────────────────────────────
     # Между чтением и письмом появляется типизированный слой: каждый факт
     # опирается на дословную цитату, и она проверяется подстрочным поиском.
@@ -139,7 +150,8 @@ async def stream_deep_research_gptr(question: str,
                 "detail": f"{len(pages)} страниц → проверяемые утверждения",
                 "estimate_s": 40})
     registry = await al_facts.build_registry(
-        client, fast, pages=pages, attributes=attributes, plan=plan)
+        client, fast, pages=pages, attributes=attributes, plan=plan,
+        keep_pages=set(review_pages))
     yield _evt({"type": "stage_status", "stage": "facts_ready",
                 "label": f"Фактов: {len(registry.facts)}",
                 "detail": f"со {len(pages)} прочитанных страниц",

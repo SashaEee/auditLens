@@ -40,6 +40,9 @@ log = logging.getLogger(__name__)
 # Сколько текста страницы отдаём извлекателю. Больше — дороже и хуже фокус;
 # меньше — теряем таблицы тарифов в хвосте страницы.
 _PAGE_BUDGET = 14000
+# Ниже этой близости к контракту страница считается не по теме.
+_MIN_TOPIC_SIM = 0.25
+
 # Факт с цитатой короче этого не проверить осмысленно: «да», «0 ₽» найдутся
 # в любом тексте и подтвердят что угодно.
 _MIN_VERBATIM = 12
@@ -102,6 +105,12 @@ def verbatim_found(quote: str, page_text: str) -> bool:
 
 
 # ── Сторона доказательства ────────────────────────────────────────────────
+
+# Площадки отзывов: наблюдаемая сторона по определению. Держим отдельно от
+# прочих агрегаторов, чтобы отличать жалобу клиента от обзорной статьи.
+REVIEW_DOMAINS = ("banki.ru", "sravni.ru", "finuslugi.ru", "otzovik.com",
+                  "irecommend.ru", "vbr.ru")
+
 
 def stance_for(url: str, subject: str, subject_domains: dict[str, str]) -> str:
     """Чей это голос: организации, регулятора или взгляд со стороны.
@@ -359,7 +368,12 @@ def _top_by_similarity(pages: dict[str, str], attributes: list[str],
             n = sum(x * x for x in v) ** 0.5 or 1.0
             return sum(a * b for a, b in zip(q, v)) / (qn * n)
         ranked = sorted(zip(urls, vecs), key=lambda p: -sim(p[1]))
-        return {u: pages[u] for u, _ in ranked[:limit]}
+        # Порог по теме: страница, далёкая от контракта, не идёт в извлечение,
+        # даже когда место есть. Так в отчёт перестают попадать «Собеседование
+        # на продакт-менеджера в Сбере» и «онбординг сотрудников» — они и
+        # попали-то из-за многозначности слова, а не из-за нехватки фильтра.
+        keep = [(u, v) for u, v in ranked[:limit] if sim(v) >= _MIN_TOPIC_SIM]
+        return {u: pages[u] for u, _ in (keep or ranked[:1])}
     except Exception:
         top = sorted(pages, key=lambda u: -len(pages[u]))[:limit]
         return {u: pages[u] for u in top}
@@ -434,7 +448,8 @@ def select_pages(pages: dict[str, str], attributes: list[str],
 async def build_registry(client, model: str, *, pages: dict[str, str],
                          attributes: list[str], plan,
                          concurrency: int = 10,
-                         page_limit: int | None = None) -> FactRegistry:
+                         page_limit: int | None = None,
+                         keep_pages: set | None = None) -> FactRegistry:
     """Страницы → реестр фактов."""
     subjects = list(getattr(plan, "subjects", None) or [])
     labels = dict(getattr(plan, "subject_labels", None) or {})
@@ -444,7 +459,13 @@ async def build_registry(client, model: str, *, pages: dict[str, str],
         return reg
     limit = page_limit if page_limit is not None else int(
         os.getenv("GPTR_EXTRACT_PAGES", "35"))
-    pages = select_pages(pages, attributes, domains, limit)
+    # Отзывы из корпуса проходят отбор вне очереди: они и есть наблюдаемая
+    # сторона, ради которой всё затевалось, и по близости к формулировкам
+    # контракта они заведомо проигрывают продуктовым страницам банков.
+    keep = {u: pages[u] for u in (keep_pages or set()) if u in pages}
+    other = {u: t for u, t in pages.items() if u not in keep}
+    pages = {**keep, **select_pages(other, attributes, domains,
+                                    max(1, limit - len(keep)))}
 
     sem = asyncio.Semaphore(concurrency)
 

@@ -25,11 +25,9 @@ log = logging.getLogger(__name__)
 class RankRow:
     subject: str
     label: str
-    closed: int             # закрытых характеристик
+    closed: int             # характеристик, закрытых заявленной стороной
+    with_observed: int      # из них подтверждённых или оспоренных со стороны
     total: int              # всего характеристик в контракте
-    declared: int           # фактов со слов самой организации
-    observed: int           # фактов со стороны
-    regulatory: int         # фактов-норм
 
     @property
     def share(self) -> float:
@@ -37,9 +35,8 @@ class RankRow:
 
     def to_ui(self) -> dict:
         return {"subject": self.subject, "label": self.label,
-                "closed": self.closed, "total": self.total,
-                "share": round(self.share, 3), "declared": self.declared,
-                "observed": self.observed, "regulatory": self.regulatory}
+                "closed": self.closed, "with_observed": self.with_observed,
+                "total": self.total, "share": round(self.share, 3)}
 
 
 def build(plan, registry, attributes) -> list[RankRow]:
@@ -52,31 +49,51 @@ def build(plan, registry, attributes) -> list[RankRow]:
     cells = registry.by_cell()
     rows: list[RankRow] = []
     for s in subjects:
-        facts = [f for f in registry.facts if f.subject == s]
-        rows.append(RankRow(
-            subject=s, label=labels.get(s, s),
-            closed=sum(1 for a in attrs if cells.get((s, a))),
-            total=len(attrs),
-            declared=sum(1 for f in facts if f.stance == "declared"),
-            observed=sum(1 for f in facts if f.stance == "observed"),
-            regulatory=sum(1 for f in facts if f.stance == "regulatory"),
-        ))
-    rows.sort(key=lambda r: (-r.closed, -r.observed, r.label))
+        closed = with_obs = 0
+        for a in attrs:
+            facts = cells.get((s, a)) or []
+            if any(f.stance == "declared" for f in facts):
+                closed += 1
+            if any(f.stance == "observed" for f in facts):
+                with_obs += 1
+        rows.append(RankRow(subject=s, label=labels.get(s, s), closed=closed,
+                            with_observed=with_obs, total=len(attrs)))
+    # Сортируем по РАСКРЫТИЮ и его проверяемости со стороны, а не по числу
+    # собранных фактов: иначе первым оказывается тот, про кого мы прочитали
+    # больше страниц, что к объекту исследования отношения не имеет.
+    rows.sort(key=lambda r: (-r.closed, -r.with_observed, r.label))
     return rows
 
 
+def is_degenerate(rows: list[RankRow]) -> bool:
+    """Все объекты неразличимы — тогда таблица мест бессмысленна и вредна."""
+    if len(rows) < 2:
+        return True
+    first = (rows[0].closed, rows[0].with_observed)
+    return all((r.closed, r.with_observed) == first for r in rows)
+
+
 def render(rows: list[RankRow]) -> str:
-    """Таблица для контекста писателя. Пустой список — раздела не будет."""
+    """Текст для контекста писателя.
+
+    Если объекты неразличимы, места не присваиваем и прямо говорим об этом:
+    ранг «ВТБ первый, Т-Банк второй» при одинаковом раскрытии — выдумка,
+    основанная на том, сколько страниц про кого удалось прочитать.
+    """
     if not rows:
         return ""
-    lines = [
-        "ПОЛНОТА РАСКРЫТИЯ (посчитано по фактам, не оценочно). Столбцы: "
-        "закрыто характеристик из контракта; фактов заявленных / со стороны / "
-        "норм регулятора.",
-        "",
-    ]
+    if is_degenerate(rows):
+        r = rows[0]
+        return (
+            "ПОЛНОТА РАСКРЫТИЯ: объекты НЕРАЗЛИЧИМЫ — каждый закрыл "
+            f"{r.closed} из {r.total} характеристик, со стороны проверено "
+            f"{r.with_observed}. Ранжировать по раскрытию нельзя: мест не "
+            "присваивай, так и напиши, что по этому критерию различий нет. "
+            "Если по существу вопроса уместен другой порядок — построй его "
+            "сам, назови критерий и обоснуй фактами.")
+    lines = ["ПОЛНОТА РАСКРЫТИЯ (посчитано по фактам). Закрыто характеристик "
+             "заявленной стороной; из них проверено взглядом со стороны.", ""]
     for i, r in enumerate(rows, 1):
-        lines.append(f"  {i}. {r.label}: {r.closed} из {r.total} "
-                     f"({r.share:.0%}) | заявлено {r.declared}, "
-                     f"со стороны {r.observed}, норм {r.regulatory}")
+        lines.append(f"  {i}. {r.label}: раскрыто {r.closed} из {r.total} "
+                     f"({r.share:.0%}), проверено со стороны {r.with_observed}")
     return "\n".join(lines)

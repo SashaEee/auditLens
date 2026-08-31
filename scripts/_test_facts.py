@@ -106,12 +106,28 @@ _rows = _rank.build(_NS(subjects=["sberbank", "tinkoff"],
                                         "tinkoff": "Т-Банк"}),
                     _r, ["ставка", "жалобы", "нормы"])
 chk("полнее раскрывший идёт первым", _rows[0].subject == "sberbank")
-chk("считается доля закрытых характеристик",
-    _rows[0].closed == 3 and _rows[1].closed == 1)
-chk("стороны доказательства разнесены",
-    _rows[0].regulatory == 1 and _rows[0].observed == 1)
-chk("в таблице для писателя есть критерий",
+chk("считается раскрытие заявленной стороной, а не число фактов",
+    _rows[0].closed == 1 and _rows[1].closed == 1)
+chk("проверка со стороны учитывается отдельно",
+    _rows[0].with_observed == 1 and _rows[1].with_observed == 0)
+chk("в тексте для писателя есть критерий",
     "ПОЛНОТА РАСКРЫТИЯ" in _rank.render(_rows))
+
+# Вырожденный случай: все объекты одинаковы. Прежний ранг присваивал места по
+# числу собранных фактов — то есть по тому, про кого больше прочитали.
+_r2 = FactRegistry()
+for _s in ("sberbank", "tinkoff"):
+    for _a in ("ставка", "жалобы"):
+        _r2.add(subject=_s, attribute=_a, value="v", unit="",
+                verbatim="достаточно длинная цитата", url=f"https://{_s}.ru",
+                stance="declared")
+_rows2 = _rank.build(_NS(subjects=["sberbank", "tinkoff"],
+                         subject_labels={"sberbank": "Сбербанк",
+                                         "tinkoff": "Т-Банк"}),
+                     _r2, ["ставка", "жалобы"])
+chk("неразличимые объекты опознаются", _rank.is_degenerate(_rows2))
+chk("при неразличимости места НЕ присваиваются",
+    "НЕРАЗЛИЧИМЫ" in _rank.render(_rows2) and "1." not in _rank.render(_rows2))
 
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)
