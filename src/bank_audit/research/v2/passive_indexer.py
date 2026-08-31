@@ -255,6 +255,51 @@ def _join_sections(*parts: str) -> str:
     return "\n\n".join(p.strip("\n") for p in parts if p and p.strip())
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    num = sum(x * y for x, y in zip(a, b))
+    da = sum(x * x for x in a) ** 0.5
+    db = sum(y * y for y in b) ** 0.5
+    return num / (da * db) if da and db else 0.0
+
+
+def _score_windows(windows: list[tuple[int, str]], question: str,
+                   terms: list[str]) -> list[tuple[float, int, str]]:
+    """Оценка релевантности окон вопросу.
+
+    Основной путь — смысловая близость (эмбеддинги той же модели, что и в
+    поиске по базе знаний): работает для любого вопроса на любом языке и не
+    требует знать заранее, что аудитор спросит. Один батч-вызов на страницу.
+
+    Запасной путь (эмбеддинги недоступны или упали) — лексическое перекрытие
+    со словами САМОГО вопроса плюс общий признак конкретики: доля цифр и
+    единиц измерения. Это не словарь предметной области, а типографика: текст
+    с числами обычно информативнее вводных абзацев, но вес у признака малый,
+    чтобы описание процесса не проигрывало таблице тарифов.
+    """
+    if not windows:
+        return []
+    chunks = [c for _s, c in windows]
+    if question and os.getenv("V2_EXCERPT_SEMANTIC", "1") != "0":
+        try:
+            from ...rag.embedder import embed_batch
+            vecs = embed_batch([question] + chunks)
+            if vecs and len(vecs) == len(chunks) + 1:
+                qv = vecs[0]
+                return [(_cosine(qv, vecs[i + 1]), windows[i][0], chunks[i])
+                        for i in range(len(chunks))]
+        except Exception as e:   # noqa: BLE001 — отбор не должен ронять чтение
+            log.info("[excerpt] смысловой отбор недоступен (%s), лексический",
+                     type(e).__name__)
+    out = []
+    for start, chunk in windows:
+        low = chunk.lower()
+        lex = sum(low.count(t) for t in terms)
+        digits = sum(ch.isdigit() for ch in chunk)
+        concreteness = digits / max(1, len(chunk)) * 10
+        out.append((lex + concreteness, start, chunk))
+    return out
+
+
 def _relevant_excerpt(text: str, query_hint: str, budget: int) -> str:
     """Окна текста, наиболее релевантные вопросу.
 
@@ -288,35 +333,12 @@ def _relevant_excerpt(text: str, query_hint: str, budget: int) -> str:
     if cur:
         windows.append((start_idx, "\n".join(cur)))
 
-    # Вес числа зависит от ТИПА ВОПРОСА, а не задан раз и навсегда. Вопрос
-    # «сравни ставки» и вопрос «как оформить карту, где проще» требуют разного:
-    # во втором числа почти не нужны, важны шаги, требования и оговорки. Ставка
-    # чисел выше ключевых слов ВСЕГДА выбрасывала бы описание процесса в пользу
-    # таблицы тарифов.
-    _proc_markers = ("как ", "процесс", "оформ", "получ", "открыт", "закрыт",
-                     "требован", "документ", "услови", "порядок", "шаг",
-                     "проще", "сложн", "срок рассмотр", "отказ", "жалоб",
-                     "поддержк", "приложени", "онлайн", "офис", "заявк")
-    _q = (query_hint or "").lower()
-    _process_q = any(m in _q for m in _proc_markers)
-    _num_w = int(os.getenv("V2_EXCERPT_NUM_WEIGHT",
-                           "2" if _process_q else "6"))
-    # Слова-маркеры процедурного текста: по ним узнаём абзац с описанием шагов,
-    # даже если в нём нет ни одной цифры.
-    _proc_words = ("нужно", "необходимо", "потребуется", "заявк", "документ",
-                   "паспорт", "анкет", "подпис", "рассмотр", "решение",
-                   "одобрен", "отказ", "шаг", "этап", "онлайн", "в офисе",
-                   "в приложении", "курьер", "доставк", "активац")
-    scored = []
-    for start, chunk in windows:
-        low = chunk.lower()
-        n_terms = sum(low.count(t) for t in terms)
-        n_nums = len(re.findall(r"\d[\d .,]*\s*(?:₽|руб|%|мес|год|дн)", chunk))
-        n_proc = sum(1 for w in _proc_words if w in low)
-        score = n_nums * _num_w + n_terms * 2 + n_proc * (4 if _process_q else 1)
-        if (n_nums or n_proc) and n_terms:
-            score += 5              # и по теме, и с содержанием — лучший случай
-        scored.append((score, start, chunk))
+    # Релевантность окна вопросу считается СМЫСЛОМ, а не списками слов.
+    # Прежняя версия угадывала тип вопроса по словарям («как оформить» →
+    # процесс, иначе тарифы) — это костыль: перечислить все формулировки
+    # аудиторов невозможно. Модель эмбеддингов сама решает, что ближе к
+    # вопросу — абзац про шаги подачи заявки или таблица ставок.
+    scored = _score_windows(windows, query_hint, terms)
     if not scored:
         return _join_sections(body[:body_budget], tables, ui_tail)[:budget]
 
