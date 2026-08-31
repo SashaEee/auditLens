@@ -25,7 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
 from .. import db
-from ..web.auth import CurrentUser
+from ..web.auth import CurrentUser, dev_grant_all_enabled
 from . import db_schema as schema
 
 log = logging.getLogger(__name__)
@@ -55,6 +55,8 @@ _CONTEXT_ADMIN = {"id": "admin", "title": "Управление доступом
 
 def is_active_member(username: str, *, session) -> bool:
     """Активная membership-строка = действующий член модуля."""
+    if dev_grant_all_enabled():
+        return True
     return (
         session.execute(
             text(
@@ -69,6 +71,8 @@ def is_active_member(username: str, *, session) -> bool:
 
 def has_active_role(username: str, role: str, *, session) -> bool:
     """Активное назначение роли (отзыв = status='revoked')."""
+    if dev_grant_all_enabled() and role in (ROLE_CCKS_EXPERT, ROLE_MODULE_ADMIN):
+        return True
     return (
         session.execute(
             text(
