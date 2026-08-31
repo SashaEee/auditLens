@@ -25,6 +25,11 @@ log = logging.getLogger(__name__)
 # продуктовой страницы после очистки остаются сотни символов условий.
 _TOO_SHORT = 400
 
+# Что реально прочитано за прогон: url → текст. Нужно для сверки чисел отчёта
+# (см. verify.py) — у движка gpt-researcher нет нашего KnowledgeBundle, и
+# доказательной базой служат сами собранные страницы.
+READ_PAGES: dict[str, str] = {}
+
 
 class AuditLensScraper:
     """Забор страницы нашим fetcher-ом с эскалацией до браузера."""
@@ -57,6 +62,8 @@ class AuditLensScraper:
             btext, btitle = self._read(browser=True)
             if len(btext) > len(text):
                 text, title = btext, btitle
+        if text:
+            READ_PAGES[self.link] = text
         return text, [], title
 
 
