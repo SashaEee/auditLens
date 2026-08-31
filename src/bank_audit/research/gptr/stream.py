@@ -101,7 +101,11 @@ async def stream_deep_research_gptr(question: str,
     yield _evt({"type": "plan", "steps": plan.to_ui_plan(),
                 "question_nature": plan.question_nature,
                 "subjects": plan.subjects,
-                "attributes": attributes,      # контракт: что обязаны закрыть
+                # Контракт: что обязаны закрыть. Списком, а не объектом —
+                # иначе в поток уезжает repr и UI получает мусор.
+                "attributes": list(attributes),
+                "observed_attribute": attributes.observed,
+                "regulatory_attribute": attributes.regulatory,
                 "client_segment": plan.client_segment})
 
     # ── Сбор ─────────────────────────────────────────────────────────────
