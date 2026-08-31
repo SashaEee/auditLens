@@ -69,6 +69,7 @@ def client(app_session, monkeypatch):
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     monkeypatch.setattr(db_mod, "session", lambda: _engine_session(SessionLocal))
     monkeypatch.delenv("LOOPHOLE_DEV_AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("LOOPHOLE_DEV_GRANT_ALL", raising=False)
 
     def override_session():
         yield app_session
@@ -149,6 +150,39 @@ def test_local_dev_auth_enabled_by_explicit_env(client, app_session, monkeypatch
     assert {context["id"] for context in r.json()["contexts"]} == {
         "catalog", "sources", "ai_research",
     }
+
+
+def test_dev_grant_all_gives_any_principal_all_module_contexts(client, monkeypatch):
+    """Только явный dev-флаг снимает membership и role gates локального модуля."""
+    monkeypatch.setenv("LOOPHOLE_DEV_GRANT_ALL", "1")
+
+    r = client.get("/api/loophole/contexts", headers=_auth("temporary-user"))
+
+    assert r.status_code == 200
+    assert {context["id"] for context in r.json()["contexts"]} == {
+        "catalog", "sources", "ai_research", "queue", "admin",
+    }
+
+
+def test_dev_grant_all_authenticates_local_user_without_sso(client, monkeypatch):
+    """Локальный запуск не требует одновременно включать два dev-переключателя."""
+    monkeypatch.setenv("LOOPHOLE_DEV_GRANT_ALL", "1")
+
+    r = client.get("/api/loophole/contexts")
+
+    assert r.status_code == 200
+    assert {context["id"] for context in r.json()["contexts"]} == {
+        "catalog", "sources", "ai_research", "queue", "admin",
+    }
+
+
+def test_dev_grant_all_requires_exactly_one(client, monkeypatch):
+    """Нечёткие значения флага не ослабляют авторизацию по ошибке конфигурации."""
+    monkeypatch.setenv("LOOPHOLE_DEV_GRANT_ALL", "true")
+
+    r = client.get("/api/loophole/contexts", headers=_auth("temporary-user"))
+
+    assert r.status_code == 403
 
 
 def test_x_user_id_header_not_trusted(client):
