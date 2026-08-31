@@ -59,7 +59,8 @@ async def run_case(case: dict) -> dict:
     our_planner.install(plan, q)
     t_plan = time.time()
 
-    al_scraper.READ_PAGES.clear()      # доказательная база этого кейса
+    from bank_audit.research.gptr import runstate
+    runstate.new_run()                 # своё состояние на кейс
     r = GPTResearcher(query=q, report_type="research_report")
     await r.conduct_research()
     t_res = time.time()

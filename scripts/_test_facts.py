@@ -92,7 +92,8 @@ chk("цитата доезжает до писателя дословно",
 
 print("принадлежность отзыва берётся из корпуса, а не угадывается")
 from bank_audit.research.gptr import reviews as _rev  # noqa: E402
-_rev.META.clear()
+from bank_audit.research.gptr import runstate as _rs  # noqa: E402
+_rs.new_run()
 _recs = [{"bank": "Т-Банк", "subject": "tinkoff", "date": "2026-07-16",
           "product": "Инвестиции", "url": "https://banki.ru/r/13230337",
           "text": "с меня списывают комиссию почти в 10 раз больше"}]
@@ -104,6 +105,10 @@ chk("служебная строка не подмешана в текст",
     "Отзыв клиента" not in _pages["https://banki.ru/r/13230337"])
 chk("подсказка о принадлежности отдана отдельно",
     _rev.subject_hints() == {"https://banki.ru/r/13230337": "tinkoff"})
+_prev = _rs.new_run()          # новый прогон — чужие метаданные не видны
+chk("состояние прогона не течёт в соседний вопрос",
+    _rev.subject_hints() == {})
+_rs.new_run(); _rev.as_pages(_recs)
 _reg3 = FactRegistry()
 _reg3.add(subject="tinkoff", attribute="комиссия", value="в 10 раз больше",
           unit="", verbatim="списывают комиссию почти в 10 раз больше",

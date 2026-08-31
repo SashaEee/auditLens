@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from ..entity_extractor import _BANK_DOMAINS
+from . import runstate
 from ..v2.tools.web_tools import REGULATOR_DOMAINS
 
 log = logging.getLogger(__name__)
@@ -73,6 +74,8 @@ def plan_to_subqueries(plan, question: str, *, attributes=None,
         if per_subject > 1:
             queries.append(f"{name} {topic} условия документы сроки")
 
+    queries.extend(mission_queries)
+
     # Общие запросы: сравнение и то, чего нет на сайтах банков (обзоры, жалобы).
     if len(subjects) > 1:
         names = ", ".join(labels.get(s, s) for s in subjects[:4])
@@ -88,17 +91,20 @@ def plan_to_subqueries(plan, question: str, *, attributes=None,
             queries.append(f"{reg_attr} {topic} site:{site}"[:300])
         queries.append(f"{reg_attr} {topic} закон требования"[:300])
 
-    # Запросы по ХАРАКТЕРИСТИКАМ контракта, без доменного фильтра. Это и есть
-    # способ добыть наблюдаемую сторону, не заводя в коде списка слов про
-    # отзывы: характеристику «с чем сталкиваются клиенты на практике» называет
-    # план под конкретный вопрос, а поиск сам приводит туда, где об этом пишут
-    # (сайта банка среди таких источников по определению нет).
+    # Запросы по ХАРАКТЕРИСТИКАМ контракта, без доменного фильтра.
+    #
+    # Брать первые три характеристики было ошибкой: наблюдаемая и нормативная
+    # добавляются в конец списка, и веб-запросов про жалобы не формировалось
+    # НИКОГДА — дыру закрывал только корпус отзывов, а для объектов вне корпуса
+    # взгляд со стороны не искался вовсе. Наблюдаемую берём явно, а не по месту.
     attr_list = list(attributes) if attributes else []
-    for attr in attr_list[:3]:
+    obs = getattr(attributes, "observed", "") if attributes else ""
+    regular = [a for a in attr_list if a not in (obs, reg_attr)]
+    picks = regular[:2] + ([obs] if obs else [])
+    for attr in picks:
         for slug in subjects[:3]:
             queries.append(f"{labels.get(slug, slug)} {attr}".strip()[:300])
 
-    queries.extend(mission_queries)
     if not queries:
         queries.append(question)
 
@@ -116,17 +122,26 @@ def plan_to_subqueries(plan, question: str, *, attributes=None,
     return out, domains
 
 
-def install(plan, question: str, attributes: list[str] | None = None) -> None:
-    """Подменяет планировщик gpt-researcher нашим планом на этот прогон."""
+def install(plan, question: str, attributes=None) -> list[str]:
+    """Кладёт подзапросы в состояние прогона и подменяет планировщик.
+
+    Подмена ставится ОДИН РАЗ на процесс, а подзапросы читаются из состояния
+    текущего прогона: иначе замыкание последнего вопроса перебивало план того,
+    кто ещё считает, и в поиск уходили чужие site:домены.
+    """
     from gpt_researcher.skills.researcher import ResearchConductor
 
     subqueries, domains = plan_to_subqueries(plan, question,
                                              attributes=attributes)
+    runstate.current().subqueries = list(subqueries)
 
-    async def plan_research(self, query, query_domains=None):
-        log.info("gptr-planner: %d подзапросов из плана Кондуктора, "
-                 "доверенных доменов %d", len(subqueries), len(domains))
-        return list(subqueries)
+    if not getattr(ResearchConductor, "_auditlens_patched", False):
+        async def plan_research(self, query, query_domains=None):
+            subs = list(runstate.current().subqueries)
+            log.info("gptr-planner: %d подзапросов из плана Кондуктора",
+                     len(subs))
+            return subs or [query]
 
-    ResearchConductor.plan_research = plan_research
+        ResearchConductor.plan_research = plan_research
+        ResearchConductor._auditlens_patched = True
     return domains

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 
+from . import runstate
+
 log = logging.getLogger(__name__)
 
 # Сколько жалоб берём на объект: достаточно, чтобы увидеть повторяющиеся темы,
@@ -82,10 +84,10 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
     return out
 
 
-# url → {bank, date, product}. Метаданные держим ОТДЕЛЬНО от текста отзыва:
-# когда я подставлял их в начало страницы, модель цитировала мою же служебную
-# строку («Отзыв клиента о банке Т-Банк от 2025-12-24») как слова клиента.
-META: dict[str, dict] = {}
+# Метаданные отзыва держим ОТДЕЛЬНО от его текста: когда я подставлял их в
+# начало страницы, модель цитировала мою же служебную строку («Отзыв клиента о
+# банке Т-Банк от 2025-12-24») как слова клиента. Живут они в состоянии
+# прогона, а не в модуле — иначе текут в соседний вопрос.
 
 
 def as_pages(records: list[dict]) -> dict[str, str]:
@@ -95,13 +97,13 @@ def as_pages(records: list[dict]) -> dict[str, str]:
     цитаты, одинаковые якоря. В текст попадает ТОЛЬКО то, что написал клиент.
     """
     pages: dict[str, str] = {}
-    META.clear()
+    meta = runstate.current().review_meta
     for r in records:
         url = r.get("url") or ""
         if not url:
             continue
         pages[url] = r["text"]
-        META[url] = {"bank": r.get("bank", ""), "date": r.get("date", ""),
+        meta[url] = {"bank": r.get("bank", ""), "date": r.get("date", ""),
                      "product": r.get("product", ""),
                      "subject": r.get("subject", "")}
     return pages
@@ -109,7 +111,9 @@ def as_pages(records: list[dict]) -> dict[str, str]:
 
 def subject_hints() -> dict[str, str]:
     """url → слаг объекта, о котором отзыв. Правда корпуса, не догадка модели."""
-    return {u: m["subject"] for u, m in META.items() if m.get("subject")}
+    return {u: m["subject"]
+            for u, m in runstate.current().review_meta.items()
+            if m.get("subject")}
 
 
 def stamp_dates(registry) -> int:
@@ -119,8 +123,9 @@ def stamp_dates(registry) -> int:
     брать её из текста нельзя — там её нет. Берём из метаданных корпуса.
     """
     n = 0
+    meta_all = runstate.current().review_meta
     for f in registry.facts:
-        meta = META.get(f.url)
+        meta = meta_all.get(f.url)
         if meta and meta.get("date") and not f.date:
             f.date = meta["date"]
             n += 1

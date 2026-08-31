@@ -15,7 +15,7 @@ import logging
 import os
 import time
 
-from . import compat, gaps as al_gaps, planner as al_planner
+from . import compat, gaps as al_gaps, planner as al_planner, runstate
 from . import scraper as al_scraper, verify as al_verify
 from .retriever import FleetSearch
 
@@ -172,6 +172,7 @@ async def run(question: str, *, history: list[dict] | None = None) -> dict:
     from ..v2.conductor import plan_research
 
     install()
+    state = runstate.new_run()
     t0 = time.time()
 
     client = AsyncOpenAI(api_key=os.environ["LLM_API_KEY"],
@@ -182,7 +183,6 @@ async def run(question: str, *, history: list[dict] | None = None) -> dict:
     al_planner.install(plan, question)
     t_plan = time.time()
 
-    al_scraper.READ_PAGES.clear()      # доказательная база именно этого прогона
     researcher = GPTResearcher(
         query=question, report_type="research_report",
         agent="AuditLens", role=_role_prompt(plan, question))
@@ -192,7 +192,7 @@ async def run(question: str, *, history: list[dict] | None = None) -> dict:
     report = await researcher.write_report()
     t_write = time.time()
 
-    pages = dict(al_scraper.READ_PAGES)
+    pages = dict(state.pages)
     verification = al_verify.verify_report(report, pages)
     report += al_gaps.render(al_gaps.collect(plan, pages, verification))
 

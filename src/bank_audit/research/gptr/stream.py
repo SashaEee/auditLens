@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, facts as al_facts
-from . import ranking as al_rank, reviews as al_reviews
+from . import ranking as al_rank, reviews as al_reviews, runstate
 from . import gaps as al_gaps, planner as al_planner
 from . import scraper as al_scraper, verify as al_verify
 from .engine import _role_prompt, install, report_prompt
@@ -67,6 +67,8 @@ async def stream_deep_research_gptr(question: str,
     from ..v2.conductor import plan_research, normalize_question
 
     started = time.time()
+    # Своё состояние на прогон: параллельные вопросы не должны видеть друг друга.
+    state = runstate.new_run()
     question = normalize_question(question)
     yield _evt({"type": "mode", "value": "deep"})
 
@@ -114,7 +116,6 @@ async def stream_deep_research_gptr(question: str,
                 "label": "Сбор данных",
                 "detail": "Поиск и чтение источников по подзапросам плана",
                 "estimate_s": 60})
-    al_scraper.READ_PAGES.clear()
     researcher = GPTResearcher(query=question, report_type="research_report",
                                agent="AuditLens",
                                role=_role_prompt(plan, question))
@@ -127,8 +128,8 @@ async def stream_deep_research_gptr(question: str,
         yield _evt({"type": "done"})
         return
 
-    pages = dict(al_scraper.READ_PAGES)
-    unreadable = dict(al_scraper.UNREADABLE)
+    pages = dict(state.pages)
+    unreadable = dict(state.unreadable)
 
     # Наблюдаемая сторона в первую очередь из собственного корпуса отзывов:
     # там живые жалобы с датами и ссылками, тогда как веб отдаёт обзоры.
@@ -215,7 +216,11 @@ async def stream_deep_research_gptr(question: str,
     if sources:
         high = sum(1 for s in sources if s["trust_score"] >= 0.85)
         mid = sum(1 for s in sources if 0.6 <= s["trust_score"] < 0.85)
-        yield _evt({"type": "sources", "sources": sources, "failed": dropped})
+        # dropped — прочитано, но НЕ процитировано. Это не «недоступен»:
+        # поле failed UI рисует как «источники недоступны», поэтому шлём 0 и
+        # отдаём честное число отдельным полем.
+        yield _evt({"type": "sources", "sources": sources, "failed": 0,
+                    "read_not_cited": dropped})
         yield _evt({"type": "coverage", "total_sources": len(sources),
                     "high_trust": high, "mid_trust": mid,
                     "low_trust": len(sources) - high - mid,
@@ -227,7 +232,7 @@ async def stream_deep_research_gptr(question: str,
         yield _evt({"type": "text", "chunk": report[i:i + _CHUNK]})
 
     # ── Сверка и пробелы ─────────────────────────────────────────────────
-    verification = al_verify.verify_report(report, pages)
+    verification = al_verify.verify_report(report, registry, pages)
     verification.update({
         "фактов": len(registry.facts),
         "абзацев_без_якоря": al_cit.unanchored_claims(report),
@@ -248,7 +253,14 @@ async def stream_deep_research_gptr(question: str,
                 "facts_total": len(registry.facts),
                 "citations": cit_stats.get("цитирований", 0),
                 "unanchored_paragraphs": verification["абзацев_без_якоря"],
-                "citation_errors": []})
+                "manual_check": verification.get("manual_check") or [],
+                "base": verification.get("база", ""),
+                # Якоря на несуществующие факты — это и есть ошибки цитирования.
+                # Раньше поле уезжало пустым, хотя число уже было посчитано.
+                "citation_errors": ([
+                    f"якорей на несуществующие факты: "
+                    f"{cit_stats.get('якорей_в_никуда', 0)}"]
+                    if cit_stats.get("якорей_в_никуда") else [])})
 
     yield _evt({"type": "gaps", "insufficient_banks": [],
                 "missing": [{"attribute": g, "missing_banks": [], "all": False}

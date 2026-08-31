@@ -18,6 +18,7 @@ import logging
 from ...rag import fetcher
 from ...rag.parsers.html_parser import parse_html
 from ..v2.tools.web_tools import _looks_like_stub
+from . import runstate
 
 log = logging.getLogger(__name__)
 
@@ -27,14 +28,12 @@ _TOO_SHORT = 400
 # Строка такой длины — это уже проза, а не заголовок и не пункт меню.
 _PROSE_LINE = 120
 
-# Что реально прочитано за прогон: url → текст.
-READ_PAGES: dict[str, str] = {}
-# Почему страница НЕ дала пригодного текста: url → причина. Нужно, чтобы
-# отчёт различал «организация не раскрывает» и «мы не смогли прочитать»:
+# Прочитанное и причины нечитаемости живут в состоянии ПРОГОНА (runstate), а
+# не в модульных словарях: иначе параллельные вопросы затирают друг друга.
+# Различать «организация не раскрывает» и «мы не смогли прочитать» обязательно:
 # на странице ВТБ «Сколько делается карта» есть заголовки «Что влияет на время
-# изготовления» и «Доставка в цифрах», а самих цифр нет — их подгружает скрипт.
+# изготовления» и «Доставка в цифрах», а чисел нет — их подгружает скрипт.
 # Прежний конвейер объявлял это непрозрачностью банка. Это ложный вывод.
-UNREADABLE: dict[str, str] = {}
 
 
 def _is_skeleton(text: str) -> bool:
@@ -54,9 +53,13 @@ def _is_skeleton(text: str) -> bool:
 class AuditLensScraper:
     """Забор страницы нашим fetcher-ом с эскалацией до браузера."""
 
-    def __init__(self, link: str, session=None, scraper_name: str = "auditlens"):
+    def __init__(self, link: str, session=None, scraper_name: str = "auditlens",
+                 state=None):
         self.link = link
         self.session = session
+        # Состояние связывается при ВЫБОРЕ скрапера (см. install): сам scrape()
+        # исполняется в пуле потоков, куда contextvars не переносятся.
+        self.state = state or runstate.current()
 
     def _read(self, *, browser: bool) -> tuple[str, str]:
         try:
@@ -85,15 +88,19 @@ class AuditLensScraper:
         # Причину фиксируем ВСЕГДА, даже если текст всё же вернули: отчёт
         # обязан отличать «нет данных» от «не смогли прочитать».
         if not text:
-            UNREADABLE[self.link] = "пустой ответ"
+            self.state.note_unreadable(self.link, "пустой ответ")
         elif _looks_like_stub(title, text):
-            UNREADABLE[self.link] = "защита от ботов"
+            self.state.note_unreadable(self.link, "защита от ботов")
         elif len(text) < _TOO_SHORT:
-            UNREADABLE[self.link] = "почти пустая страница"
+            self.state.note_unreadable(self.link, "почти пустая страница")
         elif _is_skeleton(text):
-            UNREADABLE[self.link] = "каркас без содержимого (данные грузит скрипт)"
+            self.state.note_unreadable(
+                self.link, "каркас без содержимого (данные грузит скрипт)")
+        else:
+            self.state.note_page(self.link, text)
+            return text, [], title
         if text:
-            READ_PAGES[self.link] = text
+            self.state.pages[self.link] = text   # негодную оставляем помеченной
         return text, [], title
 
 
@@ -101,6 +108,8 @@ def install() -> None:
     """Регистрирует наш скрапер в реестре gpt-researcher."""
     from gpt_researcher.scraper import scraper as _s
 
+    if getattr(_s.Scraper, "_auditlens_patched", False):
+        return
     original = _s.Scraper.get_scraper
 
     def get_scraper(self, link):
@@ -109,6 +118,14 @@ def install() -> None:
         path = link.split("?", 1)[0].lower()
         if path.endswith(".pdf") or "arxiv.org" in link:
             return original(self, link)
-        return AuditLensScraper
+        # Здесь мы ещё в контексте прогона — связываем состояние сейчас, потому
+        # что сам scrape() уедет в пул потоков без контекста.
+        state = runstate.current()
+
+        def make(link_, session=None, *a, **kw):
+            return AuditLensScraper(link_, session, state=state)
+
+        return make
 
     _s.Scraper.get_scraper = get_scraper
+    _s.Scraper._auditlens_patched = True
