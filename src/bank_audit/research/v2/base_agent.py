@@ -668,7 +668,12 @@ class BaseAgent:
             # (FINAL_MODEL_TIER=smart у researcher) идёт из истории сообщений, и
             # потерянный кусок страницы = потерянный факт. Sonnet имеет 200k
             # контекста — запас есть. web_search/semantic_search остаются 12000.
-            cap = 18000 if name == "read_url" else 12000
+            # Потолок был выше бюджета самой страницы (18 000 против 12 000),
+            # поэтому структурное сжатие не срабатывало никогда. Держим его
+            # чуть выше бюджета чтения — как страховку от разросшихся ответов.
+            _read_budget = int(os.getenv("V2_READ_BUDGET_CHARS", "5000"))
+            cap = (_read_budget + 2000) if name == "read_url" else int(
+                os.getenv("V2_TOOL_RESULT_CAP", "9000"))
             if len(result) > cap:
                 result = _shrink_tool_result(result, cap)
             return result

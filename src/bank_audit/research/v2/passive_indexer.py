@@ -163,8 +163,13 @@ def index_and_get_text(url: str, *,
             # сверка дословных цитат (антигаллюцинации). Раньше это была одна
             # и та же строка, поэтому любое сжатие контекста автоматически
             # урезало базу сверки и честные цитаты становились «неподтверждёнными».
-            text = (_relevant_excerpt(full, query_hint, budget)
-                    if query_hint and len(full) > budget else full[:budget])
+            # Выборка работает ВСЕГДА, а не только на страницах больше бюджета:
+            # типичная страница банка укладывалась в 12 000 и ехала целиком,
+            # вместе с меню и фильтрами. Подсказка — вопрос аудитора, если
+            # агент не передал свою.
+            _hint = query_hint or _origin_ctx().get("question") or ""
+            text = (_relevant_excerpt(full, _hint, budget)
+                    if len(full) > budget or _hint else full[:budget])
             full_text = full
     except Exception as e:
         log.info("fetch+parse failed for %s: %s", url[:80], e)
@@ -221,34 +226,101 @@ def _load_from_db(document_id: int, query_hint: str, budget: int) -> tuple[str, 
     return _relevant_excerpt(full, query_hint, budget), title
 
 
-def _relevant_excerpt(text: str, query_hint: str, budget: int) -> str:
-    """Выбирает окна, наиболее релевантные query_hint (плотность ключевых слов)."""
-    terms = [w.lower() for w in re.split(r"\W+", query_hint) if len(w) >= 4]
-    if not terms:
-        return text[:budget]
-    win = 1200
-    step = int(win * 0.75)
-    windows = []
-    for start in range(0, len(text), step):
-        chunk = text[start:start + win]
-        if len(chunk) < 200:
-            continue
-        low = chunk.lower()
-        score = sum(low.count(t) for t in terms)
-        # бонус за числа (часто тарифы)
-        score += len(re.findall(r"\d[\d .,]*\s*(?:₽|руб|%|мес|год|дн)", chunk)) * 2
-        windows.append((start, chunk, score))
-    if not windows:
-        return text[:budget]
-    windows.sort(key=lambda x: -x[2])
-    picked, total = [], 0
-    for start, chunk, _ in windows:
-        if total >= budget:
+# Секции, которые в выдачу попадают ЦЕЛИКОМ, минуя отбор по релевантности:
+# таблицы — самые доказательные данные страницы, а дописываются они в конец,
+# поэтому любое усечение по объёму било именно по ним.
+_ALWAYS_KEEP = ("# Таблицы страницы", "# Таблицы документа")
+_UI_TAIL = "# Элементы интерфейса"
+
+
+def _split_sections(text: str) -> tuple[str, str, str]:
+    """Разделяет текст на (основной, обязательные таблицы, служебный хвост)."""
+    tail = ""
+    if _UI_TAIL in text:
+        text, _, tail_part = text.partition(_UI_TAIL)
+        tail = _UI_TAIL + tail_part
+    keep = ""
+    for marker in _ALWAYS_KEEP:
+        if marker in text:
+            text, _, keep_part = text.partition(marker)
+            keep = marker + keep_part
             break
+    return text, keep, tail
+
+
+def _join_sections(*parts: str) -> str:
+    """Склейка секций через пустую строку: без неё последняя строка окна
+    слипалась с заголовком таблицы и переставала быть дословной подстрокой
+    исходника — сверка цитат такую строку уже не находила."""
+    return "\n\n".join(p.strip("\n") for p in parts if p and p.strip())
+
+
+def _relevant_excerpt(text: str, query_hint: str, budget: int) -> str:
+    """Окна текста, наиболее релевантные вопросу.
+
+    Отбор ЭКСТРАКТИВНЫЙ: куски копируются дословно, поэтому сверка цитат по
+    полному тексту источника (этап 2) продолжает работать, а число не может
+    «переехать» к чужой подписи. Границы окон — по переводам строк: раньше рез
+    шёл по символам и разрывал строку таблицы посередине.
+    """
+    body, tables, ui_tail = _split_sections(text or "")
+    reserve = len(tables) + len(ui_tail)
+    body_budget = max(600, budget - reserve)
+
+    terms = [w.lower() for w in re.split(r"\W+", query_hint or "") if len(w) >= 4]
+    lines = body.split("\n")
+    if not terms or len(body) <= body_budget:
+        return _join_sections(body[:body_budget], tables, ui_tail)[:budget]
+
+    win = int(os.getenv("V2_EXCERPT_WINDOW", "1200"))
+    # Окна по строкам, а не по символам: строка таблицы или «Ставка — 16,5%»
+    # не должна рваться пополам.
+    windows, cur, cur_len, start_idx = [], [], 0, 0
+    for i, line in enumerate(lines):
+        cur.append(line)
+        cur_len += len(line) + 1
+        if cur_len >= win:
+            windows.append((start_idx, "\n".join(cur)))
+            # шаг с перекрытием: условие получения ставки часто стоит абзацем
+            # ниже самого числа, окна не должны разлучать их
+            back = max(1, len(cur) // 4)
+            cur, cur_len, start_idx = cur[-back:], sum(len(x) + 1 for x in cur[-back:]), i - back + 1
+    if cur:
+        windows.append((start_idx, "\n".join(cur)))
+
+    # Вес числа выше веса ключевого слова: ради чисел страница и читается.
+    # Замер компромисса «бюджет ↔ сохранность чисел» показал, что при равных
+    # весах отбор выбрасывал окна с тарифами в пользу описательных абзацев,
+    # где просто чаще встречается слово «вклад».
+    _num_w = int(os.getenv("V2_EXCERPT_NUM_WEIGHT", "6"))
+    scored = []
+    for start, chunk in windows:
+        low = chunk.lower()
+        n_terms = sum(low.count(t) for t in terms)
+        n_nums = len(re.findall(r"\d[\d .,]*\s*(?:₽|руб|%|мес|год|дн)", chunk))
+        # Окно без единого числа почти никогда не несёт условий продукта:
+        # держим его в конце очереди, но не выбрасываем совсем.
+        score = n_nums * _num_w + n_terms + (5 if n_nums and n_terms else 0)
+        scored.append((score, start, chunk))
+    if not scored:
+        return _join_sections(body[:body_budget], tables, ui_tail)[:budget]
+
+    scored.sort(key=lambda x: -x[0])
+    picked, total = [], 0
+    for score, start, chunk in scored:
+        # Проверяем ДО добавления: иначе окно перевешивало бюджет и срезалось
+        # финальной обрезкой по символам — причём срезалось самое релевантное,
+        # если оно стояло в середине страницы (после сортировки по позиции).
+        if total + len(chunk) > body_budget:
+            if picked:
+                continue
+            chunk = chunk[:body_budget]        # одно окно и то не влезло
         picked.append((start, chunk))
         total += len(chunk)
+        if total >= body_budget:
+            break
     picked.sort(key=lambda x: x[0])
-    return "\n…\n".join(c for _, c in picked)[:budget]
+    return _join_sections("\n…\n".join(c for _, c in picked), tables, ui_tail)
 
 
 def _raw_fetch_full(url: str, budget: int) -> tuple[str, str]:
