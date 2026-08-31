@@ -31,12 +31,6 @@ def test_default_ports_removed():
     assert dedup.normalize_target("http://a.ru:8080/p") == "a.ru:8080/p"
 
 
-def test_telegram_forms_equal():
-    assert dedup.normalize_target("@bank_secrets") == "t.me/bank_secrets"
-    assert dedup.normalize_target("https://t.me/bank_secrets") == "t.me/bank_secrets"
-    assert dedup.normalize_target("t.me/Bank_Secrets") == "t.me/bank_secrets"
-
-
 def test_empty_and_garbage():
     assert dedup.normalize_target("") == ""
     assert dedup.normalize_target("   ") == ""

@@ -188,6 +188,14 @@ async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monk
         user_id="analyst",
         workspace_id=1,
         session=session,
+        fetched_sources={
+            "https://example.ru/source": {
+                "url": "https://example.ru/source",
+                "title": "Проверенный источник",
+                "extracted_text": "Текст источника",
+                "published_at": "2026-08-27T09:25:00+03:00",
+            }
+        },
     )
 
     result = await tools_nanobot.AuditExtractLoopholesTool(context=context).execute(
@@ -204,6 +212,11 @@ async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monk
             "snippet": "Подтверждающая цитата",
             "bank_slug": "sberbank",
             "raw_text": "Текст источника",
+            "source_title": "Проверенный источник",
+            "published_at": "2026-08-27T09:25:00+03:00",
+            "description": "Описание механизма",
+            "category": "Комиссии",
+            "severity": "high",
             "is_loophole": True,
         }
     ]

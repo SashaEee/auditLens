@@ -31,12 +31,6 @@ function parserTargetHref(target) {
       return null;
     }
   }
-  if (/^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(value)) {
-    return `https://t.me/${value.slice(1)}`;
-  }
-  if (/^t\.me\/\S+$/i.test(value)) {
-    return `https://${value}`;
-  }
   return null;
 }
 
@@ -205,7 +199,7 @@ function LoopholeApp() {
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState(false);
   const queueRequestRef = useRef(0);
-  // ── Администрирование (story 1.5): роль ЦК КС, Telegram-цели, сводный аудит ──
+  // ── Администрирование (story 1.5): роль ЦК КС и сводный аудит ──
   const [adminDenied, setAdminDenied] = useState(false);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState(false);
@@ -1403,6 +1397,30 @@ function LoopholeApp() {
     }
   };
 
+  const downloadResearchReport = async (reportId, format) => {
+    if (!reportId) return;
+    try {
+      const r = await fetch(`${API}/research/reports/${reportId}/export/${format}`);
+      if (!r.ok) {
+        const payload = await r.json().catch(() => null);
+        const detail = payload && payload.detail;
+        throw new Error((detail && detail.message) || "Не удалось скачать исследование.");
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      triggerCsvDownload({
+        url,
+        filename: `research-report-${reportId}.${format === "docx" ? "docx" : "pdf"}`,
+      });
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : "Не удалось скачать исследование.",
+        "error"
+      );
+    }
+  };
+
   // Ленивая загрузка полного контента записи (кэш — без повторных запросов).
   const toggleContent = (id) => {
     setExpanded(prev => {
@@ -1690,7 +1708,7 @@ function LoopholeApp() {
                   <th className="lp-col-narrow2" {...sortableThProps("verdict_confidence")}>
                     <button type="button" className="lp-sort-button"
                             onClick={() => toggleSort("verdict_confidence")}>
-                      Доверие{sortArrow("verdict_confidence")}
+                      Предварительная вероятность{sortArrow("verdict_confidence")}
                     </button>
                   </th>
                   <th {...sortableThProps("is_loophole")}>
@@ -1751,6 +1769,11 @@ function LoopholeApp() {
                             {r.verdict_reason}
                           </div>
                         )}
+                        {r.provenance && (
+                          <div className="lp-reason">
+                            Источник исследования #{r.provenance.research_id}
+                          </div>
+                        )}
                       </td>
                       <td className="lp-col-narrow2">{r.bank_slug || "—"}</td>
                       <td className="lp-col-narrow2">{fmtNum(r.verdict_confidence)}</td>
@@ -1805,7 +1828,7 @@ function LoopholeApp() {
             <div className="lp-source-grid">
               <form className="lp-source-card" onSubmit={e => { e.preventDefault(); createParserRequest(); }}>
                 <div className="lp-eyebrow">Веб-источник</div>
-                <h2>Заявка на разработку парсера</h2>
+                <h2>Параметры заявки</h2>
                 <p className="lp-muted">
                   Укажите страницу и требования. После рассмотрения команда разработки создаст парсер отдельно.
                 </p>
@@ -1982,8 +2005,10 @@ function LoopholeApp() {
                       <details className="lp-research-downloads">
                         <summary className="lp-btn lp-btn-sm">Скачать исследование</summary>
                         <div className="lp-research-download-options" aria-label="Формат скачивания">
-                          <a className="lp-btn lp-btn-sm" href={`${API}/research/reports/${lastResearchAnswer.report_id}/export/pdf`}>PDF</a>
-                          <a className="lp-btn lp-btn-sm" href={`${API}/research/reports/${lastResearchAnswer.report_id}/export/docx`}>Word</a>
+                          <button type="button" className="lp-btn lp-btn-sm"
+                                  onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "pdf")}>PDF</button>
+                          <button type="button" className="lp-btn lp-btn-sm"
+                                  onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "docx")}>Word</button>
                         </div>
                       </details>
                       <button type="button" className="lp-btn lp-btn-sm"
@@ -2041,7 +2066,7 @@ function LoopholeApp() {
                   <section className="lp-queue-list" aria-label="Записи на проверку">
                     <div className="lp-queue-list-head">
                       <span>Очередь ({queueRecords.length})</span>
-                      <span>по доверию</span>
+                      <span>по предварительной вероятности</span>
                     </div>
                     {queueRecords.map((record, index) => {
                       const active = queueSelected && queueSelected.record_id === record.record_id;
@@ -2056,7 +2081,7 @@ function LoopholeApp() {
                             <small>{record.bank_slug || "—"} · {fmtDate(record.published_at)}</small>
                           </span>
                           <span className="lp-queue-confidence">
-                            <small>Доверие</small>{fmtNum(record.verdict_confidence)}
+                            <small>Предварительная вероятность</small>{fmtNum(record.verdict_confidence)}
                           </span>
                         </button>
                       );
@@ -2069,7 +2094,7 @@ function LoopholeApp() {
                       <h2>{queueSelected.title || queueSelected.snippet || "—"}</h2>
                       <div className="lp-queue-detail-grid">
                         <div><span>Банк</span><strong>{queueSelected.bank_slug || "—"}</strong></div>
-                        <div><span>Доверие</span><strong>{fmtNum(queueSelected.verdict_confidence)}</strong></div>
+                        <div><span>Предварительная вероятность</span><strong>{fmtNum(queueSelected.verdict_confidence)}</strong></div>
                         <div><span>Статус</span><strong>{recordStatusLabel(queueSelected.status)}</strong></div>
                         <div><span>Дата публикации</span><strong>{fmtDate(queueSelected.published_at)}</strong></div>
                         <div><span>Собрано</span><strong>{fmtDate(queueSelected.collected_at)}</strong></div>

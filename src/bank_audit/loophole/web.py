@@ -258,7 +258,7 @@ def decide_verification_snapshot(
     return decision
 
 
-# ── Администрирование (story 1.5): роль ЦК КС, Telegram-цели, сводный аудит ──
+# ── Администрирование (story 1.5): роль ЦК КС и сводный аудит ────────────────
 def _require_admin(user_id: str, *, action: str, session) -> None:
     """Граница capability module_admin на КАЖДОМ админ-endpoint: 403 без
     активного назначения, отказ аудируется. Данные не возвращаются."""
@@ -333,17 +333,6 @@ def admin_revoke_role(
         "role": authorization.ROLE_CCKS_EXPERT,
         "status": "revoked",
     }
-
-
-@router.get("/admin/telegram-targets")
-def admin_telegram_targets(
-    user_id: str = Depends(get_user_id),
-    session=Depends(get_session),
-):
-    """Статус Telegram-целей: цель + операционный статус парсера,
-    без технических payload."""
-    _require_admin(user_id, action="admin_telegram_read", session=session)
-    return {"targets": repo.list_telegram_targets(session=session)}
 
 
 @router.get("/admin/audit")
@@ -684,9 +673,13 @@ async def chat(
     async def event_generator():
         import json as _json
         report_chunks: list[str] = []
+        completed = True
         try:
             stream = chat_graph.stream_chat(state, session=session)
             async for ev in stream:
+                if ev["event"] == "phase" and isinstance(ev["data"], dict):
+                    completed = completed and not bool(ev["data"].get("partial"))
+                    completed = completed and ev["data"].get("phase") != "error"
                 if ev["event"] in {"token", "partial"}:
                     data = ev["data"]
                     piece = data if isinstance(data, str) else data.get("text", data.get("message", ""))
@@ -697,7 +690,7 @@ async def chat(
                     "data": _json.dumps(ev["data"], ensure_ascii=False, default=str),
                 }
             result_text = state.get("answer") or "".join(report_chunks)
-            if result_text and state.get("run_id"):
+            if completed and result_text and state.get("run_id"):
                 report_id = ResearchCaseService(session).save_report_result(
                     workspace_id=body.workspace_id,
                     run_id=str(state["run_id"]),
@@ -1266,7 +1259,7 @@ def _parser_request_domain(url: str) -> str:
     if parsed.scheme not in {"http", "https"} or not domain:
         raise HTTPException(status_code=422, detail="Укажите URL веб-источника с http:// или https://")
     if domain in {"t.me", "telegram.me"}:
-        raise HTTPException(status_code=422, detail="Telegram-адреса не принимаются в этой форме")
+        raise HTTPException(status_code=422, detail="Укажите URL поддерживаемого публичного веб-источника")
     return domain
 
 

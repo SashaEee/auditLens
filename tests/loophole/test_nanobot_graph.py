@@ -25,8 +25,10 @@ async def test_run_chat_await_clarify(monkeypatch):
 async def test_run_chat_complete_does_not_crash(monkeypatch, session):
     from bank_audit.loophole.agent import AgentResult
     from bank_audit.loophole.chat import clarify as clarify_mod
+    from tests.loophole.test_story_2_2_research_cases import _create_research_schema
 
     monkeypatch.setenv("LOOPHOLE_ASKING_ENABLED", "1")
+    _create_research_schema(session)
 
     async def fake_gen(question, history=None):
         return {"complete": True, "questions": []}
@@ -65,17 +67,28 @@ async def test_stream_chat_await_clarify(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stream_chat_persists_confirmed_findings_after_agent_run(monkeypatch, session):
-    """Подтверждённые находки сохраняются сервером после read-only запуска агента."""
+async def test_stream_chat_saves_confirmed_findings_only_to_research_before_explicit_import(
+    monkeypatch, session
+):
+    """Мутация: managed run не должен напрямую пополнять общий каталог."""
     from sqlalchemy import text
 
     from bank_audit.loophole.chat import graph
+    from tests.loophole.test_story_2_2_research_cases import _create_research_schema
+
+    _create_research_schema(session)
 
     class FakeAgent:
         def __init__(self, context):
             self.context = context
 
         async def stream(self, _prompt, *, hook):
+            self.context.fetched_sources["https://example.ru/source"] = {
+                "url": "https://example.ru/source",
+                "title": "Источник",
+                "extracted_text": "Текст источника",
+                "published_at": None,
+            }
             self.context.pending_records.append(
                 {
                     "title": "Обход комиссии",
@@ -108,4 +121,69 @@ async def test_stream_chat_persists_confirmed_findings_after_agent_run(monkeypat
     }
     _events = [event async for event in stream_chat(state, session=session)]
 
-    assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 1
+    assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 0
+    source = session.execute(
+        text(
+            "SELECT source.url, source.extracted_text "
+            "FROM loophole_research_source AS source "
+            "JOIN loophole_research AS research ON research.research_id = source.research_id "
+            "WHERE research.workspace_id = 1"
+        )
+    ).mappings().one_or_none()
+    assert source == {
+        "url": "https://example.ru/source",
+        "extracted_text": "Текст источника",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_partial_run_does_not_persist_research_sources(monkeypatch, session):
+    """Частичный ответ агента не должен становиться доказательством исследования."""
+    from sqlalchemy import text
+
+    from bank_audit.loophole.chat import graph
+    from tests.loophole.test_story_2_2_research_cases import _create_research_schema
+
+    _create_research_schema(session)
+
+    class FakeAgent:
+        def __init__(self, context):
+            self.context = context
+
+        async def stream(self, _prompt, *, hook):
+            self.context.fetched_sources["https://example.ru/source"] = {
+                "url": "https://example.ru/source",
+                "title": "Источник",
+                "extracted_text": "Прочитанный текст",
+                "published_at": "2026-08-01T00:00:00+03:00",
+            }
+            self.context.pending_records.append({
+                "title": "Подозрение",
+                "url": "https://example.ru/source",
+                "snippet": "Цитата",
+                "raw_text": "Прочитанный текст",
+                "is_loophole": True,
+            })
+            hook.stop_reason = "error"
+            if False:
+                yield None
+
+        async def aclose(self):
+            return None
+
+    class FakeFactory:
+        def create(self, context, **_kwargs):
+            return FakeAgent(context)
+
+    monkeypatch.setattr(graph, "AgentFactory", FakeFactory)
+    monkeypatch.setattr(graph, "_save_agent_audit", lambda *args, **kwargs: None)
+
+    events = [event async for event in graph.stream_chat({
+        "query": "Найди лазейки",
+        "workspace_id": 1,
+        "user_id": "analyst",
+        "clarification_verified": True,
+    }, session=session)]
+
+    assert not any(event["event"] == "records" for event in events)
+    assert session.execute(text("SELECT count(*) FROM loophole_research")).scalar_one() == 0

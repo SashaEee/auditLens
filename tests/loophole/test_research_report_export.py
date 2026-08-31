@@ -25,6 +25,12 @@ def _create_report_schema(session) -> None:
         CREATE TABLE IF NOT EXISTS loophole_research (
             research_id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, run_id TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS loophole_research_source (
+            source_id INTEGER PRIMARY KEY, research_id INTEGER NOT NULL,
+            url TEXT NOT NULL, title TEXT, extracted_text TEXT,
+            published_at TEXT, status TEXT NOT NULL, access_status TEXT NOT NULL,
+            created_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS loophole_verification_snapshot (
             snapshot_id INTEGER PRIMARY KEY, research_id INTEGER NOT NULL,
             evidence_snapshot TEXT NOT NULL
@@ -52,17 +58,29 @@ def test_report_result_copies_only_immutable_evidence_for_its_run(session):
         {"workspace_id": workspace_id},
     )
     session.execute(
-        text("INSERT INTO loophole_verification_snapshot VALUES (1, 1, :evidence)"),
-        {"evidence": '[{"url":"https://bank.example/rules","extracted_text":"Подтверждённый текст"}]'},
+        text(
+            "INSERT INTO loophole_research_source "
+            "VALUES (1, 1, :url, 'Правила', :extracted_text, :published_at, 'fetched', 'active', CURRENT_TIMESTAMP)"
+        ),
+        {
+            "url": "https://bank.example/rules",
+            "extracted_text": "Подтверждённый текст",
+            "published_at": "2026-08-27T09:25:00+03:00",
+        },
     )
     report_id = ResearchCaseService(session).save_report_result(
         workspace_id=workspace_id, run_id="run-1", query="тема", result="итог"
     )
-    session.execute(text("UPDATE loophole_verification_snapshot SET evidence_snapshot = '[]'"))
+    session.execute(text("UPDATE loophole_research_source SET extracted_text = 'изменённый текст'"))
     report = ResearchCaseService(session).get_report_result(report_id)
 
     assert report is not None
-    assert report["evidence"] == [{"url": "https://bank.example/rules", "extracted_text": "Подтверждённый текст"}]
+    assert report["run_id"] == "run-1"
+    evidence = report["evidence"]
+    assert len(evidence) == 1
+    assert evidence[0]["url"] == "https://bank.example/rules"
+    assert evidence[0]["extracted_text"] == "Подтверждённый текст"
+    assert evidence[0]["published_at"] == "2026-08-27T09:25:00+03:00"
 
 
 def test_report_result_is_bound_to_current_workspace_run_and_has_no_evidence(session):
