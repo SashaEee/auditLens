@@ -96,6 +96,7 @@ async def stream_deep_research_gptr(question: str,
 
     fast = os.getenv("LLM_MODEL_SMART") or os.environ["LLM_MODEL_NAME"]
     attributes = await al_facts.plan_attributes(client, fast, question, plan)
+    runstate.bind(state)          # см. runstate.bind: yield сбрасывает контекст
     al_planner.install(plan, question, attributes)
     yield _evt({"type": "stage_status", "stage": "plan_ready",
                 "label": f"План: {plan.intent}",
@@ -116,6 +117,7 @@ async def stream_deep_research_gptr(question: str,
                 "label": "Сбор данных",
                 "detail": "Поиск и чтение источников по подзапросам плана",
                 "estimate_s": 60})
+    runstate.bind(state)
     researcher = GPTResearcher(query=question, report_type="research_report",
                                agent="AuditLens",
                                role=_role_prompt(plan, question))
@@ -133,6 +135,7 @@ async def stream_deep_research_gptr(question: str,
 
     # Наблюдаемая сторона в первую очередь из собственного корпуса отзывов:
     # там живые жалобы с датами и ссылками, тогда как веб отдаёт обзоры.
+    runstate.bind(state)
     review_records = al_reviews.collect(plan, attributes)
     review_pages = al_reviews.as_pages(review_records)
     if review_pages:
@@ -150,6 +153,7 @@ async def stream_deep_research_gptr(question: str,
                 "label": "Извлечение фактов",
                 "detail": f"{len(pages)} страниц → проверяемые утверждения",
                 "estimate_s": 40})
+    runstate.bind(state)
     registry = await al_facts.build_registry(
         client, fast, pages=pages, attributes=attributes, plan=plan,
         keep_pages=set(review_pages),

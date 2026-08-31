@@ -155,5 +155,32 @@ chk("неразличимые объекты опознаются", _rank.is_deg
 chk("при неразличимости места НЕ присваиваются",
     "НЕРАЗЛИЧИМЫ" in _rank.render(_rows2) and "1." not in _rank.render(_rows2))
 
+print("состояние прогона переживает yield асинхронного генератора")
+import asyncio as _asyncio  # noqa: E402
+
+
+async def _gen(state):
+    """Имитация потока событий: между установкой и чтением есть yield."""
+    _rs.bind(state)
+    state.subqueries = ["запрос"]
+    yield "событие"
+    # после yield контекст мог смениться — читаем ЧЕРЕЗ current()
+    yield "подзапросов: %d" % len(_rs.current().subqueries)
+
+
+async def _run():
+    st = _rs.new_run()
+    out = []
+    agen = _gen(st)
+    async for ev in agen:
+        out.append(ev)
+    return out
+
+
+_st = _rs.new_run()
+_res = _asyncio.run(_run())
+chk("подзапросы не теряются между шагами генератора",
+    _res[-1] == "подзапросов: 1")
+
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)
