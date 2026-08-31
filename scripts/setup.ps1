@@ -295,12 +295,45 @@ function init_db() {
     # Convert SQLAlchemy DSN (postgresql+psycopg://...) to plain psql DSN
     $PSQL_DSN = $DSN -replace 'postgresql\+psycopg:', 'postgresql:'
 
+    # Журнал обязателен: повторное применение старой миграции поверх schema,
+    # уже изменённой поздними view-migration, может быть несовместимо по
+    # форме колонок. Имя файла — стабильный ключ плоского миграционного набора.
+    Invoke-ExternalCommand -Command 'docker' -Arguments @(
+        'compose', 'exec', '-T', 'postgres', 'psql', '-U', 'audit', '-d', 'bank_audit',
+        '-v', 'ON_ERROR_STOP=1', '-c',
+        'CREATE TABLE IF NOT EXISTS schema_migrations (migration_name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)'
+    ) | Out-Null
+
+    function migration_recorded($name) {
+        $safeName = $name.Replace("'", "''")
+        $output = Invoke-ExternalCommand -Command 'docker' -Arguments @(
+            'compose', 'exec', '-T', 'postgres', 'psql', '-U', 'audit', '-d', 'bank_audit',
+            '-tAc', "SELECT 1 FROM schema_migrations WHERE migration_name = '$safeName'"
+        )
+        return (($output -join '').Trim() -eq '1')
+    }
+
+    function mark_migration($name) {
+        $safeName = $name.Replace("'", "''")
+        Invoke-ExternalCommand -Command 'docker' -Arguments @(
+            'compose', 'exec', '-T', 'postgres', 'psql', '-U', 'audit', '-d', 'bank_audit',
+            '-v', 'ON_ERROR_STOP=1', '-c',
+            "INSERT INTO schema_migrations (migration_name) VALUES ('$safeName') ON CONFLICT (migration_name) DO NOTHING"
+        ) | Out-Null
+    }
+
     function apply_sql($f) {
         if (Test-Path $f) {
+            $migrationName = Split-Path -Leaf $f
+            if (migration_recorded $migrationName) {
+                info "  -> $migrationName (already applied)"
+                return
+            }
             info "  -> $f"
             $containerPath = '/tmp/' + (Split-Path -Leaf $f)
             Invoke-ExternalCommand -Command 'docker' -Arguments @('compose', 'cp', $f, "postgres:$containerPath") | Out-Null
             Invoke-ExternalCommand -Command 'docker' -Arguments @('compose', 'exec', '-T', 'postgres', 'psql', '-U', 'audit', '-d', 'bank_audit', '-v', 'ON_ERROR_STOP=1', '-f', $containerPath) | Out-Null
+            mark_migration $migrationName
         }
     }
 

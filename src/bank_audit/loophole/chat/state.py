@@ -29,4 +29,6 @@ class ChatState(TypedDict, total=False):
     iterations: int                # счётчик итераций execute
     clarify_questions: list[dict]  # вопросы воронки clarify
     clarify_answers: list[dict]    # ответы пользователя на clarify
+    clarification_token: str | None  # server-side challenge, не ввод пользователя
+    clarification_verified: bool     # одноразовый token подтверждён сервером
     pending_table_records: list[dict]  # записи для таблицы фронта (после aggregate)

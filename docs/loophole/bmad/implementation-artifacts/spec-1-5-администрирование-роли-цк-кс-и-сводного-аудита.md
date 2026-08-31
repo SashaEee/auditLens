@@ -2,7 +2,7 @@
 title: 'Администрирование роли ЦК КС и сводного аудита'
 type: 'feature'
 created: '2026-08-29'
-status: 'draft'
+status: 'superseded'
 review_loop_iteration: 0
 context:
   - 'docs/loophole/bmad/implementation-artifacts/epic-1-context.md'
@@ -58,6 +58,10 @@ context:
 - Критерии приёмки внутри frozen Intent являются обязательным контрактом этой истории и должны быть преобразованы в наблюдаемые тесты до реализации.
 
 ## Spec Change Log
+
+- 2026-08-31: критерий показа карточки Telegram-целей заменён прямым пользовательским требованием
+  удалить её. Роль ЦК КС и redacted audit остаются реализованными, но исходная спецификация в
+  неизменяемой формулировке помечена `superseded`.
 
 ## Verification
 

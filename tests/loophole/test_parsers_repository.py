@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -32,7 +32,7 @@ def test_update_parser_code_path(session, parser_id):
 
 
 def test_update_parser_schedule(session, parser_id):
-    nxt = datetime(2026, 7, 27, 5, 0, tzinfo=timezone.utc)
+    nxt = datetime(2026, 7, 27, 5, 0, tzinfo=UTC)
     repo.update_parser_schedule(
         parser_id, cron_expr="0 5 * * *", auto_enabled=True,
         next_run_at=nxt, last_edited_by="user-2", name="new-name", session=session,
@@ -48,7 +48,7 @@ def test_update_parser_schedule(session, parser_id):
 def test_update_parser_next_run(session, parser_id):
     # Сначала ставим не-NULL, чтобы доказать, что SET работает.
     repo.update_parser_next_run(
-        parser_id, datetime(2026, 7, 27, 5, 0, tzinfo=timezone.utc), session=session,
+        parser_id, datetime(2026, 7, 27, 5, 0, tzinfo=UTC), session=session,
     )
     assert repo.get_parser(parser_id, session=session)["next_run_at"] is not None
     # Затем сбрасываем в NULL.
@@ -73,12 +73,24 @@ def test_list_all_and_source_keys(session, parser_id):
 
 def test_list_auto_parsers(session, parser_id):
     assert repo.list_auto_parsers(session=session) == []
+    repo.update_parser_status(parser_id, "ready", session=session)
     repo.update_parser_schedule(
         parser_id, cron_expr="* * * * *", auto_enabled=True,
-        next_run_at=datetime.now(timezone.utc), last_edited_by="u", session=session,
+        next_run_at=datetime.now(UTC), last_edited_by="u", session=session,
     )
     rows = repo.list_auto_parsers(session=session)
     assert [r["parser_id"] for r in rows] == [parser_id]
+
+
+def test_list_auto_parsers_excludes_failed_validation(session, parser_id):
+    """Cron не должен получать parser, не прошедший validation."""
+    repo.update_parser_schedule(
+        parser_id, cron_expr="* * * * *", auto_enabled=True,
+        next_run_at=datetime.now(UTC), last_edited_by="u", session=session,
+    )
+    repo.update_parser_status(parser_id, "validation_failed", session=session)
+
+    assert repo.list_auto_parsers(session=session) == []
 
 
 # ── parser_run ───────────────────────────────────────────────────────────────

@@ -1,0 +1,4 @@
+scrapy
+playwright
+playwright-stealth
+httpx

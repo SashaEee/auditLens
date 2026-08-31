@@ -12,7 +12,7 @@ import os
 # bank_audit.web.app при импорте делает db.init() → нужен синхронный драйвер.
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
-from bank_audit.web.app import _loophole_html_with_bust  # noqa: E402
+from bank_audit.web.app import _loophole_html_with_bust
 
 
 def test_bust_applied_to_jsx_and_css():

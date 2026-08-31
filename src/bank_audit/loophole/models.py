@@ -18,6 +18,7 @@ class LoopholeRecord(BaseModel):
     domain: str | None = None
     trust_score: float | None = None
     fetched_at: datetime | None = None
+    published_at: datetime | None = None
     collected_at: datetime | None = None
     bank_slug: str | None = None
     keyword: str | None = None

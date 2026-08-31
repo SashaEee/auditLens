@@ -1,0 +1,22 @@
+{
+  "schema_version": "0.1.0",
+  "evaluated_at": "2026-08-31",
+  "repo": "auditLens",
+  "target": {
+    "type": "module",
+    "id": "loophole",
+    "label": "Модуль Лазейки — 28 активных спецификаций"
+  },
+  "collection_status": "COLLECTED",
+  "gate_basis": "priority_thresholds",
+  "gate_status": "FAIL",
+  "rationale": "P0 coverage is 45% (required: 100%). Two critical requirements are uncovered; overall coverage is 50%.",
+  "p0_status": "NOT_MET",
+  "p1_status": "NOT_MET",
+  "overall_status": "NOT_MET",
+  "critical_open": 2,
+  "links": {
+    "trace_report_path": "docs/loophole/bmad/test-artifacts/traceability/traceability-matrix.md",
+    "phase_1_path": "docs/loophole/bmad/test-artifacts/traceability/phase-1-coverage-20260831.json"
+  }
+}

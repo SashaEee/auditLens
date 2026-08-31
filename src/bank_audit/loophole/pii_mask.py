@@ -100,7 +100,7 @@ _ADDRESS = re.compile(
 
 # Порядок применения: критично — телефон до карты (т.к. цифры), затем ИНН,
 # СНИЛС, паспорт, email, ФИО, адрес.
-_RULES: "OrderedDict[str, re.Pattern[str]]" = OrderedDict(
+_RULES: OrderedDict[str, re.Pattern[str]] = OrderedDict(
     [
         ("PHONE", _PHONE),
         ("CARD", _CARD),

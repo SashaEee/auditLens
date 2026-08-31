@@ -4,20 +4,25 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from datetime import UTC
 from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import text
 
-from bank_audit.loophole.parsers import runner
-from bank_audit.loophole.parsers.runner import (
-    ParserRunner, _parse_parser_output, subscribe, unsubscribe, log_tail,
-    finish_stream,
-)
+from bank_audit.hashing import sha256_text
 from bank_audit.loophole import repository as repo
 from bank_audit.loophole.models import LoopholeRecord
 from bank_audit.loophole.parsers import dedup as dedup_mod
-from bank_audit.hashing import sha256_text
+from bank_audit.loophole.parsers import runner
+from bank_audit.loophole.parsers.runner import (
+    ParserRunner,
+    _parse_parser_output,
+    finish_stream,
+    log_tail,
+    subscribe,
+    unsubscribe,
+)
 
 
 @pytest.fixture
@@ -91,6 +96,15 @@ def test_parse_json_log_extracts_msg():
 
 def test_format_log_line_returns_raw_on_bad_json():
     assert runner._format_log_line("plain text") == "plain text"
+
+
+def test_published_at_keeps_only_exact_aware_iso_timestamp():
+    """Наивная/невалидная дата не превращается в выдуманное время публикации."""
+    exact = runner._exact_published_at("2026-08-27T09:25:00+03:00")
+    assert exact is not None
+    assert exact.astimezone(UTC).isoformat() == "2026-08-27T06:25:00+00:00"
+    assert runner._exact_published_at("2026-08-27") is None
+    assert runner._exact_published_at("вчера вечером") is None
 
 
 # ── run records + статусы ────────────────────────────────────────────────────
@@ -289,7 +303,12 @@ async def test_wait_reads_results_json(
     parser_dir.mkdir()
     code_path = str(parser_dir / "parser.py")
     repo.update_parser_code_path(parser_id, code_path, session=session)
-    results = [{"title": "t1", "url": "https://a.ru/1", "snippet": "s"}]
+    results = [{
+        "title": "t1",
+        "url": "https://a.ru/1",
+        "snippet": "s",
+        "published_at": "2026-08-27T09:25:00+03:00",
+    }]
     (parser_dir / "results.json").write_text(json.dumps(results), encoding="utf-8")
     monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=_FakeProc(stdout=b"[]")))
     r = ParserRunner(parser_id, code_path, workspace_id=1, session=session)
@@ -298,6 +317,11 @@ async def test_wait_reads_results_json(
     run = repo.last_run(parser_id, session=session)
     assert run["status"] == "success"
     assert run["items_found"] == 1
+    record = session.execute(
+        text("SELECT published_at FROM loophole_record WHERE parser_id = :parser_id"),
+        {"parser_id": parser_id},
+    ).mappings().one()
+    assert str(record["published_at"]).startswith("2026-08-27 09:25:00")
 
 
 @pytest.mark.asyncio

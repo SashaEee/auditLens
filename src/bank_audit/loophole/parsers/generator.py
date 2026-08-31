@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .. import repository as repo
 from ..config import LoopholeSettings
@@ -47,7 +48,9 @@ _BASE_REQUIREMENTS = [
 PROMPT_TEMPLATE = (
     "Сгенерируй Scrapy-паука на Python для поиска лазеек в банковских "
     "продуктах по запросу: {query}. Используй playwright-stealth для "
-    "рендеринга JS. Паук должен собирать title, url, snippet, text. "
+    "рендеринга JS. Паук должен собирать title, url, snippet, text и published_at. "
+    "published_at — только точная дата публикации первоисточника в ISO 8601; "
+    "если первоисточник её не сообщает, записывай null и никогда не подставляй дату сбора. "
     "Код должен писать JSON-логи в stdout и сохранять результаты в файл "
     "results.json рядом с parser.py. "
     "Верни ДВА блока кода: сначала parser.py внутри ```python ... ```, "
@@ -83,6 +86,17 @@ def extract_targets(query: str) -> list[str]:
             if match not in targets:
                 targets.append(match)
     return targets
+
+
+def _is_telegram_target(target: str) -> bool:
+    """Определяет Telegram-цель, обслуживаемую отдельным контуром."""
+    if TG_HANDLE_RE.fullmatch(target):
+        return True
+    candidate = target if "://" in target else f"https://{target}"
+    try:
+        return urlsplit(candidate).hostname in {"t.me", "telegram.me"}
+    except ValueError:
+        return False
 
 
 def _default_llm() -> Any:
@@ -246,6 +260,11 @@ async def generate_parser(
             "В запросе не указан URL ресурса или группа мессенджера "
             "(например: https://example.com/page или https://t.me/group_name)"
         )
+    if any(_is_telegram_target(target) for target in targets):
+        raise ValueError(
+            "Telegram-источники обслуживаются отдельным контуром и не создаются "
+            "как обычные парсеры"
+        )
     if llm is None:
         llm = _default_llm()
 
@@ -306,8 +325,6 @@ async def start_validation(parser_id: int, code_path: str, *, session=None) -> i
 
 
 async def _validate(parser_id: int, code_path: str, run_id: int, *, session=None) -> None:
-    from . import registry as registry_mod
-
     parser_dir = Path(code_path).parent
     workspace_id = None
     query = ""
@@ -419,7 +436,7 @@ async def _validate(parser_id: int, code_path: str, run_id: int, *, session=None
             "error", 0, 0, 0, "Validation failed after 20 attempts",
             update_parser_status=False,
         )
-        registry_mod.delete_parser(parser_id, session=session)
+        repo.update_parser_status(parser_id, "validation_failed", session=session)
     except Exception:
         log.exception(
             "[parsers.generator] unhandled validation error parser_id=%s run_id=%s",
@@ -435,6 +452,7 @@ async def _validate(parser_id: int, code_path: str, run_id: int, *, session=None
                 "error", 0, 0, 0, "Unhandled validation error",
                 update_parser_status=False,
             )
+            repo.update_parser_status(parser_id, "validation_failed", session=session)
         except Exception:
             log.exception(
                 "[parsers.generator] failed to finalize validation error parser_id=%s run_id=%s",

@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date, datetime
-from typing import Any, Iterator
+from datetime import date, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import text
 
 from .. import db
 from . import db_schema as schema
 from .models import LoopholeRecord
+from .pii_mask import mask as pii_mask
 
 log = logging.getLogger(__name__)
 
@@ -123,9 +126,9 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 f"INSERT INTO {schema.T_RECORD} "
                 "(sha256, title, url, snippet, domain, trust_score, bank_slug, keyword, "
                 "raw_text, status, is_loophole, parser_id, text_sha256, "
-                "content_status, raw_text_len, raw_text_truncated) "
+                "content_status, raw_text_len, raw_text_truncated, published_at) "
                 "VALUES (:sha, :title, :url, :snip, :dom, :trust, :bank, :kw, :raw, "
-                ":status, :loop, :pid, :tsha, :cs, :rlen, :rtrunc) "
+                ":status, :loop, :pid, :tsha, :cs, :rlen, :rtrunc, :published) "
                 "RETURNING record_id"
             ),
             {
@@ -136,6 +139,7 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 "pid": rec.parser_id, "tsha": rec.text_sha256,
                 "cs": rec.content_status, "rlen": rec.raw_text_len,
                 "rtrunc": rec.raw_text_truncated,
+                "published": rec.published_at,
             },
         ).scalar_one()
         return row
@@ -216,13 +220,21 @@ def count_records_needing_content(*, session=None) -> int:
         ).scalar_one()
 
 
+def _record_dict(row) -> dict:
+    """Нормализует DB-типы записи для одинакового JSON в PostgreSQL и SQLite."""
+    record = dict(row)
+    if record.get("is_loophole") is not None:
+        record["is_loophole"] = bool(record["is_loophole"])
+    return record
+
+
 def get_record(record_id: int, *, session=None) -> dict | None:
     with _session(session) as s:
         row = s.execute(
             text(f"SELECT * FROM {schema.T_RECORD} WHERE record_id = :id"),
             {"id": record_id},
         ).mappings().first()
-        return dict(row) if row else None
+        return _record_dict(row) if row else None
 
 
 def list_records(
@@ -253,11 +265,11 @@ def list_records(
             for i, b in enumerate(bank_slugs):
                 params[f"b{i}"] = b
         if period_from:
-            clauses.append("collected_at >= :pf")
+            clauses.append("published_at >= :pf")
             params["pf"] = period_from
         if period_to:
-            clauses.append("collected_at <= :pt")
-            params["pt"] = period_to
+            clauses.append("published_at < :pt_exclusive")
+            params["pt_exclusive"] = period_to + timedelta(days=1)
         if only_loophole is True:
             clauses.append("is_loophole = TRUE")
         elif only_loophole is False:
@@ -277,7 +289,7 @@ def list_records(
             "record_id, title, url, snippet, domain, trust_score, "
             "bank_slug, keyword, is_loophole, verdict_confidence, "
             "verdict_reason, verdict_model, status, "
-            "collected_at, classified_at, content_status, raw_text_len"
+            "published_at, collected_at, classified_at, content_status, raw_text_len"
         )
         if include_content:
             columns += ", raw_text, raw_text_truncated"
@@ -287,7 +299,23 @@ def list_records(
             "ORDER BY COALESCE(verdict_confidence, 0) DESC, collected_at DESC "
             "LIMIT :limit OFFSET :offset"
         )
-        return [dict(r) for r in s.execute(text(sql), params).mappings().all()]
+        return [_record_dict(r) for r in s.execute(text(sql), params).mappings().all()]
+
+
+def list_published_cases(*, limit: int = 500, session=None) -> list[dict]:
+    """Возвращает только финально опубликованные подтверждённые кейсы."""
+    with _session(session) as s:
+        rows = s.execute(
+            text(
+                f"SELECT record_id, title, url, snippet, domain, trust_score, bank_slug, "
+                f"keyword, is_loophole, verdict_confidence, verdict_reason, verdict_model, "
+                f"status, published_at, collected_at, classified_at FROM {schema.T_RECORD} "
+                "WHERE status = 'published' AND is_loophole = TRUE "
+                "ORDER BY collected_at DESC, record_id DESC LIMIT :limit"
+            ),
+            {"limit": limit},
+        ).mappings().all()
+        return [_record_dict(row) for row in rows]
 
 
 def list_bank_slugs(*, session=None) -> list[str]:
@@ -324,11 +352,11 @@ def search_relevant(
             for i, b in enumerate(bank_slugs):
                 params[f"b{i}"] = b
         if period_from:
-            clauses.append("collected_at >= :pf")
+            clauses.append("published_at >= :pf")
             params["pf"] = period_from
         if period_to:
-            clauses.append("collected_at <= :pt")
-            params["pt"] = period_to
+            clauses.append("published_at < :pt_exclusive")
+            params["pt_exclusive"] = period_to + timedelta(days=1)
         # Текстовый поиск по title/snippet/raw_text (кросс-БД: LOWER LIKE).
         if query_text:
             clauses.append(
@@ -371,6 +399,39 @@ def list_workspaces(user_id: str, *, session=None) -> list[dict]:
                 {"u": user_id},
             ).mappings().all()
         ]
+
+
+def get_workspace(workspace_id: int, *, session=None) -> dict | None:
+    """Workspace по id — для server-side проверки ownership."""
+    with _session(session) as s:
+        row = s.execute(
+            text(
+                f"SELECT workspace_id, user_id, name, created_at, last_active_at "
+                f"FROM {schema.T_WORKSPACE} WHERE workspace_id = :id"
+            ),
+            {"id": workspace_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+
+def list_verification_queue(*, limit: int = 200, session=None) -> list[dict]:
+    """Очередь верификации ЦК КС: записи, помеченные лазейкой (LLM/сборщиком),
+    по которым ещё нет ручного вердикта (verdict_model != 'manual').
+
+    Вызывается только после server-side проверки роли ccks_expert. raw_text
+    не отдаётся (payload) — как и в list_records.
+    """
+    with _session(session) as s:
+        sql = (
+            f"SELECT record_id, title, url, snippet, domain, trust_score, "
+            "bank_slug, keyword, verdict_confidence, verdict_reason, status, "
+            "published_at, collected_at, classified_at "
+            f"FROM {schema.T_RECORD} "
+            "WHERE is_loophole = TRUE "
+            "AND (verdict_model IS NULL OR verdict_model != 'manual') "
+            "ORDER BY collected_at DESC LIMIT :limit"
+        )
+        return [dict(r) for r in s.execute(text(sql), {"limit": limit}).mappings().all()]
 
 
 def touch_workspace(workspace_id: int, *, session=None) -> None:
@@ -466,6 +527,75 @@ def log_action(
             {
                 "u": user_id, "ws": workspace_id, "act": action,
                 "det": json.dumps(detail or {}, ensure_ascii=False), "ip": ip,
+            },
+        ).scalar_one()
+        return row
+
+
+_SECRET_VALUE = re.compile(
+    r"""
+    (?:
+        ["']?authorization["']?\s*[:=]\s*["']?(?:bearer|basic)\s+[^"',;\s}]+["']?
+        |["']?(?:bearer|jwt)["']?\s*[:=]\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^,;\s}]+)
+        |["']?(?:api[_-]?(?:key|token)|access[_-]?(?:key|token)|refresh[_-]?token)["']?
+          \s*[:=]\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^,;\s}]+)
+        |["']?cloud[_-]?(?:access[_-]?)?(?:api[_-]?)?(?:key|token|secret)["']?
+          \s*[:=]\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^,;\s}]+)
+        |["']?(?:client[_-]?secret|credential(?:s)?|password|secret|token|private[_-]?key)["']?
+          \s*[:=]\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|[^,;\s}]+)
+        |eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+
+        |(?:sk|rk|gsk|gh[pousr]|xox[baprs]|hf|AIza|ya29)[_-][A-Za-z0-9._~-]+
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _redact_audit_text(value: Any, *, limit: int = 2000) -> str:
+    """Маскирует ПДн и типовые секреты перед записью в audit log."""
+    masked, _ = pii_mask(str(value or ""))
+    return _SECRET_VALUE.sub("[SECRET]", masked)[:limit]
+
+
+def redact_audit_text(value: Any, *, limit: int = 200) -> str:
+    """Публичный helper для redacted detail во всех audit sinks."""
+    return _redact_audit_text(value, limit=limit)
+
+
+def create_agent_audit(
+    *,
+    run_id: str,
+    user_id: str,
+    workspace_id: int | None,
+    query: str,
+    tools_used: list[str] | tuple[str, ...],
+    duration_ms: int,
+    result: str,
+    status: str,
+    error_code: str | None = None,
+    session=None,
+) -> int:
+    """Сохраняет только redacted метаданные запуска управляемого агента."""
+    names = [name for name in dict.fromkeys(tools_used) if isinstance(name, str)]
+    with _session(session) as s:
+        row = s.execute(
+            text(
+                f"INSERT INTO {schema.T_AGENT_AUDIT_LOG} "
+                "(run_id, user_id, workspace_id, query_redacted, tools_used, "
+                "duration_ms, result_redacted, status, error_code) "
+                "VALUES (:run, :user, :ws, :query, :tools, :duration, :result, :status, :error) "
+                "RETURNING audit_id"
+            ),
+            {
+                "run": run_id,
+                "user": user_id,
+                "ws": workspace_id,
+                "query": _redact_audit_text(query),
+                "tools": json.dumps(names, ensure_ascii=False),
+                "duration": max(0, int(duration_ms)),
+                "result": _redact_audit_text(result),
+                "status": status,
+                "error": error_code,
             },
         ).scalar_one()
         return row
@@ -837,6 +967,36 @@ def list_parsers_with_source_keys(*, session=None) -> list[dict]:
         ]
 
 
+def list_telegram_targets(*, session=None) -> list[dict]:
+    """Статус Telegram-целей (source_keys вида «t.me/<name>») для админ-экрана
+    (story 1.5): цель + операционный статус парсера. Технические payload
+    (config, code_path) и обычные web-источники в поверхность не попадают."""
+    with _session(session) as s:
+        rows = s.execute(
+            text(
+                f"SELECT parser_id, name, status, last_run_at, source_keys "
+                f"FROM {schema.T_PARSER} WHERE CAST(source_keys AS TEXT) LIKE '%t.me/%' "
+                "ORDER BY parser_id"
+            )
+        ).mappings().all()
+    targets: list[dict] = []
+    for row in rows:
+        try:
+            keys = json.loads(row["source_keys"] or "[]")
+        except (TypeError, ValueError):
+            keys = []
+        for key in keys:
+            if isinstance(key, str) and key.startswith("t.me/"):
+                targets.append({
+                    "target": key,
+                    "parser_id": row["parser_id"],
+                    "parser_name": row["name"],
+                    "status": row["status"],
+                    "last_run_at": _dt_str(row["last_run_at"]),
+                })
+    return targets
+
+
 def list_auto_parsers(*, session=None) -> list[dict]:
     """Парсеры с включённым автозапуском и заданным cron."""
     with _session(session) as s:
@@ -844,7 +1004,7 @@ def list_auto_parsers(*, session=None) -> list[dict]:
             dict(r) for r in s.execute(
                 text(
                     f"SELECT {_PARSER_COLS} FROM {schema.T_PARSER} "
-                    "WHERE auto_enabled = TRUE AND cron_expr IS NOT NULL"
+                    "WHERE auto_enabled = TRUE AND cron_expr IS NOT NULL AND status = 'ready'"
                 )
             ).mappings().all()
         ]

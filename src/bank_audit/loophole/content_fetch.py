@@ -67,4 +67,9 @@ def fetch_full_content(
         return FullContent(text=None, status=STATUS_FAILED, length=0, truncated=False)
     if page is None:
         return FullContent(text=None, status=STATUS_FAILED, length=0, truncated=False)
-    return limit_content(page.text, max_chars=settings.raw_text_max_chars)
+    # Старые fetch-double могли отдавать только excerpt, поэтому не требуем
+    # необязательный атрибут text и оставляем безопасный fallback.
+    page_text = getattr(page, "text", None)
+    if page_text is None:
+        page_text = getattr(page, "excerpt", None)
+    return limit_content(page_text, max_chars=settings.raw_text_max_chars)

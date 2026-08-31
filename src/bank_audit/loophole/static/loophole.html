@@ -4,12 +4,39 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AuditLens — Лазейки и уязвимости</title>
+  <!-- Все vendor-ресурсы САМОРАЗМЕЩЕНЫ (/static/vendor/), как у основного сайта:
+       внешние CDN (unpkg, Google Fonts) на части сетей недоступны и запрещены
+       единой оболочкой (story 1.2). -->
+  <link href="/static/vendor/fonts.css" rel="stylesheet">
   <link rel="stylesheet" href="/static/loophole/loophole.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="/static/vendor/react.min.js"></script>
+  <script src="/static/vendor/react-dom.min.js"></script>
+  <script src="/static/vendor/babel.min.js"></script>
+  <script>
+  // Синхронизация темы (story 1.2): в same-origin iframe html.dark следует за
+  // родительским документом через MutationObserver; при прямом открытии
+  // (или cross-origin родителе) — через prefers-color-scheme.
+  (function () {
+    var root = document.documentElement;
+    function applyDark(dark) { root.classList.toggle("dark", !!dark); }
+    var media = window.matchMedia("(prefers-color-scheme: dark)");
+    var synced = false;
+    try {
+      if (window.parent && window.parent !== window) {
+        var parentRoot = window.parent.document.documentElement;
+        applyDark(parentRoot.classList.contains("dark"));
+        new MutationObserver(function () {
+          applyDark(parentRoot.classList.contains("dark"));
+        }).observe(parentRoot, { attributes: true, attributeFilter: ["class"] });
+        synced = true;
+      }
+    } catch (e) { /* cross-origin родитель — уходим в fallback ниже */ }
+    if (!synced) {
+      applyDark(media.matches);
+      media.addEventListener("change", function () { applyDark(media.matches); });
+    }
+  })();
+  </script>
 </head>
 <body>
   <div id="loophole-root"></div>

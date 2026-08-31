@@ -4,6 +4,12 @@
 -- v_sber_vs_market пересаживается на неё же — Обзор и вкладка считают одинаково.
 -- ⚠ на проде вьюхи катятся руками (psql), не забыть про analytics/views.sql.
 
+-- `CREATE OR REPLACE VIEW` не умеет удалять добавленные поздними миграциями
+-- колонки. Сначала убираем зависимую витрину, затем базовую view; внизу обе
+-- немедленно создаются заново. Это делает повторный setup безопасным.
+DROP VIEW IF EXISTS v_sber_vs_market;
+DROP VIEW IF EXISTS v_market_rub_offer CASCADE;
+
 CREATE OR REPLACE VIEW v_market_rub_offer AS
 SELECT b.bank_id, b.slug AS bank_slug, b.name AS bank_name, b.is_sber,
        o.offer_id, o.category, o.title, o.url,

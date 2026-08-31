@@ -2,7 +2,7 @@
 
 Адаптация ``bank_audit.ai.clarify`` под модуль loophole: промпт из
 ``chat/prompt/01_clarify.md``, флаг ``LOOPHOLE_ASKING_ENABLED`` (дефолт «1»),
-fail-open (любой сбой → ``{"complete": true}``).
+fail-closed (любой сбой блокирует запуск агента до повторной попытки).
 
 Контракт:
   generate_clarifications(question, history) -> dict
@@ -12,35 +12,298 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+import re
+import secrets
+import time
+from hashlib import sha256
+from typing import Any, Literal, TypedDict
 
 from openai import AsyncOpenAI
 
 from ...ai.llm_utils import (
     _loose_json_loads,
-    _patch_client_reasoning_effort,
-    deep_reasoning_extra,
     detect_bank_slugs,
     normalize_question,
 )
+from .. import repository as repo
+from ..pii_mask import mask as pii_mask
 from .tools_nanobot import load_prompt
 
 log = logging.getLogger(__name__)
 
-_MAX_QUESTIONS = 5
-_TOP_BANKS = ["sberbank", "tinkoff", "alfabank", "vtb"]
+_MAX_QUESTIONS = 1
+_TOKEN_TTL_SECONDS = 600
+_MAX_PENDING_TOKENS = 4096
+_clarification_tokens: dict[str, tuple[str, float]] = {}
+_execution_tokens: dict[str, tuple[str, float]] = {}
+
+_PRODUCT_RE = re.compile(
+    r"(?:кредитн\w*|дебетов\w*|банковск\w*)\s+карт|"
+    r"\bкредит\w*\b|\bипотек\w*\b|\bвклад\w*\b|\bдепозит\w*\b|"
+    r"\bрко\b|расч[её]тн\w*\s+сч[её]т|\bстрахов\w*\b|"
+    r"\bрассроч\w*\b|\bовердрафт\w*\b|\bэквайринг\w*\b",
+    re.IGNORECASE,
+)
+_PERIOD_RE = re.compile(
+    r"\b(?:19|20)\d{2}\b|"
+    r"январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]|июн\w*|июл\w*|"
+    r"август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*|"
+    r"актуальн\w*|текущ\w*|сейчас|"
+    r"за\s+(?:недел\w*|месяц\w*|квартал\w*|год\w*)|"
+    r"последн\w*\s+\d+\s+(?:дн\w*|недел\w*|месяц\w*|лет|год\w*)",
+    re.IGNORECASE,
+)
 
 
-def clarify_enabled() -> bool:
-    return os.getenv("LOOPHOLE_ASKING_ENABLED", "1").strip().lower() in (
-        "1", "true", "yes", "on",
+def _scope_signals(query: str) -> tuple[bool, bool]:
+    normalized = normalize_question(query or "")
+    return bool(_PRODUCT_RE.search(normalized)), bool(_PERIOD_RE.search(normalized))
+
+
+def _question_dimension(question: dict) -> str | None:
+    sample = " ".join(
+        str(question.get(key) or "") for key in ("id", "question", "text")
+    ).lower()
+    if "банк" in sample:
+        return "bank"
+    if any(token in sample for token in ("продукт", "кредит", "карт", "вклад", "ипотек")):
+        return "product"
+    if any(token in sample for token in ("период", "дат", "месяц", "год", "квартал")):
+        return "period"
+    return None
+
+
+def _fallback_scope_question(query: str) -> list[dict]:
+    has_product, has_period = _scope_signals(query)
+    if not has_product:
+        return [{
+            "id": "product",
+            "question": "Какой банковский продукт исследовать?",
+            "type": "text",
+            "allow_other": True,
+            "options": [],
+        }]
+    if not has_period:
+        return [{
+            "id": "period",
+            "question": "За какой период искать публикации?",
+            "type": "text",
+            "allow_other": True,
+            "options": [],
+        }]
+    return []
+
+
+def clarification_questions(value: Any, *, query: str = "") -> list[dict]:
+    """Возвращает один релевантный вопрос, не повторяя известный scope."""
+    if not isinstance(value, dict) or value.get("complete") is True:
+        return []
+    questions = value.get("questions")
+    if isinstance(questions, list) and questions:
+        has_product, has_period = _scope_signals(query)
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            dimension = _question_dimension(question)
+            if dimension == "bank":
+                continue
+            if dimension == "product" and has_product:
+                continue
+            if dimension == "period" and has_period:
+                continue
+            return [question]
+    return _fallback_scope_question(query)
+
+
+def _mask_for_llm(value: Any) -> str:
+    """Маскирует ПДн и типовые credentials перед отправкой в LLM."""
+    masked, _ = pii_mask(str(value or ""))
+    return repo.redact_audit_text(masked, limit=10000)
+
+
+def _masked_history(history: list | None) -> str:
+    """Форматирует историю для prompt только после redaction пользовательского текста."""
+    lines = []
+    for msg in history or []:
+        if isinstance(msg, dict) and msg.get("role") in ("user", "assistant"):
+            lines.append(f"{msg['role']}: {_mask_for_llm(msg.get('content', ''))}")
+    return "\n".join(lines) or "(история отсутствует)"
+
+
+class ClarificationUnavailable(TypedDict):
+    """Типизированный fail-closed результат проверки/переписывания."""
+
+    complete: Literal[False]
+    questions: list[dict]
+    reason: Literal["clarification_unavailable", "answers_required"]
+
+
+def _clarification_unavailable() -> ClarificationUnavailable:
+    """Безопасный результат при невозможности проверить полноту запроса."""
+    return {
+        "complete": False,
+        "questions": [],
+        "reason": "clarification_unavailable",
+    }
+
+
+def _clarification_answers_required() -> ClarificationUnavailable:
+    """Возвращает состояние clarification без разрешения на execution."""
+    return {
+        "complete": False,
+        "questions": [],
+        "reason": "answers_required",
+    }
+
+
+def _token_fingerprint(user_id: str, workspace_id: int | None, query: str) -> str:
+    """Создаёт digest контекста без хранения исходного запроса в token state."""
+    payload = f"{user_id}\x00{workspace_id}\x00{normalize_question(query)}"
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _purge_tokens(store: dict[str, tuple[str, float]]) -> None:
+    now = time.monotonic()
+    expired = [token for token, (_, expires) in store.items() if expires <= now]
+    for token in expired:
+        store.pop(token, None)
+    while len(store) >= _MAX_PENDING_TOKENS:
+        store.pop(next(iter(store)))
+
+
+def _issue_token(
+    store: dict[str, tuple[str, float]],
+    *,
+    user_id: str,
+    workspace_id: int | None,
+    query: str,
+) -> str:
+    _purge_tokens(store)
+    token = secrets.token_urlsafe(32)
+    store[token] = (
+        _token_fingerprint(user_id, workspace_id, query),
+        time.monotonic() + _TOKEN_TTL_SECONDS,
+    )
+    return token
+
+
+def _consume_token(
+    store: dict[str, tuple[str, float]],
+    token: str | None,
+    *,
+    user_id: str,
+    workspace_id: int | None,
+    query: str,
+) -> bool:
+    if not _validate_token(
+        store,
+        token,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        query=query,
+    ):
+        return False
+    store.pop(token, None)
+    return True
+
+
+def _validate_token(
+    store: dict[str, tuple[str, float]],
+    token: str | None,
+    *,
+    user_id: str,
+    workspace_id: int | None,
+    query: str,
+) -> bool:
+    """Проверяет ownership/TTL, не поглощая token до успешной операции."""
+    if not token:
+        return False
+    record = store.get(token)
+    if record is None or record[1] <= time.monotonic():
+        store.pop(token, None)
+        return False
+    return record[0] == _token_fingerprint(user_id, workspace_id, query)
+
+
+def issue_clarification_token(
+    *, user_id: str, workspace_id: int | None, query: str
+) -> str:
+    """Выдаёт одноразовый server-side challenge для ответа на вопросы."""
+    return _issue_token(
+        _clarification_tokens,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        query=query,
+    )
+
+
+def consume_clarification_token(
+    token: str | None,
+    *,
+    user_id: str,
+    workspace_id: int | None,
+    query: str,
+) -> bool:
+    """Проверяет и поглощает challenge ровно один раз."""
+    return _consume_token(
+        _clarification_tokens,
+        token,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        query=query,
+    )
+
+
+def validate_clarification_token(
+    token: str | None,
+    *,
+    user_id: str,
+    workspace_id: int | None,
+    query: str,
+) -> bool:
+    """Проверяет challenge до сборки, оставляя его для retry при внутренней ошибке."""
+    return _validate_token(
+        _clarification_tokens,
+        token,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        query=query,
+    )
+
+
+def issue_execution_token(
+    *, user_id: str, workspace_id: int | None, query: str
+) -> str:
+    """Выдаёт одноразовое разрешение на запуск обогащённого запроса."""
+    return _issue_token(
+        _execution_tokens,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        query=query,
+    )
+
+
+def consume_execution_token(
+    token: str | None,
+    *,
+    user_id: str,
+    workspace_id: int | None,
+    query: str,
+) -> bool:
+    """Проверяет execution token по trusted user/workspace/query и использует его."""
+    return _consume_token(
+        _execution_tokens,
+        token,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        query=query,
     )
 
 
 def _clarify_model() -> str:
     return (
         os.getenv("LOOPHOLE_ASKING_MODEL")
-        or os.getenv("LLM_MODEL_SMART")
+        or os.getenv("LLM_MODEL_FAST")
         or os.getenv("LLM_MODEL_NAME", "gpt-4o")
     )
 
@@ -48,14 +311,13 @@ def _clarify_model() -> str:
 def _client() -> AsyncOpenAI:
     base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     api_key = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-    c = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=70, max_retries=2)
-    return _patch_client_reasoning_effort(c)
+    return AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=15, max_retries=0)
 
 
 def _validate(data: Any) -> dict:
-    """Нормализует/обрезает ответ модели. При любой кривизне → complete=true."""
+    """Нормализует ответ модели; повреждённый ответ блокирует запуск."""
     if not isinstance(data, dict):
-        return {"complete": True, "questions": [], "reason": "parse_fail"}
+        return _clarification_unavailable()
     if data.get("complete") is True:
         return {
             "complete": True,
@@ -64,10 +326,10 @@ def _validate(data: Any) -> dict:
         }
     qs_in = data.get("questions") or []
     if not isinstance(qs_in, list) or not qs_in:
-        return {"complete": True, "questions": [], "reason": "no_questions"}
+        return _clarification_unavailable()
     out: list[dict] = []
     seen_ids: set[str] = set()
-    for q in qs_in[:_MAX_QUESTIONS]:
+    for q in qs_in:
         if not isinstance(q, dict):
             continue
         text = q.get("question") or q.get("text")
@@ -101,8 +363,10 @@ def _validate(data: Any) -> dict:
             "allow_other": bool(q.get("allow_other", True)),
             "options": opts[:6],
         })
+        if len(out) >= _MAX_QUESTIONS:
+            break
     if not out:
-        return {"complete": True, "questions": [], "reason": "all_questions_invalid"}
+        return _clarification_unavailable()
     return {
         "complete": False,
         "questions": out,
@@ -116,17 +380,28 @@ async def generate_clarifications(
 ) -> dict:
     """Решает полноту запроса и (если неполный) генерирует уточняющие вопросы.
 
-    Fail-open: при любом сбое → ``{"complete": true}`` (никогда не блокируем).
+    При ошибке LLM или JSON возвращает безопасный отказ без запуска агента.
     """
-    if not clarify_enabled():
-        return {"complete": True, "questions": [], "reason": "disabled"}
     q = normalize_question(question or "")
     if len(q) < 3:
-        return {"complete": True, "questions": [], "reason": "too_short"}
+        return {
+            "complete": False,
+            "questions": [],
+            "reason": "query_too_short",
+        }
+    has_product, has_period = _scope_signals(q)
+    if has_product and has_period:
+        return {
+            "complete": True,
+            "questions": [],
+            "reason": "actionable_product_period_scope",
+        }
+    safe_q = _mask_for_llm(q)
     hinted = detect_bank_slugs(q)
     system = load_prompt("01_clarify")
     user_msg = (
-        f"Запрос аудитора:\n{q}\n\n"
+        f"Запрос аудитора:\n{safe_q}\n\n"
+        f"История диалога:\n{_masked_history(history)}\n\n"
         f"Банки, явно упомянутые в запросе: "
         f"{', '.join(hinted) if hinted else '(не указаны — предложи топ-4 + другое)'}\n\n"
         f"Верни JSON по контракту."
@@ -137,28 +412,18 @@ async def generate_clarifications(
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user_msg}],
             temperature=0.0,
-            max_tokens=2500,
-            extra_body=deep_reasoning_extra(),
+            max_tokens=700,
         )
         raw = (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        log.warning("[loophole.clarify] LLM failed: %s — fail-open", e)
-        return {"complete": True, "questions": [], "reason": "llm_error"}
+    except Exception:  # noqa: BLE001 — любой сбой LLM должен быть fail-closed
+        log.warning("[loophole.clarify] LLM failed — fail-closed")
+        return _clarification_unavailable()
     try:
         data = _loose_json_loads(raw)
-    except Exception:
-        log.warning("[loophole.clarify] no JSON parse, raw200=%r — fail-open", raw[:200])
-        return {"complete": True, "questions": [], "reason": "parse_fail"}
+    except Exception:  # noqa: BLE001 — повреждённый ответ не должен запускать агента
+        log.warning("[loophole.clarify] no JSON parse — fail-closed")
+        return _clarification_unavailable()
     return _validate(data)
-
-
-# ── Сборка обогащённого промпта ──────────────────────────────────────────────
-SYSTEM_PROMPT_REWRITE = """Ты переформулируешь запрос аудитора, вплетая его уточнения в ЕДИНЫЙ чёткий research-запрос на русском, естественным языком.
-ЖЁСТКИЕ ПРАВИЛА:
-• Сохрани названия банков ДОСЛОВНО (как в исходнике/ответах) — они нужны системе для распознавания.
-• НИЧЕГО не добавляй от себя: не выдумывай банки, продукты, параметры, которых нет в исходном запросе или ответах.
-• НЕ отвечай на запрос — только переформулируй его с учётом уточнений.
-• Верни ОДНУ строку — готовый запрос. Без преамбулы, без кавычек."""
 
 
 def _answers_summary(answers: list) -> list:
@@ -187,32 +452,13 @@ def _template_fallback(question: str, answered: list) -> str:
     return f"{question} (уточнения — {bits})"
 
 
-async def build_enriched_question(question: str, answers: list) -> str:
-    """Исходный запрос + ответы воронки → обогащённый NL-запрос."""
+async def build_enriched_question(
+    question: str,
+    answers: list,
+) -> str | ClarificationUnavailable:
+    """Детерминированно объединяет исходный запрос с ответами воронки."""
     q = (question or "").strip()
     answered = _answers_summary(answers)
     if not answered:
-        return q
-    bits = "\n".join(f"— {a['question']}: {', '.join(a['vals'])}" for a in answered)
-    user_msg = f"Исходный запрос:\n{q}\n\nОтветы аудитора на уточнения:\n{bits}"
-    try:
-        resp = await _client().chat.completions.create(
-            model=_clarify_model(),
-            messages=[{"role": "system", "content": SYSTEM_PROMPT_REWRITE},
-                      {"role": "user", "content": user_msg}],
-            temperature=0.2,
-            max_tokens=900,
-        )
-        enriched = (resp.choices[0].message.content or "").strip().strip('"').strip()
-    except Exception as e:
-        log.warning("[loophole.clarify] rewrite failed: %s — template fallback", e)
-        return _template_fallback(q, answered)
-    if not enriched or len(enriched) < len(q) // 2:
-        return _template_fallback(q, answered)
-    allowed = set(detect_bank_slugs(q))
-    for a in answered:
-        allowed |= set(detect_bank_slugs(" ".join(a["vals"])))
-    enriched_banks = set(detect_bank_slugs(enriched))
-    if enriched_banks and not enriched_banks.issubset(allowed | set(_TOP_BANKS)):
-        return _template_fallback(q, answered)
-    return enriched
+        return _clarification_answers_required()
+    return _template_fallback(q, answered)

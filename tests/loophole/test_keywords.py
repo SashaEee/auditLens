@@ -6,9 +6,7 @@ import pytest
 from bank_audit.loophole import keywords as kw_mod
 from bank_audit.loophole import repository as repo
 
-
 # Переиспользуем SQLite-фикстуру из conftest.
-from tests.loophole.conftest import session as sqlite_session  # noqa: E402
 
 
 @pytest.fixture

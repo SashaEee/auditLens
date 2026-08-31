@@ -6395,10 +6395,10 @@ function KnowledgePage({params}){
 
 // ─── Loophole page (встраивает frontend модуля loophole) ─────────────────────
 function LoopholePage(){
-  return <section className="surface" style={{padding:0,overflow:"hidden"}}>
+  return <section className="surface loophole-page" style={{padding:0,overflow:"hidden"}}>
     <iframe src="/static/loophole/loophole.html"
             title="Лазейки и уязвимости"
-            style={{width:"100%",height:"calc(100vh - 120px)",border:"none",display:"block"}}/>
+            style={{width:"100%",height:"100%",border:"none",display:"block"}}/>
   </section>;
 }
 
@@ -8141,7 +8141,7 @@ function Shell(){
           </button>
         </div>
         <div className="content">
-          {loopholeMounted&&<div style={{display:page==="loophole"?"block":"none",height:"100%"}}>
+          {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
             <LoopholePage key={refreshTick}/>
           </div>}
           {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>

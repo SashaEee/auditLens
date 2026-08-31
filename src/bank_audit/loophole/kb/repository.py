@@ -11,9 +11,9 @@ from typing import Any
 
 from sqlalchemy import text
 
-from .. import repository as repo
-from .. import db_schema as schema
 from ...rag import embedder
+from .. import db_schema as schema
+from .. import repository as repo
 
 log = logging.getLogger(__name__)
 

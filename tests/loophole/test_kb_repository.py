@@ -7,13 +7,12 @@
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from bank_audit.loophole.kb import repository as kb_repo
 from bank_audit.loophole.kb import seed as kb_seed
-
 
 EMB_DIM = 1024
 
@@ -181,7 +180,7 @@ def test_count_examples():
 
 # ── add_doc ─────────────────────────────────────────────────────────────────
 def test_add_doc_embeds_and_inserts(mock_embed):
-    m, fake_vec = mock_embed
+    m, _fake_vec = mock_embed
     s = MockSession()
     s.results.append(_Result(scalar=99))
     doc_id = kb_repo.add_doc("cbr://doc/1", "текст документа", session=s)

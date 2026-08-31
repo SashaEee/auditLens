@@ -16,11 +16,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from bank_audit.loophole.web import router, get_session, get_user_id
+from bank_audit.hashing import sha256_text
 from bank_audit.loophole import repository as repo
 from bank_audit.loophole.kb import repository as kb_repo
 from bank_audit.loophole.models import LoopholeRecord
-from bank_audit.hashing import sha256_text
+from bank_audit.loophole.web import get_session, get_user_id, router
 
 from .conftest import SCHEMA_SQL
 

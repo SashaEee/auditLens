@@ -58,6 +58,10 @@ async def lifespan(app: FastAPI):
         ENABLED as PARSER_SCHED_ENABLED,
         parser_scheduler_loop,
     )
+    from ..loophole.scheduled_analytics_scheduler import (
+        ENABLED as SCHEDULED_ANALYTICS_ENABLED,
+        scheduled_analytics_loop,
+    )
     from ..loophole import repository as loophole_repo
     tasks = [
         asyncio.create_task(alerts_background_loop()),
@@ -80,6 +84,8 @@ async def lifespan(app: FastAPI):
     # осознанно после проверки, что генерация и запуск ведут себя предсказуемо.
     if PARSER_SCHED_ENABLED:
         tasks.append(asyncio.create_task(parser_scheduler_loop()))
+    if SCHEDULED_ANALYTICS_ENABLED:
+        tasks.append(asyncio.create_task(scheduled_analytics_loop()))
     # Воркеры индексации базы знаний. Раньше на каждую прочитанную агентом
     # страницу поднимался свой daemon-поток: при остановке контейнера их
     # убивало на полуслове, документ оставался без фрагментов — и навсегда,

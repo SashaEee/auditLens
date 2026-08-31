@@ -67,7 +67,7 @@ def test_migration_is_idempotent_if_not_exists():
     # Каждый CREATE TABLE / CREATE INDEX должен сопровождаться IF NOT EXISTS.
     import re
 
-    creates = re.findall(r"CREATE\s+(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?", sql, re.I)
+    creates = re.findall(r"CREATE\s+(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?", sql, re.IGNORECASE)
     assert creates, "нет CREATE-инструкций"
     for kind, ifne in creates:
         assert ifne.strip().upper() == "IF NOT EXISTS", (
@@ -78,8 +78,8 @@ def test_migration_is_idempotent_if_not_exists():
 def test_apply_migration_calls_session_execute():
     session = MagicMock()
     db_schema.apply_migration(session)
-    # 012 + 013 + 014 + 015 + 016 — пять миграций выполняются идемпотентно.
-    assert session.execute.call_count == 5
+    # 012 + 013 + 024 + 025 + 026 + 044 выполняются идемпотентно.
+    assert session.execute.call_count == 6
     # Переданы объекты text() с SQL миграций.
     texts = [str(call.args[0].text) for call in session.execute.call_args_list]
     assert any("loophole_record" in t for t in texts), "миграция 010 не выполнена"

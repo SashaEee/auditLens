@@ -10,8 +10,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from ..config import LoopholeSettings
 from ...config import ROOT
+from ..config import LoopholeSettings
 from . import repository as kb_repo
 
 log = logging.getLogger(__name__)

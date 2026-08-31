@@ -15,8 +15,20 @@
 -- NB: знак процента в комментариях миграций не ставить — накатываются через
 -- exec_driver_sql, psycopg считает его началом плейсхолдера.
 
-ALTER TABLE IF EXISTS bankiru_review_fts RENAME TO review_index;
-ALTER TABLE IF EXISTS bankiru_fts_state  RENAME TO review_index_state;
+-- Повтор setup на старом volume возможен после частично применённого legacy
+-- прогона: тогда новое имя уже есть, а старого нет. ALTER RENAME не имеет
+-- собственного IF TARGET NOT EXISTS, поэтому проверяем обе стороны явно.
+DO $$
+BEGIN
+    IF to_regclass('public.review_index') IS NULL
+       AND to_regclass('public.bankiru_review_fts') IS NOT NULL THEN
+        ALTER TABLE bankiru_review_fts RENAME TO review_index;
+    END IF;
+    IF to_regclass('public.review_index_state') IS NULL
+       AND to_regclass('public.bankiru_fts_state') IS NOT NULL THEN
+        ALTER TABLE bankiru_fts_state RENAME TO review_index_state;
+    END IF;
+END $$;
 
 -- Откуда строка. Значение по умолчанию описывает то, что уже лежит в таблице:
 -- на момент миграции там 169 тыс. строк из корпуса banki.ru.

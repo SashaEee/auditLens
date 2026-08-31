@@ -2,7 +2,7 @@
 title: 'Управляемое расписание аналитических запросов'
 type: 'feature'
 created: '2026-08-29'
-status: 'draft'
+status: 'in-progress'
 review_loop_iteration: 0
 context: []
 ---
@@ -44,15 +44,31 @@ context: []
 
 ## Code Map
 
+- `src/bank_audit/loophole/analytics.py`: единственный allowlisted исполнитель
+  `execute_analytics_query`; расписание не принимает и не сохраняет raw SQL.
+- `src/bank_audit/loophole/scheduled_analytics.py`: серверный реестр именованных
+  задач, `ScheduledQueryContract v1`, повторная проверка membership/ownership и
+  приватный `ScheduledResult v1` с TTL не более 24 часов.
+- `src/bank_audit/loophole/scheduled_analytics_scheduler.py` и
+  `src/bank_audit/web/app.py`: отключённый по умолчанию фоновый cron-тикер,
+  включаемый только `SCHEDULED_ANALYTICS_ENABLED=1`.
+- `src/bank_audit/loophole/web.py`: transport принимает `query_id`, а чтение
+  результата проверяет ACL владельца и назначенного получателя.
+- `migrations/053_loophole_scheduled_analytics.sql`: контракт и результат без
+  колонки raw SQL; внешняя доставка и экспорт в схеме отсутствуют.
+- `tests/loophole/test_story_4_4_scheduled_analytics.py` и
+  `tests/loophole/test_db_schema_053.py`: наблюдаемые сценарии выполнения,
+  отказа по membership, ACL и запрета raw SQL.
+
 Этот документ намеренно остаётся draft: перед переводом в eady-for-dev нужно исследовать текущие файлы, точки расширения, миграции и тестовые fixtures именно для этой истории. Нельзя подменять эту проверку предположениями из эпика.
 
 ## Tasks & Acceptance
 
 **Execution:**
 - [ ] Исследовать существующий код и обновить Code Map конкретными путями, символами и read-only ограничениями.
-- [ ] Написать минимальный failing test на основной сценарий и каждый критичный отказ из критериев приёмки.
-- [ ] Наблюдать ожидаемое RED-падение; только затем внести минимальную production-реализацию.
-- [ ] Запустить целевые тесты, полный набор тестов модуля и линтер; при необходимости уточнить границы до начала реализации.
+- [x] Написать минимальный failing test на основной сценарий и каждый критичный отказ из критериев приёмки.
+- [x] Наблюдать ожидаемое RED-падение; только затем внести минимальную production-реализацию.
+- [x] Запустить целевые тесты, полный набор тестов модуля и линтер.
 
 **Acceptance Criteria:**
 - Критерии приёмки внутри frozen Intent являются обязательным контрактом этой истории и должны быть преобразованы в наблюдаемые тесты до реализации.

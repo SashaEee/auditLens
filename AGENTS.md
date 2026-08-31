@@ -61,7 +61,8 @@ src/bank_audit/
 ├── ai/                     # analyst.py (быстрый ответ), clarify.py, llm_utils.py (тиры, reasoning_effort)
 ├── rag/                    # embedder, indexer, retriever, crawler, trust.py, отзывы (review_topics и пр.)
 ├── digest/                 # «Обзор» — ежедневный брифинг (детерминированный SQL + 3 LLM-вызова/сутки)
-├── loophole/               # «Лазейки» — nanobot-агент: chat/, parsers/, kb/, pii_mask.py, repository.py
+├── loophole/               # «Лазейки» — nanobot-агент: chat/, parsers/, kb/, pii_mask.py,
+│   │                       #   repository.py, authorization.py (server-side RBAC, story 1.1)
 ├── sources/ collectors/    # адаптеры источников (banki/sravni/cbr/finuslugi…), browser.py/http.py
 ├── normalizer/ quality/    # нормализация офферов (SCD2), data-quality чеки
 ├── analytics/              # views.sql (аналитические вью, CREATE OR REPLACE)
@@ -71,7 +72,7 @@ src/bank_audit/
 
 Прочее:
 
-- `migrations/` — SQL-миграции `NNN_*.sql` (001–041) + `ensure_vector.sql`.
+- `migrations/` — SQL-миграции `NNN_*.sql` (001–042) + `ensure_vector.sql`.
 - `config/` — `settings.yaml`, `sources.yaml` (реестр источников), CA-бандлы.
 - `openclaw/` — yaml-описания агентов/cron-джобов парсеров.
 - `scripts/` — `setup.sh`/`setup.ps1`, демо-сидинг, вспомогательные `_test_*.py`/`_*.py`.

@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 
 from bank_audit.loophole import repository as repo
-from bank_audit.loophole.parsers import registry
 from bank_audit.loophole.models import LoopholeRecord
+from bank_audit.loophole.parsers import registry
 
 
 @pytest.fixture

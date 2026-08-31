@@ -33,8 +33,7 @@ def normalize_target(target: str) -> str:
     except ValueError:
         return t.lower()
     host = (parts.hostname or "").lower()
-    if host.startswith("www."):
-        host = host[4:]
+    host = host.removeprefix("www.")
     if host in ("t.me", "telegram.me"):
         path = (parts.path or "").strip("/")
         name = path.split("/")[0] if path else ""

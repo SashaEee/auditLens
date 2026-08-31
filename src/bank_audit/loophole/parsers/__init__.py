@@ -6,16 +6,16 @@
 from __future__ import annotations
 
 from .generator import extract_targets, generate_parser, sanitize_filename
-from .runner import ParserRunner, _RUNNING
-from .registry import list_parsers, get_parser, delete_parser
+from .registry import delete_parser, get_parser, list_parsers
+from .runner import _RUNNING, ParserRunner
 
 __all__ = [
+    "_RUNNING",
+    "ParserRunner",
+    "delete_parser",
     "extract_targets",
     "generate_parser",
-    "sanitize_filename",
-    "ParserRunner",
-    "_RUNNING",
-    "list_parsers",
     "get_parser",
-    "delete_parser",
+    "list_parsers",
+    "sanitize_filename",
 ]

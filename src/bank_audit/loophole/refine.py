@@ -10,8 +10,8 @@ import os
 from typing import Any
 
 from ..ai.llm_utils import _loose_json_loads
-from . import repository as repo
 from . import keywords as kw_mod
+from . import repository as repo
 from .config import LoopholeSettings
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def _build_messages(loopholes: list[dict], existing: list[str]) -> list:
         "Предложи новые ключевые слова в формате JSON."
     )
     try:
-        from langchain_core.messages import SystemMessage, HumanMessage
+        from langchain_core.messages import HumanMessage, SystemMessage
         return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user)]
     except Exception:
         return [

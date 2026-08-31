@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 # Гарантируем, что src/ в sys.path даже без установленного пакета.
 _SRC = Path(__file__).resolve().parents[2] / "src"
@@ -48,6 +48,7 @@ CREATE TABLE loophole_record (
     domain        TEXT,
     trust_score   REAL,
     fetched_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    published_at  TEXT,
     collected_at  TEXT DEFAULT CURRENT_TIMESTAMP,
     bank_slug     TEXT,
     keyword       TEXT,
@@ -98,6 +99,36 @@ CREATE TABLE loophole_chat_message (
     created_at    TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_lcm_ws ON loophole_chat_message(workspace_id, created_at);
+
+CREATE TABLE loophole_agent_task (
+    task_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id      INTEGER,
+    query_text        TEXT,
+    enriched_query    TEXT,
+    phase             TEXT,
+    status            TEXT,
+    subtasks          TEXT,
+    subtask_results   TEXT,
+    iterations        INTEGER DEFAULT 0,
+    clarify_questions TEXT,
+    clarify_answers   TEXT,
+    created_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TEXT
+);
+
+CREATE TABLE agent_audit_log (
+    audit_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    workspace_id    INTEGER,
+    query_redacted  TEXT NOT NULL,
+    tools_used      TEXT NOT NULL,
+    duration_ms     INTEGER NOT NULL,
+    result_redacted TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    error_code      TEXT,
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE loophole_action_log (
     log_id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,6 +183,58 @@ CREATE TABLE loophole_parser_run (
     log_tail     TEXT,
     heal_report  TEXT
 );
+
+-- Авторизация модуля (миграция 042): principal / membership / роли / аудит.
+CREATE TABLE loophole_principal (
+    principal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username     TEXT NOT NULL,
+    display_name TEXT,
+    status       TEXT DEFAULT 'active',
+    created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TEXT
+);
+
+CREATE TABLE loophole_workspace_membership (
+    membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL,
+    workspace_id  INTEGER,
+    status        TEXT DEFAULT 'active',
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TEXT,
+    revoked_at    TEXT
+);
+
+CREATE TABLE loophole_role_assignment (
+    assignment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL,
+    role          TEXT NOT NULL,
+    status        TEXT DEFAULT 'active',
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TEXT,
+    revoked_at    TEXT
+);
+
+CREATE TABLE loophole_auth_audit (
+    audit_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    decision   TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Результат AI-исследования (миграция 059), нужен route-тестам общего stream-пути.
+CREATE TABLE loophole_research_report (
+    report_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id      INTEGER NOT NULL,
+    run_id            TEXT NOT NULL,
+    query_text        TEXT NOT NULL,
+    result_text       TEXT NOT NULL,
+    evidence_snapshot TEXT NOT NULL DEFAULT '[]',
+    created_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (workspace_id, run_id)
+);
+CREATE INDEX idx_loophole_research_report_workspace
+    ON loophole_research_report (workspace_id, report_id DESC);
 """
 
 
@@ -171,3 +254,9 @@ def session():
     s = SessionLocal()
     yield s
     s.close()
+
+
+@pytest.fixture(name="sqlite_session")
+def _sqlite_session(session):
+    """Явный алиас SQLite-сессии для тестов, где нужна локальная fixture."""
+    return session
