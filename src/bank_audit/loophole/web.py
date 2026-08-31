@@ -11,10 +11,12 @@ import logging
 import os
 import uuid
 from datetime import date, datetime
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
 
 from .. import db
@@ -176,6 +178,49 @@ async def export_research_report(
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.post("/research/{research_id}/import-sources")
+def import_research_sources(
+    research_id: int,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Переносит новые подтверждённо прочитанные источники как предварительные."""
+    service = ResearchCaseService(session)
+    workspace_id = service.research_workspace_id(research_id)
+    if workspace_id is None:
+        raise HTTPException(status_code=404, detail="Исследование не найдено")
+    _require_workspace_owner(int(workspace_id), user_id, session=session)
+    result = service.import_preliminary_sources(research_id, imported_by=user_id)
+    logging_audit.log_action(
+        user_id,
+        "import_research_sources",
+        workspace_id=int(workspace_id),
+        detail={"research_id": research_id, "imported": result["imported"], "skipped": result["skipped"]},
+        session=session,
+    )
+    return {**result, "status_label": "Предварительные записи добавлены в общую базу"}
+
+
+@router.post("/research/reports/{report_id}/import-sources")
+def import_report_sources(
+    report_id: int,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """UI-вариант переноса: отчёт задаёт workspace и run без client-side ID источников."""
+    service = ResearchCaseService(session)
+    report = service.get_report_result(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Отчёт исследования не найден")
+    _require_workspace_owner(int(report["workspace_id"]), user_id, session=session)
+    research_id = service.research_id_for_run(
+        workspace_id=int(report["workspace_id"]), run_id=str(report["run_id"])
+    )
+    if research_id is None:
+        return {"imported": 0, "skipped": 0, "record_ids": [], "status_label": "Нет пригодных источников"}
+    return import_research_sources(research_id, user_id=user_id, session=session)
 
 
 class VerificationDecisionRequest(BaseModel):
@@ -377,28 +422,31 @@ def list_records(
 
 
 @router.get("/catalog")
-def list_published_catalog(
+def list_catalog(
     bank_slugs: str | None = None,
     period_from: date | None = None,
     period_to: date | None = None,
     q: str | None = None,
+    verification_status: str = "all",
     limit: int = 500,
     offset: int = 0,
     session=Depends(get_session),
 ):
-    """Общий каталог: только опубликованные подтверждённые кейсы."""
+    """Общая база: подтверждённые кейсы и предварительные подозрения."""
     slugs = [item.strip() for item in bank_slugs.split(",") if item.strip()] if bank_slugs else None
-    records = repo.list_records(
+    try:
+        records = repo.list_catalog_cases(
         bank_slugs=slugs,
         period_from=period_from,
         period_to=period_to,
         query_text=q,
-        only_loophole=True,
-        status="published",
+        verification_status=verification_status,
         limit=limit,
         offset=offset,
         session=session,
-    )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Неизвестный фильтр проверки") from exc
     return {"records": records, "count": len(records)}
 
 
@@ -1188,9 +1236,10 @@ async def clarify_answer(
 
 
 # ── Парсеры: общий каталог ──────────────────────────────────────────────────
-class ParserCreateRequest(BaseModel):
+class ParserDevelopmentRequest(BaseModel):
     workspace_id: int
-    query: str
+    url: str = Field(min_length=1, max_length=2048)
+    description: str = Field(min_length=1, max_length=2000)
 
 
 class ParserPatchRequest(BaseModel):
@@ -1207,60 +1256,69 @@ def list_parsers(session=Depends(get_session)):
     return {"parsers": parser_registry.list_catalog(session=session)}
 
 
-@router.post("/parsers")
-async def create_parser(
-    body: ParserCreateRequest,
+def _parser_request_domain(url: str) -> str:
+    """Возвращает нормализованный домен допустимого публичного веб-источника."""
+    try:
+        parsed = urlsplit(url.strip())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="Укажите корректный URL веб-источника") from error
+    domain = (parsed.hostname or "").lower().removeprefix("www.")
+    if parsed.scheme not in {"http", "https"} or not domain:
+        raise HTTPException(status_code=422, detail="Укажите URL веб-источника с http:// или https://")
+    if domain in {"t.me", "telegram.me"}:
+        raise HTTPException(status_code=422, detail="Telegram-адреса не принимаются в этой форме")
+    return domain
+
+
+@router.post("/parser-requests", status_code=201)
+def create_parser_development_request(
+    body: ParserDevelopmentRequest,
     user_id: str = Depends(get_user_id),
     session=Depends(get_session),
 ):
-    """Создание парсера: дедуп источников (409 при полном дубле) + LLM-генерация."""
+    """Регистрирует потребность в парсере без генерации кода и запуска процессов."""
     from .parsers import dedup as dedup_mod
-    from .parsers import generator as parser_generator
     from .parsers import registry as parser_registry
 
-    targets = parser_generator.extract_targets(body.query)
-    if not targets:
-        raise HTTPException(
-            status_code=422,
-            detail="В запросе не указан URL ресурса или группа мессенджера",
-        )
-    keys = [k for k in (dedup_mod.normalize_target(t) for t in targets) if k]
+    _require_workspace_owner(body.workspace_id, user_id, session=session)
+    url = body.url.strip()
+    description = body.description.strip()
+    domain = _parser_request_domain(url)
+    target_key = dedup_mod.normalize_target(url)
+    keys = [target_key] if target_key else []
     conflicts = parser_registry.find_conflicts(keys, session=session)
-    full = [c for c in conflicts if sorted(c["overlap"]) == sorted(keys)]
-    if full:
-        c = full[0]
+    if conflicts:
+        conflict = conflicts[0]
         raise HTTPException(
             status_code=409,
-            detail={
-                "error": "duplicate",
-                "conflict_with": {"parser_id": c["parser_id"], "name": c["name"]},
-            },
+            detail=f"Источник уже подключён: {conflict['name'] or conflict['parser_id']}",
         )
+    pending = session.execute(
+        text(
+            "SELECT proposal_id FROM source_proposal "
+            "WHERE purpose = :purpose AND domain = :domain AND status = :status"
+        ),
+        {"purpose": "loophole_parser", "domain": domain, "status": "pending"},
+    ).scalar_one_or_none()
+    if pending is not None:
+        raise HTTPException(status_code=409, detail="Заявка для этого домена уже зарегистрирована")
     try:
-        # session=None: фоновая валидация переживает запрос; repo-функции сами
-        # открывают db.session() с commit (request-session не коммитит фон).
-        result = await parser_generator.generate_parser(
-            user_id, body.workspace_id, body.query, session=None
+        proposal_id = repo.create_parser_development_request(
+            workspace_id=body.workspace_id,
+            url=url,
+            domain=domain,
+            description=description,
+            user_id=user_id,
+            session=session,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
-    if conflicts:
-        result["warnings"] = [
-            {"target": o, "conflict_with": c["parser_id"]}
-            for c in conflicts for o in c["overlap"]
-        ]
-    logging_audit.log_action(
-        user_id, "parser_create",
-        workspace_id=body.workspace_id,
-        detail={"parser_id": result.get("parser_id"), "query": body.query[:200]},
-        session=session,
-    )
+    except Exception as error:
+        if "source_proposal" in str(error).lower() and "unique" in str(error).lower():
+            raise HTTPException(status_code=409, detail="Заявка для этого домена уже зарегистрирована") from error
+        raise
     return {
-        "parser_id": result["parser_id"],
-        "validation_run_id": result["validation_run_id"],
-        "name": result["name"],
-        "targets": result["targets"],
-        "warnings": result.get("warnings") or [],
+        "request_id": proposal_id,
+        "status": "pending",
+        "domain": domain,
     }
 
 

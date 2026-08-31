@@ -1,4 +1,4 @@
-"""Runtime-регрессия focus restore после подтверждённого удаления парсера."""
+"""Runtime-регрессия доступного перехода к read-only каталогу парсеров."""
 
 from __future__ import annotations
 
@@ -50,9 +50,8 @@ def _runtime_html() -> str:
     )
 
 
-def test_confirmed_delete_restores_focus_to_enabled_sources_tab_fallback():
-    """После подтверждения delete исходная кнопка становится disabled, поэтому
-    фокус должен оказаться на стабильной вкладке рабочей поверхности."""
+def test_sources_tab_keeps_focus_after_opening_read_only_catalog():
+    """После открытия вкладки фокус остаётся на доступной стабильной вкладке."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -63,12 +62,6 @@ def test_confirmed_delete_restores_focus_to_enabled_sources_tab_fallback():
             sources_tab = page.get_by_role("tab", name="Добавить источник")
             sources_tab.wait_for(state="visible")
             sources_tab.click()
-            parser_row = page.locator(".lp-parser-row")
-            parser_row.wait_for(state="visible")
-            parser_row.get_by_role("button", name="Удалить").click()
-            confirm = page.locator(".lp-confirm-dialog")
-            confirm.wait_for(state="visible")
-            confirm.get_by_role("button", name="Удалить").click()
             page.wait_for_function(
                 """() => {
                   const active = document.activeElement;

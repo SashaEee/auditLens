@@ -6,6 +6,7 @@ from io import BytesIO
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import text
 
 from bank_audit.loophole import pdf_export
 from bank_audit.loophole import repository as repo
@@ -21,6 +22,13 @@ def _create_report_schema(session) -> None:
             query_text TEXT NOT NULL, result_text TEXT NOT NULL,
             evidence_snapshot TEXT NOT NULL DEFAULT '[]'
         );
+        CREATE TABLE IF NOT EXISTS loophole_research (
+            research_id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, run_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS loophole_verification_snapshot (
+            snapshot_id INTEGER PRIMARY KEY, research_id INTEGER NOT NULL,
+            evidence_snapshot TEXT NOT NULL
+        );
     """)
 
 
@@ -34,6 +42,27 @@ def _saved_report(session, *, user_id: str = "analyst") -> tuple[int, int]:
         result="Комиссия не видна заранее.",
     )
     return workspace_id, report_id
+
+
+def test_report_result_copies_only_immutable_evidence_for_its_run(session):
+    _create_report_schema(session)
+    workspace_id = repo.create_workspace("analyst", "исследование", session=session)
+    session.execute(
+        text("INSERT INTO loophole_research VALUES (1, :workspace_id, 'run-1')"),
+        {"workspace_id": workspace_id},
+    )
+    session.execute(
+        text("INSERT INTO loophole_verification_snapshot VALUES (1, 1, :evidence)"),
+        {"evidence": '[{"url":"https://bank.example/rules","extracted_text":"Подтверждённый текст"}]'},
+    )
+    report_id = ResearchCaseService(session).save_report_result(
+        workspace_id=workspace_id, run_id="run-1", query="тема", result="итог"
+    )
+    session.execute(text("UPDATE loophole_verification_snapshot SET evidence_snapshot = '[]'"))
+    report = ResearchCaseService(session).get_report_result(report_id)
+
+    assert report is not None
+    assert report["evidence"] == [{"url": "https://bank.example/rules", "extracted_text": "Подтверждённый текст"}]
 
 
 def test_report_result_is_bound_to_current_workspace_run_and_has_no_evidence(session):

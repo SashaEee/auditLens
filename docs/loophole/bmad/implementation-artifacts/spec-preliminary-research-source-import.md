@@ -2,7 +2,7 @@
 title: 'Перенос найденных источников исследования в общую базу как предварительных'
 type: 'feature'
 created: '2026-08-31'
-status: 'draft'
+status: 'in-progress'
 review_loop_iteration: 0
 context:
   - 'docs/project-context.md'

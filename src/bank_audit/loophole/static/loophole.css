@@ -654,6 +654,13 @@ html, body {
   font-size: 0.74rem;
   color: var(--muted);
 }
+.lp-status-preliminary {
+  display: inline-flex;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+}
 
 .lp-empty-state {
   padding: 60px 24px;
@@ -818,6 +825,7 @@ html, body {
 .lp-safe-markdown h3, .lp-safe-markdown h4, .lp-safe-markdown h5 { margin: 12px 0 6px; }
 .lp-safe-markdown ul { margin: 8px 0; padding-left: 20px; }
 .lp-research-downloads { position: relative; }
+.lp-research-result-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
 .lp-research-downloads summary { list-style: none; cursor: pointer; }
 .lp-research-downloads summary::-webkit-details-marker { display: none; }
 .lp-research-download-options {

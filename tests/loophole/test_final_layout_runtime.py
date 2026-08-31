@@ -186,14 +186,9 @@ def _runtime_html(
           last_at: "2026-08-30T10:14:00+08:00",
         }}]}}, window.__denyProtected ? 403 : 200);
         if (url.endsWith("/parsers") && method === "GET") return jsonResponse({{parsers: window.__parsers}});
-        if (url.endsWith("/parsers") && method === "POST") {{
-          const parser = {{
-            parser_id: 8, name: "Новый веб-источник", status: "created",
-            is_running: true, targets: ["https://example.ru/tariffs"], records_count: 0,
-            auto_enabled: false,
-          }};
-          window.__parsers = [...window.__parsers, parser];
-          return jsonResponse({{...parser, validation_run_id: 88}});
+        if (url.endsWith("/parser-requests") && method === "POST") {{
+          window.__parserRequestBody = JSON.parse(init.body);
+          return jsonResponse({{request_id: 88, status: "pending", domain: "example.ru"}}, 201);
         }}
         if (url.endsWith("/clarify/answer") && method === "POST") {{
           window.__clarifyAnswerBodies.push(JSON.parse(init.body));
@@ -935,47 +930,51 @@ def test_selected_csv_download_is_repeatable_and_preserves_selection(browser: Br
         page.get_by_role("tab", name="Добавить источник").click()
         page.get_by_label("URL веб-источника").fill("https://example.ru/tariffs")
         page.get_by_label("Что собирать").fill("Тарифы и комиссии")
-        page.get_by_role("button", name="Создать и проверить").click()
-        page.get_by_text("Парсер создан.").wait_for(state="visible")
+        page.get_by_role("button", name="Отправить заявку").click()
+        page.get_by_text("Заявка №88 зарегистрирована").wait_for(state="visible")
+        assert page.evaluate("window.__parserRequestBody") == {
+            "workspace_id": 1,
+            "url": "https://example.ru/tariffs",
+            "description": "Тарифы и комиссии",
+        }
         assert page.get_by_role("button", name="Скачать повторно").count() == 0
     finally:
         page.close()
 
 
-def test_web_parser_lifecycle_is_inline_on_sources_tab(browser: Browser):
+def test_parser_request_is_inline_and_catalog_is_read_only(browser: Browser):
     page = _open(browser)
     try:
         page.get_by_role("tab", name="Добавить источник").click()
-        page.get_by_role("heading", name="Новый парсер веб-источника").wait_for(state="visible")
+        page.get_by_role("heading", name="Заявка на разработку парсера").wait_for(state="visible")
         assert page.locator('[role="dialog"][aria-labelledby="lp-parsers-title"]').count() == 0
-        assert "Telegram-источники" in page.locator(".lp-source-note").inner_text()
+        assert page.locator(".lp-source-note").count() == 0
+        assert page.get_by_text("Telegram-источники", exact=True).count() == 0
 
         page.get_by_label("URL веб-источника").fill("https://example.ru/tariffs")
         page.get_by_label("Что собирать").fill("Тарифы, комиссии и условия обслуживания")
-        page.get_by_role("button", name="Создать и проверить").click()
-
-        page.locator(".lp-log-panel").wait_for(state="visible")
-        page.get_by_text("Проверка доступности — 200 OK").wait_for(state="visible")
+        page.get_by_role("button", name="Отправить заявку").click()
+        page.get_by_text("Заявка №88 зарегистрирована").wait_for(state="visible")
+        assert page.locator(".lp-log-panel").count() == 0
+        assert page.get_by_role("button", name="Запустить").count() == 0
+        assert page.get_by_role("button", name="Настроить").count() == 0
+        assert page.get_by_role("button", name="Удалить").count() == 0
         assert page.get_by_role("tab", name="Добавить источник").get_attribute("aria-selected") == "true"
     finally:
         page.close()
 
 
-def test_parser_log_disconnect_closes_stream_and_shows_inline_error(browser: Browser):
-    """Ломается, если оборванный EventSource остаётся в ложном состоянии «идёт»."""
+def test_parser_request_does_not_open_event_source(browser: Browser):
+    """Отправка заявки не запускает парсер и не открывает журнал выполнения."""
     page = _open(browser, event_source_error=True)
     try:
         page.get_by_role("tab", name="Добавить источник").click()
         page.get_by_label("URL веб-источника").fill("https://example.ru/tariffs")
         page.get_by_label("Что собирать").fill("Тарифы и комиссии")
-        page.get_by_role("button", name="Создать и проверить").click()
-
-        error = page.locator(".lp-log-panel [role='alert']")
-        error.wait_for(state="visible")
-        assert "Соединение с журналом прервано" in error.inner_text()
-        assert page.locator(".lp-log-panel .lp-log-running").count() == 0
-        assert page.locator(".lp-log-panel .lp-log-done").count() == 0
-        assert page.evaluate("window.__eventSources[0].closed") is True
+        page.get_by_role("button", name="Отправить заявку").click()
+        page.get_by_text("Заявка №88 зарегистрирована").wait_for(state="visible")
+        assert page.locator(".lp-log-panel").count() == 0
+        assert page.evaluate("window.__eventSources.length") == 0
     finally:
         page.close()
 

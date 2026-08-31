@@ -261,27 +261,22 @@ def test_parsers_list_empty(client, monkeypatch):
     assert r.json() == {"parsers": []}
 
 
-def test_parsers_create(client, monkeypatch):
-    """POST /parsers — мок generator.generate_parser (запрос с URL-таргетом)."""
+def test_parser_request_creates_pending_request(client, app_session, monkeypatch):
+    """POST /parser-requests не вызывает генератор и возвращает pending-заявку."""
     from bank_audit.loophole.parsers import generator as parser_generator
 
-    async def fake_gen(user_id, workspace_id, query, *, llm=None, session=None):
-        return {
-            "parser_id": 42,
-            "code_path": "/tmp/p.py",
-            "name": "parser",
-            "validation_run_id": 99,
-            "targets": ["https://b.ru/y"],
-        }
+    generator_spy = AsyncMock(side_effect=AssertionError("Генератор не должен вызываться"))
+    monkeypatch.setattr(parser_generator, "generate_parser", generator_spy)
+    workspace_id = repo.create_workspace("test-user", session=app_session)
 
-    monkeypatch.setattr(parser_generator, "generate_parser", fake_gen)
-    r = client.post("/api/loophole/parsers", json={
-        "workspace_id": 1, "query": "комиссии https://b.ru/y",
+    r = client.post("/api/loophole/parser-requests", json={
+        "workspace_id": workspace_id,
+        "url": "https://b.ru/y",
+        "description": "Комиссии и исключения",
     })
-    assert r.status_code == 200
-    assert r.json()["parser_id"] == 42
-    assert r.json()["validation_run_id"] == 99
-    assert r.json()["targets"] == ["https://b.ru/y"]
+    assert r.status_code == 201
+    assert r.json()["status"] == "pending"
+    generator_spy.assert_not_awaited()
 
 
 def test_parser_run_not_found(client, monkeypatch):
