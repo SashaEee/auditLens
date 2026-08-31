@@ -451,7 +451,8 @@ async def build_registry(client, model: str, *, pages: dict[str, str],
                          attributes: list[str], plan,
                          concurrency: int = 10,
                          page_limit: int | None = None,
-                         keep_pages: set | None = None) -> FactRegistry:
+                         keep_pages: set | None = None,
+                         subject_hints: dict | None = None) -> FactRegistry:
     """Страницы → реестр фактов."""
     subjects = list(getattr(plan, "subjects", None) or [])
     labels = dict(getattr(plan, "subject_labels", None) or {})
@@ -489,7 +490,11 @@ async def build_registry(client, model: str, *, pages: dict[str, str],
         url, items = res
         for it in items:
             quote = str(it.get("verbatim") or "")
-            subj = str(it.get("subject") or "")
+            # Там, где принадлежность объекту ИЗВЕСТНА (отзыв из корпуса),
+            # берём её из источника, а не из догадки модели: жалоба на
+            # брокерские комиссии одного банка уехала в раздел про другой.
+            forced = (subject_hints or {}).get(url)
+            subj = forced or str(it.get("subject") or "")
             if subj and subj not in subjects:
                 subj = ""
             reg.add(subject=subj,

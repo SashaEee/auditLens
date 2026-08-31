@@ -22,6 +22,16 @@ log = logging.getLogger(__name__)
 _PER_SUBJECT = 6
 
 
+def _match_slug(bank_name: str, name_to_slug: dict[str, str]) -> str:
+    """Корпус мог вернуть каноническое имя, отличное от переданного."""
+    low = (bank_name or "").lower()
+    for name, slug in name_to_slug.items():
+        n = name.lower()
+        if n and (n in low or low in n):
+            return slug
+    return ""
+
+
 def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
     """Жалобы по каждому объекту исследования из корпуса.
 
@@ -46,20 +56,25 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
         if not br.is_available():
             log.info("корпус отзывов недоступен — наблюдаемая сторона только из веба")
             return []
+        name_to_slug = {labels.get(s, s): s for s in subjects}
         found = br.search_reviews_multi(
-            query, banks=[labels.get(s, s) for s in subjects],
-            k_per=per_subject)
+            query, banks=list(name_to_slug), k_per=per_subject)
     except Exception as e:
         log.info("корпус отзывов: %s", type(e).__name__)
         return []
 
     out: list[dict] = []
     for bank_name, items in (found or {}).items():
+        # Чей это отзыв — ЗНАЕТ корпус. Отдавать это на угадывание модели
+        # нельзя: текст жалобы часто не называет банк («давний клиент банка»),
+        # и жалоба на брокерские комиссии Т-Банка уехала в раздел про Сбер.
+        slug = name_to_slug.get(bank_name) or _match_slug(bank_name, name_to_slug)
         for it in (items or []):
             text = (it.get("text") or "").strip()
             if not text:
                 continue
-            out.append({"bank": bank_name, "url": it.get("url") or "",
+            out.append({"bank": bank_name, "subject": slug or "",
+                        "url": it.get("url") or "",
                         "date": str(it.get("date") or "")[:10],
                         "product": it.get("product") or "",
                         "text": text})
@@ -87,8 +102,14 @@ def as_pages(records: list[dict]) -> dict[str, str]:
             continue
         pages[url] = r["text"]
         META[url] = {"bank": r.get("bank", ""), "date": r.get("date", ""),
-                     "product": r.get("product", "")}
+                     "product": r.get("product", ""),
+                     "subject": r.get("subject", "")}
     return pages
+
+
+def subject_hints() -> dict[str, str]:
+    """url → слаг объекта, о котором отзыв. Правда корпуса, не догадка модели."""
+    return {u: m["subject"] for u, m in META.items() if m.get("subject")}
 
 
 def stamp_dates(registry) -> int:

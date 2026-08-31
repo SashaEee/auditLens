@@ -90,6 +90,27 @@ chk("цитата доезжает до писателя дословно",
     "Ставка на остаток — 16,5% годовых" in ctx)
 
 
+print("принадлежность отзыва берётся из корпуса, а не угадывается")
+from bank_audit.research.gptr import reviews as _rev  # noqa: E402
+_rev.META.clear()
+_recs = [{"bank": "Т-Банк", "subject": "tinkoff", "date": "2026-07-16",
+          "product": "Инвестиции", "url": "https://banki.ru/r/13230337",
+          "text": "с меня списывают комиссию почти в 10 раз больше"}]
+_pages = _rev.as_pages(_recs)
+chk("в текст страницы попадает ТОЛЬКО слова клиента",
+    _pages["https://banki.ru/r/13230337"]
+    == "с меня списывают комиссию почти в 10 раз больше")
+chk("служебная строка не подмешана в текст",
+    "Отзыв клиента" not in _pages["https://banki.ru/r/13230337"])
+chk("подсказка о принадлежности отдана отдельно",
+    _rev.subject_hints() == {"https://banki.ru/r/13230337": "tinkoff"})
+_reg3 = FactRegistry()
+_reg3.add(subject="tinkoff", attribute="комиссия", value="в 10 раз больше",
+          unit="", verbatim="списывают комиссию почти в 10 раз больше",
+          url="https://banki.ru/r/13230337", stance="observed")
+_rev.stamp_dates(_reg3)
+chk("дата отзыва проставлена из корпуса", _reg3.facts[0].date == "2026-07-16")
+
 print("ранжирование считается по контракту, а не сочиняется")
 from types import SimpleNamespace as _NS  # noqa: E402
 from bank_audit.research.gptr import ranking as _rank  # noqa: E402

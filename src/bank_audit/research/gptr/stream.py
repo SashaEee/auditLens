@@ -151,7 +151,8 @@ async def stream_deep_research_gptr(question: str,
                 "estimate_s": 40})
     registry = await al_facts.build_registry(
         client, fast, pages=pages, attributes=attributes, plan=plan,
-        keep_pages=set(review_pages))
+        keep_pages=set(review_pages),
+        subject_hints=al_reviews.subject_hints())
     if review_pages:
         al_reviews.stamp_dates(registry)
     yield _evt({"type": "stage_status", "stage": "facts_ready",
