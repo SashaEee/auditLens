@@ -152,6 +152,8 @@ async def stream_deep_research_gptr(question: str,
     registry = await al_facts.build_registry(
         client, fast, pages=pages, attributes=attributes, plan=plan,
         keep_pages=set(review_pages))
+    if review_pages:
+        al_reviews.stamp_dates(registry)
     yield _evt({"type": "stage_status", "stage": "facts_ready",
                 "label": f"Фактов: {len(registry.facts)}",
                 "detail": f"со {len(pages)} прочитанных страниц",

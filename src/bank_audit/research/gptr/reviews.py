@@ -35,7 +35,12 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
     # Запрос — характеристика наблюдаемой стороны из контракта: она уже
     # сформулирована планом под конкретный вопрос («жалобы на задержки и
     # расхождения со сроками»), никаких слов в коде не нужно.
-    query = (getattr(contract, "observed", "") or "").strip() or None
+    # Запрос: характеристика наблюдаемой стороны ПЛЮС предмет вопроса. Без
+    # предмета корпус отдаёт жалобы про ипотеку и блокировки по 115-ФЗ — они
+    # настоящие, но к вопросу про оформление карты отношения не имеют.
+    observed = (getattr(contract, "observed", "") or "").strip()
+    product = (getattr(plan, "product", "") or "").strip()
+    query = " ".join(x for x in (observed, product) if x) or None
     try:
         from ...rag import bankiru_reviews as br
         if not br.is_available():
@@ -62,22 +67,40 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
     return out
 
 
+# url → {bank, date, product}. Метаданные держим ОТДЕЛЬНО от текста отзыва:
+# когда я подставлял их в начало страницы, модель цитировала мою же служебную
+# строку («Отзыв клиента о банке Т-Банк от 2025-12-24») как слова клиента.
+META: dict[str, dict] = {}
+
+
 def as_pages(records: list[dict]) -> dict[str, str]:
     """Отзывы в виде «страниц» для общего конвейера извлечения.
 
     Так у корпуса и веба один путь: одинаковое извлечение, одинаковая проверка
-    цитаты, одинаковые якоря. Дата подставляется в текст, чтобы писатель мог
-    датировать жалобу, а не выдавать прошлогоднюю за свежую.
+    цитаты, одинаковые якоря. В текст попадает ТОЛЬКО то, что написал клиент.
     """
     pages: dict[str, str] = {}
+    META.clear()
     for r in records:
         url = r.get("url") or ""
         if not url:
             continue
-        head = f"Отзыв клиента о банке {r['bank']}"
-        if r.get("date"):
-            head += f" от {r['date']}"
-        if r.get("product"):
-            head += f" ({r['product']})"
-        pages[url] = f"{head}\n\n{r['text']}"
+        pages[url] = r["text"]
+        META[url] = {"bank": r.get("bank", ""), "date": r.get("date", ""),
+                     "product": r.get("product", "")}
     return pages
+
+
+def stamp_dates(registry) -> int:
+    """Проставляет фактам из корпуса дату отзыва.
+
+    Дата нужна аудитору, чтобы отличить свежую жалобу от прошлогодней, но
+    брать её из текста нельзя — там её нет. Берём из метаданных корпуса.
+    """
+    n = 0
+    for f in registry.facts:
+        meta = META.get(f.url)
+        if meta and meta.get("date") and not f.date:
+            f.date = meta["date"]
+            n += 1
+    return n

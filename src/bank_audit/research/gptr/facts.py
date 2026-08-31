@@ -58,14 +58,15 @@ class Fact:
     unit: str               # единица, если применимо («%», «₽», «дн.»)
     verbatim: str           # цитата из источника, как её привела модель
     url: str
-    stance: str             # declared | observed
+    stance: str             # declared | observed | regulatory
+    date: str = ""          # дата высказывания, если источник её знает
     confidence: float = 1.0
 
     def to_ui(self) -> dict:
         return {"id": self.id, "subject": self.subject,
                 "attribute": self.attribute, "value": self.value,
                 "unit": self.unit, "verbatim": self.verbatim,
-                "url": self.url, "stance": self.stance}
+                "url": self.url, "stance": self.stance, "date": self.date}
 
 
 # ── Дословная проверка ────────────────────────────────────────────────────
@@ -211,9 +212,10 @@ class FactRegistry:
                     }.get(f.stance, "наблюдается")
             subj = labels.get(f.subject, f.subject) or "—"
             unit = f" {f.unit}" if f.unit else ""
+            when = f" | дата: {f.date}" if f.date else ""
             lines.append(
                 f"[f:{f.id}] {subj} | {f.attribute} | {f.value}{unit} "
-                f"| сторона: {side} | источник: {f.url}\n"
+                f"| сторона: {side}{when} | источник: {f.url}\n"
                 f"      цитата: «{f.verbatim}»")
         return "\n".join(lines)
 
@@ -464,8 +466,12 @@ async def build_registry(client, model: str, *, pages: dict[str, str],
     # контракта они заведомо проигрывают продуктовым страницам банков.
     keep = {u: pages[u] for u in (keep_pages or set()) if u in pages}
     other = {u: t for u, t in pages.items() if u not in keep}
-    pages = {**keep, **select_pages(other, attributes, domains,
-                                    max(1, limit - len(keep)))}
+    # Предел считается для ВЕБ-страниц; отзывы идут сверху, а не вместо них.
+    # Иначе 18 жалоб из корпуса съедали половину бюджета, продуктовые страницы
+    # банков не попадали в извлечение, и у Т-Банка оказывалось раскрыто 2
+    # характеристики из 10 — не потому что банк не раскрывает, а потому что мы
+    # его страницы не прочитали.
+    pages = {**keep, **select_pages(other, attributes, domains, limit)}
 
     sem = asyncio.Semaphore(concurrency)
 
