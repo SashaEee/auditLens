@@ -15,7 +15,42 @@ import re
 
 import httpx
 
+from ..v2.tools.web_tools import _trust_for
+
 log = logging.getLogger(__name__)
+
+# Ниже этого доверия источник не читаем никогда: форумы, доски объявлений,
+# офтоп-поддомены. Проверено: pikabu.ru = 0.20.
+_HARD_MIN = 0.35
+# Первоисточник (сайт организации, регулятор) — по нашей же шкале.
+_PRIMARY = 0.85
+# Пересказ на незнакомом сайте: 0.55 у любого домена не из реестра.
+_RETELLING = 0.60
+
+
+def _prefer_primary(results: list[dict]) -> list[dict]:
+    """Отсев по доверию, адаптивный к тому, что нашлось по ЭТОМУ запросу.
+
+    Мусор (форумы, объявления) выбрасываем всегда. Пересказ на незнакомом
+    сайте — только если по тому же запросу нашёлся первоисточник: тогда
+    zaimi.ru и 1000bankov.ru не нужны, у нас есть сайт банка. Если
+    первоисточника нет, пересказ остаётся — лучше он, чем пустой отчёт.
+    Списка «плохих доменов» здесь нет: решает состав выдачи.
+    """
+    scored = []
+    for r in results:
+        url = r.get("href") or ""
+        from urllib.parse import urlparse
+        dom = urlparse(url).netloc.removeprefix("www.")
+        scored.append((_trust_for(dom, url), r))
+    kept = [(t, r) for t, r in scored if t >= _HARD_MIN]
+    if any(t >= _PRIMARY for t, _ in kept):
+        kept = [(t, r) for t, r in kept if t >= _RETELLING]
+    dropped = len(results) - len(kept)
+    if dropped:
+        log.info("fleet: отсеяно %d из %d по доверию", dropped, len(results))
+    kept.sort(key=lambda p: -p[0])
+    return [r for _t, r in kept]
 
 
 class FleetSearch:
@@ -79,6 +114,6 @@ class FleetSearch:
                 continue
             out.append({"href": href,
                         "body": it.get("content") or it.get("snippet") or ""})
-            if len(out) >= max_results:
-                break
-        return out
+            if len(out) >= max_results * 2:
+                break                    # берём с запасом — часть отсеется
+        return _prefer_primary(out)[:max_results]

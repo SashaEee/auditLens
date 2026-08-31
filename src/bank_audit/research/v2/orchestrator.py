@@ -102,7 +102,24 @@ _AGENT_LABELS_UI = {
 async def stream_deep_research_v2(question: str,
                                     history: list[dict] | None = None,
                                     ) -> AsyncIterator[str]:
-    """Главный entry-point. Yields SSE-data строки."""
+    """Главный entry-point. Yields SSE-data строки.
+
+    RESEARCH_ENGINE=gptr переключает сбор на движок gpt-researcher (план
+    Кондуктора → их цикл → наша сверка чисел и раздел пробелов). Контракт
+    событий тот же, UI различий не видит. Переключатель нужен, чтобы прод
+    можно было вернуть на прежний конвейер одной переменной, без выката.
+    """
+    if os.getenv("RESEARCH_ENGINE", "").lower() == "gptr":
+        try:
+            from ..gptr.stream import stream_deep_research_gptr
+        except Exception:
+            log.exception("RESEARCH_ENGINE=gptr, но движок не поднялся — "
+                          "остаёмся на конвейере v2")
+        else:
+            async for ev in stream_deep_research_gptr(question, history):
+                yield ev
+            return
+
     started = time.time()
     question = normalize_question(question)
     yield _evt({"type": "mode", "value": "deep"})
