@@ -112,5 +112,13 @@
    "digit_recall": 0,
    "filter_leak": 0
   }
+ },
+ "этап_3": {
+  "chars": 7687,
+  "short_lines_pct": 49,
+  "dup_lines": 5,
+  "chars_per_num": 655,
+  "digit_recall_pct": 63,
+  "filter_leak": 6
  }
 }
