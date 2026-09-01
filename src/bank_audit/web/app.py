@@ -1714,22 +1714,35 @@ def banks():
     через resolve_bank (алиасы/слаги/фаззи), а не по точному совпадению:
     точное давало 62 пары из 692.
     """
+    # Один банк, заведённый под двумя написаниями («СОЛИД БАНК» и «Солид
+    # Банк»), выводился двумя строками — аудиторы писали, что «один и тот же
+    # банк указан несколько раз». Справочник вычистить до конца мешают внешние
+    # ключи истории изменений, поэтому схлопываем на выдаче: ключ — имя,
+    # очищенное до букв и цифр, выживает опознанная запись с большим числом
+    # отзывов.
     rows = q("""
-        SELECT b.bank_id, b.slug, b.name, b.is_sber,
-               t.rate_pct avg_grade,
-               (t.raw->>'total_reviews')::int total_reviews,
-               (t.raw->>'total_reviews_year')::int reviews_year,
-               (t.raw->>'responses_all')::int responses_all,
-               round((t.raw->>'solved_pct')::numeric,1) solved_pct,
-               (t.raw->>'place')::int place,
-               round((t.raw->>'rating_score')::numeric,1) rating_score,
-               (t.raw->>'problem_count')::int problem_count,
-               t.valid_from AS rating_at
-          FROM bank b
-          LEFT JOIN product_offer o ON o.bank_id=b.bank_id AND o.category='other'
-          LEFT JOIN product_terms t  ON t.offer_id=o.offer_id AND t.valid_to IS NULL
-                                    AND t.rate_kind='avg_grade'
-         ORDER BY COALESCE((t.raw->>'total_reviews')::int, 0) DESC
+        WITH one_per_bank AS (
+            SELECT DISTINCT ON (lower(regexp_replace(b.name,'[^[:alnum:]]','','g')))
+                   b.bank_id, b.slug, b.name, b.is_sber,
+                   t.rate_pct avg_grade,
+                   (t.raw->>'total_reviews')::int total_reviews,
+                   (t.raw->>'total_reviews_year')::int reviews_year,
+                   (t.raw->>'responses_all')::int responses_all,
+                   round((t.raw->>'solved_pct')::numeric,1) solved_pct,
+                   (t.raw->>'place')::int place,
+                   round((t.raw->>'rating_score')::numeric,1) rating_score,
+                   (t.raw->>'problem_count')::int problem_count,
+                   t.valid_from AS rating_at
+              FROM bank b
+              LEFT JOIN product_offer o ON o.bank_id=b.bank_id AND o.category='other'
+              LEFT JOIN product_terms t  ON t.offer_id=o.offer_id AND t.valid_to IS NULL
+                                        AND t.rate_kind='avg_grade'
+             ORDER BY lower(regexp_replace(b.name,'[^[:alnum:]]','','g')),
+                      (b.slug NOT LIKE 'unknown_%') DESC,
+                      COALESCE((t.raw->>'total_reviews')::int, 0) DESC
+        )
+        SELECT * FROM one_per_bank
+         ORDER BY COALESCE(total_reviews, 0) DESC
     """)
     # свой корпус: имя канона → (число отзывов, свежесть, средняя оценка)
     own: dict = {}
