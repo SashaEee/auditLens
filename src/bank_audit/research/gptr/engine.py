@@ -16,6 +16,7 @@ import os
 import time
 
 from . import compat, gaps as al_gaps, planner as al_planner, runstate
+from .compat import _rejected_param
 from . import scraper as al_scraper, verify as al_verify
 from .retriever import FleetSearch
 
@@ -190,9 +191,26 @@ async def stream_report(client, model: str, *, question: str, plan,
             plan, question, needs_ranking=needs_ranking,
             has_regulatory=has_regulatory) + "\n\nContext: " + context},
     ]
-    stream = await client.chat.completions.create(
-        model=model, messages=messages, temperature=0.3, max_tokens=16000,
-        stream=True)
+    # Причуды провайдера здесь те же, что в compat: claude-opus отвергает
+    # temperature. Прямой вызов их обработку потерял — возвращаем: параметр,
+    # на который модель пожаловалась, снимаем и повторяем.
+    kwargs: dict = {"model": model, "messages": messages, "stream": True,
+                    "temperature": 0.3, "max_tokens": 16000}
+    try:
+        stream = await client.chat.completions.create(**kwargs)
+        first = await stream.__anext__()
+    except Exception as e:
+        bad = _rejected_param(e)
+        if not bad or bad not in kwargs:
+            raise
+        log.info("писатель: %s не принимает %s — повторяем без него", model, bad)
+        kwargs.pop(bad, None)
+        stream = await client.chat.completions.create(**kwargs)
+        first = None
+    if first is not None:
+        piece = getattr(getattr(first.choices[0], "delta", None), "content", None)
+        if piece:
+            yield piece
     async for part in stream:
         try:
             delta = part.choices[0].delta
