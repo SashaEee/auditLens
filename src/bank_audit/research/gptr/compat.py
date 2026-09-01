@@ -22,6 +22,38 @@ log = logging.getLogger(__name__)
 from ...ai.llm_utils import _rejected_param  # noqa: E402,F401
 
 
+def probe_models(models: list[str], *, base_url: str, api_key: str) -> None:
+    """Разовая проверка: какие модели отвергают `temperature`.
+
+    Самолечение по исключению не срабатывает: gpt-researcher ретраит вызов
+    внутри себя десять раз и наружу отдаёт уже общую ошибку. Поэтому спрашиваем
+    провайдера прямо — три коротких запроса на старте прогона, зато список
+    строится по факту, а не по зашитым именам моделей.
+    """
+    import httpx
+    import gpt_researcher.llm_provider.generic.base as base
+    import gpt_researcher.utils.llm as llm
+
+    for model in dict.fromkeys(m for m in models if m):
+        if model in base.NO_SUPPORT_TEMPERATURE_MODELS:
+            continue
+        try:
+            r = httpx.post(base_url.rstrip("/") + "/chat/completions", timeout=30,
+                           headers={"Authorization": f"Bearer {api_key}"},
+                           json={"model": model, "max_tokens": 1,
+                                 "temperature": 0.4,
+                                 "messages": [{"role": "user", "content": "."}]})
+        except Exception as e:
+            log.info("gptr-compat: проба %s не удалась (%s)", model, type(e).__name__)
+            continue
+        if r.status_code == 200:
+            continue
+        if _rejected_param(Exception(r.text)) == "temperature":
+            base.NO_SUPPORT_TEMPERATURE_MODELS.append(model)
+            log.info("gptr-compat: %s не принимает temperature", model)
+    llm.NO_SUPPORT_TEMPERATURE_MODELS = base.NO_SUPPORT_TEMPERATURE_MODELS
+
+
 def install() -> None:
     """Оборачивает вызов модели самолечением по отвергнутым параметрам."""
     import gpt_researcher.llm_provider.generic.base as base
