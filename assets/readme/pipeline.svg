@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" width="1200" height="430" role="img" aria-labelledby="pipeTitle pipeDesc">
+  <title id="pipeTitle">Как устроен прогон исследования в AuditLens</title>
+  <desc id="pipeDesc">Слева направо пять шагов: Кондуктор строит план вопроса; движок поиска читает страницы через кэш, HTTP и браузер; из прочитанного извлекаются факты с дословными цитатами; критик из двух слоёв снимает неподтверждённое; отчёт собирается со сквозными ссылками в квадратных скобках. Отдельная нижняя полоса: графики, сравнительные таблицы и PDF считаются кодом, без участия языковой модели.</desc>
+
+  <rect width="1200" height="430" rx="16" fill="#0E1116"/>
+
+  <text x="40" y="52" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="17" letter-spacing="2.4" fill="#7C8595">ОДИН ПРОГОН ИССЛЕДОВАНИЯ</text>
+  <line x1="40" y1="68" x2="1160" y2="68" stroke="#242C38" stroke-width="1"/>
+
+  <!-- ── Пять шагов ────────────────────────────────────────────────────
+       Порядок соответствует коду: conductor.plan_research → адаптеры
+       движка (planner/retriever/scraper) → facts → critic → отчёт. -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif">
+    <g>
+      <rect x="40" y="112" width="208" height="128" rx="12" fill="#151A22" stroke="#242C38" stroke-width="1.5"/>
+      <text x="64" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">01</text>
+      <text x="64" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Кондуктор</text>
+      <text x="64" y="220" font-size="18" fill="#8A93A3">план вопроса</text>
+    </g>
+    <g>
+      <rect x="268" y="112" width="208" height="128" rx="12" fill="#151A22" stroke="#242C38" stroke-width="1.5"/>
+      <text x="292" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">02</text>
+      <text x="292" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Поиск</text>
+      <text x="292" y="220" font-size="18" fill="#8A93A3">чтение страниц</text>
+    </g>
+    <g>
+      <rect x="496" y="112" width="208" height="128" rx="12" fill="#151A22" stroke="#242C38" stroke-width="1.5"/>
+      <text x="520" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">03</text>
+      <text x="520" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Факты</text>
+      <text x="520" y="220" font-size="18" fill="#8A93A3">дословные цитаты</text>
+    </g>
+    <!-- Критик выделен рамкой: это единственный шаг, который УБИРАЕТ
+         утверждения, и владелец настаивал, что он отдельный модуль. -->
+    <g>
+      <rect x="724" y="112" width="208" height="128" rx="12" fill="#141B2C" stroke="#1F4DFF" stroke-width="1.5"/>
+      <text x="748" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">04</text>
+      <text x="748" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Критик</text>
+      <text x="748" y="220" font-size="18" fill="#93A6D6">два слоя</text>
+    </g>
+    <g>
+      <rect x="952" y="112" width="208" height="128" rx="12" fill="#151A22" stroke="#242C38" stroke-width="1.5"/>
+      <text x="976" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">05</text>
+      <text x="976" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Отчёт</text>
+      <text x="976" y="220" font-size="18" fill="#8A93A3">сквозные <tspan fill="#5B84FF" font-weight="600">[N]</tspan></text>
+    </g>
+  </g>
+
+  <!-- Переходы -->
+  <g stroke="#3A4454" stroke-width="2" fill="none" stroke-linecap="round">
+    <path d="M 250 176 L 264 176 M 258 170 L 264 176 L 258 182"/>
+    <path d="M 478 176 L 492 176 M 486 170 L 492 176 L 486 182"/>
+    <path d="M 706 176 L 720 176 M 714 170 L 720 176 L 714 182"/>
+    <path d="M 934 176 L 948 176 M 942 170 L 948 176 L 942 182"/>
+  </g>
+
+  <!-- ── Нижняя полоса: то, чего модель не касается ────────────────────
+       Главное обещание инструмента. Числа в графиках и таблицах
+       физически не могут быть выдуманы — их считает SQL. -->
+  <path d="M 600 240 L 600 288" stroke="#3A4454" stroke-width="2" fill="none"/>
+  <rect x="40" y="288" width="1120" height="102" rx="12" fill="#111721" stroke="#242C38" stroke-width="1.5"/>
+  <text x="64" y="326" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="17" letter-spacing="1.6" fill="#5B84FF">БЕЗ УЧАСТИЯ МОДЕЛИ</text>
+  <text x="64" y="362" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+        font-size="21" fill="#C6CDD8">Графики, сравнительные таблицы и PDF считаются кодом из тех же фактов — выдумать число здесь нечему</text>
+</svg>

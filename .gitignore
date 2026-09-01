@@ -111,3 +111,5 @@ package.json
 .worktrees
 .qa*
 .tmp*
+# Рендеры README-ассетов: рабочий материал, в репозиторий не нужны
+assets/readme/_preview/
