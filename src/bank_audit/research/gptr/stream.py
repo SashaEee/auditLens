@@ -153,28 +153,49 @@ async def stream_deep_research_gptr(question: str,
     researcher = GPTResearcher(query=question, report_type="research_report",
                                agent="AuditLens",
                                role=_role_prompt(plan, question))
+    # Три вещи, которые раньше шли по очереди, теперь идут вместе: сбор,
+    # разбор уже прочитанных страниц объектов и выгрузка жалоб из корпуса.
+    # Отзывы зависят только от плана и контракта — ждать сбора им незачем.
+    registry = al_facts.FactRegistry()
+    collecting = {"on": True}
+    reviews_task = asyncio.ensure_future(asyncio.to_thread(
+        al_reviews.collect, plan, attributes))
+    eager_task = asyncio.ensure_future(al_facts.extract_while_collecting(
+        registry, client, fast, state=state, attributes=attributes, plan=plan,
+        running=lambda: collecting["on"],
+        cap=max(1, int(os.getenv("GPTR_EXTRACT_PAGES", "35")) // 2)))
+
+    async def _collect():
+        try:
+            await researcher.conduct_research()
+        finally:
+            collecting["on"] = False
+
     try:
         # Сбор идёт минуту с лишним; без живого счётчика интерфейс показывает
         # неподвижный индикатор, и аудитор не понимает, работает ли система.
-        async for ev in _tick(researcher.conduct_research(), lambda: {
+        async for ev in _tick(_collect(), lambda: {
                 "type": "progress", "stage": "research",
-                "pages": len(al_scraper.READ_PAGES),
-                "blocked": len(al_scraper.UNREADABLE)}):
+                "pages": len(state.pages),
+                "facts": len(registry.facts),
+                "blocked": len(state.unreadable)}):
             yield ev
     except Exception as e:
+        collecting["on"] = False
         log.exception("gptr: сбор")
         yield _evt({"type": "text",
                     "chunk": f"\n\n⚠ **Сбор данных не удался:** {e}\n"})
         yield _evt({"type": "done"})
         return
 
+    eager_pages = await eager_task
     pages = dict(state.pages)
     unreadable = dict(state.unreadable)
 
     # Наблюдаемая сторона в первую очередь из собственного корпуса отзывов:
     # там живые жалобы с датами и ссылками, тогда как веб отдаёт обзоры.
     runstate.bind(state)
-    review_records = al_reviews.collect(plan, attributes)
+    review_records = await reviews_task
     review_pages = al_reviews.as_pages(review_records)
     if review_pages:
         pages.update(review_pages)
@@ -192,19 +213,18 @@ async def stream_deep_research_gptr(question: str,
                 "detail": f"{len(pages)} страниц → проверяемые утверждения",
                 "estimate_s": 40})
     runstate.bind(state)
-    _reg_box: dict = {}
-
     async def _extract():
-        _reg_box["r"] = await al_facts.build_registry(
+        await al_facts.build_registry(
             client, fast, pages=pages, attributes=attributes, plan=plan,
             keep_pages=set(review_pages),
-            subject_hints=al_reviews.subject_hints())
+            subject_hints=al_reviews.subject_hints(),
+            reg=registry, already=eager_pages)
 
     async for ev in _tick(_extract(), lambda: {
             "type": "progress", "stage": "facts",
-            "pages_total": len(pages)}):
+            "pages_total": len(pages), "facts": len(registry.facts),
+            "ahead": len(eager_pages)}):
         yield ev
-    registry = _reg_box.get("r") or al_facts.FactRegistry()
     if review_pages:
         al_reviews.stamp_dates(registry)
     by_stance = {"declared": 0, "observed": 0, "regulatory": 0}

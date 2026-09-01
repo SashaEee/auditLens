@@ -350,13 +350,24 @@ async def extract_page(client, model: str, *, url: str, text: str,
             f"# Характеристики, которые собираем\n"
             + "\n".join(f"- {a}" for a in attributes)
             + f"\n\n# Текст страницы\n{_fit_page(text)}")
+    # Извлечение — работа не рассуждательная: модель обязана скопировать
+    # фрагмент, а не рассудить. У рассуждающих моделей выключение «думанья»
+    # даёт четырёхкратное ускорение (замер 01.09: 16,4 с → 3,9 с на страницу),
+    # а извлечение от этого не страдает — проверено на тех же страницах.
+    kwargs: dict = {"model": model, "temperature": 0.0, "max_tokens": 4000,
+                    "response_format": {"type": "json_object"},
+                    "messages": [{"role": "system", "content": _EXTRACT_SYSTEM},
+                                 {"role": "user", "content": user}]}
+    if os.getenv("GPTR_EXTRACT_THINKING", "0") != "1":
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": _EXTRACT_SYSTEM},
-                      {"role": "user", "content": user}],
-            temperature=0.0, max_tokens=4000,
-            response_format={"type": "json_object"})
+        try:
+            resp = await client.chat.completions.create(**kwargs)
+        except Exception:
+            # Модель может не знать про отключение рассуждения — тогда зовём
+            # как обычно, а не роняем извлечение целиком.
+            kwargs.pop("extra_body", None)
+            resp = await client.chat.completions.create(**kwargs)
         raw = (resp.choices[0].message.content or "").strip()
     except Exception as e:
         log.info("извлечение %s: %s", url[:70], type(e).__name__)
@@ -468,21 +479,115 @@ def select_pages(pages: dict[str, str], attributes: list[str],
     return out or dict(list(pages.items())[:limit])
 
 
+async def extract_into(reg: FactRegistry, client, model: str, *,
+                       pages: dict[str, str], attributes: list[str], plan,
+                       subject_hints: dict | None = None,
+                       concurrency: int = 10) -> int:
+    """Извлекает факты из набора страниц В СУЩЕСТВУЮЩИЙ реестр.
+
+    Вынесено отдельно, чтобы извлечение можно было запускать ДО конца сбора:
+    страницы появляются потоково, и ждать последнюю, чтобы начать разбирать
+    первую, — это минута простоя на ровном месте.
+    """
+    subjects = list(getattr(plan, "subjects", None) or [])
+    labels = dict(getattr(plan, "subject_labels", None) or {})
+    domains = {s: _BANK_DOMAINS.get(s, "") for s in subjects}
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(url: str, text: str):
+        async with sem:
+            return url, await extract_page(
+                client, model, url=url, text=text, attributes=attributes,
+                subjects=subjects, labels=labels)
+
+    results = await asyncio.gather(*(one(u, t) for u, t in pages.items()),
+                                   return_exceptions=True)
+    added = 0
+    for res in results:
+        if isinstance(res, Exception) or not res:
+            continue
+        url, items = res
+        for it in items:
+            forced = (subject_hints or {}).get(url)
+            subj = forced or str(it.get("subject") or "")
+            if subj and subj not in subjects:
+                subj = ""
+            reg.add(subject=subj,
+                    attribute=str(it.get("attribute") or "").strip()[:120],
+                    value=str(it.get("value") or "").strip()[:300],
+                    unit=str(it.get("unit") or "").strip()[:20],
+                    verbatim=str(it.get("verbatim") or "").strip()[:600],
+                    url=url,
+                    stance=stance_for(url, subj, domains))
+            added += 1
+    return added
+
+
+async def extract_while_collecting(reg: FactRegistry, client, model: str, *,
+                                   state, attributes, plan, running,
+                                   cap: int, subject_hints=None,
+                                   poll_s: float = 4.0) -> set[str]:
+    """Разбирает страницы САЙТОВ СУБЪЕКТОВ, пока идёт сбор.
+
+    Эти страницы в отбор попадают всегда: они пришли по адресным запросам к
+    сайтам объектов исследования, и квота заявленной стороны всё равно самая
+    большая. Поэтому их можно разбирать не дожидаясь конца сбора — так минута
+    извлечения прячется под минутой чтения. Спорные группы (взгляд со стороны,
+    нормы) по-прежнему проходят общий отбор после сбора, где видна вся картина.
+    """
+    subjects = list(getattr(plan, "subjects", None) or [])
+    own = [d for d in (_BANK_DOMAINS.get(s, "") for s in subjects) if d]
+    seen: set[str] = set()
+    if not own:
+        return seen
+    while running() and len(seen) < cap:
+        fresh = {}
+        for url, text in list(state.pages.items()):
+            if url in seen or len(seen) + len(fresh) >= cap:
+                continue
+            host = urlparse(url).netloc.lower().removeprefix("www.")
+            if any(host == d or host.endswith("." + d) for d in own):
+                fresh[url] = text
+        if fresh:
+            seen.update(fresh)
+            try:
+                await extract_into(reg, client, model, pages=fresh,
+                                   attributes=attributes, plan=plan,
+                                   subject_hints=subject_hints)
+            except Exception as e:
+                log.info("опережающее извлечение: %s", type(e).__name__)
+        else:
+            await asyncio.sleep(poll_s)
+    if seen:
+        log.info("опережающее извлечение: %d страниц разобрано во время сбора",
+                 len(seen))
+    return seen
+
+
 async def build_registry(client, model: str, *, pages: dict[str, str],
                          attributes: list[str], plan,
                          concurrency: int = 10,
                          page_limit: int | None = None,
                          keep_pages: set | None = None,
-                         subject_hints: dict | None = None) -> FactRegistry:
-    """Страницы → реестр фактов."""
+                         subject_hints: dict | None = None,
+                         reg: "FactRegistry | None" = None,
+                         already: set | None = None) -> FactRegistry:
+    """Страницы → реестр фактов.
+
+    `already` — страницы, разобранные опережающим извлечением во время сбора:
+    их не разбираем повторно, а место в бюджете они уже заняли.
+    """
     subjects = list(getattr(plan, "subjects", None) or [])
     labels = dict(getattr(plan, "subject_labels", None) or {})
     domains = {s: _BANK_DOMAINS.get(s, "") for s in subjects}
-    reg = FactRegistry()
+    reg = reg if reg is not None else FactRegistry()
+    already = set(already or ())
     if not attributes:
         return reg
+    pages = {u: t for u, t in pages.items() if u not in already}
     limit = page_limit if page_limit is not None else int(
         os.getenv("GPTR_EXTRACT_PAGES", "35"))
+    limit = max(1, limit - len(already))
     # Отзывы из корпуса проходят отбор вне очереди: они и есть наблюдаемая
     # сторона, ради которой всё затевалось, и по близости к формулировкам
     # контракта они заведомо проигрывают продуктовым страницам банков.
@@ -499,36 +604,9 @@ async def build_registry(client, model: str, *, pages: dict[str, str],
                                      domains, limit)
     pages = {**keep, **picked}
 
-    sem = asyncio.Semaphore(concurrency)
-
-    async def one(url: str, text: str):
-        async with sem:
-            return url, await extract_page(
-                client, model, url=url, text=text, attributes=attributes,
-                subjects=subjects, labels=labels)
-
-    results = await asyncio.gather(*(one(u, t) for u, t in pages.items()),
-                                   return_exceptions=True)
-    for res in results:
-        if isinstance(res, Exception) or not res:
-            continue
-        url, items = res
-        for it in items:
-            quote = str(it.get("verbatim") or "")
-            # Там, где принадлежность объекту ИЗВЕСТНА (отзыв из корпуса),
-            # берём её из источника, а не из догадки модели: жалоба на
-            # брокерские комиссии одного банка уехала в раздел про другой.
-            forced = (subject_hints or {}).get(url)
-            subj = forced or str(it.get("subject") or "")
-            if subj and subj not in subjects:
-                subj = ""
-            reg.add(subject=subj,
-                    attribute=str(it.get("attribute") or "").strip()[:120],
-                    value=str(it.get("value") or "").strip()[:300],
-                    unit=str(it.get("unit") or "").strip()[:20],
-                    verbatim=quote.strip()[:600],
-                    url=url,
-                    stance=stance_for(url, subj, domains))
+    await extract_into(reg, client, model, pages=pages,
+                       attributes=attributes, plan=plan,
+                       subject_hints=subject_hints, concurrency=concurrency)
     log.info("факты: %d со %d страниц (без отбраковки — это дело критика)",
              len(reg.facts), len(pages))
     return reg
