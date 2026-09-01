@@ -2900,11 +2900,18 @@ function RvModal({onClose,title,sub,side,children}){
 }
 
 // Чипы тем обращения (классификация): regex-baseline или LLM-уточнённые.
-function RvThemes({list,src}){
+function RvThemes({list,src,active}){
   if(!list||!list.length) return <span className="rv-tag other">Прочее</span>;
-  return <>{list.slice(0,3).map((t,j)=>(
-    <span key={j} className={"rv-tag "+(t.risk||"other")} title={t.label}>{t.short||t.label}</span>
-  ))}{src==="llm"&&<span className="rv-llm" title="темы уточнены ИИ">✦</span>}</>;
+  // Разметка мультитемная: у обращения бывает до двух тем, и обе верны
+  // («не выдаёт деньги по залогу» — это и задержка, и условия кредита).
+  // Но при фильтре по теме второй ярлык выглядел равноправным, и аудитор
+  // читал его как «выдача не по теме». Помечаем ту, из-за которой отзыв здесь.
+  return <>{list.slice(0,3).map((t,j)=>{
+    const hit=active&&t.key===active;
+    return <span key={j} className={"rv-tag "+(t.risk||"other")+(hit?" rv-tag-hit":"")}
+      title={hit?`${t.label} — тема, по которой отфильтрована лента`:t.label}>
+      {t.short||t.label}</span>;
+  })}{src==="llm"&&<span className="rv-llm" title="темы уточнены ИИ">✦</span>}</>;
 }
 
 // Карточка отзыва (переиспользуется в ленте, в модале и в драуэре).
@@ -2953,6 +2960,10 @@ function ReviewsPage(){
   const[feedMeta,setFeedMeta]=useState(null);              // по каким словам искали на самом деле
   const[corp,setCorp]=useState(null);                      // реальный состав корпуса для подписи
   const[busy,setBusy]=useState(true),[feedBusy,setFeedBusy]=useState(false);
+  // Своё состояние догрузки: moreBusy живёт во вкладке «Рынок», переиспользовать
+  // его отсюда нельзя.
+  const[feedMore,setFeedMore]=useState(false);          // есть ли ещё страницы
+  const[feedMoreBusy,setFeedMoreBusy]=useState(false);
   const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
   const[modalRev,setModalRev]=useState(null);            // полный текст отзыва
   const[drill,setDrill]=useState(null);                  // {type:'city'|'month',value,label}
@@ -3025,18 +3036,33 @@ function ReviewsPage(){
       .catch(()=>{setAnom({calm:true});setAnomBusy(false);});
   },[bank,product]);
 
-  useEffect(()=>{ setFeedBusy(true);setClsOn(false);
-    const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
-    apiFetch(`/api/reviews/feed?bank=${enc(bank)}${pq()}${tq}${qq}&limit=20`)
-      .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);setFeedBusy(false);})
+  // days попадает в ленту наравне с верхними панелями: раньше переключатель
+  // периода их менял, а список обращений — нет, и в трёхмесячном срезе
+  // оставались прошлогодние жалобы.
+  const feedQS=(off)=>`/api/reviews/feed?bank=${enc(bank)}${pq()}`
+    +`${theme?`&theme=${theme}`:""}${q?`&q=${enc(q)}`:""}`
+    +`&days=${days}&limit=20&offset=${off}`;
+
+  useEffect(()=>{ setFeedBusy(true);setClsOn(false);setFeedMore(false);
+    apiFetch(feedQS(0))
+      .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
+                setFeedMore(!!d.has_more);setFeedBusy(false);})
       .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedBusy(false);});
-  },[bank,product,theme,q]);
+  },[bank,product,theme,q,days]);
+
+  const loadMoreFeed=()=>{
+    setFeedMoreBusy(true);
+    apiFetch(feedQS((feed||[]).length))
+      .then(d=>{setFeed(f=>(f||[]).concat(d.items||[]));setFeedMore(!!d.has_more);
+                setFeedMoreBusy(false);})
+      .catch(()=>setFeedMoreBusy(false));
+  };
 
   // on-demand: уточнить темы показанных отзывов через LLM (по кнопке)
   const classifyFeed=()=>{
     setClsBusy(true);
     const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
-    apiFetch(`/api/reviews/feed-classified?bank=${enc(bank)}${pq()}${tq}${qq}&limit=20`)
+    apiFetch(`/api/reviews/feed-classified?bank=${enc(bank)}${pq()}${tq}${qq}&days=${days}&limit=${feed.length||20}`)
       .then(d=>{if(d&&d.items)setFeed(d.items);if(d&&d.search)setFeedMeta(d.search);
                 setClsOn(!!(d&&d.llm));setClsBusy(false);})
       .catch(()=>setClsBusy(false));
@@ -3256,7 +3282,16 @@ function ReviewsPage(){
     {/* FEED */}
     <div className="rv-card">
       <div className="rv-ct">
-        <div><div className="rv-ttl">Лента — доказательная база</div>
+        <div><div className="rv-ttl">Лента — доказательная база
+          {/* Плашка сверху считает ОБРАЩЕНИЯ, лента показывает КАРТОЧКИ, а
+              одинаковые тексты в ней объединены в одну со счётчиком «похожих».
+              Числа сходятся, но это нигде не было сказано — аудитор считал
+              карточки и видел расхождение с плашкой. */}
+          {(()=>{const n=(feed||[]).length,
+                       dup=(feed||[]).reduce((a,r)=>a+(r.similar||0),0);
+            return dup>0?<span className="rv-count-note" title="одинаковые тексты объединены в одну карточку">
+              {" "}· {n + dup} обращений в {n} карточках</span>:null;})()}
+        </div>
           <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>:"темы обращений определены автоматически (regex) · ✦ уточнить ИИ для точности"}</div></div>
         <button className="rv-cls-btn" onClick={classifyFeed} disabled={clsBusy||feedBusy||!feed||!feed.length}
                 title="Переклассифицировать показанные отзывы с учётом смысла и отрицаний">
@@ -3298,7 +3333,12 @@ function ReviewsPage(){
         <div key={i} className="rv-rev">
           <div className="rv-rh">
             <span>{r.date}</span>
-            <RvThemes list={r.themes} src={r.theme_src}/>
+            {/* Банк подписан явно. Сверка показала, что данные верны — жалоба
+                действительно принадлежит выбранному банку, — но в тексте часто
+                упомянут другой банк («перевёл в …»), и без подписи аудитор
+                читает обращение как чужое. Дважды приходило как дефект. */}
+            {r.bank&&<span className="rv-pill rv-pill-bank" title="банк, которому принадлежит обращение">{r.bank}</span>}
+            <RvThemes list={r.themes} src={r.theme_src} active={theme}/>
             {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
             {r.city&&<span className="rv-pill">{r.city}</span>}
             {/* Источник виден на каждой карточке: площадок теперь несколько, и
@@ -3321,13 +3361,16 @@ function ReviewsPage(){
           </div>
         </div>
        ))}
+       {feedMore&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
+         disabled={feedMoreBusy}>
+         {feedMoreBusy?"Загружаю…":`Показать ещё (сейчас ${(feed||[]).length})`}</button>}
     </div>
 
     {/* МОДАЛ: полный текст обращения */}
     {modalRev&&<RvModal onClose={()=>setModalRev(null)} title="Обращение клиента"
-        sub={[modalRev.date,modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
+        sub={[modalRev.bank,modalRev.date,modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
       <div className="rv-rh" style={{marginBottom:10}}>
-        <RvThemes list={modalRev.themes} src={modalRev.theme_src}/>
+        <RvThemes list={modalRev.themes} src={modalRev.theme_src} active={theme}/>
         {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
       </div>
       {/* полный текст — с той же подсветкой, что и в карточке: аудитор открывает

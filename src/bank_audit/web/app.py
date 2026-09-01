@@ -1632,29 +1632,45 @@ def reviews_theme_defs():
 @app.get("/api/reviews/feed")
 def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  theme: Optional[str] = None, q: Optional[str] = None,
-                 city: Optional[str] = None, month: Optional[str] = None, limit: int = 20):
+                 city: Optional[str] = None, month: Optional[str] = None,
+                 days: Optional[int] = None, limit: int = 20, offset: int = 0):
+    # days раньше здесь ОТСУТСТВОВАЛ: переключатель периода стоял на вкладке,
+    # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
+    # 3 месяца, а в списке отзывы за прошлый год».
     res = _rd().list_reviews_ex(bank, product or None, theme or None, q or None,
-                                city=city or None, month=month or None, limit=limit)
+                                days=days or None,
+                                city=city or None, month=month or None,
+                                limit=limit, offset=max(0, offset))
     # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
     # search — по каким словам искали на самом деле и сколько попаданий дословных
     return {"items": res["items"], "count": len(res["items"]),
             "mode": res["mode"], "error": res["error"],
+            "has_more": bool(res.get("has_more")),
             "search": res.get("search") or None}
 
 @app.get("/api/reviews/feed-classified")
 async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,
                                   theme: Optional[str] = None, q: Optional[str] = None,
                                   city: Optional[str] = None, month: Optional[str] = None,
-                                  limit: int = 20):
+                                  days: Optional[int] = None,
+                                  limit: int = 20, offset: int = 0):
     """Лента + LLM-уточнение тем показанных отзывов (on-demand, по кнопке).
     Regex-темы остаются fallback'ом, если LLM не разобрал строку."""
     import asyncio
+    import functools
     from ..rag import reviews_llm
     # через _ex, а не list_reviews: иначе уточнение тем перезаписывает ленту
     # объектами без подсветки и признака «дословно/по смыслу», и аудитор молча
     # теряет объяснение выдачи, нажав соседнюю кнопку
-    res = await asyncio.to_thread(_rd().list_reviews_ex, bank, product or None, theme or None,
-                                  q or None, None, city or None, month or None, limit)
+    # Именованные аргументы, а не позиционные: прежний вызов подставлял None
+    # пятым по счёту и тем самым молча выбрасывал период, а любой новый
+    # параметр в середине сигнатуры сдвинул бы весь хвост.
+    res = await asyncio.to_thread(
+        functools.partial(_rd().list_reviews_ex, bank,
+                          product=product or None, theme=theme or None,
+                          q=q or None, days=days or None,
+                          city=city or None, month=month or None,
+                          limit=limit, offset=max(0, offset)))
     items = res["items"]
     if not items:
         return {"items": [], "count": 0, "llm": False, "search": res.get("search") or None}
