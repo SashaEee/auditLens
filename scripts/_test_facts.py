@@ -116,5 +116,27 @@ _reg3.add(subject="tinkoff", attribute="комиссия", value="в 10 раз �
 _rev.stamp_dates(_reg3)
 chk("дата отзыва проставлена из корпуса", _reg3.facts[0].date == "2026-07-16")
 
+print("отбор страниц: порог по теме един для всех трёх сторон")
+from bank_audit.research.gptr.facts import _fit_page, select_pages  # noqa: E402
+_pages = {"https://sberbank.ru/a": "ставка 16% годовых по вкладу " * 40,
+          "https://cbr.ru/n": "указание банка россии о раскрытии " * 40,
+          "https://banki.ru/otzyv": "жалоба клиента на комиссию по вкладу " * 40,
+          "https://hh.ru/vac": "вакансия продакт менеджер обязанности офис " * 40}
+_sel = select_pages(_pages, ["ставка по вкладу", "жалобы клиентов", "нормы ЦБ"],
+                    {"sberbank": "sberbank.ru"}, 3)
+chk("мусор не по теме отсеян даже из наблюдаемой стороны",
+    "https://hh.ru/vac" not in _sel)
+chk("все три стороны представлены",
+    {"https://sberbank.ru/a", "https://cbr.ru/n", "https://banki.ru/otzyv"}
+    <= set(_sel))
+
+print("бюджет страницы режется с двух концов")
+_long = "НАЧАЛО " * 200 + "СЕРЕДИНА " * 3000 + "# Таблицы страницы | 6 мес | 16,5% |"
+_fit = _fit_page(_long)
+chk("начало страницы сохранено", _fit.startswith("НАЧАЛО"))
+chk("таблица тарифов из хвоста сохранена",
+    "Таблицы страницы" in _fit and "16,5%" in _fit)
+chk("бюджет соблюдён", len(_fit) < 15000)
+
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)

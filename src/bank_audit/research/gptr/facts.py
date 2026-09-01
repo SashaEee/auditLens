@@ -37,9 +37,12 @@ from ..v2.tools.web_tools import REGULATOR_DOMAINS
 
 log = logging.getLogger(__name__)
 
-# Сколько текста страницы отдаём извлекателю. Больше — дороже и хуже фокус;
-# меньше — теряем таблицы тарифов в хвосте страницы.
+# Сколько текста страницы отдаём извлекателю. Больше — дороже и хуже фокус.
 _PAGE_BUDGET = 14000
+# Какую долю бюджета берём с КОНЦА страницы. Наш парсер приклеивает блок
+# «# Таблицы страницы» в самый хвост, а обрезка с головы его срезала — то есть
+# из тарифной страницы терялась ровно таблица тарифов.
+_TAIL_SHARE = 0.3
 # Ниже этой близости к контракту страница считается не по теме.
 _MIN_TOPIC_SIM = 0.25
 
@@ -326,6 +329,15 @@ _EXTRACT_SYSTEM = """Ты извлекаешь ПРОВЕРЯЕМЫЕ факты
 "subject" — один из данных слугов объектов или "" если факт общий."""
 
 
+def _fit_page(text: str) -> str:
+    """Урезает страницу с ДВУХ концов: начало и хвост с таблицами."""
+    if len(text) <= _PAGE_BUDGET:
+        return text
+    tail = int(_PAGE_BUDGET * _TAIL_SHARE)
+    head = _PAGE_BUDGET - tail
+    return text[:head] + "\n\n[…пропущено…]\n\n" + text[-tail:]
+
+
 async def extract_page(client, model: str, *, url: str, text: str,
                        attributes: list[str], subjects: list[str],
                        labels: dict[str, str]) -> list[dict]:
@@ -337,7 +349,7 @@ async def extract_page(client, model: str, *, url: str, text: str,
             f"# Объекты исследования (слуги)\n{subj_hint}\n\n"
             f"# Характеристики, которые собираем\n"
             + "\n".join(f"- {a}" for a in attributes)
-            + f"\n\n# Текст страницы\n{text[:_PAGE_BUDGET]}")
+            + f"\n\n# Текст страницы\n{_fit_page(text)}")
     try:
         resp = await client.chat.completions.create(
             model=model,
@@ -358,31 +370,57 @@ async def extract_page(client, model: str, *, url: str, text: str,
     return [i for i in items if isinstance(i, dict)]
 
 
-def _top_by_similarity(pages: dict[str, str], attributes: list[str],
-                       limit: int) -> dict[str, str]:
-    """Самые близкие к контракту страницы из набора."""
-    if len(pages) <= limit:
-        return dict(pages)
+def _rank_pages(pages: dict[str, str],
+                attributes: list[str]) -> list[tuple[float, str]]:
+    """Все страницы разом, по близости к контракту. Одна прогонка эмбеддингов.
+
+    Раньше близость считалась ТРИЖДЫ за прогон — отдельно для сайтов
+    организаций, регуляторов и взгляда со стороны, — и каждый вызов
+    блокировал event loop сетевым запросом. Плюс порог по теме применялся
+    только к первым двум группам, и мусор («Собеседование на продакт-менеджера
+    в Сбере») заходил именно через третью.
+
+    Фолбэк без эмбеддингов — по доле слов контракта, а НЕ по длине страницы:
+    сортировка по длине выбирала SEO-подборки, то есть ровно то, от чего
+    отбор и защищает.
+    """
+    urls = list(pages)
+    if not urls:
+        return []
+    probe = "; ".join(attributes)[:2000]
     try:
         from ...rag.embedder import embed_batch
-        urls = list(pages)
-        vecs = embed_batch(["; ".join(attributes)[:2000]]
-                           + [pages[u][:3000] for u in urls])
+        vecs = embed_batch([probe] + [pages[u][:3000] for u in urls])
         q = vecs[0]
         qn = sum(x * x for x in q) ** 0.5 or 1.0
+
         def sim(v):
             n = sum(x * x for x in v) ** 0.5 or 1.0
             return sum(a * b for a, b in zip(q, v)) / (qn * n)
-        ranked = sorted(zip(urls, vecs), key=lambda p: -sim(p[1]))
-        # Порог по теме: страница, далёкая от контракта, не идёт в извлечение,
-        # даже когда место есть. Так в отчёт перестают попадать «Собеседование
-        # на продакт-менеджера в Сбере» и «онбординг сотрудников» — они и
-        # попали-то из-за многозначности слова, а не из-за нехватки фильтра.
-        keep = [(u, v) for u, v in ranked[:limit] if sim(v) >= _MIN_TOPIC_SIM]
-        return {u: pages[u] for u, _ in (keep or ranked[:1])}
-    except Exception:
-        top = sorted(pages, key=lambda u: -len(pages[u]))[:limit]
-        return {u: pages[u] for u in top}
+
+        return sorted(((sim(v), u) for u, v in zip(urls, vecs[1:])),
+                      key=lambda p: -p[0])
+    except Exception as e:
+        log.info("отбор страниц: эмбеддинги недоступны (%s) — по словам "
+                 "контракта", type(e).__name__)
+        want = {w for w in re.findall(r"\w{4,}", _norm(probe))}
+        out = []
+        for u in urls:
+            got = {w for w in re.findall(r"\w{4,}", _norm(pages[u][:4000]))}
+            out.append((len(want & got) / (len(want) or 1), u))
+        return sorted(out, key=lambda p: -p[0])
+
+
+def _take(ranked: list[tuple[float, str]], pages: dict[str, str],
+          allow: set[str], room: int) -> dict[str, str]:
+    """Лучшие из группы с порогом по теме — порог един для всех групп."""
+    out: dict[str, str] = {}
+    for score, url in ranked:
+        if len(out) >= room:
+            break
+        if url in allow and score >= _MIN_TOPIC_SIM:
+            out[url] = pages[url]
+    return out
 
 
 def select_pages(pages: dict[str, str], attributes: list[str],
@@ -390,65 +428,44 @@ def select_pages(pages: dict[str, str], attributes: list[str],
     """Отбор страниц под извлечение по близости к КОНТРАКТУ.
 
     Читаем мы широко (80+ страниц), а извлекать из всего дорого: замер 31.08 —
-    196 секунд, 58% времени прогона, при том что писателю уходит около сотни
-    фактов из семисот. Отбираем страницы, семантически близкие к
-    характеристикам, которые обязаны закрыть.
-
-    Отбираем ОБЕ стороны с гарантированными долями. Первый заход отдал всё
-    место сайтам банков (47 официальных страниц при пределе 35), и наблюдаемая
-    сторона исчезла целиком — раздел пробелов честно написал «взгляд со стороны
-    отсутствует». Поэтому под непервоисточники резервируется доля: без них
-    отчёт снова станет пересказом обещаний.
-
-    Порог не по словам — по эмбеддингам, поэтому работает для любого вопроса.
+    196 секунд, 58% времени прогона. Отбираем близкие к характеристикам,
+    которые обязаны закрыть, и раздаём места трём сторонам доказательства:
+    норма и взгляд со стороны иначе проигрывают продуктовым страницам
+    организаций, которых всегда больше.
     """
-    if len(pages) <= limit:
-        return pages
+    if not pages:
+        return {}
     own = [d for d in subject_domains.values() if d]
-    declared, observed, regulatory = {}, {}, {}
-    for url, text in pages.items():
+    declared, observed, regulatory = set(), set(), set()
+    for url in pages:
         host = urlparse(url).netloc.lower().removeprefix("www.")
         if any(host == d or host.endswith("." + d)
                for d in REGULATOR_DOMAINS) or host.endswith(".gov.ru"):
-            regulatory[url] = text
+            regulatory.add(url)
         elif any(host == d or host.endswith("." + d) for d in own):
-            declared[url] = text
+            declared.add(url)
         else:
-            observed[url] = text
-    # Квоты по сторонам: норм всегда мало и они дороги, поэтому берём их все
-    # до пятой части места; треть — наблюдаемой стороне; остальное заявленной.
+            observed.add(url)
+
+    ranked = _rank_pages(pages, attributes)
     reg_room = min(len(regulatory), max(1, limit // 5))
     obs_room = min(len(observed), max(1, limit // 3))
     dec_room = max(1, limit - reg_room - obs_room)
-    must = _top_by_similarity(declared, attributes, dec_room)
-    must.update(_top_by_similarity(regulatory, attributes, reg_room))
-    rest = observed
-    room = max(0, limit - len(must))
-    if room <= 0 or not rest:
-        return must or pages
-    try:
-        from ...rag.embedder import embed_batch
-        probe = "; ".join(attributes)[:2000]
-        urls = list(rest)
-        vecs = embed_batch([probe] + [rest[u][:3000] for u in urls])
-        q = vecs[0]
-        qn = sum(x * x for x in q) ** 0.5 or 1.0
 
-        def sim(v):
-            n = sum(x * x for x in v) ** 0.5 or 1.0
-            return sum(a * b for a, b in zip(q, v)) / (qn * n)
-
-        ranked = sorted(zip(urls, vecs), key=lambda p: -sim(p[1]))
-        chosen = [u for u, _ in ranked[:room]]
-    except Exception as e:
-        log.info("отбор страниц: эмбеддинги недоступны (%s) — берём длиннейшие",
-                 type(e).__name__)
-        chosen = sorted(rest, key=lambda u: -len(rest[u]))[:room]
-    out = dict(must)
-    out.update({u: rest[u] for u in chosen})
+    out = _take(ranked, pages, regulatory, reg_room)
+    out.update(_take(ranked, pages, declared, dec_room))
+    out.update(_take(ranked, pages, observed, obs_room))
+    # Недобранное одной группой отдаём остальным: пустые квоты не должны
+    # уменьшать общий объём разбора.
+    if len(out) < limit:
+        out.update(_take([r for r in ranked if r[1] not in out], pages,
+                         set(pages), limit - len(out)))
     log.info("извлечение: %d из %d (заявлено %d, норм %d, со стороны %d)",
-             len(out), len(pages), len(declared), len(regulatory), len(chosen))
-    return out
+             len(out), len(pages),
+             sum(1 for u in out if u in declared),
+             sum(1 for u in out if u in regulatory),
+             sum(1 for u in out if u in observed))
+    return out or dict(list(pages.items())[:limit])
 
 
 async def build_registry(client, model: str, *, pages: dict[str, str],
@@ -476,7 +493,11 @@ async def build_registry(client, model: str, *, pages: dict[str, str],
     # банков не попадали в извлечение, и у Т-Банка оказывалось раскрыто 2
     # характеристики из 10 — не потому что банк не раскрывает, а потому что мы
     # его страницы не прочитали.
-    pages = {**keep, **select_pages(other, attributes, domains, limit)}
+    # Отбор считает эмбеддинги — сетевой синхронный вызов. В event loop он
+    # замораживает всё, включая отдачу SSE: интерфейс замирает.
+    picked = await asyncio.to_thread(select_pages, other, list(attributes),
+                                     domains, limit)
+    pages = {**keep, **picked}
 
     sem = asyncio.Semaphore(concurrency)
 

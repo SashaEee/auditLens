@@ -17,6 +17,7 @@ import logging
 
 from ...rag import fetcher
 from ...rag.parsers.html_parser import parse_html
+from ...rag.parsers.pdf_parser import parse_pdf
 from ..v2.tools.web_tools import _looks_like_stub
 from . import runstate
 
@@ -60,6 +61,7 @@ class AuditLensScraper:
         # Состояние связывается при ВЫБОРЕ скрапера (см. install): сам scrape()
         # исполняется в пуле потоков, куда contextvars не переносятся.
         self.state = state or runstate.current()
+        self.is_pdf = False          # выясняется при чтении, нужно в scrape()
 
     def _read(self, *, browser: bool) -> tuple[str, str]:
         try:
@@ -70,8 +72,18 @@ class AuditLensScraper:
             return "", ""
         if not res or not res.content:
             return "", ""
+        # PDF разбираем СВОИМ парсером (таблицы + провенанс), иначе документ
+        # уходил штатному классу gpt-researcher и в факты не попадал вовсе:
+        # реестр страниц заполняет только этот скрапер. Для регуляторных
+        # документов, которые почти всегда PDF, это была дыра в покрытии.
+        ctype = (res.content_type or "").lower()
+        self.is_pdf = ("pdf" in ctype
+                       or self.link.split("?", 1)[0].lower().endswith(".pdf")
+                       or res.content[:5] == b"%PDF-")
         try:
-            doc = parse_html(res.content, res.final_url or self.link)
+            doc = (parse_pdf(res.content, res.final_url or self.link)
+                   if self.is_pdf
+                   else parse_html(res.content, res.final_url or self.link))
         except Exception as e:
             log.info("parse %s: %s", self.link[:80], type(e).__name__)
             return "", ""
@@ -79,7 +91,8 @@ class AuditLensScraper:
 
     def scrape(self) -> tuple[str, list, str]:
         text, title = self._read(browser=False)
-        if len(text) < _TOO_SHORT or _looks_like_stub(title, text):
+        if not self.is_pdf and (len(text) < _TOO_SHORT
+                                or _looks_like_stub(title, text)):
             log.info("scrape %s: дёшево не вышло (%d символов) — идём браузером",
                      self.link[:70], len(text))
             btext, btitle = self._read(browser=True)
@@ -93,7 +106,7 @@ class AuditLensScraper:
             self.state.note_unreadable(self.link, "защита от ботов")
         elif len(text) < _TOO_SHORT:
             self.state.note_unreadable(self.link, "почти пустая страница")
-        elif _is_skeleton(text):
+        elif not self.is_pdf and _is_skeleton(text):
             self.state.note_unreadable(
                 self.link, "каркас без содержимого (данные грузит скрипт)")
         else:
