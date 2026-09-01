@@ -230,9 +230,10 @@ async def stream_deep_research_gptr(question: str,
         al_reviews.stamp_dates(registry)
     # ── Критик ───────────────────────────────────────────────────────────
     # Слой извлечения намеренно ничего не отбраковывал — судит отдельный
-    # модуль. Проверка детерминированная и без модели: 500 фактов за 2 мс,
-    # на время прогона не влияет.
-    verdict = al_critic.review(registry, pages)
+    # модуль. Дешёвая проверка подтверждает очевидное бесплатно (500 фактов за
+    # 3 мс), модель зовётся ТОЛЬКО на остаток: пересказ другими словами
+    # счётчиком слов не опознать, а снимать подлинное нельзя.
+    verdict = await al_critic.review(client, fast, registry, pages)
     if verdict.cut or verdict.mislabeled:
         yield _evt({"type": "stage_status", "stage": "critic",
                     "label": f"Снято без опоры: {verdict.cut}",

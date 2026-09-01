@@ -19,17 +19,33 @@
    Словари токенов по страницам считаются ОДИН раз и переиспользуются всеми
    фактами этой страницы.
 
+ДВА СЛОЯ, и это принципиально.
+
+Дешёвый слой (без модели) умеет только ПОДТВЕРЖДАТЬ: цитата найдена дословно
+или почти дословно — факту верим, дальше не смотрим. Опровергать он не вправе.
+Пересказ может быть сделан ДРУГИМИ СЛОВАМИ — синонимами, иной конструкцией — и
+остаться правдой; совпадение словарей такой пересказ объявило бы выдумкой.
+
+Слой суждения (модель) получает ТОЛЬКО остаток — факты, которых дешёвый слой
+не подтвердил. Их обычно единицы, они группируются по странице (несколько
+утверждений в один вызов), модель зовётся дешёвая и без рассуждения. Вопрос
+задаётся один и тот же для любой предметной области: следует ли утверждение из
+этого текста. Ни одного слова про банки, продукты или темы.
+
 ЧТО ДЕЛАЕТ С ФАКТОМ. Три исхода, и ни один не молчаливый:
-  • дословно     — цитата найдена в тексте символ в символ, факт идёт в отчёт;
-  • близко       — цитата пересказана, но её слова стоят рядом в источнике;
-                   факт идёт в отчёт с пометкой (модель вправе переставить
-                   слова, и это не выдумка);
-  • без опоры    — слов цитаты в источнике нет; факт СНИМАЕТСЯ, и число снятых
-                   попадает в «Честные пробелы», а не теряется тихо.
+  • дословно     — цитата найдена в тексте, факт идёт в отчёт;
+  • близко       — источник утверждение подтверждает, но другими словами;
+                   факт идёт в отчёт с пометкой;
+  • без опоры    — источник утверждение НЕ подтверждает (так сказала модель,
+                   а не счётчик слов); факт снимается, число снятых попадает
+                   в «Честные пробелы».
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
@@ -138,15 +154,118 @@ def _is_regulator(url: str) -> bool:
             or host.endswith(".gov.ru"))
 
 
-def review(registry, pages: dict[str, str]) -> Verdict:
-    """Проверяет реестр по источникам и СНИМАЕТ факты без опоры.
+_JUDGE_SYSTEM = """Ты проверяешь, следует ли утверждение из текста источника.
 
-    Меняет registry.facts на месте: снятые удаляются, у остальных
-    проставляется `support`. Возвращает вердикт со счётчиками.
+Тебе дают фрагмент источника и пронумерованные утверждения, каждое со своей
+цитатой. По каждому реши ОДНО:
+  "да"  — источник это утверждение подтверждает. Подтверждает и тогда, когда
+          слова другие: пересказ, синоним, иная конструкция, свёрнутая
+          формулировка. Смысл важнее совпадения слов.
+  "нет" — в источнике этого нет: утверждение о другом, число другое, либо
+          сказанное просто отсутствует в тексте.
+
+Сомневаешься между «да» и «нет» — отвечай "да": снимать подлинное хуже, чем
+пропустить сомнительное, его увидит человек.
+
+Ответ строго JSON: {"verdicts": [{"n": 1, "ok": true}, {"n": 2, "ok": false}]}"""
+
+# Сколько текста источника показываем судье. Больше — дороже и медленнее;
+# меньше — судья не находит подтверждения там, где оно есть.
+_JUDGE_PAGE_CHARS = 7000
+# Сколько утверждений отдаём в один вызов. Пачкой по странице: у неподтверждённых
+# фактов часто общий источник, и один вызов закрывает сразу несколько.
+_JUDGE_BATCH = 8
+
+
+async def judge(client, model: str, doubtful: list, pages: dict[str, str],
+                concurrency: int = 8) -> set:
+    """Модель судит ТОЛЬКО неподтверждённое. Возвращает id к снятию.
+
+    Группируем по источнику: и вызовов меньше, и судье не приходится каждый раз
+    заново вчитываться в одну и ту же страницу.
+    """
+    if not doubtful:
+        return set()
+    from .facts import _fit_page
+
+    by_url: dict[str, list] = {}
+    for f in doubtful:
+        by_url.setdefault(f.url, []).append(f)
+
+    batches: list[tuple[str, list]] = []
+    for url, facts in by_url.items():
+        for i in range(0, len(facts), _JUDGE_BATCH):
+            batches.append((url, facts[i:i + _JUDGE_BATCH]))
+
+    sem = asyncio.Semaphore(concurrency)
+    cut: set = set()
+
+    async def one(url: str, facts: list):
+        page = (pages.get(url) or "")[:_JUDGE_PAGE_CHARS * 2]
+        if not page.strip():
+            return                      # источника нет — не судим, оставляем
+        claims = "\n".join(
+            f'{i + 1}. {f.attribute}: {f.value} {f.unit}'.rstrip()
+            + f'\n   цитата: «{f.verbatim}»'
+            for i, f in enumerate(facts))
+        user = (f"# Источник\n{_fit_page(page[:_JUDGE_PAGE_CHARS])}\n\n"
+                f"# Утверждения\n{claims}")
+        kw: dict = {"model": model, "temperature": 0.0, "max_tokens": 700,
+                    "response_format": {"type": "json_object"},
+                    "messages": [{"role": "system", "content": _JUDGE_SYSTEM},
+                                 {"role": "user", "content": user}]}
+        if os.getenv("GPTR_EXTRACT_THINKING", "0") != "1":
+            kw["extra_body"] = {"thinking": {"type": "disabled"}}
+        async with sem:
+            try:
+                try:
+                    resp = await client.chat.completions.create(**kw)
+                except Exception:
+                    kw.pop("extra_body", None)
+                    resp = await client.chat.completions.create(**kw)
+                data = json.loads((resp.choices[0].message.content or "").strip())
+            except Exception as e:
+                log.info("критик-судья %s: %s", url[:60], type(e).__name__)
+                return                  # не смогли рассудить — не снимаем
+        for item in (data.get("verdicts") or []):
+            try:
+                n = int(item.get("n")) - 1
+            except (TypeError, ValueError):
+                continue
+            if 0 <= n < len(facts) and item.get("ok") is False:
+                cut.add(facts[n].id)
+
+    await asyncio.gather(*(one(u, fs) for u, fs in batches),
+                         return_exceptions=True)
+    return cut
+
+
+async def review(client, model: str, registry, pages: dict[str, str]) -> Verdict:
+    """Полная проверка: дешёвый слой, затем модель по остатку."""
+    v, doubtful = prescreen(registry, pages)
+    if doubtful:
+        log.info("критик: на суждение модели %d из %d фактов",
+                 len(doubtful), len(registry.facts))
+        cut = await judge(client, model, doubtful, pages)
+        # Не снятые судьёй — подтверждены смыслом, а не буквой.
+        for f in doubtful:
+            if f.id not in cut:
+                f.support = CLOSE
+                v.close += 1
+    else:
+        cut = set()
+    return _finish(registry, v, cut)
+
+
+def prescreen(registry, pages: dict[str, str]) -> tuple[Verdict, list]:
+    """Дешёвый слой: подтверждает очевидное, НИЧЕГО не снимает.
+
+    Возвращает (вердикт, список неподтверждённых фактов). Неподтверждённые
+    уходят на суждение модели — здесь их судьба не решается.
     """
     v = Verdict()
     if not registry.facts:
-        return v
+        return v, []
 
     # Словари страницы считаем ОДИН раз: фактов с одной страницы обычно
     # десятки, и пересчёт на каждый превратил бы проверку в узкое место.
@@ -159,7 +278,7 @@ def review(registry, pages: dict[str, str]) -> Verdict:
             cache[url] = (_norm(text), pw, set(pw), _nums(text))
         return cache[url]
 
-    kept = []
+    doubtful: list = []
     for f in registry.facts:
         page_norm, page_words, page_wordset, page_nums = page_of(f.url)
         if not page_norm:
@@ -167,15 +286,15 @@ def review(registry, pages: dict[str, str]) -> Verdict:
             # судить не по чему; факт не трогаем, но и в «дословные» не пишем.
             f.support = CLOSE
             v.close += 1
-            kept.append(f)
             continue
 
         level = _support(f.verbatim, page_norm, page_words, page_wordset)
-        f.support = level
         if level == UNSUPPORTED:
-            v.cut += 1
-            v.cut_ids.append(f.id)
+            # Дешёвый слой не подтвердил — но и опровергать не вправе:
+            # пересказ другими словами он не распознаёт. Отдаём на суждение.
+            doubtful.append(f)
             continue
+        f.support = level
         v.exact += level == EXACT
         v.close += level == CLOSE
 
@@ -191,9 +310,16 @@ def review(registry, pages: dict[str, str]) -> Verdict:
         if f.stance == "regulatory" and not _is_regulator(f.url):
             f.stance = "observed"
             v.mislabeled += 1
-        kept.append(f)
 
-    registry.facts = kept
+    return v, doubtful
+
+
+def _finish(registry, v: Verdict, cut_ids: set) -> Verdict:
+    """Снимает то, что не подтвердила ни проверка, ни модель."""
+    if cut_ids:
+        registry.facts = [f for f in registry.facts if f.id not in cut_ids]
+        v.cut = len(cut_ids)
+        v.cut_ids = sorted(cut_ids)
     if v.cut:
         v.notes.append(
             f"Снято утверждений без опоры на источник: {v.cut} из {v.checked}.")
