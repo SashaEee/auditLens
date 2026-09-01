@@ -2962,6 +2962,7 @@ function ReviewsPage(){
   const[busy,setBusy]=useState(true),[feedBusy,setFeedBusy]=useState(false);
   // Своё состояние догрузки: moreBusy живёт во вкладке «Рынок», переиспользовать
   // его отсюда нельзя.
+  const[escOnly,setEscOnly]=useState(false);            // только обращения с угрозой ЦБ/суд/ФАС
   const[feedMore,setFeedMore]=useState(false);          // есть ли ещё страницы
   const[feedMoreBusy,setFeedMoreBusy]=useState(false);
   const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
@@ -3041,14 +3042,14 @@ function ReviewsPage(){
   // оставались прошлогодние жалобы.
   const feedQS=(off)=>`/api/reviews/feed?bank=${enc(bank)}${pq()}`
     +`${theme?`&theme=${theme}`:""}${q?`&q=${enc(q)}`:""}`
-    +`&days=${days}&limit=20&offset=${off}`;
+    +`&days=${days}${escOnly?"&esc=1":""}&limit=20&offset=${off}`;
 
   useEffect(()=>{ setFeedBusy(true);setClsOn(false);setFeedMore(false);
     apiFetch(feedQS(0))
       .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
                 setFeedMore(!!d.has_more);setFeedBusy(false);})
       .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedBusy(false);});
-  },[bank,product,theme,q,days]);
+  },[bank,product,theme,q,days,escOnly]);
 
   const loadMoreFeed=()=>{
     setFeedMoreBusy(true);
@@ -3123,6 +3124,15 @@ function ReviewsPage(){
           {prods.map(p=><option key={p.product} value={p.product}>{p.product} ({fmtNum(p.n)})</option>)}
         </select>
       </label>
+      {/* Метка продукта приходит из корпуса площадки и там ненадёжна: сверка
+          показала, что 86-93 процентов обращений ВСЕХ банков помечены как
+          «Обслуживание юридических лиц», хотя по тексту это розница. Поэтому
+          малое число в срезе — свойство разметки, а не отсутствие жалоб, и
+          молчать об этом нельзя: аудитор делал вывод «жалоб мало». Свою
+          разметку продукта ещё предстоит вывести из текста. */}
+      {product&&<span className="rv-warn-inline"
+        title="Метка продукта берётся из корпуса площадки и часто неверна: большинство розничных обращений там помечены как обслуживание юрлиц. Для среза по смыслу используйте темы.">
+        ⚠ срез по метке площадки — неполный</span>}
       <div className="rv-chips">
         {RV_PERIODS.map(([d,l])=><button key={d} className={"rv-chip"+(days===d?" on":"")} onClick={()=>setDays(d)}>{l}</button>)}
       </div>
@@ -3141,12 +3151,26 @@ function ReviewsPage(){
         <div className="rv-kv">{busy?"…":pct1(ov&&ov.market_share_pct)}</div>
         <div className="rv-ks">{ov&&ov.market_rank?`${ov.market_rank}-е место · ⓘ без нормировки на базу`:"—"}</div>
       </div>
-      <div className={"rv-card rv-kpi"+(ov&&ov.escalation_pct>=12?" rv-alert":"")}>
+      {/* Плашка ведёт к самим обращениям: аудиторы просили дважды — «хорошо бы
+          при нажатии на эту иконку выводить такие обращения». Признак посчитан
+          при индексации, поэтому фильтр дешёвый. */}
+      <div className={"rv-card rv-kpi rv-kpi-click"+(ov&&ov.escalation_pct>=12?" rv-alert":"")
+             +(escOnly?" rv-kpi-on":"")}
+           role="button" tabIndex={0}
+           title={escOnly?"показаны только такие обращения · нажмите, чтобы снять"
+                         :"показать в ленте только обращения с угрозой ЦБ / суда / ФАС"}
+           onClick={()=>setEscOnly(v=>!v)} onKeyDown={onKey(()=>setEscOnly(v=>!v))}>
         <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_pct>=12&&<span className="rv-tag compliance">риск</span>}</div>
         <div className="rv-kv rv-up">{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
-        <div className="rv-ks">упоминают ЦБ / суд / ФАС</div>
+        <div className="rv-ks">{escOnly?"фильтр включён · нажмите, чтобы снять":"упоминают ЦБ / суд / ФАС · нажмите"}</div>
       </div>
-      <div className="rv-card rv-kpi">
+      <div className={"rv-card rv-kpi"+(th&&th.themes&&th.themes.length?" rv-kpi-click":"")
+             +(th&&th.themes&&th.themes.length&&theme===th.themes[0].key?" rv-kpi-on":"")}
+           role={th&&th.themes&&th.themes.length?"button":undefined}
+           tabIndex={th&&th.themes&&th.themes.length?0:undefined}
+           title="показать в ленте обращения этой темы"
+           onClick={()=>{if(th&&th.themes&&th.themes.length)setTheme(t=>t===th.themes[0].key?"":th.themes[0].key);}}
+           onKeyDown={onKey(()=>{if(th&&th.themes&&th.themes.length)setTheme(t=>t===th.themes[0].key?"":th.themes[0].key);})}>
         <div className="rv-kl">Главная тема</div>
         <div className="rv-kv-sm">{busy?"…":(th&&th.themes&&th.themes.length?th.themes[0].label:"—")}</div>
         <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб за 90 дн · ${RV_RISK[th.themes[0].risk]}`:""}</div>

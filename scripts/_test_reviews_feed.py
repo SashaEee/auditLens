@@ -30,7 +30,15 @@ print("\n— период и смещение доходят до ленты —
 sig = inspect.signature(RD.list_reviews_ex).parameters
 check("list_reviews_ex принимает days", "days" in sig)
 check("list_reviews_ex принимает offset", "offset" in sig)
-check("offset идёт ПОСЛЕДНИМ", list(sig)[-1] == "offset")
+all_src = "\n".join(
+    pathlib.Path(f).read_text(encoding="utf-8")
+    for f in pathlib.Path("src/bank_audit").rglob("*.py"))
+import re as _re
+_calls = _re.findall(r"list_reviews_ex[,(]\s*([^)]{0,200})", all_src)
+_positional = [c for c in _calls
+               if len([a for a in c.split(",")[1:] if a.strip() and "=" not in a]) > 0]
+check("никто не зовёт list_reviews_ex позиционно дальше первого аргумента",
+      not _positional)
 
 fsig = inspect.signature(RD._feed_from_index).parameters
 check("_feed_from_index принимает offset", "offset" in fsig)
@@ -85,10 +93,33 @@ jsx = (pathlib.Path(__file__).resolve().parents[1]
 check("банк подписан на карточке обращения", "rv-pill-bank" in jsx)
 check("банк есть в подзаголовке полного текста",
       "sub={[modalRev.bank," in jsx)
-check("лента запрашивает период", "&days=${days}&limit=20&offset=" in jsx)
+check("лента запрашивает период", "&days=${days}" in jsx and "offset=${off}" in jsx)
 check("есть кнопка догрузки", "loadMoreFeed" in jsx and "feedMore&&" in jsx)
 check("догрузка не занимает состояние вкладки «Рынок»",
       "setFeedMoreBusy" in jsx)
+
+print("\n— регуляторная эскалация как фильтр —")
+check("list_reviews_ex принимает esc", "esc" in sig)
+check("_feed_from_index принимает esc", "esc" in fsig)
+check("в ленте это один булев предикат по индексу", 'extra += " AND i.esc"' in feed_src)
+# Поиск идёт по чужому корпусу, где признака нет. Без отбора после поиска
+# фильтр молча пропадал бы, стоило ввести запрос — ровно как раньше период.
+check("фильтр не пропадает в режиме поиска", "keep = _esc_urls(" in src)
+check("множество url считается ОДИН раз, а не на элемент",
+      src.count("_esc_urls(") == 1)
+esc_src = inspect.getsource(RD._esc_urls)
+check("сбой признака не сужает выдачу молча", "return set(urls)" in esc_src)
+check("эндпоинт принимает esc", "esc: int = 0" in app_src)
+
+print("\n— плашки ведут к обращениям —")
+check("эскалация кликабельна", "setEscOnly" in jsx and "rv-kpi-click" in jsx)
+check("лента запрашивает эскалацию", 'escOnly?"&esc=1"' in jsx)
+check("фильтр эскалации перезапрашивает ленту",
+      "[bank,product,theme,q,days,escOnly]" in jsx)
+check("главная тема кликабельна", "setTheme(t=>t===th.themes[0].key" in jsx)
+
+print("\n— ненадёжная метка продукта названа —")
+check("срез по продукту помечен как неполный", "rv-warn-inline" in jsx)
 
 print("\n— лента отдаёт банк наружу —")
 check("_feed_from_index кладёт bank в элемент", '"bank": r["bank"]' in feed_src)
