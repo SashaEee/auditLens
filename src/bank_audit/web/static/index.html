@@ -1886,6 +1886,9 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
   border-radius:3px;vertical-align:middle;white-space:nowrap}
 .ofc.free{color:var(--pos);border:1px solid color-mix(in oklab,var(--pos),transparent 75%)}
 .ofc.cond{color:var(--warn);border:1px solid color-mix(in oklab,var(--warn),transparent 72%)}
+/* Неправдоподобное число: не прячем строку, а честно помечаем — аудитор
+   должен видеть, что инструмент сам сомневается, и не тратить проверку. */
+.ofc.doubt{border-color:#c2410c;color:#c2410c;background:rgba(194,65,12,.07)}
 .ofkind{font-size:10.5px;color:var(--ink-3);margin-top:2px}
 /* Паспорт премиума: цена у всех ноль, сравниваем по порогу */
 .mk-prem{margin-top:12px;padding-top:11px;border-top:1px solid var(--hair)}

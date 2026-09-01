@@ -18,6 +18,8 @@ import logging
 import re
 from pathlib import Path
 from datetime import datetime
+
+from ..clock import today_msk
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -711,10 +713,13 @@ def build_pdf_html(*, question: str, report_md: str,
             toc_entries.append({"level": 2, "text": label, "id": sid,
                                 "section_type": "appendix"})
     toc_html = _render_toc(toc_entries)
-    now_iso = datetime.now().strftime("%Y-%m-%d · %H:%M")
-    now_date = datetime.now().strftime("%Y-%m-%d")
+    # Контейнер живёт в UTC, аудиторы — в Москве: отчёт, собранный в 15:18,
+    # приходил с отметкой 12:18. Берём московское время явно.
+    _now = today_msk()
+    now_iso = _now.strftime("%Y-%m-%d · %H:%M")
+    now_date = _now.strftime("%Y-%m-%d")
     n_cites = len(set(re.findall(r"\[(\d{1,3})\]", report_md or "")))
-    audit_id = meta.get("audit_id") or datetime.now().strftime("%Y%m%d-%H%M")
+    audit_id = meta.get("audit_id") or _now.strftime("%Y%m%d-%H%M")
 
     # CSS: premium editorial. Source Serif 4 для тела, Geist для UI-блоков,
     # JetBrains Mono для метаданных. Никаких градиентов / неонов.

@@ -815,6 +815,12 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     m_lower = meta["metric_lower_is_better"] if meta else False
     order = (f"{m_field} ASC NULLS LAST" if m_lower
              else f"{m_field} DESC NULLS LAST")
+    # Неправдоподобные числа — В КОНЕЦ, а не в начало. Сторож правдоподобия
+    # (normalizer/offers.py:implausible) давно помечает такие офферы, но витрина
+    # его не читала: ПСБ «Народный вклад» со ставкой 30% при ключевой 14%
+    # стоял ПЕРВОЙ строкой рынка с готовым флагом в базе. Аудиторы шли
+    # проверять и находили на сайте банка 10,5% — доверие к инструменту
+    # ломалось именно здесь (обратная связь ТБ, август 2026).
     return q(f"""
         SELECT m.bank_slug, m.bank_name, m.is_sber, m.offer_id, m.title, m.url,
                m.primary_source, m.segment, m.sub_segment,
@@ -831,11 +837,19 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
                e.payload->>'rate_attainability' AS attain,
                e.payload->'rate_requires'       AS rate_requires,
                e.payload->>'product_kind'       AS product_kind,
+               qf.reason                        AS implausible_reason,
                count(*) OVER () AS total
           FROM v_market_rub_offer m
           LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
+          LEFT JOIN LATERAL (
+              SELECT q2.detail->>'reason' AS reason
+                FROM quality_flag q2
+               WHERE q2.entity_type = 'offer' AND q2.entity_id = m.offer_id
+                 AND q2.severity = 'warn'
+               ORDER BY q2.created_at DESC
+               LIMIT 1) qf ON true
          WHERE {' AND '.join(cond)}
-         ORDER BY m.{order}
+         ORDER BY (qf.reason IS NOT NULL), m.{order}
          LIMIT :l OFFSET :off
     """, params)
 

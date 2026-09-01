@@ -14,6 +14,7 @@ banki.ru: ~390 тысяч негативных отзывов за 2025-2026 п�
 from __future__ import annotations
 
 import logging
+import os
 
 from . import runstate
 
@@ -59,8 +60,13 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
             log.info("корпус отзывов недоступен — наблюдаемая сторона только из веба")
             return []
         name_to_slug = {labels.get(s, s): s for s in subjects}
+        # Без ограничения по свежести корпус отдавал жалобы 2022 года при
+        # наличии свежих: аудитор видел в отчёте обращение четырёхлетней
+        # давности как актуальную практику. Полтора года — компромисс между
+        # свежестью и наполнением по редким продуктам.
         found = br.search_reviews_multi(
-            query, banks=list(name_to_slug), k_per=per_subject)
+            query, banks=list(name_to_slug), k_per=per_subject,
+            since_days=int(os.getenv("GPTR_REVIEWS_SINCE_DAYS", "540")))
     except Exception as e:
         log.info("корпус отзывов: %s", type(e).__name__)
         return []

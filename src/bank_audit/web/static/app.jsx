@@ -2316,6 +2316,14 @@ function MkTerms({c,compact}){
 // безусловный ноль, а у другой — остаток 2,5 млн на счетах.
 function OfferTerms({o}){
   const f=o.free_kind, a=o.attain;
+  // Неправдоподобное число называем прямо, а не прячем: сторож уже посчитал,
+  // почему числу нельзя верить (ставка вклада 30% при ключевой 14%), но
+  // аудитор этого не видел и шёл проверять на сайт банка. Пометка избавляет
+  // от пустой проверки и объясняет, почему строка внизу списка.
+  if(o.implausible_reason) return <span className="ofc doubt"
+    title={"Число не прошло проверку правдоподобия: " + o.implausible_reason +
+           ". Скорее всего это промо- или витринная ставка — сверьте с сайтом банка."}>
+    требует проверки</span>;
   if(f==="conditional"){
     const c=(o.free_conditions||[]).map(x=>
       `${COND_RU[x.type]||"условие"}${x.threshold_rub?" от "+fmtNum(x.threshold_rub)+" ₽":""}${x.note?" — "+x.note:""}`).join("; ");
@@ -3027,8 +3035,12 @@ function ReviewsPage(){
   const exportCase=()=>{try{const cur=JSON.parse(localStorage.getItem("al-case")||"[]");
     if(!cur.length)return;
     const esc=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
-    const rows=[["банк","продукт","дата","город","ссылка","текст"].map(esc).join(",")]
-      .concat(cur.map(r=>[r.bank,r.product,r.date,r.city,r.url,r.text].map(esc).join(",")));
+    // Точка с запятой, а не запятая: Excel в русской локали при запятой
+    // сваливает всю строку в одну ячейку — аудиторы писали, что выгрузка
+    // «требует дополнительного преобразования для читаемого вида».
+    const rows=[["банк","продукт","дата","город","ссылка","текст"].map(esc).join(";")]
+      .concat(cur.map(r=>[r.bank,r.product,r.date,r.city,r.url,
+                          (r.text||"").replace(/\s*\n+\s*/g," ")].map(esc).join(";")));
     const blob=new Blob(["﻿"+rows.join("\n")],{type:"text/csv;charset=utf-8"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`audit-case-${Date.now().toString(36)}.csv`;
     document.body.appendChild(a);a.click();a.remove();}catch{}};
@@ -3484,10 +3496,10 @@ function MatrixExportButton({matrix, question, streaming}){
   const toCSV = ()=>{
     const esc = (v)=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
     const head = ["Параметр","core", ...matrix.banks.map(b=>b.name)];
-    const lines = [head.map(esc).join(",")];
+    const lines = [head.map(esc).join(";")];
     for(const r of matrix.rows){
       const byBank = {}; (r.cells||[]).forEach(c=>byBank[c.bank]=c);
-      lines.push([r.attribute, r.is_core?"да":"", ...matrix.banks.map(b=>csvCell(byBank[b.slug]))].map(esc).join(","));
+      lines.push([r.attribute, r.is_core?"да":"", ...matrix.banks.map(b=>csvCell(byBank[b.slug]))].map(esc).join(";"));
     }
     dl("﻿"+lines.join("\n"), "text/csv;charset=utf-8", "csv");
   };
@@ -5024,7 +5036,11 @@ function AIPage(){
     const t=(txt||q).trim();
     if(!t||loading)return;
     setQ("");
-    const forceDeep = deepMode ? true : null;     // null = auto-detect на бэке
+    // Выключенный тумблер = ЯВНЫЙ выбор быстрого режима, а не «решай сам».
+    // Прежний null уходил в авто-определение, и после первого глубокого отчёта
+    // любой следующий вопрос залипал в глубоком (_prior_deep на бэке) — три
+    // терробанка написали, что «переключение на быстрый не работает».
+    const forceDeep = deepMode ? true : false;
     // Снимаем незакрытую clarify-карточку; сразу показываем индикатор «анализирую»
     // (генерация вопросов идёт ~5с — без него экран пустой = «тишина»).
     setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"user",text:t},
