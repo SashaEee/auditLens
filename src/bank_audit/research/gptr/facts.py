@@ -278,13 +278,21 @@ async def plan_attributes(client, model: str, question: str, plan) -> Contract:
             f"# Что он хочет узнать\n{intent or '—'}\n\n"
             f"# Предмет\n{product or '—'}\n\n"
             f"# Разделы отчёта по плану\n{sections or '—'}")
+    # Контракт — та же работа на извлечение, а не на рассуждение: перечислить
+    # характеристики, а не размышлять о них. Рассуждающая модель тратила на это
+    # 23 секунды из планирования.
+    kw: dict = {"model": model, "temperature": 0.0, "max_tokens": 800,
+                "response_format": {"type": "json_object"},
+                "messages": [{"role": "system", "content": _ATTRS_SYSTEM},
+                             {"role": "user", "content": user}]}
+    if os.getenv("GPTR_EXTRACT_THINKING", "0") != "1":
+        kw["extra_body"] = {"thinking": {"type": "disabled"}}
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": _ATTRS_SYSTEM},
-                      {"role": "user", "content": user}],
-            temperature=0.0, max_tokens=800,
-            response_format={"type": "json_object"})
+        try:
+            resp = await client.chat.completions.create(**kw)
+        except Exception:
+            kw.pop("extra_body", None)
+            resp = await client.chat.completions.create(**kw)
         raw = (resp.choices[0].message.content or "").strip()
         data = json.loads(raw)
     except Exception as e:

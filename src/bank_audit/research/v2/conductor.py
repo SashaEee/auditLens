@@ -245,11 +245,27 @@ async def plan_research(client: AsyncOpenAI, model: str,
                 max_tokens=8000, extra_body=deep_reasoning_extra())
             raw = (raw or "").strip()
         else:
-            resp = await client.chat.completions.create(
-                model=model, messages=messages,
-                temperature=0.0, max_tokens=8000,   # 3000 рвало план на 5 банках → fallback
-                extra_body=deep_reasoning_extra(),  # план — главный reasoning-шаг: effort=high
-            )
+            kwargs = {
+                "model": model, "messages": messages,
+                "temperature": 0.0,
+                "max_tokens": 8000,   # 3000 рвало план на 5 банках → fallback
+                "extra_body": deep_reasoning_extra(),
+            }
+            try:
+                resp = await client.chat.completions.create(**kwargs)
+            except Exception as e:
+                # Провайдер отвергает параметр — снимаем и повторяем. Иначе
+                # план молча подменяется заглушкой: claude-opus отвергает
+                # temperature, и вместо разбора вопроса конвейер получал
+                # рамку по умолчанию за 0,9 с, чего в логе никто не читал.
+                from ...ai.llm_utils import _rejected_param
+                param = _rejected_param(e)
+                if not param or param not in kwargs:
+                    raise
+                log.warning("[conductor] %s не принимает %s — повторяем без него",
+                            model, param)
+                kwargs.pop(param, None)
+                resp = await client.chat.completions.create(**kwargs)
             raw = (resp.choices[0].message.content or "").strip()
     except Exception as e:
         log.warning("[conductor] LLM failed: %s — fallback plan", e)

@@ -211,6 +211,57 @@ async def _resilient_create(orig, model: str, args, kwargs):
     return resp
 
 
+_PARAMS = ("temperature", "top_p", "reasoning_effort",
+           "presence_penalty", "frequency_penalty")
+# «`temperature` is deprecated for this model», «Unsupported parameter: 'top_p'»
+_REJECTED_RE = re.compile(
+    r"(deprecated|not supported|unsupported|unknown|invalid)[^.]{0,40}?"
+    r"[`'\"]?(?P<a>" + "|".join(_PARAMS) + r")[`'\"]?"
+    r"|[`'\"]?(?P<b>" + "|".join(_PARAMS) + r")[`'\"]?[^.]{0,40}?"
+    r"(deprecated|not supported|unsupported|unknown|invalid)",
+    re.IGNORECASE)
+
+
+def _rejected_param(err: Exception) -> str | None:
+    """Какой параметр модель отвергла, если она вообще про это сказала."""
+    m = _REJECTED_RE.search(str(err))
+    if not m:
+        return None
+    return (m.group("a") or m.group("b") or "").lower() or None
+
+
+def probe_models(models: list[str], *, base_url: str, api_key: str) -> None:
+    """Разовая проверка: какие модели отвергают `temperature`.
+
+    Самолечение по исключению не срабатывает: gpt-researcher ретраит вызов
+    внутри себя десять раз и наружу отдаёт уже общую ошибку. Поэтому спрашиваем
+    провайдера прямо — три коротких запроса на старте прогона, зато список
+    строится по факту, а не по зашитым именам моделей.
+    """
+    import httpx
+    import gpt_researcher.llm_provider.generic.base as base
+    import gpt_researcher.utils.llm as llm
+
+    for model in dict.fromkeys(m for m in models if m):
+        if model in base.NO_SUPPORT_TEMPERATURE_MODELS:
+            continue
+        try:
+            r = httpx.post(base_url.rstrip("/") + "/chat/completions", timeout=30,
+                           headers={"Authorization": f"Bearer {api_key}"},
+                           json={"model": model, "max_tokens": 1,
+                                 "temperature": 0.4,
+                                 "messages": [{"role": "user", "content": "."}]})
+        except Exception as e:
+            log.info("gptr-compat: проба %s не удалась (%s)", model, type(e).__name__)
+            continue
+        if r.status_code == 200:
+            continue
+        if _rejected_param(Exception(r.text)) == "temperature":
+            base.NO_SUPPORT_TEMPERATURE_MODELS.append(model)
+            log.info("gptr-compat: %s не принимает temperature", model)
+    llm.NO_SUPPORT_TEMPERATURE_MODELS = base.NO_SUPPORT_TEMPERATURE_MODELS
+
+
 def deep_reasoning_extra(base: dict | None = None) -> dict:
     """extra_body с ПОВЫШЕННЫМ reasoning_effort для «думающих» вызовов
     (conductor / analyst / critic / repair).
