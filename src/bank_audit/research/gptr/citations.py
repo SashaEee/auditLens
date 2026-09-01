@@ -67,6 +67,84 @@ def renumber(report: str, registry) -> tuple[str, list[dict], dict]:
     }
 
 
+class StreamRenumberer:
+    """Перенумеровывает якоря ПО ХОДУ генерации отчёта.
+
+    Отчёт писался целиком и приезжал в интерфейс одним куском: последние
+    полторы минуты аудитор смотрел на «пишу по фактам». Стримить мешало то,
+    что якоря [f:id] превращаются в номера источников только после генерации.
+    Но нумерация идёт по порядку ПЕРВОГО УПОМИНАНИЯ — а это и есть порядок
+    стрима, поэтому замену можно делать на лету.
+
+    Единственная тонкость: якорь может разорваться между кусками потока, и
+    незакрытый хвост придерживается до следующего куска.
+    """
+
+    def __init__(self, registry):
+        self._by_id = {f.id: f for f in registry.facts}
+        self._order: list[str] = []
+        self._facts_by_url: dict[str, list] = {}
+        self._buf = ""
+        self._full: list[str] = []
+        self.unknown = 0
+        self.anchors = 0
+
+    def _sub(self, m: re.Match) -> str:
+        fid = int(m.group(1))
+        fact = self._by_id.get(fid)
+        if fact is None:
+            self.unknown += 1
+            return ""
+        self.anchors += 1
+        if fact.url not in self._order:
+            self._order.append(fact.url)
+            self._facts_by_url[fact.url] = []
+        if fact not in self._facts_by_url[fact.url]:
+            self._facts_by_url[fact.url].append(fact)
+        return f"[{self._order.index(fact.url) + 1}]"
+
+    def feed(self, chunk: str) -> str:
+        """Кусок потока → готовый к показу текст (может быть пустым)."""
+        self._buf += chunk or ""
+        out = _ANCHOR_RE.sub(self._sub, self._buf)
+        # Придерживаем возможный незавершённый якорь в хвосте.
+        tail = 0
+        m = re.search(r"\[f?:?\d{0,5}$", out)
+        if m:
+            tail = len(out) - m.start()
+        ready, self._buf = (out[:len(out) - tail], out[len(out) - tail:]) if tail else (out, "")
+        self._full.append(ready)
+        return ready
+
+    def finish(self) -> str:
+        ready, self._buf = self._buf, ""
+        self._full.append(ready)
+        return ready
+
+    @property
+    def text(self) -> str:
+        return "".join(self._full)
+
+    def sources(self) -> list[dict]:
+        out = []
+        for i, url in enumerate(self._order, 1):
+            facts = self._facts_by_url[url]
+            out.append({"n": i, "url": url,
+                        "facts": [f.to_ui() for f in facts],
+                        "stance": facts[0].stance if facts else "",
+                        "cited": len(facts)})
+        return out
+
+    def stats(self) -> dict:
+        return {"цитирований": self.anchors,
+                "фактов_процитировано": len({f.id for fs in
+                                             self._facts_by_url.values()
+                                             for f in fs}),
+                "фактов_всего": len(self._by_id),
+                "источников_процитировано": len(self._order),
+                "якорей_в_никуда": self.unknown}
+
+
 def unanchored_claims(report: str) -> int:
     """Абзацы с утверждениями, но без единого якоря.
 

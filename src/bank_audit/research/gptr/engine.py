@@ -172,6 +172,37 @@ def report_prompt(plan, question: str, *, needs_ranking: bool = False,
     return "\n".join(parts)
 
 
+async def stream_report(client, model: str, *, question: str, plan,
+                        context: str, needs_ranking: bool = False,
+                        has_regulatory: bool = False):
+    """Пишет отчёт ПОТОКОМ, отдавая куски по мере генерации.
+
+    Раньше звали researcher.write_report(): он возвращает готовый текст целиком,
+    и последние полторы минуты прогона аудитор смотрел на неподвижное «пишу по
+    фактам». Своего у gpt-researcher в этом вызове почти ничего нет — промпт и
+    контекст мы задаём сами (custom_prompt + ext_context), — поэтому зовём
+    модель напрямую и получаем поток. Заодно перестаём платить за их сжатие
+    контекста, результат которого всё равно отбрасывался.
+    """
+    messages = [
+        {"role": "system", "content": _role_prompt(plan, question)},
+        {"role": "user", "content": report_prompt(
+            plan, question, needs_ranking=needs_ranking,
+            has_regulatory=has_regulatory) + "\n\nContext: " + context},
+    ]
+    stream = await client.chat.completions.create(
+        model=model, messages=messages, temperature=0.3, max_tokens=16000,
+        stream=True)
+    async for part in stream:
+        try:
+            delta = part.choices[0].delta
+        except (AttributeError, IndexError):
+            continue
+        piece = getattr(delta, "content", None)
+        if piece:
+            yield piece
+
+
 async def run(question: str, *, history: list[dict] | None = None) -> dict:
     """Полный прогон: возвращает отчёт, источники, сверку и тайминги."""
     from openai import AsyncOpenAI

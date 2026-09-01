@@ -138,5 +138,30 @@ chk("таблица тарифов из хвоста сохранена",
     "Таблицы страницы" in _fit and "16,5%" in _fit)
 chk("бюджет соблюдён", len(_fit) < 15000)
 
+print("потоковая перенумерация якорей")
+from bank_audit.research.gptr.citations import StreamRenumberer  # noqa: E402
+_sr = FactRegistry()
+_sr.add(subject="sberbank", attribute="ставка", value="16", unit="%",
+        verbatim="ставка 16% годовых", url="https://sberbank.ru/a",
+        stance="declared")
+_sr.add(subject="sberbank", attribute="жалобы", value="отказ", unit="",
+        verbatim="получил необоснованный отказ", url="https://banki.ru/r",
+        stance="observed")
+_rn = StreamRenumberer(_sr)
+# самый опасный случай: якорь разорван между кусками потока
+_out = "".join(_rn.feed(p) for p in
+               ["Ставка 16% ", "[f:", "1] и жалоба ", "[f:2]", " конец"])
+_out += _rn.finish()
+chk("разорванный между кусками якорь собран",
+    _out == "Ставка 16% [1] и жалоба [2] конец")
+chk("источники пронумерованы по первому упоминанию",
+    [x["url"] for x in _rn.sources()] == ["https://sberbank.ru/a",
+                                          "https://banki.ru/r"])
+chk("счётчик цитирований совпадает", _rn.stats()["цитирований"] == 2)
+_rn2 = StreamRenumberer(_sr)
+_o2 = _rn2.feed("текст [f:99] хвост") + _rn2.finish()
+chk("якорь на несуществующий факт убирается", "[f:99]" not in _o2
+    and _rn2.stats()["якорей_в_никуда"] == 1)
+
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)

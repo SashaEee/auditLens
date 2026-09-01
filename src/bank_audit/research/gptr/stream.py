@@ -23,7 +23,8 @@ from . import citations as al_cit, facts as al_facts
 from . import reviews as al_reviews, runstate
 from . import gaps as al_gaps, planner as al_planner
 from . import scraper as al_scraper, verify as al_verify
-from .engine import _role_prompt, install, report_prompt
+from .engine import (_role_prompt, install, report_prompt,
+                     stream_report as engine_stream_report)
 
 # Как часто отдавать живой счётчик длинной стадии. Реже — индикатор кажется
 # зависшим, чаще — поток забивается служебными событиями.
@@ -246,36 +247,42 @@ async def stream_deep_research_gptr(question: str,
                 "detail": "Аналитик собирает разделы, заказанные планом",
                 "estimate_s": 90})
     labels = dict(getattr(plan, "subject_labels", None) or {})
+    ext = registry.render_for_writer(labels) if registry.facts else ""
+    writer_model = (os.getenv("SMART_LLM") or "").split(":", 1)[-1] or (
+        os.getenv("LLM_MODEL_ANALYST") or os.environ["LLM_MODEL_NAME"])
+    # Отчёт отдаётся ПО МЕРЕ написания, а якоря перенумеровываются на лету:
+    # нумерация идёт по первому упоминанию, то есть ровно в порядке потока.
+    renum = al_cit.StreamRenumberer(registry)
     try:
-        # Писатель получает НЕ ком контекста, а реестр фактов с якорями.
-        ext = registry.render_for_writer(labels) if registry.facts else None
-        # custom_prompt заменяет шаблон gpt-researcher целиком: иначе его
-        # собственные правила цитирования перебивают наши якоря.
-        report = await researcher.write_report(
-            ext_context=ext,
-            custom_prompt=report_prompt(
-                plan, question,
+        async for piece in engine_stream_report(
+                client, writer_model, question=question, plan=plan,
+                context=ext,
                 needs_ranking=bool(getattr(plan, "needs_ranking", False)),
                 has_regulatory=any(f.stance == "regulatory"
-                                   for f in registry.facts)) if ext else "")
+                                   for f in registry.facts)):
+            ready = renum.feed(piece)
+            if ready:
+                yield _evt({"type": "text", "chunk": ready})
     except Exception as e:
         log.exception("gptr: написание")
         yield _evt({"type": "text",
                     "chunk": f"\n\n⚠ **Отчёт не сформирован:** {e}\n"})
         yield _evt({"type": "done"})
         return
-    if not (report or "").strip():
-        # Пустая строка вместо отчёта — известный отказ: провайдер отверг
-        # параметр, а внутренний ретрай движка проглотил ошибку.
+    rest = renum.finish()
+    if rest:
+        yield _evt({"type": "text", "chunk": rest})
+    report = renum.text
+    if not report.strip():
         yield _evt({"type": "text", "chunk":
                     "\n\n⚠ **Отчёт не сформирован:** модель вернула пустой "
                     "ответ. Проверьте совместимость параметров модели.\n"})
         yield _evt({"type": "done"})
         return
 
-    # Якоря [f:id] → номера источников; в приложение идут ТОЛЬКО те, на кого
-    # реально сослались. Источник, ничего не давший отчёту, исчезает сам.
-    report, cited_src, cit_stats = al_cit.renumber(report, registry)
+    # Источники и метрики берём у потокового перенумеровщика: в приложение
+    # идут ТОЛЬКО те, на кого реально сослались.
+    cited_src, cit_stats = renum.sources(), renum.stats()
     log.info("цитаты: %s", cit_stats)
 
     cited_map = {c["url"]: {"facts": c["facts"],
@@ -298,9 +305,6 @@ async def stream_deep_research_gptr(question: str,
                     "read_total": len(pages), "unused": dropped,
                     "pdf_sources": sum(1 for s in sources
                                        if s["url"].lower().endswith(".pdf"))})
-
-    for i in range(0, len(report), _CHUNK):
-        yield _evt({"type": "text", "chunk": report[i:i + _CHUNK]})
 
     # ── Сверка и пробелы ─────────────────────────────────────────────────
     verification = al_verify.verify_report(report, registry, pages)
