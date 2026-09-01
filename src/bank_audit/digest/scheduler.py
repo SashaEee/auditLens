@@ -464,6 +464,13 @@ async def bankiru_fts_background_loop():
             # и сигналы главной на разметке было не построить.
             from ..rag import review_topics
             await asyncio.to_thread(review_topics.label_new)
+            # Продукт — второе измерение той же разметки. Без этого свежие
+            # обращения оставались бы без продукта, и срез по нему тихо терял
+            # бы последние дни, притом что по темам они уже видны.
+            if review_topics.active_version(review_topics.PRODUCT):
+                await asyncio.to_thread(review_topics.label_new,
+                                        dim=review_topics.PRODUCT)
+                await asyncio.to_thread(review_topics.apply_product_labels)
         except Exception as e:  # noqa: BLE001
-            log.warning("инкрементальная разметка тем: %s", e)
+            log.warning("инкрементальная разметка отзывов: %s", e)
         await asyncio.sleep(FTS_SYNC_EVERY_S)

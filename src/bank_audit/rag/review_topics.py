@@ -72,6 +72,80 @@ _RESIDUAL_PASS = os.getenv("REVIEW_TOPICS_RESIDUAL", "1").lower() not in ("0", "
 _RISKS = ("compliance", "conduct", "ops")
 
 
+# ── Измерения таксономии ─────────────────────────────────────────────────────
+# Машина одна, настроек две. Тема отвечает на вопрос «ЧТО пошло не так»,
+# продукт — «С ЧЕМ это произошло». Разделять их обязательно: жалоба на задержку
+# перевода это одновременно тема «задержки» и продукт «денежный перевод», и
+# складывать их в один список значило бы заставить их конкурировать за ранг.
+THEME, PRODUCT = "theme", "product"
+
+_SEE_PRODUCT = (
+    "Ты — методолог внутреннего аудита банка. Тебе дают выборку реальных жалоб клиентов.\n"
+    "Назови БАНКОВСКИЕ ПРОДУКТЫ И УСЛУГИ, о которых идёт речь в этих жалобах: вклад, "
+    "кредитная карта, ипотека, эквайринг и тому подобное.\n"
+    "Требования: называй сам продукт, а НЕ проблему с ним — «ипотека», а не «задержка "
+    "одобрения ипотеки», «страхование», а не «навязанная страховка»; 1-4 слова; не выдумывай "
+    "продуктов, которых в выборке нет; одна строка — один продукт, без нумерации и пояснений.")
+
+_MERGE_PRODUCT = (
+    "Ты — методолог внутреннего аудита банка. Ниже черновой список банковских продуктов и "
+    "услуг, собранный чтением жалоб клиентов: там есть дубли, синонимы и слишком мелкие "
+    "формулировки.\n\n"
+    "Сведи его в рабочий каталог продуктов. Продуктов должно быть от {lo} до {n} — это "
+    "требование, а не пожелание.\n\n"
+    "Правила:\n"
+    "— объединяй синонимы одного продукта («карта Мир», «дебетовая карточка» — одна "
+    "позиция), но НЕ сливай разные продукты: вклад и накопительный счёт это разное, "
+    "кредитная карта и потребительский кредит тоже;\n"
+    "— различай розницу и обслуживание бизнеса: расчётно-кассовое обслуживание и эквайринг "
+    "не то же самое, что дебетовая карта физлица;\n"
+    "— сохрани продукты, которые встречаются редко, но подлежат отдельной проверке "
+    "(обезличенные металлические счета, индивидуальный инвестиционный счёт, страхование "
+    "жизни при кредите, программа долгосрочных сбережений);\n"
+    "— не превращай продукт в проблему: «навязанная страховка» — это не продукт, продукт "
+    "здесь «страхование»;\n"
+    "— описание описывает САМ ПРОДУКТ: что это, как он называется у разных банков, какими "
+    "признаками клиент его узнаёт (на карту приходит зарплата; вклад открывают на срок под "
+    "процент; по ипотеке есть залог и созаёмщики). Пиши словами клиентов, но про ПРЕДМЕТ;\n"
+    "— в описании НЕ перечисляй проблемы и жалобы. Это главное правило. Проблемы у всех "
+    "продуктов одинаковые — блокировки, комиссии, отказ, списание, — и описание из проблем "
+    "перестаёт отличать один продукт от другого: замер показал, что позиция с описанием "
+    "«жалобы на блокировки, комиссии и списания» собрала тысячи чужих обращений, потому что "
+    "подходила любому. За что клиент ругает продукт, определяет ТЕМА, а не продукт;\n"
+    "— описание строго до 300 символов, без кавычек и перечисления цитат;\n"
+    "— каталог обязан ПОКРЫВАТЬ выборку. Если заметная часть жалоб не о конкретном "
+    "продукте, а о канале обслуживания или о банке в целом — например о мобильном "
+    "приложении, обслуживании в отделении, банкоматах, службе поддержки, — заведи для них "
+    "отдельные позиции. Замер показал, во что обходится пропуск: без таких позиций эти "
+    "обращения приписываются ближайшему по описанию продукту, и редкая позиция собирает "
+    "чужое — эскроу-счёт получил 7916 обращений при 378, где слово вообще встречается.\n\n"
+    "Формат: один продукт на строку, ровно три поля через вертикальную черту, без "
+    "заголовков и нумерации:\n"
+    "латинский_слаг | Название для аудитора | развёрнутое описание словами клиентов")
+
+
+class _Dim:
+    """Настройка одного измерения таксономии."""
+
+    def __init__(self, key, see, merge, target, minimum, has_risk):
+        self.key, self.see, self.merge = key, see, merge
+        self.target, self.minimum, self.has_risk = target, minimum, has_risk
+
+
+def _dim(name: str) -> "_Dim":
+    if name == PRODUCT:
+        return _Dim(PRODUCT, _SEE_PRODUCT, _MERGE_PRODUCT,
+                    int(os.getenv("REVIEW_PRODUCTS_TARGET", "28")),
+                    int(os.getenv("REVIEW_PRODUCTS_MIN", "12")), has_risk=False)
+    return _Dim(THEME, _SEE, _MERGE, _TARGET, _MIN_TOPICS, has_risk=True)
+
+
+def _skey(dim: str, k: str) -> str:
+    """Ключ состояния. У тем он БЕЗ префикса — таким он и лежит на проде,
+    и переименование стоило бы потери активного поколения."""
+    return k if dim == THEME else f"{dim}:{k}"
+
+
 def _llm(timeout: float = 180):
     from openai import OpenAI
 
@@ -128,7 +202,7 @@ def _sample(n: int, offset: int = 0) -> list[str]:
         '''), {"n": n, "off": offset}).scalars().all()
 
 
-def _sample_residual(n: int, offset: int = 0) -> list[str]:
+def _sample_residual(n: int, offset: int = 0, dim: str = THEME) -> list[str]:
     """Выборка из НЕРАЗМЕЧЕННЫХ — тех, что попадают в «Прочее».
 
     Смотреть на корпус целиком для доразметки бесполезно: модель снова назовёт
@@ -141,9 +215,11 @@ def _sample_residual(n: int, offset: int = 0) -> list[str]:
         urls = list(s.execute(text("""
             SELECT f.url FROM review_index f
             WHERE NOT EXISTS (SELECT 1 FROM review_topic_label l
-                              WHERE l.url = f.url AND l.z >= :z AND l.rn <= :rank)
+                              JOIN review_topic_def d ON d.topic_id = l.topic_id
+                              WHERE l.url = f.url AND d.dim = :dim
+                                AND l.z >= :z AND l.rn <= :rank)
             ORDER BY md5(f.url) OFFSET :off LIMIT :n
-        """), {"z": MIN_Z, "rank": RANK_CAP, "off": offset,
+        """), {"dim": dim, "z": MIN_Z, "rank": RANK_CAP, "off": offset,
                "n": n}).scalars().all())
     if not urls:
         return []
@@ -158,7 +234,7 @@ def _sample_residual(n: int, offset: int = 0) -> list[str]:
         '''), {"urls": urls}).scalars().all())
 
 
-def discover(sampler=None) -> list[str]:
+def discover(sampler=None, dim: str = THEME) -> list[str]:
     """Раунды чтения корпуса, пока не перестанут появляться новые темы.
 
     Счётчик раундов не годится: редкие, но важные для аудита темы (наследование,
@@ -167,6 +243,7 @@ def discover(sampler=None) -> list[str]:
     нового — тот же приём, что и при поиске багов.
     """
     take = sampler or _sample
+    spec = _dim(dim)
     seen: dict[str, str] = {}          # нормализованное → как назвала модель
     dry = 0
     for rnd in range(_ROUNDS):
@@ -176,10 +253,10 @@ def discover(sampler=None) -> list[str]:
         body = "\n\n".join(f"[{i + 1}] {t[:700]}" for i, t in enumerate(chunk))
         known = "\n".join(sorted(seen.values()))
         user = body if not known else (
-            f"Уже известные темы (их называть НЕ надо, нужны только новые):\n{known}\n\n"
+            f"Уже известное (называть НЕ надо, нужны только новые):\n{known}\n\n"
             f"Жалобы:\n{body}")
         try:
-            raw, cut = _ask(_SEE, user)
+            raw, cut = _ask(spec.see, user)
         except Exception as e:
             log.warning("review_topics: раунд %d не удался (%s)", rnd + 1, e)
             continue
@@ -197,7 +274,8 @@ def discover(sampler=None) -> list[str]:
                 seen[key] = t
                 fresh += 1
         dry = dry + 1 if fresh == 0 else 0
-        log.info("review_topics: раунд %d — новых тем %d, всего %d", rnd + 1, fresh, len(seen))
+        log.info("review_topics[%s]: раунд %d — новых %d, всего %d",
+                 dim, rnd + 1, fresh, len(seen))
         if dry >= _DRY_ROUNDS:
             break
     return sorted(seen.values())
@@ -233,37 +311,46 @@ _MERGE = (
 _MIN_TOPICS = int(os.getenv("REVIEW_TOPICS_MIN", "18"))
 
 
-def _parse_taxonomy(lines: list[str]) -> list[dict]:
+def _parse_taxonomy(lines: list[str], dim: str = THEME) -> list[dict]:
+    """Разбор ответа модели. У темы четыре поля, у продукта три: риска у
+    продукта нет — «ипотека» сама по себе ничем не рискованна."""
+    spec = _dim(dim)
+    need = 4 if spec.has_risk else 3
     out, seen = [], set()
     for line in lines:
         parts = [p.strip() for p in line.split("|")]
-        if len(parts) < 4:
+        if len(parts) < need:
             continue
         key = re.sub(r"[^a-z0-9_]", "", parts[0].lower().replace("-", "_"))[:40]
-        label, risk, descr = parts[1], parts[2].lower(), " | ".join(parts[3:])
+        label = parts[1]
+        if spec.has_risk:
+            risk, descr = parts[2].lower(), " | ".join(parts[3:])
+            risk = risk if risk in _RISKS else "ops"
+        else:
+            risk, descr = None, " | ".join(parts[2:])
         if not key or key in seen or len(label) < 3 or len(descr) < 20:
             continue
         seen.add(key)
-        out.append({"key": key, "label": label,
-                    "risk": risk if risk in _RISKS else "ops", "descr": descr})
-    return out[:_TARGET]
+        out.append({"key": key, "label": label, "risk": risk, "descr": descr})
+    return out[:spec.target]
 
 
-def finalize(names: list[str]) -> list[dict]:
-    sys_prompt = _MERGE.format(n=_TARGET, lo=_MIN_TOPICS)
+def finalize(names: list[str], dim: str = THEME) -> list[dict]:
+    spec = _dim(dim)
+    sys_prompt = spec.merge.format(n=spec.target, lo=spec.minimum)
     raw, cut = _ask(sys_prompt, "\n".join(names), max_tokens=16000)
     lines = raw.splitlines()
     if cut and lines:
         lines = lines[:-1]            # обрезанная строка даст тему без описания
-    out = _parse_taxonomy(lines)
-    if len(out) >= _MIN_TOPICS:
+    out = _parse_taxonomy(lines, dim)
+    if len(out) >= spec.minimum:
         return out
     # Модель склонна читать верхнюю границу как приглашение укрупнить: первый
     # прогон дал 5 тем вместо 24. Возвращаем ей её же ответ с прямым указанием —
     # это дешевле и надёжнее, чем угадывать формулировку промпта с одного раза.
-    log.info("review_topics: получено %d тем при минимуме %d — прошу дробнее",
-             len(out), _MIN_TOPICS)
-    retry = (f"Ты вернул только {len(out)} тем, а нужно минимум {_MIN_TOPICS}. "
+    log.info("review_topics[%s]: получено %d при минимуме %d — прошу дробнее",
+             dim, len(out), spec.minimum)
+    retry = (f"Ты вернул только {len(out)} позиций, а нужно минимум {spec.minimum}. "
              f"Ты слил в одну тему разные риски. Разбей укрупнённые темы обратно и верни "
              f"список заново в том же формате.\n\nТвой ответ:\n{raw}\n\nИсходный черновик:\n"
              + "\n".join(names))
@@ -272,7 +359,7 @@ def finalize(names: list[str]) -> list[dict]:
         lines2 = raw2.splitlines()
         if cut2 and lines2:
             lines2 = lines2[:-1]
-        out2 = _parse_taxonomy(lines2)
+        out2 = _parse_taxonomy(lines2, dim)
         if len(out2) > len(out):
             return out2
     except Exception as e:
@@ -295,14 +382,14 @@ def _state_put(k: str, v: str) -> None:
         """), {"k": k, "v": str(v)})
 
 
-def active_version() -> int:
+def active_version(dim: str = THEME) -> int:
     try:
-        return int(_state_get(_ACTIVE) or 0)
+        return int(_state_get(_skey(dim, _ACTIVE)) or 0)
     except (TypeError, ValueError):
         return 0
 
 
-def store(taxonomy: list[dict]) -> int:
+def store(taxonomy: list[dict], dim: str = THEME) -> int:
     """Пишет новое поколение таксономии и считает векторы тем.
 
     Эмбедим описание с QUERY-префиксом, а не как есть: векторы отзывов посчитаны
@@ -311,24 +398,25 @@ def store(taxonomy: list[dict]) -> int:
     """
     if not taxonomy:
         return 0
-    ver = active_version() + 1
+    ver = active_version(dim) + 1
     with db.session() as s:
         for t in taxonomy:
             vec = embedder.embed_one(QUERY_PREFIX + f"{t['label']}. {t['descr']}")
             s.execute(text("""
-                INSERT INTO review_topic_def (version, key, label, descr, risk, embedding)
-                VALUES (:v, :k, :l, :d, :r, CAST(:e AS vector))
-                ON CONFLICT (version, key) DO UPDATE SET
+                INSERT INTO review_topic_def (dim, version, key, label, descr, risk, embedding)
+                VALUES (:dim, :v, :k, :l, :d, :r, CAST(:e AS vector))
+                ON CONFLICT (dim, version, key) DO UPDATE SET
                     label = EXCLUDED.label, descr = EXCLUDED.descr,
                     risk = EXCLUDED.risk, embedding = EXCLUDED.embedding
-            """), {"v": ver, "k": t["key"], "l": t["label"], "d": t["descr"],
-                   "r": t["risk"], "e": "[" + ",".join(f"{x:.6f}" for x in vec) + "]"})
-    log.info("review_topics: сохранено поколение %d, тем %d", ver, len(taxonomy))
+            """), {"dim": dim, "v": ver, "k": t["key"], "l": t["label"], "d": t["descr"],
+                   "r": t.get("risk"), "e": "[" + ",".join(f"{x:.6f}" for x in vec) + "]"})
+    log.info("review_topics[%s]: сохранено поколение %d, позиций %d",
+             dim, ver, len(taxonomy))
     return ver
 
 
 # ── 4. Разложить корпус по темам ─────────────────────────────────────────────
-def assign(version: int | None = None) -> dict:
+def assign(version: int | None = None, dim: str = THEME) -> dict:
     """Каждому отзыву — ближайшие темы. Считает Postgres, не приложение.
 
     Идём кусками по id: один запрос на 169 тыс. отзывов × десятки тем — это
@@ -338,7 +426,7 @@ def assign(version: int | None = None) -> dict:
     Храним топ-N с оценками БЕЗ отсечки. Порог применяется при чтении, и его
     можно перебрать, не гоняя разметку по всему корпусу заново.
     """
-    ver = version or active_version()
+    ver = version or active_version(dim)
     if not ver:
         return {"ok": False, "reason": "нет активной таксономии"}
     src = _source_engine()
@@ -347,8 +435,8 @@ def assign(version: int | None = None) -> dict:
     with db.session() as s:
         defs = s.execute(text(
             "SELECT topic_id, key, embedding FROM review_topic_def"
-            " WHERE version = :v AND embedding IS NOT NULL ORDER BY topic_id"),
-            {"v": ver}).all()
+            " WHERE dim = :dim AND version = :v AND embedding IS NOT NULL"
+            " ORDER BY topic_id"), {"dim": dim, "v": ver}).all()
     if not defs:
         return {"ok": False, "reason": "у поколения нет векторов"}
     # темы приезжают в запрос значениями: их десятки, а не миллионы
@@ -358,7 +446,12 @@ def assign(version: int | None = None) -> dict:
     t0 = time.time()
     lo, written, seen = 0, 0, 0
     with db.session() as s:
-        s.execute(text("DELETE FROM review_topic_label"))
+        # Чистим метки ТОЛЬКО своего измерения: безусловный DELETE снёс бы
+        # разметку соседнего и обнулил бы панель тем при пересборке продуктов.
+        s.execute(text("""
+            DELETE FROM review_topic_label WHERE topic_id IN
+                (SELECT topic_id FROM review_topic_def WHERE dim = :dim)"""),
+            {"dim": dim})
     while True:
         with src.connect() as c:
             c.execute(text("SET LOCAL statement_timeout = 600000"))
@@ -391,15 +484,16 @@ def assign(version: int | None = None) -> dict:
         lo += _ASSIGN_CHUNK
         if lo > _max_source_id():
             break
-    _normalize()
-    _state_put(_ASSIGNED, str(int(time.time())))
+    _normalize(dim)
+    _state_put(_skey(dim, _ASSIGNED), str(int(time.time())))
     dt = time.time() - t0
-    log.info("review_topics: размечено отзывов %d, меток %d, %.0f с", seen, written, dt)
+    log.info("review_topics[%s]: размечено отзывов %d, меток %d, %.0f с",
+             dim, seen, written, dt)
     return {"ok": True, "reviews": seen, "labels": written,
             "version": ver, "seconds": round(dt, 1)}
 
 
-def label_new(batch: int = 4000) -> dict:
+def label_new(batch: int = 4000, dim: str = THEME) -> dict:
     """Инкрементальная разметка: только отзывы БЕЗ меток, свежие первыми.
 
     Полный assign() перегоняет весь корпус (DELETE + все куски) и запускается
@@ -412,22 +506,29 @@ def label_new(batch: int = 4000) -> dict:
     z считаем по СНИМКУ текущей статистики темы (avg/std сохранённых меток):
     корпус большой, статистика дрейфует медленно; полный пересчёт остаётся за
     rebuild()/assign(). rn — ранг по z внутри меток отзыва, как в _normalize."""
-    ver = active_version()
+    ver = active_version(dim)
     if not ver:
         return {"ok": False, "reason": "нет активной таксономии"}
     with db.session() as s:
         defs = s.execute(text(
             "SELECT topic_id, embedding FROM review_topic_def"
-            " WHERE version = :v AND embedding IS NOT NULL ORDER BY topic_id"),
-            {"v": ver}).all()
+            " WHERE dim = :dim AND version = :v AND embedding IS NOT NULL"
+            " ORDER BY topic_id"), {"dim": dim, "v": ver}).all()
         stats = {int(r[0]): (float(r[1]), float(r[2])) for r in s.execute(text("""
-            SELECT topic_id, avg(score), coalesce(nullif(stddev_samp(score), 0), 1)
-            FROM review_topic_label GROUP BY topic_id"""))}
+            SELECT l.topic_id, avg(l.score),
+                   coalesce(nullif(stddev_samp(l.score), 0), 1)
+            FROM review_topic_label l
+            JOIN review_topic_def d ON d.topic_id = l.topic_id
+            WHERE d.dim = :dim GROUP BY l.topic_id"""), {"dim": dim})}
+        # «Ещё не размечен» — в СВОЁМ измерении: отзыв с темами, но без продукта
+        # обязан попасть в доразметку продукта.
         todo = s.execute(text("""
             SELECT i.url, i.review_id, i.source FROM review_index i
-            WHERE NOT EXISTS (SELECT 1 FROM review_topic_label l WHERE l.url = i.url)
+            WHERE NOT EXISTS (SELECT 1 FROM review_topic_label l
+                              JOIN review_topic_def d ON d.topic_id = l.topic_id
+                              WHERE l.url = i.url AND d.dim = :dim)
               AND i.dt IS NOT NULL AND i.dt <= now()
-            ORDER BY i.dt DESC LIMIT :lim"""), {"lim": batch}).all()
+            ORDER BY i.dt DESC LIMIT :lim"""), {"dim": dim, "lim": batch}).all()
     if not defs or not todo:
         return {"ok": True, "labeled": 0, "backlog": 0}
     values = ", ".join(f"({d[0]}, CAST(:t{i} AS vector))" for i, d in enumerate(defs))
@@ -495,7 +596,7 @@ def label_new(batch: int = 4000) -> dict:
             "backlog": backlog, "version": ver}
 
 
-def _normalize() -> None:
+def _normalize(dim: str = THEME) -> None:
     """Приводит оценки тем к сопоставимому виду.
 
     Сырой косинус между темами сравнивать нельзя: у каждой темы своя
@@ -510,27 +611,80 @@ def _normalize() -> None:
     """
     with db.session() as s:
         s.execute(text("""
-            WITH st AS (
+            WITH mine AS (
+                SELECT l.url, l.topic_id, l.score FROM review_topic_label l
+                JOIN review_topic_def d ON d.topic_id = l.topic_id
+                WHERE d.dim = :dim),
+            st AS (
                 SELECT topic_id, avg(score) m, nullif(stddev_samp(score), 0) sd
-                FROM review_topic_label GROUP BY topic_id)
+                FROM mine GROUP BY topic_id)
             UPDATE review_topic_label l
                SET z = (l.score - st.m) / coalesce(st.sd, 1.0)
               FROM st WHERE st.topic_id = l.topic_id
-        """))
+        """), {"dim": dim})
         # Ранг по нормированной оценке. Кандидатов на отзыв храним восемь, но
         # тема отзыва — это первые из них, а не все, кто перевалил порог.
         # Замер точности (доля отзывов темы, где есть её бесспорное слово):
         # ранг 1 — 65%, ранг 2 — 53%, ранг 3 — 46%, без ограничения ранга — 16%.
         # Порог один такого отсева не даёт: он режет хвост по величине, а не по
         # месту, и восьмая тема отзыва проходит наравне с первой.
+        # Ранг считаем ВНУТРИ измерения. Иначе продукт отзыва конкурировал бы
+        # с его темами за одни и те же места, и при RANK_CAP=2 у отзыва с двумя
+        # уверенными темами продукт не поместился бы вовсе.
         s.execute(text("""
             WITH r AS (
-                SELECT url, topic_id,
-                       row_number() OVER (PARTITION BY url ORDER BY z DESC) rn
-                FROM review_topic_label)
+                SELECT l.url, l.topic_id,
+                       row_number() OVER (PARTITION BY l.url ORDER BY l.z DESC) rn
+                FROM review_topic_label l
+                JOIN review_topic_def d ON d.topic_id = l.topic_id
+                WHERE d.dim = :dim)
             UPDATE review_topic_label l SET rn = r.rn
               FROM r WHERE r.url = l.url AND r.topic_id = l.topic_id
-        """))
+        """), {"dim": dim})
+
+
+def apply_product_labels() -> dict:
+    """Переносит нашу разметку продукта в review_index.product.
+
+    Колонка product в индексе была копией метки источника, а та неверна у
+    подавляющего большинства обращений. Кладём в неё ЛУЧШИЙ по нормированной
+    оценке продукт из нашей разметки — и весь код, который уже фильтрует и
+    группирует по этой колонке, начинает работать по верным данным без правок.
+
+    Берём строго rn = 1: у обращения один продукт, в отличие от темы. Жалоба
+    бывает и про задержку, и про комиссию сразу, но «вклад и ипотека
+    одновременно» — это уже не факт о продукте, а неуверенность разметки.
+    Не дотянувшие до порога остаются без продукта: пустое честнее ложного.
+    """
+    ver = active_version(PRODUCT)
+    if not ver:
+        return {"ok": False, "reason": "нет разметки продукта"}
+    with db.session() as s:
+        n = s.execute(text("""
+            WITH best AS (
+                SELECT l.url, d.label
+                  FROM review_topic_label l
+                  JOIN review_topic_def d ON d.topic_id = l.topic_id
+                 WHERE d.dim = :dim AND d.version = :v
+                   AND l.rn = 1 AND l.z >= :minz)
+            UPDATE review_index i
+               SET product = best.label
+              FROM best WHERE best.url = i.url
+                AND (i.product IS DISTINCT FROM best.label)
+        """), {"dim": PRODUCT, "v": ver, "minz": MIN_Z}).rowcount
+        # Обращения, которые ни к чему не отнеслись, не должны сохранять старую
+        # ложную метку: иначе в срезе «Обслуживание юридических лиц» осталась бы
+        # именно та розница, ради которой всё и затевалось.
+        cleared = s.execute(text("""
+            UPDATE review_index i SET product = NULL
+             WHERE i.product IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM review_topic_label l
+                               JOIN review_topic_def d ON d.topic_id = l.topic_id
+                               WHERE l.url = i.url AND d.dim = :dim
+                                 AND d.version = :v AND l.rn = 1 AND l.z >= :minz)
+        """), {"dim": PRODUCT, "v": ver, "minz": MIN_Z}).rowcount
+    log.info("review_topics: продукт проставлен %d обращениям, снят у %d", n, cleared)
+    return {"ok": True, "labeled": n, "cleared": cleared, "version": ver}
 
 
 def _max_source_id() -> int:
@@ -541,7 +695,7 @@ def _max_source_id() -> int:
         return int(c.execute(text("SELECT coalesce(max(id), 0) FROM bankiru.reviews")).scalar() or 0)
 
 
-def seed_names() -> list[str]:
+def seed_names(dim: str = THEME) -> list[str]:
     """С чего начинать сведение, помимо прочитанного в корпусе.
 
     Случайная выборка не встречает редкое: наследование, исполнительные листы,
@@ -555,20 +709,30 @@ def seed_names() -> list[str]:
     становится ВХОДОМ. Накопленный аудиторский опыт сохраняется, а дописывать
     список руками больше не нужно — дальше поколения наследуют друг друга.
     """
-    prev = topics()
+    prev = topics(dim=dim)
     if prev:
         return [t["label"] for t in prev]
+    if dim == PRODUCT:
+        # Метки продукта в корпусе расставлены неверно, но САМ СЛОВАРЬ там
+        # правильный: «Ипотека», «Эквайринг», «Кредитная карта» — настоящие
+        # названия продуктов. Берём словарь как вход, а раскладывать по нему
+        # будет вектор, а не чужая метка.
+        with db.session() as s:
+            return [r for r in s.execute(text(
+                "SELECT DISTINCT product FROM review_index"
+                " WHERE product IS NOT NULL AND length(product) > 2")).scalars().all()]
     from .reviews_dash import THEMES         # ленивый импорт: иначе кольцо
     return [t["label"] for t in THEMES]
 
 
-def rebuild() -> dict:
+def rebuild(dim: str = THEME) -> dict:
     """Полный цикл: прочитать корпус → свести таксономию → сохранить → разметить."""
-    names = discover()
+    spec = _dim(dim)
+    names = discover(dim=dim)
     if not names:
-        return {"ok": False, "reason": "модель не назвала ни одной темы"}
-    names = sorted(set(names) | set(seed_names()))
-    taxonomy = finalize(names)
+        return {"ok": False, "reason": "модель не назвала ни одной позиции"}
+    names = sorted(set(names) | set(seed_names(dim)))
+    taxonomy = finalize(names, dim)
     if not taxonomy:
         return {"ok": False, "reason": "таксономия не собралась"}
     # Предохранитель. Один неудачный прогон модели не должен ухудшать прод: был
@@ -576,17 +740,17 @@ def rebuild() -> dict:
     # цитатами, ответ упёрся в лимит токенов на третьей строке) — и такая
     # таксономия стала активной, а вся разметка обнулилась в три метки на всё.
     # Вырожденное поколение сохраняем для разбора, но НЕ активируем.
-    prev = topics()
-    if len(taxonomy) < _MIN_TOPICS and prev:
-        store(taxonomy)
-        log.warning("review_topics: сведение дало %d тем при минимуме %d — оставляю "
+    prev = topics(dim=dim)
+    if len(taxonomy) < spec.minimum and prev:
+        store(taxonomy, dim)
+        log.warning("review_topics[%s]: сведение дало %d при минимуме %d — оставляю "
                     "поколение %d, новое сохранено без активации",
-                    len(taxonomy), _MIN_TOPICS, active_version())
+                    dim, len(taxonomy), spec.minimum, active_version(dim))
         return {"ok": False, "reason": "вырожденная таксономия, прежняя оставлена",
-                "got": len(taxonomy), "need": _MIN_TOPICS}
-    ver = store(taxonomy)
-    _state_put(_ACTIVE, str(ver))
-    res = assign(ver)
+                "got": len(taxonomy), "need": spec.minimum}
+    ver = store(taxonomy, dim)
+    _state_put(_skey(dim, _ACTIVE), str(ver))
+    res = assign(ver, dim)
 
     # Второй проход — по «Прочему». Смотреть на весь корпус второй раз
     # бесполезно: модель снова назовёт то, что уже в таксономии, потому что это
@@ -596,60 +760,71 @@ def rebuild() -> dict:
     # Отличить одно от другого предоставляем тому же сведению: дробное оно
     # схлопнет обратно, а новое оставит.
     if _RESIDUAL_PASS:
-        extra = discover(sampler=_sample_residual)
+        extra = discover(
+            sampler=lambda n, off=0: _sample_residual(n, off, dim), dim=dim)
         if extra:
-            merged = finalize(sorted(set(names) | set(extra) | set(t["label"] for t in taxonomy)))
-            if len(merged) >= max(_MIN_TOPICS, len(taxonomy)):
-                ver = store(merged)
-                _state_put(_ACTIVE, str(ver))
-                res = assign(ver)
+            merged = finalize(
+                sorted(set(names) | set(extra) | set(t["label"] for t in taxonomy)), dim)
+            if len(merged) >= max(spec.minimum, len(taxonomy)):
+                ver = store(merged, dim)
+                _state_put(_skey(dim, _ACTIVE), str(ver))
+                res = assign(ver, dim)
                 taxonomy = merged
-                log.info("review_topics: второй проход дал %d кандидатов из «Прочего», "
-                         "таксономия выросла до %d тем", len(extra), len(merged))
+                log.info("review_topics[%s]: второй проход дал %d кандидатов из "
+                         "«Прочего», таксономия выросла до %d", dim, len(extra), len(merged))
             else:
-                log.info("review_topics: второй проход не улучшил таксономию (%d тем) — "
-                         "оставляю поколение %d", len(merged), ver)
+                log.info("review_topics[%s]: второй проход не улучшил таксономию (%d) — "
+                         "оставляю поколение %d", dim, len(merged), ver)
     res["candidates"] = len(names)
     res["topics"] = len(taxonomy)
     return res
 
 
 # ── Чтение ───────────────────────────────────────────────────────────────────
-def topics(version: int | None = None) -> list[dict]:
-    ver = version or active_version()
+def topics(version: int | None = None, dim: str = THEME) -> list[dict]:
+    ver = version or active_version(dim)
     if not ver:
         return []
     with db.session() as s:
         rows = s.execute(text(
             "SELECT topic_id, key, label, risk, descr FROM review_topic_def"
-            " WHERE version = :v ORDER BY topic_id"), {"v": ver}).mappings().all()
+            " WHERE dim = :dim AND version = :v ORDER BY topic_id"),
+            {"dim": dim, "v": ver}).mappings().all()
     return [dict(r) for r in rows]
 
 
-def is_ready() -> bool:
+def is_ready(dim: str = THEME) -> bool:
     """Есть ли разметка. Пока нет — вкладка обязана работать по-старому."""
-    if not active_version():
+    if not active_version(dim):
         return False
     try:
         with db.session() as s:
-            return bool(s.execute(text("SELECT 1 FROM review_topic_label LIMIT 1")).first())
+            return bool(s.execute(text("""
+                SELECT 1 FROM review_topic_label l
+                JOIN review_topic_def d ON d.topic_id = l.topic_id
+                WHERE d.dim = :dim LIMIT 1"""), {"dim": dim}).first())
     except Exception:
         return False
 
 
-def status() -> dict:
-    out = {"version": active_version(), "topics": 0, "labels": 0, "reviews": 0,
-           "assigned_at": _state_get(_ASSIGNED)}
+def status(dim: str = THEME) -> dict:
+    out = {"dim": dim, "version": active_version(dim), "topics": 0, "labels": 0,
+           "reviews": 0, "assigned_at": _state_get(_skey(dim, _ASSIGNED))}
     try:
         with db.session() as s:
             out["topics"] = int(s.execute(text(
-                "SELECT count(*) FROM review_topic_def WHERE version = :v"),
-                {"v": out["version"]}).scalar() or 0)
-            out["labels"] = int(s.execute(text(
-                "SELECT count(*) FROM review_topic_label")).scalar() or 0)
-            out["reviews"] = int(s.execute(text(
-                "SELECT count(DISTINCT url) FROM review_topic_label"
-                " WHERE z >= :m AND rn <= :r"), {"m": MIN_Z, "r": RANK_CAP}).scalar() or 0)
+                "SELECT count(*) FROM review_topic_def"
+                " WHERE dim = :dim AND version = :v"),
+                {"dim": dim, "v": out["version"]}).scalar() or 0)
+            out["labels"] = int(s.execute(text("""
+                SELECT count(*) FROM review_topic_label l
+                JOIN review_topic_def d ON d.topic_id = l.topic_id
+                WHERE d.dim = :dim"""), {"dim": dim}).scalar() or 0)
+            out["reviews"] = int(s.execute(text("""
+                SELECT count(DISTINCT l.url) FROM review_topic_label l
+                JOIN review_topic_def d ON d.topic_id = l.topic_id
+                WHERE d.dim = :dim AND l.z >= :m AND l.rn <= :r"""),
+                {"dim": dim, "m": MIN_Z, "r": RANK_CAP}).scalar() or 0)
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
     return out
