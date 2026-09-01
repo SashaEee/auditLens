@@ -3435,20 +3435,18 @@ function CitationTooltip({source, anchor}){
 // Какой фазе принадлежит reasoning-стадия — панель «Ход мысли» активна ТОЛЬКО
 // пока её стадия == текущей фазе (иначе conductor «вечно размышляет», а analyst
 // не виден). Единый источник правды для ThinkingPanel.
-const STAGE_PHASE = {conductor:"planning", analyst:"synthesizing",
+const STAGE_PHASE = {conductor:"planning", analyst:"writing",
                      critic:"synthesizing", repair:"synthesizing"};
+// Фазы движка на фактах: план → сбор → извлечение → письмо → сверка.
+// Прежний набор описывал волновую оркестрацию, которой больше нет, и половина
+// шагов не загоралась никогда, а на этапе письма индикатор откатывался в начало.
 const PHASE_LABELS = {
-  planning:        "Планирование",
-  discovery:       "Discovery источников",
-  research:        "Сбор данных",
-  synthesizing:    "Синтез отчёта",
-  agent_iter_1:    "Уточнение (итерация 1)",
-  agent_iter_2:    "Уточнение (итерация 2)",
-  second_pass:     "Дополнительный pass",
-  merging:         "Финальная сборка",
-  post_processing: "Проверка и графики",
-  verifying:       "Проверка чисел",
-  charting:        "Графики",
+  planning:     "Разбор вопроса",
+  research:     "Поиск и чтение",
+  extraction:   "Извлечение фактов",
+  writing:      "Написание отчёта",
+  verification: "Сверка",
+  done:         "Готово",
 };
 
 // ─── PDF export button — premium A4 PDF через server-side Chromium.
@@ -3699,27 +3697,43 @@ function ClarifyCard({msg, onSubmit, onSkip}){
 //     переиспользуется ThinkingPanel), план отчёта (outline) и доуточнение
 //     пробелов (gap-loop). Всё на реальном SSE-стриме. ─────────────────────
 const DEEP_FLOW = [
-  {key:"parse",     label:"Разбор запроса",       phases:["planning"]},
-  {key:"discovery", label:"Поиск источников",     phases:["discovery"]},
-  {key:"collect",   label:"Сбор данных",          phases:["research"]},
-  {key:"synth",     label:"Синтез отчёта",        phases:["synthesizing"]},
-  {key:"gaps",      label:"Доуточнение пробелов",  phases:["agent_iter_1","agent_iter_2","second_pass"]},
-  {key:"verify",    label:"Проверка фактов",      phases:["merging","post_processing","verifying","charting"]},
+  {key:"parse",   label:"Разбор вопроса",
+   hint:"что именно отчёт обязан закрыть",            phases:["planning"]},
+  {key:"collect", label:"Поиск и чтение источников",
+   hint:"сайты организаций, регуляторы, взгляд со стороны", phases:["research"]},
+  {key:"facts",   label:"Извлечение фактов",
+   hint:"каждое утверждение — с цитатой из источника", phases:["extraction"]},
+  {key:"synth",   label:"Написание отчёта",
+   hint:"только по фактам, с якорями",                phases:["writing"]},
+  {key:"verify",  label:"Сверка и пробелы",
+   hint:"числа против источников, покрытие контракта", phases:["verification"]},
 ];
 // Какие reasoning-стадии показывать под какой display-фазой. active-флаг по-
 // прежнему вычисляется через STAGE_PHASE (стадия активна ТОЛЬКО на своей фазе).
-const PHASE_REASON = {parse:["conductor"], synth:["analyst","repair"], verify:["critic"]};
+const PHASE_REASON = {parse:["conductor"], synth:["analyst"]};
+
+// Стороны доказательства — три разных источника правды, и аудитор должен
+// видеть их по отдельности, а не общим числом «фактов».
+const STANCE_UI = {
+  declared:   {label:"заявлено",  hint:"со слов самой организации"},
+  observed:   {label:"со стороны", hint:"жалобы, отзывы, разборы"},
+  regulatory: {label:"нормы",      hint:"требования закона и регулятора"},
+};
 
 function DeepConsole({m, loading, elapsed}){
   const phase=m.phase;
   const curIdx = phase==="done" ? DEEP_FLOW.length
     : Math.max(0, DEEP_FLOW.findIndex(d=>d.phases.includes(phase)));
   const srcN   = (m.sources||[]).length;
-  const states = Object.values(m.stepStates||{});
-  const doneA  = states.filter(s=>s?.status==="done").length;
-  const totA   = (m.plan||[]).length;
-  const verified=m.claimCheck?.verified||0, dropped=m.claimCheck?.dropped||0;
-  const iters  = (m.agentIters||[]).length;
+  const contract = m.contract||[];
+  const subq   = m.subqueries||[];
+  const prog   = m.progress||{};
+  const fs     = m.factStats||{};
+  const stance = fs.by_stance||{};
+  const anchors= m.verification?.citations||0;
+  const gapsN  = (m.gapsList||[]).length;
+  const verified=m.verification?.verified||m.claimCheck?.verified||0;
+  const checked =m.verification?.numeric_checked||0;
   const pct = Math.min(100, Math.round(((curIdx + (phase==="done"?0:0.5))/DEEP_FLOW.length)*100));
   const el = elapsed||0;
   const elapsedDisplay = `${String(Math.floor(el/60)).padStart(2,"0")}:${String(el%60).padStart(2,"0")}`;
@@ -3728,13 +3742,17 @@ function DeepConsole({m, loading, elapsed}){
     if(status==="pending") return "";
     const done=status==="done";
     switch(key){
-      case "parse":     return done?"запрос разобран":"извлекаю сущности";
-      case "discovery": return done?`${srcN} источников`:"сканирую веб";
-      case "collect":   return done?`${doneA}/${totA||"·"} · ${srcN} источн.`:(totA?`${totA} агентов параллельно`:"запуск агентов");
-      case "synth":     return done?"черновик готов":"пишу черновик";
-      case "gaps":      return done?(iters?`${iters} итер.`:"без пробелов"):"ищу пробелы";
-      case "verify":    return done?`${verified} подтв.${dropped?` · ${dropped} фильтр`:""}`:"сверяю числа";
-      default:          return "";
+      case "parse":   return done?`${contract.length} характеристик`
+                                 :"строю план и контракт";
+      case "collect": return done?`${srcN} источников`
+                                 :(prog.pages?`прочитано ${prog.pages}${prog.blocked?` · ${prog.blocked} закрыто`:""}`
+                                             :`${subq.length||"…"} подзапросов`);
+      case "facts":   return done?`${fs.total||0} фактов`
+                                 :(prog.pages_total?`${prog.pages_total} страниц в разборе`:"извлекаю");
+      case "synth":   return done?(anchors?`${anchors} якорей`:"отчёт готов"):"пишу по фактам";
+      case "verify":  return done?`${verified}/${checked} чисел${gapsN?` · ${gapsN} пробелов`:""}`
+                                 :"сверяю числа";
+      default:        return "";
     }
   };
   const dotStyle=(s)=> s==="done"
@@ -3768,45 +3786,61 @@ function DeepConsole({m, loading, elapsed}){
             </div>
             <div className="dr-con-body">
               <div className="dr-con-line">
-                <span className="dr-con-label" style={titleStyle(status)}>{d.label}</span>
+                <span className="dr-con-label" style={titleStyle(status)}>{d.label}
+                  {status==="running" && d.hint &&
+                    <span className="dr-con-hint">{d.hint}</span>}
+                </span>
                 <span className="dr-con-right mono" style={{color:status==="running"?"var(--accent)":"var(--ink-3)"}}>{right(d.key,status)}</span>
               </div>
-              {/* агенты — фаза сбора */}
-              {d.key==="collect" && status!=="pending" && totA>0 &&
-                <div className="dr-con-agents">
-                  {m.plan.map((step,si)=>{
-                    const s=_agentStatus(m.stepStates?.[step.n]);
-                    return <div key={si} className="dr-con-agent">
-                      <span className="dr-con-agent-dot" style={{background:s.c,animation:s.run?"pulse 1.4s ease-in-out infinite":"none"}}/>
-                      <span className="dr-con-agent-name">{step.title}</span>
-                      <span className="dr-con-agent-st mono" style={{color:s.c}}>{s.t}</span>
+              {/* КОНТРАКТ: что отчёт обязан закрыть. Главная опора доверия —
+                  аудитор сразу видит рамку разбора, а не «идёт анализ». */}
+              {d.key==="parse" && status!=="pending" && contract.length>0 &&
+                <div className="dr-con-contract">
+                  <div className="dr-con-sub-h">Контракт разбора · что обязаны закрыть</div>
+                  <div className="dr-con-chips">
+                    {contract.map((a,ai)=>{
+                      const isObs = a===m.observedAttr, isReg = a===m.regulatoryAttr;
+                      return <span key={ai}
+                        className={"dr-con-chip"+(isObs?" obs":"")+(isReg?" reg":"")}
+                        title={isObs?"взгляд со стороны":(isReg?"нормативная рамка":"")}>{a}</span>;
+                    })}
+                  </div>
+                </div>}
+              {/* ПОДЗАПРОСЫ: куда именно пошли смотреть */}
+              {d.key==="collect" && status!=="pending" && subq.length>0 &&
+                <div className="dr-con-queries">
+                  <div className="dr-con-sub-h">Запросы · {subq.length}</div>
+                  {subq.slice(0,10).map((q,qi)=>{
+                    const site=(q.match(/site:(\S+)/)||[])[1];
+                    return <div key={qi} className="dr-con-query">
+                      <span className="dr-con-q-txt">{q.replace(/\s*site:\S+/,"")}</span>
+                      {site && <span className="dr-con-q-site mono">{site}</span>}
                     </div>;
                   })}
+                  {subq.length>10 && <div className="dr-con-more">и ещё {subq.length-10}</div>}
+                </div>}
+              {/* ФАКТЫ: три стороны доказательства по отдельности */}
+              {d.key==="facts" && status!=="pending" && (fs.total||0)>0 &&
+                <div className="dr-con-stances">
+                  {Object.entries(STANCE_UI).map(([k,v])=>(
+                    <div key={k} className={"dr-con-stance "+k} title={v.hint}>
+                      <span className="dr-con-stance-n mono">{stance[k]||0}</span>
+                      <span className="dr-con-stance-l">{v.label}</span>
+                    </div>))}
                 </div>}
               {/* размышления модели — reuse ThinkingPanel (таймер/скролл/стрим) */}
               {(PHASE_REASON[d.key]||[]).filter(s=>m.reasoningStages?.[s]).map(s=>
                 <ThinkingPanel key={s} stage={s} text={m.reasoningStages[s]}
                   active={loading && m.phase===STAGE_PHASE[s]}/>)}
-              {/* план отчёта (outline preview) */}
-              {d.key==="synth" && status!=="pending" && (m.outline||[]).length>0 &&
-                <div className="dr-con-outline">
-                  <div className="dr-con-outline-h">План отчёта</div>
-                  <div className="dr-con-outline-grid">
-                    {m.outline.map((o,oi)=>(
-                      <div key={oi} className="dr-con-outline-item">
-                        <span className="dr-con-outline-n mono">{String(oi+1).padStart(2,"0")}</span>{o.title||o.kind}
-                      </div>))}
-                  </div>
-                </div>}
-              {/* доуточнение пробелов (gap loop) */}
-              {d.key==="gaps" && status!=="pending" && (m.agentIters||[]).length>0 &&
+              {/* ПРОБЕЛЫ: то, чего добыть не удалось — считается по контракту */}
+              {d.key==="verify" && status!=="pending" && gapsN>0 &&
                 <div className="dr-con-gaps">
-                  {m.agentIters.flatMap((it,ii)=>(it.gaps||[]).map((g,gi)=>(
-                    <div key={`${ii}-${gi}`} className="dr-con-gap">
-                      <span className="dr-con-gap-i mono">↻</span>
-                      <span className="dr-con-gap-w">{g.what||g.query}</span>
-                      <span className="dr-con-gap-q mono">{g.query}</span>
-                    </div>)))}
+                  <div className="dr-con-sub-h">Честные пробелы · {gapsN}</div>
+                  {(m.gapsList||[]).slice(0,4).map((g,gi)=>(
+                    <div key={gi} className="dr-con-gap">
+                      <span className="dr-con-gap-i mono">—</span>
+                      <span className="dr-con-gap-w">{g}</span>
+                    </div>))}
                 </div>}
             </div>
           </div>;
@@ -3818,20 +3852,24 @@ function DeepConsole({m, loading, elapsed}){
 
 // ─── Сводка завершённого прогона (collapsed bar над отчётом, редизайн). ────
 function ResearchSummary({m}){
-  const states=Object.values(m.stepStates||{});
-  const total=(m.plan||[]).length;
+  // Сводка на понятиях нового конвейера: сколько фактов добыто, сколько из
+  // них взгляд со стороны, сколько утверждений имеет якорь на источник.
   const srcN=(m.sources||[]).length;
-  const verified=m.claimCheck?.verified||0, dropped=m.claimCheck?.dropped||0;
+  const fs=m.factStats||{}; const st=fs.by_stance||{};
+  const anchors=m.verification?.citations||0;
+  const gapsN=(m.gapsList||[]).length;
   return <div className="dr-summary-bar">
     <span className="dr-summary-ok">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
       Исследование завершено
     </span>
-    {total>0 && <><span>·</span><span>{total} этапов</span></>}
+    {!!fs.total && <><span>·</span><span><b>{fs.total}</b> фактов</span></>}
     <span>·</span><span><b>{srcN}</b> источников</span>
-    {verified>0 && <><span>·</span><span><b>{verified}</b> фактов подтверждено</span></>}
-    {dropped>0 && <><span>·</span><span><b>{dropped}</b> отфильтровано</span></>}
+    {!!st.observed && <><span>·</span><span><b>{st.observed}</b> со стороны</span></>}
+    {!!st.regulatory && <><span>·</span><span><b>{st.regulatory}</b> норм</span></>}
+    {anchors>0 && <><span>·</span><span><b>{anchors}</b> якорей</span></>}
+    {gapsN>0 && <><span>·</span><span><b>{gapsN}</b> пробелов</span></>}
   </div>;
 }
 
@@ -4854,7 +4892,17 @@ function AIPage(){
               }else if(data.type==="phase"){
                 updateLast(()=>({phase:data.value}));
               }else if(data.type==="plan"&&Array.isArray(data.steps)){
-                updateLast(()=>({plan:data.steps,stepStates:{}}));
+                // Контракт и подзапросы — то, по чему аудитор понимает рамку
+                // разбора ещё до появления первых фактов.
+                updateLast(()=>({plan:data.steps,stepStates:{},
+                  contract:data.attributes||[],
+                  observedAttr:data.observed_attribute||"",
+                  regulatoryAttr:data.regulatory_attribute||"",
+                  subqueries:data.subqueries||[]}));
+              }else if(data.type==="progress"){
+                updateLast(last=>({progress:{...(last.progress||{}),...data}}));
+              }else if(data.type==="facts_summary"){
+                updateLast(()=>({factStats:data}));
               }else if(data.type==="step_start"){
                 updateLast(last=>({
                   stepStates:{...(last.stepStates||{}),[data.n]:{status:"running",title:data.title,tool:data.tool,entity:data.entity}}
@@ -4882,6 +4930,8 @@ function AIPage(){
               }else if(data.type==="matrix"&&data.data){
                 // Полная матрица для машиночитаемого экспорта (CSV/JSON).
                 updateLast(()=>({matrix:data.data}));
+              }else if(data.type==="gaps"&&Array.isArray(data.missing)){
+                updateLast(()=>({gapsList:data.missing.map(g=>g.attribute||g)}));
               }else if(data.type==="gaps"){
                 updateLast(()=>({gaps:data}));
               }else if(data.type==="verification"){

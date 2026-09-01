@@ -10,6 +10,7 @@ stage_status → plan → sources → text → verification → gaps → done. �
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -23,6 +24,23 @@ from . import ranking as al_rank, reviews as al_reviews, runstate
 from . import gaps as al_gaps, planner as al_planner
 from . import scraper as al_scraper, verify as al_verify
 from .engine import _role_prompt, install, report_prompt
+
+# Как часто отдавать живой счётчик длинной стадии. Реже — индикатор кажется
+# зависшим, чаще — поток забивается служебными событиями.
+_TICK_S = 3.0
+
+
+async def _tick(coro, snapshot):
+    """Гоняет корутину и отдаёт снимок прогресса, пока она не закончится."""
+    task = asyncio.ensure_future(coro)
+    while not task.done():
+        done, _ = await asyncio.wait({task}, timeout=_TICK_S)
+        if not done:
+            try:
+                yield _evt(snapshot())
+            except Exception:
+                pass
+    await task
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +115,8 @@ async def stream_deep_research_gptr(question: str,
     fast = os.getenv("LLM_MODEL_SMART") or os.environ["LLM_MODEL_NAME"]
     attributes = await al_facts.plan_attributes(client, fast, question, plan)
     runstate.bind(state)          # см. runstate.bind: yield сбрасывает контекст
+    subqueries, _doms = al_planner.plan_to_subqueries(plan, question,
+                                                     attributes=attributes)
     al_planner.install(plan, question, attributes)
     yield _evt({"type": "stage_status", "stage": "plan_ready",
                 "label": f"План: {plan.intent}",
@@ -109,6 +129,7 @@ async def stream_deep_research_gptr(question: str,
                 "attributes": list(attributes),
                 "observed_attribute": attributes.observed,
                 "regulatory_attribute": attributes.regulatory,
+                "subqueries": subqueries,
                 "client_segment": plan.client_segment})
 
     # ── Сбор ─────────────────────────────────────────────────────────────
@@ -122,7 +143,13 @@ async def stream_deep_research_gptr(question: str,
                                agent="AuditLens",
                                role=_role_prompt(plan, question))
     try:
-        await researcher.conduct_research()
+        # Сбор идёт минуту с лишним; без живого счётчика интерфейс показывает
+        # неподвижный индикатор, и аудитор не понимает, работает ли система.
+        async for ev in _tick(researcher.conduct_research(), lambda: {
+                "type": "progress", "stage": "research",
+                "pages": len(al_scraper.READ_PAGES),
+                "blocked": len(al_scraper.UNREADABLE)}):
+            yield ev
     except Exception as e:
         log.exception("gptr: сбор")
         yield _evt({"type": "text",
@@ -154,15 +181,31 @@ async def stream_deep_research_gptr(question: str,
                 "detail": f"{len(pages)} страниц → проверяемые утверждения",
                 "estimate_s": 40})
     runstate.bind(state)
-    registry = await al_facts.build_registry(
-        client, fast, pages=pages, attributes=attributes, plan=plan,
-        keep_pages=set(review_pages),
-        subject_hints=al_reviews.subject_hints())
+    _reg_box: dict = {}
+
+    async def _extract():
+        _reg_box["r"] = await al_facts.build_registry(
+            client, fast, pages=pages, attributes=attributes, plan=plan,
+            keep_pages=set(review_pages),
+            subject_hints=al_reviews.subject_hints())
+
+    async for ev in _tick(_extract(), lambda: {
+            "type": "progress", "stage": "facts",
+            "pages_total": len(pages)}):
+        yield ev
+    registry = _reg_box.get("r") or al_facts.FactRegistry()
     if review_pages:
         al_reviews.stamp_dates(registry)
+    by_stance = {"declared": 0, "observed": 0, "regulatory": 0}
+    for f in registry.facts:
+        by_stance[f.stance] = by_stance.get(f.stance, 0) + 1
+    yield _evt({"type": "facts_summary", "total": len(registry.facts),
+                "pages": len(pages), "by_stance": by_stance,
+                "subjects": len({f.subject for f in registry.facts if f.subject})})
     yield _evt({"type": "stage_status", "stage": "facts_ready",
                 "label": f"Фактов: {len(registry.facts)}",
-                "detail": f"со {len(pages)} прочитанных страниц",
+                "detail": (f"заявлено {by_stance['declared']}, со стороны "
+                           f"{by_stance['observed']}, норм {by_stance['regulatory']}"),
                 "estimate_s": 0})
 
     # ── Отчёт ────────────────────────────────────────────────────────────

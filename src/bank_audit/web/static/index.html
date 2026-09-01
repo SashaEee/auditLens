@@ -622,6 +622,35 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 .dr-con-label{font-size:13.5px}
 .dr-con-right{margin-left:auto;font-size:11.5px;text-align:right;white-space:nowrap}
 .dr-con-agents{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+/* ── Консоль прогона: содержание шагов вместо спиннера ─────────────────
+   Аудитор должен видеть рамку разбора и три стороны доказательства, а не
+   «идёт анализ»: доверие к отчёту начинается с понимания, что искали. */
+.dr-con-hint{margin-left:10px;font-size:11.5px;font-weight:400;color:var(--ink-4)}
+.dr-con-sub-h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-4);margin-bottom:8px}
+.dr-con-contract,.dr-con-queries{margin-top:10px;padding:10px 12px;border:1px solid var(--hair);
+  border-radius:7px;background:var(--paper-2)}
+.dr-con-chips{display:flex;flex-wrap:wrap;gap:6px}
+.dr-con-chip{font-size:12px;padding:3px 9px;border-radius:20px;border:1px solid var(--hair-2);
+  color:var(--ink-2);background:var(--paper);white-space:nowrap}
+/* Наблюдаемая сторона и норма — разные источники правды, метим их цветом:
+   по ним видно, будет ли в отчёте взгляд со стороны и нормативная рамка. */
+.dr-con-chip.obs{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.dr-con-chip.reg{border-color:var(--ink-3);color:var(--ink);font-weight:500}
+.dr-con-query{display:flex;align-items:baseline;gap:10px;padding:4px 0;font-size:12.5px;
+  color:var(--ink-2);border-bottom:1px solid var(--hair)}
+.dr-con-query:last-of-type{border-bottom:0}
+.dr-con-q-txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dr-con-q-site{font-size:10.5px;color:var(--accent);flex:none;padding:1px 6px;
+  border-radius:4px;background:var(--accent-soft)}
+.dr-con-more{margin-top:6px;font-size:11.5px;color:var(--ink-4)}
+.dr-con-stances{margin-top:10px;display:flex;gap:8px}
+.dr-con-stance{flex:1;padding:9px 11px;border:1px solid var(--hair);border-radius:7px;
+  background:var(--paper-2);display:flex;flex-direction:column;gap:2px}
+.dr-con-stance-n{font-size:18px;font-weight:600;color:var(--ink);line-height:1.1}
+.dr-con-stance-l{font-size:11px;color:var(--ink-4)}
+.dr-con-stance.observed .dr-con-stance-n{color:var(--accent)}
+.dr-con-stance.regulatory{border-color:var(--ink-3)}
 .dr-con-agent{display:flex;align-items:center;gap:10px;padding:7px 11px;border:1px solid var(--hair);border-radius:8px;background:var(--paper-2)}
 .dr-con-agent-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .dr-con-agent-name{flex:1;min-width:0;font-size:12.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
