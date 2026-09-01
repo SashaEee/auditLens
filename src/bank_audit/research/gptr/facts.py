@@ -63,13 +63,15 @@ class Fact:
     url: str
     stance: str             # declared | observed | regulatory
     date: str = ""          # дата высказывания, если источник её знает
+    support: str = ""       # вердикт критика: дословно | близко к тексту
     confidence: float = 1.0
 
     def to_ui(self) -> dict:
         return {"id": self.id, "subject": self.subject,
                 "attribute": self.attribute, "value": self.value,
                 "unit": self.unit, "verbatim": self.verbatim,
-                "url": self.url, "stance": self.stance, "date": self.date}
+                "url": self.url, "stance": self.stance, "date": self.date,
+                "support": self.support}
 
 
 # ── Дословная проверка ────────────────────────────────────────────────────
@@ -216,9 +218,10 @@ class FactRegistry:
             subj = labels.get(f.subject, f.subject) or "—"
             unit = f" {f.unit}" if f.unit else ""
             when = f" | дата: {f.date}" if f.date else ""
+            weak = "" if f.support in ("", "дословно") else f" | опора: {f.support}"
             lines.append(
                 f"[f:{f.id}] {subj} | {f.attribute} | {f.value}{unit} "
-                f"| сторона: {side}{when} | источник: {f.url}\n"
+                f"| сторона: {side}{when}{weak} | источник: {f.url}\n"
                 f"      цитата: «{f.verbatim}»")
         return "\n".join(lines)
 

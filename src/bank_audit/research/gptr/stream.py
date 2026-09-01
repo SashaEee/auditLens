@@ -19,7 +19,7 @@ from typing import AsyncIterator
 from urllib.parse import urlparse
 
 from ..v2.tools.web_tools import _kind_for, _trust_for
-from . import citations as al_cit, facts as al_facts
+from . import citations as al_cit, critic as al_critic, facts as al_facts
 from . import reviews as al_reviews, runstate
 from . import gaps as al_gaps, planner as al_planner
 from . import scraper as al_scraper, verify as al_verify
@@ -228,11 +228,24 @@ async def stream_deep_research_gptr(question: str,
         yield ev
     if review_pages:
         al_reviews.stamp_dates(registry)
+    # ── Критик ───────────────────────────────────────────────────────────
+    # Слой извлечения намеренно ничего не отбраковывал — судит отдельный
+    # модуль. Проверка детерминированная и без модели: 500 фактов за 2 мс,
+    # на время прогона не влияет.
+    verdict = al_critic.review(registry, pages)
+    if verdict.cut or verdict.mislabeled:
+        yield _evt({"type": "stage_status", "stage": "critic",
+                    "label": f"Снято без опоры: {verdict.cut}",
+                    "detail": (f"проверено {verdict.checked}, дословных "
+                               f"{verdict.exact}, пересказов {verdict.close}"),
+                    "estimate_s": 0})
+
     by_stance = {"declared": 0, "observed": 0, "regulatory": 0}
     for f in registry.facts:
         by_stance[f.stance] = by_stance.get(f.stance, 0) + 1
     yield _evt({"type": "facts_summary", "total": len(registry.facts),
                 "pages": len(pages), "by_stance": by_stance,
+                "critic": verdict.to_ui(),
                 "subjects": len({f.subject for f in registry.facts if f.subject})})
     yield _evt({"type": "stage_status", "stage": "facts_ready",
                 "label": f"Фактов: {len(registry.facts)}",
@@ -315,6 +328,9 @@ async def stream_deep_research_gptr(question: str,
     })
     gap_lines = al_gaps.collect(plan, registry=registry, attributes=attributes,
                                 pages=pages, unreadable=unreadable)
+    # Снятое критиком — не «ничего не нашлось», а «нашлось, но не подтвердилось».
+    # Аудитор обязан видеть разницу.
+    gap_lines.extend(verdict.notes)
     tail = al_gaps.render(gap_lines)
     for i in range(0, len(tail), _CHUNK):
         yield _evt({"type": "text", "chunk": tail[i:i + _CHUNK]})
@@ -327,6 +343,7 @@ async def stream_deep_research_gptr(question: str,
                 "unverified_count": len(verification["unverified"]),
                 "facts_total": len(registry.facts),
                 "citations": cit_stats.get("цитирований", 0),
+                "critic": verdict.to_ui(),
                 "unanchored_paragraphs": verification["абзацев_без_якоря"],
                 "manual_check": verification.get("manual_check") or [],
                 "base": verification.get("база", ""),

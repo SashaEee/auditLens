@@ -24,13 +24,14 @@ def chk(name, cond):
 
 print("модули движка импортируются")
 from bank_audit.research.gptr import (  # noqa: E402
-    citations, compat, engine, facts, gaps, planner, retriever, reviews,
-    runstate, scraper, stream, verify)
-chk("все 12 модулей", True)
+    citations, compat, critic, engine, facts, gaps, planner, retriever,
+    reviews, runstate, scraper, stream, verify)
+chk("все 13 модулей", True)
 
 # Что каждый модуль обязан предоставлять СВОИМ вызывающим.
 CONTRACT = {
     compat:    ["install", "probe_models", "_rejected_param"],
+    critic:    ["review", "Verdict", "EXACT", "CLOSE", "UNSUPPORTED"],
     engine:    ["install", "report_prompt", "_role_prompt", "stream_report"],
     facts:     ["Contract", "FactRegistry", "plan_attributes", "build_registry",
                 "extract_into", "extract_while_collecting", "select_pages",
