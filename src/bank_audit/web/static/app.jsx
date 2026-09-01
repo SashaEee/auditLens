@@ -5380,7 +5380,22 @@ function BanksPage(){
   },[]);
 
   const[showRest,setShowRest]=useState(false);
-  const filtered=(banks||[]).filter(b=>!q||(b.name||"").toLowerCase().includes(q.toLowerCase())||(b.slug||"").toLowerCase().includes(q.toLowerCase()));
+  // Совпадение с запросом должно решать ПОРЯДОК, а не только состав: без
+  // этого список оставался отсортированным по числу отзывов, и «Сбербанк» на
+  // запрос «Сбербанк» оказывался четвёртым снизу. Точное имя
+  // выше, чем начало имени, а начало — выше, чем совпадение где-то внутри.
+  const matchRank=(b,needle)=>{
+    const n=(b.name||"").toLowerCase(), sl=(b.slug||"").toLowerCase();
+    if(n===needle||sl===needle)return 0;
+    if(n.startsWith(needle)||sl.startsWith(needle))return 1;
+    // Начало любого слова в названии: «россельхоз» в «АКБ Россельхозбанк».
+    if(n.split(/[^\p{L}\p{N}]+/u).some(w=>w.startsWith(needle)))return 2;
+    return 3;
+  };
+  const needle=q.trim().toLowerCase();
+  const filtered=(banks||[]).filter(b=>!needle||(b.name||"").toLowerCase().includes(needle)||(b.slug||"").toLowerCase().includes(needle));
+  if(needle)filtered.sort((a,b)=>matchRank(a,needle)-matchRank(b,needle)
+    ||(b.total_reviews||0)-(a.total_reviews||0));
   // Строки без рейтинга (в справочнике их большинство: 641 из 692 на 07.08.2026)
   // раньше шли в общей таблице сплошными прочерками. Теперь основная таблица —
   // только банки с данными, остальные прячутся за раскрывающийся список.

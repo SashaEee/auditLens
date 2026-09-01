@@ -801,8 +801,17 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
         # Хосты витрин-агрегаторов: ссылка на них — не первоисточник.
         "aggr_host": r"^https?://(www\.)?(sravni\.ru|banki\.ru|bankiros\.ru|vbr\.ru)"}
     if q_text:
-        cond.append("(m.bank_name ILIKE :qq OR m.title ILIKE :qq)")
+        # Подстрока И полнотекст, объединением. Не заменой: замер на проде —
+        # «дебетовые карты» подстрокой не находились ВООБЩЕ (0 против 7), но
+        # «автокредит» подстрока находит 4 против 3 у полнотекста, потому что
+        # ловит слово внутри составного названия. Ноги дополняют друг друга,
+        # и терять ни одну нельзя.
+        cond.append(
+            "(m.bank_name ILIKE :qq OR m.title ILIKE :qq"
+            " OR to_tsvector(CAST('russian' AS regconfig), coalesce(m.title,''))"
+            "    @@ websearch_to_tsquery(CAST('russian' AS regconfig), :q_fts))")
         params["qq"] = f"%{q_text.strip()}%"
+        params["q_fts"] = q_text.strip()
     if term:
         cond.append("m.term_bucket = :tb"); params["tb"] = term
     # сегмент и вид продукта: премиальная карта не должна ранжироваться рядом

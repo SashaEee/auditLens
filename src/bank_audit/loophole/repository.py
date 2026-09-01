@@ -225,6 +225,16 @@ def count_records_needing_content(*, session=None) -> int:
         ).scalar_one()
 
 
+# Все содержательные поля записи. Служебные (search_tsv, embedding) сюда не
+# входят намеренно — см. get_record.
+_RECORD_FIELDS = (
+    "record_id, title, url, snippet, domain, trust_score, bank_slug, keyword, "
+    "is_loophole, verdict_confidence, verdict_reason, verdict_model, status, "
+    "published_at, collected_at, fetched_at, classified_at, content_status, "
+    "raw_text, raw_text_len, raw_text_truncated, sha256, text_sha256, parser_id"
+)
+
+
 def _record_dict(row) -> dict:
     """Нормализует DB-типы записи для одинакового JSON в PostgreSQL и SQLite."""
     record = dict(row)
@@ -236,7 +246,11 @@ def _record_dict(row) -> dict:
 def get_record(record_id: int, *, session=None) -> dict | None:
     with _session(session) as s:
         row = s.execute(
-            text(f"SELECT * FROM {schema.T_RECORD} WHERE record_id = :id"),
+            # Не «SELECT *»: в таблице теперь лежат служебные search_tsv и
+            # embedding — в ответе API им делать нечего, а весят они больше
+            # самой записи.
+            text(f"SELECT {_RECORD_FIELDS} FROM {schema.T_RECORD} "
+                 "WHERE record_id = :id"),
             {"id": record_id},
         ).mappings().first()
         return _record_dict(row) if row else None
@@ -282,13 +296,8 @@ def list_records(
         if status:
             clauses.append("status = :st")
             params["st"] = status
-        if query_text:
-            clauses.append(
-                "(LOWER(COALESCE(title,'')) LIKE :q "
-                "OR LOWER(COALESCE(snippet,'')) LIKE :q "
-                "OR LOWER(COALESCE(raw_text,'')) LIKE :q)"
-            )
-            params["q"] = f"%{query_text.lower()}%"
+        # Условие запроса НЕ кладём в общие clauses: слияние строит свои ноги
+        # поверх тех же фильтров, а текст запроса участвует внутри них.
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         columns = (
             "record_id, title, url, snippet, domain, trust_score, "
@@ -298,6 +307,41 @@ def list_records(
         )
         if include_content:
             columns += ", raw_text, raw_text_truncated"
+
+        query_text = (query_text or "").strip()
+        if query_text and _has_column(s, schema.T_RECORD, "search_tsv"):
+            params["q"] = query_text
+            params["pool"] = _POOL
+            params["qvec"] = _query_vector(query_text)
+            cols = ", ".join(f"r.{c.strip()}" for c in columns.split(","))
+            sql = f"""
+                WITH {_fusion_cte(where, with_vec=bool(params["qvec"]))}
+                SELECT {cols}, rel.score AS relevance,
+                       rel.via_txt, rel.via_vec, rel.in_claim
+                  FROM rel JOIN {schema.T_RECORD} r ON r.record_id = rel.record_id
+                 ORDER BY rel.in_claim DESC, rel.score DESC,
+                          COALESCE(r.verdict_confidence, 0) DESC
+                 LIMIT :limit OFFSET :offset
+            """
+            try:
+                rows = [_record_dict(r) for r in
+                        s.execute(text(sql), params).mappings().all()]
+                return _mark_via(rows)
+            except Exception as e:      # noqa: BLE001
+                log.warning("лазейки: гибридный список упал (%s) — подстрока",
+                            type(e).__name__)
+                s.rollback()
+
+        if query_text:
+            clauses.append(
+                "(LOWER(COALESCE(title,'')) LIKE :q "
+                "OR LOWER(COALESCE(snippet,'')) LIKE :q "
+                "OR LOWER(COALESCE(raw_text,'')) LIKE :q)"
+            )
+            params["q"] = f"%{query_text.lower()}%"
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params.pop("pool", None)
+        params.pop("qvec", None)
         sql = (
             f"SELECT {columns} "
             f"FROM {schema.T_RECORD}{where} "
@@ -433,6 +477,125 @@ def list_bank_slugs(*, session=None) -> list[str]:
         return list(rows)
 
 
+def _has_column(s, table: str, column: str) -> bool:
+    """Есть ли колонка. Нужно, чтобы поиск пережил и непринятую миграцию, и
+    SQLite в тестах — там генерируемых tsvector-колонок нет и не будет."""
+    try:
+        s.execute(text(f"SELECT {column} FROM {table} LIMIT 0"))
+        return True
+    except Exception:      # noqa: BLE001
+        return False
+
+
+def _query_vector(query_text: str) -> str | None:
+    """Вектор запроса или None, если эмбеддер недоступен.
+
+    Молчаливый None, а не исключение: словесная нога самодостаточна, и терять
+    из-за недоступной модели весь поиск нельзя.
+    """
+    try:
+        from ..rag import embedder
+        vec = embedder.embed_one(query_text)
+        if not any(vec):
+            return None
+        return "[" + ",".join(f"{x:.6f}" for x in vec) + "]"
+    except Exception as e:      # noqa: BLE001
+        log.info("лазейки: вектор запроса не получен (%s) — ищем словами",
+                 type(e).__name__)
+        return None
+
+
+# Постоянная слияния RRF. Та же, что в поиске по базе знаний и по отзывам:
+# смысл её в том, чтобы место в списке весило больше, чем несравнимые между
+# собой абсолютные оценки двух разных движков.
+_RRF_K = 60
+_POOL = 60
+
+
+def _fusion_cte(where: str, *, with_vec: bool) -> str:
+    """SQL-фрагмент `rel(record_id, score, via_txt, via_vec)`.
+
+    Один текст на оба пути поиска — карточный (search_relevant) и табличный
+    (list_records). Две копии слияния неизбежно разъедутся, и вкладка начнёт
+    противоречить сама себе: одна и та же запись окажется первой в одном
+    списке и десятой в другом.
+    """
+    tsq = "websearch_to_tsquery(CAST('russian' AS regconfig), :q)"
+    and_or_where = "AND" if where else "WHERE"
+    vec = (f"""
+            SELECT record_id,
+                   row_number() OVER (ORDER BY embedding <=> CAST(:qvec AS vector)) rk
+              FROM {schema.T_RECORD}{where}
+               {and_or_where} embedding IS NOT NULL
+             ORDER BY embedding <=> CAST(:qvec AS vector)
+             LIMIT :pool
+    """ if with_vec else
+           "SELECT CAST(NULL AS bigint) record_id, CAST(NULL AS bigint) rk WHERE FALSE")
+    # Веса ts_rank_cd идут в порядке D, C, B, A. Обнулив D, спрашиваем: попало
+    # ли слово в САМУ запись — заголовок, изложение, довод, — или только в тело
+    # статьи первоисточника. Замер на проде: по запросу «эскроу» все шесть
+    # найденных записей — упоминания в теле, ни одна не про эскроу. Без этого
+    # различия выдача выглядела уверенной, а была догадкой.
+    claim = ("ts_rank_cd(CAST('{0,1,1,1}' AS float4[]), search_tsv, " + tsq + ") > 0")
+    return f"""
+        txt AS (
+            SELECT record_id, {claim} AS in_claim,
+                   row_number() OVER (
+                       ORDER BY {claim} DESC,
+                                ts_rank_cd(search_tsv, {tsq}) DESC) rk
+              FROM {schema.T_RECORD}{where}
+               {and_or_where} search_tsv @@ {tsq}
+             LIMIT :pool
+        ),
+        vec AS ({vec}),
+        rel AS (
+            SELECT COALESCE(t.record_id, v.record_id) AS record_id,
+                   COALESCE(1.0/({_RRF_K} + t.rk), 0)
+                 + COALESCE(1.0/({_RRF_K} + v.rk), 0) AS score,
+                   (t.record_id IS NOT NULL) AS via_txt,
+                   COALESCE(t.in_claim, FALSE) AS in_claim,
+                   (v.record_id IS NOT NULL) AS via_vec
+              FROM txt t FULL OUTER JOIN vec v ON v.record_id = t.record_id
+        )
+    """
+
+
+def _mark_via(rows: list[dict]) -> list[dict]:
+    """Проставляет «слова / смысл / слова и смысл» и снимает дубли по заголовку.
+
+    Аудитор должен видеть, дословное это попадание или догадка по смыслу:
+    порога по косинусу здесь нет намеренно — в этом проекте абсолютный порог по
+    векторному сходству трижды оказывался неработоспособным.
+    """
+    seen: set[str] = set()
+    out: list[dict] = []
+    for r in rows:
+        key = (r.get("title") or r.get("url") or "").strip().lower()
+        if key and key in seen:
+            continue
+        seen.add(key)
+        by_txt = bool(r.pop("via_txt", False))
+        by_vec = bool(r.pop("via_vec", False))
+        in_claim = bool(r.pop("in_claim", False))
+        if by_txt and not in_claim:
+            # Слово нашлось, но только в теле статьи первоисточника. Это не
+            # запись про запрошенное — это запись, где оно упомянуто.
+            r["via"] = "упоминание в статье"
+        elif by_txt and by_vec:
+            r["via"] = "слова и смысл"
+        elif by_txt:
+            r["via"] = "слова"
+        else:
+            r["via"] = "смысл"
+        out.append(r)
+    return out
+
+_SEARCH_COLS = (
+    "record_id, title, url, snippet, domain, trust_score, bank_slug, "
+    "is_loophole, verdict_confidence, verdict_reason"
+)
+
+
 def search_relevant(
     query_text: str,
     *,
@@ -443,9 +606,24 @@ def search_relevant(
     limit: int = 50,
     session=None,
 ) -> list[dict]:
-    """Полнотекстовый LIKE-поиск по loophole_record. Возвращает top-N записей."""
+    """Гибридный поиск по лазейкам: русский полнотекст + вектор, слияние RRF.
+
+    Было: LOWER(title) LIKE '...' по трём полям и сортировка по уверенности
+    классификатора. Два независимых изъяна, и второй хуже первого. Подстрока не
+    знает словоформ, поэтому «вклад» не находил «вклады», а «эскроу» находил
+    статью, где это слово стоит в проходной фразе. Но даже когда слово попадало,
+    порядок задавала `verdict_confidence` — то есть выдачей управлял не запрос
+    аудитора, а самоуверенность классификатора.
+
+    Теперь ранг задаёт близость к запросу. Полнотекст учитывает, ГДЕ совпало
+    (заголовок весит больше тела статьи), вектор добирает записи, где о том же
+    сказано другими словами. Каждая запись несёт `via` — «слова», «смысл» или
+    «слова и смысл»: аудитор должен видеть, дословное это попадание или
+    догадка. Порога по косинусу нет намеренно — в этом проекте он трижды
+    оказывался неработоспособным, потому что мера сходства не абсолютна.
+    """
     with _session(session) as s:
-        clauses = []
+        clauses: list[str] = []
         params: dict[str, Any] = {"limit": limit}
         if only_loophole:
             clauses.append("is_loophole = TRUE")
@@ -460,22 +638,55 @@ def search_relevant(
         if period_to:
             clauses.append("published_at < :pt_exclusive")
             params["pt_exclusive"] = period_to + timedelta(days=1)
-        # Текстовый поиск по title/snippet/raw_text (кросс-БД: LOWER LIKE).
-        if query_text:
-            clauses.append(
-                "(LOWER(COALESCE(title,'')) LIKE :q "
-                "OR LOWER(COALESCE(snippet,'')) LIKE :q "
-                "OR LOWER(COALESCE(raw_text,'')) LIKE :q)"
-            )
-            params["q"] = f"%{query_text.lower()}%"
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        sql = (
-            f"SELECT record_id, title, url, snippet, domain, trust_score, "
-            "bank_slug, is_loophole, verdict_confidence, verdict_reason "
-            f"FROM {schema.T_RECORD}{where} "
-            "ORDER BY verdict_confidence DESC, collected_at DESC LIMIT :limit"
-        )
-        return [dict(r) for r in s.execute(text(sql), params).mappings().all()]
+
+        # Пустой запрос — это не поиск, а «покажи всё»: так зовёт refine.
+        if not query_text or not query_text.strip():
+            sql = (f"SELECT {_SEARCH_COLS} FROM {schema.T_RECORD}{where} "
+                   "ORDER BY verdict_confidence DESC, collected_at DESC LIMIT :limit")
+            return [dict(r) for r in s.execute(text(sql), params).mappings().all()]
+
+        query_text = query_text.strip()
+        if not _has_column(s, schema.T_RECORD, "search_tsv"):
+            return _search_like(s, query_text, where, params)
+
+        params["q"] = query_text
+        params["pool"] = _POOL
+        qvec = _query_vector(query_text)
+        params["qvec"] = qvec
+
+        sql = f"""
+            WITH {_fusion_cte(where, with_vec=bool(qvec))}
+            SELECT r.record_id, r.title, r.url, r.snippet, r.domain, r.trust_score,
+                   r.bank_slug, r.is_loophole, r.verdict_confidence, r.verdict_reason,
+                   rel.score AS relevance, rel.via_txt, rel.via_vec, rel.in_claim
+              FROM rel JOIN {schema.T_RECORD} r ON r.record_id = rel.record_id
+             ORDER BY rel.in_claim DESC, rel.score DESC,
+                      r.verdict_confidence DESC
+             LIMIT :limit
+        """
+        try:
+            rows = [dict(r) for r in s.execute(text(sql), params).mappings().all()]
+        except Exception as e:      # noqa: BLE001
+            log.warning("лазейки: гибридный поиск упал (%s) — подстрока",
+                        type(e).__name__)
+            s.rollback()
+            return _search_like(s, query_text, where, params)
+        return _mark_via(rows)
+
+
+def _search_like(s, query_text: str, where: str, params: dict) -> list[dict]:
+    """Запасной путь: подстрока. Остаётся для SQLite в тестах и для случая,
+    когда миграция ещё не накачена."""
+    p = {k: v for k, v in params.items() if k not in ("q", "qvec", "pool")}
+    p["q_like"] = f"%{query_text.lower()}%"
+    cond = ("(LOWER(COALESCE(title,'')) LIKE :q_like "
+            "OR LOWER(COALESCE(snippet,'')) LIKE :q_like "
+            "OR LOWER(COALESCE(raw_text,'')) LIKE :q_like)")
+    w = f"{where} AND {cond}" if where else f" WHERE {cond}"
+    sql = (f"SELECT {_SEARCH_COLS} FROM {schema.T_RECORD}{w} "
+           "ORDER BY verdict_confidence DESC, collected_at DESC LIMIT :limit")
+    return [dict(r) for r in s.execute(text(sql), p).mappings().all()]
 
 
 # ── workspace ───────────────────────────────────────────────────────────────
