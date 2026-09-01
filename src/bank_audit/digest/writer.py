@@ -293,6 +293,25 @@ async def _news_jury(item: dict) -> bool:
     return any(v is True for v in votes)
 
 
+def _reach_of(url: str | None, bodies: dict[str, str] | None) -> str:
+    """Откроется ли ссылка ИЗ КОНТУРА банка — по факту нашей же попытки.
+
+    Аудиторы неоднократно сообщали про кнопку «Источник»: «не удаётся
+    получить доступ к сайту». Отдельного зонда для этого не нужно — тексты
+    финалистов мы и так тянем тем же клиентом из того же контура, и провал
+    там означает, что у аудитора ссылка тоже не откроется.
+
+    Ключевое: молчим там, где НЕ ПРОБОВАЛИ. Пул статей больше лимита закачки,
+    и пометить непроверенную ссылку недоступной — оболгать живой источник.
+    """
+    u = url or ""
+    if u.startswith("https://t.me/"):
+        return "telegram"          # в контуре обычно закрыт, но источник ценен
+    if bodies is None or u not in bodies:
+        return "unknown"           # не пробовали — молчим
+    return "ok" if bodies[u] else "unreachable"
+
+
 def _news_bodies(urls: list[str]) -> dict[str, str]:
     """Полные тексты статей финалистов: HTTP-only (без Playwright — дайджест не
     место для браузера), параллельно, каждая ошибка = просто нет текста.
@@ -322,7 +341,10 @@ def _news_bodies(urls: list[str]) -> dict[str, str]:
     if not urls:
         return {}
     with cf.ThreadPoolExecutor(max_workers=6) as ex:
-        return {u: t for u, t in ex.map(_one, urls) if t}
+        # Неудачу оставляем пустой строкой, а не выбрасываем: по словарю потом
+        # видно, какие ссылки мы пробовали (см. _reach_of). Потребители текста
+        # читают через .get(), и пустая строка для них равна отсутствию.
+        return dict(ex.map(_one, urls))
 
 
 # Порог «это продолжение того же сюжета» (косинус заголовков). Сравниваем
@@ -470,6 +492,7 @@ async def _news_editorial(items: list[dict], picks: list[int],
                 "title": head or src["title"],
                 **({"src_title": src["title"]} if head and head != src["title"] else {}),
                 "url": src["url"], "domain": src.get("domain"),
+                "reach": _reach_of(src.get("url"), bodies),
                 "source": src["source"], "ts": src.get("ts"), "tag": src.get("tag"),
                 "image": src.get("image"),
                 "score": v.get("score"), "event": v.get("type"),
@@ -541,7 +564,7 @@ async def news(day: date) -> dict:
         return {"groups": groups, "sources": statuses, "raw_count": len(items),
                 "pool": _news_pool(items),
                 "triage": {"kept": len(keep), "border": len(border),
-                           "fetched": len(bodies)},
+                           "fetched": sum(1 for t in bodies.values() if t)},
                 "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
     except Exception as e:  # noqa: BLE001 — конвейер сломался, не выпуск
         log.warning("news conveyor failed (%s) — одновызовный путь", e)
@@ -602,6 +625,7 @@ async def _news_legacy(items: list[dict], statuses: list[dict]) -> dict:
                 sev = str(gi.get("severity") or "amber")
                 out_items.append({
                     "title": src["title"], "url": src["url"],
+                    "reach": _reach_of(src.get("url"), None),
                     "domain": src.get("domain"), "source": src["source"],
                     "ts": src.get("ts"), "tag": src.get("tag"),
                     "image": src.get("image"),

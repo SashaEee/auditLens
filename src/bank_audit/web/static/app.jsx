@@ -2039,6 +2039,13 @@ function OverviewPage(){
                 <div className="bf-news-t">{it.title}</div>
                 {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
                 <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
+                  {/* Аудитор должен знать ДО клика, откроется ли ссылка из
+                      контура: шесть ТБ написали «не удаётся получить доступ к
+                      сайту», ещё два — что t.me требует отдельной установки. */}
+                  {it.reach==="telegram"&&<span className="bf-reach tg"
+                    title="Telegram — в контуре банка обычно не открывается без отдельной настройки">telegram</span>}
+                  {it.reach==="unreachable"&&<span className="bf-reach no"
+                    title="Источник не открылся из контура при сборе дайджеста — ссылка может не сработать и у вас">нет доступа</span>}
                   {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}
                   <Ic.ext/></div>
               </a>)}
@@ -4364,7 +4371,16 @@ function SourcesRail({sources, activeN, onHover, onClick, failed}){
             <div className="dr-rail-meta">
               <span>{kindLabel}</span>
               <TrustMarks score={s.trust_score}/>
-              {s.fetched_at && <span>· {formatRelDate(s.fetched_at)}</span>}
+              {/* Дата ПУБЛИКАЦИИ источника, а не нашего сбора: «собрано
+                  сегодня» ничего не говорит о возрасте свидетельства, и
+                  аудитор читал свежим весь отчёт целиком. */}
+              {s.published
+                ? <span title="дата публикации источника">· {fmtDateMsk(s.published)}</span>
+                : s.fetched_at && <span title="дата сбора; сам источник даты не объявил">
+                    · собрано {formatRelDate(s.fetched_at)}</span>}
+              {s.dead && <span className="dr-rail-dead"
+                title="Страница источника сейчас не открывается — цитата и дата взяты при сборе">
+                ссылка не открывается</span>}
             </div>
           </a>
         </li>;

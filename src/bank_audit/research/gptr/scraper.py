@@ -87,6 +87,20 @@ class AuditLensScraper:
         except Exception as e:
             log.info("parse %s: %s", self.link[:80], type(e).__name__)
             return "", ""
+        # Датируем из уже скачанной разметки. Аудитор должен видеть, когда
+        # источник опубликован, а не когда мы его прочитали: «шесть месяцев
+        # назад» и «сегодня» — разный вес свидетельства, а без даты отчёт
+        # выглядит одинаково свежим целиком.
+        if not self.is_pdf:
+            try:
+                from ...digest.news import date_from_html
+                # Кодировка нас не волнует: даты в метатегах — латиница и
+                # цифры, а «ignore» просто выбросит непрочитанные байты.
+                ts = date_from_html(res.content.decode("utf-8", "ignore"))
+                if ts:
+                    self.state.page_dates[self.link] = ts.date().isoformat()
+            except Exception:      # noqa: BLE001 — дата необязательна
+                pass
         return (doc.text or ""), (getattr(doc, "title", "") or "")
 
     def scrape(self) -> tuple[str, list, str]:

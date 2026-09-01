@@ -115,6 +115,41 @@ def as_pages(records: list[dict]) -> dict[str, str]:
     return pages
 
 
+def check_alive(urls: list[str], timeout: float = 6.0,
+                workers: int = 8) -> set[str]:
+    """Какие из ссылок НЕ открываются. Возвращает множество мёртвых.
+
+    Проверяем только процитированные ссылки — их единицы, и делаем это в
+    отдельном потоке, чтобы не морозить поток событий. Ошибка сети не
+    объявляет ссылку мёртвой: недоступность нашего контура и отсутствие
+    страницы — разные вещи, и обвинять источник без основания нельзя.
+    """
+    import concurrent.futures as cf
+
+    import httpx
+
+    from ...rag.fetcher import CA_BUNDLE_PATH, DEFAULT_HEADERS
+
+    def one(u: str) -> tuple[str, bool]:
+        try:
+            with httpx.Client(headers=DEFAULT_HEADERS, follow_redirects=True,
+                              verify=CA_BUNDLE_PATH or True,
+                              timeout=timeout) as c:
+                r = c.get(u)
+            return u, r.status_code in (404, 410)
+        except Exception:      # noqa: BLE001 — сеть молчит, источник не виноват
+            return u, False
+
+    dead: set[str] = set()
+    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        for u, is_dead in ex.map(one, urls):
+            if is_dead:
+                dead.add(u)
+    if dead:
+        log.info("отзывы: недоступных ссылок %d из %d", len(dead), len(urls))
+    return dead
+
+
 def subject_hints() -> dict[str, str]:
     """url → слаг объекта, о котором отзыв. Правда корпуса, не догадка модели."""
     return {u: m["subject"]
@@ -123,16 +158,23 @@ def subject_hints() -> dict[str, str]:
 
 
 def stamp_dates(registry) -> int:
-    """Проставляет фактам из корпуса дату отзыва.
+    """Проставляет фактам дату источника.
 
     Дата нужна аудитору, чтобы отличить свежую жалобу от прошлогодней, но
-    брать её из текста нельзя — там её нет. Берём из метаданных корпуса.
+    брать её из текста нельзя — там её нет. Для отзывов берём из метаданных
+    корпуса, для веб-страниц — из метаданных разметки, которые скрапер снял
+    при чтении. Без этого модель не может сказать «условие действовало на
+    такую-то дату» и все свидетельства выглядят одновременными.
     """
     n = 0
-    meta_all = runstate.current().review_meta
+    state = runstate.current()
+    meta_all = state.review_meta
     for f in registry.facts:
+        if f.date:
+            continue
         meta = meta_all.get(f.url)
-        if meta and meta.get("date") and not f.date:
-            f.date = meta["date"]
+        when = (meta or {}).get("date") or state.page_dates.get(f.url)
+        if when:
+            f.date = str(when)[:10]
             n += 1
     return n

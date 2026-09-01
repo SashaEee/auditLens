@@ -408,6 +408,7 @@ tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
   margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;
 }
 .dr-rail-meta{
+.dr-rail-dead{display:block;margin-top:3px;color:#c2410c;font-size:10px}
   display:flex;gap:6px;margin-top:4px;
   font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);
 }
@@ -2068,6 +2069,12 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 
 /* продуктовый чип новости («Ипотека», «Вклады»…) — детектор тегов, правка аналитиков */
 .bf-chip{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--hair-2);border-radius:3px;padding:1px 5px;line-height:1.5;white-space:nowrap}
+/* Доступность источника из контура. Метка тихая: она предупреждает, а не
+   кричит — новость остаётся полезной, даже если по ссылке не пройти. */
+.bf-reach{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;
+  padding:1px 5px;border-radius:4px;margin-left:6px;white-space:nowrap}
+.bf-reach.tg{color:var(--ink-4);border:1px solid var(--hair-2)}
+.bf-reach.no{color:#c2410c;border:1px solid rgba(194,65,12,.35);background:rgba(194,65,12,.06)}
 .bf-news-empty{padding:22px 16px;font-size:12.5px;color:var(--ink-3)}
 
 /* сводка жалоб (markdown из reviews_brief) */
@@ -2100,6 +2107,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260817-2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260901-fresh"></script>
 </body>
 </html>

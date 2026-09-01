@@ -55,9 +55,11 @@ def _evt(d: dict) -> str:
 
 
 def _sources_ui(urls: list[str], pages: dict[str, str],
-                cited: dict[str, dict] | None = None) -> list[dict]:
+                cited: dict[str, dict] | None = None,
+                dates: dict[str, str] | None = None) -> list[dict]:
     """Карточки источников. Если передан cited — только процитированные."""
     cited = cited or {}
+    dates = dates or {}
     out: list[dict] = []
     for i, url in enumerate(urls, 1):
         domain = urlparse(url).netloc.removeprefix("www.")
@@ -70,6 +72,10 @@ def _sources_ui(urls: list[str], pages: dict[str, str],
             "source_kind": _kind_for(domain, url),
             "excerpt": (cited.get(url, {}).get("excerpt") or text[:600]),
             "facts": cited.get(url, {}).get("facts") or [],
+            # Дата публикации, если источник её объявил. Без неё отчёт выглядит
+            # одинаково свежим целиком, хотя часть страниц может быть старой.
+            "published": dates.get(url, ""),
+            "dead": bool(cited.get(url, {}).get("dead")),
         })
     return out
 
@@ -297,13 +303,29 @@ async def stream_deep_research_gptr(question: str,
     # Источники и метрики берём у потокового перенумеровщика: в приложение
     # идут ТОЛЬКО те, на кого реально сослались.
     cited_src, cit_stats = renum.sources(), renum.stats()
+    # Ссылки на отзывы приходят из корпуса и в прогоне НИКЕМ не открываются:
+    # отзыв, удалённый или перенесённый на banki.ru после сбора, давал в отчёте
+    # живую с виду ссылку на 404 (аудиторы сообщали о ссылках на несуществующую
+    # страницу. Проверяем ТОЛЬКО процитированные — их единицы.
+    corpus_urls = [c["url"] for c in cited_src if c["url"] in review_pages]
+    if corpus_urls:
+        dead = await asyncio.to_thread(al_reviews.check_alive, corpus_urls)
+    else:
+        dead = set()
     log.info("цитаты: %s", cit_stats)
 
     cited_map = {c["url"]: {"facts": c["facts"],
+                            "dead": c["url"] in dead,
                             "excerpt": (c["facts"][0]["verbatim"]
                                         if c["facts"] else "")}
                  for c in cited_src}
-    sources = _sources_ui([c["url"] for c in cited_src], pages, cited_map)
+    # Дата отзыва живёт в метаданных корпуса, дата статьи — в разметке.
+    pub_dates = dict(state.page_dates)
+    for u, meta in state.review_meta.items():
+        if meta.get("date"):
+            pub_dates.setdefault(u, str(meta["date"])[:10])
+    sources = _sources_ui([c["url"] for c in cited_src], pages, cited_map,
+                          pub_dates)
     dropped = len(pages) - len(sources)
     if sources:
         high = sum(1 for s in sources if s["trust_score"] >= 0.85)
@@ -332,6 +354,10 @@ async def stream_deep_research_gptr(question: str,
     # Снятое критиком — не «ничего не нашлось», а «нашлось, но не подтвердилось».
     # Аудитор обязан видеть разницу.
     gap_lines.extend(verdict.notes)
+    if dead:
+        gap_lines.append(
+            f"Ссылок на отзывы, недоступных на момент отчёта: {len(dead)} — "
+            f"цитата и дата в силе, страница источника не открывается.")
     tail = al_gaps.render(gap_lines)
     for i in range(0, len(tail), _CHUNK):
         yield _evt({"type": "text", "chunk": tail[i:i + _CHUNK]})
