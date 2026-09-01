@@ -3772,6 +3772,11 @@ function DeepConsole({m, loading, elapsed}){
         <span className="dr-con-el mono">{elapsedDisplay}</span>
       </div>
       <div className="dr-con-bar"><div className="dr-con-bar-fill" style={{width:pct+"%"}}/></div>
+      {m.degraded && <div className="dr-con-degraded">
+        <b>Рамка разбора не построена</b> — модель недоступна ({m.degraded}).
+        Отчёт выйдет заметно беднее: взгляд со стороны и нормативная рамка
+        собраны не будут.
+      </div>}
       <div className="dr-con-spine">
         {DEEP_FLOW.map((d,idx)=>{
           const status = idx<curIdx?"done":(idx===curIdx?"running":"pending");
@@ -4896,6 +4901,7 @@ function AIPage(){
                 // разбора ещё до появления первых фактов.
                 updateLast(()=>({plan:data.steps,stepStates:{},
                   contract:data.attributes||[],
+                  degraded:data.degraded||"",
                   observedAttr:data.observed_attribute||"",
                   regulatoryAttr:data.regulatory_attribute||"",
                   subqueries:data.subqueries||[]}));

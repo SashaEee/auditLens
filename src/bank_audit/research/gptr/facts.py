@@ -249,6 +249,7 @@ class Contract:
     attributes: list[str]          # все характеристики, включая две ниже
     observed: str = ""             # взгляд со стороны (жалобы, разборы)
     regulatory: str = ""           # нормативная рамка, если предмет регулируется
+    degraded: str = ""             # почему контракт аварийный (пусто — всё в порядке)
 
     def __iter__(self):            # чтобы вести себя как список характеристик
         return iter(self.attributes)
@@ -284,9 +285,12 @@ async def plan_attributes(client, model: str, question: str, plan) -> Contract:
         raw = (resp.choices[0].message.content or "").strip()
         data = json.loads(raw)
     except Exception as e:
-        log.warning("характеристики плана: %s — берём предмет как единственную",
+        # Молча продолжать нельзя: без контракта не будет ни наблюдаемой
+        # стороны, ни нормативной рамки, ни осмысленных пробелов — отчёт
+        # выйдет пустым, а аудитор не узнает почему.
+        log.warning("характеристики плана: %s — контракт аварийный",
                     type(e).__name__)
-        return Contract([product or "условия"])
+        return Contract([product or "условия"], degraded=type(e).__name__)
     attrs = [str(a).strip()[:120] for a in (data.get("attributes") or []) if a]
     attrs = attrs[:8]
     # Наблюдаемая сторона добавляется ВСЕГДА: без неё отчёт пересказывает

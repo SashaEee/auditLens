@@ -118,6 +118,16 @@ async def stream_deep_research_gptr(question: str,
     subqueries, _doms = al_planner.plan_to_subqueries(plan, question,
                                                      attributes=attributes)
     al_planner.install(plan, question, attributes)
+    if attributes.degraded:
+        # Видимое предупреждение вместо тихой деградации: прогон продолжается,
+        # но аудитор обязан знать, что рамка разбора не построена.
+        yield _evt({"type": "stage_status", "stage": "degraded",
+                    "level": "warn",
+                    "label": "Рамка разбора не построена",
+                    "detail": (f"модель недоступна ({attributes.degraded}); "
+                               f"отчёт будет заметно беднее — взгляд со стороны "
+                               f"и нормативная рамка собраны не будут"),
+                    "estimate_s": 0})
     yield _evt({"type": "stage_status", "stage": "plan_ready",
                 "label": f"План: {plan.intent}",
                 "detail": plan.intent_summary[:120], "estimate_s": 0})
@@ -130,6 +140,7 @@ async def stream_deep_research_gptr(question: str,
                 "observed_attribute": attributes.observed,
                 "regulatory_attribute": attributes.regulatory,
                 "subqueries": subqueries,
+                "degraded": attributes.degraded,
                 "client_segment": plan.client_segment})
 
     # ── Сбор ─────────────────────────────────────────────────────────────
