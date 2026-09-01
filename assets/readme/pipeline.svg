@@ -2,65 +2,72 @@
   <title id="pipeTitle">Как устроен прогон исследования в AuditLens</title>
   <desc id="pipeDesc">Слева направо пять шагов: Кондуктор строит план вопроса; движок поиска читает страницы через кэш, HTTP и браузер; из прочитанного извлекаются факты с дословными цитатами; критик из двух слоёв снимает неподтверждённое; отчёт собирается со сквозными ссылками в квадратных скобках. Отдельная нижняя полоса: графики, сравнительные таблицы и PDF считаются кодом, без участия языковой модели.</desc>
 
+  <!-- Палитра та же, что в hero.svg, и та же, что в assets/brand:
+       #0E1116 подложка · #FAFAF8 текст · #1F4DFF акцент ·
+       #6E93FF осветлённый синий для мелкого текста на тёмном ·
+       #8A8F98 второстепенное · #161A20 плашка · #262B33 волосяная линия ·
+       #3A4150 стрелки · #131A2A подложка выделенного шага.
+       Поля от края 56 единиц — как требует канва README. -->
+
   <rect width="1200" height="430" rx="16" fill="#0E1116"/>
 
-  <text x="40" y="52" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="17" letter-spacing="2.4" fill="#7C8595">ОДИН ПРОГОН ИССЛЕДОВАНИЯ</text>
-  <line x1="40" y1="68" x2="1160" y2="68" stroke="#242C38" stroke-width="1"/>
+  <text x="56" y="52" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="17" letter-spacing="2.4" fill="#8A8F98">ОДИН ПРОГОН ИССЛЕДОВАНИЯ</text>
+  <line x1="56" y1="68" x2="1144" y2="68" stroke="#262B33" stroke-width="1"/>
 
   <!-- ── Пять шагов ────────────────────────────────────────────────────
        Порядок соответствует коду: conductor.plan_research → адаптеры
        движка (planner/retriever/scraper) → facts → critic → отчёт. -->
   <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif">
-    <g>
-      <rect x="40" y="112" width="208" height="128" rx="12" fill="#151A22" stroke="#242C38" stroke-width="1.5"/>
-      <text x="64" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">01</text>
-      <text x="64" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Кондуктор</text>
-      <text x="64" y="220" font-size="18" fill="#8A93A3">план вопроса</text>
+    <g id="step-1">
+      <rect x="56" y="112" width="200" height="128" rx="12" fill="#161A20" stroke="#262B33" stroke-width="1.5"/>
+      <text x="80" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#6E93FF">01</text>
+      <text x="80" y="192" font-size="24" font-weight="600" fill="#FAFAF8">Кондуктор</text>
+      <text x="80" y="220" font-size="18" fill="#8A8F98">план вопроса</text>
     </g>
-    <g>
-      <rect x="268" y="112" width="208" height="128" rx="12" fill="#151A22" stroke="#242C38" stroke-width="1.5"/>
-      <text x="292" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">02</text>
-      <text x="292" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Поиск</text>
-      <text x="292" y="220" font-size="18" fill="#8A93A3">чтение страниц</text>
+    <g id="step-2">
+      <rect x="278" y="112" width="200" height="128" rx="12" fill="#161A20" stroke="#262B33" stroke-width="1.5"/>
+      <text x="302" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#6E93FF">02</text>
+      <text x="302" y="192" font-size="24" font-weight="600" fill="#FAFAF8">Поиск</text>
+      <text x="302" y="220" font-size="18" fill="#8A8F98">чтение страниц</text>
     </g>
-    <g>
-      <rect x="496" y="112" width="208" height="128" rx="12" fill="#151A22" stroke="#242C38" stroke-width="1.5"/>
-      <text x="520" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">03</text>
-      <text x="520" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Факты</text>
-      <text x="520" y="220" font-size="18" fill="#8A93A3">дословные цитаты</text>
+    <g id="step-3">
+      <rect x="500" y="112" width="200" height="128" rx="12" fill="#161A20" stroke="#262B33" stroke-width="1.5"/>
+      <text x="524" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#6E93FF">03</text>
+      <text x="524" y="192" font-size="24" font-weight="600" fill="#FAFAF8">Факты</text>
+      <text x="524" y="220" font-size="18" fill="#8A8F98">дословные цитаты</text>
     </g>
     <!-- Критик выделен рамкой: это единственный шаг, который УБИРАЕТ
-         утверждения, и владелец настаивал, что он отдельный модуль. -->
-    <g>
-      <rect x="724" y="112" width="208" height="128" rx="12" fill="#141B2C" stroke="#1F4DFF" stroke-width="1.5"/>
-      <text x="748" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">04</text>
-      <text x="748" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Критик</text>
-      <text x="748" y="220" font-size="18" fill="#93A6D6">два слоя</text>
+         утверждения, и он намеренно отдельный модуль. -->
+    <g id="step-4">
+      <rect x="722" y="112" width="200" height="128" rx="12" fill="#131A2A" stroke="#1F4DFF" stroke-width="1.5"/>
+      <text x="746" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#6E93FF">04</text>
+      <text x="746" y="192" font-size="24" font-weight="600" fill="#FAFAF8">Критик</text>
+      <text x="746" y="220" font-size="18" fill="#8A8F98">два слоя</text>
     </g>
-    <g>
-      <rect x="952" y="112" width="208" height="128" rx="12" fill="#151A22" stroke="#242C38" stroke-width="1.5"/>
-      <text x="976" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#5B84FF">05</text>
-      <text x="976" y="192" font-size="24" font-weight="600" fill="#E7EBF2">Отчёт</text>
-      <text x="976" y="220" font-size="18" fill="#8A93A3">сквозные <tspan fill="#5B84FF" font-weight="600">[N]</tspan></text>
+    <g id="step-5">
+      <rect x="944" y="112" width="200" height="128" rx="12" fill="#161A20" stroke="#262B33" stroke-width="1.5"/>
+      <text x="968" y="158" font-size="17" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#6E93FF">05</text>
+      <text x="968" y="192" font-size="24" font-weight="600" fill="#FAFAF8">Отчёт</text>
+      <text x="968" y="220" font-size="18" fill="#8A8F98">сквозные <tspan fill="#6E93FF" font-weight="600">[N]</tspan></text>
     </g>
   </g>
 
   <!-- Переходы -->
-  <g stroke="#3A4454" stroke-width="2" fill="none" stroke-linecap="round">
-    <path d="M 250 176 L 264 176 M 258 170 L 264 176 L 258 182"/>
-    <path d="M 478 176 L 492 176 M 486 170 L 492 176 L 486 182"/>
-    <path d="M 706 176 L 720 176 M 714 170 L 720 176 L 714 182"/>
-    <path d="M 934 176 L 948 176 M 942 170 L 948 176 L 942 182"/>
+  <g stroke="#3A4150" stroke-width="2" fill="none" stroke-linecap="round">
+    <path d="M 262 176 L 272 176 M 266 170 L 272 176 L 266 182"/>
+    <path d="M 484 176 L 494 176 M 488 170 L 494 176 L 488 182"/>
+    <path d="M 706 176 L 716 176 M 710 170 L 716 176 L 710 182"/>
+    <path d="M 928 176 L 938 176 M 932 170 L 938 176 L 932 182"/>
   </g>
 
   <!-- ── Нижняя полоса: то, чего модель не касается ────────────────────
        Главное обещание инструмента. Числа в графиках и таблицах
        физически не могут быть выдуманы — их считает SQL. -->
-  <path d="M 600 240 L 600 288" stroke="#3A4454" stroke-width="2" fill="none"/>
-  <rect x="40" y="288" width="1120" height="102" rx="12" fill="#111721" stroke="#242C38" stroke-width="1.5"/>
-  <text x="64" y="326" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="17" letter-spacing="1.6" fill="#5B84FF">БЕЗ УЧАСТИЯ МОДЕЛИ</text>
-  <text x="64" y="362" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-        font-size="21" fill="#C6CDD8">Графики, сравнительные таблицы и PDF считаются кодом из тех же фактов — выдумать число здесь нечему</text>
+  <path d="M 600 240 L 600 288" stroke="#3A4150" stroke-width="2" fill="none"/>
+  <rect x="56" y="288" width="1088" height="102" rx="12" fill="#161A20" stroke="#262B33" stroke-width="1.5"/>
+  <text x="80" y="326" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="17" letter-spacing="1.6" fill="#6E93FF">БЕЗ УЧАСТИЯ МОДЕЛИ</text>
+  <text x="80" y="362" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+        font-size="21" fill="#C9CCD2">Графики, сравнительные таблицы и PDF считаются кодом из тех же фактов — выдумать число здесь нечему</text>
 </svg>

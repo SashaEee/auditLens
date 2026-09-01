@@ -1,61 +1,70 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400" role="img" aria-labelledby="heroTitle heroDesc">
   <title id="heroTitle">AuditLens — платформа исследований для внутреннего аудита банковских продуктов</title>
-  <desc id="heroDesc">Слева название и назначение: вопрос на русском превращается в отчёт, где каждое число привязано к дословной цитате. Справа фрагмент отчёта: утверждение «Ключевая ставка Банка России — 14,00 процента годовых» с якорем [1], от которого линия ведёт к карточке источника cbr.ru с дословной цитатой.</desc>
+  <desc id="heroDesc">Слева знак AuditLens и название, ниже назначение: вопрос на русском превращается в отчёт, где каждое число привязано к дословной цитате. Справа фрагмент отчёта: утверждение «Ключевая ставка Банка России — 14,00 процента годовых» с якорем [1], от которого линия ведёт к карточке источника cbr.ru с дословной цитатой.</desc>
 
-  <defs>
-    <clipPath id="card">
-      <rect x="560" y="48" width="576" height="304" rx="14"/>
-    </clipPath>
-  </defs>
+  <!-- ПАЛИТРА ЗАМОРОЖЕНА по фирменным токенам из assets/brand:
+       #0E1116 подложка · #FAFAF8 текст · #1F4DFF знак и акцент.
+       #6E93FF — тот же фирменный синий, осветлённый: на подложке #0E1116
+       чистый #1F4DFF даёт контраст 2,85:1 и для мелкого текста непригоден,
+       хотя для крупной фигуры знака его достаточно.
+       #8A8F98 второстепенный текст · #161A20 плашка · #262B33 волосяная линия. -->
 
-  <!-- Полотно тёмное намеренно: README читают и в светлой, и в тёмной теме,
-       а тёмная плашка одинаково уместна в обеих. -->
   <rect width="1200" height="400" rx="16" fill="#0E1116"/>
 
-  <!-- ── Левая колонка: кто мы и зачем ────────────────────────────────── -->
-  <text x="64" y="98" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="18" letter-spacing="2.6" fill="#8A93A3">ВНУТРЕННИЙ АУДИТ · DEEP RESEARCH</text>
+  <!-- ── Айдентика ─────────────────────────────────────────────────────
+       Знак взят из assets/brand/auditlens-icon-reversed.svg без изменений.
+       Начертание повторяет фирменный локап: «Audit» плотнее, «Lens» легче
+       и приглушён — так задумано в auditlens-lockup.svg. Гарнитуру берём
+       системную: Archivo из локапа на GitHub не загрузится.
+       Пропорции сняты с локапа, а не подобраны: высота знака 1,14 кегля,
+       зазор до слова 0,47 кегля, свес ниже базовой линии 0,226 кегля. -->
+  <g id="brand-mark" transform="translate(54 99) scale(0.93)" aria-hidden="true">
+    <path fill="#1F4DFF" d="M47.5 13 L59.5 13 L89.5 89 L75.5 89 Z"/>
+    <path fill="#FAFAF8" fill-rule="evenodd" d="M47.5 13 L57.5 13 L83.5 89 L66.5 89 L58.5 67 L36.5 67 L27.5 89 L10.5 89 Z M47.5 36 L56.5 58 L38.5 58 Z"/>
+  </g>
 
-  <text x="62" y="196" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-        font-size="86" font-weight="700" letter-spacing="-2" fill="#F2F5FA">AuditLens</text>
+  <text x="64" y="86" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="18" letter-spacing="2.6" fill="#8A8F98">ВНУТРЕННИЙ АУДИТ · DEEP RESEARCH</text>
 
-  <text x="64" y="252" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-        font-size="26" fill="#C6CDD8">Вопрос на русском — отчёт, где каждое</text>
-  <text x="64" y="288" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-        font-size="26" fill="#C6CDD8">число привязано к дословной цитате</text>
+  <text x="167" y="168" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+        font-size="62" letter-spacing="-1.6" fill="#FAFAF8"><tspan font-weight="600">Audit</tspan><tspan font-weight="400" opacity="0.72">Lens</tspan></text>
 
-  <line x1="64" y1="322" x2="150" y2="322" stroke="#1F4DFF" stroke-width="3"/>
-  <text x="64" y="356" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="18" fill="#7C8595">MIT · Python 3.11+ · Postgres 17 + pgvector</text>
+  <text x="64" y="232" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+        font-size="26" fill="#C9CCD2">Вопрос на русском — отчёт, где каждое</text>
+  <text x="64" y="266" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+        font-size="26" fill="#C9CCD2">число привязано к дословной цитате</text>
 
-  <!-- ── Правая колонка: настоящий фрагмент отчёта ─────────────────────
-       Это не украшение, а то, ради чего инструмент существует: утверждение,
+  <line x1="64" y1="300" x2="150" y2="300" stroke="#1F4DFF" stroke-width="3"/>
+  <text x="64" y="336" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="18" fill="#8A8F98">MIT · Python 3.11+ · Postgres 17 + pgvector</text>
+
+  <!-- ── Настоящий фрагмент отчёта ─────────────────────────────────────
+       Не украшение, а то, ради чего инструмент существует: утверждение,
        якорь и цитата, которая его держит. Цитата снята нашим же парсером
        со страницы Банка России 01.09.2026. -->
-  <g clip-path="url(#card)">
-    <rect x="560" y="48" width="576" height="304" rx="14" fill="#151A22"/>
+  <g id="report-specimen">
+    <rect x="640" y="48" width="496" height="304" rx="14" fill="#161A20" stroke="#262B33" stroke-width="1.5"/>
+
+    <text x="668" y="88" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="16" letter-spacing="2" fill="#8A8F98">ФРАГМЕНТ ОТЧЁТА</text>
+    <line x1="668" y1="102" x2="1108" y2="102" stroke="#262B33" stroke-width="1"/>
+
+    <text x="668" y="142" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-size="25" fill="#FAFAF8">Ключевая ставка Банка России —</text>
+    <text x="668" y="178" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-size="25" fill="#FAFAF8">14,00 % годовых<tspan dx="12" fill="#6E93FF" font-weight="600">[1]</tspan></text>
+
+    <!-- Связка «утверждение → источник»: тот самый якорь, который в отчёте
+         можно нажать. Он и есть мотив всего оформления. -->
+    <path d="M 914 190 L 914 208 Q 914 216 906 216 L 716 216 Q 708 216 708 224 L 708 236"
+          fill="none" stroke="#1F4DFF" stroke-width="1.5"/>
+
+    <rect x="668" y="236" width="440" height="92" rx="10" fill="#0E1116" stroke="#262B33" stroke-width="1.5"/>
+    <text x="688" y="266" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="17" fill="#6E93FF">[1]<tspan dx="10" fill="#8A8F98">cbr.ru/hd_base/KeyRate · 01.09.2026</tspan></text>
+    <text x="688" y="296" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-size="20" fill="#C9CCD2">«Ключевая ставка Банка России, % годовых</text>
+    <text x="688" y="318" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-size="20" fill="#C9CCD2">| 01.09.2026 | 14,00»</text>
   </g>
-  <rect x="560" y="48" width="576" height="304" rx="14" fill="none" stroke="#242C38" stroke-width="1.5"/>
-
-  <text x="592" y="88" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="16" letter-spacing="2" fill="#7C8595">ФРАГМЕНТ ОТЧЁТА</text>
-  <line x1="592" y1="102" x2="1104" y2="102" stroke="#242C38" stroke-width="1"/>
-
-  <text x="592" y="142" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-        font-size="25" fill="#E7EBF2">Ключевая ставка Банка России —</text>
-  <text x="592" y="178" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-        font-size="25" fill="#E7EBF2">14,00 % годовых<tspan dx="12" fill="#5B84FF" font-weight="600">[1]</tspan></text>
-
-  <!-- Связка «утверждение → источник»: тот самый якорь, который в отчёте
-       можно нажать. Он и есть мотив всего оформления. -->
-  <path d="M 838 190 L 838 208 Q 838 216 830 216 L 640 216 Q 632 216 632 224 L 632 236"
-        fill="none" stroke="#1F4DFF" stroke-width="1.5"/>
-
-  <rect x="592" y="236" width="512" height="92" rx="10" fill="#0E1116" stroke="#242C38" stroke-width="1.5"/>
-  <text x="612" y="266" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="17" fill="#5B84FF">[1]<tspan dx="10" fill="#8A93A3">cbr.ru/hd_base/KeyRate · 01.09.2026</tspan></text>
-  <text x="612" y="296" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-        font-size="20" fill="#C6CDD8">«Ключевая ставка Банка России, % годовых</text>
-  <text x="612" y="318" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-        font-size="20" fill="#C6CDD8">| 01.09.2026 | 14,00»</text>
 </svg>
