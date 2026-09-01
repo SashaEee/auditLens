@@ -2739,7 +2739,13 @@ function MarketPage({params}){
                   </div></div></td>
                 <td data-label="Продукт">{r.title}<OfferTerms o={r}/>
                   {r.product_kind&&<div className="ofkind" title="что это за продукт на самом деле — разобрано по тексту тарифа">{r.product_kind}</div>}</td>
-                <td className="right mono tnum" data-label={mcat.metric_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>{mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
+                <td className="right mono tnum" data-label={mcat.metric_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>
+                  {/* «до 30%» и «30%» — разные утверждения. Пока витрина
+                      показывала верхнюю границу как ставку, ПСБ с «до 30%»
+                      стоял первой строкой рынка при реальных 10,5%. */}
+                  {r.rate_kind==="max"&&(mcat.metric||"rate_pct")==="rate_pct"&&
+                    <span className="mk-upto" title="верхняя граница по витрине агрегатора, а не ставка по договору">до </span>}
+                  {mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
                 {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12.5}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
                 {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
                 {showBarCol&&<td data-label="К лидеру">

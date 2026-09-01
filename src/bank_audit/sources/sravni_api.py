@@ -164,6 +164,24 @@ def _parse_rate_display(display: str) -> Decimal | None:
     return _dec(m.group(1).replace(",", "."))
 
 
+# Рекламные метки в партнёрской ссылке: они меняются от выдачи к выдаче,
+# поэтому один и тот же продукт выглядел бы каждый раз новым источником, а
+# аудитору в отчёте показывалась бы простыня из utm вместо адреса.
+_TRACKING = ("utm_source", "utm_medium", "utm_campaign", "utm_term",
+             "utm_content", "erid", "adrclid", "gclid", "yclid", "from")
+
+
+def _clean_link(url: str | None) -> str | None:
+    """Партнёрская ссылка → чистый адрес страницы продукта."""
+    if not url or not url.startswith("http"):
+        return None
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    p = urlsplit(url)
+    keep = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
+            if k.lower() not in _TRACKING]
+    return urlunsplit((p.scheme, p.netloc, p.path, urlencode(keep), ""))
+
+
 def _add_query(url: str, key: str, value: Any) -> str:
     sep = "&" if "?" in url else "?"
     return f"{url}{sep}{key}={value}"
@@ -486,7 +504,14 @@ class SravniApiAdapter(SourceAdapter):
             seed_months = round(seed_days / 30.0) if seed_days else None
             term_min  = (_to_int(prod.get("minTerm")) or seed_months or period_q)
             term_max  = (_to_int(prod.get("maxTerm")) or seed_months or period_q)
-            amount_min_v = _dec(prod.get("minAmount")) or _dec(fc.get("amount"))
+            # Сумму НЕ выдумываем. Полей minAmount/maxAmount в ответе Сравни
+            # нет вообще, и прежний фолбэк подставлял `fc.amount` — параметр,
+            # который мы сами отправили в калькулятор. Витрина показывала его
+            # как условие банка: «сумма от 500 000 ₽» там, где банк требует
+            # 10 000 (обратная связь ТБ, три банка независимо). Пусто честнее
+            # выдуманного: аудитор видит, что условия не раскрыты, и идёт в
+            # первоисточник, а не строит на нашем числе вывод.
+            amount_min_v = _dec(prod.get("minAmount"))
             amount_max_v = _dec(prod.get("maxAmount"))
 
             # Title: depositType — это ENUM ('classic','grow','deal',...) — слабый title.
@@ -498,7 +523,11 @@ class SravniApiAdapter(SourceAdapter):
                 category=category,
                 external_id=ext_id,
                 title=title,
-                url=f"https://www.sravni.ru/bank/{bank_slug}/vklady/",
+                # Ссылка на САМ продукт, если агрегатор её даёт: страница
+                # раздела банка искомого вклада не содержит, и проверить
+                # актуальность по ней нельзя — аудиторы писали об этом четырежды.
+                url=(_clean_link(prod.get("linkToProduct"))
+                     or f"https://www.sravni.ru/bank/{bank_slug}/vklady/"),
                 rate_pct=rate,
                 rate_kind="effective",
                 currency="RUB",

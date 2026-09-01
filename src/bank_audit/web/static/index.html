@@ -1889,6 +1889,10 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 /* Неправдоподобное число: не прячем строку, а честно помечаем — аудитор
    должен видеть, что инструмент сам сомневается, и не тратить проверку. */
 .ofc.doubt{border-color:#c2410c;color:#c2410c;background:rgba(194,65,12,.07)}
+/* Верхняя граница ставки — не ставка. Приставка «до» набирается тише самого
+   числа: аудитор видит оговорку, но колонка не перестаёт читаться числами. */
+.mk-upto{font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:400;
+  color:var(--ink-4);letter-spacing:.02em;margin-right:1px}
 .ofkind{font-size:10.5px;color:var(--ink-3);margin-top:2px}
 /* Паспорт премиума: цена у всех ноль, сравниваем по порогу */
 .mk-prem{margin-top:12px;padding-top:11px;border-top:1px solid var(--hair)}

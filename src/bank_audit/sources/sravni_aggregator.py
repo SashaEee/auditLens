@@ -32,10 +32,27 @@ def _to_decimal(s: str | None) -> Decimal | None:
     try: return Decimal(s)
     except Exception: return None
 
-def _extract_rate(s: str | None) -> Decimal | None:
-    if not s: return None
+# Карточка агрегатора пишет либо ставку, либо ВЕРХНЮЮ ГРАНИЦУ: «до 30%».
+# Прежний разбор брал первый процент и объявлял его ставкой — так ПСБ
+# «Народный вклад» встал первой строкой рынка с 30% при реальных 10,5%
+# (обратная связь ТБ, три банка). Это разбор текста, а не догадка о теме:
+# «до» — грамматический маркер верхней границы, ровно как «%» — маркер доли.
+_UPPER_BOUND_RE = re.compile(r"\bдо\s*$", re.IGNORECASE)
+
+
+def _extract_rate(s: str | None) -> tuple[Decimal | None, str]:
+    """Ставка и её ВИД: 'effective' — как есть, 'max' — верхняя граница.
+
+    Вид важнее самой цифры: 30% «до» и 30% «от» — разные утверждения, и
+    ранжировать их вместе нельзя.
+    """
+    if not s:
+        return None, "effective"
     m = _RATE_RE.search(s)
-    return _to_decimal(m.group(1)) if m else None
+    if not m:
+        return None, "effective"
+    kind = "max" if _UPPER_BOUND_RE.search(s[:m.start()]) else "effective"
+    return _to_decimal(m.group(1)), kind
 
 def _extract_amount(s: str | None) -> tuple[Decimal | None, Decimal | None]:
     if not s: return (None, None)
@@ -99,7 +116,7 @@ class SravniAggregatorAdapter(SourceAdapter):
                 continue
             bank_name = bank.text(strip=True)
             title_text = title.text(strip=True)
-            rate = _extract_rate(rate_node.text() if rate_node else None)
+            rate, rate_kind = _extract_rate(rate_node.text() if rate_node else None)
             amin, amax = _extract_amount(amount_node.text() if amount_node else None)
             tmin, tmax = _extract_term_months(term_node.text() if term_node else None)
             href = url_node.attributes.get("href") if url_node else None
@@ -115,7 +132,7 @@ class SravniAggregatorAdapter(SourceAdapter):
                 url=href if href and href.startswith("http") else (
                     f"https://www.sravni.ru{href}" if href else None
                 ),
-                rate_pct=rate, rate_kind="effective",
+                rate_pct=rate, rate_kind=rate_kind,
                 amount_min=amin, amount_max=amax,
                 term_months_min=tmin, term_months_max=tmax,
                 raw={
