@@ -797,7 +797,9 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     cond, params = ["m.category = :c",
                     "m.bank_name !~* :nonbank"], {
         "c": category, "l": limit, "off": max(0, offset),
-        "nonbank": cat_meta.NON_BANK_SQL_RE}
+        "nonbank": cat_meta.NON_BANK_SQL_RE,
+        # Хосты витрин-агрегаторов: ссылка на них — не первоисточник.
+        "aggr_host": r"^https?://(www\.)?(sravni\.ru|banki\.ru|bankiros\.ru|vbr\.ru)"}
     if q_text:
         cond.append("(m.bank_name ILIKE :qq OR m.title ILIKE :qq)")
         params["qq"] = f"%{q_text.strip()}%"
@@ -821,35 +823,57 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     # стоял ПЕРВОЙ строкой рынка с готовым флагом в базе. Аудиторы шли
     # проверять и находили на сайте банка 10,5% — доверие к инструменту
     # ломалось именно здесь (обратная связь ТБ, август 2026).
+    # Один продукт, собранный двумя сборщиками, показывался двумя строками:
+    # «НС Банк · Достигай» приходил и из API, и со страницы агрегатора. Внутри
+    # берём ОДНУ запись на (банк, продукт) — предпочитая ту, у которой есть
+    # ссылка на сам продукт, а при равенстве более полные условия, — и только
+    # снаружи сортируем витрину по метрике категории.
     return q(f"""
-        SELECT m.bank_slug, m.bank_name, m.is_sber, m.offer_id, m.title, m.url,
-               m.primary_source, m.segment, m.sub_segment,
-               m.rate_min, m.rate_max, m.psk_min, m.psk_max,
-               m.rate_pct, m.rate_kind, m.term_bucket,
-               m.amount_min, m.amount_max, m.term_months_min, m.term_months_max,
-               m.fee_open, m.fee_service, m.grace_days, m.cashback_pct,
-               m.early_withdraw, m.capitalization,
-               m.replenishable, m.conditions, m.valid_from,
-               -- разбор условий: «0 руб.» в цене без пояснения, чем этот ноль
-               -- куплен, аудитору не говорит ничего (см. enrich_llm)
-               e.payload->>'free_kind'          AS free_kind,
-               e.payload->'free_conditions'     AS free_conditions,
-               e.payload->>'rate_attainability' AS attain,
-               e.payload->'rate_requires'       AS rate_requires,
-               e.payload->>'product_kind'       AS product_kind,
-               qf.reason                        AS implausible_reason,
-               count(*) OVER () AS total
-          FROM v_market_rub_offer m
-          LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
-          LEFT JOIN LATERAL (
-              SELECT q2.detail->>'reason' AS reason
-                FROM quality_flag q2
-               WHERE q2.entity_type = 'offer' AND q2.entity_id = m.offer_id
-                 AND q2.severity = 'warn'
-               ORDER BY q2.created_at DESC
-               LIMIT 1) qf ON true
-         WHERE {' AND '.join(cond)}
-         ORDER BY (qf.reason IS NOT NULL), m.{order}
+        WITH picked AS (
+            -- Ключ дедупа — ИМЯ банка, а не слаг: 774 банка из 833 в
+            -- справочнике заведены как unknown_*, и один банк живёт под
+            -- двумя слугами («ns-bank» и «unknown_6099d9c55c»), из-за чего
+            -- его продукт показывался дважды.
+            SELECT DISTINCT ON (
+                     lower(regexp_replace(m.bank_name, '[^[:alnum:]]', '', 'g')),
+                     lower(m.title), m.category)
+                   m.bank_slug, m.bank_name, m.is_sber, m.offer_id, m.title,
+                   m.url, m.primary_source, m.segment, m.sub_segment,
+                   m.rate_min, m.rate_max, m.psk_min, m.psk_max,
+                   m.rate_pct, m.rate_kind, m.term_bucket,
+                   m.amount_min, m.amount_max, m.term_months_min,
+                   m.term_months_max, m.fee_open, m.fee_service, m.grace_days,
+                   m.cashback_pct, m.early_withdraw, m.capitalization,
+                   m.replenishable, m.conditions, m.valid_from, m.category,
+                   e.payload->>'free_kind'          AS free_kind,
+                   e.payload->'free_conditions'     AS free_conditions,
+                   e.payload->>'rate_attainability' AS attain,
+                   e.payload->'rate_requires'       AS rate_requires,
+                   e.payload->>'product_kind'       AS product_kind,
+                   qf.reason                        AS implausible_reason,
+                   -- Куда ведёт «первоисточник»: на сайт организации или лишь
+                   -- на раздел агрегатора, где искомого продукта нет. Аудиторы
+                   -- писали об этом четырежды: проверить актуальность нечем.
+                   (m.url IS NOT NULL AND m.url !~* :aggr_host) AS first_party
+              FROM v_market_rub_offer m
+              LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
+              LEFT JOIN LATERAL (
+                  SELECT q2.detail->>'reason' AS reason
+                    FROM quality_flag q2
+                   WHERE q2.entity_type = 'offer' AND q2.entity_id = m.offer_id
+                     AND q2.severity = 'warn'
+                   ORDER BY q2.created_at DESC
+                   LIMIT 1) qf ON true
+             WHERE {' AND '.join(cond)}
+             ORDER BY lower(regexp_replace(m.bank_name, '[^[:alnum:]]', '', 'g')),
+                      lower(m.title), m.category,
+                      (m.bank_slug NOT LIKE 'unknown_%') DESC,
+                      (m.url !~* :aggr_host) DESC NULLS LAST,
+                      (m.amount_min IS NOT NULL) DESC, m.offer_id
+        )
+        SELECT p.*, count(*) OVER () AS total
+          FROM picked p
+         ORDER BY (p.implausible_reason IS NOT NULL), p.{order}
          LIMIT :l OFFSET :off
     """, params)
 
