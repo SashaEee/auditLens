@@ -114,12 +114,29 @@ check("эндпоинт принимает esc", "esc: int = 0" in app_src)
 print("\n— плашки ведут к обращениям —")
 check("эскалация кликабельна", "setEscOnly" in jsx and "rv-kpi-click" in jsx)
 check("лента запрашивает эскалацию", 'escOnly?"&esc=1"' in jsx)
-check("фильтр эскалации перезапрашивает ленту",
-      "[bank,product,theme,q,days,escOnly]" in jsx)
+import re as _re2
+_deps = _re2.search(r"\},\[(bank,product,theme[^\]]*)\]\);", jsx)
+_deps = _deps.group(1) if _deps else ""
+check("каждый фильтр перезапрашивает ленту",
+      all(d in _deps for d in ("bank", "product", "theme", "q", "days", "escOnly")))
 check("главная тема кликабельна", "setTheme(t=>t===th.themes[0].key" in jsx)
 
+print("\n— порядок выдачи поиска —")
+check("list_reviews_ex принимает sort", "sort" in sig)
+check("по дате сортируем ДО среза страницы",
+      src.index('sort == "date"') < src.index("res[offset:offset + limit]"))
+check("сортировка не трогает ленту без запроса",
+      'if sort == "date":' in src and src.count('sort == "date"') == 1)
+check("эндпоинт принимает sort", 'sort: str = "auto"' in app_src)
+check("эндпоинт передаёт sort дальше", "sort=sort" in app_src)
+check("переключатель есть только при запросе", 'q&&<div className="rv-sort"' in jsx)
+check("выбор порядка перезапрашивает ленту", "sortBy" in _deps)
+check("подсказка честна: отбирает релевантность",
+      "Отбирает всё равно релевантность" in jsx)
+
 print("\n— ненадёжная метка продукта названа —")
-check("срез по продукту помечен как неполный", "rv-warn-inline" in jsx)
+check("происхождение метки продукта названо", "rv-warn-inline" in jsx
+      and "определён по тексту" in jsx)
 
 print("\n— лента отдаёт банк наружу —")
 check("_feed_from_index кладёт bank в элемент", '"bank": r["bank"]' in feed_src)

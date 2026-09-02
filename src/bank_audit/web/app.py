@@ -1634,7 +1634,7 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  theme: Optional[str] = None, q: Optional[str] = None,
                  city: Optional[str] = None, month: Optional[str] = None,
                  days: Optional[int] = None, esc: int = 0,
-                 limit: int = 20, offset: int = 0):
+                 sort: str = "auto", limit: int = 20, offset: int = 0):
     # days раньше здесь ОТСУТСТВОВАЛ: переключатель периода стоял на вкладке,
     # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
     # 3 месяца, а в списке отзывы за прошлый год».
@@ -1642,7 +1642,7 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                                 q=q or None, days=days or None,
                                 city=city or None, month=month or None,
                                 limit=limit, offset=max(0, offset),
-                                esc=bool(esc))
+                                esc=bool(esc), sort=sort)
     # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
     # search — по каким словам искали на самом деле и сколько попаданий дословных
     return {"items": res["items"], "count": len(res["items"]),

@@ -1020,7 +1020,7 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
                     q: str | None = None, days: int | None = None,
                     city: str | None = None, month: str | None = None,
                     limit: int = 20, offset: int = 0,
-                    esc: bool = False) -> dict:
+                    esc: bool = False, sort: str = "auto") -> dict:
     """Лента доказательной базы. q → семантика; иначе свежие с фильтрами
     тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
     массовость это аудит-сигнал → поле `similar`.
@@ -1050,6 +1050,12 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
         except Exception as e:
             log.warning("reviews_dash: поиск по %r упал: %s", q, e)
             return {"items": [], "mode": "search", "error": "search_failed"}
+        if sort == "date":
+            # По умолчанию поиск отдаёт по релевантности — это правильно, когда
+            # ищут проблему. Но аудитор, читающий ленту как хронику, просил
+            # порядок по датам. Сортируем ДО среза страницы: иначе страницы
+            # перемешались бы между собой.
+            res.sort(key=lambda r: (r.get("date") or ""), reverse=True)
         if esc:
             # Поиск идёт по внешнему корпусу, где признака эскалации нет: он
             # наш и посчитан при индексации. Поэтому отбираем после поиска по

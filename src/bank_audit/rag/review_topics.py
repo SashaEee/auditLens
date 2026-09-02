@@ -69,6 +69,11 @@ RANK_CAP = int(os.getenv("REVIEW_TOPICS_RANK_CAP", "2"))
 # нужно сделать быстрым: он удваивает и чтение корпуса, и разметку.
 _RESIDUAL_PASS = os.getenv("REVIEW_TOPICS_RESIDUAL", "1").lower() not in ("0", "false", "no")
 
+# Во сколько раз позиции позволено быть размеченной чаще, чем её упоминают.
+# Замер на 28 позициях: надёжные укладываются в 2.9, переборщики начинаются с
+# 7.8 — между ними чистый разрыв, поэтому тройка берётся с запасом в обе стороны.
+_MAX_OVER = float(os.getenv("REVIEW_PRODUCTS_MAX_OVER", "3.0"))
+
 _RISKS = ("compliance", "conduct", "ops")
 
 
@@ -643,6 +648,93 @@ def _normalize(dim: str = THEME) -> None:
         """), {"dim": dim})
 
 
+_TERMS = (
+    "Ты — методолог внутреннего аудита банка. Ниже позиции каталога банковских "
+    "продуктов и услуг.\n\n"
+    "Для каждой позиции назови слова, которыми клиент называет её В ТЕКСТЕ ЖАЛОБЫ. "
+    "Это нужно, чтобы отличить позицию, которую клиент НАЗЫВАЕТ прямо («эскроу», "
+    "«ячейка», «автокредит»), от той, которую он только ОПИСЫВАЕТ, не называя "
+    "(про службу поддержки пишут «не дозвонился», «оператор нахамил»).\n\n"
+    "Правила:\n"
+    "— 2-6 слов на позицию, в начальной форме, через запятую;\n"
+    "— только слова, ОДНОЗНАЧНО указывающие на эту позицию. «Счёт» и «банк» не "
+    "годятся: они встречаются у всех;\n"
+    "— если позицию клиенты обычно НЕ называют, а только описывают, поставь "
+    "прочерк вместо слов. Это не недостаток позиции, это её свойство.\n\n"
+    "Формат: одна позиция на строку, два поля через вертикальную черту:\n"
+    "латинский_слаг | слово, слово, слово")
+
+
+def name_terms(dim: str = PRODUCT) -> dict:
+    """Спрашивает у модели опорные слова позиций и сохраняет их.
+
+    Отдельный дешёвый вызов, а не поле в сведении: слова нужны уже к готовому
+    каталогу, и переспрашивать их не значит пересобирать таксономию.
+    """
+    ver = active_version(dim)
+    items = topics(dim=dim)
+    if not items:
+        return {"ok": False, "reason": "нет таксономии"}
+    listing = "\n".join(f"{t['key']} | {t['label']} — {t['descr'][:120]}" for t in items)
+    raw, _ = _ask(_TERMS, listing, max_tokens=4000)
+    got = 0
+    with db.session() as s:
+        for line in raw.splitlines():
+            parts = [x.strip() for x in line.split("|")]
+            if len(parts) < 2:
+                continue
+            key = re.sub(r"[^a-z0-9_]", "", parts[0].lower())
+            words = [w.strip().lower() for w in parts[1].split(",")
+                     if len(w.strip()) >= 3 and w.strip() != "-"]
+            if not key:
+                continue
+            s.execute(text("""
+                UPDATE review_topic_def SET terms = :t
+                 WHERE dim = :dim AND version = :v AND key = :k"""),
+                {"t": words or None, "dim": dim, "v": ver, "k": key})
+            got += 1
+    log.info("review_topics[%s]: опорные слова у %d позиций", dim, got)
+    return {"ok": True, "positions": got, "version": ver}
+
+
+def product_reliability() -> list[dict]:
+    """Для каждой позиции — сколько обращений её УПОМИНАЮТ и сколько размечено.
+
+    Позицию, которую клиенты называют прямо, но которой приписано кратно больше
+    обращений, чем её вообще упоминают, показывать нельзя: она собирает чужое.
+    Позиции без опорных слов не проверяются — их и не называют.
+    """
+    ver = active_version(PRODUCT)
+    out = []
+    with db.session() as s:
+        rows = s.execute(text(
+            "SELECT key, label, terms FROM review_topic_def"
+            " WHERE dim = :dim AND version = :v"), {"dim": PRODUCT, "v": ver}).all()
+        for key, label, terms in rows:
+            n = int(s.execute(text("""
+                SELECT count(DISTINCT l.url) FROM review_topic_label l
+                JOIN review_topic_def d ON d.topic_id = l.topic_id
+                WHERE d.dim = :dim AND d.version = :v AND d.key = :k
+                  AND l.rn = 1 AND l.z >= :z"""),
+                {"dim": PRODUCT, "v": ver, "k": key, "z": MIN_Z}).scalar() or 0)
+            support = None
+            if terms:
+                # Опорные слова бывают словосочетаниями («дебетовая карта»), а
+                # to_tsquery такого не принимает. websearch_to_tsquery понимает
+                # и кавычки-фразу, и OR — тот же разбор, что у поиска по базе
+                # знаний, поэтому поведение совпадает с тем, что видит аудитор.
+                q = " OR ".join('"%s"' % w.replace('"', " ") for w in terms)
+                support = int(s.execute(text(
+                    "SELECT count(*) FROM review_index"
+                    " WHERE tsv @@ websearch_to_tsquery("
+                    "     CAST('russian' AS regconfig), :q)"),
+                    {"q": q}).scalar() or 0)
+            out.append({"key": key, "label": label, "terms": terms,
+                        "labeled": n, "support": support,
+                        "ratio": (n / support) if support else None})
+    return out
+
+
 def apply_product_labels() -> dict:
     """Переносит нашу разметку продукта в review_index.product.
 
@@ -659,6 +751,16 @@ def apply_product_labels() -> dict:
     ver = active_version(PRODUCT)
     if not ver:
         return {"ok": False, "reason": "нет разметки продукта"}
+    # Позиции, которым приписано кратно больше обращений, чем их вообще
+    # упоминают, в индекс не пишем: они собирают чужое. Правило считается
+    # ЗАМЕРОМ на каждом переносе, а не списком в коде, поэтому переживает
+    # пересборку таксономии. Позиции без опорных слов (их не называют, а
+    # описывают — служба поддержки) проверке не подлежат.
+    unreliable = [r["key"] for r in product_reliability()
+                  if r["ratio"] is not None and r["ratio"] > _MAX_OVER]
+    if unreliable:
+        log.info("review_topics: не переносим %d позиций-переборщиков: %s",
+                 len(unreliable), ", ".join(unreliable))
     with db.session() as s:
         n = s.execute(text("""
             WITH best AS (
@@ -666,12 +768,14 @@ def apply_product_labels() -> dict:
                   FROM review_topic_label l
                   JOIN review_topic_def d ON d.topic_id = l.topic_id
                  WHERE d.dim = :dim AND d.version = :v
-                   AND l.rn = 1 AND l.z >= :minz)
+                   AND l.rn = 1 AND l.z >= :minz
+                   AND NOT (d.key = ANY(:skip)))
             UPDATE review_index i
                SET product = best.label
               FROM best WHERE best.url = i.url
                 AND (i.product IS DISTINCT FROM best.label)
-        """), {"dim": PRODUCT, "v": ver, "minz": MIN_Z}).rowcount
+        """), {"dim": PRODUCT, "v": ver, "minz": MIN_Z,
+               "skip": unreliable}).rowcount
         # Обращения, которые ни к чему не отнеслись, не должны сохранять старую
         # ложную метку: иначе в срезе «Обслуживание юридических лиц» осталась бы
         # именно та розница, ради которой всё и затевалось.
@@ -681,10 +785,13 @@ def apply_product_labels() -> dict:
                AND NOT EXISTS (SELECT 1 FROM review_topic_label l
                                JOIN review_topic_def d ON d.topic_id = l.topic_id
                                WHERE l.url = i.url AND d.dim = :dim
-                                 AND d.version = :v AND l.rn = 1 AND l.z >= :minz)
-        """), {"dim": PRODUCT, "v": ver, "minz": MIN_Z}).rowcount
+                                 AND d.version = :v AND l.rn = 1 AND l.z >= :minz
+                                 AND NOT (d.key = ANY(:skip)))
+        """), {"dim": PRODUCT, "v": ver, "minz": MIN_Z,
+               "skip": unreliable}).rowcount
     log.info("review_topics: продукт проставлен %d обращениям, снят у %d", n, cleared)
-    return {"ok": True, "labeled": n, "cleared": cleared, "version": ver}
+    return {"ok": True, "labeled": n, "cleared": cleared, "version": ver,
+            "skipped": unreliable}
 
 
 def _max_source_id() -> int:

@@ -2963,6 +2963,7 @@ function ReviewsPage(){
   // Своё состояние догрузки: moreBusy живёт во вкладке «Рынок», переиспользовать
   // его отсюда нельзя.
   const[escOnly,setEscOnly]=useState(false);            // только обращения с угрозой ЦБ/суд/ФАС
+  const[sortBy,setSortBy]=useState("auto");             // порядок выдачи поиска
   const[feedMore,setFeedMore]=useState(false);          // есть ли ещё страницы
   const[feedMoreBusy,setFeedMoreBusy]=useState(false);
   const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
@@ -3042,14 +3043,15 @@ function ReviewsPage(){
   // оставались прошлогодние жалобы.
   const feedQS=(off)=>`/api/reviews/feed?bank=${enc(bank)}${pq()}`
     +`${theme?`&theme=${theme}`:""}${q?`&q=${enc(q)}`:""}`
-    +`&days=${days}${escOnly?"&esc=1":""}&limit=20&offset=${off}`;
+    +`&days=${days}${escOnly?"&esc=1":""}${q&&sortBy==="date"?"&sort=date":""}`
+    +`&limit=20&offset=${off}`;
 
   useEffect(()=>{ setFeedBusy(true);setClsOn(false);setFeedMore(false);
     apiFetch(feedQS(0))
       .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
                 setFeedMore(!!d.has_more);setFeedBusy(false);})
       .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedBusy(false);});
-  },[bank,product,theme,q,days,escOnly]);
+  },[bank,product,theme,q,days,escOnly,sortBy]);
 
   const loadMoreFeed=()=>{
     setFeedMoreBusy(true);
@@ -3124,15 +3126,16 @@ function ReviewsPage(){
           {prods.map(p=><option key={p.product} value={p.product}>{p.product} ({fmtNum(p.n)})</option>)}
         </select>
       </label>
-      {/* Метка продукта приходит из корпуса площадки и там ненадёжна: сверка
-          показала, что 86-93 процентов обращений ВСЕХ банков помечены как
-          «Обслуживание юридических лиц», хотя по тексту это розница. Поэтому
-          малое число в срезе — свойство разметки, а не отсутствие жалоб, и
-          молчать об этом нельзя: аудитор делал вывод «жалоб мало». Свою
-          разметку продукта ещё предстоит вывести из текста. */}
+      {/* Продукт определяем МЫ по тексту: метка площадки была неверна у 86-93
+          процентов обращений всех банков. Наша разметка точна на продуктах,
+          которые клиент называет прямо (вклад, ипотека, автокредит, эскроу), и
+          заметно слабее на широких позициях вроде «подписок» и «дистанционного
+          обслуживания» — туда стягивается то, что не отнеслось ни к чему.
+          Позиции, которым приписано кратно больше обращений, чем их вообще
+          упоминают, в срез не попадают вовсе. */}
       {product&&<span className="rv-warn-inline"
-        title="Метка продукта берётся из корпуса площадки и часто неверна: большинство розничных обращений там помечены как обслуживание юрлиц. Для среза по смыслу используйте темы.">
-        ⚠ срез по метке площадки — неполный</span>}
+        title="Продукт определён по тексту обращения, а не взят из метки площадки. На продуктах, которые клиент называет прямо, разметка точна; широкие позиции («подписки», «дистанционное обслуживание») собирают и неопределённое — проверяйте выборочно.">
+        продукт определён по тексту</span>}
       <div className="rv-chips">
         {RV_PERIODS.map(([d,l])=><button key={d} className={"rv-chip"+(days===d?" on":"")} onClick={()=>setDays(d)}>{l}</button>)}
       </div>
@@ -3322,6 +3325,18 @@ function ReviewsPage(){
           {clsBusy?"Уточняю…":clsOn?"✦ темы уточнены ИИ":"✦ Уточнить темы (ИИ)"}
         </button>
       </div>
+      {/* Порядок выдачи. Показываем только при запросе: лента без него и так
+          идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
+          то, что уже отобрано, и об этом честно написано в подсказке. */}
+      {q&&<div className="rv-sort">
+        <span className="rv-sort-l">порядок:</span>
+        {[["auto","по релевантности"],["date","по дате"]].map(([k,l])=>
+          <button key={k} className={"rv-chip"+(sortBy===k?" on":"")}
+            title={k==="date"
+              ?"сначала свежие. Отбирает всё равно релевантность — порядок меняется внутри отобранного"
+              :"сначала самые близкие к запросу"}
+            onClick={()=>setSortBy(k)}>{l}</button>)}
+      </div>}
       <div className="rv-search">
         <span>⌕</span>
         <input value={qInput} onChange={e=>setQInput(e.target.value)}
