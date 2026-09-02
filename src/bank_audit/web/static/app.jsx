@@ -442,9 +442,14 @@ function _inlineHTML(s, renderCitation=(n)=>`[${n}]`){
 
 function inlineHTML(s){return _inlineHTML(s);}
 
-function renderMD(text, sources, charts){
+function renderMD(text, sources, charts, viz, opts){
   if(!text) return null;
   const chartsArr = Array.isArray(charts) ? charts : [];
+  // Визуализации дизайнера: маркер [[VIZ:n]] в тексте → блок по номеру.
+  // Разметка санитизирована на сервере (белый список) до сохранения.
+  const vizByN={};
+  if(Array.isArray(viz)){for(const v of viz){if(v&&v.n!=null)vizByN[v.n]=v;}}
+  const vizPending=!!(opts&&opts.streaming);
   const srcByN={};
   if(Array.isArray(sources)){for(const s of sources){if(s&&s.n!=null)srcByN[s.n]=s;}}
   const renderCitation=(n)=>{
@@ -490,9 +495,24 @@ function renderMD(text, sources, charts){
     // Inline-chart marker: [[CHART:N]] вставляет ChartCanvas прямо в поток
     // markdown'а. Используется в demo и backend-generated отчётах когда
     // нужно показать график между секциями, а не в конце.
+    const vzm = /^\s*\[\[VIZ:(\d+)\]\]\s*$/.exec(ln);
+    if(vzm){
+      flushList(); flushTable(); flushQuote();
+      const v = vizByN[parseInt(vzm[1], 10)];
+      if(v&&v.html){
+        out.push(<div key={"vz"+idx} className="dr-viz" dangerouslySetInnerHTML={{__html:v.html}}/>);
+      }else if(v&&vizPending){
+        // Блок отклонён проверкой — во время стрима говорим об этом одной
+        // строкой, в сохранённом отчёте на этом месте пусто.
+        out.push(<div key={"vz"+idx} className="dr-viz dr-viz-pending dr-viz-rejected">визуализация раздела не прошла проверку{v.reason?`: ${v.reason}`:""}</div>);
+      }else if(vizPending){
+        out.push(<div key={"vz"+idx} className="dr-viz dr-viz-pending"><span className="dr-viz-dot"/>рисую визуализацию раздела…</div>);
+      }
+      return;
+    }
     const chm = /^\s*\[\[CHART:(\d+)\]\]\s*$/.exec(ln);
     if(chm){
-      flushList(); flushTable();
+      flushList(); flushTable(); flushQuote();
       const ci = parseInt(chm[1], 10);
       const spec = chartsArr[ci];
       if(spec){
@@ -3605,7 +3625,7 @@ function MatrixExportButton({matrix, question, streaming}){
   </span>;
 }
 
-function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, ranking, insights, gaps}){
+function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
     if(busy || streaming) return;
@@ -3648,6 +3668,7 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           // Графики — передаём specs как они пришли через SSE, бэкенд
           // отрендерит их в PDF тем же Chart.js через offscreen Chromium.
           charts: charts || [],
+          viz: viz || [],
           // Богатые виджеты UI — раньше терялись при экспорте. Теперь шлём их
           // в PDF (рейтинг-карточки, инсайты, пробелы, claim-check).
           ranking: ranking || null,
@@ -5100,6 +5121,8 @@ function AIPage(){
                   if(iters.length){iters[iters.length-1]={...iters[iters.length-1],status:"done"};}
                   return {agentIters:iters, phase:data.value};
                 });
+              }else if(data.type==="viz"&&data.n!=null){
+                updateLast(last=>({viz:[...(last.viz||[]).filter(v=>v.n!==data.n),{n:data.n,section:data.section,html:data.html||"",reason:data.reason||""}]}));
               }else if(data.type==="chart"&&data.spec){
                 updateLast(last=>({charts:[...(last.charts||[]),data.spec]}));
               }else if(data.type==="ranking"&&data.entries){
@@ -5230,7 +5253,7 @@ function AIPage(){
       const r=await apiFetch(`/api/reports/${rid}`);
       const p=r.payload||{};
       setMsgs([{role:"user",text:r.question},
-               {role:"ai",text:r.body,sources:p.sources||[],charts:p.charts||[],
+               {role:"ai",text:r.body,sources:p.sources||[],charts:p.charts||[],viz:p.viz||[],
                 mode:p.mode||"deep",phase:"done",
                 // Волна 9: артефакты верификации восстанавливаются из payload —
                 // сохранённый отчёт больше не «чище» живого прогона.
@@ -5313,7 +5336,7 @@ function AIPage(){
                     <PdfExportButton question={userQ} report={m.text}
                                      sources={m.sources||[]} verification={m.verification}
                                      claimCheck={m.claimCheck} streaming={streaming}
-                                     charts={m.charts||[]} ranking={m.ranking}
+                                     charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
                                      insights={m.insights} gaps={m.gaps}/>}
                   {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
                 </div>
@@ -5331,7 +5354,7 @@ function AIPage(){
                                         sourcesCount={(m.sources||[]).length}/>}
                       <ClaimFlagWrap q={msgs[0]&&msgs[0].text} sessionId={sessionId}
                                       mode={m.mode} reportId={m.report_id}>
-                        {renderMD(m.text, m.sources, m.charts)}
+                        {renderMD(m.text, m.sources, m.charts, m.viz, {streaming})}
                       </ClaimFlagWrap>
                       {streaming && m.text && <span className="dr-type-caret"/>}
                       {/* Charts-wrap внизу: только графики БЕЗ [[CHART:N]] маркера. */}
@@ -5351,7 +5374,7 @@ function AIPage(){
                           <PdfExportButton question={userQ} report={m.text}
                                            sources={m.sources||[]} verification={m.verification}
                                            claimCheck={m.claimCheck} streaming={false}
-                                           charts={m.charts||[]} ranking={m.ranking}
+                                           charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
                                            insights={m.insights} gaps={m.gaps}/>
                           {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={false}/>}
                           <span className="dr-doc-footer-hint">

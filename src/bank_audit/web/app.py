@@ -2780,6 +2780,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     replaced: Optional[str] = None
     sources: list = []
     charts: list = []
+    viz: list = []                # визуализации дизайнера, по номеру маркера [[VIZ:n]]
     mode: Optional[str] = None
     persisted = False
     # Волна 9: артефакты верификации живут в payload, а не один прогон.
@@ -2804,6 +2805,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                 report_id = userdata.save_report(
                     username, session_id, question, body,
                     payload={"sources": sources, "mode": mode, "charts": charts,
+                             "viz": viz,
                              "verification": verification, "gaps": gaps,
                              "ranking": ranking, "insights": insights,
                              "payload_v": 2},
@@ -2850,6 +2852,9 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     replaced = data["text"]
                 elif t == "sources" and isinstance(data.get("sources"), list):
                     sources = data["sources"]
+                elif t == "viz" and data.get("html"):
+                    viz.append({"n": data.get("n"), "section": data.get("section"),
+                                "html": data["html"]})
                 elif t == "chart" and isinstance(data.get("spec"), dict):
                     charts.append(data["spec"])   # графики — в payload отчёта
                 elif t == "verification":
@@ -2985,12 +2990,26 @@ class PdfExportRequest(BaseModel):
     # — будут отрендерены Chart.js'ом в Playwright Chromium и снапшотнуты
     # в PDF как самостоятельная секция перед источниками.
     charts: list[dict] = []
+    # Визуализации дизайнера: уже санитизированная разметка по номеру [[VIZ:n]]
+    viz: list[dict] = []
     # Богатые виджеты UI, которых раньше не было в PDF — рендерятся как
     # styled-секции (рейтинг-карточки, инсайты, пробелы, claim-check).
     ranking: Optional[dict] = None
     insights: list[dict] = []
     gaps: Optional[dict] = None
     claim_check: Optional[dict] = None
+
+def _viz_clean(items: list) -> list[dict]:
+    """Разметка визуализаций приходит от клиента — доверять ей нельзя, даже
+    если когда-то её сгенерировали мы: та же финальная очистка."""
+    from ..research.gptr import viz as _viz
+    out = []
+    for v in items:
+        if isinstance(v, dict) and v.get("n") is not None:
+            out.append({"n": v["n"], "section": v.get("section"),
+                        "html": _viz.resanitize(str(v.get("html") or ""))})
+    return out
+
 
 @app.post("/api/ai/export-pdf")
 async def ai_export_pdf(req: PdfExportRequest):
@@ -3007,7 +3026,7 @@ async def ai_export_pdf(req: PdfExportRequest):
                 question=req.question, report_md=req.report_md,
                 sources=req.sources or [], meta=req.meta or {},
                 verification=req.verification,
-                charts=req.charts or [],
+                charts=req.charts or [], viz=_viz_clean(req.viz or []),
                 ranking=req.ranking, insights=req.insights or [],
                 gaps=req.gaps, claim_check=req.claim_check),
         )

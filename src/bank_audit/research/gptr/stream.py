@@ -22,6 +22,7 @@ from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, critic as al_critic, facts as al_facts
 from . import reviews as al_reviews, runstate
 from . import dossier as al_dossier
+from . import viz as al_viz
 from . import gaps as al_gaps, planner as al_planner
 from . import scraper as al_scraper, verify as al_verify
 from .engine import _role_prompt, install, report_prompt
@@ -299,6 +300,33 @@ async def stream_deep_research_gptr(question: str,
                 if ready:
                     body_parts.append(ready)
                     yield _evt({"type": "text", "chunk": ready})
+            elif kind == "marker":
+                # Место блока визуализации. Сначала сбрасываем придержанный
+                # хвост перенумеровщика, иначе якорь вылез бы после маркера.
+                tail = renum.finish()
+                if tail:
+                    body_parts.append(tail)
+                    yield _evt({"type": "text", "chunk": tail})
+                mk = al_viz.marker(payload)
+                body_parts.append(mk)
+                yield _evt({"type": "text", "chunk": mk})
+            elif kind == "status":
+                yield _evt({"type": "stage_status", "stage": "analyst",
+                            "label": payload})
+            elif kind == "viz":
+                # Блок дизайнера: якоря нумеруются тем же счётчиком, что и
+                # текст, поэтому [n] на картинке ведёт на тот же источник.
+                html_out, reason = "", payload.get("reason") or ""
+                if payload.get("html"):
+                    try:
+                        html_out = al_viz.finalize(payload["html"], payload.get("logos") or {},
+                                                   cite=renum.cite)
+                    except al_viz.VizRejected as e:
+                        reason = str(e)
+                        log.info("визуализация %s: финал — %s", payload["section"], e)
+                yield _evt({"type": "viz", "n": payload["n"],
+                            "section": payload["section"],
+                            "html": html_out, "reason": reason})
             elif kind == "lead":
                 # Резюме и план проверки — целиком, наверх. Перенумеровщик
                 # тот же: якоря получат следующие номера, но каждый ведёт на
@@ -371,10 +399,11 @@ async def stream_deep_research_gptr(question: str,
                                        if s["url"].lower().endswith(".pdf"))})
 
     # ── Сверка и пробелы ─────────────────────────────────────────────────
-    verification = al_verify.verify_report(report, registry, pages)
+    report_plain = al_viz.strip_markers(report)   # маркеры — не утверждения
+    verification = al_verify.verify_report(report_plain, registry, pages)
     verification.update({
         "фактов": len(registry.facts),
-        "абзацев_без_якоря": al_cit.unanchored_claims(report),
+        "абзацев_без_якоря": al_cit.unanchored_claims(report_plain),
         **cit_stats,
     })
     gap_lines = al_gaps.collect(plan, registry=registry, attributes=attributes,

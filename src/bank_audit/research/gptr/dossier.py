@@ -23,10 +23,14 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
 from typing import AsyncIterator
 
+from . import runstate
+from . import viz as al_viz
 from .engine import stream_report as _stream
 
 log = logging.getLogger(__name__)
@@ -407,48 +411,171 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
     labels = dict(getattr(plan, "subject_labels", None) or {})
     ttl = titles(plan)
     body: dict[str, str] = {}
+    anchor = anchor_of(plan)
+    subjects = [s for s in (getattr(plan, "subjects", None) or []) if s]
+    by_id = {f.id: f for f in registry.facts}
 
-    for key in WRITING_ORDER:
-        if key in LEAD:
-            continue
-        facts = facts_for(key, registry, plan)
-        if not facts:
-            log.info("досье: раздел %s пропущен — фактов нет", key)
-            continue
-        yield ("section", key)
-        yield ("chunk", f"\n\n## {ttl[key]}\n\n")
-        prompt = section_prompt(key, plan, question, labels,
-                                facts_text=render_facts(facts, labels))
-        buf = []
-        async for piece in _without_heading(_stream_section(client, model, prompt), ttl[key]):
-            buf.append(piece)
-            yield ("chunk", piece)
-        body[key] = "".join(buf)
-        log.info("досье: раздел %s — %d фактов, %d символов", key, len(facts),
-                 len(body[key]))
+    # Дизайнер работает в фоне: пока пишется следующий раздел, к
+    # предыдущему рисуется визуализация. В текст сразу встаёт маркер
+    # [[VIZ:n]], а готовый блок приходит событием («viz», …) — интерфейс
+    # подставляет его по номеру, когда бы он ни пришёл.
+    slots: list[str] = []
+    tasks: set[asyncio.Task] = set()
+    state = runstate.current()      # контекст прогона: задача создаётся после yield
+    gate = asyncio.Semaphore(al_viz.CONCURRENCY)
 
-    if not body:
-        return
+    async def _complete(prompt: str) -> str:
+        return "".join([p async for p in _stream_section(client, model, prompt)])
 
-    prior = "\n\n".join(f"## {ttl[k]}\n\n{body[k]}" for k in WRITING_ORDER
-                        if k in body)
-    index = facts_index(list(registry.facts), labels)
-    lead: dict[str, str] = {}
-    for key in ("checks", "summary"):
-        prompt = section_prompt(key, plan, question, labels, facts_text=index,
-                                prior_text=prior + ("\n\n## " + ttl["checks"]
-                                                    + "\n\n" + lead["checks"]
-                                                    if "checks" in lead else ""),
-                                gaps_text=gaps_text)
-        buf = []
-        async for piece in _without_heading(_stream_section(client, model, prompt), ttl[key]):
-            buf.append(piece)
-        lead[key] = "".join(buf).strip()
-        log.info("досье: раздел %s — %d символов", key, len(lead[key]))
+    def _spawn(key: str, facts: list, text: str):
+        """Дизайнер раздела — фоновая задача. Факты — только те, что раздел
+        сам процитировал: блок не должен спорить с текстом."""
+        if key not in al_viz.SECTIONS or len(facts) < al_viz.MIN_FACTS or not (text or "").strip():
+            return None
+        n = len(slots)
+        slots.append(key)
+        prompt = al_viz.designer_prompt(
+            section=key, title=ttl[key], question=question, anchor=anchor,
+            labels=labels, facts_text=render_facts(facts, labels),
+            section_text=text, subjects=subjects)
 
-    head = "".join(f"## {ttl[k]}\n\n{lead[k]}\n\n" for k in LEAD if lead.get(k))
-    if head:
-        yield ("lead", head)
+        async def run():
+            runstate.bind(state)
+            try:
+                async with gate:
+                    answer = await asyncio.wait_for(_complete(prompt), al_viz.TIMEOUT)
+            except Exception as e:
+                log.info("визуализация %s: %s", key, type(e).__name__)
+                return {"n": n, "section": key, "html": "", "logos": {},
+                        "reason": f"дизайнер не ответил: {type(e).__name__}"}
+            if os.getenv("AL_VIZ_DEBUG"):
+                # Сырой ответ дизайнера — для разбора отказов на стенде.
+                try:
+                    with open(f"/tmp/viz_raw_{key}.html", "w", encoding="utf-8") as fh:
+                        fh.write(answer)
+                except OSError:
+                    pass
+            try:
+                built = al_viz.build(answer, facts=facts, labels=labels,
+                                     section=key, subjects=subjects)
+            except Exception as e:
+                log.exception("визуализация %s: сборка", key)
+                return {"n": n, "section": key, "html": "", "logos": {},
+                        "reason": f"сборка: {type(e).__name__}"}
+            log.info("визуализация %s: %s", key,
+                     "принята" if built.html else ("пусто" if not built.rejected else "; ".join(built.rejected)))
+            return {"n": n, "section": key, "html": built.html, "logos": built.logos,
+                    "reason": "; ".join(built.rejected) if not built.html else ""}
+
+        tasks.add(asyncio.create_task(run()))
+        return n
+
+    def _ready() -> list:
+        out = []
+        for t in [t for t in tasks if t.done()]:
+            tasks.discard(t)
+            try:
+                r = t.result()
+            except Exception as e:
+                log.info("визуализация: %s", type(e).__name__)
+                continue
+            if r:
+                out.append(("viz", r))
+        return out
+
+    def _cited(text: str, cap: int = 60) -> list:
+        ids = [int(x) for x in re.findall(r"[\[(]f:(\d+)[\])]", text or "")]
+        return [by_id[i] for i in dict.fromkeys(ids) if i in by_id][:cap]
+
+    try:
+        for key in WRITING_ORDER:
+            if key in LEAD:
+                continue
+            facts = facts_for(key, registry, plan)
+            if not facts:
+                log.info("досье: раздел %s пропущен — фактов нет", key)
+                continue
+            yield ("section", key)
+            yield ("chunk", f"\n\n## {ttl[key]}\n\n")
+            prompt = section_prompt(key, plan, question, labels,
+                                    facts_text=render_facts(facts, labels))
+            buf = []
+            async for piece in al_viz.without_markers(
+                    _without_heading(_stream_section(client, model, prompt), ttl[key])):
+                buf.append(piece)
+                yield ("chunk", piece)
+                for ev in _ready():
+                    yield ev
+            body[key] = "".join(buf)
+            log.info("досье: раздел %s — %d фактов, %d символов", key, len(facts),
+                     len(body[key]))
+            n = _spawn(key, _cited(body[key]), body[key])
+            if n is not None:
+                yield ("marker", n)
+            for ev in _ready():
+                yield ev
+
+        if not body:
+            return
+
+        prior = "\n\n".join(f"## {ttl[k]}\n\n{body[k]}" for k in WRITING_ORDER
+                            if k in body)
+        index = facts_index(list(registry.facts), labels)
+        lead: dict[str, str] = {}
+        lead_slot: dict[str, int | None] = {}
+        for key in ("checks", "summary"):
+            prompt = section_prompt(key, plan, question, labels, facts_text=index,
+                                    prior_text=prior + ("\n\n## " + ttl["checks"]
+                                                        + "\n\n" + lead["checks"]
+                                                        if "checks" in lead else ""),
+                                    gaps_text=gaps_text)
+            buf = []
+            async for piece in al_viz.without_markers(
+                    _without_heading(_stream_section(client, model, prompt), ttl[key])):
+                buf.append(piece)
+                for ev in _ready():
+                    yield ev
+            lead[key] = "".join(buf).strip()
+            log.info("досье: раздел %s — %d символов", key, len(lead[key]))
+            # Дизайнер плана стартует сразу, не дожидаясь резюме: факты —
+            # только те, на которые раздел сам сослался.
+            lead_slot[key] = _spawn(key, _cited(lead[key]), lead[key])
+            for ev in _ready():
+                yield ev
+
+        head = ""
+        for k in LEAD:
+            if not lead.get(k):
+                continue
+            n = lead_slot.get(k)
+            marker = al_viz.MARKER.format(n=n) + "\n\n" if n is not None else ""
+            if k in al_viz.BEFORE_TEXT:
+                head += f"## {ttl[k]}\n\n{marker}{lead[k]}\n\n"
+            else:
+                head += f"## {ttl[k]}\n\n{lead[k]}\n\n{marker}"
+        if head:
+            yield ("lead", head)
+
+        # Дорисовать, что не успело, — в общий бюджет, отдавая готовое по
+        # мере готовности. Дольше не ждём: отчёт без одной картинки лучше
+        # отчёта, который не пришёл.
+        deadline = asyncio.get_running_loop().time() + al_viz.FINAL_WAIT
+        while tasks:
+            left = deadline - asyncio.get_running_loop().time()
+            if left <= 0:
+                break
+            yield ("status", f"Рисую карточки: осталось {len(tasks)}")
+            await asyncio.wait(tasks, timeout=min(left, 10.0),
+                               return_when=asyncio.FIRST_COMPLETED)
+            for ev in _ready():
+                yield ev
+        for t in tasks:
+            t.cancel()
+            log.info("визуализация: не успела за %.0f с", al_viz.FINAL_WAIT)
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
 
 
 async def _without_heading(pieces: AsyncIterator[str], title: str = "") -> AsyncIterator[str]:

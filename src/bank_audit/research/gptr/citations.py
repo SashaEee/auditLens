@@ -96,6 +96,17 @@ class StreamRenumberer:
         if fact is None:
             self.unknown += 1
             return ""
+        return self._sub_fact(fact)
+
+    def cite(self, fact_id: int) -> int | None:
+        """Номер источника факта — для блоков визуализации, где якорь
+        ставит код, а не модель. Регистрирует источник, как и текст."""
+        fact = self._by_id.get(int(fact_id))
+        if fact is None:
+            return None
+        return int(self._sub_fact(fact)[1:-1])
+
+    def _sub_fact(self, fact) -> str:
         self.anchors += 1
         if fact.url not in self._order:
             self._order.append(fact.url)
