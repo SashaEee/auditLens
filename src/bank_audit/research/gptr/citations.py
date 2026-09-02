@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import re
 
-_ANCHOR_RE = re.compile(r"\[f:(\d{1,5})\]")
+_ANCHOR_RE = re.compile(r"[\[(]f:(\d{1,5})[\])]")   # модель иногда пишет (f:12) — тоже якорь
+_DUP_RE = re.compile(r"(\[\d{1,3}\])(?:\s?\1)+")      # [3][3] — один и тот же источник подряд
 
 
 def renumber(report: str, registry) -> tuple[str, list[dict], dict]:
@@ -106,10 +107,14 @@ class StreamRenumberer:
     def feed(self, chunk: str) -> str:
         """Кусок потока → готовый к показу текст (может быть пустым)."""
         self._buf += chunk or ""
-        out = _ANCHOR_RE.sub(self._sub, self._buf)
-        # Придерживаем возможный незавершённый якорь в хвосте.
+        out = _DUP_RE.sub(r"\1", _ANCHOR_RE.sub(self._sub, self._buf))
+        # Придерживаем незавершённый якорь в хвосте — и завершённый тоже:
+        # его двойник может прийти следующим куском, и склеить их можно
+        # только вместе.
         tail = 0
-        m = re.search(r"\[f?:?\d{0,5}$", out)
+        # Хвост: цепочка уже готовых якорей, за которой идёт незавершённый или
+        # ещё один готовый — «[1][f:1» + «3]» иначе даёт [1][1].
+        m = re.search(r"(?:\[\d{1,3}\]\s?)*(?:[\[(]f?:?\d{0,5}|\[\d{1,3}\])$", out)
         if m:
             tail = len(out) - m.start()
         ready, self._buf = (out[:len(out) - tail], out[len(out) - tail:]) if tail else (out, "")

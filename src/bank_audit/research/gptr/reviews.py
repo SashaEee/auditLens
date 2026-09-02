@@ -20,9 +20,11 @@ from . import runstate
 
 log = logging.getLogger(__name__)
 
-# Сколько жалоб берём на объект: достаточно, чтобы увидеть повторяющиеся темы,
-# и не столько, чтобы утопить контекст писателя.
-_PER_SUBJECT = 6
+# Сколько жалоб берём на объект. Было 6 — «чтобы не утопить контекст
+# писателя»; с досье писатель раздела «Голос клиента» получает только
+# наблюдаемые факты, и двадцать цитат на объект ему по силам. Шесть давали
+# по Сберу две-три цитаты в отчёте при самом большом корпусе.
+_PER_SUBJECT = 20
 
 
 def _match_slug(bank_name: str, name_to_slug: dict[str, str]) -> str:
@@ -86,6 +88,37 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
                         "date": str(it.get("date") or "")[:10],
                         "product": it.get("product") or "",
                         "text": text})
+    # Дочерние компании и сервисы в корпусе не значатся банком: 184 отзыва
+    # упоминают Домклик, и все они привязаны к материнскому банку. Объект
+    # без единого отзыва по слагу ищем по названию — и оставляем только те
+    # тексты, где оно действительно есть, иначе приедут жалобы на банк вообще.
+    covered = {r["subject"] for r in out}
+    for slug in subjects:
+        label = (labels.get(slug) or "").strip()
+        if slug in covered or not label:
+            continue
+        try:
+            extra = br.search_reviews(" ".join(x for x in (label, query) if x),
+                                      k=per_subject * 3,
+                                      since_days=int(os.getenv("GPTR_REVIEWS_SINCE_DAYS", "540")))
+        except Exception as e:
+            log.info("корпус отзывов, поиск по названию «%s»: %s", label, type(e).__name__)
+            continue
+        added = 0
+        for it in (extra or []):
+            text = (it.get("text") or "").strip()
+            if not text or label.lower() not in text.lower():
+                continue
+            out.append({"bank": label, "subject": slug,
+                        "url": it.get("url") or "",
+                        "date": str(it.get("date") or "")[:10],
+                        "product": it.get("product") or "",
+                        "text": text})
+            added += 1
+            if added >= per_subject:
+                break
+        if added:
+            log.info("корпус отзывов: «%s» не банк в корпусе, по названию нашлось %d", label, added)
     log.info("корпус отзывов: %d жалоб по %d объектам", len(out), len(subjects))
     return out
 

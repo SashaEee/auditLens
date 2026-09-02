@@ -112,10 +112,27 @@ def verbatim_found(quote: str, page_text: str) -> bool:
 
 # ── Сторона доказательства ────────────────────────────────────────────────
 
-# Площадки отзывов: наблюдаемая сторона по определению. Держим отдельно от
-# прочих агрегаторов, чтобы отличать жалобу клиента от обзорной статьи.
+# Площадки отзывов: наблюдаемая сторона по определению. Но у агрегаторов
+# отзывы — только часть сайта: карточка «Потребительский, 18,9–28,8%» на
+# finuslugi.ru — это условия банка, переизданные площадкой, то есть
+# заявленное. Считать весь хост отзывами — терять оффер конкурента целиком:
+# так все 28 фактов о конкуренте ушли в «наблюдается», и разделы сравнения
+# написали «данных нет». Поэтому — по пути.
 REVIEW_DOMAINS = ("banki.ru", "sravni.ru", "finuslugi.ru", "otzovik.com",
                   "irecommend.ru", "vbr.ru")
+_REVIEW_ONLY_HOSTS = ("otzovik.com", "irecommend.ru")
+_REVIEW_PATH = re.compile(r"/(responses?|otzyvy?|otzivy|reviews?|questions-answers|feedback|complaints?)(/|$|\?)", re.I)
+
+
+def is_review_page(url: str) -> bool:
+    """Страница отзывов, а не карточка продукта на той же площадке."""
+    u = urlparse(url)
+    host = u.netloc.lower().removeprefix("www.")
+    if any(host == d or host.endswith("." + d) for d in _REVIEW_ONLY_HOSTS):
+        return True
+    if any(host == d or host.endswith("." + d) for d in REVIEW_DOMAINS):
+        return bool(_REVIEW_PATH.search(u.path or "/")) or "otzyv" in (u.path or "").lower()
+    return False
 
 
 def stance_for(url: str, subject: str, subject_domains: dict[str, str]) -> str:
@@ -139,7 +156,29 @@ def stance_for(url: str, subject: str, subject_domains: dict[str, str]) -> str:
     if not subject and any(host == d or host.endswith("." + d)
                            for d in subject_domains.values() if d):
         return "declared"
+    # Домен неизвестен карте, но это явно сайт самого субъекта: vbrr.ru для
+    # vbrr, domclick.ru для domclick. Карта доменов конечна, конкурентов —
+    # нет; без этого правила собственный сайт банка становился «взглядом со
+    # стороны».
+    if subject and _own_host(host, subject):
+        return "declared"
+    if is_review_page(url):
+        return "observed"
+    # Карточка продукта на агрегаторе — условия банка, переизданные
+    # площадкой: сторона заявленного, пусть и не с сайта банка.
+    if any(host == d or host.endswith("." + d) for d in REVIEW_DOMAINS):
+        return "declared"
     return "observed"
+
+
+def _own_host(host: str, subject: str) -> bool:
+    parts = host.split(".")
+    label = parts[-2] if len(parts) >= 2 else host
+    key = re.sub(r"[^a-z0-9]", "", subject.lower())
+    lab = re.sub(r"[^a-z0-9]", "", label)
+    if len(key) < 4:
+        return False
+    return lab == key or lab == key.replace("bank", "") or lab.replace("bank", "") == key
 
 
 # ── Реестр ────────────────────────────────────────────────────────────────

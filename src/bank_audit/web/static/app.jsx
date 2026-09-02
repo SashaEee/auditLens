@@ -4980,6 +4980,11 @@ function AIPage(){
                 if(data.session_id) setSessionId(data.session_id);
               }else if(data.type==="text"&&data.chunk){
                 updateLast(last=>({text:(last.text||"")+data.chunk}));
+              }else if(data.type==="lead"&&data.chunk){
+                // Резюме и «что проверять» пишутся ПОСЛЕДНИМИ — по готовому
+                // телу, — а читаются первыми. Поэтому вставляем наверх, а не
+                // дописываем в конец.
+                updateLast(last=>({text:data.chunk+(last.text||"")}));
               }else if(data.type==="reasoning"){
                 // Живой ход мысли LLM (delta.reasoning_content). Копим ПО СТАДИЯМ
                 // (reasoningStages[stage]) — иначе таймер «Ход мысли · Nс» суммирует

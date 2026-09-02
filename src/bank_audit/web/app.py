@@ -2776,6 +2776,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     # Сразу отдаём фронту session_id, чтобы следующий вопрос продолжил эту сессию.
     yield json.dumps({"type": "session", "session_id": session_id}, ensure_ascii=False)
     parts: list[str] = []
+    lead_parts: list[str] = []   # резюме и план проверки приходят последними, а стоят первыми
     replaced: Optional[str] = None
     sources: list = []
     charts: list = []
@@ -2792,7 +2793,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
 
     def _persist() -> int | None:
         """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
-        body = replaced if replaced is not None else "".join(parts)
+        body = replaced if replaced is not None else "".join(lead_parts) + "".join(parts)
         if not (body and body.strip()):
             return None
         try:
@@ -2843,6 +2844,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                         parts.append(data["chunk"])
                     elif isinstance(data.get("text"), str):
                         replaced = data["text"]
+                elif t == "lead" and data.get("chunk"):
+                    lead_parts.append(data["chunk"])
                 elif t == "report_replace" and isinstance(data.get("text"), str):
                     replaced = data["text"]
                 elif t == "sources" and isinstance(data.get("sources"), list):

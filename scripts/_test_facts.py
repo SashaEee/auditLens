@@ -163,5 +163,23 @@ _o2 = _rn2.feed("текст [f:99] хвост") + _rn2.finish()
 chk("якорь на несуществующий факт убирается", "[f:99]" not in _o2
     and _rn2.stats()["якорей_в_никуда"] == 1)
 
+
+from bank_audit.research.gptr import facts as _fx  # noqa: E402
+print("сторона доказательства: конкурент без домена в карте, карточки агрегаторов")
+_dom = {"sberbank": "sberbank.ru", "vbrr": ""}
+chk("сайт банка, известный карте — заявлено", _fx.stance_for("https://www.sberbank.ru/ru/person/credits", "sberbank", _dom) == "declared")
+chk("сайт конкурента без домена в карте — заявлено по слагу", _fx.stance_for("https://www.vbrr.ru/private/credits/loan/", "vbrr", _dom) == "declared")
+chk("домен с суффиксом bank совпадает со слагом", _fx.stance_for("https://alfabank.ru/get-money/credit/", "alfabank", {}) == "declared")
+chk("карточка продукта на finuslugi — заявлено", _fx.stance_for("https://finuslugi.ru/potrebitelskie_kredity/vbrr_potrebitelskiy", "vbrr", _dom) == "declared")
+chk("отзывы на banki.ru — наблюдается", _fx.stance_for("https://www.banki.ru/services/responses/bank/response/123/", "vbrr", _dom) == "observed")
+chk("отзывы на sravni — наблюдается", _fx.stance_for("https://www.sravni.ru/bank/vbrr/otzyvy/", "vbrr", _dom) == "observed")
+chk("карточка на sravni — заявлено", _fx.stance_for("https://www.sravni.ru/bank/vbrr/kredity/", "vbrr", _dom) == "declared")
+chk("otzovik всегда наблюдается", _fx.stance_for("https://otzovik.com/reviews/bank_vbrr/", "vbrr", _dom) == "observed")
+chk("сторонний сайт (новости) — наблюдается", _fx.stance_for("https://www.rbc.ru/finances/2026/09/01/", "vbrr", _dom) == "observed")
+chk("короткий слаг не ловит чужие домены", _fx.stance_for("https://vtb.ru/personal/kredit/", "otp", {}) == "observed")
+chk("чужой банк со слагом другой длины не свой", _fx.stance_for("https://vtb.ru/personal/kredit/", "vbrr", {}) == "observed")
+chk("регулятор по-прежнему норма", _fx.stance_for("https://www.cbr.ru/statistics/bank_sector/psk/", "vbrr", _dom) == "regulatory")
+chk("is_review_page: путь, а не хост", _fx.is_review_page("https://www.banki.ru/services/responses/") and not _fx.is_review_page("https://www.banki.ru/products/credits/vbrr/"))
+
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)

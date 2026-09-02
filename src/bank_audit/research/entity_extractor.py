@@ -64,6 +64,8 @@ _BANK_DOMAINS = {
     "yandexbank":   "bank.yandex.ru",
     "tochka":       "tochka.com",
     "modulbank":    "modulbank.ru",
+    "vbrr": "vbrr.ru",
+    "domclick": "domclick.ru",
 }
 
 
