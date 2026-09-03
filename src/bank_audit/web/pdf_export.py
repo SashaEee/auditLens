@@ -247,10 +247,15 @@ def _render_sources_section(sources: list[dict]) -> str:
     return f'<ol class="src-list">{"".join(rows)}</ol>'
 
 
-def _render_verification_section(unverified: list[dict]) -> str:
+def _render_verification_section(unverified: list) -> str:
     """Премиум-блок «Утверждения для ручной проверки» — то же что
     VerificationBanner в UI (.dr-verify-warn), но адаптировано под PDF.
     Warn-tinted rounded box со всем содержимым, не голым списком."""
+    # Новый конвейер кладёт сюда числа, не нашедшие подтверждения в источнике,
+    # а старый — словари {claim, issue}; печатаем оба вида, прочее пропускаем.
+    unverified = [u if isinstance(u, dict)
+                  else {"claim": f"число {u} не найдено в источнике рядом с цитатой", "issue": ""}
+                  for u in (unverified or []) if isinstance(u, (dict, str, int, float))]
     if not unverified:
         return ""
     items = []
@@ -1295,8 +1300,8 @@ def render_pdf(html_str: str) -> bytes:
             except Exception as e:
                 log.warning("PDF chart-render wait failed: %s "
                              "(PDF будет создан, но графики могут быть пустые)", e)
+            page.set_default_timeout(60000)
             pdf = page.pdf(
-                timeout=60000,
                 format="A4",
                 print_background=True,
                 margin={"top":"0mm","bottom":"0mm","left":"0mm","right":"0mm"},

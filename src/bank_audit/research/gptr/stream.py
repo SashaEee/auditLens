@@ -338,7 +338,8 @@ async def stream_deep_research_gptr(question: str,
                     body_parts.append(tail)
                     yield _evt({"type": "text", "chunk": tail})
                 lead_guard = al_viz.MarkerGuard()
-                lead_text = lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish()
+                lead_text = al_viz.restore_lead_markers(
+                    lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish())
                 yield _evt({"type": "lead", "chunk": lead_text})
     except Exception as e:
         log.exception("gptr: написание")

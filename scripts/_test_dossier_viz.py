@@ -71,16 +71,18 @@ text = "".join(p for k, p in evs if k == "chunk")
 markers = [p for k, p in evs if k == "marker"]
 vizs = [p for k, p in evs if k == "viz"]
 lead = next((p for k, p in evs if k == "lead"), "")
+lead_restored = V.restore_lead_markers(lead)
 check("маркеры выданы для разделов тела с дизайнером", len(markers) >= 2)
 check("маркер модели обезврежен в тексте", "[[VIZ:0]]" not in text and "VIZ​:" in text)
-check("событий viz столько же, сколько маркеров (включая lead)", len(vizs) == len(markers) + sum(1 for k in ("summary", "checks") if f"[[VIZ:" in lead) or len(vizs) >= len(markers))
+check("событий viz столько же, сколько маркеров (включая lead)", len(vizs) == len(markers) + lead_restored.count("[[VIZ:"))
 accepted = [v for v in vizs if v["html"]]
 rejected = [v for v in vizs if not v["html"]]
 check("принятые блоки — с сентинелями якорей, без цифр модели", accepted and all(V._S_CITE in v["html"] for v in accepted))
 check("отклонённый блок несёт причину", any("цифра" in (v.get("reason") or "") for v in rejected))
 check("ПУСТО от дизайнера — событие с пустым html без причины", any(v["section"] == "checks" and not v["html"] and not v.get("reason") for v in vizs))
-check("маркер резюме стоит над текстом резюме", lead.startswith("## Резюме для руководителя проверки\n\n[[VIZ:"))
-check("маркер плана — под текстом плана", "## Что проверять" in lead and lead.rstrip().endswith("]]"))
+check("в lead — служебный токен, а не маркер (страж его не тронет)", "[[VIZ:" not in lead and "\ue010VIZ:" in lead)
+check("маркер резюме стоит над текстом резюме", lead_restored.startswith("## Резюме для руководителя проверки\n\n[[VIZ:"))
+check("маркер плана — под текстом плана", "## Что проверять" in lead_restored and lead_restored.rstrip().endswith("]]"))
 check("отклонённый блок получает одну попытку починки", len(REPAIRS) == 2 and all("ОТКЛОНЁН" in r and "цифра" in r for r in REPAIRS))
 check("починенный блок принят", any(v["section"] == "conditions" and v["html"] for v in vizs))
 check("непочиненный — причины обеих попыток", any(v["section"] == "voice" and "повтор:" in (v.get("reason") or "") for v in vizs))

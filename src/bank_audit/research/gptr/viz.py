@@ -219,6 +219,31 @@ def _esc(v) -> str:
             .replace("[", "&#91;").replace("]", "&#93;"))
 
 
+_UNIT_SYNONYMS = {"₽": ("₽", "руб", "rub"), "%": ("%", "проц"), "дн": ("дн", "день", "дня", "дней"),
+                  "мес": ("мес", "месяц"), "год": ("год", "лет")}
+VALUE_CHARS = 90
+
+
+def _clip(v: str) -> str:
+    """Значение-простыня из извлекателя не должно растягивать ячейку."""
+    v = re.sub(r"\s+", " ", str(v or "")).strip()
+    return v if len(v) <= VALUE_CHARS else v[:VALUE_CHARS].rstrip() + "…"
+
+
+def value_with_unit(f) -> str:
+    """«1%» + «%» → «1%», а не «1% %»: единица добавляется, только если её
+    (или синонима) ещё нет в значении."""
+    value = _clip(getattr(f, "value", "") or "")
+    unit = (getattr(f, "unit", "") or "").strip()
+    if not unit:
+        return value
+    low = value.lower()
+    keys = _UNIT_SYNONYMS.get(unit.rstrip("."), (unit,))
+    if unit.lower() in low or any(k in low for k in keys):
+        return value
+    return f"{value} {unit}".strip()
+
+
 def _side(stance: str) -> str:
     return {"declared": "заявлено", "regulatory": "норма регулятора"}.get(stance, "наблюдается")
 
@@ -234,8 +259,8 @@ def meta_for(facts: list) -> dict[str, str]:
     dates = sorted(d for d in (str(getattr(f, "date", "") or "")[:10] for f in facts) if d)
     return {"facts_total": str(len(facts)),
             "subjects": str(len({getattr(f, "subject", "") for f in facts})),
-            "date_min": dates[0] if dates else "",
-            "date_max": dates[-1] if dates else ""}
+            "date_min": dates[0] if dates else "не указана",
+            "date_max": dates[-1] if dates else "не указана"}
 
 
 def prepare(template: str, *, facts: list, labels: dict[str, str], section: str,
@@ -306,6 +331,8 @@ def prepare(template: str, *, facts: list, labels: dict[str, str], section: str,
     if re.search(r'(?:style|fill|stroke|stop-color)\s*=\s*"[^"]*(?:#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\()', html.unescape(own)):
         raise VizRejected("литеральный цвет — только переменные палитры")
 
+    if re.search(rf"<[^>]*{_S_VAL}\d+{_S_VAL}[^>]*>", sent):
+        raise VizRejected("плейсхолдер внутри тега: значения и якоря ставятся только в тексте")
     # Якорь рядом с каждым числом — в том же элементе; дата — в любом
     # сравнении двух объектов, у каждого объекта или общая одного окна.
     positions = [(m.start(), int(m.group(1))) for m in re.finditer(rf"{_S_VAL}(\d+){_S_VAL}", sent)]
@@ -314,19 +341,28 @@ def prepare(template: str, *, facts: list, labels: dict[str, str], section: str,
     for p, i in positions:
         kind, fid, fld = slots[i]
         if i in value_slots:
+            # Число — якорь в том же элементе; у цитаты подпись с якорем обычно
+            # отдельной строкой карточки, поэтому ей достаточно окна.
+            strict = fld != "quote"
             near = any(slots[j][1] == fid and abs(cp - p) <= CITE_WINDOW
-                       and not _BLOCK_CLOSE.search(sent[min(p, cp):max(p, cp)])
+                       and (not strict or not _BLOCK_CLOSE.search(sent[min(p, cp):max(p, cp)]))
                        for j, cp in cite_pos.items())
             if not near:
-                raise VizRejected(f"у числа факта f:{fid} нет якоря источника в том же элементе")
+                raise VizRejected(f"у {'цитаты' if fld == 'quote' else 'числа'} факта f:{fid} нет якоря источника "
+                                  + ("рядом" if fld == "quote" else "в том же элементе"))
     # Два значения вплотную (только теги и знаки между ними) читаются как одно число.
     for m in re.finditer(rf"{_S_VAL}(\d+){_S_VAL}(?=(?:<[^>]*>|[.,]|&nbsp;|\s)*{_S_VAL}(\d+){_S_VAL})", sent):
         if int(m.group(1)) in value_slots and int(m.group(2)) in value_slots:
             raise VizRejected("два значения вплотную — между ними нужен текст")
-    # Счётчики покрытия — только в строке покрытия <small>, не как свободные числа.
+    # Счётчики покрытия — только в строке покрытия «Показано фактов…», не как
+    # свободные числа под чужим смыслом («жалоб … тыс.»).
     for p, i in positions:
-        if slots[i][0] == "meta" and not (sent.rfind("<small", 0, p) > sent.rfind("</small>", 0, p)):
-            raise VizRejected("счётчик meta допустим только в строке покрытия <small>")
+        if slots[i][0] != "meta":
+            continue
+        seg = sent[max(0, p - 260):p]
+        k = seg.rfind("Показано")
+        if k < 0 or _BLOCK_CLOSE.search(seg[k:]):
+            raise VizRejected("счётчик meta допустим только в строке покрытия «Показано фактов…»")
     if re.search(r"<li>\s*</li>", sent):
         raise VizRejected("пустой пункт списка")
     used_ids = list(dict.fromkeys(s[1] for s in slots if s[0] == "f"))
@@ -349,10 +385,9 @@ def prepare(template: str, *, facts: list, labels: dict[str, str], section: str,
         if kind == "f":
             f = by_id[key]
             if fld == "full":
-                unit = f" {f.unit}" if getattr(f, "unit", "") else ""
-                return _esc(f"{f.value or ''}{unit}".strip())
+                return _esc(value_with_unit(f))
             if fld == "value":
-                return _esc(f.value or "")
+                return _esc(_clip(f.value or ""))
             if fld == "unit":
                 return _esc(getattr(f, "unit", "") or "")
             if fld == "date":
@@ -374,8 +409,6 @@ def prepare(template: str, *, facts: list, labels: dict[str, str], section: str,
         logos[key] = logo_svg(key, labels.get(key, key))
         return f"{_S_LOGO}{key}{_S_LOGO}"
 
-    if re.search(rf"<[^>]*{_S_VAL}\d+{_S_VAL}[^>]*>", sent):
-        raise VizRejected("плейсхолдер внутри тега: значения и якоря ставятся только в тексте")
     for m_ in re.finditer(r"<svg\b.*?</svg>", sent, re.S | re.I):
         for k in re.findall(rf"{_S_VAL}(\d+){_S_VAL}", m_.group(0)):
             if slots[int(k)][0] == "f" and slots[int(k)][2] == "cite":
@@ -803,6 +836,9 @@ def finalize(html_with_sentinels: str, logos: dict[str, str], cite, known=None) 
         if _SENTINELS.search(out):
             raise VizRejected("остался служебный символ")
         out = _nh3(out, final=True).strip()
+        # «заявлено ·» с пустой датой после точки — убираем висячий разделитель.
+        out = re.sub(r"\s*[·•]\s*(?=</)", "", out)
+        out = re.sub(r"(?<=>)\s*[·•]\s+", "", out)
         logo_bytes = sum(len(v.encode("utf-8")) for v in logos.values())
         if len(out.encode("utf-8")) - logo_bytes > FINAL_BYTES or logo_bytes > 6 * 24_000:
             raise VizRejected(f"блок после подстановки больше {FINAL_BYTES // 1000} КБ")
@@ -830,6 +866,15 @@ def resanitize(markup: str) -> str:
 # ── Маркер в тексте ──────────────────────────────────────────────────────────
 MARKER = "[[VIZ:{n}]]"
 _MARKER_PREFIX = "[[VIZ:"
+# Маркер внутри резюме идёт одной строкой с текстом модели через страж —
+# поэтому код ставит его служебным токеном, а поток превращает в маркер
+# уже ПОСЛЕ стража.
+LEAD_MARKER = "\ue010VIZ:{n}\ue010"
+_LEAD_MARKER_RE = re.compile("\ue010VIZ:(\\d+)\ue010")
+
+
+def restore_lead_markers(text: str) -> str:
+    return _LEAD_MARKER_RE.sub(lambda m: MARKER.format(n=m.group(1)), text or "")
 
 
 def marker(n: int) -> str:
@@ -938,6 +983,17 @@ def repair_prompt(prompt: str, answer: str, reasons: list[str]) -> str:
     ])
 
 
+def mark_long_values(facts_text: str) -> str:
+    """Строка факта с простынёй вместо значения — не для ячейки сравнения."""
+    out = []
+    for line in facts_text.splitlines():
+        parts = line.split(" | ")
+        if len(parts) >= 3 and len(parts[2]) > VALUE_CHARS:
+            line += "  ← длинное значение: не ставь в ячейку, только как цитату или пропусти"
+        out.append(line)
+    return "\n".join(out)
+
+
 def designer_prompt(*, section: str, title: str, question: str, anchor: str,
                     labels: dict[str, str], facts_text: str, section_text: str,
                     subjects: list[str]) -> str:
@@ -972,11 +1028,13 @@ def designer_prompt(*, section: str, title: str, question: str, anchor: str,
         "Нельзя писать даже «500 тыс.», «3 месяца», «2 дня», «шаг 1», "
         "«2026» — любое число в твоём тексте выбросит блок. Правильная ячейка "
         "выглядит так: <td>{{f:12}} {{f:12.cite}}<br><small>{{f:12.side}} · "
-        "{{f:12.date}}</small></td>. Строка покрытия — только так: «Показано "
-        "фактов: {{meta:facts_used}} из {{meta:facts_total}}; объектов "
-        "{{meta:subjects}}».",
-        "2. Рядом с каждым числом, в том же элементе, — якорь источника "
-        "{{f:12.cite}}. Не списком под блоком, а у числа.",
+        "{{f:12.date}}</small></td>. Строка покрытия — последней строкой блока, "
+        "дословно: <small>Показано фактов: {{meta:facts_used}} из "
+        "{{meta:facts_total}}; объектов {{meta:subjects}}</small>. Счётчики "
+        "meta нигде больше не используй.",
+        "2. Рядом с каждым числом, в том же элементе (той же ячейке или строке), — "
+        "якорь источника {{f:12.cite}}. Не списком под блоком, а у числа. У "
+        "цитаты якорь — в подписи той же карточки.",
         "3. В сравнении двух и более объектов у значений стоит дата "
         "{{f:12.date}} — либо у каждого, либо в заголовке столбца.",
         "4. Нет данных — покажи честно: ячейка с подписью «нет данных», "
@@ -1015,7 +1073,7 @@ def designer_prompt(*, section: str, title: str, question: str, anchor: str,
         "ограждении ```html … ```. Никаких пояснений вне ограждений.",
         "",
         "ФАКТЫ РАЗДЕЛА (id | объект | характеристика | значение | сторона | дата):",
-        facts_text.strip() or "— фактов нет —",
+        mark_long_values(facts_text.strip()) or "— фактов нет —",
         "",
         "ТЕКСТ РАЗДЕЛА (для понимания главного; числа из него брать нельзя — "
         "только плейсхолдерами фактов):",

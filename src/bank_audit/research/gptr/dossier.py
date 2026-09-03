@@ -569,7 +569,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
             if not lead.get(k):
                 continue
             n = lead_slot.get(k)
-            marker = al_viz.MARKER.format(n=n) + "\n\n" if n is not None else ""
+            marker = al_viz.LEAD_MARKER.format(n=n) + "\n\n" if n is not None else ""
             if k in al_viz.BEFORE_TEXT:
                 head += f"## {ttl[k]}\n\n{marker}{lead[k]}\n\n"
             else:
