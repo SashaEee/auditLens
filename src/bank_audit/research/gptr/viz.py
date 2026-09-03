@@ -369,10 +369,14 @@ def prepare(template: str, *, facts: list, labels: dict[str, str], section: str,
     used_subj = {by_id[i].subject for i in used_ids}
     # Дата обязательна там, где объекты сравниваются числами; доска шагов и
     # цитаты клиентов объекты не сопоставляют.
-    if len(used_subj) >= 2 and section in DATED_SECTIONS:
+    have_dates = {i for i in used_ids if str(getattr(by_id[i], "date", "") or "").strip()}
+    if len(used_subj) >= 2 and section in DATED_SECTIONS and have_dates:
+        # Дата нужна у объектов, чьи факты датированы; без дат в фактах
+        # требовать её бессмысленно — подставилась бы пустота.
+        need = {by_id[i].subject for i in have_dates}
         dated = {by_id[sl[1]].subject for sl in slots if sl[0] == "f" and sl[2] == "date"}
-        same_window = len({str(getattr(by_id[i], "date", "") or "")[:7] for i in used_ids}) == 1
-        if not (dated >= used_subj or (dated and same_window)):
+        same_window = len({str(getattr(by_id[i], "date", "") or "")[:7] for i in have_dates}) == 1
+        if not (dated >= need or (dated and same_window)):
             raise VizRejected("сравнение объектов: дата у каждого объекта или общая дата одного окна")
 
     used = [by_id[i] for i in used_ids]
@@ -1026,7 +1030,9 @@ def designer_prompt(*, section: str, title: str, question: str, anchor: str,
         "{{f:12.quote}} дословная цитата. Нумерация шагов и тем — только "
         "списком <ol>, без цифр в тексте. Оси и шкалы числами не подписывай. "
         "Нельзя писать даже «500 тыс.», «3 месяца», «2 дня», «шаг 1», "
-        "«2026» — любое число в твоём тексте выбросит блок. Правильная ячейка "
+        "«2026» — любое число в твоём тексте выбросит блок, в заголовке и в "
+        "подписях тоже: вопрос аудитора и рекламные формулировки пересказывай "
+        "словами («целевой оборот сегмента», «рекламная ставка»). Правильная ячейка "
         "выглядит так: <td>{{f:12}} {{f:12.cite}}<br><small>{{f:12.side}} · "
         "{{f:12.date}}</small></td>. Строка покрытия — последней строкой блока, "
         "дословно: <small>Показано фактов: {{meta:facts_used}} из "

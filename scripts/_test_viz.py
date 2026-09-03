@@ -252,5 +252,8 @@ check("длинное значение помечено в списке факт
 check("meta даты без фактов с датой — «не указана»", V.meta_for([fact(1, "s", "a", "1")])["date_min"] == "не указана")
 g3 = V.MarkerGuard()
 check("токен lead переживает стража и восстанавливается", V.restore_lead_markers(g3.feed("## Резюме\n\n" + V.LEAD_MARKER.format(n=4) + "\n\nтекст [[VIZ:0]]") + g3.finish()) == "## Резюме\n\n[[VIZ:4]]\n\nтекст [[VIZ\u200b:0]]")
+Fnd = [fact(11, "sberbank", "Ставка", "1", "%"), fact(12, "tbank", "Ставка", "2", "%")]
+check("сравнение фактов без дат не требует даты", rejected(V.prepare, '<div class="viz">{{f:11}} {{f:11.cite}} {{f:12}} {{f:12.cite}}</div>', facts=Fnd, labels=L, section="market", subjects=SUBJ) is None)
+check("промпт: заголовки без чисел", "в заголовке и в" in V.designer_prompt(section="market", title="t", question="q", anchor="", labels=L, facts_text="", section_text="", subjects=SUBJ))
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)
