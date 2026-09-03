@@ -366,7 +366,7 @@ function ErrState({msg}){
 
 function StatRow({label,value,delta,sub,warn,neg}){
   return <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:14}}>
-    <div className="t-cap" style={{fontSize:12.5,color:"var(--ink-3)"}}>{label}</div>
+    <div className="t-cap" style={{fontSize:12,color:"var(--ink-3)"}}>{label}</div>
     <div style={{textAlign:"right"}}>
       <div className="mono tnum" style={{fontSize:18,fontWeight:500,color:neg?"var(--neg)":warn?"var(--warn)":"var(--ink)"}}>{value}</div>
       {(delta||sub)&&<div className="t-cap" style={{fontSize:11,color:"var(--ink-3)"}}>{delta||sub}</div>}
@@ -935,7 +935,7 @@ function BfCard({ins,idx,lead}){
     if(ins.kind==="tariff_move")return <DeltaStrip from={d.from} to={d.to}/>;
     if(ins.kind==="mass_move")
       return <span className="mono" style={{fontSize:12}}>
-        <b style={{fontSize:15}}>{d.n_banks}</b> банков · {(d.banks||[]).slice(0,3).join(", ")}{(d.banks||[]).length>3?"…":""}
+        <b style={{fontSize:14}}>{d.n_banks}</b> банков · {(d.banks||[]).slice(0,3).join(", ")}{(d.banks||[]).length>3?"…":""}
       </span>;
     if(ins.kind==="rate_move")
       return <><RateStep points={(d.points||[]).slice(-30)}/><span className="mono tnum" style={{fontSize:13,fontWeight:600}}>{d.current}%</span></>;
@@ -1591,7 +1591,7 @@ function ForYouPage(){
   if(p===null) return <div className="fade-in">
     <style>{FY_CSS}</style><div className="fy-seg-mob"><OvSeg page="foryou"/></div>
     <div style={{padding:"72px 24px",textAlign:"center",maxWidth:500,margin:"0 auto"}}>
-      <div style={{fontSize:26,marginBottom:12,color:"var(--accent)"}}>✦</div>
+      <div style={{fontSize:24,marginBottom:12,color:"var(--accent)"}}>✦</div>
       <div className="t-h" style={{marginBottom:8}}>Персонализация выключена</div>
       <p className="t-cap" style={{marginBottom:20,textWrap:"pretty"}}>Включите персональный дайджест — и эта страница будет собираться каждое утро под вашу зону ответственности в Сбере: направления, новости, зацепки для проверок.</p>
       <button className="btn btn-accent" onClick={async()=>{try{await apiPut("/api/me",{prefs:{personal_digest:true}});setP(undefined);load();}catch{}}}>Включить персонализацию</button>
@@ -1860,6 +1860,55 @@ function Sept3Strip(){
     </div>
     <button type="button" className="s3-hide" onClick={hide} title="Скрыть до следующего года">×</button>
   </div>;
+}
+
+// ─── Сегментированный переключатель: подложка едет, а не перекрашивается ───
+// Ставится один раз на все .seg в приложении: сама находит активную кнопку,
+// подставляет общую подложку и двигает её пружиной. Пока подложки нет,
+// активный сегмент выглядит как раньше — если скрипт не отработал, ничего
+// не теряется.
+const SEGS=".seg, .rv-chips";
+function useSlidingSegments(){
+  useEffect(()=>{
+    const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const place=(seg)=>{
+      const on=seg.querySelector(".seg-btn.on, .rv-chip.on");
+      let ind=seg.querySelector(":scope > .seg-ind");
+      if(!on){ if(ind) ind.style.opacity="0"; return; }
+      if(!ind){
+        ind=document.createElement("i"); ind.className="seg-ind";
+        seg.insertBefore(ind, seg.firstChild); seg.classList.add("seg--ind");
+      }
+      const s=seg.getBoundingClientRect(), b=on.getBoundingClientRect();
+      ind.style.opacity="1";
+      ind.style.width=b.width+"px"; ind.style.height=b.height+"px";
+      ind.style.transform=`translate(${b.left-s.left}px, ${b.top-s.top}px)`;
+      if(reduce) ind.style.transition="none";
+    };
+    const all=()=>document.querySelectorAll(SEGS).forEach(place);
+    all();
+    // Переключатели появляются вместе со своими экранами, поэтому следим и за
+    // добавлением узлов: иначе подложка встала бы только после первого клика.
+    let queued=false;
+    const later=()=>{ if(queued)return; queued=true;
+      requestAnimationFrame(()=>{queued=false; all(); attach();}); };
+    const mo=new MutationObserver(muts=>{
+      for(const m of muts){
+        if(m.type==="childList"){ later(); continue; }
+        const seg=(m.target.closest&&m.target.closest(SEGS));
+        if(seg) place(seg);
+      }
+    });
+    mo.observe(document.body,{subtree:true,attributes:true,attributeFilter:["class"],childList:true});
+    const ro=new ResizeObserver(()=>all());
+    const seen=new WeakSet();
+    const attach=()=>document.querySelectorAll(SEGS).forEach(el=>{
+      if(seen.has(el))return; seen.add(el); ro.observe(el);
+    });
+    attach();
+    addEventListener("resize",all);
+    return()=>{mo.disconnect();ro.disconnect();removeEventListener("resize",all);};
+  },[]);
 }
 
 function OverviewPage(){
@@ -2193,7 +2242,7 @@ function OverviewPage(){
               return <tr key={i} onClick={go} style={{cursor:"pointer"}} title="Открыть в журнале изменений">
                 <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}{c.is_sber&&<span className="badge solid" style={{marginLeft:8,fontSize:9}}>Сбер</span>}</div>
                   <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
-                <td data-label="Продукт" style={{fontSize:12.5,color:"var(--ink-2)"}}>{c.title}</td>
+                <td data-label="Продукт" style={{fontSize:12,color:"var(--ink-2)"}}>{c.title}</td>
                 <td className="right mono tnum" data-label="Было → стало">{c.from}% → <b>{c.to}%</b></td>
                 <td className="right" data-label="Δ"><span className={`delta ${up?"pos":"neg"}`}>{up?<Ic.arrow_up/>:<Ic.arrow_dn/>}{signed(c.delta)}</span></td>
                 <td className="right mono tnum" data-label="Когда" style={{fontSize:11,color:"var(--ink-3)"}}>{fmtDate(c.changed_at)}</td>
@@ -2564,7 +2613,10 @@ function MarketPage({params}){
   },[cat]);
 
   // debounce поиска (серверный q — не дёргаем API на каждую букву)
-  useEffect(()=>{const t=setTimeout(()=>setQ(qLive),350);return()=>clearTimeout(t);},[qLive]);
+  // Пауза перед запросом — единственная задержка на пути ввода, поэтому
+  // держим её на пороге незаметности: пользователь дописывает слово, а не
+  // ждёт. Стереть запрос — реакция мгновенная, ждать нечего.
+  useEffect(()=>{if(!qLive){setQ("");return;}const t=setTimeout(()=>setQ(qLive),200);return()=>clearTimeout(t);},[qLive]);
 
   // состояние → hash: диплинк живёт в адресе, F5 ничего не теряет
   useEffect(()=>{
@@ -2847,7 +2899,7 @@ function MarketPage({params}){
                 <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
                   <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
                   <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
-                    {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
+                    {isSber&&<div className="t-cap" style={{fontSize:10,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
                 <td data-label="Продукт">{r.title}<OfferTerms o={r}/>
                   {r.product_kind&&<div className="ofkind" title="что это за продукт на самом деле — разобрано по тексту тарифа">{r.product_kind}</div>}</td>
@@ -2858,8 +2910,8 @@ function MarketPage({params}){
                   {r.rate_kind==="max"&&(mcat.metric||"rate_pct")==="rate_pct"&&
                     <span className="mk-upto" title="верхняя граница по витрине агрегатора, а не ставка по договору">до </span>}
                   {mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
-                {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12.5}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
-                {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
+                {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
+                {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
                 {showBarCol&&<td data-label="К лидеру">
                   {rel!=null&&isFinite(rel)?<div style={{display:"flex",alignItems:"center",gap:8}}>
                     <div className="bar" style={{flex:1,maxWidth:70}}>
@@ -2869,8 +2921,8 @@ function MarketPage({params}){
                       {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2)} пп`}</span>
                   </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
                 </td>}
-                <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
-                <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
+                <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
+                <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
               </tr>;})}
           </tbody>
         </table>}
@@ -2994,7 +3046,7 @@ function RvModal({onClose,title,sub,side,children}){
       <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")} onClick={e=>e.stopPropagation()}>
         <div className="rv-ovl-head">
           <div style={{minWidth:0}}>
-            <div className="rv-ttl" style={{fontSize:15}}>{title}</div>
+            <div className="rv-ttl" style={{fontSize:14}}>{title}</div>
             {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
           </div>
           <button className="rv-ovl-x" onClick={onClose} aria-label="Закрыть">✕</button>
@@ -5682,7 +5734,7 @@ function BanksPage(){
               </td>
               <td data-label="ОТЗЫВОВ" className="right mono tnum">
                 {b.total_reviews?<>{fmtNum(b.total_reviews)}
-                  {b.reviews_year?<div style={{fontSize:10.5,color:"var(--ink-4)"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
+                  {b.reviews_year?<div style={{fontSize:10,color:"var(--ink-4)"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
                   :<span style={{color:"var(--ink-4)"}}>—</span>}
               </td>
               <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${solved}%`:"—"}</td>
@@ -5701,7 +5753,7 @@ function BanksPage(){
         {showRest?"▾":"▸"} Ещё {rest.length} организаций в справочнике без рейтинга и отзывов
       </div>
       {showRest&&<div className="surface" style={{marginTop:8,padding:"12px 14px",display:"flex",flexWrap:"wrap",gap:8}}>
-        {rest.map(b=><span key={b.bank_id||b.slug} className="badge" style={{fontSize:11.5}}>{b.name||b.slug}</span>)}
+        {rest.map(b=><span key={b.bank_id||b.slug} className="badge" style={{fontSize:11}}>{b.name||b.slug}</span>)}
       </div>}
     </div>}
   </div>;
@@ -5881,7 +5933,7 @@ function SourcesTech({data:extData}){
       </div>
       {loading?<div style={{padding:32}}><Skel h={40}/><div style={{height:8}}/><Skel h={40}/></div>:
       !runs.length?<EmptyState text="Нет запусков в истории"/>:
-      <><div style={{padding:"10px 24px",fontSize:11.5,color:"var(--ink-3)",borderBottom:"1px solid var(--hair)"}}>
+      <><div style={{padding:"10px 24px",fontSize:11,color:"var(--ink-3)",borderBottom:"1px solid var(--hair)"}}>
         <strong>Спарсено</strong> — сколько товаров увидел адаптер. <strong>Изменилось</strong> — сколько новых
         или с обновлёнными условиями (SCD2). 0 при ненулевом «Спарсено» = идемпотентный прогон, данные не изменились.
         Снимок не меняется (sha256) → парсер не запускается, оба нуля.
@@ -5901,8 +5953,8 @@ function SourcesTech({data:extData}){
             const fresh=written>0;
             const empty=seen===0&&written===0&&r.status==="ok";
             return <tr key={i}>
-              <td className="mono" style={{fontWeight:500,fontSize:12.5}}>{r.source}</td>
-              <td className="mono" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.target_name}</td>
+              <td className="mono" style={{fontWeight:500,fontSize:12}}>{r.source}</td>
+              <td className="mono" style={{color:"var(--ink-2)",fontSize:12}}>{r.target_name}</td>
               <td>
                 <span className={`badge ${r.status==="ok"?"pos":r.status==="error"||r.status==="failed"?"neg":r.status==="captcha"?"warn":""}`}>
                   <span className="dot"/>
@@ -6118,7 +6170,7 @@ function SourcesPage(){
             <td data-label="Статус">
               <span className={"badge "+(p.status==="approved"?"pos":p.status==="rejected"?"neg":"warn")}>
                 {SRC_STATUS_RU[p.status]||p.status}</span>
-              <div className="t-cap" style={{fontSize:10.5}}>{fmtDateMsk(p.created_at)}</div>
+              <div className="t-cap" style={{fontSize:10}}>{fmtDateMsk(p.created_at)}</div>
             </td>
             {isAdmin&&<td data-label="Автор" className="t-cap">{p.proposer_name||p.proposed_by}</td>}
             <td className="right">
@@ -6999,10 +7051,10 @@ function AdDonut({parts,center,sub}){
         fontFamily="'JetBrains Mono',monospace">{sub}</text>
     </svg>
     <div style={{display:"flex",flexDirection:"column",gap:7}}>
-      {(parts||[]).map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,fontSize:12.5}}>
+      {(parts||[]).map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,fontSize:12}}>
         <span style={{width:9,height:9,borderRadius:3,background:p.color,flex:"none"}}/>
         <span style={{color:"var(--ink-2)"}}>{p.label}</span>
-        <b className="tnum" style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11.5}}>{p.value||0}</b>
+        <b className="tnum" style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{p.value||0}</b>
       </div>)}
     </div>
   </div>;
@@ -7823,7 +7875,7 @@ function PulsePage(){
     {sess&&<PuSessionView sid={sess} onClose={()=>setSess(null)}/>}
 
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
-                 fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:"var(--ink-4)"}}>
+                 fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"var(--ink-4)"}}>
       телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS ·
       открытие чужого отчёта пишется в журнал (admin_report_open)
     </div>
@@ -8185,7 +8237,7 @@ class PageBoundary extends React.Component{
   componentDidUpdate(prev){ if(prev.pageKey!==this.props.pageKey&&this.state.err)this.setState({err:null}); }
   render(){
     if(this.state.err) return <div style={{padding:"64px 24px",textAlign:"center"}}>
-      <div style={{fontSize:26,marginBottom:10,color:"var(--warn)"}}>⚠</div>
+      <div style={{fontSize:24,marginBottom:10,color:"var(--warn)"}}>⚠</div>
       <div style={{fontWeight:500,marginBottom:6}}>Страница не смогла отрисоваться</div>
       <div className="t-cap" style={{maxWidth:"46ch",margin:"0 auto 16px"}}>
         Ошибка записана в журнал «Пульса». Чаще всего в вкладке осталась старая версия
@@ -8475,6 +8527,7 @@ function Shell(){
 }
 
 function App(){
+  useSlidingSegments();
   return <ThemeProvider><Shell/></ThemeProvider>;
 }
 
