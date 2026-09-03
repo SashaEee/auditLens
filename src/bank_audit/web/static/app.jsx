@@ -1778,6 +1778,52 @@ function ForYouPage(){
   </div>;
 }
 
+// ─── 3 сентября: календарь переворачивается сам, раз в год ────────────────
+// Пасхалка на главной. Включается только 3 сентября по дате в браузере;
+// параметр ?sept3=1 показывает её в любой день (предпросмотр). Скрытие
+// запоминается на год в localStorage.
+function isSept3(){
+  try{ if(new URLSearchParams(location.search).get("sept3")==="1") return true; }catch{}
+  const d=new Date(); return d.getMonth()===8&&d.getDate()===3;
+}
+function Sept3Banner(){
+  const year=new Date().getFullYear();
+  const key="al-sept3-"+year;
+  const[hidden,setHidden]=useState(()=>{try{return localStorage.getItem(key)==="1";}catch{return false;}});
+  const[flip,setFlip]=useState(0);
+  if(!isSept3()||hidden) return null;
+  const dow=(()=>{try{return new Intl.DateTimeFormat("ru-RU",{weekday:"long"}).format(new Date(year,8,3));}catch{return "";}})();
+  const hide=()=>{try{localStorage.setItem(key,"1");}catch{} setHidden(true);};
+  return <div className="s3-card" role="note">
+    <div className="s3-cal" key={flip}>
+      <div className="s3-rings"><i/><i/></div>
+      <div className="s3-leaf">
+        <div className="s3-leaf-head">сентябрь</div>
+        <div className="s3-leaf-day">3</div>
+        <div className="s3-leaf-dow">{dow}</div>
+      </div>
+    </div>
+    <div className="s3-text">
+      <div className="eyebrow">3 сентября · раз в год</div>
+      <div className="s3-title">Календарь перевёрнут.</div>
+      <div className="s3-sub">Единственный день, когда дата-платформа переворачивает страницу вручную и без ссылки на источник. Все остальные числа на этой странице по-прежнему сверены с первоисточниками.</div>
+      <div className="s3-actions">
+        <button type="button" onClick={()=>setFlip(f=>f+1)}>Перевернуть ещё раз</button>
+        <button type="button" onClick={hide}>Скрыть до следующего года</button>
+      </div>
+    </div>
+    <svg className="s3-rowan" viewBox="0 0 70 70" aria-hidden="true">
+      <path d="M12 44 C 22 30, 40 22, 62 14" fill="none" stroke="var(--pos)" strokeWidth="1.6" strokeLinecap="round"/>
+      <path d="M40 22 C 46 14, 56 12, 64 8" fill="none" stroke="var(--pos)" strokeWidth="1.2" strokeLinecap="round"/>
+      <ellipse cx="50" cy="16" rx="7" ry="2.6" transform="rotate(-28 50 16)" fill="var(--pos)" opacity=".85"/>
+      <ellipse cx="58" cy="11" rx="6" ry="2.2" transform="rotate(-28 58 11)" fill="var(--pos)" opacity=".7"/>
+      <circle cx="16" cy="48" r="5" fill="var(--accent)"/><circle cx="25" cy="52" r="5" fill="var(--accent)"/>
+      <circle cx="21" cy="42" r="4.6" fill="var(--accent)" opacity=".9"/><circle cx="31" cy="46" r="4.6" fill="var(--accent)" opacity=".85"/>
+      <circle cx="12" cy="56" r="4.2" fill="var(--accent)" opacity=".8"/><circle cx="27" cy="60" r="4.2" fill="var(--accent)" opacity=".75"/>
+    </svg>
+  </div>;
+}
+
 function OverviewPage(){
   const[dg,setDg]=useState(null);
   const[summary,setSummary]=useState(null);
@@ -1873,6 +1919,7 @@ function OverviewPage(){
   const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{}):[];
 
   return <div className="fade-in">
+    <Sept3Banner/>
     <div className="fy-seg-mob"><OvSeg page="overview"/></div>
     {/* ⓪ ЛИЧНЫЙ СЛОЙ — опциональная полоса (prefs.personal_band_home), над передовицей */}
     <PersonalBand/>
