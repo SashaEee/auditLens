@@ -1778,49 +1778,87 @@ function ForYouPage(){
   </div>;
 }
 
-// ─── 3 сентября: календарь переворачивается сам, раз в год ────────────────
-// Пасхалка на главной. Включается только 3 сентября по дате в браузере;
-// параметр ?sept3=1 показывает её в любой день (предпросмотр). Скрытие
-// запоминается на год в localStorage.
+// ─── 3 сентября: перекидной календарь, раз в год ──────────────────────────
+// Пасхалка на главной. Видна только 3 сентября по дате в браузере;
+// ?sept3=1 показывает её в любой день (предпросмотр), скрытие запоминается
+// на год. Лист переворачивается со 2-го на 3-е при наведении и по клику —
+// НЕ анимацией при монтировании: на рабочих машинах часто включено
+// «уменьшить движение», и css-анимация там не проигрывается вовсе.
 function isSept3(){
   try{ if(new URLSearchParams(location.search).get("sept3")==="1") return true; }catch{}
   const d=new Date(); return d.getMonth()===8&&d.getDate()===3;
 }
-function Sept3Banner(){
+// Пиксель-арт: карта символов → квадратики. Дешевле картинки и не тащит
+// чужие файлы на прод.
+const S3_FACE=[
+  "....dddd....",
+  "..dddddddd..",
+  ".dd222222dd.",
+  ".d22222222d.",
+  ".2kkkk2kkkk2",
+  ".2kkkk2kkkk2",
+  ".22222222222",
+  "..222hh222..",
+  "..w22222w2..",
+  ".www2222www.",
+  ".wwwwwwwwww.",
+  "..wwwwwwww..",
+];
+const S3_COLORS={d:"#2b2b30",2:"#e8c49a",k:"#17171b",h:"#c98f6a",w:"#e9e9ee"};
+function PixelFace({singing}){
+  return <svg className={"s3-face"+(singing?" sing":"")} viewBox="0 0 12 12" aria-hidden="true">
+    {S3_FACE.map((row,y)=>row.split("").map((ch,x)=>ch==="."?null:
+      <rect key={x+"-"+y} x={x} y={y} width="1" height="1" fill={S3_COLORS[ch]}
+            className={ch==="h"?"s3-mouth":undefined}/>))}
+  </svg>;
+}
+// Чем настойчивее переворачивают лист, тем меньше в подписи официоза.
+const S3_LINES=[
+  "Календарь перевёрнут вручную — единственное число на этой странице без ссылки на источник.",
+  "Перевёрнут. Ставка ностальгии — годовая, пересмотру не подлежит.",
+  "Костёр рябины разожжён по регламенту, акт составлен.",
+  "Дата подтверждена независимо: третье, сентября, снова.",
+  "Аудиторский след ведётся: каждый переворот зафиксирован.",
+  "Достаточно. Календарь и так согласен, что опять третье сентября.",
+];
+function Sept3Strip(){
   const year=new Date().getFullYear();
   const key="al-sept3-"+year;
   const[hidden,setHidden]=useState(()=>{try{return localStorage.getItem(key)==="1";}catch{return false;}});
-  const[flip,setFlip]=useState(0);
+  const[flipped,setFlipped]=useState(false);
+  const[count,setCount]=useState(0);
+  const[berries,setBerries]=useState([]);
   if(!isSept3()||hidden) return null;
-  const dow=(()=>{try{return new Intl.DateTimeFormat("ru-RU",{weekday:"long"}).format(new Date(year,8,3));}catch{return "";}})();
+  // Клик всегда оставляет лист на третьем: если он уже перевёрнут, роняем его
+  // обратно на миг и переворачиваем снова — «ещё раз, с начала».
+  const flip=()=>{
+    setCount(c=>c+1);
+    setFlipped(f=>{ if(f){ setTimeout(()=>setFlipped(true),90); return false; } return true; });
+  };
+  const sing=()=>{
+    setBerries(b=>[...b,{id:(b[b.length-1]?.id||0)+1}]);
+    setTimeout(()=>setBerries(b=>b.slice(1)),1400);
+  };
   const hide=()=>{try{localStorage.setItem(key,"1");}catch{} setHidden(true);};
-  return <div className="s3-card" role="note">
-    <div className="s3-cal" key={flip}>
-      <div className="s3-rings"><i/><i/></div>
-      <div className="s3-leaf">
-        <div className="s3-leaf-head">сентябрь</div>
-        <div className="s3-leaf-day">3</div>
-        <div className="s3-leaf-dow">{dow}</div>
-      </div>
+  return <div className={"s3-strip"+(flipped?" flipped":"")} role="note">
+    <button type="button" className="s3-cal" onMouseEnter={()=>setFlipped(true)} onClick={flip}
+            aria-label="Перевернуть календарь на третье сентября">
+      <span className="s3-rings"><i/><i/></span>
+      <span className="s3-leaf s3-leaf-old"><b>2</b></span>
+      <span className="s3-leaf s3-leaf-new"><b>3</b></span>
+      <span className="s3-tip">Я календарь переверну…</span>
+    </button>
+    <button type="button" className="s3-portrait" onClick={sing} aria-label="Разжечь костёр рябины">
+      <PixelFace singing={berries.length>0}/>
+      <span className="s3-tip s3-tip-r">…и снова третье сентября</span>
+      {berries.map(b=><i key={b.id} className="s3-berry"/>)}
+    </button>
+    <div className="s3-line">
+      <b>Третье сентября.</b>
+      <span> {S3_LINES[Math.min(count,S3_LINES.length-1)]}</span>
+      {count>1&&<span className="s3-count"> Переворотов: {count}.</span>}
     </div>
-    <div className="s3-text">
-      <div className="eyebrow">3 сентября · раз в год</div>
-      <div className="s3-title">Календарь перевёрнут.</div>
-      <div className="s3-sub">Единственный день, когда дата-платформа переворачивает страницу вручную и без ссылки на источник. Все остальные числа на этой странице по-прежнему сверены с первоисточниками.</div>
-      <div className="s3-actions">
-        <button type="button" onClick={()=>setFlip(f=>f+1)}>Перевернуть ещё раз</button>
-        <button type="button" onClick={hide}>Скрыть до следующего года</button>
-      </div>
-    </div>
-    <svg className="s3-rowan" viewBox="0 0 70 70" aria-hidden="true">
-      <path d="M12 44 C 22 30, 40 22, 62 14" fill="none" stroke="var(--pos)" strokeWidth="1.6" strokeLinecap="round"/>
-      <path d="M40 22 C 46 14, 56 12, 64 8" fill="none" stroke="var(--pos)" strokeWidth="1.2" strokeLinecap="round"/>
-      <ellipse cx="50" cy="16" rx="7" ry="2.6" transform="rotate(-28 50 16)" fill="var(--pos)" opacity=".85"/>
-      <ellipse cx="58" cy="11" rx="6" ry="2.2" transform="rotate(-28 58 11)" fill="var(--pos)" opacity=".7"/>
-      <circle cx="16" cy="48" r="5" fill="var(--accent)"/><circle cx="25" cy="52" r="5" fill="var(--accent)"/>
-      <circle cx="21" cy="42" r="4.6" fill="var(--accent)" opacity=".9"/><circle cx="31" cy="46" r="4.6" fill="var(--accent)" opacity=".85"/>
-      <circle cx="12" cy="56" r="4.2" fill="var(--accent)" opacity=".8"/><circle cx="27" cy="60" r="4.2" fill="var(--accent)" opacity=".75"/>
-    </svg>
+    <button type="button" className="s3-hide" onClick={hide} title="Скрыть до следующего года">×</button>
   </div>;
 }
 
@@ -1919,7 +1957,7 @@ function OverviewPage(){
   const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{}):[];
 
   return <div className="fade-in">
-    <Sept3Banner/>
+    <Sept3Strip/>
     <div className="fy-seg-mob"><OvSeg page="overview"/></div>
     {/* ⓪ ЛИЧНЫЙ СЛОЙ — опциональная полоса (prefs.personal_band_home), над передовицей */}
     <PersonalBand/>
