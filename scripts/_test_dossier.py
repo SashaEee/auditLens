@@ -157,7 +157,7 @@ check("поток зовёт досье", "al_dossier.write_dossier(" in stream_
 check("оглавление уходит до текста", '"type": "outline"' in stream_src)
 check("резюме уходит событием lead", '"type": "lead"' in stream_src)
 check("итоговый текст собирается в порядке чтения", 'report = lead_text + "".join(body_parts)' in stream_src)
-check("хвост тела сбрасывается ДО резюме", "tail = renum.finish()" in stream_src)
+check("хвост тела сбрасывается ДО резюме", "tail = guard.feed(renum.finish()) + guard.finish()" in stream_src and stream_src.index("tail = guard.feed(renum.finish())") < stream_src.index('"type": "lead"'))
 check("старый писатель одним куском не вызывается", "engine_stream_report(" not in stream_src.split("write_dossier")[1])
 jsx = pathlib.Path("src/bank_audit/web/static/app.jsx").read_text(encoding="utf-8")
 check("фронт вставляет lead наверх", 'data.type==="lead"' in jsx and "data.chunk+(last.text||" in jsx)

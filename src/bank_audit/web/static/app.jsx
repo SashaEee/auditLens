@@ -501,7 +501,7 @@ function renderMD(text, sources, charts, viz, opts){
       const v = vizByN[parseInt(vzm[1], 10)];
       if(v&&v.html){
         out.push(<div key={"vz"+idx} className="dr-viz" dangerouslySetInnerHTML={{__html:v.html}}/>);
-      }else if(v&&vizPending){
+      }else if(v&&v.reason&&vizPending){
         // Блок отклонён проверкой — во время стрима говорим об этом одной
         // строкой, в сохранённом отчёте на этом месте пусто.
         out.push(<div key={"vz"+idx} className="dr-viz dr-viz-pending dr-viz-rejected">визуализация раздела не прошла проверку{v.reason?`: ${v.reason}`:""}</div>);
@@ -5238,9 +5238,20 @@ function AIPage(){
       const mapped=(d.messages||[]).map(m=>{
         if(m.role==="user") return {role:"user",text:m.content};
         const meta=m.meta||{};
-        return {role:"ai",text:m.content,sources:meta.sources||[],
+        return {role:"ai",text:m.content,sources:meta.sources||[],report_id:meta.report_id||undefined,
                 mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined};
       });
+      // История хранит только текст и источники; визуализации, графики и
+      // артефакты проверки живут в отчёте — дотягиваем их по report_id, иначе
+      // маркеры [[VIZ:n]] в тексте рендерятся в пустоту.
+      await Promise.all(mapped.map(async m=>{
+        if(m.role!=="ai"||!m.report_id) return;
+        try{
+          const r=await apiFetch(`/api/reports/${m.report_id}`); const p=r.payload||{};
+          Object.assign(m,{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
+                           gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null});
+        }catch{}
+      }));
       setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}

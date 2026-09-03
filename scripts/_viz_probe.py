@@ -69,5 +69,19 @@ async def main():
         print("--- сырой ответ (первые 2500) ---"); print(ans[:2500])
         built = V.build(ans, facts=sec_facts, labels=labels, section=key, subjects=subjects)
         print("--- вердикт ---"); print("принято байт:", len(built.html), "| отклонено:", built.rejected)
+        if not built.html and built.rejected:
+            ans2 = ""
+            for attempt in range(2):
+                try:
+                    ans2 = await complete(V.repair_prompt(prompt, ans, built.rejected)); break
+                except Exception as e:
+                    print("починка, попытка", attempt + 1, "—", type(e).__name__); await asyncio.sleep(3)
+            built2 = V.build(ans2, facts=sec_facts, labels=labels, section=key, subjects=subjects)
+            print("--- починка ---"); print("принято байт:", len(built2.html), "| отклонено:", built2.rejected)
+            open(f"/tmp/probe_{key}_repair.html", "w").write(ans2)
+            if built2.html: built = built2
+        if built.html:
+            fin = V.finalize(built.html, built.logos, cite=lambda fid: fid)
+            open(f"/tmp/probe_{key}_final.html", "w").write(fin); print("финал байт:", len(fin))
         open(f"/tmp/probe_{key}.html", "w").write(ans)
 asyncio.run(main())

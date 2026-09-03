@@ -651,7 +651,11 @@ def build_pdf_html(*, question: str, report_md: str,
         report_md = (report_md[:_mt.start()] + report_md[_mt.end():]).lstrip("\n")
     # [[CHART:i]] → алфанум-токен: markdown-конвертер не должен его исказить
     report_md = re.sub(r"\[\[CHART:(\d+)\]\]", r"CHARTSLOT7f3a\1end", report_md)
-    report_md = re.sub(r"\[\[VIZ:(\d+)\]\]", r"VIZSLOT7f3a\1end", report_md)
+    # Литерал VIZSLOT в тексте модели не должен стать блоком; маркер — только
+    # отдельной строкой, как его ставит поток.
+    report_md = report_md.replace("VIZSLOT7f3a", "VIZSLOT 7f3a")
+    report_md = re.sub(r"(?m)^\s*\[\[VIZ:(\d{1,2})\]\]\s*$", r"VIZSLOT7f3a\1end", report_md)
+    report_md = re.sub(r"\[\[VIZ:\d+\]\]", "", report_md)
     body_html = _md_to_html(report_md, sources_by_n, toc_out=toc_entries)
     sources_html = _render_sources_section(sources)
     unverified = (verification or {}).get("unverified") or []
@@ -755,7 +759,7 @@ def build_pdf_html(*, question: str, report_md: str,
         --accent-soft:rgba(200,65,43,.08); --pos:#2f7a3d; --warn:#b8862b; --neg:#c8412b; }}
 .viz-block {{ margin: 5mm 0 6mm; page-break-inside: avoid; font-family: 'Geist', system-ui, sans-serif; font-size: 9pt; }}
 .viz-block .viz {{ width: 100%; }}
-.viz-block svg {{ max-width: 100%; height: auto; }}
+.viz-block svg {{ max-width: 100%; height: auto; max-height: 600px; }}
 .viz-block .viz-cite {{ font-size: 6.5pt; vertical-align: super; color: #7a808c; margin-left: 1px; }}
 html, body {{ margin: 0; padding: 0; }}
 body {{
@@ -1260,6 +1264,15 @@ def render_pdf(html_str: str) -> bytes:
                     route.abort()
             page.route("**/*", _route)
             page.set_content(html_str, wait_until="networkidle", timeout=30000)
+            # Разметка модели не должна раздуть документ: сотни тысяч пикселей
+            # высоты — это тысячи пустых страниц, а не отчёт.
+            try:
+                if page.evaluate("document.documentElement.scrollHeight") > 200_000:
+                    raise ValueError("документ аномально высок")
+            except ValueError:
+                raise
+            except Exception:
+                pass
             # Ждём загрузку шрифтов Google Fonts
             try:
                 page.evaluate("document.fonts.ready")
@@ -1283,6 +1296,7 @@ def render_pdf(html_str: str) -> bytes:
                 log.warning("PDF chart-render wait failed: %s "
                              "(PDF будет создан, но графики могут быть пустые)", e)
             pdf = page.pdf(
+                timeout=60000,
                 format="A4",
                 print_background=True,
                 margin={"top":"0mm","bottom":"0mm","left":"0mm","right":"0mm"},

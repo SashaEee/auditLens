@@ -420,6 +420,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
     # [[VIZ:n]], а готовый блок приходит событием («viz», …) — интерфейс
     # подставляет его по номеру, когда бы он ни пришёл.
     slots: list[str] = []
+    reported: set[int] = set()
     tasks: set[asyncio.Task] = set()
     state = runstate.current()      # контекст прогона: задача создаётся после yield
     gate = asyncio.Semaphore(al_viz.CONCURRENCY)
@@ -441,6 +442,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
 
         async def run():
             runstate.bind(state)
+            t0 = asyncio.get_running_loop().time()
             try:
                 async with gate:
                     answer = await asyncio.wait_for(_complete(prompt), al_viz.TIMEOUT)
@@ -458,6 +460,24 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
             try:
                 built = al_viz.build(answer, facts=facts, labels=labels,
                                      section=key, subjects=subjects)
+                spent = asyncio.get_running_loop().time() - t0
+                if not built.html and built.rejected and spent < al_viz.TIMEOUT / 2:
+                    # Одна попытка починить, если первый заход был быстрым:
+                    # модель видит причины и свой ответ.
+                    try:
+                        async with gate:
+                            answer2 = await asyncio.wait_for(
+                                _complete(al_viz.repair_prompt(prompt, answer, built.rejected)),
+                                al_viz.TIMEOUT - spent)
+                        built2 = al_viz.build(answer2, facts=facts, labels=labels,
+                                              section=key, subjects=subjects)
+                        if built2.html or not built2.rejected:
+                            log.info("визуализация %s: принята со второй попытки", key)
+                            built = built2
+                        else:
+                            built.rejected.extend("повтор: " + r for r in built2.rejected)
+                    except Exception as e:
+                        log.info("визуализация %s: повтор не удался — %s", key, type(e).__name__)
             except Exception as e:
                 log.exception("визуализация %s: сборка", key)
                 return {"n": n, "section": key, "html": "", "logos": {},
@@ -480,6 +500,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
                 log.info("визуализация: %s", type(e).__name__)
                 continue
             if r:
+                reported.add(r["n"])
                 out.append(("viz", r))
         return out
 
@@ -572,6 +593,12 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         for t in tasks:
             t.cancel()
             log.info("визуализация: не успела за %.0f с", al_viz.FINAL_WAIT)
+        if tasks:
+            for n_, key_ in enumerate(slots):
+                if n_ in reported:
+                    continue
+                yield ("viz", {"n": n_, "section": key_, "html": "", "logos": {},
+                               "reason": f"дизайнер не успел за {int(al_viz.FINAL_WAIT)} с"})
     finally:
         for t in tasks:
             if not t.done():

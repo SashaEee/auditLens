@@ -275,6 +275,7 @@ async def stream_deep_research_gptr(question: str,
     # Якоря перенумеровываются одним перенумеровщиком на все разделы —
     # нумерация по первому упоминанию, в порядке потока.
     renum = al_cit.StreamRenumberer(registry)
+    guard = al_viz.MarkerGuard()      # маркер не должен родиться из обрывков и якоря
     _ttl = al_dossier.titles(plan)
     yield _evt({"type": "outline",
                 "sections": al_dossier.outline(plan, registry)})
@@ -296,14 +297,14 @@ async def stream_deep_research_gptr(question: str,
                             "label": f"Пишу раздел: {_ttl[payload]}",
                             "detail": "каждый раздел получает свои факты целиком"})
             elif kind == "chunk":
-                ready = renum.feed(payload)
+                ready = guard.feed(renum.feed(payload))
                 if ready:
                     body_parts.append(ready)
                     yield _evt({"type": "text", "chunk": ready})
             elif kind == "marker":
                 # Место блока визуализации. Сначала сбрасываем придержанный
                 # хвост перенумеровщика, иначе якорь вылез бы после маркера.
-                tail = renum.finish()
+                tail = guard.feed(renum.finish()) + guard.finish()
                 if tail:
                     body_parts.append(tail)
                     yield _evt({"type": "text", "chunk": tail})
@@ -320,7 +321,7 @@ async def stream_deep_research_gptr(question: str,
                 if payload.get("html"):
                     try:
                         html_out = al_viz.finalize(payload["html"], payload.get("logos") or {},
-                                                   cite=renum.cite)
+                                                   cite=renum.cite, known=renum.known)
                     except al_viz.VizRejected as e:
                         reason = str(e)
                         log.info("визуализация %s: финал — %s", payload["section"], e)
@@ -332,11 +333,12 @@ async def stream_deep_research_gptr(question: str,
                 # тот же: якоря получат следующие номера, но каждый ведёт на
                 # свой источник. finish() сбрасывает придержанный хвост тела
                 # ДО подачи резюме, чтобы обрывок якоря не приклеился к нему.
-                tail = renum.finish()
+                tail = guard.feed(renum.finish()) + guard.finish()
                 if tail:
                     body_parts.append(tail)
                     yield _evt({"type": "text", "chunk": tail})
-                lead_text = renum.feed(payload) + renum.finish()
+                lead_guard = al_viz.MarkerGuard()
+                lead_text = lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish()
                 yield _evt({"type": "lead", "chunk": lead_text})
     except Exception as e:
         log.exception("gptr: написание")
@@ -344,7 +346,7 @@ async def stream_deep_research_gptr(question: str,
                     "chunk": f"\n\n⚠ **Отчёт не сформирован:** {e}\n"})
         yield _evt({"type": "done"})
         return
-    rest = renum.finish()
+    rest = guard.feed(renum.finish()) + guard.finish()
     if rest:
         body_parts.append(rest)
         yield _evt({"type": "text", "chunk": rest})

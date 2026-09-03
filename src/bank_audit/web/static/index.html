@@ -862,7 +862,7 @@ td .dr-conflict{padding:0 5px 1px;font-size:9.5px}
 .dr-chart-inline{margin:6px 0 18px;}
 .dr-viz{margin:18px 0 22px;max-width:100%;overflow:hidden;position:relative;contain:layout paint;isolation:isolate;font-family:'Geist',system-ui,sans-serif;font-size:13px;line-height:1.35;color:var(--ink)}
 .dr-viz .viz{width:100%;max-width:100%}
-.dr-viz svg{max-width:100%;height:auto}
+.dr-viz svg{max-width:100%;height:auto;max-height:600px}
 .dr-viz svg text:not([fill]){fill:var(--ink)}
 .dr-viz-rejected{color:var(--ink-3);font-style:italic}
 @media(max-width:640px){.dr-viz [style*="grid-template-columns"]{display:flex!important;flex-wrap:wrap!important}}
@@ -2131,6 +2131,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260903-viz"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260903-viz2"></script>
 </body>
 </html>

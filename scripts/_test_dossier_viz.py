@@ -28,12 +28,22 @@ VIZ_OK = ('```html\n<div class="viz"><h4>Ставка</h4><p>{{name:sberbank}} {
           '{{name:tbank}} {{f:2}} {{f:2.cite}} {{f:2.date}}</p><small>Показано {{meta:facts_used}} из '
           '{{meta:facts_total}}; объектов {{meta:subjects}}</small></div>\n```')
 
+REPAIRS = []
 async def fake_stream(client, model, prompt):
     if "Ты — дизайнер" in prompt:
+        if "ТВОЙ ПРЕДЫДУЩИЙ ОТВЕТ ОТКЛОНЁН" in prompt:
+            REPAIRS.append(prompt)
+            if "РАЗДЕЛ: Голос клиента" in prompt:
+                yield "```html\n<div class=\"viz\">снова 7</div>\n```"          # не починил
+            else:
+                yield VIZ_OK                                                    # починил
+            return
         if "РАЗДЕЛ: Голос клиента" in prompt:
             yield "```html\n<div class=\"viz\">цифра 7 руками</div>\n```"      # отклонится
         elif "РАЗДЕЛ: Что проверять" in prompt:
             yield "ПУСТО"
+        elif "РАЗДЕЛ: Карта условий" in prompt:
+            yield "```html\n<div class=\"viz\">срок 2 дня руками</div>\n```"   # отклонится, починится
         else:
             yield VIZ_OK
         return
@@ -71,6 +81,9 @@ check("отклонённый блок несёт причину", any("цифр
 check("ПУСТО от дизайнера — событие с пустым html без причины", any(v["section"] == "checks" and not v["html"] and not v.get("reason") for v in vizs))
 check("маркер резюме стоит над текстом резюме", lead.startswith("## Резюме для руководителя проверки\n\n[[VIZ:"))
 check("маркер плана — под текстом плана", "## Что проверять" in lead and lead.rstrip().endswith("]]"))
-check("статус ожидания приходит как событие", "status" in kinds or True)
+check("отклонённый блок получает одну попытку починки", len(REPAIRS) == 2 and all("ОТКЛОНЁН" in r and "цифра" in r for r in REPAIRS))
+check("починенный блок принят", any(v["section"] == "conditions" and v["html"] for v in vizs))
+check("непочиненный — причины обеих попыток", any(v["section"] == "voice" and "повтор:" in (v.get("reason") or "") for v in vizs))
+check("промпт починки содержит прежний ответ", all("ПРЕДЫДУЩИЙ ОТВЕТ" in r and "руками" in r for r in REPAIRS))
 check("нет незавершённых задач после генератора", True)
 print(f"\nитого: {ok} ок, {fail} с ошибкой"); sys.exit(1 if fail else 0)

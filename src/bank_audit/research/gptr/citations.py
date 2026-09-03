@@ -98,6 +98,10 @@ class StreamRenumberer:
             return ""
         return self._sub_fact(fact)
 
+    def known(self, fact_id: int) -> bool:
+        """Есть ли такой факт — без регистрации источника."""
+        return int(fact_id) in self._by_id
+
     def cite(self, fact_id: int) -> int | None:
         """Номер источника факта — для блоков визуализации, где якорь
         ставит код, а не модель. Регистрирует источник, как и текст."""

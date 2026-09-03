@@ -3004,10 +3004,17 @@ def _viz_clean(items: list) -> list[dict]:
     если когда-то её сгенерировали мы: та же финальная очистка."""
     from ..research.gptr import viz as _viz
     out = []
-    for v in items:
-        if isinstance(v, dict) and v.get("n") is not None:
-            out.append({"n": v["n"], "section": v.get("section"),
-                        "html": _viz.resanitize(str(v.get("html") or ""))})
+    for v in items[:50]:
+        if not isinstance(v, dict):
+            continue
+        try:
+            n = int(v.get("n"))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= n < 50:
+            continue
+        out.append({"n": n, "section": str(v.get("section") or "")[:40],
+                    "html": _viz.resanitize(str(v.get("html") or ""))})
     return out
 
 
@@ -3020,7 +3027,7 @@ async def ai_export_pdf(req: PdfExportRequest):
         raise HTTPException(400, "Empty report content")
     from .pdf_export import export_report_to_pdf
     try:
-        pdf_bytes = await asyncio.get_event_loop().run_in_executor(
+        pdf_bytes = await asyncio.wait_for(asyncio.get_event_loop().run_in_executor(
             None,
             lambda: export_report_to_pdf(
                 question=req.question, report_md=req.report_md,
@@ -3029,7 +3036,7 @@ async def ai_export_pdf(req: PdfExportRequest):
                 charts=req.charts or [], viz=_viz_clean(req.viz or []),
                 ranking=req.ranking, insights=req.insights or [],
                 gaps=req.gaps, claim_check=req.claim_check),
-        )
+        ), timeout=90)
     except Exception as e:
         logging.getLogger(__name__).warning("PDF export failed: %s", e)
         raise HTTPException(500, f"PDF generation failed: {str(e)[:200]}")
