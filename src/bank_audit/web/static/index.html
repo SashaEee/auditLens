@@ -2346,6 +2346,24 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
   from { opacity: .4; transform: translateX(28px); }
   to   { opacity: 1; transform: none; }
 }
+/* Закрытие — зеркало открытия: те же путь и кривая, только в обратную
+   сторону. Окно, которое исчезает мгновенно, читается как сбой. */
+.rv-ovl.is-closing { animation: scrim-out var(--dur-quick) var(--ease-out) both; }
+@keyframes scrim-out { to { opacity: 0 } }
+.rv-ovl.is-closing .rv-ovl-card { animation: sheet-out var(--dur-quick) var(--ease-out) both; }
+@keyframes sheet-out {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: scale(.97) translateY(6px); }
+}
+.rv-ovl.is-closing .rv-ovl-right { animation: panel-out var(--dur-quick) var(--ease-out) both; }
+@keyframes panel-out {
+  from { opacity: 1; transform: none; }
+  to   { opacity: .3; transform: translateX(28px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rv-ovl.is-closing, .rv-ovl.is-closing .rv-ovl-card, .rv-ovl.is-closing .rv-ovl-right { animation: none; opacity: 0; }
+}
+
 /* Всплывающие подсказки растут из своего источника, а не из ниоткуда. */
 .tip-pop, .xp-pop, .shr-pop { animation: pop-in var(--dur-quick) var(--ease-out) both; }
 @keyframes pop-in {
@@ -2376,6 +2394,29 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .dr-doc-main h1 { font-size: clamp(1.5rem, 1.2rem + 1.2vw, 2rem); }
 .dr-doc-main h2 { font-size: clamp(1.15rem, 1rem + .6vw, 1.4rem); }
 
+/* ── Подсказка появляется сразу и там, где смотрит глаз. Системный title
+   ждал секунду и не умел ни стилей, ни тач-экрана. ── */
+.tip-inst{position:fixed;z-index:9500;max-width:320px;padding:6px 9px;border-radius:6px;
+  background:var(--ink);color:var(--paper);font-size:12px;line-height:1.35;
+  box-shadow:var(--shadow-2);pointer-events:none;opacity:0;transform:translateY(-2px);
+  transition:opacity var(--dur-quick) var(--ease-out),transform var(--dur-quick) var(--ease-out)}
+.tip-inst.on{opacity:1;transform:none}
+
+/* ── Прокрутка внутри панели остаётся внутри панели: докрутив список до
+   конца, человек не должен внезапно поехать по странице под ним. ── */
+.rv-ovl-body, .chat-feed, .pu-drawer, .kb-list, .dr-doc-main, .src-panel-body {
+  overscroll-behavior: contain;
+}
+/* Плавная прокрутка ленты мешает, когда человек крутит сам: движение нельзя
+   перехватить на полпути. Оставляем её только там, где прокручивает код. */
+.chat-feed { scroll-behavior: auto; }
+
+/* ── Нажатие не выделяет текст: двойной клик по кнопке должен нажимать её,
+   а не подсвечивать подпись. ── */
+.btn, .nav-item, .seg-btn, .rv-chip, .chip, .pill, .bf-t, .icon-btn, .s3-cal, .s3-portrait {
+  user-select: none; -webkit-user-select: none;
+}
+
 /* ── Палец не должен целиться: минимальная зона нажатия на тач-экранах. ── */
 @media (pointer: coarse) {
   .btn, .nav-item, .chip, .pill, .rv-chip, .kb-tab { min-height: 44px; }
@@ -2386,6 +2427,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260903-apple7"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260903-apple9"></script>
 </body>
 </html>

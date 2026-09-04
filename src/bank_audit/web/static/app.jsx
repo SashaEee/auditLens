@@ -1867,6 +1867,54 @@ function Sept3Strip(){
 // подставляет общую подложку и двигает её пружиной. Пока подложки нет,
 // активный сегмент выглядит как раньше — если скрипт не отработал, ничего
 // не теряется.
+// ─── Подсказки без ожидания ────────────────────────────────────────────────
+// Системный title всплывает через секунду, не стилизуется и молчит на
+// тач-экранах. Забираем его у интерактивных элементов и показываем свой —
+// через 60 мс, то есть сразу, но без мельтешения при проведении мышью.
+const TIP_SEL='[title],[data-tip]';
+function useInstantTips(){
+  useEffect(()=>{
+    if(matchMedia("(pointer: coarse)").matches) return;   // на тач подсказка не нужна
+    let el=null, tip=null, timer=null;
+    const hide=()=>{ clearTimeout(timer); if(tip){tip.remove(); tip=null;} el=null; };
+    const show=(target,text)=>{
+      tip=document.createElement("div"); tip.className="tip-inst"; tip.textContent=text;
+      document.body.appendChild(tip);
+      const r=target.getBoundingClientRect(), t=tip.getBoundingClientRect();
+      const left=Math.min(Math.max(8, r.left), innerWidth-t.width-8);
+      const below=r.bottom+8+t.height<innerHeight;
+      tip.style.left=`${left}px`;
+      tip.style.top=`${below?r.bottom+7:r.top-t.height-7}px`;
+      requestAnimationFrame(()=>tip&&tip.classList.add("on"));
+    };
+    const over=e=>{
+      const t=e.target.closest&&e.target.closest(TIP_SEL);
+      if(!t||t===el)return;
+      hide(); el=t;
+      const text=t.getAttribute("data-tip")||t.getAttribute("title");
+      if(!text)return;
+      if(t.hasAttribute("title")){ t.setAttribute("data-tip",text); t.removeAttribute("title"); }
+      timer=setTimeout(()=>show(t,text),60);
+    };
+    const out=e=>{ if(el&&(!e.relatedTarget||!el.contains(e.relatedTarget))) hide(); };
+    // Тем, кто ходит с клавиатуры, подсказка тоже нужна — на фокусе.
+    const onFocus=e=>{ const t=e.target.closest&&e.target.closest(TIP_SEL); if(t) over({target:t}); };
+    document.addEventListener("pointerover",over,true);
+    document.addEventListener("pointerout",out,true);
+    document.addEventListener("focusin",onFocus,true);
+    document.addEventListener("focusout",hide,true);
+    document.addEventListener("pointerdown",hide,true);   // нажал — подсказка больше не нужна
+    addEventListener("scroll",hide,true);
+    addEventListener("keydown",e=>{if(e.key==="Escape")hide();});
+    return()=>{hide();document.removeEventListener("pointerover",over,true);
+      document.removeEventListener("pointerout",out,true);
+      document.removeEventListener("focusin",onFocus,true);
+      document.removeEventListener("focusout",hide,true);
+      document.removeEventListener("pointerdown",hide,true);
+      removeEventListener("scroll",hide,true);};
+  },[]);
+}
+
 const SEGS=".seg, .rv-chips";
 function useSlidingSegments(){
   useEffect(()=>{
@@ -2671,7 +2719,8 @@ function MarketPage({params}){
 
   const hlRef=useRef(null);
   useEffect(()=>{if(changes&&hlRef.current)
-    hlRef.current.scrollIntoView({block:"center",behavior:"smooth"});},[changes]);
+    hlRef.current.scrollIntoView({block:"center",
+      behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});},[changes]);
 
   const A=atlas?Object.fromEntries((atlas.categories||[]).map(c=>[c.category,c])):{};
   // Чипы строим по тому, что РЕАЛЬНО есть в категории (счётчики приходят с
@@ -3032,24 +3081,63 @@ function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удало
 // Переиспользуемый оверлей: центральный модал (полный текст) или правый драуэр
 // (drill-in по городу/месяцу). Закрытие по клику-вне, ✕ и Esc.
 function RvModal({onClose,title,sub,side,children}){
-  useEffect(()=>{
-    const h=e=>{if(e.key==="Escape")onClose();};
-    document.addEventListener("keydown",h);
-    const prev=document.body.style.overflow;
-    document.body.style.overflow="hidden";   // фон не скроллим, пока открыт оверлей
-    return ()=>{document.removeEventListener("keydown",h);document.body.style.overflow=prev;};
+  const cardRef=useRef(null);
+  // Окно уходит тем же путём, каким пришло: центральное — сжимаясь на месте,
+  // правая панель — вправо. Раньше оно появлялось с движением, а исчезало
+  // мгновенно, и это читалось как сбой, а не как закрытие.
+  const [closing,setClosing]=useState(false);
+  const close=useCallback(()=>{
+    setClosing(c=>{
+      if(c)return c;
+      const ms=matchMedia("(prefers-reduced-motion: reduce)").matches?0:190;
+      setTimeout(onClose,ms);
+      return true;
+    });
   },[onClose]);
+  useEffect(()=>{
+    // Куда вернуть фокус, когда окно закроется: человек должен оказаться там,
+    // откуда ушёл, а не в начале страницы.
+    const returnTo=document.activeElement;
+    const focusable=()=>[...(cardRef.current?.querySelectorAll(
+      'a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])')||[])]
+      .filter(el=>el.offsetWidth||el.offsetHeight);
+    const h=e=>{
+      if(e.key==="Escape"){close();return;}
+      if(e.key!=="Tab")return;
+      // Табуляция не должна уводить за пределы окна — иначе человек «проваливается»
+      // на страницу под ним и не понимает, где он.
+      const f=focusable(); if(!f.length)return;
+      const first=f[0], last=f[f.length-1];
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    };
+    document.addEventListener("keydown",h);
+    // Фон не скроллим, но и не даём странице дёрнуться на ширину полосы прокрутки.
+    const gap=window.innerWidth-document.documentElement.clientWidth;
+    const prev=document.body.style.overflow, prevPad=document.body.style.paddingRight;
+    document.body.style.overflow="hidden";
+    if(gap>0)document.body.style.paddingRight=`${gap}px`;
+    const t=setTimeout(()=>{const f=focusable(); (f[0]||cardRef.current)?.focus?.();},0);
+    return ()=>{
+      clearTimeout(t);
+      document.removeEventListener("keydown",h);
+      document.body.style.overflow=prev; document.body.style.paddingRight=prevPad;
+      if(returnTo&&returnTo.focus)returnTo.focus();
+    };
+  },[close]);
   // ПОРТАЛ в body: у предка .fade-in есть transform (animation fill-mode both),
   // который иначе становится containing-block для position:fixed и «роняет» модал вниз.
   return ReactDOM.createPortal(
-    <div className={"rv-ovl"+(side==="right"?" rv-ovl-r":"")} onClick={onClose}>
-      <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")} onClick={e=>e.stopPropagation()}>
+    <div className={"rv-ovl"+(side==="right"?" rv-ovl-r":"")+(closing?" is-closing":"")} onClick={close}>
+      <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")}
+           ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true"
+           onClick={e=>e.stopPropagation()}>
         <div className="rv-ovl-head">
           <div style={{minWidth:0}}>
             <div className="rv-ttl" style={{fontSize:14}}>{title}</div>
             {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
           </div>
-          <button className="rv-ovl-x" onClick={onClose} aria-label="Закрыть">✕</button>
+          <button className="rv-ovl-x" onClick={close} aria-label="Закрыть">✕</button>
         </div>
         <div className="rv-ovl-body">{children}</div>
       </div>
@@ -8528,6 +8616,7 @@ function Shell(){
 
 function App(){
   useSlidingSegments();
+  useInstantTips();
   return <ThemeProvider><Shell/></ThemeProvider>;
 }
 
