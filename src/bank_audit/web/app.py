@@ -792,7 +792,16 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     """Витрина категории: чистая база (без псевдо-офферов рейтингов), серверный
     поиск и пагинация — раньше limit=100 молча усекал категорию, а поиск шарил
     только по загруженной сотне."""
-    limit = max(1, min(limit, 200))
+    return _market_rows(category, limit, offset, q_text, term, segment, sub)
+
+
+def _market_rows(category: str, limit: int, offset: int,
+                 q_text: Optional[str], term: Optional[str],
+                 segment: Optional[str], sub: Optional[str],
+                 max_limit: int = 200):
+    """Строки витрины. Вынесено из эндпоинта, чтобы выгрузка в файл отдавала
+    РОВНО то же, что видно на экране, с теми же фильтрами."""
+    limit = max(1, min(limit, max_limit))
     # не-банки (сервисы подбора, застройщики) не показываем в банковской витрине
     cond, params = ["m.category = :c",
                     "m.bank_name !~* :nonbank"], {
@@ -826,6 +835,7 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     m_lower = meta["metric_lower_is_better"] if meta else False
     order = (f"{m_field} ASC NULLS LAST" if m_lower
              else f"{m_field} DESC NULLS LAST")
+    m_dir = "ASC" if m_lower else "DESC"
     # Неправдоподобные числа — В КОНЕЦ, а не в начало. Сторож правдоподобия
     # (normalizer/offers.py:implausible) давно помечает такие офферы, но витрина
     # его не читала: ПСБ «Народный вклад» со ставкой 30% при ключевой 14%
@@ -878,13 +888,79 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
                       lower(m.title), m.category,
                       (m.bank_slug NOT LIKE 'unknown_%') DESC,
                       (m.url !~* :aggr_host) DESC NULLS LAST,
-                      (m.amount_min IS NOT NULL) DESC, m.offer_id
+                      (m.amount_min IS NOT NULL) DESC,
+                      -- Один продукт наблюдается на нескольких сроках (сбор
+                      -- спрашивает 3/6/12/24/36 мес, а вилки сроков источник
+                      -- не отдаёт). Представителем берём ЛУЧШЕЕ предложение
+                      -- банка по метрике категории, иначе строка «Рынка»
+                      -- зависела бы от того, какое наблюдение легло первым.
+                      -- Фильтр по сроку работает ДО этого выбора, поэтому
+                      -- «вклады от года» показывают именно длинные условия.
+                      m.{m_field} {m_dir} NULLS LAST, m.offer_id
         )
         SELECT p.*, count(*) OVER () AS total
           FROM picked p
          ORDER BY (p.implausible_reason IS NOT NULL), p.{order}
          LIMIT :l OFFSET :off
     """, params)
+
+
+@app.get("/api/market/export.csv")
+def market_export(category: str = "deposit",
+                  q_text: Optional[str] = Query(None, alias="q"),
+                  term: Optional[str] = None,
+                  segment: Optional[str] = None,
+                  sub: Optional[str] = None,
+                  user: CurrentUser = Depends(get_current_user)):
+    """Витрина категории файлом. Аудиторы просили выгрузку, чтобы считать в
+    таблице и прикладывать к рабочим материалам: на экране цифры видно, а
+    сослаться на них в отчёте было нечем.
+
+    CSV с точкой с запятой и BOM — Excel открывает такой файл двойным щелчком
+    и не ломает кириллицу; запятая как разделитель ему не подходит.
+    """
+    rows = _market_rows(category, 5000, 0, q_text, term, segment, sub,
+                        max_limit=5000)
+    cols = [("bank_name", "Банк"), ("title", "Продукт"),
+            ("rate_pct", "Ставка, %"), ("psk_min", "ПСК от, %"),
+            ("psk_max", "ПСК до, %"), ("term_months_min", "Срок от, мес"),
+            ("term_months_max", "Срок до, мес"),
+            ("amount_min", "Сумма от"), ("amount_max", "Сумма до"),
+            ("fee_open", "Открытие"), ("fee_service", "Обслуживание"),
+            ("grace_days", "Льготный период, дн"),
+            ("cashback_pct", "Кэшбэк, %"), ("segment", "Сегмент"),
+            ("sub_segment", "Вид продукта"),
+            ("early_withdraw", "Досрочное снятие"),
+            ("capitalization", "Капитализация"),
+            ("replenishable", "Пополнение"),
+            ("valid_from", "Условия от"), ("url", "Источник"),
+            ("implausible_reason", "Отметка о проверке")]
+
+    from decimal import Decimal
+
+    def cell(v) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, bool):
+            return "да" if v else "нет"
+        if isinstance(v, (Decimal, float)):
+            # Дробная часть через запятую — иначе русский Excel считает
+            # «19.0000» текстом, и по колонке нельзя ни сортировать, ни считать.
+            t = f"{v:.2f}".rstrip("0").rstrip(".")
+            return t.replace(".", ",")
+        if isinstance(v, datetime):
+            return v.strftime("%d.%m.%Y")      # без микросекунд и часового пояса
+        return str(v).replace(";", ",").replace("\r", " ").replace("\n", " ")
+
+    lines = [";".join(t for _, t in cols)]
+    for r in rows:
+        lines.append(";".join(cell(r.get(k)) for k, _ in cols))
+    body = "\ufeff" + "\r\n".join(lines) + "\r\n"
+    name = f"auditlens-{category}-{datetime.now(timezone.utc):%Y%m%d}.csv"
+    return Response(content=body.encode("utf-8"),
+                    media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="{name}"'})
 
 
 @app.get("/api/meta/schedule")
@@ -2962,6 +3038,9 @@ class ClarifyRequest(BaseModel):
     answers: Optional[list] = None    # None → генерим вопросы; задан → собираем enriched
     deep: bool = False
 
+CLARIFY_TIMEOUT = float(os.getenv("CLARIFY_TIMEOUT", "40"))
+
+
 @app.post("/api/ai/clarify")
 async def ai_clarify(req: ClarifyRequest):
     """Синхронный JSON (НЕ SSE). Два режима:
@@ -2970,10 +3049,23 @@ async def ai_clarify(req: ClarifyRequest):
     # Demo-режим: воронку пропускаем — переписанный промпт сломал бы trigger_keywords.
     if is_demo_mode_active() and find_demo_response(req.question) is not None:
         return {"complete": True, "questions": [], "reason": "demo"}
-    if req.answers is not None:
-        enriched = await build_enriched_question(req.question, req.answers)
-        return {"enriched_question": enriched, "original": req.question}
-    return await generate_clarifications(req.question, req.history)
+    # Крышка по времени. Воронка НЕОБЯЗАТЕЛЬНА (fail-open → сразу research), а
+    # экран всё это время показывает «Анализирую запрос…». 04.09 один вызов ушёл
+    # на резервную модель и думал 4,5 минуты — со стороны это «зависло».
+    # Лучше пропустить уточнение, чем держать человека перед статичным экраном.
+    try:
+        if req.answers is not None:
+            enriched = await asyncio.wait_for(
+                build_enriched_question(req.question, req.answers), timeout=CLARIFY_TIMEOUT)
+            return {"enriched_question": enriched, "original": req.question}
+        return await asyncio.wait_for(
+            generate_clarifications(req.question, req.history), timeout=CLARIFY_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.warning("clarify: не уложился в %sс — идём в research без уточнения",
+                    CLARIFY_TIMEOUT)
+        if req.answers is not None:
+            return {"enriched_question": req.question, "original": req.question}
+        return {"complete": True, "questions": [], "reason": "timeout"}
 
 
 # ── PDF export ───────────────────────────────────────────────────────────────

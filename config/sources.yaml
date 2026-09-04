@@ -46,6 +46,19 @@ sravni_api:
         filter_context: { amount: 1000000, period_months: 12, region: msk } }
     - { name: deposits_500k_24m_msk, category: deposit, page_size: 100, max_pages: 15,
         filter_context: { amount: 500000, period_months: 24, region: msk } }
+    # Сроки 3/6/36 мес. API отдаёт top-15 ПО СТАВКЕ под запрошенный период, а
+    # вилки сроков в ответе нет вообще — какой период спросили, такой и увидим.
+    # Опрашивая только 12 и 24 мес, витрина показывала почти одни короткие
+    # промо-ставки: на весь Сбер оставался единственный вклад длиннее года
+    # («Пенсионный Максимум»), из-за чего фильтр «от 1 года» выглядел пустым.
+    - { name: deposits_3m_msk, category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 3, region: msk } }
+    - { name: deposits_6m_msk, category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 6, region: msk } }
+    - { name: deposits_36m_msk, category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 36, region: msk } }
+    - { name: deposits_36m_spb, category: deposit, page_size: 100, max_pages: 15,
+        filter_context: { amount: 100000, period_months: 36, region: sankt-peterburg } }
 
     # ─── ПОТРЕБКРЕДИТЫ — SSR top-10 (page=N не работает) ──────────────────
     - { name: credits_msk, category: credit, max_pages: 1,

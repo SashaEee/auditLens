@@ -343,10 +343,21 @@ async def stream_deep_research_gptr(question: str,
                 yield _evt({"type": "lead", "chunk": lead_text})
     except Exception as e:
         log.exception("gptr: написание")
-        yield _evt({"type": "text",
-                    "chunk": f"\n\n⚠ **Отчёт не сформирован:** {e}\n"})
-        yield _evt({"type": "done"})
-        return
+        # Написанное НЕ выбрасываем. Одна перегрузка провайдера в середине
+        # последнего раздела обнуляла двадцать минут работы: аудитор видел
+        # «Отчёт не сформирован» вместо готовых разделов, источников и
+        # проверок. Отдаём собранное с честной пометкой и идём дальше —
+        # источники и сохранение отчёта отрабатывают как обычно.
+        note = (f"\n\n⚠ **Отчёт неполный:** написание прервано ({e}). "
+                f"Ниже — разделы, которые успели собраться; "
+                f"повторите запрос, чтобы получить отчёт целиком.\n")
+        if not "".join(body_parts).strip() and not lead_text.strip():
+            yield _evt({"type": "text",
+                        "chunk": f"\n\n⚠ **Отчёт не сформирован:** {e}\n"})
+            yield _evt({"type": "done"})
+            return
+        body_parts.append(note)
+        yield _evt({"type": "text", "chunk": note})
     rest = guard.feed(renum.finish()) + guard.finish()
     if rest:
         body_parts.append(rest)

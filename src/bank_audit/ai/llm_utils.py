@@ -125,6 +125,8 @@ def _fit_kwargs(target_model: str, kwargs: dict) -> dict:
     ушёл на gpt-5.4-mini с reasoning_effort и temperature=0).
     """
     out = {**kwargs, "model": target_model}
+    for bad in tuple(_DROP_PARAMS.get(target_model, ())):
+        _strip_param(out, bad)              # резерв уже отвергал этот параметр
     if "gpt-5" in target_model:
         if out.get("temperature") not in (None, 1):
             out.pop("temperature", None)
@@ -167,13 +169,59 @@ def _add_reasoning_content(kwargs: dict) -> bool:
     return fixed
 
 
+_PARAMS = ("temperature", "top_p", "reasoning_effort",
+           "presence_penalty", "frequency_penalty")
+# «`temperature` is deprecated for this model», «Unsupported parameter: 'top_p'»
+_REJECTED_RE = re.compile(
+    r"(deprecated|not supported|unsupported|unknown|invalid)[^.]{0,40}?"
+    r"[`'\"]?(?P<a>" + "|".join(_PARAMS) + r")[`'\"]?"
+    r"|[`'\"]?(?P<b>" + "|".join(_PARAMS) + r")[`'\"]?[^.]{0,40}?"
+    r"(deprecated|not supported|unsupported|unknown|invalid)",
+    re.IGNORECASE)
+
+
+def _rejected_param(err: Exception) -> str | None:
+    """Какой параметр модель отвергла, если она вообще про это сказала."""
+    m = _REJECTED_RE.search(str(err))
+    if not m:
+        return None
+    return (m.group("a") or m.group("b") or "").lower() or None
+
+
+# Параметры, которые конкретная модель уже отвергла: снимаем их превентивно,
+# чтобы не платить лишним round-trip на каждом следующем вызове.
+_DROP_PARAMS: dict[str, set[str]] = {}
+
+
+def _strip_param(kwargs: dict, param: str) -> bool:
+    """Убирает параметр и из kwargs, и из extra_body. True — если что-то сняли."""
+    hit = kwargs.pop(param, None) is not None
+    extra = kwargs.get("extra_body")
+    if isinstance(extra, dict) and param in extra:
+        kwargs["extra_body"] = {k: v for k, v in extra.items() if k != param} or None
+        hit = True
+    return hit
+
+
 async def _resilient_create(orig, model: str, args, kwargs):
     stream = bool(kwargs.get("stream"))
     if model in _NEEDS_RC:
         _add_reasoning_content(kwargs)      # знаем требование — выполняем сразу
+    for p in tuple(_DROP_PARAMS.get(model, ())):
+        _strip_param(kwargs, p)             # то же для отвергнутых параметров
     try:
         resp = await orig(*args, **kwargs)
     except Exception as e:
+        # Модель отвергла ОДИН параметр, а не сломалась. Уходить на резерв
+        # здесь — терять качество на ровном месте: из-за «`temperature` is
+        # deprecated» весь кондуктор молча уезжал с основной модели на
+        # резервную. Снимаем параметр и повторяем ТОЙ ЖЕ моделью.
+        bad = _rejected_param(e)
+        if bad and _strip_param(kwargs, bad):
+            _DROP_PARAMS.setdefault(model, set()).add(bad)
+            log.warning("[llm] %s не принимает %s — сняли, повтор той же моделью",
+                        model, bad)
+            return await _resilient_create(orig, model, args, kwargs)
         if _MISSING_RC in str(e).lower() and _add_reasoning_content(kwargs):
             if model not in _NEEDS_RC:
                 _NEEDS_RC.add(model)
@@ -209,25 +257,6 @@ async def _resilient_create(orig, model: str, args, kwargs):
         resp = await orig(*args, **_fit_kwargs(fb, kwargs))
         _salvage_reasoning(resp)
     return resp
-
-
-_PARAMS = ("temperature", "top_p", "reasoning_effort",
-           "presence_penalty", "frequency_penalty")
-# «`temperature` is deprecated for this model», «Unsupported parameter: 'top_p'»
-_REJECTED_RE = re.compile(
-    r"(deprecated|not supported|unsupported|unknown|invalid)[^.]{0,40}?"
-    r"[`'\"]?(?P<a>" + "|".join(_PARAMS) + r")[`'\"]?"
-    r"|[`'\"]?(?P<b>" + "|".join(_PARAMS) + r")[`'\"]?[^.]{0,40}?"
-    r"(deprecated|not supported|unsupported|unknown|invalid)",
-    re.IGNORECASE)
-
-
-def _rejected_param(err: Exception) -> str | None:
-    """Какой параметр модель отвергла, если она вообще про это сказала."""
-    m = _REJECTED_RE.search(str(err))
-    if not m:
-        return None
-    return (m.group("a") or m.group("b") or "").lower() or None
 
 
 def probe_models(models: list[str], *, base_url: str, api_key: str) -> None:

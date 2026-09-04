@@ -2996,6 +2996,18 @@ function MarketPage({params}){
         </table>}
         {offers&&total>offers.length&&<button className="btn btn-ghost mk-more" onClick={loadMore} disabled={moreBusy}>
           {moreBusy?"Загружаю…":`Показать ещё (${offers.length} из ${total})`}</button>}
+        {/* Выгрузка витрины: аудиторы просили считать в таблице и прикладывать
+            цифры к рабочим материалам. Фильтры те же, что на экране. */}
+        {offers&&offers.length>0&&<div className="mk-export">
+          <a className="btn btn-ghost btn-sm"
+             href={`/api/market/export.csv?category=${encodeURIComponent(cat||"deposit")}`
+                   +(q?`&q=${encodeURIComponent(q)}`:"")
+                   +(term?`&term=${encodeURIComponent(term)}`:"")
+                   +(seg?`&segment=${encodeURIComponent(seg)}`:"")
+                   +(sub?`&sub=${encodeURIComponent(sub)}`:"")}>
+            ⬇ Выгрузить в таблицу</a>
+          <span className="mk-export-hint">CSV с текущими фильтрами — открывается в Excel</span>
+        </div>}
       </div>}
 
       {/* ЖУРНАЛ ИЗМЕНЕНИЙ */}
@@ -4003,10 +4015,16 @@ function ThinkingPanel({text, stage, active}){
 //     Закрывает «тихие окна» (генерация вопросов, сборка запроса, старт
 //     research) — пользователь всегда видит, что система жива. ──────────────
 function PendingDots({label}){
+  // Статичная строка одинаково выглядит и когда система работает, и когда она
+  // встала. После 8 с показываем счётчик: по нему видно, что процесс жив
+  // (04.09 воронка вопросов думала 4,5 минуты — со стороны «зависло»).
+  const [sec,setSec]=useState(0);
+  useEffect(()=>{const t=setInterval(()=>setSec(s=>s+1),1000);return ()=>clearInterval(t);},[]);
   return <div className="pending-row">
     <span className="dr-stage-pulse"/>
     <span className="pending-label">{label||"Думаю"}</span>
     <span className="pending-dots"><i/><i/><i/></span>
+    {sec>=8 && <span className="pending-sec" aria-hidden="true">{sec} с</span>}
   </div>;
 }
 
