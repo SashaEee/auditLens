@@ -1893,6 +1893,47 @@ function Sept3Strip(){
 // подставляет общую подложку и двигает её пружиной. Пока подложки нет,
 // активный сегмент выглядит как раньше — если скрипт не отработал, ничего
 // не теряется.
+// ─── Память о месте ───────────────────────────────────────────────────────
+// Новый раздел открывается сверху: иначе человек кликает «Отзывы», а видит
+// середину чужой страницы — прокрутка оставалась от предыдущего экрана.
+// Раздел переключается состоянием, а не адресом, поэтому смену ловим по
+// активному пункту меню — это единственный признак, который виден всегда.
+function useNavMemory(){
+  useEffect(()=>{
+    const active=()=>document.querySelector(".nav-item.active")?.textContent?.trim()||"";
+    let here=active();
+    const mo=new MutationObserver(()=>{
+      const now=active();
+      if(!now||now===here)return;
+      here=now;
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        if(scrollY>0)scrollTo({top:0,behavior:"auto"});
+      }));
+    });
+    mo.observe(document.body,{subtree:true,attributes:true,attributeFilter:["class"],childList:true});
+    return()=>mo.disconnect();
+  },[]);
+}
+
+// ─── Цифры как ярлыки разделов ────────────────────────────────────────────
+// В меню разделы пронумерованы от 01 до 09 — цифра на клавиатуре ведёт туда
+// же. Ярлык привязан к видимому номеру, а не к позиции в разметке. Пока
+// человек печатает, цифры не перехватываются.
+function useNumberShortcuts(){
+  useEffect(()=>{
+    const typing=el=>!!el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.tagName==="SELECT"||el.isContentEditable);
+    const onKey=e=>{
+      if(e.metaKey||e.ctrlKey||e.altKey||typing(document.activeElement))return;
+      if(!/^[1-9]$/.test(e.key))return;
+      const target=[...document.querySelectorAll(".nav-item")].find(
+        el=>el.querySelector(".rail-num")?.textContent.trim()===e.key.padStart(2,"0"));
+      if(target){e.preventDefault();target.click();}
+    };
+    addEventListener("keydown",onKey);
+    return()=>removeEventListener("keydown",onKey);
+  },[]);
+}
+
 const SEGS=".seg, .rv-chips";
 function useSlidingSegments(){
   useEffect(()=>{
