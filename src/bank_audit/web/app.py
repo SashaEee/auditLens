@@ -1008,6 +1008,30 @@ def meta_categories():
     return out
 
 
+@app.get("/api/meta/coverage")
+def meta_coverage():
+    """Чего в витрине нет и почему.
+
+    Аудиторы четырежды написали, что не нашли инвестиции, драгметаллы, валюту и
+    страхование. Витрина показывала только покрытые категории и молчала про
+    остальные — «мы этого не собираем» было неотличимо от «этого нет на рынке».
+    Здесь непокрытие становится данными: причина, что требуется и сколько
+    записей уже есть, если категория собирается, но не ранжируется.
+    """
+    have = {r["category"]: r["n"] for r in q("""
+        SELECT category::text AS category, count(*) AS n
+          FROM product_offer WHERE is_active GROUP BY 1
+    """)}
+    items = []
+    for cid, note in cat_meta.NOT_COVERED.items():
+        items.append({"id": cid, "label": note["label"], "reason": note["reason"],
+                      "status": note["status"], "needs": note.get("needs"),
+                      "collected": int(have.get(cid, 0))})
+    # сперва то, что уже собрано (его можно показать хотя бы справочно)
+    items.sort(key=lambda x: (-x["collected"], x["label"]))
+    return {"covered": [c["id"] for c in cat_meta.CATEGORIES], "not_covered": items}
+
+
 # «бесплатно всегда» лучше «бесплатно при условии», а то — лучше платного
 _FREE_RANK = {"unconditional": 2, "conditional": 1, "paid": 0}
 
@@ -1058,9 +1082,22 @@ def market_atlas(term: Optional[str] = None):
                e.payload->>'free_kind'          AS free_kind,
                e.payload->>'rate_attainability' AS attain,
                e.payload->'free_conditions'     AS free_conditions,
-               e.payload->'rate_requires'       AS rate_requires
+               e.payload->'rate_requires'       AS rate_requires,
+               -- Сторож правдоподобия. Витрина его читает и уводит такие
+               -- строки в конец списка (см. _market_rows), а позиция на рынке
+               -- считалась по ним как по обычным числам: ПСБ «Народный вклад»
+               -- под 30% при ключевой 14% задирал медиану и становился
+               -- «лидером», против которого меряется отставание Сбера.
+               qf.reason                        AS implausible_reason
           FROM v_market_rub_offer m
           LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
+          LEFT JOIN LATERAL (
+              SELECT q2.detail->>'reason' AS reason
+                FROM quality_flag q2
+               WHERE q2.entity_type = 'offer' AND q2.entity_id = m.offer_id
+                 AND q2.severity = 'warn'
+               ORDER BY q2.created_at DESC
+               LIMIT 1) qf ON true
          WHERE {cond}
     """, params)
     # ключевая ставка ЦБ — база числового стража субсидий (кэш SOAP ЦБ)
@@ -1089,12 +1126,25 @@ def market_atlas(term: Optional[str] = None):
     teaser: dict[str, int] = {}          # ПСК сильно выше заявленной ставки
     psk_fallback: dict[str, int] = {}    # ПСК не раскрыта — сравниваем по ставке
     non_bank: dict[str, int] = {}        # застройщики и сервисы подбора
+    implausible: dict[str, int] = {}     # число не прошло сторожа правдоподобия
     seen_banks: dict[str, set] = {}      # все банки категории до отсева
+
+    def bkey(row) -> str:
+        """Ключ банка — очищенное ИМЯ, а не слаг.
+
+        774 банка из 833 заведены как unknown_*, и один банк живёт под двумя
+        слагами. Витрина это уже учитывает (см. _market_rows), а позиция на
+        рынке ключевала по слагу: дубль банка становился ОТДЕЛЬНОЙ точкой,
+        раздувал знаменатель «#N из M» и мог занять место лидера, против
+        которого меряется отставание.
+        """
+        return re.sub(r"[^0-9a-zа-яё]", "", (row["bank_name"] or "").lower()) or row["bank_slug"]
+
     for r in rows:
         meta = cat_meta.CAT_META.get(r["category"])
         if not meta:                       # не витринная категория (рейтинги и пр.)
             continue
-        seen_banks.setdefault(r["category"], set()).add(r["bank_slug"])
+        seen_banks.setdefault(r["category"], set()).add(bkey(r))
         if (r["category"] in ("card_debit", "card_credit")
                 and r.get("free_kind") in _FREE_RANK
                 and not cat_meta.is_non_bank(r["bank_name"])):
@@ -1112,18 +1162,18 @@ def market_atlas(term: Optional[str] = None):
                         v = float(cnd["threshold_rub"])
                         thr = v if thr is None else min(thr, v)
                 pslot = premium.setdefault(r["category"], {})
-                prev = pslot.get(r["bank_slug"])
+                prev = pslot.get(bkey(r))
                 fee_ = (float(r["fee_service"]) if r.get("fee_service") is not None else None)
                 cand = {"slug": r["bank_slug"], "name": r["bank_name"],
                         "is_sber": bool(r["is_sber"]), "title": r["title"],
                         "fee": fee_, "free_kind": r["free_kind"], "threshold": thr}
                 # банк представляет САМОЕ МЯГКОЕ его премиальное предложение
                 if prev is None or _prem_key(cand) < _prem_key(prev):
-                    pslot[r["bank_slug"]] = cand
+                    pslot[bkey(r)] = cand
             slot = free_by_bank.setdefault(r["category"], {})
-            prev = slot.get(r["bank_slug"])
+            prev = slot.get(bkey(r))
             if prev is None or _FREE_RANK[r["free_kind"]] > _FREE_RANK[prev["free_kind"]]:
-                slot[r["bank_slug"]] = {
+                slot[bkey(r)] = {
                     "free_kind": r["free_kind"],
                     "conditions": _jsonb(r.get("free_conditions")) or [],
                     "is_sber": bool(r["is_sber"]),
@@ -1164,6 +1214,16 @@ def market_atlas(term: Optional[str] = None):
             # («Сбер #2 на рынке кредитов» из-за образовательного под 3%).
             subsidized[r["category"]] = subsidized.get(r["category"], 0) + 1
             continue
+        if r.get("implausible_reason"):
+            # Сторож усомнился в числе — в распределение, медиану и выбор
+            # лидера оно не идёт. Проверка стоит ПОСЛЕ господдержки не случайно:
+            # сторож считает подозрительной любую ставку сильно ниже ключевой,
+            # и семейная ипотека под 5,8% при ключевой 14% попадает к нему как
+            # «неправдоподобная». Это не ошибка данных, а госпрограмма, и у неё
+            # своя причина отсева, иначе паспорт выборки объявил бы
+            # сомнительными 72 честных ипотечных предложения.
+            implausible[r["category"]] = implausible.get(r["category"], 0) + 1
+            continue
         val = float(val)
         # Ранг считается ВНУТРИ сопоставимой группы. Раньше группировка шла
         # только по категории, и в одном ранжире оказывались новостройка и
@@ -1175,7 +1235,7 @@ def market_atlas(term: Optional[str] = None):
         gkey = (r["category"], seg, sub)
         best = by_group.setdefault(gkey, {})
         lower = meta["metric_lower_is_better"]
-        cur = best.get(r["bank_slug"])
+        cur = best.get(bkey(r))
         # При РАВНОЙ метрике банк представляет оффер с лучшими условиями. У карт
         # это не придирка: десятки банков стоят на «0 руб./год», и если у банка
         # есть и безусловно бесплатная карта, и бесплатная «при остатке 2,5 млн»,
@@ -1186,7 +1246,7 @@ def market_atlas(term: Optional[str] = None):
                       and _FREE_RANK.get(r.get("free_kind"), -1)
                       > _FREE_RANK.get(cur.get("free_kind"), -1))
         if cur is None or tie_better or (val < cur["rate"] if lower else val > cur["rate"]):
-            best[r["bank_slug"]] = {
+            best[bkey(r)] = {
                 "slug": r["bank_slug"], "name": r["bank_name"],
                 "is_sber": bool(r["is_sber"]), "rate": val,
                 "offer_id": r["offer_id"], "title": r["title"],
@@ -1274,6 +1334,10 @@ def market_atlas(term: Optional[str] = None):
             "teaser": teaser.get(cid, 0),
             "psk_fallback": psk_fallback.get(cid, 0),
             "non_bank_excluded": non_bank.get(cid, 0),
+            # Числа, отвергнутые сторожем правдоподобия. Отсев должен быть
+            # виден: «медиана посчитана без 3 сомнительных ставок» — это часть
+            # методики, а не деталь реализации.
+            "implausible_excluded": implausible.get(cid, 0),
             "banks_total": len(seen_banks.get(cid, ())),
             "banks_dropped": max(len(seen_banks.get(cid, ())) - len(banks), 0),
             # сколько банков стоит ровно на лучшем значении: «#1» при 70 таких
@@ -1473,6 +1537,7 @@ def market_verdict(term: Optional[str] = None):
             # доверие к выборке: по этим числам фронт рисует бейджи
             "no_metric": c.get("no_metric", 0),
             "subsidized_excluded": c.get("subsidized_excluded", 0),
+            "implausible_excluded": c.get("implausible_excluded", 0),
             "at_best": c.get("at_best", 0), "small_n": c.get("small_n", False),
             "teaser": c.get("teaser", 0), "banks_dropped": c.get("banks_dropped", 0),
             "degenerate": degenerate,
@@ -1678,20 +1743,25 @@ def reviews_trend(bank: str = "Сбербанк", product: Optional[str] = None)
     return _rd().trend(bank, product or None) or {}
 
 @app.get("/api/reviews/themes")
-def reviews_themes(bank: str = "Сбербанк", product: Optional[str] = None):
-    return _rd().themes(bank, product or None) or {}
+def reviews_themes(bank: str = "Сбербанк", product: Optional[str] = None,
+                   days: int = 90):
+    # Период приходит из того же переключателя, что и у KPI. Раньше эндпоинт
+    # его не объявлял, панель считалась по зашитым 90 дням при любом выборе —
+    # отсюда «за квартал, за год и за всё время выводится одно и то же».
+    return _rd().themes(bank, product or None, days) or {}
 
 @app.get("/api/reviews/vs-market")
 def reviews_vs_market(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
     return _rd().vs_market(bank, product or None, days) or {}
 
 @app.get("/api/reviews/geo")
-def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None):
-    return _rd().geo(bank, product or None) or {}
+def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None,
+                days: int = 365):
+    return _rd().geo(bank, product or None, days) or {}
 
 @app.get("/api/reviews/products")
-def reviews_products(bank: str = "Сбербанк"):
-    return _rd().products(bank) or {}
+def reviews_products(bank: str = "Сбербанк", days: int = 365):
+    return _rd().products(bank, days) or {}
 
 @app.get("/api/reviews/corpus")
 def reviews_corpus(bank: Optional[str] = None):
@@ -2513,6 +2583,38 @@ def knowledge_doc(document_id: int, user: CurrentUser = Depends(get_current_user
 
     return {"doc": doc, "revisions": revisions, "origins": origins,
             "preview": preview}
+
+
+# Сколько текста отдаём за один заход. Больше 200 тысяч знаков читать в модальном
+# окне всё равно невозможно, а тариф на 760 тысяч знаков одним куском повесит
+# вкладку — поэтому листаем.
+DOC_TEXT_PAGE = 60_000
+
+
+@app.get("/api/knowledge/doc/{document_id}/text")
+def knowledge_doc_text(document_id: int, offset: int = 0,
+                       user: CurrentUser = Depends(get_current_user)):
+    """Текст документа целиком, с продолжением.
+
+    Карточка показывала четыре фрагмента по 700 знаков — при среднем документе
+    в 10 тысяч знаков и тарифах на сотни тысяч. Аудиторы так и написали:
+    «документы открываются не в полном объёме». Сверять оговорку в тарифе по
+    трём абзацам нельзя, а уходить на сайт банка — значит потерять ровно ту
+    версию, которая лежит в архиве и на которую ссылается отчёт.
+    """
+    row = q("""
+        SELECT length(content_text) AS total,
+               substr(content_text, :off, :lim) AS chunk
+          FROM document WHERE document_id = :i
+    """, {"i": document_id, "off": max(0, offset) + 1, "lim": DOC_TEXT_PAGE})
+    if not row:
+        raise HTTPException(404, "документ не найден")
+    total = int(row[0]["total"] or 0)
+    text = row[0]["chunk"] or ""
+    return {"document_id": document_id, "offset": max(0, offset),
+            "total": total, "text": text,
+            "next_offset": (max(0, offset) + len(text)) if
+                           (max(0, offset) + len(text)) < total else None}
 
 
 @app.get("/api/knowledge/doc/{document_id}/diff")
