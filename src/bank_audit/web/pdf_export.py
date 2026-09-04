@@ -29,6 +29,13 @@ def _esc(s: Any) -> str:
     return _html.escape(str(s or ""))
 
 
+def _title_size(title: str) -> str:
+    """Кегль обложки по длине заголовка: короткий звучит крупно, длинный не
+    должен съедать половину листа."""
+    n = len(title or "")
+    return "xlong" if n > 110 else ("long" if n > 60 else "")
+
+
 def _toc_label(s: str) -> str:
     """Чистый текст заголовка для оглавления (без markdown/цитат/эмодзи)."""
     s = re.sub(r"\[\d+\]", "", s or "")
@@ -477,7 +484,11 @@ def _render_charts_assets(charts: list[dict], tail_ids: list[int]) -> tuple[str,
     js = (
         '<script>' + chartjs_src + '</script>'
         '<script>'
-        'const PAL=["#16181d","#44464d","#707075","#9c9ea3","#c4c6cc"];'
+        # Оттенки серого сливались в один тёмный круг — доли не различались;
+        # об этом прямо написали в обратной связи. Цвета подобраны так, чтобы
+        # отличаться и по тону, и по светлоте: тогда они читаются и на
+        # чёрно-белой печати.
+        'const PAL=["#3b6fb6","#c8412b","#2f7a45","#b8862b","#6b52a3","#4a8f9c","#8a5a3c","#707075"];'
         'const ACC="oklch(58% 0.18 25)",INK="#16181d",INK3="#707075",'
         '      HAIR="#ebebed",PAPER="#ffffff";'
         'function renderChart(cid, spec){'
@@ -769,8 +780,8 @@ def build_pdf_html(*, question: str, report_md: str,
 html, body {{ margin: 0; padding: 0; }}
 body {{
   font-family: 'Source Serif 4', Georgia, serif;
-  font-size: 10.5pt;
-  line-height: 1.55;
+  font-size: 11pt;
+  line-height: 1.6;
   color: #16181d;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -806,13 +817,17 @@ body {{
 }}
 .cover h1 {{
   font-family: 'Source Serif 4', Georgia, serif;
-  font-size: 30pt;
+  font-size: 26pt;
   font-weight: 500;
   line-height: 1.2;
   letter-spacing: -0.01em;
   margin: 0 0 12mm;
   max-width: 130mm;
 }}
+/* Длинный вопрос на обложке набирался тем же кеглем и занимал половину листа —
+   замечание из обратной связи. Чем длиннее заголовок, тем он спокойнее. */
+.cover h1.long {{ font-size: 21pt; line-height: 1.25; }}
+.cover h1.xlong {{ font-size: 17pt; line-height: 1.3; max-width: 140mm; }}
 .cover .meta {{
   margin-top: 26mm;
   font-family: 'Geist', system-ui, sans-serif;
@@ -1208,7 +1223,7 @@ body {{
       <span class="id">{_esc(audit_id)}</span>
     </div>
     <div class="eyebrow">Аналитический отчёт</div>
-    <h1>{_esc(doc_title)}</h1>
+    <h1 class="{_title_size(doc_title)}">{_esc(doc_title)}</h1>
     <dl class="meta">
       <dt>Дата</dt><dd>{_esc(now_iso)}</dd>
       <dt>Источников</dt><dd>{len(sources)}</dd>
