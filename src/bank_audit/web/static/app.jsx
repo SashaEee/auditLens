@@ -1915,6 +1915,48 @@ function useInstantTips(){
   },[]);
 }
 
+// ─── Память о месте ───────────────────────────────────────────────────────
+// Новый раздел открывается сверху: иначе человек кликает «Отзывы», а видит
+// середину чужой страницы — прокрутка оставалась от предыдущего экрана.
+// Раздел переключается состоянием, а не адресом, поэтому смену ловим по
+// активному пункту меню — это единственный признак, который виден всегда.
+function useNavMemory(){
+  useEffect(()=>{
+    const active=()=>document.querySelector(".nav-item.active")?.textContent?.trim()||"";
+    let here=active();
+    const mo=new MutationObserver(()=>{
+      const now=active();
+      if(!now||now===here)return;
+      here=now;
+      // Ждём, пока новый экран появится, и только потом ставим страницу в
+      // начало: иначе браузер вернёт прокрутку обратно при отрисовке.
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        if(scrollY>0)scrollTo({top:0,behavior:"auto"});
+      }));
+    });
+    mo.observe(document.body,{subtree:true,attributes:true,attributeFilter:["class"],childList:true});
+    return()=>mo.disconnect();
+  },[]);
+}
+
+// ─── Цифры как ярлыки разделов ────────────────────────────────────────────
+// В меню разделы и так пронумерованы от 01 до 09 — логично, чтобы цифра на
+// клавиатуре туда и вела. Работает, только когда человек не печатает.
+function useNumberShortcuts(){
+  useEffect(()=>{
+    const typing=el=>!!el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.tagName==="SELECT"||el.isContentEditable);
+    const onKey=e=>{
+      if(e.metaKey||e.ctrlKey||e.altKey||typing(document.activeElement))return;
+      if(!/^[1-9]$/.test(e.key))return;
+      const target=[...document.querySelectorAll(".nav-item")].find(
+        el=>el.querySelector(".rail-num")?.textContent.trim()===e.key.padStart(2,"0"));
+      if(target){e.preventDefault();target.click();}
+    };
+    addEventListener("keydown",onKey);
+    return()=>removeEventListener("keydown",onKey);
+  },[]);
+}
+
 const SEGS=".seg, .rv-chips";
 function useSlidingSegments(){
   useEffect(()=>{
@@ -8534,7 +8576,9 @@ function Shell(){
               const count=null;
               // ИИ-аналитик: пульсирующая точка = прогон идёт; зелёная = отчёт готов
               const aiDot=n.id==="ai"&&(aiBusy||aiReady);
-              return <button key={n.id} className={`nav-item ${active?"active":""}`} onClick={()=>{setPage(n.id);setNavOpen(false);}}>
+              return <button key={n.id} className={`nav-item ${active?"active":""}`}
+                             title={`Клавиша ${num}`}
+                             onClick={()=>{setPage(n.id);setNavOpen(false);}}>
                 <span className="rail-num">{String(num).padStart(2,"0")}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
                 {n.label}
@@ -8617,6 +8661,8 @@ function Shell(){
 function App(){
   useSlidingSegments();
   useInstantTips();
+  useNavMemory();
+  useNumberShortcuts();
   return <ThemeProvider><Shell/></ThemeProvider>;
 }
 
