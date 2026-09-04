@@ -113,3 +113,4 @@ package.json
 .tmp*
 # Рендеры README-ассетов: рабочий материал, в репозиторий не нужны
 assets/readme/_preview/
+src/bank_audit/web/static/app.js

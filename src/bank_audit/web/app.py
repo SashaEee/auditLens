@@ -3114,7 +3114,17 @@ def _index_html_with_bust() -> str:
     Bust-параметр на каждый ре-deploy меняется, браузер пере-фетчит."""
     idx = STATIC_DIR / "index.html"
     html = idx.read_text(encoding="utf-8")
+    built = STATIC_DIR / "app.js"
     jsx_path = STATIC_DIR / "app.jsx"
+    # Собранный заранее файл избавляет браузер от компиляции на лету: раньше
+    # каждый заход стоил трёх секунд неотзывчивого интерфейса и трёх мегабайт
+    # компилятора. Если сборки нет — работаем по-старому, только медленнее.
+    if built.exists() and built.stat().st_mtime >= jsx_path.stat().st_mtime:
+        v = int(built.stat().st_mtime)
+        html = re.sub(r'<script src="[^"]*babel[^"]*"></script>\s*', "", html)
+        html = re.sub(r'<script type="text/babel" src="/static/app\.jsx[^"]*"></script>',
+                      f'<script src="/static/app.js?v={v}"></script>', html)
+        return html
     if jsx_path.exists():
         v = int(jsx_path.stat().st_mtime)
         html = html.replace('src="/static/app.jsx"',
