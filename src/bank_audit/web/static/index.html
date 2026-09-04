@@ -1322,6 +1322,12 @@ td .dr-conflict{padding:0 4px 0px;font-size:9px}
   font-size:10px;font-weight:600;padding:2px 6px;border-radius:10px;
   letter-spacing:.02em;
 }
+.src-item{position:relative}
+.src-go{position:absolute;right:12px;top:12px;color:var(--ink-4);font-size:12px;
+  opacity:0;transition:opacity var(--dur-quick) var(--ease-out),color var(--dur-quick) var(--ease-out)}
+.src-item:hover .src-go,.src-item:focus-visible .src-go{opacity:1;color:var(--ink-2)}
+.src-req-cap{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:10px;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3);margin:10px 0 4px}
 .src-pill.official  {color:var(--info);background:var(--info-soft)}
 .src-pill.regulator {color:var(--legal);background:var(--legal-soft)}
 .src-panel-toggle{
@@ -1870,6 +1876,17 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .bf-card.lead{grid-column:1/-1}
 .bf-card::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;
   background:var(--sev,var(--ink-4))}
+.bf-legend{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:10px 2px 0;
+  font-size:11px;color:var(--ink-3);font-family:'JetBrains Mono',ui-monospace,monospace}
+.bf-legend span{display:inline-flex;align-items:center;gap:6px}
+.bf-legend .d{width:8px;height:8px;border-radius:50%;flex:none}
+.bf-legend .d.risk{background:var(--neg)}
+.bf-legend .d.watch{background:var(--warn)}
+.bf-legend .d.good{background:var(--pos)}
+.bf-legend .sep{color:var(--ink-4)}
+.bf-legend .gl{--sev:var(--ink-3)}
+.bf-legend .bf-glyph{width:16px;height:16px}
+@media(max-width:760px){.bf-legend .gl{display:none}}
 .bf-card[data-sev=risk]{--sev:var(--neg)}
 .bf-card[data-sev=watch]{--sev:var(--warn)}
 .bf-card[data-sev=good]{--sev:var(--pos)}
@@ -2394,13 +2411,11 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .dr-doc-main h1 { font-size: clamp(1.5rem, 1.2rem + 1.2vw, 2rem); }
 .dr-doc-main h2 { font-size: clamp(1.15rem, 1rem + .6vw, 1.4rem); }
 
-/* ── Подсказка появляется сразу и там, где смотрит глаз. Системный title
-   ждал секунду и не умел ни стилей, ни тач-экрана. ── */
-.tip-inst{position:fixed;z-index:9500;max-width:320px;padding:6px 9px;border-radius:6px;
-  background:var(--ink);color:var(--paper);font-size:12px;line-height:1.35;
-  box-shadow:var(--shadow-2);pointer-events:none;opacity:0;transform:translateY(-2px);
-  transition:opacity var(--dur-quick) var(--ease-out),transform var(--dur-quick) var(--ease-out)}
-.tip-inst.on{opacity:1;transform:none}
+/* Остановка прогона: кнопка занимает место отправки, но выглядит спокойнее —
+   это не главное действие, а выход из ожидания. */
+.composer-stop{background:var(--paper-2)!important;color:var(--ink-2)!important;border:1px solid var(--hair-2)!important}
+.composer-stop:hover{background:var(--surface)!important;color:var(--ink)!important;border-color:var(--ink-4)!important}
+.composer-stop svg{width:14px;height:14px}
 
 /* ── Прокрутка внутри панели остаётся внутри панели: докрутив список до
    конца, человек не должен внезапно поехать по странице под ним. ── */
@@ -2427,6 +2442,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260903-apple9"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260904-fix2"></script>
 </body>
 </html>

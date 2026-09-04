@@ -922,6 +922,19 @@ function BfBrief({markdown}){
   </div>;
 }
 
+// Цвет карточки и точка в квадрате 3×3 кодировали риск и его матрицу, но нигде
+// не объяснялись — в обратной связи об этом написали трижды: «непонятна
+// расцветка», «непонятна световая палитра», «расшифруйте вероятность × влияние».
+function BfLegend(){
+  return <div className="bf-legend">
+    <span><i className="d risk"/>риск — требует действия</span>
+    <span><i className="d watch"/>следить — держим в поле зрения</span>
+    <span><i className="d good"/>спокойно — отклонений нет</span>
+    <span className="sep">·</span>
+    <span className="gl"><RiskGlyph likelihood={3} impact={3}/>положение точки: вероятность слева направо, влияние снизу вверх</span>
+  </div>;
+}
+
 function BfCard({ins,idx,lead}){
   const d=ins.data||{};
   const xp=xpRows(ins.kind,d);
@@ -1607,8 +1620,13 @@ function ForYouPage(){
     return arr; })();
   const focus=p.focus||[], checks=p.checks||[];
   const tar=p.tariffs||{}, gap=tar.gap||[], moves=tar.moves||[];
+  // В «Отзывы» уходим с контекстом карточки: банк, продукт и та самая горячая
+  // тема, которая на карточке и названа. Иначе человек нажимает на конкретную
+  // жалобу, а попадает в общий список и не понимает, зачем его перебросили —
+  // ровно об этом дважды написали в обратной связи.
   const openReviews=(c)=>{ try{sessionStorage.setItem("al-rv-prefilter",
-      JSON.stringify({bank:"Сбербанк",product:c.product||""}));}catch{}
+      JSON.stringify({bank:"Сбербанк",product:c.product||"",
+                      theme:(c.theme&&(c.theme.key||c.theme.slug))||""}));}catch{}
     location.hash="reviews"; };
 
   return <div className="fade-in">
@@ -1660,7 +1678,15 @@ function ForYouPage(){
           <span className="n">{tk[c.title]?<span className="taken-mark">✓</span>:String(i+1).padStart(2,"0")}</span>
           <div className="t">
             {c.src&&<span className="src-chip" title="Открыть источник сигнала"
-              onClick={()=>{location.hash={reviews:"reviews",news:"overview",tariffs:"market"}[c.src]||"overview";}}>
+              onClick={()=>{
+                // Ведём в тот же срез, о котором говорит сигнал, а не в общий раздел.
+                if(c.src==="reviews"){
+                  try{sessionStorage.setItem("al-rv-prefilter",JSON.stringify({
+                    bank:c.bank||"Сбербанк", theme:(c.theme&&(c.theme.key||c.theme.slug))||"",
+                    product:c.product||""}));}catch{}
+                }
+                location.hash={reviews:"reviews",news:"overview",tariffs:"market"}[c.src]||"overview";
+              }}>
               {{reviews:"жалобы",news:"новости",tariffs:"тарифы"}[c.src]}</span>}
             {c.title}{c.why&&<div className="w">{c.why}</div>}</div>
           <span className="acts2">
@@ -1867,96 +1893,6 @@ function Sept3Strip(){
 // подставляет общую подложку и двигает её пружиной. Пока подложки нет,
 // активный сегмент выглядит как раньше — если скрипт не отработал, ничего
 // не теряется.
-// ─── Подсказки без ожидания ────────────────────────────────────────────────
-// Системный title всплывает через секунду, не стилизуется и молчит на
-// тач-экранах. Забираем его у интерактивных элементов и показываем свой —
-// через 60 мс, то есть сразу, но без мельтешения при проведении мышью.
-const TIP_SEL='[title],[data-tip]';
-function useInstantTips(){
-  useEffect(()=>{
-    if(matchMedia("(pointer: coarse)").matches) return;   // на тач подсказка не нужна
-    let el=null, tip=null, timer=null;
-    const hide=()=>{ clearTimeout(timer); if(tip){tip.remove(); tip=null;} el=null; };
-    const show=(target,text)=>{
-      tip=document.createElement("div"); tip.className="tip-inst"; tip.textContent=text;
-      document.body.appendChild(tip);
-      const r=target.getBoundingClientRect(), t=tip.getBoundingClientRect();
-      const left=Math.min(Math.max(8, r.left), innerWidth-t.width-8);
-      const below=r.bottom+8+t.height<innerHeight;
-      tip.style.left=`${left}px`;
-      tip.style.top=`${below?r.bottom+7:r.top-t.height-7}px`;
-      requestAnimationFrame(()=>tip&&tip.classList.add("on"));
-    };
-    const over=e=>{
-      const t=e.target.closest&&e.target.closest(TIP_SEL);
-      if(!t||t===el)return;
-      hide(); el=t;
-      const text=t.getAttribute("data-tip")||t.getAttribute("title");
-      if(!text)return;
-      if(t.hasAttribute("title")){ t.setAttribute("data-tip",text); t.removeAttribute("title"); }
-      timer=setTimeout(()=>show(t,text),60);
-    };
-    const out=e=>{ if(el&&(!e.relatedTarget||!el.contains(e.relatedTarget))) hide(); };
-    // Тем, кто ходит с клавиатуры, подсказка тоже нужна — на фокусе.
-    const onFocus=e=>{ const t=e.target.closest&&e.target.closest(TIP_SEL); if(t) over({target:t}); };
-    document.addEventListener("pointerover",over,true);
-    document.addEventListener("pointerout",out,true);
-    document.addEventListener("focusin",onFocus,true);
-    document.addEventListener("focusout",hide,true);
-    document.addEventListener("pointerdown",hide,true);   // нажал — подсказка больше не нужна
-    addEventListener("scroll",hide,true);
-    addEventListener("keydown",e=>{if(e.key==="Escape")hide();});
-    return()=>{hide();document.removeEventListener("pointerover",over,true);
-      document.removeEventListener("pointerout",out,true);
-      document.removeEventListener("focusin",onFocus,true);
-      document.removeEventListener("focusout",hide,true);
-      document.removeEventListener("pointerdown",hide,true);
-      removeEventListener("scroll",hide,true);};
-  },[]);
-}
-
-// ─── Память о месте ───────────────────────────────────────────────────────
-// Новый раздел открывается сверху: иначе человек кликает «Отзывы», а видит
-// середину чужой страницы — прокрутка оставалась от предыдущего экрана.
-// Раздел переключается состоянием, а не адресом, поэтому смену ловим по
-// активному пункту меню — это единственный признак, который виден всегда.
-function useNavMemory(){
-  useEffect(()=>{
-    const active=()=>document.querySelector(".nav-item.active")?.textContent?.trim()||"";
-    let here=active();
-    const mo=new MutationObserver(()=>{
-      const now=active();
-      if(!now||now===here)return;
-      here=now;
-      // Ждём, пока новый экран появится, и только потом ставим страницу в
-      // начало: иначе браузер вернёт прокрутку обратно при отрисовке.
-      requestAnimationFrame(()=>requestAnimationFrame(()=>{
-        if(scrollY>0)scrollTo({top:0,behavior:"auto"});
-      }));
-    });
-    mo.observe(document.body,{subtree:true,attributes:true,attributeFilter:["class"],childList:true});
-    return()=>mo.disconnect();
-  },[]);
-}
-
-// ─── Цифры как ярлыки разделов ────────────────────────────────────────────
-// В меню разделы и так пронумерованы от 01 до 09 — логично, чтобы цифра на
-// клавиатуре туда и вела. Работает, только когда человек не печатает.
-function useNumberShortcuts(){
-  useEffect(()=>{
-    const typing=el=>!!el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.tagName==="SELECT"||el.isContentEditable);
-    const onKey=e=>{
-      if(e.metaKey||e.ctrlKey||e.altKey||typing(document.activeElement))return;
-      if(!/^[1-9]$/.test(e.key))return;
-      const target=[...document.querySelectorAll(".nav-item")].find(
-        el=>el.querySelector(".rail-num")?.textContent.trim()===e.key.padStart(2,"0"));
-      if(target){e.preventDefault();target.click();}
-    };
-    addEventListener("keydown",onKey);
-    return()=>removeEventListener("keydown",onKey);
-  },[]);
-}
-
 const SEGS=".seg, .rv-chips";
 function useSlidingSegments(){
   useEffect(()=>{
@@ -2239,9 +2175,9 @@ function OverviewPage(){
     <section className="bf-core" style={{marginBottom:30}}>
       <div>
         {insights.length?
-          <div className="bf-cards">
+          <><div className="bf-cards">
             {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0}/>)}
-          </div>:
+          </div><BfLegend/></>:
           generating?
             <div className="bf-cards">
               {[0,1,2].map(i=><div key={i} className="skel" style={{height:150,borderRadius:10}}/>)}
@@ -3226,7 +3162,11 @@ const IcoRadar=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" 
 const IcoCheck=()=> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.5 2.5 4.7-5.4"/></svg>;
 const IcoTrendUp=()=> <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>;
 
-function ReviewsPage(){
+function ReviewsPage({params}){
+  // Контекст перехода: карточка сигнала ведёт не «куда-то в Отзывы», а к своей
+  // теме и своему банку. В обратной связи об этом писали дважды: «нажимаешь на
+  // жалобу — попадаешь в раздел, и непонятно, зачем».
+  const P=params||{};
   // prefill из «Обзора» (Разобраться → по сигналу): банк/тема/период/город
   const preset=(()=>{try{
     const p=JSON.parse(sessionStorage.getItem("al-rv-prefilter")||"null");
@@ -3238,8 +3178,13 @@ function ReviewsPage(){
   const firstBankRun=useRef(true);   // не сбрасывать префилл продукта при монтировании
   const[days,setDays]=useState((preset&&preset.days)||90);
   const[theme,setTheme]=useState((preset&&preset.theme)||"");
-  const[q,setQ]=useState("");
-  const[qInput,setQInput]=useState("");
+  const[q,setQ]=useState(P.q||"");
+  // Тема — это фильтр, и человек ждёт от неё именно фильтрации. Пока в
+  // строке поиска что-то есть, выдачу определяет поиск, и клик по теме
+  // выглядит как «ничего не произошло»: в обратной связи так и написали —
+  // «приходится удалять из поискового окна все символы». Делаем это сами.
+  const pickTheme=(key)=>{ setQ(""); setQInput(""); setTheme(t=>t===key?"":key); };
+  const[qInput,setQInput]=useState(P.q||"");
   const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
   const[vm,setVm]=useState(null),[ge,setGe]=useState(null),[prods,setProds]=useState([]);
   const[feed,setFeed]=useState(null);
@@ -3459,8 +3404,8 @@ function ReviewsPage(){
            role={th&&th.themes&&th.themes.length?"button":undefined}
            tabIndex={th&&th.themes&&th.themes.length?0:undefined}
            title="показать в ленте обращения этой темы"
-           onClick={()=>{if(th&&th.themes&&th.themes.length)setTheme(t=>t===th.themes[0].key?"":th.themes[0].key);}}
-           onKeyDown={onKey(()=>{if(th&&th.themes&&th.themes.length)setTheme(t=>t===th.themes[0].key?"":th.themes[0].key);})}>
+           onClick={()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);}}
+           onKeyDown={onKey(()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);})}>
         <div className="rv-kl">Главная тема</div>
         <div className="rv-kv-sm">{busy?"…":(th&&th.themes&&th.themes.length?th.themes[0].label:"—")}</div>
         <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб за 90 дн · ${RV_RISK[th.themes[0].risk]}`:""}</div>
@@ -3496,8 +3441,8 @@ function ReviewsPage(){
               const clk=t.key!=="other", risky=t.risk==="compliance"||t.risk==="conduct";
               return <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")+(clk?"":" rv-trow-static")}
                    role={clk?"button":undefined} tabIndex={clk?0:undefined} aria-pressed={clk?(theme===t.key):undefined}
-                   onClick={clk?()=>setTheme(theme===t.key?"":t.key):undefined}
-                   onKeyDown={clk?onKey(()=>setTheme(theme===t.key?"":t.key)):undefined}>
+                   onClick={clk?()=>pickTheme(t.key):undefined}
+                   onKeyDown={clk?onKey(()=>pickTheme(t.key)):undefined}>
                 <div className="rv-tname">{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
                 <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
                 <div className="rv-tn mono">{fmtNum(t.n)}</div>
@@ -3565,7 +3510,7 @@ function ReviewsPage(){
                 {(anom.watch||[]).map((d,i)=>
                   <span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
                     title={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
-                    onClick={()=>setTheme(d.key)} onKeyDown={onKey(()=>setTheme(d.key))}>
+                    onClick={()=>pickTheme(d.key)} onKeyDown={onKey(()=>pickTheme(d.key))}>
                     {d.short||d.label}<b>×{d.gap}</b></span>)}
               </div>
               <div className="rv-cap" style={{marginTop:8}}>
@@ -5117,6 +5062,7 @@ function AIPage(){
   const[msgs,setMsgs]=useState([]);
   const[q,setQ]=useState("");
   const[loading,setLoading]=useState(false);
+  const abortRef=useRef(null);          // текущий прогон — чтобы его можно было остановить
   const[deepMode,setDeepMode]=useState(false);
   const[showKbd,setShowKbd]=useState(false);
   const[hoverCite,setHoverCite]=useState(null);          // {n, anchor} для tooltip
@@ -5238,11 +5184,15 @@ function AIPage(){
   },[showKbd]);
 
   const streamChat=async(question,history,forceDeep)=>{
+    // Прогон длится минуты. Если вопрос задан неудачно, ждать его конца незачем —
+    // об этом прямо написали в обратной связи. Держим отменяемый запрос.
+    const ac=new AbortController(); abortRef.current=ac;
     try{
       const res=await fetch("/api/ai/analyze",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({question,history,force_deep:forceDeep,session_id:sessionId}),
+        signal:ac.signal,
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({detail:res.statusText}));
@@ -5413,8 +5363,17 @@ function AIPage(){
         return u;
       });
     }catch(e){
-      setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],text:`⚠ Ошибка соединения: ${e.message}`};return u;});
+      if(e.name==="AbortError"){
+        // Человек остановил сам — это не ошибка. Оставляем то, что успело
+        // прийти, и честно помечаем, что продолжения не будет.
+        setMsgs(m=>{const u=[...m];const last=u[u.length-1]||{};
+          u[u.length-1]={...last,text:(last.text||"")+"\n\n⏹ Остановлено. Показано то, что успело прийти.",phase:"done"};
+          return u;});
+      }else{
+        setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],text:`⚠ Ошибка соединения: ${e.message}`};return u;});
+      }
     }finally{
+      abortRef.current=null;
       setLoading(false);
     }
   };
@@ -5743,10 +5702,16 @@ function AIPage(){
               </div>
               <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"агент Hermes · БД, новости, веб"}</span>
               <span className="composer-kbd">Enter ↵</span>
-              <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()||loading} onClick={()=>send()} aria-label="Отправить">
+              {loading
+                ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
+                          aria-label="Остановить прогон">
+                    Остановить
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+                  </button>
+                : <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()} onClick={()=>send()} aria-label="Отправить">
                 {deepMode?"Запустить research":"Спросить"}
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-              </button>
+                  </button>}
             </div>
           </div>
           <div className="composer-note">Внутренний контур · данные не покидают периметр · Llama 3.3 70B</div>
@@ -6217,6 +6182,9 @@ function SrcPurpose({p,openForm,setOpenForm,onProposed}){
         <span className="src-meta">{s.role}{s.kind?` · ${s.kind}`:""}
           {s.coverage?` · ${s.coverage}`:""}</span>
         <span className="src-ttl">{s.title!==s.domain?s.title:""}</span>
+        {/* Что строка ведёт на сайт, раньше приходилось угадывать: в обратной
+            связи так и написали — «не понятно, что нужно нажать на название». */}
+        <span className="src-go" aria-hidden="true">↗</span>
       </a>)}
       {(p.sources||[]).length>8&&<button className="btn btn-ghost btn-sm src-more"
         onClick={()=>setShowAll(v=>!v)}>
@@ -6225,8 +6193,9 @@ function SrcPurpose({p,openForm,setOpenForm,onProposed}){
 
     <details className="src-req" open={open}>
       <summary onClick={e=>{e.preventDefault();setOpenForm(open?null:p.id);}}>
-        Требования к источнику для этого раздела
+        Предложить свой источник для аналитики
       </summary>
+      <div className="src-req-cap">Требования к источнику для этого раздела</div>
       <ul className="src-req-list">
         {(p.requirements||[]).map((r,i)=><li key={i}>{r}</li>)}
       </ul>
@@ -8577,7 +8546,6 @@ function Shell(){
               // ИИ-аналитик: пульсирующая точка = прогон идёт; зелёная = отчёт готов
               const aiDot=n.id==="ai"&&(aiBusy||aiReady);
               return <button key={n.id} className={`nav-item ${active?"active":""}`}
-                             title={`Клавиша ${num}`}
                              onClick={()=>{setPage(n.id);setNavOpen(false);}}>
                 <span className="rail-num">{String(num).padStart(2,"0")}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
@@ -8660,7 +8628,6 @@ function Shell(){
 
 function App(){
   useSlidingSegments();
-  useInstantTips();
   useNavMemory();
   useNumberShortcuts();
   return <ThemeProvider><Shell/></ThemeProvider>;
