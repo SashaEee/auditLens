@@ -91,7 +91,7 @@ def test_mark_single_loophole(client, app_session, no_embedding):
     assert rec["verdict_model"] == "manual"
     assert rec["verdict_confidence"] == 1.0
     assert rec["verdict_reason"] == "проверено вручную"
-    assert rec["status"] == "classified"
+    assert rec["status"] == "preliminary"
     assert rec["classified_at"] is not None
 
 

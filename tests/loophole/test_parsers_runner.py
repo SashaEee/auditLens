@@ -129,9 +129,10 @@ async def test_wait_success_creates_run_record(
     assert run["items_new"] == 1
     assert run["items_dup"] == 0
     rec = session.execute(
-        text("SELECT parser_id, text_sha256 FROM loophole_record")
+        text("SELECT parser_id, text_sha256, status FROM loophole_record")
     ).mappings().one()
     assert rec["parser_id"] == parser_id
+    assert rec["status"] == "preliminary"
     assert rec["text_sha256"] == dedup_mod.page_text_sha256("полный текст страницы")
 
 

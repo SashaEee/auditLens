@@ -157,7 +157,7 @@ def test_allowed_role_changes_verdict_and_synchronizes_kb(
     for record_id in record_ids:
         record = repo.get_record(record_id, session=session)
         assert bool(record["is_loophole"]) is is_loophole
-        assert record["status"] == "classified"
+        assert record["status"] == "published"
         assert record["verdict_model"] == "manual"
         assert record["verdict_reason"] == "Решение эксперта"
         example = repo.get_kb_example_by_record(record_id, session=session)

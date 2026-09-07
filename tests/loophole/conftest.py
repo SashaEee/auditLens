@@ -63,7 +63,7 @@ CREATE TABLE loophole_record (
     classified_at TEXT,
     parser_id     INTEGER,
     text_sha256   TEXT,
-    status        TEXT DEFAULT 'new'
+    status        TEXT DEFAULT 'preliminary'
 );
 CREATE INDEX idx_lr_sha ON loophole_record(sha256);
 CREATE INDEX idx_lr_bank ON loophole_record(bank_slug);

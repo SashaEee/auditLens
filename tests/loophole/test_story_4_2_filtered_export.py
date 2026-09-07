@@ -29,7 +29,7 @@ def test_filtered_export_uses_published_catalog_only(session):
             title="Черновой кейс",
             url="https://example.ru/pending",
             snippet="Не публиковать",
-            status="classified",
+            status="preliminary",
             is_loophole=True,
         ),
         session=session,

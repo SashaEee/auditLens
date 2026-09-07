@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -31,7 +31,7 @@ class LoopholeRecord(BaseModel):
     verdict_reason: str | None = None
     verdict_model: str | None = None
     classified_at: datetime | None = None
-    status: str = "new"
+    status: Literal["published", "preliminary"] = "preliminary"
 
 
 class SearchQuery(BaseModel):

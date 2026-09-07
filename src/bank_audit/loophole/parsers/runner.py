@@ -401,7 +401,6 @@ class ParserRunner:
                 bank_slug=r.get("bank_slug"),
                 keyword=r.get("keyword"),
                 raw_text=raw_text,
-                status="new",
             )
             try:
                 repo.insert_record(rec, session=self.session)

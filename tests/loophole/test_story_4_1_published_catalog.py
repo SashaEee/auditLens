@@ -26,7 +26,7 @@ def test_published_catalog_excludes_research_and_pending_cases(session):
             title="Черновой кейс",
             url="https://example.ru/pending",
             snippet="Не публиковать",
-            status="classified",
+            status="preliminary",
             is_loophole=True,
         ),
         session=session,

@@ -159,12 +159,13 @@ def update_verdict(
     model: str,
     session=None,
 ) -> None:
+    """Обновляет классификацию, сохраняя статус публикации записи."""
     with _session(session) as s:
         s.execute(
             text(
                 f"UPDATE {schema.T_RECORD} SET is_loophole = :is_l, "
                 "verdict_confidence = :conf, verdict_reason = :reason, "
-                "verdict_model = :model, classified_at = CURRENT_TIMESTAMP, status = 'classified' "
+                "verdict_model = :model, classified_at = CURRENT_TIMESTAMP "
                 "WHERE record_id = :id"
             ),
             {"is_l": is_loophole, "conf": confidence, "reason": reason,
@@ -334,7 +335,7 @@ def list_catalog_cases(
     offset: int = 0,
     session=None,
 ) -> list[dict]:
-    """Общая база: подтверждённые и предварительные подозрения.
+    """Общая база: найденные лазейки независимо от статуса записи.
 
     ``verified`` показывает только записи с положительным append-only решением
     ЦК КС; ``pending`` — только предварительные записи без решения.
@@ -342,7 +343,7 @@ def list_catalog_cases(
     if verification_status not in {"all", "verified", "pending"}:
         raise ValueError("Неизвестный статус верификации")
     with _session(session) as s:
-        clauses = ["record.is_loophole = TRUE", "record.status IN ('published', 'preliminary')"]
+        clauses = ["record.is_loophole = TRUE"]
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         positive_decision = (
             "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
