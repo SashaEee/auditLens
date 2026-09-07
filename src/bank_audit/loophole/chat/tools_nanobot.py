@@ -528,7 +528,6 @@ def save_loophole(
         raw_text_len=content.length,
         raw_text_truncated=content.truncated,
         is_loophole=is_loophole,
-        status="new",
     )
     try:
         is_new = not repo.exists_sha256(sha, session=session)

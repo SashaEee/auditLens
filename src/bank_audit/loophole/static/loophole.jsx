@@ -1361,12 +1361,6 @@ function LoopholeApp() {
 
   const RECORD_STATUS_LABELS = {
     published: "подтверждено",
-    verified: "подтверждено",
-    pending: "на проверке",
-    classified: "классифицировано",
-    monitoring: "мониторинг",
-    rejected: "отклонено",
-    new: "новая",
     preliminary: "предварительно",
   };
   const recordStatusLabel = (status) => status ? (RECORD_STATUS_LABELS[status] || "—") : "—";
