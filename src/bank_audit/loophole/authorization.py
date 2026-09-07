@@ -9,9 +9,9 @@ explicit revoke и fail-closed 403. Привилегированные queue/adm
 которые перечитываются из БД на каждом запросе. Роль/workspace/capability
 из клиентских заголовков не принимаются никогда.
 
-module_admin (story 1.5) — прикладная роль, не DB-superuser: даёт только
-управление назначениями ЦК КС (не более пяти активных) и сводный
-обезличенный аудит. Изменения ролей аудируются так же обезличенно:
+module_admin (story 1.5) — прикладная роль, не DB-superuser: даёт
+управление назначениями ЦК КС (не более пяти активных), сводный
+обезличенный аудит и ручную маркировку записей. Изменения ролей аудируются обезличенно:
 actor + действие + решение, без целевого username и payload.
 
 Отказы фиксируются в обезличенном аудите (loophole_auth_audit): только
@@ -156,6 +156,24 @@ def require_role(
     ):
         log_auth_event(username, action, "deny")
         raise HTTPException(status_code=403, detail=detail)
+
+
+def can_mark_verdict(username: str, *, session) -> bool:
+    """Ручной статус требует активного членства и роли администратора или ЦК КС."""
+    return is_active_member(username, session=session) and any(
+        has_active_role(username, role, session=session)
+        for role in (ROLE_MODULE_ADMIN, ROLE_CCKS_EXPERT)
+    )
+
+
+def require_mark_verdict(username: str, *, session) -> None:
+    """Перепроверяет право до чтения записей и изменения статуса или примеров KB."""
+    if not can_mark_verdict(username, session=session):
+        log_auth_event(username, "mark_verdict", "deny")
+        raise HTTPException(
+            status_code=403,
+            detail="Изменять статус лазеек могут только администратор модуля или участник ЦК КС",
+        )
 
 
 def available_contexts(username: str, *, session) -> list[dict]:

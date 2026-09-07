@@ -75,6 +75,11 @@ def _runtime_html(
     jsx = (STATIC / "loophole.jsx").read_text(encoding="utf-8")
     css = (STATIC / "loophole.css").read_text(encoding="utf-8")
     context_json = json.dumps(contexts or ALL_CONTEXTS, ensure_ascii=False)
+    capabilities_json = json.dumps({
+        "can_mark_verdict": any(
+            context["id"] in {"queue", "admin"} for context in contexts or ALL_CONTEXTS
+        ),
+    })
     records_json = json.dumps(RECORDS, ensure_ascii=False)
     parser_json = json.dumps(
         {
@@ -166,7 +171,9 @@ def _runtime_html(
           )).join(newline + newline) + newline + newline,
           {{status: 200, headers: {{"Content-Type": "text/event-stream"}}}}
         );
-        if (url.endsWith("/contexts")) return jsonResponse({{contexts: {context_json}}});
+        if (url.endsWith("/contexts")) return jsonResponse({{
+          contexts: {context_json}, capabilities: {capabilities_json},
+        }});
         if (url.endsWith("/workspace")) return jsonResponse({{workspace_id: 1}});
         if (url.endsWith("/banks")) return jsonResponse({{banks: ["sber", "vtb"]}});
         if (url.includes("/catalog")) {{
