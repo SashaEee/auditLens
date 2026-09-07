@@ -6,6 +6,45 @@ from bank_audit.loophole.chat.nanobot_agent import (
 )
 
 
+def test_actual_managed_factory_registry_is_exact_allowlist(monkeypatch, tmp_path):
+    """SDK builtins не должны обходить allowlist и общий бюджет managed agent."""
+    import asyncio
+
+    from bank_audit.loophole.agent import DEFAULT_ALLOWED_SKILLS, AgentFactory, AgentRunContext
+
+    monkeypatch.setenv("LOOPHOLE_WORKSPACE_DIR", str(tmp_path))
+    managed = AgentFactory().create(AgentRunContext(
+        "offline-analyst", 1, "Найди лазейки", "exact-registry",
+    ))
+    try:
+        registry = managed._bot._loop.tools
+        definitions = {item["function"]["name"] for item in registry.get_definitions()}
+        assert definitions == set(registry.tool_names) == set(DEFAULT_ALLOWED_SKILLS)
+        for name in ("spawn", "long_task", "message", "complete_goal"):
+            tool, _params, error = registry.prepare_call(name, {})
+            assert tool is None
+            assert "not found" in error
+    finally:
+        asyncio.run(managed.aclose())
+
+
+def test_explicit_healer_tools_survive_sdk_builtin_removal(tmp_path):
+    """Явные tools существующего healer-а сохраняются, не наследуя SDK builtins."""
+    import asyncio
+    from pathlib import Path
+
+    from bank_audit.loophole.chat.tools_nanobot import NANOBOT_HEAL_TOOLS, NANOBOT_TOOLS
+
+    bot, config_path = create_nanobot(workspace=tmp_path, extra_tools=NANOBOT_HEAL_TOOLS)
+    try:
+        expected = {tool_class().name for tool_class in (*NANOBOT_TOOLS, *NANOBOT_HEAL_TOOLS)}
+        assert set(bot._loop.tools.tool_names) == expected
+        assert {row["function"]["name"] for row in bot._loop.tools.get_definitions()} == expected
+    finally:
+        asyncio.run(bot.aclose())
+        Path(config_path).unlink(missing_ok=True)
+
+
 def _transport_uses_proxy(client):
     """Возвращает True, если httpx transport содержит proxy-пул."""
     transport = client._transport

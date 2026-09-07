@@ -96,7 +96,7 @@ def test_chat_panel_only_in_ai_research():
 def test_header_titles_follow_context():
     """Заголовок показывает название выбранного контекста."""
     jsx = _jsx()
-    assert "Новое AI-исследование" in jsx
+    assert "AI-исследования" in jsx
     assert "Очередь верификации" in jsx
 
 

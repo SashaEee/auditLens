@@ -26,6 +26,10 @@ def _runtime_html() -> str:
           {id: "sources", title: "Добавить источник"},
         ]});
         if (url.endsWith("/workspace")) return json({workspace_id: 1});
+        if (url.endsWith("/workspaces")) return json({workspaces: [{workspace_id: 1}]});
+        if (url.endsWith("/history/1")) return json({
+          workspace: {workspace_id: 1}, messages: [], reports: [], read_only: false,
+        });
         if (url.endsWith("/banks")) return json({banks: []});
         if (url.includes("/catalog")) return json({records: []});
         if (url.endsWith("/parsers") && method === "GET") {

@@ -19,6 +19,7 @@ class ChatState(TypedDict, total=False):
     tool_calls: list[dict]         # запрошенные tool-calls
     tool_results: list[dict]       # результаты tools
     answer: str                    # финальный ответ LLM
+    persist_messages: bool         # False: API атомарно сохраняет ответ вместе с отчётом
     error: str | None
 
     # ── Поля ReAct-фаз ───────────────────────────────────────────────────────

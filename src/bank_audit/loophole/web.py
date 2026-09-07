@@ -16,6 +16,7 @@ from datetime import date, datetime
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
@@ -23,7 +24,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from .. import db
 from ..web.auth import CurrentUser, get_current_user
-from . import authorization, logging_audit
+from . import authorization, logging_audit, research_history
 from . import collector as collector_mod
 from . import refine as refine_mod
 from . import repository as repo
@@ -65,13 +66,14 @@ def get_user_id(
 router = APIRouter(dependencies=[Depends(get_user_id)])
 
 
-def _require_workspace_owner(workspace_id: int, user_id: str, *, session) -> None:
+def _require_workspace_owner(workspace_id: int, user_id: str, *, session) -> dict:
     """Ownership workspace: 404 — не существует, 403 — чужой."""
     ws = repo.get_workspace(workspace_id, session=session)
     if ws is None:
         raise HTTPException(status_code=404, detail="Рабочая область не найдена")
     if ws["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Нет доступа к чужому workspace")
+    return ws
 
 
 # ── Рабочие контексты и очередь верификации (story 1.1) ─────────────────────
@@ -616,8 +618,57 @@ def history(
     user_id: str = Depends(get_user_id),
     session=Depends(get_session),
 ):
+    workspace = _require_workspace_owner(workspace_id, user_id, session=session)
+    return research_history.history_payload(
+        workspace, user_id, session=session,
+    )
+
+
+@router.delete("/workspace/{workspace_id}")
+def delete_workspace(
+    workspace_id: int,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Скрывает исследование автора, сохраняя все связанные данные."""
     _require_workspace_owner(workspace_id, user_id, session=session)
-    return {"messages": ws_mod.history(workspace_id, session=session)}
+    if not research_history.soft_delete(workspace_id, user_id, session=session):
+        raise HTTPException(status_code=404, detail="Исследование не найдено")
+    logging_audit.log_action(user_id, "workspace_delete", workspace_id=workspace_id, session=session)
+    return {"deleted": True}
+
+
+@router.post("/workspace/{workspace_id}/share")
+def share_workspace(
+    workspace_id: int,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Создаёт ссылку для чтения пользователями модуля."""
+    _require_workspace_owner(workspace_id, user_id, session=session)
+    token = research_history.share_token(workspace_id, user_id, session=session)
+    if token is None:
+        raise HTTPException(status_code=404, detail="Исследование не найдено")
+    logging_audit.log_action(user_id, "workspace_share", workspace_id=workspace_id, session=session)
+    return {"share_url": f"/static/loophole/loophole.html?share={token}"}
+
+
+@router.get("/shared/{token}")
+def shared_history(
+    token: str,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Ссылка не ослабляет ownership-проверки существующих mutation endpoints."""
+    workspace = research_history.shared_workspace(token, session=session)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Исследование не найдено или удалено")
+    return JSONResponse(
+        content=jsonable_encoder(
+            research_history.history_payload(workspace, user_id, session=session),
+        ),
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
 
 
 class ChatRequest(BaseModel):
@@ -657,12 +708,17 @@ async def chat(
         raise HTTPException(status_code=400, detail="Недействительный execution token")
     state: ChatState = {
         "query": body.message,
-        "messages": body.history,
+        "messages": [
+            {"role": row["role"], "content": row["content"]}
+            for row in repo.list_chat_history(body.workspace_id, limit=200, session=session)
+            if row["role"] in {"user", "assistant"}
+        ],
         "workspace_id": body.workspace_id,
         "user_id": user_id,
         "session": session,
         "clarification_verified": clarification_verified,
         "run_id": uuid.uuid4().hex,
+        "persist_messages": False,
     }
     # Обогащённый execution input уже представлен в истории исходным запросом
     # и ответом на clarification, поэтому не сохраняем его третьим user-message.
@@ -672,17 +728,32 @@ async def chat(
         user_id, "chat", workspace_id=body.workspace_id,
         detail={"message": repo.redact_audit_text(body.message, limit=200)}, session=session,
     )
+    # Запрос остаётся в истории даже при разрыве SSE до ответа агента.
+    session.commit()
 
     async def event_generator():
         import json as _json
         report_chunks: list[str] = []
         completed = True
+        report_id = None
+        history_saved = False
         try:
             stream = chat_graph.stream_chat(state, session=session)
             async for ev in stream:
                 if ev["event"] == "phase" and isinstance(ev["data"], dict):
                     completed = completed and not bool(ev["data"].get("partial"))
                     completed = completed and ev["data"].get("phase") != "error"
+                if ev["event"] == "question" and isinstance(ev["data"], dict):
+                    completed = False
+                    questions = ev["data"].get("questions", [])
+                    question_text = "\n".join(
+                        str(q.get("question", "")) for q in questions if isinstance(q, dict)
+                    ).strip()
+                    if question_text:
+                        repo.add_chat_message(
+                            body.workspace_id, "assistant", question_text, session=session,
+                        )
+                        session.commit()
                 if ev["event"] in {"token", "partial"}:
                     data = ev["data"]
                     piece = data if isinstance(data, str) else data.get("text", data.get("message", ""))
@@ -700,22 +771,37 @@ async def chat(
                     query=body.message,
                     result=str(result_text),
                 )
+            if result_text:
+                repo.add_chat_message(
+                    body.workspace_id, "assistant", str(result_text),
+                    report_id=report_id, session=session,
+                )
+            session.commit()
+            history_saved = True
+            if report_id is not None:
                 yield {"event": "report", "data": _json.dumps({"report_id": report_id})}
-            # Сохраняем ответ (если есть).
-            try:
-                if state.get("answer"):
-                    repo.add_chat_message(
-                        body.workspace_id, "assistant", state["answer"], session=session
-                    )
-            except Exception:
-                pass
         finally:
-            close_stream = getattr(locals().get("stream"), "aclose", None)
-            if callable(close_stream):
-                try:
+            try:
+                close_stream = getattr(locals().get("stream"), "aclose", None)
+                if callable(close_stream):
                     await close_stream()
-                except Exception:
-                    log.warning("[chat] закрытие graph stream завершилось ошибкой")
+            except Exception:
+                log.warning("[chat] закрытие graph stream завершилось ошибкой")
+            finally:
+                # Закрытие вкладки отменяет генератор в точке yield: уже показанный
+                # текст сохраняем отдельно, не выдавая его за завершённый отчёт.
+                if not history_saved and report_chunks:
+                    try:
+                        partial_text = "".join(report_chunks) + (
+                            "\n\nОтвет прерван. Сохранён полученный фрагмент; "
+                            "исследование можно продолжить новым сообщением."
+                        )
+                        research_history.save_interrupted_answer(
+                            body.workspace_id, partial_text, session=session,
+                        )
+                    except Exception:
+                        session.rollback()
+                        log.exception("[chat] не удалось сохранить прерванный ответ")
 
     return EventSourceResponse(event_generator())
 
@@ -1083,9 +1169,10 @@ async def clarify(
     if body.workspace_id is not None:
         _require_workspace_owner(body.workspace_id, user_id, session=session)
 
-    result = await clarify_mod.generate_clarifications(
-        body.question, history=body.history
-    )
+    server_history = body.history
+    if body.workspace_id is not None:
+        server_history = repo.list_chat_history(body.workspace_id, limit=200, session=session)
+    result = await clarify_mod.generate_clarifications(body.question, history=server_history)
     questions = clarify_mod.clarification_questions(result, query=body.question)
     if questions:
         result = {**result, "questions": questions}
@@ -1094,6 +1181,14 @@ async def clarify(
         and not result.get("complete")
         and questions
     ):
+        repo.add_chat_message(body.workspace_id, "user", body.question, session=session)
+        question_text = "\n".join(
+            str(q.get("question", "")) for q in questions if isinstance(q, dict)
+        ).strip()
+        if question_text:
+            repo.add_chat_message(
+                body.workspace_id, "assistant", question_text, session=session,
+            )
         result = {
             **result,
             "clarification_token": clarify_mod.issue_clarification_token(

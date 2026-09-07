@@ -17,6 +17,7 @@ from typing import Any
 from ...config import ROOT
 from ..config import LoopholeSettings, validate_nanobot_max_iterations
 from ..direct_transport import async_client
+from ..run_budget import requested_finding_count
 from .tools_nanobot import NANOBOT_TOOLS
 
 log = logging.getLogger(__name__)
@@ -182,6 +183,10 @@ def create_nanobot(
         ws.mkdir(parents=True, exist_ok=True)
 
         bot = Nanobot.from_config(config_path=config_path, workspace=str(ws))
+        # SDK добавляет spawn/long_task/message независимо от отключённых web/file/exec.
+        # Оставляем только явно выбранные приложением tools, включая extras healer-а.
+        for tool_name in tuple(bot._loop.tools.tool_names):
+            bot._loop.tools.unregister(tool_name)
         _configure_direct_provider(bot)
         selected_tools = NANOBOT_TOOLS if tool_classes is None else tool_classes
         for tool_cls in (*selected_tools, *extra_tools):
@@ -201,6 +206,15 @@ def build_prompt(query: str, history: list[dict[str, str]] | None = None) -> str
     """Формирует сообщение для nanobot: system prompt + history + query."""
     system = load_system_prompt()
     parts = [system]
+    requested_count = requested_finding_count(query)
+    if requested_count is not None:
+        parts.append(
+            f"Ограничение текущего запроса: требуется AI-кандидатов — {requested_count}. "
+            "После получения этого числа кандидатов с цитатой из прочитанного источника "
+            "и проверенной датой публикации завершай поиск и формируй итоговый отчёт. "
+            "Широкое покрытие других механизмов и площадок после этого не требуется. "
+            "Кандидат не означает решение или подтверждение ЦК КС."
+        )
     if history:
         for msg in history:
             role = msg.get("role", "user")

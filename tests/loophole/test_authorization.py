@@ -259,7 +259,7 @@ def test_contexts_member_gets_catalog_and_research(client, app_session):
     assert ids == {"catalog", "sources", "ai_research"}
     titles = {c["title"] for c in contexts}
     assert "Общая база" in titles
-    assert "Новое AI-исследование" in titles
+    assert "AI-исследования" in titles
 
 
 def test_contexts_expert_also_gets_queue(client, app_session):

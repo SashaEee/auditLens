@@ -73,7 +73,9 @@ CREATE TABLE loophole_workspace (
     user_id        TEXT NOT NULL,
     name           TEXT,
     created_at     TEXT DEFAULT CURRENT_TIMESTAMP,
-    last_active_at TEXT
+    last_active_at TEXT,
+    deleted_at     TEXT,
+    share_token    TEXT UNIQUE
 );
 CREATE INDEX idx_lw_user ON loophole_workspace(user_id);
 
@@ -92,6 +94,7 @@ CREATE TABLE loophole_result (
 CREATE TABLE loophole_chat_message (
     message_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id  INTEGER,
+    report_id     INTEGER,
     role          TEXT,
     content       TEXT,
     tool_name     TEXT,

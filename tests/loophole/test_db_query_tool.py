@@ -14,9 +14,17 @@ CREATE TABLE loophole_workspace (
     user_id TEXT NOT NULL,
     name TEXT,
     created_at TEXT,
-    last_active_at TEXT
+    last_active_at TEXT,
+    deleted_at TEXT
 );
 INSERT INTO loophole_workspace (workspace_id, user_id) VALUES (17, 'test-user');
+
+CREATE TABLE loophole_chat_message (
+    message_id INTEGER PRIMARY KEY,
+    workspace_id INTEGER,
+    role TEXT,
+    content TEXT
+);
 
 CREATE TABLE loophole_record (
     record_id INTEGER PRIMARY KEY AUTOINCREMENT,

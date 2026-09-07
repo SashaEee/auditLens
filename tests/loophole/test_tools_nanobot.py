@@ -233,6 +233,7 @@ async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monk
             "title": "Обход комиссии",
             "url": "https://example.ru/source",
             "snippet": "Подтверждающая цитата",
+            "evidence_quote": "Подтверждающая цитата",
             "bank_slug": "sberbank",
             "raw_text": "Текст источника",
             "source_title": "Проверенный источник",
