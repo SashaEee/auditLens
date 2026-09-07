@@ -15,6 +15,39 @@ from typing import Any
 from .. import repository as repo
 
 UNKNOWN_PUBLIC_TOOL = "инструмент недоступен"
+MODEL_PROTOCOL_ERROR = "model_protocol_error"
+MODEL_PROTOCOL_ERROR_MESSAGE = (
+    "Аналитик временно недоступен. Повторите запрос через несколько секунд."
+)
+_PROTOCOL_OPENING = re.compile(
+    r"^\s*<(?:ipython_send_cmd|tool_call|tool_calls|function_call|functioncall|"
+    r"function_calls|(?:antml:|minimax:)?invoke|function)(?:\s|>|=)|"
+    r"^\s*(?:\[TOOL_CALLS\]|<\|python_tag\|>)",
+    re.IGNORECASE,
+)
+
+
+class ModelProtocolError(ValueError):
+    """Модель вернула командный протокол вместо аналитического ответа."""
+
+
+def validate_final_content(content: Any) -> None:
+    """Отвергает служебные вызовы вне явно оформленных цитат и блоков кода."""
+    fence_char = ""
+    fence_length = 0
+    for line in str(content or "").splitlines():
+        fence = re.match(r"^\s{0,3}(`{3,}|~{3,})", line)
+        if fence:
+            marker = fence.group(1)
+            if not fence_char:
+                fence_char, fence_length = marker[0], len(marker)
+            elif marker[0] == fence_char and len(marker) >= fence_length:
+                fence_char = ""
+            continue
+        if fence_char or line.startswith(("    ", "\t")) or re.match(r"^\s*>", line):
+            continue
+        if _PROTOCOL_OPENING.match(line):
+            raise ModelProtocolError(MODEL_PROTOCOL_ERROR)
 
 
 _STREAM_EMAIL_CANDIDATE = re.compile(
@@ -22,10 +55,20 @@ _STREAM_EMAIL_CANDIDATE = re.compile(
 )
 
 
-def redact_stream_text(value: Any) -> str:
+def redact_stream_text(value: Any, *, limit: int = 10000) -> str:
     """Маскирует ПДн и credentials перед сохранением или выдачей delta."""
-    masked = repo.redact_audit_text(value, limit=10000)
+    masked = repo.redact_audit_text(value, limit=limit)
     return _STREAM_EMAIL_CANDIDATE.sub("[EMAIL]", masked)
+
+
+def public_answer_text(value: Any) -> str:
+    """Отделяет служебные размышления только в публичном ответе, затем маскирует ПДн."""
+    from nanobot.utils.helpers import strip_think
+
+    public = strip_think(str(value or ""))
+    # SDK убирает незакрытый блок в начале, но оставляет такой хвост после ответа.
+    public = re.sub(r"<(?:think|thought)>[\s\S]*$", "", public).rstrip()
+    return redact_stream_text(public)
 
 
 class StreamRedactor:
@@ -41,9 +84,13 @@ class StreamRedactor:
 
     def flush(self) -> str:
         """Маскирует и выдаёт полный накопленный текст одним сообщением."""
-        safe = redact_stream_text(self._pending)
+        safe = public_answer_text(self._pending)
         self._pending = ""
         return safe
+
+    def validate(self) -> None:
+        """Проверяет весь буфер до публикации, включая split служебных тегов."""
+        validate_final_content(self._pending)
 
 
 def public_tool_name(name: Any) -> str:
@@ -84,6 +131,24 @@ class AuditHook(_audit_hook_base()):
         self.iterations = 0
         self.stop_reason: str | None = None
 
+    def validate_answer(self, content: Any = None) -> bool:
+        """Обнуляет публичный ответ и буфер при нарушении протокола модели."""
+        try:
+            if MODEL_PROTOCOL_ERROR in self.tool_errors:
+                raise ModelProtocolError(MODEL_PROTOCOL_ERROR)
+            validate_final_content(self.final_answer if content is None else content)
+            self._stream_redactor.validate()
+        except ModelProtocolError:
+            if MODEL_PROTOCOL_ERROR not in self.tool_errors:
+                self.tool_errors.append(MODEL_PROTOCOL_ERROR)
+            self.stop_reason = MODEL_PROTOCOL_ERROR
+            self.final_answer = MODEL_PROTOCOL_ERROR_MESSAGE
+            self._stream_source = ""
+            self._stream_redactor = StreamRedactor()
+            self.records = []
+            return False
+        return True
+
     def wants_streaming(self) -> bool:
         return True
 
@@ -97,6 +162,8 @@ class AuditHook(_audit_hook_base()):
 
     def flush_stream_for_sse(self) -> str:
         """Выдаёт полный безопасный ответ после окончания stream."""
+        if not self.validate_answer():
+            return ""
         safe_answer = self._stream_redactor.flush()
         if safe_answer and not self.final_answer:
             self.final_answer = safe_answer
@@ -155,14 +222,17 @@ class AuditHook(_audit_hook_base()):
         final = getattr(context, "final_content", None)
         if final:
             self._stream_source = str(final)
-            self.final_answer = redact_stream_text(final)
+            self.final_answer = public_answer_text(final)
         stop_reason = getattr(context, "stop_reason", None)
         if stop_reason:
             self.stop_reason = str(stop_reason)
         for name in getattr(context, "tools_used", []):
             self._add_tool(name)
+        self.validate_answer()
 
     def finalize_content(self, context: Any, content: str | None) -> str | None:
         if content is None:
             return content
+        if not self.validate_answer(content):
+            return MODEL_PROTOCOL_ERROR_MESSAGE
         return redact_stream_text(content)

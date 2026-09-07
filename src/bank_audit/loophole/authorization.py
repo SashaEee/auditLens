@@ -50,7 +50,7 @@ class ExpertLimitError(Exception):
 # Рабочие контексты модуля. Заголовки русские — отдаются в UI как есть.
 _CONTEXT_CATALOG = {"id": "catalog", "title": "Общая база"}
 _CONTEXT_SOURCES = {"id": "sources", "title": "Добавить источник"}
-_CONTEXT_AI_RESEARCH = {"id": "ai_research", "title": "Новое AI-исследование"}
+_CONTEXT_AI_RESEARCH = {"id": "ai_research", "title": "AI-исследования"}
 _CONTEXT_QUEUE = {"id": "queue", "title": "Очередь верификации"}
 _CONTEXT_ADMIN = {"id": "admin", "title": "Управление доступом"}
 

@@ -15,7 +15,7 @@ VENDOR = ROOT / "src" / "bank_audit" / "web" / "static" / "vendor"
 ALL_CONTEXTS = [
     {"id": "catalog", "title": "Общая база"},
     {"id": "sources", "title": "Добавить источник"},
-    {"id": "ai_research", "title": "Новое AI-исследование"},
+    {"id": "ai_research", "title": "AI-исследования"},
     {"id": "queue", "title": "Очередь верификации"},
     {"id": "admin", "title": "Управление доступом"},
 ]
@@ -23,7 +23,7 @@ ALL_CONTEXTS = [
 ROLELESS_CONTEXTS = [
     {"id": "catalog", "title": "Общая база"},
     {"id": "sources", "title": "Добавить источник"},
-    {"id": "ai_research", "title": "Новое AI-исследование"},
+    {"id": "ai_research", "title": "AI-исследования"},
 ]
 
 RECORDS = [
@@ -171,8 +171,11 @@ def _runtime_html(
           )).join(newline + newline) + newline + newline,
           {{status: 200, headers: {{"Content-Type": "text/event-stream"}}}}
         );
-        if (url.endsWith("/contexts")) return jsonResponse({{
-          contexts: {context_json}, capabilities: {capabilities_json},
+        if (url.endsWith("/contexts")) return jsonResponse({{contexts: {context_json}}});
+        if (url.endsWith("/workspaces")) return jsonResponse({{workspaces: [{{workspace_id: 1, name: "Новое исследование"}}]}});
+        if (url.endsWith("/history/1")) return jsonResponse({{
+          workspace: {{workspace_id: 1, name: "Новое исследование"}},
+          messages: [], reports: [], read_only: false,
         }});
         if (url.endsWith("/workspace")) return jsonResponse({{workspace_id: 1}});
         if (url.endsWith("/banks")) return jsonResponse({{banks: ["sber", "vtb"]}});
@@ -345,7 +348,7 @@ def _open(
 
 
 def _open_ai_chat(page, *, compact: bool) -> None:
-    page.get_by_role("tab", name="Новое AI-исследование").click()
+    page.get_by_role("tab", name="AI-исследования").click()
     if compact:
         page.get_by_role("button", name="Открыть чат").click()
     page.get_by_label("Сообщение аналитику").wait_for(state="visible")
@@ -767,7 +770,7 @@ def test_chat_panel_follows_theme_tokens_without_gradient_or_slash_copy(
 def test_research_result_renders_safe_markdown_and_exposes_snapshot_downloads(browser: Browser):
     page = _open(browser, report_snapshot_id=73)
     try:
-        page.get_by_role("tab", name="Новое AI-исследование").click()
+        page.get_by_role("tab", name="AI-исследования").click()
         composer = page.get_by_label("Сообщение аналитику")
         send = page.get_by_role("button", name="Отправить сообщение")
         composer.fill("Проверь условия")
@@ -894,12 +897,12 @@ def test_roleless_base_contexts_switch_without_queue_or_admin(browser: Browser):
     page = _open(browser, contexts=ROLELESS_CONTEXTS)
     try:
         catalog = page.get_by_role("tab", name="Общая база")
-        research = page.get_by_role("tab", name="Новое AI-исследование")
+        research = page.get_by_role("tab", name="AI-исследования")
 
         catalog.click()
         page.locator(".lp-table").wait_for(state="visible")
         research.click()
-        page.get_by_role("heading", name="Новое AI-исследование").wait_for(state="visible")
+        page.get_by_role("heading", name="AI-исследования").wait_for(state="visible")
 
         assert page.get_by_role("tab", name="Очередь верификации").count() == 0
         assert page.get_by_role("tab", name="Управление доступом").count() == 0
@@ -1046,8 +1049,8 @@ def test_parser_targets_link_only_safe_web_addresses(browser: Browser):
 def test_secondary_surfaces_use_final_board_composition(browser: Browser):
     page = _open(browser)
     try:
-        page.get_by_role("tab", name="Новое AI-исследование").click()
-        page.get_by_role("heading", name="Новое AI-исследование").wait_for(state="visible")
+        page.get_by_role("tab", name="AI-исследования").click()
+        page.get_by_role("heading", name="AI-исследования").wait_for(state="visible")
         assert page.locator(".lp-research-board").is_visible()
         assert page.locator(".lp-research-card").count() >= 3
         assert page.get_by_role("complementary", name="Аналитик лазеек").is_visible()

@@ -703,13 +703,32 @@ def create_workspace(user_id: str, name: str | None = None, *, session=None) -> 
         return row
 
 
+_WORKSPACE_SUMMARY_SQL = (
+    "SELECT w.workspace_id, w.user_id, w.name, w.created_at, w.last_active_at, "
+    "(SELECT m.content FROM loophole_chat_message m "
+    "WHERE m.workspace_id = w.workspace_id AND m.role = 'user' "
+    "ORDER BY m.message_id LIMIT 1) AS first_query "
+    f"FROM {schema.T_WORKSPACE} w "
+)
+
+
+def _workspace_summary(row) -> dict:
+    """Старые области с именем default получают заголовок из первого запроса."""
+    result = dict(row)
+    first_query = result.pop("first_query", None)
+    if not result["name"] or result["name"] == "default":
+        result["name"] = " ".join(str(first_query or "Новое исследование").split())[:120]
+    return result
+
+
 def list_workspaces(user_id: str, *, session=None) -> list[dict]:
     with _session(session) as s:
         return [
-            dict(r) for r in s.execute(
+            _workspace_summary(r) for r in s.execute(
                 text(
-                    f"SELECT workspace_id, user_id, name, created_at, last_active_at "
-                    f"FROM {schema.T_WORKSPACE} WHERE user_id = :u ORDER BY workspace_id"
+                    _WORKSPACE_SUMMARY_SQL
+                    + "WHERE w.user_id = :u AND w.deleted_at IS NULL "
+                    "ORDER BY COALESCE(w.last_active_at, w.created_at) DESC, w.workspace_id DESC"
                 ),
                 {"u": user_id},
             ).mappings().all()
@@ -721,12 +740,12 @@ def get_workspace(workspace_id: int, *, session=None) -> dict | None:
     with _session(session) as s:
         row = s.execute(
             text(
-                f"SELECT workspace_id, user_id, name, created_at, last_active_at "
-                f"FROM {schema.T_WORKSPACE} WHERE workspace_id = :id"
+                _WORKSPACE_SUMMARY_SQL
+                + "WHERE w.workspace_id = :id AND w.deleted_at IS NULL"
             ),
             {"id": workspace_id},
         ).mappings().first()
-        return dict(row) if row else None
+        return _workspace_summary(row) if row else None
 
 
 def list_verification_queue(*, limit: int = 200, session=None) -> list[dict]:
@@ -752,7 +771,10 @@ def list_verification_queue(*, limit: int = 200, session=None) -> list[dict]:
 def touch_workspace(workspace_id: int, *, session=None) -> None:
     with _session(session) as s:
         s.execute(
-            text(f"UPDATE {schema.T_WORKSPACE} SET last_active_at = CURRENT_TIMESTAMP WHERE workspace_id = :id"),
+            text(
+                f"UPDATE {schema.T_WORKSPACE} SET last_active_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = :id AND deleted_at IS NULL"
+            ),
             {"id": workspace_id},
         )
 
@@ -765,6 +787,7 @@ def add_chat_message(
     *,
     tool_name: str | None = None,
     tool_args: dict | None = None,
+    report_id: int | None = None,
     session=None,
 ) -> int:
     with _session(session) as s:
@@ -772,27 +795,31 @@ def add_chat_message(
         row = s.execute(
             text(
                 f"INSERT INTO {schema.T_CHAT_MESSAGE} "
-                "(workspace_id, role, content, tool_name, tool_args) "
-                "VALUES (:ws, :role, :content, :tn, :ta) RETURNING message_id"
+                "(workspace_id, role, content, tool_name, tool_args, report_id) "
+                "VALUES (:ws, :role, :content, :tn, :ta, :report_id) RETURNING message_id"
             ),
             {"ws": workspace_id, "role": role, "content": content,
-             "tn": tool_name, "ta": args_json},
+             "tn": tool_name, "ta": args_json, "report_id": report_id},
         ).scalar_one()
+        touch_workspace(workspace_id, session=s)
         return row
 
 
-def list_chat_history(workspace_id: int, *, limit: int = 200, session=None) -> list[dict]:
+def list_chat_history(workspace_id: int, *, limit: int | None = None, session=None) -> list[dict]:
+    """Полная история в порядке записи; ограниченный контекст берётся с конца."""
     with _session(session) as s:
-        return [
+        rows = [
             dict(r) for r in s.execute(
                 text(
                     f"SELECT message_id, workspace_id, role, content, tool_name, tool_args, "
-                    f"created_at FROM {schema.T_CHAT_MESSAGE} "
-                    "WHERE workspace_id = :ws ORDER BY created_at LIMIT :lim"
+                    f"created_at, report_id FROM {schema.T_CHAT_MESSAGE} "
+                    "WHERE workspace_id = :ws ORDER BY message_id "
+                    + ("DESC LIMIT :lim" if limit is not None else "ASC")
                 ),
                 {"ws": workspace_id, "lim": limit},
             ).mappings().all()
         ]
+        return list(reversed(rows)) if limit is not None else rows
 
 
 # ── results ─────────────────────────────────────────────────────────────────

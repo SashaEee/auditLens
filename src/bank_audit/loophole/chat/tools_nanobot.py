@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
@@ -16,11 +17,16 @@ from .. import repository as repo
 from ..adapters import fetch_decorator, search_decorator
 from ..config import LoopholeSettings
 from ..models import LoopholeRecord
+from ..network_io import run_blocking_network
 from ..pii_mask import mask as pii_mask
+
+if TYPE_CHECKING:
+    from ..run_budget import ResearchBudget
 
 log = logging.getLogger(__name__)
 
 _PROMPT_DIR = Path(__file__).parent / "prompt"
+_EXTRACTION_TIMEOUT_SECONDS = 45.0
 
 
 def load_prompt(name: str) -> str:
@@ -86,6 +92,16 @@ class ToolContext:
     pending_records: list[dict] = field(default_factory=list)
     source_publication_dates: dict[str, str | None] = field(default_factory=dict)
     fetched_sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    budget: ResearchBudget | None = None
+
+
+def _ensure_tool_active(context: ToolContext | None) -> None:
+    """Проверяет отмену/дедлайн в потоке владельца перед изменением контекста."""
+    task = asyncio.current_task()
+    if task is not None and task.cancelling():
+        raise asyncio.CancelledError
+    if context is not None and context.budget is not None:
+        context.budget.ensure_active()
 
 
 _RU_MONTHS = {
@@ -112,17 +128,25 @@ _QUERY_LOWER_BOUND_RE = re.compile(
     rf"(?P<year>(?:19|20)\d{{2}})\b",
     re.IGNORECASE,
 )
+_QUERY_YEAR_WINDOW_RE = re.compile(
+    r"\bза\s+(?P<year>(?:19|20)\d{2})\s*(?:год\w*|г\.?(?!\w))?\b",
+    re.IGNORECASE,
+)
 
 
 def _publication_window(query: str) -> tuple[date, date | None] | None:
-    """Возвращает строгий window даты первоисточника из понятного month/year scope."""
+    """Возвращает строгий период даты первоисточника для месяца или года."""
     text_query = str(query or "")
     match = _QUERY_MONTH_WINDOW_RE.search(text_query)
     exact = match is not None
     if match is None:
         match = _QUERY_LOWER_BOUND_RE.search(text_query)
     if match is None:
-        return None
+        year_match = _QUERY_YEAR_WINDOW_RE.search(text_query)
+        if year_match is None:
+            return None
+        year = int(year_match.group("year"))
+        return date(year, 1, 1), date(year + 1, 1, 1)
     month_word = match.group("month").lower()
     month = next(
         (number for stem, number in _RU_MONTHS.items() if month_word.startswith(stem)),
@@ -260,7 +284,9 @@ def _default_llm() -> Any:
     model = LoopholeSettings.load().effective_chat_model()
     return ChatOpenAI(
         model=model, base_url=base_url, api_key=api_key, temperature=0.3,
-        http_client=sync_client(), http_async_client=async_client(),
+        timeout=_EXTRACTION_TIMEOUT_SECONDS, max_retries=0,
+        http_client=sync_client(timeout=_EXTRACTION_TIMEOUT_SECONDS),
+        http_async_client=async_client(timeout=_EXTRACTION_TIMEOUT_SECONDS),
     )
 
 
@@ -279,20 +305,31 @@ async def extract_loopholes(
     """
     from ...ai.llm_utils import _loose_json_loads
 
+    if not (text or "").strip():
+        return []
     masked_text, _ = pii_mask(text or "")
     system = load_prompt("04_extract_loopholes")
     user = f"Текст для анализа:\n{masked_text}\n\nВерни JSON по контракту."
+    owns_llm = llm is None
     try:
         if llm is None:
             llm = _default_llm()
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
+        async with asyncio.timeout(_EXTRACTION_TIMEOUT_SECONDS):
+            resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
+            _ensure_tool_active(None)
         raw = _llm_content(resp)
         data = _loose_json_loads(raw)
     except Exception as e:  # noqa: BLE001 — граница LLM должна вернуть безопасный пустой список
         log.warning("[extract_loopholes] failed: %s", e)
         return []
+    finally:
+        if owns_llm and llm is not None:
+            try:
+                await llm.http_async_client.aclose()
+            finally:
+                llm.http_client.close()
     if isinstance(data, dict):
         loopholes = data.get("loopholes") or []
     elif isinstance(data, list):
@@ -309,7 +346,7 @@ async def extract_loopholes(
             "category": str(item.get("category") or ""),
             "severity": str(item.get("severity") or "medium"),
             "evidence_quote": str(item.get("evidence_quote") or ""),
-            "is_loophole": bool(item.get("is_loophole", False)),
+            "is_loophole": item.get("is_loophole") is True,
         })
     return out
 
@@ -343,6 +380,7 @@ def _queue_confirmed_findings(
             "title": title,
             "url": source["url"],
             "snippet": snippet,
+            "evidence_quote": str(finding.get("evidence_quote") or "").strip(),
             "bank_slug": bank_slug,
             "raw_text": source["extracted_text"],
             "source_title": source["title"],
@@ -651,7 +689,9 @@ try:
             return True
 
         async def execute(self, query: str, max_results: int = 12) -> str:
-            return _tool_result(web_search(query, max_results=max_results))
+            return _tool_result(await run_blocking_network(
+                web_search, query, max_results=max_results,
+            ))
 
     @tool_parameters({
         "type": "object",
@@ -682,7 +722,9 @@ try:
             return True
 
         async def execute(self, url: str) -> str:
-            result = web_fetch(url)
+            _ensure_tool_active(self._context)
+            result = await run_blocking_network(web_fetch, url)
+            _ensure_tool_active(self._context)
             _remember_source_publication_date(self._context, url, result)
             period_error = _source_publication_period_error(self._context, url)
             if period_error is not None:
@@ -730,13 +772,21 @@ try:
             source_url: str,
             bank_slug: str | None = None,
         ) -> str:
+            _ensure_tool_active(self._context)
             period_error = _source_publication_period_error(self._context, source_url)
             if period_error is not None:
                 return _tool_result({"error": period_error})
             source = self._context.fetched_sources.get(source_url) if self._context else None
             if source is None:
                 return _tool_result({"error": "source_not_fetched"})
+            source = dict(source)
             findings = await extract_loopholes(source["extracted_text"])
+            _ensure_tool_active(self._context)
+            if self._context.fetched_sources.get(source_url) != source:
+                return _tool_result({"error": "source_changed_during_extraction"})
+            period_error = _source_publication_period_error(self._context, source_url)
+            if period_error is not None:
+                return _tool_result({"error": period_error})
             _queue_confirmed_findings(
                 self._context,
                 findings,
@@ -960,7 +1010,7 @@ try:
             return True
 
         async def execute(self, url: str) -> str:
-            return _tool_result(fetch_target(url))
+            return _tool_result(await run_blocking_network(fetch_target, url))
 
     @tool_parameters({
         "type": "object",
