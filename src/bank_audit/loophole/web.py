@@ -82,7 +82,12 @@ def list_contexts(
 ):
     """Доступные principal рабочие контексты: каталог и создание
     AI-исследования — любому члену, очередь — только эксперту ЦК КС."""
-    return {"contexts": authorization.available_contexts(user_id, session=session)}
+    return {
+        "contexts": authorization.available_contexts(user_id, session=session),
+        "capabilities": {
+            "can_mark_verdict": authorization.can_mark_verdict(user_id, session=session),
+        },
+    }
 
 
 @router.get("/queue")
@@ -538,6 +543,7 @@ def mark_verdict(
     is_loophole=true → пример добавляется в KB (дедуп по record_id);
     is_loophole=false → пример удаляется из KB (откат).
     """
+    authorization.require_mark_verdict(user_id, session=session)
     if not body.record_ids:
         raise HTTPException(status_code=400, detail="record_ids пуст")
     updated: list[int] = []
