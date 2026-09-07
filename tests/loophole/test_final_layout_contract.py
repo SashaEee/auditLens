@@ -297,7 +297,6 @@ def test_contexts_follow_final_order_and_keep_protected_tabs_role_gated(session)
     """Новая общая вкладка не меняет fail-closed видимость queue/admin."""
     assert authorization.available_contexts("auditor", session=session) == [
         {"id": "catalog", "title": "Общая база"},
-        {"id": "sources", "title": "Добавить источник"},
         {"id": "ai_research", "title": "AI-исследования"},
     ]
 
@@ -317,7 +316,6 @@ def test_contexts_follow_final_order_and_keep_protected_tabs_role_gated(session)
 
     assert authorization.available_contexts("expert-admin", session=session) == [
         {"id": "catalog", "title": "Общая база"},
-        {"id": "sources", "title": "Добавить источник"},
         {"id": "ai_research", "title": "AI-исследования"},
         {"id": "queue", "title": "Очередь верификации"},
         {"id": "admin", "title": "Управление доступом"},

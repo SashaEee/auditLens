@@ -150,7 +150,7 @@ def test_local_dev_auth_enabled_by_explicit_env(client, app_session, monkeypatch
 
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
-        "catalog", "sources", "ai_research",
+        "catalog", "ai_research",
     }
 
 
@@ -165,7 +165,7 @@ def test_dev_grant_all_gives_any_principal_all_module_contexts(client, monkeypat
 
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
-        "catalog", "sources", "ai_research", "queue", "admin",
+        "catalog", "ai_research", "queue", "admin",
     }
     assert queue.status_code == 200
     assert queue.json() == {"records": [], "count": 0}
@@ -181,7 +181,7 @@ def test_dev_grant_all_authenticates_local_user_without_sso(client, monkeypatch)
 
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
-        "catalog", "sources", "ai_research", "queue", "admin",
+        "catalog", "ai_research", "queue", "admin",
     }
 
 
@@ -194,7 +194,6 @@ def test_dev_grant_all_requires_exactly_one(client, monkeypatch):
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
 
@@ -218,7 +217,6 @@ def test_contexts_authenticated_without_membership_gets_base_access(client):
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
     assert queue.status_code == 403
@@ -256,7 +254,7 @@ def test_contexts_member_gets_catalog_and_research(client, app_session):
     assert r.status_code == 200
     contexts = r.json()["contexts"]
     ids = {c["id"] for c in contexts}
-    assert ids == {"catalog", "sources", "ai_research"}
+    assert ids == {"catalog", "ai_research"}
     titles = {c["title"] for c in contexts}
     assert "Общая база" in titles
     assert "AI-исследования" in titles
@@ -269,7 +267,7 @@ def test_contexts_expert_also_gets_queue(client, app_session):
     assert r.status_code == 200
     contexts = r.json()["contexts"]
     ids = {c["id"] for c in contexts}
-    assert ids == {"catalog", "sources", "ai_research", "queue"}
+    assert ids == {"catalog", "ai_research", "queue"}
     queue = next(c for c in contexts if c["id"] == "queue")
     assert queue["title"] == "Очередь верификации"
 
@@ -286,7 +284,6 @@ def test_role_without_active_membership_gets_base_contexts_and_queue_403(
     assert contexts.status_code == 200
     assert {context["id"] for context in contexts.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
     assert queue.status_code == 403
@@ -306,7 +303,6 @@ def test_admin_role_without_active_membership_gets_base_contexts_and_admin_403(
     assert contexts.status_code == 200
     assert {context["id"] for context in contexts.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
     assert admin.status_code == 403
@@ -332,7 +328,6 @@ def test_active_membership_wins_history_but_queue_requires_active_role(
     assert contexts_without_role.status_code == 200
     assert {context["id"] for context in contexts_without_role.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
     assert queue_without_role.status_code == 403
@@ -349,7 +344,6 @@ def test_active_membership_wins_history_but_queue_requires_active_role(
 
     assert {context["id"] for context in contexts_with_role.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
         "queue",
     }
@@ -443,7 +437,7 @@ def test_revoked_role_denies_next_request(client, app_session):
     # Контексты тоже пересчитываются: очередь пропадает.
     r3 = client.get("/api/loophole/contexts", headers=_auth("expert"))
     assert {c["id"] for c in r3.json()["contexts"]} == {
-        "catalog", "sources", "ai_research",
+        "catalog", "ai_research",
     }
 
 
