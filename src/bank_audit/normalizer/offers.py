@@ -77,6 +77,23 @@ def bank_slug_for(session, raw_name: str) -> str:
         """), {"raw": (raw_name or "").strip()}).first()
         if row:
             return row[0]
+    if not slug and key:
+        # ПОСЛЕДНЯЯ попытка до placeholder: сопоставить с УЖЕ ЗАВЕДЁННЫМ банком
+        # по имени, очищенному до букв и цифр. Рукописный словарь знает 63
+        # банка, а собираем мы 800+, поэтому весь длинный хвост рынка попадал
+        # в unknown_, и каждое новое написание («СОЛИД БАНК» против «Солид
+        # Банк») заводило ЕЩЁ ОДИН банк: 55 групп дублей на проде, один банк
+        # двумя строками в витрине и в ранге. Справочник — источник правды о
+        # том, кого мы уже знаем; словарь остаётся только для алиасов.
+        row = session.execute(text("""
+            SELECT slug FROM bank
+             WHERE lower(regexp_replace(name, '[^[:alnum:]]', '', 'g'))
+                 = lower(regexp_replace(:raw, '[^[:alnum:]]', '', 'g'))
+             ORDER BY (slug NOT LIKE 'unknown_%') DESC
+             LIMIT 1
+        """), {"raw": raw_name}).first()
+        if row:
+            return row[0]
     if not slug:
         # Пустое имя или "?" → placeholder-банк
         slug = "unknown_" + stable_digest({"n": key if key else "_empty_"})[:10]

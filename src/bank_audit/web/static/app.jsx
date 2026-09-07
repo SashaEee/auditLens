@@ -366,7 +366,7 @@ function ErrState({msg}){
 
 function StatRow({label,value,delta,sub,warn,neg}){
   return <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:14}}>
-    <div className="t-cap" style={{fontSize:12.5,color:"var(--ink-3)"}}>{label}</div>
+    <div className="t-cap" style={{fontSize:12,color:"var(--ink-3)"}}>{label}</div>
     <div style={{textAlign:"right"}}>
       <div className="mono tnum" style={{fontSize:18,fontWeight:500,color:neg?"var(--neg)":warn?"var(--warn)":"var(--ink)"}}>{value}</div>
       {(delta||sub)&&<div className="t-cap" style={{fontSize:11,color:"var(--ink-3)"}}>{delta||sub}</div>}
@@ -442,9 +442,14 @@ function _inlineHTML(s, renderCitation=(n)=>`[${n}]`){
 
 function inlineHTML(s){return _inlineHTML(s);}
 
-function renderMD(text, sources, charts){
+function renderMD(text, sources, charts, viz, opts){
   if(!text) return null;
   const chartsArr = Array.isArray(charts) ? charts : [];
+  // Визуализации дизайнера: маркер [[VIZ:n]] в тексте → блок по номеру.
+  // Разметка санитизирована на сервере (белый список) до сохранения.
+  const vizByN={};
+  if(Array.isArray(viz)){for(const v of viz){if(v&&v.n!=null)vizByN[v.n]=v;}}
+  const vizPending=!!(opts&&opts.streaming);
   const srcByN={};
   if(Array.isArray(sources)){for(const s of sources){if(s&&s.n!=null)srcByN[s.n]=s;}}
   const renderCitation=(n)=>{
@@ -490,9 +495,24 @@ function renderMD(text, sources, charts){
     // Inline-chart marker: [[CHART:N]] вставляет ChartCanvas прямо в поток
     // markdown'а. Используется в demo и backend-generated отчётах когда
     // нужно показать график между секциями, а не в конце.
+    const vzm = /^\s*\[\[VIZ:(\d+)\]\]\s*$/.exec(ln);
+    if(vzm){
+      flushList(); flushTable(); flushQuote();
+      const v = vizByN[parseInt(vzm[1], 10)];
+      if(v&&v.html){
+        out.push(<div key={"vz"+idx} className="dr-viz" dangerouslySetInnerHTML={{__html:v.html}}/>);
+      }else if(v&&v.reason&&vizPending){
+        // Блок отклонён проверкой — во время стрима говорим об этом одной
+        // строкой, в сохранённом отчёте на этом месте пусто.
+        out.push(<div key={"vz"+idx} className="dr-viz dr-viz-pending dr-viz-rejected">визуализация раздела не прошла проверку{v.reason?`: ${v.reason}`:""}</div>);
+      }else if(vizPending){
+        out.push(<div key={"vz"+idx} className="dr-viz dr-viz-pending"><span className="dr-viz-dot"/>рисую визуализацию раздела…</div>);
+      }
+      return;
+    }
     const chm = /^\s*\[\[CHART:(\d+)\]\]\s*$/.exec(ln);
     if(chm){
-      flushList(); flushTable();
+      flushList(); flushTable(); flushQuote();
       const ci = parseInt(chm[1], 10);
       const spec = chartsArr[ci];
       if(spec){
@@ -902,6 +922,19 @@ function BfBrief({markdown}){
   </div>;
 }
 
+// Цвет карточки и точка в квадрате 3×3 кодировали риск и его матрицу, но нигде
+// не объяснялись — в обратной связи об этом написали трижды: «непонятна
+// расцветка», «непонятна световая палитра», «расшифруйте вероятность × влияние».
+function BfLegend(){
+  return <div className="bf-legend">
+    <span><i className="d risk"/>риск — требует действия</span>
+    <span><i className="d watch"/>следить — держим в поле зрения</span>
+    <span><i className="d good"/>спокойно — отклонений нет</span>
+    <span className="sep">·</span>
+    <span className="gl"><RiskGlyph likelihood={3} impact={3}/>положение точки: вероятность слева направо, влияние снизу вверх</span>
+  </div>;
+}
+
 function BfCard({ins,idx,lead}){
   const d=ins.data||{};
   const xp=xpRows(ins.kind,d);
@@ -915,7 +948,7 @@ function BfCard({ins,idx,lead}){
     if(ins.kind==="tariff_move")return <DeltaStrip from={d.from} to={d.to}/>;
     if(ins.kind==="mass_move")
       return <span className="mono" style={{fontSize:12}}>
-        <b style={{fontSize:15}}>{d.n_banks}</b> банков · {(d.banks||[]).slice(0,3).join(", ")}{(d.banks||[]).length>3?"…":""}
+        <b style={{fontSize:14}}>{d.n_banks}</b> банков · {(d.banks||[]).slice(0,3).join(", ")}{(d.banks||[]).length>3?"…":""}
       </span>;
     if(ins.kind==="rate_move")
       return <><RateStep points={(d.points||[]).slice(-30)}/><span className="mono tnum" style={{fontSize:13,fontWeight:600}}>{d.current}%</span></>;
@@ -1571,7 +1604,7 @@ function ForYouPage(){
   if(p===null) return <div className="fade-in">
     <style>{FY_CSS}</style><div className="fy-seg-mob"><OvSeg page="foryou"/></div>
     <div style={{padding:"72px 24px",textAlign:"center",maxWidth:500,margin:"0 auto"}}>
-      <div style={{fontSize:26,marginBottom:12,color:"var(--accent)"}}>✦</div>
+      <div style={{fontSize:24,marginBottom:12,color:"var(--accent)"}}>✦</div>
       <div className="t-h" style={{marginBottom:8}}>Персонализация выключена</div>
       <p className="t-cap" style={{marginBottom:20,textWrap:"pretty"}}>Включите персональный дайджест — и эта страница будет собираться каждое утро под вашу зону ответственности в Сбере: направления, новости, зацепки для проверок.</p>
       <button className="btn btn-accent" onClick={async()=>{try{await apiPut("/api/me",{prefs:{personal_digest:true}});setP(undefined);load();}catch{}}}>Включить персонализацию</button>
@@ -1587,8 +1620,13 @@ function ForYouPage(){
     return arr; })();
   const focus=p.focus||[], checks=p.checks||[];
   const tar=p.tariffs||{}, gap=tar.gap||[], moves=tar.moves||[];
+  // В «Отзывы» уходим с контекстом карточки: банк, продукт и та самая горячая
+  // тема, которая на карточке и названа. Иначе человек нажимает на конкретную
+  // жалобу, а попадает в общий список и не понимает, зачем его перебросили —
+  // ровно об этом дважды написали в обратной связи.
   const openReviews=(c)=>{ try{sessionStorage.setItem("al-rv-prefilter",
-      JSON.stringify({bank:"Сбербанк",product:c.product||""}));}catch{}
+      JSON.stringify({bank:"Сбербанк",product:c.product||"",
+                      theme:(c.theme&&(c.theme.key||c.theme.slug))||""}));}catch{}
     location.hash="reviews"; };
 
   return <div className="fade-in">
@@ -1640,7 +1678,15 @@ function ForYouPage(){
           <span className="n">{tk[c.title]?<span className="taken-mark">✓</span>:String(i+1).padStart(2,"0")}</span>
           <div className="t">
             {c.src&&<span className="src-chip" title="Открыть источник сигнала"
-              onClick={()=>{location.hash={reviews:"reviews",news:"overview",tariffs:"market"}[c.src]||"overview";}}>
+              onClick={()=>{
+                // Ведём в тот же срез, о котором говорит сигнал, а не в общий раздел.
+                if(c.src==="reviews"){
+                  try{sessionStorage.setItem("al-rv-prefilter",JSON.stringify({
+                    bank:c.bank||"Сбербанк", theme:(c.theme&&(c.theme.key||c.theme.slug))||"",
+                    product:c.product||""}));}catch{}
+                }
+                location.hash={reviews:"reviews",news:"overview",tariffs:"market"}[c.src]||"overview";
+              }}>
               {{reviews:"жалобы",news:"новости",tariffs:"тарифы"}[c.src]}</span>}
             {c.title}{c.why&&<div className="w">{c.why}</div>}</div>
           <span className="acts2">
@@ -1758,6 +1804,180 @@ function ForYouPage(){
   </div>;
 }
 
+// ─── 3 сентября: перекидной календарь, раз в год ──────────────────────────
+// Пасхалка на главной. Видна только 3 сентября по дате в браузере;
+// ?sept3=1 показывает её в любой день (предпросмотр), скрытие запоминается
+// на год. Лист переворачивается со 2-го на 3-е при наведении и по клику —
+// НЕ анимацией при монтировании: на рабочих машинах часто включено
+// «уменьшить движение», и css-анимация там не проигрывается вовсе.
+function isSept3(){
+  try{ if(new URLSearchParams(location.search).get("sept3")==="1") return true; }catch{}
+  const d=new Date(); return d.getMonth()===8&&d.getDate()===3;
+}
+// Пиксель-арт: карта символов → квадратики. Дешевле картинки и не тащит
+// чужие файлы на прод.
+const S3_FACE=[
+  "....dddd....",
+  "..dddddddd..",
+  ".dd222222dd.",
+  ".d22222222d.",
+  ".2kkkk2kkkk2",
+  ".2kkkk2kkkk2",
+  ".22222222222",
+  "..222hh222..",
+  "..w22222w2..",
+  ".www2222www.",
+  ".wwwwwwwwww.",
+  "..wwwwwwww..",
+];
+const S3_COLORS={d:"#2b2b30",2:"#e8c49a",k:"#17171b",h:"#c98f6a",w:"#e9e9ee"};
+function PixelFace({singing}){
+  return <svg className={"s3-face"+(singing?" sing":"")} viewBox="0 0 12 12" aria-hidden="true">
+    {S3_FACE.map((row,y)=>row.split("").map((ch,x)=>ch==="."?null:
+      <rect key={x+"-"+y} x={x} y={y} width="1" height="1" fill={S3_COLORS[ch]}
+            className={ch==="h"?"s3-mouth":undefined}/>))}
+  </svg>;
+}
+// Чем настойчивее переворачивают лист, тем меньше в подписи официоза.
+const S3_LINES=[
+  "Календарь перевёрнут вручную — единственное число на этой странице без ссылки на источник.",
+  "Перевёрнут. Ставка ностальгии — годовая, пересмотру не подлежит.",
+  "Костёр рябины разожжён по регламенту, акт составлен.",
+  "Дата подтверждена независимо: третье, сентября, снова.",
+  "Аудиторский след ведётся: каждый переворот зафиксирован.",
+  "Достаточно. Календарь и так согласен, что опять третье сентября.",
+];
+function Sept3Strip(){
+  const year=new Date().getFullYear();
+  const key="al-sept3-"+year;
+  const[hidden,setHidden]=useState(()=>{try{return localStorage.getItem(key)==="1";}catch{return false;}});
+  const[flipped,setFlipped]=useState(false);
+  const[count,setCount]=useState(0);
+  const[berries,setBerries]=useState([]);
+  if(!isSept3()||hidden) return null;
+  // Клик всегда оставляет лист на третьем: если он уже перевёрнут, роняем его
+  // обратно на миг и переворачиваем снова — «ещё раз, с начала».
+  const flip=()=>{
+    setCount(c=>c+1);
+    setFlipped(f=>{ if(f){ setTimeout(()=>setFlipped(true),90); return false; } return true; });
+  };
+  const sing=()=>{
+    setBerries(b=>[...b,{id:(b[b.length-1]?.id||0)+1}]);
+    setTimeout(()=>setBerries(b=>b.slice(1)),1400);
+  };
+  const hide=()=>{try{localStorage.setItem(key,"1");}catch{} setHidden(true);};
+  return <div className={"s3-strip"+(flipped?" flipped":"")} role="note">
+    <button type="button" className="s3-cal" onMouseEnter={()=>setFlipped(true)} onClick={flip}
+            aria-label="Перевернуть календарь на третье сентября">
+      <span className="s3-rings"><i/><i/></span>
+      <span className="s3-leaf s3-leaf-old"><b>2</b></span>
+      <span className="s3-leaf s3-leaf-new"><b>3</b></span>
+      <span className="s3-tip">Я календарь переверну…</span>
+    </button>
+    <button type="button" className="s3-portrait" onClick={sing} aria-label="Разжечь костёр рябины">
+      <PixelFace singing={berries.length>0}/>
+      <span className="s3-tip s3-tip-r">…и снова третье сентября</span>
+      {berries.map(b=><i key={b.id} className="s3-berry"/>)}
+    </button>
+    <div className="s3-line">
+      <b>Третье сентября.</b>
+      <span> {S3_LINES[Math.min(count,S3_LINES.length-1)]}</span>
+      {count>1&&<span className="s3-count"> Переворотов: {count}.</span>}
+    </div>
+    <button type="button" className="s3-hide" onClick={hide} title="Скрыть до следующего года">×</button>
+  </div>;
+}
+
+// ─── Сегментированный переключатель: подложка едет, а не перекрашивается ───
+// Ставится один раз на все .seg в приложении: сама находит активную кнопку,
+// подставляет общую подложку и двигает её пружиной. Пока подложки нет,
+// активный сегмент выглядит как раньше — если скрипт не отработал, ничего
+// не теряется.
+// ─── Память о месте ───────────────────────────────────────────────────────
+// Новый раздел открывается сверху: иначе человек кликает «Отзывы», а видит
+// середину чужой страницы — прокрутка оставалась от предыдущего экрана.
+// Раздел переключается состоянием, а не адресом, поэтому смену ловим по
+// активному пункту меню — это единственный признак, который виден всегда.
+function useNavMemory(){
+  useEffect(()=>{
+    const active=()=>document.querySelector(".nav-item.active")?.textContent?.trim()||"";
+    let here=active();
+    const mo=new MutationObserver(()=>{
+      const now=active();
+      if(!now||now===here)return;
+      here=now;
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        if(scrollY>0)scrollTo({top:0,behavior:"auto"});
+      }));
+    });
+    mo.observe(document.body,{subtree:true,attributes:true,attributeFilter:["class"],childList:true});
+    return()=>mo.disconnect();
+  },[]);
+}
+
+// ─── Цифры как ярлыки разделов ────────────────────────────────────────────
+// В меню разделы пронумерованы от 01 до 09 — цифра на клавиатуре ведёт туда
+// же. Ярлык привязан к видимому номеру, а не к позиции в разметке. Пока
+// человек печатает, цифры не перехватываются.
+function useNumberShortcuts(){
+  useEffect(()=>{
+    const typing=el=>!!el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.tagName==="SELECT"||el.isContentEditable);
+    const onKey=e=>{
+      if(e.metaKey||e.ctrlKey||e.altKey||typing(document.activeElement))return;
+      if(!/^[1-9]$/.test(e.key))return;
+      const target=[...document.querySelectorAll(".nav-item")].find(
+        el=>el.querySelector(".rail-num")?.textContent.trim()===e.key.padStart(2,"0"));
+      if(target){e.preventDefault();target.click();}
+    };
+    addEventListener("keydown",onKey);
+    return()=>removeEventListener("keydown",onKey);
+  },[]);
+}
+
+const SEGS=".seg, .rv-chips";
+function useSlidingSegments(){
+  useEffect(()=>{
+    const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const place=(seg)=>{
+      const on=seg.querySelector(".seg-btn.on, .rv-chip.on");
+      let ind=seg.querySelector(":scope > .seg-ind");
+      if(!on){ if(ind) ind.style.opacity="0"; return; }
+      if(!ind){
+        ind=document.createElement("i"); ind.className="seg-ind";
+        seg.insertBefore(ind, seg.firstChild); seg.classList.add("seg--ind");
+      }
+      const s=seg.getBoundingClientRect(), b=on.getBoundingClientRect();
+      ind.style.opacity="1";
+      ind.style.width=b.width+"px"; ind.style.height=b.height+"px";
+      ind.style.transform=`translate(${b.left-s.left}px, ${b.top-s.top}px)`;
+      if(reduce) ind.style.transition="none";
+    };
+    const all=()=>document.querySelectorAll(SEGS).forEach(place);
+    all();
+    // Переключатели появляются вместе со своими экранами, поэтому следим и за
+    // добавлением узлов: иначе подложка встала бы только после первого клика.
+    let queued=false;
+    const later=()=>{ if(queued)return; queued=true;
+      requestAnimationFrame(()=>{queued=false; all(); attach();}); };
+    const mo=new MutationObserver(muts=>{
+      for(const m of muts){
+        if(m.type==="childList"){ later(); continue; }
+        const seg=(m.target.closest&&m.target.closest(SEGS));
+        if(seg) place(seg);
+      }
+    });
+    mo.observe(document.body,{subtree:true,attributes:true,attributeFilter:["class"],childList:true});
+    const ro=new ResizeObserver(()=>all());
+    const seen=new WeakSet();
+    const attach=()=>document.querySelectorAll(SEGS).forEach(el=>{
+      if(seen.has(el))return; seen.add(el); ro.observe(el);
+    });
+    attach();
+    addEventListener("resize",all);
+    return()=>{mo.disconnect();ro.disconnect();removeEventListener("resize",all);};
+  },[]);
+}
+
 function OverviewPage(){
   const[dg,setDg]=useState(null);
   const[summary,setSummary]=useState(null);
@@ -1853,6 +2073,7 @@ function OverviewPage(){
   const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{}):[];
 
   return <div className="fade-in">
+    <Sept3Strip/>
     <div className="fy-seg-mob"><OvSeg page="overview"/></div>
     {/* ⓪ ЛИЧНЫЙ СЛОЙ — опциональная полоса (prefs.personal_band_home), над передовицей */}
     <PersonalBand/>
@@ -1995,9 +2216,9 @@ function OverviewPage(){
     <section className="bf-core" style={{marginBottom:30}}>
       <div>
         {insights.length?
-          <div className="bf-cards">
+          <><div className="bf-cards">
             {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0}/>)}
-          </div>:
+          </div><BfLegend/></>:
           generating?
             <div className="bf-cards">
               {[0,1,2].map(i=><div key={i} className="skel" style={{height:150,borderRadius:10}}/>)}
@@ -2039,6 +2260,13 @@ function OverviewPage(){
                 <div className="bf-news-t">{it.title}</div>
                 {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
                 <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
+                  {/* Аудитор должен знать ДО клика, откроется ли ссылка из
+                      контура: шесть ТБ написали «не удаётся получить доступ к
+                      сайту», ещё два — что t.me требует отдельной установки. */}
+                  {it.reach==="telegram"&&<span className="bf-reach tg"
+                    title="Telegram — в контуре банка обычно не открывается без отдельной настройки">telegram</span>}
+                  {it.reach==="unreachable"&&<span className="bf-reach no"
+                    title="Источник не открылся из контура при сборе дайджеста — ссылка может не сработать и у вас">нет доступа</span>}
                   {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}
                   <Ic.ext/></div>
               </a>)}
@@ -2081,7 +2309,7 @@ function OverviewPage(){
               return <tr key={i} onClick={go} style={{cursor:"pointer"}} title="Открыть в журнале изменений">
                 <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}{c.is_sber&&<span className="badge solid" style={{marginLeft:8,fontSize:9}}>Сбер</span>}</div>
                   <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
-                <td data-label="Продукт" style={{fontSize:12.5,color:"var(--ink-2)"}}>{c.title}</td>
+                <td data-label="Продукт" style={{fontSize:12,color:"var(--ink-2)"}}>{c.title}</td>
                 <td className="right mono tnum" data-label="Было → стало">{c.from}% → <b>{c.to}%</b></td>
                 <td className="right" data-label="Δ"><span className={`delta ${up?"pos":"neg"}`}>{up?<Ic.arrow_up/>:<Ic.arrow_dn/>}{signed(c.delta)}</span></td>
                 <td className="right mono tnum" data-label="Когда" style={{fontSize:11,color:"var(--ink-3)"}}>{fmtDate(c.changed_at)}</td>
@@ -2452,7 +2680,10 @@ function MarketPage({params}){
   },[cat]);
 
   // debounce поиска (серверный q — не дёргаем API на каждую букву)
-  useEffect(()=>{const t=setTimeout(()=>setQ(qLive),350);return()=>clearTimeout(t);},[qLive]);
+  // Пауза перед запросом — единственная задержка на пути ввода, поэтому
+  // держим её на пороге незаметности: пользователь дописывает слово, а не
+  // ждёт. Стереть запрос — реакция мгновенная, ждать нечего.
+  useEffect(()=>{if(!qLive){setQ("");return;}const t=setTimeout(()=>setQ(qLive),200);return()=>clearTimeout(t);},[qLive]);
 
   // состояние → hash: диплинк живёт в адресе, F5 ничего не теряет
   useEffect(()=>{
@@ -2507,7 +2738,8 @@ function MarketPage({params}){
 
   const hlRef=useRef(null);
   useEffect(()=>{if(changes&&hlRef.current)
-    hlRef.current.scrollIntoView({block:"center",behavior:"smooth"});},[changes]);
+    hlRef.current.scrollIntoView({block:"center",
+      behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});},[changes]);
 
   const A=atlas?Object.fromEntries((atlas.categories||[]).map(c=>[c.category,c])):{};
   // Чипы строим по тому, что РЕАЛЬНО есть в категории (счётчики приходят с
@@ -2735,13 +2967,19 @@ function MarketPage({params}){
                 <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
                   <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
                   <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
-                    {isSber&&<div className="t-cap" style={{fontSize:10.5,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
+                    {isSber&&<div className="t-cap" style={{fontSize:10,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
                 <td data-label="Продукт">{r.title}<OfferTerms o={r}/>
                   {r.product_kind&&<div className="ofkind" title="что это за продукт на самом деле — разобрано по тексту тарифа">{r.product_kind}</div>}</td>
-                <td className="right mono tnum" data-label={mcat.metric_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>{mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
-                {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12.5}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
-                {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
+                <td className="right mono tnum" data-label={mcat.metric_label||"Ставка"} style={{fontWeight:500,fontSize:14}}>
+                  {/* «до 30%» и «30%» — разные утверждения. Пока витрина
+                      показывала верхнюю границу как ставку, ПСБ с «до 30%»
+                      стоял первой строкой рынка при реальных 10,5%. */}
+                  {r.rate_kind==="max"&&(mcat.metric||"rate_pct")==="rate_pct"&&
+                    <span className="mk-upto" title="верхняя граница по витрине агрегатора, а не ставка по договору">до </span>}
+                  {mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
+                {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
+                {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
                 {showBarCol&&<td data-label="К лидеру">
                   {rel!=null&&isFinite(rel)?<div style={{display:"flex",alignItems:"center",gap:8}}>
                     <div className="bar" style={{flex:1,maxWidth:70}}>
@@ -2751,8 +2989,8 @@ function MarketPage({params}){
                       {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2)} пп`}</span>
                   </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
                 </td>}
-                <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
-                <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12.5}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
+                <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
+                <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
               </tr>;})}
           </tbody>
         </table>}
@@ -2862,24 +3100,63 @@ function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удало
 // Переиспользуемый оверлей: центральный модал (полный текст) или правый драуэр
 // (drill-in по городу/месяцу). Закрытие по клику-вне, ✕ и Esc.
 function RvModal({onClose,title,sub,side,children}){
-  useEffect(()=>{
-    const h=e=>{if(e.key==="Escape")onClose();};
-    document.addEventListener("keydown",h);
-    const prev=document.body.style.overflow;
-    document.body.style.overflow="hidden";   // фон не скроллим, пока открыт оверлей
-    return ()=>{document.removeEventListener("keydown",h);document.body.style.overflow=prev;};
+  const cardRef=useRef(null);
+  // Окно уходит тем же путём, каким пришло: центральное — сжимаясь на месте,
+  // правая панель — вправо. Раньше оно появлялось с движением, а исчезало
+  // мгновенно, и это читалось как сбой, а не как закрытие.
+  const [closing,setClosing]=useState(false);
+  const close=useCallback(()=>{
+    setClosing(c=>{
+      if(c)return c;
+      const ms=matchMedia("(prefers-reduced-motion: reduce)").matches?0:190;
+      setTimeout(onClose,ms);
+      return true;
+    });
   },[onClose]);
+  useEffect(()=>{
+    // Куда вернуть фокус, когда окно закроется: человек должен оказаться там,
+    // откуда ушёл, а не в начале страницы.
+    const returnTo=document.activeElement;
+    const focusable=()=>[...(cardRef.current?.querySelectorAll(
+      'a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])')||[])]
+      .filter(el=>el.offsetWidth||el.offsetHeight);
+    const h=e=>{
+      if(e.key==="Escape"){close();return;}
+      if(e.key!=="Tab")return;
+      // Табуляция не должна уводить за пределы окна — иначе человек «проваливается»
+      // на страницу под ним и не понимает, где он.
+      const f=focusable(); if(!f.length)return;
+      const first=f[0], last=f[f.length-1];
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    };
+    document.addEventListener("keydown",h);
+    // Фон не скроллим, но и не даём странице дёрнуться на ширину полосы прокрутки.
+    const gap=window.innerWidth-document.documentElement.clientWidth;
+    const prev=document.body.style.overflow, prevPad=document.body.style.paddingRight;
+    document.body.style.overflow="hidden";
+    if(gap>0)document.body.style.paddingRight=`${gap}px`;
+    const t=setTimeout(()=>{const f=focusable(); (f[0]||cardRef.current)?.focus?.();},0);
+    return ()=>{
+      clearTimeout(t);
+      document.removeEventListener("keydown",h);
+      document.body.style.overflow=prev; document.body.style.paddingRight=prevPad;
+      if(returnTo&&returnTo.focus)returnTo.focus();
+    };
+  },[close]);
   // ПОРТАЛ в body: у предка .fade-in есть transform (animation fill-mode both),
   // который иначе становится containing-block для position:fixed и «роняет» модал вниз.
   return ReactDOM.createPortal(
-    <div className={"rv-ovl"+(side==="right"?" rv-ovl-r":"")} onClick={onClose}>
-      <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")} onClick={e=>e.stopPropagation()}>
+    <div className={"rv-ovl"+(side==="right"?" rv-ovl-r":"")+(closing?" is-closing":"")} onClick={close}>
+      <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")}
+           ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true"
+           onClick={e=>e.stopPropagation()}>
         <div className="rv-ovl-head">
           <div style={{minWidth:0}}>
-            <div className="rv-ttl" style={{fontSize:15}}>{title}</div>
+            <div className="rv-ttl" style={{fontSize:14}}>{title}</div>
             {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
           </div>
-          <button className="rv-ovl-x" onClick={onClose} aria-label="Закрыть">✕</button>
+          <button className="rv-ovl-x" onClick={close} aria-label="Закрыть">✕</button>
         </div>
         <div className="rv-ovl-body">{children}</div>
       </div>
@@ -2887,11 +3164,18 @@ function RvModal({onClose,title,sub,side,children}){
 }
 
 // Чипы тем обращения (классификация): regex-baseline или LLM-уточнённые.
-function RvThemes({list,src}){
+function RvThemes({list,src,active}){
   if(!list||!list.length) return <span className="rv-tag other">Прочее</span>;
-  return <>{list.slice(0,3).map((t,j)=>(
-    <span key={j} className={"rv-tag "+(t.risk||"other")} title={t.label}>{t.short||t.label}</span>
-  ))}{src==="llm"&&<span className="rv-llm" title="темы уточнены ИИ">✦</span>}</>;
+  // Разметка мультитемная: у обращения бывает до двух тем, и обе верны
+  // («не выдаёт деньги по залогу» — это и задержка, и условия кредита).
+  // Но при фильтре по теме второй ярлык выглядел равноправным, и аудитор
+  // читал его как «выдача не по теме». Помечаем ту, из-за которой отзыв здесь.
+  return <>{list.slice(0,3).map((t,j)=>{
+    const hit=active&&t.key===active;
+    return <span key={j} className={"rv-tag "+(t.risk||"other")+(hit?" rv-tag-hit":"")}
+      title={hit?`${t.label} — тема, по которой отфильтрована лента`:t.label}>
+      {t.short||t.label}</span>;
+  })}{src==="llm"&&<span className="rv-llm" title="темы уточнены ИИ">✦</span>}</>;
 }
 
 // Карточка отзыва (переиспользуется в ленте, в модале и в драуэре).
@@ -2919,7 +3203,11 @@ const IcoRadar=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" 
 const IcoCheck=()=> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.5 2.5 4.7-5.4"/></svg>;
 const IcoTrendUp=()=> <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>;
 
-function ReviewsPage(){
+function ReviewsPage({params}){
+  // Контекст перехода: карточка сигнала ведёт не «куда-то в Отзывы», а к своей
+  // теме и своему банку. В обратной связи об этом писали дважды: «нажимаешь на
+  // жалобу — попадаешь в раздел, и непонятно, зачем».
+  const P=params||{};
   // prefill из «Обзора» (Разобраться → по сигналу): банк/тема/период/город
   const preset=(()=>{try{
     const p=JSON.parse(sessionStorage.getItem("al-rv-prefilter")||"null");
@@ -2931,8 +3219,13 @@ function ReviewsPage(){
   const firstBankRun=useRef(true);   // не сбрасывать префилл продукта при монтировании
   const[days,setDays]=useState((preset&&preset.days)||90);
   const[theme,setTheme]=useState((preset&&preset.theme)||"");
-  const[q,setQ]=useState("");
-  const[qInput,setQInput]=useState("");
+  const[q,setQ]=useState(P.q||"");
+  // Тема — это фильтр, и человек ждёт от неё именно фильтрации. Пока в
+  // строке поиска что-то есть, выдачу определяет поиск, и клик по теме
+  // выглядит как «ничего не произошло»: в обратной связи так и написали —
+  // «приходится удалять из поискового окна все символы». Делаем это сами.
+  const pickTheme=(key)=>{ setQ(""); setQInput(""); setTheme(t=>t===key?"":key); };
+  const[qInput,setQInput]=useState(P.q||"");
   const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
   const[vm,setVm]=useState(null),[ge,setGe]=useState(null),[prods,setProds]=useState([]);
   const[feed,setFeed]=useState(null);
@@ -2940,6 +3233,12 @@ function ReviewsPage(){
   const[feedMeta,setFeedMeta]=useState(null);              // по каким словам искали на самом деле
   const[corp,setCorp]=useState(null);                      // реальный состав корпуса для подписи
   const[busy,setBusy]=useState(true),[feedBusy,setFeedBusy]=useState(false);
+  // Своё состояние догрузки: moreBusy живёт во вкладке «Рынок», переиспользовать
+  // его отсюда нельзя.
+  const[escOnly,setEscOnly]=useState(false);            // только обращения с угрозой ЦБ/суд/ФАС
+  const[sortBy,setSortBy]=useState("auto");             // порядок выдачи поиска
+  const[feedMore,setFeedMore]=useState(false);          // есть ли ещё страницы
+  const[feedMoreBusy,setFeedMoreBusy]=useState(false);
   const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
   const[modalRev,setModalRev]=useState(null);            // полный текст отзыва
   const[drill,setDrill]=useState(null);                  // {type:'city'|'month',value,label}
@@ -3012,18 +3311,34 @@ function ReviewsPage(){
       .catch(()=>{setAnom({calm:true});setAnomBusy(false);});
   },[bank,product]);
 
-  useEffect(()=>{ setFeedBusy(true);setClsOn(false);
-    const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
-    apiFetch(`/api/reviews/feed?bank=${enc(bank)}${pq()}${tq}${qq}&limit=20`)
-      .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);setFeedBusy(false);})
+  // days попадает в ленту наравне с верхними панелями: раньше переключатель
+  // периода их менял, а список обращений — нет, и в трёхмесячном срезе
+  // оставались прошлогодние жалобы.
+  const feedQS=(off)=>`/api/reviews/feed?bank=${enc(bank)}${pq()}`
+    +`${theme?`&theme=${theme}`:""}${q?`&q=${enc(q)}`:""}`
+    +`&days=${days}${escOnly?"&esc=1":""}${q&&sortBy==="date"?"&sort=date":""}`
+    +`&limit=20&offset=${off}`;
+
+  useEffect(()=>{ setFeedBusy(true);setClsOn(false);setFeedMore(false);
+    apiFetch(feedQS(0))
+      .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
+                setFeedMore(!!d.has_more);setFeedBusy(false);})
       .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedBusy(false);});
-  },[bank,product,theme,q]);
+  },[bank,product,theme,q,days,escOnly,sortBy]);
+
+  const loadMoreFeed=()=>{
+    setFeedMoreBusy(true);
+    apiFetch(feedQS((feed||[]).length))
+      .then(d=>{setFeed(f=>(f||[]).concat(d.items||[]));setFeedMore(!!d.has_more);
+                setFeedMoreBusy(false);})
+      .catch(()=>setFeedMoreBusy(false));
+  };
 
   // on-demand: уточнить темы показанных отзывов через LLM (по кнопке)
   const classifyFeed=()=>{
     setClsBusy(true);
     const tq=theme?`&theme=${theme}`:"", qq=q?`&q=${enc(q)}`:"";
-    apiFetch(`/api/reviews/feed-classified?bank=${enc(bank)}${pq()}${tq}${qq}&limit=20`)
+    apiFetch(`/api/reviews/feed-classified?bank=${enc(bank)}${pq()}${tq}${qq}&days=${days}&limit=${feed.length||20}`)
       .then(d=>{if(d&&d.items)setFeed(d.items);if(d&&d.search)setFeedMeta(d.search);
                 setClsOn(!!(d&&d.llm));setClsBusy(false);})
       .catch(()=>setClsBusy(false));
@@ -3084,6 +3399,16 @@ function ReviewsPage(){
           {prods.map(p=><option key={p.product} value={p.product}>{p.product} ({fmtNum(p.n)})</option>)}
         </select>
       </label>
+      {/* Продукт определяем МЫ по тексту: метка площадки была неверна у 86-93
+          процентов обращений всех банков. Наша разметка точна на продуктах,
+          которые клиент называет прямо (вклад, ипотека, автокредит, эскроу), и
+          заметно слабее на широких позициях вроде «подписок» и «дистанционного
+          обслуживания» — туда стягивается то, что не отнеслось ни к чему.
+          Позиции, которым приписано кратно больше обращений, чем их вообще
+          упоминают, в срез не попадают вовсе. */}
+      {product&&<span className="rv-warn-inline"
+        title="Продукт определён по тексту обращения, а не взят из метки площадки. На продуктах, которые клиент называет прямо, разметка точна; широкие позиции («подписки», «дистанционное обслуживание») собирают и неопределённое — проверяйте выборочно.">
+        продукт определён по тексту</span>}
       <div className="rv-chips">
         {RV_PERIODS.map(([d,l])=><button key={d} className={"rv-chip"+(days===d?" on":"")} onClick={()=>setDays(d)}>{l}</button>)}
       </div>
@@ -3102,12 +3427,26 @@ function ReviewsPage(){
         <div className="rv-kv">{busy?"…":pct1(ov&&ov.market_share_pct)}</div>
         <div className="rv-ks">{ov&&ov.market_rank?`${ov.market_rank}-е место · ⓘ без нормировки на базу`:"—"}</div>
       </div>
-      <div className={"rv-card rv-kpi"+(ov&&ov.escalation_pct>=12?" rv-alert":"")}>
+      {/* Плашка ведёт к самим обращениям: аудиторы просили дважды — «хорошо бы
+          при нажатии на эту иконку выводить такие обращения». Признак посчитан
+          при индексации, поэтому фильтр дешёвый. */}
+      <div className={"rv-card rv-kpi rv-kpi-click"+(ov&&ov.escalation_pct>=12?" rv-alert":"")
+             +(escOnly?" rv-kpi-on":"")}
+           role="button" tabIndex={0}
+           title={escOnly?"показаны только такие обращения · нажмите, чтобы снять"
+                         :"показать в ленте только обращения с угрозой ЦБ / суда / ФАС"}
+           onClick={()=>setEscOnly(v=>!v)} onKeyDown={onKey(()=>setEscOnly(v=>!v))}>
         <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_pct>=12&&<span className="rv-tag compliance">риск</span>}</div>
         <div className="rv-kv rv-up">{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
-        <div className="rv-ks">упоминают ЦБ / суд / ФАС</div>
+        <div className="rv-ks">{escOnly?"фильтр включён · нажмите, чтобы снять":"упоминают ЦБ / суд / ФАС · нажмите"}</div>
       </div>
-      <div className="rv-card rv-kpi">
+      <div className={"rv-card rv-kpi"+(th&&th.themes&&th.themes.length?" rv-kpi-click":"")
+             +(th&&th.themes&&th.themes.length&&theme===th.themes[0].key?" rv-kpi-on":"")}
+           role={th&&th.themes&&th.themes.length?"button":undefined}
+           tabIndex={th&&th.themes&&th.themes.length?0:undefined}
+           title="показать в ленте обращения этой темы"
+           onClick={()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);}}
+           onKeyDown={onKey(()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);})}>
         <div className="rv-kl">Главная тема</div>
         <div className="rv-kv-sm">{busy?"…":(th&&th.themes&&th.themes.length?th.themes[0].label:"—")}</div>
         <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб за 90 дн · ${RV_RISK[th.themes[0].risk]}`:""}</div>
@@ -3143,8 +3482,8 @@ function ReviewsPage(){
               const clk=t.key!=="other", risky=t.risk==="compliance"||t.risk==="conduct";
               return <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")+(clk?"":" rv-trow-static")}
                    role={clk?"button":undefined} tabIndex={clk?0:undefined} aria-pressed={clk?(theme===t.key):undefined}
-                   onClick={clk?()=>setTheme(theme===t.key?"":t.key):undefined}
-                   onKeyDown={clk?onKey(()=>setTheme(theme===t.key?"":t.key)):undefined}>
+                   onClick={clk?()=>pickTheme(t.key):undefined}
+                   onKeyDown={clk?onKey(()=>pickTheme(t.key)):undefined}>
                 <div className="rv-tname">{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
                 <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
                 <div className="rv-tn mono">{fmtNum(t.n)}</div>
@@ -3212,7 +3551,7 @@ function ReviewsPage(){
                 {(anom.watch||[]).map((d,i)=>
                   <span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
                     title={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
-                    onClick={()=>setTheme(d.key)} onKeyDown={onKey(()=>setTheme(d.key))}>
+                    onClick={()=>pickTheme(d.key)} onKeyDown={onKey(()=>pickTheme(d.key))}>
                     {d.short||d.label}<b>×{d.gap}</b></span>)}
               </div>
               <div className="rv-cap" style={{marginTop:8}}>
@@ -3243,13 +3582,34 @@ function ReviewsPage(){
     {/* FEED */}
     <div className="rv-card">
       <div className="rv-ct">
-        <div><div className="rv-ttl">Лента — доказательная база</div>
+        <div><div className="rv-ttl">Лента — доказательная база
+          {/* Плашка сверху считает ОБРАЩЕНИЯ, лента показывает КАРТОЧКИ, а
+              одинаковые тексты в ней объединены в одну со счётчиком «похожих».
+              Числа сходятся, но это нигде не было сказано — аудитор считал
+              карточки и видел расхождение с плашкой. */}
+          {(()=>{const n=(feed||[]).length,
+                       dup=(feed||[]).reduce((a,r)=>a+(r.similar||0),0);
+            return dup>0?<span className="rv-count-note" title="одинаковые тексты объединены в одну карточку">
+              {" "}· {n + dup} обращений в {n} карточках</span>:null;})()}
+        </div>
           <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>:"темы обращений определены автоматически (regex) · ✦ уточнить ИИ для точности"}</div></div>
         <button className="rv-cls-btn" onClick={classifyFeed} disabled={clsBusy||feedBusy||!feed||!feed.length}
                 title="Переклассифицировать показанные отзывы с учётом смысла и отрицаний">
           {clsBusy?"Уточняю…":clsOn?"✦ темы уточнены ИИ":"✦ Уточнить темы (ИИ)"}
         </button>
       </div>
+      {/* Порядок выдачи. Показываем только при запросе: лента без него и так
+          идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
+          то, что уже отобрано, и об этом честно написано в подсказке. */}
+      {q&&<div className="rv-sort">
+        <span className="rv-sort-l">порядок:</span>
+        {[["auto","по релевантности"],["date","по дате"]].map(([k,l])=>
+          <button key={k} className={"rv-chip"+(sortBy===k?" on":"")}
+            title={k==="date"
+              ?"сначала свежие. Отбирает всё равно релевантность — порядок меняется внутри отобранного"
+              :"сначала самые близкие к запросу"}
+            onClick={()=>setSortBy(k)}>{l}</button>)}
+      </div>}
       <div className="rv-search">
         <span>⌕</span>
         <input value={qInput} onChange={e=>setQInput(e.target.value)}
@@ -3285,7 +3645,12 @@ function ReviewsPage(){
         <div key={i} className="rv-rev">
           <div className="rv-rh">
             <span>{r.date}</span>
-            <RvThemes list={r.themes} src={r.theme_src}/>
+            {/* Банк подписан явно. Сверка показала, что данные верны — жалоба
+                действительно принадлежит выбранному банку, — но в тексте часто
+                упомянут другой банк («перевёл в …»), и без подписи аудитор
+                читает обращение как чужое. Дважды приходило как дефект. */}
+            {r.bank&&<span className="rv-pill rv-pill-bank" title="банк, которому принадлежит обращение">{r.bank}</span>}
+            <RvThemes list={r.themes} src={r.theme_src} active={theme}/>
             {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
             {r.city&&<span className="rv-pill">{r.city}</span>}
             {/* Источник виден на каждой карточке: площадок теперь несколько, и
@@ -3308,13 +3673,16 @@ function ReviewsPage(){
           </div>
         </div>
        ))}
+       {feedMore&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
+         disabled={feedMoreBusy}>
+         {feedMoreBusy?"Загружаю…":`Показать ещё (сейчас ${(feed||[]).length})`}</button>}
     </div>
 
     {/* МОДАЛ: полный текст обращения */}
     {modalRev&&<RvModal onClose={()=>setModalRev(null)} title="Обращение клиента"
-        sub={[modalRev.date,modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
+        sub={[modalRev.bank,modalRev.date,modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
       <div className="rv-rh" style={{marginBottom:10}}>
-        <RvThemes list={modalRev.themes} src={modalRev.theme_src}/>
+        <RvThemes list={modalRev.themes} src={modalRev.theme_src} active={theme}/>
         {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
       </div>
       {/* полный текст — с той же подсветкой, что и в карточке: аудитор открывает
@@ -3510,7 +3878,7 @@ function MatrixExportButton({matrix, question, streaming}){
   </span>;
 }
 
-function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, ranking, insights, gaps}){
+function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
     if(busy || streaming) return;
@@ -3553,6 +3921,7 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           // Графики — передаём specs как они пришли через SSE, бэкенд
           // отрендерит их в PDF тем же Chart.js через offscreen Chromium.
           charts: charts || [],
+          viz: viz || [],
           // Богатые виджеты UI — раньше терялись при экспорте. Теперь шлём их
           // в PDF (рейтинг-карточки, инсайты, пробелы, claim-check).
           ranking: ranking || null,
@@ -4358,7 +4727,16 @@ function SourcesRail({sources, activeN, onHover, onClick, failed}){
             <div className="dr-rail-meta">
               <span>{kindLabel}</span>
               <TrustMarks score={s.trust_score}/>
-              {s.fetched_at && <span>· {formatRelDate(s.fetched_at)}</span>}
+              {/* Дата ПУБЛИКАЦИИ источника, а не нашего сбора: «собрано
+                  сегодня» ничего не говорит о возрасте свидетельства, и
+                  аудитор читал свежим весь отчёт целиком. */}
+              {s.published
+                ? <span title="дата публикации источника">· {fmtDateMsk(s.published)}</span>
+                : s.fetched_at && <span title="дата сбора; сам источник даты не объявил">
+                    · собрано {formatRelDate(s.fetched_at)}</span>}
+              {s.dead && <span className="dr-rail-dead"
+                title="Страница источника сейчас не открывается — цитата и дата взяты при сборе">
+                ссылка не открывается</span>}
             </div>
           </a>
         </li>;
@@ -4725,6 +5103,7 @@ function AIPage(){
   const[msgs,setMsgs]=useState([]);
   const[q,setQ]=useState("");
   const[loading,setLoading]=useState(false);
+  const abortRef=useRef(null);          // текущий прогон — чтобы его можно было остановить
   const[deepMode,setDeepMode]=useState(false);
   const[showKbd,setShowKbd]=useState(false);
   const[hoverCite,setHoverCite]=useState(null);          // {n, anchor} для tooltip
@@ -4846,11 +5225,15 @@ function AIPage(){
   },[showKbd]);
 
   const streamChat=async(question,history,forceDeep)=>{
+    // Прогон длится минуты. Если вопрос задан неудачно, ждать его конца незачем —
+    // об этом прямо написали в обратной связи. Держим отменяемый запрос.
+    const ac=new AbortController(); abortRef.current=ac;
     try{
       const res=await fetch("/api/ai/analyze",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({question,history,force_deep:forceDeep,session_id:sessionId}),
+        signal:ac.signal,
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({detail:res.statusText}));
@@ -4876,6 +5259,11 @@ function AIPage(){
                 if(data.session_id) setSessionId(data.session_id);
               }else if(data.type==="text"&&data.chunk){
                 updateLast(last=>({text:(last.text||"")+data.chunk}));
+              }else if(data.type==="lead"&&data.chunk){
+                // Резюме и «что проверять» пишутся ПОСЛЕДНИМИ — по готовому
+                // телу, — а читаются первыми. Поэтому вставляем наверх, а не
+                // дописываем в конец.
+                updateLast(last=>({text:data.chunk+(last.text||"")}));
               }else if(data.type==="reasoning"){
                 // Живой ход мысли LLM (delta.reasoning_content). Копим ПО СТАДИЯМ
                 // (reasoningStages[stage]) — иначе таймер «Ход мысли · Nс» суммирует
@@ -4991,6 +5379,8 @@ function AIPage(){
                   if(iters.length){iters[iters.length-1]={...iters[iters.length-1],status:"done"};}
                   return {agentIters:iters, phase:data.value};
                 });
+              }else if(data.type==="viz"&&data.n!=null){
+                updateLast(last=>({viz:[...(last.viz||[]).filter(v=>v.n!==data.n),{n:data.n,section:data.section,html:data.html||"",reason:data.reason||""}]}));
               }else if(data.type==="chart"&&data.spec){
                 updateLast(last=>({charts:[...(last.charts||[]),data.spec]}));
               }else if(data.type==="ranking"&&data.entries){
@@ -5014,8 +5404,17 @@ function AIPage(){
         return u;
       });
     }catch(e){
-      setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],text:`⚠ Ошибка соединения: ${e.message}`};return u;});
+      if(e.name==="AbortError"){
+        // Человек остановил сам — это не ошибка. Оставляем то, что успело
+        // прийти, и честно помечаем, что продолжения не будет.
+        setMsgs(m=>{const u=[...m];const last=u[u.length-1]||{};
+          u[u.length-1]={...last,text:(last.text||"")+"\n\n⏹ Остановлено. Показано то, что успело прийти.",phase:"done"};
+          return u;});
+      }else{
+        setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],text:`⚠ Ошибка соединения: ${e.message}`};return u;});
+      }
     }finally{
+      abortRef.current=null;
       setLoading(false);
     }
   };
@@ -5106,9 +5505,20 @@ function AIPage(){
       const mapped=(d.messages||[]).map(m=>{
         if(m.role==="user") return {role:"user",text:m.content};
         const meta=m.meta||{};
-        return {role:"ai",text:m.content,sources:meta.sources||[],
+        return {role:"ai",text:m.content,sources:meta.sources||[],report_id:meta.report_id||undefined,
                 mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined};
       });
+      // История хранит только текст и источники; визуализации, графики и
+      // артефакты проверки живут в отчёте — дотягиваем их по report_id, иначе
+      // маркеры [[VIZ:n]] в тексте рендерятся в пустоту.
+      await Promise.all(mapped.map(async m=>{
+        if(m.role!=="ai"||!m.report_id) return;
+        try{
+          const r=await apiFetch(`/api/reports/${m.report_id}`); const p=r.payload||{};
+          Object.assign(m,{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
+                           gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null});
+        }catch{}
+      }));
       setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
@@ -5121,7 +5531,7 @@ function AIPage(){
       const r=await apiFetch(`/api/reports/${rid}`);
       const p=r.payload||{};
       setMsgs([{role:"user",text:r.question},
-               {role:"ai",text:r.body,sources:p.sources||[],charts:p.charts||[],
+               {role:"ai",text:r.body,sources:p.sources||[],charts:p.charts||[],viz:p.viz||[],
                 mode:p.mode||"deep",phase:"done",
                 // Волна 9: артефакты верификации восстанавливаются из payload —
                 // сохранённый отчёт больше не «чище» живого прогона.
@@ -5204,7 +5614,7 @@ function AIPage(){
                     <PdfExportButton question={userQ} report={m.text}
                                      sources={m.sources||[]} verification={m.verification}
                                      claimCheck={m.claimCheck} streaming={streaming}
-                                     charts={m.charts||[]} ranking={m.ranking}
+                                     charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
                                      insights={m.insights} gaps={m.gaps}/>}
                   {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
                 </div>
@@ -5222,7 +5632,7 @@ function AIPage(){
                                         sourcesCount={(m.sources||[]).length}/>}
                       <ClaimFlagWrap q={msgs[0]&&msgs[0].text} sessionId={sessionId}
                                       mode={m.mode} reportId={m.report_id}>
-                        {renderMD(m.text, m.sources, m.charts)}
+                        {renderMD(m.text, m.sources, m.charts, m.viz, {streaming})}
                       </ClaimFlagWrap>
                       {streaming && m.text && <span className="dr-type-caret"/>}
                       {/* Charts-wrap внизу: только графики БЕЗ [[CHART:N]] маркера. */}
@@ -5242,7 +5652,7 @@ function AIPage(){
                           <PdfExportButton question={userQ} report={m.text}
                                            sources={m.sources||[]} verification={m.verification}
                                            claimCheck={m.claimCheck} streaming={false}
-                                           charts={m.charts||[]} ranking={m.ranking}
+                                           charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
                                            insights={m.insights} gaps={m.gaps}/>
                           {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={false}/>}
                           <span className="dr-doc-footer-hint">
@@ -5333,10 +5743,16 @@ function AIPage(){
               </div>
               <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"агент Hermes · БД, новости, веб"}</span>
               <span className="composer-kbd">Enter ↵</span>
-              <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()||loading} onClick={()=>send()} aria-label="Отправить">
+              {loading
+                ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
+                          aria-label="Остановить прогон">
+                    Остановить
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+                  </button>
+                : <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()} onClick={()=>send()} aria-label="Отправить">
                 {deepMode?"Запустить research":"Спросить"}
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-              </button>
+                  </button>}
             </div>
           </div>
           <div className="composer-note">Внутренний контур · данные не покидают периметр · Llama 3.3 70B</div>
@@ -5358,7 +5774,22 @@ function BanksPage(){
   },[]);
 
   const[showRest,setShowRest]=useState(false);
-  const filtered=(banks||[]).filter(b=>!q||(b.name||"").toLowerCase().includes(q.toLowerCase())||(b.slug||"").toLowerCase().includes(q.toLowerCase()));
+  // Совпадение с запросом должно решать ПОРЯДОК, а не только состав: без
+  // этого список оставался отсортированным по числу отзывов, и «Сбербанк» на
+  // запрос «Сбербанк» оказывался четвёртым снизу. Точное имя
+  // выше, чем начало имени, а начало — выше, чем совпадение где-то внутри.
+  const matchRank=(b,needle)=>{
+    const n=(b.name||"").toLowerCase(), sl=(b.slug||"").toLowerCase();
+    if(n===needle||sl===needle)return 0;
+    if(n.startsWith(needle)||sl.startsWith(needle))return 1;
+    // Начало любого слова в названии: «россельхоз» в «АКБ Россельхозбанк».
+    if(n.split(/[^\p{L}\p{N}]+/u).some(w=>w.startsWith(needle)))return 2;
+    return 3;
+  };
+  const needle=q.trim().toLowerCase();
+  const filtered=(banks||[]).filter(b=>!needle||(b.name||"").toLowerCase().includes(needle)||(b.slug||"").toLowerCase().includes(needle));
+  if(needle)filtered.sort((a,b)=>matchRank(a,needle)-matchRank(b,needle)
+    ||(b.total_reviews||0)-(a.total_reviews||0));
   // Строки без рейтинга (в справочнике их большинство: 641 из 692 на 07.08.2026)
   // раньше шли в общей таблице сплошными прочерками. Теперь основная таблица —
   // только банки с данными, остальные прячутся за раскрывающийся список.
@@ -5439,7 +5870,7 @@ function BanksPage(){
               </td>
               <td data-label="ОТЗЫВОВ" className="right mono tnum">
                 {b.total_reviews?<>{fmtNum(b.total_reviews)}
-                  {b.reviews_year?<div style={{fontSize:10.5,color:"var(--ink-4)"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
+                  {b.reviews_year?<div style={{fontSize:10,color:"var(--ink-4)"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
                   :<span style={{color:"var(--ink-4)"}}>—</span>}
               </td>
               <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${solved}%`:"—"}</td>
@@ -5458,7 +5889,7 @@ function BanksPage(){
         {showRest?"▾":"▸"} Ещё {rest.length} организаций в справочнике без рейтинга и отзывов
       </div>
       {showRest&&<div className="surface" style={{marginTop:8,padding:"12px 14px",display:"flex",flexWrap:"wrap",gap:8}}>
-        {rest.map(b=><span key={b.bank_id||b.slug} className="badge" style={{fontSize:11.5}}>{b.name||b.slug}</span>)}
+        {rest.map(b=><span key={b.bank_id||b.slug} className="badge" style={{fontSize:11}}>{b.name||b.slug}</span>)}
       </div>}
     </div>}
   </div>;
@@ -5638,7 +6069,7 @@ function SourcesTech({data:extData}){
       </div>
       {loading?<div style={{padding:32}}><Skel h={40}/><div style={{height:8}}/><Skel h={40}/></div>:
       !runs.length?<EmptyState text="Нет запусков в истории"/>:
-      <><div style={{padding:"10px 24px",fontSize:11.5,color:"var(--ink-3)",borderBottom:"1px solid var(--hair)"}}>
+      <><div style={{padding:"10px 24px",fontSize:11,color:"var(--ink-3)",borderBottom:"1px solid var(--hair)"}}>
         <strong>Спарсено</strong> — сколько товаров увидел адаптер. <strong>Изменилось</strong> — сколько новых
         или с обновлёнными условиями (SCD2). 0 при ненулевом «Спарсено» = идемпотентный прогон, данные не изменились.
         Снимок не меняется (sha256) → парсер не запускается, оба нуля.
@@ -5658,8 +6089,8 @@ function SourcesTech({data:extData}){
             const fresh=written>0;
             const empty=seen===0&&written===0&&r.status==="ok";
             return <tr key={i}>
-              <td className="mono" style={{fontWeight:500,fontSize:12.5}}>{r.source}</td>
-              <td className="mono" style={{color:"var(--ink-2)",fontSize:12.5}}>{r.target_name}</td>
+              <td className="mono" style={{fontWeight:500,fontSize:12}}>{r.source}</td>
+              <td className="mono" style={{color:"var(--ink-2)",fontSize:12}}>{r.target_name}</td>
               <td>
                 <span className={`badge ${r.status==="ok"?"pos":r.status==="error"||r.status==="failed"?"neg":r.status==="captcha"?"warn":""}`}>
                   <span className="dot"/>
@@ -5792,6 +6223,9 @@ function SrcPurpose({p,openForm,setOpenForm,onProposed}){
         <span className="src-meta">{s.role}{s.kind?` · ${s.kind}`:""}
           {s.coverage?` · ${s.coverage}`:""}</span>
         <span className="src-ttl">{s.title!==s.domain?s.title:""}</span>
+        {/* Что строка ведёт на сайт, раньше приходилось угадывать: в обратной
+            связи так и написали — «не понятно, что нужно нажать на название». */}
+        <span className="src-go" aria-hidden="true">↗</span>
       </a>)}
       {(p.sources||[]).length>8&&<button className="btn btn-ghost btn-sm src-more"
         onClick={()=>setShowAll(v=>!v)}>
@@ -5800,8 +6234,9 @@ function SrcPurpose({p,openForm,setOpenForm,onProposed}){
 
     <details className="src-req" open={open}>
       <summary onClick={e=>{e.preventDefault();setOpenForm(open?null:p.id);}}>
-        Требования к источнику для этого раздела
+        Предложить свой источник для аналитики
       </summary>
+      <div className="src-req-cap">Требования к источнику для этого раздела</div>
       <ul className="src-req-list">
         {(p.requirements||[]).map((r,i)=><li key={i}>{r}</li>)}
       </ul>
@@ -5875,7 +6310,7 @@ function SourcesPage(){
             <td data-label="Статус">
               <span className={"badge "+(p.status==="approved"?"pos":p.status==="rejected"?"neg":"warn")}>
                 {SRC_STATUS_RU[p.status]||p.status}</span>
-              <div className="t-cap" style={{fontSize:10.5}}>{fmtDateMsk(p.created_at)}</div>
+              <div className="t-cap" style={{fontSize:10}}>{fmtDateMsk(p.created_at)}</div>
             </td>
             {isAdmin&&<td data-label="Автор" className="t-cap">{p.proposer_name||p.proposed_by}</td>}
             <td className="right">
@@ -6756,10 +7191,10 @@ function AdDonut({parts,center,sub}){
         fontFamily="'JetBrains Mono',monospace">{sub}</text>
     </svg>
     <div style={{display:"flex",flexDirection:"column",gap:7}}>
-      {(parts||[]).map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,fontSize:12.5}}>
+      {(parts||[]).map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,fontSize:12}}>
         <span style={{width:9,height:9,borderRadius:3,background:p.color,flex:"none"}}/>
         <span style={{color:"var(--ink-2)"}}>{p.label}</span>
-        <b className="tnum" style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11.5}}>{p.value||0}</b>
+        <b className="tnum" style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{p.value||0}</b>
       </div>)}
     </div>
   </div>;
@@ -7580,7 +8015,7 @@ function PulsePage(){
     {sess&&<PuSessionView sid={sess} onClose={()=>setSess(null)}/>}
 
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
-                 fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:"var(--ink-4)"}}>
+                 fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"var(--ink-4)"}}>
       телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS ·
       открытие чужого отчёта пишется в журнал (admin_report_open)
     </div>
@@ -7942,7 +8377,7 @@ class PageBoundary extends React.Component{
   componentDidUpdate(prev){ if(prev.pageKey!==this.props.pageKey&&this.state.err)this.setState({err:null}); }
   render(){
     if(this.state.err) return <div style={{padding:"64px 24px",textAlign:"center"}}>
-      <div style={{fontSize:26,marginBottom:10,color:"var(--warn)"}}>⚠</div>
+      <div style={{fontSize:24,marginBottom:10,color:"var(--warn)"}}>⚠</div>
       <div style={{fontWeight:500,marginBottom:6}}>Страница не смогла отрисоваться</div>
       <div className="t-cap" style={{maxWidth:"46ch",margin:"0 auto 16px"}}>
         Ошибка записана в журнал «Пульса». Чаще всего в вкладке осталась старая версия
@@ -8151,7 +8586,8 @@ function Shell(){
               const count=null;
               // ИИ-аналитик: пульсирующая точка = прогон идёт; зелёная = отчёт готов
               const aiDot=n.id==="ai"&&(aiBusy||aiReady);
-              return <button key={n.id} className={`nav-item ${active?"active":""}`} onClick={()=>{setPage(n.id);setNavOpen(false);}}>
+              return <button key={n.id} className={`nav-item ${active?"active":""}`}
+                             onClick={()=>{setPage(n.id);setNavOpen(false);}}>
                 <span className="rail-num">{String(num).padStart(2,"0")}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
                 {n.label}
@@ -8232,6 +8668,9 @@ function Shell(){
 }
 
 function App(){
+  useSlidingSegments();
+  useNavMemory();
+  useNumberShortcuts();
   return <ThemeProvider><Shell/></ThemeProvider>;
 }
 

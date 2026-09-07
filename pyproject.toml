@@ -19,6 +19,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "nh3>=0.2",
   # ── HTTP / scraping ────────────────────────────────────────────────────
   "httpx>=0.27",
   "selectolax>=0.3.21",

@@ -175,7 +175,8 @@ def report_prompt(plan, question: str, *, needs_ranking: bool = False,
 
 async def stream_report(client, model: str, *, question: str, plan,
                         context: str, needs_ranking: bool = False,
-                        has_regulatory: bool = False):
+                        has_regulatory: bool = False,
+                        raw_prompt: str | None = None):
     """Пишет отчёт ПОТОКОМ, отдавая куски по мере генерации.
 
     Раньше звали researcher.write_report(): он возвращает готовый текст целиком,
@@ -185,12 +186,23 @@ async def stream_report(client, model: str, *, question: str, plan,
     модель напрямую и получаем поток. Заодно перестаём платить за их сжатие
     контекста, результат которого всё равно отбрасывался.
     """
-    messages = [
-        {"role": "system", "content": _role_prompt(plan, question)},
-        {"role": "user", "content": report_prompt(
-            plan, question, needs_ranking=needs_ranking,
-            has_regulatory=has_regulatory) + "\n\nContext: " + context},
-    ]
+    if raw_prompt is not None:
+        # Досье пишет разделы по очереди, и у каждого раздела свой полный
+        # промпт (research/gptr/dossier.py). Здесь остаётся только то, что
+        # общее для всех вызовов: поток и обход причуд провайдера.
+        messages = [
+            {"role": "system", "content":
+                "Ты — аналитик службы внутреннего аудита. Пишешь по-русски, "
+                "в markdown, строго по переданным фактам с якорями [f:N]."},
+            {"role": "user", "content": raw_prompt},
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": _role_prompt(plan, question)},
+            {"role": "user", "content": report_prompt(
+                plan, question, needs_ranking=needs_ranking,
+                has_regulatory=has_regulatory) + "\n\nContext: " + context},
+        ]
     # Причуды провайдера здесь те же, что в compat: claude-opus отвергает
     # temperature. Прямой вызов их обработку потерял — возвращаем: параметр,
     # на который модель пожаловалась, снимаем и повторяем.

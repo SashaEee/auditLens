@@ -26,6 +26,7 @@ class RunState:
     unreadable: dict[str, str] = field(default_factory=dict)     # url → причина
     review_meta: dict[str, dict] = field(default_factory=dict)   # url → банк/дата
     subqueries: list[str] = field(default_factory=list)          # план поиска
+    page_dates: dict[str, str] = field(default_factory=dict)     # url → ISO-дата
 
     def note_page(self, url: str, text: str) -> None:
         self.pages[url] = text

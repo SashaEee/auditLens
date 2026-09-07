@@ -12,7 +12,12 @@ DO $$ BEGIN
     CREATE INDEX IF NOT EXISTS chunk_embedding_hnsw
       ON document_chunk USING hnsw (embedding vector_cosine_ops)
       WITH (m = 16, ef_construction = 64);
-    RAISE NOTICE 'pgvector: document_chunk.embedding и HNSW-индекс на месте.';
+    -- «Лазейки»: вектор нужен, чтобы запрос находил запись, даже когда автор
+    -- назвал то же самое другими словами. Записей меньше сотни, поэтому
+    -- индекса нет намеренно — точный перебор по такой таблице мгновенный, а
+    -- HNSW на малых объёмах только портит выдачу под фильтрами.
+    ALTER TABLE loophole_record ADD COLUMN IF NOT EXISTS embedding vector(1024);
+    RAISE NOTICE 'pgvector: document_chunk.embedding, loophole_record.embedding и HNSW-индекс на месте.';
   ELSE
     RAISE NOTICE 'pgvector отсутствует → embedding/HNSW пропущены (vector-free фаза). Суперюзер: CREATE EXTENSION vector, затем повторите `migrate`.';
   END IF;
