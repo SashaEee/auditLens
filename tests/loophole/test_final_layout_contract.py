@@ -196,7 +196,7 @@ def test_selected_export_skips_records_outside_catalog_and_preserves_requested_o
         LoopholeRecord(
             sha256=sha256_text("export-draft"),
             title="Неопубликованная",
-            status="classified",
+            status="preliminary",
             is_loophole=True,
         ),
         session=session,

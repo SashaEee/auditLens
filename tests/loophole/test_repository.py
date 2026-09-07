@@ -66,7 +66,7 @@ def test_update_verdict(session):
     row = repo.get_record(rid, session=session)
     assert row["is_loophole"] == 1  # SQLite хранит bool как int
     assert row["verdict_confidence"] == 0.92
-    assert row["status"] == "classified"
+    assert row["status"] == "preliminary"
 
 
 def test_search_relevant_by_query(session):

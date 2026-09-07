@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -42,7 +42,18 @@ def app_session():
 
 
 @pytest.fixture
-def client(app_session):
+def client(app_session, monkeypatch):
+    monkeypatch.delenv("LOOPHOLE_DEV_AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("LOOPHOLE_DEV_GRANT_ALL", raising=False)
+    app_session.execute(text(
+        "INSERT INTO loophole_workspace_membership (username, status) "
+        "VALUES ('test-user', 'active')"
+    ))
+    app_session.execute(text(
+        "INSERT INTO loophole_role_assignment (username, role, status) "
+        "VALUES ('test-user', 'ccks_expert', 'active')"
+    ))
+
     def override_session():
         yield app_session
 
@@ -80,7 +91,7 @@ def test_mark_single_loophole(client, app_session, no_embedding):
     assert rec["verdict_model"] == "manual"
     assert rec["verdict_confidence"] == 1.0
     assert rec["verdict_reason"] == "проверено вручную"
-    assert rec["status"] == "classified"
+    assert rec["status"] == "preliminary"
     assert rec["classified_at"] is not None
 
 

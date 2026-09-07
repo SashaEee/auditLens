@@ -21,10 +21,11 @@ from urllib.parse import urlparse
 from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, critic as al_critic, facts as al_facts
 from . import reviews as al_reviews, runstate
+from . import dossier as al_dossier
+from . import viz as al_viz
 from . import gaps as al_gaps, planner as al_planner
 from . import scraper as al_scraper, verify as al_verify
-from .engine import (_role_prompt, install, report_prompt,
-                     stream_report as engine_stream_report)
+from .engine import _role_prompt, install, report_prompt
 
 # Как часто отдавать живой счётчик длинной стадии. Реже — индикатор кажется
 # зависшим, чаще — поток забивается служебными событиями.
@@ -55,9 +56,11 @@ def _evt(d: dict) -> str:
 
 
 def _sources_ui(urls: list[str], pages: dict[str, str],
-                cited: dict[str, dict] | None = None) -> list[dict]:
+                cited: dict[str, dict] | None = None,
+                dates: dict[str, str] | None = None) -> list[dict]:
     """Карточки источников. Если передан cited — только процитированные."""
     cited = cited or {}
+    dates = dates or {}
     out: list[dict] = []
     for i, url in enumerate(urls, 1):
         domain = urlparse(url).netloc.removeprefix("www.")
@@ -70,6 +73,10 @@ def _sources_ui(urls: list[str], pages: dict[str, str],
             "source_kind": _kind_for(domain, url),
             "excerpt": (cited.get(url, {}).get("excerpt") or text[:600]),
             "facts": cited.get(url, {}).get("facts") or [],
+            # Дата публикации, если источник её объявил. Без неё отчёт выглядит
+            # одинаково свежим целиком, хотя часть страниц может быть старой.
+            "published": dates.get(url, ""),
+            "dead": bool(cited.get(url, {}).get("dead")),
         })
     return out
 
@@ -260,33 +267,91 @@ async def stream_deep_research_gptr(question: str,
                 "label": "Написание отчёта",
                 "detail": "Аналитик собирает разделы, заказанные планом",
                 "estimate_s": 90})
-    labels = dict(getattr(plan, "subject_labels", None) or {})
-    ext = registry.render_for_writer(labels) if registry.facts else ""
     writer_model = (os.getenv("SMART_LLM") or "").split(":", 1)[-1] or (
         os.getenv("LLM_MODEL_ANALYST") or os.environ["LLM_MODEL_NAME"])
-    # Отчёт отдаётся ПО МЕРЕ написания, а якоря перенумеровываются на лету:
-    # нумерация идёт по первому упоминанию, то есть ровно в порядке потока.
+    # Отчёт пишется ПО РАЗДЕЛАМ (dossier.py): у каждого раздела свои факты
+    # целиком, а не «по три на ячейку». Тело стримится по мере написания,
+    # резюме и план проверки пишутся последними и вставляются наверх.
+    # Якоря перенумеровываются одним перенумеровщиком на все разделы —
+    # нумерация по первому упоминанию, в порядке потока.
     renum = al_cit.StreamRenumberer(registry)
+    guard = al_viz.MarkerGuard()      # маркер не должен родиться из обрывков и якоря
+    _ttl = al_dossier.titles(plan)
+    yield _evt({"type": "outline",
+                "sections": al_dossier.outline(plan, registry)})
+    gaps_preview = al_gaps.render(al_gaps.collect(
+        plan, registry=registry, attributes=attributes,
+        pages=pages, unreadable=unreadable)) if registry.facts else ""
+    # Текст собираем в ПОРЯДКЕ ЧТЕНИЯ: тело стримится по мере написания, а
+    # резюме с планом проверки приходят последними и встают наверх. У
+    # перенумеровщика порядок подачи, и полагаться на его text нельзя —
+    # сохранённый отчёт получил бы резюме в конце.
+    body_parts: list[str] = []
+    lead_text = ""
     try:
-        async for piece in engine_stream_report(
+        async for kind, payload in al_dossier.write_dossier(
                 client, writer_model, question=question, plan=plan,
-                context=ext,
-                needs_ranking=bool(getattr(plan, "needs_ranking", False)),
-                has_regulatory=any(f.stance == "regulatory"
-                                   for f in registry.facts)):
-            ready = renum.feed(piece)
-            if ready:
-                yield _evt({"type": "text", "chunk": ready})
+                registry=registry, gaps_text=gaps_preview):
+            if kind == "section":
+                yield _evt({"type": "stage_status", "stage": "analyst",
+                            "label": f"Пишу раздел: {_ttl[payload]}",
+                            "detail": "каждый раздел получает свои факты целиком"})
+            elif kind == "chunk":
+                ready = guard.feed(renum.feed(payload))
+                if ready:
+                    body_parts.append(ready)
+                    yield _evt({"type": "text", "chunk": ready})
+            elif kind == "marker":
+                # Место блока визуализации. Сначала сбрасываем придержанный
+                # хвост перенумеровщика, иначе якорь вылез бы после маркера.
+                tail = guard.feed(renum.finish()) + guard.finish()
+                if tail:
+                    body_parts.append(tail)
+                    yield _evt({"type": "text", "chunk": tail})
+                mk = al_viz.marker(payload)
+                body_parts.append(mk)
+                yield _evt({"type": "text", "chunk": mk})
+            elif kind == "status":
+                yield _evt({"type": "stage_status", "stage": "analyst",
+                            "label": payload})
+            elif kind == "viz":
+                # Блок дизайнера: якоря нумеруются тем же счётчиком, что и
+                # текст, поэтому [n] на картинке ведёт на тот же источник.
+                html_out, reason = "", payload.get("reason") or ""
+                if payload.get("html"):
+                    try:
+                        html_out = al_viz.finalize(payload["html"], payload.get("logos") or {},
+                                                   cite=renum.cite, known=renum.known)
+                    except al_viz.VizRejected as e:
+                        reason = str(e)
+                        log.info("визуализация %s: финал — %s", payload["section"], e)
+                yield _evt({"type": "viz", "n": payload["n"],
+                            "section": payload["section"],
+                            "html": html_out, "reason": reason})
+            elif kind == "lead":
+                # Резюме и план проверки — целиком, наверх. Перенумеровщик
+                # тот же: якоря получат следующие номера, но каждый ведёт на
+                # свой источник. finish() сбрасывает придержанный хвост тела
+                # ДО подачи резюме, чтобы обрывок якоря не приклеился к нему.
+                tail = guard.feed(renum.finish()) + guard.finish()
+                if tail:
+                    body_parts.append(tail)
+                    yield _evt({"type": "text", "chunk": tail})
+                lead_guard = al_viz.MarkerGuard()
+                lead_text = al_viz.restore_lead_markers(
+                    lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish())
+                yield _evt({"type": "lead", "chunk": lead_text})
     except Exception as e:
         log.exception("gptr: написание")
         yield _evt({"type": "text",
                     "chunk": f"\n\n⚠ **Отчёт не сформирован:** {e}\n"})
         yield _evt({"type": "done"})
         return
-    rest = renum.finish()
+    rest = guard.feed(renum.finish()) + guard.finish()
     if rest:
+        body_parts.append(rest)
         yield _evt({"type": "text", "chunk": rest})
-    report = renum.text
+    report = lead_text + "".join(body_parts)
     if not report.strip():
         yield _evt({"type": "text", "chunk":
                     "\n\n⚠ **Отчёт не сформирован:** модель вернула пустой "
@@ -297,13 +362,29 @@ async def stream_deep_research_gptr(question: str,
     # Источники и метрики берём у потокового перенумеровщика: в приложение
     # идут ТОЛЬКО те, на кого реально сослались.
     cited_src, cit_stats = renum.sources(), renum.stats()
+    # Ссылки на отзывы приходят из корпуса и в прогоне НИКЕМ не открываются:
+    # отзыв, удалённый или перенесённый на banki.ru после сбора, давал в отчёте
+    # живую с виду ссылку на 404 (аудиторы сообщали о ссылках на несуществующую
+    # страницу. Проверяем ТОЛЬКО процитированные — их единицы.
+    corpus_urls = [c["url"] for c in cited_src if c["url"] in review_pages]
+    if corpus_urls:
+        dead = await asyncio.to_thread(al_reviews.check_alive, corpus_urls)
+    else:
+        dead = set()
     log.info("цитаты: %s", cit_stats)
 
     cited_map = {c["url"]: {"facts": c["facts"],
+                            "dead": c["url"] in dead,
                             "excerpt": (c["facts"][0]["verbatim"]
                                         if c["facts"] else "")}
                  for c in cited_src}
-    sources = _sources_ui([c["url"] for c in cited_src], pages, cited_map)
+    # Дата отзыва живёт в метаданных корпуса, дата статьи — в разметке.
+    pub_dates = dict(state.page_dates)
+    for u, meta in state.review_meta.items():
+        if meta.get("date"):
+            pub_dates.setdefault(u, str(meta["date"])[:10])
+    sources = _sources_ui([c["url"] for c in cited_src], pages, cited_map,
+                          pub_dates)
     dropped = len(pages) - len(sources)
     if sources:
         high = sum(1 for s in sources if s["trust_score"] >= 0.85)
@@ -321,10 +402,11 @@ async def stream_deep_research_gptr(question: str,
                                        if s["url"].lower().endswith(".pdf"))})
 
     # ── Сверка и пробелы ─────────────────────────────────────────────────
-    verification = al_verify.verify_report(report, registry, pages)
+    report_plain = al_viz.strip_markers(report)   # маркеры — не утверждения
+    verification = al_verify.verify_report(report_plain, registry, pages)
     verification.update({
         "фактов": len(registry.facts),
-        "абзацев_без_якоря": al_cit.unanchored_claims(report),
+        "абзацев_без_якоря": al_cit.unanchored_claims(report_plain),
         **cit_stats,
     })
     gap_lines = al_gaps.collect(plan, registry=registry, attributes=attributes,
@@ -332,6 +414,10 @@ async def stream_deep_research_gptr(question: str,
     # Снятое критиком — не «ничего не нашлось», а «нашлось, но не подтвердилось».
     # Аудитор обязан видеть разницу.
     gap_lines.extend(verdict.notes)
+    if dead:
+        gap_lines.append(
+            f"Ссылок на отзывы, недоступных на момент отчёта: {len(dead)} — "
+            f"цитата и дата в силе, страница источника не открывается.")
     tail = al_gaps.render(gap_lines)
     for i in range(0, len(tail), _CHUNK):
         yield _evt({"type": "text", "chunk": tail[i:i + _CHUNK]})

@@ -798,7 +798,8 @@ _SOURCE_LABEL = {"bankiru": "banki.ru", "banki_reviews": "banki.ru",
 
 def _feed_from_index(bc: str, product: str | None, theme: str | None,
                      days: int | None, city: str | None, month: str | None,
-                     limit: int) -> dict:
+                     limit: int, offset: int = 0,
+                     esc: bool = False) -> dict:
     """Лента по ЕДИНОМУ индексу — все источники в одном списке.
 
     Раньше лента читала только внешнюю базу banki.ru, поэтому отзывы, собранные
@@ -806,7 +807,10 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     колонка, и аудитор видит их вперемешку по дате, как и просил: не отдельным
     блоком, а расширением того же списка.
     """
-    fetch = min(max(limit * 5, 40), 150)
+    # Берём с запасом на дедуп и на уже показанные страницы: аудитор жаловался,
+    # что лента жёстко обрывается на двадцати обращениях и проверить фильтр по
+    # периоду нечем.
+    fetch = min(max((limit + offset) * 5, 40), 600)
     p: dict = {"bank": bc, "product": product, "lim": fetch}
     extra = ""
     if days:
@@ -818,6 +822,11 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     if month:
         extra += " AND date_trunc('month', i.dt) = to_date(:month, 'YYYY-MM')"
         p["month"] = month
+    if esc:
+        # Признак посчитан при индексации (миграция 031) и лежит под частичным
+        # индексом — фильтр стоит один булев предикат. Аудиторы дважды просили
+        # переход к самим обращениям по плашке регуляторной эскалации.
+        extra += " AND i.esc"
     if theme:
         from . import review_topics
         ver = review_topics.active_version()
@@ -869,9 +878,10 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
                     "rating": float(r["rating"]) if r["rating"] is not None else None,
                     "source": r["source"],
                     "themes": []})
-    out = out[:limit]
-    _attach_themes(out)
-    return {"items": out, "mode": "feed", "error": None}
+    page = out[offset:offset + limit]
+    _attach_themes(page)
+    return {"items": page, "mode": "feed", "error": None,
+            "has_more": len(out) > offset + limit}
 
 
 def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None,
@@ -984,13 +994,33 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
                  limit: int = 20) -> list[dict]:
     """Лента доказательной базы. Тонкая обёртка над list_reviews_ex для тех
     вызывающих, кому нужен только список (сегменты, LLM-объяснения)."""
-    return list_reviews_ex(bank, product, theme, q, days, city, month, limit)["items"]
+    # Только именованные: позиционный вызов уже однажды тихо съел период,
+    # подставив None пятым аргументом, и любой новый параметр в середине
+    # сигнатуры сдвинул бы весь хвост.
+    return list_reviews_ex(bank, product=product, theme=theme, q=q, days=days,
+                           city=city, month=month, limit=limit)["items"]
+
+
+def _esc_urls(urls: list[str]) -> set[str]:
+    """Какие из этих обращений несут признак регуляторной эскалации."""
+    if not urls:
+        return set()
+    try:
+        with db.session() as s:
+            rows = s.execute(text(
+                "SELECT url FROM review_index WHERE esc AND url = ANY(:u)"),
+                {"u": urls}).scalars().all()
+        return set(rows)
+    except Exception as e:                                     # noqa: BLE001
+        log.warning("reviews_dash: признак эскалации не забрался (%s)", e)
+        return set(urls)      # фильтр не молчит: лучше не сузить, чем соврать
 
 
 def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = None,
                     q: str | None = None, days: int | None = None,
                     city: str | None = None, month: str | None = None,
-                    limit: int = 20) -> dict:
+                    limit: int = 20, offset: int = 0,
+                    esc: bool = False, sort: str = "auto") -> dict:
     """Лента доказательной базы. q → семантика; иначе свежие с фильтрами
     тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
     массовость это аудит-сигнал → поле `similar`.
@@ -1007,15 +1037,36 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
         th = THEME_BY_KEY.get(theme or "")
         meta: dict = {}
         try:
+            # Смещение отрабатываем срезом, а не SQL-OFFSET: дедуп массовых
+            # жалоб идёт уже после выборки, и OFFSET по сырым строкам разъехался
+            # бы со списком, который видит аудитор.
+            # Просим на ОДНУ запись больше, чем покажем: поиск обрезает выдачу
+            # ровно до k, и без этого запаса «есть ещё» было бы тождественно
+            # ложным — кнопка догрузки не появилась бы никогда.
             res = search_reviews(q, bank=bc, product=product, since_days=days,
                                  theme_rx=_theme_rx(th, r"\y") if th else None,
-                                 city=city, month=month, k=limit, strict=True,
-                                 _meta=meta)
+                                 city=city, month=month, k=limit + offset + 1,
+                                 strict=True, _meta=meta)
         except Exception as e:
             log.warning("reviews_dash: поиск по %r упал: %s", q, e)
             return {"items": [], "mode": "search", "error": "search_failed"}
-        _attach_themes(res)
-        return {"items": res, "mode": "search", "error": None, "search": meta}
+        if sort == "date":
+            # По умолчанию поиск отдаёт по релевантности — это правильно, когда
+            # ищут проблему. Но аудитор, читающий ленту как хронику, просил
+            # порядок по датам. Сортируем ДО среза страницы: иначе страницы
+            # перемешались бы между собой.
+            res.sort(key=lambda r: (r.get("date") or ""), reverse=True)
+        if esc:
+            # Поиск идёт по внешнему корпусу, где признака эскалации нет: он
+            # наш и посчитан при индексации. Поэтому отбираем после поиска по
+            # нашему индексу — иначе фильтр молча пропадал бы, стоило аудитору
+            # ввести запрос, ровно как раньше пропадал период.
+            keep = _esc_urls([r.get("url") for r in res if r.get("url")])
+            res = [r for r in res if r.get("url") in keep]
+        page = res[offset:offset + limit]
+        _attach_themes(page)
+        return {"items": page, "mode": "search", "error": None, "search": meta,
+                "has_more": len(res) > offset + limit}
     if not bc:
         return {"items": [], "mode": "feed", "error": "unknown_bank"}
     # Единый индекс — основной путь: в нём и внешний корпус, и наши коллекторы.
@@ -1024,8 +1075,12 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
     if FEED_FROM_INDEX:
         from . import bankiru_fts
         if bankiru_fts.is_ready():
-            res = _feed_from_index(bc, product, theme, days, city, month, limit)
-            if res["items"] or res["error"]:
+            res = _feed_from_index(bc, product, theme, days, city, month,
+                                   limit, offset, esc)
+            # offset в условии обязателен: на последней странице список пуст и
+            # ошибки нет, без этого запрос провалился бы в запасную ветку и
+            # аудитор по кнопке «показать ещё» получил бы первую страницу снова.
+            if res["items"] or res["error"] or offset:
                 return res
     eng = _get_engine()
     if eng is None:

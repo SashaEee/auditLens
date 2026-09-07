@@ -75,6 +75,11 @@ def _runtime_html(
     jsx = (STATIC / "loophole.jsx").read_text(encoding="utf-8")
     css = (STATIC / "loophole.css").read_text(encoding="utf-8")
     context_json = json.dumps(contexts or ALL_CONTEXTS, ensure_ascii=False)
+    capabilities_json = json.dumps({
+        "can_mark_verdict": any(
+            context["id"] in {"queue", "admin"} for context in contexts or ALL_CONTEXTS
+        ),
+    })
     records_json = json.dumps(RECORDS, ensure_ascii=False)
     parser_json = json.dumps(
         {

@@ -59,6 +59,41 @@ _FK_REFS = """
 """
 
 
+_OFFER_REFS = """
+    SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+      FROM pg_constraint c
+      JOIN unnest(c.conkey) k(attnum) ON true
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+     WHERE c.contype = 'f'
+       AND c.confrelid = 'product_offer'::regclass
+"""
+
+
+def _relink_history(s, tbl: str, col: str, rid, keep_id: int) -> None:
+    """Переводит зависимые записи с удаляемой строки на её канонический двойник.
+
+    Двойник ищется по естественному ключу (категория + внешний идентификатор),
+    а не по номеру: номер у копии свой, а сама она — тот же самый оффер,
+    собранный дважды под разными написаниями имени банка.
+    """
+    if tbl != "product_offer":
+        return
+    row = s.execute(text(
+        "SELECT offer_id, category, external_id FROM product_offer "
+        "WHERE ctid = :r"), {"r": rid}).mappings().first()
+    if not row:
+        return
+    twin = s.execute(text(
+        "SELECT offer_id FROM product_offer "
+        " WHERE bank_id = :k AND category = :c AND external_id = :e"),
+        {"k": keep_id, "c": row["category"], "e": row["external_id"]}).scalar()
+    if not twin:
+        return
+    for dep_tbl, dep_col in s.execute(text(_OFFER_REFS)).all():
+        s.execute(text(f"UPDATE {dep_tbl} SET {dep_col} = :t WHERE {dep_col} = :o"),
+                  {"t": twin, "o": row["offer_id"]})
+
+
 def _repoint_all(s, drop_id: int, keep_id: int) -> int:
     """Перевести на канонический банк ВСЕ ссылки по внешним ключам.
 
@@ -74,7 +109,36 @@ def _repoint_all(s, drop_id: int, keep_id: int) -> int:
                 s.execute(text(f"UPDATE {tbl} SET {col} = :k WHERE {col} = :d"),
                           {"k": keep_id, "d": drop_id})
         except Exception as e:  # noqa: BLE001 — конфликт уникальности ожидаем
+            # Уникальный ключ сработал = ТАКАЯ ЖЕ строка уже есть у канонического
+            # банка: это тот же оффер (или отзыв), собранный дважды под разными
+            # написаниями имени. Переносить нечего — дубликат удаляем поштучно,
+            # иначе строка банка остаётся навечно из-за копии самой себя.
             print(f"        {tbl}.{col}: перенос не удался ({str(e).splitlines()[0][:60]})")
+            moved = dropped = 0
+            for (rid,) in s.execute(text(
+                    f"SELECT ctid FROM {tbl} WHERE {col} = :d"), {"d": drop_id}).all():
+                try:
+                    with s.begin_nested():
+                        s.execute(text(f"UPDATE {tbl} SET {col} = :k "
+                                       f"WHERE ctid = :r"), {"k": keep_id, "r": rid})
+                    moved += 1
+                except Exception:
+                    # Дубликат нельзя просто удалить: на оффер ссылается
+                    # история изменений. Переводим историю на ту строку, что
+                    # осталась у канонического банка, и лишь потом удаляем —
+                    # иначе теряется след того, как менялись условия.
+                    try:
+                        with s.begin_nested():
+                            _relink_history(s, tbl, col, rid, keep_id)
+                            s.execute(text(f"DELETE FROM {tbl} WHERE ctid = :r"),
+                                      {"r": rid})
+                        dropped += 1
+                    except Exception as e2:  # noqa: BLE001
+                        print(f"          строка оставлена: "
+                              f"{str(e2).splitlines()[0][:70]}")
+            if moved or dropped:
+                print(f"          поштучно: перенесено {moved}, "
+                      f"удалено дубликатов {dropped}")
         stuck += s.execute(text(f"SELECT count(*) FROM {tbl} WHERE {col} = :d"),
                            {"d": drop_id}).scalar() or 0
     return stuck

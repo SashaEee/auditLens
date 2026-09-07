@@ -378,22 +378,32 @@ _META_DATE_RES = (
 )
 
 
+def date_from_html(html: str) -> datetime | None:
+    """Дата публикации из метаданных РАЗМЕТКИ, без обращения к сети.
+
+    Вынесено из `_page_date`, чтобы тот, кто уже скачал страницу (скрапер
+    глубокого исследования), датировал её бесплатно, а не вторым запросом.
+    """
+    # ВЕСЬ документ, не первые N КБ: у forbes.ru datePublished лежит за
+    # пределами первых 60 КБ — обрезка стоила фантомного «сбоя дня» из
+    # апрельской статьи (05.08.2026)
+    head = (html or "")[:500000]
+    for rx in _META_DATE_RES:
+        m = rx.search(head)
+        if m:
+            ts = _parse_dt(m.group(1))
+            if ts:
+                return ts
+    return None
+
+
 def _page_date(url: str) -> datetime | None:
     """Дата публикации из метаданных страницы (только структурные источники)."""
     try:
         r = _get(url)
         if r.status_code != 200:
             return None
-        # ВЕСЬ документ, не первые N КБ: у forbes.ru datePublished лежит за
-        # пределами первых 60 КБ — обрезка стоила фантомного «сбоя дня» из
-        # апрельской статьи (05.08.2026)
-        head = r.text[:500000]
-        for rx in _META_DATE_RES:
-            m = rx.search(head)
-            if m:
-                ts = _parse_dt(m.group(1))
-                if ts:
-                    return ts
+        return date_from_html(r.text)
     except Exception:  # noqa: BLE001
         pass
     return None

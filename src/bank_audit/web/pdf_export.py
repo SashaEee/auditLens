@@ -29,6 +29,13 @@ def _esc(s: Any) -> str:
     return _html.escape(str(s or ""))
 
 
+def _title_size(title: str) -> str:
+    """Кегль обложки по длине заголовка: короткий звучит крупно, длинный не
+    должен съедать половину листа."""
+    n = len(title or "")
+    return "xlong" if n > 110 else ("long" if n > 60 else "")
+
+
 def _toc_label(s: str) -> str:
     """Чистый текст заголовка для оглавления (без markdown/цитат/эмодзи)."""
     s = re.sub(r"\[\d+\]", "", s or "")
@@ -247,10 +254,15 @@ def _render_sources_section(sources: list[dict]) -> str:
     return f'<ol class="src-list">{"".join(rows)}</ol>'
 
 
-def _render_verification_section(unverified: list[dict]) -> str:
+def _render_verification_section(unverified: list) -> str:
     """Премиум-блок «Утверждения для ручной проверки» — то же что
     VerificationBanner в UI (.dr-verify-warn), но адаптировано под PDF.
     Warn-tinted rounded box со всем содержимым, не голым списком."""
+    # Новый конвейер кладёт сюда числа, не нашедшие подтверждения в источнике,
+    # а старый — словари {claim, issue}; печатаем оба вида, прочее пропускаем.
+    unverified = [u if isinstance(u, dict)
+                  else {"claim": f"число {u} не найдено в источнике рядом с цитатой", "issue": ""}
+                  for u in (unverified or []) if isinstance(u, (dict, str, int, float))]
     if not unverified:
         return ""
     items = []
@@ -472,7 +484,11 @@ def _render_charts_assets(charts: list[dict], tail_ids: list[int]) -> tuple[str,
     js = (
         '<script>' + chartjs_src + '</script>'
         '<script>'
-        'const PAL=["#16181d","#44464d","#707075","#9c9ea3","#c4c6cc"];'
+        # Оттенки серого сливались в один тёмный круг — доли не различались;
+        # об этом прямо написали в обратной связи. Цвета подобраны так, чтобы
+        # отличаться и по тону, и по светлоте: тогда они читаются и на
+        # чёрно-белой печати.
+        'const PAL=["#3b6fb6","#c8412b","#2f7a45","#b8862b","#6b52a3","#4a8f9c","#8a5a3c","#707075"];'
         'const ACC="oklch(58% 0.18 25)",INK="#16181d",INK3="#707075",'
         '      HAIR="#ebebed",PAPER="#ffffff";'
         'function renderChart(cid, spec){'
@@ -630,6 +646,7 @@ def build_pdf_html(*, question: str, report_md: str,
                    meta: dict | None = None,
                    verification: dict | None = None,
                    charts: list[dict] | None = None,
+                   viz: list[dict] | None = None,
                    ranking: dict | None = None,
                    insights: list[dict] | None = None,
                    gaps: dict | None = None,
@@ -650,6 +667,11 @@ def build_pdf_html(*, question: str, report_md: str,
         report_md = (report_md[:_mt.start()] + report_md[_mt.end():]).lstrip("\n")
     # [[CHART:i]] → алфанум-токен: markdown-конвертер не должен его исказить
     report_md = re.sub(r"\[\[CHART:(\d+)\]\]", r"CHARTSLOT7f3a\1end", report_md)
+    # Литерал VIZSLOT в тексте модели не должен стать блоком; маркер — только
+    # отдельной строкой, как его ставит поток.
+    report_md = report_md.replace("VIZSLOT7f3a", "VIZSLOT 7f3a")
+    report_md = re.sub(r"(?m)^\s*\[\[VIZ:(\d{1,2})\]\]\s*$", r"VIZSLOT7f3a\1end", report_md)
+    report_md = re.sub(r"\[\[VIZ:\d+\]\]", "", report_md)
     body_html = _md_to_html(report_md, sources_by_n, toc_out=toc_entries)
     sources_html = _render_sources_section(sources)
     unverified = (verification or {}).get("unverified") or []
@@ -686,6 +708,17 @@ def build_pdf_html(*, question: str, report_md: str,
 
     body_html = re.sub(r"(?:<p>\s*)?CHARTSLOT7f3a(\d+)end(?:\s*</p>)?",
                        _chsub, body_html)
+    # Визуализации дизайнера: разметка уже прошла белый список на сервере
+    # при генерации, сюда приходит как есть. Пустой номер — маркер убираем.
+    _viz_by_n = {int(v["n"]): (v.get("html") or "") for v in (viz or [])
+                 if isinstance(v, dict) and v.get("n") is not None}
+
+    def _vzsub(mm):
+        h = _viz_by_n.get(int(mm.group(1)), "")
+        return f'<div class="viz-block">{h}</div>' if h.strip() else ""
+
+    body_html = re.sub(r"(?:<p>\s*)?VIZSLOT7f3a(\d+)end(?:\s*</p>)?",
+                       _vzsub, body_html)
     _tail = [i for i in _figs if i not in _placed]
     charts_html, charts_js = _render_charts_assets(charts, _tail)
     # Богатые виджеты UI, которых раньше не было в PDF (рейтинг/инсайты/gaps/claim-check)
@@ -737,11 +770,18 @@ def build_pdf_html(*, question: str, report_md: str,
   @bottom-right {{ content: "стр. " counter(page) " из " counter(pages); font-family: 'JetBrains Mono', monospace; font-size: 8pt; color: #888; }}
 }}
 * {{ box-sizing: border-box; }}
+:root {{ --paper:#fbfaf7; --paper-2:#f4f2ec; --surface:#ffffff; --ink:#16181d; --ink-2:#4a4f5a;
+        --ink-3:#7a808c; --ink-4:#b3b8c2; --hair:#e6e3da; --hair-2:#d9d5ca; --accent:#c8412b;
+        --accent-soft:rgba(200,65,43,.08); --pos:#2f7a3d; --warn:#b8862b; --neg:#c8412b; }}
+.viz-block {{ margin: 5mm 0 6mm; page-break-inside: avoid; font-family: 'Geist', system-ui, sans-serif; font-size: 9pt; }}
+.viz-block .viz {{ width: 100%; }}
+.viz-block svg {{ max-width: 100%; height: auto; max-height: 600px; }}
+.viz-block .viz-cite {{ font-size: 6.5pt; vertical-align: super; color: #7a808c; margin-left: 1px; }}
 html, body {{ margin: 0; padding: 0; }}
 body {{
   font-family: 'Source Serif 4', Georgia, serif;
-  font-size: 10.5pt;
-  line-height: 1.55;
+  font-size: 11pt;
+  line-height: 1.6;
   color: #16181d;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -777,13 +817,17 @@ body {{
 }}
 .cover h1 {{
   font-family: 'Source Serif 4', Georgia, serif;
-  font-size: 30pt;
+  font-size: 26pt;
   font-weight: 500;
   line-height: 1.2;
   letter-spacing: -0.01em;
   margin: 0 0 12mm;
   max-width: 130mm;
 }}
+/* Длинный вопрос на обложке набирался тем же кеглем и занимал половину листа —
+   замечание из обратной связи. Чем длиннее заголовок, тем он спокойнее. */
+.cover h1.long {{ font-size: 21pt; line-height: 1.25; }}
+.cover h1.xlong {{ font-size: 17pt; line-height: 1.3; max-width: 140mm; }}
 .cover .meta {{
   margin-top: 26mm;
   font-family: 'Geist', system-ui, sans-serif;
@@ -1179,7 +1223,7 @@ body {{
       <span class="id">{_esc(audit_id)}</span>
     </div>
     <div class="eyebrow">Аналитический отчёт</div>
-    <h1>{_esc(doc_title)}</h1>
+    <h1 class="{_title_size(doc_title)}">{_esc(doc_title)}</h1>
     <dl class="meta">
       <dt>Дата</dt><dd>{_esc(now_iso)}</dd>
       <dt>Источников</dt><dd>{len(sources)}</dd>
@@ -1227,7 +1271,28 @@ def render_pdf(html_str: str) -> bytes:
         try:
             ctx = browser.new_context(device_scale_factor=2)
             page = ctx.new_page()
+            # В документ попадает разметка модели: сеть рендеру не нужна,
+            # кроме шрифтов. Всё остальное — в том числе внутренние адреса —
+            # обрывается до запроса.
+            def _route(route):
+                url = route.request.url
+                if url.startswith("data:") or url.startswith("about:") or \
+                        url.startswith("https://fonts.googleapis.com/") or \
+                        url.startswith("https://fonts.gstatic.com/"):
+                    route.continue_()
+                else:
+                    route.abort()
+            page.route("**/*", _route)
             page.set_content(html_str, wait_until="networkidle", timeout=30000)
+            # Разметка модели не должна раздуть документ: сотни тысяч пикселей
+            # высоты — это тысячи пустых страниц, а не отчёт.
+            try:
+                if page.evaluate("document.documentElement.scrollHeight") > 200_000:
+                    raise ValueError("документ аномально высок")
+            except ValueError:
+                raise
+            except Exception:
+                pass
             # Ждём загрузку шрифтов Google Fonts
             try:
                 page.evaluate("document.fonts.ready")
@@ -1250,6 +1315,7 @@ def render_pdf(html_str: str) -> bytes:
             except Exception as e:
                 log.warning("PDF chart-render wait failed: %s "
                              "(PDF будет создан, но графики могут быть пустые)", e)
+            page.set_default_timeout(60000)
             pdf = page.pdf(
                 format="A4",
                 print_background=True,
@@ -1267,6 +1333,7 @@ def export_report_to_pdf(*, question: str, report_md: str,
                           meta: dict | None = None,
                           verification: dict | None = None,
                           charts: list[dict] | None = None,
+                   viz: list[dict] | None = None,
                           ranking: dict | None = None,
                           insights: list[dict] | None = None,
                           gaps: dict | None = None,
@@ -1275,7 +1342,7 @@ def export_report_to_pdf(*, question: str, report_md: str,
     html_str = build_pdf_html(question=question, report_md=report_md,
                                 sources=sources, meta=meta,
                                 verification=verification,
-                                charts=charts, ranking=ranking,
+                                charts=charts, viz=viz, ranking=ranking,
                                 insights=insights, gaps=gaps,
                                 claim_check=claim_check)
     return render_pdf(html_str)

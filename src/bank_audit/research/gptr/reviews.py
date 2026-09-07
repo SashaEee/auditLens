@@ -20,9 +20,11 @@ from . import runstate
 
 log = logging.getLogger(__name__)
 
-# Сколько жалоб берём на объект: достаточно, чтобы увидеть повторяющиеся темы,
-# и не столько, чтобы утопить контекст писателя.
-_PER_SUBJECT = 6
+# Сколько жалоб берём на объект. Было 6 — «чтобы не утопить контекст
+# писателя»; с досье писатель раздела «Голос клиента» получает только
+# наблюдаемые факты, и двадцать цитат на объект ему по силам. Шесть давали
+# по Сберу две-три цитаты в отчёте при самом большом корпусе.
+_PER_SUBJECT = 20
 
 
 def _match_slug(bank_name: str, name_to_slug: dict[str, str]) -> str:
@@ -86,6 +88,37 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
                         "date": str(it.get("date") or "")[:10],
                         "product": it.get("product") or "",
                         "text": text})
+    # Дочерние компании и сервисы в корпусе не значатся банком: 184 отзыва
+    # упоминают Домклик, и все они привязаны к материнскому банку. Объект
+    # без единого отзыва по слагу ищем по названию — и оставляем только те
+    # тексты, где оно действительно есть, иначе приедут жалобы на банк вообще.
+    covered = {r["subject"] for r in out}
+    for slug in subjects:
+        label = (labels.get(slug) or "").strip()
+        if slug in covered or not label:
+            continue
+        try:
+            extra = br.search_reviews(" ".join(x for x in (label, query) if x),
+                                      k=per_subject * 3,
+                                      since_days=int(os.getenv("GPTR_REVIEWS_SINCE_DAYS", "540")))
+        except Exception as e:
+            log.info("корпус отзывов, поиск по названию «%s»: %s", label, type(e).__name__)
+            continue
+        added = 0
+        for it in (extra or []):
+            text = (it.get("text") or "").strip()
+            if not text or label.lower() not in text.lower():
+                continue
+            out.append({"bank": label, "subject": slug,
+                        "url": it.get("url") or "",
+                        "date": str(it.get("date") or "")[:10],
+                        "product": it.get("product") or "",
+                        "text": text})
+            added += 1
+            if added >= per_subject:
+                break
+        if added:
+            log.info("корпус отзывов: «%s» не банк в корпусе, по названию нашлось %d", label, added)
     log.info("корпус отзывов: %d жалоб по %d объектам", len(out), len(subjects))
     return out
 
@@ -115,6 +148,41 @@ def as_pages(records: list[dict]) -> dict[str, str]:
     return pages
 
 
+def check_alive(urls: list[str], timeout: float = 6.0,
+                workers: int = 8) -> set[str]:
+    """Какие из ссылок НЕ открываются. Возвращает множество мёртвых.
+
+    Проверяем только процитированные ссылки — их единицы, и делаем это в
+    отдельном потоке, чтобы не морозить поток событий. Ошибка сети не
+    объявляет ссылку мёртвой: недоступность нашего контура и отсутствие
+    страницы — разные вещи, и обвинять источник без основания нельзя.
+    """
+    import concurrent.futures as cf
+
+    import httpx
+
+    from ...rag.fetcher import CA_BUNDLE_PATH, DEFAULT_HEADERS
+
+    def one(u: str) -> tuple[str, bool]:
+        try:
+            with httpx.Client(headers=DEFAULT_HEADERS, follow_redirects=True,
+                              verify=CA_BUNDLE_PATH or True,
+                              timeout=timeout) as c:
+                r = c.get(u)
+            return u, r.status_code in (404, 410)
+        except Exception:      # noqa: BLE001 — сеть молчит, источник не виноват
+            return u, False
+
+    dead: set[str] = set()
+    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        for u, is_dead in ex.map(one, urls):
+            if is_dead:
+                dead.add(u)
+    if dead:
+        log.info("отзывы: недоступных ссылок %d из %d", len(dead), len(urls))
+    return dead
+
+
 def subject_hints() -> dict[str, str]:
     """url → слаг объекта, о котором отзыв. Правда корпуса, не догадка модели."""
     return {u: m["subject"]
@@ -123,16 +191,23 @@ def subject_hints() -> dict[str, str]:
 
 
 def stamp_dates(registry) -> int:
-    """Проставляет фактам из корпуса дату отзыва.
+    """Проставляет фактам дату источника.
 
     Дата нужна аудитору, чтобы отличить свежую жалобу от прошлогодней, но
-    брать её из текста нельзя — там её нет. Берём из метаданных корпуса.
+    брать её из текста нельзя — там её нет. Для отзывов берём из метаданных
+    корпуса, для веб-страниц — из метаданных разметки, которые скрапер снял
+    при чтении. Без этого модель не может сказать «условие действовало на
+    такую-то дату» и все свидетельства выглядят одновременными.
     """
     n = 0
-    meta_all = runstate.current().review_meta
+    state = runstate.current()
+    meta_all = state.review_meta
     for f in registry.facts:
+        if f.date:
+            continue
         meta = meta_all.get(f.url)
-        if meta and meta.get("date") and not f.date:
-            f.date = meta["date"]
+        when = (meta or {}).get("date") or state.page_dates.get(f.url)
+        if when:
+            f.date = str(when)[:10]
             n += 1
     return n

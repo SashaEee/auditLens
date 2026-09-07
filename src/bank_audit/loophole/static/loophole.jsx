@@ -205,8 +205,11 @@ function LoopholeApp() {
 
   // ── Авторизация и рабочие контексты (story 1.1) ──────────────────────────
   // authz: null = проверяем доступ, false = отказ (401/403),
-  // "error" = сетевая ошибка загрузки контекстов, иначе {contexts}.
+  // "error" = сетевая ошибка загрузки контекстов, иначе {contexts, capabilities}.
   const [authz, setAuthz] = useState(null);
+  const canMarkVerdict = !!(authz && authz.capabilities
+    && authz.capabilities.can_mark_verdict === true);
+  const VerdictControl = canMarkVerdict ? "button" : "span";
   const [contextsRetry, setContextsRetry] = useState(0);  // +1 = повторить /contexts
   const [view, setView] = useState("catalog"); // catalog | sources | ai_research | queue | admin
   // Панель агента живёт только в контексте AI-исследования (story 1.3): на
@@ -289,7 +292,9 @@ function LoopholeApp() {
         if (!r.ok) { setAuthz(false); return null; }
         return r.json();
       })
-      .then(d => { if (d) setAuthz({contexts: d.contexts || []}); })
+      .then(d => { if (d) setAuthz({
+        contexts: d.contexts || [], capabilities: d.capabilities || {},
+      }); })
       .catch(() => setAuthz("error"));
   }, [contextsRetry]);
 
@@ -689,7 +694,7 @@ function LoopholeApp() {
 
   // ── Ручная маркировка: POST /records/verdict + toast результата ──────────
   const markVerdict = async (ids, isLoophole, comment) => {
-    if (!ids.length || markBusy) return false;
+    if (!canMarkVerdict || !ids.length || markBusy) return false;
     setMarkBusy(true);
     try {
       const r = await fetch(`${API}/records/verdict`, {
@@ -700,6 +705,13 @@ function LoopholeApp() {
       });
       const d = await r.json().catch(() => null);
       if (!r.ok) {
+        if (r.status === 401 || r.status === 403) {
+          setAuthz(prev => prev && prev.contexts ? {
+            ...prev, capabilities: {...prev.capabilities, can_mark_verdict: false},
+          } : prev);
+          setVerdictModal(null);
+          setMarkComment("");
+        }
         showToast((d && typeof d.detail === "string" && d.detail) || "Ошибка маркировки.", "error");
         return false;
       }
@@ -1630,12 +1642,6 @@ function LoopholeApp() {
 
   const RECORD_STATUS_LABELS = {
     published: "подтверждено",
-    verified: "подтверждено",
-    pending: "на проверке",
-    classified: "классифицировано",
-    monitoring: "мониторинг",
-    rejected: "отклонено",
-    new: "новая",
     preliminary: "предварительно",
   };
   const recordStatusLabel = (status) => status ? (RECORD_STATUS_LABELS[status] || "—") : "—";
@@ -2073,16 +2079,19 @@ function LoopholeApp() {
                       <td className="lp-col-narrow2">{r.bank_slug || "—"}</td>
                       <td className="lp-col-narrow2">{fmtNum(r.verdict_confidence)}</td>
                       <td onClick={e => e.stopPropagation()}>
-                        <button type="button"
+                        <VerdictControl type={canMarkVerdict ? "button" : undefined}
                                 className={"lp-verdict-chip " +
                                   (r.is_loophole === true ? "lp-verdict-chip-bad"
                                  : r.is_loophole === false ? "lp-verdict-chip-ok"
                                  : "lp-verdict-chip-na")}
-                                title="Изменить вердикт"
-                                onClick={() => { setMarkComment(""); setVerdictModal({record: r}); }}>
+                                style={canMarkVerdict ? undefined : {cursor: "default"}}
+                                title={canMarkVerdict ? "Изменить вердикт" : undefined}
+                                onClick={canMarkVerdict
+                                  ? () => { setMarkComment(""); setVerdictModal({record: r}); }
+                                  : undefined}>
                           <span className="lp-verdict-dot"></span>
                           {verdictLabel(r)}
-                        </button>
+                        </VerdictControl>
                         {r.verdict_model === "manual" && (
                           <span className="lp-manual-mark"
                                 title="Вердикт проставлен вручную">ручная</span>
@@ -2503,10 +2512,10 @@ function LoopholeApp() {
                           <a className="lp-btn" href={queueSelected.url} target="_blank"
                              rel="noopener noreferrer">Открыть источник</a>
                         )}
-                        <button type="button" className="lp-btn lp-btn-primary"
+                        {canMarkVerdict && <button type="button" className="lp-btn lp-btn-primary"
                                 onClick={() => { setMarkComment(""); setVerdictModal({record: queueSelected}); }}>
                           Проверить вердикт
-                        </button>
+                        </button>}
                       </div>
                     </article>
                   )}
@@ -2875,7 +2884,7 @@ function LoopholeApp() {
       </div>}
 
       {/* ── Модал ручной маркировки вердикта ────────────────────────────────── */}
-      {verdictModal && (() => {
+      {canMarkVerdict && verdictModal && (() => {
         const rec = verdictModal.record;
         const current = rec.is_loophole; // true | false | null
         const choose = async (val) => {

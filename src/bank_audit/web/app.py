@@ -797,10 +797,21 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     cond, params = ["m.category = :c",
                     "m.bank_name !~* :nonbank"], {
         "c": category, "l": limit, "off": max(0, offset),
-        "nonbank": cat_meta.NON_BANK_SQL_RE}
+        "nonbank": cat_meta.NON_BANK_SQL_RE,
+        # Хосты витрин-агрегаторов: ссылка на них — не первоисточник.
+        "aggr_host": r"^https?://(www\.)?(sravni\.ru|banki\.ru|bankiros\.ru|vbr\.ru)"}
     if q_text:
-        cond.append("(m.bank_name ILIKE :qq OR m.title ILIKE :qq)")
+        # Подстрока И полнотекст, объединением. Не заменой: замер на проде —
+        # «дебетовые карты» подстрокой не находились ВООБЩЕ (0 против 7), но
+        # «автокредит» подстрока находит 4 против 3 у полнотекста, потому что
+        # ловит слово внутри составного названия. Ноги дополняют друг друга,
+        # и терять ни одну нельзя.
+        cond.append(
+            "(m.bank_name ILIKE :qq OR m.title ILIKE :qq"
+            " OR to_tsvector(CAST('russian' AS regconfig), coalesce(m.title,''))"
+            "    @@ websearch_to_tsquery(CAST('russian' AS regconfig), :q_fts))")
         params["qq"] = f"%{q_text.strip()}%"
+        params["q_fts"] = q_text.strip()
     if term:
         cond.append("m.term_bucket = :tb"); params["tb"] = term
     # сегмент и вид продукта: премиальная карта не должна ранжироваться рядом
@@ -821,35 +832,57 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     # стоял ПЕРВОЙ строкой рынка с готовым флагом в базе. Аудиторы шли
     # проверять и находили на сайте банка 10,5% — доверие к инструменту
     # ломалось именно здесь (обратная связь ТБ, август 2026).
+    # Один продукт, собранный двумя сборщиками, показывался двумя строками:
+    # «НС Банк · Достигай» приходил и из API, и со страницы агрегатора. Внутри
+    # берём ОДНУ запись на (банк, продукт) — предпочитая ту, у которой есть
+    # ссылка на сам продукт, а при равенстве более полные условия, — и только
+    # снаружи сортируем витрину по метрике категории.
     return q(f"""
-        SELECT m.bank_slug, m.bank_name, m.is_sber, m.offer_id, m.title, m.url,
-               m.primary_source, m.segment, m.sub_segment,
-               m.rate_min, m.rate_max, m.psk_min, m.psk_max,
-               m.rate_pct, m.rate_kind, m.term_bucket,
-               m.amount_min, m.amount_max, m.term_months_min, m.term_months_max,
-               m.fee_open, m.fee_service, m.grace_days, m.cashback_pct,
-               m.early_withdraw, m.capitalization,
-               m.replenishable, m.conditions, m.valid_from,
-               -- разбор условий: «0 руб.» в цене без пояснения, чем этот ноль
-               -- куплен, аудитору не говорит ничего (см. enrich_llm)
-               e.payload->>'free_kind'          AS free_kind,
-               e.payload->'free_conditions'     AS free_conditions,
-               e.payload->>'rate_attainability' AS attain,
-               e.payload->'rate_requires'       AS rate_requires,
-               e.payload->>'product_kind'       AS product_kind,
-               qf.reason                        AS implausible_reason,
-               count(*) OVER () AS total
-          FROM v_market_rub_offer m
-          LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
-          LEFT JOIN LATERAL (
-              SELECT q2.detail->>'reason' AS reason
-                FROM quality_flag q2
-               WHERE q2.entity_type = 'offer' AND q2.entity_id = m.offer_id
-                 AND q2.severity = 'warn'
-               ORDER BY q2.created_at DESC
-               LIMIT 1) qf ON true
-         WHERE {' AND '.join(cond)}
-         ORDER BY (qf.reason IS NOT NULL), m.{order}
+        WITH picked AS (
+            -- Ключ дедупа — ИМЯ банка, а не слаг: 774 банка из 833 в
+            -- справочнике заведены как unknown_*, и один банк живёт под
+            -- двумя слугами («ns-bank» и «unknown_6099d9c55c»), из-за чего
+            -- его продукт показывался дважды.
+            SELECT DISTINCT ON (
+                     lower(regexp_replace(m.bank_name, '[^[:alnum:]]', '', 'g')),
+                     lower(m.title), m.category)
+                   m.bank_slug, m.bank_name, m.is_sber, m.offer_id, m.title,
+                   m.url, m.primary_source, m.segment, m.sub_segment,
+                   m.rate_min, m.rate_max, m.psk_min, m.psk_max,
+                   m.rate_pct, m.rate_kind, m.term_bucket,
+                   m.amount_min, m.amount_max, m.term_months_min,
+                   m.term_months_max, m.fee_open, m.fee_service, m.grace_days,
+                   m.cashback_pct, m.early_withdraw, m.capitalization,
+                   m.replenishable, m.conditions, m.valid_from, m.category,
+                   e.payload->>'free_kind'          AS free_kind,
+                   e.payload->'free_conditions'     AS free_conditions,
+                   e.payload->>'rate_attainability' AS attain,
+                   e.payload->'rate_requires'       AS rate_requires,
+                   e.payload->>'product_kind'       AS product_kind,
+                   qf.reason                        AS implausible_reason,
+                   -- Куда ведёт «первоисточник»: на сайт организации или лишь
+                   -- на раздел агрегатора, где искомого продукта нет. Аудиторы
+                   -- писали об этом четырежды: проверить актуальность нечем.
+                   (m.url IS NOT NULL AND m.url !~* :aggr_host) AS first_party
+              FROM v_market_rub_offer m
+              LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
+              LEFT JOIN LATERAL (
+                  SELECT q2.detail->>'reason' AS reason
+                    FROM quality_flag q2
+                   WHERE q2.entity_type = 'offer' AND q2.entity_id = m.offer_id
+                     AND q2.severity = 'warn'
+                   ORDER BY q2.created_at DESC
+                   LIMIT 1) qf ON true
+             WHERE {' AND '.join(cond)}
+             ORDER BY lower(regexp_replace(m.bank_name, '[^[:alnum:]]', '', 'g')),
+                      lower(m.title), m.category,
+                      (m.bank_slug NOT LIKE 'unknown_%') DESC,
+                      (m.url !~* :aggr_host) DESC NULLS LAST,
+                      (m.amount_min IS NOT NULL) DESC, m.offer_id
+        )
+        SELECT p.*, count(*) OVER () AS total
+          FROM picked p
+         ORDER BY (p.implausible_reason IS NOT NULL), p.{order}
          LIMIT :l OFFSET :off
     """, params)
 
@@ -1599,29 +1632,47 @@ def reviews_theme_defs():
 @app.get("/api/reviews/feed")
 def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  theme: Optional[str] = None, q: Optional[str] = None,
-                 city: Optional[str] = None, month: Optional[str] = None, limit: int = 20):
-    res = _rd().list_reviews_ex(bank, product or None, theme or None, q or None,
-                                city=city or None, month=month or None, limit=limit)
+                 city: Optional[str] = None, month: Optional[str] = None,
+                 days: Optional[int] = None, esc: int = 0,
+                 sort: str = "auto", limit: int = 20, offset: int = 0):
+    # days раньше здесь ОТСУТСТВОВАЛ: переключатель периода стоял на вкладке,
+    # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
+    # 3 месяца, а в списке отзывы за прошлый год».
+    res = _rd().list_reviews_ex(bank, product=product or None, theme=theme or None,
+                                q=q or None, days=days or None,
+                                city=city or None, month=month or None,
+                                limit=limit, offset=max(0, offset),
+                                esc=bool(esc), sort=sort)
     # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
     # search — по каким словам искали на самом деле и сколько попаданий дословных
     return {"items": res["items"], "count": len(res["items"]),
             "mode": res["mode"], "error": res["error"],
+            "has_more": bool(res.get("has_more")),
             "search": res.get("search") or None}
 
 @app.get("/api/reviews/feed-classified")
 async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,
                                   theme: Optional[str] = None, q: Optional[str] = None,
                                   city: Optional[str] = None, month: Optional[str] = None,
-                                  limit: int = 20):
+                                  days: Optional[int] = None,
+                                  limit: int = 20, offset: int = 0):
     """Лента + LLM-уточнение тем показанных отзывов (on-demand, по кнопке).
     Regex-темы остаются fallback'ом, если LLM не разобрал строку."""
     import asyncio
+    import functools
     from ..rag import reviews_llm
     # через _ex, а не list_reviews: иначе уточнение тем перезаписывает ленту
     # объектами без подсветки и признака «дословно/по смыслу», и аудитор молча
     # теряет объяснение выдачи, нажав соседнюю кнопку
-    res = await asyncio.to_thread(_rd().list_reviews_ex, bank, product or None, theme or None,
-                                  q or None, None, city or None, month or None, limit)
+    # Именованные аргументы, а не позиционные: прежний вызов подставлял None
+    # пятым по счёту и тем самым молча выбрасывал период, а любой новый
+    # параметр в середине сигнатуры сдвинул бы весь хвост.
+    res = await asyncio.to_thread(
+        functools.partial(_rd().list_reviews_ex, bank,
+                          product=product or None, theme=theme or None,
+                          q=q or None, days=days or None,
+                          city=city or None, month=month or None,
+                          limit=limit, offset=max(0, offset)))
     items = res["items"]
     if not items:
         return {"items": [], "count": 0, "llm": False, "search": res.get("search") or None}
@@ -1690,22 +1741,35 @@ def banks():
     через resolve_bank (алиасы/слаги/фаззи), а не по точному совпадению:
     точное давало 62 пары из 692.
     """
+    # Один банк, заведённый под двумя написаниями («СОЛИД БАНК» и «Солид
+    # Банк»), выводился двумя строками — аудиторы писали, что «один и тот же
+    # банк указан несколько раз». Справочник вычистить до конца мешают внешние
+    # ключи истории изменений, поэтому схлопываем на выдаче: ключ — имя,
+    # очищенное до букв и цифр, выживает опознанная запись с большим числом
+    # отзывов.
     rows = q("""
-        SELECT b.bank_id, b.slug, b.name, b.is_sber,
-               t.rate_pct avg_grade,
-               (t.raw->>'total_reviews')::int total_reviews,
-               (t.raw->>'total_reviews_year')::int reviews_year,
-               (t.raw->>'responses_all')::int responses_all,
-               round((t.raw->>'solved_pct')::numeric,1) solved_pct,
-               (t.raw->>'place')::int place,
-               round((t.raw->>'rating_score')::numeric,1) rating_score,
-               (t.raw->>'problem_count')::int problem_count,
-               t.valid_from AS rating_at
-          FROM bank b
-          LEFT JOIN product_offer o ON o.bank_id=b.bank_id AND o.category='other'
-          LEFT JOIN product_terms t  ON t.offer_id=o.offer_id AND t.valid_to IS NULL
-                                    AND t.rate_kind='avg_grade'
-         ORDER BY COALESCE((t.raw->>'total_reviews')::int, 0) DESC
+        WITH one_per_bank AS (
+            SELECT DISTINCT ON (lower(regexp_replace(b.name,'[^[:alnum:]]','','g')))
+                   b.bank_id, b.slug, b.name, b.is_sber,
+                   t.rate_pct avg_grade,
+                   (t.raw->>'total_reviews')::int total_reviews,
+                   (t.raw->>'total_reviews_year')::int reviews_year,
+                   (t.raw->>'responses_all')::int responses_all,
+                   round((t.raw->>'solved_pct')::numeric,1) solved_pct,
+                   (t.raw->>'place')::int place,
+                   round((t.raw->>'rating_score')::numeric,1) rating_score,
+                   (t.raw->>'problem_count')::int problem_count,
+                   t.valid_from AS rating_at
+              FROM bank b
+              LEFT JOIN product_offer o ON o.bank_id=b.bank_id AND o.category='other'
+              LEFT JOIN product_terms t  ON t.offer_id=o.offer_id AND t.valid_to IS NULL
+                                        AND t.rate_kind='avg_grade'
+             ORDER BY lower(regexp_replace(b.name,'[^[:alnum:]]','','g')),
+                      (b.slug NOT LIKE 'unknown_%') DESC,
+                      COALESCE((t.raw->>'total_reviews')::int, 0) DESC
+        )
+        SELECT * FROM one_per_bank
+         ORDER BY COALESCE(total_reviews, 0) DESC
     """)
     # свой корпус: имя канона → (число отзывов, свежесть, средняя оценка)
     own: dict = {}
@@ -2712,9 +2776,11 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     # Сразу отдаём фронту session_id, чтобы следующий вопрос продолжил эту сессию.
     yield json.dumps({"type": "session", "session_id": session_id}, ensure_ascii=False)
     parts: list[str] = []
+    lead_parts: list[str] = []   # резюме и план проверки приходят последними, а стоят первыми
     replaced: Optional[str] = None
     sources: list = []
     charts: list = []
+    viz: list = []                # визуализации дизайнера, по номеру маркера [[VIZ:n]]
     mode: Optional[str] = None
     persisted = False
     # Волна 9: артефакты верификации живут в payload, а не один прогон.
@@ -2728,7 +2794,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
 
     def _persist() -> int | None:
         """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
-        body = replaced if replaced is not None else "".join(parts)
+        body = replaced if replaced is not None else "".join(lead_parts) + "".join(parts)
         if not (body and body.strip()):
             return None
         try:
@@ -2739,6 +2805,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                 report_id = userdata.save_report(
                     username, session_id, question, body,
                     payload={"sources": sources, "mode": mode, "charts": charts,
+                             "viz": viz,
                              "verification": verification, "gaps": gaps,
                              "ranking": ranking, "insights": insights,
                              "payload_v": 2},
@@ -2779,10 +2846,15 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                         parts.append(data["chunk"])
                     elif isinstance(data.get("text"), str):
                         replaced = data["text"]
+                elif t == "lead" and data.get("chunk"):
+                    lead_parts.append(data["chunk"])
                 elif t == "report_replace" and isinstance(data.get("text"), str):
                     replaced = data["text"]
                 elif t == "sources" and isinstance(data.get("sources"), list):
                     sources = data["sources"]
+                elif t == "viz" and data.get("html"):
+                    viz.append({"n": data.get("n"), "section": data.get("section"),
+                                "html": data["html"]})
                 elif t == "chart" and isinstance(data.get("spec"), dict):
                     charts.append(data["spec"])   # графики — в payload отчёта
                 elif t == "verification":
@@ -2918,12 +2990,33 @@ class PdfExportRequest(BaseModel):
     # — будут отрендерены Chart.js'ом в Playwright Chromium и снапшотнуты
     # в PDF как самостоятельная секция перед источниками.
     charts: list[dict] = []
+    # Визуализации дизайнера: уже санитизированная разметка по номеру [[VIZ:n]]
+    viz: list[dict] = []
     # Богатые виджеты UI, которых раньше не было в PDF — рендерятся как
     # styled-секции (рейтинг-карточки, инсайты, пробелы, claim-check).
     ranking: Optional[dict] = None
     insights: list[dict] = []
     gaps: Optional[dict] = None
     claim_check: Optional[dict] = None
+
+def _viz_clean(items: list) -> list[dict]:
+    """Разметка визуализаций приходит от клиента — доверять ей нельзя, даже
+    если когда-то её сгенерировали мы: та же финальная очистка."""
+    from ..research.gptr import viz as _viz
+    out = []
+    for v in items[:50]:
+        if not isinstance(v, dict):
+            continue
+        try:
+            n = int(v.get("n"))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= n < 50:
+            continue
+        out.append({"n": n, "section": str(v.get("section") or "")[:40],
+                    "html": _viz.resanitize(str(v.get("html") or ""))})
+    return out
+
 
 @app.post("/api/ai/export-pdf")
 async def ai_export_pdf(req: PdfExportRequest):
@@ -2934,16 +3027,16 @@ async def ai_export_pdf(req: PdfExportRequest):
         raise HTTPException(400, "Empty report content")
     from .pdf_export import export_report_to_pdf
     try:
-        pdf_bytes = await asyncio.get_event_loop().run_in_executor(
+        pdf_bytes = await asyncio.wait_for(asyncio.get_event_loop().run_in_executor(
             None,
             lambda: export_report_to_pdf(
                 question=req.question, report_md=req.report_md,
                 sources=req.sources or [], meta=req.meta or {},
                 verification=req.verification,
-                charts=req.charts or [],
+                charts=req.charts or [], viz=_viz_clean(req.viz or []),
                 ranking=req.ranking, insights=req.insights or [],
                 gaps=req.gaps, claim_check=req.claim_check),
-        )
+        ), timeout=90)
     except Exception as e:
         logging.getLogger(__name__).warning("PDF export failed: %s", e)
         raise HTTPException(500, f"PDF generation failed: {str(e)[:200]}")
@@ -3021,7 +3114,17 @@ def _index_html_with_bust() -> str:
     Bust-параметр на каждый ре-deploy меняется, браузер пере-фетчит."""
     idx = STATIC_DIR / "index.html"
     html = idx.read_text(encoding="utf-8")
+    built = STATIC_DIR / "app.js"
     jsx_path = STATIC_DIR / "app.jsx"
+    # Собранный заранее файл избавляет браузер от компиляции на лету: раньше
+    # каждый заход стоил трёх секунд неотзывчивого интерфейса и трёх мегабайт
+    # компилятора. Если сборки нет — работаем по-старому, только медленнее.
+    if built.exists() and built.stat().st_mtime >= jsx_path.stat().st_mtime:
+        v = int(built.stat().st_mtime)
+        html = re.sub(r'<script src="[^"]*babel[^"]*"></script>\s*', "", html)
+        html = re.sub(r'<script type="text/babel" src="/static/app\.jsx[^"]*"></script>',
+                      f'<script src="/static/app.js?v={v}"></script>', html)
+        return html
     if jsx_path.exists():
         v = int(jsx_path.stat().st_mtime)
         html = html.replace('src="/static/app.jsx"',
