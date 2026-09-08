@@ -393,6 +393,28 @@ def test_queue_error_clears_denied_state():
     assert "setQueueDenied(false)" in m.group(1)
 
 
+def _load_contexts_body() -> str:
+    m = re.search(
+        r"useEffect\(\(\) => \{\s*fetch\(`\$\{API\}/contexts`\)(.*?)\}, "
+        r"\[contextsRetry\]\);",
+        JSX,
+        re.DOTALL,
+    )
+    assert m, "не найден обработчик загрузки /contexts"
+    return m.group(1)
+
+
+def test_context_refresh_falls_back_when_active_view_is_no_longer_allowed():
+    """Повторная загрузка контекстов не оставляет активным исчезнувший view."""
+    body = _norm(_load_contexts_body())
+    assert _norm("const contexts = d.contexts || [];") in body
+    assert _norm("setAuthz({contexts, capabilities: d.capabilities || {},});") in body
+    assert _norm(
+        'setView(current => (contexts.some(context => context.id === current) '
+        '? current : "catalog"));'
+    ) in body
+
+
 def test_focus_layer_onclose_not_stale():
     """useFocusLayer зовёт onClose через ref, обновляемый каждый рендер:
     эффект с deps [active] не держит устаревшее замыкание."""

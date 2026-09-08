@@ -2,8 +2,8 @@
 
 Граница доверия: identity приходит только от trusted nginx (заголовки
 X-Authentik-*, см. web/auth.py) и устанавливает лишь ЛИЧНОСТЬ principal.
-Отсутствие membership-истории означает default base access к каталогу,
-источникам и AI-исследованию; существующая история без active-строки —
+Отсутствие membership-истории означает default base access к каталогу
+и AI-исследованию; существующая история без active-строки —
 explicit revoke и fail-closed 403. Привилегированные queue/admin требуют
 одновременно active membership и active role (ccks_expert/module_admin),
 которые перечитываются из БД на каждом запросе. Роль/workspace/capability
@@ -49,7 +49,6 @@ class ExpertLimitError(Exception):
 
 # Рабочие контексты модуля. Заголовки русские — отдаются в UI как есть.
 _CONTEXT_CATALOG = {"id": "catalog", "title": "Общая база"}
-_CONTEXT_SOURCES = {"id": "sources", "title": "Добавить источник"}
 _CONTEXT_AI_RESEARCH = {"id": "ai_research", "title": "AI-исследования"}
 _CONTEXT_QUEUE = {"id": "queue", "title": "Очередь верификации"}
 _CONTEXT_ADMIN = {"id": "admin", "title": "Управление доступом"}
@@ -181,7 +180,7 @@ def available_contexts(username: str, *, session) -> list[dict]:
 
     Очередь и администрирование требуют одновременно active membership и роль.
     """
-    contexts = [dict(_CONTEXT_CATALOG), dict(_CONTEXT_SOURCES), dict(_CONTEXT_AI_RESEARCH)]
+    contexts = [dict(_CONTEXT_CATALOG), dict(_CONTEXT_AI_RESEARCH)]
     active_member = is_active_member(username, session=session)
     if active_member and has_active_role(username, ROLE_CCKS_EXPERT, session=session):
         contexts.append(dict(_CONTEXT_QUEUE))

@@ -292,9 +292,17 @@ function LoopholeApp() {
         if (!r.ok) { setAuthz(false); return null; }
         return r.json();
       })
-      .then(d => { if (d) setAuthz({
-        contexts: d.contexts || [], capabilities: d.capabilities || {},
-      }); })
+      .then(d => {
+        if (!d) return;
+        const contexts = d.contexts || [];
+        setAuthz({
+          contexts,
+          capabilities: d.capabilities || {},
+        });
+        setView(current => (
+          contexts.some(context => context.id === current) ? current : "catalog"
+        ));
+      })
       .catch(() => setAuthz("error"));
   }, [contextsRetry]);
 
