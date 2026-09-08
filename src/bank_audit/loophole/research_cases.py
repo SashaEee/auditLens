@@ -829,6 +829,7 @@ class ResearchCaseService:
         record_id = repo.insert_record(
             LoopholeRecord(
                 sha256=sha256_text(f"publication:{decision_id}:{command_key}"),
+                classification=decision["decision"],
                 title=case["title"],
                 url="",
                 snippet=case["evidence"],

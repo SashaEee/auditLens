@@ -161,7 +161,9 @@ def test_soft_delete_preserves_database_and_revokes_every_access(client, app_ses
         ).status_code == 404
 
 
-def test_share_requires_auth_and_respects_membership_revoke(client, app_session):
+def test_share_requires_auth_and_respects_membership_revoke(client, app_session, monkeypatch):
+    # Fail-closed (dev-auth выключен): открытие share-ссылки без principal — 401.
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     wid = create(client)
     token = share(client, wid)
     assert client.get(f"{API}/shared/{token}").status_code == 401

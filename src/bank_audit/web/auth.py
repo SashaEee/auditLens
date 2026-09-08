@@ -17,7 +17,9 @@ Nginx перед приложением делает `auth_request` к Authentik
 прислать фейковый X-Authentik-Username. Снаружи порт закрыт security-группой;
 доверять заголовку можно только на пути через nginx.
 
-Локально (без nginx) заголовков нет → возвращаем dev-пользователя.
+Локально (без nginx) заголовков нет → возвращаем dev-пользователя, который
+по умолчанию считается авторизованным (base access к модулю «Лазейки»).
+Вернуть fail-closed можно явно: LOOPHOLE_DEV_AUTH_ENABLED=0.
 """
 from __future__ import annotations
 
@@ -47,8 +49,12 @@ _DEV_USER = os.getenv("DEV_USER", "local-dev")
 
 
 def _dev_auth_enabled() -> bool:
-    """Разрешает local-dev только при явном локальном opt-in флаге."""
-    return os.getenv("LOOPHOLE_DEV_AUTH_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+    """Dev-пользователь авторизован по умолчанию; fail-closed — по явному opt-out."""
+    return os.getenv("LOOPHOLE_DEV_AUTH_ENABLED", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
 
 
 def dev_grant_all_enabled() -> bool:
@@ -81,8 +87,8 @@ def get_current_user(
     if username:
         name = _fix_header_encoding((x_authentik_name or "").strip()) or username
         return CurrentUser(username=username, name=name, authenticated=True)
-    # Заголовка нет → локалка или прямой доступ к :8000 в обход nginx. По умолчанию
-    # остаёмся fail-closed; opt-in разрешён только для локальной разработки.
+    # Заголовка нет → локалка или прямой доступ к :8000 в обход nginx. Dev-пользователь
+    # авторизован по умолчанию; fail-closed включается явным LOOPHOLE_DEV_AUTH_ENABLED=0.
     return CurrentUser(
         username=_DEV_USER,
         name=_DEV_USER,

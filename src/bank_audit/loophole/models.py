@@ -27,6 +27,7 @@ class LoopholeRecord(BaseModel):
     raw_text_len: int | None = None
     raw_text_truncated: bool = False
     is_loophole: bool | None = None
+    classification: Literal["vulnerability", "fraud_scheme", "not_confirmed"] | None = None
     verdict_confidence: float | None = None
     verdict_reason: str | None = None
     verdict_model: str | None = None

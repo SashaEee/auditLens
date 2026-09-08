@@ -8,8 +8,9 @@
 
 Покрывает I/O-матрицу спеки: базовые и привилегированные контексты, 403 без
 active membership+role, active-first исторические строки, отсутствие утечки
-защищённых данных при deny, explicit dev bypass, 401 без trusted principal и
-запрет создания workspace до авторизации. Плюс contract-тест миграции 042.
+защищённых данных при deny, explicit dev bypass, 401 без trusted principal при
+явном opt-out dev-auth и запрет создания workspace до авторизации.
+Плюс contract-тест миграции 042.
 
 Без сети и реальной БД: in-memory SQLite (паттерн test_web.py), авторизация
 НЕ переопределяется — ходим реальными заголовками X-Authentik-Username.
@@ -135,16 +136,17 @@ def _engine_session(SessionLocal):
         s.close()
 
 
-# ── 401/403 без trusted principal ───────────────────────────────────────────
-def test_contexts_without_principal_401(client):
+# ── 401/403 без trusted principal (fail-closed по явному opt-out) ───────────
+def test_contexts_without_principal_401(client, monkeypatch):
+    """LOOPHOLE_DEV_AUTH_ENABLED=0 возвращает fail-closed: без SSO-заголовков 401."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     r = client.get("/api/loophole/contexts")
     assert r.status_code == 401
 
 
-def test_local_dev_auth_enabled_by_explicit_env(client, app_session, monkeypatch):
-    """Локальный bypass доступен только по явному dev-флагу."""
+def test_local_dev_authenticated_by_default(client, app_session):
+    """Без SSO-заголовков и без флагов dev-пользователь авторизован по умолчанию."""
     _grant_membership(app_session, "local-dev")
-    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "1")
 
     r = client.get("/api/loophole/contexts")
 
@@ -198,14 +200,17 @@ def test_dev_grant_all_requires_exactly_one(client, monkeypatch):
     }
 
 
-def test_x_user_id_header_not_trusted(client):
-    """Never: X-User-Id от клиента не является identity."""
+def test_x_user_id_header_not_trusted(client, monkeypatch):
+    """Never: X-User-Id от клиента не является identity. При fail-closed
+    (dev-auth выключен) такой запрос не аутентифицирует никого → 401."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     r = client.get("/api/loophole/contexts", headers={"X-User-Id": "admin"})
     assert r.status_code == 401
 
 
-def test_data_endpoint_without_principal_401(client):
+def test_data_endpoint_without_principal_401(client, monkeypatch):
     """Отказ до чтения данных, а не только на /contexts."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     r = client.get("/api/loophole/records")
     assert r.status_code == 401
 
@@ -442,7 +447,9 @@ def test_revoked_role_denies_next_request(client, app_session):
 
 
 # ── Workspace не создаётся до авторизации ───────────────────────────────────
-def test_workspace_not_created_before_authorization(client, app_session):
+def test_workspace_not_created_before_authorization(client, app_session, monkeypatch):
+    """Fail-closed (dev-auth выключен): workspace не создаётся без principal."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     r = client.post(
         "/api/loophole/workspace", json={"name": "default"},
     )

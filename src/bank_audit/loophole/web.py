@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
 
@@ -427,6 +427,7 @@ def list_catalog(
     period_to: date | None = None,
     q: str | None = None,
     verification_status: str = "all",
+    classification: str = "all",
     limit: int = 500,
     offset: int = 0,
     session=Depends(get_session),
@@ -440,12 +441,13 @@ def list_catalog(
         period_to=period_to,
         query_text=q,
         verification_status=verification_status,
+        classification=classification,
         limit=limit,
         offset=offset,
         session=session,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail="Неизвестный фильтр проверки") from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"records": records, "count": len(records)}
 
 
@@ -529,8 +531,24 @@ def backfill_content(
 
 class VerdictRequest(BaseModel):
     record_ids: list[int]
-    is_loophole: bool
+    is_loophole: bool | None = None
+    classification: str | None = Field(
+        default=None, pattern="^(vulnerability|fraud_scheme|not_confirmed)$",
+    )
     comment: str | None = None
+
+    @model_validator(mode="after")
+    def resolve_classification(self):
+        """Старые bool-запросы совместимы; противоречивые значения отклоняются."""
+        if self.classification is None:
+            if self.is_loophole is None:
+                raise ValueError("Укажите тип записи")
+            self.classification = "vulnerability" if self.is_loophole else "not_confirmed"
+        positive = self.classification != "not_confirmed"
+        if self.is_loophole is not None and self.is_loophole != positive:
+            raise ValueError("Тип записи противоречит признаку находки")
+        self.is_loophole = positive
+        return self
 
 
 @router.post("/records/verdict")
@@ -539,7 +557,7 @@ def mark_verdict(
     user_id: str = Depends(get_user_id),
     session=Depends(get_session),
 ):
-    """Ручная маркировка записей: «лазейка» / «обычный запрос».
+    """Ручная маркировка: уязвимость, мошенническая схема или ни то ни другое.
 
     Покрывает одиночную (массив из одного id) и массовую маркировку.
     is_loophole=true → пример добавляется в KB (дедуп по record_id);
@@ -562,6 +580,7 @@ def mark_verdict(
             confidence=1.0,
             reason=reason,
             model="manual",
+            classification=body.classification,
             session=session,
         )
         if body.is_loophole:
@@ -587,6 +606,7 @@ def mark_verdict(
         detail={
             "ids": body.record_ids,
             "is_loophole": body.is_loophole,
+            "classification": body.classification,
             "comment": body.comment,
         },
         session=session,

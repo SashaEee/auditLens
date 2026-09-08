@@ -1,6 +1,8 @@
 """TDD-контракт Story 2.2: кандидаты существуют только внутри исследования."""
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 
 from sqlalchemy import text
@@ -572,7 +574,10 @@ def test_ccks_decision_is_append_only_and_idempotent_for_submitted_snapshot(sess
     )).scalar_one() == 1
 
 
-def test_positive_decision_publishes_catalog_case_once_and_negative_never_publishes(session):
+@pytest.mark.parametrize("classification", ["vulnerability", "fraud_scheme"])
+def test_positive_decision_publishes_catalog_case_once_and_negative_never_publishes(
+    session, classification,
+):
     from bank_audit.loophole.research_cases import ResearchCaseService
 
     _create_research_schema(session)
@@ -607,7 +612,7 @@ def test_positive_decision_publishes_catalog_case_once_and_negative_never_publis
     )
     decision = service.decide_snapshot(
         snapshot["snapshot_id"],
-        decision="vulnerability",
+        decision=classification,
         comment="Подтверждено.",
         decided_by="expert",
         run_id="agent-run-decision",
@@ -618,6 +623,9 @@ def test_positive_decision_publishes_catalog_case_once_and_negative_never_publis
 
     assert first == repeated
     assert first["status"] == "published"
+    assert session.execute(text(
+        "SELECT classification FROM loophole_record WHERE record_id = :id"
+    ), {"id": first["record_id"]}).scalar_one() == classification
     assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 1
     assert session.execute(text(
         "SELECT count(*) FROM loophole_publication_mapping"
