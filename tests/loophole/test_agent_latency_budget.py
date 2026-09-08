@@ -52,7 +52,7 @@ def test_requested_count_is_explicit(query, expected):
 
 def test_budget_configuration(monkeypatch):
     monkeypatch.delenv("LOOPHOLE_AGENT_TIMEOUT_SECONDS", raising=False)
-    assert LoopholeSettings.load().agent_timeout_seconds == 180
+    assert LoopholeSettings.load().agent_timeout_seconds == 360
     monkeypatch.setenv("LOOPHOLE_AGENT_TIMEOUT_SECONDS", "45")
     assert LoopholeSettings.load().agent_timeout_seconds == 45
 

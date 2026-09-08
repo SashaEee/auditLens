@@ -57,6 +57,9 @@ CREATE TABLE loophole_record (
     raw_text_len   INTEGER,
     raw_text_truncated INTEGER DEFAULT 0,
     is_loophole   INTEGER,
+    classification TEXT CHECK (classification IN (
+        'vulnerability', 'fraud_scheme', 'not_confirmed'
+    )),
     verdict_confidence REAL,
     verdict_reason TEXT,
     verdict_model TEXT,

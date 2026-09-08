@@ -52,6 +52,7 @@ def _open(browser: Browser, *, capability=None, protected_context=None, verdict_
             return json({detail: "Нет права изменять вердикт."}, VERDICT_STATUS);
           }
           window.__record.is_loophole = body.is_loophole;
+          window.__record.classification = body.classification;
           return json({updated: 1, skipped: []});
         }
         return json({});
@@ -85,7 +86,7 @@ def test_catalog_verdict_is_read_only_without_explicit_permission(browser, capab
     """Отсутствующее, ложное и некорректное разрешение запрещают UI-маркировку."""
     page = _open(browser, capability=capability)
     try:
-        assert page.locator(".lp-verdict-chip").inner_text() == "лазейка"
+        assert page.locator(".lp-verdict-chip").inner_text() == "уязвимость"
         assert page.get_by_title("Изменить вердикт").count() == 0
         assert page.locator("button.lp-verdict-chip").count() == 0
         page.locator(".lp-verdict-chip").click()
@@ -110,11 +111,11 @@ def test_authorized_catalog_verdict_can_be_changed(browser, protected_context):
         page.get_by_title("Изменить вердикт").click()
         dialog = page.get_by_role("dialog", name="Вердикт записи")
         dialog.get_by_label("Комментарий аудитора").fill("Проверено экспертом")
-        dialog.get_by_role("button", name="Обычный запрос").click()
+        dialog.get_by_role("button", name="Ни то ни другое").click()
         page.get_by_role("status").filter(has_text="Вердикт сохранён.").wait_for()
         dialog.wait_for(state="detached")
         assert page.evaluate("window.__verdictRequests") == [{
-            "record_ids": [1], "is_loophole": False, "comment": "Проверено экспертом",
+            "record_ids": [1], "classification": "not_confirmed", "comment": "Проверено экспертом",
         }]
     finally:
         page.close()
@@ -127,11 +128,11 @@ def test_revoked_permission_closes_dialog_and_removes_actions(browser, verdict_s
     try:
         page.get_by_title("Изменить вердикт").click()
         dialog = page.get_by_role("dialog", name="Вердикт записи")
-        dialog.get_by_role("button", name="Обычный запрос").click()
+        dialog.get_by_role("button", name="Ни то ни другое").click()
         page.get_by_role("alert").filter(has_text="Нет права изменять вердикт.").wait_for()
         assert dialog.count() == 0
         assert page.locator("button.lp-verdict-chip").count() == 0
-        assert page.locator(".lp-verdict-chip").inner_text() == "лазейка"
+        assert page.locator(".lp-verdict-chip").inner_text() == "уязвимость"
         assert len(page.evaluate("window.__verdictRequests")) == 1
     finally:
         page.close()

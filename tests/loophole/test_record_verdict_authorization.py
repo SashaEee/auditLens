@@ -229,7 +229,9 @@ def test_client_workspace_and_role_claims_do_not_grant_verdict_access(client, se
     assert _state(session, record_ids) == before
 
 
-def test_unauthenticated_verdict_preserves_data(client, session):
+def test_unauthenticated_verdict_preserves_data(client, session, monkeypatch):
+    """Fail-closed (dev-auth выключен): без principal — 401, данные не меняются."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     record_ids = _records(session, 1)
     before = _state(session, record_ids)
     response = client.post(_ENDPOINT, json={"record_ids": record_ids, "is_loophole": False})

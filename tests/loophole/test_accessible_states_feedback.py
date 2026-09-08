@@ -485,7 +485,7 @@ def test_icon_controls_and_inputs_have_russian_accessible_names():
         assert f'id="{control_id}"' in JSX
     assert 'id="lp-filter-verdict"' not in JSX
     assert 'id="lp-filter-status"' not in JSX
-    assert 'aria-label="Каталог показывает только лазейки"' in JSX
+    assert '<label htmlFor="lp-filter-classification">Тип записи</label>' in JSX
     assert 'aria-label="Каталог показывает подтверждённые и предварительные записи"' in JSX
     assert "lp-bulk-comment" not in JSX
     assert 'htmlFor="lp-select-all"' in JSX
@@ -555,12 +555,12 @@ def _oklch_luminance(value: str) -> float:
     l_prime = lightness + 0.3963377774 * a + 0.2158037573 * b
     m_prime = lightness - 0.1055613458 * a - 0.0638541728 * b
     s_prime = lightness - 0.0894841775 * a - 1.2914855480 * b
-    l = l_prime**3
+    l_cube = l_prime**3
     m = m_prime**3
     s = s_prime**3
-    red = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
-    green = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
-    blue = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    red = 4.0767416621 * l_cube - 3.3077115913 * m + 0.2309699292 * s
+    green = -1.2684380046 * l_cube + 2.6097574011 * m - 0.3413193965 * s
+    blue = -0.0041960863 * l_cube - 0.7034186147 * m + 1.7076147010 * s
     return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 
 

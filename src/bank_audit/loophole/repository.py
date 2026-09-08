@@ -127,10 +127,10 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 "(sha256, title, url, snippet, domain, trust_score, bank_slug, keyword, "
                 "raw_text, status, is_loophole, parser_id, text_sha256, "
                 "content_status, raw_text_len, raw_text_truncated, published_at, "
-                "verdict_confidence, verdict_reason, verdict_model) "
+                "verdict_confidence, verdict_reason, verdict_model, classification) "
                 "VALUES (:sha, :title, :url, :snip, :dom, :trust, :bank, :kw, :raw, "
                 ":status, :loop, :pid, :tsha, :cs, :rlen, :rtrunc, :published, "
-                ":confidence, :reason, :model) "
+                ":confidence, :reason, :model, :classification) "
                 "RETURNING record_id"
             ),
             {
@@ -145,6 +145,7 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 "confidence": rec.verdict_confidence,
                 "reason": rec.verdict_reason,
                 "model": rec.verdict_model,
+                "classification": rec.classification,
             },
         ).scalar_one()
         return row
@@ -157,19 +158,26 @@ def update_verdict(
     confidence: float,
     reason: str,
     model: str,
+    classification: str | None = None,
     session=None,
 ) -> None:
     """Обновляет классификацию, сохраняя статус публикации записи."""
+    classification = classification or ("vulnerability" if is_loophole else "not_confirmed")
+    if classification not in {"vulnerability", "fraud_scheme", "not_confirmed"}:
+        raise ValueError("Неизвестный тип записи")
+    if is_loophole != (classification != "not_confirmed"):
+        raise ValueError("Тип записи противоречит признаку находки")
     with _session(session) as s:
         s.execute(
             text(
                 f"UPDATE {schema.T_RECORD} SET is_loophole = :is_l, "
                 "verdict_confidence = :conf, verdict_reason = :reason, "
-                "verdict_model = :model, classified_at = CURRENT_TIMESTAMP "
+                "verdict_model = :model, classification = :classification, "
+                "classified_at = CURRENT_TIMESTAMP "
                 "WHERE record_id = :id"
             ),
             {"is_l": is_loophole, "conf": confidence, "reason": reason,
-             "model": model, "id": record_id},
+             "model": model, "id": record_id, "classification": classification},
         )
 
 
@@ -230,7 +238,7 @@ def count_records_needing_content(*, session=None) -> int:
 # входят намеренно — см. get_record.
 _RECORD_FIELDS = (
     "record_id, title, url, snippet, domain, trust_score, bank_slug, keyword, "
-    "is_loophole, verdict_confidence, verdict_reason, verdict_model, status, "
+    "is_loophole, classification, verdict_confidence, verdict_reason, verdict_model, status, "
     "published_at, collected_at, fetched_at, classified_at, content_status, "
     "raw_text, raw_text_len, raw_text_truncated, sha256, text_sha256, parser_id"
 )
@@ -241,6 +249,10 @@ def _record_dict(row) -> dict:
     record = dict(row)
     if record.get("is_loophole") is not None:
         record["is_loophole"] = bool(record["is_loophole"])
+    if not record.get("classification") and record.get("is_loophole") is not None:
+        record["classification"] = (
+            "vulnerability" if record["is_loophole"] else "not_confirmed"
+        )
     return record
 
 
@@ -302,7 +314,7 @@ def list_records(
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         columns = (
             "record_id, title, url, snippet, domain, trust_score, "
-            "bank_slug, keyword, is_loophole, verdict_confidence, "
+            "bank_slug, keyword, is_loophole, classification, verdict_confidence, "
             "verdict_reason, verdict_model, status, "
             "published_at, collected_at, classified_at, content_status, raw_text_len"
         )
@@ -358,7 +370,7 @@ def list_published_cases(*, limit: int = 500, session=None) -> list[dict]:
         rows = s.execute(
             text(
                 f"SELECT record_id, title, url, snippet, domain, trust_score, bank_slug, "
-                f"keyword, is_loophole, verdict_confidence, verdict_reason, verdict_model, "
+                f"keyword, is_loophole, classification, verdict_confidence, verdict_reason, verdict_model, "
                 f"status, published_at, collected_at, classified_at FROM {schema.T_RECORD} "
                 "WHERE status = 'published' AND is_loophole = TRUE "
                 "ORDER BY collected_at DESC, record_id DESC LIMIT :limit"
@@ -375,20 +387,32 @@ def list_catalog_cases(
     period_to: date | None = None,
     query_text: str | None = None,
     verification_status: str = "all",
+    classification: str = "all",
     limit: int = 500,
     offset: int = 0,
     session=None,
 ) -> list[dict]:
-    """Общая база: найденные лазейки независимо от статуса записи.
+    """Общая база: типы находок независимо от статуса публикации.
 
     ``verified`` показывает только записи с положительным append-only решением
     ЦК КС; ``pending`` — только предварительные записи без решения.
     """
     if verification_status not in {"all", "verified", "pending"}:
         raise ValueError("Неизвестный статус верификации")
+    if classification not in {"all", "vulnerability", "fraud_scheme", "not_confirmed"}:
+        raise ValueError("Неизвестный тип записи")
     with _session(session) as s:
-        clauses = ["record.is_loophole = TRUE"]
+        record_type = (
+            "COALESCE(record.classification, CASE WHEN record.is_loophole = TRUE "
+            "THEN 'vulnerability' WHEN record.is_loophole = FALSE THEN 'not_confirmed' END)"
+        )
+        clauses = [
+            f"{record_type} IN ('vulnerability', 'fraud_scheme')"
+            if classification == "all" else f"{record_type} = :classification"
+        ]
         params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if classification != "all":
+            params["classification"] = classification
         positive_decision = (
             "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
             "JOIN loophole_research_candidate AS candidate "
@@ -437,6 +461,7 @@ def list_catalog_cases(
             text(
                 "SELECT record.record_id, record.title, record.url, record.snippet, record.domain, "
                 "record.trust_score, record.bank_slug, record.keyword, record.is_loophole, "
+                "record.classification, "
                 "record.verdict_confidence, record.verdict_reason, record.verdict_model, record.status, "
                 "record.published_at, record.collected_at, record.classified_at, "
                 "record.content_status, record.raw_text_len, imported.research_id AS provenance_research_id, "

@@ -151,6 +151,7 @@ function LoopholeApp() {
   const [fFrom, setFFrom] = useState("");
   const [fTo, setFTo] = useState("");
   const [fVerification, setFVerification] = useState("all");
+  const [fClassification, setFClassification] = useState("all");
   // Сортировка
   const [sortKey, setSortKey] = useState("verdict_confidence");
   const [sortDir, setSortDir] = useState("desc");
@@ -325,6 +326,7 @@ function LoopholeApp() {
       if (fFrom) params.set("period_from", fFrom);
       if (fTo) params.set("period_to", fTo);
       params.set("verification_status", fVerification);
+      params.set("classification", fClassification);
       const url = `${API}/catalog${params.toString() ? "?" + params.toString() : ""}`;
       const r = await fetch(url);
       if (requestGeneration !== recordsRequestRef.current) return;
@@ -344,7 +346,7 @@ function LoopholeApp() {
         setLoading(false);
       }
     }
-  }, [fText, fBanks, fFrom, fTo, fVerification]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
@@ -353,7 +355,7 @@ function LoopholeApp() {
   }, [loadRecords, authz, fText]);
 
   // Сброс выделения и развёрнутых строк при смене фильтров.
-  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo, fVerification]);
+  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
 
   // ── Сортировка на клиенте ──────────────────────────────────────────────────
   const sortedRecords = useMemo(() => {
@@ -405,6 +407,7 @@ function LoopholeApp() {
   // Сброс фильтров каталога — действие «Сбросить» (фильтры + пустая выборка).
   const resetFilters = () => {
     setFText(""); setFBanks([]); setFFrom(""); setFTo(""); setFVerification("all");
+    setFClassification("all");
   };
 
   // ── CSV-экспорт выделенных записей ─────────────────────────────────────────
@@ -427,7 +430,7 @@ function LoopholeApp() {
 
   const exportCSV = useCallback(async () => {
     if (selected.size === 0) {
-      showToast("Сначала выделите перечень лазеек для выгрузки в CSV.", "info");
+      showToast("Сначала выделите записи для выгрузки в CSV.", "info");
       return;
     }
     if (selected.size > EXPORT_LIMIT) {
@@ -701,14 +704,14 @@ function LoopholeApp() {
   }, []);
 
   // ── Ручная маркировка: POST /records/verdict + toast результата ──────────
-  const markVerdict = async (ids, isLoophole, comment) => {
+  const markVerdict = async (ids, classification, comment) => {
     if (!canMarkVerdict || !ids.length || markBusy) return false;
     setMarkBusy(true);
     try {
       const r = await fetch(`${API}/records/verdict`, {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          record_ids: ids, is_loophole: isLoophole, comment: comment || null,
+          record_ids: ids, classification, comment: comment || null,
         }),
       });
       const d = await r.json().catch(() => null);
@@ -1683,11 +1686,14 @@ function LoopholeApp() {
   const completedSubtasks = subtasks.filter(task => task.status === "done").length;
   const restoredResearch = !phase && (chat.length > 0 || savedReports.length > 0);
 
-  const verdictLabel = (r) => {
-    if (r.is_loophole === true) return "лазейка";
-    if (r.is_loophole === false) return "не лазейка";
-    return "не размечено";
-  };
+  const recordClassification = (r) => r.classification
+    || (r.is_loophole === true ? "vulnerability"
+      : r.is_loophole === false ? "not_confirmed" : null);
+  const verdictLabel = (r) => ({
+    vulnerability: "уязвимость",
+    fraud_scheme: "мошенническая схема",
+    not_confirmed: "ни уязвимость, ни мошенническая схема",
+  }[recordClassification(r)] || "не размечено");
 
   const importResearchSources = async (reportId) => {
     if (!reportId || researchAccessRef.current.readOnly || researchAccessRef.current.loading) return;
@@ -1830,7 +1836,7 @@ function LoopholeApp() {
   if (authz === false) {
     return (
       <div className="lp-empty-state" style={{padding: 48}}>
-        <h1>Нет доступа к модулю «Лазейки»</h1>
+        <h1>Нет доступа к модулю «Уязвимости»</h1>
         <p>Учётная запись не авторизована. Обратитесь к администратору модуля.</p>
       </div>
     );
@@ -1858,7 +1864,7 @@ function LoopholeApp() {
               : view === "sources" ? "Заявка на разработку парсера"
               : view === "queue" ? "Очередь верификации"
               : view === "admin" ? "Управление доступом"
-              : "Лазейки и уязвимости в продуктах банка"}
+              : "Лазейки и мошеннические схемы в продуктах банка"}
           </h1>
           <div className="lp-header-actions">
             {view === "ai_research" && (
@@ -1959,10 +1965,15 @@ function LoopholeApp() {
               <option value="pending">Ожидает верификации</option>
             </select>
           </div>
-          <div className="lp-filter lp-filter-scope">
-            <span className="lp-filter-label">Тип данных</span>
-            <span className="lp-scope-indicator"
-                  aria-label="Каталог показывает только лазейки">лазейки</span>
+          <div className="lp-filter">
+            <label htmlFor="lp-filter-classification">Тип записи</label>
+            <select id="lp-filter-classification" value={fClassification}
+                    onChange={e => setFClassification(e.target.value)}>
+              <option value="all">Уязвимости и мошеннические схемы</option>
+              <option value="vulnerability">Уязвимости</option>
+              <option value="fraud_scheme">Мошеннические схемы</option>
+              <option value="not_confirmed">Ни уязвимость, ни мошенническая схема</option>
+            </select>
           </div>
           <div className="lp-filter lp-filter-scope">
             <span className="lp-filter-label">Состояния базы</span>
@@ -2020,10 +2031,10 @@ function LoopholeApp() {
                       Предварительная вероятность{sortArrow("verdict_confidence")}
                     </button>
                   </th>
-                  <th {...sortableThProps("is_loophole")}>
+                  <th {...sortableThProps("classification")}>
                     <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("is_loophole")}>
-                      Вердикт{sortArrow("is_loophole")}
+                            onClick={() => toggleSort("classification")}>
+                      Вердикт{sortArrow("classification")}
                     </button>
                   </th>
                   <th className="lp-col-narrow2" {...sortableThProps("status")}>
@@ -2345,7 +2356,7 @@ function LoopholeApp() {
                   </div>
                   <div>
                     <dt>Режим</dt>
-                    <dd>Поиск лазеек с проверкой первоисточников</dd>
+                    <dd>Поиск уязвимостей с проверкой первоисточников</dd>
                   </div>
                   <div>
                     <dt>Данные</dt>
@@ -2666,7 +2677,7 @@ function LoopholeApp() {
         <div className="lp-sidebar-header">
           <div className="lp-agent-avatar">AI</div>
           <div style={{flex: 1, minWidth: 0}}>
-            <div ref={chatTitleRef} className="lp-agent-name" id="lp-chat-title" tabIndex={-1}>Аналитик лазеек</div>
+            <div ref={chatTitleRef} className="lp-agent-name" id="lp-chat-title" tabIndex={-1}>Аналитик уязвимостей</div>
             <div className="lp-agent-status">
               <span className={"lp-dot " + (agentBusy ? "lp-dot-busy" : "lp-dot-online")}></span>
               {researchLoading ? "Загрузка истории" : researchReadOnly ? "Только чтение" : agentBusy ? "Обдумывает ответ" : "Готов"}
@@ -2707,7 +2718,7 @@ function LoopholeApp() {
         <div className="lp-chat-messages" ref={chatScrollRef}>
           {chat.length === 0 && !researchLoading && !researchReadOnly && (
             <div className="lp-chat-empty">
-              Задайте вопрос по найденным лазейкам — аналитик уточнит контекст
+              Задайте вопрос по найденным уязвимостям — аналитик уточнит контекст
               и подготовит исследование по доступным источникам.
             </div>
           )}
@@ -2894,7 +2905,7 @@ function LoopholeApp() {
       {/* ── Модал ручной маркировки вердикта ────────────────────────────────── */}
       {canMarkVerdict && verdictModal && (() => {
         const rec = verdictModal.record;
-        const current = rec.is_loophole; // true | false | null
+        const current = recordClassification(rec);
         const choose = async (val) => {
           const ok = await markVerdict([rec.record_id], val, markComment.trim());
           if (ok) setVerdictModal(null);
@@ -2930,29 +2941,39 @@ function LoopholeApp() {
                   <label htmlFor="lp-mark-comment">Комментарий аудитора</label>
                   <textarea id="lp-mark-comment" rows={2} value={markComment}
                             onChange={e => setMarkComment(e.target.value)}
-                            placeholder="Почему это лазейка или обычный запрос…"/>
+                            placeholder="Обоснование выбранного типа записи…"/>
                 </div>
                 <div className="lp-verdict-options">
-                  {current !== true && (
+                  {current !== "vulnerability" && (
                     <button className="lp-verdict-option lp-verdict-option-bad"
-                            disabled={markBusy} onClick={() => choose(true)}>
+                            disabled={markBusy} onClick={() => choose("vulnerability")}>
                       <span className="lp-verdict-dot"></span>
                       <span className="lp-verdict-option-text">
-                        <span className="lp-verdict-option-name">Лазейка</span>
+                        <span className="lp-verdict-option-name">Уязвимость</span>
                         <span className="lp-verdict-option-desc">
-                          подтверждённая схема обхода условий
+                          возможность обхода условий или контроля
                         </span>
                       </span>
                     </button>
                   )}
-                  {current !== false && (
-                    <button className="lp-verdict-option lp-verdict-option-ok"
-                            disabled={markBusy} onClick={() => choose(false)}>
+                  {current !== "fraud_scheme" && (
+                    <button className="lp-verdict-option lp-verdict-option-bad"
+                            disabled={markBusy} onClick={() => choose("fraud_scheme")}>
                       <span className="lp-verdict-dot"></span>
                       <span className="lp-verdict-option-text">
-                        <span className="lp-verdict-option-name">Обычный запрос</span>
+                        <span className="lp-verdict-option-name">Мошенническая схема</span>
+                        <span className="lp-verdict-option-desc">схема обмана или злоупотребления</span>
+                      </span>
+                    </button>
+                  )}
+                  {current !== "not_confirmed" && (
+                    <button className="lp-verdict-option lp-verdict-option-ok"
+                            disabled={markBusy} onClick={() => choose("not_confirmed")}>
+                      <span className="lp-verdict-dot"></span>
+                      <span className="lp-verdict-option-text">
+                        <span className="lp-verdict-option-name">Ни то ни другое</span>
                         <span className="lp-verdict-option-desc">
-                          лазейкой не является
+                          ни уязвимость, ни мошенническая схема
                         </span>
                       </span>
                     </button>

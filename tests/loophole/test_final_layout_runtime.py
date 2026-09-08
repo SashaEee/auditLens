@@ -925,7 +925,7 @@ def test_catalog_exposes_read_only_published_loophole_scope_without_false_query_
     try:
         assert page.locator("#lp-filter-verdict").count() == 0
         assert page.locator("#lp-filter-status").count() == 0
-        assert page.get_by_label("Каталог показывает только лазейки").inner_text() == "лазейки"
+        assert page.get_by_label("Тип записи").input_value() == "all"
         assert page.get_by_label(
             "Каталог показывает подтверждённые и предварительные записи"
         ).inner_text() == (
@@ -1058,7 +1058,7 @@ def test_secondary_surfaces_use_final_board_composition(browser: Browser):
         page.get_by_role("heading", name="AI-исследования").wait_for(state="visible")
         assert page.locator(".lp-research-board").is_visible()
         assert page.locator(".lp-research-card").count() >= 3
-        assert page.get_by_role("complementary", name="Аналитик лазеек").is_visible()
+        assert page.get_by_role("complementary", name="Аналитик уязвимостей").is_visible()
 
         page.get_by_role("tab", name="Очередь верификации").click()
         page.get_by_role("heading", name="Очередь верификации").wait_for(state="visible")
