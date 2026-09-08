@@ -52,12 +52,12 @@ def test_requested_count_is_explicit(query, expected):
 
 def test_budget_configuration(monkeypatch):
     monkeypatch.delenv("LOOPHOLE_AGENT_TIMEOUT_SECONDS", raising=False)
-    assert LoopholeSettings.load().agent_timeout_seconds == 360
+    assert LoopholeSettings.load().agent_timeout_seconds == 0
     monkeypatch.setenv("LOOPHOLE_AGENT_TIMEOUT_SECONDS", "45")
     assert LoopholeSettings.load().agent_timeout_seconds == 45
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "nan", "forever"])
+@pytest.mark.parametrize("value", ["-1", "nan", "forever"])
 def test_budget_configuration_rejects_invalid_values(monkeypatch, value):
     monkeypatch.setenv("LOOPHOLE_AGENT_TIMEOUT_SECONDS", value)
     with pytest.raises(ValueError, match="timeout"):
@@ -65,7 +65,7 @@ def test_budget_configuration_rejects_invalid_values(monkeypatch, value):
 
 
 def test_expired_budget_rejects_late_results():
-    budget = ResearchBudget(timeout_seconds=0)
+    budget = ResearchBudget(timeout_seconds=1, started_at=time.monotonic() - 2)
     with pytest.raises(TimeoutError):
         budget.ensure_active()
 

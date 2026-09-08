@@ -22,6 +22,7 @@ from ..pii_mask import mask as pii_mask
 
 if TYPE_CHECKING:
     from ..run_budget import ResearchBudget
+    from .subagents import ResearchSubagents
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ class ToolContext:
     source_publication_dates: dict[str, str | None] = field(default_factory=dict)
     fetched_sources: dict[str, dict[str, Any]] = field(default_factory=dict)
     budget: ResearchBudget | None = None
+    subagents: ResearchSubagents | None = None
 
 
 def _ensure_tool_active(context: ToolContext | None) -> None:
@@ -282,9 +284,12 @@ def _default_llm() -> Any:
     base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     api_key = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
     model = LoopholeSettings.load().effective_chat_model()
+    from ..model_policy import short_response_extra_body
+
     return ChatOpenAI(
         model=model, base_url=base_url, api_key=api_key, temperature=0.3,
         timeout=_EXTRACTION_TIMEOUT_SECONDS, max_retries=0,
+        extra_body=short_response_extra_body(model),
         http_client=sync_client(timeout=_EXTRACTION_TIMEOUT_SECONDS),
         http_async_client=async_client(timeout=_EXTRACTION_TIMEOUT_SECONDS),
     )
@@ -321,9 +326,9 @@ async def extract_loopholes(
             _ensure_tool_active(None)
         raw = _llm_content(resp)
         data = _loose_json_loads(raw)
-    except Exception as e:  # noqa: BLE001 — граница LLM должна вернуть безопасный пустой список
-        log.warning("[extract_loopholes] failed: %s", e)
-        return []
+    except Exception as e:  # noqa: BLE001 — не смешиваем ошибку с отсутствием находок
+        log.warning("loophole_extraction_failed exception_type=%s", type(e).__name__)
+        raise RuntimeError("extraction_failed") from None
     finally:
         if owns_llm and llm is not None:
             try:
@@ -667,12 +672,60 @@ try:
     @tool_parameters({
         "type": "object",
         "properties": {
+            "queries": {"type": "array", "items": {"type": "string"},
+                        "minItems": 1, "maxItems": 3,
+                        "description": "До трёх поисковых направлений для младших исследователей"},
+            "max_results": {"type": "integer", "minimum": 1, "maximum": 8, "default": 8},
+        },
+        "required": ["queries"],
+    })
+    class AuditResearchSubagentsTool(Tool):
+        """Делегирует предварительную разметку выдачи изолированным младшим агентам."""
+
+        requires_context = True
+
+        def __init__(self, context: ToolContext | None = None):
+            self._context = context
+
+        @property
+        def name(self) -> str:
+            return _tool_name("research_subagents")
+
+        @property
+        def description(self) -> str:
+            return (
+                "Создаёт до трёх младших subagents для параллельного поиска и анализа "
+                "описаний статей, постов и комментариев. Возвращает предварительные метки "
+                "loophole/fraud/irrelevant/insufficient_data с URL и обоснованием. "
+                "После отбора читай первоисточники через audit_web_fetch."
+            )
+
+        @property
+        def read_only(self) -> bool:
+            return True
+
+        async def execute(self, queries: list[str], max_results: int = 8) -> str:
+            _ensure_tool_active(self._context)
+            if self._context is None or self._context.subagents is None:
+                return _tool_result({"error": "managed_context_required"})
+            return _tool_result(await self._context.subagents.research(
+                queries, max_results=max_results,
+            ))
+
+    @tool_parameters({
+        "type": "object",
+        "properties": {
             "query": {"type": "string", "description": "Поисковый запрос"},
             "max_results": {"type": "integer", "default": 12},
         },
         "required": ["query"],
     })
     class AuditWebSearchTool(Tool):
+        requires_context = True
+
+        def __init__(self, context: ToolContext | None = None):
+            self._context = context
+
         @property
         def name(self) -> str:
             return _tool_name("web_search")
@@ -689,9 +742,32 @@ try:
             return True
 
         async def execute(self, query: str, max_results: int = 12) -> str:
-            return _tool_result(await run_blocking_network(
-                web_search, query, max_results=max_results,
-            ))
+            _ensure_tool_active(self._context)
+            budget = self._context.budget if self._context else None
+            key = " ".join(query.casefold().split())
+            if budget:
+                if key in budget.search_cache:
+                    return _tool_result(budget.search_cache[key])
+                if len(budget.search_cache) >= budget.search_limit:
+                    return _tool_result({"error": "search_limit",
+                                         "next_step": "Проверь найденные источники и составь отчёт."})
+                budget.search_cache[key] = {"error": "search_in_progress"}
+            try:
+                result = await run_blocking_network(web_search, query, max_results=max_results)
+                _ensure_tool_active(self._context)
+            except Exception:  # noqa: BLE001 — не раскрываем ответ внешнего сервиса
+                result = {"error": "search_unavailable"}
+            if budget:
+                _ensure_tool_active(self._context)
+                budget.search_cache[key] = result
+                if isinstance(result, list):
+                    known = {s.get("url") for s in budget.search_results}
+                    for source in result:
+                        if isinstance(source, dict) and source.get("url") not in known:
+                            known.add(source.get("url"))
+                            budget.search_results.append(source)
+                    del budget.search_results[96:]
+            return _tool_result(result)
 
     @tool_parameters({
         "type": "object",
@@ -723,16 +799,35 @@ try:
 
         async def execute(self, url: str) -> str:
             _ensure_tool_active(self._context)
-            result = await run_blocking_network(web_fetch, url)
+            budget = self._context.budget if self._context else None
+            if budget:
+                if url in budget.fetch_cache:
+                    return _tool_result(budget.fetch_cache[url])
+                if len(budget.fetch_cache) >= budget.fetch_limit:
+                    return _tool_result({"error": "fetch_limit",
+                                         "next_step": "Составь отчёт по уже прочитанным материалам."})
+                budget.fetch_cache[url] = {"error": "source_in_progress", "url": url}
+            try:
+                result = await run_blocking_network(web_fetch, url)
+            except Exception:  # noqa: BLE001 — безопасное пояснение вместо сырой ошибки
+                result = None
             _ensure_tool_active(self._context)
+            if not result or not result.get("excerpt"):
+                failure = {"error": "source_unavailable", "url": url}
+                if budget:
+                    budget.source_failures[url] = "source_unavailable"
+                    budget.fetch_cache[url] = failure
+                return _tool_result(failure)
             _remember_source_publication_date(self._context, url, result)
             period_error = _source_publication_period_error(self._context, url)
             if period_error is not None:
-                return _tool_result({
+                result = {
                     "url": url,
                     "published_at": result.get("published_at") if result else None,
                     "error": period_error,
-                })
+                }
+            if budget:
+                budget.fetch_cache[url] = result
             return _tool_result(result)
 
     @tool_parameters({
@@ -780,7 +875,22 @@ try:
             if source is None:
                 return _tool_result({"error": "source_not_fetched"})
             source = dict(source)
-            findings = await extract_loopholes(source["extracted_text"])
+            budget = self._context.budget
+            canonical = source["url"]
+            if budget and canonical in budget.analysis_status:
+                if canonical in budget.analysis_results:
+                    return _tool_result(budget.analysis_results[canonical])
+                return _tool_result({"status": budget.analysis_status[canonical],
+                                     "message": "Этот источник уже проходил извлечение."})
+            if budget:
+                budget.analysis_status[canonical] = "extracting"
+            try:
+                findings = await extract_loopholes(source["extracted_text"])
+            except Exception:  # noqa: BLE001 — ошибка не означает отсутствие лазеек
+                _ensure_tool_active(self._context)
+                if budget:
+                    budget.analysis_status[canonical] = "extraction_failed"
+                return _tool_result({"error": "extraction_failed", "url": canonical})
             _ensure_tool_active(self._context)
             if self._context.fetched_sources.get(source_url) != source:
                 return _tool_result({"error": "source_changed_during_extraction"})
@@ -794,6 +904,9 @@ try:
                 bank_slug=bank_slug,
                 raw_text=text,
             )
+            if budget:
+                budget.analysis_status[canonical] = "completed"
+                budget.analysis_results[canonical] = findings
             return _tool_result(findings)
 
     @tool_parameters({
@@ -1049,6 +1162,7 @@ try:
     )
 
     NANOBOT_TOOLS: tuple[type[Tool], ...] = (
+        AuditResearchSubagentsTool,
         AuditWebSearchTool,
         AuditWebFetchTool,
         AuditExtractLoopholesTool,

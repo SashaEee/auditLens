@@ -20,6 +20,136 @@ const PHASE_LABELS = {
   error: "Ошибка",
 };
 
+const SUBAGENT_STAGES = {
+  queued: "Ожидает свободного исследователя",
+  searching: "Поиск материалов", classifying: "Анализ описаний",
+  completed: "Завершено", failed: "Не удалось завершить", cancelled: "Прервано",
+};
+const SUBAGENT_CATEGORIES = {
+  loophole: "Лазейка", fraud: "Признаки мошенничества",
+  irrelevant: "Не относится", insufficient_data: "Недостаточно данных",
+};
+const SUBAGENT_CONTENT_TYPES = {
+  article: "Статья", post: "Пост", comment: "Комментарий", unknown: "Материал",
+};
+const SUBAGENT_ERRORS = {
+  timeout: "Не хватило времени на поиск и анализ.",
+  search_error: "Поисковик временно недоступен.",
+  model_error: "Младшая модель не смогла завершить ответ.",
+  invalid_response: "Младшая модель вернула некорректную разметку материалов.",
+};
+
+function subagentSourceHref(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password
+      ? url.href : null;
+  } catch { return null; }
+}
+
+function acceptSubagentEvent(value) {
+  if (!value || !/^subagent-[1-6](?:-retry-[12])?$/.test(value.id)
+      || !Object.hasOwn(SUBAGENT_STAGES, value.status)
+      || !Number.isInteger(value.total) || !Number.isInteger(value.completed)
+      || value.completed < 0 || value.total < value.completed || value.total > 8) return null;
+  return {
+    id: value.id, status: value.status, title: String(value.title || "").slice(0, 200),
+    total: value.total, completed: value.completed,
+    retry_of: /^subagent-[1-6](?:-retry-1)?$/.test(value.retry_of) ? value.retry_of : null,
+    error_code: Object.hasOwn(SUBAGENT_ERRORS, value.error_code) ? value.error_code : null,
+    items: (Array.isArray(value.items) ? value.items : []).slice(0, 8)
+      .filter(item => item && Object.hasOwn(SUBAGENT_CATEGORIES, item.category))
+      .map(item => ({
+        title: String(item.title || "Материал").slice(0, 200),
+        reason: String(item.reason || "").slice(0, 300),
+        category: item.category,
+        content_type: Object.hasOwn(SUBAGENT_CONTENT_TYPES, item.content_type)
+          ? item.content_type : "unknown",
+        url: subagentSourceHref(item.url),
+      })),
+  };
+}
+
+function ToolActivity({events = [], active = false}) {
+  if (!events.length) return null;
+  const calls = [];
+  for (const event of events) {
+    if (event.kind === "call") calls.push({...event, status: "running"});
+    else {
+      const pending = calls.find(call => call.name === event.name && call.status === "running");
+      if (pending) pending.status = event.status;
+      else calls.push(event);
+    }
+  }
+  const labels = {
+    audit_web_search: "Веб-поиск", audit_research_subagents: "Младшие исследователи",
+    audit_web_fetch: "Чтение источника", audit_extract_loopholes: "Извлечение признаков",
+    audit_db_query: "Запрос к базе", audit_table_load: "Загрузка таблицы",
+    audit_export: "Подготовка выгрузки",
+  };
+  return <div className="lp-tool-events" aria-label="Работа инструментов" role="status">
+    {calls.slice(-8).map((call, i) => <div key={i} className="lp-tool-activity">
+      <span>{labels[call.name] || "Инструмент"}</span>
+      <span>{call.status === "running" ? (active ? "Выполняется" : "Прервано")
+        : call.status === "failed" ? "Ошибка" : "Завершено"}</span>
+    </div>)}
+  </div>;
+}
+
+function SubagentCards({agents}) {
+  if (!agents.length) return null;
+  return <section className="lp-subagent-list" aria-label="Младшие исследователи">
+    <div className="lp-subtasks-title">Младшие исследователи</div>
+    <p className="lp-subagent-note">Предварительный отбор по описаниям</p>
+    {agents.map(agent => {
+      const busy = ["queued", "searching", "classifying"].includes(agent.status);
+      return <article key={agent.id} className={"lp-subagent-card lp-subagent-" + agent.status}
+                      aria-busy={busy}>
+        <div className="lp-subagent-heading">
+          <span className={"lp-subagent-indicator" + (busy ? " is-active" : "")} aria-hidden="true" />
+          <strong>Исследователь {agent.id.split("-")[1]}
+            {agent.retry_of ? ` · замена ${agent.id.split("-")[3]}` : ""}</strong>
+          <span role="status" className="lp-subagent-status">{SUBAGENT_STAGES[agent.status]}</span>
+        </div>
+        <div className="lp-subagent-query">{agent.title}</div>
+        {agent.retry_of && <p className="lp-subagent-note">
+          Продолжает необработанные материалы предыдущего исследователя.
+        </p>}
+        <div className="lp-subagent-steps" aria-hidden="true">
+          <span className="is-reached">Поиск</span><span>→</span>
+          <span className={agent.total > 0 ? "is-reached" : ""}>Анализ</span><span>→</span>
+          <span className={agent.status === "completed" ? "is-reached" : ""}>Результат</span>
+        </div>
+        {agent.total > 0 && <div className="lp-subagent-count">
+          Размечено {agent.completed} из {agent.total} материалов
+        </div>}
+        {agent.status === "failed" && <p className="lp-subagent-note">
+          {SUBAGENT_ERRORS[agent.error_code]
+            || "Отбор неполный. Основной аналитик получил информацию о сбое."}
+        </p>}
+        {agent.status === "completed" && agent.total === 0 && <p className="lp-subagent-note">
+          По этому запросу материалы не найдены.
+        </p>}
+        {agent.items.length > 0 && <details className="lp-subagent-results" open>
+          <summary>Предварительные метки · {agent.items.length}</summary>
+          {agent.items.map((item, index) => <div className="lp-subagent-item" key={index}>
+            <div className="lp-subagent-item-meta">
+              <span className={"lp-subagent-label lp-subagent-label-" + item.category}>
+                {SUBAGENT_CATEGORIES[item.category]}
+              </span>
+              <span>{SUBAGENT_CONTENT_TYPES[item.content_type]}</span>
+            </div>
+            {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a>
+              : <span>{item.title}</span>}
+            <p>{item.reason}</p>
+          </div>)}
+          <p className="lp-subagent-note">Выводы требуют проверки первоисточников.</p>
+        </details>}
+      </article>;
+    })}
+  </section>;
+}
+
 function parserTargetHref(target) {
   const value = String(target || "").trim();
   if (!value) return null;
@@ -262,6 +392,7 @@ function LoopholeApp() {
   const [clarifySubmitting, setClarifySubmitting] = useState(false); // идёт /clarify/answer
   const [clarifyError, setClarifyError] = useState("");    // inline-ошибка с восстановлением ответа
   const [toolEvents, setToolEvents] = useState([]);        // badges tool_call/tool_result
+  const [subagents, setSubagents] = useState([]);
 
   // ── Парсеры ───────────────────────────────────────────────────────────────
   const [parsers, setParsers] = useState([]);
@@ -478,6 +609,7 @@ function LoopholeApp() {
     setResearchActivity(null);
     setPendingQuestions(null); setPendingQuery(""); setClarificationToken(null);
     setAnswersByQ({}); setClarifyError(""); setToolEvents([]);
+    setSubagents([]);
     setSavedReports([]); setSelectedReportId(""); setResearchShareUrl("");
   };
 
@@ -1212,6 +1344,7 @@ function LoopholeApp() {
     setChatLoading(true);
     setClarifyError("");
     setToolEvents([]);
+    setSubagents([]);
     setPendingQuestions(null);
     let gotQuestions = false;
     let terminalError = false;
@@ -1387,19 +1520,35 @@ function LoopholeApp() {
                 });
                 break;
               }
+              case "subagent": {
+                const event = acceptSubagentEvent(payload);
+                if (!event) break;
+                setSubagents(prev => {
+                  const index = prev.findIndex(agent => agent.id === event.id);
+                  if (index < 0) return [...prev, event].slice(0, 18);
+                  return prev.map((agent, i) => i === index ? event : agent);
+                });
+                break;
+              }
               case "records": {
                 const recs = (payload && payload.records) || [];
                 setRecords(recs);
                 break;
               }
-              case "tool_call": {
-                const name = (payload && payload.name) || "tool";
-                setToolEvents(prev => [...prev, {kind: "call", name, ts: Date.now()}]);
-                break;
-              }
+              case "tool_call":
               case "tool_result": {
                 const name = (payload && payload.name) || "tool";
-                setToolEvents(prev => [...prev, {kind: "result", name, ts: Date.now()}]);
+                const event = {kind: sseEventType === "tool_call" ? "call" : "result",
+                  name, status: payload.status === "failed" ? "failed" : "completed", ts: Date.now()};
+                setToolEvents(prev => [...prev, event]);
+                setChat(prev => {
+                  const copy = [...prev];
+                  const last = copy[copy.length - 1];
+                  if (last && last.role === "assistant" && last._live) {
+                    copy[copy.length - 1] = {...last, tools: [...(last.tools || []), event]};
+                  } else copy.push({role: "assistant", content: "", _live: true, tools: [event]});
+                  return copy;
+                });
                 break;
               }
               case "answer":
@@ -1474,6 +1623,10 @@ function LoopholeApp() {
       chatBusyRef.current = false;
       if (researchGeneration === researchRequestRef.current) {
         setResearchActivity(null);
+        setChat(prev => prev.map(message => message._live ? {...message, _live: false} : message));
+        setSubagents(prev => prev.map(agent =>
+          ["queued", "searching", "classifying"].includes(agent.status)
+            ? {...agent, status: "cancelled"} : agent));
         setChatLoading(false);
         loadResearchList();
       }
@@ -1683,7 +1836,13 @@ function LoopholeApp() {
   const researchProgress = phase === "done"
     ? 100
     : (phasePosition >= 0 ? Math.round(((phasePosition + 1) / PHASES.length) * 100) : 0);
-  const completedSubtasks = subtasks.filter(task => task.status === "done").length;
+  const researchTasks = [...subtasks, ...subagents
+    .filter(agent => !subagents.some(next => next.retry_of === agent.id)).map(agent => ({
+    title: agent.title,
+    status: agent.status === "completed" ? "done"
+      : ["failed", "cancelled"].includes(agent.status) ? "error" : "running",
+  }))];
+  const completedSubtasks = researchTasks.filter(task => task.status === "done").length;
   const restoredResearch = !phase && (chat.length > 0 || savedReports.length > 0);
 
   const recordClassification = (r) => r.classification
@@ -2385,11 +2544,11 @@ function LoopholeApp() {
                   </p>
                 )}
                 {!restoredResearch && <div className="lp-research-task-summary">
-                  Выполнено подзадач: {completedSubtasks} из {subtasks.length}
+                  Выполнено подзадач: {completedSubtasks} из {researchTasks.length}
                 </div>}
-                {subtasks.length > 0 ? (
+                {researchTasks.length > 0 ? (
                   <ul className="lp-research-task-list">
-                    {subtasks.map((task, index) => (
+                    {researchTasks.map((task, index) => (
                       <li key={index} className={`lp-research-task-${task.status}`}>
                         <span aria-hidden="true"></span>{task.title}
                       </li>
@@ -2723,26 +2882,7 @@ function LoopholeApp() {
             </div>
           )}
 
-          {/* Список использованных инструментов без аргументов и результатов */}
-          {toolEvents.length > 0 && (
-            <div className="lp-tool-events">
-              <div className="lp-subtasks-title">Использованные инструменты</div>
-              {toolEvents.slice(-8).map((ev, i) => (
-                <span key={i}
-                      className={"lp-tool-badge lp-tool-" + ev.kind}
-                      title={ev.kind === "call" ? "вызов инструмента" : "результат"}>
-                  {ev.kind === "call" ? "🔧" : "📦"} {({
-                    audit_web_search: "Веб-поиск",
-                    audit_web_fetch: "Чтение источника",
-                    audit_extract_loopholes: "Извлечение признаков",
-                    audit_db_query: "Запрос к базе",
-                    audit_table_load: "Загрузка таблицы",
-                    audit_export: "Подготовка выгрузки",
-                  })[ev.name] || "Инструмент"}
-                </span>
-              ))}
-            </div>
-          )}
+          <SubagentCards agents={subagents} />
 
           {/* Подзадачи */}
           {subtasks.length > 0 && (
@@ -2765,13 +2905,17 @@ function LoopholeApp() {
                 {m.role === "user" ? (researchReadOnly ? "Автор" : "Вы") : "Аналитик"}
               </div>
               <div className="lp-bubble-content">{m.content}</div>
+              {m.role === "assistant" && <ToolActivity events={m.tools} active={agentBusy && m._live} />}
+              {agentBusy && m._live && <div className="lp-agent-activity" role="status">
+                {researchActivity ? researchActivity.message : "Аналитик работает"}
+              </div>}
             </div>
           ))}
-          {agentBusy && (
+          {agentBusy && !chat.some(m => m._live) && (
             <div className="lp-bubble lp-bubble-assistant lp-typing">
               <div className="lp-bubble-role">Аналитик</div>
-              <div className="lp-typing-dots">
-                <span></span><span></span><span></span>
+              <div className="lp-agent-activity" role="status">
+                {researchActivity ? researchActivity.message : "Аналитик обрабатывает запрос"}
               </div>
             </div>
           )}

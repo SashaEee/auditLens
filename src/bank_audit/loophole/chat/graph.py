@@ -20,8 +20,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .. import repository as repo
 from ..agent import (
-    AGENT_TIME_BUDGET_MESSAGE,
     AGENT_UNAVAILABLE_MESSAGE,
+    PARTIAL_STOP_MESSAGES,
     AgentFactory,
     AgentResult,
     AgentRunContext,
@@ -441,7 +441,7 @@ async def stream_chat(
         flush_stream = getattr(hook, "flush_stream_for_sse", None)
         if (
             callable(flush_stream) and not protocol_failed
-            and hook.stop_reason not in {"time_budget", "requested_count"}
+            and hook.stop_reason not in {*PARTIAL_STOP_MESSAGES, "requested_count"}
         ):
             tail = flush_stream()
             if tail:
@@ -462,7 +462,7 @@ async def stream_chat(
         if stream_failed and "agent_stream_error" not in errors:
             errors.append("agent_stream_error")
         records = []
-        budget_expired_only = bool(errors) and set(errors) <= {"time_budget"}
+        budget_expired_only = bool(errors) and set(errors) <= set(PARTIAL_STOP_MESSAGES)
         if not errors or budget_expired_only:
             findings = (
                 eligible_findings(context) if budget_expired_only else context.pending_records
@@ -491,8 +491,8 @@ async def stream_chat(
             answer = AGENT_UNAVAILABLE_MESSAGE
         elif errors:
             partial_explanation = (
-                AGENT_TIME_BUDGET_MESSAGE
-                if "time_budget" in errors
+                next(PARTIAL_STOP_MESSAGES[code] for code in errors if code in PARTIAL_STOP_MESSAGES)
+                if any(code in PARTIAL_STOP_MESSAGES for code in errors)
                 else "Исследование завершено частично: достигнут лимит итераций."
                 if "max_iterations" in errors
                 else "Исследование завершено частично: выполнение остановлено безопасно."
@@ -626,6 +626,20 @@ def _map_event(event: Any, hook: Any) -> dict | None:
     )
 
     ev_type = getattr(event, "type", None)
+    if ev_type == "audit.tool":
+        data = getattr(event, "metadata", {})
+        if (data.get("name") != "audit_extract_loopholes"
+                or data.get("status") not in {"running", "completed", "failed"}):
+            return None
+        # Сбой одного источника уже учтён в реестре и не отменяет валидные находки.
+        hook._add_tool(data["name"])
+        return {"event": "tool_call" if data["status"] == "running" else "tool_result",
+                "data": {"name": data["name"], "status": data["status"]}}
+    if ev_type == "subagent.progress":
+        from .subagents import public_event
+
+        data = public_event(getattr(event, "metadata", None))
+        return {"event": "subagent", "data": data} if data is not None else None
     if ev_type == "run.progress":
         metadata = getattr(event, "metadata", {})
         stage = metadata.get("stage")

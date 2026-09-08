@@ -111,8 +111,8 @@ async def test_tool_timeout_cancels_wait_and_drops_late_fetch_result(monkeypatch
     monkeypatch.setattr(tools, "web_fetch", fetch)
     context = tools.ToolContext("analyst", 1, object())
     try:
-        with pytest.raises(TimeoutError):
-            await tools.AuditWebFetchTool(context).execute("https://example.test/late")
+        result = await tools.AuditWebFetchTool(context).execute("https://example.test/late")
+        assert json.loads(result)["error"] == "source_unavailable"
         assert not finished.is_set()
     finally:
         released.set()
@@ -225,7 +225,8 @@ async def test_extract_cannot_queue_result_after_budget_expires(monkeypatch):
                                budget=budget)
 
     async def extract(text):
-        budget.timeout_seconds = 0
+        budget.timeout_seconds = 1
+        budget.started_at -= 2
         return [{"title": "Находка", "evidence_quote": "Цитата", "is_loophole": True}]
 
     monkeypatch.setattr(tools, "extract_loopholes", extract)
@@ -248,7 +249,8 @@ async def test_extraction_timeout_masks_input_and_propagates_external_cancellati
                 cancelled.append(True)
 
     monkeypatch.setattr(tools, "_EXTRACTION_TIMEOUT_SECONDS", 0.02)
-    assert await tools.extract_loopholes("Контакт auditor@example.test", llm=Llm()) == []
+    with pytest.raises(RuntimeError, match="extraction_failed"):
+        await tools.extract_loopholes("Контакт auditor@example.test", llm=Llm())
     assert "auditor@example.test" not in seen[0]
     assert cancelled == [True]
 
