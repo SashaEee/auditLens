@@ -86,8 +86,14 @@ async def export_pdf(records: list[dict], *, output_path: str = "") -> bytes:
 
 def render_research_report_html(report: dict) -> str:
     """Собирает отдельный безопасный HTML для immutable отчёта исследования."""
+    from .markdown_render import render_markdown_html
+
     def paragraph(value: object) -> str:
         return "<br>".join(escape(line) for line in str(value or "").splitlines()) or "—"
+
+    # Итог исследования — markdown от аналитика: рендерим разметку
+    # (заголовки/списки/таблицы), вход экранируется внутри рендерера.
+    result_html = render_markdown_html(report.get("result")) or "<p>—</p>"
 
     evidence = report.get("evidence") or []
     if evidence:
@@ -104,12 +110,24 @@ def render_research_report_html(report: dict) -> str:
     else:
         evidence_html = "<p>Проверенные доказательства отсутствуют.</p>"
     return """<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\"><style>
-body {{ font-family: Arial, sans-serif; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 32px; }}
+body {{ font-family: Arial, sans-serif; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 32px; line-height: 1.55; }}
 h1 {{ font-size: 24px; }} h2 {{ margin-top: 24px; }} .url {{ word-break: break-all; color: #555; }}
+h3 {{ font-size: 17px; margin: 18px 0 8px; }} h4, h5, h6 {{ font-size: 15px; margin: 14px 0 6px; }}
+p {{ margin: 8px 0; }} ul, ol {{ margin: 8px 0; padding-left: 22px; }} li {{ margin: 3px 0; }}
+a {{ color: #1a5fb4; word-break: break-all; }}
+code {{ font-family: "JetBrains Mono", monospace; font-size: 0.86em; background: #f1f1ec; padding: 1px 4px; border-radius: 3px; }}
+pre {{ background: #f1f1ec; border: 1px solid #d8d8d2; border-radius: 6px; padding: 10px 12px; overflow-x: auto; }}
+pre code {{ background: none; padding: 0; }}
+blockquote {{ margin: 10px 0; padding: 4px 14px; border-left: 3px solid #d8d8d2; color: #555; }}
+hr {{ border: none; border-top: 1px solid #d8d8d2; margin: 16px 0; }}
+.md-table-wrap {{ overflow-x: auto; margin: 10px 0; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 0.9em; }}
+th, td {{ border: 1px solid #d8d8d2; padding: 6px 10px; text-align: left; vertical-align: top; }}
+th {{ background: #f6f6f2; }}
 </style></head><body><h1>Отчёт AI-исследования</h1><h2>Тема</h2><p>{query}</p>
-<h2>Итог</h2><p>{result}</p><h2>Проверенные доказательства и источники</h2><ul>{evidence}</ul>
+<h2>Итог</h2><div class="md-result">{result}</div><h2>Проверенные доказательства и источники</h2><ul>{evidence}</ul>
 </body></html>""".format(
-        query=paragraph(report.get("query")), result=paragraph(report.get("result")), evidence=evidence_html
+        query=paragraph(report.get("query")), result=result_html, evidence=evidence_html
     )
 
 

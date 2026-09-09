@@ -952,17 +952,43 @@ html, body {
   color: var(--muted);
   line-height: 1.55;
 }
-.lp-safe-markdown h3, .lp-safe-markdown h4, .lp-safe-markdown h5 { margin: 12px 0 6px; }
-.lp-safe-markdown ul { margin: 8px 0; padding-left: 20px; }
-.lp-research-downloads { position: relative; }
-.lp-research-result-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
-.lp-research-downloads summary { list-style: none; cursor: pointer; }
-.lp-research-downloads summary::-webkit-details-marker { display: none; }
-.lp-research-download-options {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
+.lp-safe-markdown p { margin: 8px 0; color: var(--muted); line-height: 1.55; }
+.lp-safe-markdown h3, .lp-safe-markdown h4,
+.lp-safe-markdown h5, .lp-safe-markdown h6 { margin: 12px 0 6px; color: var(--ink); }
+.lp-safe-markdown ul, .lp-safe-markdown ol { margin: 8px 0; padding-left: 20px; color: var(--muted); }
+.lp-safe-markdown li { margin: 3px 0; line-height: 1.5; }
+.lp-safe-markdown a { color: var(--accent); overflow-wrap: anywhere; }
+.lp-safe-markdown code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--border-soft);
+  padding: 1px 4px;
+  border-radius: 4px;
 }
+.lp-safe-markdown pre {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: var(--border-soft);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.lp-safe-markdown pre code { background: none; padding: 0; }
+.lp-safe-markdown blockquote {
+  margin: 10px 0;
+  padding: 4px 14px;
+  border-left: 3px solid var(--border-soft);
+  color: var(--muted);
+}
+.lp-safe-markdown hr { border: none; border-top: 1px solid var(--border-soft); margin: 14px 0; }
+.lp-md-table-wrap { overflow-x: auto; max-width: 100%; margin: 10px 0; }
+.lp-safe-markdown table { border-collapse: collapse; font-size: 0.82rem; }
+.lp-safe-markdown th, .lp-safe-markdown td {
+  border: 1px solid var(--border-soft);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.lp-research-result-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
 .lp-research-meta {
   display: flex;
   flex-wrap: wrap;

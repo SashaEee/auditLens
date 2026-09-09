@@ -176,21 +176,120 @@ function publicChatErrorMessage(value) {
   return message;
 }
 
+// ── Markdown-рендерер результата исследования ───────────────────────────────
+// Зеркало python-рендерера loophole/markdown_render.py (PDF-экспорт): заголовки,
+// списки, таблицы, цитаты, код-блоки, ссылки. Весь вход сначала экранируется —
+// в markdown попадает недоверенный вывод LLM (stored XSS через <img onerror=…>).
+
+function lpEscAttr(value) {
+  return String(value == null ? "" : value)
+    .replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function lpInlineMarkdown(text) {
+  return String(text)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    // markdown-ссылки [текст](url) — только http(s), URL через lpEscAttr.
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      (_, label, url) => `<a href="${lpEscAttr(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    // __жирный__ / _курсив_ — только на границах слова; JS \w без кириллицы,
+    // поэтому класс слова задан явно.
+    .replace(/(^|[^A-Za-zА-Яа-яЁё0-9_])__([^_]+?)__(?![A-Za-zА-Яа-яЁё0-9])/g, "$1<strong>$2</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/(^|[^A-Za-zА-Яа-яЁё0-9_])_([^_]+?)_(?![A-Za-zА-Яа-яЁё0-9])/g, "$1<em>$2</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/~~(.+?)~~/g, "<s>$1</s>");
+}
+
 function SafeMarkdown({content}) {
   const lines = String(content || "").split(/\r?\n/);
   const blocks = [];
   let list = [];
-  const flushList = () => { if (list.length) { blocks.push(<ul key={`list-${blocks.length}`}>{list.map((item, i) => <li key={i}>{item}</li>)}</ul>); list = []; } };
-  lines.forEach((raw) => {
+  let listOrdered = false;
+  let tableHead = null;
+  let tableRows = [];
+  let quote = [];
+  let code = null;
+  const flushList = () => {
+    if (!list.length) return;
+    const Tag = listOrdered ? "ol" : "ul";
+    blocks.push(<Tag key={`l-${blocks.length}`}>{list.map((item, i) =>
+      <li key={i} dangerouslySetInnerHTML={{__html: lpInlineMarkdown(item)}} />)}</Tag>);
+    list = [];
+    listOrdered = false;
+  };
+  const flushTable = () => {
+    if (!tableHead) return;
+    blocks.push(<div key={`t-${blocks.length}`} className="lp-md-table-wrap"><table>
+      <thead><tr>{tableHead.map((cell, i) =>
+        <th key={i} dangerouslySetInnerHTML={{__html: lpInlineMarkdown(cell)}} />)}</tr></thead>
+      <tbody>{tableRows.map((row, i) => <tr key={i}>{row.map((cell, j) =>
+        <td key={j} dangerouslySetInnerHTML={{__html: lpInlineMarkdown(cell)}} />)}</tr>)}</tbody>
+    </table></div>);
+    tableHead = null;
+    tableRows = [];
+  };
+  const flushQuote = () => {
+    if (!quote.length) return;
+    blocks.push(<blockquote key={`q-${blocks.length}`}
+      dangerouslySetInnerHTML={{__html: quote.map(lpInlineMarkdown).join("<br>")}} />);
+    quote = [];
+  };
+  const flushBlocks = () => { flushList(); flushTable(); flushQuote(); };
+  const flushCode = () => {
+    if (code === null) return;
+    // React сам экранирует children — код выводим как текст.
+    blocks.push(<pre key={`c-${blocks.length}`}><code>{code.join("\n")}</code></pre>);
+    code = null;
+  };
+  lines.forEach((raw, idx) => {
+    if (code !== null) {
+      if (/^\s*```/.test(raw)) flushCode(); else code.push(raw);
+      return;
+    }
+    if (/^\s*```/.test(raw)) { flushBlocks(); code = []; return; }
+    const quoteMatch = /^>\s?(.*)$/.exec(raw);
+    if (quoteMatch) { flushList(); flushTable(); quote.push(quoteMatch[1]); return; }
+    flushQuote();
     const line = raw.trim();
-    if (!line) { flushList(); return; }
-    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
-    const bullet = /^[-*]\s+(.+)$/.exec(line);
-    if (heading) { flushList(); const Tag = `h${heading[1].length + 2}`; blocks.push(<Tag key={`h-${blocks.length}`}>{heading[2]}</Tag>); }
-    else if (bullet) list.push(bullet[1]);
-    else { flushList(); blocks.push(<p key={`p-${blocks.length}`}>{raw}</p>); }
+    if (line.startsWith("|")) {
+      const cells = line.split("|").map((cell) => cell.trim()).slice(1, -1);
+      if (/^[-:\s|]+$/.test(line.replace(/\|/g, ""))) return;
+      flushList();
+      if (!tableHead) tableHead = cells; else tableRows.push(cells);
+      return;
+    }
+    flushTable();
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushList();
+      const Tag = `h${Math.min(heading[1].length + 2, 6)}`;
+      blocks.push(<Tag key={`h-${idx}`}
+        dangerouslySetInnerHTML={{__html: lpInlineMarkdown(heading[2])}} />);
+      return;
+    }
+    if (/^---+$/.test(line)) { flushList(); blocks.push(<hr key={`hr-${idx}`} />); return; }
+    const ordered = /^\d+\.\s+(.+)$/.exec(raw);
+    if (ordered) {
+      if (list.length && !listOrdered) flushList();
+      listOrdered = true;
+      list.push(ordered[1]);
+      return;
+    }
+    const bullet = /^[-*•]\s+(.+)$/.exec(raw);
+    if (bullet) {
+      if (list.length && listOrdered) flushList();
+      listOrdered = false;
+      list.push(bullet[1]);
+      return;
+    }
+    flushList();
+    if (!line) return;
+    blocks.push(<p key={`p-${idx}`} dangerouslySetInnerHTML={{__html: lpInlineMarkdown(raw)}} />);
   });
-  flushList();
+  flushCode();
+  flushBlocks();
   return <div className="lp-safe-markdown">{blocks}</div>;
 }
 
@@ -1854,23 +1953,6 @@ function LoopholeApp() {
     not_confirmed: "ни уязвимость, ни мошенническая схема",
   }[recordClassification(r)] || "не размечено");
 
-  const importResearchSources = async (reportId) => {
-    if (!reportId || researchAccessRef.current.readOnly || researchAccessRef.current.loading) return;
-    try {
-      const r = await fetch(`${API}/research/reports/${reportId}/import-sources`, {method: "POST"});
-      const d = await r.json().catch(() => null);
-      if (!r.ok) throw new Error((d && d.detail) || "Не удалось перенести источники.");
-      if (d.imported) {
-        showToast(`В общую базу добавлено предварительных записей: ${d.imported}.`, "success");
-        await loadRecords();
-      } else {
-        showToast("Новых пригодных источников для переноса нет.", "info");
-      }
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Не удалось перенести источники.", "error");
-    }
-  };
-
   const downloadResearchReport = async (reportId, format) => {
     if (!reportId || researchAccessRef.current.readOnly || researchAccessRef.current.loading) return;
     try {
@@ -2496,6 +2578,11 @@ function LoopholeApp() {
                 ) : <div className="lp-research-result-actions">
                   <button className="lp-btn" disabled={agentBusy || researchActionBusy || researchLoading}
                           onClick={shareResearch}>Поделиться</button>
+                  {!researchLoading && lastResearchAnswer && lastResearchAnswer.report_id && (
+                    <button type="button" className="lp-btn"
+                            disabled={agentBusy || researchActionBusy || researchLoading}
+                            onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "pdf")}>PDF</button>
+                  )}
                 </div>}
               </section>}
               {researchShareUrl && <div className="lp-research-share">
@@ -2580,23 +2667,6 @@ function LoopholeApp() {
                   <div><SafeMarkdown content={lastResearchAnswer
                     ? lastResearchAnswer.content
                     : "После запуска здесь появится проверенный промежуточный вывод аналитика."} /></div>
-                  {!researchReadOnly && !researchLoading && lastResearchAnswer && lastResearchAnswer.report_id && (
-                    <div className="lp-research-result-actions">
-                      <details className="lp-research-downloads">
-                        <summary className="lp-btn lp-btn-sm">Скачать исследование</summary>
-                        <div className="lp-research-download-options" aria-label="Формат скачивания">
-                          <button type="button" className="lp-btn lp-btn-sm"
-                                  onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "pdf")}>PDF</button>
-                          <button type="button" className="lp-btn lp-btn-sm"
-                                  onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "docx")}>Word</button>
-                        </div>
-                      </details>
-                      <button type="button" className="lp-btn lp-btn-sm"
-                              onClick={() => importResearchSources(lastResearchAnswer.report_id)}>
-                        Добавить в общую базу
-                      </button>
-                    </div>
-                  )}
                 </div>
                 {!restoredResearch && <div className="lp-research-meta">
                   <span>Событий инструментов: {toolEvents.length}</span>
