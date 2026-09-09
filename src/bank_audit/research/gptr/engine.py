@@ -25,19 +25,45 @@ log = logging.getLogger(__name__)
 _installed = False
 
 
+def _as_engine_model(name: str) -> str:
+    """«имя» → «openai:имя»: движок ждёт провайдер перед моделью, а у нас
+    один шлюз с OpenAI-совместимым протоколом."""
+    return name if ":" in name else f"openai:{name}"
+
+
 def _ensure_engine_env() -> None:
     """gpt-researcher читает OPENAI_*, а шлюз у нас один и тот же.
 
-    Без этой подстановки достаточно потерять переменную при переезде
-    контейнера на другой env-файл, чтобы аналитик перестал строить план:
-    ошибка вылезала уже внутри install(), в ответе — «не удалось построить
-    план», а причина видна только в логе сервера.
+    Так же задаём ретривер и модели движка. Все эти переменные жили только
+    в окружении контейнера: после пересоздания контейнера аналитик сначала
+    вовсе не строил план, а затем строил отчёт без веб-источников — на
+    чужих моделях по умолчанию и с поиском в недоступный tavily.
     """
     for engine_key, ours in (("OPENAI_BASE_URL", "LLM_BASE_URL"),
                              ("OPENAI_API_KEY", "LLM_API_KEY")):
         if not os.getenv(engine_key) and os.getenv(ours):
             os.environ[engine_key] = os.environ[ours]
             log.info("движок: %s не задан, беру %s", engine_key, ours)
+    # Поиск: наш ретривер подставляется под именем searx (см. install).
+    # Без этого движок молча уходит в свой умолчательный tavily, получает
+    # 401 и остаётся без веб-источников: в отчёте только корпус отзывов,
+    # заявленной стороны нет, разделы сравнения выпадают.
+    if not os.getenv("RETRIEVER"):
+        os.environ["RETRIEVER"] = "searx"
+    # Модели движка: формат «openai:имя». Без них он берёт свои умолчания
+    # (gpt-5.4 и text-embedding-3-small), которых на нашем шлюзе нет.
+    for engine_key, ours in (("SMART_LLM", "LLM_MODEL_ANALYST"),
+                             ("STRATEGIC_LLM", "LLM_MODEL_REASONING"),
+                             ("FAST_LLM", "LLM_MODEL_FAST")):
+        if not os.getenv(engine_key):
+            name = os.getenv(ours) or os.getenv("LLM_MODEL_NAME")
+            if name:
+                os.environ[engine_key] = _as_engine_model(name)
+                log.info("движок: %s не задан, беру %s", engine_key, ours)
+    if not os.getenv("EMBEDDING"):
+        emb = os.getenv("EMBEDDING_API_MODEL") or os.getenv("EMBEDDING_MODEL")
+        if emb:
+            os.environ["EMBEDDING"] = _as_engine_model(emb)
 
 
 def install() -> None:

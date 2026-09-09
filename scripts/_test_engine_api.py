@@ -75,6 +75,16 @@ _os.environ["OPENAI_BASE_URL"] = "https://свой/v1"
 engine._ensure_engine_env()
 chk("заданное значение движка не перетирается", _os.environ["OPENAI_BASE_URL"] == "https://свой/v1")
 chk("подстановка вызывается в install()", "_ensure_engine_env()" in inspect.getsource(engine.install))
+for _k in ("RETRIEVER", "SMART_LLM", "STRATEGIC_LLM", "FAST_LLM", "EMBEDDING"):
+    _saved[_k] = _os.environ.pop(_k, None)
+_os.environ["LLM_MODEL_ANALYST"], _os.environ["LLM_MODEL_REASONING"] = "anthropic/opus", "openai/gpt"
+_os.environ["LLM_MODEL_FAST"], _os.environ["EMBEDDING_API_MODEL"] = "ds/flash", "BAAI/bge-m3"
+engine._ensure_engine_env()
+chk("ретривер — наш searx, а не tavily", _os.environ.get("RETRIEVER") == "searx")
+chk("модель писателя из LLM_MODEL_ANALYST с префиксом", _os.environ.get("SMART_LLM") == "openai:anthropic/opus")
+chk("модель планировщика из LLM_MODEL_REASONING", _os.environ.get("STRATEGIC_LLM") == "openai:openai/gpt")
+chk("быстрая модель и эмбеддинг заданы", _os.environ.get("FAST_LLM") == "openai:ds/flash" and _os.environ.get("EMBEDDING") == "openai:BAAI/bge-m3")
+chk("готовый префикс не дублируется", engine._as_engine_model("openai:x") == "openai:x")
 for k, v in _saved.items():
     if v is None: _os.environ.pop(k, None)
     else: _os.environ[k] = v
