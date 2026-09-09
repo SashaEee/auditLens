@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from html import escape
 from io import BytesIO
 
@@ -13,17 +14,21 @@ from .direct_transport import chromium_args
 
 log = logging.getLogger(__name__)
 
+# Поля страницы A4 по ГОСТ-подобной раскладке: слева 30 мм, справа 10 мм,
+# сверху и снизу по 20 мм (нижнее поле — отступ от нижней грани листа).
+_PDF_MARGINS = {"top": "20mm", "bottom": "20mm", "left": "30mm", "right": "10mm"}
+
 
 _HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-  body {{ font-family: "Geist", system-ui, sans-serif; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 32px; }}
-  h1 {{ font-family: "Source Serif 4", Georgia, serif; font-size: 1.5rem; }}
-  h2 {{ font-family: "Source Serif 4", Georgia, serif; font-size: 1.1rem; margin-top: 18px; }}
+  body {{ font-family: "Geist", system-ui, sans-serif; color: #1a1a1a; margin: 0; padding: 0; }}
+  h1 {{ font-family: "Source Serif 4", Georgia, serif; font-size: 1.5rem; break-after: avoid; }}
+  h2 {{ font-family: "Source Serif 4", Georgia, serif; font-size: 1.1rem; margin-top: 18px; break-after: avoid; }}
   .meta {{ color: #6b6b6b; font-size: 0.85rem; margin-bottom: 20px; }}
-  .record {{ border-bottom: 1px solid #d8d8d2; padding: 12px 0; }}
+  .record {{ border-bottom: 1px solid #d8d8d2; padding: 12px 0; break-inside: avoid; }}
   .record .title {{ font-weight: 600; }}
   .record .url {{ font-family: "JetBrains Mono", monospace; font-size: 0.8rem; color: #6b6b6b; word-break: break-all; }}
   .record .verdict {{ margin-top: 4px; }}
@@ -76,7 +81,7 @@ async def export_pdf(records: list[dict], *, output_path: str = "") -> bytes:
         browser = await p.chromium.launch(args=chromium_args())
         page = await browser.new_page()
         await page.set_content(html, wait_until="networkidle")
-        pdf = await page.pdf(format="A4", print_background=True)
+        pdf = await page.pdf(format="A4", print_background=True, margin=_PDF_MARGINS)
         await browser.close()
     if output_path:
         from pathlib import Path
@@ -84,50 +89,85 @@ async def export_pdf(records: list[dict], *, output_path: str = "") -> bytes:
     return pdf
 
 
+_RE_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+_RE_RAW_URL = re.compile(r"https?://[^\s<>()\[\]\"']+")
+
+
 def render_research_report_html(report: dict) -> str:
-    """Собирает отдельный безопасный HTML для immutable отчёта исследования."""
+    """Собирает отдельный безопасный HTML для immutable отчёта исследования.
+
+    URL из текста итога убираются: вместо них подставляются номера [N]
+    из нумерованного списка используемых источников в конце отчёта.
+    Тексты статей (extracted_text) в отчёт не попадают.
+    """
     from .markdown_render import render_markdown_html
+
+    sources: list[dict[str, str]] = []
+    source_index: dict[str, int] = {}
+
+    def source_no(url: str, title: str = "") -> int:
+        if url not in source_index:
+            source_index[url] = len(sources) + 1
+            sources.append({"url": url, "title": title})
+        elif title and not sources[source_index[url] - 1]["title"]:
+            sources[source_index[url] - 1]["title"] = title
+        return source_index[url]
+
+    def replace_link(match: re.Match[str]) -> str:
+        label, url = match.group(1), match.group(2)
+        return f"{label} [{source_no(url, label)}]"
+
+    def replace_url(match: re.Match[str]) -> str:
+        url = match.group(0).rstrip(".,;:!?")
+        tail = match.group(0)[len(url):]
+        return f"[{source_no(url)}]{tail}"
+
+    # Итог исследования — markdown от аналитика: ссылки выносим в список
+    # источников, затем рендерим разметку (вход экранируется внутри рендерера).
+    result_text = _RE_MD_LINK.sub(replace_link, str(report.get("result") or ""))
+    result_text = _RE_RAW_URL.sub(replace_url, result_text)
+    result_html = render_markdown_html(result_text) or "<p>—</p>"
+
+    for item in report.get("evidence") or []:
+        if isinstance(item, dict) and item.get("url"):
+            source_no(str(item["url"]), str(item.get("title") or ""))
+
+    if sources:
+        items = "".join(
+            "<li>{title} — <a href=\"{url}\">ссылка</a></li>".format(
+                title=escape(s["title"] or "Источник без названия"),
+                url=escape(s["url"], quote=True),
+            )
+            for s in sources
+        )
+        sources_html = f"<ol>{items}</ol>"
+    else:
+        sources_html = "<p>Источники не использовались.</p>"
 
     def paragraph(value: object) -> str:
         return "<br>".join(escape(line) for line in str(value or "").splitlines()) or "—"
 
-    # Итог исследования — markdown от аналитика: рендерим разметку
-    # (заголовки/списки/таблицы), вход экранируется внутри рендерера.
-    result_html = render_markdown_html(report.get("result")) or "<p>—</p>"
-
-    evidence = report.get("evidence") or []
-    if evidence:
-        evidence_html = "".join(
-            "<li><strong>{title}</strong><br><span class=\"url\">{url}</span>"
-            "<p>{text}</p></li>".format(
-                title=paragraph(item.get("title") or "Источник без названия"),
-                url=paragraph(item.get("url")),
-                text=paragraph(item.get("extracted_text")),
-            )
-            for item in evidence
-            if isinstance(item, dict)
-        ) or "<p>Проверенные доказательства отсутствуют.</p>"
-    else:
-        evidence_html = "<p>Проверенные доказательства отсутствуют.</p>"
     return """<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\"><style>
-body {{ font-family: Arial, sans-serif; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 32px; line-height: 1.55; }}
-h1 {{ font-size: 24px; }} h2 {{ margin-top: 24px; }} .url {{ word-break: break-all; color: #555; }}
+body {{ font-family: Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 0; line-height: 1.55; }}
+h1 {{ font-size: 24px; }} h2 {{ margin-top: 24px; }}
+h1, h2, h3, h4, h5, h6 {{ break-after: avoid; }}
+li, pre, blockquote, tr {{ break-inside: avoid; }}
 h3 {{ font-size: 17px; margin: 18px 0 8px; }} h4, h5, h6 {{ font-size: 15px; margin: 14px 0 6px; }}
 p {{ margin: 8px 0; }} ul, ol {{ margin: 8px 0; padding-left: 22px; }} li {{ margin: 3px 0; }}
-a {{ color: #1a5fb4; word-break: break-all; }}
+a {{ color: #1a5fb4; }}
 code {{ font-family: "JetBrains Mono", monospace; font-size: 0.86em; background: #f1f1ec; padding: 1px 4px; border-radius: 3px; }}
 pre {{ background: #f1f1ec; border: 1px solid #d8d8d2; border-radius: 6px; padding: 10px 12px; overflow-x: auto; }}
 pre code {{ background: none; padding: 0; }}
 blockquote {{ margin: 10px 0; padding: 4px 14px; border-left: 3px solid #d8d8d2; color: #555; }}
 hr {{ border: none; border-top: 1px solid #d8d8d2; margin: 16px 0; }}
-.md-table-wrap {{ overflow-x: auto; margin: 10px 0; }}
-table {{ border-collapse: collapse; width: 100%; font-size: 0.9em; }}
-th, td {{ border: 1px solid #d8d8d2; padding: 6px 10px; text-align: left; vertical-align: top; }}
+.md-table-wrap {{ margin: 10px 0; }}
+table {{ border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 0.85em; }}
+th, td {{ border: 1px solid #d8d8d2; padding: 6px 10px; text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }}
 th {{ background: #f6f6f2; }}
 </style></head><body><h1>Отчёт AI-исследования</h1><h2>Тема</h2><p>{query}</p>
-<h2>Итог</h2><div class="md-result">{result}</div><h2>Проверенные доказательства и источники</h2><ul>{evidence}</ul>
+<h2>Итог</h2><div class="md-result">{result}</div><h2>Список используемых источников</h2>{sources}
 </body></html>""".format(
-        query=paragraph(report.get("query")), result=result_html, evidence=evidence_html
+        query=paragraph(report.get("query")), result=result_html, sources=sources_html
     )
 
 
@@ -142,7 +182,7 @@ async def export_research_report_pdf(report: dict) -> bytes:
         try:
             page = await browser.new_page()
             await page.set_content(render_research_report_html(report), wait_until="networkidle")
-            return await page.pdf(format="A4", print_background=True)
+            return await page.pdf(format="A4", print_background=True, margin=_PDF_MARGINS)
         finally:
             await browser.close()
 
