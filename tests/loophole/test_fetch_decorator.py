@@ -190,3 +190,42 @@ def test_sanitize_ca_bundle_env_keeps_valid(monkeypatch, tmp_path):
     monkeypatch.setenv("CA_BUNDLE_PATH", str(pem))
     fetch_decorator._sanitize_ca_bundle_env()
     assert os.environ["CA_BUNDLE_PATH"] == str(pem)
+
+
+def test_fetch_and_parse_estimates_publication_date_from_url():
+    result = MagicMock()
+    result.content = "<html><body><p>текст без даты</p></body></html>".encode()
+    result.final_url = "https://example.ru/2026/09/09/post"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/2026/09/09/post",
+        _fetch_impl=lambda _url, prefer_browser=False: result,
+    )
+
+    assert page is not None
+    assert page.published_at is None
+    assert page.estimated_published_at == "2026-09-09"
+
+
+def test_fetch_and_parse_estimates_publication_date_from_text_marker():
+    result = MagicMock()
+    result.content = (
+        "<html><body><p>Опубликовано 9 сентября 2026 года. Текст статьи.</p>"
+        "</body></html>"
+    ).encode()
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/doc",
+        _fetch_impl=lambda _url, prefer_browser=False: result,
+    )
+
+    assert page is not None
+    assert page.published_at is None
+    assert page.estimated_published_at == "2026-09-09"

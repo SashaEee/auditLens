@@ -23,7 +23,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -126,6 +126,117 @@ def _exact_published_at(content: bytes) -> str | None:
     return None
 
 
+# ── Оценочная дата публикации (мягкий period-фильтр) ────────────────────────
+# Иерархия: точный tz-aware timestamp → оценка из URL → оценка из текста.
+# Оценка не подтверждает дату, но позволяет не отсекать источник fail-closed.
+# Словарь единый для loophole: tools_nanobot импортирует его отсюда.
+RU_MONTHS = {
+    "январ": 1,
+    "феврал": 2,
+    "март": 3,
+    "апрел": 4,
+    "ма": 5,
+    "июн": 6,
+    "июл": 7,
+    "август": 8,
+    "сентябр": 9,
+    "октябр": 10,
+    "ноябр": 11,
+    "декабр": 12,
+}
+# Стебель «ма\w*» матчил «машин»/«магазинов»: у мая перечислены явные окончания.
+RU_MONTH_PATTERN = (
+    "январ\\w*|феврал\\w*|март\\w*|апрел\\w*|ма[йяе]\\w*|июн\\w*|"
+    "июл\\w*|август\\w*|сентябр\\w*|октябр\\w*|ноябр\\w*|декабр\\w*"
+)
+_URL_FULL_DATE_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})[-/_](\d{1,2})[-/_](\d{1,2})(?!\d)")
+_URL_MONTH_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})[-/_](\d{1,2})(?!\d)")
+_TEXT_ISO_DATE_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})-(\d{2})-(\d{2})(?!\d)")
+_TEXT_DMY_DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.((?:19|20)\d{2})\b")
+_TEXT_RU_DATE_RE = re.compile(
+    rf"\b(\d{{1,2}})\s+({RU_MONTH_PATTERN})\s+((?:19|20)\d{{2}})\b",
+    re.IGNORECASE,
+)
+_PUBLICATION_MARKER_RE = re.compile(
+    r"опубликован\w*|дата\s+публикации|размещен\w*|published",
+    re.IGNORECASE,
+)
+
+
+def _safe_date(year: int, month: int, day: int) -> date | None:
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _plausible(found: date | None) -> date | None:
+    """Отбрасывает даты в будущем: дата публикации не может быть позже сегодня."""
+    if found is None or found > date.today():
+        return None
+    return found
+
+
+def _first_date_in(fragment: str) -> date | None:
+    """Первая правдоподобная дата во фрагменте: русские месяцы, dd.mm.yyyy, ISO."""
+    match = _TEXT_RU_DATE_RE.search(fragment)
+    if match is not None:
+        month_word = match.group(2).lower()
+        month = next(
+            (number for stem, number in RU_MONTHS.items() if month_word.startswith(stem)),
+            None,
+        )
+        if month is not None:
+            found = _plausible(_safe_date(int(match.group(3)), month, int(match.group(1))))
+            if found is not None:
+                return found
+    match = _TEXT_DMY_DATE_RE.search(fragment)
+    if match is not None:
+        found = _plausible(_safe_date(int(match.group(3)), int(match.group(2)), int(match.group(1))))
+        if found is not None:
+            return found
+    match = _TEXT_ISO_DATE_RE.search(fragment)
+    if match is not None:
+        return _plausible(_safe_date(int(match.group(1)), int(match.group(2)), int(match.group(3))))
+    return None
+
+
+def _date_from_url(url: str) -> date | None:
+    """Дата из пути URL: /2026/09/09/, 2026-09-09, /2026/09/."""
+    match = _URL_FULL_DATE_RE.search(url)
+    if match is not None:
+        found = _plausible(_safe_date(int(match.group(1)), int(match.group(2)), int(match.group(3))))
+        if found is not None:
+            return found
+    match = _URL_MONTH_RE.search(url)
+    if match is not None:
+        return _plausible(_safe_date(int(match.group(1)), int(match.group(2)), 1))
+    return None
+
+
+def _date_from_text(text: str) -> date | None:
+    """Дата из текста страницы: сначала рядом с маркерами публикации, затем первая."""
+    sample = text[:20000]
+    for marker in _PUBLICATION_MARKER_RE.finditer(sample):
+        found = _first_date_in(sample[marker.start():marker.start() + 160])
+        if found is not None:
+            return found
+    return _first_date_in(sample)
+
+
+def estimate_published_date(url: str, text: str = "") -> str | None:
+    """Оценочная дата публикации: сначала из URL, затем из текста страницы.
+
+    Возвращает ISO-дату (YYYY-MM-DD) или None. Это не подтверждённый timestamp:
+    источник с оценкой вне окна отклоняется, без любой даты — допускается
+    с пометкой неподтверждённой даты.
+    """
+    found = _date_from_url(url or "")
+    if found is None and text:
+        found = _date_from_text(text)
+    return found.isoformat() if found is not None else None
+
+
 @dataclass
 class FetchedPage:
     url: str
@@ -137,6 +248,7 @@ class FetchedPage:
     via: str
     content_type: str | None = None
     published_at: str | None = None
+    estimated_published_at: str | None = None
 
 
 def fetch_and_parse(
@@ -182,9 +294,11 @@ def fetch_and_parse(
         text = content.decode("utf-8", errors="replace")[:excerpt_len * 4]
         title = None
     excerpt = text[:excerpt_len]
+    final_url = getattr(result, "final_url", url)
+    estimated = estimate_published_date(final_url, text) or estimate_published_date(url)
     return FetchedPage(
         url=url,
-        final_url=getattr(result, "final_url", url),
+        final_url=final_url,
         status=getattr(result, "status", 0),
         text=text,
         title=title,
@@ -192,4 +306,5 @@ def fetch_and_parse(
         via=getattr(result, "via", "unknown"),
         content_type=content_type,
         published_at=_exact_published_at(content),
+        estimated_published_at=estimated,
     )

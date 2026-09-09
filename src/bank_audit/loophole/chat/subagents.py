@@ -176,6 +176,18 @@ class ResearchSubagents:
         self._timeout_seconds = int(os.getenv("LOOPHOLE_SUBAGENT_TIMEOUT_SECONDS", "180"))
         if not 1 <= self._timeout_seconds <= 600:
             raise ValueError("LOOPHOLE_SUBAGENT_TIMEOUT_SECONDS должен быть от 1 до 600")
+        # HTTP read-таймаут ответа классификатора: зависшая порция прерывается
+        # раньше дедлайна порции и успевает повториться в пределах recovery-цепочки.
+        self._read_timeout_seconds = int(os.getenv("LOOPHOLE_SUBAGENT_READ_TIMEOUT_SECONDS", "60"))
+        if not 1 <= self._read_timeout_seconds <= 600:
+            raise ValueError("LOOPHOLE_SUBAGENT_READ_TIMEOUT_SECONDS должен быть от 1 до 600")
+        if self._read_timeout_seconds >= self._timeout_seconds:
+            log.warning(
+                "[subagents] read-таймаут %s с не меньше дедлайна порции %s с — "
+                "ограничиваем, чтобы повтор успел уложиться в порцию",
+                self._read_timeout_seconds, self._timeout_seconds,
+            )
+            self._read_timeout_seconds = max(1, self._timeout_seconds - 1)
 
     async def research(self, queries: list[str], *, max_results: int = 8) -> dict:
         """Запускает ограниченную группу subagents и собирает частичные результаты."""
@@ -184,7 +196,9 @@ class ResearchSubagents:
                 or any(not isinstance(q, str) or not q.strip() or len(q) > 500 for q in queries)
                 or type(max_results) is not int or not 1 <= max_results <= 8):
             return {"error": "invalid_subagent_request"}
-        model = (os.getenv("LOOPHOLE_SUBAGENT_MODEL") or os.getenv("LLM_MODEL_FAST") or "").strip()
+        # Цепочка деградации как у остальных модулей: спец-env → FAST → основная модель.
+        model = (os.getenv("LOOPHOLE_SUBAGENT_MODEL") or os.getenv("LLM_MODEL_FAST")
+                 or os.getenv("LLM_MODEL_NAME") or "").strip()
         if not model:
             return {"error": "subagent_model_not_configured"}
         if self._launched + len(queries) > 6:
@@ -244,12 +258,12 @@ class ResearchSubagents:
             model=model, temperature=0, max_iterations=1, tool_classes=(),
             workspace=workspace, provider_extra_body=extra_body,
             disable_model_timeouts=True, connect_timeout_seconds=10,
+            read_timeout_seconds=self._read_timeout_seconds,
         )
         try:
-            # Дедлайн порции принадлежит раннеру; не тратим его на три повтора SDK.
-            provider = getattr(getattr(bot, "_loop", None), "provider", None)
-            if provider is not None:
-                provider._CHAT_RETRY_DELAYS = (1,)
+            # Дедлайн порции принадлежит раннеру; ретраи SDK не урезаем —
+            # транзиентный обрыв классификатора переживает штатные повторы,
+            # а зависший ответ прерывает HTTP read-таймаут раньше дедлайна порции.
             payload = [{"id": i, "title": source["title"], "description": source["snippet"]}
                        for i, source in enumerate(sources)]
             hook = AuditHook()

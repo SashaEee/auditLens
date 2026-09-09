@@ -107,12 +107,19 @@ def _patch_registry_for_gemini(registry: Any) -> None:
 def _configure_direct_provider(
     bot: Any, *, disable_model_timeouts: bool = False,
     connect_timeout_seconds: float | None = None,
+    read_timeout_seconds: float | None = None,
 ) -> None:
     """Подменяет транспорт нерасширяемого nanobot-провайдера локально.
 
     Nanobot создаёт OpenAI SDK лениво и по умолчанию разрешает proxy-env.
     Патч применяется только к экземпляру этого Loophole-бота, не меняя
     ``os.environ`` и не затрагивая остальных потребителей nanobot/httpx.
+
+    ``disable_model_timeouts=True`` отключает дефолтный read-таймаут SDK
+    (чтобы основная модель не прерывалась по idle) и включает адаптер
+    полного ответа без stream idle timeout. Явный ``read_timeout_seconds``
+    имеет приоритет в любом режиме: если он задан, клиент получает именно
+    его, даже когда ``disable_model_timeouts`` включён.
     """
     provider = bot._loop.provider
     if not hasattr(provider, "_build_client"):
@@ -126,9 +133,13 @@ def _configure_direct_provider(
         if client_factory is None:
             from openai import AsyncOpenAI as client_factory
             module.AsyncOpenAI = client_factory
-        timeout_s = None if disable_model_timeouts else module._openai_compat_timeout_s()
-        # У дочернего бота зависший TLS не должен расходовать весь бюджет анализа.
-        # Ожидание ответа и политика основной модели сохраняются независимо.
+        # Read-таймаут задаётся явно; без него — дефолт SDK, а при
+        # disable_model_timeouts ответ ожидается без read-лимита.
+        timeout_s = read_timeout_seconds
+        if timeout_s is None and not disable_model_timeouts:
+            timeout_s = module._openai_compat_timeout_s()
+        # Connect-timeout не зависит от read-таймаута: зависший TLS handshake
+        # прерывается даже при отключённых таймаутах основной модели.
         timeout = (httpx.Timeout(timeout_s, connect=connect_timeout_seconds)
                    if connect_timeout_seconds is not None else timeout_s)
         self._client = client_factory(
@@ -186,6 +197,7 @@ def create_nanobot(
     provider_extra_body: dict[str, Any] | None = None,
     disable_model_timeouts: bool = False,
     connect_timeout_seconds: float | None = None,
+    read_timeout_seconds: float | None = None,
 ) -> Any:
     """Создаёт Nanobot, отключает встроенные tools, регистрирует кастомные.
 
@@ -219,6 +231,7 @@ def create_nanobot(
         _configure_direct_provider(
             bot, disable_model_timeouts=disable_model_timeouts,
             connect_timeout_seconds=connect_timeout_seconds,
+            read_timeout_seconds=read_timeout_seconds,
         )
         selected_tools = NANOBOT_TOOLS if tool_classes is None else tool_classes
         for tool_cls in (*selected_tools, *extra_tools):

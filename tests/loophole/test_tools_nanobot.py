@@ -217,6 +217,7 @@ async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monk
                 "title": "Проверенный источник",
                 "extracted_text": "Текст источника",
                 "published_at": "2026-08-27T09:25:00+03:00",
+                "estimated_published_at": "2026-08-27",
             }
         },
     )
@@ -238,6 +239,7 @@ async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monk
             "raw_text": "Текст источника",
             "source_title": "Проверенный источник",
             "published_at": "2026-08-27T09:25:00+03:00",
+            "estimated_published_at": "2026-08-27",
             "description": "Описание механизма",
             "category": "Комиссии",
             "severity": "high",

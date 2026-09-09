@@ -10,6 +10,7 @@ fail-closed (любой сбой блокирует запуск агента д
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -25,6 +26,11 @@ from ...ai.llm_utils import (
     detect_bank_slugs,
     normalize_question,
 )
+from ...research.llm_throttle import (
+    extract_retry_after,
+    is_rate_limit_error,
+    is_transient_error,
+)
 from .. import repository as repo
 from ..direct_transport import async_client
 from ..pii_mask import mask as pii_mask
@@ -35,6 +41,8 @@ log = logging.getLogger(__name__)
 _MAX_QUESTIONS = 1
 _TOKEN_TTL_SECONDS = 600
 _MAX_PENDING_TOKENS = 4096
+# Короткий бэкофф ретраев транзиентных сбоев clarify-вызова до fail-closed.
+_CLARIFY_RETRY_DELAYS = (1.0, 2.0)
 _clarification_tokens: dict[str, tuple[str, float]] = {}
 _execution_tokens: dict[str, tuple[str, float]] = {}
 
@@ -321,6 +329,25 @@ def _client() -> AsyncOpenAI:
     )
 
 
+async def _create_with_retries(client: AsyncOpenAI, **kwargs: Any) -> Any:
+    """Ретраит транзиентные сбои (классификатор llm_throttle) до fail-closed."""
+    attempt = 0
+    while True:
+        try:
+            return await client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            transient = is_transient_error(exc) or is_rate_limit_error(exc)
+            if not transient or attempt >= len(_CLARIFY_RETRY_DELAYS):
+                raise
+            delay = min(extract_retry_after(exc) or _CLARIFY_RETRY_DELAYS[attempt], 5.0)
+            attempt += 1
+            log.warning(
+                "[loophole.clarify] транзиентный сбой (%s), повтор %s/%s через %.1f с",
+                type(exc).__name__, attempt, len(_CLARIFY_RETRY_DELAYS), delay,
+            )
+            await asyncio.sleep(delay)
+
+
 def _validate(data: Any) -> dict:
     """Нормализует ответ модели; повреждённый ответ блокирует запуск."""
     if not isinstance(data, dict):
@@ -414,7 +441,8 @@ async def generate_clarifications(
         f"Верни JSON по контракту."
     )
     try:
-        resp = await _client().chat.completions.create(
+        resp = await _create_with_retries(
+            _client(),
             model=_clarify_model(),
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user_msg}],

@@ -83,14 +83,8 @@ def test_invalid_model_labels_are_not_accepted(items):
         ])
 
 
-@pytest.mark.asyncio
-async def test_no_fallback_to_parent_model(monkeypatch):
-    sub = _module()
-    monkeypatch.delenv("LOOPHOLE_SUBAGENT_MODEL", raising=False)
-    monkeypatch.delenv("LLM_MODEL_FAST", raising=False)
-    monkeypatch.setenv("LLM_MODEL_NAME", "expensive-parent")
-    result = await sub.ResearchSubagents(ResearchBudget()).research(["карты"])
-    assert result["error"] == "subagent_model_not_configured"
+# Резерв на основную модель (LLM_MODEL_NAME) и fail-closed при пустой цепочке
+# покрыты в test_agent_stability.py (CAP-5).
 
 
 @pytest.mark.asyncio

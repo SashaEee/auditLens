@@ -105,10 +105,11 @@ async def test_read_source_is_extracted_before_next_model_round(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_failed_fetch_is_not_retried_and_reported(monkeypatch):
+async def test_failed_fetch_is_retried_then_reported_and_cached(monkeypatch):
     from bank_audit.loophole.chat import tools_nanobot as tools
 
     ctx = context()
+    monkeypatch.setattr(tools, "_TOOL_RETRY_DELAYS", (0, 0))
     calls = []
 
     async def unavailable(*args, **kwargs):
@@ -122,12 +123,12 @@ async def test_failed_fetch_is_not_retried_and_reported(monkeypatch):
     first = json.loads(await tool.execute("https://example.test/down"))
     second = json.loads(await tool.execute("https://example.test/down"))
     assert first == second and first["error"] == "source_unavailable"
-    assert len(calls) == 1
+    assert len(calls) == 3  # исходная попытка + два ретрая транзиента; далее — из кэша
     assert "secret" not in json.dumps(ctx.budget.source_failures)
 
 
 @pytest.mark.asyncio
-async def test_model_gets_at_most_one_retry(monkeypatch, tmp_path):
+async def test_model_retries_transient_errors_before_giving_up(monkeypatch, tmp_path):
     from bank_audit.loophole.chat.nanobot_agent import create_nanobot
     from nanobot.providers.base import LLMResponse
 
@@ -148,7 +149,7 @@ async def test_model_gets_at_most_one_retry(monkeypatch, tmp_path):
     monkeypatch.setattr(bot._loop.provider, "_safe_chat_stream", provider)
     monkeypatch.setattr(bot._loop.provider, "_sleep_with_heartbeat", heartbeat)
     result = await ManagedAgent(ctx, bot, path).run()
-    assert calls == [True, True]
+    assert calls == [True, True, True, True]  # штатные ретраи SDK (1, 2, 4) не урезаны
     assert result.stop_reason == "model_unavailable" and result.partial
     assert "secret" not in result.answer
 
@@ -225,8 +226,11 @@ async def test_search_quota_and_duplicate_do_not_make_more_requests(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_extraction_failure_is_not_empty_success(caplog):
+async def test_extraction_failure_is_not_empty_success(monkeypatch, caplog):
+    from bank_audit.loophole.chat import tools_nanobot as tools
     from bank_audit.loophole.chat.tools_nanobot import extract_loopholes
+
+    monkeypatch.setattr(tools, "_EXTRACTION_RETRY_DELAYS", ())
 
     class LLM:
         async def ainvoke(self, messages):

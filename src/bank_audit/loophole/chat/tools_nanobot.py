@@ -19,6 +19,11 @@ from ..config import LoopholeSettings
 from ..models import LoopholeRecord
 from ..network_io import run_blocking_network
 from ..pii_mask import mask as pii_mask
+from ...research.llm_throttle import (
+    extract_retry_after,
+    is_rate_limit_error,
+    is_transient_error,
+)
 
 if TYPE_CHECKING:
     from ..run_budget import ResearchBudget
@@ -28,6 +33,9 @@ log = logging.getLogger(__name__)
 
 _PROMPT_DIR = Path(__file__).parent / "prompt"
 _EXTRACTION_TIMEOUT_SECONDS = 45.0
+# Короткий бэкофф ретраев транзиентных сбоев; общий потолок — дедлайн budget.
+_EXTRACTION_RETRY_DELAYS = (1.0, 2.0)
+_TOOL_RETRY_DELAYS = (1.0, 2.0)
 
 
 def load_prompt(name: str) -> str:
@@ -95,6 +103,7 @@ class ToolContext:
     fetched_sources: dict[str, dict[str, Any]] = field(default_factory=dict)
     budget: ResearchBudget | None = None
     subagents: ResearchSubagents | None = None
+    source_estimated_dates: dict[str, str | None] = field(default_factory=dict)
 
 
 def _ensure_tool_active(context: ToolContext | None) -> None:
@@ -106,27 +115,46 @@ def _ensure_tool_active(context: ToolContext | None) -> None:
         context.budget.ensure_active()
 
 
-_RU_MONTHS = {
-    "январ": 1,
-    "феврал": 2,
-    "март": 3,
-    "апрел": 4,
-    "ма": 5,
-    "июн": 6,
-    "июл": 7,
-    "август": 8,
-    "сентябр": 9,
-    "октябр": 10,
-    "ноябр": 11,
-    "декабр": 12,
-}
-_RU_MONTH_PATTERN = "|".join(f"{stem}\\w*" for stem in _RU_MONTHS)
+async def _call_with_transient_retries(
+    call: Any,
+    *,
+    context: ToolContext | None,
+    label: str,
+) -> Any:
+    """Повторяет транзиентный сбой инструмента до fail-closed кода результата.
+
+    Классификатор — research.llm_throttle, второго не создаём. Исчерпание
+    попыток или нетранзиентная ошибка пробрасываются вызывающему инструменту,
+    который конвертирует их в прежний безопасный код (search_unavailable,
+    source_unavailable, extraction_failed). Транзиент не кэшируется как
+    окончательный до исчерпания ретраев: после успешного повтора источник участвует в исследовании, после исчерпания — прежний fail-closed код.
+    """
+    attempt = 0
+    while True:
+        try:
+            return await call()
+        except Exception as exc:
+            transient = is_transient_error(exc) or is_rate_limit_error(exc)
+            if not transient or attempt >= len(_TOOL_RETRY_DELAYS):
+                raise
+            delay = min(extract_retry_after(exc) or _TOOL_RETRY_DELAYS[attempt], 5.0)
+            attempt += 1
+            log.warning(
+                "[tools_nanobot] %s: транзиентный сбой (%s), повтор %s/%s через %.1f с",
+                label, type(exc).__name__, attempt, len(_TOOL_RETRY_DELAYS), delay,
+            )
+            # Истёкший бюджет не ретраим: ensure_active пробрасывает дедлайн наверх.
+            _ensure_tool_active(context)
+            await asyncio.sleep(delay)
+            _ensure_tool_active(context)
+
+
 _QUERY_MONTH_WINDOW_RE = re.compile(
-    rf"\bза\s+(?P<month>{_RU_MONTH_PATTERN})\s+(?P<year>(?:19|20)\d{{2}})\b",
+    rf"\bза\s+(?P<month>{fetch_decorator.RU_MONTH_PATTERN})\s+(?P<year>(?:19|20)\d{{2}})\b",
     re.IGNORECASE,
 )
 _QUERY_LOWER_BOUND_RE = re.compile(
-    rf"\b(?:не\s+)?(?:раньше|ранее|с)\s+(?P<month>{_RU_MONTH_PATTERN})\s+"
+    rf"\b(?:не\s+)?(?:раньше|ранее|с)\s+(?P<month>{fetch_decorator.RU_MONTH_PATTERN})\s+"
     rf"(?P<year>(?:19|20)\d{{2}})\b",
     re.IGNORECASE,
 )
@@ -151,7 +179,7 @@ def _publication_window(query: str) -> tuple[date, date | None] | None:
         return date(year, 1, 1), date(year + 1, 1, 1)
     month_word = match.group("month").lower()
     month = next(
-        (number for stem, number in _RU_MONTHS.items() if month_word.startswith(stem)),
+        (number for stem, number in fetch_decorator.RU_MONTHS.items() if month_word.startswith(stem)),
         None,
     )
     if month is None:
@@ -164,29 +192,52 @@ def _publication_window(query: str) -> tuple[date, date | None] | None:
     return start, end_exclusive
 
 
+def _outside_window(published: date, window: tuple[date, date | None]) -> bool:
+    start, end_exclusive = window
+    return published < start or (end_exclusive is not None and published >= end_exclusive)
+
+
+def _estimated_publication_date(context: ToolContext, source_url: str) -> date | None:
+    """Оценочная дата (ISO YYYY-MM-DD из URL/текста); повреждённая игнорируется."""
+    raw = context.source_estimated_dates.get(source_url)
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw).strip())
+    except ValueError:
+        return None
+
+
 def _source_publication_period_error(context: ToolContext | None, source_url: str) -> str | None:
-    """Fail-closed проверка источника при заданном пользователем publication window."""
+    """Период первоисточника: точная дата → оценочная (URL/текст) → допуск без даты.
+
+    Fail-closed сохраняется для подтверждённой даты вне окна; источник без
+    любой даты допускается с пометкой неподтверждённой даты.
+    """
     if context is None:
         return None
     window = _publication_window(context.query)
     if window is None:
         return None
     raw_published_at = context.source_publication_dates.get(source_url)
-    if not raw_published_at:
-        return "source_publication_date_unverified"
-    normalized = raw_published_at.removesuffix("Z") + (
-        "+00:00" if raw_published_at.endswith("Z") else ""
-    )
-    try:
-        published_at = datetime.fromisoformat(normalized)
-    except ValueError:
-        return "source_publication_date_unverified"
-    if published_at.tzinfo is None or published_at.utcoffset() is None:
-        return "source_publication_date_unverified"
-    start, end_exclusive = window
-    published_date = published_at.date()
-    if published_date < start or (end_exclusive is not None and published_date >= end_exclusive):
-        return "source_outside_publication_period"
+    if raw_published_at:
+        normalized = raw_published_at.removesuffix("Z") + (
+            "+00:00" if raw_published_at.endswith("Z") else ""
+        )
+        try:
+            published_at = datetime.fromisoformat(normalized)
+        except ValueError:
+            published_at = None
+        if published_at is not None:
+            if _outside_window(published_at.date(), window):
+                return "source_outside_publication_period"
+            return None
+    estimated = _estimated_publication_date(context, source_url)
+    if estimated is not None:
+        if _outside_window(estimated, window):
+            return "source_outside_publication_period"
+        return None
+    # Без подтверждённой и оценочной даты — допуск с пометкой неподтверждённой даты.
     return None
 
 
@@ -199,15 +250,18 @@ def _remember_source_publication_date(
     if context is None or not result:
         return
     published_at = result.get("published_at")
+    estimated = result.get("estimated_published_at")
     for source_url in (requested_url, result.get("url"), result.get("final_url")):
         if source_url:
             context.source_publication_dates[str(source_url)] = published_at
+            context.source_estimated_dates[str(source_url)] = estimated
             if result.get("excerpt"):
                 context.fetched_sources[str(source_url)] = {
                     "url": str(result.get("final_url") or result.get("url") or requested_url),
                     "title": str(result.get("title") or "") or None,
                     "extracted_text": str(result["excerpt"]),
                     "published_at": published_at,
+                    "estimated_published_at": estimated,
                 }
 
 
@@ -268,6 +322,7 @@ def web_fetch(url: str, *, _impl: Any = None) -> dict | None:
         "excerpt": page.excerpt,
         "via": page.via,
         "published_at": getattr(page, "published_at", None),
+        "estimated_published_at": getattr(page, "estimated_published_at", None),
     })
 
 
@@ -321,9 +376,26 @@ async def extract_loopholes(
             llm = _default_llm()
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        async with asyncio.timeout(_EXTRACTION_TIMEOUT_SECONDS):
-            resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
-            _ensure_tool_active(None)
+        attempt = 0
+        while True:
+            try:
+                async with asyncio.timeout(_EXTRACTION_TIMEOUT_SECONDS):
+                    resp = await llm.ainvoke(
+                        [SystemMessage(content=system), HumanMessage(content=user)],
+                    )
+                break
+            except Exception as exc:
+                transient = is_transient_error(exc) or is_rate_limit_error(exc)
+                if not transient or attempt >= len(_EXTRACTION_RETRY_DELAYS):
+                    raise
+                # Транзиентный обрыв ретраится до fail-closed extraction_failed.
+                delay = min(extract_retry_after(exc) or _EXTRACTION_RETRY_DELAYS[attempt], 5.0)
+                attempt += 1
+                log.warning(
+                    "loophole_extraction_retry attempt=%s/%s exception_type=%s delay=%.1f",
+                    attempt, len(_EXTRACTION_RETRY_DELAYS), type(exc).__name__, delay,
+                )
+                await asyncio.sleep(delay)
         raw = _llm_content(resp)
         data = _loose_json_loads(raw)
     except Exception as e:  # noqa: BLE001 — не смешиваем ошибку с отсутствием находок
@@ -390,6 +462,7 @@ def _queue_confirmed_findings(
             "raw_text": source["extracted_text"],
             "source_title": source["title"],
             "published_at": source["published_at"],
+            "estimated_published_at": source.get("estimated_published_at"),
             "description": str(finding.get("description") or ""),
             "category": str(finding.get("category") or "") or None,
             "severity": str(finding.get("severity") or "medium"),
@@ -753,9 +826,14 @@ try:
                                          "next_step": "Проверь найденные источники и составь отчёт."})
                 budget.search_cache[key] = {"error": "search_in_progress"}
             try:
-                result = await run_blocking_network(web_search, query, max_results=max_results)
+                result = await _call_with_transient_retries(
+                    lambda: run_blocking_network(web_search, query, max_results=max_results),
+                    context=self._context, label="web_search",
+                )
                 _ensure_tool_active(self._context)
             except Exception:  # noqa: BLE001 — не раскрываем ответ внешнего сервиса
+                if budget and (budget.stop_reason or budget.expired):
+                    raise
                 result = {"error": "search_unavailable"}
             if budget:
                 _ensure_tool_active(self._context)
@@ -789,7 +867,8 @@ try:
         @property
         def description(self) -> str:
             return (
-                "Загружает страницу по URL и возвращает title, excerpt, status, published_at. "
+                "Загружает страницу по URL и возвращает title, excerpt, status, published_at "
+                "(если точной даты нет — estimated_published_at, оценочную дату из URL/текста). "
                 "Используй после web_search, чтобы получить детали и проверить период."
             )
 
@@ -808,8 +887,13 @@ try:
                                          "next_step": "Составь отчёт по уже прочитанным материалам."})
                 budget.fetch_cache[url] = {"error": "source_in_progress", "url": url}
             try:
-                result = await run_blocking_network(web_fetch, url)
+                result = await _call_with_transient_retries(
+                    lambda: run_blocking_network(web_fetch, url),
+                    context=self._context, label="web_fetch",
+                )
             except Exception:  # noqa: BLE001 — безопасное пояснение вместо сырой ошибки
+                if budget and (budget.stop_reason or budget.expired):
+                    raise
                 result = None
             _ensure_tool_active(self._context)
             if not result or not result.get("excerpt"):
@@ -824,6 +908,7 @@ try:
                 result = {
                     "url": url,
                     "published_at": result.get("published_at") if result else None,
+                    "estimated_published_at": result.get("estimated_published_at") if result else None,
                     "error": period_error,
                 }
             if budget:

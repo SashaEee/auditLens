@@ -84,7 +84,8 @@ def test_count_prompt_stops_after_evidence_without_changing_broad_queries():
     ("Цитата о механизме", "2026-03-01T10:00:00+03:00", 1),
     ("Фраза только из SERP", "2026-03-01T10:00:00+03:00", 0),
     ("Цитата о механизме", "2025-03-01T10:00:00+03:00", 0),
-    ("Цитата о механизме", None, 0),
+    # Без подтверждённой даты — допуск с пометкой неподтверждённой даты (CAP-4).
+    ("Цитата о механизме", None, 1),
 ])
 def test_quantity_counts_only_read_evidence_in_period(quote, published_at, expected):
     from bank_audit.loophole.agent import eligible_findings

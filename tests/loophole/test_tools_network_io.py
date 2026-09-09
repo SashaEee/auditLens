@@ -100,6 +100,8 @@ async def test_tool_timeout_cancels_wait_and_drops_late_fetch_result(monkeypatch
     released = threading.Event()
     finished = threading.Event()
     monkeypatch.setattr(network_io, "NETWORK_TIMEOUT_SECONDS", 0.03)
+    # Одиночная попытка: отмена ожидания и поздний результат не зависят от ретраев.
+    monkeypatch.setattr(tools, "_TOOL_RETRY_DELAYS", ())
 
     def fetch(url):
         try:
@@ -200,18 +202,22 @@ async def test_cancelled_fetch_may_fill_cache_using_its_own_worker_session(monke
     assert context.fetched_sources == {}
 
 
-@pytest.mark.parametrize("timestamp,error", [
-    (None, "source_publication_date_unverified"),
-    ("2026-04-01", "source_publication_date_unverified"),
-    ("2025-12-31T23:59:59+03:00", "source_outside_publication_period"),
-    ("2027-01-01T00:00:00+03:00", "source_outside_publication_period"),
-    ("2026-01-01T00:00:00+03:00", None),
-    ("2026-12-31T23:59:59+03:00", None),
+@pytest.mark.parametrize("timestamp,estimated,error", [
+    (None, None, None),
+    ("2026-04-01", None, None),
+    (None, "2026-06-15", None),
+    (None, "2025-06-15", "source_outside_publication_period"),
+    ("2025-12-31", None, "source_outside_publication_period"),
+    ("2025-12-31T23:59:59+03:00", "2026-06-15", "source_outside_publication_period"),
+    ("2027-01-01T00:00:00+03:00", None, "source_outside_publication_period"),
+    ("2026-01-01T00:00:00+03:00", None, None),
+    ("2026-12-31T23:59:59+03:00", None, None),
 ])
-def test_requested_year_requires_verified_publication_timestamp(timestamp, error):
+def test_requested_year_period_filter_date_hierarchy(timestamp, estimated, error):
     query = "Найди 1 лазейку по кредитным картам за 2026 год"
     context = tools.ToolContext("analyst", 1, object(), query=query,
-                               source_publication_dates={"https://example.test": timestamp})
+                               source_publication_dates={"https://example.test": timestamp},
+                               source_estimated_dates={"https://example.test": estimated})
     assert tools._publication_window(query) == (date(2026, 1, 1), date(2027, 1, 1))
     assert tools._source_publication_period_error(context, "https://example.test") == error
 
@@ -249,6 +255,8 @@ async def test_extraction_timeout_masks_input_and_propagates_external_cancellati
                 cancelled.append(True)
 
     monkeypatch.setattr(tools, "_EXTRACTION_TIMEOUT_SECONDS", 0.02)
+    # Одиночная попытка: маскирование и внешняя отмена не зависят от ретраев.
+    monkeypatch.setattr(tools, "_EXTRACTION_RETRY_DELAYS", ())
     with pytest.raises(RuntimeError, match="extraction_failed"):
         await tools.extract_loopholes("Контакт auditor@example.test", llm=Llm())
     assert "auditor@example.test" not in seen[0]

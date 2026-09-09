@@ -43,8 +43,10 @@ class ResearchBudget:
     cancelled: bool = False
     stop_reason: str | None = None
     phase: str = "waiting_model"
+    # Read-таймаут ответа основной модели и потолок всего вызова SDK с повторами.
+    # Явный 0 по-прежнему отключает read-таймаут; connect-timeout от него не зависит.
     model_timeout_seconds: float = field(default_factory=lambda: _limit(
-        "LOOPHOLE_MODEL_TIMEOUT_SECONDS", 0, 300, minimum=0))
+        "LOOPHOLE_MODEL_TIMEOUT_SECONDS", 600, 3600, minimum=0))
     no_progress_limit: int = field(default_factory=lambda: _limit(
         "LOOPHOLE_NO_PROGRESS_ROUNDS", 3, 10))
     search_limit: int = field(default_factory=lambda: _limit(

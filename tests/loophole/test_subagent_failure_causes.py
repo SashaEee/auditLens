@@ -84,7 +84,7 @@ async def test_qwen_classifier_requests_strict_labels_without_stream_idle_timer(
     async def response(self, **kwargs):
         await self._ensure_client()
         assert self._client.timeout.connect == 10
-        assert self._client.timeout.read is None
+        assert self._client.timeout.read == 60  # HTTP read-таймаут внутри порции
         assert self._client._client.timeout.connect == 10
         body = self._build_kwargs(**kwargs)
         schema = body["extra_body"]["response_format"]["json_schema"]["schema"]
