@@ -8,8 +8,9 @@
 
 Покрывает I/O-матрицу спеки: базовые и привилегированные контексты, 403 без
 active membership+role, active-first исторические строки, отсутствие утечки
-защищённых данных при deny, explicit dev bypass, 401 без trusted principal и
-запрет создания workspace до авторизации. Плюс contract-тест миграции 042.
+защищённых данных при deny, explicit dev bypass, 401 без trusted principal при
+явном opt-out dev-auth и запрет создания workspace до авторизации.
+Плюс contract-тест миграции 042.
 
 Без сети и реальной БД: in-memory SQLite (паттерн test_web.py), авторизация
 НЕ переопределяется — ходим реальными заголовками X-Authentik-Username.
@@ -135,22 +136,23 @@ def _engine_session(SessionLocal):
         s.close()
 
 
-# ── 401/403 без trusted principal ───────────────────────────────────────────
-def test_contexts_without_principal_401(client):
+# ── 401/403 без trusted principal (fail-closed по явному opt-out) ───────────
+def test_contexts_without_principal_401(client, monkeypatch):
+    """LOOPHOLE_DEV_AUTH_ENABLED=0 возвращает fail-closed: без SSO-заголовков 401."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     r = client.get("/api/loophole/contexts")
     assert r.status_code == 401
 
 
-def test_local_dev_auth_enabled_by_explicit_env(client, app_session, monkeypatch):
-    """Локальный bypass доступен только по явному dev-флагу."""
+def test_local_dev_authenticated_by_default(client, app_session):
+    """Без SSO-заголовков и без флагов dev-пользователь авторизован по умолчанию."""
     _grant_membership(app_session, "local-dev")
-    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "1")
 
     r = client.get("/api/loophole/contexts")
 
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
-        "catalog", "sources", "ai_research",
+        "catalog", "ai_research",
     }
 
 
@@ -165,7 +167,7 @@ def test_dev_grant_all_gives_any_principal_all_module_contexts(client, monkeypat
 
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
-        "catalog", "sources", "ai_research", "queue", "admin",
+        "catalog", "ai_research", "queue", "admin",
     }
     assert queue.status_code == 200
     assert queue.json() == {"records": [], "count": 0}
@@ -181,7 +183,7 @@ def test_dev_grant_all_authenticates_local_user_without_sso(client, monkeypatch)
 
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
-        "catalog", "sources", "ai_research", "queue", "admin",
+        "catalog", "ai_research", "queue", "admin",
     }
 
 
@@ -194,19 +196,21 @@ def test_dev_grant_all_requires_exactly_one(client, monkeypatch):
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
 
 
-def test_x_user_id_header_not_trusted(client):
-    """Never: X-User-Id от клиента не является identity."""
+def test_x_user_id_header_not_trusted(client, monkeypatch):
+    """Never: X-User-Id от клиента не является identity. При fail-closed
+    (dev-auth выключен) такой запрос не аутентифицирует никого → 401."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     r = client.get("/api/loophole/contexts", headers={"X-User-Id": "admin"})
     assert r.status_code == 401
 
 
-def test_data_endpoint_without_principal_401(client):
+def test_data_endpoint_without_principal_401(client, monkeypatch):
     """Отказ до чтения данных, а не только на /contexts."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     r = client.get("/api/loophole/records")
     assert r.status_code == 401
 
@@ -218,7 +222,6 @@ def test_contexts_authenticated_without_membership_gets_base_access(client):
     assert r.status_code == 200
     assert {context["id"] for context in r.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
     assert queue.status_code == 403
@@ -256,10 +259,10 @@ def test_contexts_member_gets_catalog_and_research(client, app_session):
     assert r.status_code == 200
     contexts = r.json()["contexts"]
     ids = {c["id"] for c in contexts}
-    assert ids == {"catalog", "sources", "ai_research"}
+    assert ids == {"catalog", "ai_research"}
     titles = {c["title"] for c in contexts}
     assert "Общая база" in titles
-    assert "Новое AI-исследование" in titles
+    assert "AI-исследования" in titles
 
 
 def test_contexts_expert_also_gets_queue(client, app_session):
@@ -269,7 +272,7 @@ def test_contexts_expert_also_gets_queue(client, app_session):
     assert r.status_code == 200
     contexts = r.json()["contexts"]
     ids = {c["id"] for c in contexts}
-    assert ids == {"catalog", "sources", "ai_research", "queue"}
+    assert ids == {"catalog", "ai_research", "queue"}
     queue = next(c for c in contexts if c["id"] == "queue")
     assert queue["title"] == "Очередь верификации"
 
@@ -286,7 +289,6 @@ def test_role_without_active_membership_gets_base_contexts_and_queue_403(
     assert contexts.status_code == 200
     assert {context["id"] for context in contexts.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
     assert queue.status_code == 403
@@ -306,7 +308,6 @@ def test_admin_role_without_active_membership_gets_base_contexts_and_admin_403(
     assert contexts.status_code == 200
     assert {context["id"] for context in contexts.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
     assert admin.status_code == 403
@@ -332,7 +333,6 @@ def test_active_membership_wins_history_but_queue_requires_active_role(
     assert contexts_without_role.status_code == 200
     assert {context["id"] for context in contexts_without_role.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
     }
     assert queue_without_role.status_code == 403
@@ -349,7 +349,6 @@ def test_active_membership_wins_history_but_queue_requires_active_role(
 
     assert {context["id"] for context in contexts_with_role.json()["contexts"]} == {
         "catalog",
-        "sources",
         "ai_research",
         "queue",
     }
@@ -443,12 +442,14 @@ def test_revoked_role_denies_next_request(client, app_session):
     # Контексты тоже пересчитываются: очередь пропадает.
     r3 = client.get("/api/loophole/contexts", headers=_auth("expert"))
     assert {c["id"] for c in r3.json()["contexts"]} == {
-        "catalog", "sources", "ai_research",
+        "catalog", "ai_research",
     }
 
 
 # ── Workspace не создаётся до авторизации ───────────────────────────────────
-def test_workspace_not_created_before_authorization(client, app_session):
+def test_workspace_not_created_before_authorization(client, app_session, monkeypatch):
+    """Fail-closed (dev-auth выключен): workspace не создаётся без principal."""
+    monkeypatch.setenv("LOOPHOLE_DEV_AUTH_ENABLED", "0")
     r = client.post(
         "/api/loophole/workspace", json={"name": "default"},
     )

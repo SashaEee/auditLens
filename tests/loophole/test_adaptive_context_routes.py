@@ -96,7 +96,7 @@ def test_chat_panel_only_in_ai_research():
 def test_header_titles_follow_context():
     """Заголовок показывает название выбранного контекста."""
     jsx = _jsx()
-    assert "Новое AI-исследование" in jsx
+    assert "AI-исследования" in jsx
     assert "Очередь верификации" in jsx
 
 
@@ -150,14 +150,19 @@ def test_table_container_is_the_only_horizontal_scroller():
 
 
 def test_horizontal_scroll_is_limited_to_table_queue_container():
-    """Ни один иной элемент интерфейса не создаёт горизонтальную прокрутку."""
+    """Ни один иной элемент интерфейса не создаёт горизонтальную прокрутку.
+
+    Исключения — внутренние скролл-контейнеры markdown-результата исследования
+    (широкие таблицы сравнения и код-блоки): прокрутка остаётся внутри карточки
+    и не расталкивает страницу целиком.
+    """
     css = re.sub(r"/\*.*?\*/", "", _css(), flags=re.DOTALL)
     scroll_containers = {
         selectors.strip()
         for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
         if re.search(r"\boverflow(?:-x)?\s*:\s*(?:auto|scroll)\b", body)
     }
-    assert scroll_containers == {".lp-table-wrap"}
+    assert scroll_containers == {".lp-table-wrap", ".lp-md-table-wrap", ".lp-safe-markdown pre"}
 
 
 def test_no_100vh_anywhere():

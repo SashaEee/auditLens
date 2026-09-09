@@ -18,17 +18,20 @@ from uuid import uuid4
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from .. import logging_audit
 from .. import repository as repo
 from ..agent import (
     AGENT_UNAVAILABLE_MESSAGE,
+    PARTIAL_STOP_MESSAGES,
     AgentFactory,
     AgentResult,
     AgentRunContext,
     _safe_run_id,
+    eligible_findings,
 )
 from ..research_cases import ResearchCaseService
 from . import clarify as clarify_mod
-from .hooks import AuditHook, public_tool_name
+from .hooks import MODEL_PROTOCOL_ERROR, AuditHook, public_tool_name, redact_stream_text
 from .nanobot_agent import build_prompt
 from .state import ChatState
 
@@ -109,7 +112,7 @@ def _save_agent_audit(
             tools_used=list(result.tools_used),
             duration_ms=int((time.perf_counter() - started_at) * 1000),
             result=result.answer,
-            status="partial" if result.partial else "completed",
+            status="partial" if result.partial or result.errors else "completed",
             error_code=(result.errors[0] if result.errors else None),
             session=session,
         )
@@ -118,19 +121,41 @@ def _save_agent_audit(
         raise AgentAuditError("Аудит запуска недоступен") from None
 
 
+def _public_finding(finding: dict[str, Any], *, research_id: int) -> dict[str, Any]:
+    """Проекция карточки для UI без сырого тела источника и произвольных полей tools."""
+    fields = (
+        "title", "url", "snippet", "evidence_quote", "description", "category", "severity",
+        "bank_slug", "source_title", "published_at", "collected_at", "is_loophole",
+        "record_id", "candidate_id", "source_id", "verdict_confidence", "verdict_reason",
+        "verdict_model", "content_status", "raw_text_len", "raw_text_truncated",
+    )
+    public = {}
+    for key in fields:
+        if key not in finding:
+            continue
+        value = finding[key]
+        if isinstance(value, str):
+            public[key] = redact_stream_text(value, limit=max(10000, len(value) * 2))
+        elif value is None or isinstance(value, (bool, int, float)):
+            public[key] = value
+    return {**public, "research_id": research_id, "status": "preliminary"}
+
+
 def _persist_confirmed_findings(
     findings: list[dict],
     *,
     sources: list[dict] | None,
     workspace_id: int | None,
+    user_id: str | None,
     run_id: str,
     query: str,
     session: Any,
 ) -> list[dict]:
-    """Сохраняет находки только в изолированное исследование.
+    """Сохраняет находки в изолированное исследование и переносит их в общий каталог.
 
-    Общий каталог намеренно не меняется: его пополняет только явный endpoint
-    переноса предварительных источников аналитиком.
+    Подтверждённые находки (is_loophole=TRUE) после persist автоматически
+    импортируются в общий каталог со статусом preliminary; дедупликация и
+    аудит повторных переносов встроены в ``import_preliminary_sources``.
     """
     if session is None or not isinstance(workspace_id, int) or (not findings and not sources):
         return []
@@ -146,12 +171,36 @@ def _persist_confirmed_findings(
         rollback = getattr(session, "rollback", None)
         if callable(rollback):
             rollback()
-        log.warning("[research_persistence] пропущена некорректная находка")
+        log.warning("[research_persistence] пропущена некорректная находка", exc_info=True)
         return []
     research_id = persisted["research_id"]
+    try:
+        imported = ResearchCaseService(session).import_preliminary_sources(
+            research_id, imported_by=user_id or "unknown"
+        )
+        logging_audit.log_action(
+            user_id or "unknown",
+            "import_research_sources",
+            workspace_id=workspace_id,
+            detail={
+                "research_id": research_id,
+                "imported": imported["imported"],
+                "skipped": imported["skipped"],
+                "origin": "auto_after_analysis",
+            },
+            session=session,
+        )
+    except Exception:  # noqa: BLE001 — автоимпорт не должен ронять чат/стрим
+        rollback = getattr(session, "rollback", None)
+        if callable(rollback):
+            rollback()
+        log.warning(
+            "[research_persistence] автоимпорт в общий каталог не выполнен",
+            exc_info=True,
+        )
     candidate_urls = set(persisted.get("candidate_urls", ()))
     return [
-        {**finding, "research_id": research_id, "status": "preliminary"}
+        _public_finding(finding, research_id=research_id)
         for finding in findings
         if finding.get("is_loophole") and str(finding.get("url") or "") in candidate_urls
     ]
@@ -262,28 +311,30 @@ async def run_chat(
             iterations=result.iterations,
             run_id=_normalized_run_id(result.run_id, run_id),
             records=result.records,
+            sources=result.sources,
             stop_reason=result.stop_reason,
         )
     answer = result.answer
     tools_used = list(result.tools_used)
+    can_preserve_findings = not result.errors or set(result.errors) <= {"time_budget"}
     records = _persist_confirmed_findings(
         list(result.records),
-        sources=None,
+        sources=list(result.sources),
         workspace_id=workspace_id,
+        user_id=state.get("user_id"),
         run_id=_normalized_run_id(result.run_id, run_id),
         query=state["query"],
         session=session,
-    )
+    ) if can_preserve_findings else []
     agent_unavailable = (
-        result.stop_reason == "error"
-        and "agent_error" in result.errors
-        and not records
+        result.stop_reason == MODEL_PROTOCOL_ERROR
+        or (result.stop_reason == "error" and "agent_error" in result.errors and not records)
     )
     if agent_unavailable:
         answer = AGENT_UNAVAILABLE_MESSAGE
 
     # Сохраняем ответ в БД.
-    if workspace_id and answer:
+    if workspace_id and answer and result.stop_reason != MODEL_PROTOCOL_ERROR:
         try:
             repo.add_chat_message(workspace_id, "assistant", answer, session=session)
         except Exception:
@@ -414,8 +465,12 @@ async def stream_chat(
                 stream_failed = True
                 log.warning("[stream_chat] managed agent прерван — возвращаем partial")
 
+        protocol_failed = not hook.validate_answer()
         flush_stream = getattr(hook, "flush_stream_for_sse", None)
-        if callable(flush_stream):
+        if (
+            callable(flush_stream) and not protocol_failed
+            and hook.stop_reason not in {*PARTIAL_STOP_MESSAGES, "requested_count"}
+        ):
             tail = flush_stream()
             if tail:
                 streamed_any = True
@@ -435,28 +490,39 @@ async def stream_chat(
         if stream_failed and "agent_stream_error" not in errors:
             errors.append("agent_stream_error")
         records = []
-        if not errors:
+        budget_expired_only = bool(errors) and set(errors) <= set(PARTIAL_STOP_MESSAGES)
+        if not errors or budget_expired_only:
+            findings = (
+                eligible_findings(context) if budget_expired_only else context.pending_records
+            )
+            finding_urls = {str(finding.get("url")) for finding in findings}
             records = _persist_confirmed_findings(
-                context.pending_records,
+                findings,
                 sources=list({
                     str(source.get("url")): source
                     for source in context.fetched_sources.values()
                     if isinstance(source, dict) and source.get("url")
+                    and (not budget_expired_only or str(source.get("url")) in finding_urls)
                 }.values()),
                 workspace_id=workspace_id,
+                user_id=state.get("user_id"),
                 run_id=run_id,
                 query=state["query"],
                 session=session,
             )
         if not records and not errors:
             records = hook.records
-        terminal_provider_error = provider_failed and not streamed_any and not records
+        terminal_provider_error = protocol_failed or (
+            provider_failed and not streamed_any and not records
+        )
         partial_explanation = ""
         if terminal_provider_error:
             answer = AGENT_UNAVAILABLE_MESSAGE
         elif errors:
             partial_explanation = (
-                "Исследование завершено частично: достигнут лимит итераций."
+                next(PARTIAL_STOP_MESSAGES[code] for code in errors if code in PARTIAL_STOP_MESSAGES)
+                if any(code in PARTIAL_STOP_MESSAGES for code in errors)
+                else "Исследование завершено частично: достигнут лимит итераций."
                 if "max_iterations" in errors
                 else "Исследование завершено частично: выполнение остановлено безопасно."
             )
@@ -465,7 +531,7 @@ async def stream_chat(
             answer=answer,
             tools_used=tuple(dict.fromkeys(hook.tools_used)),
             errors=tuple(errors),
-            partial=bool(errors),
+            partial=bool(errors) and not protocol_failed,
             run_id=run_id,
             records=tuple(records),
             iterations=hook.iterations,
@@ -505,12 +571,16 @@ async def stream_chat(
                     "phase": "error",
                     "error": "agent_unavailable",
                     "message": AGENT_UNAVAILABLE_MESSAGE,
+                    "code": MODEL_PROTOCOL_ERROR if protocol_failed else "agent_unavailable",
+                    "partial": False,
                 },
             }
             return
         yield {
             "event": "phase",
-            "data": {"phase": "answer", "partial": bool(errors)},
+            "data": {
+                "phase": "answer", "partial": bool(errors), "stop_reason": hook.stop_reason,
+            },
         }
         # Полный ответ дошлём ТОЛЬКО если модель не стримила дельты. Иначе токен
         # с полным текстом дублирует уже показанный поток (или плодит пустой
@@ -521,7 +591,7 @@ async def stream_chat(
             yield {"event": "partial", "data": {"message": partial_explanation}}
 
         # Сохраняем ответ.
-        if workspace_id and answer:
+        if workspace_id and answer and state.get("persist_messages", True):
             try:
                 repo.add_chat_message(workspace_id, "assistant", answer, session=session)
             except Exception:
@@ -585,6 +655,34 @@ def _map_event(event: Any, hook: Any) -> dict | None:
     )
 
     ev_type = getattr(event, "type", None)
+    if ev_type == "audit.tool":
+        data = getattr(event, "metadata", {})
+        if (data.get("name") != "audit_extract_loopholes"
+                or data.get("status") not in {"running", "completed", "failed"}):
+            return None
+        # Сбой одного источника уже учтён в реестре и не отменяет валидные находки.
+        hook._add_tool(data["name"])
+        return {"event": "tool_call" if data["status"] == "running" else "tool_result",
+                "data": {"name": data["name"], "status": data["status"]}}
+    if ev_type == "subagent.progress":
+        from .subagents import public_event
+
+        data = public_event(getattr(event, "metadata", None))
+        return {"event": "subagent", "data": data} if data is not None else None
+    if ev_type == "run.progress":
+        metadata = getattr(event, "metadata", {})
+        stage = metadata.get("stage")
+        if stage not in {"waiting_model", "research_tools"}:
+            return None
+        elapsed = metadata.get("elapsed_seconds")
+        if not isinstance(elapsed, int) or isinstance(elapsed, bool) or elapsed < 0:
+            return None
+        return {"event": "phase", "data": {
+            "phase": "execute", "stage": stage, "elapsed_seconds": elapsed,
+            "message": (
+                "Проверка источников" if stage == "research_tools" else "Ожидание ответа модели"
+            ),
+        }}
     if ev_type == STREAM_EVENT_TEXT_DELTA:
         # Текстовые дельты только накапливаются в hook. Полный redacted answer
         # публикуется после завершения stream через flush_stream_for_sse.

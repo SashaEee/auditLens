@@ -65,7 +65,7 @@ async def test_classify_and_persist(session):
     assert row["is_loophole"] == 1
     assert row["verdict_confidence"] == 0.88
     assert row["verdict_model"] == "test-model"
-    assert row["status"] == "classified"
+    assert row["status"] == "preliminary"
 
 
 @pytest.mark.asyncio

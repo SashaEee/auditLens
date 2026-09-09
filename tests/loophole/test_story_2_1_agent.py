@@ -885,7 +885,7 @@ async def test_managed_agent_masks_unhooked_result_content_before_return():
 def test_ui_shows_tool_names_without_technical_payloads():
     source = Path("src/bank_audit/loophole/static/loophole.jsx").read_text(encoding="utf-8")
 
-    assert "Использованные инструменты" in source
+    assert "Работа инструментов" in source
     assert "ev.args" not in source
     assert "ev.result" not in source
 

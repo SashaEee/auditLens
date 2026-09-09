@@ -7,6 +7,9 @@ const API = "/api/loophole";
 // Максимум записей в одной CSV-выгрузке (дублирует EXPORT_LIMIT на бэкенде).
 const EXPORT_LIMIT = 10000;
 
+// Размер страницы общей базы (дублирует верхнюю границу limit на бэкенде).
+const PAGE_SIZE = 50;
+
 // Фазы, которые реально сообщает nanobot-пайплайн, включая финальное done.
 // Пользователь видит только русские подписи, протокольные ключи не меняются.
 const PHASES = ["clarify", "execute", "answer", "done"];
@@ -19,6 +22,136 @@ const PHASE_LABELS = {
   done: "Готово",
   error: "Ошибка",
 };
+
+const SUBAGENT_STAGES = {
+  queued: "Ожидает свободного исследователя",
+  searching: "Поиск материалов", classifying: "Анализ описаний",
+  completed: "Завершено", failed: "Не удалось завершить", cancelled: "Прервано",
+};
+const SUBAGENT_CATEGORIES = {
+  loophole: "Лазейка", fraud: "Признаки мошенничества",
+  irrelevant: "Не относится", insufficient_data: "Недостаточно данных",
+};
+const SUBAGENT_CONTENT_TYPES = {
+  article: "Статья", post: "Пост", comment: "Комментарий", unknown: "Материал",
+};
+const SUBAGENT_ERRORS = {
+  timeout: "Не хватило времени на поиск и анализ.",
+  search_error: "Поисковик временно недоступен.",
+  model_error: "Младшая модель не смогла завершить ответ.",
+  invalid_response: "Младшая модель вернула некорректную разметку материалов.",
+};
+
+function subagentSourceHref(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password
+      ? url.href : null;
+  } catch { return null; }
+}
+
+function acceptSubagentEvent(value) {
+  if (!value || !/^subagent-[1-6](?:-retry-[12])?$/.test(value.id)
+      || !Object.hasOwn(SUBAGENT_STAGES, value.status)
+      || !Number.isInteger(value.total) || !Number.isInteger(value.completed)
+      || value.completed < 0 || value.total < value.completed || value.total > 8) return null;
+  return {
+    id: value.id, status: value.status, title: String(value.title || "").slice(0, 200),
+    total: value.total, completed: value.completed,
+    retry_of: /^subagent-[1-6](?:-retry-1)?$/.test(value.retry_of) ? value.retry_of : null,
+    error_code: Object.hasOwn(SUBAGENT_ERRORS, value.error_code) ? value.error_code : null,
+    items: (Array.isArray(value.items) ? value.items : []).slice(0, 8)
+      .filter(item => item && Object.hasOwn(SUBAGENT_CATEGORIES, item.category))
+      .map(item => ({
+        title: String(item.title || "Материал").slice(0, 200),
+        reason: String(item.reason || "").slice(0, 300),
+        category: item.category,
+        content_type: Object.hasOwn(SUBAGENT_CONTENT_TYPES, item.content_type)
+          ? item.content_type : "unknown",
+        url: subagentSourceHref(item.url),
+      })),
+  };
+}
+
+function ToolActivity({events = [], active = false}) {
+  if (!events.length) return null;
+  const calls = [];
+  for (const event of events) {
+    if (event.kind === "call") calls.push({...event, status: "running"});
+    else {
+      const pending = calls.find(call => call.name === event.name && call.status === "running");
+      if (pending) pending.status = event.status;
+      else calls.push(event);
+    }
+  }
+  const labels = {
+    audit_web_search: "Веб-поиск", audit_research_subagents: "Младшие исследователи",
+    audit_web_fetch: "Чтение источника", audit_extract_loopholes: "Извлечение признаков",
+    audit_db_query: "Запрос к базе", audit_table_load: "Загрузка таблицы",
+    audit_export: "Подготовка выгрузки",
+  };
+  return <div className="lp-tool-events" aria-label="Работа инструментов" role="status">
+    {calls.slice(-8).map((call, i) => <div key={i} className="lp-tool-activity">
+      <span>{labels[call.name] || "Инструмент"}</span>
+      <span>{call.status === "running" ? (active ? "Выполняется" : "Прервано")
+        : call.status === "failed" ? "Ошибка" : "Завершено"}</span>
+    </div>)}
+  </div>;
+}
+
+function SubagentCards({agents}) {
+  if (!agents.length) return null;
+  return <section className="lp-subagent-list" aria-label="Младшие исследователи">
+    <div className="lp-subtasks-title">Младшие исследователи</div>
+    <p className="lp-subagent-note">Предварительный отбор по описаниям</p>
+    {agents.map(agent => {
+      const busy = ["queued", "searching", "classifying"].includes(agent.status);
+      return <article key={agent.id} className={"lp-subagent-card lp-subagent-" + agent.status}
+                      aria-busy={busy}>
+        <div className="lp-subagent-heading">
+          <span className={"lp-subagent-indicator" + (busy ? " is-active" : "")} aria-hidden="true" />
+          <strong>Исследователь {agent.id.split("-")[1]}
+            {agent.retry_of ? ` · замена ${agent.id.split("-")[3]}` : ""}</strong>
+          <span role="status" className="lp-subagent-status">{SUBAGENT_STAGES[agent.status]}</span>
+        </div>
+        <div className="lp-subagent-query">{agent.title}</div>
+        {agent.retry_of && <p className="lp-subagent-note">
+          Продолжает необработанные материалы предыдущего исследователя.
+        </p>}
+        <div className="lp-subagent-steps" aria-hidden="true">
+          <span className="is-reached">Поиск</span><span>→</span>
+          <span className={agent.total > 0 ? "is-reached" : ""}>Анализ</span><span>→</span>
+          <span className={agent.status === "completed" ? "is-reached" : ""}>Результат</span>
+        </div>
+        {agent.total > 0 && <div className="lp-subagent-count">
+          Размечено {agent.completed} из {agent.total} материалов
+        </div>}
+        {agent.status === "failed" && <p className="lp-subagent-note">
+          {SUBAGENT_ERRORS[agent.error_code]
+            || "Отбор неполный. Основной аналитик получил информацию о сбое."}
+        </p>}
+        {agent.status === "completed" && agent.total === 0 && <p className="lp-subagent-note">
+          По этому запросу материалы не найдены.
+        </p>}
+        {agent.items.length > 0 && <details className="lp-subagent-results" open>
+          <summary>Предварительные метки · {agent.items.length}</summary>
+          {agent.items.map((item, index) => <div className="lp-subagent-item" key={index}>
+            <div className="lp-subagent-item-meta">
+              <span className={"lp-subagent-label lp-subagent-label-" + item.category}>
+                {SUBAGENT_CATEGORIES[item.category]}
+              </span>
+              <span>{SUBAGENT_CONTENT_TYPES[item.content_type]}</span>
+            </div>
+            {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a>
+              : <span>{item.title}</span>}
+            <p>{item.reason}</p>
+          </div>)}
+          <p className="lp-subagent-note">Выводы требуют проверки первоисточников.</p>
+        </details>}
+      </article>;
+    })}
+  </section>;
+}
 
 function parserTargetHref(target) {
   const value = String(target || "").trim();
@@ -46,21 +179,120 @@ function publicChatErrorMessage(value) {
   return message;
 }
 
+// ── Markdown-рендерер результата исследования ───────────────────────────────
+// Зеркало python-рендерера loophole/markdown_render.py (PDF-экспорт): заголовки,
+// списки, таблицы, цитаты, код-блоки, ссылки. Весь вход сначала экранируется —
+// в markdown попадает недоверенный вывод LLM (stored XSS через <img onerror=…>).
+
+function lpEscAttr(value) {
+  return String(value == null ? "" : value)
+    .replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function lpInlineMarkdown(text) {
+  return String(text)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    // markdown-ссылки [текст](url) — только http(s), URL через lpEscAttr.
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      (_, label, url) => `<a href="${lpEscAttr(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    // __жирный__ / _курсив_ — только на границах слова; JS \w без кириллицы,
+    // поэтому класс слова задан явно.
+    .replace(/(^|[^A-Za-zА-Яа-яЁё0-9_])__([^_]+?)__(?![A-Za-zА-Яа-яЁё0-9])/g, "$1<strong>$2</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/(^|[^A-Za-zА-Яа-яЁё0-9_])_([^_]+?)_(?![A-Za-zА-Яа-яЁё0-9])/g, "$1<em>$2</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/~~(.+?)~~/g, "<s>$1</s>");
+}
+
 function SafeMarkdown({content}) {
   const lines = String(content || "").split(/\r?\n/);
   const blocks = [];
   let list = [];
-  const flushList = () => { if (list.length) { blocks.push(<ul key={`list-${blocks.length}`}>{list.map((item, i) => <li key={i}>{item}</li>)}</ul>); list = []; } };
-  lines.forEach((raw) => {
+  let listOrdered = false;
+  let tableHead = null;
+  let tableRows = [];
+  let quote = [];
+  let code = null;
+  const flushList = () => {
+    if (!list.length) return;
+    const Tag = listOrdered ? "ol" : "ul";
+    blocks.push(<Tag key={`l-${blocks.length}`}>{list.map((item, i) =>
+      <li key={i} dangerouslySetInnerHTML={{__html: lpInlineMarkdown(item)}} />)}</Tag>);
+    list = [];
+    listOrdered = false;
+  };
+  const flushTable = () => {
+    if (!tableHead) return;
+    blocks.push(<div key={`t-${blocks.length}`} className="lp-md-table-wrap"><table>
+      <thead><tr>{tableHead.map((cell, i) =>
+        <th key={i} dangerouslySetInnerHTML={{__html: lpInlineMarkdown(cell)}} />)}</tr></thead>
+      <tbody>{tableRows.map((row, i) => <tr key={i}>{row.map((cell, j) =>
+        <td key={j} dangerouslySetInnerHTML={{__html: lpInlineMarkdown(cell)}} />)}</tr>)}</tbody>
+    </table></div>);
+    tableHead = null;
+    tableRows = [];
+  };
+  const flushQuote = () => {
+    if (!quote.length) return;
+    blocks.push(<blockquote key={`q-${blocks.length}`}
+      dangerouslySetInnerHTML={{__html: quote.map(lpInlineMarkdown).join("<br>")}} />);
+    quote = [];
+  };
+  const flushBlocks = () => { flushList(); flushTable(); flushQuote(); };
+  const flushCode = () => {
+    if (code === null) return;
+    // React сам экранирует children — код выводим как текст.
+    blocks.push(<pre key={`c-${blocks.length}`}><code>{code.join("\n")}</code></pre>);
+    code = null;
+  };
+  lines.forEach((raw, idx) => {
+    if (code !== null) {
+      if (/^\s*```/.test(raw)) flushCode(); else code.push(raw);
+      return;
+    }
+    if (/^\s*```/.test(raw)) { flushBlocks(); code = []; return; }
+    const quoteMatch = /^>\s?(.*)$/.exec(raw);
+    if (quoteMatch) { flushList(); flushTable(); quote.push(quoteMatch[1]); return; }
+    flushQuote();
     const line = raw.trim();
-    if (!line) { flushList(); return; }
-    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
-    const bullet = /^[-*]\s+(.+)$/.exec(line);
-    if (heading) { flushList(); const Tag = `h${heading[1].length + 2}`; blocks.push(<Tag key={`h-${blocks.length}`}>{heading[2]}</Tag>); }
-    else if (bullet) list.push(bullet[1]);
-    else { flushList(); blocks.push(<p key={`p-${blocks.length}`}>{raw}</p>); }
+    if (line.startsWith("|")) {
+      const cells = line.split("|").map((cell) => cell.trim()).slice(1, -1);
+      if (/^[-:\s|]+$/.test(line.replace(/\|/g, ""))) return;
+      flushList();
+      if (!tableHead) tableHead = cells; else tableRows.push(cells);
+      return;
+    }
+    flushTable();
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushList();
+      const Tag = `h${Math.min(heading[1].length + 2, 6)}`;
+      blocks.push(<Tag key={`h-${idx}`}
+        dangerouslySetInnerHTML={{__html: lpInlineMarkdown(heading[2])}} />);
+      return;
+    }
+    if (/^---+$/.test(line)) { flushList(); blocks.push(<hr key={`hr-${idx}`} />); return; }
+    const ordered = /^\d+\.\s+(.+)$/.exec(raw);
+    if (ordered) {
+      if (list.length && !listOrdered) flushList();
+      listOrdered = true;
+      list.push(ordered[1]);
+      return;
+    }
+    const bullet = /^[-*•]\s+(.+)$/.exec(raw);
+    if (bullet) {
+      if (list.length && listOrdered) flushList();
+      listOrdered = false;
+      list.push(bullet[1]);
+      return;
+    }
+    flushList();
+    if (!line) return;
+    blocks.push(<p key={`p-${idx}`} dangerouslySetInnerHTML={{__html: lpInlineMarkdown(raw)}} />);
   });
-  flushList();
+  flushCode();
+  flushBlocks();
   return <div className="lp-safe-markdown">{blocks}</div>;
 }
 
@@ -139,6 +371,8 @@ function useFocusLayer(active, containerRef, onClose, initialFocusRef, restoreFa
 function LoopholeApp() {
   // ── Таблица / фильтры ──────────────────────────────────────────────────────
   const [records, setRecords] = useState([]);
+  const [recordsTotal, setRecordsTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   // Ошибка загрузки записей (story 1.4): отдельная поверхность с «Повторить»,
   // чтобы сбой не маскировался под пустой результат.
@@ -151,6 +385,7 @@ function LoopholeApp() {
   const [fFrom, setFFrom] = useState("");
   const [fTo, setFTo] = useState("");
   const [fVerification, setFVerification] = useState("all");
+  const [fClassification, setFClassification] = useState("all");
   // Сортировка
   const [sortKey, setSortKey] = useState("verdict_confidence");
   const [sortDir, setSortDir] = useState("desc");
@@ -178,11 +413,38 @@ function LoopholeApp() {
   const [chatLoading, setChatLoading] = useState(false);
   const [workspaceId, setWorkspaceId] = useState(null);
   const chatScrollRef = useRef(null);
+  const [researches, setResearches] = useState([]);
+  const [researchWorkspace, setResearchWorkspace] = useState(null);
+  const [researchReadOnly, setResearchReadOnly] = useState(true);
+  const [researchLoading, setResearchLoading] = useState(true);
+  const [researchError, setResearchError] = useState("");
+  const [historyListError, setHistoryListError] = useState("");
+  const [historyListLoading, setHistoryListLoading] = useState(false);
+  const [researchActionBusy, setResearchActionBusy] = useState(false);
+  const [savedReports, setSavedReports] = useState([]);
+  const [selectedReportId, setSelectedReportId] = useState("");
+  const [researchShareUrl, setResearchShareUrl] = useState("");
+  const [researchDeleteConfirm, setResearchDeleteConfirm] = useState(false);
+  const [researchDeleteError, setResearchDeleteError] = useState("");
+  const [researchDeleteTarget, setResearchDeleteTarget] = useState(null);
+  const researchRequestRef = useRef(0);
+  const historyListRequestRef = useRef(0);
+  const researchActionRef = useRef(false);
+  const researchAccessRef = useRef({readOnly: true, loading: true});
+  const researchTargetRef = useRef({token: new URLSearchParams(window.location.search).get("share")});
+  const chatBusyRef = useRef(false);
+  const clarifyBusyRef = useRef(false);
+  const researchDeleteDialogRef = useRef(null);
+  const researchDeleteCancelRef = useRef(null);
+  const researchTabRef = useRef(null);
 
   // ── Авторизация и рабочие контексты (story 1.1) ──────────────────────────
   // authz: null = проверяем доступ, false = отказ (401/403),
-  // "error" = сетевая ошибка загрузки контекстов, иначе {contexts}.
+  // "error" = сетевая ошибка загрузки контекстов, иначе {contexts, capabilities}.
   const [authz, setAuthz] = useState(null);
+  const canMarkVerdict = !!(authz && authz.capabilities
+    && authz.capabilities.can_mark_verdict === true);
+  const VerdictControl = canMarkVerdict ? "button" : "span";
   const [contextsRetry, setContextsRetry] = useState(0);  // +1 = повторить /contexts
   const [view, setView] = useState("catalog"); // catalog | sources | ai_research | queue | admin
   // Панель агента живёт только в контексте AI-исследования (story 1.3): на
@@ -225,6 +487,7 @@ function LoopholeApp() {
 
   // ── Новый пайплайн: фазы / подзадачи / уточняющие вопросы ────────────────
   const [phase, setPhase] = useState(null);                // текущая фаза
+  const [researchActivity, setResearchActivity] = useState(null); // безопасный stage/elapsed из SSE
   const [subtasks, setSubtasks] = useState([]);            // [{title, status}]
   const [pendingQuestions, setPendingQuestions] = useState(null); // null | array
   const [pendingQuery, setPendingQuery] = useState("");           // исходный запрос, вызвавший clarify
@@ -233,6 +496,7 @@ function LoopholeApp() {
   const [clarifySubmitting, setClarifySubmitting] = useState(false); // идёт /clarify/answer
   const [clarifyError, setClarifyError] = useState("");    // inline-ошибка с восстановлением ответа
   const [toolEvents, setToolEvents] = useState([]);        // badges tool_call/tool_result
+  const [subagents, setSubagents] = useState([]);
 
   // ── Парсеры ───────────────────────────────────────────────────────────────
   const [parsers, setParsers] = useState([]);
@@ -264,21 +528,19 @@ function LoopholeApp() {
         if (!r.ok) { setAuthz(false); return null; }
         return r.json();
       })
-      .then(d => { if (d) setAuthz({contexts: d.contexts || []}); })
+      .then(d => {
+        if (!d) return;
+        const contexts = d.contexts || [];
+        setAuthz({
+          contexts,
+          capabilities: d.capabilities || {},
+        });
+        setView(current => (
+          contexts.some(context => context.id === current) ? current : "catalog"
+        ));
+      })
       .catch(() => setAuthz("error"));
   }, [contextsRetry]);
-
-  // Workspace создаётся только ПОСЛЕ успешной авторизации (не раньше).
-  useEffect(() => {
-    if (!authz || !authz.contexts) return;
-    fetch(`${API}/workspace`, {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({name: "default"}),
-    })
-      .then(r => r.json())
-      .then(d => setWorkspaceId(d.workspace_id))
-      .catch(() => {});
-  }, [authz]);
 
   // Загружаем список банков для фильтра — тоже только после авторизации.
   useEffect(() => {
@@ -299,6 +561,9 @@ function LoopholeApp() {
       if (fFrom) params.set("period_from", fFrom);
       if (fTo) params.set("period_to", fTo);
       params.set("verification_status", fVerification);
+      params.set("classification", fClassification);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(page * PAGE_SIZE));
       const url = `${API}/catalog${params.toString() ? "?" + params.toString() : ""}`;
       const r = await fetch(url);
       if (requestGeneration !== recordsRequestRef.current) return;
@@ -306,19 +571,21 @@ function LoopholeApp() {
       const d = await r.json();
       if (requestGeneration !== recordsRequestRef.current) return;
       setRecords(d.records || []);
+      setRecordsTotal(Number.isInteger(d.total) ? d.total : (d.records || []).length);
       setRecordsError(null);
     } catch (e) {
       if (requestGeneration !== recordsRequestRef.current) return;
       // Ошибка не маскируется под пустой результат: отдельная поверхность
       // с «Повторить», старые данные не подменяют актуальное состояние.
       setRecords([]);
+      setRecordsTotal(0);
       setRecordsError(String(e));
     } finally {
       if (requestGeneration === recordsRequestRef.current) {
         setLoading(false);
       }
     }
-  }, [fText, fBanks, fFrom, fTo, fVerification]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, page]);
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
@@ -326,8 +593,12 @@ function LoopholeApp() {
     return () => clearTimeout(timer);
   }, [loadRecords, authz, fText]);
 
-  // Сброс выделения и развёрнутых строк при смене фильтров.
-  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo, fVerification]);
+  // Сброс страницы при смене фильтров (выборка начинается с первой страницы).
+  useEffect(() => { setPage(0); }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
+
+  // Сброс выделения и развёрнутых строк при смене фильтров и страницы.
+  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); },
+           [fText, fBanks, fFrom, fTo, fVerification, fClassification, page]);
 
   // ── Сортировка на клиенте ──────────────────────────────────────────────────
   const sortedRecords = useMemo(() => {
@@ -379,6 +650,7 @@ function LoopholeApp() {
   // Сброс фильтров каталога — действие «Сбросить» (фильтры + пустая выборка).
   const resetFilters = () => {
     setFText(""); setFBanks([]); setFFrom(""); setFTo(""); setFVerification("all");
+    setFClassification("all"); setPage(0);
   };
 
   // ── CSV-экспорт выделенных записей ─────────────────────────────────────────
@@ -401,7 +673,7 @@ function LoopholeApp() {
 
   const exportCSV = useCallback(async () => {
     if (selected.size === 0) {
-      showToast("Сначала выделите перечень лазеек для выгрузки в CSV.", "info");
+      showToast("Сначала выделите записи для выгрузки в CSV.", "info");
       return;
     }
     if (selected.size > EXPORT_LIMIT) {
@@ -438,6 +710,237 @@ function LoopholeApp() {
     toastTimerRef.current = setTimeout(() => setToast(null), 4000);
   };
 
+  // История загружается после проверки доступа. Поколение запроса исключает
+  // подмену выбранного исследования поздним ответом при быстрых переходах.
+  const resetResearch = () => {
+    setWorkspaceId(null);
+    setResearchWorkspace(null);
+    setResearchReadOnly(true);
+    researchAccessRef.current = {readOnly: true, loading: true};
+    setChat([]); setChatInput(""); setPhase(null); setSubtasks([]);
+    setResearchActivity(null);
+    setPendingQuestions(null); setPendingQuery(""); setClarificationToken(null);
+    setAnswersByQ({}); setClarifyError(""); setToolEvents([]);
+    setSubagents([]);
+    setSavedReports([]); setSelectedReportId(""); setResearchShareUrl("");
+  };
+
+  const applyResearch = (data) => {
+    if (!data.workspace || !data.workspace.workspace_id) throw new Error("Неверный ответ истории");
+    const readOnly = data.read_only !== false;
+    setResearchWorkspace(data.workspace);
+    setWorkspaceId(data.workspace.workspace_id);
+    setResearchReadOnly(readOnly);
+    researchAccessRef.current = {readOnly, loading: false};
+    setChat(data.messages || []);
+    // Сервер возвращает отчёты по возрастанию; показываем последние первыми.
+    const reports = [...(data.reports || [])].reverse();
+    setSavedReports(reports);
+    setSelectedReportId(reports.length ? String(reports[0].report_id) : "");
+  };
+
+  const clearSharedLocation = () => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("share")) return;
+    url.searchParams.delete("share");
+    window.history.replaceState(null, "", url);
+  };
+
+  const loadResearchList = async () => {
+    const generation = ++historyListRequestRef.current;
+    setHistoryListLoading(true);
+    setHistoryListError("");
+    try {
+      const response = await fetch(`${API}/workspaces`);
+      if (!response.ok) throw new Error("Не удалось загрузить историю исследований.");
+      const data = await response.json();
+      if (!Array.isArray(data.workspaces)) throw new Error("Не удалось загрузить историю исследований.");
+      if (generation === historyListRequestRef.current) {
+        setResearches(data.workspaces);
+        setResearchWorkspace(current => current
+          ? data.workspaces.find(item => item.workspace_id === current.workspace_id) || current
+          : current);
+      }
+      return data.workspaces;
+    } catch (error) {
+      if (generation === historyListRequestRef.current) {
+        setHistoryListError("Не удалось загрузить историю исследований. Повторите запрос.");
+      }
+      return null;
+    } finally {
+      if (generation === historyListRequestRef.current) setHistoryListLoading(false);
+    }
+  };
+
+  const openResearch = async (target) => {
+    if (chatBusyRef.current || clarifyBusyRef.current || researchActionRef.current) return;
+    const generation = ++researchRequestRef.current;
+    researchTargetRef.current = target;
+    resetResearch();
+    setResearchLoading(true); setResearchError("");
+    if (!target.token) clearSharedLocation();
+    try {
+      const response = await fetch(target.token
+        ? `${API}/shared/${encodeURIComponent(target.token)}`
+        : `${API}/history/${target.id}`);
+      if (!response.ok) throw new Error(response.status === 404
+        ? "Исследование недоступно: оно удалено или ссылка больше не действует."
+        : "Не удалось открыть исследование. Проверьте доступ и повторите запрос.");
+      const data = await response.json();
+      if (generation !== researchRequestRef.current) return;
+      applyResearch(data);
+    } catch (error) {
+      if (generation === researchRequestRef.current) {
+        setResearchError(error.message || "Не удалось открыть исследование.");
+      }
+    } finally {
+      if (generation === researchRequestRef.current) {
+        researchAccessRef.current.loading = false;
+        setResearchLoading(false);
+      }
+    }
+  };
+
+  const createResearch = async (showResearch = true) => {
+    if (chatBusyRef.current || clarifyBusyRef.current || researchActionRef.current) return;
+    researchActionRef.current = true;
+    setResearchActionBusy(true);
+    const generation = ++researchRequestRef.current;
+    // Повтор после сбоя создания должен снова создавать, а не открывать
+    // предыдущую историю, которая пока остаётся на экране.
+    researchTargetRef.current = {create: true, showResearch};
+    setResearchLoading(true); setResearchError("");
+    researchAccessRef.current.loading = true;
+    try {
+      const response = await fetch(`${API}/workspace`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name: null}),
+      });
+      if (!response.ok) throw new Error("Не удалось создать исследование. Повторите запрос.");
+      const data = await response.json();
+      if (!data.workspace_id) throw new Error("Не удалось создать исследование.");
+      if (generation !== researchRequestRef.current) return;
+      resetResearch();
+      researchTargetRef.current = {id: data.workspace_id};
+      clearSharedLocation();
+      applyResearch({workspace: {workspace_id: data.workspace_id, name: "Новое исследование"},
+        messages: [], reports: [], read_only: false});
+      if (showResearch) setView("ai_research");
+      await loadResearchList();
+    } catch (error) {
+      if (generation === researchRequestRef.current) {
+        setResearchError(error.message || "Не удалось создать исследование.");
+      }
+    } finally {
+      if (generation === researchRequestRef.current) {
+        researchAccessRef.current.loading = false;
+        setResearchLoading(false);
+      }
+      researchActionRef.current = false;
+      setResearchActionBusy(false);
+    }
+  };
+
+  const initializeResearch = async () => {
+    const target = researchTargetRef.current;
+    if (target.token) {
+      setView("ai_research");
+      loadResearchList();
+      await openResearch(target);
+      return;
+    }
+    const generation = researchRequestRef.current;
+    const list = await loadResearchList();
+    if (generation !== researchRequestRef.current) return;
+    if (list === null) {
+      researchAccessRef.current.loading = false;
+      setResearchLoading(false);
+      return;
+    }
+    if (list.length) await openResearch({id: list[0].workspace_id});
+    else await createResearch(false);
+  };
+
+  useEffect(() => {
+    if (!authz || !authz.contexts) return;
+    initializeResearch();
+    return () => { researchRequestRef.current += 1; historyListRequestRef.current += 1; };
+  }, [authz]);
+
+  const shareResearch = async () => {
+    if (!workspaceId || researchAccessRef.current.readOnly || researchAccessRef.current.loading
+        || researchActionRef.current || chatBusyRef.current || clarifyBusyRef.current) return;
+    researchActionRef.current = true;
+    setResearchActionBusy(true);
+    try {
+      const response = await fetch(`${API}/workspace/${workspaceId}/share`, {method: "POST"});
+      if (!response.ok) throw new Error("Не удалось создать ссылку. Повторите запрос.");
+      const data = await response.json();
+      if (!data.share_url) throw new Error("Сервер не вернул ссылку на исследование.");
+      const url = new URL(data.share_url, window.location.href).href;
+      setResearchShareUrl(url);
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast("Ссылка скопирована. Получателю потребуется вход в модуль.", "success");
+      } catch {
+        showToast("Ссылка готова. Скопируйте её из поля ниже.", "info");
+      }
+    } catch (error) {
+      showToast(error.message || "Не удалось создать ссылку.", "error");
+    } finally {
+      researchActionRef.current = false;
+      setResearchActionBusy(false);
+    }
+  };
+
+  const requestResearchDelete = (research) => {
+    if (!research || researchAccessRef.current.loading || researchActionRef.current
+        || chatBusyRef.current || clarifyBusyRef.current) return;
+    setResearchDeleteError("");
+    setResearchDeleteTarget(research);
+    setResearchDeleteConfirm(true);
+  };
+
+  const deleteResearch = async () => {
+    const deletedId = researchDeleteTarget && researchDeleteTarget.workspace_id;
+    if (!deletedId || researchAccessRef.current.loading || researchActionRef.current
+        || chatBusyRef.current || clarifyBusyRef.current) return;
+    researchActionRef.current = true;
+    setResearchActionBusy(true); setResearchDeleteError("");
+    const deletedWasOpen = workspaceId === deletedId;
+    let deleted = false;
+    try {
+      const response = await fetch(`${API}/workspace/${deletedId}`, {method: "DELETE"});
+      if (!response.ok) throw new Error("Не удалось удалить исследование из истории. Повторите запрос.");
+      deleted = true;
+      // Список, запрошенный до удаления, уже устарел: его поздний ответ
+      // не должен возвращать удалённую строку или менять индикатор загрузки.
+      historyListRequestRef.current += 1;
+      setHistoryListLoading(false);
+      setHistoryListError("");
+      // Убираем строку только после подтверждения сервера.
+      setResearches(previous => previous.filter(item => item.workspace_id !== deletedId));
+      setResearchDeleteConfirm(false);
+      setResearchDeleteTarget(null);
+      if (deletedWasOpen) {
+        resetResearch();
+        researchTargetRef.current = {};
+        clearSharedLocation();
+      }
+      showToast("Исследование удалено из истории. Данные сохранены в системе.", "success");
+    } catch (error) {
+      setResearchDeleteError(error.message || "Не удалось удалить исследование.");
+    } finally {
+      researchActionRef.current = false;
+      setResearchActionBusy(false);
+    }
+    if (deleted && deletedWasOpen) {
+      const next = researches.find(item => item.workspace_id !== deletedId);
+      if (next) await openResearch({id: next.workspace_id});
+      else await createResearch(false);
+    }
+  };
+
   // Таймер toast очищается при размонтировании (нет setState после unmount).
   useEffect(() => () => {
     clearTimeout(toastTimerRef.current);
@@ -445,18 +948,25 @@ function LoopholeApp() {
   }, []);
 
   // ── Ручная маркировка: POST /records/verdict + toast результата ──────────
-  const markVerdict = async (ids, isLoophole, comment) => {
-    if (!ids.length || markBusy) return false;
+  const markVerdict = async (ids, classification, comment) => {
+    if (!canMarkVerdict || !ids.length || markBusy) return false;
     setMarkBusy(true);
     try {
       const r = await fetch(`${API}/records/verdict`, {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          record_ids: ids, is_loophole: isLoophole, comment: comment || null,
+          record_ids: ids, classification, comment: comment || null,
         }),
       });
       const d = await r.json().catch(() => null);
       if (!r.ok) {
+        if (r.status === 401 || r.status === 403) {
+          setAuthz(prev => prev && prev.contexts ? {
+            ...prev, capabilities: {...prev.capabilities, can_mark_verdict: false},
+          } : prev);
+          setVerdictModal(null);
+          setMarkComment("");
+        }
         showToast((d && typeof d.detail === "string" && d.detail) || "Ошибка маркировки.", "error");
         return false;
       }
@@ -672,6 +1182,14 @@ function LoopholeApp() {
   );
   // Отзыв роли ЦК КС (story 1.5): начальный фокус — «Отмена».
   useFocusLayer(!!revokeConfirm, revokeDialogRef, () => setRevokeConfirm(null), revokeCancelRef);
+  useFocusLayer(researchDeleteConfirm, researchDeleteDialogRef,
+    () => {
+      if (!researchActionRef.current) {
+        setResearchDeleteConfirm(false);
+        setResearchDeleteTarget(null);
+      }
+    },
+    researchDeleteCancelRef, researchTabRef);
 
   // ── Парсеры: список + CRUD + polling ───────────────────────────────────────
   const loadParsers = useCallback(async () => {
@@ -715,7 +1233,8 @@ function LoopholeApp() {
   const createParserRequest = async () => {
     const url = newParserUrl.trim();
     const description = newParserDescription.trim();
-    if (!url || !description || !workspaceId) return;
+    if (!url || !description || !workspaceId || researchAccessRef.current.readOnly
+        || researchAccessRef.current.loading) return;
     if (!WEB_TARGET_RE.test(url)) {
       setParserError("Укажите полный URL веб-источника, начиная с http:// или https://");
       return;
@@ -916,7 +1435,13 @@ function LoopholeApp() {
     const serverClarificationToken = opts && opts.clarificationToken;
     const skipClarify = !!serverClarificationToken;
     const userMsg = overrideMessage != null ? overrideMessage : chatInput;
-    if (!userMsg || !userMsg.trim() || !workspaceId) return false;
+    if (!userMsg || !userMsg.trim() || !workspaceId || researchAccessRef.current.readOnly
+        || researchAccessRef.current.loading || researchActionRef.current
+        || chatBusyRef.current || (!skipClarify && clarifyBusyRef.current)) return false;
+    chatBusyRef.current = true;
+    const researchGeneration = researchRequestRef.current;
+    setResearchActivity(null);
+    setSelectedReportId("");
     // Token одноразовый: новый challenge принимаем только из server-side SSE.
     setClarificationToken(null);
     // запоминаем ИСХОДНЫЙ запрос (не enriched) — из него build_enriched_question
@@ -931,6 +1456,7 @@ function LoopholeApp() {
     setChatLoading(true);
     setClarifyError("");
     setToolEvents([]);
+    setSubagents([]);
     setPendingQuestions(null);
     let gotQuestions = false;
     let terminalError = false;
@@ -970,6 +1496,7 @@ function LoopholeApp() {
           clarify_token: serverClarificationToken || null,
         }),
       });
+      if (researchGeneration !== researchRequestRef.current) return false;
       if (!resp.ok || !resp.body) {
         throw new Error(!resp.ok ? `HTTP ${resp.status}` : "Пустой ответ сервера");
       }
@@ -1012,6 +1539,7 @@ function LoopholeApp() {
 
       while (true) {
         const {done, value} = await reader.read();
+        if (researchGeneration !== researchRequestRef.current) { await reader.cancel(); return false; }
         if (done) break;
         buf += decoder.decode(value, {stream: true});
         const lines = buf.split("\n");
@@ -1061,6 +1589,12 @@ function LoopholeApp() {
                 const p = (payload && payload.phase) || payload;
                 if (typeof p === "string") {
                   setPhase(p);
+                  const hasActivity = p === "execute" && payload
+                    && ["waiting_model", "research_tools"].includes(payload.stage)
+                    && typeof payload.message === "string" && payload.message.trim()
+                    && Number.isInteger(payload.elapsed_seconds) && payload.elapsed_seconds >= 0;
+                  setResearchActivity(hasActivity
+                    ? {message: payload.message, elapsed: payload.elapsed_seconds} : null);
                   if (p === "error") {
                     terminalError = true;
                     terminalErrorMessage = publicChatErrorMessage(
@@ -1098,23 +1632,40 @@ function LoopholeApp() {
                 });
                 break;
               }
+              case "subagent": {
+                const event = acceptSubagentEvent(payload);
+                if (!event) break;
+                setSubagents(prev => {
+                  const index = prev.findIndex(agent => agent.id === event.id);
+                  if (index < 0) return [...prev, event].slice(0, 18);
+                  return prev.map((agent, i) => i === index ? event : agent);
+                });
+                break;
+              }
               case "records": {
                 const recs = (payload && payload.records) || [];
                 setRecords(recs);
                 break;
               }
-              case "tool_call": {
-                const name = (payload && payload.name) || "tool";
-                setToolEvents(prev => [...prev, {kind: "call", name, ts: Date.now()}]);
-                break;
-              }
+              case "tool_call":
               case "tool_result": {
                 const name = (payload && payload.name) || "tool";
-                setToolEvents(prev => [...prev, {kind: "result", name, ts: Date.now()}]);
+                const event = {kind: sseEventType === "tool_call" ? "call" : "result",
+                  name, status: payload.status === "failed" ? "failed" : "completed", ts: Date.now()};
+                setToolEvents(prev => [...prev, event]);
+                setChat(prev => {
+                  const copy = [...prev];
+                  const last = copy[copy.length - 1];
+                  if (last && last.role === "assistant" && last._live) {
+                    copy[copy.length - 1] = {...last, tools: [...(last.tools || []), event]};
+                  } else copy.push({role: "assistant", content: "", _live: true, tools: [event]});
+                  return copy;
+                });
                 break;
               }
               case "answer":
               case "done": {
+                setResearchActivity(null);
                 // финализация — закрываем "живое" сообщение ассистента
                 flushAssistant();
                 if (sseEventType === "done" && !terminalError) {
@@ -1172,6 +1723,7 @@ function LoopholeApp() {
       }
       return true;
     } catch (e) {
+      if (researchGeneration !== researchRequestRef.current) return false;
       const message = publicChatErrorMessage(
         e instanceof Error && e.message ? e.message : String(e)
       );
@@ -1180,7 +1732,16 @@ function LoopholeApp() {
       setChat(prev => [...prev, {role: "assistant", content: "Ошибка: " + message}]);
       return false;
     } finally {
-      setChatLoading(false);
+      chatBusyRef.current = false;
+      if (researchGeneration === researchRequestRef.current) {
+        setResearchActivity(null);
+        setChat(prev => prev.map(message => message._live ? {...message, _live: false} : message));
+        setSubagents(prev => prev.map(agent =>
+          ["queued", "searching", "classifying"].includes(agent.status)
+            ? {...agent, status: "cancelled"} : agent));
+        setChatLoading(false);
+        loadResearchList();
+      }
       // Подтягиваем в таблицу подтверждённые находки, сохранённые серверным
       // этапом после завершения managed-запуска.
       loadRecords();
@@ -1212,6 +1773,8 @@ function LoopholeApp() {
       || !pendingQuestions.length
       || !clarificationToken
       || clarifySubmitting
+      || clarifyBusyRef.current || chatBusyRef.current || researchActionRef.current
+      || researchAccessRef.current.readOnly || researchAccessRef.current.loading
     ) return;
     const q = pendingQuestions[0];
     const questionsForRetry = pendingQuestions;
@@ -1239,6 +1802,7 @@ function LoopholeApp() {
       .filter(Boolean)
       .join("; ");
     const optimisticId = `clarify-answer-${Date.now()}-${Math.random()}`;
+    clarifyBusyRef.current = true;
     setClarifySubmitting(true);
     setClarifyError("");
     setChat(prev => [...prev, {
@@ -1322,6 +1886,7 @@ function LoopholeApp() {
         ? e.message
         : "Не удалось отправить ответ.");
     } finally {
+      clarifyBusyRef.current = false;
       setClarifySubmitting(false);
     }
   };
@@ -1345,16 +1910,14 @@ function LoopholeApp() {
         })
       : date.toLocaleDateString("ru-RU");
   };
+  const researchListName = (name) => {
+    const value = String(name || "Без названия").trim() || "Без названия";
+    return value.length <= 64 ? value : `${value.slice(0, 63)}…`;
+  };
   const fmtNum = (v) => v != null ? Number(v).toFixed(2) : "—";
 
   const RECORD_STATUS_LABELS = {
     published: "подтверждено",
-    verified: "подтверждено",
-    pending: "на проверке",
-    classified: "классифицировано",
-    monitoring: "мониторинг",
-    rejected: "отклонено",
-    new: "новая",
     preliminary: "предварительно",
   };
   const recordStatusLabel = (status) => status ? (RECORD_STATUS_LABELS[status] || "—") : "—";
@@ -1362,43 +1925,49 @@ function LoopholeApp() {
   const queueSelected = queueRecords.find(r => r.record_id === queueSelectedId)
     || queueRecords[0]
     || null;
-  const lastResearchQuery = [...chat].reverse().find(
+  const reportChoices = [...savedReports];
+  let reportQuery = "";
+  chat.forEach(message => {
+    if (message.role === "user" && !message._clarificationAnswer) reportQuery = message.content;
+    if (message.role !== "assistant" || !message.report_id) return;
+    const index = reportChoices.findIndex(report => report.report_id === message.report_id);
+    if (index < 0) reportChoices.unshift({
+      report_id: message.report_id, result: message.content, query: reportQuery,
+    });
+  });
+  const selectedReport = reportChoices.find(report => String(report.report_id) === selectedReportId);
+  const lastResearchQuery = (selectedReport && selectedReport.query
+    ? {content: selectedReport.query} : null) || [...chat].reverse().find(
     message => message.role === "user" && !message._clarificationAnswer
   );
-  const lastResearchAnswer = [...chat].reverse().find(
+  const lastResearchAnswer = (selectedReport
+    ? {content: selectedReport.result, report_id: selectedReport.report_id} : null) || [...chat].reverse().find(
     message => message.role === "assistant" && !message._clarificationQuestion
   );
   const phasePosition = phase ? PHASES.indexOf(phase) : -1;
   const researchProgress = phase === "done"
     ? 100
     : (phasePosition >= 0 ? Math.round(((phasePosition + 1) / PHASES.length) * 100) : 0);
-  const completedSubtasks = subtasks.filter(task => task.status === "done").length;
+  const researchTasks = [...subtasks, ...subagents
+    .filter(agent => !subagents.some(next => next.retry_of === agent.id)).map(agent => ({
+    title: agent.title,
+    status: agent.status === "completed" ? "done"
+      : ["failed", "cancelled"].includes(agent.status) ? "error" : "running",
+  }))];
+  const completedSubtasks = researchTasks.filter(task => task.status === "done").length;
+  const restoredResearch = !phase && (chat.length > 0 || savedReports.length > 0);
 
-  const verdictLabel = (r) => {
-    if (r.is_loophole === true) return "лазейка";
-    if (r.is_loophole === false) return "не лазейка";
-    return "не размечено";
-  };
-
-  const importResearchSources = async (reportId) => {
-    if (!reportId) return;
-    try {
-      const r = await fetch(`${API}/research/reports/${reportId}/import-sources`, {method: "POST"});
-      const d = await r.json().catch(() => null);
-      if (!r.ok) throw new Error((d && d.detail) || "Не удалось перенести источники.");
-      if (d.imported) {
-        showToast(`В общую базу добавлено предварительных записей: ${d.imported}.`, "success");
-        await loadRecords();
-      } else {
-        showToast("Новых пригодных источников для переноса нет.", "info");
-      }
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Не удалось перенести источники.", "error");
-    }
-  };
+  const recordClassification = (r) => r.classification
+    || (r.is_loophole === true ? "vulnerability"
+      : r.is_loophole === false ? "not_confirmed" : null);
+  const verdictLabel = (r) => ({
+    vulnerability: "уязвимость",
+    fraud_scheme: "мошенническая схема",
+    not_confirmed: "ни уязвимость, ни мошенническая схема",
+  }[recordClassification(r)] || "не размечено");
 
   const downloadResearchReport = async (reportId, format) => {
-    if (!reportId) return;
+    if (!reportId || researchAccessRef.current.readOnly || researchAccessRef.current.loading) return;
     try {
       const r = await fetch(`${API}/research/reports/${reportId}/export/${format}`);
       if (!r.ok) {
@@ -1521,7 +2090,7 @@ function LoopholeApp() {
   if (authz === false) {
     return (
       <div className="lp-empty-state" style={{padding: 48}}>
-        <h1>Нет доступа к модулю «Лазейки»</h1>
+        <h1>Нет доступа к модулю «Уязвимости»</h1>
         <p>Учётная запись не авторизована. Обратитесь к администратору модуля.</p>
       </div>
     );
@@ -1545,11 +2114,11 @@ function LoopholeApp() {
       <main className="lp-main">
         <header className="lp-main-header">
           <h1>
-            {view === "ai_research" ? "Новое AI-исследование"
+            {view === "ai_research" ? "AI-исследования"
               : view === "sources" ? "Заявка на разработку парсера"
               : view === "queue" ? "Очередь верификации"
               : view === "admin" ? "Управление доступом"
-              : "Лазейки и уязвимости в продуктах банка"}
+              : "Лазейки и мошеннические схемы в продуктах банка"}
           </h1>
           <div className="lp-header-actions">
             {view === "ai_research" && (
@@ -1561,7 +2130,7 @@ function LoopholeApp() {
             <button className={"lp-btn" + (selected.size > 0 ? " lp-btn-primary" : "")}
                     onClick={exportCSV}
                     disabled={loading || sortedRecords.length === 0}
-                    title="Выгрузить выделенные записи в CSV (не более 10000)">
+                    title="Выгрузить выделенные записи текущей страницы в CSV (не более 10000)">
               CSV{selected.size > 0 ? ` · ${selected.size} ${recordWord(selected.size)}` : ""}
             </button>
             </>)}
@@ -1587,11 +2156,11 @@ function LoopholeApp() {
                       id={`lp-tab-${c.id}`} aria-selected={active}
                       aria-controls={`lp-panel-${c.id}`} tabIndex={active ? 0 : -1}
                       data-context-id={c.id}
-                      ref={c.id === "sources" ? sourcesTabRef : null}
+                      ref={c.id === "sources" ? sourcesTabRef : c.id === "ai_research" ? researchTabRef : null}
                       className={"lp-context-tab" + (active ? " lp-context-tab-active" : "")}
                       onKeyDown={onContextTabKeyDown}
                       onClick={() => openContext(c.id)}>
-                {c.title}
+                {c.id === "ai_research" ? "AI-исследования" : c.title}
               </button>
             );
           })}
@@ -1650,17 +2219,16 @@ function LoopholeApp() {
               <option value="pending">Ожидает верификации</option>
             </select>
           </div>
-          <div className="lp-filter lp-filter-scope">
-            <span className="lp-filter-label">Тип данных</span>
-            <span className="lp-scope-indicator"
-                  aria-label="Каталог показывает только лазейки">лазейки</span>
-          </div>
-          <div className="lp-filter lp-filter-scope">
-            <span className="lp-filter-label">Состояния базы</span>
-            <span className="lp-scope-indicator"
-                  aria-label="Каталог показывает подтверждённые и предварительные записи">
-              подтверждённые и предварительные
-            </span>
+          <div className="lp-filter">
+            <label htmlFor="lp-filter-classification">Тип записи</label>
+            <select id="lp-filter-classification" value={fClassification}
+                    onChange={e => setFClassification(e.target.value)}>
+              <option value="all">Все</option>
+              <option value="confirmed">Уязвимости и мошеннические схемы</option>
+              <option value="vulnerability">Уязвимости</option>
+              <option value="fraud_scheme">Мошеннические схемы</option>
+              <option value="not_confirmed">Ни уязвимость, ни мошенническая схема</option>
+            </select>
           </div>
           <div className="lp-filter lp-filter-reset">
             <button className="lp-btn" onClick={resetFilters}>Сбросить</button>
@@ -1711,10 +2279,10 @@ function LoopholeApp() {
                       Предварительная вероятность{sortArrow("verdict_confidence")}
                     </button>
                   </th>
-                  <th {...sortableThProps("is_loophole")}>
+                  <th {...sortableThProps("classification")}>
                     <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("is_loophole")}>
-                      Вердикт{sortArrow("is_loophole")}
+                            onClick={() => toggleSort("classification")}>
+                      Вердикт{sortArrow("classification")}
                     </button>
                   </th>
                   <th className="lp-col-narrow2" {...sortableThProps("status")}>
@@ -1778,16 +2346,19 @@ function LoopholeApp() {
                       <td className="lp-col-narrow2">{r.bank_slug || "—"}</td>
                       <td className="lp-col-narrow2">{fmtNum(r.verdict_confidence)}</td>
                       <td onClick={e => e.stopPropagation()}>
-                        <button type="button"
+                        <VerdictControl type={canMarkVerdict ? "button" : undefined}
                                 className={"lp-verdict-chip " +
                                   (r.is_loophole === true ? "lp-verdict-chip-bad"
                                  : r.is_loophole === false ? "lp-verdict-chip-ok"
                                  : "lp-verdict-chip-na")}
-                                title="Изменить вердикт"
-                                onClick={() => { setMarkComment(""); setVerdictModal({record: r}); }}>
+                                style={canMarkVerdict ? undefined : {cursor: "default"}}
+                                title={canMarkVerdict ? "Изменить вердикт" : undefined}
+                                onClick={canMarkVerdict
+                                  ? () => { setMarkComment(""); setVerdictModal({record: r}); }
+                                  : undefined}>
                           <span className="lp-verdict-dot"></span>
                           {verdictLabel(r)}
-                        </button>
+                        </VerdictControl>
                         {r.verdict_model === "manual" && (
                           <span className="lp-manual-mark"
                                 title="Вердикт проставлен вручную">ручная</span>
@@ -1819,6 +2390,22 @@ function LoopholeApp() {
             </table>
           )}
         </div>
+        {recordsTotal > PAGE_SIZE && (
+          <nav className="lp-pagination" aria-label="Страницы общей базы">
+            <button type="button" className="lp-btn" disabled={page === 0}
+                    onClick={() => setPage(p => Math.max(0, p - 1))}>
+              Назад
+            </button>
+            <span className="lp-pagination-info" role="status">
+              Страница {page + 1} из {Math.ceil(recordsTotal / PAGE_SIZE)}
+            </span>
+            <button type="button" className="lp-btn"
+                    disabled={(page + 1) * PAGE_SIZE >= recordsTotal}
+                    onClick={() => setPage(p => p + 1)}>
+              Вперёд
+            </button>
+          </nav>
+        )}
         </section>)}
 
         {/* ── Заявка на разработку веб-парсера и read-only каталог источников. ── */}
@@ -1842,10 +2429,11 @@ function LoopholeApp() {
                           placeholder="Тарифы, комиссии и условия обслуживания" />
                 {parserError && <div className="lp-parser-error" role="alert">{parserError}</div>}
                 <button type="submit" className="lp-btn lp-btn-primary"
-                        disabled={parsersBusy || !workspaceId
+                        disabled={parsersBusy || !workspaceId || researchReadOnly || researchLoading
                           || !newParserUrl.trim() || !newParserDescription.trim()}>
                   {parsersBusy ? "Отправляем…" : "Отправить заявку"}
                 </button>
+                {researchReadOnly && <p className="lp-muted">Для заявки откройте или создайте собственное AI-исследование.</p>}
               </form>
             </div>
 
@@ -1943,6 +2531,89 @@ function LoopholeApp() {
           <section className="lp-research-surface" id="lp-panel-ai_research"
                    role="tabpanel" aria-labelledby="lp-tab-ai_research"
                    aria-label="Ход AI-исследования">
+            <div className="lp-research-shell">
+            <aside className="lp-research-history" aria-labelledby="lp-research-history-title">
+              <div className="lp-research-history-head">
+                <div>
+                  <div className="lp-eyebrow">Личная история</div>
+                  <h2 id="lp-research-history-title">Ваши исследования</h2>
+                </div>
+                <button type="button" className="lp-btn lp-btn-primary"
+                        disabled={agentBusy || researchActionBusy || researchLoading}
+                        onClick={() => createResearch()}>Новое исследование</button>
+              </div>
+              {historyListLoading && <p className="lp-muted" role="status">Загрузка списка…</p>}
+              {historyListError && <div className="lp-research-history-error" role="alert">
+                <p>{historyListError}</p>
+                <button className="lp-btn" disabled={historyListLoading || agentBusy || researchActionBusy}
+                        onClick={() => workspaceId ? loadResearchList() : initializeResearch()}>
+                  Повторить загрузку истории
+                </button>
+              </div>}
+              {!historyListLoading && !historyListError && !researches.length && (
+                <p className="lp-muted">В личной истории пока нет исследований.</p>
+              )}
+              <div className="lp-research-history-list">
+                {researches.map(item => {
+                  const fullName = String(item.name || "Без названия").trim() || "Без названия";
+                  const name = researchListName(fullName);
+                  const active = workspaceId === item.workspace_id && !researchReadOnly;
+                  return (
+                    <article key={item.workspace_id}
+                             className={"lp-research-history-item" + (active ? " lp-research-history-active" : "")}>
+                      <button type="button" className="lp-research-history-open"
+                              aria-label={`Открыть исследование ${fullName}`}
+                              aria-current={active ? "true" : undefined}
+                              disabled={agentBusy || researchActionBusy}
+                              onClick={() => openResearch({id: item.workspace_id})}>
+                        <strong title={fullName}>{name}</strong>
+                        <time dateTime={item.last_active_at || item.created_at || undefined}>
+                          {fmtDate(item.last_active_at || item.created_at)}
+                        </time>
+                      </button>
+                      <button type="button" className="lp-research-history-delete"
+                              aria-label={`Удалить исследование ${fullName} из истории`}
+                              title="Удалить из истории"
+                              disabled={agentBusy || researchActionBusy || researchLoading}
+                              onClick={() => requestResearchDelete(item)}>×</button>
+                    </article>
+                  );
+                })}
+              </div>
+              {agentBusy && <p className="lp-muted" role="status">Переключение истории будет доступно после ответа аналитика.</p>}
+              {researchLoading && <p role="status">Загрузка исследования…</p>}
+              {researchError && <div className="lp-research-history-error" role="alert">
+                <p>{researchError}</p>
+                <button className="lp-btn" disabled={agentBusy || researchActionBusy || researchLoading}
+                        onClick={() => researchTargetRef.current.create
+                          ? createResearch(researchTargetRef.current.showResearch)
+                          : researchTargetRef.current.id || researchTargetRef.current.token
+                            ? openResearch(researchTargetRef.current) : initializeResearch()}>
+                  Повторить загрузку исследования
+                </button>
+              </div>}
+            </aside>
+            <div className="lp-research-content">
+              {researchWorkspace && <section className="lp-research-current">
+                <h3>{researchWorkspace.name || "Исследование"}</h3>
+                {researchReadOnly ? (
+                  <p className="lp-research-readonly">Исследование доступно только для чтения.</p>
+                ) : <div className="lp-research-result-actions">
+                  <button className="lp-btn" disabled={agentBusy || researchActionBusy || researchLoading}
+                          onClick={shareResearch}>Поделиться</button>
+                  {!researchLoading && lastResearchAnswer && lastResearchAnswer.report_id && (
+                    <button type="button" className="lp-btn"
+                            disabled={agentBusy || researchActionBusy || researchLoading}
+                            onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "pdf")}>PDF</button>
+                  )}
+                </div>}
+              </section>}
+              {researchShareUrl && <div className="lp-research-share">
+                <label htmlFor="lp-research-share-url">Ссылка на исследование</label>
+                <input id="lp-research-share-url" value={researchShareUrl} readOnly
+                       onFocus={event => event.target.select()} />
+                <p className="lp-muted">Получателю потребуется вход в модуль. Просмотр доступен без права редактирования.</p>
+              </div>}
             <div className="lp-research-board">
               <section className="lp-research-card" aria-labelledby="lp-research-params-title">
                 <div className="lp-eyebrow">Параметры исследования</div>
@@ -1954,11 +2625,11 @@ function LoopholeApp() {
                   </div>
                   <div>
                     <dt>Режим</dt>
-                    <dd>Поиск лазеек с проверкой первоисточников</dd>
+                    <dd>Поиск уязвимостей с проверкой первоисточников</dd>
                   </div>
                   <div>
                     <dt>Данные</dt>
-                    <dd>{records.length} {recordWord(records.length)} в общей базе</dd>
+                    <dd>{recordsTotal} {recordWord(recordsTotal)} в общей базе</dd>
                   </div>
                 </dl>
               </section>
@@ -1968,61 +2639,65 @@ function LoopholeApp() {
                   <div>
                     <div className="lp-eyebrow">Прогресс исследования</div>
                     <h2 id="lp-research-progress-title">
-                      {phase ? (PHASE_LABELS[phase] || phase) : "Ожидает запуска"}
+                      {phase ? (PHASE_LABELS[phase] || phase) : restoredResearch ? "История загружена" : "Ожидает запуска"}
                     </h2>
                   </div>
-                  <strong>{researchProgress}%</strong>
+                  {!restoredResearch && <strong>{researchProgress}%</strong>}
                 </div>
-                <div className="lp-research-progress" aria-label={`Выполнено ${researchProgress}%`}>
+                {!restoredResearch && <div className="lp-research-progress" aria-label={`Выполнено ${researchProgress}%`}>
                   <span style={{width: `${researchProgress}%`}}></span>
-                </div>
-                <div className="lp-research-task-summary">
-                  Выполнено подзадач: {completedSubtasks} из {subtasks.length}
-                </div>
-                {subtasks.length > 0 ? (
+                </div>}
+                {phase === "execute" && researchActivity && (
+                  <p className="lp-research-task-summary" role="status"
+                     aria-label="Текущий этап исследования" aria-live="polite" aria-atomic="true">
+                    {researchActivity.message} · {researchActivity.elapsed} с
+                  </p>
+                )}
+                {!restoredResearch && <div className="lp-research-task-summary">
+                  Выполнено подзадач: {completedSubtasks} из {researchTasks.length}
+                </div>}
+                {researchTasks.length > 0 ? (
                   <ul className="lp-research-task-list">
-                    {subtasks.map((task, index) => (
+                    {researchTasks.map((task, index) => (
                       <li key={index} className={`lp-research-task-${task.status}`}>
                         <span aria-hidden="true"></span>{task.title}
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="lp-muted">Подзадачи появятся после запуска исследования.</p>
+                  <p className="lp-muted">{restoredResearch
+                    ? "Доступны сохранённые переписка и результаты. Прогресс прошлого запуска не сохранялся."
+                    : "Подзадачи появятся после запуска исследования."}</p>
                 )}
               </section>
 
               <section className="lp-research-card lp-research-evidence"
                        aria-labelledby="lp-research-evidence-title">
                 <div className="lp-eyebrow">Доказательства и источники</div>
-                <h2 id="lp-research-evidence-title">Промежуточный результат</h2>
+                <h2 id="lp-research-evidence-title">{selectedReport ? "Результат исследования" : "Промежуточный результат"}</h2>
+                {reportChoices.length > 0 && <div className="lp-research-report-select">
+                  <label htmlFor="lp-research-report">Сохранённый результат</label>
+                  <select id="lp-research-report" value={selectedReportId}
+                          disabled={agentBusy || researchLoading}
+                          onChange={event => setSelectedReportId(event.target.value)}>
+                    <option value="">Последний ответ в переписке</option>
+                    {reportChoices.map(report => <option key={report.report_id} value={String(report.report_id)}>
+                      {report.query || `Отчёт №${report.report_id}`} · {fmtDate(report.created_at)}
+                    </option>)}
+                  </select>
+                </div>}
                 <div className="lp-research-card-head">
                   <div><SafeMarkdown content={lastResearchAnswer
                     ? lastResearchAnswer.content
                     : "После запуска здесь появится проверенный промежуточный вывод аналитика."} /></div>
-                  {lastResearchAnswer && lastResearchAnswer.report_id && (
-                    <div className="lp-research-result-actions">
-                      <details className="lp-research-downloads">
-                        <summary className="lp-btn lp-btn-sm">Скачать исследование</summary>
-                        <div className="lp-research-download-options" aria-label="Формат скачивания">
-                          <button type="button" className="lp-btn lp-btn-sm"
-                                  onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "pdf")}>PDF</button>
-                          <button type="button" className="lp-btn lp-btn-sm"
-                                  onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "docx")}>Word</button>
-                        </div>
-                      </details>
-                      <button type="button" className="lp-btn lp-btn-sm"
-                              onClick={() => importResearchSources(lastResearchAnswer.report_id)}>
-                        Добавить в общую базу
-                      </button>
-                    </div>
-                  )}
                 </div>
-                <div className="lp-research-meta">
+                {!restoredResearch && <div className="lp-research-meta">
                   <span>Событий инструментов: {toolEvents.length}</span>
                   <span>Фаза: {phase ? (PHASE_LABELS[phase] || phase) : "не запущено"}</span>
-                </div>
+                </div>}
               </section>
+            </div>
+            </div>
             </div>
             {!chatOpen && (
               <p className="lp-research-chat-note">
@@ -2108,10 +2783,10 @@ function LoopholeApp() {
                           <a className="lp-btn" href={queueSelected.url} target="_blank"
                              rel="noopener noreferrer">Открыть источник</a>
                         )}
-                        <button type="button" className="lp-btn lp-btn-primary"
+                        {canMarkVerdict && <button type="button" className="lp-btn lp-btn-primary"
                                 onClick={() => { setMarkComment(""); setVerdictModal({record: queueSelected}); }}>
                           Проверить вердикт
-                        </button>
+                        </button>}
                       </div>
                     </article>
                   )}
@@ -2254,10 +2929,10 @@ function LoopholeApp() {
         <div className="lp-sidebar-header">
           <div className="lp-agent-avatar">AI</div>
           <div style={{flex: 1, minWidth: 0}}>
-            <div ref={chatTitleRef} className="lp-agent-name" id="lp-chat-title" tabIndex={-1}>Аналитик лазеек</div>
+            <div ref={chatTitleRef} className="lp-agent-name" id="lp-chat-title" tabIndex={-1}>Аналитик уязвимостей</div>
             <div className="lp-agent-status">
               <span className={"lp-dot " + (agentBusy ? "lp-dot-busy" : "lp-dot-online")}></span>
-              {agentBusy ? "Обдумывает ответ" : "Готов"}
+              {researchLoading ? "Загрузка истории" : researchReadOnly ? "Только чтение" : agentBusy ? "Обдумывает ответ" : "Готов"}
             </div>
           </div>
           <button type="button" className="lp-chat-close"
@@ -2293,33 +2968,14 @@ function LoopholeApp() {
         )}
 
         <div className="lp-chat-messages" ref={chatScrollRef}>
-          {chat.length === 0 && (
+          {chat.length === 0 && !researchLoading && !researchReadOnly && (
             <div className="lp-chat-empty">
-              Задайте вопрос по найденным лазейкам — аналитик уточнит контекст
+              Задайте вопрос по найденным уязвимостям — аналитик уточнит контекст
               и подготовит исследование по доступным источникам.
             </div>
           )}
 
-          {/* Список использованных инструментов без аргументов и результатов */}
-          {toolEvents.length > 0 && (
-            <div className="lp-tool-events">
-              <div className="lp-subtasks-title">Использованные инструменты</div>
-              {toolEvents.slice(-8).map((ev, i) => (
-                <span key={i}
-                      className={"lp-tool-badge lp-tool-" + ev.kind}
-                      title={ev.kind === "call" ? "вызов инструмента" : "результат"}>
-                  {ev.kind === "call" ? "🔧" : "📦"} {({
-                    audit_web_search: "Веб-поиск",
-                    audit_web_fetch: "Чтение источника",
-                    audit_extract_loopholes: "Извлечение признаков",
-                    audit_db_query: "Запрос к базе",
-                    audit_table_load: "Загрузка таблицы",
-                    audit_export: "Подготовка выгрузки",
-                  })[ev.name] || "Инструмент"}
-                </span>
-              ))}
-            </div>
-          )}
+          <SubagentCards agents={subagents} />
 
           {/* Подзадачи */}
           {subtasks.length > 0 && (
@@ -2339,23 +2995,27 @@ function LoopholeApp() {
           {chat.map((m, i) => (
             <div key={i} className={"lp-bubble lp-bubble-" + m.role}>
               <div className="lp-bubble-role">
-                {m.role === "user" ? "Вы" : "Аналитик"}
+                {m.role === "user" ? (researchReadOnly ? "Автор" : "Вы") : "Аналитик"}
               </div>
               <div className="lp-bubble-content">{m.content}</div>
+              {m.role === "assistant" && <ToolActivity events={m.tools} active={agentBusy && m._live} />}
+              {agentBusy && m._live && <div className="lp-agent-activity" role="status">
+                {researchActivity ? researchActivity.message : "Аналитик работает"}
+              </div>}
             </div>
           ))}
-          {agentBusy && (
+          {agentBusy && !chat.some(m => m._live) && (
             <div className="lp-bubble lp-bubble-assistant lp-typing">
               <div className="lp-bubble-role">Аналитик</div>
-              <div className="lp-typing-dots">
-                <span></span><span></span><span></span>
+              <div className="lp-agent-activity" role="status">
+                {researchActivity ? researchActivity.message : "Аналитик обрабатывает запрос"}
               </div>
             </div>
           )}
         </div>
 
         {/* Карточка уточняющих вопросов — между сообщениями и input-area */}
-        {selectionQuestions.length > 0 && (
+        {!researchReadOnly && selectionQuestions.length > 0 && (
           <div className="lp-questions-card">
             <div className="lp-questions-header">Уточняющие вопросы</div>
             {selectionQuestions.map(q => {
@@ -2419,7 +3079,7 @@ function LoopholeApp() {
           <div className="lp-clarify-error" role="alert">{clarifyError}</div>
         )}
 
-        <div className="lp-chat-input-area">
+        {!researchReadOnly && <div className="lp-chat-input-area">
           <label className="lp-sr-only" htmlFor="lp-chat-input">Сообщение аналитику</label>
           <textarea id="lp-chat-input"
             ref={chatInputRef}
@@ -2442,24 +3102,47 @@ function LoopholeApp() {
               : (selectionQuestions.length
                 ? "Сначала ответьте на уточняющие вопросы…"
                 : "Сообщение аналитику…")}
-            disabled={agentBusy || !workspaceId || selectionQuestions.length > 0}
+            disabled={agentBusy || researchLoading || researchActionBusy || !workspaceId || selectionQuestions.length > 0}
           />
           <button
             className="lp-chat-send"
             type="button"
             aria-label="Отправить сообщение"
             onClick={() => textClarification ? submitAnswers() : sendChat()}
-            disabled={agentBusy || !workspaceId || !chatInput.trim() || selectionQuestions.length > 0}
+            disabled={agentBusy || researchLoading || researchActionBusy || !workspaceId || !chatInput.trim() || selectionQuestions.length > 0}
           >
             {agentBusy ? "…" : "➤"}
           </button>
-        </div>
+        </div>}
       </aside>)}
 
+      {researchDeleteConfirm && <div className="lp-parsers-modal">
+        <button type="button" className="lp-modal-backdrop" aria-label="Закрыть подтверждение удаления"
+                tabIndex={-1} disabled={researchActionBusy} onClick={() => {
+                  setResearchDeleteConfirm(false); setResearchDeleteTarget(null);
+                }} />
+        <div className="lp-parsers-dialog lp-verdict-dialog" ref={researchDeleteDialogRef}
+             role="dialog" aria-modal="true" aria-labelledby="lp-research-delete-title">
+          <div className="lp-parsers-header"><h2 id="lp-research-delete-title">Удалить исследование из истории?</h2></div>
+          <div className="lp-verdict-body">
+            <p>Исследование исчезнет из личной истории, а общая ссылка перестанет работать.
+              Данные сохранятся в системе.</p>
+            {researchDeleteError && <p role="alert" className="lp-research-history-error">{researchDeleteError}</p>}
+            <div className="lp-research-result-actions">
+              <button ref={researchDeleteCancelRef} className="lp-btn" disabled={researchActionBusy}
+                      onClick={() => { setResearchDeleteConfirm(false); setResearchDeleteTarget(null); }}>Отмена</button>
+              <button className="lp-btn" disabled={researchActionBusy} onClick={deleteResearch}>
+                {researchActionBusy ? "Удаляем…" : "Удалить"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>}
+
       {/* ── Модал ручной маркировки вердикта ────────────────────────────────── */}
-      {verdictModal && (() => {
+      {canMarkVerdict && verdictModal && (() => {
         const rec = verdictModal.record;
-        const current = rec.is_loophole; // true | false | null
+        const current = recordClassification(rec);
         const choose = async (val) => {
           const ok = await markVerdict([rec.record_id], val, markComment.trim());
           if (ok) setVerdictModal(null);
@@ -2495,29 +3178,39 @@ function LoopholeApp() {
                   <label htmlFor="lp-mark-comment">Комментарий аудитора</label>
                   <textarea id="lp-mark-comment" rows={2} value={markComment}
                             onChange={e => setMarkComment(e.target.value)}
-                            placeholder="Почему это лазейка или обычный запрос…"/>
+                            placeholder="Обоснование выбранного типа записи…"/>
                 </div>
                 <div className="lp-verdict-options">
-                  {current !== true && (
+                  {current !== "vulnerability" && (
                     <button className="lp-verdict-option lp-verdict-option-bad"
-                            disabled={markBusy} onClick={() => choose(true)}>
+                            disabled={markBusy} onClick={() => choose("vulnerability")}>
                       <span className="lp-verdict-dot"></span>
                       <span className="lp-verdict-option-text">
-                        <span className="lp-verdict-option-name">Лазейка</span>
+                        <span className="lp-verdict-option-name">Уязвимость</span>
                         <span className="lp-verdict-option-desc">
-                          подтверждённая схема обхода условий
+                          возможность обхода условий или контроля
                         </span>
                       </span>
                     </button>
                   )}
-                  {current !== false && (
-                    <button className="lp-verdict-option lp-verdict-option-ok"
-                            disabled={markBusy} onClick={() => choose(false)}>
+                  {current !== "fraud_scheme" && (
+                    <button className="lp-verdict-option lp-verdict-option-bad"
+                            disabled={markBusy} onClick={() => choose("fraud_scheme")}>
                       <span className="lp-verdict-dot"></span>
                       <span className="lp-verdict-option-text">
-                        <span className="lp-verdict-option-name">Обычный запрос</span>
+                        <span className="lp-verdict-option-name">Мошенническая схема</span>
+                        <span className="lp-verdict-option-desc">схема обмана или злоупотребления</span>
+                      </span>
+                    </button>
+                  )}
+                  {current !== "not_confirmed" && (
+                    <button className="lp-verdict-option lp-verdict-option-ok"
+                            disabled={markBusy} onClick={() => choose("not_confirmed")}>
+                      <span className="lp-verdict-dot"></span>
+                      <span className="lp-verdict-option-text">
+                        <span className="lp-verdict-option-name">Ни то ни другое</span>
                         <span className="lp-verdict-option-desc">
-                          лазейкой не является
+                          ни уязвимость, ни мошенническая схема
                         </span>
                       </span>
                     </button>

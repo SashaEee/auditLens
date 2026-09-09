@@ -2,16 +2,40 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass
+from datetime import date, datetime
 from inspect import isawaitable
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from ..hashing import sha256_text
 from . import repository as repo
 from .models import LoopholeRecord
+
+log = logging.getLogger(__name__)
+
+
+def _normalize_published_at(value: Any) -> date | datetime | None:
+    """Приводит published_at к типу, принимаемому timestamptz.
+
+    Строки парсятся как ISO 8601 (допустимы чистая дата и суффикс Z);
+    непарсящееся значение отбрасывается в None — битая дата из fetch/LLM
+    не должна ронять сохранение всего прогона (DataError на INSERT).
+    """
+    if value is None or isinstance(value, (date, datetime)):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    normalized = raw.removesuffix("Z") + ("+00:00" if raw.endswith("Z") else "")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        log.warning("[research_cases] отброшена некорректная дата публикации источника")
+        return None
 
 
 def _decode_json_value(value: Any) -> Any:
@@ -70,7 +94,7 @@ class ResearchCaseService:
         url: str,
         title: str | None,
         extracted_text: str | None,
-        published_at: str | None = None,
+        published_at: str | date | datetime | None = None,
     ) -> int:
         return self._session.execute(
             text(
@@ -84,7 +108,7 @@ class ResearchCaseService:
                 "url": url,
                 "title": title,
                 "extracted_text": extracted_text,
-                "published_at": published_at,
+                "published_at": _normalize_published_at(published_at),
             },
         ).scalar_one()
 
@@ -97,11 +121,12 @@ class ResearchCaseService:
         findings: list[dict[str, Any]],
         sources: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Фиксирует server-side результат managed run вне общего каталога.
+        """Фиксирует server-side результат managed run в изолированном исследовании.
 
         ``findings`` формируются только read-only tools после успешного fetch.
-        Метод намеренно не вызывает repository.insert_record: перенос в каталог
-        возможен исключительно через ``import_preliminary_sources``.
+        Метод намеренно не вызывает repository.insert_record: перенос в общий
+        каталог выполняется отдельно через ``import_preliminary_sources``
+        (автоматически после анализа из chat/graph.py и по явному endpoint'у).
         """
         research_id = self.research_id_for_run(workspace_id=workspace_id, run_id=run_id)
         if research_id is not None:
@@ -129,13 +154,23 @@ class ResearchCaseService:
             extracted_text = str(source.get("extracted_text") or "").strip()
             if not url or not extracted_text or url in source_ids:
                 continue
-            source_ids[url] = self.record_source(
-                research_id,
-                url=url,
-                title=str(source.get("title") or "") or None,
-                extracted_text=extracted_text,
-                published_at=source.get("published_at"),
-            )
+            try:
+                # Savepoint: битая строка-источник не обнуляет весь прогон;
+                # её кандидаты пропускаются естественно (source_id нет).
+                with self._session.begin_nested():
+                    source_ids[url] = self.record_source(
+                        research_id,
+                        url=url,
+                        title=str(source.get("title") or "") or None,
+                        extracted_text=extracted_text,
+                        published_at=source.get("published_at"),
+                    )
+            except SQLAlchemyError:
+                log.warning(
+                    "[research_cases] источник %s пропущен из-за ошибки записи",
+                    url, exc_info=True,
+                )
+                continue
 
         candidate_ids: list[int] = []
         candidate_urls: list[str] = []
@@ -543,11 +578,15 @@ class ResearchCaseService:
         ).scalar_one_or_none()
 
     def import_preliminary_sources(self, research_id: int, *, imported_by: str) -> dict[str, Any]:
-        """Явно переносит новые подозрительные источники в общий каталог.
+        """Явно переносит новые оценённые источники в общий каталог.
 
         Исходный research source остаётся неизменяемым provenance. В каталог
-        попадает только успешно прочитанная страница с кандидатной оценкой;
-        повторный перенос source_id идемпотентно возвращается как skipped.
+        попадает успешно прочитанная страница с явным вердиктом кандидата
+        (лазейка или «не лазейка») — эффективный вердикт источника считается
+        как BOOL_OR по его кандидатам; повторный перенос source_id идемпотентно
+        возвращается как skipped. Колонка ``is_loophole`` кандидата NOT NULL
+        (миграция 045), поэтому фильтр COALESCE(...) IS NOT NULL пропускает
+        всех исторических кандидатов.
         """
         workspace_id = self.research_workspace_id(research_id)
         if workspace_id is None:
@@ -556,15 +595,16 @@ class ResearchCaseService:
             text(
                 "SELECT source.source_id, source.url, source.title AS source_title, "
                 "source.extracted_text, source.published_at, candidate.title AS candidate_title, "
-                "MAX(COALESCE(candidate.model_confidence, 0.0)) AS confidence "
+                "MAX(COALESCE(candidate.model_confidence, 0.0)) AS confidence, "
+                "MAX(CASE WHEN COALESCE(candidate.model_is_loophole, candidate.is_loophole) = TRUE "
+                "THEN 1 ELSE 0 END) AS effective_is_loophole "
                 "FROM loophole_research_source AS source "
                 "JOIN loophole_research_candidate AS candidate "
                 "ON candidate.source_id = source.source_id "
                 "WHERE source.research_id = :research_id "
                 "AND source.status = 'fetched' AND source.access_status = 'active' "
                 "AND source.extracted_text IS NOT NULL AND source.extracted_text != '' "
-                "AND (candidate.model_is_loophole = TRUE "
-                "OR (candidate.model_is_loophole IS NULL AND candidate.is_loophole = TRUE)) "
+                "AND COALESCE(candidate.model_is_loophole, candidate.is_loophole) IS NOT NULL "
                 "GROUP BY source.source_id, source.url, source.title, source.extracted_text, "
                 "source.published_at, candidate.title "
                 "ORDER BY source.source_id"
@@ -587,6 +627,7 @@ class ResearchCaseService:
             ):
                 skipped += 1
                 continue
+            effective_is_loophole = bool(row["effective_is_loophole"])
             record_id = repo.insert_record(
                 LoopholeRecord(
                     sha256=source_sha,
@@ -598,7 +639,12 @@ class ResearchCaseService:
                     raw_text_len=len(content),
                     published_at=row["published_at"],
                     status="preliminary",
-                    is_loophole=True,
+                    is_loophole=effective_is_loophole,
+                    # Явный classification: insert_record дефолта не имеет,
+                    # инвариант согласованности — repository.update_verdict.
+                    classification=(
+                        "vulnerability" if effective_is_loophole else "not_confirmed"
+                    ),
                     verdict_confidence=float(row["confidence"]),
                     verdict_reason="Предварительная оценка из AI-исследования",
                     verdict_model="research_preliminary",
@@ -829,6 +875,7 @@ class ResearchCaseService:
         record_id = repo.insert_record(
             LoopholeRecord(
                 sha256=sha256_text(f"publication:{decision_id}:{command_key}"),
+                classification=decision["decision"],
                 title=case["title"],
                 url="",
                 snippet=case["evidence"],

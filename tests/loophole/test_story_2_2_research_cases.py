@@ -1,6 +1,8 @@
 """TDD-контракт Story 2.2: кандидаты существуют только внутри исследования."""
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 
 from sqlalchemy import text
@@ -151,10 +153,10 @@ def test_managed_run_persists_fetched_source_even_without_candidate(session):
     source = session.execute(
         text("SELECT url, published_at FROM loophole_research_source")
     ).mappings().one()
-    assert source == {
-        "url": "https://example.ru/rules",
-        "published_at": "2026-08-01T00:00:00+03:00",
-    }
+    assert source["url"] == "https://example.ru/rules"
+    # Дата нормализуется в datetime на границе записи; в SQLite хранится
+    # сериализованной строкой вида "2026-08-01 00:00:00+03:00".
+    assert str(source["published_at"]).replace("T", " ").startswith("2026-08-01 00:00:00")
 
 
 def test_unavailable_source_keeps_limitation_and_rejects_candidate(session):
@@ -572,7 +574,10 @@ def test_ccks_decision_is_append_only_and_idempotent_for_submitted_snapshot(sess
     )).scalar_one() == 1
 
 
-def test_positive_decision_publishes_catalog_case_once_and_negative_never_publishes(session):
+@pytest.mark.parametrize("classification", ["vulnerability", "fraud_scheme"])
+def test_positive_decision_publishes_catalog_case_once_and_negative_never_publishes(
+    session, classification,
+):
     from bank_audit.loophole.research_cases import ResearchCaseService
 
     _create_research_schema(session)
@@ -607,7 +612,7 @@ def test_positive_decision_publishes_catalog_case_once_and_negative_never_publis
     )
     decision = service.decide_snapshot(
         snapshot["snapshot_id"],
-        decision="vulnerability",
+        decision=classification,
         comment="Подтверждено.",
         decided_by="expert",
         run_id="agent-run-decision",
@@ -618,6 +623,9 @@ def test_positive_decision_publishes_catalog_case_once_and_negative_never_publis
 
     assert first == repeated
     assert first["status"] == "published"
+    assert session.execute(text(
+        "SELECT classification FROM loophole_record WHERE record_id = :id"
+    ), {"id": first["record_id"]}).scalar_one() == classification
     assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 1
     assert session.execute(text(
         "SELECT count(*) FROM loophole_publication_mapping"

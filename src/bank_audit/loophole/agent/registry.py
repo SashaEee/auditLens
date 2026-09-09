@@ -5,6 +5,7 @@ import os
 from collections.abc import Iterable
 
 DEFAULT_ALLOWED_SKILLS = (
+    "audit_research_subagents",
     "audit_web_search",
     "audit_web_fetch",
     "audit_extract_loopholes",

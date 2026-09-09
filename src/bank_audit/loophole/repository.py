@@ -127,10 +127,10 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 "(sha256, title, url, snippet, domain, trust_score, bank_slug, keyword, "
                 "raw_text, status, is_loophole, parser_id, text_sha256, "
                 "content_status, raw_text_len, raw_text_truncated, published_at, "
-                "verdict_confidence, verdict_reason, verdict_model) "
+                "verdict_confidence, verdict_reason, verdict_model, classification) "
                 "VALUES (:sha, :title, :url, :snip, :dom, :trust, :bank, :kw, :raw, "
                 ":status, :loop, :pid, :tsha, :cs, :rlen, :rtrunc, :published, "
-                ":confidence, :reason, :model) "
+                ":confidence, :reason, :model, :classification) "
                 "RETURNING record_id"
             ),
             {
@@ -145,6 +145,7 @@ def insert_record(rec: LoopholeRecord, *, session=None) -> int | None:
                 "confidence": rec.verdict_confidence,
                 "reason": rec.verdict_reason,
                 "model": rec.verdict_model,
+                "classification": rec.classification,
             },
         ).scalar_one()
         return row
@@ -157,18 +158,26 @@ def update_verdict(
     confidence: float,
     reason: str,
     model: str,
+    classification: str | None = None,
     session=None,
 ) -> None:
+    """Обновляет классификацию, сохраняя статус публикации записи."""
+    classification = classification or ("vulnerability" if is_loophole else "not_confirmed")
+    if classification not in {"vulnerability", "fraud_scheme", "not_confirmed"}:
+        raise ValueError("Неизвестный тип записи")
+    if is_loophole != (classification != "not_confirmed"):
+        raise ValueError("Тип записи противоречит признаку находки")
     with _session(session) as s:
         s.execute(
             text(
                 f"UPDATE {schema.T_RECORD} SET is_loophole = :is_l, "
                 "verdict_confidence = :conf, verdict_reason = :reason, "
-                "verdict_model = :model, classified_at = CURRENT_TIMESTAMP, status = 'classified' "
+                "verdict_model = :model, classification = :classification, "
+                "classified_at = CURRENT_TIMESTAMP "
                 "WHERE record_id = :id"
             ),
             {"is_l": is_loophole, "conf": confidence, "reason": reason,
-             "model": model, "id": record_id},
+             "model": model, "id": record_id, "classification": classification},
         )
 
 
@@ -229,7 +238,7 @@ def count_records_needing_content(*, session=None) -> int:
 # входят намеренно — см. get_record.
 _RECORD_FIELDS = (
     "record_id, title, url, snippet, domain, trust_score, bank_slug, keyword, "
-    "is_loophole, verdict_confidence, verdict_reason, verdict_model, status, "
+    "is_loophole, classification, verdict_confidence, verdict_reason, verdict_model, status, "
     "published_at, collected_at, fetched_at, classified_at, content_status, "
     "raw_text, raw_text_len, raw_text_truncated, sha256, text_sha256, parser_id"
 )
@@ -240,6 +249,10 @@ def _record_dict(row) -> dict:
     record = dict(row)
     if record.get("is_loophole") is not None:
         record["is_loophole"] = bool(record["is_loophole"])
+    if not record.get("classification") and record.get("is_loophole") is not None:
+        record["classification"] = (
+            "vulnerability" if record["is_loophole"] else "not_confirmed"
+        )
     return record
 
 
@@ -301,7 +314,7 @@ def list_records(
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         columns = (
             "record_id, title, url, snippet, domain, trust_score, "
-            "bank_slug, keyword, is_loophole, verdict_confidence, "
+            "bank_slug, keyword, is_loophole, classification, verdict_confidence, "
             "verdict_reason, verdict_model, status, "
             "published_at, collected_at, classified_at, content_status, raw_text_len"
         )
@@ -357,7 +370,7 @@ def list_published_cases(*, limit: int = 500, session=None) -> list[dict]:
         rows = s.execute(
             text(
                 f"SELECT record_id, title, url, snippet, domain, trust_score, bank_slug, "
-                f"keyword, is_loophole, verdict_confidence, verdict_reason, verdict_model, "
+                f"keyword, is_loophole, classification, verdict_confidence, verdict_reason, verdict_model, "
                 f"status, published_at, collected_at, classified_at FROM {schema.T_RECORD} "
                 "WHERE status = 'published' AND is_loophole = TRUE "
                 "ORDER BY collected_at DESC, record_id DESC LIMIT :limit"
@@ -367,6 +380,86 @@ def list_published_cases(*, limit: int = 500, session=None) -> list[dict]:
         return [_record_dict(row) for row in rows]
 
 
+def _catalog_where(
+    *,
+    bank_slugs: list[str] | None,
+    period_from: date | None,
+    period_to: date | None,
+    query_text: str | None,
+    verification_status: str,
+    classification: str,
+) -> tuple[list[str], dict[str, Any]]:
+    """Общие WHERE-условия общей базы для выборки записей и их подсчёта.
+
+    ``classification='all'`` не ограничивает тип записи (все три классификации),
+    ``'confirmed'`` — только лазейки (vulnerability/fraud_scheme).
+    """
+    if verification_status not in {"all", "verified", "pending"}:
+        raise ValueError("Неизвестный статус верификации")
+    if classification not in {"all", "confirmed", "vulnerability", "fraud_scheme", "not_confirmed"}:
+        raise ValueError("Неизвестный тип записи")
+    record_type = (
+        "COALESCE(record.classification, CASE WHEN record.is_loophole = TRUE "
+        "THEN 'vulnerability' WHEN record.is_loophole = FALSE THEN 'not_confirmed' END)"
+    )
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    if classification == "confirmed":
+        clauses.append(f"{record_type} IN ('vulnerability', 'fraud_scheme')")
+    elif classification == "all":
+        # «Все» — любая из трёх классификаций; полностью неразмеченные
+        # legacy-строки (record_type IS NULL) в каталог не попадают.
+        clauses.append(f"{record_type} IS NOT NULL")
+    else:
+        clauses.append(f"{record_type} = :classification")
+        params["classification"] = classification
+    positive_decision = (
+        "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
+        "JOIN loophole_research_candidate AS candidate "
+        "ON candidate.research_id = verification_import.research_id "
+        "AND candidate.source_id = verification_import.source_id "
+        "JOIN loophole_verification_snapshot AS snapshot "
+        "ON snapshot.candidate_id = candidate.candidate_id "
+        "JOIN loophole_verification_decision AS decision "
+        "ON decision.snapshot_id = snapshot.snapshot_id "
+        "WHERE verification_import.record_id = record.record_id "
+        "AND decision.decision IN ('vulnerability', 'fraud_scheme'))"
+    )
+    any_decision = (
+        "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
+        "JOIN loophole_research_candidate AS candidate "
+        "ON candidate.research_id = verification_import.research_id "
+        "AND candidate.source_id = verification_import.source_id "
+        "JOIN loophole_verification_snapshot AS snapshot "
+        "ON snapshot.candidate_id = candidate.candidate_id "
+        "JOIN loophole_verification_decision AS decision "
+        "ON decision.snapshot_id = snapshot.snapshot_id "
+        "WHERE verification_import.record_id = record.record_id)"
+    )
+    if verification_status == "verified":
+        clauses.append(positive_decision)
+    elif verification_status == "pending":
+        clauses.append("record.status = 'preliminary'")
+        clauses.append(f"NOT {any_decision}")
+    if bank_slugs:
+        placeholders = ", ".join(f":b{i}" for i in range(len(bank_slugs)))
+        clauses.append(f"record.bank_slug IN ({placeholders})")
+        params.update({f"b{i}": value for i, value in enumerate(bank_slugs)})
+    if period_from:
+        clauses.append("record.published_at >= :period_from")
+        params["period_from"] = period_from
+    if period_to:
+        clauses.append("record.published_at < :period_to")
+        params["period_to"] = period_to + timedelta(days=1)
+    if query_text:
+        clauses.append(
+            "(LOWER(COALESCE(record.title, '')) LIKE :query "
+            "OR LOWER(COALESCE(record.snippet, '')) LIKE :query)"
+        )
+        params["query"] = f"%{query_text.lower()}%"
+    return clauses, params
+
+
 def list_catalog_cases(
     *,
     bank_slugs: list[str] | None = None,
@@ -374,75 +467,39 @@ def list_catalog_cases(
     period_to: date | None = None,
     query_text: str | None = None,
     verification_status: str = "all",
-    limit: int = 500,
+    classification: str = "all",
+    limit: int = 50,
     offset: int = 0,
     session=None,
 ) -> list[dict]:
-    """Общая база: подтверждённые и предварительные подозрения.
+    """Общая база: типы находок независимо от статуса публикации.
 
     ``verified`` показывает только записи с положительным append-only решением
     ЦК КС; ``pending`` — только предварительные записи без решения.
     """
-    if verification_status not in {"all", "verified", "pending"}:
-        raise ValueError("Неизвестный статус верификации")
+    clauses, params = _catalog_where(
+        bank_slugs=bank_slugs,
+        period_from=period_from,
+        period_to=period_to,
+        query_text=query_text,
+        verification_status=verification_status,
+        classification=classification,
+    )
+    params = {**params, "limit": limit, "offset": offset}
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
     with _session(session) as s:
-        clauses = ["record.is_loophole = TRUE", "record.status IN ('published', 'preliminary')"]
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
-        positive_decision = (
-            "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
-            "JOIN loophole_research_candidate AS candidate "
-            "ON candidate.research_id = verification_import.research_id "
-            "AND candidate.source_id = verification_import.source_id "
-            "JOIN loophole_verification_snapshot AS snapshot "
-            "ON snapshot.candidate_id = candidate.candidate_id "
-            "JOIN loophole_verification_decision AS decision "
-            "ON decision.snapshot_id = snapshot.snapshot_id "
-            "WHERE verification_import.record_id = record.record_id "
-            "AND decision.decision IN ('vulnerability', 'fraud_scheme'))"
-        )
-        any_decision = (
-            "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
-            "JOIN loophole_research_candidate AS candidate "
-            "ON candidate.research_id = verification_import.research_id "
-            "AND candidate.source_id = verification_import.source_id "
-            "JOIN loophole_verification_snapshot AS snapshot "
-            "ON snapshot.candidate_id = candidate.candidate_id "
-            "JOIN loophole_verification_decision AS decision "
-            "ON decision.snapshot_id = snapshot.snapshot_id "
-            "WHERE verification_import.record_id = record.record_id)"
-        )
-        if verification_status == "verified":
-            clauses.append(positive_decision)
-        elif verification_status == "pending":
-            clauses.append("record.status = 'preliminary'")
-            clauses.append(f"NOT {any_decision}")
-        if bank_slugs:
-            placeholders = ", ".join(f":b{i}" for i in range(len(bank_slugs)))
-            clauses.append(f"record.bank_slug IN ({placeholders})")
-            params.update({f"b{i}": value for i, value in enumerate(bank_slugs)})
-        if period_from:
-            clauses.append("record.published_at >= :period_from")
-            params["period_from"] = period_from
-        if period_to:
-            clauses.append("record.published_at < :period_to")
-            params["period_to"] = period_to + timedelta(days=1)
-        if query_text:
-            clauses.append(
-                "(LOWER(COALESCE(record.title, '')) LIKE :query "
-                "OR LOWER(COALESCE(record.snippet, '')) LIKE :query)"
-            )
-            params["query"] = f"%{query_text.lower()}%"
         rows = s.execute(
             text(
                 "SELECT record.record_id, record.title, record.url, record.snippet, record.domain, "
                 "record.trust_score, record.bank_slug, record.keyword, record.is_loophole, "
+                "record.classification, "
                 "record.verdict_confidence, record.verdict_reason, record.verdict_model, record.status, "
                 "record.published_at, record.collected_at, record.classified_at, "
                 "record.content_status, record.raw_text_len, imported.research_id AS provenance_research_id, "
                 "imported.source_id AS provenance_source_id, imported.imported_at AS provenance_imported_at "
                 f"FROM {schema.T_RECORD} AS record "
                 "LEFT JOIN loophole_preliminary_import AS imported ON imported.record_id = record.record_id "
-                f"WHERE {' AND '.join(clauses)} "
+                f"{where} "
                 "ORDER BY record.collected_at DESC, record.record_id DESC LIMIT :limit OFFSET :offset"
             ),
             params,
@@ -463,6 +520,38 @@ def list_catalog_cases(
                 record["provenance"] = None
             catalog.append(record)
         return catalog
+
+
+def count_catalog_cases(
+    *,
+    bank_slugs: list[str] | None = None,
+    period_from: date | None = None,
+    period_to: date | None = None,
+    query_text: str | None = None,
+    verification_status: str = "all",
+    classification: str = "all",
+    session=None,
+) -> int:
+    """Общее число записей общей базы по тем же фильтрам, что list_catalog_cases."""
+    clauses, params = _catalog_where(
+        bank_slugs=bank_slugs,
+        period_from=period_from,
+        period_to=period_to,
+        query_text=query_text,
+        verification_status=verification_status,
+        classification=classification,
+    )
+    with _session(session) as s:
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        return int(
+            s.execute(
+                text(
+                    f"SELECT COUNT(*) FROM {schema.T_RECORD} AS record "
+                    f"{where}"
+                ),
+                params,
+            ).scalar_one()
+        )
 
 
 def list_bank_slugs(*, session=None) -> list[str]:
@@ -702,13 +791,32 @@ def create_workspace(user_id: str, name: str | None = None, *, session=None) -> 
         return row
 
 
+_WORKSPACE_SUMMARY_SQL = (
+    "SELECT w.workspace_id, w.user_id, w.name, w.created_at, w.last_active_at, "
+    "(SELECT m.content FROM loophole_chat_message m "
+    "WHERE m.workspace_id = w.workspace_id AND m.role = 'user' "
+    "ORDER BY m.message_id LIMIT 1) AS first_query "
+    f"FROM {schema.T_WORKSPACE} w "
+)
+
+
+def _workspace_summary(row) -> dict:
+    """Старые области с именем default получают заголовок из первого запроса."""
+    result = dict(row)
+    first_query = result.pop("first_query", None)
+    if not result["name"] or result["name"] == "default":
+        result["name"] = " ".join(str(first_query or "Новое исследование").split())[:120]
+    return result
+
+
 def list_workspaces(user_id: str, *, session=None) -> list[dict]:
     with _session(session) as s:
         return [
-            dict(r) for r in s.execute(
+            _workspace_summary(r) for r in s.execute(
                 text(
-                    f"SELECT workspace_id, user_id, name, created_at, last_active_at "
-                    f"FROM {schema.T_WORKSPACE} WHERE user_id = :u ORDER BY workspace_id"
+                    _WORKSPACE_SUMMARY_SQL
+                    + "WHERE w.user_id = :u AND w.deleted_at IS NULL "
+                    "ORDER BY COALESCE(w.last_active_at, w.created_at) DESC, w.workspace_id DESC"
                 ),
                 {"u": user_id},
             ).mappings().all()
@@ -720,12 +828,12 @@ def get_workspace(workspace_id: int, *, session=None) -> dict | None:
     with _session(session) as s:
         row = s.execute(
             text(
-                f"SELECT workspace_id, user_id, name, created_at, last_active_at "
-                f"FROM {schema.T_WORKSPACE} WHERE workspace_id = :id"
+                _WORKSPACE_SUMMARY_SQL
+                + "WHERE w.workspace_id = :id AND w.deleted_at IS NULL"
             ),
             {"id": workspace_id},
         ).mappings().first()
-        return dict(row) if row else None
+        return _workspace_summary(row) if row else None
 
 
 def list_verification_queue(*, limit: int = 200, session=None) -> list[dict]:
@@ -751,7 +859,10 @@ def list_verification_queue(*, limit: int = 200, session=None) -> list[dict]:
 def touch_workspace(workspace_id: int, *, session=None) -> None:
     with _session(session) as s:
         s.execute(
-            text(f"UPDATE {schema.T_WORKSPACE} SET last_active_at = CURRENT_TIMESTAMP WHERE workspace_id = :id"),
+            text(
+                f"UPDATE {schema.T_WORKSPACE} SET last_active_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = :id AND deleted_at IS NULL"
+            ),
             {"id": workspace_id},
         )
 
@@ -764,6 +875,7 @@ def add_chat_message(
     *,
     tool_name: str | None = None,
     tool_args: dict | None = None,
+    report_id: int | None = None,
     session=None,
 ) -> int:
     with _session(session) as s:
@@ -771,27 +883,31 @@ def add_chat_message(
         row = s.execute(
             text(
                 f"INSERT INTO {schema.T_CHAT_MESSAGE} "
-                "(workspace_id, role, content, tool_name, tool_args) "
-                "VALUES (:ws, :role, :content, :tn, :ta) RETURNING message_id"
+                "(workspace_id, role, content, tool_name, tool_args, report_id) "
+                "VALUES (:ws, :role, :content, :tn, :ta, :report_id) RETURNING message_id"
             ),
             {"ws": workspace_id, "role": role, "content": content,
-             "tn": tool_name, "ta": args_json},
+             "tn": tool_name, "ta": args_json, "report_id": report_id},
         ).scalar_one()
+        touch_workspace(workspace_id, session=s)
         return row
 
 
-def list_chat_history(workspace_id: int, *, limit: int = 200, session=None) -> list[dict]:
+def list_chat_history(workspace_id: int, *, limit: int | None = None, session=None) -> list[dict]:
+    """Полная история в порядке записи; ограниченный контекст берётся с конца."""
     with _session(session) as s:
-        return [
+        rows = [
             dict(r) for r in s.execute(
                 text(
                     f"SELECT message_id, workspace_id, role, content, tool_name, tool_args, "
-                    f"created_at FROM {schema.T_CHAT_MESSAGE} "
-                    "WHERE workspace_id = :ws ORDER BY created_at LIMIT :lim"
+                    f"created_at, report_id FROM {schema.T_CHAT_MESSAGE} "
+                    "WHERE workspace_id = :ws ORDER BY message_id "
+                    + ("DESC LIMIT :lim" if limit is not None else "ASC")
                 ),
                 {"ws": workspace_id, "lim": limit},
             ).mappings().all()
         ]
+        return list(reversed(rows)) if limit is not None else rows
 
 
 # ── results ─────────────────────────────────────────────────────────────────

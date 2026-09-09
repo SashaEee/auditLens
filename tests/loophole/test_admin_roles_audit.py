@@ -143,6 +143,7 @@ def test_contexts_admin_gets_admin_surface(client, app_session):
     contexts = r.json()["contexts"]
     ids = {c["id"] for c in contexts}
     assert "admin" in ids
+    assert "sources" not in ids
     admin = next(c for c in contexts if c["id"] == "admin")
     assert admin["title"] == "Управление доступом"
 
@@ -151,7 +152,7 @@ def test_contexts_member_without_admin_role_has_no_admin(client, app_session):
     _grant_membership(app_session, "analyst")
     r = client.get("/api/loophole/contexts", headers=_auth("analyst"))
     assert {c["id"] for c in r.json()["contexts"]} == {
-        "catalog", "sources", "ai_research",
+        "catalog", "ai_research",
     }
 
 

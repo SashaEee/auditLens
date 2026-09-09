@@ -102,7 +102,37 @@ def test_report_renderer_escapes_untrusted_text_and_marks_missing_evidence():
 
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
-    assert "Проверенные доказательства отсутствуют." in html
+    assert "Источники не использовались." in html
+
+
+def test_report_renderer_replaces_urls_with_numbered_source_list():
+    html = pdf_export.render_research_report_html({
+        "query": "тема",
+        "result": (
+            "Вывод по [статье](https://a.test/page). "
+            "Дополнительно: https://b.test/post. "
+            "Повтор https://a.test/page."
+        ),
+        "evidence": [
+            {"title": "Статья А", "url": "https://a.test/page",
+             "extracted_text": "СЕКРЕТНЫЙ ТЕКСТ СТАТЬИ"},
+            {"title": "Комментарий", "url": "https://c.test/comments",
+             "extracted_text": "текст"},
+        ],
+    })
+
+    # В итоговом тексте нет сырых URL — только номера источников
+    assert "статье [1]" in html
+    assert "Дополнительно: [2]." in html
+    assert "Повтор [1]." in html
+    # Список источников нумерованный, с подписью «ссылка» и гиперссылкой
+    assert "Список используемых источников" in html
+    assert '<a href="https://a.test/page">ссылка</a>' in html
+    assert '<a href="https://b.test/post">ссылка</a>' in html
+    assert '<a href="https://c.test/comments">ссылка</a>' in html
+    assert "<ol>" in html
+    # Тексты статей не выводятся
+    assert "СЕКРЕТНЫЙ ТЕКСТ СТАТЬИ" not in html
 
 
 def test_report_docx_contains_query_result_and_only_snapshot_evidence(session):

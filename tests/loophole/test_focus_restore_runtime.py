@@ -1,4 +1,4 @@
-"""Runtime-регрессия доступного перехода к read-only каталогу парсеров."""
+"""Runtime-регрессия фокуса и доступных рабочих контекстов."""
 
 from __future__ import annotations
 
@@ -23,9 +23,13 @@ def _runtime_html() -> str:
         });
         if (url.endsWith("/contexts")) return json({contexts: [
           {id: "catalog", title: "Общая база"},
-          {id: "sources", title: "Добавить источник"},
+          {id: "ai_research", title: "AI-исследования"},
         ]});
         if (url.endsWith("/workspace")) return json({workspace_id: 1});
+        if (url.endsWith("/workspaces")) return json({workspaces: [{workspace_id: 1}]});
+        if (url.endsWith("/history/1")) return json({
+          workspace: {workspace_id: 1}, messages: [], reports: [], read_only: false,
+        });
         if (url.endsWith("/banks")) return json({banks: []});
         if (url.includes("/catalog")) return json({records: []});
         if (url.endsWith("/parsers") && method === "GET") {
@@ -50,7 +54,7 @@ def _runtime_html() -> str:
     )
 
 
-def test_sources_tab_keeps_focus_after_opening_read_only_catalog():
+def test_available_tab_keeps_focus_and_parser_tab_is_hidden():
     """После открытия вкладки фокус остаётся на доступной стабильной вкладке."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -59,15 +63,16 @@ def test_sources_tab_keeps_focus_after_opening_read_only_catalog():
             page.set_default_timeout(10_000)
             page.set_default_navigation_timeout(10_000)
             page.set_content(_runtime_html(), wait_until="load")
-            sources_tab = page.get_by_role("tab", name="Добавить источник")
-            sources_tab.wait_for(state="visible")
-            sources_tab.click()
+            ai_research_tab = page.get_by_role("tab", name="AI-исследования")
+            ai_research_tab.wait_for(state="visible")
+            assert page.get_by_role("tab", name="Добавить источник").count() == 0
+            ai_research_tab.click()
             page.wait_for_function(
                 """() => {
                   const active = document.activeElement;
                   return active instanceof HTMLButtonElement
                     && active.getAttribute("role") === "tab"
-                    && active.textContent.includes("Добавить источник")
+                    && active.textContent.includes("AI-исследования")
                     && !active.disabled;
                 }"""
             )

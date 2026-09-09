@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -27,11 +27,12 @@ class LoopholeRecord(BaseModel):
     raw_text_len: int | None = None
     raw_text_truncated: bool = False
     is_loophole: bool | None = None
+    classification: Literal["vulnerability", "fraud_scheme", "not_confirmed"] | None = None
     verdict_confidence: float | None = None
     verdict_reason: str | None = None
     verdict_model: str | None = None
     classified_at: datetime | None = None
-    status: str = "new"
+    status: Literal["published", "preliminary"] = "preliminary"
 
 
 class SearchQuery(BaseModel):

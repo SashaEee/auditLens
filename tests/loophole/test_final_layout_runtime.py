@@ -14,16 +14,19 @@ VENDOR = ROOT / "src" / "bank_audit" / "web" / "static" / "vendor"
 
 ALL_CONTEXTS = [
     {"id": "catalog", "title": "Общая база"},
-    {"id": "sources", "title": "Добавить источник"},
-    {"id": "ai_research", "title": "Новое AI-исследование"},
+    {"id": "ai_research", "title": "AI-исследования"},
     {"id": "queue", "title": "Очередь верификации"},
     {"id": "admin", "title": "Управление доступом"},
 ]
 
 ROLELESS_CONTEXTS = [
     {"id": "catalog", "title": "Общая база"},
+    {"id": "ai_research", "title": "AI-исследования"},
+]
+
+PARSER_CONTEXTS = [
+    {"id": "catalog", "title": "Общая база"},
     {"id": "sources", "title": "Добавить источник"},
-    {"id": "ai_research", "title": "Новое AI-исследование"},
 ]
 
 RECORDS = [
@@ -75,6 +78,11 @@ def _runtime_html(
     jsx = (STATIC / "loophole.jsx").read_text(encoding="utf-8")
     css = (STATIC / "loophole.css").read_text(encoding="utf-8")
     context_json = json.dumps(contexts or ALL_CONTEXTS, ensure_ascii=False)
+    capabilities_json = json.dumps({
+        "can_mark_verdict": any(
+            context["id"] in {"queue", "admin"} for context in contexts or ALL_CONTEXTS
+        ),
+    })
     records_json = json.dumps(RECORDS, ensure_ascii=False)
     parser_json = json.dumps(
         {
@@ -166,7 +174,14 @@ def _runtime_html(
           )).join(newline + newline) + newline + newline,
           {{status: 200, headers: {{"Content-Type": "text/event-stream"}}}}
         );
-        if (url.endsWith("/contexts")) return jsonResponse({{contexts: {context_json}}});
+        if (url.endsWith("/contexts")) return jsonResponse({{
+          contexts: {context_json}, capabilities: {capabilities_json},
+        }});
+        if (url.endsWith("/workspaces")) return jsonResponse({{workspaces: [{{workspace_id: 1, name: "Новое исследование"}}]}});
+        if (url.endsWith("/history/1")) return jsonResponse({{
+          workspace: {{workspace_id: 1, name: "Новое исследование"}},
+          messages: [], reports: [], read_only: false,
+        }});
         if (url.endsWith("/workspace")) return jsonResponse({{workspace_id: 1}});
         if (url.endsWith("/banks")) return jsonResponse({{banks: ["sber", "vtb"]}});
         if (url.includes("/catalog")) {{
@@ -338,7 +353,7 @@ def _open(
 
 
 def _open_ai_chat(page, *, compact: bool) -> None:
-    page.get_by_role("tab", name="Новое AI-исследование").click()
+    page.get_by_role("tab", name="AI-исследования").click()
     if compact:
         page.get_by_role("button", name="Открыть чат").click()
     page.get_by_label("Сообщение аналитику").wait_for(state="visible")
@@ -760,7 +775,7 @@ def test_chat_panel_follows_theme_tokens_without_gradient_or_slash_copy(
 def test_research_result_renders_safe_markdown_and_exposes_snapshot_downloads(browser: Browser):
     page = _open(browser, report_snapshot_id=73)
     try:
-        page.get_by_role("tab", name="Новое AI-исследование").click()
+        page.get_by_role("tab", name="AI-исследования").click()
         composer = page.get_by_label("Сообщение аналитику")
         send = page.get_by_role("button", name="Отправить сообщение")
         composer.fill("Проверь условия")
@@ -771,12 +786,12 @@ def test_research_result_renders_safe_markdown_and_exposes_snapshot_downloads(br
 
         report = page.locator(".lp-research-evidence")
         assert report.get_by_role("listitem").inner_text() == "Проверенный источник"
-        menu = report.get_by_text("Скачать исследование", exact=True)
-        menu.click()
-        pdf = report.get_by_role("button", name="PDF")
-        word = report.get_by_role("button", name="Word")
+        assert report.get_by_text("Скачать исследование", exact=True).count() == 0
+        assert page.get_by_role("button", name="Word").count() == 0
+        assert page.get_by_role("button", name="Добавить в общую базу").count() == 0
+        current = page.locator(".lp-research-current")
+        pdf = current.get_by_role("button", name="PDF")
         pdf.click()
-        assert word.is_enabled()
         page.wait_for_function("() => window.__downloads.length === 1")
     finally:
         page.close()
@@ -837,7 +852,7 @@ def test_tablist_keyboard_navigation_wraps_selects_and_focuses(browser: Browser)
 
         page.keyboard.press("ArrowDown")
         page.wait_for_function(
-            '() => document.activeElement.id === "lp-tab-sources" '
+            '() => document.activeElement.id === "lp-tab-ai_research" '
             '&& document.activeElement.getAttribute("aria-selected") === "true"'
         )
         page.keyboard.press("ArrowUp")
@@ -887,12 +902,12 @@ def test_roleless_base_contexts_switch_without_queue_or_admin(browser: Browser):
     page = _open(browser, contexts=ROLELESS_CONTEXTS)
     try:
         catalog = page.get_by_role("tab", name="Общая база")
-        research = page.get_by_role("tab", name="Новое AI-исследование")
+        research = page.get_by_role("tab", name="AI-исследования")
 
         catalog.click()
         page.locator(".lp-table").wait_for(state="visible")
         research.click()
-        page.get_by_role("heading", name="Новое AI-исследование").wait_for(state="visible")
+        page.get_by_role("heading", name="AI-исследования").wait_for(state="visible")
 
         assert page.get_by_role("tab", name="Очередь верификации").count() == 0
         assert page.get_by_role("tab", name="Управление доступом").count() == 0
@@ -910,12 +925,9 @@ def test_catalog_exposes_read_only_published_loophole_scope_without_false_query_
     try:
         assert page.locator("#lp-filter-verdict").count() == 0
         assert page.locator("#lp-filter-status").count() == 0
-        assert page.get_by_label("Каталог показывает только лазейки").inner_text() == "лазейки"
-        assert page.get_by_label(
-            "Каталог показывает подтверждённые и предварительные записи"
-        ).inner_text() == (
-            "подтверждённые и предварительные"
-        )
+        assert page.get_by_label("Тип записи").input_value() == "all"
+        # Декоративный индикатор «Состояния базы» удалён из фильтров каталога.
+        assert page.locator(".lp-scope-indicator").count() == 0
 
         page.get_by_label("Поиск по тексту").fill("комиссия")
         page.wait_for_function("() => window.__catalogUrls.length >= 2")
@@ -928,7 +940,7 @@ def test_catalog_exposes_read_only_published_loophole_scope_without_false_query_
 
 
 def test_selected_csv_download_is_repeatable_and_preserves_selection(browser: Browser):
-    page = _open(browser)
+    page = _open(browser, contexts=PARSER_CONTEXTS)
     try:
         page.locator("#lp-select-record-1").check()
         page.locator("#lp-select-record-3").check()
@@ -972,7 +984,7 @@ def test_selected_csv_download_is_repeatable_and_preserves_selection(browser: Br
 
 
 def test_parser_request_is_inline_and_catalog_is_read_only(browser: Browser):
-    page = _open(browser)
+    page = _open(browser, contexts=PARSER_CONTEXTS)
     try:
         page.get_by_role("tab", name="Добавить источник").click()
         page.get_by_role("heading", name="Параметры заявки").wait_for(state="visible")
@@ -995,7 +1007,7 @@ def test_parser_request_is_inline_and_catalog_is_read_only(browser: Browser):
 
 def test_parser_request_does_not_open_event_source(browser: Browser):
     """Отправка заявки не запускает парсер и не открывает журнал выполнения."""
-    page = _open(browser, event_source_error=True)
+    page = _open(browser, contexts=PARSER_CONTEXTS, event_source_error=True)
     try:
         page.get_by_role("tab", name="Добавить источник").click()
         page.get_by_label("URL веб-источника").fill("https://example.ru/tariffs")
@@ -1016,7 +1028,7 @@ def test_parser_targets_link_only_safe_web_addresses(browser: Browser):
         "javascript:alert(1)",
         "ftp://bank.example/dump",
     ]
-    page = _open(browser, parser_targets=targets)
+    page = _open(browser, contexts=PARSER_CONTEXTS, parser_targets=targets)
     try:
         page.get_by_role("tab", name="Добавить источник").click()
         target_list = page.locator(".lp-parser-targets")
@@ -1039,11 +1051,11 @@ def test_parser_targets_link_only_safe_web_addresses(browser: Browser):
 def test_secondary_surfaces_use_final_board_composition(browser: Browser):
     page = _open(browser)
     try:
-        page.get_by_role("tab", name="Новое AI-исследование").click()
-        page.get_by_role("heading", name="Новое AI-исследование").wait_for(state="visible")
+        page.get_by_role("tab", name="AI-исследования").click()
+        page.get_by_role("heading", name="AI-исследования").wait_for(state="visible")
         assert page.locator(".lp-research-board").is_visible()
         assert page.locator(".lp-research-card").count() >= 3
-        assert page.get_by_role("complementary", name="Аналитик лазеек").is_visible()
+        assert page.get_by_role("complementary", name="Аналитик уязвимостей").is_visible()
 
         page.get_by_role("tab", name="Очередь верификации").click()
         page.get_by_role("heading", name="Очередь верификации").wait_for(state="visible")
@@ -1115,6 +1127,7 @@ def test_breakpoints_have_no_root_overflow_or_clipped_persistent_controls(
             assert box["right"] <= metrics["viewport"] + 1, box
             assert box["width"] > 0, box
         assert page.get_by_role("button", name="CSV").is_visible()
-        assert page.get_by_role("tab", name="Добавить источник").is_visible()
+        assert page.get_by_role("tab", name="AI-исследования").is_visible()
+        assert page.get_by_role("tab", name="Добавить источник").count() == 0
     finally:
         page.close()

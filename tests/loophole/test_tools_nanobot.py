@@ -183,7 +183,7 @@ async def test_extract_loopholes_returns_empty_on_empty_text():
 
 @pytest.mark.asyncio
 async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monkeypatch, session):
-    """Инструмент извлечения передаёт подтверждённую находку серверу, не записывая БД сам."""
+    """Инструмент извлечения передаёт явно оценённые находки серверу, не записывая БД сам."""
     from bank_audit.loophole.chat import tools_nanobot
 
     async def fake_extract(_text):
@@ -217,6 +217,7 @@ async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monk
                 "title": "Проверенный источник",
                 "extracted_text": "Текст источника",
                 "published_at": "2026-08-27T09:25:00+03:00",
+                "estimated_published_at": "2026-08-27",
             }
         },
     )
@@ -228,20 +229,38 @@ async def test_extract_tool_queues_confirmed_finding_for_server_persistence(monk
     )
 
     assert json.loads(result)[0]["title"] == "Обход комиссии"
+    # Явные вердикты в обе стороны ставятся в очередь сохранения.
     assert context.pending_records == [
         {
             "title": "Обход комиссии",
             "url": "https://example.ru/source",
             "snippet": "Подтверждающая цитата",
+            "evidence_quote": "Подтверждающая цитата",
             "bank_slug": "sberbank",
             "raw_text": "Текст источника",
             "source_title": "Проверенный источник",
             "published_at": "2026-08-27T09:25:00+03:00",
+            "estimated_published_at": "2026-08-27",
             "description": "Описание механизма",
             "category": "Комиссии",
             "severity": "high",
             "is_loophole": True,
-        }
+        },
+        {
+            "title": "Не лазейка",
+            "url": "https://example.ru/source",
+            "snippet": "Штатная функция",
+            "evidence_quote": "",
+            "bank_slug": "sberbank",
+            "raw_text": "Текст источника",
+            "source_title": "Проверенный источник",
+            "published_at": "2026-08-27T09:25:00+03:00",
+            "estimated_published_at": "2026-08-27",
+            "description": "Штатная функция",
+            "category": None,
+            "severity": "low",
+            "is_loophole": False,
+        },
     ]
 
 

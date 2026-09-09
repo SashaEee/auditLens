@@ -10,6 +10,7 @@ from ..config import ROOT
 NANOBOT_MAX_ITERATIONS_DEFAULT = 20
 NANOBOT_MAX_ITERATIONS_MIN = 1
 NANOBOT_MAX_ITERATIONS_MAX = 500
+AGENT_TIMEOUT_SECONDS_DEFAULT = 0
 
 
 def validate_nanobot_max_iterations(value: object) -> int:
@@ -34,13 +35,13 @@ def _load_nanobot_max_iterations() -> int:
     return validate_nanobot_max_iterations(value)
 
 
-def _load_positive_int(env_name: str, default: int, label: str) -> int:
+def _load_positive_int(env_name: str, default: int, label: str, *, minimum: int = 1) -> int:
     """Читает положительное целое из env с понятной fail-closed ошибкой."""
     try:
         value = int(os.getenv(env_name, str(default)))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label} должен быть положительным целым") from exc
-    if value < 1:
+    if value < minimum:
         raise ValueError(f"{label} должен быть положительным целым")
     return value
 
@@ -54,6 +55,7 @@ class LoopholeSettings:
     chat_model: str = ""
     nanobot_model: str = ""
     nanobot_max_iterations: int = NANOBOT_MAX_ITERATIONS_DEFAULT
+    agent_timeout_seconds: int = AGENT_TIMEOUT_SECONDS_DEFAULT
     trust_min: float = 0.5
     raw_text_max_chars: int = 200_000
     workspace_dir: Path = field(default_factory=lambda: ROOT / "workspace" / "loophole")
@@ -71,6 +73,10 @@ class LoopholeSettings:
             chat_model=os.getenv("LOOPHOLE_CHAT_MODEL", ""),
             nanobot_model=os.getenv("LOOPHOLE_NANOBOT_MODEL", ""),
             nanobot_max_iterations=_load_nanobot_max_iterations(),
+            agent_timeout_seconds=_load_positive_int(
+                "LOOPHOLE_AGENT_TIMEOUT_SECONDS", AGENT_TIMEOUT_SECONDS_DEFAULT,
+                "agent timeout (0 отключает)", minimum=0,
+            ),
             trust_min=float(os.getenv("LOOPHOLE_TRUST_MIN", "0.5")),
             raw_text_max_chars=int(os.getenv("LOOPHOLE_RAW_TEXT_MAX_CHARS", "200000")),
             workspace_dir=Path(ws_env).resolve() if ws_env else (ROOT / "workspace" / "loophole"),

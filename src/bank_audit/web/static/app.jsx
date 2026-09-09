@@ -613,7 +613,7 @@ const BF_KIND={
   tariff_move:{tag:"Тарифы"},
   rate_move:{tag:"Ключевая ставка"},
   news_alert:{tag:"Новость"},
-  exploit:{tag:"Лазейки"},          // будущий источник соседней команды
+  exploit:{tag:"Уязвимости"},          // будущий источник соседней команды
 };
 
 // ── мост телеметрии для компонентов ──────────────────────────────────────────
@@ -6993,7 +6993,7 @@ function KnowledgePage({params}){
 function LoopholePage(){
   return <section className="surface loophole-page" style={{padding:0,overflow:"hidden"}}>
     <iframe src="/static/loophole/loophole.html"
-            title="Лазейки и уязвимости"
+            title="Уязвимости и мошеннические схемы"
             style={{width:"100%",height:"100%",border:"none",display:"block"}}/>
   </section>;
 }
@@ -7216,7 +7216,7 @@ const AD_CSS=`
 
 `;
 const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
-  ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Лазейки",banks:"Банки",sources:"Источники",
+  ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",sources:"Источники",
   quality:"Качество",profile:"Профиль",pulse:"Пульс"};
 const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
   if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1)+"ч"; };
@@ -8117,7 +8117,7 @@ const NAV=[
   {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
   {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
   {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Анализ"},
-  {id:"loophole",label:"Лазейки",     icon:Ic.shield, group:"Анализ", badge:"beta"},
+  {id:"loophole",label:"Уязвимости",     icon:Ic.shield, group:"Анализ"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
 ];
@@ -8126,7 +8126,7 @@ const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:S
 const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],
   market:["02","Рынок · позиция"],sber:["02","Рынок · позиция"],
   reviews:["03","Отзывы"],ai:["04","ИИ-аналитик"],knowledge:["05","База знаний"],
-  loophole:["06","Лазейки"],banks:["07","Банки"],sources:["08","Источники"],
+  loophole:["06","Уязвимости"],banks:["07","Банки"],sources:["08","Источники"],
   profile:["·","Профиль"],pulse:["09","Пульс"]};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────

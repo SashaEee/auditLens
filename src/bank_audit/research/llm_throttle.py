@@ -142,6 +142,13 @@ def _extract_retry_after(exc: Exception) -> float | None:
     return None
 
 
+# Публичные алиасы классификатора для внешних модулей (loophole и пр.):
+# приватные имена сохраняются для внутренних вызовов этого модуля.
+is_rate_limit_error = _is_rate_limit_error
+is_transient_error = _is_transient_error
+extract_retry_after = _extract_retry_after
+
+
 def patch_client_throttle(client, max_concurrent: int = DEFAULT_MAX_CONCURRENT):
     """Monkey-patch client.chat.completions.create чтобы добавить throttle.
 

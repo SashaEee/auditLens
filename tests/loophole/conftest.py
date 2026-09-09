@@ -57,13 +57,16 @@ CREATE TABLE loophole_record (
     raw_text_len   INTEGER,
     raw_text_truncated INTEGER DEFAULT 0,
     is_loophole   INTEGER,
+    classification TEXT CHECK (classification IN (
+        'vulnerability', 'fraud_scheme', 'not_confirmed'
+    )),
     verdict_confidence REAL,
     verdict_reason TEXT,
     verdict_model TEXT,
     classified_at TEXT,
     parser_id     INTEGER,
     text_sha256   TEXT,
-    status        TEXT DEFAULT 'new'
+    status        TEXT DEFAULT 'preliminary'
 );
 CREATE INDEX idx_lr_sha ON loophole_record(sha256);
 CREATE INDEX idx_lr_bank ON loophole_record(bank_slug);
@@ -73,7 +76,9 @@ CREATE TABLE loophole_workspace (
     user_id        TEXT NOT NULL,
     name           TEXT,
     created_at     TEXT DEFAULT CURRENT_TIMESTAMP,
-    last_active_at TEXT
+    last_active_at TEXT,
+    deleted_at     TEXT,
+    share_token    TEXT UNIQUE
 );
 CREATE INDEX idx_lw_user ON loophole_workspace(user_id);
 
@@ -92,6 +97,7 @@ CREATE TABLE loophole_result (
 CREATE TABLE loophole_chat_message (
     message_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id  INTEGER,
+    report_id     INTEGER,
     role          TEXT,
     content       TEXT,
     tool_name     TEXT,

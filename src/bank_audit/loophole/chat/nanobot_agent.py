@@ -6,6 +6,7 @@ system prompt.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ from typing import Any
 from ...config import ROOT
 from ..config import LoopholeSettings, validate_nanobot_max_iterations
 from ..direct_transport import async_client
+from ..run_budget import requested_finding_count
 from .tools_nanobot import NANOBOT_TOOLS
 
 log = logging.getLogger(__name__)
@@ -102,12 +104,22 @@ def _patch_registry_for_gemini(registry: Any) -> None:
     registry.get_definitions = sanitized
 
 
-def _configure_direct_provider(bot: Any) -> None:
+def _configure_direct_provider(
+    bot: Any, *, disable_model_timeouts: bool = False,
+    connect_timeout_seconds: float | None = None,
+    read_timeout_seconds: float | None = None,
+) -> None:
     """Подменяет транспорт нерасширяемого nanobot-провайдера локально.
 
     Nanobot создаёт OpenAI SDK лениво и по умолчанию разрешает proxy-env.
     Патч применяется только к экземпляру этого Loophole-бота, не меняя
     ``os.environ`` и не затрагивая остальных потребителей nanobot/httpx.
+
+    ``disable_model_timeouts=True`` отключает дефолтный read-таймаут SDK
+    (чтобы основная модель не прерывалась по idle) и включает адаптер
+    полного ответа без stream idle timeout. Явный ``read_timeout_seconds``
+    имеет приоритет в любом режиме: если он задан, клиент получает именно
+    его, даже когда ``disable_model_timeouts`` включён.
     """
     provider = bot._loop.provider
     if not hasattr(provider, "_build_client"):
@@ -121,23 +133,47 @@ def _configure_direct_provider(bot: Any) -> None:
         if client_factory is None:
             from openai import AsyncOpenAI as client_factory
             module.AsyncOpenAI = client_factory
-        timeout_s = module._openai_compat_timeout_s()
+        # Read-таймаут задаётся явно; без него — дефолт SDK, а при
+        # disable_model_timeouts ответ ожидается без read-лимита.
+        timeout_s = read_timeout_seconds
+        if timeout_s is None and not disable_model_timeouts:
+            timeout_s = module._openai_compat_timeout_s()
+        # Connect-timeout не зависит от read-таймаута: зависший TLS handshake
+        # прерывается даже при отключённых таймаутах основной модели.
+        timeout = (httpx.Timeout(timeout_s, connect=connect_timeout_seconds)
+                   if connect_timeout_seconds is not None else timeout_s)
         self._client = client_factory(
             api_key=self._api_key_for_client,
             base_url=self._effective_base,
             default_headers=self._default_headers,
             default_query=self._extra_query or None,
             max_retries=0,
-            timeout=timeout_s,
-            http_client=async_client(timeout=httpx.Timeout(timeout_s)),
+            timeout=timeout,
+            http_client=async_client(timeout=httpx.Timeout(timeout)),
         )
 
     provider._build_client = types.MethodType(build_direct_client, provider)
+    if disable_model_timeouts:
+        async def full_response(self: Any, *, on_content_delta=None, on_thinking_delta=None,
+                                on_tool_call_delta=None, **kwargs):
+            # Полный ответ существующего провайдера не имеет stream idle timeout.
+            # Ошибка не является текстовой дельтой: иначе SDK запрещает повтор.
+            response = await self.chat(**kwargs)
+            if response.finish_reason != "error" and response.content and on_content_delta:
+                await on_content_delta(response.content)
+            return response
+
+        provider.chat_stream = types.MethodType(full_response, provider)
 
     original_close = bot.aclose
 
     async def close_direct(self: Any) -> None:
         try:
+            # Фоновая архивация SDK может породить ещё одну задачу при закрытии.
+            # Его close_mcp очищает весь список после первого gather, теряя новую.
+            while getattr(self._loop, "_background_tasks", None):
+                await asyncio.gather(*tuple(self._loop._background_tasks), return_exceptions=True)
+                await asyncio.sleep(0)  # Даём done callbacks удалить завершённые задачи.
             await original_close()
         finally:
             client = getattr(provider, "_client", None)
@@ -158,6 +194,10 @@ def create_nanobot(
     extra_tools: tuple = (),
     tool_classes: tuple[type, ...] | None = None,
     tool_context: Any = None,
+    provider_extra_body: dict[str, Any] | None = None,
+    disable_model_timeouts: bool = False,
+    connect_timeout_seconds: float | None = None,
+    read_timeout_seconds: float | None = None,
 ) -> Any:
     """Создаёт Nanobot, отключает встроенные tools, регистрирует кастомные.
 
@@ -170,6 +210,8 @@ def create_nanobot(
     cfg = build_nanobot_config(
         model=model, provider=provider, temperature=temperature, max_iterations=max_iterations
     )
+    if provider_extra_body is not None:
+        cfg["providers"][provider]["extraBody"] = provider_extra_body
     fd, config_path = tempfile.mkstemp(suffix=".json")
     config_path_obj = Path(config_path)
     created = False
@@ -182,7 +224,15 @@ def create_nanobot(
         ws.mkdir(parents=True, exist_ok=True)
 
         bot = Nanobot.from_config(config_path=config_path, workspace=str(ws))
-        _configure_direct_provider(bot)
+        # SDK добавляет spawn/long_task/message независимо от отключённых web/file/exec.
+        # Оставляем только явно выбранные приложением tools, включая extras healer-а.
+        for tool_name in tuple(bot._loop.tools.tool_names):
+            bot._loop.tools.unregister(tool_name)
+        _configure_direct_provider(
+            bot, disable_model_timeouts=disable_model_timeouts,
+            connect_timeout_seconds=connect_timeout_seconds,
+            read_timeout_seconds=read_timeout_seconds,
+        )
         selected_tools = NANOBOT_TOOLS if tool_classes is None else tool_classes
         for tool_cls in (*selected_tools, *extra_tools):
             if tool_context is not None and getattr(tool_cls, "requires_context", False):
@@ -201,6 +251,15 @@ def build_prompt(query: str, history: list[dict[str, str]] | None = None) -> str
     """Формирует сообщение для nanobot: system prompt + history + query."""
     system = load_system_prompt()
     parts = [system]
+    requested_count = requested_finding_count(query)
+    if requested_count is not None:
+        parts.append(
+            f"Ограничение текущего запроса: требуется AI-кандидатов — {requested_count}. "
+            "После получения этого числа кандидатов с цитатой из прочитанного источника "
+            "и проверенной датой публикации завершай поиск и формируй итоговый отчёт. "
+            "Широкое покрытие других механизмов и площадок после этого не требуется. "
+            "Кандидат не означает решение или подтверждение ЦК КС."
+        )
     if history:
         for msg in history:
             role = msg.get("role", "user")
