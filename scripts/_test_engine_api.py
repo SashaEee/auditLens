@@ -64,5 +64,20 @@ chk("extract_while_collecting — корутина",
 chk("stream_deep_research_gptr — асинхронный генератор",
     inspect.isasyncgenfunction(stream.stream_deep_research_gptr))
 
+print("\n— переменные движка не теряются при переезде контейнера —")
+import os as _os
+_saved = {k: _os.environ.pop(k, None) for k in ("OPENAI_BASE_URL", "OPENAI_API_KEY", "LLM_BASE_URL", "LLM_API_KEY")}
+_os.environ["LLM_BASE_URL"], _os.environ["LLM_API_KEY"] = "https://gate/v1", "ключ"
+engine._ensure_engine_env()
+chk("OPENAI_BASE_URL берётся из LLM_BASE_URL", _os.environ.get("OPENAI_BASE_URL") == "https://gate/v1")
+chk("OPENAI_API_KEY берётся из LLM_API_KEY", _os.environ.get("OPENAI_API_KEY") == "ключ")
+_os.environ["OPENAI_BASE_URL"] = "https://свой/v1"
+engine._ensure_engine_env()
+chk("заданное значение движка не перетирается", _os.environ["OPENAI_BASE_URL"] == "https://свой/v1")
+chk("подстановка вызывается в install()", "_ensure_engine_env()" in inspect.getsource(engine.install))
+for k, v in _saved.items():
+    if v is None: _os.environ.pop(k, None)
+    else: _os.environ[k] = v
+
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)

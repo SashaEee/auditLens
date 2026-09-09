@@ -25,11 +25,27 @@ log = logging.getLogger(__name__)
 _installed = False
 
 
+def _ensure_engine_env() -> None:
+    """gpt-researcher читает OPENAI_*, а шлюз у нас один и тот же.
+
+    Без этой подстановки достаточно потерять переменную при переезде
+    контейнера на другой env-файл, чтобы аналитик перестал строить план:
+    ошибка вылезала уже внутри install(), в ответе — «не удалось построить
+    план», а причина видна только в логе сервера.
+    """
+    for engine_key, ours in (("OPENAI_BASE_URL", "LLM_BASE_URL"),
+                             ("OPENAI_API_KEY", "LLM_API_KEY")):
+        if not os.getenv(engine_key) and os.getenv(ours):
+            os.environ[engine_key] = os.environ[ours]
+            log.info("движок: %s не задан, беру %s", engine_key, ours)
+
+
 def install() -> None:
     """Одноразовая подмена частей gpt-researcher нашими."""
     global _installed
     if _installed:
         return
+    _ensure_engine_env()
     compat.install()
     # Без пробы писатель молча отдаёт пустой отчёт: провайдер отвергает
     # temperature у части моделей, а внутренний ретрай gpt-researcher гасит
