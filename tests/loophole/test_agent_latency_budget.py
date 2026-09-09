@@ -52,12 +52,12 @@ def test_requested_count_is_explicit(query, expected):
 
 def test_budget_configuration(monkeypatch):
     monkeypatch.delenv("LOOPHOLE_AGENT_TIMEOUT_SECONDS", raising=False)
-    assert LoopholeSettings.load().agent_timeout_seconds == 360
+    assert LoopholeSettings.load().agent_timeout_seconds == 0
     monkeypatch.setenv("LOOPHOLE_AGENT_TIMEOUT_SECONDS", "45")
     assert LoopholeSettings.load().agent_timeout_seconds == 45
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "nan", "forever"])
+@pytest.mark.parametrize("value", ["-1", "nan", "forever"])
 def test_budget_configuration_rejects_invalid_values(monkeypatch, value):
     monkeypatch.setenv("LOOPHOLE_AGENT_TIMEOUT_SECONDS", value)
     with pytest.raises(ValueError, match="timeout"):
@@ -65,7 +65,7 @@ def test_budget_configuration_rejects_invalid_values(monkeypatch, value):
 
 
 def test_expired_budget_rejects_late_results():
-    budget = ResearchBudget(timeout_seconds=0)
+    budget = ResearchBudget(timeout_seconds=1, started_at=time.monotonic() - 2)
     with pytest.raises(TimeoutError):
         budget.ensure_active()
 
@@ -84,7 +84,8 @@ def test_count_prompt_stops_after_evidence_without_changing_broad_queries():
     ("Цитата о механизме", "2026-03-01T10:00:00+03:00", 1),
     ("Фраза только из SERP", "2026-03-01T10:00:00+03:00", 0),
     ("Цитата о механизме", "2025-03-01T10:00:00+03:00", 0),
-    ("Цитата о механизме", None, 0),
+    # Без подтверждённой даты — допуск с пометкой неподтверждённой даты (CAP-4).
+    ("Цитата о механизме", None, 1),
 ])
 def test_quantity_counts_only_read_evidence_in_period(quote, published_at, expected):
     from bank_audit.loophole.agent import eligible_findings
@@ -312,7 +313,11 @@ async def test_sse_preserves_completed_candidate_on_deadline_but_not_external_ca
         assert answer.count("Найденные AI-кандидаты") == 1
         assert "user@example.test" not in answer
         expected_candidates = 1
-    assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 0
+    # При дедлайне подтверждённый кандидат автоимпортируется в общий каталог,
+    # при внешней отмене — нет.
+    assert session.execute(
+        text("SELECT count(*) FROM loophole_record")
+    ).scalar_one() == expected_candidates
     assert session.execute(
         text("SELECT count(*) FROM loophole_research_candidate")
     ).scalar_one() == expected_candidates

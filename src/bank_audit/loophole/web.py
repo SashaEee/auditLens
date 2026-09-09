@@ -13,9 +13,10 @@ import logging
 import os
 import uuid
 from datetime import date, datetime
+from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -428,11 +429,15 @@ def list_catalog(
     q: str | None = None,
     verification_status: str = "all",
     classification: str = "all",
-    limit: int = 500,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=1, le=50)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
     session=Depends(get_session),
 ):
-    """Общая база: подтверждённые кейсы и предварительные подозрения."""
+    """Общая база: подтверждённые кейсы и предварительные подозрения.
+
+    Ответ пагинирован: ``total`` — общее число записей по тем же фильтрам,
+    ``count`` — размер текущей страницы (обратная совместимость).
+    """
     slugs = [item.strip() for item in bank_slugs.split(",") if item.strip()] if bank_slugs else None
     try:
         records = repo.list_catalog_cases(
@@ -446,9 +451,18 @@ def list_catalog(
         offset=offset,
         session=session,
         )
+        total = repo.count_catalog_cases(
+        bank_slugs=slugs,
+        period_from=period_from,
+        period_to=period_to,
+        query_text=q,
+        verification_status=verification_status,
+        classification=classification,
+        session=session,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"records": records, "count": len(records)}
+    return {"records": records, "total": total, "limit": limit, "offset": offset, "count": len(records)}
 
 
 @router.get("/records/{record_id}/content")

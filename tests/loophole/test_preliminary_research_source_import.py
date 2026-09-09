@@ -152,8 +152,11 @@ def test_migration_and_ui_expose_preliminary_import_and_verification_filter():
     root = Path(__file__).resolve().parents[2]
     migration = (root / "migrations" / "060_loophole_preliminary_import.sql").read_text(encoding="utf-8")
     jsx = (root / "src" / "bank_audit" / "loophole" / "static" / "loophole.jsx").read_text(encoding="utf-8")
+    web = (root / "src" / "bank_audit" / "loophole" / "web.py").read_text(encoding="utf-8")
 
     assert "loophole_preliminary_import" in migration
     assert "UNIQUE INDEX" in migration
     assert "verification_status" in jsx
-    assert "Добавить в общую базу" in jsx
+    # Кнопка «Добавить в общую базу» убрана из UI; эндпоинт импорта сохраняется серверным.
+    assert "Добавить в общую базу" not in jsx
+    assert "import-sources" in web

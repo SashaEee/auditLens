@@ -380,6 +380,86 @@ def list_published_cases(*, limit: int = 500, session=None) -> list[dict]:
         return [_record_dict(row) for row in rows]
 
 
+def _catalog_where(
+    *,
+    bank_slugs: list[str] | None,
+    period_from: date | None,
+    period_to: date | None,
+    query_text: str | None,
+    verification_status: str,
+    classification: str,
+) -> tuple[list[str], dict[str, Any]]:
+    """Общие WHERE-условия общей базы для выборки записей и их подсчёта.
+
+    ``classification='all'`` не ограничивает тип записи (все три классификации),
+    ``'confirmed'`` — только лазейки (vulnerability/fraud_scheme).
+    """
+    if verification_status not in {"all", "verified", "pending"}:
+        raise ValueError("Неизвестный статус верификации")
+    if classification not in {"all", "confirmed", "vulnerability", "fraud_scheme", "not_confirmed"}:
+        raise ValueError("Неизвестный тип записи")
+    record_type = (
+        "COALESCE(record.classification, CASE WHEN record.is_loophole = TRUE "
+        "THEN 'vulnerability' WHEN record.is_loophole = FALSE THEN 'not_confirmed' END)"
+    )
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    if classification == "confirmed":
+        clauses.append(f"{record_type} IN ('vulnerability', 'fraud_scheme')")
+    elif classification == "all":
+        # «Все» — любая из трёх классификаций; полностью неразмеченные
+        # legacy-строки (record_type IS NULL) в каталог не попадают.
+        clauses.append(f"{record_type} IS NOT NULL")
+    else:
+        clauses.append(f"{record_type} = :classification")
+        params["classification"] = classification
+    positive_decision = (
+        "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
+        "JOIN loophole_research_candidate AS candidate "
+        "ON candidate.research_id = verification_import.research_id "
+        "AND candidate.source_id = verification_import.source_id "
+        "JOIN loophole_verification_snapshot AS snapshot "
+        "ON snapshot.candidate_id = candidate.candidate_id "
+        "JOIN loophole_verification_decision AS decision "
+        "ON decision.snapshot_id = snapshot.snapshot_id "
+        "WHERE verification_import.record_id = record.record_id "
+        "AND decision.decision IN ('vulnerability', 'fraud_scheme'))"
+    )
+    any_decision = (
+        "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
+        "JOIN loophole_research_candidate AS candidate "
+        "ON candidate.research_id = verification_import.research_id "
+        "AND candidate.source_id = verification_import.source_id "
+        "JOIN loophole_verification_snapshot AS snapshot "
+        "ON snapshot.candidate_id = candidate.candidate_id "
+        "JOIN loophole_verification_decision AS decision "
+        "ON decision.snapshot_id = snapshot.snapshot_id "
+        "WHERE verification_import.record_id = record.record_id)"
+    )
+    if verification_status == "verified":
+        clauses.append(positive_decision)
+    elif verification_status == "pending":
+        clauses.append("record.status = 'preliminary'")
+        clauses.append(f"NOT {any_decision}")
+    if bank_slugs:
+        placeholders = ", ".join(f":b{i}" for i in range(len(bank_slugs)))
+        clauses.append(f"record.bank_slug IN ({placeholders})")
+        params.update({f"b{i}": value for i, value in enumerate(bank_slugs)})
+    if period_from:
+        clauses.append("record.published_at >= :period_from")
+        params["period_from"] = period_from
+    if period_to:
+        clauses.append("record.published_at < :period_to")
+        params["period_to"] = period_to + timedelta(days=1)
+    if query_text:
+        clauses.append(
+            "(LOWER(COALESCE(record.title, '')) LIKE :query "
+            "OR LOWER(COALESCE(record.snippet, '')) LIKE :query)"
+        )
+        params["query"] = f"%{query_text.lower()}%"
+    return clauses, params
+
+
 def list_catalog_cases(
     *,
     bank_slugs: list[str] | None = None,
@@ -388,7 +468,7 @@ def list_catalog_cases(
     query_text: str | None = None,
     verification_status: str = "all",
     classification: str = "all",
-    limit: int = 500,
+    limit: int = 50,
     offset: int = 0,
     session=None,
 ) -> list[dict]:
@@ -397,66 +477,17 @@ def list_catalog_cases(
     ``verified`` показывает только записи с положительным append-only решением
     ЦК КС; ``pending`` — только предварительные записи без решения.
     """
-    if verification_status not in {"all", "verified", "pending"}:
-        raise ValueError("Неизвестный статус верификации")
-    if classification not in {"all", "vulnerability", "fraud_scheme", "not_confirmed"}:
-        raise ValueError("Неизвестный тип записи")
+    clauses, params = _catalog_where(
+        bank_slugs=bank_slugs,
+        period_from=period_from,
+        period_to=period_to,
+        query_text=query_text,
+        verification_status=verification_status,
+        classification=classification,
+    )
+    params = {**params, "limit": limit, "offset": offset}
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
     with _session(session) as s:
-        record_type = (
-            "COALESCE(record.classification, CASE WHEN record.is_loophole = TRUE "
-            "THEN 'vulnerability' WHEN record.is_loophole = FALSE THEN 'not_confirmed' END)"
-        )
-        clauses = [
-            f"{record_type} IN ('vulnerability', 'fraud_scheme')"
-            if classification == "all" else f"{record_type} = :classification"
-        ]
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
-        if classification != "all":
-            params["classification"] = classification
-        positive_decision = (
-            "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
-            "JOIN loophole_research_candidate AS candidate "
-            "ON candidate.research_id = verification_import.research_id "
-            "AND candidate.source_id = verification_import.source_id "
-            "JOIN loophole_verification_snapshot AS snapshot "
-            "ON snapshot.candidate_id = candidate.candidate_id "
-            "JOIN loophole_verification_decision AS decision "
-            "ON decision.snapshot_id = snapshot.snapshot_id "
-            "WHERE verification_import.record_id = record.record_id "
-            "AND decision.decision IN ('vulnerability', 'fraud_scheme'))"
-        )
-        any_decision = (
-            "EXISTS (SELECT 1 FROM loophole_preliminary_import AS verification_import "
-            "JOIN loophole_research_candidate AS candidate "
-            "ON candidate.research_id = verification_import.research_id "
-            "AND candidate.source_id = verification_import.source_id "
-            "JOIN loophole_verification_snapshot AS snapshot "
-            "ON snapshot.candidate_id = candidate.candidate_id "
-            "JOIN loophole_verification_decision AS decision "
-            "ON decision.snapshot_id = snapshot.snapshot_id "
-            "WHERE verification_import.record_id = record.record_id)"
-        )
-        if verification_status == "verified":
-            clauses.append(positive_decision)
-        elif verification_status == "pending":
-            clauses.append("record.status = 'preliminary'")
-            clauses.append(f"NOT {any_decision}")
-        if bank_slugs:
-            placeholders = ", ".join(f":b{i}" for i in range(len(bank_slugs)))
-            clauses.append(f"record.bank_slug IN ({placeholders})")
-            params.update({f"b{i}": value for i, value in enumerate(bank_slugs)})
-        if period_from:
-            clauses.append("record.published_at >= :period_from")
-            params["period_from"] = period_from
-        if period_to:
-            clauses.append("record.published_at < :period_to")
-            params["period_to"] = period_to + timedelta(days=1)
-        if query_text:
-            clauses.append(
-                "(LOWER(COALESCE(record.title, '')) LIKE :query "
-                "OR LOWER(COALESCE(record.snippet, '')) LIKE :query)"
-            )
-            params["query"] = f"%{query_text.lower()}%"
         rows = s.execute(
             text(
                 "SELECT record.record_id, record.title, record.url, record.snippet, record.domain, "
@@ -468,7 +499,7 @@ def list_catalog_cases(
                 "imported.source_id AS provenance_source_id, imported.imported_at AS provenance_imported_at "
                 f"FROM {schema.T_RECORD} AS record "
                 "LEFT JOIN loophole_preliminary_import AS imported ON imported.record_id = record.record_id "
-                f"WHERE {' AND '.join(clauses)} "
+                f"{where} "
                 "ORDER BY record.collected_at DESC, record.record_id DESC LIMIT :limit OFFSET :offset"
             ),
             params,
@@ -489,6 +520,38 @@ def list_catalog_cases(
                 record["provenance"] = None
             catalog.append(record)
         return catalog
+
+
+def count_catalog_cases(
+    *,
+    bank_slugs: list[str] | None = None,
+    period_from: date | None = None,
+    period_to: date | None = None,
+    query_text: str | None = None,
+    verification_status: str = "all",
+    classification: str = "all",
+    session=None,
+) -> int:
+    """Общее число записей общей базы по тем же фильтрам, что list_catalog_cases."""
+    clauses, params = _catalog_where(
+        bank_slugs=bank_slugs,
+        period_from=period_from,
+        period_to=period_to,
+        query_text=query_text,
+        verification_status=verification_status,
+        classification=classification,
+    )
+    with _session(session) as s:
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        return int(
+            s.execute(
+                text(
+                    f"SELECT COUNT(*) FROM {schema.T_RECORD} AS record "
+                    f"{where}"
+                ),
+                params,
+            ).scalar_one()
+        )
 
 
 def list_bank_slugs(*, session=None) -> list[str]:

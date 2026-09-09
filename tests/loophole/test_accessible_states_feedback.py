@@ -486,7 +486,9 @@ def test_icon_controls_and_inputs_have_russian_accessible_names():
     assert 'id="lp-filter-verdict"' not in JSX
     assert 'id="lp-filter-status"' not in JSX
     assert '<label htmlFor="lp-filter-classification">Тип записи</label>' in JSX
-    assert 'aria-label="Каталог показывает подтверждённые и предварительные записи"' in JSX
+    # Декоративный индикатор «Состояния базы» удалён из фильтров каталога.
+    assert "lp-scope-indicator" not in JSX
+    assert "lp-filter-scope" not in JSX
     assert "lp-bulk-comment" not in JSX
     assert 'htmlFor="lp-select-all"' in JSX
     assert 'id="lp-select-all"' in JSX
