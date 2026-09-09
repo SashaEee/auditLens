@@ -455,11 +455,6 @@ html, body {
   color: var(--muted);
   font-weight: 500;
 }
-.lp-filter-label {
-  font-size: 0.75rem;
-  color: var(--muted);
-  font-weight: 500;
-}
 .lp-filter input, .lp-filter select {
   font-family: var(--sans);
   padding: 6px 10px;
@@ -471,27 +466,6 @@ html, body {
 }
 .lp-filter input:focus, .lp-filter select:focus {
   outline: none; border-color: var(--accent);
-}
-.lp-scope-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 31px;
-  box-sizing: border-box;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--paper-2);
-  color: var(--fg);
-  font-size: 0.85rem;
-}
-.lp-scope-indicator::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  flex: 0 0 6px;
-  border-radius: 50%;
-  background: var(--accent);
 }
 .lp-period { display: flex; align-items: center; gap: 6px; }
 .lp-period input { width: 130px; }
@@ -672,6 +646,19 @@ html, body {
   text-align: center;
   color: var(--muted);
   font-size: 0.95rem;
+}
+
+.lp-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}
+.lp-pagination-info {
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 /* ── Скроллбары ──────────────────────────────────────────────────────────── */

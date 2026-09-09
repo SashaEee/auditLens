@@ -417,13 +417,16 @@ async def extract_loopholes(
     for item in loopholes:
         if not isinstance(item, dict):
             continue
+        # Три состояния: True — лазейка, False — явно «не лазейка»,
+        # None — модель не дала вердикт (такие находки отбрасываются позже).
+        raw_verdict = item.get("is_loophole")
         out.append({
             "title": str(item.get("title") or ""),
             "description": str(item.get("description") or ""),
             "category": str(item.get("category") or ""),
             "severity": str(item.get("severity") or "medium"),
             "evidence_quote": str(item.get("evidence_quote") or ""),
-            "is_loophole": item.get("is_loophole") is True,
+            "is_loophole": raw_verdict if raw_verdict is True or raw_verdict is False else None,
         })
     return out
 
@@ -436,10 +439,12 @@ def _queue_confirmed_findings(
     bank_slug: str | None,
     raw_text: str,
 ) -> None:
-    """Передаёт подтверждённые находки серверному этапу сохранения.
+    """Передаёт явно оценённые находки серверному этапу сохранения.
 
     Инструмент остаётся read-only для модели: запись выполняется только после
     завершения managed-запуска в ``chat.graph`` с доверенной сессией.
+    Пропускаются только находки без вердикта (is_loophole is None); явные
+    «лазейка» и «не лазейка» сохраняют фактическое значение.
     """
     if context is None or not source_url.startswith(("https://", "http://")):
         return
@@ -447,7 +452,7 @@ def _queue_confirmed_findings(
     if source is None:
         return
     for finding in findings:
-        if not finding.get("is_loophole"):
+        if finding.get("is_loophole") is None:
             continue
         title = str(finding.get("title") or "").strip()
         snippet = str(finding.get("evidence_quote") or finding.get("description") or "").strip()
@@ -466,7 +471,7 @@ def _queue_confirmed_findings(
             "description": str(finding.get("description") or ""),
             "category": str(finding.get("category") or "") or None,
             "severity": str(finding.get("severity") or "medium"),
-            "is_loophole": True,
+            "is_loophole": finding["is_loophole"],
         })
 
 

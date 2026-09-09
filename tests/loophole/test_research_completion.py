@@ -200,7 +200,8 @@ async def test_sse_partial_keeps_valid_candidate_and_material_report(monkeypatch
     assert "Незавершённый черновик" not in tokens
     assert "https://example.test/lead" in saved[0][2]
     assert "AI-кандидаты" in saved[0][2]
-    assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 0
+    # Подтверждённый кандидат частичного прогона автоимпортируется в каталог.
+    assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 1
     assert session.execute(text("SELECT count(*) FROM loophole_research_candidate")).scalar_one() == 1
 
 

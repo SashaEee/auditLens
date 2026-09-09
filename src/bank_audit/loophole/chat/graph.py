@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from .. import logging_audit
 from .. import repository as repo
 from ..agent import (
     AGENT_UNAVAILABLE_MESSAGE,
@@ -145,14 +146,16 @@ def _persist_confirmed_findings(
     *,
     sources: list[dict] | None,
     workspace_id: int | None,
+    user_id: str | None,
     run_id: str,
     query: str,
     session: Any,
 ) -> list[dict]:
-    """Сохраняет находки только в изолированное исследование.
+    """Сохраняет находки в изолированное исследование и переносит их в общий каталог.
 
-    Общий каталог намеренно не меняется: его пополняет только явный endpoint
-    переноса предварительных источников аналитиком.
+    Подтверждённые находки (is_loophole=TRUE) после persist автоматически
+    импортируются в общий каталог со статусом preliminary; дедупликация и
+    аудит повторных переносов встроены в ``import_preliminary_sources``.
     """
     if session is None or not isinstance(workspace_id, int) or (not findings and not sources):
         return []
@@ -168,9 +171,33 @@ def _persist_confirmed_findings(
         rollback = getattr(session, "rollback", None)
         if callable(rollback):
             rollback()
-        log.warning("[research_persistence] пропущена некорректная находка")
+        log.warning("[research_persistence] пропущена некорректная находка", exc_info=True)
         return []
     research_id = persisted["research_id"]
+    try:
+        imported = ResearchCaseService(session).import_preliminary_sources(
+            research_id, imported_by=user_id or "unknown"
+        )
+        logging_audit.log_action(
+            user_id or "unknown",
+            "import_research_sources",
+            workspace_id=workspace_id,
+            detail={
+                "research_id": research_id,
+                "imported": imported["imported"],
+                "skipped": imported["skipped"],
+                "origin": "auto_after_analysis",
+            },
+            session=session,
+        )
+    except Exception:  # noqa: BLE001 — автоимпорт не должен ронять чат/стрим
+        rollback = getattr(session, "rollback", None)
+        if callable(rollback):
+            rollback()
+        log.warning(
+            "[research_persistence] автоимпорт в общий каталог не выполнен",
+            exc_info=True,
+        )
     candidate_urls = set(persisted.get("candidate_urls", ()))
     return [
         _public_finding(finding, research_id=research_id)
@@ -294,6 +321,7 @@ async def run_chat(
         list(result.records),
         sources=list(result.sources),
         workspace_id=workspace_id,
+        user_id=state.get("user_id"),
         run_id=_normalized_run_id(result.run_id, run_id),
         query=state["query"],
         session=session,
@@ -477,6 +505,7 @@ async def stream_chat(
                     and (not budget_expired_only or str(source.get("url")) in finding_urls)
                 }.values()),
                 workspace_id=workspace_id,
+                user_id=state.get("user_id"),
                 run_id=run_id,
                 query=state["query"],
                 session=session,

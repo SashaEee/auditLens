@@ -67,10 +67,11 @@ async def test_stream_chat_await_clarify(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stream_chat_saves_confirmed_findings_only_to_research_before_explicit_import(
+async def test_stream_chat_saves_confirmed_findings_and_auto_imports_to_catalog(
     monkeypatch, session
 ):
-    """Мутация: managed run не должен напрямую пополнять общий каталог."""
+    """Мутация: managed run сохраняет исследование и сразу переносит
+    подтверждённые находки в общий каталог со статусом preliminary."""
     from sqlalchemy import text
 
     from bank_audit.loophole.chat import graph
@@ -121,7 +122,11 @@ async def test_stream_chat_saves_confirmed_findings_only_to_research_before_expl
     }
     _events = [event async for event in stream_chat(state, session=session)]
 
-    assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 0
+    record = session.execute(
+        text("SELECT status, is_loophole FROM loophole_record")
+    ).mappings().one()
+    assert record["status"] == "preliminary"
+    assert record["is_loophole"] in (True, 1)
     source = session.execute(
         text(
             "SELECT source.url, source.extracted_text "

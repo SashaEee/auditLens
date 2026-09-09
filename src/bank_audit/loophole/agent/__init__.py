@@ -128,7 +128,9 @@ def eligible_findings(context: AgentRunContext) -> list[dict]:
         quote = str(finding.get("evidence_quote") or "").strip()
         title = str(finding.get("title") or "").strip()
         source = sources.get(url)
-        if finding.get("is_loophole") is not True or not title or not quote or not source:
+        # Принимаются только явные вердикты модели (True — лазейка,
+        # False — «не лазейка»); находки без вердикта отбрасываются.
+        if finding.get("is_loophole") not in (True, False) or not title or not quote or not source:
             continue
         if _source_publication_period_error(period_context, url):
             continue

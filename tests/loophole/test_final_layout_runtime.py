@@ -926,11 +926,8 @@ def test_catalog_exposes_read_only_published_loophole_scope_without_false_query_
         assert page.locator("#lp-filter-verdict").count() == 0
         assert page.locator("#lp-filter-status").count() == 0
         assert page.get_by_label("Тип записи").input_value() == "all"
-        assert page.get_by_label(
-            "Каталог показывает подтверждённые и предварительные записи"
-        ).inner_text() == (
-            "подтверждённые и предварительные"
-        )
+        # Декоративный индикатор «Состояния базы» удалён из фильтров каталога.
+        assert page.locator(".lp-scope-indicator").count() == 0
 
         page.get_by_label("Поиск по тексту").fill("комиссия")
         page.wait_for_function("() => window.__catalogUrls.length >= 2")

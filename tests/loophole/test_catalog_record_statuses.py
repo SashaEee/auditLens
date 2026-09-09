@@ -24,15 +24,17 @@ def test_catalog_includes_existing_findings_with_every_status(session, status):
         text("UPDATE loophole_record SET status = :status WHERE record_id = :id"),
         {"status": status, "id": record_id},
     )
-    repo.insert_record(
+    negative_id = repo.insert_record(
         LoopholeRecord(sha256="negative", is_loophole=False), session=session,
     )
     repo.insert_record(LoopholeRecord(sha256="unknown"), session=session)
 
     result = list_catalog(session=session)
 
-    assert result["count"] == 1
-    assert [row["record_id"] for row in result["records"]] == [record_id]
+    # 'all' теперь включает явные «не лазейки»; полностью неразмеченные
+    # legacy-строки (is_loophole IS NULL) по-прежнему не попадают в каталог.
+    assert result["count"] == 2
+    assert [row["record_id"] for row in result["records"]] == [negative_id, record_id]
 
 
 def test_analyst_saved_finding_is_preliminary_and_visible_in_catalog(session):

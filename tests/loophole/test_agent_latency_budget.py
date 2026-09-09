@@ -313,7 +313,11 @@ async def test_sse_preserves_completed_candidate_on_deadline_but_not_external_ca
         assert answer.count("Найденные AI-кандидаты") == 1
         assert "user@example.test" not in answer
         expected_candidates = 1
-    assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 0
+    # При дедлайне подтверждённый кандидат автоимпортируется в общий каталог,
+    # при внешней отмене — нет.
+    assert session.execute(
+        text("SELECT count(*) FROM loophole_record")
+    ).scalar_one() == expected_candidates
     assert session.execute(
         text("SELECT count(*) FROM loophole_research_candidate")
     ).scalar_one() == expected_candidates

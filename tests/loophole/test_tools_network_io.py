@@ -324,5 +324,7 @@ async def test_extraction_uses_strict_boolean_and_closes_owned_http_clients(monk
 
     monkeypatch.setattr(tools, "_default_llm", Llm)
     result = await tools.extract_loopholes("Текст источника")
-    assert [item["is_loophole"] for item in result] == [False, True]
+    # Строгий boolean: строка "false" не является вердиктом (None),
+    # явные True/False сохраняются как есть.
+    assert [item["is_loophole"] for item in result] == [None, True]
     assert closed == ["async", "sync"]

@@ -153,10 +153,10 @@ def test_managed_run_persists_fetched_source_even_without_candidate(session):
     source = session.execute(
         text("SELECT url, published_at FROM loophole_research_source")
     ).mappings().one()
-    assert source == {
-        "url": "https://example.ru/rules",
-        "published_at": "2026-08-01T00:00:00+03:00",
-    }
+    assert source["url"] == "https://example.ru/rules"
+    # Дата нормализуется в datetime на границе записи; в SQLite хранится
+    # сериализованной строкой вида "2026-08-01 00:00:00+03:00".
+    assert str(source["published_at"]).replace("T", " ").startswith("2026-08-01 00:00:00")
 
 
 def test_unavailable_source_keeps_limitation_and_rejects_candidate(session):

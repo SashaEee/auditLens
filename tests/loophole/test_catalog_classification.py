@@ -43,13 +43,17 @@ def test_classification_transition_round_trips_and_moves_between_filters(
     assert (repo.get_kb_example_by_record(record_id, session=session) is not None) is (
         after_type != "not_confirmed"
     )
-    for selected in ["all", *TYPES]:
+    for selected in ["all", "confirmed", *TYPES]:
         result = client.get(
             "/api/loophole/catalog", headers=access._HEADERS,
             params={"classification": selected},
         )
         assert result.status_code == 200
-        expected = selected == after_type or (selected == "all" and after_type != "not_confirmed")
+        expected = (
+            selected == "all"
+            or selected == after_type
+            or (selected == "confirmed" and after_type != "not_confirmed")
+        )
         assert [row["record_id"] for row in result.json()["records"]] == (
             [record_id] if expected else []
         )
@@ -98,7 +102,8 @@ def test_catalog_legacy_types_and_combined_filters(client, session):
             sha256=str(number), title=f"Запись {number}", is_loophole=positive,
             classification=category, bank_slug=bank,
         ), session=session)
-    assert len(repo.list_catalog_cases(session=session)) == 3
+    assert len(repo.list_catalog_cases(session=session)) == 4
+    assert len(repo.list_catalog_cases(classification="confirmed", session=session)) == 3
     assert len(repo.list_catalog_cases(classification="not_confirmed", session=session)) == 1
     assert repo.list_catalog_cases(classification="vulnerability", session=session)[0][
         "classification"

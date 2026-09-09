@@ -7,6 +7,9 @@ const API = "/api/loophole";
 // Максимум записей в одной CSV-выгрузке (дублирует EXPORT_LIMIT на бэкенде).
 const EXPORT_LIMIT = 10000;
 
+// Размер страницы общей базы (дублирует верхнюю границу limit на бэкенде).
+const PAGE_SIZE = 50;
+
 // Фазы, которые реально сообщает nanobot-пайплайн, включая финальное done.
 // Пользователь видит только русские подписи, протокольные ключи не меняются.
 const PHASES = ["clarify", "execute", "answer", "done"];
@@ -368,6 +371,8 @@ function useFocusLayer(active, containerRef, onClose, initialFocusRef, restoreFa
 function LoopholeApp() {
   // ── Таблица / фильтры ──────────────────────────────────────────────────────
   const [records, setRecords] = useState([]);
+  const [recordsTotal, setRecordsTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   // Ошибка загрузки записей (story 1.4): отдельная поверхность с «Повторить»,
   // чтобы сбой не маскировался под пустой результат.
@@ -557,6 +562,8 @@ function LoopholeApp() {
       if (fTo) params.set("period_to", fTo);
       params.set("verification_status", fVerification);
       params.set("classification", fClassification);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(page * PAGE_SIZE));
       const url = `${API}/catalog${params.toString() ? "?" + params.toString() : ""}`;
       const r = await fetch(url);
       if (requestGeneration !== recordsRequestRef.current) return;
@@ -564,19 +571,21 @@ function LoopholeApp() {
       const d = await r.json();
       if (requestGeneration !== recordsRequestRef.current) return;
       setRecords(d.records || []);
+      setRecordsTotal(Number.isInteger(d.total) ? d.total : (d.records || []).length);
       setRecordsError(null);
     } catch (e) {
       if (requestGeneration !== recordsRequestRef.current) return;
       // Ошибка не маскируется под пустой результат: отдельная поверхность
       // с «Повторить», старые данные не подменяют актуальное состояние.
       setRecords([]);
+      setRecordsTotal(0);
       setRecordsError(String(e));
     } finally {
       if (requestGeneration === recordsRequestRef.current) {
         setLoading(false);
       }
     }
-  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, page]);
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
@@ -584,8 +593,12 @@ function LoopholeApp() {
     return () => clearTimeout(timer);
   }, [loadRecords, authz, fText]);
 
-  // Сброс выделения и развёрнутых строк при смене фильтров.
-  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
+  // Сброс страницы при смене фильтров (выборка начинается с первой страницы).
+  useEffect(() => { setPage(0); }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
+
+  // Сброс выделения и развёрнутых строк при смене фильтров и страницы.
+  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); },
+           [fText, fBanks, fFrom, fTo, fVerification, fClassification, page]);
 
   // ── Сортировка на клиенте ──────────────────────────────────────────────────
   const sortedRecords = useMemo(() => {
@@ -637,7 +650,7 @@ function LoopholeApp() {
   // Сброс фильтров каталога — действие «Сбросить» (фильтры + пустая выборка).
   const resetFilters = () => {
     setFText(""); setFBanks([]); setFFrom(""); setFTo(""); setFVerification("all");
-    setFClassification("all");
+    setFClassification("all"); setPage(0);
   };
 
   // ── CSV-экспорт выделенных записей ─────────────────────────────────────────
@@ -2117,7 +2130,7 @@ function LoopholeApp() {
             <button className={"lp-btn" + (selected.size > 0 ? " lp-btn-primary" : "")}
                     onClick={exportCSV}
                     disabled={loading || sortedRecords.length === 0}
-                    title="Выгрузить выделенные записи в CSV (не более 10000)">
+                    title="Выгрузить выделенные записи текущей страницы в CSV (не более 10000)">
               CSV{selected.size > 0 ? ` · ${selected.size} ${recordWord(selected.size)}` : ""}
             </button>
             </>)}
@@ -2210,18 +2223,12 @@ function LoopholeApp() {
             <label htmlFor="lp-filter-classification">Тип записи</label>
             <select id="lp-filter-classification" value={fClassification}
                     onChange={e => setFClassification(e.target.value)}>
-              <option value="all">Уязвимости и мошеннические схемы</option>
+              <option value="all">Все</option>
+              <option value="confirmed">Уязвимости и мошеннические схемы</option>
               <option value="vulnerability">Уязвимости</option>
               <option value="fraud_scheme">Мошеннические схемы</option>
               <option value="not_confirmed">Ни уязвимость, ни мошенническая схема</option>
             </select>
-          </div>
-          <div className="lp-filter lp-filter-scope">
-            <span className="lp-filter-label">Состояния базы</span>
-            <span className="lp-scope-indicator"
-                  aria-label="Каталог показывает подтверждённые и предварительные записи">
-              подтверждённые и предварительные
-            </span>
           </div>
           <div className="lp-filter lp-filter-reset">
             <button className="lp-btn" onClick={resetFilters}>Сбросить</button>
@@ -2383,6 +2390,22 @@ function LoopholeApp() {
             </table>
           )}
         </div>
+        {recordsTotal > PAGE_SIZE && (
+          <nav className="lp-pagination" aria-label="Страницы общей базы">
+            <button type="button" className="lp-btn" disabled={page === 0}
+                    onClick={() => setPage(p => Math.max(0, p - 1))}>
+              Назад
+            </button>
+            <span className="lp-pagination-info" role="status">
+              Страница {page + 1} из {Math.ceil(recordsTotal / PAGE_SIZE)}
+            </span>
+            <button type="button" className="lp-btn"
+                    disabled={(page + 1) * PAGE_SIZE >= recordsTotal}
+                    onClick={() => setPage(p => p + 1)}>
+              Вперёд
+            </button>
+          </nav>
+        )}
         </section>)}
 
         {/* ── Заявка на разработку веб-парсера и read-only каталог источников. ── */}
@@ -2606,7 +2629,7 @@ function LoopholeApp() {
                   </div>
                   <div>
                     <dt>Данные</dt>
-                    <dd>{records.length} {recordWord(records.length)} в общей базе</dd>
+                    <dd>{recordsTotal} {recordWord(recordsTotal)} в общей базе</dd>
                   </div>
                 </dl>
               </section>
