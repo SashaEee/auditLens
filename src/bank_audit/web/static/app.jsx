@@ -5829,6 +5829,21 @@ function AIPage(){
 }
 
 // ─── BANKS PAGE ───────────────────────────────────────────────────────────────
+// Методика под рукой, а не в голове автора. Аудиторы спрашивали дважды: как
+// считаются баллы банков и откуда берётся рейтинг. Свёрнуто по умолчанию —
+// иначе страница, на которую уже жаловались за плотность, станет ещё плотнее.
+function MethodNote({title, children}){
+  const[open,setOpen]=useState(false);
+  return <div className="method-note">
+    <button type="button" className="method-note-btn" onClick={()=>setOpen(o=>!o)}
+            aria-expanded={open}>
+      <span className="method-note-mark">?</span>{title}
+      <span className="method-note-chev">{open?"свернуть":"как это считается"}</span>
+    </button>
+    {open&&<div className="method-note-body">{children}</div>}
+  </div>;
+}
+
 function BanksPage(){
   const[banks,setBanks]=useState([]);
   const[loading,setLoading]=useState(true);
@@ -5876,6 +5891,21 @@ function BanksPage(){
     <header style={{marginBottom:24}}>
       <div className="eyebrow" style={{marginBottom:6}}>§ Банки · рейтинг у {rated.length} из {banks.length} в справочнике</div>
       <h1 className="t-h" style={{marginBottom:6}}>Рейтинги и репутация</h1>
+      <MethodNote title="Как считаются балл, место и доля решённых">
+        <p><b>Балл и место</b> считает banki.ru, мы их только показываем. Балл — средневзвешенная оценка
+          пользователей за последние 12 месяцев: учитываются отзывы, прошедшие проверку площадкой, свежие
+          весят больше. Место — позиция в народном рейтинге на дату сбора; банки без оценок в рейтинг
+          не попадают, поэтому строк с местом меньше, чем банков в справочнике.</p>
+        <p><b>Доля решённых</b> — доля отзывов с отметкой «проблема решена» <b>от проверенных площадкой</b>,
+          а не от всех поступивших. Это ключевое: банк с сотней отзывов, из которых проверено десять,
+          покажет высокую долю, хотя решено всего несколько обращений. Поэтому рядом стоит колонка
+          «Отзывов» — читать долю в отрыве от неё нельзя.</p>
+        <p><b>«У нас»</b> — сколько обращений по этому банку лежит в нашем корпусе. Это другая величина:
+          мы собираем отзывы с нескольких площадок и не фильтруем их по проверке, поэтому число обычно
+          больше. По нему можно открыть и прочитать сами обращения во вкладке «Отзывы».</p>
+        <p className="t-cap">Расхождение с сайтом banki.ru объясняется срезом: мы показываем состояние
+          на дату сбора, а площадка — на сейчас.</p>
+      </MethodNote>
       <p className="t-cap" style={{maxWidth:"72ch"}}>Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
         по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать во вкладке «Отзывы».
         {freshest>0&&<> Данные рейтинга на {fmtDateMsk(new Date(freshest).toISOString())}.</>}</p>
@@ -8116,8 +8146,8 @@ const NAV=[
   {id:"market",  label:"Рынок · позиция",icon:Ic.market, group:"Анализ"},
   {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
   {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
-  {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Анализ"},
   {id:"loophole",label:"Уязвимости",     icon:Ic.shield, group:"Анализ"},
+  {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Данные"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
 ];
@@ -8619,6 +8649,36 @@ function Shell(){
       }catch{}
     }
   },[page]);
+  // Держим в памяти последние разделы, а не все: иначе обход всего меню
+  // оставил бы висеть десяток страниц с их данными и подписками.
+  const KEEP_PAGES=4;
+  const[keptPages,setKeptPages]=useState(()=>{
+    const p0=parseHash().p||"overview";
+    return (p0==="loophole"||p0==="ai")?[]:[p0];
+  });
+  useEffect(()=>{
+    if(page==="loophole"||page==="ai"||!PAGES_FN[page])return;
+    setKeptPages(prev=>{
+      const next=[page,...prev.filter(x=>x!==page)];
+      return next.slice(0,KEEP_PAGES);
+    });
+  },[page]);
+  // Прокрутка своя у каждого раздела: возврат должен попадать на то же место,
+  // а не в начало списка.
+  const scrollPos=useRef({});
+  const contentRef=useRef(null);
+  const prevPage=useRef(page);
+  useEffect(()=>{
+    const el=contentRef.current;
+    if(!el)return;
+    if(prevPage.current!==page){
+      scrollPos.current[prevPage.current]=el.scrollTop;
+      prevPage.current=page;
+      const y=scrollPos.current[page];
+      requestAnimationFrame(()=>{ if(contentRef.current) contentRef.current.scrollTop=y||0; });
+    }
+  },[page]);
+
   const Page=PAGES_FN[page]||OverviewPage;
   const[idx,label]=PAGE_LABELS[page]||["01","Обзор"];
 
@@ -8737,14 +8797,24 @@ function Shell(){
             {theme==="dark"?<Ic.sun/>:<Ic.moon/>}
           </button>
         </div>
-        <div className="content">
+        <div className="content" ref={contentRef}>
           {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
             <LoopholePage key={refreshTick}/>
           </div>}
           {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
             <PageBoundary pageKey="ai"><AIPage/></PageBoundary>
           </div>}
-          {page!=="loophole"&&page!=="ai"&&<PageBoundary pageKey={page}><Page key={page} params={pageParams}/></PageBoundary>}
+          {keptPages.map(id=>{
+            const P=PAGES_FN[id]||OverviewPage;
+            const on=page===id;
+            // Посещённый раздел не размонтируется, а прячется: запрос, фильтры и
+            // загруженные строки остаются на месте. Аудиторы писали дважды —
+            // при переходе туда и обратно всё приходилось набирать заново.
+            return <div key={id} style={{display:on?"block":"none",height:"100%"}}
+                        aria-hidden={!on} data-page={id}>
+              <PageBoundary pageKey={id}><P key={id} params={on?pageParams:undefined}/></PageBoundary>
+            </div>;
+          })}
           {aiReady&&page!=="ai"&&
             <div className="ai-ready" onClick={()=>{setAiReady(false);setPage("ai");}}>
               <span className="sp">✦</span> Отчёт готов — открыть

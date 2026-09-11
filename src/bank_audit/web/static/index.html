@@ -1558,6 +1558,16 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .t-h{font-size:22px;font-weight:600;letter-spacing:-.015em;line-height:1.2}
 .t-body{font-size:14px;line-height:1.55}
 .t-cap{font-size:12px;line-height:1.45;color:var(--ink-3)}
+/* Пояснение методики: свёрнуто по умолчанию, открывается по клику */
+.method-note{margin:10px 0 12px;max-width:82ch}
+.method-note-btn{display:inline-flex;align-items:center;gap:8px;border:0;background:none;padding:0;font:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer}
+.method-note-btn:hover{color:var(--ink)}
+.method-note-mark{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid var(--hair-2);border-radius:50%;font-size:10px;color:var(--ink-3)}
+.method-note-chev{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:10.5px;letter-spacing:.04em;color:var(--ink-4)}
+.method-note-body{margin-top:8px;padding:12px 14px;border:1px solid var(--hair);border-radius:var(--r-md,8px);background:var(--paper-2);font-size:13px;line-height:1.5;color:var(--ink-2)}
+.method-note-body p{margin:0 0 8px}
+.method-note-body p:last-child{margin-bottom:0}
+.method-note-body b{color:var(--ink);font-weight:600}
 .lede{font-size:16px;line-height:1.55;color:var(--ink-2);max-width:62ch}
 .divider{height:1px;background:var(--hair);margin:28px 0}
 .eyebrow-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
@@ -2470,6 +2480,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260904-fix2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260911-method"></script>
 </body>
 </html>

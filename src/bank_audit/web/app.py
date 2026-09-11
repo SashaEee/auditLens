@@ -795,6 +795,31 @@ def market(category: str = "deposit", limit: int = 100, offset: int = 0,
     return _market_rows(category, limit, offset, q_text, term, segment, sub)
 
 
+# Сколько ближайших по смыслу подмешивать в отбор витрины. Порог по косинусу
+# в этом проекте трижды оказывался неработоспособным, поэтому берём фиксированный
+# пул лучших и отдаём решение об уместности остальным фильтрам.
+_MARKET_VEC_POOL = 120
+
+
+def _market_query_vector(q_text: str) -> Optional[str]:
+    """Вектор запроса для витрины; None, если эмбеддер недоступен.
+
+    Поиск не должен падать из-за того, что модель эмбеддингов не отвечает:
+    в этом случае остаются подстрока и полнотекст.
+    """
+    text_q = (q_text or "").strip()
+    if len(text_q) < 3:
+        return None
+    try:
+        from ..rag import embedder
+        vec = embedder.embed_one(text_q)
+        return str(vec) if vec else None
+    except Exception as e:                      # noqa: BLE001
+        logging.getLogger(__name__).info(
+            "рынок: вектор запроса недоступен (%s) — ищем словами", type(e).__name__)
+        return None
+
+
 def _market_rows(category: str, limit: int, offset: int,
                  q_text: Optional[str], term: Optional[str],
                  segment: Optional[str], sub: Optional[str],
@@ -810,15 +835,27 @@ def _market_rows(category: str, limit: int, offset: int,
         # Хосты витрин-агрегаторов: ссылка на них — не первоисточник.
         "aggr_host": r"^https?://(www\.)?(sravni\.ru|banki\.ru|bankiros\.ru|vbr\.ru)"}
     if q_text:
-        # Подстрока И полнотекст, объединением. Не заменой: замер на проде —
-        # «дебетовые карты» подстрокой не находились ВООБЩЕ (0 против 7), но
-        # «автокредит» подстрока находит 4 против 3 у полнотекста, потому что
-        # ловит слово внутри составного названия. Ноги дополняют друг друга,
-        # и терять ни одну нельзя.
-        cond.append(
-            "(m.bank_name ILIKE :qq OR m.title ILIKE :qq"
-            " OR to_tsvector(CAST('russian' AS regconfig), coalesce(m.title,''))"
-            "    @@ websearch_to_tsquery(CAST('russian' AS regconfig), :q_fts))")
+        # Три ноги поиска, объединением. Подстрока и полнотекст дополняют друг
+        # друга: замер на проде — «дебетовые карты» подстрокой не находились
+        # ВООБЩЕ (0 против 7), но «автокредит» подстрока находит 4 против 3,
+        # потому что ловит слово внутри составного названия.
+        #
+        # Третья нога — смысловая. Аудиторы писали восемь раз: поиск идёт по
+        # формам слов. «Детская карта» находилась у трёх банков и не находилась
+        # у четвёртого, где тот же продукт назван иначе. Вектор ищет по банку,
+        # названию, виду продукта и условиям; если векторов ещё нет, ветка
+        # просто не добавляется и поиск работает как прежде.
+        legs = ["m.bank_name ILIKE :qq", "m.title ILIKE :qq",
+                "o.search_tsv @@ websearch_to_tsquery("
+                "CAST('russian' AS regconfig), :q_fts)",
+                "to_tsvector(CAST('russian' AS regconfig), coalesce(m.title,''))"
+                " @@ websearch_to_tsquery(CAST('russian' AS regconfig), :q_fts)"]
+        qvec = _market_query_vector(q_text)
+        if qvec:
+            legs.append("o.offer_id IN (SELECT offer_id FROM near)")
+            params["qvec"] = qvec
+            params["near_pool"] = _MARKET_VEC_POOL
+        cond.append("(" + " OR ".join(legs) + ")")
         params["qq"] = f"%{q_text.strip()}%"
         params["q_fts"] = q_text.strip()
     if term:
@@ -847,8 +884,22 @@ def _market_rows(category: str, limit: int, offset: int,
     # берём ОДНУ запись на (банк, продукт) — предпочитая ту, у которой есть
     # ссылка на сам продукт, а при равенстве более полные условия, — и только
     # снаружи сортируем витрину по метрике категории.
+    near_cte = ""
+    if "qvec" in params:
+        # Ближайшие по смыслу — отдельным списком: так вектор не участвует в
+        # сортировке витрины, а только расширяет отбор. Порядок строк остаётся
+        # прежним (банк, название), иначе аудитор не нашёл бы знакомую строку.
+        near_cte = """
+        near AS (
+            SELECT offer_id
+              FROM product_offer
+             WHERE embedding IS NOT NULL
+             ORDER BY embedding <=> CAST(:qvec AS vector)
+             LIMIT :near_pool
+        ),
+"""
     return q(f"""
-        WITH picked AS (
+        WITH {near_cte}picked AS (
             -- Ключ дедупа — ИМЯ банка, а не слаг: 774 банка из 833 в
             -- справочнике заведены как unknown_*, и один банк живёт под
             -- двумя слугами («ns-bank» и «unknown_6099d9c55c»), из-за чего
@@ -875,6 +926,7 @@ def _market_rows(category: str, limit: int, offset: int,
                    -- писали об этом четырежды: проверить актуальность нечем.
                    (m.url IS NOT NULL AND m.url !~* :aggr_host) AS first_party
               FROM v_market_rub_offer m
+              LEFT JOIN product_offer o ON o.offer_id = m.offer_id
               LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
               LEFT JOIN LATERAL (
                   SELECT q2.detail->>'reason' AS reason
