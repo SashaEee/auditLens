@@ -37,10 +37,19 @@ def main() -> int:
     where = "" if args.all else "WHERE o.embedding IS NULL"
     lim = f"LIMIT {args.limit}" if args.limit else ""
     with db.session() as s:
+        # Условия лежат в отдельной таблице и версионируются: берём актуальную
+        # запись, иначе в текст попадут условия, снятые с витрины полгода назад.
         rows = s.execute(text(f"""
-            SELECT o.offer_id, o.title, o.category, o.conditions, b.name AS bank_name
+            SELECT o.offer_id, o.title, o.category, b.name AS bank_name,
+                   t.conditions
               FROM product_offer o
               LEFT JOIN bank b ON b.bank_id = o.bank_id
+              LEFT JOIN LATERAL (
+                  SELECT pt.conditions
+                    FROM product_terms pt
+                   WHERE pt.offer_id = o.offer_id
+                   ORDER BY pt.valid_to IS NOT NULL, pt.valid_from DESC
+                   LIMIT 1) t ON true
               {where}
              ORDER BY o.offer_id
              {lim}

@@ -62,5 +62,19 @@ check("в текст входят банк, название, вид и усло
 check("считает только недостающее по умолчанию", "o.embedding IS NULL" in BF)
 check("полнотекст пишется тем же текстом", "search_tsv = to_tsvector" in BF)
 
+print("\n— релевантность в порядке выдачи —")
+check("при поиске сначала прямые попадания", "p.exact_hit DESC" in src)
+check("затем ближайшие по смыслу", "p.vec_rank" in src and "COALESCE(nr.rk, 1000000)" in src)
+check("ранг близости считается в near", "row_number() OVER (ORDER BY embedding <=>" in src)
+check("без запроса порядок прежний", 'rel_cols = rel_join = rel_order = ""' in src)
+check("подмешанные колонки появляются только при запросе", "if q_text:\n        rel_cols" in src)
+check("пустой джойн, когда вектора нет", "WHERE FALSE) nr" in src)
+
+print("\n— пометка о сомнительном числе не прячет найденное —")
+check("при поиске точное совпадение выше пометки",
+      src.index("p.exact_hit DESC") < src.index('flag_order = "(p.implausible_reason IS NOT NULL), " if flag_first'))
+check("без поиска помеченные строки по-прежнему в конце", "if flag_first else \"\"" in src)
+check("пометка остаётся в ответе", "implausible_reason" in src)
+
 print(f"\nитого: {ok} ок, {fail} с ошибкой")
 sys.exit(1 if fail else 0)

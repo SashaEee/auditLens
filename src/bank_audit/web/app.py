@@ -884,6 +884,31 @@ def _market_rows(category: str, limit: int, offset: int,
     # берём ОДНУ запись на (банк, продукт) — предпочитая ту, у которой есть
     # ссылка на сам продукт, а при равенстве более полные условия, — и только
     # снаружи сортируем витрину по метрике категории.
+    # При поиске выдача упорядочивается по близости к запросу: сначала прямые
+    # попадания в название и банк, затем ближайшие по смыслу. Без запроса
+    # порядок прежний — по банку и названию, чтобы витрина читалась как список.
+    rel_cols = rel_join = rel_order = ""
+    flag_first = True
+    if q_text:
+        rel_cols = (",\n                   (m.title ILIKE :qq OR m.bank_name ILIKE :qq) AS exact_hit"
+                    ",\n                   COALESCE(nr.rk, 1000000) AS vec_rank")
+        rel_order = "p.exact_hit DESC, p.vec_rank, "
+        # Найденное по названию встаёт выше пометки о сомнительном числе.
+        # Иначе запрос «семейная ипотека» не находил её вовсе: льготная ставка
+        # 6% помечается сторожем правдоподобия, а помеченные строки уходят в
+        # конец списка. Пометка остаётся видимой в карточке — она предупреждает,
+        # но не прячет то, что аудитор искал прямо по имени.
+        flag_first = False
+        rel_join = ("LEFT JOIN near nr ON nr.offer_id = m.offer_id"
+                    if "qvec" in params else
+                    "LEFT JOIN (SELECT CAST(NULL AS bigint) offer_id,"
+                    " CAST(NULL AS bigint) rk WHERE FALSE) nr ON nr.offer_id = m.offer_id")
+
+    # Без поиска список открывается «чистыми» строками, помеченные — в конце.
+    flag_order = "(p.implausible_reason IS NOT NULL), " if flag_first else ""
+    if not flag_first:
+        rel_order += "(p.implausible_reason IS NOT NULL), "
+
     near_cte = ""
     if "qvec" in params:
         # Ближайшие по смыслу — отдельным списком: так вектор не участвует в
@@ -891,7 +916,8 @@ def _market_rows(category: str, limit: int, offset: int,
         # прежним (банк, название), иначе аудитор не нашёл бы знакомую строку.
         near_cte = """
         near AS (
-            SELECT offer_id
+            SELECT offer_id,
+                   row_number() OVER (ORDER BY embedding <=> CAST(:qvec AS vector)) AS rk
               FROM product_offer
              WHERE embedding IS NOT NULL
              ORDER BY embedding <=> CAST(:qvec AS vector)
@@ -925,8 +951,10 @@ def _market_rows(category: str, limit: int, offset: int,
                    -- на раздел агрегатора, где искомого продукта нет. Аудиторы
                    -- писали об этом четырежды: проверить актуальность нечем.
                    (m.url IS NOT NULL AND m.url !~* :aggr_host) AS first_party
+                   {rel_cols}
               FROM v_market_rub_offer m
               LEFT JOIN product_offer o ON o.offer_id = m.offer_id
+              {rel_join}
               LEFT JOIN offer_enrichment e ON e.offer_id = m.offer_id
               LEFT JOIN LATERAL (
                   SELECT q2.detail->>'reason' AS reason
@@ -952,7 +980,7 @@ def _market_rows(category: str, limit: int, offset: int,
         )
         SELECT p.*, count(*) OVER () AS total
           FROM picked p
-         ORDER BY (p.implausible_reason IS NOT NULL), p.{order}
+         ORDER BY {flag_order}{rel_order}p.{order}
          LIMIT :l OFFSET :off
     """, params)
 
