@@ -451,3 +451,180 @@ def test_triaged_snippet_publication_date_reaches_source_and_catalog(session):
         )
     ).scalar_one()
     assert str(record_row).startswith("2026-08-05")
+
+
+def test_import_upgrades_unmarked_record_saved_by_tool(session):
+    """URL, сохранённый audit_save_loophole без вердикта, доводится до вердикта исследования.
+
+    Регрессия: немаркированная запись блокировала перенос маркировки
+    (exists_url-дедуп) и оставалась невидимой в общей базе навсегда.
+    """
+    from bank_audit.loophole.chat.tools_nanobot import save_loophole
+
+    _create_import_schema(session)
+    url = "https://bank.example/rules"
+    saved = save_loophole(
+        title="Сохранено инструментом",
+        url=url,
+        snippet="Комиссия",
+        raw_text="Полный текст страницы: комиссия указана только в примечании.",
+        session=session,
+    )
+    assert saved["is_new"] is True
+    before = repo.get_record(saved["record_id"], session=session)
+    assert before["classification"] is None and before["is_loophole"] is None
+
+    service = ResearchCaseService(session)
+    persisted = service.persist_managed_run(
+        workspace_id=1,
+        run_id="run-upgrade",
+        query="проверь комиссии",
+        sources=[{"url": url, "title": "Условия продукта",
+                  "extracted_text": "Комиссия указана только в примечании."}],
+        findings=[{"url": url, "title": "Скрытая комиссия",
+                   "snippet": "Комиссия указана только в примечании.",
+                   "is_loophole": True, "classification": "vulnerability"}],
+    )
+
+    imported = service.import_preliminary_sources(
+        persisted["research_id"], imported_by="analyst",
+    )
+    assert imported["imported"] == 0
+    assert imported["upgraded"] == 1
+    assert imported["record_ids"] == [saved["record_id"]]
+
+    after = repo.get_record(saved["record_id"], session=session)
+    assert after["classification"] == "vulnerability"
+    assert after["is_loophole"] is True
+    assert after["verdict_model"] == "research_preliminary"
+    assert after["status"] == "preliminary"
+    # Дубль по URL не создан, provenance переноса записан.
+    assert session.execute(
+        text("SELECT count(*) FROM loophole_record WHERE url = :u"), {"u": url}
+    ).scalar_one() == 1
+    source_id = session.execute(
+        text("SELECT source_id FROM loophole_research_source WHERE research_id = :rid"),
+        {"rid": persisted["research_id"]},
+    ).scalar_one()
+    provenance = session.execute(
+        text(
+            "SELECT record_id FROM loophole_preliminary_import "
+            "WHERE research_id = :rid AND source_id = :sid"
+        ),
+        {"rid": persisted["research_id"], "sid": source_id},
+    ).mappings().one()
+    assert provenance["record_id"] == saved["record_id"]
+    # Запись стала видимой в общей базе.
+    rows = repo.list_catalog_cases(session=session)
+    assert [row["record_id"] for row in rows] == [saved["record_id"]]
+    # Повторный импорт идемпотентен: upgraded не накапливается.
+    again = service.import_preliminary_sources(
+        persisted["research_id"], imported_by="analyst",
+    )
+    assert again["upgraded"] == 0
+    assert again["skipped"] >= 1
+
+
+def test_import_does_not_overwrite_marked_record_with_same_url(session):
+    """Размеченная запись по тому же URL не перезаписывается вердиктом исследования."""
+    from bank_audit.loophole.chat.tools_nanobot import save_loophole
+
+    _create_import_schema(session)
+    url = "https://bank.example/rules"
+    saved = save_loophole(
+        title="Помечено аудитором",
+        url=url,
+        snippet="Комиссия",
+        raw_text="Полный текст страницы: комиссия указана только в примечании.",
+        is_loophole=False,
+        session=session,
+    )
+    assert repo.get_record(saved["record_id"], session=session)["classification"] == "not_confirmed"
+
+    service = ResearchCaseService(session)
+    persisted = service.persist_managed_run(
+        workspace_id=1,
+        run_id="run-no-overwrite",
+        query="проверь комиссии",
+        sources=[{"url": url, "title": "Условия продукта",
+                  "extracted_text": "Комиссия указана только в примечании."}],
+        findings=[{"url": url, "title": "Скрытая комиссия",
+                   "snippet": "Комиссия указана только в примечании.",
+                   "is_loophole": True, "classification": "vulnerability"}],
+    )
+
+    imported = service.import_preliminary_sources(
+        persisted["research_id"], imported_by="analyst",
+    )
+    assert imported["imported"] == 0
+    assert imported["upgraded"] == 0
+    assert imported["skipped"] == 1
+    after = repo.get_record(saved["record_id"], session=session)
+    assert after["classification"] == "not_confirmed"
+    assert after["is_loophole"] is False
+
+
+def test_import_upgrades_unmarked_record_from_subagent_triage(session):
+    """Triaged-разметка субагента по URL из немаркированной записи ставит fraud_scheme."""
+    from bank_audit.loophole.chat.tools_nanobot import save_loophole
+
+    _create_import_schema(session)
+    url = "https://example.ru/fraud-post"
+    saved = save_loophole(
+        title="Сохранено инструментом",
+        url=url,
+        snippet="Схема",
+        raw_text="Полный текст страницы: описание мошеннической схемы вывода средств.",
+        session=session,
+    )
+    service = ResearchCaseService(session)
+    persisted = service.persist_managed_run(
+        workspace_id=1,
+        run_id="run-upgrade-triaged",
+        query="проверь схемы",
+        findings=[],
+        sources=[],
+        triaged_items=[{
+            "url": url, "title": "Схема вывода",
+            "snippet": "Описание мошеннической схемы вывода средств",
+            "category": "fraud", "content_type": "post", "reason": "Признаки обмана",
+        }],
+    )
+
+    imported = service.import_preliminary_sources(
+        persisted["research_id"], imported_by="analyst",
+    )
+    assert imported["upgraded"] == 1
+    after = repo.get_record(saved["record_id"], session=session)
+    assert after["classification"] == "fraud_scheme"
+    assert after["is_loophole"] is True
+    assert after["verdict_model"] == "subagent_triage"
+
+
+def test_save_loophole_sets_classification_consistent_with_verdict(session):
+    """Инструмент сохраняет согласованную пару (is_loophole, classification)."""
+    from bank_audit.loophole.chat.tools_nanobot import save_loophole
+
+    _create_import_schema(session)
+    base = {
+        "snippet": "Комиссия",
+        "raw_text": "Полный текст страницы: комиссия указана только в примечании.",
+    }
+    positive = save_loophole(
+        title="Лазейка", url="https://bank.example/pos", is_loophole=True,
+        session=session, **base,
+    )
+    negative = save_loophole(
+        title="Не лазейка", url="https://bank.example/neg", is_loophole=False,
+        session=session, **base,
+    )
+    without = save_loophole(
+        title="Без вердикта", url="https://bank.example/none",
+        session=session, **base,
+    )
+    pos = repo.get_record(positive["record_id"], session=session)
+    neg = repo.get_record(negative["record_id"], session=session)
+    none_row = repo.get_record(without["record_id"], session=session)
+    assert (pos["is_loophole"], pos["classification"]) == (True, "vulnerability")
+    assert (neg["is_loophole"], neg["classification"]) == (False, "not_confirmed")
+    assert none_row["is_loophole"] is None and none_row["classification"] is None

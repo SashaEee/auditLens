@@ -655,7 +655,11 @@ class ResearchCaseService:
         как BOOL_OR по его кандидатам; повторный перенос source_id идемпотентно
         возвращается как skipped. Колонка ``is_loophole`` кандидата NOT NULL
         (миграция 045), поэтому фильтр COALESCE(...) IS NOT NULL пропускает
-        всех исторических кандидатов.
+        всех исторических кандидатов. URL, уже присутствующий в каталоге,
+        дублем не создаётся: немаркированная запись (сохранённая, например,
+        инструментом audit_save_loophole без вердикта) доводится до вердикта
+        исследования (счётчик ``upgraded``), уже размеченная — skipped без
+        перезаписи существующего вердикта.
         """
         workspace_id = self.research_workspace_id(research_id)
         if workspace_id is None:
@@ -686,6 +690,7 @@ class ResearchCaseService:
             {"research_id": research_id},
         ).mappings().all()
         imported_ids: list[int] = []
+        upgraded_ids: list[int] = []
         skipped = 0
         for row in rows:
             source_id = int(row["source_id"])
@@ -696,9 +701,7 @@ class ResearchCaseService:
             content = str(row["extracted_text"])
             source_url = str(row["url"])
             source_sha = sha256_text(f"research-source:{source_url}\n{content}")
-            if already_imported or repo.exists_url(source_url, session=self._session) or repo.exists_sha256(
-                source_sha, session=self._session
-            ):
+            if already_imported or repo.exists_sha256(source_sha, session=self._session):
                 skipped += 1
                 continue
             effective_is_loophole = bool(row["effective_is_loophole"])
@@ -713,6 +716,33 @@ class ResearchCaseService:
             # Триажированный сниппет — не прочитанная страница: запись помечена
             # отдельной моделью вердикта и легаси-контентом, решение за аудитором.
             is_triaged = str(row["source_status"]) == "triaged"
+            verdict_confidence = float(row["confidence"])
+            verdict_reason = (
+                "Предварительная разметка сниппета подзадачей; страница не прочитана"
+                if is_triaged else "Предварительная оценка из AI-исследования"
+            )
+            verdict_model = "subagent_triage" if is_triaged else "research_preliminary"
+            existing_record_id = repo.get_record_id_by_url(source_url, session=self._session)
+            if existing_record_id is not None:
+                # URL уже в общей базе (например, сохранён инструментом
+                # audit_save_loophole без вердикта): дубль не создаём, но
+                # немаркированную запись доводим до вердикта исследования —
+                # иначе маркировка агента/субагентов теряется навсегда.
+                if self._upgrade_unmarked_record(
+                    int(existing_record_id),
+                    classification=record_classification,
+                    confidence=verdict_confidence,
+                    reason=verdict_reason,
+                    model=verdict_model,
+                ):
+                    upgraded_ids.append(int(existing_record_id))
+                    self._record_import_provenance(
+                        research_id, source_id, workspace_id,
+                        int(existing_record_id), imported_by,
+                    )
+                else:
+                    skipped += 1
+                continue
             record_id = repo.insert_record(
                 LoopholeRecord(
                     sha256=source_sha,
@@ -728,34 +758,81 @@ class ResearchCaseService:
                     # Явный classification: insert_record дефолта не имеет,
                     # инвариант согласованности — repository.update_verdict.
                     classification=record_classification,
-                    verdict_confidence=float(row["confidence"]),
-                    verdict_reason=(
-                        "Предварительная разметка сниппета подзадачей; страница не прочитана"
-                        if is_triaged else "Предварительная оценка из AI-исследования"
-                    ),
-                    verdict_model="subagent_triage" if is_triaged else "research_preliminary",
+                    verdict_confidence=verdict_confidence,
+                    verdict_reason=verdict_reason,
+                    verdict_model=verdict_model,
                 ),
                 session=self._session,
             )
             if record_id is None:
                 skipped += 1
                 continue
-            self._session.execute(
-                text(
-                    "INSERT INTO loophole_preliminary_import "
-                    "(research_id, source_id, workspace_id, record_id, imported_by) "
-                    "VALUES (:research_id, :source_id, :workspace_id, :record_id, :imported_by)"
-                ),
-                {
-                    "research_id": research_id,
-                    "source_id": source_id,
-                    "workspace_id": workspace_id,
-                    "record_id": record_id,
-                    "imported_by": imported_by,
-                },
+            self._record_import_provenance(
+                research_id, source_id, workspace_id, int(record_id), imported_by,
             )
             imported_ids.append(int(record_id))
-        return {"imported": len(imported_ids), "skipped": skipped, "record_ids": imported_ids}
+        return {
+            "imported": len(imported_ids),
+            "upgraded": len(upgraded_ids),
+            "skipped": skipped,
+            "record_ids": [*imported_ids, *upgraded_ids],
+        }
+
+    def _upgrade_unmarked_record(
+        self,
+        record_id: int,
+        *,
+        classification: str,
+        confidence: float,
+        reason: str,
+        model: str,
+    ) -> bool:
+        """Проставляет вердикт исследования записи, сохранённой без маркировки.
+
+        Запись с уже заданным classification/is_loophole не изменяется:
+        существующий вердикт (агента, аудитора, ЦК КС) важнее повторного
+        переноса. Пара (is_loophole, classification) выводится из типа записи,
+        чтобы удовлетворять инварианту ``repository.update_verdict``.
+        """
+        record = repo.get_record(record_id, session=self._session)
+        if record is None:
+            return False
+        if record.get("classification") or record.get("is_loophole") is not None:
+            return False
+        repo.update_verdict(
+            record_id,
+            is_loophole=classification != "not_confirmed",
+            confidence=confidence,
+            reason=reason,
+            model=model,
+            classification=classification,
+            session=self._session,
+        )
+        return True
+
+    def _record_import_provenance(
+        self,
+        research_id: int,
+        source_id: int,
+        workspace_id: int,
+        record_id: int,
+        imported_by: str,
+    ) -> None:
+        """Связывает перенесённый источник с записью общей базы (идемпотентно)."""
+        self._session.execute(
+            text(
+                "INSERT INTO loophole_preliminary_import "
+                "(research_id, source_id, workspace_id, record_id, imported_by) "
+                "VALUES (:research_id, :source_id, :workspace_id, :record_id, :imported_by)"
+            ),
+            {
+                "research_id": research_id,
+                "source_id": source_id,
+                "workspace_id": workspace_id,
+                "record_id": record_id,
+                "imported_by": imported_by,
+            },
+        )
 
     def get_report_snapshot(self, snapshot_id: int) -> dict[str, Any] | None:
         """Возвращает канонические данные отчёта только из immutable snapshot.

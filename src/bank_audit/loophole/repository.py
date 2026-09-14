@@ -103,6 +103,15 @@ def exists_url(url: str, *, session=None) -> bool:
         ).scalar_one_or_none() is not None
 
 
+def get_record_id_by_url(url: str, *, session=None) -> int | None:
+    """Возвращает record_id по url, если запись существует."""
+    with _session(session) as s:
+        return s.execute(
+            text(f"SELECT record_id FROM {schema.T_RECORD} WHERE url = :u LIMIT 1"),
+            {"u": url},
+        ).scalar_one_or_none()
+
+
 def get_record_id_by_sha256(sha256: str, *, session=None) -> int | None:
     """Возвращает record_id по sha256, если запись существует."""
     with _session(session) as s:

@@ -679,6 +679,14 @@ def save_loophole(
         raw_text_len=content.length,
         raw_text_truncated=content.truncated,
         is_loophole=is_loophole,
+        # Согласованная пара по инварианту repository.update_verdict: без
+        # classification запись невидима в общей базе и блокирует доводку URL
+        # вердиктом исследования (import_preliminary_sources по тому же URL).
+        classification=(
+            "vulnerability" if is_loophole is True
+            else "not_confirmed" if is_loophole is False
+            else None
+        ),
     )
     try:
         is_new = not repo.exists_sha256(sha, session=session)
