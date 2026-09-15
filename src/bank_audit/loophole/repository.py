@@ -103,6 +103,15 @@ def exists_url(url: str, *, session=None) -> bool:
         ).scalar_one_or_none() is not None
 
 
+def get_record_id_by_url(url: str, *, session=None) -> int | None:
+    """Возвращает record_id по url, если запись существует."""
+    with _session(session) as s:
+        return s.execute(
+            text(f"SELECT record_id FROM {schema.T_RECORD} WHERE url = :u LIMIT 1"),
+            {"u": url},
+        ).scalar_one_or_none()
+
+
 def get_record_id_by_sha256(sha256: str, *, session=None) -> int | None:
     """Возвращает record_id по sha256, если запись существует."""
     with _session(session) as s:
@@ -161,7 +170,13 @@ def update_verdict(
     classification: str | None = None,
     session=None,
 ) -> None:
-    """Обновляет классификацию, сохраняя статус публикации записи."""
+    """Обновляет классификацию, сохраняя статус публикации записи.
+
+    Первый классификаторский комментарий замораживается в
+    classifier_verdict_reason (миграция 068): SET-выражения видят старые
+    значения строки, поэтому COALESCE фиксирует текст до перезаписи
+    verdict_reason ручным вердиктом; повторные вызовы ничего не меняют.
+    """
     classification = classification or ("vulnerability" if is_loophole else "not_confirmed")
     if classification not in {"vulnerability", "fraud_scheme", "not_confirmed"}:
         raise ValueError("Неизвестный тип записи")
@@ -172,6 +187,7 @@ def update_verdict(
             text(
                 f"UPDATE {schema.T_RECORD} SET is_loophole = :is_l, "
                 "verdict_confidence = :conf, verdict_reason = :reason, "
+                "classifier_verdict_reason = COALESCE(classifier_verdict_reason, verdict_reason), "
                 "verdict_model = :model, classification = :classification, "
                 "classified_at = CURRENT_TIMESTAMP "
                 "WHERE record_id = :id"
@@ -836,24 +852,73 @@ def get_workspace(workspace_id: int, *, session=None) -> dict | None:
         return _workspace_summary(row) if row else None
 
 
+def _verification_decisions_by_record(
+    record_ids: list[int], *, session,
+) -> dict[int, list[dict]]:
+    """Решения ЦК КС для записей одним батч-запросом (без N+1).
+
+    Цепочка record → loophole_preliminary_import → loophole_research_candidate
+    → loophole_verification_snapshot → loophole_verification_decision —
+    каноническая, join-образец из _catalog_where. Запись может быть
+    импортирована из нескольких исследований → несколько решений на один
+    record_id; порядок — decided_at, затем decision_id.
+    """
+    if not record_ids:
+        return {}
+    placeholders = ", ".join(f":r{i}" for i in range(len(record_ids)))
+    params = {f"r{i}": value for i, value in enumerate(record_ids)}
+    rows = session.execute(
+        text(
+            "SELECT verification_import.record_id, "
+            "decision.decision_id, decision.snapshot_id, decision.decision, "
+            "decision.comment, decision.decided_by, decision.decided_at, "
+            "decision.run_id "
+            "FROM loophole_preliminary_import AS verification_import "
+            "JOIN loophole_research_candidate AS candidate "
+            "ON candidate.research_id = verification_import.research_id "
+            "AND candidate.source_id = verification_import.source_id "
+            "JOIN loophole_verification_snapshot AS snapshot "
+            "ON snapshot.candidate_id = candidate.candidate_id "
+            "JOIN loophole_verification_decision AS decision "
+            "ON decision.snapshot_id = snapshot.snapshot_id "
+            f"WHERE verification_import.record_id IN ({placeholders}) "
+            "ORDER BY decision.decided_at, decision.decision_id"
+        ),
+        params,
+    ).mappings().all()
+    grouped: dict[int, list[dict]] = {}
+    for row in rows:
+        decision = {key: value for key, value in dict(row).items() if key != "record_id"}
+        grouped.setdefault(row["record_id"], []).append(decision)
+    return grouped
+
+
 def list_verification_queue(*, limit: int = 200, session=None) -> list[dict]:
     """Очередь верификации ЦК КС: записи, помеченные лазейкой (LLM/сборщиком),
     по которым ещё нет ручного вердикта (verdict_model != 'manual').
 
     Вызывается только после server-side проверки роли ccks_expert. raw_text
-    не отдаётся (payload) — как и в list_records.
+    не отдаётся (payload) — как и в list_records. Решения ЦК КС прикрепляются
+    в rec["decisions"] одним батч-запросом (см.
+    _verification_decisions_by_record); у записей без решений — пустой список.
     """
     with _session(session) as s:
         sql = (
             f"SELECT record_id, title, url, snippet, domain, trust_score, "
             "bank_slug, keyword, verdict_confidence, verdict_reason, status, "
-            "published_at, collected_at, classified_at "
+            "published_at, collected_at, classified_at, classifier_verdict_reason "
             f"FROM {schema.T_RECORD} "
             "WHERE is_loophole = TRUE "
             "AND (verdict_model IS NULL OR verdict_model != 'manual') "
             "ORDER BY collected_at DESC LIMIT :limit"
         )
-        return [dict(r) for r in s.execute(text(sql), {"limit": limit}).mappings().all()]
+        records = [dict(r) for r in s.execute(text(sql), {"limit": limit}).mappings().all()]
+        decisions = _verification_decisions_by_record(
+            [rec["record_id"] for rec in records], session=s,
+        )
+        for rec in records:
+            rec["decisions"] = decisions.get(rec["record_id"], [])
+        return records
 
 
 def touch_workspace(workspace_id: int, *, session=None) -> None:

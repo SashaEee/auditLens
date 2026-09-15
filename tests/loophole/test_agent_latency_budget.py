@@ -9,7 +9,13 @@ from types import SimpleNamespace
 import pytest
 
 from bank_audit.loophole.config import LoopholeSettings
-from bank_audit.loophole.run_budget import ResearchBudget, requested_finding_count
+from bank_audit.loophole.run_budget import (
+    DEFAULT_FINDING_COUNT,
+    MAX_SUCCESSFUL_PAGES,
+    ResearchBudget,
+    requested_finding_count,
+    requested_finding_kind,
+)
 
 
 def _context(*, count=1, timeout=0.06):
@@ -38,6 +44,8 @@ def _add_candidate(context, *, quote="Цитата о механизме", publi
     ("Найди 1 лазейку по кредитным картам за 2026 год", 1),
     ("Найди одну лазейку", 1),
     ("Найди 3 проверенные лазейки", 3),
+    ("Найди 3 мошеннические схемы", 3),
+    ("Найди 2 схемы", 2),
     ("Найди лазейки за 2026 год", None),
     ("Сравни кредитные карты", None),
     ("Найди более 1 лазейки", None),
@@ -48,6 +56,17 @@ def _add_candidate(context, *, quote="Цитата о механизме", publi
 ])
 def test_requested_count_is_explicit(query, expected):
     assert requested_finding_count(query) == expected
+
+
+def test_fraud_target_is_separate_from_loophole_catalog_candidates():
+    from bank_audit.loophole.agent import eligible_findings
+
+    context = _context()
+    _add_candidate(context)
+    context.pending_records[0]["classification"] = "fraud_scheme"
+    assert requested_finding_kind("Найди 1 мошенническую схему") == "fraud"
+    assert eligible_findings(context) == []
+    assert len(eligible_findings(context, kind="fraud")) == 1
 
 
 def test_budget_configuration(monkeypatch):
@@ -75,9 +94,30 @@ def test_count_prompt_stops_after_evidence_without_changing_broad_queries():
 
     narrow = build_prompt("Найди 1 лазейку по кредитным картам за 2026 год")
     broad = build_prompt("Найди лазейки по кредитным картам за 2026 год")
-    assert "требуется AI-кандидатов — 1" in narrow
-    assert "Ограничение текущего запроса:" not in broad
-    assert "нескольких независимых кластеров" in broad
+    assert "явная цель пользователя — 1" in narrow
+    assert f"цель по умолчанию — {DEFAULT_FINDING_COUNT}" in broad
+    assert "100" in broad
+
+
+def test_budget_uses_default_or_explicit_target_and_counts_only_canonical_pages():
+    budget = ResearchBudget()
+    assert budget.target_finding_count == DEFAULT_FINDING_COUNT
+    assert budget.successful_page_count == 0
+    assert budget.register_successful_page("https://example.test/article")
+    assert not budget.register_successful_page("https://example.test/article")
+    assert budget.successful_page_count == 1
+
+    explicit = ResearchBudget(requested_count=3)
+    assert explicit.target_finding_count == 3
+
+
+def test_budget_reaches_page_limit_only_after_unique_successful_pages():
+    budget = ResearchBudget()
+    for index in range(MAX_SUCCESSFUL_PAGES - 1):
+        assert budget.register_successful_page(f"https://example.test/{index}")
+    assert not budget.page_limit_reached
+    assert budget.register_successful_page("https://example.test/final")
+    assert budget.page_limit_reached
 
 
 @pytest.mark.parametrize(("quote", "published_at", "expected"), [

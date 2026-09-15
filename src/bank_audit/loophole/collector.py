@@ -115,6 +115,9 @@ async def collect_once(
                 content_status=content.status,
                 raw_text_len=content.length,
                 raw_text_truncated=content.truncated,
+                # Дата вычислена в fetch_and_parse (разметка или видимый текст);
+                # при неуспешном fetch страницы даты нет — остаётся NULL.
+                published_at=page.published_at if page is not None else None,
             )
             rid = repo.insert_record(rec, session=session)
             if rid is None:

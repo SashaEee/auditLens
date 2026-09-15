@@ -23,7 +23,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -104,10 +104,11 @@ def _normalize_to_utf8(content: bytes, content_type: str | None) -> bytes:
 
 
 def _exact_published_at(content: bytes) -> str | None:
-    """Извлекает только точный timezone-aware timestamp первоисточника.
+    """Извлекает timestamp публикации первоисточника из разметки.
 
-    Дата в сниппете поиска, год в тексте и naive дата не подходят: при жёстком
-    периоде они не доказывают, что публикация действительно попадает в окно.
+    tz-aware значение возвращается как есть; наивное (без пояса) якорится
+    к UTC — календарный день сохраняется. Дата в сниппете поиска и оценка
+    из URL не подходят: здесь считается только разметка самого поста.
     """
     markup = content.decode("utf-8", errors="replace")
     for pattern in _PUBLISHED_AT_RES:
@@ -121,7 +122,7 @@ def _exact_published_at(content: bytes) -> str | None:
         except ValueError:
             continue
         if parsed.tzinfo is None or parsed.utcoffset() is None:
-            continue
+            parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed.isoformat()
     return None
 
@@ -237,6 +238,28 @@ def estimate_published_date(url: str, text: str = "") -> str | None:
     return found.isoformat() if found is not None else None
 
 
+def published_date_from_text(text: str) -> str | None:
+    """Текстовая дата публикации «YYYY-MM-DD» из видимого текста (URL не участвует).
+
+    Обёртка над _date_from_text для мест, где страница не прочитана
+    (например triaged-сниппет поисковой выдачи): будущее и битые строки
+    отбрасываются молча (_plausible).
+    """
+    found = _date_from_text(text or "")
+    return found.isoformat() if found is not None else None
+
+
+def _text_published_at(text: str) -> str | None:
+    """Точная дата из видимого текста поста: полночь UTC («…T00:00:00+00:00»).
+
+    Fallback, когда в разметке дат не нашлось; будущие и битые даты дают None.
+    """
+    found = _date_from_text(text or "")
+    if found is None:
+        return None
+    return datetime(found.year, found.month, found.day, tzinfo=timezone.utc).isoformat()
+
+
 @dataclass
 class FetchedPage:
     url: str
@@ -296,6 +319,8 @@ def fetch_and_parse(
     excerpt = text[:excerpt_len]
     final_url = getattr(result, "final_url", url)
     estimated = estimate_published_date(final_url, text) or estimate_published_date(url)
+    # Приоритет: tz-aware/наивная разметка (UTC) → видимая дата текста (полночь UTC).
+    published_at = _exact_published_at(content) or _text_published_at(text)
     return FetchedPage(
         url=url,
         final_url=final_url,
@@ -305,6 +330,6 @@ def fetch_and_parse(
         excerpt=excerpt,
         via=getattr(result, "via", "unknown"),
         content_type=content_type,
-        published_at=_exact_published_at(content),
+        published_at=published_at,
         estimated_published_at=estimated,
     )

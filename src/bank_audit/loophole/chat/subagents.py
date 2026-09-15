@@ -173,6 +173,10 @@ class ResearchSubagents:
         self.events: asyncio.Queue[dict] = asyncio.Queue()
         self._slots = asyncio.Semaphore(3)
         self._launched = 0
+        # Разметка сниппетов всех подзадач прогона: url, title, snippet,
+        # category (loophole/fraud/...), reason. Персистится в общий контур
+        # как явно помеченные предварительные зацепки.
+        self.triaged: list[dict] = []
         self._timeout_seconds = int(os.getenv("LOOPHOLE_SUBAGENT_TIMEOUT_SECONDS", "180"))
         if not 1 <= self._timeout_seconds <= 600:
             raise ValueError("LOOPHOLE_SUBAGENT_TIMEOUT_SECONDS должен быть от 1 до 600")
@@ -353,7 +357,12 @@ class ResearchSubagents:
                             )):
                                 labels = await self._classify(sources[offset:offset + 2], model)
                             self.budget.ensure_active()
-                            checkpoint["items"].extend(labels)
+                            # Сниппет выдачи сопровождает метку: персистится как
+                            # evidence предварительной зацепки без чтения страницы.
+                            for position, label in enumerate(labels):
+                                label["snippet"] = sources[offset + position].get("snippet", "")
+                                checkpoint["items"].append(dict(label))
+                                self.triaged.append(dict(label))
                             state["items"].extend(labels)
                             state["completed"] = len(state["items"])
                             if offset + 2 < len(sources):

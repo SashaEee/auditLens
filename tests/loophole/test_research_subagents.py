@@ -67,6 +67,11 @@ async def test_labels_keep_real_sources_and_mask_model_inputs(monkeypatch, tmp_p
     while not state.events.empty():
         stages.append(state.events.get_nowait()["status"])
     assert stages == ["searching", "classifying", "completed"]
+    # Разметка со сниппетом копится на раннере для персистенции в общий контур.
+    assert len(state.triaged) == 1
+    assert state.triaged[0]["url"] == "https://example.ru/post"
+    assert state.triaged[0]["category"] == "fraud"
+    assert state.triaged[0]["snippet"]
 
 
 @pytest.mark.parametrize("items", [

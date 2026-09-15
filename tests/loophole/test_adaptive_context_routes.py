@@ -234,9 +234,13 @@ def _send_chat_body() -> str:
 
 
 def _record_content_body() -> str:
-    """Тело renderRecordContent для проверок деталей раскрытой записи."""
+    """Тело renderRecordContent для проверок деталей раскрытой записи.
+
+    Сигнатура расширена вторым аргументом `opts` (режим «всегда развёрнут»
+    карточки очереди) — хелпер должен находить то же тело функции.
+    """
     m = re.search(
-        r"const renderRecordContent = \(r\) => \{(.*?)\n  \};",
+        r"const renderRecordContent = \(r[^)]*\) => \{(.*?)\n  \};",
         _jsx(),
         re.DOTALL,
     )

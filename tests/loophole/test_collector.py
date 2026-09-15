@@ -5,10 +5,12 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import text
 
 from bank_audit.loophole import collector
 from bank_audit.loophole import keywords as kw_mod
 from bank_audit.loophole import repository as repo
+from bank_audit.loophole.adapters import search_decorator
 from bank_audit.loophole.config import LoopholeSettings
 
 
@@ -148,3 +150,87 @@ async def test_collect_once_saves_full_content(session):
     assert "полный текст страницы" in (row["raw_text"] or "")
     assert row["content_status"] == "full"
     assert row["raw_text_len"] == len(row["raw_text"])
+
+
+def _fetch_impl_by_url(mapping):
+    """Инъекция fetch: на каждый URL — свой контент; None имитирует неуспех."""
+    def _impl(url, prefer_browser=False):
+        body = mapping[url]
+        if body is None:
+            return None
+        result = MagicMock()
+        result.content = body.encode("utf-8")
+        result.final_url = url
+        result.status = 200
+        result.content_type = "text/html"
+        result.via = "http"
+        return result
+    return _impl
+
+
+def _only_first_keyword(session):
+    """Сеет ключевые слова и оставляет активным только первое."""
+    kw_mod.seed_keywords(session=session)
+    kws = repo.list_keywords(session=session)
+    for k in kws[1:]:
+        repo.set_keyword_active(k["keyword_id"], False, session=session)
+
+
+@pytest.mark.asyncio
+async def test_collect_once_persists_visible_date_as_published_at(session):
+    """Видимая дата страницы доходит до loophole_record.published_at (NOT NULL)."""
+    # Кеш поиска — на процесс: без сброса подтянутся результаты чужих тестов.
+    search_decorator.clear_cache()
+    _only_first_keyword(session)
+    results = [{
+        "title": "лазейка", "url": "https://example.ru/dated",
+        "snippet": "скрытая комиссия", "domain": "example.ru",
+    }]
+    settings = LoopholeSettings(trust_min=0.0)
+    n = await collector.collect_once(
+        settings=settings,
+        llm=_llm_mock({"is_loophole": True, "confidence": 0.9, "reason": "ок"}),
+        session=session,
+        search_impl=_search_impl_factory(results),
+        fetch_impl=_fetch_impl_factory(
+            text="Опубликовано 9 сентября 2026 года. Скрытая комиссия в договоре."
+        ),
+    )
+    assert n == 1
+    # Pydantic приводит ISO-строку к datetime, SQLite хранит её с пробелом.
+    row = session.execute(
+        text("SELECT published_at FROM loophole_record WHERE url = 'https://example.ru/dated'")
+    ).scalar_one()
+    assert row is not None
+    assert str(row).startswith("2026-09-09")
+
+
+@pytest.mark.asyncio
+async def test_collect_once_keeps_published_at_null_without_dates(session):
+    """Без дат в разметке/тексте или при неуспешном fetch published_at остаётся NULL."""
+    search_decorator.clear_cache()
+    _only_first_keyword(session)
+    results = [
+        {"title": "лазейка", "url": "https://example.ru/undated",
+         "snippet": "скрытая комиссия", "domain": "example.ru"},
+        {"title": "лазейка", "url": "https://example.ru/failed",
+         "snippet": "другая комиссия", "domain": "example.ru"},
+    ]
+    settings = LoopholeSettings(trust_min=0.0)
+    n = await collector.collect_once(
+        settings=settings,
+        llm=_llm_mock({"is_loophole": True, "confidence": 0.9, "reason": "ок"}),
+        session=session,
+        search_impl=_search_impl_factory(results),
+        fetch_impl=_fetch_impl_by_url({
+            "https://example.ru/undated": "<html><body><p>текст без дат</p></body></html>",
+            "https://example.ru/failed": None,
+        }),
+    )
+    assert n == 2
+    rows = session.execute(
+        text("SELECT url, published_at FROM loophole_record ORDER BY url")
+    ).mappings().all()
+    by_url = {row["url"]: row["published_at"] for row in rows}
+    assert by_url["https://example.ru/undated"] is None
+    assert by_url["https://example.ru/failed"] is None
