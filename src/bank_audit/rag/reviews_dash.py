@@ -529,7 +529,7 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
 
 
 @_safe(None)
-def _themes_from_labels(bc: str, product: str | None) -> dict | None:
+def _themes_from_labels(bc: str, product: str | None, days: int = 90) -> dict | None:
     """Панель тем по СОХРАНЁННОЙ разметке вместо regex-скана по текстам.
 
     Разметку делает фоновый прогон (review_topics): темы выводит модель из
@@ -544,7 +544,10 @@ def _themes_from_labels(bc: str, product: str | None) -> dict | None:
     ver = review_topics.active_version()
     if not ver:
         return None
-    params = {"bank": bc, "product": product, "ver": ver,
+    # Окно и «предыдущее такое же» — от выбранного периода, а не от зашитых
+    # 90/180: панель тем не менялась при переключении периода, и «главная тема»
+    # спорила с KPI «жалоб за N дней», посчитанным по другому окну.
+    params = {"bank": bc, "product": product, "ver": ver, "d": days, "d2": days * 2,
               "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP}
     try:
         with db.session() as s:
@@ -552,7 +555,12 @@ def _themes_from_labels(bc: str, product: str | None) -> dict | None:
                 WITH dd AS (
                     SELECT f.url, f.dt FROM review_index f
                     WHERE f.bank = :bank
-                      AND f.dt >= now() - make_interval(days => 180)
+                      AND f.dt >= now() - make_interval(days => :d2)
+                      -- Верхняя граница обязательна: в корпусе есть даты из
+                      -- будущего (площадка отдаёт дату акции или ответа банка),
+                      -- и без отсечки они попадали в «за период» — тема
+                      -- считалась по большему числу отзывов, чем KPI рядом.
+                      AND f.dt <= now()
                       AND (CAST(:product AS text) IS NULL OR f.product = :product)
                 ), lab AS (
                     SELECT l.topic_id, dd.dt
@@ -560,8 +568,8 @@ def _themes_from_labels(bc: str, product: str | None) -> dict | None:
                     WHERE l.z >= :min AND l.rn <= :rank
                 )
                 SELECT d.key, d.label, d.risk,
-                       count(*) FILTER (WHERE lab.dt >= now() - make_interval(days => 90)) AS n,
-                       count(*) FILTER (WHERE lab.dt <  now() - make_interval(days => 90)) AS p
+                       count(*) FILTER (WHERE lab.dt >= now() - make_interval(days => :d)) AS n,
+                       count(*) FILTER (WHERE lab.dt <  now() - make_interval(days => :d)) AS p
                 FROM lab JOIN review_topic_def d ON d.topic_id = lab.topic_id
                 WHERE d.version = :ver
                 GROUP BY d.key, d.label, d.risk
@@ -570,7 +578,8 @@ def _themes_from_labels(bc: str, product: str | None) -> dict | None:
                 WITH dd AS (
                     SELECT f.url FROM review_index f
                     WHERE f.bank = :bank
-                      AND f.dt >= now() - make_interval(days => 90)
+                      AND f.dt >= now() - make_interval(days => :d)
+                      AND f.dt <= now()
                       AND (CAST(:product AS text) IS NULL OR f.product = :product)
                 )
                 SELECT count(*),
@@ -594,7 +603,7 @@ def _themes_from_labels(bc: str, product: str | None) -> dict | None:
         out.append({"key": "other", "label": "Прочее / без темы", "risk": "other",
                     "n": int(other), "pct": round(100.0 * int(other) / total, 1),
                     "delta_pct": None})
-    return {"bank": bc, "product": product, "days": 90, "total": total,
+    return {"bank": bc, "product": product, "days": days, "total": total,
             "themes": out, "src": "labels"}
 
 
@@ -610,7 +619,7 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
         # Пока разметки нет (первый прогон ещё не отработал) — считаем как раньше.
         # Панель тем не должна пустеть из-за того, что фоновая задача не успела.
         if TOPICS_FROM_LABELS:
-            byl = _themes_from_labels(bc, product)
+            byl = _themes_from_labels(bc, product, days)
             if byl and byl["themes"]:
                 return byl
         bclause, bp = _bank_clause(bc, product)
@@ -622,21 +631,23 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
             ts, tp = _theme_sql(t, f"t{t['key']}_")
             params.update(tp)
             cte_sel.append(f'({ts}) AS "{t["key"]}"')
-        n_sel = [f'count(*) FILTER (WHERE dt >= now()-make_interval(days=>90) AND "{t["key"]}") AS "{t["key"]}_n"' for t in THEMES]
-        p_sel = [f'count(*) FILTER (WHERE dt < now()-make_interval(days=>90) AND "{t["key"]}") AS "{t["key"]}_p"' for t in THEMES]
+        params["_d"], params["_d2"] = days, days * 2
+        n_sel = [f'count(*) FILTER (WHERE dt >= now()-make_interval(days=>:_d) AND "{t["key"]}") AS "{t["key"]}_n"' for t in THEMES]
+        p_sel = [f'count(*) FILTER (WHERE dt < now()-make_interval(days=>:_d) AND "{t["key"]}") AS "{t["key"]}_p"' for t in THEMES]
         any_expr = " OR ".join(f'"{t["key"]}"' for t in THEMES)   # отзыв попал хоть в одну тему
         # дедуп источника СНАЧАЛА (DISTINCT ON url), потом regex по уникальным
         # (корпус содержит точные дубли краулера — иначе счёт и время раздуты)
         sql = (f'WITH dd AS MATERIALIZED ('
                f' SELECT DISTINCT ON (r.url) r."datePublished", r."reviewBody"'
                f' FROM bankiru.reviews r WHERE {bclause}'
-               f' AND r."datePublished" >= now() - make_interval(days => 180)'
+               f' AND r."datePublished" >= now() - make_interval(days => :_d2)'
+               f' AND r."datePublished" <= now()'
                f' ORDER BY r.url),'
                f' tagged AS MATERIALIZED ('
                f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)} FROM dd r)'
                f' SELECT {", ".join(n_sel + p_sel)},'
-               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>90)) AS "_total",'
-               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>90) AND NOT ({any_expr})) AS "_other"'
+               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>:_d)) AS "_total",'
+               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>:_d) AND NOT ({any_expr})) AS "_other"'
                f' FROM tagged')
         with eng.connect() as c:
             row = c.execute(text(sql), params).mappings().one()
@@ -655,8 +666,11 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
         if other_n:
             out.append({"key": "other", "label": "Прочее / без темы", "risk": "other",
                         "n": other_n, "pct": round(100.0 * other_n / total, 1), "delta_pct": None})
-        return {"bank": bc, "product": product, "days": 90, "total": total, "themes": out}
-    return _cached(f"th:{bc}:{product}", _compute)
+        return {"bank": bc, "product": product, "days": days, "total": total, "themes": out}
+    # Период — часть ключа кэша. Без него первый же ответ за 90 дней оседал в
+    # кэше и отдавался на любой другой период: панель выглядела «одинаковой
+    # за квартал, за год и за всё время» даже после проброса параметра.
+    return _cached(f"th:{bc}:{product}:{days}", _compute)
 
 
 @_safe(None)

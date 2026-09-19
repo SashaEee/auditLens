@@ -661,9 +661,33 @@ def _same_title(line: str, title: str) -> bool:
     return len(a & b) >= max(1, min(len(a), len(b)) // 2 + (1 if min(len(a), len(b)) > 1 else 0))
 
 
-async def _stream_section(client, model: str, prompt: str) -> AsyncIterator[str]:
+# Временные отказы провайдера: перегрузка, лимит запросов, шлюз. Постоянные
+# ошибки (неверный запрос, нет модели) сюда не попадают — их повтор не лечит.
+_RETRY_ERR = re.compile(
+    r"overload|rate.?limit|too many requests|\b(429|502|503|504)\b|"
+    r"timeout|timed out|temporar", re.IGNORECASE)
+
+
+async def _stream_section(client, model: str, prompt: str,
+                          attempts: int = 3) -> AsyncIterator[str]:
     """Один раздел одним вызовом. Роль и правила уже внутри промпта, поэтому
-    системное сообщение короткое — оно лишь фиксирует режим."""
-    async for piece in _stream(client, model, question="", plan=None,
-                               context="", raw_prompt=prompt):
-        yield piece
+    системное сообщение короткое — оно лишь фиксирует режим.
+
+    Перегрузка провайдера на старте раздела больше не роняет прогон: пока
+    наружу не ушло ни куска, повторяем. После первого же выданного куска
+    повтор запрещён — иначе читатель получил бы раздел дважды.
+    """
+    for attempt in range(attempts):
+        sent = False
+        try:
+            async for piece in _stream(client, model, question="", plan=None,
+                                       context="", raw_prompt=prompt):
+                sent = True
+                yield piece
+            return
+        except Exception as e:
+            if sent or attempt == attempts - 1 or not _RETRY_ERR.search(str(e)):
+                raise
+            log.warning("раздел: %s — повтор %d из %d",
+                        str(e)[:80], attempt + 2, attempts)
+            await asyncio.sleep(2 * (attempt + 1))

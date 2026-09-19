@@ -15,6 +15,8 @@ import logging
 from typing import Any
 from urllib.parse import urlparse
 
+from datetime import datetime
+
 from ..ai.llm_utils import detect_bank_slugs
 from ..hashing import sha256_text
 from ..rag.trust import KNOWN_BANK_DOMAINS, compute_trust
@@ -27,6 +29,17 @@ from .config import LoopholeSettings
 from .models import LoopholeRecord
 
 log = logging.getLogger(__name__)
+
+
+def _to_dt(raw: str | None) -> datetime | None:
+    """ISO-строка даты публикации → datetime. Адаптер отдаёт только точный
+    timezone-aware timestamp, поэтому разбор здесь прямой."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
 
 
 def _domain_of(url: str) -> str:
@@ -92,6 +105,12 @@ async def collect_once(
                         truncated=False,
                     )
                 title = page.title
+                # Дата публикации первоисточника. Адаптер её извлекает
+                # (article:published_time / datePublished), но запись её не
+                # получала: published_at был пуст у ВСЕХ записей. Отсюда и
+                # «NEW» на статье позапрошлого года, и фильтр по периоду,
+                # который фильтровать было нечем (обратная связь ТБ).
+                published = _to_dt(page.published_at)
             else:
                 content = content_fetch.FullContent(
                     text=r.get("snippet") or "",
@@ -100,6 +119,7 @@ async def collect_once(
                     truncated=False,
                 )
                 title = r.get("title")
+                published = None
             raw_text = content.text
             bank_slugs = detect_bank_slugs((r.get("title") or "") + " " + (r.get("snippet") or ""))
             rec = LoopholeRecord(
@@ -112,6 +132,7 @@ async def collect_once(
                 bank_slug=bank_slugs[0] if bank_slugs else None,
                 keyword=keyword,
                 raw_text=raw_text,
+                published_at=published,
                 content_status=content.status,
                 raw_text_len=content.length,
                 raw_text_truncated=content.truncated,

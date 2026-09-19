@@ -69,6 +69,11 @@ SYSTEM = """Ты — аналитик службы внутреннего ауд
   • [1], [2], [3] — порядковые номера ИСТОЧНИКОВ, которые система сама подставит в sources panel
   • НИКОГДА не придумывай факты — цитируй только то, что нашёл в инструментах
   • Если данных не нашлось — честно скажи "по доступным источникам данных нет"
+  • РАЗЛИЧАЙ «мы этого не собираем» и «этого нет на рынке». Если инструмент
+    вернул not_collected=true — скажи прямо, что категория не собирается, и
+    приведи причину из поля reason. НЕ выдавай отсутствие данных за отсутствие
+    продукта у банка: у Сбера есть и ОМС, и страховые продукты, просто витрина
+    их не собирает.
 
 Стиль ответа:
   • Русский язык, коротко и по делу
@@ -92,8 +97,14 @@ TOOLS = [
                 "properties": {
                     "category": {
                         "type": "string",
-                        "enum": ["deposit", "credit", "card_credit", "card_debit", "mortgage", "auto_loan", "metals", "other"],
-                        "description": "Категория банковского продукта"
+                        "enum": ["deposit", "savings_account", "credit", "card_credit",
+                                 "card_debit", "mortgage", "auto_loan", "rko",
+                                 "microloan", "npf", "invest_broker", "other"],
+                        "description": (
+                            "Категория банковского продукта. Перечислены только те, "
+                            "что реально собираются. Драгметаллов/ОМС, страхования и "
+                            "валютных продуктов в списке НЕТ: они не собираются, и "
+                            "пустой ответ по ним означал бы «на рынке нет», что неверно.")
                     },
                     "limit": {"type": "integer", "default": 20, "description": "Максимальное количество записей"}
                 },
@@ -413,6 +424,19 @@ def _run_tool(name: str, args: dict) -> str:
                  ORDER BY rate_pct DESC NULLS LAST
                  LIMIT :l
             """), {"c": args["category"], "l": args.get("limit", 20)}).mappings().all()
+            if not rows:
+                # Пустая выборка сама по себе ничего не значит: аудитор спросил
+                # про ОМС в Сбере, инструмент вернул [], и ответ прозвучал как
+                # «у Сбера такого нет». На деле категория просто не собирается.
+                # Отдаём причину, чтобы модель могла сказать правду.
+                from .. import categories as _cat
+                note = _cat.coverage_note(args["category"])
+                return json.dumps(
+                    {"rows": [], "not_collected": bool(note),
+                     "reason": (note or {}).get("reason",
+                                "по этой категории в базе нет активных предложений"),
+                     "status": (note or {}).get("status")},
+                    ensure_ascii=False)
             return json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str)
 
         if name == "get_sber_vs_market":

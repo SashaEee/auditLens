@@ -188,7 +188,7 @@ function HBars({rows,max,fmt=v=>v}){
 
 function BankAvatar({slug="",name="",isSber=false}){
   const letter=(name||slug||"?").charAt(0).toUpperCase();
-  return <div style={{width:28,height:28,borderRadius:6,background:isSber?"var(--accent)":"var(--paper-2)",color:isSber?"#fff":"var(--ink-2)",border:"1px solid "+(isSber?"var(--accent)":"var(--hair-2)"),display:"grid",placeItems:"center",fontWeight:600,fontSize:12,fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{letter}</div>;
+  return <div style={{width:28,height:28,borderRadius:6,background:isSber?"var(--sber)":"var(--paper-2)",color:isSber?"#fff":"var(--ink-2)",border:"1px solid "+(isSber?"var(--sber)":"var(--hair-2)"),display:"grid",placeItems:"center",fontWeight:600,fontSize:12,fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{letter}</div>;
 }
 
 // Полноэкранная заглушка для пустой БД с CTA-кнопкой запуска всех источников.
@@ -1787,7 +1787,7 @@ function ForYouPage(){
           <div className="t-cap" style={{marginBottom:4}}>Движения за 7 дней</div>
           {moves.map((m,i)=><div key={i} className="fy-tar-row">
             <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-              {m.is_sber?<b style={{color:"var(--accent)"}}>Сбер</b>:m.bank}
+              {m.is_sber?<b style={{color:"var(--sber)"}}>Сбер</b>:m.bank}
               <span style={{color:"var(--ink-4)"}}> · {CAT_LABELS[m.category]||m.category}</span></span>
             <span className="mono tnum r">{m.from}→{m.to}
               {typeof m.delta==="number"&&<b style={{marginLeft:6,color:"var(--ink-2)"}}>{m.delta>0?"+":""}{m.delta} п.п.</b>}</span>
@@ -2651,6 +2651,7 @@ function MarketPage({params}){
   const hlChange=useRef(P.change?parseInt(P.change):null);
   const[meta,setMeta]=useState(null);
   const[atlas,setAtlas]=useState(null);
+  const[cov,setCov]=useState(null);        // карта покрытия: чего нет и почему
   const[verdict,setVerdict]=useState(null);
   const[sum,setSum]=useState(null);
   const[sch,setSch]=useState(null);
@@ -2703,8 +2704,9 @@ function MarketPage({params}){
     Promise.all([apiFetch("/api/meta/categories"),apiFetch("/api/market/atlas"),
                  apiFetch("/api/summary").catch(()=>null),
                  apiFetch("/api/meta/schedule").catch(()=>null),
-                 apiFetch("/api/market/verdict").catch(()=>null)])
-      .then(([m,a,s,sc,v])=>{setMeta(m);setAtlas(a);setSum(s);setSch(sc);setVerdict(v);})
+                 apiFetch("/api/market/verdict").catch(()=>null),
+                 apiFetch("/api/meta/coverage").catch(()=>null)])
+      .then(([m,a,s,sc,v,cv])=>{setMeta(m);setAtlas(a);setSum(s);setSch(sc);setVerdict(v);setCov(cv);})
       .catch(e=>setErr(e.message));
   },[]);
 
@@ -2967,7 +2969,7 @@ function MarketPage({params}){
                 <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
                   <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
                   <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
-                    {isSber&&<div className="t-cap" style={{fontSize:10,color:"var(--accent)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
+                    {isSber&&<div className="t-cap" style={{fontSize:10,color:"var(--sber)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
                 <td data-label="Продукт">{r.title}<OfferTerms o={r}/>
                   {r.product_kind&&<div className="ofkind" title="что это за продукт на самом деле — разобрано по тексту тарифа">{r.product_kind}</div>}</td>
@@ -2983,7 +2985,7 @@ function MarketPage({params}){
                 {showBarCol&&<td data-label="К лидеру">
                   {rel!=null&&isFinite(rel)?<div style={{display:"flex",alignItems:"center",gap:8}}>
                     <div className="bar" style={{flex:1,maxWidth:70}}>
-                      <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--accent)":"var(--ink-3)"}}/>
+                      <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--sber)":"var(--ink-3)"}}/>
                     </div>
                     <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
                       {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2)} пп`}</span>
@@ -2996,7 +2998,48 @@ function MarketPage({params}){
         </table>}
         {offers&&total>offers.length&&<button className="btn btn-ghost mk-more" onClick={loadMore} disabled={moreBusy}>
           {moreBusy?"Загружаю…":`Показать ещё (${offers.length} из ${total})`}</button>}
+        {/* Выгрузка витрины: аудиторы просили считать в таблице и прикладывать
+            цифры к рабочим материалам. Фильтры те же, что на экране. */}
+        {offers&&offers.length>0&&<div className="mk-export">
+          <a className="btn btn-ghost btn-sm"
+             href={`/api/market/export.csv?category=${encodeURIComponent(cat||"deposit")}`
+                   +(q?`&q=${encodeURIComponent(q)}`:"")
+                   +(term?`&term=${encodeURIComponent(term)}`:"")
+                   +(seg?`&segment=${encodeURIComponent(seg)}`:"")
+                   +(sub?`&sub=${encodeURIComponent(sub)}`:"")}>
+            ⬇ Выгрузить в таблицу</a>
+          <span className="mk-export-hint">CSV с текущими фильтрами — открывается в Excel</span>
+        </div>}
       </div>}
+
+      {/* ЧЕГО В ДАННЫХ НЕТ И ПОЧЕМУ — витрина показывала только покрытые
+          категории и молчала про остальные. Аудитор искал драгметаллы,
+          страхование, валюту и инвестиции, не находил и не мог понять: этого
+          нет на рынке или мы этого не собираем. Молчание читается как
+          «проверено, пусто», поэтому непокрытие объясняем прямо. */}
+      {view==="vitrina"&&cov&&(cov.not_covered||[]).length>0&&
+        <details className="surface mk-cov">
+          <summary>
+            <b>Чего в витрине нет</b>
+            <span className="mk-cov-n">{cov.not_covered.length} категорий · с объяснением</span>
+          </summary>
+          <p className="mk-cov-lede">
+            Витрина сравнивает банки только там, где есть сопоставимая метрика и
+            подключён источник. Ниже — что осталось за её пределами и почему;
+            «не собираем» это не то же самое, что «на рынке нет».
+          </p>
+          <ul className="mk-cov-list">
+            {cov.not_covered.map(c=><li key={c.id}>
+              <div className="mk-cov-h">
+                <b>{c.label}</b>
+                <span className={"mk-cov-tag"+(c.collected>0?" has":"")}>{c.status}</span>
+                {c.collected>0&&<span className="mk-cov-cnt">собрано записей: {c.collected}</span>}
+              </div>
+              <div className="mk-cov-r">{c.reason}</div>
+              {c.needs&&<div className="mk-cov-need">чтобы закрыть: {c.needs}</div>}
+            </li>)}
+          </ul>
+        </details>}
 
       {/* ЖУРНАЛ ИЗМЕНЕНИЙ */}
       {view==="changes"&&<div className="surface" style={{overflow:"hidden"}}>
@@ -3255,7 +3298,10 @@ function ReviewsPage({params}){
   const openDrill=(type,value,label)=>{
     setDrill({type,value,label});setExplain(null);setExplainBusy(false);
     setDrillItems(null);setDrillBusy(true);
-    const f=type==="city"?`&city=${enc(value)}`:`&month=${enc(value)}`;
+    // Клик по городу открывал жалобы за ВЕСЬ корпус (с 2010 года), хотя карта
+    // построена по выбранному периоду: цифра в карточке и число строк в
+    // раскрытии не сходились. У месяца окно задаёт сам месяц — там период не нужен.
+    const f=type==="city"?`&city=${enc(value)}&days=${days}`:`&month=${enc(value)}`;
     apiFetch(`/api/reviews/feed?bank=${enc(bank)}${pq()}${f}&limit=40`)
       .then(d=>{setDrillItems(d.items||[]);setDrillBusy(false);}).catch(()=>{setDrillItems([]);setDrillBusy(false);});
   };
@@ -3291,9 +3337,12 @@ function ReviewsPage({params}){
     Promise.allSettled([
       apiFetch(`/api/reviews/overview?bank=${enc(bank)}${pq()}&days=${days}`),
       apiFetch(`/api/reviews/trend?bank=${enc(bank)}${pq()}`),
-      apiFetch(`/api/reviews/themes?bank=${enc(bank)}${pq()}`),
+      // Период — тот же, что у KPI. Раньше темы и география считались по
+      // своим зашитым окнам, и переключатель на них не влиял: аудиторы писали,
+      // что «за квартал, за год и за всё время» показывается одно и то же.
+      apiFetch(`/api/reviews/themes?bank=${enc(bank)}${pq()}&days=${days}`),
       apiFetch(`/api/reviews/vs-market?bank=${enc(bank)}${pq()}&days=${days}`),
-      apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}`),
+      apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}&days=${days}`),
     ]).then(([o,t,h,v,g])=>{
       const V=s=>s.status==="fulfilled"?s.value:{__err:true};
       setOv(V(o));setTr(V(t));setTh(V(h));setVm(V(v));setGe(V(g));setBusy(false);
@@ -3449,7 +3498,7 @@ function ReviewsPage({params}){
            onKeyDown={onKey(()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);})}>
         <div className="rv-kl">Главная тема</div>
         <div className="rv-kv-sm">{busy?"…":(th&&th.themes&&th.themes.length?th.themes[0].label:"—")}</div>
-        <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб за 90 дн · ${RV_RISK[th.themes[0].risk]}`:""}</div>
+        <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб за ${th.days||days} дн · ${RV_RISK[th.themes[0].risk]}`:""}</div>
       </div>
     </div>
 
@@ -3458,7 +3507,7 @@ function ReviewsPage({params}){
       <div className="rv-col">
         {/* TREND */}
         <div className="rv-card">
-          <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно · клик по столбцу → жалобы месяца{tr&&tr.series&&tr.series.some(s=>s.partial)?" · последний месяц неполный (штриховка)":""}</div></div></div>
+          <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно за 14 месяцев · переключатель периода на неё не влияет: пики считаются по завершённым месяцам · клик по столбцу → жалобы месяца{tr&&tr.series&&tr.series.some(s=>s.partial)?" · последний месяц неполный (штриховка)":""}</div></div></div>
           {busy?<Skel h={150}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
             <div className="rv-bars">
               {tr.series.map((s,i)=><div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={`${s.ym}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`}
@@ -3474,7 +3523,7 @@ function ReviewsPage({params}){
         {/* THEMES */}
         <div className="rv-card">
           <div className="rv-ttl">Темы жалоб — риск-карта</div>
-          <div className="rv-cap">доля от жалоб за 90 дн · мультилейбл (сумма ≠ 100%) · клик → лента темы</div>
+          <div className="rv-cap">доля от жалоб за {(th&&th.days)||days} дн · мультилейбл (сумма ≠ 100%) · клик → лента темы</div>
           {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:(()=>{
             const real=th.themes.filter(t=>t.key!=="other"), other=th.themes.find(t=>t.key==="other");
             const shown=thAll?real:real.slice(0,12);
@@ -3503,7 +3552,7 @@ function ReviewsPage({params}){
         {/* GEO */}
         <div className="rv-card">
           <div className="rv-ttl">География</div>
-          <div className="rv-cap">города · per-capita аномалии (12 мес) · клик → жалобы города</div>
+          <div className="rv-cap">города · per-capita аномалии за {(ge&&ge.days)||days} дн · клик → жалобы города</div>
           {busy?<Skel h={220}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:ge.cities.map((c,i)=>(
             <div key={i} className="rv-grow rv-grow-click" role="button" tabIndex={0}
                  onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
@@ -3723,9 +3772,17 @@ function TrustMarks({score}){
                title={`trust ${v.toFixed(2)}`}>{marks}</span>;
 }
 
+// Словарь должен совпадать с тем, что реально присылает разбор источников
+// (_kind_for в web_tools.py). Он отдаёт «regulatory», «review», «web», «news»,
+// а здесь их не было: регуляторный источник подписывался сырым «regulatory»,
+// и счётчик официальных источников в шапке всегда показывал ноль.
 const SOURCE_KIND_LABELS = {
   bank_official: "Официальный сайт",
   regulator:     "Регулятор",
+  regulatory:    "Регулятор",
+  review:        "Отзывы",
+  news:          "Новости",
+  web:           "Веб-источник",
   government:    "Госструктура",
   legal_db:      "Юр. база",
   aggregator:    "Агрегатор",
@@ -4003,10 +4060,16 @@ function ThinkingPanel({text, stage, active}){
 //     Закрывает «тихие окна» (генерация вопросов, сборка запроса, старт
 //     research) — пользователь всегда видит, что система жива. ──────────────
 function PendingDots({label}){
+  // Статичная строка одинаково выглядит и когда система работает, и когда она
+  // встала. После 8 с показываем счётчик: по нему видно, что процесс жив
+  // (04.09 воронка вопросов думала 4,5 минуты — со стороны «зависло»).
+  const [sec,setSec]=useState(0);
+  useEffect(()=>{const t=setInterval(()=>setSec(s=>s+1),1000);return ()=>clearInterval(t);},[]);
   return <div className="pending-row">
     <span className="dr-stage-pulse"/>
     <span className="pending-label">{label||"Думаю"}</span>
     <span className="pending-dots"><i/><i/><i/></span>
+    {sec>=8 && <span className="pending-sec" aria-hidden="true">{sec} с</span>}
   </div>;
 }
 
@@ -4702,7 +4765,10 @@ function TableOfContents({contentEl, activeId, onClick}){
 function SourcesRail({sources, activeN, onHover, onClick, failed}){
   if(!sources||!sources.length)return null;
   const officialN  = sources.filter(s=>s.source_kind==="bank_official").length;
-  const regulatorN = sources.filter(s=>s.source_kind==="regulator").length;
+  const regulatorN = sources.filter(s=>s.source_kind==="regulator"
+                                    ||s.source_kind==="regulatory"
+                                    ||s.source_kind==="government"
+                                    ||s.source_kind==="legal_db").length;
   return <aside className="dr-rail">
     <div className="dr-rail-h">
       <span>Источники · {sources.length}</span>
@@ -5763,6 +5829,21 @@ function AIPage(){
 }
 
 // ─── BANKS PAGE ───────────────────────────────────────────────────────────────
+// Методика под рукой, а не в голове автора. Аудиторы спрашивали дважды: как
+// считаются баллы банков и откуда берётся рейтинг. Свёрнуто по умолчанию —
+// иначе страница, на которую уже жаловались за плотность, станет ещё плотнее.
+function MethodNote({title, children}){
+  const[open,setOpen]=useState(false);
+  return <div className="method-note">
+    <button type="button" className="method-note-btn" onClick={()=>setOpen(o=>!o)}
+            aria-expanded={open}>
+      <span className="method-note-mark">?</span>{title}
+      <span className="method-note-chev">{open?"свернуть":"как это считается"}</span>
+    </button>
+    {open&&<div className="method-note-body">{children}</div>}
+  </div>;
+}
+
 function BanksPage(){
   const[banks,setBanks]=useState([]);
   const[loading,setLoading]=useState(true);
@@ -5810,6 +5891,21 @@ function BanksPage(){
     <header style={{marginBottom:24}}>
       <div className="eyebrow" style={{marginBottom:6}}>§ Банки · рейтинг у {rated.length} из {banks.length} в справочнике</div>
       <h1 className="t-h" style={{marginBottom:6}}>Рейтинги и репутация</h1>
+      <MethodNote title="Как считаются балл, место и доля решённых">
+        <p><b>Балл и место</b> считает banki.ru, мы их только показываем. Балл — средневзвешенная оценка
+          пользователей за последние 12 месяцев: учитываются отзывы, прошедшие проверку площадкой, свежие
+          весят больше. Место — позиция в народном рейтинге на дату сбора; банки без оценок в рейтинг
+          не попадают, поэтому строк с местом меньше, чем банков в справочнике.</p>
+        <p><b>Доля решённых</b> — доля отзывов с отметкой «проблема решена» <b>от проверенных площадкой</b>,
+          а не от всех поступивших. Это ключевое: банк с сотней отзывов, из которых проверено десять,
+          покажет высокую долю, хотя решено всего несколько обращений. Поэтому рядом стоит колонка
+          «Отзывов» — читать долю в отрыве от неё нельзя.</p>
+        <p><b>«У нас»</b> — сколько обращений по этому банку лежит в нашем корпусе. Это другая величина:
+          мы собираем отзывы с нескольких площадок и не фильтруем их по проверке, поэтому число обычно
+          больше. По нему можно открыть и прочитать сами обращения во вкладке «Отзывы».</p>
+        <p className="t-cap">Расхождение с сайтом banki.ru объясняется срезом: мы показываем состояние
+          на дату сбора, а площадка — на сейчас.</p>
+      </MethodNote>
       <p className="t-cap" style={{maxWidth:"72ch"}}>Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
         по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать во вкладке «Отзывы».
         {freshest>0&&<> Данные рейтинга на {fmtDateMsk(new Date(freshest).toISOString())}.</>}</p>
@@ -6529,6 +6625,8 @@ function KbDocCard({documentId,onClose}){
   const[d,setD]=useState(null);
   const[err,setErr]=useState(null);
   const[tab,setTab]=useState("about");
+  const[full,setFull]=useState(null);      // документ целиком, порциями
+  const[fullBusy,setFullBusy]=useState(false);
   useEffect(()=>{
     setD(null);setErr(null);
     apiFetch(`/api/knowledge/doc/${documentId}`).then(setD).catch(e=>setErr(e.message));
@@ -6585,13 +6683,34 @@ function KbDocCard({documentId,onClose}){
     </div>
 
     {tab==="about"&&<div className="kb-preview">
-      {(d.preview||[]).map((p,i)=><div key={i} className="kb-hit">
+      {!full&&(d.preview||[]).map((p,i)=><div key={i} className="kb-hit">
         {p.headings_path&&<div className="kb-crumbs">{p.headings_path}</div>}
         <p className="kb-snip">{p.text}…</p>
       </div>)}
-      {!(d.preview||[]).length&&<div className="kb-empty">
+      {!(d.preview||[]).length&&!full&&<div className="kb-empty">
         У документа нет фрагментов в поиске — он либо слишком короткий,
         либо загрузился заглушкой.</div>}
+      {full&&<pre className="kb-full">{full.text}</pre>}
+      {/* Аудитор должен читать ту версию документа, что лежит в архиве и на
+          которую ссылается отчёт, — а не идти за ней на сайт банка. */}
+      <div className="kb-full-bar">
+        <span className="kb-full-note">
+          {full
+            ? `показано ${(full.offset+full.text.length).toLocaleString("ru")} из ${(full.total||0).toLocaleString("ru")} знаков`
+            : `в превью ${Math.min(4,(d.preview||[]).length)} фрагмента из ${doc.chunks||0} · всего ${(doc.text_len||0).toLocaleString("ru")} знаков`}
+        </span>
+        {(!full||full.next_offset!=null)&&<button className="btn btn-ghost btn-sm"
+          disabled={fullBusy}
+          onClick={()=>{
+            setFullBusy(true);
+            const off=full?full.next_offset:0;
+            apiFetch(`/api/knowledge/doc/${doc.document_id}/text?offset=${off}`)
+              .then(r=>{setFull(f=>f?{...r,text:f.text+r.text,offset:f.offset}:r);setFullBusy(false);})
+              .catch(()=>setFullBusy(false));
+          }}>
+          {fullBusy?"Загружаю…":(full?"Показать дальше":"Показать текст целиком")}</button>}
+        {full&&<button className="btn btn-ghost btn-sm" onClick={()=>setFull(null)}>Свернуть</button>}
+      </div>
     </div>}
     {tab==="rev"&&<KbRevisions doc={doc} revisions={d.revisions}/>}
     {tab==="case"&&<KbCasePicker doc={doc}/>}
@@ -8027,8 +8146,8 @@ const NAV=[
   {id:"market",  label:"Рынок · позиция",icon:Ic.market, group:"Анализ"},
   {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
   {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
-  {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Анализ"},
   {id:"loophole",label:"Уязвимости",     icon:Ic.shield, group:"Анализ"},
+  {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Данные"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
 ];
@@ -8530,6 +8649,36 @@ function Shell(){
       }catch{}
     }
   },[page]);
+  // Держим в памяти последние разделы, а не все: иначе обход всего меню
+  // оставил бы висеть десяток страниц с их данными и подписками.
+  const KEEP_PAGES=4;
+  const[keptPages,setKeptPages]=useState(()=>{
+    const p0=parseHash().p||"overview";
+    return (p0==="loophole"||p0==="ai")?[]:[p0];
+  });
+  useEffect(()=>{
+    if(page==="loophole"||page==="ai"||!PAGES_FN[page])return;
+    setKeptPages(prev=>{
+      const next=[page,...prev.filter(x=>x!==page)];
+      return next.slice(0,KEEP_PAGES);
+    });
+  },[page]);
+  // Прокрутка своя у каждого раздела: возврат должен попадать на то же место,
+  // а не в начало списка.
+  const scrollPos=useRef({});
+  const contentRef=useRef(null);
+  const prevPage=useRef(page);
+  useEffect(()=>{
+    const el=contentRef.current;
+    if(!el)return;
+    if(prevPage.current!==page){
+      scrollPos.current[prevPage.current]=el.scrollTop;
+      prevPage.current=page;
+      const y=scrollPos.current[page];
+      requestAnimationFrame(()=>{ if(contentRef.current) contentRef.current.scrollTop=y||0; });
+    }
+  },[page]);
+
   const Page=PAGES_FN[page]||OverviewPage;
   const[idx,label]=PAGE_LABELS[page]||["01","Обзор"];
 
@@ -8648,14 +8797,24 @@ function Shell(){
             {theme==="dark"?<Ic.sun/>:<Ic.moon/>}
           </button>
         </div>
-        <div className="content">
+        <div className="content" ref={contentRef}>
           {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
             <LoopholePage key={refreshTick}/>
           </div>}
           {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
             <PageBoundary pageKey="ai"><AIPage/></PageBoundary>
           </div>}
-          {page!=="loophole"&&page!=="ai"&&<PageBoundary pageKey={page}><Page key={page} params={pageParams}/></PageBoundary>}
+          {keptPages.map(id=>{
+            const P=PAGES_FN[id]||OverviewPage;
+            const on=page===id;
+            // Посещённый раздел не размонтируется, а прячется: запрос, фильтры и
+            // загруженные строки остаются на месте. Аудиторы писали дважды —
+            // при переходе туда и обратно всё приходилось набирать заново.
+            return <div key={id} style={{display:on?"block":"none",height:"100%"}}
+                        aria-hidden={!on} data-page={id}>
+              <PageBoundary pageKey={id}><P key={id} params={on?pageParams:undefined}/></PageBoundary>
+            </div>;
+          })}
           {aiReady&&page!=="ai"&&
             <div className="ai-ready" onClick={()=>{setAiReady(false);setPage("ai");}}>
               <span className="sp">✦</span> Отчёт готов — открыть

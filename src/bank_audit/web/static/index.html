@@ -26,6 +26,12 @@
   --hair-2:       oklch(86% 0.005 80);
   --accent:       oklch(55% 0.19 25);
   --accent-soft:  oklch(58% 0.18 25 / 0.08);
+  /* Объект аудита — Сбер. Отдельный токен, а не --pos: зелёный здесь
+     говорит «это наш банк», а не «здесь всё хорошо». Красным Сбер
+     помечать нельзя — он читается как тревога (просьба ТБ), да и
+     контраст ниже: 5.35 против 6.64 на светлой теме. */
+  --sber:         oklch(46% 0.13 152);
+  --sber-soft:    oklch(46% 0.13 152 / 0.10);
   --pos:          oklch(48% 0.10 150);
   --warn:         oklch(55% 0.13 75);
   --neg:          oklch(58% 0.18 25);
@@ -68,6 +74,8 @@ html.dark{
   --hair:         oklch(26% 0.008 260);
   --hair-2:       oklch(32% 0.008 260);
   --accent:       oklch(68% 0.18 25);
+  --sber:         oklch(70% 0.14 152);
+  --sber-soft:    oklch(70% 0.14 152 / 0.14);
   --accent-soft:  oklch(68% 0.18 25 / 0.14);
   --pos:          oklch(72% 0.14 150);
   --warn:         oklch(80% 0.14 75);
@@ -300,6 +308,27 @@ tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
 @keyframes blink{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
 .pending-row{display:flex;align-items:center;gap:10px;padding:10px 0}
 .pending-label{font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.04em;color:var(--ink-3)}
+.pending-sec{margin-left:6px;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.mk-export{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.mk-cov{margin-top:14px;padding:14px 18px}
+.mk-cov>summary{cursor:pointer;display:flex;align-items:baseline;gap:10px;list-style:none}
+.mk-cov>summary::-webkit-details-marker{display:none}
+.mk-cov>summary::before{content:"›";color:var(--ink-3);transition:transform var(--dur-quick) var(--ease-out)}
+.mk-cov[open]>summary::before{transform:rotate(90deg)}
+.mk-cov-n{font-size:11px;color:var(--ink-3)}
+.mk-cov-lede{font-size:12px;line-height:1.55;color:var(--ink-2);margin:10px 0 12px;max-width:62ch}
+.mk-cov-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.mk-cov-list>li{padding:10px 12px;border:1px solid var(--hair);border-radius:8px;background:var(--surface-2)}
+.mk-cov-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.mk-cov-tag{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3)}
+.mk-cov-tag.has{color:var(--legal);border-color:color-mix(in oklch,var(--legal) 40%,transparent)}
+.mk-cov-cnt{font-size:11px;color:var(--ink-3)}
+.mk-cov-r{font-size:12px;line-height:1.5;color:var(--ink-2);margin-top:4px;max-width:70ch}
+.mk-cov-need{font-size:11px;color:var(--ink-3);margin-top:3px}
+.kb-full{white-space:pre-wrap;word-break:break-word;font:12px/1.65 var(--font-ui);color:var(--ink-1);max-height:52vh;overflow:auto;margin:0;padding:10px 12px;background:var(--surface-2);border:1px solid var(--hair);border-radius:8px}
+.kb-full-bar{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.kb-full-note{font-size:11px;color:var(--ink-3);flex:1;min-width:150px}
+.mk-export-hint{font-size:11px;color:var(--ink-3)}
 .pending-dots{display:inline-flex;gap:4px}
 .pending-dots i{width:5px;height:5px;border-radius:50%;background:var(--ink-4);animation:blink 1.2s infinite ease-in-out}
 .pending-dots i:nth-child(2){animation-delay:.15s}
@@ -1529,6 +1558,16 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .t-h{font-size:22px;font-weight:600;letter-spacing:-.015em;line-height:1.2}
 .t-body{font-size:14px;line-height:1.55}
 .t-cap{font-size:12px;line-height:1.45;color:var(--ink-3)}
+/* Пояснение методики: свёрнуто по умолчанию, открывается по клику */
+.method-note{margin:10px 0 12px;max-width:82ch}
+.method-note-btn{display:inline-flex;align-items:center;gap:8px;border:0;background:none;padding:0;font:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer}
+.method-note-btn:hover{color:var(--ink)}
+.method-note-mark{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid var(--hair-2);border-radius:50%;font-size:10px;color:var(--ink-3)}
+.method-note-chev{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:10.5px;letter-spacing:.04em;color:var(--ink-4)}
+.method-note-body{margin-top:8px;padding:12px 14px;border:1px solid var(--hair);border-radius:var(--r-md,8px);background:var(--paper-2);font-size:13px;line-height:1.5;color:var(--ink-2)}
+.method-note-body p{margin:0 0 8px}
+.method-note-body p:last-child{margin-bottom:0}
+.method-note-body b{color:var(--ink);font-weight:600}
 .lede{font-size:16px;line-height:1.55;color:var(--ink-2);max-width:62ch}
 .divider{height:1px;background:var(--hair);margin:28px 0}
 .eyebrow-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
@@ -1941,7 +1980,7 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .mk-strip-big .mk-med{height:30px}
 .mk-strip .mk-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:5px;height:5px;border-radius:50%;background:var(--ink-3);opacity:.55}
 .mk-strip-big .mk-dot{width:6px;height:6px}
-.mk-strip .mk-dot.sber{width:9px;height:9px;background:var(--accent);opacity:1;box-shadow:0 0 0 2px var(--surface);z-index:2}
+.mk-strip .mk-dot.sber{width:9px;height:9px;background:var(--sber);opacity:1;box-shadow:0 0 0 2px var(--surface);z-index:2}
 .mk-strip-big .mk-dot.sber{width:11px;height:11px}
 /* ── Вердикт вкладки «Рынок»: ответ за ноль кликов (редизайн 11.08.2026) ──
    Раньше первым содержательным элементом был абзац методики на 78ch, а
@@ -2441,6 +2480,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260904-fix2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260911-method"></script>
 </body>
 </html>
