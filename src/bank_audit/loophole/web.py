@@ -804,20 +804,28 @@ async def chat(
                     "data": _json.dumps(ev["data"], ensure_ascii=False, default=str),
                 }
             result_text = state.get("answer") or "".join(report_chunks)
-            if completed and result_text and state.get("run_id"):
-                report_id = ResearchCaseService(session).save_report_result(
-                    workspace_id=body.workspace_id,
-                    run_id=str(state["run_id"]),
-                    query=body.message,
-                    result=str(result_text),
-                )
-            if result_text:
-                repo.add_chat_message(
-                    body.workspace_id, "assistant", str(result_text),
-                    report_id=report_id, session=session,
-                )
-            session.commit()
-            history_saved = True
+            try:
+                if completed and result_text and state.get("run_id"):
+                    report_id = ResearchCaseService(session).save_report_result(
+                        workspace_id=body.workspace_id,
+                        run_id=str(state["run_id"]),
+                        query=body.message,
+                        result=str(result_text),
+                    )
+                if result_text:
+                    repo.add_chat_message(
+                        body.workspace_id, "assistant", str(result_text),
+                        report_id=report_id, session=session,
+                    )
+                session.commit()
+                history_saved = True
+            except Exception:
+                # Ошибка сохранения не должна обрывать SSE-ответ: пользователь
+                # уже видел отчёт, а отравленную транзакцию откатываем безопасно.
+                rollback = getattr(session, "rollback", None)
+                if callable(rollback):
+                    rollback()
+                log.exception("[chat] не удалось сохранить результат исследования")
             if report_id is not None:
                 yield {"event": "report", "data": _json.dumps({"report_id": report_id})}
         finally:

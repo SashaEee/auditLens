@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import text
 
@@ -19,6 +20,7 @@ from ..config import LoopholeSettings
 from ..models import LoopholeRecord
 from ..network_io import run_blocking_network
 from ..pii_mask import mask as pii_mask
+from ..run_budget import READ_NUDGE_AFTER
 from ...research.llm_throttle import (
     extract_retry_after,
     is_rate_limit_error,
@@ -251,18 +253,29 @@ def _remember_source_publication_date(
         return
     published_at = result.get("published_at")
     estimated = result.get("estimated_published_at")
-    for source_url in (requested_url, result.get("url"), result.get("final_url")):
+    canonical_url = _canonical_source_url(result, requested_url)
+    for source_url in (requested_url, result.get("url"), canonical_url):
         if source_url:
             context.source_publication_dates[str(source_url)] = published_at
             context.source_estimated_dates[str(source_url)] = estimated
-            if result.get("excerpt"):
-                context.fetched_sources[str(source_url)] = {
-                    "url": str(result.get("final_url") or result.get("url") or requested_url),
-                    "title": str(result.get("title") or "") or None,
-                    "extracted_text": str(result["excerpt"]),
-                    "published_at": published_at,
-                    "estimated_published_at": estimated,
-                }
+    if canonical_url and result.get("excerpt"):
+        context.fetched_sources[canonical_url] = {
+            "url": canonical_url,
+            "title": str(result.get("title") or "") or None,
+            "extracted_text": str(result["excerpt"]),
+            "published_at": published_at,
+            "estimated_published_at": estimated,
+        }
+
+
+def _canonical_source_url(result: dict | None, fallback_url: str) -> str:
+    """Возвращает канонический URL fetch без fragment для дедупликации страниц."""
+    raw = str((result or {}).get("final_url") or (result or {}).get("url") or fallback_url)
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return raw
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
 
 
 def _context_owns_workspace(context: ToolContext | None) -> bool:
@@ -476,6 +489,13 @@ def _queue_confirmed_findings(
 
 
 # ── db / table / export ─────────────────────────────────────────────────────
+def _execute_read_only_query(s: Any, sql: str, params: dict[str, Any]) -> dict:
+    """Выполняет уже проверенный SELECT и упаковывает строки для возврата в LLM."""
+    result = s.execute(text(sql), params)
+    rows = [list(row.values()) for row in result.mappings().all()]
+    return {"columns": list(result.keys()), "rows": rows, "row_count": len(rows)}
+
+
 def db_query(
     sql: str,
     *,
@@ -550,15 +570,25 @@ def db_query(
 
     try:
         with repo._session(context.session) as s:
-            result = s.execute(text(normalized), params)
-            columns = list(result.keys())
-            rows = result.mappings().all()
-            return _redact_tool_value({
-                "columns": columns,
-                "rows": [list(row.values()) for row in rows],
-                "row_count": len(rows),
-            })
+            savepoint = getattr(s, "begin_nested", None)
+            if callable(savepoint):
+                # Savepoint: SQL модели обязан выполняться в изолированной
+                # вложенной транзакции. Ошибка запроса (например, сравнение
+                # boolean с integer) не должна отравлять общую транзакцию
+                # request-сессии — иначе до конца запроса падают аудит, persist
+                # находок и история чата.
+                with savepoint():
+                    payload = _execute_read_only_query(s, normalized, params)
+            else:
+                payload = _execute_read_only_query(s, normalized, params)
+            return _redact_tool_value(payload)
     except Exception as e:  # noqa: BLE001 — ошибка БД превращается в безопасный результат tool
+        rollback = getattr(context.session, "rollback", None)
+        if callable(rollback):
+            try:
+                rollback()
+            except Exception:  # noqa: BLE001 — восстановление сессии не должно маскировать ошибку
+                log.warning("[db_query] rollback после ошибки не выполнен", exc_info=True)
         log.warning("[db_query] failed: %s", e)
         return _redact_tool_value({"error": str(e)})
 
@@ -649,6 +679,14 @@ def save_loophole(
         raw_text_len=content.length,
         raw_text_truncated=content.truncated,
         is_loophole=is_loophole,
+        # Согласованная пара по инварианту repository.update_verdict: без
+        # classification запись невидима в общей базе и блокирует доводку URL
+        # вердиктом исследования (import_preliminary_sources по тому же URL).
+        classification=(
+            "vulnerability" if is_loophole is True
+            else "not_confirmed" if is_loophole is False
+            else None
+        ),
     )
     try:
         is_new = not repo.exists_sha256(sha, session=session)
@@ -826,10 +864,40 @@ try:
             if budget:
                 if key in budget.search_cache:
                     return _tool_result(budget.search_cache[key])
-                if len(budget.search_cache) >= budget.search_limit:
-                    return _tool_result({"error": "search_limit",
-                                         "next_step": "Проверь найденные источники и составь отчёт."})
                 budget.search_cache[key] = {"error": "search_in_progress"}
+                # Гейт «поиск → чтение»: серия поисков без прочитанных страниц
+                # не даёт находок. Пока есть непрочитанные URL, новые поиски
+                # блокируются детерминированно — модель не может проигнорировать
+                # чтение. Гейт открывается успешной страницей (сброс счётчика в
+                # web_fetch) либо исчерпанием непрочитанного пула (все URL
+                # прочитаны или попали в source_failures) — deadlock невозможен.
+                if budget.searches_since_read >= READ_NUDGE_AFTER:
+                    read = {str(source.get("url")) for source in self._context.fetched_sources.values()}
+                    unread = [
+                        {"title": source.get("title") or "Материал", "url": source["url"]}
+                        for source in budget.search_results
+                        if isinstance(source, dict) and source.get("url")
+                        and source["url"] not in read and source["url"] not in budget.source_failures
+                    ]
+                    if not unread:
+                        budget.searches_since_read = 0
+                    else:
+                        budget.searches_since_read += 1
+                        # Блокировка не занимает слот кэша: после чтения страниц
+                        # повторный запрос вернёт реальные результаты.
+                        budget.search_cache.pop(key, None)
+                        return _tool_result({
+                            "error": "read_required",
+                            "unread_sources": unread[:8],
+                            "pages_read": budget.successful_page_count,
+                            "next_step": (
+                                "Новые поисковые запросы заблокированы, пока не прочитана "
+                                "хотя бы одна страница. Прочитай любой URL из unread_sources "
+                                "через audit_web_fetch и прогони текст через "
+                                "audit_extract_loopholes; затем поиск продолжится."
+                            ),
+                        })
+                budget.searches_since_read += 1
             try:
                 result = await _call_with_transient_retries(
                     lambda: run_blocking_network(web_search, query, max_results=max_results),
@@ -843,6 +911,8 @@ try:
             if budget:
                 _ensure_tool_active(self._context)
                 budget.search_cache[key] = result
+                if key not in budget.search_clusters:
+                    budget.search_clusters.append(key)
                 if isinstance(result, list):
                     known = {s.get("url") for s in budget.search_results}
                     for source in result:
@@ -887,9 +957,9 @@ try:
             if budget:
                 if url in budget.fetch_cache:
                     return _tool_result(budget.fetch_cache[url])
-                if len(budget.fetch_cache) >= budget.fetch_limit:
-                    return _tool_result({"error": "fetch_limit",
-                                         "next_step": "Составь отчёт по уже прочитанным материалам."})
+                if budget.page_limit_reached:
+                    return _tool_result({"error": "page_limit_reached",
+                                         "next_step": "Сформируй итог по подтверждённым находкам."})
                 budget.fetch_cache[url] = {"error": "source_in_progress", "url": url}
             try:
                 result = await _call_with_transient_retries(
@@ -907,6 +977,14 @@ try:
                     budget.source_failures[url] = "source_unavailable"
                     budget.fetch_cache[url] = failure
                 return _tool_result(failure)
+            canonical_url = _canonical_source_url(result, url)
+            if budget and canonical_url in budget.successful_page_urls:
+                duplicate = {"error": "source_duplicate", "url": canonical_url}
+                budget.fetch_cache[url] = duplicate
+                return _tool_result(duplicate)
+            # Модель получает тот же URL, под которым сервер сохранил текст:
+            # alias redirect нельзя передать далее как доказательство.
+            result = {**result, "url": canonical_url, "final_url": canonical_url}
             _remember_source_publication_date(self._context, url, result)
             period_error = _source_publication_period_error(self._context, url)
             if period_error is not None:
@@ -917,7 +995,14 @@ try:
                     "error": period_error,
                 }
             if budget:
+                budget.register_successful_page(canonical_url)
+                budget.searches_since_read = 0
                 budget.fetch_cache[url] = result
+                if canonical_url != url:
+                    budget.fetch_cache.setdefault(
+                        canonical_url,
+                        {"error": "source_duplicate", "url": canonical_url},
+                    )
             return _tool_result(result)
 
     @tool_parameters({
@@ -1018,9 +1103,15 @@ try:
 
         @property
         def description(self) -> str:
+            schema_hint = "; ".join(
+                f"{table}({', '.join(sorted(columns))})"
+                for table, columns in _DB_QUERY_COLUMNS.items()
+            )
             return (
                 "Выполняет READ-ONLY SQL-запрос к базе данных лазеек. "
-                "Только SELECT; любые модифицирующие команды запрещены."
+                "Только SELECT; любые модифицирующие команды запрещены. "
+                f"Доступные таблицы и колонки: {schema_hint}. "
+                "Булевы колонки (is_loophole, is_active) сравнивай с TRUE/FALSE, а не с 1/0."
             )
 
         @property

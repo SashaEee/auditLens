@@ -81,3 +81,21 @@ def test_db_query_enforces_limit(session):
     assert result["columns"] == ["record_id", "title"]
     assert result["rows"] == []
     assert result["row_count"] == 0
+
+
+def test_db_query_failure_keeps_session_usable(session):
+    context = ToolContext(user_id="test-user", workspace_id=17, session=session)
+    # Колонки verdict_confidence нет в тестовой схеме: SQL валиден по allowlist,
+    # но падает при выполнении. Ошибка обязана остаться изолированной —
+    # общая транзакция сессии продолжает работать (аудит, persist, история чата).
+    broken = db_query(
+        sql="SELECT record_id, verdict_confidence FROM loophole_record LIMIT 5",
+        context=context,
+    )
+    assert "error" in broken
+    recovered = db_query(
+        sql="SELECT record_id, title FROM loophole_record LIMIT 1",
+        context=context,
+    )
+    assert "error" not in recovered
+    assert recovered["row_count"] == 0

@@ -1034,7 +1034,7 @@ async def test_verified_run_chat_skips_clarification_gate(monkeypatch):
         raise AssertionError("повторный clarification gate запрещён")
 
     async def successful_agent(*args, **kwargs):
-        return AgentResult(answer="Готово", run_id="verified-run")
+        return AgentResult(answer="Готово", run_id="verified-run"), []
 
     monkeypatch.setattr(clarify_mod, "generate_clarifications", forbidden_gate)
     monkeypatch.setattr(graph_mod, "_run_nanobot", successful_agent)

@@ -62,6 +62,7 @@ CREATE TABLE loophole_record (
     )),
     verdict_confidence REAL,
     verdict_reason TEXT,
+    classifier_verdict_reason TEXT,
     verdict_model TEXT,
     classified_at TEXT,
     parser_id     INTEGER,
@@ -273,6 +274,55 @@ CREATE TABLE loophole_preliminary_import (
 );
 CREATE INDEX idx_loophole_preliminary_import_record
     ON loophole_preliminary_import (record_id);
+
+-- Цепочка верификации ЦК КС (candidate → snapshot → decision, миграции
+-- 048/049): нужна батч-запросу решений в list_verification_queue.
+-- SQLite-адаптация по образцу test_story_2_5_submission_route.py.
+CREATE TABLE loophole_research_candidate (
+    candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    research_id INTEGER NOT NULL,
+    source_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    category TEXT,
+    description TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    is_loophole INTEGER NOT NULL,
+    classification TEXT,
+    model_is_loophole INTEGER,
+    model_confidence REAL,
+    model_reason TEXT,
+    model_name TEXT,
+    model_classified_at TEXT,
+    manual_verdict INTEGER,
+    ccks_decision TEXT,
+    draft_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE loophole_verification_snapshot (
+    snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id INTEGER NOT NULL,
+    research_id INTEGER NOT NULL,
+    workspace_id INTEGER NOT NULL,
+    draft_version INTEGER NOT NULL,
+    case_snapshot TEXT NOT NULL,
+    evidence_snapshot TEXT NOT NULL,
+    submitted_by TEXT NOT NULL,
+    submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    run_id TEXT NOT NULL,
+    status TEXT NOT NULL
+);
+
+CREATE TABLE loophole_verification_decision (
+    decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('vulnerability', 'fraud_scheme', 'not_confirmed')),
+    comment TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    decided_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    run_id TEXT NOT NULL
+);
+CREATE INDEX idx_lvd_snapshot ON loophole_verification_decision(snapshot_id);
 """
 
 

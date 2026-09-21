@@ -483,7 +483,9 @@ async def test_partial_retries_after_aborted_postgres_transaction(app_session, m
             Request({"type": "http"}), user_id="author", session=request_session,
         )
         await anext(response.body_iterator)
-        with pytest.raises(DataError):
+        # Ошибка сохранения отчёта не роняет SSE-ответ: генератор завершается
+        # штатно, а текст сохраняется в историю после восстановления транзакции.
+        with pytest.raises(StopAsyncIteration):
             await anext(response.body_iterator)
     with Session(app_session.get_bind()) as reader_session:
         messages = repo.list_chat_history(wid, session=reader_session)

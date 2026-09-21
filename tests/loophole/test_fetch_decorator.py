@@ -161,7 +161,7 @@ def test_fetch_and_parse_exposes_exact_source_publication_timestamp():
     assert page.published_at == "2026-08-27T09:25:00+03:00"
 
 
-def test_fetch_and_parse_keeps_naive_publication_date_unknown():
+def test_fetch_and_parse_anchors_naive_publication_date_to_utc():
     result = MagicMock()
     result.content = b'<script>{"datePublished":"2026-08-27"}</script>'
     result.final_url = "https://example.ru/doc"
@@ -175,7 +175,27 @@ def test_fetch_and_parse_keeps_naive_publication_date_unknown():
     )
 
     assert page is not None
-    assert page.published_at is None
+    assert page.published_at == "2026-08-27T00:00:00+00:00"
+
+
+def test_fetch_and_parse_anchors_naive_datetime_publication_to_utc():
+    result = MagicMock()
+    result.content = (
+        '<html><head><meta property="article:published_time" '
+        'content="2026-08-27T09:25:00"></head><body>текст</body></html>'
+    ).encode()
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/doc",
+        _fetch_impl=lambda _url, prefer_browser=False: result,
+    )
+
+    assert page is not None
+    assert page.published_at == "2026-08-27T09:25:00+00:00"
 
 
 def test_sanitize_ca_bundle_env_drops_invalid(monkeypatch):
@@ -210,7 +230,7 @@ def test_fetch_and_parse_estimates_publication_date_from_url():
     assert page.estimated_published_at == "2026-09-09"
 
 
-def test_fetch_and_parse_estimates_publication_date_from_text_marker():
+def test_fetch_and_parse_fills_published_at_from_text_marker():
     result = MagicMock()
     result.content = (
         "<html><body><p>Опубликовано 9 сентября 2026 года. Текст статьи.</p>"
@@ -227,5 +247,64 @@ def test_fetch_and_parse_estimates_publication_date_from_text_marker():
     )
 
     assert page is not None
-    assert page.published_at is None
+    assert page.published_at == "2026-09-09T00:00:00+00:00"
     assert page.estimated_published_at == "2026-09-09"
+
+
+def test_fetch_and_parse_prefers_tz_aware_markup_over_text_date():
+    result = MagicMock()
+    result.content = (
+        '<html><head><meta property="article:published_time" '
+        'content="2026-08-27T09:25:00+03:00"></head>'
+        "<body><p>Опубликовано 9 сентября 2026 года. Текст статьи.</p></body></html>"
+    ).encode()
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/doc",
+        _fetch_impl=lambda _url, prefer_browser=False: result,
+    )
+
+    assert page is not None
+    assert page.published_at == "2026-08-27T09:25:00+03:00"
+
+
+def test_fetch_and_parse_broken_markup_date_yields_none():
+    result = MagicMock()
+    result.content = '<script>{"datePublished":"неизвестно"}</script>'.encode()
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/doc",
+        _fetch_impl=lambda _url, prefer_browser=False: result,
+    )
+
+    assert page is not None
+    assert page.published_at is None
+
+
+def test_fetch_and_parse_future_text_date_yields_none():
+    result = MagicMock()
+    result.content = (
+        "<html><body><p>Опубликовано 1 января 2099 года. Текст статьи.</p>"
+        "</body></html>"
+    ).encode()
+    result.final_url = "https://example.ru/doc"
+    result.status = 200
+    result.content_type = "text/html"
+    result.via = "http"
+
+    page = fetch_decorator.fetch_and_parse(
+        "https://example.ru/doc",
+        _fetch_impl=lambda _url, prefer_browser=False: result,
+    )
+
+    assert page is not None
+    assert page.published_at is None
+    assert page.estimated_published_at is None

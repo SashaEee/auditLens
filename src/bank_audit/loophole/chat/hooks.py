@@ -169,6 +169,15 @@ class AuditHook(_audit_hook_base()):
             self.final_answer = safe_answer
         return safe_answer
 
+    def reset_stream_round(self) -> None:
+        """Новый раунд модели начинает стрим с чистого буфера.
+
+        Промежуточный текст раунда (рассуждения между вызовами tools) не должен
+        накапливаться и попадать в итоговый отчёт и SSE-поток пользователя.
+        """
+        self._stream_source = ""
+        self._stream_redactor = StreamRedactor()
+
     def _add_tool(self, name: Any) -> None:
         public_name = public_tool_name(name)
         if public_name not in self.tools_used:

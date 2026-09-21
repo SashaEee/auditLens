@@ -68,8 +68,8 @@ def test_imports_only_fetched_new_suspected_sources_idempotently(session):
     first = service.import_preliminary_sources(research_id, imported_by="analyst")
     second = service.import_preliminary_sources(research_id, imported_by="analyst")
 
-    assert first == {"imported": 1, "skipped": 0, "record_ids": first["record_ids"]}
-    assert second == {"imported": 0, "skipped": 1, "record_ids": []}
+    assert first == {"imported": 1, "upgraded": 0, "skipped": 0, "record_ids": first["record_ids"]}
+    assert second == {"imported": 0, "upgraded": 0, "skipped": 1, "record_ids": []}
     record = repo.get_record(first["record_ids"][0], session=session)
     assert record["status"] == "preliminary"
     assert record["is_loophole"] is True
@@ -98,7 +98,7 @@ def test_import_skips_existing_url_and_unavailable_or_non_suspicious_sources(ses
 
     result = service.import_preliminary_sources(research_id, imported_by="analyst")
 
-    assert result == {"imported": 0, "skipped": 1, "record_ids": []}
+    assert result == {"imported": 0, "upgraded": 0, "skipped": 1, "record_ids": []}
     assert session.execute(text("SELECT count(*) FROM loophole_record")).scalar_one() == 1
     assert repo.get_record(existing_id, session=session)["status"] == "published"
 

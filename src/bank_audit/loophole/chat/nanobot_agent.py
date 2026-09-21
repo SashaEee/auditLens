@@ -18,7 +18,7 @@ from typing import Any
 from ...config import ROOT
 from ..config import LoopholeSettings, validate_nanobot_max_iterations
 from ..direct_transport import async_client
-from ..run_budget import requested_finding_count
+from ..run_budget import DEFAULT_FINDING_COUNT, MAX_SUCCESSFUL_PAGES, requested_finding_count
 from .tools_nanobot import NANOBOT_TOOLS
 
 log = logging.getLogger(__name__)
@@ -252,14 +252,15 @@ def build_prompt(query: str, history: list[dict[str, str]] | None = None) -> str
     system = load_system_prompt()
     parts = [system]
     requested_count = requested_finding_count(query)
-    if requested_count is not None:
-        parts.append(
-            f"Ограничение текущего запроса: требуется AI-кандидатов — {requested_count}. "
-            "После получения этого числа кандидатов с цитатой из прочитанного источника "
-            "и проверенной датой публикации завершай поиск и формируй итоговый отчёт. "
-            "Широкое покрытие других механизмов и площадок после этого не требуется. "
-            "Кандидат не означает решение или подтверждение ЦК КС."
-        )
+    target = requested_count if requested_count is not None else DEFAULT_FINDING_COUNT
+    target_source = "явная цель пользователя" if requested_count is not None else "цель по умолчанию"
+    parts.append(
+        f"Стратегия текущего исследования: {target_source} — {target} доказательных "
+        "AI-кандидатов с цитатой из прочитанного источника и допустимой датой публикации. "
+        f"Продолжай новые поисковые кластеры и URL до цели либо до {MAX_SUCCESSFUL_PAGES} "
+        "уникальных успешно прочитанных канонических страниц. Не останавливайся по прежним "
+        "квотам запросов или попыток загрузки; кандидат не означает решение ЦК КС."
+    )
     if history:
         for msg in history:
             role = msg.get("role", "user")

@@ -1089,6 +1089,59 @@ html, body {
 }
 .lp-queue-reason h3 { margin: 0 0 6px; font-size: 0.78rem; }
 .lp-queue-reason p { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
+/* Решения ЦК КС в карточке проверки: тот же каркас, что у комментария
+   классификатора, но нейтральный фон; внутри — список append-only решений
+   с меткой типа, комментарием, автором и датой. */
+.lp-queue-decisions {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--paper-2);
+}
+.lp-queue-decisions h3 { margin: 0 0 6px; font-size: 0.78rem; }
+.lp-queue-decisions p { margin: 0; color: var(--muted); font-size: 0.8rem; }
+.lp-queue-decisions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.lp-queue-decision {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.lp-queue-decision-type {
+  justify-self: start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--accent-soft);
+  color: var(--muted);
+}
+.lp-decision-vulnerability { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+.lp-decision-fraud_scheme { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.lp-decision-not_confirmed { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.lp-queue-decision-comment {
+  color: var(--fg);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.lp-queue-decision-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted-2);
+}
 .lp-queue-detail-actions {
   display: flex;
   justify-content: flex-end;
@@ -1096,6 +1149,16 @@ html, body {
   gap: 8px;
   margin-top: 16px;
 }
+/* Поле комментария участника ЦК в карточке проверки: форма по образцу
+   .lp-verdict-field (класс переиспользуется в разметке), отступ — как у
+   соседних секций карточки. */
+.lp-queue-comment { margin-top: 14px; }
+/* Полный текст записи в самом низу карточки: развёрнутый блок сохраняет
+   прокрутку внутри себя (overflow-y у .lp-content-body-full) и не
+   расталкивает сетку карточки. */
+.lp-queue-fulltext { margin-top: 14px; }
+.lp-queue-fulltext h3 { margin: 0 0 6px; font-size: 0.78rem; }
+.lp-queue-fulltext .lp-content-body-full { max-height: 48vh; }
 
 /* ── Добавление источника: самостоятельная рабочая поверхность ──────────── */
 .lp-sources-surface {
@@ -1871,6 +1934,41 @@ html, body {
   font-size: 10.5px;
   color: var(--muted-2);
 }
+/* Read-only блок решений ЦК КС в модалке вердикта: переиспользует элементы
+   карточки (.lp-queue-decision*), виден только для записей очереди. */
+.lp-verdict-decisions {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  background: var(--paper);
+  border-radius: 8px;
+}
+.lp-verdict-decisions-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+.lp-verdict-decisions-empty { margin: 0; color: var(--muted); font-size: 0.8rem; }
+.lp-verdict-decisions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.lp-verdict-classifier-comment {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+  overflow-wrap: anywhere;
+}
 .lp-verdict-field {
   display: flex;
   flex-direction: column;
@@ -2134,15 +2232,6 @@ html, body {
   color: var(--fg);
   max-height: 320px;
   overflow: hidden;
-  position: relative;
-}
-.lp-content-body:not(.lp-content-body-full)::after {
-  content: "";
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
-  height: 48px;
-  background: linear-gradient(transparent, var(--bg));
-  pointer-events: none;
 }
 .lp-content-body-full { max-height: 70vh; overflow-y: auto; }
 .lp-content-more { margin-top: 6px; }

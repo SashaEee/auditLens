@@ -70,10 +70,8 @@ def test_nanobot_prompt_requires_wide_separate_fraud_research():
     assert "разным площадкам" in prompt
     assert "дедуплицируй URL" in prompt
     assert "финальный URL для исключения повторов" in prompt
-    assert "насколько позволяет агентский контекст" in prompt
-    assert "В пределах доступного лимита итераций" in prompt
-    assert "до покрытия нескольких независимых кластеров и разных доступных площадок" in prompt
-    assert "честно отметь это ограничение" in prompt
+    assert "100" in prompt
+    assert "deadline" in prompt
     assert "Мошеннические схемы" in prompt
     assert "релевантного проверенного источника" in prompt
     assert "не объявляй форум первоисточником" in prompt

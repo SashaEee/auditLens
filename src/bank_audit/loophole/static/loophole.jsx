@@ -1965,6 +1965,13 @@ function LoopholeApp() {
     fraud_scheme: "мошенническая схема",
     not_confirmed: "ни уязвимость, ни мошенническая схема",
   }[recordClassification(r)] || "не размечено");
+  // Метки решений ЦК КС (loophole_verification_decision.decision) для карточки
+  // очереди и модалки вердикта.
+  const decisionLabel = (value) => ({
+    vulnerability: "Уязвимость",
+    fraud_scheme: "Мошенническая схема",
+    not_confirmed: "Не подтверждено",
+  }[value] || value);
 
   const downloadResearchReport = async (reportId, format) => {
     if (!reportId || researchAccessRef.current.readOnly || researchAccessRef.current.loading) return;
@@ -1990,13 +1997,8 @@ function LoopholeApp() {
     }
   };
 
-  // Ленивая загрузка полного контента записи (кэш — без повторных запросов).
-  const toggleContent = (id) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  // Ленивая загрузка полного контента записи в кэш (без повторных запросов).
+  const loadContent = (id) => {
     if (contentCache[id]) return;
     setContentCache(prev => ({...prev, [id]: {loading: true, data: null, error: null}}));
     fetch(`${API}/records/${id}/content`)
@@ -2004,6 +2006,28 @@ function LoopholeApp() {
       .then(data => setContentCache(prev => ({...prev, [id]: {loading: false, data, error: null}})))
       .catch(e => setContentCache(prev => ({...prev, [id]: {loading: false, data: null, error: String(e)}})));
   };
+
+  // Раскрытие/сворачивание деталей записи в таблице каталога.
+  const toggleContent = (id) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    loadContent(id);
+  };
+
+  // Карточка очереди: при смене выбранной записи сбрасываем комментарий
+  // участника ЦК (поле карточки и поле модалки вердикта — одно состояние
+  // markComment) и лениво догружаем полный текст записи; contentCache
+  // исключает повторные сетевые запросы при возврате к записи. Состояние
+  // expanded (раскрытые детали каталога) здесь не трогаем: таблица каталога
+  // не должна раскрываться из-за просмотра карточки очереди.
+  const queueSelectedRecordId = queueSelected ? queueSelected.record_id : null;
+  useEffect(() => {
+    setMarkComment("");
+    if (queueSelectedRecordId) loadContent(queueSelectedRecordId);
+  }, [queueSelectedRecordId]);
 
   const toggleFullView = (id) => {
     setFullView(prev => {
@@ -2024,8 +2048,11 @@ function LoopholeApp() {
     return null; // legacy/нет данных
   };
 
-  // Развёрнутый блок контента под строкой.
-  const renderRecordContent = (r) => {
+  // Развёрнутый блок контента под строкой. opts.alwaysFull — режим карточки
+  // очереди: текст всегда развёрнут (lp-content-body-full), кнопка
+  // «Развернуть полностью» не показывается.
+  const renderRecordContent = (r, opts = {}) => {
+    const alwaysFull = !!opts.alwaysFull;
     const entry = contentCache[r.record_id];
     const sourceLink = r.url ? (
       <a href={r.url} target="_blank" rel="noopener noreferrer">открыть источник ↗</a>
@@ -2039,7 +2066,7 @@ function LoopholeApp() {
     const d = entry.data || {};
     const sizeKb = d.raw_text_len ? Math.ceil(d.raw_text_len / 1024) : null;
     const failed = d.content_status === "fetch_failed" || d.content_status === "empty";
-    const showFull = fullView.has(r.record_id);
+    const showFull = alwaysFull || fullView.has(r.record_id);
     return (
       <div className="lp-content-block" onClick={e => e.stopPropagation()}>
         <div className="lp-content-head">
@@ -2059,7 +2086,7 @@ function LoopholeApp() {
             Контент станет доступен после backfill.
           </div>
         )}
-        {!failed && (d.raw_text_len || 0) > 2000 && (
+        {!alwaysFull && !failed && (d.raw_text_len || 0) > 2000 && (
           <button type="button" className="lp-btn lp-btn-sm lp-content-more"
                   onClick={() => toggleFullView(r.record_id)}>
             {showFull ? "Свернуть" : "Развернуть полностью"}
@@ -2776,7 +2803,31 @@ function LoopholeApp() {
                       </div>
                       <section className="lp-queue-reason" aria-labelledby="lp-queue-reason-title">
                         <h3 id="lp-queue-reason-title">Комментарий классификатора</h3>
-                        <p>{queueSelected.verdict_reason || "Комментарий не указан."}</p>
+                        <p>{(queueSelected.classifier_verdict_reason ?? queueSelected.verdict_reason) || "Комментарий не указан."}</p>
+                      </section>
+                      {/* Решения ЦК КС записи (все импорты): append-only
+                          loophole_verification_decision с автором и датой;
+                          queueSelected.decisions всегда массив (пустой, если
+                          решений нет), данные приходят с GET /queue. */}
+                      <section className="lp-queue-decisions" aria-labelledby="lp-queue-decisions-title">
+                        <h3 id="lp-queue-decisions-title">Решения ЦК КС</h3>
+                        {Array.isArray(queueSelected.decisions) && queueSelected.decisions.length > 0 ? (
+                          <ul className="lp-queue-decisions-list">
+                            {queueSelected.decisions.map(d => (
+                              <li key={d.decision_id} className="lp-queue-decision">
+                                <span className={`lp-queue-decision-type lp-decision-${d.decision}`}>
+                                  {decisionLabel(d.decision)}
+                                </span>
+                                <span className="lp-queue-decision-comment">{d.comment}</span>
+                                <span className="lp-queue-decision-meta">
+                                  {d.decided_by} · {fmtDate(d.decided_at)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p>Решений ЦК пока нет.</p>
+                        )}
                       </section>
                       <div className="lp-queue-detail-actions">
                         {queueSelected.url && (
@@ -2784,10 +2835,30 @@ function LoopholeApp() {
                              rel="noopener noreferrer">Открыть источник</a>
                         )}
                         {canMarkVerdict && <button type="button" className="lp-btn lp-btn-primary"
-                                onClick={() => { setMarkComment(""); setVerdictModal({record: queueSelected}); }}>
+                                onClick={() => setVerdictModal({record: queueSelected})}>
                           Проверить вердикт
                         </button>}
                       </div>
+                      {/* Комментарий участника ЦК — одно состояние markComment
+                          с полем модалки вердикта; сохраняется только через
+                          существующий вердикт-флоу (POST /records/verdict). */}
+                      {canMarkVerdict && (
+                        <section className="lp-verdict-field lp-queue-comment"
+                                 aria-labelledby="lp-queue-comment-label">
+                          <label id="lp-queue-comment-label" htmlFor="lp-queue-comment-input">
+                            Комментарий участника ЦК
+                          </label>
+                          <textarea id="lp-queue-comment-input" rows={3} value={markComment}
+                                    onChange={e => setMarkComment(e.target.value)}
+                                    placeholder="Комментарий сохранится вместе с вердиктом…"/>
+                        </section>
+                      )}
+                      {/* Полный текст записи: ленивая догрузка content-эндпоинтом,
+                          в карточке всегда развёрнут (прокрутка внутри блока). */}
+                      <section className="lp-queue-fulltext" aria-labelledby="lp-queue-fulltext-title">
+                        <h3 id="lp-queue-fulltext-title">Полный текст записи</h3>
+                        {renderRecordContent(queueSelected, {alwaysFull: true})}
+                      </section>
                     </article>
                   )}
                 </div>
@@ -3174,6 +3245,38 @@ function LoopholeApp() {
                     <span>собрано {fmtDate(rec.collected_at)}</span>
                   </div>
                 </div>
+                {/* Read-only контекст записи: решения ЦК КС и исходный
+                    комментарий классификатора. Блок только для записей
+                    очереди (поле decisions есть всегда, возможно пустой
+                    массив); у каталожных записей поля нет → блок скрыт,
+                    поведение модалки прежнее. */}
+                {Array.isArray(rec.decisions) && (
+                  <div className="lp-verdict-decisions">
+                    <div className="lp-verdict-decisions-title">Решения ЦК КС</div>
+                    {rec.decisions.length > 0 ? (
+                      <ul className="lp-verdict-decisions-list">
+                        {rec.decisions.map(d => (
+                          <li key={d.decision_id} className="lp-queue-decision">
+                            <span className={`lp-queue-decision-type lp-decision-${d.decision}`}>
+                              {decisionLabel(d.decision)}
+                            </span>
+                            <span className="lp-queue-decision-comment">{d.comment}</span>
+                            <span className="lp-queue-decision-meta">
+                              {d.decided_by} · {fmtDate(d.decided_at)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="lp-verdict-decisions-empty">Решений ЦК пока нет.</p>
+                    )}
+                    {rec.verdict_model !== "manual" && (rec.classifier_verdict_reason ?? rec.verdict_reason) && (
+                      <p className="lp-verdict-classifier-comment">
+                        Комментарий классификатора: {rec.classifier_verdict_reason ?? rec.verdict_reason}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <div className="lp-verdict-field">
                   <label htmlFor="lp-mark-comment">Комментарий аудитора</label>
                   <textarea id="lp-mark-comment" rows={2} value={markComment}

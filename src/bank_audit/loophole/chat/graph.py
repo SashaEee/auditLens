@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from .. import logging_audit
@@ -46,6 +48,80 @@ _SESSION_UNAVAILABLE_MESSAGE = "Исследование недоступно: �
 _CLARIFICATION_ASSEMBLY_MESSAGE = (
     "Не удалось подготовить исследование. Повторите отправку ответа."
 )
+_SIMILAR_STOP_WORDS = {
+    "лазейки", "лазейка", "схемы", "схема", "мошеннические", "мошенническая",
+    "найди", "найдите", "покажи", "покажите", "периода", "период", "время",
+    "банки", "банка", "банковские", "продукты", "продукта",
+}
+
+
+def _similar_known_records_section(
+    session: Any,
+    *,
+    query: str,
+    records: list[dict] | None = None,
+    limit: int = 5,
+) -> str:
+    """Детерминированный раздел отчёта: близкие записи из общей базы лазеек.
+
+    Подбор — только кодом, без LLM: по банкам находок и значимым словам
+    запроса; URL текущих находок исключаются. Раздел информирует о ранее
+    выявленном и не является доказательством по новому запросу.
+    """
+    if session is None or limit <= 0:
+        return ""
+    records = records or []
+    slugs = sorted({str(record["bank_slug"]) for record in records if record.get("bank_slug")})
+    terms = [
+        word for word in re.findall(r"[A-Za-zА-Яа-яЁё0-9]{4,}", query or "")
+        if word.lower() not in _SIMILAR_STOP_WORDS
+    ][:6]
+    if not slugs and not terms:
+        return ""
+    params: dict[str, Any] = {"limit": limit}
+    matchers = []
+    for index, slug in enumerate(slugs):
+        matchers.append(f"bank_slug = :slug_{index}")
+        params[f"slug_{index}"] = slug
+    for index, term in enumerate(terms):
+        matchers.append("LOWER(title) LIKE LOWER(:term_" + str(index) + ")")
+        params[f"term_{index}"] = f"%{term.lower()}%"
+    conditions = ["(" + " OR ".join(matchers) + ")"]
+    finding_urls = sorted({str(record["url"]) for record in records if record.get("url")})
+    if finding_urls:
+        excluded = ", ".join(f":url_{index}" for index in range(len(finding_urls)))
+        conditions.append(f"(url IS NULL OR url NOT IN ({excluded}))")
+        for index, url in enumerate(finding_urls):
+            params[f"url_{index}"] = url
+    sql = (
+        "SELECT record_id, title, url, bank_slug, status, published_at "
+        "FROM loophole_record "
+        "WHERE is_loophole = TRUE AND " + " AND ".join(conditions)
+        + " ORDER BY published_at DESC NULLS LAST LIMIT :limit"
+    )
+    try:
+        rows = session.execute(text(sql), params).mappings().all()
+    except Exception:  # noqa: BLE001 — необязательный раздел не ломает отчёт
+        log.warning("[similar_records] раздел близких записей не построен", exc_info=True)
+        return ""
+    if not rows:
+        return ""
+    lines = [
+        "Близкие записи, ранее выявленные в общей базе (для сопоставления; "
+        "это не доказательства по текущему запросу):",
+    ]
+    for row in rows:
+        meta = []
+        if row.get("bank_slug"):
+            meta.append(f"банк: {row['bank_slug']}")
+        if row.get("status"):
+            meta.append(f"статус: {row['status']}")
+        if row.get("published_at"):
+            meta.append(f"дата публикации: {row['published_at']}")
+        suffix = (" (" + ", ".join(str(item) for item in meta) + ")") if meta else ""
+        lines.append(f"{len(lines)}. {row['title'] or 'Запись без названия'} — "
+                     f"{row['url'] or 'без URL'}{suffix}")
+    return redact_stream_text("\n".join(lines))
 
 
 def _normalized_run_id(value: Any, fallback: Any = None) -> str:
@@ -76,7 +152,7 @@ async def _run_nanobot(
     *,
     llm: Any = None,
     session=None,
-) -> AgentResult:
+) -> tuple[AgentResult, list[dict]]:
     """Запускает отдельный managed agent."""
     query = clarify_mod._mask_for_llm(state.get("query", ""))
     history = _state_history(state)
@@ -89,7 +165,11 @@ async def _run_nanobot(
         run_id=run_id,
     )
     agent = AgentFactory().create(context, llm=llm, session=session)
-    return await agent.run(prompt, session=session)
+    result = await agent.run(prompt, session=session)
+    # Разметка младших исследователей живёт на контексте запуска: отдаём её
+    # вместе с результатом для персистенции в общий контур.
+    triaged = list(getattr(context.subagents, "triaged", []) or [])
+    return result, triaged
 
 
 def _save_agent_audit(
@@ -126,8 +206,8 @@ def _public_finding(finding: dict[str, Any], *, research_id: int) -> dict[str, A
     fields = (
         "title", "url", "snippet", "evidence_quote", "description", "category", "severity",
         "bank_slug", "source_title", "published_at", "collected_at", "is_loophole",
-        "record_id", "candidate_id", "source_id", "verdict_confidence", "verdict_reason",
-        "verdict_model", "content_status", "raw_text_len", "raw_text_truncated",
+        "classification", "record_id", "candidate_id", "source_id", "verdict_confidence",
+        "verdict_reason", "verdict_model", "content_status", "raw_text_len", "raw_text_truncated",
     )
     public = {}
     for key in fields:
@@ -150,14 +230,19 @@ def _persist_confirmed_findings(
     run_id: str,
     query: str,
     session: Any,
+    triaged_items: list[dict] | None = None,
 ) -> list[dict]:
     """Сохраняет находки в изолированное исследование и переносит их в общий каталог.
 
     Подтверждённые находки (is_loophole=TRUE) после persist автоматически
     импортируются в общий каталог со статусом preliminary; дедупликация и
     аудит повторных переносов встроены в ``import_preliminary_sources``.
+    ``triaged_items`` — разметка сниппетов младших исследователей: сохраняется
+    в тот же research case и переносится с пометкой subagent_triage.
     """
-    if session is None or not isinstance(workspace_id, int) or (not findings and not sources):
+    if session is None or not isinstance(workspace_id, int) or (
+        not findings and not sources and not triaged_items
+    ):
         return []
     try:
         persisted = ResearchCaseService(session).persist_managed_run(
@@ -166,6 +251,7 @@ def _persist_confirmed_findings(
             query=query,
             findings=findings,
             sources=sources,
+            triaged_items=triaged_items,
         )
     except (AttributeError, KeyError, SQLAlchemyError, TypeError, ValueError):
         rollback = getattr(session, "rollback", None)
@@ -276,8 +362,9 @@ async def run_chat(
         }
 
     started_at = time.perf_counter()
+    triaged_items: list[dict] = []
     try:
-        result = await _run_nanobot(state, llm=llm, session=session)
+        result, triaged_items = await _run_nanobot(state, llm=llm, session=session)
     except asyncio.CancelledError:
         result = AgentResult(
             answer="Исследование прервано до завершения.",
@@ -316,10 +403,14 @@ async def run_chat(
         )
     answer = result.answer
     tools_used = list(result.tools_used)
-    can_preserve_findings = not result.errors or set(result.errors) <= {"time_budget"}
+    # Частичная остановка с валидными находками не теряет подтверждённую работу.
+    can_preserve_findings = not result.errors or set(result.errors) <= {
+        "time_budget", "max_iterations",
+    }
     records = _persist_confirmed_findings(
         list(result.records),
         sources=list(result.sources),
+        triaged_items=triaged_items,
         workspace_id=workspace_id,
         user_id=state.get("user_id"),
         run_id=_normalized_run_id(result.run_id, run_id),
@@ -332,6 +423,10 @@ async def run_chat(
     )
     if agent_unavailable:
         answer = AGENT_UNAVAILABLE_MESSAGE
+    else:
+        similar = _similar_known_records_section(session, query=state["query"], records=records)
+        if similar:
+            answer = f"{answer}\n\n{similar}" if answer else similar
 
     # Сохраняем ответ в БД.
     if workspace_id and answer and result.stop_reason != MODEL_PROTOCOL_ERROR:
@@ -463,13 +558,18 @@ async def stream_chat(
                 log.warning("[stream_chat] AgentFactory завершился ошибкой")
             else:
                 stream_failed = True
-                log.warning("[stream_chat] managed agent прерван — возвращаем partial")
+                log.warning("[stream_chat] managed agent прерван — возвращаем partial",
+                            exc_info=True)
 
         protocol_failed = not hook.validate_answer()
         flush_stream = getattr(hook, "flush_stream_for_sse", None)
+        # requested_count/page_limit и частичные остановки заменяют финальный ответ
+        # детерминированным серверным отчётом: хвост оборванного стрима модели его
+        # не дополняет. При max_iterations хвост последнего раунда чист от
+        # промежуточных рассуждений благодаря reset_stream_round на границе раундов.
         if (
             callable(flush_stream) and not protocol_failed
-            and hook.stop_reason not in {*PARTIAL_STOP_MESSAGES, "requested_count"}
+            and hook.stop_reason not in {*PARTIAL_STOP_MESSAGES, "requested_count", "page_limit"}
         ):
             tail = flush_stream()
             if tail:
@@ -490,20 +590,34 @@ async def stream_chat(
         if stream_failed and "agent_stream_error" not in errors:
             errors.append("agent_stream_error")
         records = []
-        budget_expired_only = bool(errors) and set(errors) <= set(PARTIAL_STOP_MESSAGES)
-        if not errors or budget_expired_only:
+        # Частичная остановка с валидными evidence-backed находками не должна
+        # терять подтверждённую работу: лимит итераций, бюджетные причины и
+        # обрыв стрима сохраняют находки и triaged-разметку, остальные
+        # ошибки — нет. Находки на tolerated-пути проходят строгую проверку
+        # eligible_findings, triaged уже серверно проверены.
+        partial_stop_tolerated = bool(errors) and set(errors) <= {
+            *PARTIAL_STOP_MESSAGES, "max_iterations", "agent_stream_error",
+        }
+        if not errors or partial_stop_tolerated:
             findings = (
-                eligible_findings(context) if budget_expired_only else context.pending_records
+                eligible_findings(context, kind=None) if partial_stop_tolerated
+                else context.pending_records
             )
             finding_urls = {str(finding.get("url")) for finding in findings}
+            # Subagents живут на внутреннем контексте ManagedAgent, а не на
+            # локальном context этого метода: забираем разметку после стрима.
+            agent_context = getattr(agent, "context", None)
+            agent_subagents = getattr(agent_context, "subagents", None)
+            triaged = list(getattr(agent_subagents, "triaged", []) or []) if agent_subagents else []
             records = _persist_confirmed_findings(
                 findings,
                 sources=list({
                     str(source.get("url")): source
                     for source in context.fetched_sources.values()
                     if isinstance(source, dict) and source.get("url")
-                    and (not budget_expired_only or str(source.get("url")) in finding_urls)
+                    and (not partial_stop_tolerated or str(source.get("url")) in finding_urls)
                 }.values()),
+                triaged_items=triaged,
                 workspace_id=workspace_id,
                 user_id=state.get("user_id"),
                 run_id=run_id,
@@ -518,15 +632,21 @@ async def stream_chat(
         partial_explanation = ""
         if terminal_provider_error:
             answer = AGENT_UNAVAILABLE_MESSAGE
-        elif errors:
-            partial_explanation = (
-                next(PARTIAL_STOP_MESSAGES[code] for code in errors if code in PARTIAL_STOP_MESSAGES)
-                if any(code in PARTIAL_STOP_MESSAGES for code in errors)
-                else "Исследование завершено частично: достигнут лимит итераций."
-                if "max_iterations" in errors
-                else "Исследование завершено частично: выполнение остановлено безопасно."
+        else:
+            similar = _similar_known_records_section(
+                session, query=state["query"], records=records,
             )
-            answer = answer + chr(10) * 2 + partial_explanation if answer else partial_explanation
+            if similar:
+                answer = f"{answer}\n\n{similar}" if answer else similar
+            if errors:
+                partial_explanation = (
+                    next(PARTIAL_STOP_MESSAGES[code] for code in errors if code in PARTIAL_STOP_MESSAGES)
+                    if any(code in PARTIAL_STOP_MESSAGES for code in errors)
+                    else "Исследование завершено частично: достигнут лимит итераций."
+                    if "max_iterations" in errors
+                    else "Исследование завершено частично: выполнение остановлено безопасно."
+                )
+                answer = answer + chr(10) * 2 + partial_explanation if answer else partial_explanation
         stream_result = AgentResult(
             answer=answer,
             tools_used=tuple(dict.fromkeys(hook.tools_used)),
