@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from ..v2.tools.web_tools import REGULATOR_DOMAINS
-from .facts import _norm
+from .facts import _norm, call_model
 
 log = logging.getLogger(__name__)
 
@@ -218,11 +218,7 @@ async def judge(client, model: str, doubtful: list, pages: dict[str, str],
             kw["extra_body"] = {"thinking": {"type": "disabled"}}
         async with sem:
             try:
-                try:
-                    resp = await client.chat.completions.create(**kw)
-                except Exception:
-                    kw.pop("extra_body", None)
-                    resp = await client.chat.completions.create(**kw)
+                resp = await call_model(client, model, kw)
                 data = json.loads((resp.choices[0].message.content or "").strip())
             except Exception as e:
                 log.info("критик-судья %s: %s", url[:60], type(e).__name__)

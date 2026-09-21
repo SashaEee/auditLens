@@ -266,26 +266,27 @@ async def plan_research(client: AsyncOpenAI, model: str,
                 max_tokens=8000, extra_body=deep_reasoning_extra())
             raw = (raw or "").strip()
         else:
+            from ...ai.llm_utils import drop_known_rejected, remember_rejected
             kwargs = {
                 "model": model, "messages": messages,
                 "temperature": 0.0,
                 "max_tokens": 8000,   # 3000 рвало план на 5 банках → fallback
                 "extra_body": deep_reasoning_extra(),
             }
+            drop_known_rejected(model, kwargs)
             try:
                 resp = await client.chat.completions.create(**kwargs)
             except Exception as e:
-                # Провайдер отвергает параметр — снимаем и повторяем. Иначе
-                # план молча подменяется заглушкой: claude-opus отвергает
-                # temperature, и вместо разбора вопроса конвейер получал
-                # рамку по умолчанию за 0,9 с, чего в логе никто не читал.
-                from ...ai.llm_utils import _rejected_param
-                param = _rejected_param(e)
-                if not param or param not in kwargs:
+                # Провайдер отвергает параметр — снимаем, запоминаем за моделью
+                # и повторяем. Иначе план молча подменяется заглушкой:
+                # claude-opus отвергает temperature, и вместо разбора вопроса
+                # конвейер получал рамку по умолчанию за 0,9 с, чего в логе
+                # никто не читал.
+                param = remember_rejected(model, e, kwargs)
+                if not param:
                     raise
-                log.warning("[conductor] %s не принимает %s — повторяем без него",
-                            model, param)
-                kwargs.pop(param, None)
+                log.warning("[conductor] %s не принимает %s — запомнили, "
+                            "повторяем без него", model, param)
                 resp = await client.chat.completions.create(**kwargs)
             raw = (resp.choices[0].message.content or "").strip()
     except Exception as e:

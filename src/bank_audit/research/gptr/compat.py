@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 # Распознавание отвергнутого параметра переехало в ai/llm_utils: им теперь
 # пользуется и Кондуктор, а он лежит слоем ниже и на gptr ссылаться не может.
-from ...ai.llm_utils import _rejected_param  # noqa: E402,F401
+from ...ai.llm_utils import _DROP_PARAMS, _rejected_param  # noqa: E402,F401
 
 
 def probe_models(models: list[str], *, base_url: str, api_key: str) -> None:
@@ -50,6 +50,9 @@ def probe_models(models: list[str], *, base_url: str, api_key: str) -> None:
             continue
         if _rejected_param(Exception(r.text)) == "temperature":
             base.NO_SUPPORT_TEMPERATURE_MODELS.append(model)
+            # Та же память, что у прямых вызовов (писатель, кондуктор):
+            # раз проба уже показала отказ, платить за него ещё раз незачем.
+            _DROP_PARAMS.setdefault(model, set()).add("temperature")
             log.info("gptr-compat: %s не принимает temperature", model)
     llm.NO_SUPPORT_TEMPERATURE_MODELS = base.NO_SUPPORT_TEMPERATURE_MODELS
 
@@ -77,6 +80,7 @@ def install() -> None:
                     base.NO_SUPPORT_TEMPERATURE_MODELS.append(model)
                     llm.NO_SUPPORT_TEMPERATURE_MODELS = \
                         base.NO_SUPPORT_TEMPERATURE_MODELS
+                _DROP_PARAMS.setdefault(model, set()).add("temperature")
             elif param == "reasoning_effort":
                 if model in base.SUPPORT_REASONING_EFFORT_MODELS:
                     base.SUPPORT_REASONING_EFFORT_MODELS.remove(model)

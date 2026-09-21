@@ -15,8 +15,8 @@ import logging
 import os
 import time
 
+from ...ai.llm_utils import drop_known_rejected, remember_rejected
 from . import compat, gaps as al_gaps, planner as al_planner, runstate
-from .compat import _rejected_param
 from . import scraper as al_scraper, verify as al_verify
 from .retriever import FleetSearch
 
@@ -247,18 +247,21 @@ async def stream_report(client, model: str, *, question: str, plan,
         ]
     # Причуды провайдера здесь те же, что в compat: claude-opus отвергает
     # temperature. Прямой вызов их обработку потерял — возвращаем: параметр,
-    # на который модель пожаловалась, снимаем и повторяем.
+    # на который модель пожаловалась, снимаем и повторяем. Отказ запоминается
+    # за моделью (память общая с compat и слоем фактов): досье пишет разделы
+    # отдельными вызовами, и без памяти каждый раздел платил 400-м заново.
     kwargs: dict = {"model": model, "messages": messages, "stream": True,
                     "temperature": 0.3, "max_tokens": 16000}
+    drop_known_rejected(model, kwargs)
     try:
         stream = await client.chat.completions.create(**kwargs)
         first = await stream.__anext__()
     except Exception as e:
-        bad = _rejected_param(e)
-        if not bad or bad not in kwargs:
+        bad = remember_rejected(model, e, kwargs)
+        if not bad:
             raise
-        log.info("писатель: %s не принимает %s — повторяем без него", model, bad)
-        kwargs.pop(bad, None)
+        log.info("писатель: %s не принимает %s — запомнили, повторяем без него",
+                 model, bad)
         stream = await client.chat.completions.create(**kwargs)
         first = None
     if first is not None:
