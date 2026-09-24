@@ -392,7 +392,11 @@ def _news_quality(days: int) -> dict:
     p = {"days": days}
     series = _rows("""
         SELECT digest_date::text AS d, n_items, junk, borderline, relevant,
-               avg_score::float AS avg
+               avg_score::float AS avg,
+               (detail->>'headline_value')::int AS head,
+               (detail->>'strong')::int AS strong,
+               jsonb_array_length(coalesce(detail->'missed', '[]'::jsonb)) AS missed,
+               detail->>'rubric' AS rubric
           FROM digest_news_judge
          WHERE digest_date > current_date - make_interval(days => :days)
          ORDER BY digest_date""", p)
@@ -409,9 +413,22 @@ def _news_quality(days: int) -> dict:
          WHERE kind = 'news_click'
            AND created_at > now() - make_interval(days => :days)
          GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", p)
+    # оценки карточек передовицы аудиторами: «полезно» / «не по делу»
+    cards = _rows("""
+        SELECT count(*) FILTER (WHERE verdict = 1) AS useful,
+               count(*) FILTER (WHERE verdict = -1) AS noise,
+               count(DISTINCT username) AS users
+          FROM item_feedback
+         WHERE kind = 'digest_card' AND created_at > now() - make_interval(days => :days)""", p)
+    try:
+        from ..digest import newsflow
+        stream = newsflow.health()
+    except Exception:  # noqa: BLE001 — поток ещё не запускался
+        stream = None
     today = series[-1] if series else None
     return {"series": series, "today": today, "clicks": clicks,
-            "top_clicked": top_clicked}
+            "top_clicked": top_clicked, "cards": (cards[0] if cards else None),
+            "stream": stream}
 
 
 # ── оценки ответов ИИ: «что разбирать» ───────────────────────────────────────

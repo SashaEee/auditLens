@@ -52,7 +52,8 @@ async def lifespan(app: FastAPI):
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
     from ..digest.scheduler import (bankiru_fts_background_loop, digest_background_loop,
                                     foryou_pregen_loop, ingest_background_loop,
-                                    judge_background_loop, keyrate_background_loop)
+                                    judge_background_loop, keyrate_background_loop,
+                                    newsflow_background_loop)
     from ..rag import ingest_queue
     from ..loophole.parsers.scheduler import (
         ENABLED as PARSER_SCHED_ENABLED,
@@ -75,6 +76,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(bankiru_fts_background_loop()),
         # ночной судья новостного выпуска → метрика мусора в Пульсе (этап 6)
         asyncio.create_task(judge_background_loop()),
+        asyncio.create_task(newsflow_background_loop()),
         # предгенерация «Для вас» для активных: первый заход дня без 21с LLM
         asyncio.create_task(foryou_pregen_loop()),
     ]
@@ -325,7 +327,7 @@ def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user
     """Единая точка оценок 👍/👎. Контентные (news/for_you/check) учат ЕГО
     рекомендации; ai_answer — контур качества (разбор командой);
     check_taken — «взял в работу» (влияет на генерацию зацепок, не на ранк)."""
-    if body.kind not in ("news", "for_you", "check", "ai_answer", "check_taken") \
+    if body.kind not in ("news", "for_you", "check", "ai_answer", "check_taken", "digest_card") \
             or body.verdict not in (1, -1) or not body.item_key:
         raise HTTPException(400, "bad feedback")
     res = userdata.save_feedback(user.username, body.kind, body.item_key[:500],
@@ -345,7 +347,7 @@ def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user
 @app.get("/api/feedback")
 def get_feedback(kind: str, user: CurrentUser = Depends(get_current_user)):
     """Карта оценок пользователя по kind — для рендера уже проставленных."""
-    if kind not in ("news", "for_you", "check", "ai_answer", "check_taken"):
+    if kind not in ("news", "for_you", "check", "ai_answer", "check_taken", "digest_card"):
         raise HTTPException(400, "bad kind")
     return {"items": userdata.feedback_map(user.username, kind)}
 

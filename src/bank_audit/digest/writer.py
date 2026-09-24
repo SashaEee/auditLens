@@ -18,15 +18,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 from datetime import date
 
 from openai import AsyncOpenAI
 
-from ..ai.analyst import (LLM_API_KEY, LLM_BASE_URL, fast_model, insight_model,
-                          smart_model)
+from ..ai.analyst import (LLM_API_KEY, LLM_BASE_URL, insight_model)
 from ..ai.llm_utils import _loose_json_loads, _patch_client_reasoning_effort
 from ..clock import today_anchor, today_ru
+from sqlalchemy import text
+
+from .. import db
 from . import store
 
 log = logging.getLogger(__name__)
@@ -115,15 +116,6 @@ async def reviews_brief(day: date) -> dict:
 
 # ── news ──────────────────────────────────────────────────────────────────────
 
-_NEWS_SYSTEM = (
-    "Ты — аналитик службы внутреннего аудита Сбербанка, розничный бизнес. Тебе дают "
-    "сырую ленту новостей за последние 48 часов (RSS ЦБ, банковские СМИ, "
-    "телеграм-каналы, поиск). Отбери ТОЛЬКО релевантное аудитору розницы Сбера: "
-    "регуляторика ЦБ и законы; инциденты/сбои/утечки/хищения в банках; схемы "
-    "мошенничества против клиентов; значимые действия конкурентов (продукты, ставки, "
-    "акции); решения по ключевой ставке. Отбрось дубли по смыслу, пиар и нерелевантное. "
-    "НЕ выдумывай фактов сверх текста новости."
-)
 
 # Рубрикатор согласован с аналитиками УВА (фидбек 07.2026): «Сбер» отдельно,
 # ставки/экономика слиты в регуляторику, схемы — в инциденты
@@ -150,128 +142,20 @@ def _news_products(txt: str) -> list[str]:
 #   4) редакция: summary/why из фактического текста, без плана-на-12.
 # Любая ступень падает → _news_legacy (старый одновызовный путь), не пустой экран.
 
-_TRIAGE_MIN = int(os.getenv("DIGEST_NEWS_TRIAGE_MIN", "6"))      # порог «в выпуск»
-_JURY_LOW = 4                                                    # низ пограничной зоны
-_MAX_PICKS = int(os.getenv("DIGEST_NEWS_MAX_PICKS", "14"))       # потолок финалистов
 _FETCH_N = int(os.getenv("DIGEST_NEWS_FETCH_N", "12"))           # статей за прогон
 _FETCH_TIMEOUT_S = float(os.getenv("DIGEST_NEWS_FETCH_TIMEOUT_S", "8"))
 _BODY_CHARS = int(os.getenv("DIGEST_NEWS_BODY_CHARS", "2000"))
 
-_EVENT_TYPES = (
-    "rate_decision",      # решение по ключевой ставке
-    "reg_enforcement",    # санкция/предписание/штраф/отзыв лицензии
-    "reg_rulemaking",     # закон/норматив/проект, затрагивающий розничные операции
-    "reg_guidance",       # разъяснения/обзоры/статистика регулятора по рознице
-    "bank_incident",      # сбой/авария в банке
-    "data_leak",          # утечка данных
-    "fraud_scheme",       # схема мошенничества против клиентов банков
-    "fraud_stats",        # статистика/отчёты по мошенничеству
-    "competitor_product", # продукт/тариф/акция банка-конкурента
-    "market_trend",       # динамика рынка розничных продуктов (ставки, просрочка)
-    "legal_precedent",    # суд/практика по банковской рознице
-    "infosec",            # кибербезопасность банковских каналов
-    "sber_news",          # событие самого Сбера
-    "payments_infra",     # платёжная инфраструктура: СБП, карты, банкоматы, НСПК
-    "other_relevant",
-)
 
 # Анти-примеры — РЕАЛЬНЫЙ мусор из выпусков/пулов (аудит 05.08.2026 + жалоба
 # владельца на «задержали в Дубае бизнесмена»). Позитивной рубрики LLM-фильтру
 # мало: без негативных примеров пограничное стабильно просачивается.
-_TRIAGE_SYSTEM = (
-    "Ты — фильтр новостной ленты для аудитора РОЗНИЦЫ Сбербанка. По КАЖДОЙ позиции "
-    "дай вердикт: score 0-10 (насколько это нужно именно аудитору розницы Сбера), "
-    "тип события и, для отвергнутых, короткую причину.\n"
-    "РЕЛЕВАНТНО (6-10): санкции/предписания ЦБ банкам; законы и нормативы по "
-    "розничным банковским операциям; ключевая ставка; сбои/утечки/хищения В БАНКАХ; "
-    "схемы мошенничества против банковских клиентов; продуктовые/тарифные действия "
-    "банков-конкурентов; судебная практика по рознице; платёжная инфраструктура "
-    "(СБП, карты, банкоматы); события самого Сбера.\n"
-    "НЕ РЕЛЕВАНТНО (0-3), реальные примеры пропущенного ранее мусора:\n"
-    "• «задержан бизнесмен в Дубае за взятки» — уголовка вне банковского сектора;\n"
-    "• «Адмирал расторг контракт с экс-игроком НХЛ» — спорт;\n"
-    "• «ПСБ и МЧС окажут поддержку пострадавшим» — пиар банка без продуктовой сути;\n"
-    "• «Ставка RUONIA», «Депозиты банков в Банке России» — ежедневная рутина ЦБ;\n"
-    "• «мошенничество с пособиями в Польше» — зарубежный сюжет без связи с рынком РФ;\n"
-    "• выборы, назначения в министерствах, геополитика, ЧС, шоубиз;\n"
-    "• «3 ошибки при выборе депозита» — потребительские советы;\n"
-    "• «средняя цена авто», «рост зарплат по отраслям» — общая статистика.\n"
-    "ПОГРАНИЧНО (4-5): финансовый сектор без конкретики или связи с розницей.\n"
-    "УСТАРЕВШЕЕ = score 0: если в заголовке/сниппете/URL видна дата старше двух "
-    "суток от сегодняшней — это не новость (реальный прокол: пресс-релиз 2011 "
-    "года о сбое процессинга ушёл в заголовок выпуска). reject: «устаревшее».\n"
-    "Сомнительный домен-агрегатор без первоисточника — снижай score на 2. "
-    "Пустой рубричный заголовок (одно название рубрики без сути) сам по себе "
-    "score не поднимает — оценивай вероятную ценность содержимого.\n"
-    f"type — один из: {', '.join(_EVENT_TYPES)}; для score<=3 ставь null.\n"
-    'Верни СТРОГО JSON без markdown: {"verdicts":[{"n":1,"score":7,'
-    '"type":"reg_enforcement","reject":null}]} — по ВСЕМ позициям, reject — '
-    "до 8 слов только для score<=3."
-)
 
 
-async def _news_triage(items: list[dict]) -> dict[int, dict]:
-    """Один вызов: вердикты по всем позициям пула. Бросает исключение при сбое —
-    news() уходит на _news_legacy."""
-    listing = "\n".join(
-        f'#{i + 1} [{it.get("tag")}] {it["title"]} — {(it.get("snippet") or "")[:180]} '
-        f'({it.get("domain")}{", повторили " + str(it["echo"]) + " ист." if it.get("echo", 1) > 1 else ""})'
-        for i, it in enumerate(items))
-    raw, ti, to = await _chat(insight_model(), today_anchor() + "\n\n" + _TRIAGE_SYSTEM,
-                              f"Лента ({len(items)} позиций):\n{listing}",
-                              max_tokens=4000, temperature=0.0)
-    try:
-        parsed = _loose_json_loads(raw)
-    except ValueError:
-        raw, ti2, to2 = await _chat(insight_model(),
-                                    today_anchor() + "\n\n" + _TRIAGE_SYSTEM,
-                                    f"Лента ({len(items)} позиций):\n{listing}",
-                                    max_tokens=4000, temperature=0.0)
-        ti, to = ti + ti2, to + to2
-        parsed = _loose_json_loads(raw)
-    out: dict[int, dict] = {}
-    for v in (parsed.get("verdicts") or []):
-        try:
-            n = int(v.get("n"))
-            score = max(0, min(10, int(v.get("score"))))
-        except (TypeError, ValueError):
-            continue
-        if not (1 <= n <= len(items)):
-            continue
-        typ = v.get("type")
-        out[n] = {"score": score,
-                  "type": typ if typ in _EVENT_TYPES else None,
-                  "reject": (str(v.get("reject") or "")[:80] or None)}
-    if len(out) < len(items) * 0.7:      # модель размечает не всё → не доверяем
-        raise ValueError(f"триаж покрыл {len(out)} из {len(items)} позиций")
-    out["_tokens"] = {"in": ti, "out": to}  # type: ignore[assignment]
-    return out
 
 
-_JURY_SYSTEM = (
-    "Ты — скептик редакции брифинга аудитора розницы Сбербанка. Тебе дают ОДНУ "
-    "пограничную новость. Твоя задача — ОПРОВЕРГНУТЬ её релевантность: найди, "
-    "почему она аудитору розницы Сбера НЕ нужна (не банковская розница; пиар; "
-    "рутина; нет конкретики; зарубежное без связи с РФ). Если опровергнуть "
-    "честно не получается — так и скажи.\n"
-    'Верни СТРОГО JSON: {"verdict":"drop"|"keep","reason":"до 12 слов"}'
-)
 
 
-async def _news_jury(item: dict) -> bool:
-    """Два скептика по пограничной позиции; выживает при хотя бы одном keep
-    (вместе с «за» триажа это 2 из 3). Сбой голосов → drop: порог честнее."""
-    body = (f'{item["title"]} — {(item.get("snippet") or "")[:300]} '
-            f'({item.get("domain")})')
-
-    async def _vote() -> bool:
-        raw, _ti, _to = await _chat(insight_model(),
-                                    today_anchor() + "\n\n" + _JURY_SYSTEM,
-                                    body, max_tokens=120, temperature=0.3)
-        return str(_loose_json_loads(raw).get("verdict")).strip() == "keep"
-
-    votes = await asyncio.gather(_vote(), _vote(), return_exceptions=True)
-    return any(v is True for v in votes)
 
 
 def _reach_of(url: str | None, bodies: dict[str, str] | None) -> str:
@@ -380,287 +264,92 @@ def _news_stories(groups: list[dict]) -> int:
         return 0
 
 
-def _news_pool(items: list[dict]) -> list[dict]:
-    """Полный сырой пул дня — сырьё для персонального ре-ранка («Для вас»).
-    LLM-группы дают ≤12 позиций на всех; персональная сетка ранжирует из всего пула."""
-    return [{"title": it.get("title"), "url": it.get("url"), "domain": it.get("domain"),
-             "source": it.get("source"), "ts": it.get("ts"), "tag": it.get("tag"),
-             "dimension": it.get("dimension"), "image": it.get("image"),
-             # echo — сколько источников продублировали событие (смысловой дедуп);
-             # tri/event — вердикт триажа (этап 2): персональный ре-ранк отсекает
-             # забракованное и знает тип события
-             "echo": int(it.get("echo") or 1),
-             "tri": it.get("tri"), "event": it.get("event"),
-             "snippet": (it.get("snippet") or "")[:200]} for it in items]
 
 
-_EDIT_SYSTEM = (
-    "Ты — редактор блока «Новости для аудитора» утреннего брифинга службы "
-    "внутреннего аудита Сбербанка (розница). Тебе передают УЖЕ ОТОБРАННЫЕ "
-    "фильтром позиции, у большинства есть полный текст статьи. Твоя работа:\n"
-    "• сгруппировать по рубрикам;\n"
-    "• каждой позиции написать: headline — до 90 знаков (если исходный заголовок "
-    "— пустое название рубрики вроде «Решения Банка России в отношении участников "
-    "финансового рынка», НАПИШИ заголовок заново по сути содержимого текста); "
-    "summary — 1 предложение сути ИЗ ТЕКСТА; why — какой процесс или продукт "
-    "розницы Сбера затронут и ЧТО КОНКРЕТНО проверить аудитору (без пустых "
-    "«требует мониторинга/наблюдать»); severity.\n"
-    "Включи ВСЕ переданные позиции, кроме смысловых дублей друг друга И кроме "
-    "устаревших: если дата события в тексте старше двух суток от сегодняшней — "
-    "позицию НЕ включай (прокол: мартовская статистика сбоя подавалась как "
-    "сегодняшняя). Факты бери ТОЛЬКО из переданного текста, не выдумывай."
-)
 
 
-async def _news_editorial(items: list[dict], picks: list[int],
-                          bodies: dict[str, str],
-                          verdicts: dict[int, dict]) -> tuple[list[dict], tuple[int, int]]:
-    """Редакция по финалистам триажа: группировка + headline/summary/why из
-    фактического текста статьи (не 160 символов сниппета)."""
-    blocks = []
-    for n in picks:
-        it = items[n - 1]
-        v = verdicts.get(n) or {}
-        body = bodies.get(it.get("url") or "")
-        echo = f', повторили {it["echo"]} ист.' if it.get("echo", 1) > 1 else ""
-        blocks.append(
-            f'#{n} [{v.get("type") or it.get("tag")}{echo}] {it["title"]} '
-            f'({it.get("domain")}, {it.get("ts") or "без даты"})\n'
-            + (f'ТЕКСТ: {body}' if body else f'СНИППЕТ: {(it.get("snippet") or "")[:300]}'))
-    group_keys = ", ".join(k for k, _ in _NEWS_GROUPS)
-    user = (
-        f"Дата: {today_ru()}. Позиции ({len(picks)}):\n\n" + "\n---\n".join(blocks)
-        + f"\n\nВерни СТРОГО JSON без markdown. Допустимые key групп: {group_keys}.\n"
-          "Смысл групп: sber — всё про Сбер; regulatory — ЦБ, законы, ставка; "
-          "incidents — сбои, утечки, хищения, мошенничество; market — конкуренты "
-          "и движения рынка; other — важное, не подошедшее выше.\n"
-          'Формат: {"groups":[{"key":"regulatory","items":[{"n":3,'
-          '"headline":"...","summary":"...","why":"...","severity":"amber"}]}]}\n'
-          "severity: red — прямая угроза/инцидент, amber — наблюдать, green — "
-          "благоприятное/нейтральное. Группы без позиций не включай."
-    )
-    raw, ti, to = await _chat(insight_model(), today_anchor() + "\n\n" + _EDIT_SYSTEM,
-                              user, max_tokens=3500, temperature=0.1)
-    try:
-        parsed = _loose_json_loads(raw)
-    except ValueError:          # обрезка/флак парсинга → один дешёвый ретрай
-        raw, ti2, to2 = await _chat(insight_model(),
-                                    today_anchor() + "\n\n" + _EDIT_SYSTEM,
-                                    user, max_tokens=3500, temperature=0.0)
-        ti, to = ti + ti2, to + to2
-        parsed = _loose_json_loads(raw)
-    titles = {k: t for k, t in _NEWS_GROUPS}
-    picks_set = set(picks)
-    groups = []
-    for g in (parsed.get("groups") or []):
-        key = str(g.get("key") or "").strip()
-        if key not in titles:
-            key = next((k for k in titles if k in key), "market")
-        out_items = []
-        for gi in (g.get("items") or [])[:6]:
-            try:
-                n = int(gi.get("n"))
-            except (TypeError, ValueError):
-                continue
-            if n not in picks_set:      # редакция не добавляет отвергнутое триажом
-                continue
-            src = items[n - 1]
-            v = verdicts.get(n) or {}
-            sev = str(gi.get("severity") or "amber")
-            head = str(gi.get("headline") or "").strip()[:120]
-            out_items.append({
-                # headline редакции показываем как title; исходник — рядом
-                "title": head or src["title"],
-                **({"src_title": src["title"]} if head and head != src["title"] else {}),
-                "url": src["url"], "domain": src.get("domain"),
-                "reach": _reach_of(src.get("url"), bodies),
-                "source": src["source"], "ts": src.get("ts"), "tag": src.get("tag"),
-                "image": src.get("image"),
-                "score": v.get("score"), "event": v.get("type"),
-                "echo": int(src.get("echo") or 1),
-                "products": _news_products(
-                    f'{src["title"]} {gi.get("summary") or ""}'),
-                "summary": str(gi.get("summary") or "")[:240],
-                "why": str(gi.get("why") or "")[:240],
-                "severity": sev if sev in ("red", "amber", "green") else "amber",
-            })
-        if out_items:
-            groups.append({"key": key, "title": titles.get(key, key),
-                           "items": out_items})
-    _ord = {k: i for i, (k, _) in enumerate(_NEWS_GROUPS)}
-    groups.sort(key=lambda g: _ord.get(g["key"], 99))
-    return groups, (ti, to)
 
 
 async def news(day: date) -> dict:
-    """Секция новостей: конвейер триаж → жюри → фетч → редакция; любой сбой
-    конвейера → _news_legacy (одновызовный путь, работал до этапа 2)."""
-    from . import news as news_mod
-    items, statuses = await asyncio.to_thread(news_mod.fetch_all)
-    if not items:
-        return {"groups": [], "items_raw": [], "sources": statuses,
-                "_status": "degraded"}
+    """Новости выпуска из полного потока (digest/newsflow): весь день идёт сбор
+    и оценка, здесь — хвост за последние минуты и выбор.
+
+    Публикуются события с ценностью от 6 по рубрике аудита розницы; ставки,
+    тарифы и макроэкономика уходят в «фон рынка» (для абзаца передовицы).
+    Резервного одновызовного пути больше нет: при сбое секция остаётся
+    прежней (pipeline: kept/stale), а не публикует сырые заголовки — 24.09
+    так вышли «#БанковскийСектор» и «🔤 🔤 🔤»."""
+    from . import newsflow as nf
     try:
-        verdicts = await _news_triage(items)
-        tok = verdicts.pop("_tokens", {"in": 0, "out": 0})  # type: ignore[arg-type]
-        ti, to = int(tok.get("in") or 0), int(tok.get("out") or 0)
-        keep = [n for n, v in verdicts.items() if v["score"] >= _TRIAGE_MIN]
-        border = sorted((n for n, v in verdicts.items()
-                         if _JURY_LOW <= v["score"] < _TRIAGE_MIN),
-                        key=lambda n: -verdicts[n]["score"])[:8]
-        if border:      # два скептика на пограничную; выжило — в выпуск
-            votes = await asyncio.gather(*(_news_jury(items[n - 1]) for n in border),
-                                         return_exceptions=True)
-            keep += [n for n, ok in zip(border, votes) if ok is True]
-        keep.sort(key=lambda n: -verdicts[n]["score"])
-        keep = keep[:_MAX_PICKS]
-        # триаж-оценка уезжает в пул: персональный ре-ранк «Для вас» не должен
-        # поднимать то, что триаж забраковал для ЛЮБОГО аудитора (общие ленты
-        # с сильной семантикой профиля всплывали в личной сетке)
-        for n, v in verdicts.items():
-            items[n - 1]["tri"] = v.get("score")
-            if v.get("type"):
-                items[n - 1]["event"] = v["type"]
-        if not keep:    # честно тихий день — без добора мусором
-            return {"groups": [], "sources": statuses, "raw_count": len(items),
-                    "pool": _news_pool(items), "quiet": True,
-                    "triage": {"kept": 0, "border": len(border)},
-                    "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
-        bodies = await asyncio.to_thread(
-            _news_bodies, [items[n - 1].get("url") or "" for n in keep])
-        groups, (ei, eo) = await _news_editorial(items, keep, bodies, verdicts)
-        ti, to = ti + ei, to + eo
-        if not groups:
-            raise ValueError("редакция вернула пустые группы")
-        # сюжеты СНАЧАЛА (по прошлым дням памяти), отметка публикации — потом:
-        # иначе сегодняшняя запись сматчилась бы сама с собой
-        await asyncio.to_thread(_news_stories, groups)
-        # межднёвная память: опубликованное сегодня завтра в пул не возвращается
-        try:
-            await asyncio.to_thread(
-                news_mod.mark_published,
-                [it["url"] for g in groups for it in g["items"] if it.get("url")])
-        except Exception:  # noqa: BLE001 — память не должна ронять секцию
-            log.warning("news: mark_published failed", exc_info=True)
-        return {"groups": groups, "sources": statuses, "raw_count": len(items),
-                "pool": _news_pool(items),
-                "triage": {"kept": len(keep), "border": len(border),
-                           "fetched": sum(1 for t in bodies.values() if t)},
-                "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
-    except Exception as e:  # noqa: BLE001 — конвейер сломался, не выпуск
-        log.warning("news conveyor failed (%s) — одновызовный путь", e)
-        return await _news_legacy(items, statuses)
+        await nf.tick()
+    except Exception as e:  # noqa: BLE001 — хвост, основной сбор шёл весь день
+        log.warning("news: хвостовой проход потока не удался (%s)", e)
+    evs = await asyncio.to_thread(nf.day_events)
+    evs = await nf.merge_events(evs)
+    hl = await asyncio.to_thread(nf.health)
+    if not evs:
+        raise RuntimeError("в потоке нет оценённых событий за окно")
+    shown = [e for e in evs if (e["value"] or 0) >= 6][:_NEWS_MAX]
+    background = [e for e in evs if (e["value"] or 0) <= 5
+                  and (e["s2"] or {}).get("category") in _BG_CATS][:8]
+    order = {k: i for i, (k, _t) in enumerate(_NEWS_GROUPS)}
+    titles = dict(_NEWS_GROUPS)
+    groups: dict[str, dict] = {}
+    for e in shown:
+        it = _news_item(e)
+        g = groups.setdefault(e["group"], {"key": e["group"], "title": titles.get(e["group"], "Прочее важное"),
+                                           "items": []})
+        g["items"].append(it)
+    glist = sorted(groups.values(), key=lambda g: (-max(i["score"] for i in g["items"]),
+                                                   order.get(g["key"], 9)))
+    await asyncio.to_thread(_news_stories, glist)
+    try:
+        await asyncio.to_thread(nf.mark_published,
+                                [i for e in shown for i in (e.get("merged_ids") or [e["event_id"]])])
+        from . import news as news_mod
+        await asyncio.to_thread(news_mod.mark_published, [i["url"] for g in glist for i in g["items"]])
+    except Exception:  # noqa: BLE001 — память не должна ронять секцию
+        log.warning("news: отметка публикации не удалась", exc_info=True)
+    sources = [{"name": s["source"], "ok": not s.get("last_error"),
+                "items": s.get("items_24h") or 0, "skipped_reason": s.get("last_error")}
+               for s in hl["sources"]]
+    pool = [{"title": (e["s2"] or {}).get("headline") or e["lead"]["title"],
+             "url": e["lead"]["url"], "domain": _domain(e["lead"]["url"]),
+             "source": e["lead"]["source"],
+             "ts": e["ts"].isoformat() if e["ts"] else None, "tag": e["lead"].get("rtype"),
+             "dimension": None, "image": e["lead"].get("image"), "echo": e["n_sources"],
+             "tri": e["value"], "event": (e["s2"] or {}).get("category"),
+             "snippet": (e["s2"] or {}).get("summary") or ""}
+            for e in evs if (e["value"] or 0) >= 4]
+    return {"groups": glist,
+            "background": [{"title": (e["s2"] or {}).get("headline") or e["lead"]["title"],
+                            "url": e["lead"]["url"], "source": e["lead"]["source"],
+                            "value": e["value"]} for e in background],
+            "sources": sources, "raw_count": hl["items_24h"], "pool": pool,
+            "triage": {"stream_24h": hl["items_24h"], "relevant_24h": hl["relevant_24h"],
+                       "events": len(evs), "kept": len(shown)},
+            "_llm_model": nf.S2_MODEL}
 
 
-async def _news_legacy(items: list[dict], statuses: list[dict]) -> dict:
-    """Одновызовный отбор (до этапа 2) — страховка при сбое конвейера."""
-    from . import news as news_mod
-    listing = "\n".join(
-        f'#{i + 1} [{it["tag"]}] {it["title"]} — {(it.get("snippet") or "")[:160]} '
-        f'({it.get("domain")}, {it.get("ts") or "без даты"})'
-        for i, it in enumerate(items))
-    group_keys = ", ".join(k for k, _ in _NEWS_GROUPS)
-    user = (
-        f"Дата: {today_ru()}. Лента ({len(items)} позиций):\n{listing}\n\n"
-        f"Верни СТРОГО JSON без markdown. Допустимые key групп: {group_keys}.\n"
-        "Смысл групп: sber — всё про Сбер (продукты, технологии, сервисы, экосистема); "
-        "regulatory — ЦБ, законы, ключевая ставка, макроэкономика; "
-        "incidents — сбои, утечки, хищения, схемы мошенничества; "
-        "market — конкуренты, их продукты и ставки, движения рынка; "
-        "other — важное аудитору, но не подошедшее выше (используй редко).\n"
-        "Пример формата (значения — твои):\n"
-        '{"groups":[{"key":"regulatory","items":[{"n":3,'
-        '"summary":"1 предложение сути","why":"почему важно аудитору розницы Сбера, '
-        '1 фраза","severity":"amber"}]}]}\n'
-        "Всего не больше 12 позиций, в каждой группе не больше 4. Группы без "
-        "позиций не включай. severity: red — прямая угроза/инцидент, amber — "
-        "наблюдать, green — благоприятное/нейтральное."
-    )
-    try:
-        raw, ti, to = await _chat(insight_model(),
-                                  today_anchor() + "\n\n" + _NEWS_SYSTEM,
-                                  user, max_tokens=3000, temperature=0.1)
-        try:
-            parsed = _loose_json_loads(raw)
-        except ValueError:      # обрезка/флак парсинга → один дешёвый ретрай
-            raw, ti2, to2 = await _chat(insight_model(),
-                                        today_anchor() + "\n\n" + _NEWS_SYSTEM,
-                                        user, max_tokens=3000, temperature=0.0)
-            ti, to = ti + ti2, to + to2
-            parsed = _loose_json_loads(raw)
-        titles = {k: t for k, t in _NEWS_GROUPS}
-        groups = []
-        for g in (parsed.get("groups") or []):
-            key = str(g.get("key") or "").strip()
-            if key not in titles:       # модель скопировала альтернативу/мусор
-                key = next((k for k in titles if k in key), "market")
-            out_items = []
-            for gi in (g.get("items") or [])[:4]:
-                try:
-                    n = int(gi.get("n"))
-                except (TypeError, ValueError):
-                    continue
-                if not (1 <= n <= len(items)):
-                    continue
-                src = items[n - 1]
-                sev = str(gi.get("severity") or "amber")
-                out_items.append({
-                    "title": src["title"], "url": src["url"],
-                    "reach": _reach_of(src.get("url"), None),
-                    "domain": src.get("domain"), "source": src["source"],
-                    "ts": src.get("ts"), "tag": src.get("tag"),
-                    "image": src.get("image"),
-                    "products": _news_products(
-                        f'{src["title"]} {gi.get("summary") or ""}'),
-                    "summary": str(gi.get("summary") or "")[:220],
-                    "why": str(gi.get("why") or "")[:200],
-                    "severity": sev if sev in ("red", "amber", "green") else "amber",
-                })
-            if out_items:
-                groups.append({"key": key, "title": titles.get(key, key),
-                               "items": out_items})
-        if not groups:
-            raise ValueError("LLM вернул пустые группы")
-        _ord = {k: i for i, (k, _) in enumerate(_NEWS_GROUPS)}
-        groups.sort(key=lambda g: _ord.get(g["key"], 99))  # стабильный порядок рубрик
-        # межднёвная память: опубликованное сегодня завтра в пул не возвращается
-        try:
-            await asyncio.to_thread(
-                news_mod.mark_published,
-                [it["url"] for g in groups for it in g["items"] if it.get("url")])
-        except Exception:  # noqa: BLE001 — память не должна ронять секцию
-            log.warning("news: mark_published failed", exc_info=True)
-        return {"groups": groups, "sources": statuses, "raw_count": len(items),
-                "pool": _news_pool(items),
-                "_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
-    except Exception as e:  # noqa: BLE001 — деградация: сырые заголовки без LLM
-        log.warning("news digest LLM failed: %s", e)
-        return {"groups": [], "sources": statuses, "raw_count": len(items),
-                "items_raw": [{k: it.get(k) for k in
-                               ("title", "url", "domain", "source", "ts", "tag", "image")}
-                              for it in items[:15]],
-                "pool": _news_pool(items),
-                "_status": "degraded"}
 
 
 # ── headline (+insights) ──────────────────────────────────────────────────────
 
 _HEAD_SYSTEM = (
-    "Ты — главный редактор утреннего брифинга службы внутреннего аудита Сбербанка "
-    "(розничный бизнес). Тебе дают ГОТОВЫЕ сигналы дня с точными числами (id в "
-    "скобках). Твоя работа: выбрать главное, написать заголовок дня и 3–6 "
-    "карточек-инсайтов ЧЕЛОВЕЧЕСКИМ языком. Числа бери ТОЛЬКО из сигналов, ничего "
-    "не выдумывай. Рекомендации — внутренние действия по Сберу (конкуренты — "
-    "бенчмарк и ранний сигнал, НЕ «перейти/закупить у них»). Особо ценны СВЯЗКИ "
-    "(ref link:*) — внешняя новость, подтверждённая нашими данными: если связка "
-    "есть, обязательно включи её карточкой и объясни, что совпало. Пометка "
-    "«продолжение сюжета» у новости — событие развивается несколько дней, скажи "
-    "об этом. Без эмодзи.\n"
-    "ВЫПУСК ЕЖЕДНЕВНЫЙ: заголовок — про то, что изменилось СЕГОДНЯ. Сигнал с "
-    "пометкой «уже был главным в прошлых выпусках» заголовком не делай — веди "
-    "выпуск другим, даже если тот по абсолютной величине крупнее. Исключение "
-    "одно: сигнал заметно усилился со вчера — тогда заголовок про САМО "
-    "ИЗМЕНЕНИЕ, а не про исходный факт."
+    "Ты — главный редактор утреннего брифинга службы внутреннего аудита розничного "
+    "бизнеса Сбера. Тебе дают УЖЕ УПОРЯДОЧЕННЫЙ по важности список поводов для проверки "
+    "(порядок определён по рубрике аудита — НЕ меняй его) и блок «фон рынка».\n"
+    "Твоя работа — текст:\n"
+    "• headline — заголовок дня про ПЕРВЫЙ повод, до 90 знаков, по существу, без "
+    "драматизации и оценок, которых нет в данных;\n"
+    "• cards — по каждому поводу в том же порядке: title (суть с цифрой, если она есть в "
+    "данных), so_what (1–2 фразы: почему это важно аудиту розницы Сбера), idea (что "
+    "проверить — конкретно, опираясь на данные повода; не выдумывай фактов);\n"
+    "• market_note — 1–2 предложения «Фон рынка» ТОЛЬКО по блоку фона: ключевая ставка, "
+    "движение ставок и тарифов; без оценок «рынок нервничает»; если блока нет — пусто.\n"
+    "Строку «Наши данные» у повода показывают отдельно — в so_what её числа не повторяй. "
+    "Числа бери только из данных и пиши по-русски: десятичная запятая (3,6; 14%). "
+    "Конкуренты — бенчмарк, рекомендации — внутренние действия по Сберу. Без эмодзи."
 )
 
 # Раньше здесь жила локальная копия с битыми ключами (autocredit/credit_card
@@ -678,90 +367,8 @@ def _cat_ru(c: str) -> str:
 # фронт не меняется. Это главное преимущество платформы: внешняя нейросеть
 # новость перескажет, но у неё нет наших тарифных рядов и жалоб.
 
-_PROD_CAT = {"deposit": "deposit", "savings": "deposit", "ipoteka": "mortgage",
-             "credit_card": "card_credit", "debit_card": "card_debit",
-             "auto": "auto_loan", "consumer_loan": "credit"}
 
 
-def _connection_candidates(secs: dict) -> tuple[list[str], dict[str, dict]]:
-    lines: list[str] = []
-    reg: dict[str, dict] = {}
-    nw = (secs.get("news") or {}).get("payload") or {}
-    tm = (secs.get("tariff_moves") or {}).get("payload") or {}
-    rp = (secs.get("reviews_pulse") or {}).get("payload") or {}
-    news_items = [it for g in (nw.get("groups") or [])
-                  for it in (g.get("items") or [])]
-    mass_by_cat = {m.get("category"): m for m in (tm.get("mass_updates") or [])}
-    kr = tm.get("key_rate") or {}
-    spread = tm.get("dep_spread_pp")
-
-    def _add(ref: str, line: str, data: dict) -> None:
-        if ref not in reg and len(reg) < 3:      # максимум 3 связки на выпуск
-            reg[ref] = {"kind": "connection", "data": data}
-            lines.append(f"({ref}) {line}")
-
-    # 1) решение по ставке ↔ рынок переставляет вклады / наш спред
-    rate_news = next((it for it in news_items
-                      if it.get("event") == "rate_decision"), None)
-    if rate_news and (mass_by_cat.get("deposit") or spread is not None):
-        m = mass_by_cat.get("deposit")
-        bits = []
-        if m:
-            bits.append(f'{m["n_banks"]} банков переставили вклады за 48 ч')
-        if spread is not None:
-            bits.append(f'спред макс.вклад Сбера − КС {spread:+} пп')
-        _add("link:rate",
-             f'СВЯЗКА новость×данные: «{(rate_news.get("title") or "")[:70]}» ↔ '
-             + "; ".join(bits)
-             + (f' (КС {kr.get("current")}%)' if kr.get("current") is not None else ""),
-             {"news": {k: rate_news.get(k) for k in ("title", "url", "domain")},
-              "category": "deposit", "mass": m, "spread": spread,
-              "key_rate": kr.get("current")})
-
-    # 2) продуктовая новость ↔ массовое движение той же категории тарифов
-    for it in news_items:
-        if it is rate_news:
-            continue
-        for p in (it.get("products") or []):
-            cat = _PROD_CAT.get(p)
-            m = mass_by_cat.get(cat)
-            if not m:
-                continue
-            _add(f"link:cat:{cat}",
-                 f'СВЯЗКА новость×данные: «{(it.get("title") or "")[:70]}» ↔ '
-                 f'{m["n_banks"]} банков изменили «{_cat_ru(cat)}» за 48 ч '
-                 f'({", ".join(m["banks"][:4])})',
-                 {"news": {k: it.get(k) for k in ("title", "url", "domain")},
-                  "category": cat, "mass": m})
-            break
-
-    # 3) сбой/утечка в новостях ↔ ведущее расхождение жалоб с рынком
-    inc = next((it for it in news_items
-                if it.get("event") in ("bank_incident", "data_leak")), None)
-    dv = next((d for d in (rp.get("diverge") or [])
-               if (d.get("gap") or 0) >= 1.25), None)
-    if inc and dv:
-        _add("link:incident",
-             f'СВЯЗКА новость×данные: «{(inc.get("title") or "")[:70]}» ↔ жалобы '
-             f'«{dv["label"]}»: {dv["week"]} за 7 дн, ×{dv.get("gap")} к рынку',
-             {"news": {k: inc.get(k) for k in ("title", "url", "domain")},
-              "theme": dv})
-
-    # 4) платёжная инфраструктура ↔ темы жалоб про переводы/банкоматы/СБП
-    pay = next((it for it in news_items
-                if it.get("event") == "payments_infra"), None)
-    if pay:
-        th = next((d for d in (rp.get("diverge") or [])
-                   if re.search(r"перевод|банкомат|сбп|плат[её]ж",
-                                d.get("label") or "", re.I)), None)
-        if th:
-            _add("link:pay",
-                 f'СВЯЗКА новость×данные: «{(pay.get("title") or "")[:70]}» ↔ жалобы '
-                 f'«{th["label"]}»: {th["week"]} за 7 дн'
-                 + (f', ×{th["gap"]} к рынку' if th.get("gap") else ""),
-                 {"news": {k: pay.get(k) for k in ("title", "url", "domain")},
-                  "theme": th})
-    return lines, reg
 
 
 # Тарифное движение попадает в кандидаты передовицы, только пока оно СВЕЖЕЕ.
@@ -786,134 +393,29 @@ def _age_hours(iso_ts: str | None) -> float | None:
         return None
 
 
-def _build_candidates(secs: dict) -> tuple[list[str], dict[str, dict]]:
-    """Кандидаты-сигналы для LLM + реестр ref → данные (для обогащения)."""
-    lines, reg = [], {}
-    rp = (secs.get("reviews_pulse") or {}).get("payload") or {}
-    for s in (rp.get("signals") or [])[:6]:
-        ref = f"rev:{s['key']}"
-        reg[ref] = {"kind": "review_spike", "data": s}
-        bits = [f'{s["week"]} за 7 дн']
-        if s.get("ratio"):
-            bits.append(f'×{s["ratio"]} к норме')
-        if s.get("new"):
-            bits.append("новая тема")
-        if s.get("accel"):
-            bits.append("ускоряется")
-        if s.get("bank_specific"):
-            bits.append("только у Сбера")
-        if s.get("geo"):
-            bits.append(f'{s["geo"]["share"]}% из {s["geo"]["city"]}')
-        lines.append(f'({ref}) жалобы «{s["label"]}» [{s.get("level")}]: ' + ", ".join(bits))
-    ov = rp.get("overall") or {}
-    if ov.get("week") is not None:
-        lines.append(f'(ctx) всего жалоб за нед: {ov["week"]}, норма ~{ov.get("baseline_week")}'
-                     + (f', рынок ×{ov["market_ratio"]}' if ov.get("market_ratio") is not None else ""))
-
-    tm = (secs.get("tariff_moves") or {}).get("payload") or {}
-    for m in (tm.get("mass_updates") or [])[:3]:
-        ref = f"mass:{m['category']}"
-        reg[ref] = {"kind": "mass_move", "data": m,
-                    "after_pause": tm.get("after_pause")}
-        note = " (возможен артефакт: сбор после паузы)" if tm.get("after_pause") else ""
-        lines.append(f'({ref}) массовое движение: {m["n_banks"]} банков изменили '
-                     f'ставки «{_cat_ru(m["category"])}» за 48 ч'
-                     f' ({", ".join(m["banks"][:4])}){note}')
-    n_chg = 0
-    for c in (tm.get("top_changes") or []):
-        age = _age_hours(c.get("changed_at"))
-        if age is not None and age > _TARIFF_FRESH_H:
-            continue                    # уже история — живёт в журнале изменений
-        ref = f"chg:{n_chg}"
-        reg[ref] = {"kind": "tariff_move", "data": c}
-        lines.append(f'({ref}) {c["bank"]}: «{c["title"]}» ({_cat_ru(c["category"])}) '
-                     f'{c["from"]}% → {c["to"]}% (Δ{c["delta"]:+})'
-                     + (f', {round(age)} ч назад' if age is not None else ''))
-        n_chg += 1
-        if n_chg >= 5:
-            break
-    kr = tm.get("key_rate") or {}
-    if kr.get("current") is not None:
-        reg["rate"] = {"kind": "rate_move", "data": kr}
-        spread = tm.get("dep_spread_pp")
-        lines.append(f'(rate) ключевая ставка {kr["current"]}% (на {kr.get("as_of")})'
-                     + (f', спред макс.вклад Сбера − КС: {spread:+} пп' if spread is not None else ""))
-
-    nw = (secs.get("news") or {}).get("payload") or {}
-    ni = 0
-    for g in (nw.get("groups") or []):
-        for it in g.get("items") or []:
-            ref = f"news:{ni}"
-            reg[ref] = {"kind": "news_alert", "data": it, "group": g.get("key")}
-            story = it.get("story") or []
-            lines.append(f'({ref}) новость [{g.get("key")}/{it.get("severity")}]: '
-                         f'{it["title"]} — {it.get("why") or it.get("summary") or ""}'
-                         + (f' [продолжение сюжета: {len(story)} эп. ранее,'
-                            f' с {story[0].get("date")}]' if story else ""))
-            ni += 1
-            if ni >= 10:
-                break
-        if ni >= 10:
-            break
-
-    # связки «новость ↔ наши данные» — детерминированный матчинг (этап 5)
-    try:
-        c_lines, c_reg = _connection_candidates(secs)
-        lines += c_lines
-        reg.update(c_reg)
-    except Exception:  # noqa: BLE001 — связки не должны ронять передовицу
-        log.warning("connection candidates failed", exc_info=True)
-
-    qo = (secs.get("quality_ops") or {}).get("payload") or {}
-    if qo.get("flags_err"):
-        lines.append(f'(ctx) флаги качества данных: {qo["flags_err"]} error, '
-                     f'{qo.get("flags_warn", 0)} warn — цифры проверяй с оглядкой')
-    return lines, reg
 
 
 def _ai_prompt(kind: str, d: dict) -> str:
     if kind == "review_spike":
         geo = d.get("geo") or {}
-        parts = [f'Разбери всплеск жалоб на тему «{d["label"]}» у Сбербанка: '
+        parts = [f'Разбери всплеск жалоб «{d["label"]}» у Сбербанка: '
                  f'{d["week"]} за 7 дней против ~{d.get("baseline_week")}/нед'
                  + (f' (×{d["ratio"]})' if d.get("ratio") else "")]
         if geo:
             parts.append(f'{geo["share"]}% жалоб из г. {geo["city"]}')
         if d.get("bank_specific"):
-            parts.append("рынок по теме ровный — похоже на нашу регрессию")
+            parts.append("у рынка без Сбера роста нет")
         parts.append("Найди вероятную причину, оцени регуляторный риск и предложи шаги аудита.")
         return ". ".join(parts)
-    if kind == "mass_move":
-        return (f'За последние 48 часов {d["n_banks"]} банков '
-                f'({", ".join(d["banks"][:5])}) изменили ставки в категории '
-                f'«{_cat_ru(d["category"])}». Разбери это движение рынка: вероятные '
-                f'причины, сравнение с позицией Сбера, риски и действия для аудита розницы.')
     if kind == "tariff_move":
-        return (f'Банк {d["bank"]} изменил ставку по продукту «{d["title"]}» '
-                f'({_cat_ru(d["category"])}) с {d["from"]}% до {d["to"]}%. Оцени '
-                f'значимость для позиции Сбера и стоит ли реагировать.')
-    if kind == "rate_move":
-        return (f'Ключевая ставка сейчас {d.get("current")}%. Проанализируй влияние '
-                f'на розничные продукты Сбера (вклады, кредиты, ипотека) и позицию '
-                f'относительно рынка.')
+        return (f'Банк {d["bank"]} изменил условия «{d["title"]}» ({_cat_ru(d["category"])}) '
+                f'с {d["from"]}% до {d["to"]}%. Оцени последствия для клиентов и риски для аудита розницы.')
     if kind == "news_alert":
-        return (f'Проанализируй новость для аудита розничного бизнеса Сбера: '
-                f'«{d.get("title")}» ({d.get("url")}). Какие риски и какие действия '
-                f'стоит предпринять?')
-    if kind == "connection":
-        n = d.get("news") or {}
-        if d.get("theme"):
-            t = d["theme"]
-            return (f'Внешняя новость «{n.get("title")}» совпала с нашими данными: '
-                    f'жалобы «{t.get("label")}» — {t.get("week")} за 7 дней, '
-                    f'×{t.get("gap")} к рынку. Разбери связь: одно ли это событие, '
-                    f'какова причинность, какие шаги аудита розницы Сбера.')
-        m = d.get("mass") or {}
-        return (f'Внешняя новость «{n.get("title")}» совпала с движением рынка: '
-                f'{m.get("n_banks") or "несколько"} банков изменили '
-                f'«{_cat_ru(d.get("category"))}» за 48 ч'
-                + (f', ключевая ставка {d.get("key_rate")}%' if d.get("key_rate") is not None else "")
-                + '. Оцени связь, позицию Сбера и действия аудита.')
+        return (f'Проанализируй для аудита розничного бизнеса Сбера: «{d.get("title")}» '
+                f'({d.get("url")}). Какой процесс затронут, какие риски, что проверить и что запросить?')
+    if kind == "loophole":
+        return (f'Разбери лазейку в продуктах Сбера: «{d.get("title")}» ({d.get("url")}). '
+                f'Насколько она реальна, каков ущерб для банка, какие контроли проверить?')
     return ""
 
 
@@ -928,185 +430,340 @@ def _drill(kind: str, d: dict) -> dict:
              "bank": d.get("bank_slug"), "offer": d.get("offer_id"),
              "change": d.get("change_id")}
         return {"page": "market", "params": {k: v for k, v in p.items() if v}}
-    if kind == "mass_move":
-        return {"page": "market",
-                "params": {"category": d.get("category"), "view": "changes"}}
-    if kind == "rate_move":
-        return {"page": "market", "params": {"view": "changes"}}
     if kind == "news_alert":
         return {"url": d.get("url")}
-    if kind == "connection":
-        if d.get("theme"):
-            return {"page": "reviews", "params": {"theme": (d["theme"] or {}).get("key")}}
-        return {"page": "market",
-                "params": {"category": d.get("category"), "view": "changes"}}
+    if kind == "loophole":
+        return {"page": "loophole", "params": {}} if not d.get("url") else {"url": d.get("url")}
     return {}
 
 
 def _provenance(kind: str, d: dict) -> str:
     if kind == "review_spike":
-        return f'banki.ru · {d.get("week")} жалоб/7дн · норма — среднее за 7 нед + сверка с рынком'
-    if kind in ("mass_move", "tariff_move"):
-        return "журнал изменений тарифов (banki.ru/sravni.ru)"
-    if kind == "rate_move":
-        return f'ЦБ РФ · официально · на {d.get("as_of")}'
+        return (f'жалобы всех площадок, разметка ИИ · {d.get("week")} за 7 дн · норма — '
+                f'7 прошлых недель, рост статистически значим')
+    if kind == "tariff_move":
+        return "журнал изменений тарифов · проверено на сбои сбора"
     if kind == "news_alert":
-        return f'{d.get("domain") or d.get("source") or "пресса"}'
-    if kind == "connection":
-        src = ((d.get("news") or {}).get("domain")) or "пресса"
-        inside = "жалобы клиентов" if d.get("theme") else "журнал тарифов"
-        return f'связка: {src} × наши данные ({inside})'
+        src = d.get("domain") or d.get("source") or "пресса"
+        n = int(d.get("echo") or 1)
+        return f'{src}' + (f' · ещё {n - 1} ист.' if n > 1 else "")
+    if kind == "loophole":
+        return "вкладка «Уязвимости» · предварительная классификация"
     return ""
 
 
-def _fallback_headline(reg: dict[str, dict]) -> dict:
-    """LLM недоступен → детерминированная передовица из топ-сигналов."""
-    insights = []
-    for ref, meta in list(reg.items())[:4]:
-        d, kind = meta["data"], meta["kind"]
-        if kind == "review_spike":
+def _fallback_headline(leads: list[dict]) -> dict:
+    """Модель недоступна → детерминированная передовица из поводов."""
+    cards = []
+    for ld in leads[:5]:
+        d = ld["data"]
+        if ld["kind"] == "review_spike":
             title = (f'Всплеск жалоб «{d["label"]}»: {d["week"]} за неделю'
                      + (f' (×{d["ratio"]})' if d.get("ratio") else ""))
-            sev = "risk" if d.get("level") == "high" else "watch"
-        elif kind == "mass_move":
-            title = f'{d["n_banks"]} банков изменили ставки «{_cat_ru(d["category"])}» за 48 ч'
-            sev = "watch"
-        elif kind == "tariff_move":
-            title = f'{d["bank"]}: {d["from"]}% → {d["to"]}% ({_cat_ru(d["category"])})'
-            sev = "watch"
-        elif kind == "rate_move":
-            title = f'Ключевая ставка {d.get("current")}%'
-            sev = "neutral"
-        elif kind == "connection":
-            title = (f'Связка: {((d.get("news") or {}).get("title") or "")[:60]}'
-                     f' ↔ наши данные')
-            sev = "watch"
+        elif ld["kind"] == "tariff_move":
+            title = f'Сбер: «{d["title"]}» {d["from"]}% → {d["to"]}%'
         else:
             title = d.get("title") or ""
-            sev = {"red": "risk", "amber": "watch", "green": "good"}.get(
-                d.get("severity"), "neutral")
-        insights.append({"ref": ref, "severity": sev, "likelihood": 2, "impact": 2,
-                         "title": title, "so_what": ""})
-    head = insights[0]["title"] if insights else f"Сводка за {today_ru()}"
-    return {"headline": head, "hot": "", "insights": insights}
+        cards.append({"ref": ld["ref"], "title": title,
+                      "so_what": d.get("summary") or "", "idea": d.get("idea") or ""})
+    head = cards[0]["title"] if cards else f"Сводка за {today_ru()}"
+    return {"headline": head, "hot": "", "cards": cards, "market_note": "", "quiet_note": ""}
 
 
 async def headline(day: date) -> dict:
     secs = await asyncio.to_thread(store._read_day_rows, day)
-    lines, reg = _build_candidates(secs)
-    brief_md = ((secs.get("reviews_brief") or {}).get("payload") or {}).get("markdown")
-
-    # чем был занят заголовок в прошлые дни: сигнал, уже побывавший главным,
-    # не должен становиться заголовком снова без нового поворота
-    prev = await asyncio.to_thread(store.recent_headlines, day, 5)
-    lead_before = {p["lead_ref"] for p in prev if p.get("lead_ref")}
-    if lead_before:
-        lines = [ln + "  [УЖЕ БЫЛ ГЛАВНЫМ В ПРОШЛЫХ ВЫПУСКАХ]"
-                 if any(ln.startswith(f"({r})") for r in lead_before) else ln
-                 for ln in lines]
-    prev_block = ""
-    if prev:
-        prev_block = ("\n\nЗАГОЛОВКИ ПРОШЛЫХ ВЫПУСКОВ (не повторяй их тему и "
-                      "формулировку; если сигнал тот же и не усилился — веди "
-                      "выпуск ДРУГИМ сигналом):\n"
-                      + "\n".join(f'- {p["date"]}: {p["headline"]}'
-                                  for p in prev if p.get("headline")))
+    prev = await asyncio.to_thread(store.recent_headlines, day, 3)
+    prev_leads = {p["lead_ref"] for p in prev if p.get("lead_ref")}
+    leads, bg = await asyncio.to_thread(_build_leads, secs, prev_leads)
+    top = await asyncio.to_thread(_distinct_leads, [ld for ld in leads if ld["score"] >= 6])
+    top = top[:6]
 
     result, ti, to, model, degraded = None, 0, 0, None, False
-    if lines:
-        user = (
-            f"Дата выпуска: {today_ru()}.\nСИГНАЛЫ ДНЯ:\n" + "\n".join(lines)
-            + prev_block
-            + (f"\n\nАНАЛИЗ ЖАЛОБ (для контекста):\n{brief_md[:1200]}" if brief_md else "")
-            + "\n\nВерни СТРОГО JSON без markdown:\n"
-              '{"headline":"заголовок дня, до 90 знаков, самый сильный сигнал",'
-              '"hot":"СКОПИРУЙ ДОСЛОВНО 2-4 слова из headline (теми же буквами и '
-              'регистром) — самый важный фрагмент для оранжевого акцента; '
-              'предпочти цифру/название банка, если есть",'
-              '"insights":[{"ref":"<id сигнала из скобок>","severity":"risk|watch|good|neutral",'
-              '"likelihood":1-3,"impact":1-3,"title":"инсайт человеческим языком, с цифрой",'
-              '"so_what":"почему важно аудитору розницы Сбера, 1-2 фразы"}],'
-              '"quiet_note":"1 фраза про то, где спокойно (или пустая строка)"}\n'
-              "3–6 инсайтов, отсортируй по важности для аудита. ref бери ТОЛЬКО из списка."
-        )
-        try:
-            # 3000 токенов: gemini многословен (обёртка ```json + полные инсайты),
-            # при 6 сигналах на проде 1400 обрезало JSON посреди строки → парс падал
-            raw, ti, to = await _chat(insight_model(),
-                                      today_anchor() + "\n\n" + _HEAD_SYSTEM,
-                                      user, max_tokens=3000, temperature=0.3)
+    if top or bg:
+        lines = [f"{k + 1}. ({ld['ref']}) {ld['facts']}" for k, ld in enumerate(top)]
+        prev_block = ("\n\nЗАГОЛОВКИ ПРОШЛЫХ ВЫПУСКОВ (не повторяй формулировки):\n"
+                      + "\n".join(f'- {p["date"]}: {p["headline"]}' for p in prev if p.get("headline"))
+                      if prev else "")
+        user = (f"Дата выпуска: {today_ru()}.\nПОВОДЫ (по убыванию важности):\n"
+                + ("\n".join(lines) or "— поводов с высокой ценностью нет")
+                + "\n\nФОН РЫНКА:\n" + ("\n".join(f"- {b}" for b in bg) or "—")
+                + prev_block
+                + "\n\nВерни СТРОГО JSON без markdown: "
+                  '{"headline":"...","hot":"2-4 слова ДОСЛОВНО из headline",'
+                  '"cards":[{"ref":"<id из скобок>","title":"...","so_what":"...","idea":"..."}],'
+                  '"market_note":"..."} — cards по всем поводам в том же порядке.')
+        for mdl in (_HEAD_MODEL, insight_model()):
             try:
+                raw, ti, to = await _chat(mdl, today_anchor() + "\n\n" + _HEAD_SYSTEM, user,
+                                          max_tokens=3500, temperature=0.2)
                 result = _loose_json_loads(raw)
-            except ValueError:              # обрезка/мусор → ретрай холоднее
-                raw, ti2, to2 = await _chat(insight_model(),
-                                            today_anchor() + "\n\n" + _HEAD_SYSTEM,
-                                            user, max_tokens=3000, temperature=0.0)
-                ti, to = ti + ti2, to + to2
-                result = _loose_json_loads(raw)
-            model = insight_model()
-        except Exception as e:  # noqa: BLE001
-            log.warning("headline LLM failed: %s", e)
+                model = mdl
+                break
+            except Exception as e:  # noqa: BLE001
+                log.warning("headline: %s не ответила (%s)", mdl, e)
     if result is None:
-        result = _fallback_headline(reg)
+        result = _fallback_headline(top)
         degraded = True
 
-    # обогащение инсайтов детерминированным кодом (drill/ai_prompt/viz/provenance)
-    def _enrich(raw_list: list) -> list:
-        out, seen_refs = [], set()
-        for ins in (raw_list or [])[:10]:
-            ref = str(ins.get("ref") or "").strip().strip("()")
-            meta = reg.get(ref)
-            if not meta or ref in seen_refs:    # дедуп: не 3 карточки про одно
-                continue
-            seen_refs.add(ref)
-            kind, d = meta["kind"], meta["data"]
-            sev = str(ins.get("severity") or "watch")
-            try:
-                lik = max(1, min(3, int(ins.get("likelihood") or 2)))
-                imp = max(1, min(3, int(ins.get("impact") or 2)))
-            except (TypeError, ValueError):
-                lik, imp = 2, 2
-            out.append({
-                "ref": ref, "kind": kind,
-                "severity": sev if sev in ("risk", "watch", "good", "neutral") else "watch",
-                "likelihood": lik, "impact": imp,
-                "title": str(ins.get("title") or "")[:180],
-                "so_what": str(ins.get("so_what") or "")[:280],
-                "data": d,
-                "drill": _drill(kind, d),
-                "ai_prompt": _ai_prompt(kind, d),
-                "provenance": _provenance(kind, d),
-                **({"after_pause": True} if meta.get("after_pause") else {}),
-            })
-            if len(out) >= 6:
-                break
-        return out
-
-    insights = _enrich(result.get("insights") or [])
-    if not insights and (result.get("insights") or []):
-        log.warning("headline: все ref LLM мимо реестра: %s (reg: %s)",
-                    [str(i.get("ref"))[:30] for i in result["insights"][:8]],
-                    list(reg)[:12])
-    if not insights and reg:
-        # LLM вернул пусто или ВСЕ ref мимо реестра → детерминированные карточки
-        # (заголовок LLM при этом оставляем)
-        insights = _enrich(_fallback_headline(reg)["insights"])
-
+    by_ref = {str(c.get("ref") or "").strip("() "): c for c in (result.get("cards") or [])
+              if isinstance(c, dict)}
+    insights = []
+    for ld in top:                         # порядок — наш, текст — модели
+        c = by_ref.get(ld["ref"]) or {}
+        d = ld["data"]
+        sev, lik, imp = _sev(ld["score"])
+        title = str(c.get("title") or d.get("title") or d.get("label") or "")[:180]
+        if not title:
+            continue
+        insights.append({
+            "ref": ld["ref"], "kind": ld["kind"], "severity": sev,
+            "likelihood": lik, "impact": imp, "score": round(ld["score"], 2),
+            "title": title,
+            "so_what": str(c.get("so_what") or "")[:280],
+            "idea": str(c.get("idea") or d.get("idea") or "")[:260],
+            "evidence": _evidence_line(d.get("evidence")) if ld["kind"] == "news_alert" else "",
+            "data": d, "drill": _drill(ld["kind"], d), "ai_prompt": _ai_prompt(ld["kind"], d),
+            "provenance": _provenance(ld["kind"], d),
+        })
     rp = (secs.get("reviews_pulse") or {}).get("payload") or {}
     nw = (secs.get("news") or {}).get("payload") or {}
     n_news = sum(len(g.get("items") or []) for g in (nw.get("groups") or []))
-    stats = {
-        "risk": sum(1 for i in insights if i["severity"] == "risk"),
-        "good": sum(1 for i in insights if i["severity"] == "good"),
-        "news": n_news,
-        "checked_themes": (rp.get("checked") or {}).get("themes") or 0,
-    }
+    # «где спокойно» — детерминированно: модель писала странное вроде
+    # «по жалобам на кредит мошенников за неделю 0 обращений»
+    n_sig = len(rp.get("signals") or [])
+    quiet = ("Жалобы клиентов по остальным проблемам кодификатора — в пределах нормы."
+             if n_sig else "Значимых всплесков жалоб клиентов за неделю нет.")
+    result["quiet_note"] = quiet
+    head = str(result.get("headline") or "")[:160]
+    if not head or not insights:
+        head = head or (insights[0]["title"] if insights else f"Сводка за {today_ru()}")
     return {
-        "headline": str(result.get("headline") or "")[:160] or f"Сводка за {today_ru()}",
+        "headline": head,
         "hot": str(result.get("hot") or "")[:60],
         "quiet_note": str(result.get("quiet_note") or "")[:200],
+        "market_note": str(result.get("market_note") or "")[:400],
         "insights": insights,
-        "stats": stats,
+        "lead_ref": insights[0]["ref"] if insights else None,
+        "stats": {"risk": sum(1 for i in insights if i["severity"] == "risk"),
+                  "good": 0, "news": n_news,
+                  "checked_themes": (rp.get("checked") or {}).get("themes") or 0,
+                  "stream_24h": (nw.get("triage") or {}).get("stream_24h")},
         **({"_status": "degraded"} if degraded else {}),
         **({"_llm_model": model, "_tokens_in": ti, "_tokens_out": to} if model else {}),
     }
+
+
+_NEWS_MAX = int(os.getenv("DIGEST_NEWS_MAX", "14"))
+
+
+_BG_CATS = ("market_background", "macro", "competitor_risk")
+
+
+def _domain(url: str | None) -> str:
+    from urllib.parse import urlparse
+    try:
+        return urlparse(url or "").netloc.replace("www.", "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _news_item(e: dict) -> dict:
+    s2 = e["s2"] or {}
+    v = int(e["value"] or 0)
+    lead = e["lead"]
+    return {"title": s2.get("headline") or lead["title"], "src_title": lead["title"],
+            "summary": s2.get("summary") or "",
+            "why": s2.get("idea") or s2.get("sber") or "",
+            "sber": s2.get("sber") or "", "idea": s2.get("idea") or "",
+            "request": s2.get("request") or "", "deadline": s2.get("deadline") or "",
+            "codes": s2.get("codes") or [],
+            "url": lead["url"], "domain": _domain(lead["url"]), "source": lead["source"],
+            "ts": lead["ts"].isoformat() if lead["ts"] else None,
+            "severity": "red" if v >= 9 else ("amber" if v >= 7 else "green"),
+            "score": v, "event": s2.get("category"), "echo": e["n_sources"],
+            "event_id": e["event_id"], "image": lead.get("image"), "products": [],
+            "tag": lead.get("rtype")}
+
+
+_UNFAV = {"deposit": -1, "savings_account": -1, "credit": 1, "mortgage": 1, "auto_loan": 1,
+          "card_credit": 1}
+
+
+def _codes_evidence(codes: list[str]) -> dict | None:
+    """Наши данные к поводу: жалобы Сбера по связанным кодам кодификатора —
+    за 90 дней и неделя к норме. Так новость становится связкой «внешнее
+    событие ↔ что видят наши клиенты»."""
+    codes = [c for c in (codes or []) if c][:3]
+    if not codes:
+        return None
+    try:
+        from ..rag import reviews_dash as rd
+        from ..rag import review_codebook as cb
+        lab = rd._topic_week_counts("Сбербанк", None)
+        if not lab:
+            return None
+        _t, cnt = lab
+        week = sum(int(cnt.get(f"{c}_w0", 0)) for c in codes)
+        norm = sum(int(cnt.get(f"{c}_b", 0)) for c in codes) / 7.0
+        with db.session() as s:
+            d90 = int(s.execute(text("""
+                SELECT count(*) FROM review_index
+                WHERE bank = 'Сбербанк' AND kind IN ('complaint', 'mixed') AND issue = ANY(:c)
+                  AND dt >= now() - interval '90 days' AND dt <= now()"""), {"c": codes}).scalar() or 0)
+        if not d90:
+            return None
+        labels = [(cb.issue_obj(c) or {}).get("short") for c in codes]
+        return {"codes": codes, "labels": [x for x in labels if x], "week": week,
+                "norm": round(norm, 1), "d90": d90,
+                "up": bool(week >= 5 and norm > 0 and week >= 1.5 * norm)}
+    except Exception:  # noqa: BLE001
+        log.info("headline: данные жалоб к поводу не посчитались", exc_info=True)
+        return None
+
+
+def _evidence_line(ev: dict | None) -> str:
+    if not ev:
+        return ""
+    lab = " / ".join(ev["labels"][:2]) or "по теме"
+    return (f'жалобы Сбера «{lab}»: {ev["d90"]} за 90 дн, за неделю {ev["week"]}'
+            f' при норме ~{ev["norm"]}' + (" — выше нормы" if ev.get("up") else ""))
+
+
+def _new_sber_loopholes() -> list[dict]:
+    try:
+        with db.session() as s:
+            rows = s.execute(text("""
+                SELECT record_id, coalesce(title, left(snippet, 120)) AS title, url, verdict_reason,
+                       verdict_confidence, collected_at
+                FROM auditlens.loophole_record
+                WHERE is_loophole AND bank_slug = 'sberbank' AND verdict_confidence >= 0.85
+                  AND collected_at > now() - interval '72 hours'
+                ORDER BY verdict_confidence DESC, collected_at DESC LIMIT 3""")).mappings().all()
+        return [dict(r) for r in rows]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str]]:
+    """Поводы из всех вкладок с детерминированной оценкой. Возвращает
+    (упорядоченные поводы, строки блока «фон рынка»)."""
+    leads: list[dict] = []
+    nw = (secs.get("news") or {}).get("payload") or {}
+    for g in nw.get("groups") or []:
+        for it in g.get("items") or []:
+            v = float(it.get("score") or 0)
+            if v < 7:
+                continue
+            ev = _codes_evidence(it.get("codes") or [])
+            score = v
+            if it.get("event") == "sber" or "сбер" in (it.get("title") or "").lower():
+                score += 0.5
+            if it.get("deadline"):
+                try:
+                    left = (date.fromisoformat(it["deadline"]) - date.today()).days
+                    if 0 <= left <= 14:
+                        score += 0.5
+                except ValueError:
+                    pass
+            if int(it.get("echo") or 1) >= 3:
+                score += 0.3
+            if ev and ev.get("up"):
+                score += 0.5
+            leads.append({"ref": f"news:{it.get('event_id') or it.get('url')}", "kind": "news_alert",
+                          "score": score, "data": {**it, "evidence": ev},
+                          "facts": (f'новость ({it.get("domain")}, ценность {int(v)}/10): {it.get("title")}. '
+                                    f'{it.get("summary") or ""} Затронуто: {it.get("sber") or "—"}. '
+                                    f'Идея проверки от отбора: {it.get("idea") or "—"}'
+                                    + (f'. Срок: {it["deadline"]}' if it.get("deadline") else "")
+                                    + (f'. Наши данные: {_evidence_line(ev)}' if ev else ""))})
+    rp = (secs.get("reviews_pulse") or {}).get("payload") or {}
+    for s_ in (rp.get("signals") or [])[:4]:
+        score = 8.5 if s_.get("level") == "high" else 7.5
+        if s_.get("bank_specific"):
+            score += 0.5
+        leads.append({"ref": f"rev:{s_['key']}", "kind": "review_spike", "score": score, "data": s_,
+                      "facts": (f'всплеск жалоб клиентов Сбера «{s_["label"]}»: {s_["week"]} за 7 дн '
+                                f'при норме ~{s_.get("baseline_week")}/нед'
+                                + (f', ×{s_["ratio"]}' if s_.get("ratio") else "")
+                                + (", только у Сбера" if s_.get("bank_specific") else "")
+                                + (f', {s_["geo"]["share"]}% из г. {s_["geo"]["city"]}' if s_.get("geo") else "")
+                                + ". Причину см. в анализе жалоб недели.")})
+    tm = (secs.get("tariff_moves") or {}).get("payload") or {}
+    for c in (tm.get("top_changes") or []):
+        if not c.get("is_sber"):
+            continue
+        age = _age_hours(c.get("changed_at"))
+        if age is not None and age > _TARIFF_FRESH_H:
+            continue
+        direction = _UNFAV.get(c.get("category"), 0) * (1 if c["delta"] > 0 else -1)
+        score = 6.5 + (0.5 if direction > 0 else 0)
+        leads.append({"ref": f"chg:{c.get('change_id')}", "kind": "tariff_move", "score": score,
+                      "data": c,
+                      "facts": (f'Сбер изменил условия «{c["title"]}» ({_cat_ru(c["category"])}): '
+                                f'{c["from"]}% → {c["to"]}%'
+                                + (" — хуже для клиента" if direction > 0 else ""))})
+        break
+    for lp in _new_sber_loopholes()[:1]:
+        leads.append({"ref": f"loop:{lp['record_id']}", "kind": "loophole", "score": 6.0,
+                      "data": {**lp, "collected_at": str(lp.get("collected_at"))},
+                      "facts": f'новая лазейка в продуктах Сбера (предварительно): {lp.get("title")}. '
+                               f'{lp.get("verdict_reason") or ""}'})
+    for ld in leads:                       # не вести выпуск тем же поводом второй день
+        if ld["ref"] in prev_leads:
+            ld["score"] -= 1.0
+    leads.sort(key=lambda x: -x["score"])
+
+    bg: list[str] = []
+    kr = tm.get("key_rate") or {}
+    if kr.get("current") is not None:
+        bg.append(f'ключевая ставка {kr["current"]}% (на {kr.get("as_of")})'
+                  + (f', спред макс. вклада Сбера к ключевой {tm["dep_spread_pp"]:+} пп'
+                     if tm.get("dep_spread_pp") is not None else ""))
+    for m in (tm.get("mass_updates") or [])[:2]:
+        bg.append(f'{m["n_banks"]} банков изменили ставки «{_cat_ru(m["category"])}» за 48 ч')
+    n = 0
+    for c in (tm.get("top_changes") or []):
+        if c.get("is_sber"):
+            continue
+        age = _age_hours(c.get("changed_at"))
+        if age is not None and age > _TARIFF_FRESH_H:
+            continue
+        bg.append(f'{c["bank"]}: «{c["title"]}» {c["from"]}% → {c["to"]}%')
+        n += 1
+        if n >= 3:
+            break
+    for b in (nw.get("background") or [])[:5]:
+        bg.append(f'новость: {b.get("title")}')
+    return leads, bg
+
+
+def _distinct_leads(leads: list[dict]) -> list[dict]:
+    """Два повода об одном сюжете — одна карточка (оставляем более весомый).
+    Пример 24.09: «ЦБ и НСПК дорабатывают «Добрую волю»» и «НСПК тестирует
+    автоисключение реквизитов» — разные источники одного события."""
+    if len(leads) < 2:
+        return leads
+    try:
+        from ..rag import embedder
+        texts = [str(ld["data"].get("title") or ld["data"].get("label") or ld["facts"])[:200]
+                 for ld in leads]
+        vecs = embedder.embed_batch(texts)
+    except Exception:  # noqa: BLE001 — без векторов просто не склеиваем
+        return leads
+    keep: list[int] = []
+    for i in range(len(leads)):
+        if any(embedder.cosine_similarity(vecs[i], vecs[j]) >= 0.72 for j in keep):
+            continue
+        keep.append(i)
+    return [leads[i] for i in keep]
+
+
+def _sev(score: float) -> tuple[str, int, int]:
+    if score >= 8.5:
+        return "risk", 3, 3
+    if score >= 7:
+        return "watch", 2, 3
+    return "neutral", 2, 2
+
+
+_HEAD_MODEL = os.getenv("DIGEST_HEAD_MODEL", "anthropic/claude-opus-4.8")

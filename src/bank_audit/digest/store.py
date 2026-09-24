@@ -98,6 +98,18 @@ def _read_day_rows(day: date) -> dict[str, dict]:
     return out
 
 
+def archive_day(day: date) -> int:
+    """Копия текущих секций дня в daily_digest_archive — перед ручной
+    перегенерацией."""
+    with db.session() as s:
+        return s.execute(text("""
+            INSERT INTO daily_digest_archive (digest_date, section, payload, status, generated_at)
+            SELECT digest_date, section, payload, status, generated_at
+              FROM daily_digest WHERE digest_date = :d
+            ON CONFLICT DO NOTHING
+        """), {"d": day}).rowcount or 0
+
+
 def recent_headlines(day: date, limit: int = 5) -> list[dict]:
     """Заголовки прошлых выпусков + их ведущие сигналы — чтобы передовица не
     повторялась. 07-10.08.2026 один и тот же ведущий сигнал (скачок ставки

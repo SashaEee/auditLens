@@ -613,7 +613,8 @@ const BF_KIND={
   tariff_move:{tag:"Тарифы"},
   rate_move:{tag:"Ключевая ставка"},
   news_alert:{tag:"Новость"},
-  exploit:{tag:"Уязвимости"},          // будущий источник соседней команды
+  loophole:{tag:"Уязвимости · Сбер"},
+  exploit:{tag:"Уязвимости"},
 };
 
 // ── мост телеметрии для компонентов ──────────────────────────────────────────
@@ -935,6 +936,24 @@ function BfLegend(){
   </div>;
 }
 
+// Оценка карточки аудитором: «Полезно» / «Не по делу». Это главный сигнал
+// качества передовицы — раньше о нём судили только по жалобам руководства.
+function BfFeedback({ins}){
+  const key="bf-fb:"+(ins.ref||"")+":"+new Date().toISOString().slice(0,10);
+  const[v,setV]=useState(()=>{try{return localStorage.getItem(key)||"";}catch{return "";}});
+  const send=verdict=>{
+    if(v===verdict)return;
+    setV(verdict);
+    try{localStorage.setItem(key,verdict);}catch{}
+    apiPost("/api/feedback",{kind:"digest_card",item_key:key.slice(6),verdict:verdict==="useful"?1:-1,
+      topics:[ins.kind||""],payload:{title:ins.title,ref:ins.ref,score:ins.score}}).catch(()=>{});
+  };
+  return <span className="bf-fb" role="group" aria-label="Оценка карточки">
+    <button className={"bf-fb-b"+(v==="useful"?" on":"")} onClick={()=>send("useful")} title="Полезно для работы">Полезно</button>
+    <button className={"bf-fb-b"+(v==="noise"?" on":"")} onClick={()=>send("noise")} title="Не по делу">Не по делу</button>
+  </span>;
+}
+
 function BfCard({ins,idx,lead}){
   const d=ins.data||{};
   const xp=xpRows(ins.kind,d);
@@ -962,6 +981,8 @@ function BfCard({ins,idx,lead}){
     </div>
     <h3 className="bf-title">{ins.title}</h3>
     {ins.so_what&&<div className="bf-sowhat">{ins.so_what}</div>}
+    {ins.idea&&<div className="bf-idea"><span className="bf-idea-l">Что проверить</span>{ins.idea}</div>}
+    {ins.evidence&&<div className="bf-ev" title="жалобы клиентов Сбера по связанным проблемам кодификатора">Наши данные · {ins.evidence}</div>}
     {viz&&<div className="bf-viz">{viz}</div>}
     {(ins.provenance||xp.length>0)&&<div className="bf-prov">
       {xp.length>0
@@ -971,10 +992,12 @@ function BfCard({ins,idx,lead}){
       {ins.provenance}
     </div>}
     <div className="bf-foot">
-      <button className="bf-btn" onClick={()=>bfGoDrill(ins.drill)}>
+      <button className="bf-btn" onClick={()=>{trkEvent({kind:"ui",page:"overview",
+          payload:{action:"insight_open",ref:ins.ref,kind:ins.kind}});bfGoDrill(ins.drill);}}>
         {ins.kind==="news_alert"?"Источник":"Разобраться"} <Ic.ext/>
       </button>
       {ins.ai_prompt&&<button className="bf-btn ai" onClick={()=>bfGoAI(ins.ai_prompt)}>✦ Спросить ИИ</button>}
+      <BfFeedback ins={ins}/>
     </div>
   </article>;
 }
@@ -2227,6 +2250,7 @@ function OverviewPage(){
               <div className="rv-radar-calm"><span className="rv-radar-check"><Ic.check/></span>
                 За сутки резких сигналов не выявлено{head.stats?` · проверено ${head.stats.checked_themes} тем жалоб`:""}</div>
             </div>}
+        {head.market_note&&<div className="bf-fon"><span className="bf-fon-l">Фон рынка</span><span>{head.market_note}</span></div>}
         {head.quiet_note&&<div className="bf-quiet"><span className="ok"><Ic.check/></span>{head.quiet_note}</div>}
 
         {/* ③b Анализ жалоб недели (LLM, reviews_brief) */}
@@ -7525,23 +7549,35 @@ function PuNewsQuality({q}){
   const junkPct=(r)=>r&&r.n_items?Math.round(100*r.junk/r.n_items):null;
   return <div className="pu-grid2 pu-sec">
     <div className="pu-card">
-      <div className="h"><span>Новости: LLM-судья выпуска</span>
-        {today&&<span className={"pu-chip "+(junkPct(today)>15?"bad":"ok")}>
-          сегодня мусор {junkPct(today)}%</span>}</div>
+      <div className="h"><span>Выпуск: независимый судья</span>
+        {today&&today.head!=null&&<span className={"pu-chip "+(today.head<4?"bad":"ok")}>
+          заголовок {today.head}/5</span>}</div>
+      <p className="t-cap" style={{margin:"0 0 10px"}}>
+        Рубрика — «повод для проверки аудитора розницы»: фон — ставки, тарифы, макро;
+        пропущено — сильные поводы из потока, не попавшие в выпуск.
+        {q.cards&&(q.cards.useful||q.cards.noise)?<> Аудиторы: полезно {q.cards.useful}, не по делу {q.cards.noise}.</>:null}</p>
       {s.length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
           Судья ещё не оценил ни одного выпуска (первый прогон — в {""}
           {String(8).padStart(2,"0")}:00 МСК).</div>
         :<table className="pu-tbl">
-          <thead><tr><th>дата</th><th>позиций</th><th>мусор</th><th>погранично</th><th>ср. балл</th></tr></thead>
+          <thead><tr><th>дата</th><th>заголовок</th><th>новостей</th><th>сильных</th><th>фон</th><th>мусор</th><th>пропущено</th></tr></thead>
           <tbody>{s.slice(-10).map((r,i)=><tr key={i}>
-            <td>{(r.d||"").slice(5)}</td><td>{r.n_items}</td>
+            <td>{(r.d||"").slice(5)}</td><td>{r.head!=null?`${r.head}/5`:"—"}</td><td>{r.n_items}</td>
+            <td>{r.strong??"—"}</td><td>{r.borderline}</td>
             <td style={r.junk>0?{color:"var(--warn)"}:null}>{r.junk}{r.n_items?` (${junkPct(r)}%)`:""}</td>
-            <td>{r.borderline}</td><td>{r.avg}</td>
+            <td style={r.missed>0?{color:"var(--warn)"}:null}>{r.missed??"—"}</td>
           </tr>)}</tbody></table>}
     </div>
     <div className="pu-card">
-      <div className="h"><span>Клики по новостям · {""}14 дн</span>
-        <span className="pu-chip">{nClicks}</span></div>
+      <div className="h"><span>Поток новостей · 24 ч</span>
+        <span className="pu-chip">{nClicks} кликов / 14 дн</span></div>
+      {q.stream&&<div style={{marginBottom:10}}>
+        <div className="pu-kv"><span>материалов собрано</span><b className="tnum">{q.stream.items_24h}</b></div>
+        <div className="pu-kv"><span>про розницу</span><b className="tnum">{q.stream.relevant_24h}</b></div>
+        <div className="pu-kv"><span>сильных поводов (от 7)</span><b className="tnum">{q.stream.strong_24h}</b></div>
+        {(q.stream.sources||[]).filter(x=>x.last_error).map((x,i)=><div key={i} className="pu-err">
+          <span className="k">{x.source}</span><span className="m">{x.last_error}</span></div>)}
+      </div>}
       {(q.top_clicked||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
           Кликов ещё нет — трекинг включён с 05.08.</div>
         :(q.top_clicked||[]).map((r,i)=><div key={i} className="pu-err">

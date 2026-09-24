@@ -1937,6 +1937,21 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .bf-title{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:16px;line-height:1.32;letter-spacing:-.01em}
 .bf-card.lead .bf-title{font-size:20px}
 .bf-sowhat{font-size:12px;line-height:1.55;color:var(--ink-2)}
+/* повод для проверки: что проверить и наши данные — тонко, без лишних рамок */
+.bf-idea{font-size:12px;line-height:1.5;color:var(--ink-1);padding-left:10px;border-left:2px solid var(--accent)}
+.bf-idea-l{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--accent);margin-bottom:2px}
+.bf-ev{font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.45;color:var(--ink-3)}
+.bf-fb{margin-left:auto;display:inline-flex;gap:2px}
+.bf-btn.ai~.bf-fb{margin-left:4px}
+.bf-fb-b{border:0;background:transparent;color:var(--ink-4);font-family:'JetBrains Mono',monospace;font-size:10px;
+  letter-spacing:.03em;padding:4px 6px;border-radius:6px;cursor:pointer;transition:color .15s,background .15s}
+.bf-fb-b:hover{color:var(--ink-2);background:var(--hair)}
+.bf-fb-b.on{color:var(--accent);background:var(--accent-soft)}
+/* фон рынка — одна спокойная строка под карточками вместо тарифных карточек */
+.bf-fon{display:flex;gap:12px;align-items:baseline;margin-top:14px;padding:12px 2px 0;border-top:1px solid var(--hair);
+  font-size:12.5px;line-height:1.55;color:var(--ink-2)}
+.bf-fon-l{flex:none;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-4)}
 .bf-viz{display:flex;align-items:center;gap:12px;min-height:22px;color:var(--ink-3)}
 .bf-prov{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bf-foot{display:flex;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid var(--hair)}
@@ -2483,6 +2498,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260924-reviews-ann"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-brief-v2"></script>
 </body>
 </html>

@@ -75,6 +75,11 @@ async def ensure_digest(trigger: str, day: date | None = None, force: bool = Fal
                     return False
                 if not force and store.day_complete(day, pipeline.REQUIRED):
                     return False   # перепроверка под локом
+                if force:
+                    # ручное обновление не затирает выпуск бесследно: прежняя
+                    # версия секций уходит в архив (24.09 обновление в 16:00
+                    # заменило утренний выпуск худшим и без следа)
+                    store.archive_day(day)
                 store.mark_run(day, trigger)
                 # отдельный event-loop в worker-потоке: генерация (LLM, fetch)
                 # не блокирует основной цикл FastAPI
@@ -474,3 +479,28 @@ async def bankiru_fts_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("разметка отзывов: %s", e)
         await asyncio.sleep(FTS_SYNC_EVERY_S)
+
+
+NEWSFLOW_EVERY_S = int(os.getenv("NEWSFLOW_EVERY_S", "1200"))
+
+
+async def newsflow_background_loop():
+    """Непрерывный сбор новостей «Обзора» (digest/newsflow): каждые 20 минут
+    все источники, первичный отсев, полный текст, склейка и оценка сильной
+    моделью. Выпуск по-прежнему один — в 07:00; частый сбор нужен, чтобы к
+    нему в хранилище был весь суточный поток: веб-превью Telegram показывает
+    ~20 последних постов, у Banksta это четыре часа, и сбор раз в сутки видел
+    только ночной хвост."""
+    from . import newsflow
+    await asyncio.sleep(120)
+    log.info("поток новостей: сбор раз в %d с", NEWSFLOW_EVERY_S)
+    while True:
+        try:
+            r = await newsflow.tick()
+            log.info("поток новостей: новых %s, ступень 1 — %s, ступень 2 — %s",
+                     (r.get("collect") or {}).get("added"),
+                     (r.get("stage1") or {}).get("scored"),
+                     (r.get("stage2") or {}).get("scored"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("поток новостей: %s", e)
+        await asyncio.sleep(NEWSFLOW_EVERY_S)
