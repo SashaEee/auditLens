@@ -462,6 +462,63 @@ def _valid_codes(v) -> list[str]:
             and c not in ("other", "no_issue")][:3]
 
 
+_DATE = re.compile(r"(?<![\d.,])(?:0?[1-9]|[12]\d|3[01])\.(?:0[1-9]|1[0-2])(?:\.\d{2,4})?"
+                   r"(?![\d,]|\.\d|\s*%)")
+_NUM = re.compile(r"\d[\d\u00a0\u202f ]*(?:[.,]\d+)?")
+
+
+def _nums(text_: str) -> set[float]:
+    out = set()
+    for m in _NUM.finditer(text_ or ""):
+        raw = re.sub(r"[\u00a0\u202f ]", "", m.group(0)).replace(",", ".")
+        try:
+            out.add(float(raw))
+        except ValueError:
+            pass
+    return out
+
+
+def ungrounded_numbers(generated: str, source: str) -> list[str]:
+    """Числа из текста модели, которых нет в источнике.
+
+    Мелкие целые (до 10) не проверяются: «три банка» модель пишет цифрой, а
+    в тексте словом. Годы тоже. Разрядность прощается: «600 тыс.» против
+    «600 000», «1,2 млрд» против «1 200 млн»."""
+    have = _nums(source)
+    scaled = {round(v * k, 6) for v in have for k in (1, 1e3, 1e6, 1e9, 1e-3, 1e-6, 1e-9)}
+    # даты модель переписывает в свой формат («01.07.2027» при «1 июля 2027»)
+    generated = _DATE.sub(" ", generated or "")
+    bad = []
+    for m in _NUM.finditer(generated):
+        raw = re.sub(r"[\u00a0\u202f ]", "", m.group(0)).replace(",", ".")
+        try:
+            v = float(raw)
+        except ValueError:
+            continue
+        if (v <= 10 and v == int(v)) or 1900 <= v <= 2100:
+            continue
+        if round(v, 6) not in scaled:
+            bad.append(m.group(0).strip())
+    return bad
+
+
+def _ground(s2: dict, e: dict) -> dict:
+    """Факты — только из источника: заголовок с чужим числом заменяется
+    исходным, предложение изложения с чужим числом выбрасывается."""
+    src = " ".join([e["lead"]["title"] or "", e["lead"]["body"] or ""]
+                   + [x.get("title") or "" for x in e["items"]])
+    bad_h = ungrounded_numbers(s2["headline"], src)
+    if bad_h:
+        s2["headline"] = e["lead"]["title"]
+    sents = re.split(r"(?<=[.!?])\s+", s2["summary"])
+    keep = [x for x in sents if not ungrounded_numbers(x, src)]
+    if len(keep) < len(sents):
+        s2["summary"] = " ".join(keep)
+    if bad_h or len(keep) < len(sents):
+        s2["ungrounded"] = bad_h + [n for x in sents for n in ungrounded_numbers(x, src)]
+    return s2
+
+
 async def stage2(since_h: float = 30, limit: int = 120) -> dict:
     """Сильная модель по событиям окна без оценки: полный текст ведущей записи
     и заголовки других источников. Пакеты по 6 событий."""
@@ -529,6 +586,7 @@ async def stage2(since_h: float = 30, limit: int = 120) -> dict:
                                if re.match(r"20\d\d-\d\d-\d\d", str(it.get("deadline") or "")) else ""),
                   "codes": _valid_codes(it.get("codes")),
                   "n_sources": e["n_sources"], "model": S2_MODEL}
+            s2 = _ground(s2, e)
             payload.append({"id": e["lead"]["id"], "v": val, "s2": json.dumps(s2, ensure_ascii=False)})
         if payload:
             with db.session() as s:

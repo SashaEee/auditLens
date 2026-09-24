@@ -71,3 +71,21 @@ def test_brief_items_drops_trailing_remarks():
           "По жалобам без точного кода: пункт «Новое» не формируется.")
     assert brief_items(md) == "- **[ВЫСОКИЙ]** **Чарджбэк** — рост ×3,6.\n  Аудитору: запросить выборку."
     assert brief_items("Вступление без пунктов") is None
+
+
+def test_ungrounded_numbers():
+    from bank_audit.digest.newsflow import ungrounded_numbers
+    src = "Хакер украл данные 600 000 карт; ущерб — 1,2 млрд рублей. Ставка 7.9% с 1 октября 2026 года."
+    assert ungrounded_numbers("Украдены данные 600 тыс. карт, ущерб 1,2 млрд", src) == []
+    assert ungrounded_numbers("Ставка 7,9% с 1 октября 2026", src) == []
+    assert ungrounded_numbers("Ущерб 1200 млн рублей", src) == []
+    assert ungrounded_numbers("Украдено 750 тыс. карт", src) == ["750"]
+    assert ungrounded_numbers("Три банка, 5 схем", src) == []
+
+
+def test_ungrounded_numbers_ignores_dates():
+    from bank_audit.digest.newsflow import ungrounded_numbers
+    src = "Закон вступает в силу с 1 июля 2027 года, реестры — с 5 октября."
+    assert ungrounded_numbers("Проверять происхождение средств до 01.07.2027", src) == []
+    assert ungrounded_numbers("Реестры с 05.10", src) == []
+    assert ungrounded_numbers("Ставка 12.5% с 01.07", src) == ["12.5"]
