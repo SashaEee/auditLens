@@ -641,7 +641,7 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
                              f"процент не показателен)")
                 else:
                     line += f", {st['delta_pct']:+.0f}% к пред. периоду"
-            elif st.get("prev") is not None:
+            elif st.get("prev") is not None and not st.get("delta_partial"):
                 line += f" (было {st['prev']})"
             th = c.get("theme")
             if th:
@@ -671,13 +671,13 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
     try:
         client = _client()
         r = await client.chat.completions.create(
-            model=insight_model(), messages=msgs, temperature=0.4, max_tokens=700)
+            model=insight_model(), messages=msgs, temperature=0.4, max_tokens=1500)
         raw = (r.choices[0].message.content or "").strip()
         try:
             parsed = _loose_json_loads(raw)
         except ValueError:              # обрезка/флак парсинга → один дешёвый ретрай
             r = await client.chat.completions.create(
-                model=insight_model(), messages=msgs, temperature=0.0, max_tokens=700)
+                model=insight_model(), messages=msgs, temperature=0.0, max_tokens=1500)
             parsed = _loose_json_loads((r.choices[0].message.content or "").strip())
         headline = str(parsed.get("headline") or "").strip()[:90] or None
         hot = str(parsed.get("hot") or "").strip()[:60] or None

@@ -307,6 +307,26 @@ def _coverage(bank_canon: str | None, days: int) -> float | None:
         return None
 
 
+def _prev_ready(bank_canon: str | None, days: int) -> bool:
+    """Размечено ли прошлое окно [2·days, days) целиком (≥97%).
+
+    Массовая разметка идёт от свежих отзывов к старым: пока прошлый период
+    размечен наполовину, в нём «не хватает» жалоб, и сравнение даёт ложный
+    рост (+170% вместо реальных единиц процентов). Такое сравнение не
+    показываем вовсе."""
+    try:
+        with db.session() as s:
+            n, lab = s.execute(text(
+                "SELECT count(*), count(*) FILTER (WHERE i.kind IS NOT NULL) FROM review_index i"
+                " WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)"
+                " AND i.dt >= now() - make_interval(days => :d2)"
+                " AND i.dt <  now() - make_interval(days => :d)"),
+                {"bank": bank_canon, "d": days, "d2": days * 2}).one()
+        return bool(n) and lab >= 0.97 * n
+    except Exception:  # noqa: BLE001
+        return False
+
+
 # ── Агрегаты ────────────────────────────────────────────────────────────────
 @_safe([])
 def banks(top: int = 60) -> list[dict]:
@@ -421,11 +441,14 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
                 f" AND i.dt >= now() - make_interval(days => :d)"
                 f" GROUP BY 1 ORDER BY 2 DESC"), {**ip, "d": days}).all()]
         total_market = sum(int(r[1]) for r in mk) or 1
-        delta = round(100.0 * (total_cur - total_prev) / total_prev, 1) if total_prev else None
+        ready = _prev_ready(bc, days)
+        delta = (round(100.0 * (total_cur - total_prev) / total_prev, 1)
+                 if total_prev and ready else None)
         return {
             "bank": bc, "product": product, "days": days,
             "total": total_cur, "prev": total_prev, "delta_pct": delta,
             "delta_low_n": bool(total_prev and min(total_cur, total_prev) < 30),
+            "delta_partial": not ready,
             "market_share_pct": round(100.0 * total_cur / total_market, 1),
             "market_rank": next((i + 1 for i, r in enumerate(mk) if r[0] == bc), None),
             "market_banks": len(mk),
@@ -511,6 +534,7 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
                   AND (CAST(:product AS text) IS NULL OR i.product = :product)
                 GROUP BY 1"""), p).all())
         total = sum(int(r[1]) for r in rows) or 1
+        ready = _prev_ready(bc, days)
         out = []
         for code, n, prev in rows:
             o = cb.issue_obj(code)
@@ -521,10 +545,12 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
                 continue
             out.append({**o, "n": n, "pct": round(100.0 * n / total, 1),
                         "n_also": int(also.get(code, 0)),
-                        "delta_pct": round(100.0 * (n - prev) / prev) if prev else (None if n == 0 else 100)})
+                        "delta_pct": (None if not ready else
+                                      round(100.0 * (n - prev) / prev) if prev else (None if n == 0 else 100))})
         out.sort(key=lambda x: (x["key"] == "other", -x["n"]))
         return {"bank": bc, "product": product, "days": days, "total": total,
-                "themes": out, "src": "annotation", "coverage": _coverage(bc, days * 2)}
+                "themes": out, "src": "annotation", "coverage": _coverage(bc, days * 2),
+                "delta_partial": not ready}
     return _cached(f"th:{bc}:{product}:{days}", _compute)
 
 
@@ -608,6 +634,83 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
 _SOURCE_LABEL = {"bankiru": "banki.ru", "banki_reviews": "banki.ru",
                  "sravni_reviews": "sravni.ru", "bankiros_reviews": "bankiros.ru",
                  "finuslugi_reviews": "finuslugi.ru"}
+
+
+_ESC_RU = {"none": "", "threat": "грозит", "filed": "обратился"}
+
+
+def export_rows(bank: str, product: str | None = None, theme: str | None = None,
+                days: int | None = None, city: str | None = None,
+                month: str | None = None, esc: bool = False,
+                limit: int = 10000) -> list[dict] | None:
+    """Жалобы с разметкой для выгрузки в таблицу — те же фильтры, что у ленты
+    (без поиска по смыслу: он возвращает топ-300 похожих, а выгрузка — это
+    полный срез). Раньше такой срез собирали вручную по запросу коллег."""
+    bc = resolve_bank(bank)
+    if not bc:
+        return None
+    if theme and theme not in cb.ISSUES:
+        return []
+    p: dict = {"bank": bc, "product": product, "lim": max(1, min(limit, 20000)),
+               "sv": _ann_schema()}
+    extra = ""
+    if days:
+        extra += " AND i.dt >= now() - make_interval(days => :d)"
+        p["d"] = days
+    if city:
+        extra += " AND i.city = :city"
+        p["city"] = city
+    if month:
+        extra += " AND date_trunc('month', i.dt) = to_date(:month, 'YYYY-MM')"
+        p["month"] = month
+    if esc:
+        extra += " AND i.esc"
+    if theme:
+        extra += " AND i.issue = :tkey"
+        p["tkey"] = theme
+    with db.session() as s:
+        rows = [dict(r) for r in s.execute(text(f"""
+            SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt, i.city, i.rating,
+                   i.issue, i.issues2, a.kind, a.esc, a.esc_to, a.no_consent, a.misled,
+                   a.vulnerable, a.amount, a.event_date, a.code_fit, a.new_topic,
+                   a.summary, a.quote
+            FROM review_index i
+            JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+            WHERE i.bank = :bank AND {_CMP}
+              AND (i.dt IS NULL OR i.dt <= now())
+              AND (CAST(:product AS text) IS NULL OR i.product = :product){extra}
+            ORDER BY i.dt DESC NULLS LAST
+            LIMIT :lim
+        """), p).mappings().all()]
+    from . import bankiru_fts
+    bodies = {}
+    for j in range(0, len(rows), 1000):
+        bodies.update(bankiru_fts.bodies_for(rows[j:j + 1000]))
+    out = []
+    for r in rows:
+        o = cb.issue_obj(r["issue"]) or {}
+        out.append({
+            "дата": r["dt"].date().isoformat() if r["dt"] else "",
+            "банк": r["bank"], "площадка": r["source"] or "bankiru",
+            "город": r["city"] or "", "оценка": r["rating"] if r["rating"] is not None else "",
+            "продукт": r["product"] or "",
+            "главная проблема": o.get("label") or r["issue"] or "",
+            "группа": o.get("group_label") or "",
+            "доп. проблемы": "; ".join((cb.issue_obj(x) or {}).get("label") or x
+                                       for x in (r["issues2"] or [])),
+            "эскалация": _ESC_RU.get(r["esc"] or "none", r["esc"] or ""),
+            "куда": ", ".join(r["esc_to"] or []),
+            "без согласия": "да" if r["no_consent"] else "",
+            "ввели в заблуждение": "да" if r["misled"] else "",
+            "уязвимый клиент": ", ".join(r["vulnerable"] or []),
+            "сумма": r["amount"] if r["amount"] is not None else "",
+            "дата события": r["event_date"] or "",
+            "вне кодификатора": (r["new_topic"] or "") if r["code_fit"] != "exact" else "",
+            "суть": r["summary"] or "", "цитата": r["quote"] or "",
+            "ссылка": r["url"],
+            "текст": (bodies.get(r["url"]) or {}).get("text") or "",
+        })
+    return out
 
 
 def _feed_from_index(bc: str, product: str | None, theme: str | None,
@@ -928,7 +1031,7 @@ def top_topic(bank: str, product: str | None, days: int = 90) -> dict | None:
     o = cb.issue_obj(row[0]) or {}
     n, prev = int(row[1]), int(row[2])
     return {"key": row[0], "label": o.get("label"), "risk": o.get("risk"), "n": n,
-            "delta_pct": (round(100.0 * (n - prev) / prev) if prev else None)}
+            "delta_pct": (round(100.0 * (n - prev) / prev) if prev and _prev_ready(bc, days) else None)}
 
 
 

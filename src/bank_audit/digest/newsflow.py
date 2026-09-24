@@ -201,7 +201,10 @@ def collect() -> dict:
                 for it in nm._parse_rss(r.text, src):
                     if it.get("ts") and it["ts"] < since:
                         continue
-                    t = clean_title(it.get("title") or "", it.get("snippet") or "")
+                    if src.get("title_join"):
+                        t = " ".join((it.get("title") or "").split())[:300]
+                    else:
+                        t = clean_title(it.get("title") or "", it.get("snippet") or "")
                     rows.append(_row(src, it["url"], it.get("ts"), t,
                                      it.get("snippet") or "", it.get("image")))
         except Exception as e:  # noqa: BLE001 — источник, не сбор целиком
@@ -251,13 +254,15 @@ _S1_SYSTEM = (
     "розничных практик; новые законы и нормативы по рознице, платежам, ПОД/ФТ; схемы "
     "мошенничества против клиентов банков; сбои, утечки, инциденты в банках; события Сбера; "
     "судебная практика по банковской рознице; защита прав потребителей финуслуг; статистика "
-    "ЦБ по жалобам и мошенничеству.\n"
+    "ЦБ по жалобам и мошенничеству; опубликованные законы и акты (указания ЦБ, приказы) о "
+    "банках, платежах, кредитах и вкладах граждан, ПОД/ФТ, персональных данных, антифроде.\n"
     "5–6: рынок розничных банковских продуктов: ставки, тарифы, акции банков, ключевая "
     "ставка, объёмы кредитов и вкладов, продукты конкурентов.\n"
     "3–4: финансы и макроэкономика без связи с розницей: фондовый рынок, облигации, "
     "корпоративные новости, бюджет, курс.\n"
     "0–2: не про финансовый сектор РФ: политика, происшествия, спорт, наука, зарубежные "
-    "новости без связи с РФ, реклама, подпись канала, рубрика без содержания.\n"
+    "новости без связи с РФ, реклама, подпись канала, рубрика без содержания; акты и "
+    "новости ведомств не о финансах (госслужба, ЖКХ, здравоохранение, питание).\n"
     f"type — одно из: {', '.join(_S1_TYPES)}.\n"
     'Ответ строго JSON без markdown: {"items":[{"n":1,"rel":7,"type":"fraud"}]} — по всем позициям.'
 )
@@ -678,5 +683,22 @@ def health() -> dict:
                    count(DISTINCT event_id) FILTER (WHERE rel >= 5)
             FROM news_item WHERE coalesce(ts, first_seen) > now() - interval '24 hours'
         """)).one()
+        # Отдача источника за 2 недели: слабые исключаем по цифрам, а не на глаз.
+        # «Сильный» — материал события с ценностью от 7 (оценка стоит на ведущей
+        # записи события, поэтому берём максимум по событию).
+        yld = [dict(r) for r in s.execute(text("""
+            WITH ev AS (
+                SELECT event_id, max(value) AS v, bool_or(published_on IS NOT NULL) AS pub
+                FROM news_item
+                WHERE event_id IS NOT NULL AND first_seen > now() - interval '14 days'
+                GROUP BY 1)
+            SELECT n.source, count(*) AS items,
+                   count(*) FILTER (WHERE n.rel >= 6) AS relevant,
+                   count(*) FILTER (WHERE ev.v >= 7) AS strong,
+                   count(*) FILTER (WHERE ev.pub) AS published
+            FROM news_item n LEFT JOIN ev USING (event_id)
+            WHERE n.first_seen > now() - interval '14 days'
+            GROUP BY 1 ORDER BY 4 DESC, 3 DESC
+        """)).mappings().all()]
     return {"sources": src, "items_24h": int(agg[0]), "relevant_24h": int(agg[1]),
-            "strong_24h": int(agg[2]), "events_24h": int(agg[3])}
+            "strong_24h": int(agg[2]), "events_24h": int(agg[3]), "yield_14d": yld}

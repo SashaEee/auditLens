@@ -70,6 +70,41 @@ _BRIEF_SYSTEM = (
 )
 
 
+# Формат разбора жалоб — общий для «Обзора» и «Отзывов» (фронт разбирает его в
+# карточки: уровень бейджем, проблема заголовком, «Аудитору» отдельной строкой).
+# Лимиты слов — не косметика: разбор без них занимал полэкрана на пункт.
+_BRIEF_FORMAT = (
+    "Выдай markdown-список (каждый пункт с «- »):\n"
+    "1) 1–4 пункта по приоритету, только по сигналам из списка выше: «**[ВЫСОКИЙ/СРЕДНИЙ]** "
+    "**<проблема, до 8 слов>** — что изменилось (с цифрой), пометь если *только у банка*/"
+    "*локально*/*ускоряется*; вероятная причина — ТОЛЬКО из жалоб этого сигнала. "
+    "Аудитору: одно конкретное действие». Разбор — не длиннее 45 слов, действие — не "
+    "длиннее 30.\n"
+    "2) Если среди жалоб без точного кода НЕ МЕНЬШЕ ТРЁХ об одном и том же — пункт "
+    "«- **Новое:** **<суть>** — что общего (≈N жалоб). Аудитору: действие», до 40 слов. "
+    "Одиночные и парные случаи не выноси.\n"
+    "Не переноси формулировки из жалоб одного сигнала в другой, не выдумывай причин. "
+    "Номера обращений, суммы и детали отдельных клиентов не приводи. Десятичные — через "
+    "запятую (×3,6). Только пункты списка: без вступления, выводов, разделителей и "
+    "пояснений о том, чего нет.")
+
+
+def brief_items(md: str | None) -> str | None:
+    """Оставляет от разбора только пункты списка: модель иногда дописывает
+    «---» и ремарку вроде «пункт „Новое“ не формируется» — аудитору это шум."""
+    out, cur = [], False
+    for ln in (md or "").splitlines():
+        st = ln.strip()
+        if st.startswith(("- ", "* ")):
+            cur = True
+            out.append(ln)
+        elif not st or st in ("---", "***", "___"):
+            cur = False
+        elif cur:
+            out.append(ln)
+    return "\n".join(out).strip() or None
+
+
 async def reviews_brief(day: date) -> dict:
     """Сводка по жалобам для утреннего выпуска.
 
@@ -90,14 +125,7 @@ async def reviews_brief(day: date) -> dict:
         f"Сводка на {today_ru()}.\n"
         "СИГНАЛЫ НЕДЕЛИ (числа точные, не меняй):\n" + "\n".join(lines) + f"\n{ov_line}\n\n"
         + context + "\n\n"
-        "Выдай markdown-список (каждый пункт с «- »):\n"
-        "1) 2–4 пункта по приоритету: «**[ВЫСОКИЙ/СРЕДНИЙ]** **<проблема>** — что "
-        "изменилось (с цифрой), пометь если *только у банка*/*локально*/*ускоряется*, "
-        "вероятная причина — ТОЛЬКО из жалоб этого сигнала, что проверить аудитору».\n"
-        "2) Если среди жалоб без точного кода несколько об одном и том же — пункт "
-        "«- **Новое:** <суть> (≈N жалоб)».\n"
-        "Не переноси формулировки из жалоб одного сигнала в другой, не выдумывай причин. "
-        "Коротко, аналитично, без вступления."
+        + _BRIEF_FORMAT
     )
     # LLM-сбой → degraded (фронт покажет детерминированные сигнал-чипы),
     # НЕ exception: failed-секция без истории copy_forward держала бы день
@@ -108,6 +136,7 @@ async def reviews_brief(day: date) -> dict:
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_brief LLM failed: %s", e)
         md, ti, to = None, None, None
+    md = brief_items(md)
     ov = (sig or {}).get("overall") or {}
     return {"markdown": md or None, "calm": False, "overall": ov,
             **({"_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
@@ -131,31 +160,10 @@ def _news_products(txt: str) -> list[str]:
     return [slug for rx, slug in _PRODUCT_KEYWORDS if rx.search(txt or "")][:2]
 
 
-# ── этап 2: триаж → жюри → фетч → редакция ────────────────────────────────────
-# Одновызовный отбор пропускал в выпуск пиар и рутину (замер 05.08.2026: 50
-# процентов мусора), а «why» писались по 160 символам сниппета — вода. Конвейер:
-#   1) триаж: вердикт ПО КАЖДОЙ позиции (score/тип события/причина отказа),
-#      с явными анти-примерами из реального мусора прошлых выпусков;
-#   2) жюри для пограничных (score 4-5): два скептика, задача — ОПРОВЕРГНУТЬ;
-#   3) полный текст статей финалистов (HTTP, без Playwright — дайджест не место
-#      для браузера) — рубричные заголовки ЦБ без контента бессмысленны;
-#   4) редакция: summary/why из фактического текста, без плана-на-12.
-# Любая ступень падает → _news_legacy (старый одновызовный путь), не пустой экран.
-
+# Тексты статей: фетч по HTTP (без Playwright — дайджест не место для браузера).
 _FETCH_N = int(os.getenv("DIGEST_NEWS_FETCH_N", "12"))           # статей за прогон
 _FETCH_TIMEOUT_S = float(os.getenv("DIGEST_NEWS_FETCH_TIMEOUT_S", "8"))
 _BODY_CHARS = int(os.getenv("DIGEST_NEWS_BODY_CHARS", "2000"))
-
-
-# Анти-примеры — РЕАЛЬНЫЙ мусор из выпусков/пулов (аудит 05.08.2026 + жалоба
-# владельца на «задержали в Дубае бизнесмена»). Позитивной рубрики LLM-фильтру
-# мало: без негативных примеров пограничное стабильно просачивается.
-
-
-
-
-
-
 
 
 def _reach_of(url: str | None, bodies: dict[str, str] | None) -> str:
@@ -416,6 +424,9 @@ def _ai_prompt(kind: str, d: dict) -> str:
     if kind == "loophole":
         return (f'Разбери лазейку в продуктах Сбера: «{d.get("title")}» ({d.get("url")}). '
                 f'Насколько она реальна, каков ущерб для банка, какие контроли проверить?')
+    if kind == "bank_rating":
+        return (f'{d.get("title")} за неделю. Какие жалобы Сбера за эту неделю могли это вызвать '
+                f'и что проверить в работе с обращениями?')
     return ""
 
 
@@ -434,6 +445,8 @@ def _drill(kind: str, d: dict) -> dict:
         return {"url": d.get("url")}
     if kind == "loophole":
         return {"page": "loophole", "params": {}} if not d.get("url") else {"url": d.get("url")}
+    if kind == "bank_rating":
+        return {"page": "banks", "params": {}}
     return {}
 
 
@@ -449,6 +462,8 @@ def _provenance(kind: str, d: dict) -> str:
         return f'{src}' + (f' · ещё {n - 1} ист.' if n > 1 else "")
     if kind == "loophole":
         return "вкладка «Уязвимости» · предварительная классификация"
+    if kind == "bank_rating":
+        return f'народный рейтинг banki.ru · {d.get("base_date")} → {d.get("as_of")}, держится 2 дня'
     return ""
 
 
@@ -624,9 +639,10 @@ def _codes_evidence(codes: list[str]) -> dict | None:
 def _evidence_line(ev: dict | None) -> str:
     if not ev:
         return ""
-    lab = " / ".join(ev["labels"][:2]) or "по теме"
-    return (f'жалобы Сбера «{lab}»: {ev["d90"]} за 90 дн, за неделю {ev["week"]}'
-            f' при норме ~{ev["norm"]}' + (" — выше нормы" if ev.get("up") else ""))
+    lab = ", ".join(f"«{x}»" for x in ev["labels"][:2]) or "по теме"
+    norm = str(ev["norm"]).replace(".", ",")
+    return (f'жалобы Сбера {lab}: {ev["d90"]} за 90 дн, за неделю {ev["week"]}'
+            f' при норме ~{norm}' + (" — выше нормы" if ev.get("up") else ""))
 
 
 def _new_sber_loopholes() -> list[dict]:
@@ -642,6 +658,49 @@ def _new_sber_loopholes() -> list[dict]:
         return [dict(r) for r in rows]
     except Exception:  # noqa: BLE001
         return []
+
+
+def _sber_rating_move() -> dict | None:
+    """Заметный сдвиг народного рейтинга Сбера на banki.ru за неделю.
+
+    Сбор этого рейтинга даёт сбои: 22.09 место скакнуло 17 → 33 и на следующий
+    день вернулось. Поэтому сдвиг засчитывается, только если он держится два
+    последних дня подряд. Доля решённых — накопительная по всем отзывам
+    (десятки тысяч), падение даже на 1 п. п. за неделю — уже много."""
+    try:
+        with db.session() as s:
+            rows = s.execute(text("""
+                WITH o AS (
+                    SELECT o.offer_id FROM product_offer o JOIN product_terms t ON t.offer_id = o.offer_id
+                    WHERE o.external_id LIKE 'banki_rating_%' AND o.title ILIKE '%— Сбербанк'
+                      AND t.valid_to IS NULL
+                    ORDER BY (t.raw->>'total_reviews')::int DESC NULLS LAST LIMIT 1)
+                SELECT DISTINCT ON (t.valid_from::date) t.valid_from::date AS d,
+                       (t.raw->>'place')::int AS place, (t.raw->>'solved_pct')::numeric AS solved
+                FROM product_terms t JOIN o USING (offer_id)
+                WHERE t.valid_from > now() - interval '12 days'
+                ORDER BY t.valid_from::date DESC, t.valid_from DESC
+            """)).mappings().all()
+    except Exception:  # noqa: BLE001
+        return None
+    by = {r["d"]: r for r in rows}
+    days = sorted(by, reverse=True)
+    if len(days) < 3:
+        return None
+    last2 = [by[days[0]], by[days[1]]]
+    base = next((by[d] for d in days if (days[0] - d).days >= 7), None)
+    if not base:
+        return None
+    out = {"as_of": days[0].isoformat(), "base_date": next(
+        d for d in days if (days[0] - d).days >= 7).isoformat()}
+    if base["place"] and all(x["place"] and x["place"] - base["place"] >= 5 for x in last2):
+        out.update(kind="place", before=base["place"], after=last2[0]["place"])
+        return out
+    if base["solved"] is not None and all(
+            x["solved"] is not None and float(base["solved"]) - float(x["solved"]) >= 1.0 for x in last2):
+        out.update(kind="solved", before=float(base["solved"]), after=float(last2[0]["solved"]))
+        return out
+    return None
 
 
 def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str]]:
@@ -708,6 +767,15 @@ def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str
                       "data": {**lp, "collected_at": str(lp.get("collected_at"))},
                       "facts": f'новая лазейка в продуктах Сбера (предварительно): {lp.get("title")}. '
                                f'{lp.get("verdict_reason") or ""}'})
+    rm = _sber_rating_move()
+    if rm:
+        what = (f'место Сбера в народном рейтинге banki.ru ухудшилось с {rm["before"]} до {rm["after"]}'
+                if rm["kind"] == "place" else
+                f'доля решённых жалоб Сбера в народном рейтинге banki.ru снизилась с '
+                f'{rm["before"]}% до {rm["after"]}%')
+        leads.append({"ref": f"bank:{rm['kind']}:{rm['as_of']}", "kind": "bank_rating", "score": 6.0,
+                      "data": {**rm, "title": what},
+                      "facts": what + f' за неделю (с {rm["base_date"]}), держится два дня подряд'})
     for ld in leads:                       # не вести выпуск тем же поводом второй день
         if ld["ref"] in prev_leads:
             ld["score"] -= 1.0
@@ -767,3 +835,59 @@ def _sev(score: float) -> tuple[str, int, int]:
 
 
 _HEAD_MODEL = os.getenv("DIGEST_HEAD_MODEL", "anthropic/claude-opus-4.8")
+
+
+# ── дневное дополнение ────────────────────────────────────────────────────────
+
+async def afternoon_update(day: date) -> dict:
+    """Дополнение к утреннему выпуску: «что нового с утра».
+
+    Утренний выпуск не меняется. Берутся только события из непрерывного потока
+    с ценностью от 7, появившиеся после утренней сборки и не опубликованные
+    утром (в том числе тем же сюжетом из другого источника), плюс всплески жалоб,
+    которых утром не было. Всё уже оценено потоком — моделей здесь нет, кроме
+    склейки сюжетов."""
+    from datetime import datetime, timedelta, timezone
+    from . import newsflow as nf
+    from ..rag import reviews_dash as rd
+    secs = await asyncio.to_thread(store._read_day_rows, day)
+    news_sec = secs.get("news") or {}
+    gen = news_sec.get("generated_at")
+    since = datetime.fromisoformat(gen) if gen else datetime.now(timezone.utc) - timedelta(hours=8)
+    try:
+        await nf.tick()
+    except Exception as e:  # noqa: BLE001
+        log.warning("дополнение: проход потока не удался (%s)", e)
+    # целые часы: окно в SQL — make_interval(hours => int)
+    hours = max(1, int((datetime.now(timezone.utc) - since).total_seconds() // 3600) + 2)
+    evs = await asyncio.to_thread(nf.day_events, hours, hours)
+    evs = [e for e in evs
+           if (e["value"] or 0) >= 7 and e["ts"] and e["ts"] > since
+           and not any(x.get("published_on") for x in e["items"])]
+    evs = await nf.merge_events(evs) if evs else []
+    # тот же сюжет, что утром, но из новой статьи — не дополнение
+    morning = [i.get("title") or "" for g in ((news_sec.get("payload") or {}).get("groups") or [])
+               for i in g.get("items") or []]
+    morning += [i.get("title") or "" for i in
+                ((secs.get("headline") or {}).get("payload") or {}).get("insights") or []]
+    fresh = evs
+    if evs and morning:
+        try:
+            from ..rag import embedder
+            mv = embedder.embed_batch([t[:200] for t in morning if t])
+            ev_titles = [((e["s2"] or {}).get("headline") or e["lead"]["title"])[:200] for e in evs]
+            fv = embedder.embed_batch(ev_titles)
+            fresh = [e for e, v in zip(evs, fv)
+                     if not any(embedder.cosine_similarity(v, m) >= 0.72 for m in mv)]
+        except Exception:  # noqa: BLE001 — без векторов сравниваем только по событиям
+            fresh = evs
+    items = [_news_item(e) for e in fresh[:3]]
+    sig = await asyncio.to_thread(rd.weekly_signals, "Сбербанк", None) or {}
+    had = {s.get("key") for s in (((secs.get("reviews_pulse") or {}).get("payload") or {})
+                                  .get("signals") or [])}
+    new_sig = [{"key": s["key"], "label": s["label"], "week": s["week"],
+                "baseline_week": s.get("baseline_week"), "ratio": s.get("ratio"),
+                "bank_specific": s.get("bank_specific")}
+               for s in (sig.get("signals") or []) if s.get("key") not in had][:2]
+    return {"since": since.isoformat(), "at": datetime.now(timezone.utc).isoformat(),
+            "items": items, "signals": new_sig}

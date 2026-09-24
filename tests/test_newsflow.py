@@ -63,3 +63,11 @@ def test_rate_artifacts_flapping_and_jumps():
     assert pending == {fresh}
     assert confirmed not in flap and confirmed not in pending
     assert offers and offers[0]["offer_id"] == 1
+
+
+def test_brief_items_drops_trailing_remarks():
+    from bank_audit.digest.writer import brief_items
+    md = ("- **[ВЫСОКИЙ]** **Чарджбэк** — рост ×3,6.\n  Аудитору: запросить выборку.\n\n---\n\n"
+          "По жалобам без точного кода: пункт «Новое» не формируется.")
+    assert brief_items(md) == "- **[ВЫСОКИЙ]** **Чарджбэк** — рост ×3,6.\n  Аудитору: запросить выборку."
+    assert brief_items("Вступление без пунктов") is None

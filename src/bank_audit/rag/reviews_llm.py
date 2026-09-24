@@ -185,6 +185,11 @@ _ANOM_SYSTEM = (
 )
 
 
+def _brief_format() -> str:
+    from ..digest.writer import _BRIEF_FORMAT
+    return _BRIEF_FORMAT
+
+
 async def anomaly_brief(sig: dict, context: str) -> str | None:
     """sig — reviews_dash.weekly_signals(); context — signal_context(). Возвращает
     markdown-аналитику (приоритизированную) или None — тогда фронт показывает
@@ -196,14 +201,7 @@ async def anomaly_brief(sig: dict, context: str) -> str | None:
     user = (
         "СИГНАЛЫ НЕДЕЛИ (числа точные, не меняй):\n" + "\n".join(lines) + f"\n{ov_line}\n\n"
         + context + "\n\n"
-        "Выдай markdown-список (начинай каждый пункт с «- »):\n"
-        "1) 2–4 пункта по приоритету. Формат: «**[ВЫСОКИЙ/СРЕДНИЙ]** **<проблема>** — "
-        "что изменилось (с цифрой), пометь если *только у банка*/*локально*/*ускоряется*, "
-        "вероятная причина — ТОЛЬКО из жалоб этого сигнала, что проверить аудитору».\n"
-        "2) Если среди жалоб без точного кода несколько об одном и том же — добавь пункт "
-        "«- **Новое:** <суть> (≈N жалоб)».\n"
-        "Не переноси формулировки из жалоб одного сигнала в другой. Не выдумывай причин, "
-        "которых нет в жалобах. Коротко, аналитично, без вступления и без эмодзи."
+        + _brief_format()
     )
     try:
         resp = await _client().chat.completions.create(
@@ -211,7 +209,8 @@ async def anomaly_brief(sig: dict, context: str) -> str | None:
             messages=[{"role": "system", "content": _ANOM_SYSTEM},
                       {"role": "user", "content": user}],
             temperature=0.2, max_tokens=1800)
-        return (resp.choices[0].message.content or "").strip() or None
+        from ..digest.writer import brief_items
+        return brief_items(resp.choices[0].message.content)
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_llm.anomaly_brief упал: %s", e)
         return None

@@ -110,6 +110,25 @@ def archive_day(day: date) -> int:
         """), {"d": day}).rowcount or 0
 
 
+def _first_archive(day: date) -> tuple[dict[str, dict], str | None]:
+    """Первая архивная версия дня — утренний выпуск до ручных обновлений."""
+    try:
+        with db.session() as s:
+            rows = s.execute(text("""
+                SELECT section, payload::text, status, generated_at
+                  FROM daily_digest_archive
+                 WHERE digest_date = :d AND archived_at = (
+                       SELECT min(archived_at) FROM daily_digest_archive WHERE digest_date = :d)
+            """), {"d": day}).all()
+    except Exception:  # noqa: BLE001 — архив необязателен
+        return {}, None
+    out = {sec: {"status": st, "payload": json.loads(p),
+                 "generated_at": g.isoformat() if g else None}
+           for sec, p, st, g in rows}
+    gen = max((v["generated_at"] for v in out.values() if v["generated_at"]), default=None)
+    return out, gen
+
+
 def recent_headlines(day: date, limit: int = 5) -> list[dict]:
     """Заголовки прошлых выпусков + их ведущие сигналы — чтобы передовица не
     повторялась. 07-10.08.2026 один и тот же ведущий сигнал (скачок ставки
@@ -150,11 +169,15 @@ def list_dates(limit: int = 90) -> list[str]:
     return [r[0].isoformat() for r in rows]
 
 
-def read_latest(today: date, want: date | None = None) -> dict:
+def read_latest(today: date, want: date | None = None, morning: bool = False) -> dict:
     """Собранный документ дайджеста: указанный день, или последний ≤ today.
+    morning=True — утренняя версия дня, если его потом обновляли вручную.
     Никогда не кидает — на девственной БД вернёт {sections:{}, meta:{empty}}."""
     day = want or latest_day(today)
     sections = _read_day_rows(day) if day else {}
+    archived, archived_at = _first_archive(day) if day else ({}, None)
+    if morning and archived:
+        sections = archived
     tokens_in = sum((v.get("tokens") or {}).get("in", 0) for v in sections.values())
     tokens_out = sum((v.get("tokens") or {}).get("out", 0) for v in sections.values())
     gen_ts = [v["generated_at"] for v in sections.values() if v.get("generated_at")]
@@ -166,6 +189,9 @@ def read_latest(today: date, want: date | None = None) -> dict:
             "refreshing": run_in_progress(today),
             "generated_at": max(gen_ts) if gen_ts else None,
             "tokens": {"in": tokens_in, "out": tokens_out},
+            # выпуск обновляли вручную — утренняя версия доступна отдельно
+            "morning_at": archived_at,
+            "is_morning": bool(morning and archived),
         },
         "sections": sections,
     }

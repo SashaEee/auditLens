@@ -96,6 +96,20 @@ SOURCES: list[dict] = [
     # предупреждения о мошенничестве госагентство часто даёт первым).
     {"key": "tg_rbc",        "kind": "tg",  "url": "https://t.me/s/rbc_news",             "tag": "market", "dimension": "market", "cls": "gen"},
     {"key": "ria_novosti",   "kind": "rss", "url": "https://ria.ru/export/rss2/archive/index.xml", "tag": "market", "dimension": "market", "cls": "gen"},
+    # ── регуляторы и первоисточники (волна 1 «Обзора», проверены 24.09.2026) ──
+    # Ленты ведомств — обо всём подряд (ЖКХ, госслужба, здравоохранение): отсев
+    # делает ступень 1, поэтому источник берётся целиком, а не по ключевым словам.
+    {"key": "fas_news",      "kind": "rss", "url": "https://fas.gov.ru/news.rss", "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    # Официальное опубликование: законы (блок президента) и акты ведомств, в т. ч.
+    # указания ЦБ. Заголовок — «Приказ … № N» и название с новой строки → склеиваем.
+    {"key": "pravo_laws",    "kind": "rss", "url": "http://publication.pravo.gov.ru/api/rss?block=president&pageSize=200", "tag": "regulator", "dimension": "compliance", "cls": "gen", "title_join": True},
+    {"key": "pravo_acts",    "kind": "rss", "url": "http://publication.pravo.gov.ru/api/rss?block=federal_authorities&pageSize=200", "tag": "regulator", "dimension": "compliance", "cls": "gen", "title_join": True},
+    {"key": "tg_fincult",    "kind": "tg",  "url": "https://t.me/s/fincult_info",       "tag": "scheme",    "dimension": "fraud",      "cls": "bank"},
+    {"key": "tg_vsrf",       "kind": "tg",  "url": "https://t.me/s/vsrf_ru",            "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_duma",       "kind": "tg",  "url": "https://t.me/s/dumainfo",           "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_minfin",     "kind": "tg",  "url": "https://t.me/s/minfin",             "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_mintsifry",  "kind": "tg",  "url": "https://t.me/s/mintsifry",          "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_rospotreb",  "kind": "tg",  "url": "https://t.me/s/rospotrebnadzor_ru", "tag": "regulator", "dimension": "compliance", "cls": "gen"},
 ]
 
 # Точечные поисковые запросы (SearXNG). У выдачи нет дат → берём мало и метим.

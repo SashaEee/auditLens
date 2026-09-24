@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
     from ..digest.scheduler import (bankiru_fts_background_loop, digest_background_loop,
                                     foryou_pregen_loop, ingest_background_loop,
                                     judge_background_loop, keyrate_background_loop,
-                                    newsflow_background_loop)
+                                    newsflow_background_loop, update_background_loop)
     from ..rag import ingest_queue
     from ..loophole.parsers.scheduler import (
         ENABLED as PARSER_SCHED_ENABLED,
@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
         # ночной судья новостного выпуска → метрика мусора в Пульсе (этап 6)
         asyncio.create_task(judge_background_loop()),
         asyncio.create_task(newsflow_background_loop()),
+        asyncio.create_task(update_background_loop()),
         # предгенерация «Для вас» для активных: первый заход дня без 21с LLM
         asyncio.create_task(foryou_pregen_loop()),
     ]
@@ -598,7 +599,7 @@ def _digest_today():
 
 
 @app.get("/api/overview/digest")
-async def overview_digest(date: Optional[str] = None):
+async def overview_digest(date: Optional[str] = None, version: Optional[str] = None):
     """Выпуск дня (или последний доступный ≤ сегодня). Без date при отсутствии
     сегодняшнего выпуска lazy-запускает генерацию в фоне и СРАЗУ отдаёт вчерашний
     с meta.refreshing=true — никогда не пустой экран и не 500."""
@@ -612,10 +613,10 @@ async def overview_digest(date: Optional[str] = None):
             want = _date.fromisoformat(date)
         except ValueError:
             raise HTTPException(400, f"плохая дата: {date}")
-    doc = await asyncio.to_thread(digest_store.read_latest, today, want)
+    doc = await asyncio.to_thread(digest_store.read_latest, today, want, version == "morning")
     if date and doc["meta"]["empty"]:
         raise HTTPException(404, f"дайджест за {date} не найден")
-    if not date and not doc["meta"]["refreshing"]:
+    if not date and not version and not doc["meta"]["refreshing"]:
         # lazy catch-up и при ПОЛНОМ отсутствии выпуска, и при упавшем на середине
         # прогоне (часть секций есть, но день не полон) — иначе висит до утра.
         # Ночью (до GEN_HOUR) не генерим и refreshing не включаем — иначе фронт
@@ -1878,6 +1879,33 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
             "mode": res["mode"], "error": res["error"],
             "has_more": bool(res.get("has_more")),
             "search": res.get("search") or None}
+
+@app.get("/api/reviews/export.csv")
+def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None,
+                   theme: Optional[str] = None, city: Optional[str] = None,
+                   month: Optional[str] = None, days: Optional[int] = None,
+                   esc: int = 0, limit: int = 10000):
+    """Выгрузка жалоб с разметкой ИИ в CSV (UTF-8 с BOM — открывается в Excel)."""
+    import csv
+    import io
+    from urllib.parse import quote as _q
+    rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
+                             days=days or None, city=city or None, month=month or None,
+                             esc=bool(esc), limit=limit)
+    if rows is None:
+        raise HTTPException(404, "банк не найден")
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    cols = list(rows[0].keys()) if rows else ["дата", "банк", "суть", "ссылка"]
+    w = csv.DictWriter(buf, fieldnames=cols, delimiter=";")
+    w.writeheader()
+    # тексты отзывов чужие: «=», «+», «-», «@» в начале ячейки Excel исполнит как формулу
+    w.writerows({k: ("'" + v if isinstance(v, str) and v[:1] in "=+-@" else v)
+                 for k, v in r.items()} for r in rows)
+    name = f"жалобы_{bank}_{theme or product or 'все'}_{days or 'всё'}дн.csv"
+    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
+
 
 @app.get("/api/reviews/feed-classified")
 async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,

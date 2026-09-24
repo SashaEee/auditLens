@@ -614,6 +614,7 @@ const BF_KIND={
   rate_move:{tag:"Ключевая ставка"},
   news_alert:{tag:"Новость"},
   loophole:{tag:"Уязвимости · Сбер"},
+  bank_rating:{tag:"Банки · рейтинг"},
   exploit:{tag:"Уязвимости"},
 };
 
@@ -756,14 +757,14 @@ const xpDiverge=d=>[
   ["Рынок",d.market_ratio!=null
     ?`та же тема по всем банкам ×${d.market_ratio} — мы растём в ${d.gap} раза быстрее рынка`
     :"рыночный срез недоступен"],
-  ["Почему здесь","из 22 тем показана та, где наш рост сильнее всего обгоняет рыночный"],
-  ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
+  ["Почему здесь","из 41 проблемы кодификатора показана та, где наш рост сильнее всего обгоняет рыночный"],
+  ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
 const xpEscalation=k=>[
   ["Значение",`${pct1(k.escalation_pct)} жалоб: клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор или к финомбудсмену (разметка ИИ)`],
-  ["Как ищем","по формулировкам жалобы: «жалоба в ЦБ», «подам иск», «в прокуратуру» и подобным"],
+  ["Как ищем","модель читает жалобу целиком и отмечает угрозу или уже поданное обращение; выборочная проверка — 99% верно"],
   ["Порог","12% — принятый в инструменте уровень внимания"],
-  ["Выборка",`${fmtNum(k.total||0)} жалоб за 90 дней · только Сбербанк · banki.ru`],
+  ["Выборка",`${fmtNum(k.total||0)} жалоб за 90 дней · только Сбербанк · все площадки`],
 ];
 const xpWeek=(ov,k)=>[
   ["Расчёт",`${ov.week} жалоб за последние 7 дней`],
@@ -771,7 +772,7 @@ const xpWeek=(ov,k)=>[
     ?`${Math.round(ov.baseline_week)} в неделю — среднее по окну 14–63 дня назад`:"—"],
   ["Рынок",ov.market_ratio!=null?`по всем банкам ×${ov.market_ratio} к своей норме`:"—"],
   ["Масштаб",k.total?`корпус ${fmtNum(k.total)} жалоб за 90 дн · доля рынка ${k.market_share_pct}% · ${k.market_rank}-е место из ${k.market_banks}`:"—"],
-  ["Канал","banki.ru, негативные отзывы 1–2★ — один из каналов, не все обращения"],
+  ["Канал","отзывы на площадках (banki.ru, sravni.ru, finuslugi.ru и др.) — один из каналов, не все обращения"],
 ];
 const xpOurChanges=tm=>[
   ["Значение",`${(tm.totals&&tm.totals.sber_changes_7d)||0} офферов Сбера со значимым изменением условий за 7 дней`],
@@ -780,16 +781,16 @@ const xpOurChanges=tm=>[
   ["Источник","журнал изменений условий (sravni.ru), сверка ежедневная"],
 ];
 const xpUnclassified=u=>u?[
-  ["Значение",`${u.week} жалоб из ${u.week_total} за неделю (${u.pct}%) не попали ни в одну из 22 тем`],
+  ["Значение",`${u.week} жалоб из ${u.week_total} за неделю (${u.pct}%) модель не отнесла ни к одной из 41 проблемы`],
   ["Норма",`${u.baseline_week} в неделю по окну 14–63 дня назад`+(u.ratio!=null?` — сейчас ×${u.ratio}`:"")],
-  ["Что значит","классификатор их не видит: либо инцидент вне таксономии, либо пробел в правилах"],
+  ["Что значит","либо инцидент нового типа, либо проблема, которой нет в кодификаторе — такие жалобы читаем первыми"],
   ["Зачем","картина по темам неполна на эту долю — это надо знать до выводов"],
 ]:[];
 const xpThemeUp=t=>[
   ["Расчёт",`${t.n} жалоб за 90 дней против ${Math.round(t.n/(1+(t.delta_pct||0)/100))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
   ["Горизонт","квартал — медленные тренды, которых не видно в недельном окне"],
   ["Порог","показываем тему с ростом от 50% и не менее 30 жалоб"],
-  ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
+  ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
 
 // обёртка вокруг числа: пунктирное подчёркивание + карточка-расшифровка.
@@ -949,8 +950,10 @@ function BfFeedback({ins}){
       topics:[ins.kind||""],payload:{title:ins.title,ref:ins.ref,score:ins.score}}).catch(()=>{});
   };
   return <span className="bf-fb" role="group" aria-label="Оценка карточки">
-    <button className={"bf-fb-b"+(v==="useful"?" on":"")} onClick={()=>send("useful")} title="Полезно для работы">Полезно</button>
-    <button className={"bf-fb-b"+(v==="noise"?" on":"")} onClick={()=>send("noise")} title="Не по делу">Не по делу</button>
+    <button className={"bf-fb-b"+(v==="useful"?" on":"")} onClick={()=>send("useful")} title="Полезно для работы" aria-label="Полезно">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg></button>
+    <button className={"bf-fb-b"+(v==="noise"?" on":"")} onClick={()=>send("noise")} title="Не по делу" aria-label="Не по делу">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg></button>
   </span>;
 }
 
@@ -2064,7 +2067,10 @@ function OverviewPage(){
   const avgDelta=deltas.length?deltas.reduce((a,b)=>a+b,0)/deltas.length:null;
   const ovl=pulse.overall||{};
   const insights=head.insights||[];
-  const newsGroups=nw.groups||[];
+  // новость, уже развёрнутая карточкой, в колонке не повторяется
+  const onCards=new Set(insights.map(i=>String(i.ref||"")).filter(r=>r.startsWith("news:")).map(r=>r.slice(5)));
+  const newsGroups=(nw.groups||[]).map(g=>({...g,items:(g.items||[]).filter(it=>
+    !onCards.has(String(it.event_id!=null?it.event_id:it.url)))})).filter(g=>g.items.length);
   const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
   const hl=head.headline||"", hot=head.hot||"";
   // данные плиток пульса
@@ -2143,9 +2149,35 @@ function OverviewPage(){
               {kr.as_of&&<> с {fmtDateMsk(kr.as_of)}</>}</>}
             {ST("headline")==="stale"&&<span className="bf-stale"> · ⚠ сводка за {sec.headline.stale_from}</span>}
             {ST("headline")==="degraded"&&<span className="bf-stale"> · ⚠ ИИ недоступен, сигналы детерминированные</span>}
+            {/* ручное обновление не затирает утренний выпуск — он доступен отдельно */}
+            {dg.meta&&dg.meta.morning_at&&(dg.meta.is_morning
+              ?<> · утренний выпуск · <a href="#overview"
+                   onClick={e=>{e.preventDefault();loadDigest().catch(()=>{});}}>текущая версия</a></>
+              :<> · обновлено вручную · <a href="#overview"
+                   onClick={e=>{e.preventDefault();apiFetch(`/api/overview/digest?date=${dg.date}&version=morning`).then(setDg).catch(()=>{});}}>
+                   утренний выпуск</a></>)}
           </p>
         </>}
     </header>
+
+    {/* Дневное дополнение: что нового с утра. Утренний выпуск не меняется. */}
+    {(()=>{const up=(sec.update||{}).payload||{};
+      const its=up.items||[], sg=up.signals||[];
+      if(!isToday||dg.meta.is_morning||(!its.length&&!sg.length))return null;
+      const at=up.at?new Date(up.at).toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"}):"";
+      return <section className="bf-upd" aria-label="Дополнение к выпуску">
+        <div className="bf-upd-h"><span className="bf-upd-dot" aria-hidden="true"/>Дополнение {at} · что нового с утра</div>
+        {sg.map((x,i)=><a key={"s"+i} className="bf-upd-it" href="#reviews"
+            onClick={()=>{try{sessionStorage.setItem("al-rv-prefilter",JSON.stringify({theme:x.key}));}catch{}}}>
+          <span className="bf-upd-k">жалобы</span>
+          <span className="bf-upd-t">Всплеск «{x.label}»: {x.week} за 7 дней при норме ~{String(x.baseline_week).replace(".",",")}{x.bank_specific?" — только у Сбера":""}</span>
+        </a>)}
+        {its.map((it,i)=><a key={"n"+i} className="bf-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
+            onClick={()=>trkEvent({kind:"news_click",page:"overview",payload:{url:it.url,source:it.source,group:"update",title:it.title}})}>
+          <span className="bf-upd-k">{it.domain}</span>
+          <span className="bf-upd-t">{it.title}{it.idea&&<span className="bf-upd-s"> — {it.idea}</span>}</span>
+        </a>)}
+      </section>;})()}
 
     {/* ② ПУЛЬС ДНЯ — сменный лист аудитора (без LLM).
         Отбор переработан 23.07.2026 по отзыву аудиторов «бесполезная»: рыночные
@@ -2163,7 +2195,7 @@ function OverviewPage(){
           <div className="bf-t-cap">Проверить сегодня
             {dv&&dv.gap>=1.25&&<span className="bf-t-chip">сильнее рынка</span>}</div>
           {dv?<>
-            <Xp rows={xpDiverge(dv)} note="banki.ru · негативные отзывы 1–2★">
+            <Xp rows={xpDiverge(dv)} note="жалобы всех площадок · разметка ИИ">
               <span className="bf-t-val">{dv.short||dv.label}</span>
             </Xp>
             <div className="bf-t-sub">{dv.week} жалоб · норма {dv.baseline_week}
@@ -2178,7 +2210,7 @@ function OverviewPage(){
         {/* Регуляторный риск: доля жалоб с угрозой ЦБ/суда/ФАС */}
         <a className={"bf-t"+(esc!=null&&esc>=12?" attn":"")} href="#reviews">
           <div className="bf-t-cap">Дошло до ЦБ и суда</div>
-          <Xp rows={xpEscalation(kpi)} note="banki.ru · окно 90 дней">
+          <Xp rows={xpEscalation(kpi)} note="жалобы всех площадок · окно 90 дней">
             <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
           </Xp>
           <div className="bf-t-sub">порог 12%{kpi.total?` · из ${fmtNum(kpi.total)} жалоб за 90 дн`:""}
@@ -2188,7 +2220,7 @@ function OverviewPage(){
         {/* Объём недели — с нормой рядом, без коэффициента */}
         <a className="bf-t" href="#reviews">
           <div className="bf-t-cap">Жалобы · 7 дней</div>
-          <Xp rows={xpWeek(ovl,kpi)} note="banki.ru · негативные отзывы 1–2★">
+          <Xp rows={xpWeek(ovl,kpi)} note="жалобы всех площадок · разметка ИИ">
             <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
               {ovl.baseline_week!=null&&<small> норма {Math.round(ovl.baseline_week)}</small>}</span>
           </Xp>
@@ -2210,7 +2242,7 @@ function OverviewPage(){
         {/* Слепая зона: чего классификатор не видит */}
         <a className={"bf-t"+(unc&&unc.ratio>=1.3?" attn":"")} href="#reviews">
           <div className="bf-t-cap">Вне кодификатора</div>
-          <Xp rows={xpUnclassified(unc)} note="кодификатор жалоб · 40 проблем, разметка ИИ">
+          <Xp rows={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ">
             <span className="bf-t-val">{unc&&unc.week!=null?unc.week:"—"}
               {unc&&unc.pct!=null&&<small> · {unc.pct}%</small>}</span>
           </Xp>
@@ -2223,7 +2255,7 @@ function OverviewPage(){
         <a className="bf-t bf-t-wide" href="#reviews">
           <div className="bf-t-cap">Растёт за квартал</div>
           {up?<>
-            <Xp rows={xpThemeUp(up)} note="banki.ru · окно 90 дней против предыдущих 90">
+            <Xp rows={xpThemeUp(up)} note="жалобы всех площадок · 90 дней против предыдущих 90">
               <span className="bf-t-val">{up.short||up.label}</span>
             </Xp>
             <div className="bf-t-sub">+{Math.round(up.delta_pct)}% к прошлому кварталу · {up.n} жалоб</div>
@@ -2270,6 +2302,7 @@ function OverviewPage(){
       <aside className="bf-news">
         <div className="bf-news-h">
           <div className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</div>
+          {ST("news")==="stale"&&<span className="bf-stale" title="сбор или отбор новостей сегодня не удался — показан последний удачный выпуск">⚠ за {sec.news.stale_from}</span>}
           {newsAll>0&&<span className="bf-news-cov" title={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
             {newsOk}/{newsAll} ист.</span>}
         </div>
@@ -3157,6 +3190,7 @@ const RV_BANKS=["Сбербанк","ВТБ","Т-Банк","Альфа-Банк",
 const RV_PERIODS=[[90,"3 мес"],[180,"6 мес"],[365,"12 мес"]];
 const RV_RISK={compliance:"комплаенс",conduct:"практики",ops:"операции"};
 const pct1=v=>v==null?"—":String(v).replace(".",",")+"%";
+const rvHost=u=>{try{return new URL(u).hostname.replace(/^www\./,"");}catch(e){return "источник";}};
 const rvDelta=(d)=> d==null ? <span className="rv-flat">→</span>
   : d>4 ? <span className="rv-up">↑ {d}%</span>
   : d<-4 ? <span className="rv-down">↓ {Math.abs(d)}%</span>
@@ -3230,7 +3264,7 @@ function RvModal({onClose,title,sub,side,children}){
     </div>, document.body);
 }
 
-// Чипы тем обращения (классификация): regex-baseline или LLM-уточнённые.
+// Чипы тем обращения: главная и дополнительные проблемы из LLM-разметки.
 function RvThemes({list,src,active}){
   // Темы — LLM-разметка по кодификатору: первая — главная проблема жалобы,
   // дальше дополнительные. Свежий отзыв без разметки ещё размечается (до часа).
@@ -3483,7 +3517,7 @@ function ReviewsPage({params}){
         : "источники загружаются…"}
       {ov&&ov.as_of?<> · данные по {ov.as_of}</>:""}
     </div>
-    <div className="rv-disclaimer">⚠ Корпус — <b>только негатив (1–2★)</b>. Все метрики — динамика и структура <b>внутри жалоб</b>, а не доля недовольных клиентов. «Доля рынка» и «место» отражают объём выгрузки banki.ru, <b>не нормированы на клиентскую базу</b> банка.</div>
+    <div className="rv-disclaimer">⚠ Жалобы — отзывы со всех площадок, которые ИИ отнёс к претензиям (похвала, вопросы, мусор и копии исключены). Метрики — динамика и структура <b>внутри жалоб</b>, а не доля недовольных клиентов. «Доля рынка» и «место» <b>не нормированы на клиентскую базу</b> банка.</div>
 
     <div className="rv-filters">
       <label className="rv-fl">Банк
@@ -3518,7 +3552,7 @@ function ReviewsPage({params}){
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Жалоб за {days} дн</div>
         <div className="rv-kv">{busy?"…":(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
-        <div className="rv-ks">{ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {Math.abs(ov.delta_pct)}%</span>:<span className="rv-up">↑ {ov.delta_pct}%</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
+        <div className="rv-ks">{ov&&ov.delta_partial?<span title="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {Math.abs(ov.delta_pct)}%</span>:<span className="rv-up">↑ {ov.delta_pct}%</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
       </div>
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Доля рынка жалоб</div>
@@ -3574,7 +3608,7 @@ function ReviewsPage({params}){
         <div className="rv-card">
           <div className="rv-ttl">Темы жалоб — риск-карта</div>
           <div className="rv-cap">доля от жалоб за {(th&&th.days)||days} дн · по главной проблеме (сумма 100%), разметка ИИ · клик → лента темы
-            {th&&th.coverage!=null&&th.coverage<99&&<> · <span title="массовая разметка корпуса ещё идёт — числа за старые периоды занижены">размечено {pct1(th.coverage)} отзывов периода</span></>}</div>
+            {th&&th.delta_partial&&<> · <span title="прошлый период ещё размечается — сравнение с ним дало бы ложный рост">динамика появится после разметки прошлого периода</span></>}</div>
           {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:(()=>{
             const real=th.themes.filter(t=>t.key!=="other"), other=th.themes.find(t=>t.key==="other");
             const shown=thAll?real:real.slice(0,12);
@@ -3587,7 +3621,7 @@ function ReviewsPage({params}){
                 <div className="rv-tname" title={t.n_also?`ещё в ${t.n_also} жалобах упоминается как дополнительная проблема`:undefined}>{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
                 <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
                 <div className="rv-tn mono">{fmtNum(t.n)}</div>
-                <div className="rv-ttr">{rvDelta(t.delta_pct)}</div>
+                <div className="rv-ttr">{th.delta_partial?<span className="rv-flat">·</span>:rvDelta(t.delta_pct)}</div>
               </div>;
             };
             return <>
@@ -3619,7 +3653,7 @@ function ReviewsPage({params}){
         {/* VS MARKET */}
         <div className="rv-card">
           <div className="rv-ttl">{bank} против рынка</div>
-          <div className="rv-cap">доля в общем потоке жалоб banki.ru · {days} дн{product?` · ${product}`:""}</div>
+          <div className="rv-cap">доля в общем потоке жалоб всех площадок · {days} дн{product?` · ${product}`:""}</div>
           {busy?<Skel h={120}/>:!vm||!vm.rows||!vm.rows.length?<RvNote err={vm&&vm.__err}/>:vm.rows.map((r,i)=>(
             <div key={i} className="rv-vrow">
               <div className={"rv-vname"+(r.is_target?" t":"")}>{r.bank}</div>
@@ -3655,8 +3689,8 @@ function ReviewsPage({params}){
                     {d.short||d.label}<b>×{d.gap}</b></span>)}
               </div>
               <div className="rv-cap" style={{marginTop:8}}>
-                Всплеском считаем рост от ×1.8 к своей норме. Здесь — темы ниже этого порога,
-                но обгоняющие рынок: их стоит держать в поле зрения.</div>
+                Всплеск — значимый рост к своей норме (от ×1,5 и 8 жалоб, с поправкой на число
+                проверенных проблем). Здесь — проблемы ниже этого порога, но обгоняющие рынок.</div>
             </>
            :<>
               <div className="rv-radar-chips">
@@ -3672,7 +3706,7 @@ function ReviewsPage({params}){
                   </span>;
                 })}
               </div>
-              {anom.summary?<div className="rv-radar-brief">{renderMD(anom.summary)}</div>
+              {anom.summary?<div className="rv-radar-brief"><BfBrief markdown={anom.summary}/></div>
                 :<div className="rv-cap" style={{marginTop:6}}>LLM-разбор недоступен — см. всплески выше (числа за 7 дн точны).</div>}
             </>}
         </div>
@@ -3692,8 +3726,12 @@ function ReviewsPage({params}){
             return dup>0?<span className="rv-count-note" title="одинаковые тексты объединены в одну карточку">
               {" "}· {n + dup} обращений в {n} карточках</span>:null;})()}
         </div>
-          <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>:"темы обращений определены автоматически (regex) · ✦ уточнить ИИ для точности"}</div></div>
-
+          <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>:"у каждой жалобы — продукт, главная проблема и суть по разметке ИИ; цитата сверена с текстом"}</div></div>
+        {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
+        <a className="rv-export rv-export-a" download
+           href={`/api/reviews/export.csv?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}&days=${days}${escOnly?"&esc=1":""}`}
+           title="Все жалобы с текущими фильтрами банка, продукта, темы и периода — с разметкой ИИ и полным текстом (поиск в выгрузку не входит)"
+           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,days,esc:escOnly}})}>↧ CSV</a>
       </div>
       {/* Порядок выдачи. Показываем только при запросе: лента без него и так
           идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
@@ -3732,7 +3770,7 @@ function ReviewsPage({params}){
           Это не значит, что жалоб по теме не было: возможно, клиенты называют её иначе.</div>}
       {feedBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
        feedErr?<EmptyState title={feedErr==="unknown_bank"?"Банка нет в корпусе":q?"Поиск не отработал":"Лента не загрузилась"}
-         text={feedErr==="unknown_bank"?"Отзывов banki.ru по этому банку у нас нет — выберите другой банк в списке выше.":
+         text={feedErr==="unknown_bank"?"Отзывов по этому банку у нас нет — выберите другой банк в списке выше.":
                feedErr==="network"?"Не удалось получить ответ сервера. Обновите страницу или повторите запрос.":
                "Запрос к корпусу отзывов не выполнился — это сбой, а не отсутствие жалоб по теме. Повторите; если повторяется, сообщите нам."}/>:
        !feed||!feed.length?<EmptyState text={q
@@ -3766,7 +3804,7 @@ function ReviewsPage({params}){
             {kbMark(cutMark(r.marked||r.text,420))}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
           </div>
           <div className="rv-rf">
-            {r.url&&<a href={r.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
+            {r.url&&<a href={r.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(r.url)} ↗</a>}
             <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(r)} onKeyDown={onKey(()=>addCase(r))}>＋ в аудит-дело</span>
           </div>
         </div>
@@ -3788,7 +3826,7 @@ function ReviewsPage({params}){
           отзыв именно чтобы проверить совпадение, терять его тут нельзя */}
       <div className="rv-modal-text">{kbMark(modalRev.marked||modalRev.text)}</div>
       <div className="rv-rf" style={{marginTop:16}}>
-        {modalRev.url&&<a href={modalRev.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
+        {modalRev.url&&<a href={modalRev.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(modalRev.url)} ↗</a>}
         <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(modalRev)} onKeyDown={onKey(()=>addCase(modalRev))}>＋ в аудит-дело</span>
       </div>
     </RvModal>}
@@ -7578,6 +7616,13 @@ function PuNewsQuality({q}){
         {(q.stream.sources||[]).filter(x=>x.last_error).map((x,i)=><div key={i} className="pu-err">
           <span className="k">{x.source}</span><span className="m">{x.last_error}</span></div>)}
       </div>}
+      {q.stream&&(q.stream.yield_14d||[]).length>0&&<table className="pu-tbl" style={{marginBottom:12}}
+          title="Отдача источника: сильные — материалы событий с ценностью от 7; слабые источники исключаются по этим цифрам">
+        <thead><tr><th>источник · 14 дн</th><th>собрано</th><th>про розницу</th><th>сильных</th><th>в выпуске</th></tr></thead>
+        <tbody>{q.stream.yield_14d.map((r,i)=><tr key={i}>
+          <td>{r.source}</td><td>{r.items}</td><td>{r.relevant}</td>
+          <td style={r.items>=20&&!r.strong?{color:"var(--warn)"}:null}>{r.strong}</td><td>{r.published}</td>
+        </tr>)}</tbody></table>}
       {(q.top_clicked||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
           Кликов ещё нет — трекинг включён с 05.08.</div>
         :(q.top_clicked||[]).map((r,i)=><div key={i} className="pu-err">

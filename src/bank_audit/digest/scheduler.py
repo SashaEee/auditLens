@@ -428,6 +428,39 @@ async def judge_background_loop():
             await asyncio.sleep(1800)
 
 
+# Дневное дополнение «что нового с утра» (0 — выключено). Утренний выпуск не
+# трогает: отдельная секция update.
+UPDATE_HOUR = int(os.getenv("DIGEST_UPDATE_HOUR_MSK", "15"))
+
+
+async def update_background_loop():
+    from . import writer
+    if UPDATE_HOUR <= 0:
+        return
+    await asyncio.sleep(300)
+    log.info("дополнение выпуска: расписание %02d:00 МСК", UPDATE_HOUR)
+    while True:
+        try:
+            now = datetime.now(MSK)
+            day = _today_msk()
+            # догон после рестарта — только в рабочие часы: вечером дополнение
+            # уже никто не прочтёт, а утром его перекроет новый выпуск
+            if UPDATE_HOUR <= now.hour < UPDATE_HOUR + 5 and await asyncio.to_thread(
+                    store.day_complete, day, ("news", "headline")) and "update" not in \
+                    await asyncio.to_thread(store.live_sections, day):
+                p = await writer.afternoon_update(day)
+                await asyncio.to_thread(store.upsert, day, "update", p)
+                log.info("дополнение выпуска: новостей %d, сигналов %d",
+                         len(p.get("items") or []), len(p.get("signals") or []))
+            nxt = now.replace(hour=UPDATE_HOUR, minute=0, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            await asyncio.sleep((nxt - datetime.now(MSK)).total_seconds())
+        except Exception as e:  # noqa: BLE001
+            log.warning("дополнение выпуска: %s", e)
+            await asyncio.sleep(1800)
+
+
 # Корпус отзывов наполняет чужой крон, и мы не знаем его расписания, поэтому
 # догоняем зеркало часто и небольшими порциями, а не раз в сутки: инкремент по
 # водяному знаку почти бесплатен, когда догонять нечего.
