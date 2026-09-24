@@ -459,18 +459,18 @@ async def bankiru_fts_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("индекс отзывов, свои коллекторы: %s", e)
         try:
-            # Инкрементальная разметка тем: без неё свежая неделя оставалась
-            # без меток до ручного assign (замер 05.08: 36 процентов окна),
-            # и сигналы главной на разметке было не построить.
-            from ..rag import review_topics
-            await asyncio.to_thread(review_topics.label_new)
-            # Продукт — второе измерение той же разметки. Без этого свежие
-            # обращения оставались бы без продукта, и срез по нему тихо терял
-            # бы последние дни, притом что по темам они уже видны.
-            if review_topics.active_version(review_topics.PRODUCT):
-                await asyncio.to_thread(review_topics.label_new,
-                                        dim=review_topics.PRODUCT)
-                await asyncio.to_thread(review_topics.apply_product_labels)
+            # LLM-разметка новых отзывов по кодификатору и перенос в индекс.
+            # Без неё свежие отзывы не входят в счётчики жалоб. Если идёт
+            # массовый прогон отдельным процессом, тик пропускает разметку
+            # (общий замок), но перенос в индекс делает — иначе размеченное
+            # прогоном не дошло бы до вкладки.
+            from ..rag import review_annotate
+            r = await review_annotate.run(
+                limit=int(os.getenv("REVIEW_ANN_TICK_LIMIT", "3000")), daily=True)
+            if r.get("done"):
+                log.info("разметка отзывов: %d за тик, %.1f ₽ за сутки, остановка: %s",
+                         r["done"], r.get("rub") or 0, r.get("stop"))
+            await asyncio.to_thread(review_annotate.apply_to_index)
         except Exception as e:  # noqa: BLE001
-            log.warning("инкрементальная разметка отзывов: %s", e)
+            log.warning("разметка отзывов: %s", e)
         await asyncio.sleep(FTS_SYNC_EVERY_S)

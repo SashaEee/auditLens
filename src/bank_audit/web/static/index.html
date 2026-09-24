@@ -1729,6 +1729,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-sim{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent);background:var(--accent-soft);border-radius:4px;padding:2px 6px}
 .rv-pill-dim{opacity:.65;font-size:9px}
 .rv-llm{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);margin-left:2px}
+/* разбор отзыва моделью: суть и признаки под шапкой карточки */
+.rv-ann{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 6px;font-size:12.5px;color:var(--ink-2)}
+.rv-ann-s{flex-basis:100%;line-height:1.45}
 .rv-cls-btn{flex:none;height:30px;padding:0 12px;border-radius:6px;border:1px solid color-mix(in oklab,var(--accent),transparent 55%);background:var(--accent-soft);color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s}
 .rv-cls-btn:hover:not(:disabled){background:color-mix(in oklab,var(--accent),transparent 80%)}
 .rv-cls-btn:disabled{opacity:.5;cursor:default}
@@ -2480,6 +2483,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260911-method"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260924-reviews-ann"></script>
 </body>
 </html>

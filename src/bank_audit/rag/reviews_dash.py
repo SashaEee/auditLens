@@ -19,7 +19,8 @@ import time
 from sqlalchemy import text
 
 from .. import db
-from .bankiru_reviews import _get_engine, resolve_bank, search_reviews
+from .bankiru_reviews import resolve_bank, search_reviews
+from . import review_codebook as cb
 
 log = logging.getLogger(__name__)
 
@@ -279,6 +280,33 @@ def _bank_clause(bank_canon, product):
     return " AND ".join(cl), params
 
 
+# ── Разметка ────────────────────────────────────────────────────────────────
+# Все счётчики вкладки, сигналов и обзора считают ЖАЛОБЫ из LLM-разметки
+# (rag/review_annotate): отзыв, который модель отнесла к жалобам, в т. ч.
+# смешанный. Неразмеченное (kind IS NULL), похвала, вопросы, мусор и копии
+# одного отзыва в счёт не входят.
+_CMP = "i.kind IN ('complaint', 'mixed')"
+
+
+def _ann_schema() -> str:
+    from .review_annotate import SCHEMA
+    return SCHEMA
+
+
+def _coverage(bank_canon: str | None, days: int) -> float | None:
+    """Доля отзывов окна, у которых уже есть разметка (в процентах)."""
+    try:
+        with db.session() as s:
+            n, lab = s.execute(text(
+                "SELECT count(*), count(*) FILTER (WHERE i.kind IS NOT NULL) FROM review_index i"
+                " WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)"
+                " AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"),
+                {"bank": bank_canon, "d": days}).one()
+        return round(100.0 * lab / n, 1) if n else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ── Агрегаты ────────────────────────────────────────────────────────────────
 @_safe([])
 def banks(top: int = 60) -> list[dict]:
@@ -286,28 +314,12 @@ def banks(top: int = 60) -> list[dict]:
     индексу, поэтому банк, которого нет во внешнем корпусе, но который собрали
     наши коллекторы, тоже попадает в список.
     Сбер первым (даже если по объёму не №1), дальше по убыванию."""
-    eng = _get_engine()
-
     def _compute():
-        rows = None
-        if _index_ready():
-            try:
-                with db.session() as s:
-                    rows = s.execute(text(
-                        "SELECT i.bank, count(*) n FROM review_index i"
-                        " WHERE i.bank IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT :top"),
-                        {"top": top}).all()
-            except Exception as e:
-                log.warning("reviews_dash.banks: индекс не сработал (%s)", e)
-                rows = None
-        if rows is None:
-            if eng is None:
-                return []
-            with eng.connect() as c:
-                rows = c.execute(text(
-                    'SELECT "bankName", count(DISTINCT url) n FROM bankiru.reviews'
-                    ' GROUP BY 1 ORDER BY 2 DESC LIMIT :top'),
-                    {"top": top}).all()
+        with db.session() as s:
+            rows = s.execute(text(
+                "SELECT i.bank, count(*) n FROM review_index i"
+                f" WHERE i.bank IS NOT NULL AND {_CMP}"
+                " GROUP BY 1 ORDER BY 2 DESC LIMIT :top"), {"top": top}).all()
         items = [{"bank": r[0], "n": int(r[1])} for r in rows]
         sber = [x for x in items if x["bank"] == "Сбербанк"]
         rest = [x for x in items if x["bank"] != "Сбербанк"]
@@ -319,95 +331,95 @@ def banks(top: int = 60) -> list[dict]:
 def corpus_stats(bank: str | None = None) -> dict | None:
     """Реальный состав корпуса: сколько отзывов, откуда и за какой период.
 
-    Нужна подзаголовку вкладки. Раньше там стояла зашитая строка «негативные
-    отзывы banki.ru (1-2 звезды)» — она перестала быть правдой, как только
-    источников стало несколько, и никак не отражала объём. Числа берём из
-    индекса, а не пишем руками: добавится источник — подпись обновится сама.
-    """
+    Мусор (служебная разметка вместо текста) и копии одного отзыва, собранные
+    двумя путями, в состав не входят — это не отзывы. Похвала и вопросы входят:
+    это настоящие отзывы, просто не жалобы (жалобы считает overview)."""
     if not _index_ready():
         return None
     bc = resolve_bank(bank) if bank else None
-    where, p = ("WHERE i.bank = :bank AND (i.dt IS NULL OR i.dt <= now())",
-                {"bank": bc}) if bc else ("WHERE (i.dt IS NULL OR i.dt <= now())", {})
+    real = "coalesce(i.kind, '') NOT IN ('junk', 'dup')"
+    where, p = ((f"WHERE i.bank = :bank AND (i.dt IS NULL OR i.dt <= now()) AND {real}",
+                 {"bank": bc}) if bc else
+                (f"WHERE (i.dt IS NULL OR i.dt <= now()) AND {real}", {}))
     with db.session() as s:
         rows = s.execute(text(f"""
             SELECT i.source, count(*) n, min(i.dt)::date, max(i.dt)::date,
                    count(*) FILTER (WHERE i.rating IS NOT NULL) rated,
-                   round(avg(i.rating)::numeric, 2) avg_rating
+                   round(avg(i.rating)::numeric, 2) avg_rating,
+                   count(*) FILTER (WHERE {_CMP}) complaints
             FROM review_index i {where}
             GROUP BY 1 ORDER BY 2 DESC
         """), p).mappings().all()
-        # Размер всего корпуса — отдельно от чисел по выбранному банку. Одной
-        # цифрой их показывать нельзя: «18 603 по 220 банкам» читается так,
-        # будто 18 603 это весь корпус, хотя это только выбранный банк.
         banks_n, all_n = s.execute(text(
             "SELECT count(DISTINCT i.bank), count(*) FROM review_index i"
-            " WHERE i.bank IS NOT NULL AND (i.dt IS NULL OR i.dt <= now())")).one()
+            f" WHERE i.bank IS NOT NULL AND (i.dt IS NULL OR i.dt <= now()) AND {real}")).one()
     items = [{"source": _SOURCE_LABEL.get(r["source"], r["source"]),
-              "key": r["source"], "n": int(r["n"]),
+              "key": r["source"], "n": int(r["n"]), "complaints": int(r["complaints"]),
               "from": r["min"].isoformat() if r["min"] else None,
               "to": r["max"].isoformat() if r["max"] else None,
               "avg_rating": float(r["avg_rating"]) if r["avg_rating"] is not None else None}
              for r in rows]
-    # площадки схлопываем по подписи: внешний корпус и наш коллектор banki.ru
-    # для аудитора одна площадка, и показывать её двумя строками бессмысленно
     merged: dict[str, dict] = {}
     for it in items:
-        m = merged.setdefault(it["source"], {"source": it["source"], "n": 0,
+        m = merged.setdefault(it["source"], {"source": it["source"], "n": 0, "complaints": 0,
                                              "from": it["from"], "to": it["to"]})
         m["n"] += it["n"]
+        m["complaints"] += it["complaints"]
         if it["from"] and (not m["from"] or it["from"] < m["from"]):
             m["from"] = it["from"]
         if it["to"] and (not m["to"] or it["to"] > m["to"]):
             m["to"] = it["to"]
     out = sorted(merged.values(), key=lambda x: -x["n"])
     return {"bank": bc,
-            # total — по ВЫБРАННОМУ банку; corpus_* — весь индекс
             "total": sum(x["n"] for x in out),
+            "complaints": sum(x["complaints"] for x in out),
             "corpus_total": int(all_n or 0), "banks": int(banks_n or 0),
             "sources": out, "raw": items}
 
 
 @_safe(None)
 def overview(bank: str, product: str | None = None, days: int = 90) -> dict | None:
-    eng = _get_engine()
-    if eng is None:
-        return None
+    """KPI вкладки по жалобам из LLM-разметки.
+
+    Жалоба — отзыв, который модель отнесла к жалобам (в т. ч. смешанный:
+    претензия и похвала вместе). Похвала, вопросы, мусор и копии одного отзыва
+    в счёт не идут — раньше они давали до трети «роста». Эскалация — признак
+    разметки («грозит» или «уже обратился» в ЦБ, суд, прокуратуру и т. п.), а
+    не регулярка по словам «в суд»: та ошибалась в половине случаев."""
     bc = resolve_bank(bank)
     if not bc:
         return None
 
-    def _compute_index():
-        """Обзор по ЕДИНОМУ индексу: числа включают все источники, а не только
-        внешний корпус. Дедуп не нужен — url это первичный ключ индекса, поэтому
-        count(*) вместо count(DISTINCT url), и это заметно дешевле."""
+    def _compute():
         idx, ip = _idx_clause(bc, product)
         with db.session() as s:
             cur = s.execute(text(f"""
                 SELECT count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d)),
                        count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d2)
-                                          AND i.dt <  now() - make_interval(days => :d))
-                FROM review_index i WHERE {idx}
+                                          AND i.dt <  now() - make_interval(days => :d)),
+                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d) AND i.esc)
+                FROM review_index i WHERE {idx} AND {_CMP}
             """), {**ip, "d": days, "d2": days * 2}).one()
-            total_cur, total_prev = int(cur[0]), int(cur[1])
-            # признак посчитан при индексации: по tsvector его не выразить,
-            # ограничителем в паттернах служат предлоги, а словарь их выбрасывает
-            esc_cur = int(s.execute(text(f"""
+            total_cur, total_prev, esc_cur = int(cur[0]), int(cur[1]), int(cur[2])
+            filed = int(s.execute(text(f"""
                 SELECT count(*) FROM review_index i
-                WHERE {idx} AND i.dt >= now() - make_interval(days => :d) AND i.esc
-            """), {**ip, "d": days}).scalar() or 0)
+                JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+                WHERE {idx} AND {_CMP} AND i.dt >= now() - make_interval(days => :d)
+                  AND a.esc = 'filed'
+            """), {**ip, "d": days, "sv": _ann_schema()}).scalar() or 0)
             mk = s.execute(text(
                 "SELECT i.bank, count(*) n FROM review_index i"
-                " WHERE i.dt >= now() - make_interval(days => :d)"
-                " AND (i.dt IS NULL OR i.dt <= now())"
+                " WHERE i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
+                f" AND {_CMP}"
                 + (" AND i.product = :product" if product else "") +
                 " GROUP BY 1 ORDER BY 2 DESC"),
                 {"d": days, **({"product": product} if product else {})}).all()
             asof = s.execute(text(
-                f"SELECT max(i.dt) FROM review_index i WHERE {idx}"), ip).scalar()
+                f"SELECT max(i.dt) FROM review_index i WHERE {idx} AND {_CMP}"), ip).scalar()
             by_src = [{"source": r[0], "n": int(r[1])} for r in s.execute(text(
-                f"SELECT i.source, count(*) FROM review_index i WHERE {idx}"
-                f" GROUP BY 1 ORDER BY 2 DESC"), ip).all()]
+                f"SELECT i.source, count(*) FROM review_index i WHERE {idx} AND {_CMP}"
+                f" AND i.dt >= now() - make_interval(days => :d)"
+                f" GROUP BY 1 ORDER BY 2 DESC"), {**ip, "d": days}).all()]
         total_market = sum(int(r[1]) for r in mk) or 1
         delta = round(100.0 * (total_cur - total_prev) / total_prev, 1) if total_prev else None
         return {
@@ -418,109 +430,47 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
             "market_rank": next((i + 1 for i, r in enumerate(mk) if r[0] == bc), None),
             "market_banks": len(mk),
             "escalation_pct": round(100.0 * esc_cur / total_cur, 1) if total_cur else 0.0,
+            "escalation_filed_pct": round(100.0 * filed / total_cur, 1) if total_cur else 0.0,
             "as_of": asof.date().isoformat() if asof else None,
-            "by_source": by_src, "src": "index",
-        }
-
-    def _compute():
-        if _index_ready():
-            try:
-                return _compute_index()
-            except Exception as e:
-                log.warning("reviews_dash.overview: индекс не сработал (%s) — считаю по корпусу", e)
-        bclause, bp = _bank_clause(bc, product)
-        esc, ep = _theme_sql(THEME_BY_KEY["escalation"], "e")
-        with eng.connect() as c:
-            # объёмы — только по дате (быстро по индексу datePublished)
-            # count(DISTINCT r.url): корпус banki.ru содержит точные дубли (сбой
-            # дедупа краулера — один URL встречается тысячи раз), считать их как
-            # разные жалобы = ложные всплески. Одна жалоба = один URL.
-            cur = c.execute(text(
-                f'SELECT count(DISTINCT r.url) FILTER (WHERE r."datePublished" >= now() - make_interval(days => :d)),'
-                f'       count(DISTINCT r.url) FILTER (WHERE r."datePublished" >= now() - make_interval(days => :d2)'
-                f'                          AND r."datePublished" < now() - make_interval(days => :d))'
-                f' FROM bankiru.reviews r WHERE {bclause}'),
-                {**bp, "d": days, "d2": days * 2}).one()
-            total_cur, total_prev = int(cur[0]), int(cur[1])
-            # эскалация (ILIKE) — ТОЛЬКО по строкам текущего периода (мало строк → быстро)
-            esc_cur = int(c.execute(text(
-                f'SELECT count(DISTINCT r.url) FROM bankiru.reviews r WHERE {bclause}'
-                f' AND r."datePublished" >= now() - make_interval(days => :d) AND {esc}'),
-                {**bp, **ep, "d": days}).scalar() or 0)
-            # доля рынка + ранг за период
-            mk = c.execute(text(
-                'SELECT "bankName", count(DISTINCT r.url) AS n FROM bankiru.reviews r'
-                ' WHERE r."datePublished" >= now() - make_interval(days => :d)'
-                + (' AND r."product" = :product' if product else '') +
-                ' GROUP BY 1 ORDER BY 2 DESC'),
-                {"d": days, **({"product": product} if product else {})}).all()
-            # свежесть данных — последняя дата отзыва по банку (индекс по datePublished)
-            asof = c.execute(text(
-                f'SELECT max(r."datePublished") FROM bankiru.reviews r WHERE {bclause}'),
-                bp).scalar()
-        total_market = sum(int(r[1]) for r in mk) or 1
-        share = round(100.0 * total_cur / total_market, 1)
-        rank = next((i + 1 for i, r in enumerate(mk) if r[0] == bc), None)
-        delta = round(100.0 * (total_cur - total_prev) / total_prev, 1) if total_prev else None
-        esc_pct = round(100.0 * esc_cur / total_cur, 1) if total_cur else 0.0
-        return {
-            "bank": bc, "product": product, "days": days,
-            "total": total_cur, "prev": total_prev, "delta_pct": delta,
-            # малые абсолютные числа делают %-дельту шумной — помечаем
-            "delta_low_n": bool(total_prev and min(total_cur, total_prev) < 30),
-            "market_share_pct": share, "market_rank": rank, "market_banks": len(mk),
-            "escalation_pct": esc_pct,
-            "as_of": asof.date().isoformat() if asof else None,
+            "by_source": by_src, "src": "annotation",
+            "coverage": _coverage(bc, days * 2),
         }
     return _cached(f"ov:{bc}:{product}:{days}", _compute)
 
 
 @_safe(None)
 def trend(bank: str, product: str | None = None, months: int = 14) -> dict | None:
-    eng = _get_engine()
-    if eng is None:
-        return None
     bc = resolve_bank(bank)
     if not bc:
         return None
 
     def _compute():
-        if _index_ready():
-            try:
-                idx, ip = _idx_clause(bc, product)
-                with db.session() as s:
-                    rows = s.execute(text(
-                        f"SELECT to_char(date_trunc('month', i.dt), 'YYYY-MM') ym, count(*)"
-                        f" FROM review_index i WHERE {idx}"
-                        f" AND i.dt >= date_trunc('month', now()) - make_interval(months => :m)"
-                        f" GROUP BY 1 ORDER BY 1"), {**ip, "m": months - 1}).all()
-                    cur_ym = s.execute(text("SELECT to_char(now(),'YYYY-MM')")).scalar()
-            except Exception as e:
-                log.warning("reviews_dash.trend: индекс не сработал (%s)", e)
-                rows = None
-        else:
-            rows = None
-        if rows is None:
-            bclause, bp = _bank_clause(bc, product)
-            with eng.connect() as c:
-                rows = c.execute(text(
-                    f"SELECT to_char(date_trunc('month', r.\"datePublished\"), 'YYYY-MM') ym, count(DISTINCT r.url)"
-                    f" FROM bankiru.reviews r WHERE {bclause}"
-                    f" AND r.\"datePublished\" >= date_trunc('month', now()) - make_interval(months => :m)"
-                    f" GROUP BY 1 ORDER BY 1"),
-                    {**bp, "m": months - 1}).all()
-                cur_ym = c.execute(text("SELECT to_char(now(),'YYYY-MM')")).scalar()
-        series = [{"ym": r[0], "n": int(r[1]), "partial": r[0] == cur_ym} for r in rows]
-        # baseline и детект спайка — ТОЛЬКО по завершённым месяцам (текущий неполный
-        # занижен и раздувал бы «падение»/смещал среднее). Robust: медиана + MAD,
-        # устойчиво к самому пику и к растущему тренду (в отличие от mean+std).
+        idx, ip = _idx_clause(bc, product)
+        with db.session() as s:
+            # Месяц, где разметка ещё не закончена (массовый прогон идёт от
+            # свежих к старым), помечается неполным — как текущий: его столбик
+            # занижен, и в базовую линию он не входит.
+            rows = s.execute(text(
+                f"SELECT to_char(date_trunc('month', i.dt), 'YYYY-MM') ym,"
+                f"       count(*) FILTER (WHERE {_CMP}),"
+                f"       count(*) FILTER (WHERE i.kind IS NOT NULL),"
+                f"       count(*)"
+                f" FROM review_index i WHERE {idx}"
+                f" AND i.dt >= date_trunc('month', now()) - make_interval(months => :m)"
+                f" GROUP BY 1 ORDER BY 1"), {**ip, "m": months - 1}).all()
+            cur_ym = s.execute(text("SELECT to_char(now(),'YYYY-MM')")).scalar()
+        series = []
+        for ym, n, lab, tot in rows:
+            cov = (lab / tot) if tot else 1.0
+            series.append({"ym": ym, "n": int(n), "partial": ym == cur_ym or cov < 0.97,
+                           **({"labeled_pct": round(100 * cov)} if cov < 0.97 else {})})
         complete = [s["n"] for s in series if not s["partial"]]
         med = None
         if len(complete) >= 4:
             med = _median(complete)
             mad = _median([abs(v - med) for v in complete]) or (
                 sum(abs(v - med) for v in complete) / len(complete))
-            thr = med + 2.0 * mad   # ловит явный пик (напр. +55%), не шумит на ровном ряде
+            thr = med + 2.0 * mad
             for s in series:
                 s["pct_vs_median"] = round(100.0 * (s["n"] - med) / med) if med else 0
                 s["spike"] = (not s["partial"]) and s["n"] > thr and s["n"] >= med * 1.4
@@ -528,183 +478,71 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
     return _cached(f"tr:{bc}:{product}:{months}", _compute)
 
 
+
+
 @_safe(None)
-def _themes_from_labels(bc: str, product: str | None, days: int = 90) -> dict | None:
-    """Панель тем по СОХРАНЁННОЙ разметке вместо regex-скана по текстам.
-
-    Разметку делает фоновый прогон (review_topics): темы выводит модель из
-    корпуса, раскладывает по ним вектор. Здесь остаётся обычный GROUP BY — а
-    было двадцать с лишним регэкспов по всем текстам рынка за 180 дней на каждое
-    открытие вкладки.
-
-    Всё нужное для среза (банк, продукт, дата) уже лежит в полнотекстовом
-    зеркале, поэтому чужая база в агрегате не участвует вовсе.
-    """
-    from . import review_topics
-    ver = review_topics.active_version()
-    if not ver:
-        return None
-    # Окно и «предыдущее такое же» — от выбранного периода, а не от зашитых
-    # 90/180: панель тем не менялась при переключении периода, и «главная тема»
-    # спорила с KPI «жалоб за N дней», посчитанным по другому окну.
-    params = {"bank": bc, "product": product, "ver": ver, "d": days, "d2": days * 2,
-              "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP}
-    try:
-        with db.session() as s:
-            rows = s.execute(text("""
-                WITH dd AS (
-                    SELECT f.url, f.dt FROM review_index f
-                    WHERE f.bank = :bank
-                      AND f.dt >= now() - make_interval(days => :d2)
-                      -- Верхняя граница обязательна: в корпусе есть даты из
-                      -- будущего (площадка отдаёт дату акции или ответа банка),
-                      -- и без отсечки они попадали в «за период» — тема
-                      -- считалась по большему числу отзывов, чем KPI рядом.
-                      AND f.dt <= now()
-                      AND (CAST(:product AS text) IS NULL OR f.product = :product)
-                ), lab AS (
-                    SELECT l.topic_id, dd.dt
-                    FROM review_topic_label l JOIN dd ON dd.url = l.url
-                    WHERE l.z >= :min AND l.rn <= :rank
-                )
-                SELECT d.key, d.label, d.risk,
-                       count(*) FILTER (WHERE lab.dt >= now() - make_interval(days => :d)) AS n,
-                       count(*) FILTER (WHERE lab.dt <  now() - make_interval(days => :d)) AS p
-                FROM lab JOIN review_topic_def d ON d.topic_id = lab.topic_id
-                WHERE d.version = :ver
-                GROUP BY d.key, d.label, d.risk
-            """), params).mappings().all()
-            tot, other = s.execute(text("""
-                WITH dd AS (
-                    SELECT f.url FROM review_index f
-                    WHERE f.bank = :bank
-                      AND f.dt >= now() - make_interval(days => :d)
-                      AND f.dt <= now()
-                      AND (CAST(:product AS text) IS NULL OR f.product = :product)
-                )
-                SELECT count(*),
-                       count(*) FILTER (WHERE NOT EXISTS (
-                           SELECT 1 FROM review_topic_label l
-                           WHERE l.url = dd.url AND l.z >= :min AND l.rn <= :rank))
-                FROM dd
-            """), params).one()
-    except Exception as e:
-        log.warning("reviews_dash: агрегат по разметке не сработал (%s) — иду regex'ом", e)
-        return None
-    total = int(tot) or 1
-    out = []
-    for r in rows:
-        n, p = int(r["n"]), int(r["p"])
-        out.append({"key": r["key"], "label": r["label"], "risk": r["risk"], "n": n,
-                    "pct": round(100.0 * n / total, 1),
-                    "delta_pct": round(100.0 * (n - p) / p) if p else (None if n == 0 else 100)})
-    out.sort(key=lambda x: x["n"], reverse=True)
-    if other:
-        out.append({"key": "other", "label": "Прочее / без темы", "risk": "other",
-                    "n": int(other), "pct": round(100.0 * int(other) / total, 1),
-                    "delta_pct": None})
-    return {"bank": bc, "product": product, "days": days, "total": total,
-            "themes": out, "src": "labels"}
-
-
 def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None:
-    eng = _get_engine()
-    if eng is None:
-        return None
+    """Риск-карта: распределение жалоб по ГЛАВНОЙ проблеме из LLM-разметки.
+
+    У каждой жалобы ровно одна главная проблема, поэтому доли в сумме дают
+    100%: прежняя векторная разметка давала отзыву до двух тем, вторая была
+    неверна в половине случаев, и сумма долей переваливала за сотню. Где
+    проблема упомянута как дополнительная — отдельным числом «ещё в N»."""
     bc = resolve_bank(bank)
     if not bc:
         return None
 
     def _compute():
-        # Пока разметки нет (первый прогон ещё не отработал) — считаем как раньше.
-        # Панель тем не должна пустеть из-за того, что фоновая задача не успела.
-        if TOPICS_FROM_LABELS:
-            byl = _themes_from_labels(bc, product, days)
-            if byl and byl["themes"]:
-                return byl
-        bclause, bp = _bank_clause(bc, product)
-        # Темы для аудита = РИСКИ ПОСЛЕДНИХ 90 дн (n/доля), momentum vs пред. 90.
-        # Скан ограничен 180 днями + булев-флаг темы считаем ОДИН раз в CTE
-        # (иначе ILIKE по 40к длинных текстов × десятки паттернов = десятки сек).
-        cte_sel, params = [], dict(bp)
-        for t in THEMES:
-            ts, tp = _theme_sql(t, f"t{t['key']}_")
-            params.update(tp)
-            cte_sel.append(f'({ts}) AS "{t["key"]}"')
-        params["_d"], params["_d2"] = days, days * 2
-        n_sel = [f'count(*) FILTER (WHERE dt >= now()-make_interval(days=>:_d) AND "{t["key"]}") AS "{t["key"]}_n"' for t in THEMES]
-        p_sel = [f'count(*) FILTER (WHERE dt < now()-make_interval(days=>:_d) AND "{t["key"]}") AS "{t["key"]}_p"' for t in THEMES]
-        any_expr = " OR ".join(f'"{t["key"]}"' for t in THEMES)   # отзыв попал хоть в одну тему
-        # дедуп источника СНАЧАЛА (DISTINCT ON url), потом regex по уникальным
-        # (корпус содержит точные дубли краулера — иначе счёт и время раздуты)
-        sql = (f'WITH dd AS MATERIALIZED ('
-               f' SELECT DISTINCT ON (r.url) r."datePublished", r."reviewBody"'
-               f' FROM bankiru.reviews r WHERE {bclause}'
-               f' AND r."datePublished" >= now() - make_interval(days => :_d2)'
-               f' AND r."datePublished" <= now()'
-               f' ORDER BY r.url),'
-               f' tagged AS MATERIALIZED ('
-               f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)} FROM dd r)'
-               f' SELECT {", ".join(n_sel + p_sel)},'
-               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>:_d)) AS "_total",'
-               f' count(*) FILTER (WHERE dt >= now()-make_interval(days=>:_d) AND NOT ({any_expr})) AS "_other"'
-               f' FROM tagged')
-        with eng.connect() as c:
-            row = c.execute(text(sql), params).mappings().one()
-        total = int(row["_total"]) or 1
+        p = {"bank": bc, "product": product, "d": days, "d2": days * 2}
+        with db.session() as s:
+            rows = s.execute(text(f"""
+                SELECT i.issue,
+                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d)) n,
+                       count(*) FILTER (WHERE i.dt <  now() - make_interval(days => :d)) p
+                FROM review_index i
+                WHERE i.bank = :bank AND {_CMP}
+                  AND i.dt >= now() - make_interval(days => :d2) AND i.dt <= now()
+                  AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                GROUP BY 1"""), p).all()
+            also = dict(s.execute(text(f"""
+                SELECT x, count(*) FROM review_index i, unnest(i.issues2) x
+                WHERE i.bank = :bank AND {_CMP}
+                  AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+                  AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                GROUP BY 1"""), p).all())
+        total = sum(int(r[1]) for r in rows) or 1
         out = []
-        for t in THEMES:
-            n = int(row[f'{t["key"]}_n'])
-            mp = int(row[f'{t["key"]}_p'])
-            d = round(100.0 * (n - mp) / mp) if mp else (None if n == 0 else 100)
-            out.append({"key": t["key"], "label": t["label"], "risk": t["risk"],
-                        "n": n, "pct": round(100.0 * n / total, 1), "delta_pct": d})
-        out.sort(key=lambda x: x["n"], reverse=True)
-        # «Прочее / без темы» — сколько жалоб не попало ни в одну тему (контекст
-        # полноты риск-карты; темы мультилейбл, поэтому сумма pct ≠ 100%).
-        other_n = int(row["_other"])
-        if other_n:
-            out.append({"key": "other", "label": "Прочее / без темы", "risk": "other",
-                        "n": other_n, "pct": round(100.0 * other_n / total, 1), "delta_pct": None})
-        return {"bank": bc, "product": product, "days": days, "total": total, "themes": out}
-    # Период — часть ключа кэша. Без него первый же ответ за 90 дней оседал в
-    # кэше и отдавался на любой другой период: панель выглядела «одинаковой
-    # за квартал, за год и за всё время» даже после проброса параметра.
+        for code, n, prev in rows:
+            o = cb.issue_obj(code)
+            if not o or code == "no_issue":
+                continue
+            n, prev = int(n), int(prev)
+            if not n and not prev:
+                continue
+            out.append({**o, "n": n, "pct": round(100.0 * n / total, 1),
+                        "n_also": int(also.get(code, 0)),
+                        "delta_pct": round(100.0 * (n - prev) / prev) if prev else (None if n == 0 else 100)})
+        out.sort(key=lambda x: (x["key"] == "other", -x["n"]))
+        return {"bank": bc, "product": product, "days": days, "total": total,
+                "themes": out, "src": "annotation", "coverage": _coverage(bc, days * 2)}
     return _cached(f"th:{bc}:{product}:{days}", _compute)
 
 
 @_safe(None)
 def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 8) -> dict | None:
-    eng = _get_engine()
-    if eng is None:
-        return None
     bc = resolve_bank(bank)
     if not bc:
         return None
 
     def _compute():
-        rows = None
-        if _index_ready():
-            try:
-                with db.session() as s:
-                    rows = s.execute(text(
-                        "SELECT i.bank, count(*) n FROM review_index i"
-                        " WHERE i.dt >= now() - make_interval(days => :d)"
-                        " AND (i.dt IS NULL OR i.dt <= now())"
-                        + (" AND i.product = :product" if product else "") +
-                        " GROUP BY 1 ORDER BY 2 DESC"),
-                        {"d": days, **({"product": product} if product else {})}).all()
-            except Exception as e:
-                log.warning("reviews_dash.vs_market: индекс не сработал (%s)", e)
-                rows = None
-        if rows is None:
-            with eng.connect() as c:
-                rows = c.execute(text(
-                    'SELECT "bankName", count(DISTINCT r.url) n FROM bankiru.reviews r'
-                    ' WHERE r."datePublished" >= now() - make_interval(days => :d)'
-                    + (' AND r."product" = :product' if product else '') +
-                    ' GROUP BY 1 ORDER BY 2 DESC'),
-                    {"d": days, **({"product": product} if product else {})}).all()
+        with db.session() as s:
+            rows = s.execute(text(
+                "SELECT i.bank, count(*) n FROM review_index i"
+                " WHERE i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
+                f" AND {_CMP}"
+                + (" AND i.product = :product" if product else "") +
+                " GROUP BY 1 ORDER BY 2 DESC"),
+                {"d": days, **({"product": product} if product else {})}).all()
         total = sum(int(r[1]) for r in rows) or 1
         ranked = [{"bank": r[0], "n": int(r[1]), "pct": round(100.0 * int(r[1]) / total, 1),
                    "is_target": r[0] == bc} for r in rows]
@@ -719,45 +557,24 @@ def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 
 
 @_safe(None)
 def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) -> dict | None:
-    eng = _get_engine()
-    if eng is None:
-        return None
     bc = resolve_bank(bank)
     if not bc:
         return None
 
     def _compute():
-        rows = None
-        if _index_ready():
-            try:
-                idx, ip = _idx_clause(bc, product)
-                with db.session() as s:
-                    # город заполнен не у всех источников — считаем по тем, где он
-                    # есть, и не подмешиваем безгородные строки нулями
-                    rows = s.execute(text(
-                        f"SELECT i.city, count(*) n FROM review_index i"
-                        f" WHERE {idx} AND i.city IS NOT NULL AND i.city <> ''"
-                        f" AND i.dt >= now() - make_interval(days => :d)"
-                        f" GROUP BY 1 ORDER BY 2 DESC LIMIT 40"), {**ip, "d": days}).all()
-            except Exception as e:
-                log.warning("reviews_dash.geo: индекс не сработал (%s)", e)
-                rows = None
-        if rows is None:
-            bclause, bp = _bank_clause(bc, product)
-            with eng.connect() as c:
-                rows = c.execute(text(
-                    f"SELECT split_part(r.location, ' (', 1) AS city, count(DISTINCT r.url) n"
-                    f" FROM bankiru.reviews r WHERE {bclause} AND r.location <> ''"
-                    f" AND r.\"datePublished\" >= now() - make_interval(days => :d)"
-                    f" GROUP BY 1 ORDER BY 2 DESC LIMIT 40"),
-                    {**bp, "d": days}).all()
+        idx, ip = _idx_clause(bc, product)
+        with db.session() as s:
+            rows = s.execute(text(
+                f"SELECT i.city, count(*) n FROM review_index i"
+                f" WHERE {idx} AND {_CMP} AND i.city IS NOT NULL AND i.city <> ''"
+                f" AND i.dt >= now() - make_interval(days => :d)"
+                f" GROUP BY 1 ORDER BY 2 DESC LIMIT 40"), {**ip, "d": days}).all()
         cities = []
         for city, n in rows:
             n = int(n)
             pop = _POP.get(city.strip().lower().replace("ё", "е"))
             per100k = round(n / (pop / 100.0), 1) if pop else None
             cities.append({"city": city, "n": n, "per_100k": per100k})
-        # аномалия: per-capita сильно выше медианы городов с известным населением
         known = [c["per_100k"] for c in cities if c["per_100k"] is not None]
         if known:
             known_sorted = sorted(known)
@@ -770,35 +587,18 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
 
 @_safe(None)
 def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
-    eng = _get_engine()
-    if eng is None:
-        return None
     bc = resolve_bank(bank)
     if not bc:
         return None
 
     def _compute():
-        rows = None
-        if _index_ready():
-            try:
-                with db.session() as s:
-                    rows = s.execute(text(
-                        "SELECT i.product, count(*) n FROM review_index i"
-                        " WHERE i.bank = :bank AND i.product IS NOT NULL"
-                        " AND i.dt >= now() - make_interval(days => :d)"
-                        " AND (i.dt IS NULL OR i.dt <= now())"
-                        " GROUP BY 1 ORDER BY 2 DESC LIMIT :top"),
-                        {"bank": bc, "d": days, "top": top}).all()
-            except Exception as e:
-                log.warning("reviews_dash.products: индекс не сработал (%s)", e)
-                rows = None
-        if rows is None:
-            with eng.connect() as c:
-                rows = c.execute(text(
-                    'SELECT "product", count(DISTINCT r.url) n FROM bankiru.reviews r'
-                    ' WHERE r."bankName" = :bank AND r."datePublished" >= now() - make_interval(days => :d)'
-                    ' GROUP BY 1 ORDER BY 2 DESC LIMIT :top'),
-                    {"bank": bc, "d": days, "top": top}).all()
+        with db.session() as s:
+            rows = s.execute(text(
+                "SELECT i.product, count(*) n FROM review_index i"
+                f" WHERE i.bank = :bank AND i.product IS NOT NULL AND {_CMP}"
+                " AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
+                " GROUP BY 1 ORDER BY 2 DESC LIMIT :top"),
+                {"bank": bc, "d": days, "top": top}).all()
         return {"bank": bc, "items": [{"product": r[0], "n": int(r[1])} for r in rows]}
     return _cached(f"pr:{bc}:{days}:{top}", _compute)
 
@@ -816,14 +616,11 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
                      esc: bool = False) -> dict:
     """Лента по ЕДИНОМУ индексу — все источники в одном списке.
 
-    Раньше лента читала только внешнюю базу banki.ru, поэтому отзывы, собранные
-    нашими коллекторами, лежали в базе и были невидимы. Теперь источник — просто
-    колонка, и аудитор видит их вперемешку по дате, как и просил: не отдельным
-    блоком, а расширением того же списка.
-    """
-    # Берём с запасом на дедуп и на уже показанные страницы: аудитор жаловался,
-    # что лента жёстко обрывается на двадцати обращениях и проверить фильтр по
-    # периоду нечем.
+    Показываются жалобы из разметки и ещё не размеченные свежие отзывы (они
+    размечаются в течение часа — прятать самые свежие нельзя). Похвала,
+    вопросы, мусор и копии в ленту жалоб не идут. Фильтр по теме — по главной
+    проблеме, как и счётчик риск-карты: клик по строке показывает ровно те
+    жалобы, что в ней посчитаны."""
     fetch = min(max((limit + offset) * 5, 40), 600)
     p: dict = {"bank": bc, "product": product, "lim": fetch}
     extra = ""
@@ -837,21 +634,14 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
         extra += " AND date_trunc('month', i.dt) = to_date(:month, 'YYYY-MM')"
         p["month"] = month
     if esc:
-        # Признак посчитан при индексации (миграция 031) и лежит под частичным
-        # индексом — фильтр стоит один булев предикат. Аудиторы дважды просили
-        # переход к самим обращениям по плашке регуляторной эскалации.
         extra += " AND i.esc"
     if theme:
-        from . import review_topics
-        ver = review_topics.active_version()
-        if not ver:
+        if theme not in cb.ISSUES:
             return {"items": [], "mode": "feed", "error": "unknown_theme"}
-        extra += (" AND EXISTS (SELECT 1 FROM review_topic_label l"
-                  " JOIN review_topic_def d ON d.topic_id = l.topic_id"
-                  " WHERE l.url = i.url AND d.version = :ver AND d.key = :tkey"
-                  " AND l.z >= :minz AND l.rn <= :rank)")
-        p.update({"ver": ver, "tkey": theme, "minz": review_topics.MIN_Z,
-                  "rank": review_topics.RANK_CAP})
+        extra += f" AND i.issue = :tkey AND {_CMP}"
+        p["tkey"] = theme
+    else:
+        extra += f" AND (i.kind IS NULL OR {_CMP})"
     try:
         with db.session() as s:
             rows = [dict(r) for r in s.execute(text(f"""
@@ -859,8 +649,6 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
                        i.city, i.rating
                 FROM review_index i
                 WHERE i.bank = :bank
-                  -- дата из будущего это дефект источника, а не свежий отзыв:
-                  -- такая строка навсегда встаёт первой в ленте
                   AND (i.dt IS NULL OR i.dt <= now())
                   AND (CAST(:product AS text) IS NULL OR i.product = :product){extra}
                 ORDER BY i.dt DESC NULLS LAST
@@ -885,7 +673,7 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
             continue
         seen[key] = len(out)
         dt = r["dt"]
-        out.append({"bank": r["bank"], "product": r["product"] or b.get("product"),
+        out.append({"bank": r["bank"], "product": r["product"],
                     "date": dt.date().isoformat() if dt else None,
                     "city": r["city"] or b.get("city"),
                     "url": r["url"], "text": body, "similar": 0,
@@ -900,18 +688,11 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
 
 def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None,
                    city: str | None, month: str | None, limit: int) -> list[str] | None:
-    """Ссылки на отзывы темы из выведенной таксономии — по сохранённой разметке.
-
-    Возвращает None, если такой темы в активном поколении нет: аудитор должен
-    увидеть «тема не найдена», а не молча пустую ленту (её легко принять за
-    «жалоб по теме нет»).
-    """
-    from . import review_topics
-    ver = review_topics.active_version()
-    if not ver:
+    """Ссылки на жалобы с этой главной проблемой. None — такого кода нет:
+    аудитор должен увидеть «тема не найдена», а не пустую ленту."""
+    if key not in cb.ISSUES:
         return None
-    p = {"key": key, "ver": ver, "bank": bank, "product": product,
-         "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP, "lim": int(limit)}
+    p = {"key": key, "bank": bank, "product": product, "lim": int(limit)}
     extra = ""
     if days:
         extra += " AND f.dt >= now() - make_interval(days => :d)"
@@ -922,84 +703,63 @@ def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None
     if month:
         extra += " AND date_trunc('month', f.dt) = to_date(:month, 'YYYY-MM')"
         p["month"] = month
-    try:
-        with db.session() as s:
-            if not s.execute(text(
-                "SELECT 1 FROM review_topic_def WHERE version = :ver AND key = :key"),
-                    p).first():
-                return None
-            return list(s.execute(text(f"""
-                SELECT f.url FROM review_index f
-                JOIN review_topic_label l ON l.url = f.url
-                JOIN review_topic_def  d ON d.topic_id = l.topic_id
-                WHERE d.version = :ver AND d.key = :key AND l.z >= :min AND l.rn <= :rank
-                  AND f.bank = :bank
-                  AND (CAST(:product AS text) IS NULL OR f.product = :product){extra}
-                ORDER BY f.dt DESC LIMIT :lim
-            """), p).scalars().all())
-    except Exception as e:
-        log.warning("reviews_dash: отбор по теме %r не сработал (%s)", key, e)
-        return None
+    with db.session() as s:
+        return list(s.execute(text(f"""
+            SELECT f.url FROM review_index f
+            WHERE f.issue = :key AND f.kind IN ('complaint', 'mixed') AND f.bank = :bank
+              AND (CAST(:product AS text) IS NULL OR f.product = :product){extra}
+            ORDER BY f.dt DESC LIMIT :lim
+        """), p).scalars().all())
 
 
 def _labels_for(urls: list[str]) -> dict[str, list[dict]]:
-    """Темы показанных отзывов из разметки — одним запросом на всю страницу.
-
-    Пер-отзыв regex-разметка (match_themes) остаётся фолбэком: пока фоновый
-    прогон не отработал, чипы должны быть, пусть и прежние."""
-    if not urls:
-        return {}
-    from . import review_topics  # noqa: F401 — READ_TOP используется ниже
-    ver = review_topics.active_version()
-    if not ver:
-        return {}
-    try:
-        with db.session() as s:
-            rows = s.execute(text("""
-                SELECT l.url, d.key, d.label, d.risk, l.score
-                FROM review_topic_label l
-                JOIN review_topic_def d ON d.topic_id = l.topic_id
-                WHERE d.version = :ver AND l.z >= :min AND l.rn <= :rank AND l.url = ANY(:urls)
-                ORDER BY l.url, l.z DESC
-            """), {"ver": ver, "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP, "urls": urls}).mappings().all()
-    except Exception as e:
-        log.warning("reviews_dash: темы показанных отзывов не забрались (%s)", e)
-        return {}
+    """Чипы тем показанных отзывов: главная проблема первой, затем дополнительные."""
     out: dict[str, list[dict]] = {}
-    for r in rows:
-        out.setdefault(r["url"], []).append(
-            {"key": r["key"], "label": r["label"], "short": _short(r["label"]),
-             "risk": r["risk"]})
+    for u, a in _ann_for(urls).items():
+        if a["status"] not in ("agree", "arbitrated"):
+            continue
+        chips = []
+        for code in [a["issue"]] + list(a["issues2"] or []):
+            o = cb.issue_obj(code)
+            if o and code != "no_issue":
+                chips.append(o)
+        out[u] = chips
     return out
 
 
 def _attach_themes(items: list[dict]) -> None:
-    """Темы и человекочитаемый источник — общий финиш для ленты и поиска.
-
-    Обе ветки проходят здесь, поэтому и подпись источника ставится здесь: иначе
-    лента показывала бы «banki.ru», а поиск по тем же данным — служебный ключ
-    «bankiru», и аудитор считал бы их разными площадками."""
+    """Темы, разбор и человекочитаемый источник — общий финиш ленты и поиска."""
     for r in items:
         src = r.get("source")
         if src:
             r["source"] = _SOURCE_LABEL.get(src, src)
-    from . import review_topics          # ленивый импорт: иначе кольцо модулей
-    ready = review_topics.is_ready()
-    by_url = _labels_for([i["url"] for i in items if i.get("url")])
+    ann = _ann_for([i["url"] for i in items if i.get("url")])
     for r in items:
-        lab = by_url.get(r.get("url") or "")
-        if lab:
-            r["themes"] = lab[:review_topics.READ_TOP]
-            r["theme_src"] = "topics"
-        elif ready:
-            # Разметка есть, но этот отзыв ни к чему не отнесён — он и в панели
-            # считается «Прочим». Показывать здесь regex-темы нельзя: в одном
-            # списке оказались бы названия двух разных таксономий, а карточка
-            # спорила бы с панелью. Пустой список фронт рисует как «Прочее».
+        a = ann.get(r.get("url") or "")
+        if not a or a["status"] not in ("agree", "arbitrated"):
             r["themes"] = []
-            r["theme_src"] = "topics"
-        else:
-            r["themes"] = match_themes(r.get("text", ""))
+            r["theme_src"] = "pending"
+            continue
+        chips = []
+        for code in [a["issue"]] + list(a["issues2"] or []):
+            o = cb.issue_obj(code)
+            if o and code != "no_issue":
+                chips.append(o)
+        r["themes"] = chips
+        r["theme_src"] = "ann"
+        # продукт — из разметки, а не метка площадки (у поиска по внешнему
+        # корпусу она своя и неверна у большинства обращений)
+        r["product"] = cb.product_label(a["product"])
+        r["ann"] = {
+            "kind": a["kind"], "summary": a["summary"],
+            "quote": a["quote"] if a["quote_ok"] else None,
+            "esc": a["esc"], "esc_to": list(a["esc_to"] or []),
+            "no_consent": bool(a["no_consent"]), "misled": bool(a["misled"]),
+            "vulnerable": list(a["vulnerable"] or []),
+            "amount": float(a["amount"]) if a["amount"] is not None else None,
+            "confidence": "согласие двух моделей" if a["status"] == "agree" else "решено арбитром",
+            "new_topic": a["new_topic"] if a["code_fit"] == "approx" or a["issue"] == "other" else None,
+        }
 
 
 def list_reviews(bank: str, product: str | None = None, theme: str | None = None,
@@ -1015,19 +775,6 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
                            city=city, month=month, limit=limit)["items"]
 
 
-def _esc_urls(urls: list[str]) -> set[str]:
-    """Какие из этих обращений несут признак регуляторной эскалации."""
-    if not urls:
-        return set()
-    try:
-        with db.session() as s:
-            rows = s.execute(text(
-                "SELECT url FROM review_index WHERE esc AND url = ANY(:u)"),
-                {"u": urls}).scalars().all()
-        return set(rows)
-    except Exception as e:                                     # noqa: BLE001
-        log.warning("reviews_dash: признак эскалации не забрался (%s)", e)
-        return set(urls)      # фильтр не молчит: лучше не сузить, чем соврать
 
 
 def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = None,
@@ -1035,144 +782,55 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
                     city: str | None = None, month: str | None = None,
                     limit: int = 20, offset: int = 0,
                     esc: bool = False, sort: str = "auto") -> dict:
-    """Лента доказательной базы. q → семантика; иначе свежие с фильтрами
+    """Лента доказательной базы. q → поиск; иначе свежие с фильтрами
     тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
     массовость это аудит-сигнал → поле `similar`.
 
-    Возвращает {items, mode, error}. Признак error нужен вкладке: раньше упавший
-    поиск и честное «ничего не нашлось» выглядели одинаково — пустым списком,
-    и аудитор делал вывод, что жалоб по теме нет."""
+    Возвращает {items, mode, error}: упавший поиск и честное «ничего не
+    нашлось» не должны выглядеть одинаково."""
     bc = resolve_bank(bank) if bank else None
+    if theme and theme not in cb.ISSUES:
+        return {"items": [], "mode": "search" if q else "feed", "error": "unknown_theme"}
     if q and q.strip():
         if bank and not bc:
-            # банка нет в корпусе — это не «жалоб не нашлось», а другой ответ
             return {"items": [], "mode": "search", "error": "unknown_bank"}
-        # тема/город/месяц раньше здесь терялись — теперь уезжают в сам поиск
-        th = THEME_BY_KEY.get(theme or "")
         meta: dict = {}
+        # Тема и отбор жалоб применяются к выдаче поиска по нашей разметке:
+        # поиск идёт и по внешнему корпусу, где разметки нет. Поэтому берём с
+        # запасом — иначе после отбора страница пустела бы.
+        want = limit + offset + 1
+        # при теме или продукте отбор после поиска узкий: берём широко, иначе
+        # в первых десятках выдачи жалоб с нужной главной проблемой может не быть
+        k = 300 if (theme or product) else min(400, want * 2)
         try:
-            # Смещение отрабатываем срезом, а не SQL-OFFSET: дедуп массовых
-            # жалоб идёт уже после выборки, и OFFSET по сырым строкам разъехался
-            # бы со списком, который видит аудитор.
-            # Просим на ОДНУ запись больше, чем покажем: поиск обрезает выдачу
-            # ровно до k, и без этого запаса «есть ещё» было бы тождественно
-            # ложным — кнопка догрузки не появилась бы никогда.
-            res = search_reviews(q, bank=bc, product=product, since_days=days,
-                                 theme_rx=_theme_rx(th, r"\y") if th else None,
-                                 city=city, month=month, k=limit + offset + 1,
+            # Продукт тоже отбираем по нашей разметке: у внешнего корпуса своя
+            # метка площадки («Обслуживание юридических лиц» у 180 тыс. строк),
+            # и смысловая часть поиска с ней почти ничего не находила.
+            res = search_reviews(q, bank=bc, product=None, since_days=days,
+                                 theme_rx=None, city=city, month=month, k=k,
                                  strict=True, _meta=meta)
         except Exception as e:
             log.warning("reviews_dash: поиск по %r упал: %s", q, e)
             return {"items": [], "mode": "search", "error": "search_failed"}
+        keep = _keep_urls([r.get("url") for r in res if r.get("url")], theme=theme, esc=esc,
+                          product=product)
+        res = [r for r in res if r.get("url") in keep]
         if sort == "date":
-            # По умолчанию поиск отдаёт по релевантности — это правильно, когда
-            # ищут проблему. Но аудитор, читающий ленту как хронику, просил
-            # порядок по датам. Сортируем ДО среза страницы: иначе страницы
-            # перемешались бы между собой.
             res.sort(key=lambda r: (r.get("date") or ""), reverse=True)
-        if esc:
-            # Поиск идёт по внешнему корпусу, где признака эскалации нет: он
-            # наш и посчитан при индексации. Поэтому отбираем после поиска по
-            # нашему индексу — иначе фильтр молча пропадал бы, стоило аудитору
-            # ввести запрос, ровно как раньше пропадал период.
-            keep = _esc_urls([r.get("url") for r in res if r.get("url")])
-            res = [r for r in res if r.get("url") in keep]
         page = res[offset:offset + limit]
         _attach_themes(page)
         return {"items": page, "mode": "search", "error": None, "search": meta,
                 "has_more": len(res) > offset + limit}
     if not bc:
         return {"items": [], "mode": "feed", "error": "unknown_bank"}
-    # Единый индекс — основной путь: в нём и внешний корпус, и наши коллекторы.
-    # Старая ветка по внешней базе остаётся страховкой на случай, если индекс
-    # ещё не наполнен (первый запуск) или его отключили рубильником.
-    if FEED_FROM_INDEX:
-        from . import bankiru_fts
-        if bankiru_fts.is_ready():
-            res = _feed_from_index(bc, product, theme, days, city, month,
-                                   limit, offset, esc)
-            # offset в условии обязателен: на последней странице список пуст и
-            # ошибки нет, без этого запрос провалился бы в запасную ветку и
-            # аудитор по кнопке «показать ещё» получил бы первую страницу снова.
-            if res["items"] or res["error"] or offset:
-                return res
-    eng = _get_engine()
-    if eng is None:
-        return {"items": [], "mode": "feed", "error": None}
-    bclause, bp = _bank_clause(bc, product)
-    # тянем с запасом, чтобы счётчик «ещё N похожих» был осмысленным после дедупа
-    fetch = min(max(limit * 5, 40), 120)
-    params = {**bp, "lim": fetch}
-    clause = ""
-    # Тема из выведенной таксономии живёт разметкой в НАШЕЙ базе, а лента читает
-    # чужую — join между ними невозможен. Поэтому сначала берём отобранные url
-    # у себя, потом добираем по ним тексты: та же двухфазность, что и в
-    # словесной ноге поиска. Ключи старой regex-таксономии продолжают работать
-    # прежним путём, пока разметки нет.
-    if theme and theme not in THEME_BY_KEY:
-        urls = _urls_by_topic(theme, bc, product, days=days, city=city,
-                              month=month, limit=fetch)
-        if urls is None:
-            return {"items": [], "mode": "feed", "error": "unknown_theme"}
-        if not urls:
-            return {"items": [], "mode": "feed", "error": None}
-        clause += " AND r.url = ANY(:turls)"
-        params["turls"] = urls
-        theme = None                      # дальше по regex-ветке не идём
-    if theme and theme in THEME_BY_KEY:
-        ts, tp = _theme_sql(THEME_BY_KEY[theme], "lt")
-        clause += f" AND {ts}"
-        params.update(tp)
-    if days:
-        clause += " AND r.\"datePublished\" >= now() - make_interval(days => :d)"
-        params["d"] = days
-    if city:
-        clause += " AND split_part(r.location, ' (', 1) = :city"
-        params["city"] = city
-    if month:
-        clause += " AND date_trunc('month', r.\"datePublished\") = to_date(:month, 'YYYY-MM')"
-        params["month"] = month
-    try:
-        with eng.connect() as c:
-            # DISTINCT ON (url): в корпусе точные дубли краулера (один URL тысячи
-            # раз). Без дедупа окно из :lim свежих заполнялось бы копиями одной
-            # жалобы (все с датой заливки), реальные отзывы вытеснялись.
-            rows = c.execute(text(
-                f'SELECT bank, product, dt, url, body, location FROM ('
-                f'  SELECT DISTINCT ON (r.url) r."bankName" bank, r."product" product,'
-                f'  r."datePublished" dt, r.url, r."reviewBody" body, r.location'
-                f'  FROM bankiru.reviews r WHERE {bclause}{clause}'
-                f'  AND length(r."reviewBody") >= 40'
-                f'  ORDER BY r.url, r."datePublished" DESC) s'
-                f' ORDER BY dt DESC LIMIT :lim'), params).mappings().all()
-    except Exception as e:
-        log.warning("reviews_dash.list_reviews failed: %s", e)
-        return {"items": [], "mode": "feed", "error": "feed_failed"}
-    seen: dict[str, int] = {}
-    out: list[dict] = []
-    for r in rows:
-        body = (r["body"] or "").strip()
-        key = body[:100].lower()
-        if key in seen:
-            out[seen[key]]["similar"] += 1
-            continue
-        seen[key] = len(out)
-        dt = r["dt"]
-        out.append({"bank": r["bank"], "product": r["product"],
-                    "date": dt.date().isoformat() if dt else None,
-                    "city": (r["location"] or "").split(" (")[0],
-                    "url": r["url"], "text": body, "similar": 0,
-                    "themes": []})
-    out = out[:limit]
-    _attach_themes(out)
-    return {"items": out, "mode": "feed", "error": None}
+    return _feed_from_index(bc, product, theme, days, city, month, limit, offset, esc)
 
 
 @_safe(None)
 def segment_reviews(bank: str, product: str | None = None, city: str | None = None,
                     month: str | None = None, limit: int = 40) -> dict | None:
     """Сводка по срезу (город или месяц) для LLM-объяснения аномалии/пика:
-    тексты жалоб + детерминированный regex-разбор тем + примеры со ссылками."""
+    распределение главных проблем по разметке + изложения и примеры со ссылками."""
     revs = list_reviews(bank, product=product, city=city, month=month, limit=limit)
     if not revs:
         return {"n": 0, "themes": [], "samples": [], "texts": []}
@@ -1180,205 +838,115 @@ def segment_reviews(bank: str, product: str | None = None, city: str | None = No
     cnt: Counter = Counter()
     risk_by: dict[str, str] = {}
     for r in revs:
-        for th in match_themes(r.get("text", "")):
-            cnt[th["label"]] += 1
-            risk_by[th["label"]] = th["risk"]
-    themes = [{"label": lbl, "risk": risk_by[lbl], "n": n} for lbl, n in cnt.most_common(6)]
+        th = (r.get("themes") or [])[:1]
+        for t in th:
+            cnt[t["label"]] += 1
+            risk_by[t["label"]] = t["risk"]
+    themes_ = [{"label": lbl, "risk": risk_by[lbl], "n": n} for lbl, n in cnt.most_common(6)]
     samples = [{"date": r["date"], "city": r.get("city"), "url": r["url"],
                 "text": (r["text"] or "")[:320]} for r in revs[:4]]
-    texts = [(r["text"] or "")[:600] for r in revs[:25]]
-    return {"n": len(revs), "themes": themes, "samples": samples, "texts": texts}
+    texts = [(((r.get("ann") or {}).get("summary") or "") + " | " + (r["text"] or "")[:450])
+             for r in revs[:25]]
+    return {"n": len(revs), "themes": themes_, "samples": samples, "texts": texts}
 
 
-def _topic_week_counts(bank_canon: str | None, product: str | None):
-    """Понедельные счётчики по темам LLM-таксономии из сохранённой разметки
-    (review_index × review_topic_label) — сырьё сигналов главной. До 05.08.2026
-    сигналы считались regex-темами THEMES и ТОЛЬКО по banki.ru: вкладка
-    «Отзывы» уже жила на новой таксономии и всех источниках, а передовица — на
-    старой. bank=None — рынок целиком. Возвращает (topics, counts) или None
-    (нет таксономии/разметки → вызывающий падает на THEMES-путь):
-      topics: [{key,label,risk}] активного поколения;
-      counts: {<key>_w0/_w1/_b, _tw0, _tb, _lab_w0/_lab_b (размечено),
-               _unc_w0/_unc_b (размечено, но ни одна тема не прошла порог)}.
-    Слепая зона честная: неразмеченный ещё бэклог в неё не пишется — иначе
-    отставание разметки выглядело бы как «вал жалоб вне тем»."""
-    from . import review_topics
-    ver = review_topics.active_version()
-    if not ver:
-        return None
-    p = {"ver": ver, "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP,
-         "bank": bank_canon, "product": product}
+def _topic_week_counts(bank_canon: str | None, product: str | None,
+                       exclude_bank: str | None = None):
+    """Понедельные счётчики жалоб по ГЛАВНОЙ проблеме — сырьё сигналов, пульса
+    и слепой зоны. bank=None — рынок; exclude_bank — рынок без этого банка
+    (иначе у крупного банка «рынок» наполовину состоит из него самого, и
+    всплеск у банка выглядит отраслевым).
+
+    Только жалобы, и только те, где события не старше 60 дней на момент
+    отзыва: история двухлетней давности, опубликованная на этой неделе, —
+    не всплеск этой недели (так в заголовок 22.09 попало событие 2025 года).
+
+    Возвращает (topics, counts) или None:
+      topics: [{key,label,short,risk,group}] — проблемы кодификатора;
+      counts: <key>_w0/_w1/_b, <key>_wk (по неделям 0..8), _tw0, _tb,
+              _lab_w0/_lab_b (размечено жалоб), _unc_w0/_unc_b («Прочее»)."""
+    p = {"bank": bank_canon, "ex": exclude_bank, "product": product}
     try:
         with db.session() as s:
-            topics = [dict(r) for r in s.execute(text(
-                "SELECT key, label, risk FROM review_topic_def"
-                " WHERE version = :ver ORDER BY topic_id"), p).mappings()]
-            if not topics:
-                return None
-            rows = s.execute(text("""
+            rows = s.execute(text(f"""
                 WITH dd AS (
-                    SELECT i.url, i.dt FROM review_index i
-                    WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)
-                      AND (CAST(:product AS text) IS NULL OR i.product = :product)
-                      AND i.dt >= now() - make_interval(days => 63)
-                      AND i.dt <= now())
-                SELECT d.key,
-                       count(*) FILTER (WHERE dd.dt >= now()-make_interval(days=>7)) AS w0,
-                       count(*) FILTER (WHERE dd.dt <  now()-make_interval(days=>7)
-                                          AND dd.dt >= now()-make_interval(days=>14)) AS w1,
-                       count(*) FILTER (WHERE dd.dt <  now()-make_interval(days=>14)) AS b
-                FROM dd
-                JOIN review_topic_label l ON l.url = dd.url
-                     AND l.z >= :min AND l.rn <= :rank
-                JOIN review_topic_def d ON d.topic_id = l.topic_id AND d.version = :ver
-                GROUP BY d.key
-            """), p).mappings().all()
-            tot = s.execute(text("""
-                WITH dd AS (
-                    SELECT i.dt,
-                           EXISTS (SELECT 1 FROM review_topic_label l
-                                   WHERE l.url = i.url) AS lab,
-                           EXISTS (SELECT 1 FROM review_topic_label l
-                                   JOIN review_topic_def d ON d.topic_id = l.topic_id
-                                        AND d.version = :ver
-                                   WHERE l.url = i.url
-                                     AND l.z >= :min AND l.rn <= :rank) AS clf
+                    SELECT i.issue, floor(extract(epoch FROM now() - i.dt) / 604800)::int AS w
                     FROM review_index i
                     WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)
+                      AND (CAST(:ex AS text) IS NULL OR i.bank <> :ex)
                       AND (CAST(:product AS text) IS NULL OR i.product = :product)
-                      AND i.dt >= now() - make_interval(days => 63)
-                      AND i.dt <= now())
-                SELECT count(*) FILTER (WHERE dt >= now()-make_interval(days=>7)),
-                       count(*) FILTER (WHERE dt <  now()-make_interval(days=>14)),
-                       count(*) FILTER (WHERE dt >= now()-make_interval(days=>7) AND lab),
-                       count(*) FILTER (WHERE dt <  now()-make_interval(days=>14) AND lab),
-                       count(*) FILTER (WHERE dt >= now()-make_interval(days=>7)
-                                          AND lab AND NOT clf),
-                       count(*) FILTER (WHERE dt <  now()-make_interval(days=>14)
-                                          AND lab AND NOT clf)
-                FROM dd
-            """), p).one()
+                      AND {_CMP}
+                      AND i.dt >= now() - make_interval(days => 63) AND i.dt <= now()
+                      AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60))
+                SELECT issue, w, count(*) FROM dd WHERE w BETWEEN 0 AND 8 GROUP BY 1, 2
+            """), p).all()
     except Exception as e:  # noqa: BLE001
-        log.warning("topic_week_counts: %s — фолбэк на regex-темы", e)
+        log.warning("topic_week_counts: %s", e)
         return None
+    topics = [t for t in cb.complaint_issues() if t["key"] != "other"]
     counts: dict = {}
-    for t in topics:
-        for sfx in ("w0", "w1", "b"):
-            counts[f'{t["key"]}_{sfx}'] = 0
-    for r in rows:
-        counts[f'{r["key"]}_w0'] = int(r["w0"])
-        counts[f'{r["key"]}_w1'] = int(r["w1"])
-        counts[f'{r["key"]}_b'] = int(r["b"])
-    counts.update({"_tw0": int(tot[0]), "_tb": int(tot[1]),
-                   "_lab_w0": int(tot[2]), "_lab_b": int(tot[3]),
-                   "_unc_w0": int(tot[4]), "_unc_b": int(tot[5])})
+    wk: dict[str, list[int]] = {}
+    for code, w, n in rows:
+        wk.setdefault(code, [0] * 9)[int(w)] += int(n)
+    tot = [0] * 9
+    for code, arr in wk.items():
+        for j in range(9):
+            tot[j] += arr[j]
+    for t in topics + [{"key": "other"}]:
+        arr = wk.get(t["key"], [0] * 9)
+        counts[f'{t["key"]}_w0'] = arr[0]
+        counts[f'{t["key"]}_w1'] = arr[1]
+        counts[f'{t["key"]}_b'] = sum(arr[2:9])
+        counts[f'{t["key"]}_wk'] = arr
+    oth = wk.get("other", [0] * 9)
+    counts.update({"_tw0": tot[0], "_tb": sum(tot[2:9]),
+                   "_lab_w0": tot[0], "_lab_b": sum(tot[2:9]),
+                   "_unc_w0": oth[0], "_unc_b": sum(oth[2:9])})
     return topics, counts
 
 
 @_safe(None)
 def top_topic(bank: str, product: str | None, days: int = 90) -> dict | None:
-    """Ведущая тема жалоб по продукту из label-таксономии + momentum к прошлому
-    окну. Для стат-карт «Для вас»: раньше «горячая тема» искалась через
-    _THEME_SLUG по СТАРЫМ regex-ключам (deposit/mortgage/transfer) — после
-    перехода на LLM-таксономию лукап молча возвращал пусто (аудит 05.08.2026)."""
-    from . import review_topics
-    ver = review_topics.active_version()
+    """Ведущая проблема жалоб по продукту + динамика к прошлому окну — для
+    стат-карт «Для вас»."""
     bc = resolve_bank(bank)
-    if not ver or not bc:
+    if not bc:
         return None
-    p = {"ver": ver, "min": review_topics.MIN_Z, "rank": review_topics.RANK_CAP,
-         "bank": bc, "product": product, "days": days}
     with db.session() as s:
-        row = s.execute(text("""
-            WITH dd AS (
-                SELECT i.url, i.dt FROM review_index i
-                WHERE i.bank = :bank
-                  AND (CAST(:product AS text) IS NULL OR i.product = :product)
-                  AND i.dt >= now() - make_interval(days => :days * 2)
-                  AND i.dt <= now())
-            SELECT d.key, d.label, d.risk,
-                   count(*) FILTER (WHERE dd.dt >= now() - make_interval(days => :days)) AS n,
-                   count(*) FILTER (WHERE dd.dt <  now() - make_interval(days => :days)) AS p
-            FROM dd
-            JOIN review_topic_label l ON l.url = dd.url
-                 AND l.z >= :min AND l.rn <= :rank
-            JOIN review_topic_def d ON d.topic_id = l.topic_id AND d.version = :ver
-            GROUP BY d.key, d.label, d.risk
-            ORDER BY n DESC LIMIT 1
-        """), p).mappings().first()
-    if not row or not int(row["n"]):
+        row = s.execute(text(f"""
+            SELECT i.issue,
+                   count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :days)) AS n,
+                   count(*) FILTER (WHERE i.dt <  now() - make_interval(days => :days)) AS p
+            FROM review_index i
+            WHERE i.bank = :bank AND {_CMP} AND i.issue NOT IN ('other', 'no_issue')
+              AND (CAST(:product AS text) IS NULL OR i.product = :product)
+              AND i.dt >= now() - make_interval(days => :days * 2) AND i.dt <= now()
+            GROUP BY 1 ORDER BY 2 DESC LIMIT 1
+        """), {"bank": bc, "product": product, "days": days}).first()
+    if not row or not int(row[1]):
         return None
-    n, prev = int(row["n"]), int(row["p"])
-    return {"key": row["key"], "label": row["label"], "risk": row["risk"], "n": n,
+    o = cb.issue_obj(row[0]) or {}
+    n, prev = int(row[1]), int(row[2])
+    return {"key": row[0], "label": o.get("label"), "risk": o.get("risk"), "n": n,
             "delta_pct": (round(100.0 * (n - prev) / prev) if prev else None)}
 
 
-def _theme_week_counts(eng, where_sql: str, params_extra: dict) -> dict:
-    """Помесячно→понедельно: по каждой теме счёт за окна w0[0-7д], w1[7-14д],
-    base[14-63д] + общие. where_sql — bank-scoped или 'TRUE' (рынок)."""
-    cte_sel, params = [], dict(params_extra)
-    for t in THEMES:
-        ts, tp = _theme_sql(t, f"x{t['key']}_")
-        params.update(tp)
-        cte_sel.append(f'({ts}) AS "{t["key"]}"')
-    w0 = "dt >= now()-make_interval(days=>7)"
-    w1 = "dt < now()-make_interval(days=>7) AND dt >= now()-make_interval(days=>14)"
-    base = "dt < now()-make_interval(days=>14)"
-    sel = []
-    for t in THEMES:
-        k = t["key"]
-        sel += [f'count(*) FILTER (WHERE {w0} AND "{k}") AS "{k}_w0"',
-                f'count(*) FILTER (WHERE {w1} AND "{k}") AS "{k}_w1"',
-                f'count(*) FILTER (WHERE {base} AND "{k}") AS "{k}_b"']
-    # Дедуп СНАЧАЛА (DISTINCT ON url), потом regex-скан по уникальным — иначе
-    # точные дубли краулера и раздувают счёт (ложные всплески), и удваивают
-    # тяжёлый market-скан. Один проход дедупа дешевле, чем count(DISTINCT)×63.
-    sql = (f'WITH dd AS MATERIALIZED ('
-           f' SELECT DISTINCT ON (r.url) r."datePublished", r."reviewBody"'
-           f' FROM bankiru.reviews r WHERE {where_sql}'
-           f' AND r."datePublished" >= now() - make_interval(days => 63)'
-           f' ORDER BY r.url),'
-           f' tagged AS MATERIALIZED ('
-           f' SELECT r."datePublished" AS dt, {", ".join(cte_sel)} FROM dd r)'
-           f' SELECT {", ".join(sel)},'
-           f' count(*) FILTER (WHERE {w0}) AS "_tw0", count(*) FILTER (WHERE {base}) AS "_tb"'
-           f' FROM tagged')
-    with eng.connect() as c:
-        return dict(c.execute(text(sql), params).mappings().one())
 
 
 @_safe(None)
 def week_pulse(bank: str, product: str | None = None) -> dict | None:
-    """Недельный срез для «пульса дня» на главной — БЕЗ порога сигнала.
-
-    Сигналы (weekly_signals) показывают только пробившие порог ×1.8, и в
-    спокойный день их ноль — полоса пустеет. Здесь считаем то, что есть всегда:
-      • расхождение с рынком по каждой теме (наша динамика против отраслевой) —
-        главный вопрос аудитора «это мы или рынок»;
-      • слепая зона: жалобы, не попавшие ни в одну из тем классификатора.
-    Оба числа берутся из уже выполняемых запросов, лишней нагрузки нет.
-    """
-    eng = _get_engine()
-    if eng is None:
-        return None
+    """Недельный срез для «пульса дня» на главной — БЕЗ порога сигнала:
+    расхождение с рынком по каждой проблеме (наша динамика против отраслевой,
+    рынок — без самого банка) и общий объём недели."""
     bc = resolve_bank(bank)
     if not bc:
         return None
     lab = _topic_week_counts(bc, product)
-    if lab:
-        theme_defs, brow = lab
-        mlab = _topic_week_counts(None, product)     # рынок = все банки индекса
-        mrow = mlab[1] if mlab else None
-    else:                       # разметки ещё нет — старый regex-путь по banki.ru
-        theme_defs = THEMES
-        bclause, bp = _bank_clause(bc, product)
-        brow = _theme_week_counts(eng, bclause, bp)
-        try:
-            mrow = _theme_week_counts(eng, "TRUE", {})
-        except Exception as e:  # noqa: BLE001
-            log.warning("week_pulse: рыночный срез не посчитан: %s", e)
-            mrow = None
-
+    if not lab:
+        return None
+    theme_defs, brow = lab
+    mlab = _topic_week_counts(None, product, exclude_bank=bc)
+    mrow = mlab[1] if mlab else None
     BASE_W = 7.0
     diverge = []
     for t in theme_defs:
@@ -1393,192 +961,280 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
             mw0, mb = int(mrow[f"{k}_w0"]), int(mrow[f"{k}_b"])
             mbw = mb / BASE_W
             mratio = (mw0 / mbw) if mbw >= 0.5 else None
-        # расхождение = во сколько раз наш рост обгоняет рыночный
         gap = (ratio / mratio) if mratio and mratio > 0 else None
         diverge.append({
-            "key": k, "label": t["label"], "short": _short(t["label"]),
+            "key": k, "label": t["label"], "short": t["short"],
             "risk": t["risk"], "week": w0, "baseline_week": round(bw, 1),
             "base_count": b, "base_weeks": int(BASE_W),
             "ratio": round(ratio, 2),
             "market_ratio": round(mratio, 2) if mratio else None,
             "gap": round(gap, 2) if gap else None,
         })
-    # ведущая тема: сначала по расхождению с рынком, при равенстве — по объёму
     diverge.sort(key=lambda d: ((d["gap"] or d["ratio"]), d["week"]), reverse=True)
-
     tw0, tb = int(brow["_tw0"]), int(brow["_tb"])
-    return {
-        "diverge": diverge[:5],
-        "week_total": tw0,
-        "baseline_total": round(tb / BASE_W, 1),
-        **({"src": "labels"} if lab else {}),
-    }
+    return {"diverge": diverge[:5], "week_total": tw0,
+            "baseline_total": round(tb / BASE_W, 1), "src": "annotation"}
 
 
 @_safe(None)
 def unclassified_week(bank: str, product: str | None = None) -> dict | None:
-    """Слепая зона: жалобы недели, не попавшие ни в одну тему классификатора,
-    и та же доля по базовому окну — чтобы отличить «свежий инцидент вне
-    таксономии» от обычного уровня непокрытия."""
-    eng = _get_engine()
-    if eng is None:
-        return None
+    """Слепая зона: жалобы недели, которые модель не смогла отнести ни к одной
+    проблеме кодификатора («Прочее»), и та же доля по базовому окну."""
     bc = resolve_bank(bank)
     if not bc:
         return None
     lab = _topic_week_counts(bc, product)
-    if lab:
-        # слепая зона НОВОГО классификатора: отзыв размечен, но ни одна тема не
-        # прошла порог z/rn; неразмеченный бэклог в знаменатель не входит
-        _t, c_ = lab
-        w_unc, w_tot, b_unc = c_["_unc_w0"], c_["_lab_w0"], c_["_unc_b"]
-        base_week = round(b_unc / 7.0, 1)
-        return {"week": w_unc, "week_total": w_tot,
-                "pct": round(100 * w_unc / w_tot) if w_tot else 0,
-                "baseline_week": base_week,
-                "ratio": round(w_unc / base_week, 2) if base_week >= 1 else None,
-                "src": "labels"}
-    bclause, bp = _bank_clause(bc, product)
-    with eng.connect() as c:
-        rows = c.execute(text(
-            f'SELECT DISTINCT ON (r.url) r."reviewBody" AS body, r."datePublished" AS dt'
-            f' FROM bankiru.reviews r WHERE {bclause}'
-            f' AND r."datePublished" >= now() - make_interval(days => 63)'
-            f' ORDER BY r.url'), bp).all()
-    from datetime import datetime, timedelta, timezone
-    now = datetime.now(timezone.utc)
-    w_edge, b_edge = now - timedelta(days=7), now - timedelta(days=14)
-    w_tot = w_unc = b_tot = b_unc = 0
-    for body, dt in rows:
-        if dt is None:
-            continue
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        unmatched = not match_themes(body)
-        if dt >= w_edge:
-            w_tot += 1
-            w_unc += unmatched
-        elif dt < b_edge:
-            b_tot += 1
-            b_unc += unmatched
+    if not lab:
+        return None
+    _t, c_ = lab
+    w_unc, w_tot, b_unc = c_["_unc_w0"], c_["_lab_w0"], c_["_unc_b"]
     base_week = round(b_unc / 7.0, 1)
-    return {
-        "week": w_unc, "week_total": w_tot,
-        "pct": round(100 * w_unc / w_tot) if w_tot else 0,
-        "baseline_week": base_week,
-        "ratio": round(w_unc / base_week, 2) if base_week >= 1 else None,
-    }
+    return {"week": w_unc, "week_total": w_tot,
+            "pct": round(100 * w_unc / w_tot) if w_tot else 0,
+            "baseline_week": base_week,
+            "ratio": round(w_unc / base_week, 2) if base_week >= 1 else None,
+            "src": "annotation"}
 
 
 @_safe(None)
 def weekly_signals(bank: str, product: str | None = None) -> dict | None:
-    """Срочные аномалии за 7 дней — МНОГОСИГНАЛЬНО (не просто «выросло ×N»):
-    рост к базлайну (среднее за 7 нед, окно 14–63 дн), УСКОРЕНИЕ (нед-к-нед), сравнение с РЫНКОМ (всплеск
-    только у банка vs отраслевой тренд), ГЕО-концентрация (локальный сбой), новые
-    темы. Числа детерминированы; LLM объясняет и приоритизирует, не меняя их."""
-    eng = _get_engine()
-    if eng is None:
-        return None
+    """Всплески жалоб за 7 дней по главной проблеме из LLM-разметки.
+
+    Сигнал — не «выросло в ×1,8», а статистически значимый рост:
+      • норма — 7 прошлых недель (окно 14–63 дня), с их собственным разбросом
+        (отрицательно-биномиальное распределение);
+      • поправка на множественность по всем проблемам банка (q < 0,05);
+      • и практический порог: ≥ 8 жалоб, избыток ≥ 5 над нормой, рост ≥ ×1,5.
+    Плюс: ускорение неделя к неделе, сравнение с рынком БЕЗ самого банка,
+    географическая концентрация. Числа детерминированы; модель их только
+    объясняет, и объясняет по жалобам самого сигнала (signal_evidence)."""
     bc = resolve_bank(bank)
     if not bc:
         return None
-    BASE_W = 7.0   # недель в базлайне (49 дн: окно 14–63)
+    BASE_W = 7.0
 
     def _compute():
         lab = _topic_week_counts(bc, product)
-        if lab:
-            theme_defs, brow = lab
-            mlab = _topic_week_counts(None, product)   # рынок = все банки индекса
-            mrow = mlab[1] if mlab else None
-        else:                   # разметки ещё нет — старый regex-путь по banki.ru
-            theme_defs = THEMES
-            bclause, bp = _bank_clause(bc, product)
-            brow = _theme_week_counts(eng, bclause, bp)
-            try:
-                mrow = _theme_week_counts(eng, "TRUE", {})     # рынок (все банки)
-            except Exception as e:
-                log.warning("weekly_signals: рыночный срез не посчитан: %s", e)
-                mrow = None
-        out = []
+        if not lab:
+            return None
+        theme_defs, brow = lab
+        mlab = _topic_week_counts(None, product, exclude_bank=bc)
+        mrow = mlab[1] if mlab else None
+        cand, pv = [], {}
         for t in theme_defs:
             k = t["key"]
             w0, w1, b = int(brow[f"{k}_w0"]), int(brow[f"{k}_w1"]), int(brow[f"{k}_b"])
+            weeks = list(brow[f"{k}_wk"][2:9])
+            p = _nb_tail(w0, weeks)
+            pv[k] = p
+            cand.append((t, w0, w1, b, weeks, p))
+        qv = _bh(pv)
+        out = []
+        for t, w0, w1, b, weeks, p in cand:
+            k = t["key"]
             bw = b / BASE_W
             ratio = (w0 / bw) if bw >= 0.5 else None
+            excess = w0 - bw
             new = b <= 2 and w0 >= 6
-            accel = w0 > w1 and w0 >= max(8, 1.4 * w1)      # нарастает неделя к неделе
-            surge = w0 >= 8 and bw >= 1.0 and ratio is not None and ratio >= 1.8
-            if not (surge or new):
+            practical = w0 >= 8 and excess >= 5 and (ratio is None or ratio >= 1.5)
+            if not ((qv[k] < 0.05 and practical) or (new and qv[k] < 0.05)):
                 continue
+            accel = w0 > w1 and w0 >= max(8, 1.4 * w1)
             mratio, bank_specific = None, False
             if mrow is not None:
                 mw0, mb = int(mrow[f"{k}_w0"]), int(mrow[f"{k}_b"])
                 mbw = mb / BASE_W
                 mratio = round(mw0 / mbw, 2) if mbw >= 0.5 else None
                 if ratio is not None and (mratio is None or mratio < 1.4 or ratio >= 1.8 * mratio):
-                    bank_specific = True   # всплеск у банка, рынок ровный → наша регрессия
-            out.append({"key": k, "label": t["label"], "short": _short(t["label"]),
-                        "risk": t["risk"], "week": w0, "prev_week": w1,
-                        # сырьё нормы — чтобы UI показывал аудитору саму формулу,
-                        # а не только результат (b жалоб за BASE_W недель)
+                    bank_specific = True
+            out.append({"key": k, "label": t["label"], "short": t["short"],
+                        "risk": t["risk"], "group": t["group"],
+                        "week": w0, "prev_week": w1,
                         "base_count": b, "base_weeks": int(BASE_W),
                         "week_total": int(brow["_tw0"]),
-                        "baseline_week": round(bw, 1), "ratio": (round(ratio, 1) if ratio else None),
+                        "baseline_week": round(bw, 1),
+                        "ratio": (round(ratio, 1) if ratio else None),
+                        "excess": round(excess, 1),
+                        "p_value": round(p, 5), "q_value": round(qv[k], 5),
                         "new": bool(new), "accel": bool(accel),
                         "market_ratio": mratio, "bank_specific": bool(bank_specific)})
-        out.sort(key=lambda s: (s["ratio"] or 5) * s["week"], reverse=True)
-        # гео-концентрация ведущего сигнала (локальный сбой/инцидент)
+        for s_ in out:
+            strong = s_["q_value"] < 0.001 and s_["week"] >= 12
+            s_["level"] = "high" if (strong or (s_["risk"] == "compliance" and s_["q_value"] < 0.01)
+                                     or (s_["bank_specific"] and (s_["ratio"] or 0) >= 2.5)) else "medium"
+        out.sort(key=lambda s_: (s_["level"] == "high", s_["excess"]), reverse=True)
         if out:
             top = out[0]
             try:
-                if lab:
-                    from . import review_topics as _rt
-                    with db.session() as s:
-                        grows = s.execute(text("""
-                            SELECT split_part(i.city, ' (', 1) AS city,
-                                   count(DISTINCT i.url) AS n
-                            FROM review_index i
-                            JOIN review_topic_label l ON l.url = i.url
-                                 AND l.z >= :min AND l.rn <= :rank
-                            JOIN review_topic_def d ON d.topic_id = l.topic_id
-                                 AND d.version = :ver AND d.key = :key
-                            WHERE i.bank = :bank
-                              AND (CAST(:product AS text) IS NULL OR i.product = :product)
-                              AND i.dt >= now() - make_interval(days => 7)
-                              AND i.dt <= now() AND coalesce(i.city, '') <> ''
-                            GROUP BY 1 ORDER BY 2 DESC LIMIT 3
-                        """), {"min": _rt.MIN_Z, "rank": _rt.RANK_CAP,
-                               "ver": _rt.active_version(), "key": top["key"],
-                               "bank": bc, "product": product}).all()
-                else:
-                    bclause, bp = _bank_clause(bc, product)
-                    ts, tp = _theme_sql(THEME_BY_KEY[top["key"]], "g")
-                    with eng.connect() as c:
-                        grows = c.execute(text(
-                            f"SELECT split_part(r.location, ' (', 1) city, count(DISTINCT r.url) n"
-                            f" FROM bankiru.reviews r WHERE {bclause} AND {ts} AND r.location <> ''"
-                            f" AND r.\"datePublished\" >= now()-make_interval(days=>7)"
-                            f" GROUP BY 1 ORDER BY 2 DESC LIMIT 3"), {**bp, **tp}).all()
+                with db.session() as s:
+                    grows = s.execute(text(f"""
+                        SELECT i.city, count(*) FROM review_index i
+                        WHERE i.bank = :bank AND i.issue = :key AND {_CMP}
+                          AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                          AND i.dt >= now() - make_interval(days => 7) AND i.dt <= now()
+                          AND coalesce(i.city, '') <> ''
+                        GROUP BY 1 ORDER BY 2 DESC LIMIT 3
+                    """), {"bank": bc, "key": top["key"], "product": product}).all()
                 tot = sum(int(x[1]) for x in grows) or 1
                 if grows and int(grows[0][1]) >= 4 and int(grows[0][1]) / tot >= 0.4:
                     top["geo"] = {"city": grows[0][0], "share": round(100 * int(grows[0][1]) / tot)}
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
-        # уровень приоритета
-        for s in out:
-            score = ((s["ratio"] or 4) * (1.5 if s["bank_specific"] else 1.0)
-                     * (1.3 if s["accel"] else 1.0) * (1.4 if s["risk"] == "compliance" else 1.0))
-            s["level"] = "high" if (score >= 5 and s["week"] >= 10) or (
-                s["bank_specific"] and (s["ratio"] or 0) >= 2.5) else "medium"
-        out.sort(key=lambda s: (s["level"] == "high", (s["ratio"] or 5) * s["week"]), reverse=True)
         tw0, tb = int(brow["_tw0"]), int(brow["_tb"])
         tbw = tb / BASE_W
         overall = {"week": tw0, "baseline_week": round(tbw, 1),
                    "ratio": (round(tw0 / tbw, 1) if tbw >= 0.5 else None)}
         if mrow is not None:
-            mtw0, mtb = int(mrow["_tw0"]), int(mrow["_tb"])
-            mtbw = mtb / BASE_W
-            overall["market_ratio"] = round(mtw0 / mtbw, 2) if mtbw >= 0.5 else None
+            mtbw = int(mrow["_tb"]) / BASE_W
+            overall["market_ratio"] = round(int(mrow["_tw0"]) / mtbw, 2) if mtbw >= 0.5 else None
         return {"bank": bc, "product": product, "signals": out[:6], "overall": overall,
-                **({"src": "labels"} if lab else {})}
+                "src": "annotation"}
     return _cached(f"wk:{bc}:{product}", _compute, ttl=1800)
+
+
+def _ann_for(urls: list[str]) -> dict[str, dict]:
+    """Разметка показанных отзывов одним запросом: коды, признаки, изложение,
+    цитата. Нужна карточке — аудитор видит не только тему, но и то, почему."""
+    if not urls:
+        return {}
+    try:
+        with db.session() as s:
+            rows = s.execute(text("""
+                SELECT a.url, a.status, a.kind, a.issue, a.issues2, a.esc, a.esc_to,
+                       a.no_consent, a.misled, a.vulnerable, a.amount, a.summary, a.quote,
+                       a.quote_ok, a.code_fit, a.new_topic, a.product
+                FROM review_annotation a
+                WHERE a.schema_version = :sv AND a.url = ANY(:u)
+            """), {"sv": _ann_schema(), "u": urls}).mappings().all()
+    except Exception as e:                                     # noqa: BLE001
+        log.warning("reviews_dash: разметка показанных отзывов не забралась (%s)", e)
+        return {}
+    return {r["url"]: dict(r) for r in rows}
+
+
+def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
+               product: str | None = None) -> set[str]:
+    """Какие из найденных отзывов показывать: жалобы (и ещё не размеченные),
+    при заданной теме — с этой главной проблемой, при флажке — с эскалацией."""
+    if not urls:
+        return set()
+    cond = [f"(i.kind IS NULL OR {_CMP})" if not theme else _CMP]
+    p: dict = {"u": urls}
+    if theme:
+        cond.append("i.issue = :t")
+        p["t"] = theme
+    if esc:
+        cond.append("i.esc")
+    if product:
+        cond.append("i.product = :pr")
+        p["pr"] = product
+    try:
+        with db.session() as s:
+            known = set(s.execute(text("SELECT i.url FROM review_index i WHERE i.url = ANY(:u)"),
+                                  {"u": urls}).scalars().all())
+            ok = set(s.execute(text(
+                f"SELECT i.url FROM review_index i WHERE i.url = ANY(:u) AND {' AND '.join(cond)}"),
+                p).scalars().all())
+    except Exception as e:                                     # noqa: BLE001
+        log.warning("reviews_dash: отбор выдачи по разметке не сработал (%s)", e)
+        return set(urls)
+    # отзыв, которого нет в индексе (вне окна зеркала), без темы не отбрасываем
+    return ok | ({u for u in urls if u not in known} if not (theme or esc or product) else set())
+
+
+def _nb_tail(x: int, weeks: list[int]) -> float:
+    """P(X ≥ x) при недельной норме из истории — отрицательно-биномиальное
+    распределение с разбросом, оценённым по самим неделям (жалобы идут
+    волнами, и пуассоновский порог на них даёт ложные всплески). Если разброс
+    не больше среднего — обычный Пуассон."""
+    import math
+    n = len(weeks)
+    m = sum(weeks) / n if n else 0.0
+    m = max(m, 0.5)                               # нулевая база — не бесконечный рост
+    v = (sum((w - m) ** 2 for w in weeks) / (n - 1)) if n > 1 else m
+    if x <= 0:
+        return 1.0
+    if v > m * 1.05:
+        r = m * m / (v - m)
+        q = r / (r + m)
+        pk = q ** r
+        cdf = pk
+        for k in range(0, x - 1):
+            pk *= (k + r) / (k + 1) * (1 - q)
+            cdf += pk
+    else:
+        pk = math.exp(-m)
+        cdf = pk
+        for k in range(0, x - 1):
+            pk *= m / (k + 1)
+            cdf += pk
+    return max(0.0, min(1.0, 1.0 - cdf))
+
+
+def _bh(pvals: dict[str, float]) -> dict[str, float]:
+    """q-значения Бенджамини — Хохберга: проблем десятки, и без поправки хотя
+    бы одна «пробивает порог» каждую неделю просто по случайности."""
+    items = sorted(pvals.items(), key=lambda kv: kv[1])
+    m = len(items)
+    out, prev = {}, 1.0
+    for rank in range(m, 0, -1):
+        k, p = items[rank - 1]
+        prev = min(prev, p * m / rank)
+        out[k] = prev
+    return out
+
+
+@_safe([])
+def signal_evidence(bank: str, key: str, product: str | None = None, days: int = 7,
+                    limit: int = 30) -> list[dict]:
+    """Жалобы, из которых сложился сигнал: та же выборка, что в его счётчике
+    (главная проблема, жалоба, события не старше 60 дней). Именно их, а не
+    «последние жалобы банка» читает модель, когда объясняет сигнал: 22.09
+    сводка взяла формулировку из отзыва другой темы."""
+    bc = resolve_bank(bank)
+    if not bc or key not in cb.ISSUES:
+        return []
+    with db.session() as s:
+        rows = s.execute(text(f"""
+            SELECT i.url, i.dt, i.city, a.summary, a.quote, a.quote_ok, a.esc,
+                   a.no_consent, a.misled, a.issues2
+            FROM review_index i
+            JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+            WHERE i.bank = :bank AND i.issue = :key AND {_CMP}
+              AND (CAST(:product AS text) IS NULL OR i.product = :product)
+              AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+              AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)
+            ORDER BY i.dt DESC LIMIT :lim
+        """), {"bank": bc, "key": key, "product": product, "d": days, "lim": limit,
+               "sv": _ann_schema()}).mappings().all()
+    return [{"url": r["url"], "date": r["dt"].date().isoformat() if r["dt"] else None,
+             "city": r["city"], "summary": r["summary"],
+             "quote": r["quote"] if r["quote_ok"] else None,
+             "esc": r["esc"], "no_consent": bool(r["no_consent"]), "misled": bool(r["misled"])}
+            for r in rows]
+
+
+@_safe([])
+def novel_week(bank: str, product: str | None = None, days: int = 7, limit: int = 30) -> list[dict]:
+    """Жалобы недели, для которых в кодификаторе нет точного кода: модель
+    отнесла их к «Прочему» или отметила код как приблизительный и назвала
+    проблему своими словами. Отсюда видно новое — и для сводки, и для
+    пополнения кодификатора."""
+    bc = resolve_bank(bank)
+    if not bc:
+        return []
+    with db.session() as s:
+        rows = s.execute(text(f"""
+            SELECT i.url, i.dt, a.new_topic, a.summary, a.issue
+            FROM review_index i
+            JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+            WHERE i.bank = :bank AND {_CMP}
+              AND (CAST(:product AS text) IS NULL OR i.product = :product)
+              AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+              AND (a.issue = 'other' OR a.code_fit = 'approx') AND a.new_topic IS NOT NULL
+            ORDER BY i.dt DESC LIMIT :lim
+        """), {"bank": bc, "product": product, "d": days, "lim": limit,
+               "sv": _ann_schema()}).mappings().all()
+    return [{"url": r["url"], "date": r["dt"].date().isoformat() if r["dt"] else None,
+             "new_topic": r["new_topic"], "summary": r["summary"], "issue": r["issue"]}
+            for r in rows]

@@ -60,62 +60,42 @@ _BRIEF_SYSTEM = (
     "Ты — старший аналитик службы внутреннего аудита Сбербанка (розничный бизнес). "
     "Пишешь утреннюю сводку по жалобам клиентов для ежедневного брифинга. НЕ "
     "пересказывай жалобы — дай АНАЛИЗ: что аномально, почему важно, куда смотреть. "
-    "Тебе дают точные недельные метрики (НЕ меняй числа) и свежие жалобы. Сигналы:\n"
+    "Тебе дают точные недельные метрики (НЕ меняй числа) и жалобы каждого сигнала. Сигналы:\n"
     "• рост темы к норме (×N) и УСКОРЕНИЕ — проблема нарастает;\n"
     "• «только у банка» (рынок ровный) → НАША регрессия, высокий приоритет;\n"
     "• гео-концентрация → локальный сбой (отделение/банкомат/регион);\n"
-    "• жалобы ВНЕ известных тем → свежий инцидент, которого нет в таксономии.\n"
+    "• жалобы без точного кода кодификатора → свежий инцидент, которого нет в списке.\n"
     "Без эмодзи, без воды, не алармируй без чисел."
 )
 
 
 async def reviews_brief(day: date) -> dict:
+    """Сводка по жалобам для утреннего выпуска.
+
+    Числа — из сигналов недели (LLM-разметка, статистический порог). Причину
+    модель ищет ТОЛЬКО в жалобах своего сигнала: раньше ей давали 12 последних
+    жалоб банка любых тем, и 22.09 заголовок взял формулировку из чужого
+    отзыва о событии 2025 года."""
     from ..rag import reviews_dash as rd
+    from ..rag import reviews_llm
     sig = await asyncio.to_thread(rd.weekly_signals, "Сбербанк", None)
     signals = (sig or {}).get("signals") or []
     if not signals:
         return {"markdown": None, "calm": True,
                 "overall": (sig or {}).get("overall")}
-    recent = await asyncio.to_thread(
-        rd.list_reviews, "Сбербанк", None, None, None, 7, None, None, 50)
-    unclassified = [r for r in recent if not r.get("themes")]
-
-    lines = []
-    for s in signals:
-        bits = []
-        if s.get("new"):
-            bits.append("НОВАЯ тема (раньше почти не было)")
-        elif s.get("ratio"):
-            bits.append(f"×{s['ratio']} к норме ~{s['baseline_week']}/нед")
-        if s.get("accel"):
-            bits.append(f"ускоряется (нед: {s.get('prev_week')}→{s['week']})")
-        if s.get("bank_specific"):
-            bits.append(f"ТОЛЬКО у банка (рынок ×{s.get('market_ratio') or '~1'})")
-        elif s.get("market_ratio") is not None and s["market_ratio"] >= 1.4:
-            bits.append(f"рынок тоже растёт ×{s['market_ratio']}")
-        if s.get("geo"):
-            bits.append(f"{s['geo']['share']}% из г. {s['geo']['city']}")
-        lines.append(f'- {s["label"]} [{s.get("level", "medium")}]: '
-                     f'{s["week"]} за 7 дн; ' + "; ".join(bits))
-    ov = (sig or {}).get("overall") or {}
-    ov_line = ""
-    if ov.get("week") is not None:
-        ov_line = (f'Всего за неделю: {ov["week"]} (норма ~{ov.get("baseline_week")}/нед'
-                   + (f', рынок ×{ov["market_ratio"]}'
-                      if ov.get("market_ratio") is not None else "") + ").")
-    samp = "\n".join(f'— {(r.get("text") or "")[:260]}' for r in recent[:12])
-    unc = "\n".join(f'— {(r.get("text") or "")[:240]}' for r in unclassified[:12])
+    lines, ov_line = reviews_llm.signal_lines(sig)
+    context = await asyncio.to_thread(reviews_llm.signal_context, sig, "Сбербанк", None)
     user = (
         f"Сводка на {today_ru()}.\n"
         "СИГНАЛЫ НЕДЕЛИ (числа точные, не меняй):\n" + "\n".join(lines) + f"\n{ov_line}\n\n"
-        f"СВЕЖИЕ ЖАЛОБЫ НЕДЕЛИ (для причины):\n{samp}\n\n"
-        f"ЖАЛОБЫ ВНЕ ИЗВЕСТНЫХ ТЕМ (ищи НОВЫЙ повторяющийся инцидент):\n{unc or '—'}\n\n"
+        + context + "\n\n"
         "Выдай markdown-список (каждый пункт с «- »):\n"
-        "1) 2–4 пункта по приоритету: «**[ВЫСОКИЙ/СРЕДНИЙ]** **<тема>** — что "
+        "1) 2–4 пункта по приоритету: «**[ВЫСОКИЙ/СРЕДНИЙ]** **<проблема>** — что "
         "изменилось (с цифрой), пометь если *только у банка*/*локально*/*ускоряется*, "
-        "вероятная причина из жалоб, что проверить аудитору».\n"
-        "2) Если вне тем виден НОВЫЙ повторяющийся инцидент — пункт "
+        "вероятная причина — ТОЛЬКО из жалоб этого сигнала, что проверить аудитору».\n"
+        "2) Если среди жалоб без точного кода несколько об одном и том же — пункт "
         "«- **Новое:** <суть> (≈N жалоб)».\n"
+        "Не переноси формулировки из жалоб одного сигнала в другой, не выдумывай причин. "
         "Коротко, аналитично, без вступления."
     )
     # LLM-сбой → degraded (фронт покажет детерминированные сигнал-чипы),
@@ -127,6 +107,7 @@ async def reviews_brief(day: date) -> dict:
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_brief LLM failed: %s", e)
         md, ti, to = None, None, None
+    ov = (sig or {}).get("overall") or {}
     return {"markdown": md or None, "calm": False, "overall": ov,
             **({"_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
                if md else {"_status": "degraded"})}

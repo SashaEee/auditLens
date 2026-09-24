@@ -1852,8 +1852,9 @@ def reviews_corpus(bank: Optional[str] = None):
 
 @app.get("/api/reviews/theme-defs")
 def reviews_theme_defs():
-    from ..rag.reviews_dash import THEMES
-    return [{"key": t["key"], "label": t["label"], "risk": t["risk"]} for t in THEMES]
+    """Проблемы кодификатора LLM-разметки: ключ, подпись, группа, риск."""
+    from ..rag import review_codebook as cb
+    return cb.complaint_issues()
 
 @app.get("/api/reviews/feed")
 def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
@@ -1882,58 +1883,53 @@ async def reviews_feed_classified(bank: str = "Сбербанк", product: Optio
                                   city: Optional[str] = None, month: Optional[str] = None,
                                   days: Optional[int] = None,
                                   limit: int = 20, offset: int = 0):
-    """Лента + LLM-уточнение тем показанных отзывов (on-demand, по кнопке).
-    Regex-темы остаются fallback'ом, если LLM не разобрал строку."""
+    """Прежняя кнопка «Уточнить темы»: модель на лету придумывала отзыву
+    свободную тему, не совпадавшую ни с панелью, ни с фильтрами. Теперь каждый
+    отзыв размечен заранее по кодификатору — отдаём ту же ленту, что /feed.
+    Эндпоинт оставлен для совместимости со старым фронтом в кэше браузеров."""
     import asyncio
     import functools
-    from ..rag import reviews_llm
-    # через _ex, а не list_reviews: иначе уточнение тем перезаписывает ленту
-    # объектами без подсветки и признака «дословно/по смыслу», и аудитор молча
-    # теряет объяснение выдачи, нажав соседнюю кнопку
-    # Именованные аргументы, а не позиционные: прежний вызов подставлял None
-    # пятым по счёту и тем самым молча выбрасывал период, а любой новый
-    # параметр в середине сигнатуры сдвинул бы весь хвост.
     res = await asyncio.to_thread(
         functools.partial(_rd().list_reviews_ex, bank,
                           product=product or None, theme=theme or None,
                           q=q or None, days=days or None,
                           city=city or None, month=month or None,
                           limit=limit, offset=max(0, offset)))
-    items = res["items"]
-    if not items:
-        return {"items": [], "count": 0, "llm": False, "search": res.get("search") or None}
-    cls = await reviews_llm.classify_reviews(items)
-    llm_ok = False
-    for it, c in zip(items, cls):
-        if c and c.get("themes"):
-            it["themes"] = c["themes"]
-            it["theme_src"] = "llm"
-            llm_ok = True
-    return {"items": items, "count": len(items), "llm": llm_ok,
+    return {"items": res["items"], "count": len(res["items"]), "llm": False,
             "search": res.get("search") or None}
+
+
+_ANOM_CACHE: dict[str, tuple[float, dict]] = {}
+
 
 @app.get("/api/reviews/anomalies")
 async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[str] = None):
-    """Срочные аномалии за 7 дней (audit-радар): детерминированные недельные
-    всплески тем/модулей + краткое LLM-объяснение. Грузится отдельно от дашборда."""
+    """Срочные аномалии за 7 дней (audit-радар): статистически значимые
+    всплески жалоб по главной проблеме + объяснение модели по жалобам самого
+    сигнала. Разбор кэшируется, пока не изменился набор сигналов: раньше
+    модель вызывалась на каждое открытие вкладки и каждый раз писала новый
+    текст, спорящий со сводкой обзора."""
     import asyncio
+    import time as _time
     from ..rag import reviews_llm
     sig = await asyncio.to_thread(_rd().weekly_signals, bank, product or None)
     signals = (sig or {}).get("signals") or []
     if not signals:
-        # Порог всплеска (×1.8) не пробит — но это НЕ значит «всё спокойно»:
-        # тема может расти вдвое быстрее рынка при ×1.6. Радар обязан показать
-        # такое как наблюдение, иначе он противоречит анализу недели, где эта
-        # же тема идёт первым пунктом (жалоба владельца 23.07.2026).
         wp = await asyncio.to_thread(_rd().week_pulse, bank, product or None)
         watch = [d for d in ((wp or {}).get("diverge") or []) if (d.get("gap") or 0) >= 1.15]
         return {"summary": None, "signals": [], "watch": watch[:4],
                 "overall": (sig or {}).get("overall"),
                 "calm": not watch}
-    recent = await asyncio.to_thread(_rd().list_reviews, bank, product or None, None, None, 7, None, None, 50)
-    unclassified = [r for r in recent if not r.get("themes")]   # кандидаты в новые инциденты
-    brief = await reviews_llm.anomaly_brief(sig, recent[:14], unclassified[:14])
-    return {"summary": brief, "signals": signals, "overall": sig.get("overall"), "calm": False}
+    key = f"{bank}|{product}|" + ",".join(f"{s['key']}:{s['week']}" for s in signals)
+    hit = _ANOM_CACHE.get(key)
+    if hit and _time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    context = await asyncio.to_thread(reviews_llm.signal_context, sig, bank, product or None)
+    brief = await reviews_llm.anomaly_brief(sig, context)
+    out = {"summary": brief, "signals": signals, "overall": sig.get("overall"), "calm": False}
+    if brief:
+        _ANOM_CACHE[key] = (_time.time(), out)
+    return out
 
 @app.get("/api/reviews/explain")
 async def reviews_explain(bank: str = "Сбербанк", product: Optional[str] = None,
@@ -2005,6 +2001,8 @@ def banks():
                    round(avg(rating)::numeric, 2) avg_rating
               FROM review_index
              WHERE bank IS NOT NULL AND (dt IS NULL OR dt <= now())
+               -- мусор вместо текста и копии одного отзыва — не отзывы
+               AND coalesce(kind, '') NOT IN ('junk', 'dup')
              GROUP BY bank
         """):
             own[r["bank"]] = r

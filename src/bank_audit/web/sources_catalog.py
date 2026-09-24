@@ -270,6 +270,7 @@ def _review_sources() -> list[dict]:
                        min(dt)::date since, max(dt)::date until
                 FROM review_index
                 WHERE bank IS NOT NULL AND (dt IS NULL OR dt <= now())
+                  AND coalesce(kind, '') NOT IN ('junk', 'dup')
                 GROUP BY 1 ORDER BY 2 DESC
             """)).mappings().all()
     except Exception as e:  # noqa: BLE001

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 
 from sqlalchemy import text
@@ -45,11 +46,11 @@ _UPSERT = text("""
     ON CONFLICT (url) DO UPDATE SET
         review_id = EXCLUDED.review_id,
         bank      = EXCLUDED.bank,
-        product   = EXCLUDED.product,
         dt        = EXCLUDED.dt,
-        city      = EXCLUDED.city,
-        tsv       = EXCLUDED.tsv,
-        esc       = EXCLUDED.esc
+        city      = coalesce(EXCLUDED.city, review_index.city),
+        tsv       = EXCLUDED.tsv
+    -- product и esc не переписываем: их ставит LLM-разметка
+    -- (review_annotate.apply_to_index), а метка площадки и регулярка неверны
     WHERE review_index.dt IS NULL
        OR (EXCLUDED.dt IS NOT NULL AND EXCLUDED.dt >= review_index.dt)
 """)
@@ -81,6 +82,11 @@ def _city(location: str | None) -> str | None:
     """location в источнике вида «Москва (Московская область)» — витрина везде
     берёт часть до скобки, зеркало обязано резать так же."""
     head = (location or "").split(" (")[0].strip()
+    # «Москва и область» площадка ведёт отдельным городом, и столица в
+    # географии раскалывалась надвое (1 691 жалоба жила отдельно от Москвы)
+    m = re.match(r"^(.+?) и (?:область|[А-ЯЁ][а-яё]+ская область)$", head)
+    if m:
+        head = m.group(1).strip()
     return head or None
 
 
@@ -125,9 +131,11 @@ def sync(max_batches: int | None = None) -> dict:
             """), {"since": since_id, "minlen": _MIN_LEN, "lim": _BATCH}).all()
         if not rows:
             break
-        payload = [{"url": r[1], "review_id": r[0], "bank": r[2], "product": r[3],
+        # продукт и эскалацию новой строке проставит разметка (в течение часа);
+        # до неё строка не входит в счётчики жалоб
+        payload = [{"url": r[1], "review_id": r[0], "bank": r[2], "product": None,
                     "dt": r[4], "city": _city(r[5]), "body": r[6],
-                    "esc": _is_escalation(r[6])} for r in rows]
+                    "esc": False} for r in rows]
         # сессия на батч, а не на весь прогон: иначе бэкфилл держит одну
         # транзакцию на сотни тысяч строк и блокирует вакуум
         with db.session() as s:
@@ -226,11 +234,10 @@ def sync_local(batch: int = 400) -> dict:
     written = 0
     for i in range(0, len(rows), batch):
         payload = [{"url": r["source_url"], "review_id": int(r["review_id"]),
-                    "bank": canon.get(r["bank"], r["bank"]), "product": r["product"],
+                    "bank": canon.get(r["bank"], r["bank"]), "product": None,
                     "dt": r["posted_at"], "city": None,
                     "rating": float(r["rating"]) if r["rating"] is not None else None,
-                    "source": r["source"], "body": r["body"],
-                    "esc": _is_escalation(r["body"])}
+                    "source": r["source"], "body": r["body"], "esc": False}
                    for r in rows[i:i + batch]]
         with db.session() as s:
             s.execute(text("""
@@ -241,8 +248,7 @@ def sync_local(batch: int = 400) -> dict:
                 ON CONFLICT (url) DO UPDATE SET
                     review_id = EXCLUDED.review_id, bank = EXCLUDED.bank,
                     dt = EXCLUDED.dt, rating = EXCLUDED.rating,
-                    source = EXCLUDED.source, tsv = EXCLUDED.tsv,
-                    esc = EXCLUDED.esc
+                    source = EXCLUDED.source, tsv = EXCLUDED.tsv
             """), payload)
         written += len(payload)
 

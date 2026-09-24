@@ -722,7 +722,7 @@ function xpRows(kind,d){
     if(d.market_ratio!=null)
       R.push(["Рынок",`та же тема по рынку ×${d.market_ratio}` +
         (d.bank_specific?" — значит всплеск наш, а не отраслевой":"")]);
-    R.push(["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★) · темы по ключевым словам"]);
+    R.push(["Выборка","только Сбербанк · жалобы со всех площадок, без похвалы, мусора и копий · главная проблема по разметке ИИ (кодификатор) · порог — статистически значимый рост к 7 прошлым неделям"]);
   } else if(kind==="tariff_move"){
     if(d.from!=null&&d.to!=null)
       R.push(["Расчёт",`${d.from}% → ${d.to}% = ${d.delta>0?"+":""}${d.delta} п.п.`]);
@@ -759,7 +759,7 @@ const xpDiverge=d=>[
   ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
 ];
 const xpEscalation=k=>[
-  ["Значение",`${pct1(k.escalation_pct)} жалоб содержат угрозу обращения в ЦБ, суд, ФАС или прокуратуру`],
+  ["Значение",`${pct1(k.escalation_pct)} жалоб: клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор или к финомбудсмену (разметка ИИ)`],
   ["Как ищем","по формулировкам жалобы: «жалоба в ЦБ», «подам иск», «в прокуратуру» и подобным"],
   ["Порог","12% — принятый в инструменте уровень внимания"],
   ["Выборка",`${fmtNum(k.total||0)} жалоб за 90 дней · только Сбербанк · banki.ru`],
@@ -2148,7 +2148,7 @@ function OverviewPage(){
               {dlt.diverge_key===dv.key&&<BfDelta v={dlt.diverge_week} invert/>}</div>
           </>:<>
             <span className="bf-t-val">Ничего срочного</span>
-            <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||22} тем — превышений нет</div>
+            <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||40} проблем — значимых всплесков нет</div>
           </>}
         </div>
 
@@ -2169,7 +2169,7 @@ function OverviewPage(){
             <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
               {ovl.baseline_week!=null&&<small> норма {Math.round(ovl.baseline_week)}</small>}</span>
           </Xp>
-          <div className="bf-t-sub">banki.ru · 1–2★{kpi.market_rank?` · ${kpi.market_rank}-е место из ${kpi.market_banks}`:""}
+          <div className="bf-t-sub">жалобы всех площадок · разметка ИИ
             <BfDelta v={dlt.week} invert/></div>
         </a>
 
@@ -2186,14 +2186,14 @@ function OverviewPage(){
 
         {/* Слепая зона: чего классификатор не видит */}
         <a className={"bf-t"+(unc&&unc.ratio>=1.3?" attn":"")} href="#reviews">
-          <div className="bf-t-cap">Вне известных тем</div>
-          <Xp rows={xpUnclassified(unc)} note="классификатор тем · 22 темы">
+          <div className="bf-t-cap">Вне кодификатора</div>
+          <Xp rows={xpUnclassified(unc)} note="кодификатор жалоб · 40 проблем, разметка ИИ">
             <span className="bf-t-val">{unc&&unc.week!=null?unc.week:"—"}
               {unc&&unc.pct!=null&&<small> · {unc.pct}%</small>}</span>
           </Xp>
           <div className="bf-t-sub">{unc&&unc.ratio!=null
             ?(unc.ratio>=1.3?"выше обычного — возможен новый инцидент":"как обычно")
-            :"жалобы без темы"}<BfDelta v={dlt.unclassified} invert/></div>
+            :"жалобы без подходящего кода"}<BfDelta v={dlt.unclassified} invert/></div>
         </a>
 
         {/* Медленный тренд — то, чего не видно в недельном окне */}
@@ -3208,7 +3208,11 @@ function RvModal({onClose,title,sub,side,children}){
 
 // Чипы тем обращения (классификация): regex-baseline или LLM-уточнённые.
 function RvThemes({list,src,active}){
-  if(!list||!list.length) return <span className="rv-tag other">Прочее</span>;
+  // Темы — LLM-разметка по кодификатору: первая — главная проблема жалобы,
+  // дальше дополнительные. Свежий отзыв без разметки ещё размечается (до часа).
+  if(!list||!list.length) return src==="pending"
+    ?<span className="rv-tag other" title="отзыв ещё размечается — обычно до часа после сбора">размечается</span>
+    :null;
   // Разметка мультитемная: у обращения бывает до двух тем, и обе верны
   // («не выдаёт деньги по залогу» — это и задержка, и условия кредита).
   // Но при фильтре по теме второй ярлык выглядел равноправным, и аудитор
@@ -3218,7 +3222,27 @@ function RvThemes({list,src,active}){
     return <span key={j} className={"rv-tag "+(t.risk||"other")+(hit?" rv-tag-hit":"")}
       title={hit?`${t.label} — тема, по которой отфильтрована лента`:t.label}>
       {t.short||t.label}</span>;
-  })}{src==="llm"&&<span className="rv-llm" title="темы уточнены ИИ">✦</span>}</>;
+  })}</>;
+}
+
+// Разбор отзыва моделью: суть, признаки, насколько уверена разметка.
+const RV_ESC_TO={cbr:"ЦБ",court:"суд",prosecutor:"прокуратура",rpn:"Роспотребнадзор",
+  finombudsman:"финомбудсмен",police:"полиция",fas:"ФАС"};
+function RvAnn({a}){
+  if(!a) return null;
+  const flags=[];
+  if(a.esc==="filed") flags.push(["compliance","обратился: "+(a.esc_to||[]).map(x=>RV_ESC_TO[x]||x).join(", ")]);
+  else if(a.esc==="threat") flags.push(["conduct","грозит: "+(a.esc_to||[]).map(x=>RV_ESC_TO[x]||x).join(", ")]);
+  if(a.no_consent) flags.push(["conduct","без согласия клиента"]);
+  if(a.misled) flags.push(["conduct","ввели в заблуждение"]);
+  if(a.vulnerable&&a.vulnerable.length) flags.push(["other","уязвимый клиент"]);
+  if(a.amount) flags.push(["other",fmtNum(Math.round(a.amount))+" ₽"]);
+  if(!a.summary&&!flags.length) return null;
+  return <div className="rv-ann" title={"разметка ИИ: "+(a.confidence||"")}>
+    {a.summary&&<span className="rv-ann-s">Суть: {a.summary}</span>}
+    {flags.map(([r,t],i)=><span key={i} className={"rv-tag "+r}>{t}</span>)}
+    {a.new_topic&&<span className="rv-tag other" title="точного кода в кодификаторе нет — так проблему назвала модель">новое: {a.new_topic}</span>}
+  </div>;
 }
 
 // Карточка отзыва (переиспользуется в ленте, в модале и в драуэре).
@@ -3228,10 +3252,11 @@ function RvReview({r,onOpen,full}){
     <div className="rv-rh">
       <span>{r.date}</span>
       <RvThemes list={r.themes} src={r.theme_src}/>
-      {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
+      {r.product&&<span className="rv-pill rv-pill-dim" title="продукт по разметке ИИ">{r.product}</span>}
       {r.city&&<span className="rv-pill">{r.city}</span>}
       {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
     </div>
+    <RvAnn a={r.ann}/>
     <div className={"rv-rq"+(onOpen?" rv-rq-click":"")} role={onOpen?"button":undefined}
          tabIndex={onOpen?0:undefined} onClick={onOpen||undefined}
          onKeyDown={onOpen?(e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen();}}):undefined}>
@@ -3483,11 +3508,12 @@ function ReviewsPage({params}){
              +(escOnly?" rv-kpi-on":"")}
            role="button" tabIndex={0}
            title={escOnly?"показаны только такие обращения · нажмите, чтобы снять"
-                         :"показать в ленте только обращения с угрозой ЦБ / суда / ФАС"}
+                         :"показать в ленте только жалобы, где клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор, к финомбудсмену или в полицию"}
            onClick={()=>setEscOnly(v=>!v)} onKeyDown={onKey(()=>setEscOnly(v=>!v))}>
         <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_pct>=12&&<span className="rv-tag compliance">риск</span>}</div>
         <div className="rv-kv rv-up">{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
-        <div className="rv-ks">{escOnly?"фильтр включён · нажмите, чтобы снять":"упоминают ЦБ / суд / ФАС · нажмите"}</div>
+        <div className="rv-ks">{escOnly?"фильтр включён · нажмите, чтобы снять"
+          :(ov&&ov.escalation_filed_pct!=null?`уже обратились ${pct1(ov.escalation_filed_pct)} · грозят остальные · нажмите`:"грозят или обратились в ЦБ, суд, прокуратуру · нажмите")}</div>
       </div>
       <div className={"rv-card rv-kpi"+(th&&th.themes&&th.themes.length?" rv-kpi-click":"")
              +(th&&th.themes&&th.themes.length&&theme===th.themes[0].key?" rv-kpi-on":"")}
@@ -3523,17 +3549,18 @@ function ReviewsPage({params}){
         {/* THEMES */}
         <div className="rv-card">
           <div className="rv-ttl">Темы жалоб — риск-карта</div>
-          <div className="rv-cap">доля от жалоб за {(th&&th.days)||days} дн · мультилейбл (сумма ≠ 100%) · клик → лента темы</div>
+          <div className="rv-cap">доля от жалоб за {(th&&th.days)||days} дн · по главной проблеме (сумма 100%), разметка ИИ · клик → лента темы
+            {th&&th.coverage!=null&&th.coverage<99&&<> · <span title="массовая разметка корпуса ещё идёт — числа за старые периоды занижены">размечено {pct1(th.coverage)} отзывов периода</span></>}</div>
           {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:(()=>{
             const real=th.themes.filter(t=>t.key!=="other"), other=th.themes.find(t=>t.key==="other");
             const shown=thAll?real:real.slice(0,12);
             const row=t=>{
-              const clk=t.key!=="other", risky=t.risk==="compliance"||t.risk==="conduct";
+              const clk=true, risky=t.risk==="compliance"||t.risk==="conduct";
               return <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")+(clk?"":" rv-trow-static")}
                    role={clk?"button":undefined} tabIndex={clk?0:undefined} aria-pressed={clk?(theme===t.key):undefined}
                    onClick={clk?()=>pickTheme(t.key):undefined}
                    onKeyDown={clk?onKey(()=>pickTheme(t.key)):undefined}>
-                <div className="rv-tname">{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
+                <div className="rv-tname" title={t.n_also?`ещё в ${t.n_also} жалобах упоминается как дополнительная проблема`:undefined}>{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
                 <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
                 <div className="rv-tn mono">{fmtNum(t.n)}</div>
                 <div className="rv-ttr">{rvDelta(t.delta_pct)}</div>
@@ -3642,10 +3669,7 @@ function ReviewsPage({params}){
               {" "}· {n + dup} обращений в {n} карточках</span>:null;})()}
         </div>
           <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>:"темы обращений определены автоматически (regex) · ✦ уточнить ИИ для точности"}</div></div>
-        <button className="rv-cls-btn" onClick={classifyFeed} disabled={clsBusy||feedBusy||!feed||!feed.length}
-                title="Переклассифицировать показанные отзывы с учётом смысла и отрицаний">
-          {clsBusy?"Уточняю…":clsOn?"✦ темы уточнены ИИ":"✦ Уточнить темы (ИИ)"}
-        </button>
+
       </div>
       {/* Порядок выдачи. Показываем только при запросе: лента без него и так
           идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
@@ -3700,7 +3724,7 @@ function ReviewsPage({params}){
                 читает обращение как чужое. Дважды приходило как дефект. */}
             {r.bank&&<span className="rv-pill rv-pill-bank" title="банк, которому принадлежит обращение">{r.bank}</span>}
             <RvThemes list={r.themes} src={r.theme_src} active={theme}/>
-            {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
+            {r.product&&<span className="rv-pill rv-pill-dim" title="продукт по разметке ИИ">{r.product}</span>}
             {r.city&&<span className="rv-pill">{r.city}</span>}
             {/* Источник виден на каждой карточке: площадок теперь несколько, и
                 аудитор должен понимать, откуда жалоба, не открывая ссылку */}
@@ -3713,6 +3737,7 @@ function ReviewsPage({params}){
                 :"слова запроса встречаются в тексте дословно (подсвечены)"}>
               {r.via==="смысл"?"по смыслу":r.via==="слова"?"дословно":"дословно и по смыслу"}</span>}
           </div>
+          <RvAnn a={r.ann}/>
           <div className="rv-rq rv-rq-click" role="button" tabIndex={0} onClick={()=>setModalRev(r)} onKeyDown={onKey(()=>setModalRev(r))}>
             {kbMark(cutMark(r.marked||r.text,420))}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
           </div>
@@ -3734,6 +3759,7 @@ function ReviewsPage({params}){
         <RvThemes list={modalRev.themes} src={modalRev.theme_src} active={theme}/>
         {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
       </div>
+      <RvAnn a={modalRev.ann}/>
       {/* полный текст — с той же подсветкой, что и в карточке: аудитор открывает
           отзыв именно чтобы проверить совпадение, терять его тут нельзя */}
       <div className="rv-modal-text">{kbMark(modalRev.marked||modalRev.text)}</div>
