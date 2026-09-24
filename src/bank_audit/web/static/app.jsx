@@ -7579,6 +7579,39 @@ function PuCollect({c}){
   </div>;
 }
 
+// ── Веб-поиск и копии страниц ───────────────────────────────────────────────
+function PuSearch({s}){
+  const rows=(s||{}).backends||[], gw=(s||{}).gateway||{};
+  if(!rows.length&&!gw.enabled) return null;
+  const RU={ok:"нашёл",empty:"пусто",limited:"лимит",down:"недоступен",error:"ошибка"};
+  const NAME={"web_search:yandex":"Яндекс (шлюз) — каждый вызов",
+    "web_search_chain:yandex_gw":"Итог поиска — ответил Яндекс",
+    "web_search_chain:fleet":"Итог поиска — выручил запасной fleet",
+    "web_search_chain:none":"Итог поиска — не нашёл никто",
+    "web_read:yandex_copy":"Копии страниц · Яндекс"};
+  return <div className="pu-card">
+    <div className="h"><span>Веб-поиск</span>
+      <span className="mono">{gw.enabled?("основной: "+(gw.primary==="fleet"?"fleet":"Яндекс")):"шлюз не настроен"}
+        {gw.breaker_open?" · шлюз отключён":""}</span></div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      «Лимит» и «недоступен» — запрос ушёл на запасной поиск; «пусто» — честно
+      ничего не нашлось. Копии — страницы, закрытые антиботом, прочитанные из
+      сохранённой копии Яндекса. Повторы из кэша не считаются.
+      {gw.breaker_open&&gw.breaker_reason?<><br/>Причина отключения: {gw.breaker_reason}</>:null}
+    </p>
+    {rows.map(r=>{const k=r.kind+":"+r.backend, bs=r.by_status||{};
+      return <div key={k} style={{marginBottom:10}}>
+        <div className="pu-kv"><span>{NAME[k]||k}</span>
+          <b className="tnum">{r.total}{r.p50_ok!=null?` · p50 ${r.p50_ok} мс`:""}</b></div>
+        <div className="pu-reasons">
+          {Object.keys(bs).map(st=><span key={st}
+            className={"pu-reason"+(st==="ok"?" ok":(st==="down"||st==="error"||st==="limited")?" bad":"")}>
+            {RU[st]||st}<i>{bs[st]}</i></span>)}
+        </div>
+      </div>;})}
+  </div>;
+}
+
 // ── Что проверяет отдел ─────────────────────────────────────────────────────
 function PuTopics({t}){
   const banks=(t||{}).banks||[];
@@ -8074,6 +8107,7 @@ function PulsePage(){
     {tab==="data"&&<>
       <PuIngest ing={m.ingest||{}}/>
       <PuCollect c={m.collect||{}}/>
+      <PuSearch s={m.search||{}}/>
       <PuNewsQuality q={m.news_quality||{}}/>
     </>}
 

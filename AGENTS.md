@@ -33,8 +33,10 @@ Critic регуляркой сверяет каждое число в текст
   цепочка `явный аргумент → спец-env → SMART/FAST → LLM_MODEL_NAME → хардкод`
   (реестр — `src/bank_audit/ai/analyst.py`, `_tier_models()`). Смена модели =
   env + рестарт, без правки кода.
-- **Поиск:** SearXNG (self-hosted, в контуре Cloud.ru живы только `bing`+`dogpile`),
-  fallback — ddgs.
+- **Поиск:** Яндекс через корпоративный шлюз (`rag/search_gateway.py`: свой лимит
+  частоты, размыкатель при 401/402/403/5xx, TLS нашим бандлом) → запасной fleet-SearXNG
+  (домены — оператором `site:` в тексте, не `include_domains`) → ddgs. Страницы,
+  закрытые антиботом, скрапер отчёта читает из сохранённой копии Яндекса до браузера.
 - **Скрейпинг / PDF:** Playwright Chromium + playwright-stealth; httpx + selectolax
   для простых страниц; pdfplumber/pdfminer для PDF-документов.
 - **Агент «Лазейки»:** nanobot-ai (отдельный harness, модель `openai/gpt-4.1` —

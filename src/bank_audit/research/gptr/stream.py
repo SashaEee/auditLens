@@ -281,7 +281,8 @@ async def stream_deep_research_gptr(question: str,
                 "sections": al_dossier.outline(plan, registry)})
     gaps_preview = al_gaps.render(al_gaps.collect(
         plan, registry=registry, attributes=attributes,
-        pages=pages, unreadable=unreadable)) if registry.facts else ""
+        pages=pages, unreadable=unreadable,
+        cached_copies=dict(state.cached_copies))) if registry.facts else ""
     # Текст собираем в ПОРЯДКЕ ЧТЕНИЯ: тело стримится по мере написания, а
     # резюме с планом проверки приходят последними и встают наверх. У
     # перенумеровщика порядок подачи, и полагаться на его text нельзя —
@@ -421,7 +422,8 @@ async def stream_deep_research_gptr(question: str,
         **cit_stats,
     })
     gap_lines = al_gaps.collect(plan, registry=registry, attributes=attributes,
-                                pages=pages, unreadable=unreadable)
+                                pages=pages, unreadable=unreadable,
+                                cached_copies=dict(state.cached_copies))
     # Снятое критиком — не «ничего не нашлось», а «нашлось, но не подтвердилось».
     # Аудитор обязан видеть разницу.
     gap_lines.extend(verdict.notes)

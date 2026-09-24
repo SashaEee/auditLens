@@ -82,13 +82,17 @@ class FetchResult:
 def fetch(url: str, *, prefer_browser: bool = False,
           cache_ttl_seconds: int = 6 * 3600,
           force_refresh: bool = False,
-          browser=None, direct: bool = False) -> FetchResult:
+          browser=None, direct: bool = False,
+          browser_fallback: bool = True) -> FetchResult:
     """Главная точка входа. Возвращает FetchResult.
 
     prefer_browser=True — сразу через Playwright (для SPA вроде sravni.ru/banki.ru,
                           где HTTP отдаст пустой каркас)
     force_refresh — игнорировать кэш
     browser — опциональный BrowserCollector instance (если уже есть)
+    browser_fallback=False — не звать браузер, если HTTP не удался: вызывающий
+                          сам решит, что пробовать дальше (скрапер отчёта сначала
+                          берёт копию страницы из Яндекса — это секунды, а не 20 с)
     """
     # 1. Cache lookup
     if not force_refresh:
@@ -109,6 +113,9 @@ def fetch(url: str, *, prefer_browser: bool = False,
         if result and _looks_valid(result.content, result.content_type, result.status):
             _cache_result(url, prefer_browser, result, cache_ttl_seconds)
             return result
+        if not browser_fallback:
+            return result or FetchResult(url=url, final_url=url, status=0,
+                                         content=b"", content_type=None, via="failed")
         log.info("fetch %s: HTTP didn't yield valid content (%s bytes), trying browser",
                  url[:80], len(result.content) if result else 0)
 

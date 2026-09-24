@@ -340,6 +340,7 @@ def metrics(days: int = 14) -> dict:
             "proposals": _proposals(),
             "ingest": _ingest_health(days),
             "collect": _collect_health(days),
+            "search": _search_health(days),
             "news_quality": _news_quality(days),
             "personalization": _personalization(days),
             "topics": _team_topics(days)}
@@ -572,6 +573,39 @@ def _ingest_health(days: int) -> dict:
            AND created_at > now() - (:days || ' days')::interval
          GROUP BY 1 ORDER BY 1""", {"days": days})
     return {"queue": q, "per_day": [{**r, "d": str(r["d"])} for r in hist]}
+
+
+def _search_health(days: int) -> dict:
+    """Веб-поиск и чтение копий страниц: кто отвечал и как часто сбоило.
+
+    Сбой шлюза и честная пустая выдача выглядят для отчёта одинаково — «ничего
+    не нашлось». Здесь их видно раздельно: ok / empty (поиск честно пуст) /
+    limited (упёрлись в лимит, ушли на запасной) / down (шлюз недоступен,
+    ключ, квота) / error. Текст запросов не пишется.
+    """
+    rows = _rows("""
+        SELECT kind, COALESCE(page, '?') AS backend,
+               COALESCE(payload->>'status', '?') AS status, count(*) AS n,
+               round(percentile_cont(0.5) WITHIN GROUP (ORDER BY dur_ms)) AS p50
+          FROM usage_event
+         WHERE kind IN ('web_search', 'web_read', 'web_search_chain')
+           AND created_at > now() - (:days || ' days')::interval
+         GROUP BY 1, 2, 3 ORDER BY 1, 2, 4 DESC""", {"days": days})
+    out: dict[str, dict] = {}
+    for r in rows:
+        key = f"{r['kind']}:{r['backend']}"
+        b = out.setdefault(key, {"kind": r["kind"], "backend": r["backend"],
+                                 "total": 0, "by_status": {}, "p50_ok": None})
+        b["total"] += int(r["n"])
+        b["by_status"][r["status"]] = int(r["n"])
+        if r["status"] == "ok":
+            b["p50_ok"] = r["p50"]
+    try:
+        from ..rag import search_gateway
+        gw = search_gateway.status()
+    except Exception:  # noqa: BLE001 — сбой импорта не роняет «Пульс»
+        gw = {}
+    return {"backends": list(out.values()), "gateway": gw}
 
 
 def _collect_health(days: int) -> dict:

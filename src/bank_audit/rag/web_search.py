@@ -1,15 +1,17 @@
 """Web search — multi-backend chain с fallback'ами.
 
 Цепочка (в порядке приоритета):
-  1. SearXNG (self-hosted, безлимитный) — env SEARXNG_URL
-  2. Brave Search API (2k/мес free)    — env BRAVE_SEARCH_API_KEY
-  3. DuckDuckGo HTML SERP               — нет ключа, но банят
-  4. Yandex HTML SERP                   — нет ключа, тоже банят
+  1. Яндекс через корпоративный шлюз   — env SEARCH_GATEWAY_URL/_API_KEY (rag/search_gateway.py)
+  2. SearXNG fleet на резидентских прокси — env FLEET_SEARXNG_URL (запасной)
+  3. SearXNG локальный                   — env SEARXNG_URL
+  4. Brave Search API                    — env BRAVE_SEARCH_API_KEY
+  5. ddgs / DuckDuckGo HTML / Yandex HTML — без ключа, последний рубеж
 
-Каждый backend возвращает [{title, url, snippet, domain}, ...].
-search() пробует backend'ы по порядку: первый давший непустой результат — используется.
+SEARCH_PRIMARY=fleet меняет местами первые два. Каждый backend возвращает
+[{title, url, snippet, domain, date?}, ...]. search() пробует backend'ы по
+порядку: первый давший непустой результат — используется.
 
-Кэш на 1 час по (query, site_filter, region).
+Кэш на 1 час по (query, site_filter, region, max_results, fresh_hours).
 """
 from __future__ import annotations
 import logging, os, re, time
@@ -91,30 +93,38 @@ def search(
     region: str = "ru-ru",
     cache_ttl_seconds: int = 3600,
     direct: bool = False,
+    fresh_hours: int | None = None,
+    caller: str = "",
 ) -> list[dict]:
-    """Multi-backend web search:
-      1. SearXNG (если SEARXNG_URL задан) — приоритет, безлимит
-      2. Brave Search API (если BRAVE_SEARCH_API_KEY задан) — 2k/мес free
-      3. DuckDuckGo HTML
-      4. Yandex HTML
-    Первый непустой результат используется. Возвращает [{title, url, snippet, domain}].
+    """Multi-backend web search (порядок — в докстринге модуля).
+
+    fresh_hours — только материалы свежее N часов (понимает Яндекс, оператор
+    date:>; остальные бэкенды параметр игнорируют). Первый непустой результат
+    используется. Возвращает [{title, url, snippet, domain, date?}].
     """
     if not query or not query.strip():
         return []
 
     # max_results входит в ключ (item 47): иначе закэшированный меньший срез
     # (напр. 6 результатов) «голодом морил» более поздний вызов с max_results=10.
-    cache_key = ("web_search", query, tuple(sorted(site_filter or [])), region, max_results)
+    from . import search_gateway as _gw
+    cache_key = ("web_search", query, tuple(sorted(site_filter or [])), region, max_results,
+                 fresh_hours, _gw.primary() if _gw.enabled() else "fleet")
     cached = rag_cache.get("web_search", *cache_key[1:])
     if cached:
         return cached[:max_results]
 
     backends = []
-    # Fleet SearXNG на резидентских прокси — приоритет: google cse/yandex дают
-    # первоисточники (cbr.ru/garant.ru/sberbank), где локальный bing тащил
-    # букмекеров/аптеки. Наш локальный SearXNG — fallback при недоступности.
+    # Яндекс через корпоративный шлюз — основной; fleet на резидентских прокси
+    # — запасной. Два живых бэкенда вместо одного: при сбое, лимите или пустой
+    # выдаче первого запрос уходит на второй, а не в «ничего не нашлось».
+    gw_first = _gw.yandex_first()
+    if gw_first:
+        backends.append(("yandex_gw", _search_gw_yandex))
     if _fleet_searxng_url():
         backends.append(("fleet", _search_fleet))
+    if _gw.enabled() and not gw_first:
+        backends.append(("yandex_gw", _search_gw_yandex))
     if _searxng_url():
         backends.append(("searxng", _search_searxng))
     if _brave_key():
@@ -126,10 +136,16 @@ def search(
     backends.append(("yandex", _search_yandex))
 
     results: list[dict] = []
+    used = "none"
+    t0 = time.monotonic()
     for name, fn in backends:
         try:
-            r = fn(query, max_results=max_results,
-                   site_filter=site_filter, region=region, direct=direct)
+            if name == "yandex_gw":
+                r = fn(query, max_results=max_results, site_filter=site_filter,
+                       fresh_hours=fresh_hours, caller=caller)
+            else:
+                r = fn(query, max_results=max_results,
+                       site_filter=site_filter, region=region, direct=direct)
         except TypeError:
             # backend не принимает region (yandex)
             try:
@@ -147,11 +163,35 @@ def search(
             log.warning("[web_search] backend=%s q=%s → %d",
                      name, query[:50], len(r))
             results = r
+            used = name
             break
+
+    # Итог по всей цепочке: какой бэкенд в итоге ответил. По нему в «Пульсе»
+    # видно, как часто основной поиск подводит и срабатывает запасной.
+    _gw.emit("web_search_chain", used, "ok" if results else "empty",
+             dur_ms=int((time.monotonic() - t0) * 1000), n=len(results),
+             caller=caller, primary="yandex_gw" if gw_first else "fleet")
 
     if results:
         rag_cache.put("web_search", results, cache_ttl_seconds, *cache_key[1:])
     return results[:max_results]
+
+
+# ── Яндекс через корпоративный шлюз ──────────────────────────────────────────
+def _search_gw_yandex(query: str, *, max_results: int = 8,
+                      site_filter: list[str] | None = None,
+                      fresh_hours: int | None = None, caller: str = "") -> list[dict]:
+    """Яндекс через шлюз. site: из запроса и site_filter Яндекс понимает сам,
+    поэтому домены уходят в текст запроса. Пустой список при сбое, лимите или
+    пустой выдаче — search() пойдёт к следующему бэкенду; причину видно в
+    телеметрии (kind=web_search)."""
+    from . import search_gateway as _gw
+    res = _gw.yandex_search(query, sites=site_filter, fresh_hours=fresh_hours,
+                            max_results=max_results, caller=caller or "web_search")
+    if res.status not in (_gw.OK, _gw.EMPTY):
+        log.info("yandex_gw %s: %s (%s) — запасной поиск", query[:50], res.status, res.detail)
+    return [{k: it.get(k) for k in ("title", "url", "snippet", "domain", "date")}
+            for it in res.items]
 
 
 # ── Backend 0: ddgs (мульти-движковый, основной без SearXNG) ──────────────
@@ -266,6 +306,11 @@ def _searxng_query(base: str, query: str, *, max_results: int,
     except Exception as e:
         log.info("%s %s: %s", label, q_send[:50], type(e).__name__)
         return []
+    if not (data.get("results") or []) and data.get("unresponsive_engines"):
+        # Движки отказали (dogpile 24.09.2026: «Suspended: access denied»):
+        # пустота здесь — поломка, а не «ничего не нашлось».
+        log.warning("%s: движки не ответили — %s", label,
+                    "; ".join(" ".join(map(str, e)) for e in data["unresponsive_engines"][:3]))
 
     matched: list[dict] = []
     extra: list[dict] = []
@@ -316,10 +361,16 @@ def _search_fleet(query: str, *, max_results: int = 8,
 def _fleet_v1_query(base: str, query: str, *, max_results: int,
                     site_filter: list[str] | None, direct: bool = False) -> list[dict]:
     """POST /v1/search — версионированный агентский контракт гейтвея (гайд
-    оператора, август 2026). Отличия от сырого /search: JSON-body, серверная
-    фильтрация include_domains (site: больше не вырезается молча), лимиты
-    query≤512 / max_results≤20, 403 = исчерпана предоплаченная квота трафика —
-    НЕ ретраить, а громко сказать оператору."""
+    оператора, август 2026): JSON-body, лимиты query≤512 / max_results≤20,
+    403 = исчерпана предоплаченная квота трафика — НЕ ретраить, а громко
+    сказать оператору.
+
+    Домены передаём оператором site: В ТЕКСТЕ запроса, а не include_domains.
+    include_domains фильтрует уже готовую общую выдачу, и узкие сайты туда
+    почти не попадают: замер 24.09.2026 — на site:cbr.ru / pravo.gov.ru /
+    consultant.ru пусто в 8 из 17 запросов, 1,6 релевантной ссылки на запрос.
+    С site: в тексте движки гейтвея (google cse, yandex) ищут по сайту сами:
+    0 пустых, 5,5 ссылки, 99% выдачи на целевом домене."""
     import re as _re
     token = _fleet_searxng_token()
     sites_in_q = _re.findall(r"site:(\S+)", query, flags=_re.IGNORECASE)
@@ -331,12 +382,16 @@ def _fleet_v1_query(base: str, query: str, *, max_results: int,
         if host and host not in domains:
             domains.append(host)
     engines = [e.strip() for e in _fleet_searxng_engines().split(",") if e.strip()][:10]
-    body: dict = {"query": (clean or query)[:512], "language": "ru",
+    sites = ""
+    if len(domains) == 1:
+        sites = f" site:{domains[0]}"
+    elif domains:
+        sites = " (" + " OR ".join(f"site:{d}" for d in domains[:10]) + ")"
+    base_q = (clean or query)[:512 - len(sites)]
+    body: dict = {"query": (base_q + sites).strip(), "language": "ru",
                   "max_results": max(1, min(int(max_results or 8), 20))}
     if engines:
         body["engines"] = engines
-    if domains:
-        body["include_domains"] = domains[:10]
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -368,8 +423,7 @@ def _fleet_v1_query(base: str, query: str, *, max_results: int,
     # добираем широким запросом, помечая чужие домены (контракт off_domain).
     broad_used = False
     if data is not None and not (data.get("results") or []) and domains:
-        status, data = _call({k: v for k, v in body.items()
-                              if k != "include_domains"})
+        status, data = _call({**body, "query": (clean or query)[:512]})
         broad_used = True
     if status != 200 or data is None:
         if status not in (0, 200):
@@ -393,7 +447,8 @@ def _fleet_v1_query(base: str, query: str, *, max_results: int,
             continue
         dom = (r.get("domain") or "").lower().removeprefix("www.")
         item = {"title": (r.get("title") or "")[:200], "url": url,
-                "snippet": (r.get("content") or "")[:400], "domain": dom}
+                "snippet": (r.get("content") or "")[:400], "domain": dom,
+                "date": (str(r.get("published_at"))[:10] if r.get("published_at") else None)}
         if broad_used and domains and not any(
                 dom == dd or dom.endswith("." + dd) for dd in domains):
             item["off_domain"] = True

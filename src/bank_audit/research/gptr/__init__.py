@@ -4,7 +4,7 @@
 поиск → чтение → сжатие эмбеддингами → написание отчёта), а подставляем в его
 точки расширения наши части, которые оплачены болью и которых у него нет:
 
-  retriever  — шлюз fleet-searxng (POST + Bearer, google cse/yandex/duckduckgo)
+  retriever  — наша цепочка поиска (Яндекс через шлюз → fleet-searxng → запасные)
                вместо их GET к открытому SearXNG;
   scraper    — наш fetcher (Playwright, детектор заглушек, кэш) вместо
                beautifulsoup-по-HTTP, который на сбербанке получает заглушку;

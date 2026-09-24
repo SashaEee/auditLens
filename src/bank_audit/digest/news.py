@@ -307,9 +307,15 @@ def _fetch_search() -> tuple[list[dict], dict]:
         from ..rag.web_search import search
         dim = {"incident": "ops", "scheme": "fraud", "regulator": "compliance"}
         for query, tag in SEARCH_QUERIES:
-            for r in search(query, max_results=4, cache_ttl_seconds=6 * 3600):
+            # Свежесть просим у самого поиска (Яндекс понимает date:>): окно то
+            # же, что у пула новостей. Без этого поиск отдавал вечнозелёные
+            # страницы, которые потом всё равно выбрасывались как старые.
+            fresh = _WINDOW_REG_H if tag == "regulator" else _WINDOW_H
+            for r in search(query, max_results=4, cache_ttl_seconds=6 * 3600,
+                            fresh_hours=fresh, caller="digest_news"):
                 items.append({"title": (r.get("title") or "")[:220],
                               "url": r.get("url") or "", "ts": None,
+                              "ts_hint": r.get("date"),
                               "snippet": (r.get("snippet") or "")[:300],
                               "source": "web_search", "tag": tag, "cls": "bank",
                               "dimension": dim.get(tag, "market"), "image": None})
@@ -448,9 +454,20 @@ def _resolve_undated(items: list[dict]) -> list[dict]:
             except (ValueError, KeyError):
                 pass
         it["ts"] = _page_date(u)
+        if not it["ts"] and it.get("ts_hint"):
+            # Последний довод — дата из поисковой выдачи (у Яндекса это время
+            # изменения страницы, а не публикации). Поэтому только после даты
+            # из адреса, текста и метаданных самой страницы.
+            try:
+                it["ts"] = datetime.fromisoformat(str(it["ts_hint"])[:10]).replace(
+                    tzinfo=timezone.utc)
+            except ValueError:
+                pass
 
     with cf.ThreadPoolExecutor(max_workers=4) as ex:
         list(ex.map(_try, undated))
+    for it in items:
+        it.pop("ts_hint", None)
     kept = [i for i in items if i.get("ts")]
     if len(kept) < len(items):
         log.info("выброшено недатируемых: %d (из них поиск: %d)",

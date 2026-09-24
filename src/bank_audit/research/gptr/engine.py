@@ -18,7 +18,7 @@ import time
 from ...ai.llm_utils import drop_known_rejected, remember_rejected
 from . import compat, gaps as al_gaps, planner as al_planner, runstate
 from . import scraper as al_scraper, verify as al_verify
-from .retriever import FleetSearch
+from .retriever import WebSearch
 
 log = logging.getLogger(__name__)
 
@@ -81,8 +81,8 @@ def install() -> None:
                         api_key=os.environ["OPENAI_API_KEY"])
     import gpt_researcher.retrievers as _r
     import gpt_researcher.retrievers.searx.searx as _rs
-    _r.SearxSearch = FleetSearch
-    _rs.SearxSearch = FleetSearch
+    _r.SearxSearch = WebSearch
+    _rs.SearxSearch = WebSearch
     al_scraper.install()
     _installed = True
 
