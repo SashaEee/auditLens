@@ -671,13 +671,13 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
     try:
         client = _client()
         r = await client.chat.completions.create(
-            model=insight_model(), messages=msgs, temperature=0.4, max_tokens=1500)
+            model=insight_model(), messages=msgs, temperature=0.4, max_tokens=4000)
         raw = (r.choices[0].message.content or "").strip()
         try:
             parsed = _loose_json_loads(raw)
         except ValueError:              # обрезка/флак парсинга → один дешёвый ретрай
             r = await client.chat.completions.create(
-                model=insight_model(), messages=msgs, temperature=0.0, max_tokens=1500)
+                model=insight_model(), messages=msgs, temperature=0.0, max_tokens=4000)
             parsed = _loose_json_loads((r.choices[0].message.content or "").strip())
         headline = str(parsed.get("headline") or "").strip()[:90] or None
         hot = str(parsed.get("hot") or "").strip()[:60] or None

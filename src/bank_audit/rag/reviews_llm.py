@@ -204,13 +204,9 @@ async def anomaly_brief(sig: dict, context: str) -> str | None:
         + _brief_format()
     )
     try:
-        resp = await _client().chat.completions.create(
-            model=insight_model(),
-            messages=[{"role": "system", "content": _ANOM_SYSTEM},
-                      {"role": "user", "content": user}],
-            temperature=0.2, max_tokens=1800)
-        from ..digest.writer import brief_items
-        return brief_items(resp.choices[0].message.content)
+        from ..digest.writer import _chat, brief_items
+        md, _ti, _to = await _chat(insight_model(), _ANOM_SYSTEM, user, max_tokens=5000)
+        return brief_items(md)
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_llm.anomaly_brief упал: %s", e)
         return None

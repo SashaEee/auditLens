@@ -41,14 +41,28 @@ def _client() -> AsyncOpenAI:
     return _patch_client_reasoning_effort(c)
 
 
+def _cut_reasoning(resp) -> bool:
+    """Ответ оборвался на рассуждениях: лимит съело «думание», а страховка
+    клиента подставила рассуждения вместо ответа. 25.09 так в разбор жалоб
+    ушла строка черновика модели."""
+    try:
+        ch = resp.choices[0]
+        rc = (getattr(ch.message, "reasoning_content", "") or "").strip()
+        return ch.finish_reason == "length" and bool(rc) and (ch.message.content or "").strip() == rc
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def _chat(model: str, system: str, user: str, *,
                 max_tokens: int, temperature: float = 0.2) -> tuple[str, int, int]:
+    msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     resp = await _client().chat.completions.create(
-        model=model,
-        messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": user}],
-        temperature=temperature, max_tokens=max_tokens)
-    content = (resp.choices[0].message.content or "").strip()
+        model=model, messages=msgs, temperature=temperature, max_tokens=max_tokens)
+    if _cut_reasoning(resp):
+        log.warning("%s: ответ оборвался на рассуждениях — повтор с лимитом ×3", model)
+        resp = await _client().chat.completions.create(
+            model=model, messages=msgs, temperature=temperature, max_tokens=max_tokens * 3)
+    content = "" if _cut_reasoning(resp) else (resp.choices[0].message.content or "").strip()
     usage = getattr(resp, "usage", None)
     return (content,
             int(getattr(usage, "prompt_tokens", 0) or 0),
@@ -80,7 +94,8 @@ _BRIEF_FORMAT = (
     "*локально*/*ускоряется*; вероятная причина — ТОЛЬКО из жалоб этого сигнала. "
     "Аудитору: одно конкретное действие». Разбор — не длиннее 45 слов, действие — не "
     "длиннее 30.\n"
-    "2) Если среди жалоб без точного кода НЕ МЕНЬШЕ ТРЁХ об одном и том же — пункт "
+    "2) Если среди жалоб без точного кода НЕ МЕНЬШЕ ТРЁХ с одной и той же механикой "
+    "проблемы (не просто один продукт или канал) — пункт "
     "«- **Новое:** **<суть>** — что общего (≈N жалоб). Аудитору: действие», до 40 слов. "
     "Одиночные и парные случаи не выноси.\n"
     "Не переноси формулировки из жалоб одного сигнала в другой, не выдумывай причин. "
@@ -132,7 +147,7 @@ async def reviews_brief(day: date) -> dict:
     # неполным и провоцировала lazy-перезапуски
     try:
         md, ti, to = await _chat(insight_model(), today_anchor() + "\n\n" + _BRIEF_SYSTEM,
-                                 user, max_tokens=1800)
+                                 user, max_tokens=5000)
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_brief LLM failed: %s", e)
         md, ti, to = None, None, None
