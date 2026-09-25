@@ -59,6 +59,19 @@ _UPSERT = text("""
 _ESC_RE = None
 
 
+
+# Площадка переименовывает банки, и история одного банка распадается на два
+# названия: «Точка» до февраля 2026 и «Точка Банк» после, «Долинск» и «Долинск
+# Банк». Старое имя ведём в новое при индексации (исторические строки —
+# миграция 072). «Почта Банк» сюда не входит: с мая 2026 его отзывы на площадке
+# идут под ВТБ, это слияние, а не переименование, и склеивать его нельзя.
+BANK_RENAMES = {"Точка": "Точка Банк", "SBI Bank": "SBI Банк",
+                "А7-финансы ПСБ": "А7 Финансы - ПСБ", "Долинск": "Долинск Банк"}
+
+
+def canon_bank(name: str | None) -> str | None:
+    return BANK_RENAMES.get(name, name) if name else name
+
 def _is_escalation(body: str) -> bool:
     """Грозит ли клиент уйти в ЦБ, суд, ФАС или прокуратуру.
 
@@ -133,7 +146,7 @@ def sync(max_batches: int | None = None) -> dict:
             break
         # продукт и эскалацию новой строке проставит разметка (в течение часа);
         # до неё строка не входит в счётчики жалоб
-        payload = [{"url": r[1], "review_id": r[0], "bank": r[2], "product": None,
+        payload = [{"url": r[1], "review_id": r[0], "bank": canon_bank(r[2]), "product": None,
                     "dt": r[4], "city": _city(r[5]), "body": r[6],
                     "esc": False} for r in rows]
         # сессия на батч, а не на весь прогон: иначе бэкфилл держит одну
@@ -231,11 +244,22 @@ def sync_local(batch: int = 400) -> dict:
               AND r.source_url IS NOT NULL AND length(r.text) >= :minlen
         """), {"minlen": _MIN_LEN, "src": known}).mappings().all()
 
+    # дата позже завтрашнего дня — ошибка разбора площадки (09.12.2026 в
+    # сентябре), а не отзыв из будущего: без даты он не попадёт в динамику
+    from datetime import datetime, timedelta, timezone
+    horizon = datetime.now(timezone.utc) + timedelta(days=1)
+
+    def _dt(v):
+        if v is None:
+            return None
+        vv = v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        return None if vv > horizon else v
+
     written = 0
     for i in range(0, len(rows), batch):
         payload = [{"url": r["source_url"], "review_id": int(r["review_id"]),
-                    "bank": canon.get(r["bank"], r["bank"]), "product": None,
-                    "dt": r["posted_at"], "city": None,
+                    "bank": canon_bank(canon.get(r["bank"], r["bank"])), "product": None,
+                    "dt": _dt(r["posted_at"]), "city": None,
                     "rating": float(r["rating"]) if r["rating"] is not None else None,
                     "source": r["source"], "body": r["body"], "esc": False}
                    for r in rows[i:i + batch]]

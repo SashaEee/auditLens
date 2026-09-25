@@ -1865,7 +1865,9 @@ def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None,
 
 @app.get("/api/reviews/products")
 def reviews_products(bank: str = "Сбербанк", days: int = 365):
-    return _rd().products(bank, days) or {}
+    # все продукты кодификатора: при топ-10 вклады, страхование, инвестиции и
+    # ещё полтора десятка продуктов в фильтре выбрать было нельзя
+    return _rd().products(bank, days, top=60) or {}
 
 @app.get("/api/reviews/corpus")
 def reviews_corpus(bank: Optional[str] = None):
@@ -1970,36 +1972,61 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
         watch = [d for d in ((wp or {}).get("diverge") or []) if (d.get("gap") or 0) >= 1.15]
         return {"summary": None, "signals": [], "watch": watch[:4],
                 "overall": (sig or {}).get("overall"),
-                "calm": not watch}
+                "week_end": (sig or {}).get("week_end"), "calm": not watch}
     key = f"{bank}|{product}|" + ",".join(f"{s['key']}:{s['week']}" for s in signals)
     hit = _ANOM_CACHE.get(key)
     if hit and _time.time() - hit[0] < 6 * 3600:
         return hit[1]
     context = await asyncio.to_thread(reviews_llm.signal_context, sig, bank, product or None)
     brief = await reviews_llm.anomaly_brief(sig, context)
-    out = {"summary": brief, "signals": signals, "overall": sig.get("overall"), "calm": False}
+    out = {"summary": brief, "signals": signals, "overall": sig.get("overall"),
+           "week_end": sig.get("week_end"), "calm": False}
     if brief:
         _ANOM_CACHE[key] = (_time.time(), out)
     return out
 
+_EXPLAIN_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+@app.get("/api/reviews/segment-profile")
+def reviews_segment_profile(bank: str = "Сбербанк", product: Optional[str] = None,
+                            city: Optional[str] = None, month: Optional[str] = None,
+                            days: int = 90):
+    """Чем город или месяц отличается от нормы — цифры для панели, без модели."""
+    return _rd().segment_profile(bank, product or None, city or None, month or None, days) or {}
+
+
 @app.get("/api/reviews/explain")
 async def reviews_explain(bank: str = "Сбербанк", product: Optional[str] = None,
-                          city: Optional[str] = None, month: Optional[str] = None):
-    """On-demand LLM-объяснение причины гео-аномалии или пика динамики (по кнопке)."""
+                          city: Optional[str] = None, month: Optional[str] = None,
+                          days: int = 90):
+    """Разбор среза моделью (по кнопке): сначала цифры против нормы, потом
+    тексты. Кэш на 6 часов — повторное открытие не ждёт модель 25 секунд."""
     import asyncio
+    import time as _time
     from ..rag import reviews_llm
+    key = f"{bank}|{product}|{city}|{month}|{days}"
+    hit = _EXPLAIN_CACHE.get(key)
+    if hit and _time.time() - hit[0] < 6 * 3600:
+        return hit[1]
     seg = await asyncio.to_thread(_rd().segment_reviews, bank, product or None,
                                   city or None, month or None)
     if not seg or not seg.get("n"):
         return {"summary": None, "themes": [], "samples": [], "n": 0}
+    prof = await asyncio.to_thread(_rd().segment_profile, bank, product or None,
+                                   city or None, month or None, days)
     parts = []
     if city:
         parts.append(f"г. {city}")
     if month:
         parts.append(f"месяц {month}")
     label = f"{bank}" + (" · " + ", ".join(parts) if parts else "")
-    summary = await reviews_llm.explain_segment(seg, label=label)
-    return {"summary": summary, "themes": seg["themes"], "samples": seg["samples"], "n": seg["n"]}
+    summary = await reviews_llm.explain_segment(seg, label=label, profile=prof)
+    out = {"summary": summary, "themes": seg["themes"], "samples": seg["samples"],
+           "n": seg["n"], "profile": prof}
+    if summary:
+        _EXPLAIN_CACHE[key] = (_time.time(), out)
+    return out
 
 
 # ── banks & ratings ───────────────────────────────────────────────────────────

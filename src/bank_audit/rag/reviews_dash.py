@@ -329,18 +329,22 @@ def _prev_ready(bank_canon: str | None, days: int) -> bool:
 
 # ── Агрегаты ────────────────────────────────────────────────────────────────
 @_safe([])
-def banks(top: int = 60) -> list[dict]:
-    """Список банков по объёму жалоб — для фильтра вкладки. Считается по единому
+def banks(top: int = 120) -> list[dict]:
+    """Список банков для фильтра вкладки — по жалобам ЗА ГОД, не за всё время:
+    иначе в списке висели закрытые банки («Рокетбанк»). Считается по единому
     индексу, поэтому банк, которого нет во внешнем корпусе, но который собрали
-    наши коллекторы, тоже попадает в список.
+    наши коллекторы, тоже попадает в список. last — дата последней жалобы:
+    у банка, пропавшего с площадки («Почта Банк» с мая 2026), фронт это покажет.
     Сбер первым (даже если по объёму не №1), дальше по убыванию."""
     def _compute():
         with db.session() as s:
             rows = s.execute(text(
-                "SELECT i.bank, count(*) n FROM review_index i"
+                "SELECT i.bank, count(*) n, max(i.dt)::date FROM review_index i"
                 f" WHERE i.bank IS NOT NULL AND {_CMP}"
-                " GROUP BY 1 ORDER BY 2 DESC LIMIT :top"), {"top": top}).all()
-        items = [{"bank": r[0], "n": int(r[1])} for r in rows]
+                " AND i.dt > now() - interval '365 days' AND i.dt <= now()"
+                " GROUP BY 1 HAVING count(*) >= 20 ORDER BY 2 DESC LIMIT :top"), {"top": top}).all()
+        items = [{"bank": r[0], "n": int(r[1]), "last": r[2].isoformat() if r[2] else None}
+                 for r in rows]
         sber = [x for x in items if x["bank"] == "Сбербанк"]
         rest = [x for x in items if x["bank"] != "Сбербанк"]
         return sber + rest
@@ -479,7 +483,7 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
                 f"       count(*) FILTER (WHERE i.kind IS NOT NULL),"
                 f"       count(*)"
                 f" FROM review_index i WHERE {idx}"
-                f" AND i.dt >= date_trunc('month', now()) - make_interval(months => :m)"
+                f" AND i.dt >= date_trunc('month', now()) - make_interval(months => :m) AND i.dt <= now()"
                 f" GROUP BY 1 ORDER BY 1"), {**ip, "m": months - 1}).all()
             cur_ym = s.execute(text("SELECT to_char(now(),'YYYY-MM')")).scalar()
         series = []
@@ -953,6 +957,83 @@ def segment_reviews(bank: str, product: str | None = None, city: str | None = No
     return {"n": len(revs), "themes": themes_, "samples": samples, "texts": texts}
 
 
+@_safe(None)
+def segment_profile(bank: str, product: str | None = None, city: str | None = None,
+                    month: str | None = None, days: int = 90) -> dict | None:
+    """Чем срез (город или месяц) отличается от нормы — по главной проблеме.
+
+    Город сравнивается со всей страной за тот же период, месяц — с шестью
+    предыдущими. Индекс = доля проблемы в срезе / доля в норме. flagged —
+    отмечен ли срез аномалией по правилам вкладки (гео — per-capita, месяц —
+    пик динамики): модель не должна называть аномалией то, что ею не отмечено,
+    как было с Краснодаром 25.09."""
+    bc = resolve_bank(bank)
+    if not bc or not (city or month):
+        return None
+    p: dict = {"bank": bc, "product": product, "d": days, "city": city, "month": month}
+    if city:
+        seg = "i.city = :city AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
+        base = "i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
+        base_label = f"вся страна за те же {days} дн"
+    else:
+        seg = "date_trunc('month', i.dt) = to_date(:month, 'YYYY-MM')"
+        base = ("i.dt >= to_date(:month, 'YYYY-MM') - interval '6 months'"
+                " AND i.dt < to_date(:month, 'YYYY-MM')")
+        base_label = "6 предыдущих месяцев"
+    with db.session() as s:
+        rows = s.execute(text(f"""
+            SELECT i.issue, count(*) FILTER (WHERE {seg}) AS n, count(*) FILTER (WHERE {base}) AS b
+            FROM review_index i
+            WHERE i.bank = :bank AND {_CMP}
+              AND (CAST(:product AS text) IS NULL OR i.product = :product)
+              AND (({seg}) OR ({base}))
+            GROUP BY 1"""), p).all()
+    n_seg = sum(int(r[1]) for r in rows)
+    n_base = sum(int(r[2]) for r in rows)
+    if not n_seg or not n_base:
+        return {"n": n_seg, "base_n": n_base, "base_label": base_label, "rows": [], "flagged": False}
+    out = []
+    for code, n, b in rows:
+        o = cb.issue_obj(code) or {}
+        n, b = int(n), int(b)
+        if n < 3 or code in ("no_issue",):
+            continue
+        share, bshare = n / n_seg, b / n_base
+        exp = bshare * n_seg
+        out.append({"key": code, "label": o.get("label") or code, "risk": o.get("risk"),
+                    "n": n, "pct": round(100 * share, 1), "base_pct": round(100 * bshare, 1),
+                    "index": round(share / bshare, 1) if bshare else None,
+                    "excess": round(n - exp, 1)})
+    out.sort(key=lambda r: -r["excess"])
+    flagged = False
+    if city:
+        g = geo(bank, product, days=days, top=40) or {}
+        flagged = any(c["city"] == city and c.get("anomaly") for c in g.get("cities") or [])
+    else:
+        t = trend(bank, product) or {}
+        flagged = any(x.get("ym") == month and x.get("spike") for x in t.get("series") or [])
+    return {"n": n_seg, "base_n": n_base, "base_label": base_label, "rows": out[:8],
+            "flagged": bool(flagged)}
+
+
+# Конец недели сигнала — конец последнего ПОЛНОГО дня с данными, а не «сейчас».
+# Корпус приходит с опозданием на сутки: неделя «от now()» содержала 6 дней
+# данных против 7 в норме, и всплеск занижался на седьмую часть и опаздывал.
+# Если корпус встал, неделя заканчивается на последнем дне, где он был.
+_WEEK_END = ("(SELECT least(date_trunc('day', now()), date_trunc('day', max(dt)) + interval '1 day')"
+             " FROM review_index WHERE source = 'bankiru' AND dt <= now())")
+
+
+def week_end() -> str | None:
+    """Дата последнего дня недели сигнала (для подписи «неделя по …»)."""
+    try:
+        with db.session() as s:
+            v = s.execute(text(f"SELECT {_WEEK_END} - interval '1 day'")).scalar()
+        return v.date().isoformat() if v else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _topic_week_counts(bank_canon: str | None, product: str | None,
                        exclude_bank: str | None = None):
     """Понедельные счётчики жалоб по ГЛАВНОЙ проблеме — сырьё сигналов, пульса
@@ -973,13 +1054,13 @@ def _topic_week_counts(bank_canon: str | None, product: str | None,
         with db.session() as s:
             rows = s.execute(text(f"""
                 WITH dd AS (
-                    SELECT i.issue, floor(extract(epoch FROM now() - i.dt) / 604800)::int AS w
+                    SELECT i.issue, floor(extract(epoch FROM {_WEEK_END} - i.dt) / 604800)::int AS w
                     FROM review_index i
                     WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)
                       AND (CAST(:ex AS text) IS NULL OR i.bank <> :ex)
                       AND (CAST(:product AS text) IS NULL OR i.product = :product)
                       AND {_CMP}
-                      AND i.dt >= now() - make_interval(days => 63) AND i.dt <= now()
+                      AND i.dt >= {_WEEK_END} - make_interval(days => 63) AND i.dt < {_WEEK_END}
                       AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60))
                 SELECT issue, w, count(*) FROM dd WHERE w BETWEEN 0 AND 8 GROUP BY 1, 2
             """), p).all()
@@ -1174,7 +1255,7 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
                         SELECT i.city, count(*) FROM review_index i
                         WHERE i.bank = :bank AND i.issue = :key AND {_CMP}
                           AND (CAST(:product AS text) IS NULL OR i.product = :product)
-                          AND i.dt >= now() - make_interval(days => 7) AND i.dt <= now()
+                          AND i.dt >= {_WEEK_END} - make_interval(days => 7) AND i.dt < {_WEEK_END}
                           AND coalesce(i.city, '') <> ''
                         GROUP BY 1 ORDER BY 2 DESC LIMIT 3
                     """), {"bank": bc, "key": top["key"], "product": product}).all()
@@ -1191,7 +1272,7 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
             mtbw = int(mrow["_tb"]) / BASE_W
             overall["market_ratio"] = round(int(mrow["_tw0"]) / mtbw, 2) if mtbw >= 0.5 else None
         return {"bank": bc, "product": product, "signals": out[:6], "overall": overall,
-                "src": "annotation"}
+                "week_end": week_end(), "src": "annotation"}
     return _cached(f"wk:{bc}:{product}", _compute, ttl=1800)
 
 
@@ -1305,7 +1386,7 @@ def signal_evidence(bank: str, key: str, product: str | None = None, days: int =
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE i.bank = :bank AND i.issue = :key AND {_CMP}
               AND (CAST(:product AS text) IS NULL OR i.product = :product)
-              AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+              AND i.dt >= {_WEEK_END} - make_interval(days => :d) AND i.dt < {_WEEK_END}
               AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)
             ORDER BY i.dt DESC LIMIT :lim
         """), {"bank": bc, "key": key, "product": product, "d": days, "lim": limit,
@@ -1318,6 +1399,41 @@ def signal_evidence(bank: str, key: str, product: str | None = None, days: int =
 
 
 @_safe([])
+def novel_clusters(bank: str, product: str | None = None, days: int = 7,
+                   min_n: int = 3, sim: float = 0.78) -> list[dict]:
+    """Новые сюжеты недели, сгруппированные кодом: формулировки проблем вне
+    кодификатора, похожие по смыслу (векторы bge-m3), от min_n жалоб.
+
+    Раньше «новую тему» решала модель по списку из 20 жалоб и склеивала
+    разнородное: три разных случая («скрыли альтернативу», «не дали бонус»,
+    «пенсионер») назвала одной темой. Теперь группы считает код, модель их
+    только называет."""
+    rows = novel_week(bank, product=product, days=days, limit=120)
+    if len(rows) < min_n:
+        return []
+    try:
+        from . import embedder
+        vecs = embedder.embed_batch([(r["new_topic"] or "")[:200] for r in rows])
+    except Exception as e:  # noqa: BLE001 — без векторов новых сюжетов не выводим
+        log.info("novel_clusters: векторы недоступны (%s)", e)
+        return []
+    n = len(rows)
+    near = [[j for j in range(n) if j != i and embedder.cosine_similarity(vecs[i], vecs[j]) >= sim]
+            for i in range(n)]
+    taken: set[int] = set()
+    out = []
+    for i in sorted(range(n), key=lambda k: -len(near[k])):
+        if i in taken:
+            continue
+        members = [i] + [j for j in near[i] if j not in taken]
+        if len(members) < min_n:
+            continue
+        taken.update(members)
+        out.append({"n": len(members), "topic": rows[i]["new_topic"],
+                    "items": [rows[j] for j in members]})
+    return out
+
+
 def novel_week(bank: str, product: str | None = None, days: int = 7, limit: int = 30) -> list[dict]:
     """Жалобы недели, для которых в кодификаторе нет точного кода: модель
     отнесла их к «Прочему» или отметила код как приблизительный и назвала
@@ -1333,7 +1449,7 @@ def novel_week(bank: str, product: str | None = None, days: int = 7, limit: int 
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE i.bank = :bank AND {_CMP}
               AND (CAST(:product AS text) IS NULL OR i.product = :product)
-              AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+              AND i.dt >= {_WEEK_END} - make_interval(days => :d) AND i.dt < {_WEEK_END}
               AND (a.issue = 'other' OR a.code_fit = 'approx') AND a.new_topic IS NOT NULL
             ORDER BY i.dt DESC LIMIT :lim
         """), {"bank": bc, "product": product, "d": days, "lim": limit,

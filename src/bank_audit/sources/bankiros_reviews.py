@@ -152,10 +152,15 @@ class BankirosReviewsAdapter(SourceAdapter):
                 seen.add(rid)
                 n_reviews += 1
 
+                # Своей ссылки у отзыва на bankiros нет — только страница банка.
+                # С ней все отзывы банка делили один url, и индекс вкладки
+                # (ключ — url) схлопывал 567 отзывов в 14 строк. Якорь с id
+                # делает ссылку уникальной и по-прежнему открывает страницу.
+                page = target.get("url", "")
                 yield ReviewDraft(
                     source=self.name,
                     source_review_id=rid,
-                    source_url=target.get("url", ""),
+                    source_url=f"{page}#r-{rid}" if page else "",
                     bank_name_raw=bank_slug,
                     posted_at=posted,
                     rating=rating_v,

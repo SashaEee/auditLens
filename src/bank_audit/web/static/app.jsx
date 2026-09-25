@@ -3191,6 +3191,16 @@ const RV_PERIODS=[[90,"3 мес"],[180,"6 мес"],[365,"12 мес"]];
 const RV_RISK={compliance:"комплаенс",conduct:"практики",ops:"операции"};
 const pct1=v=>v==null?"—":String(v).replace(".",",")+"%";
 const rvHost=u=>{try{return new URL(u).hostname.replace(/^www\./,"");}catch(e){return "источник";}};
+const RV_MON=["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"];
+const RV_MON_FULL=["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+// «2025-08» → «август 2025»: подпись «25.08» читалась как дата 25 августа
+const rvYm=ym=>{const[y,m]=String(ym||"").split("-").map(Number);return y&&m?`${RV_MON_FULL[m-1]} ${y}`:(ym||"");};
+const rvDate=d=>{const m=String(d||"").match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}.${m[2]}.${m[1]}`:(d||"");};
+// площадки жалоб за период — по доле, наш сбор banki.ru сливается с корпусом той же площадки
+const RV_SRC={bankiru:"banki.ru",banki_reviews:"banki.ru",sravni_reviews:"sravni.ru",
+  finuslugi_reviews:"finuslugi.ru",bankiros_reviews:"bankiros.ru"};
+const rvSrcShares=list=>{const m={};let t=0;(list||[]).forEach(x=>{const k=RV_SRC[x.source]||x.source;m[k]=(m[k]||0)+x.n;t+=x.n;});
+  return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,n])=>({k,n,p:t?n/t*100:0}));};
 const rvDelta=(d)=> d==null ? <span className="rv-flat">→</span>
   : d>4 ? <span className="rv-up">↑ {d}%</span>
   : d<-4 ? <span className="rv-down">↓ {Math.abs(d)}%</span>
@@ -3308,7 +3318,7 @@ function RvReview({r,onOpen,full}){
   const txt=r.text||"";
   return <div className="rv-rev">
     <div className="rv-rh">
-      <span>{r.date}</span>
+      <span>{rvDate(r.date)}</span>
       <RvThemes list={r.themes} src={r.theme_src}/>
       {r.product&&<span className="rv-pill rv-pill-dim" title="продукт по разметке ИИ">{r.product}</span>}
       {r.city&&<span className="rv-pill">{r.city}</span>}
@@ -3341,6 +3351,7 @@ function ReviewsPage({params}){
   }catch{return null;}})();
   const[bank,setBank]=useState((preset&&preset.bank)||"Сбербанк");
   const[bankList,setBankList]=useState(RV_BANKS);
+  const[bankItems,setBankItems]=useState([]);   // {bank,n,last} — жалобы за год
   const[product,setProduct]=useState((preset&&preset.product)||"");
   const firstBankRun=useRef(true);   // не сбрасывать префилл продукта при монтировании
   const[days,setDays]=useState((preset&&preset.days)||90);
@@ -3370,6 +3381,7 @@ function ReviewsPage({params}){
   const[drill,setDrill]=useState(null);                  // {type:'city'|'month',value,label}
   const[drillItems,setDrillItems]=useState(null),[drillBusy,setDrillBusy]=useState(false);
   const[explain,setExplain]=useState(null),[explainBusy,setExplainBusy]=useState(false);
+  const[drillProf,setDrillProf]=useState(null);   // чем срез отличается от нормы — цифры без модели
   const[clsBusy,setClsBusy]=useState(false),[clsOn,setClsOn]=useState(false);
   const[thAll,setThAll]=useState(false);   // показать все темы риск-карты vs топ-12
   const[anom,setAnom]=useState(null),[anomBusy,setAnomBusy]=useState(false);  // радар аномалий
@@ -3379,7 +3391,9 @@ function ReviewsPage({params}){
 
   // drill-in: открыть боковую панель по городу/месяцу, подгрузить жалобы среза
   const openDrill=(type,value,label)=>{
-    setDrill({type,value,label});setExplain(null);setExplainBusy(false);
+    setDrill({type,value,label});setExplain(null);setExplainBusy(false);setDrillProf(null);
+    apiFetch(`/api/reviews/segment-profile?bank=${enc(bank)}${pq()}&${type==="city"?"city":"month"}=${enc(value)}&days=${days}`)
+      .then(setDrillProf).catch(()=>setDrillProf(null));
     setDrillItems(null);setDrillBusy(true);
     // Клик по городу открывал жалобы за ВЕСЬ корпус (с 2010 года), хотя карта
     // построена по выбранному периоду: цифра в карточке и число строк в
@@ -3390,7 +3404,7 @@ function ReviewsPage({params}){
   };
   const runExplain=()=>{
     if(!drill)return; setExplainBusy(true);
-    const f=drill.type==="city"?`&city=${enc(drill.value)}`:`&month=${enc(drill.value)}`;
+    const f=drill.type==="city"?`&city=${enc(drill.value)}&days=${days}`:`&month=${enc(drill.value)}`;
     apiFetch(`/api/reviews/explain?bank=${enc(bank)}${pq()}${f}`)
       .then(d=>{setExplain(d&&d.summary?d.summary:"__none__");setExplainBusy(false);})
       .catch(()=>{setExplain("__none__");setExplainBusy(false);});
@@ -3403,7 +3417,7 @@ function ReviewsPage({params}){
 
   useEffect(()=>{
     apiFetch("/api/reviews/banks").then(d=>{
-      if(d&&d.items&&d.items.length)setBankList(d.items.map(x=>x.bank));
+      if(d&&d.items&&d.items.length){setBankList(d.items.map(x=>x.bank));setBankItems(d.items);}
     }).catch(()=>{});
   },[]);
 
@@ -3505,24 +3519,33 @@ function ReviewsPage({params}){
     {/* Состав корпуса берётся из индекса, а не пишется в вёрстке: площадок
         теперь несколько, и зашитая строка про одну из них была бы неправдой */}
     <div className="rv-src">
-      {corp&&corp.sources&&corp.sources.length
-        ? <>{/* сначала — по выбранному банку, потом размер всего корпуса.
-               Одной цифрой нельзя: «18 603 по 220 банкам» читается так, будто
-               это весь корпус, хотя относится только к выбранному банку */}
-           <b>{bank}</b>{": "}
-           {corp.sources.map((s,i)=><span key={i}>{i?" · ":""}
-             <b title={s.from&&s.to?`отзывы с ${s.from} по ${s.to}`:""}>{s.source}</b> {fmtNum(s.n)}</span>)}
-           {" — "}{fmtNum(corp.total)}{" отзыв"}{plural(corp.total,"","а","ов")}
-           {corp.corpus_total?<span className="rv-src-all">{" · корпус: "}{fmtNum(corp.corpus_total)}{" по "}{corp.banks}{" банкам"}</span>:""}</>
+      {/* Площадки — долями жалоб ЗА ПЕРИОД, а не счётчиками за всё время:
+          «finuslugi 591 · sravni 33» создавало впечатление многих площадок,
+          хотя за квартал 97% жалоб пришло с одной */}
+      {ov&&ov.by_source&&ov.by_source.length
+        ? <><b>{bank}</b>{`: жалобы за ${days} дн — `}
+           {rvSrcShares(ov.by_source).map((x,i)=><span key={x.k}>{i?" · ":""}
+             <b>{x.k}</b> {x.p>=1?Math.round(x.p)+"%":fmtNum(x.n)}</span>)}
+           {corp&&corp.corpus_total?<span className="rv-src-all">{" · корпус: "}{fmtNum(corp.corpus_total)}{" отзывов по "}{corp.banks}{" банкам"}</span>:""}</>
         : "источники загружаются…"}
-      {ov&&ov.as_of?<> · данные по {ov.as_of}</>:""}
+      {ov&&ov.as_of?<> · данные по {rvDate(ov.as_of)}</>:""}
     </div>
-    <div className="rv-disclaimer">⚠ Жалобы — отзывы со всех площадок, которые ИИ отнёс к претензиям (похвала, вопросы, мусор и копии исключены). Метрики — динамика и структура <b>внутри жалоб</b>, а не доля недовольных клиентов. «Доля рынка» и «место» <b>не нормированы на клиентскую базу</b> банка.</div>
+    <div className="rv-disclaimer">⚠ Жалобы — отзывы со всех площадок, которые ИИ отнёс к претензиям (похвала, вопросы, мусор и копии исключены). Метрики — динамика и структура <b>внутри жалоб</b>, а не доля недовольных клиентов. Доля в жалобах на площадках <b>не нормирована на число клиентов</b> банка: у крупного банка она ниже, чем у активного на площадках небольшого.</div>
 
     <div className="rv-filters">
       <label className="rv-fl">Банк
         <select value={bank} onChange={e=>setBank(e.target.value)}>
-          {bankList.map(b=><option key={b} value={b}>{b}</option>)}
+          {/* 15 крупнейших по жалобам за год, остальные по алфавиту: в плоском
+              списке из 60 банков нужный приходилось искать глазами */}
+          {bankItems.length?(()=>{
+            const stale=x=>x.last&&(Date.now()-new Date(x.last+"T00:00:00"))>60*864e5;
+            const opt=x=><option key={x.bank} value={x.bank}>{x.bank}{stale(x)?` · нет отзывов с ${rvDate(x.last).slice(3)}`:""}</option>;
+            const top=bankItems.slice(0,15), rest=bankItems.slice(15).sort((a,b)=>a.bank.localeCompare(b.bank,"ru"));
+            return <>
+              {!bankItems.some(x=>x.bank===bank)&&<option value={bank}>{bank}</option>}
+              <optgroup label="Крупнейшие по жалобам за год">{top.map(opt)}</optgroup>
+              <optgroup label="Остальные — по алфавиту">{rest.map(opt)}</optgroup></>;})()
+           :bankList.map(b=><option key={b} value={b}>{b}</option>)}
         </select>
       </label>
       <label className="rv-fl">Продукт
@@ -3552,12 +3575,15 @@ function ReviewsPage({params}){
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Жалоб за {days} дн</div>
         <div className="rv-kv">{busy?"…":(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
-        <div className="rv-ks">{ov&&ov.delta_partial?<span title="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {Math.abs(ov.delta_pct)}%</span>:<span className="rv-up">↑ {ov.delta_pct}%</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
+        <div className="rv-ks">{ov&&ov.delta_partial?<span title="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {pct1(Math.abs(ov.delta_pct))}</span>:<span className="rv-up">↑ {pct1(ov.delta_pct)}</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
       </div>
       <div className="rv-card rv-kpi">
-        <div className="rv-kl">Доля рынка жалоб</div>
+        <div className="rv-kl">Доля в жалобах на площадках</div>
         <div className="rv-kv">{busy?"…":pct1(ov&&ov.market_share_pct)}</div>
-        <div className="rv-ks">{ov&&ov.market_rank?`${ov.market_rank}-е место · ⓘ без нормировки на базу`:"—"}</div>
+        {/* «4-е место» без поправки на число клиентов читалось как «у Сбера жалоб
+            меньше, чем у Альфы». Место вернётся вместе с нормировкой */}
+        <div className="rv-ks" title="Доля всех жалоб на банки за период. Не нормирована на число клиентов: у крупного банка она ниже, чем у небольшого, чьи клиенты активнее пишут на площадках">
+          от всех банков · без поправки на число клиентов</div>
       </div>
       {/* Плашка ведёт к самим обращениям: аудиторы просили дважды — «хорошо бы
           при нажатии на эту иконку выводить такие обращения». Признак посчитан
@@ -3571,7 +3597,7 @@ function ReviewsPage({params}){
         <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_pct>=12&&<span className="rv-tag compliance">риск</span>}</div>
         <div className="rv-kv rv-up">{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
         <div className="rv-ks">{escOnly?"фильтр включён · нажмите, чтобы снять"
-          :(ov&&ov.escalation_filed_pct!=null?`уже обратились ${pct1(ov.escalation_filed_pct)} · грозят остальные · нажмите`:"грозят или обратились в ЦБ, суд, прокуратуру · нажмите")}</div>
+          :(ov&&ov.escalation_filed_pct!=null?`обратились ${pct1(ov.escalation_filed_pct)} · грозят ${pct1(Math.round((ov.escalation_pct-ov.escalation_filed_pct)*10)/10)} · нажмите`:"грозят или обратились в ЦБ, суд, прокуратуру · нажмите")}</div>
       </div>
       <div className={"rv-card rv-kpi"+(th&&th.themes&&th.themes.length?" rv-kpi-click":"")
              +(th&&th.themes&&th.themes.length&&theme===th.themes[0].key?" rv-kpi-on":"")}
@@ -3594,14 +3620,16 @@ function ReviewsPage({params}){
           <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно за 14 месяцев · переключатель периода на неё не влияет: пики считаются по завершённым месяцам · клик по столбцу → жалобы месяца{tr&&tr.series&&tr.series.some(s=>s.partial)?" · последний месяц неполный (штриховка)":""}</div></div></div>
           {busy?<Skel h={150}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
             <div className="rv-bars">
-              {tr.series.map((s,i)=><div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={`${s.ym}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`}
-                   role="button" tabIndex={0} onClick={()=>openDrill("month",s.ym,`Жалобы за ${s.ym}${s.partial?" (неполный месяц)":""}`)}
-                   onKeyDown={onKey(()=>openDrill("month",s.ym,`Жалобы за ${s.ym}`))}>
+              {tr.series.map((s,i)=><div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={`${rvYm(s.ym)}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`}
+                   role="button" tabIndex={0} onClick={()=>openDrill("month",s.ym,`Жалобы за ${rvYm(s.ym)}${s.partial?" (неполный месяц)":""}`)}
+                   onKeyDown={onKey(()=>openDrill("month",s.ym,`Жалобы за ${rvYm(s.ym)}`))}>
                 <div className={"rv-bar"+(s.spike?" hot":"")+(s.partial?" part":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
-                <div className="rv-blab">{s.ym.slice(2).replace("-",".")}</div>
+                {(()=>{const[y,m]=s.ym.split("-").map(Number);return <div className={"rv-blab"+((i===0||m===1)?" yr":"")}>
+                  <span className="rv-bmon">{RV_MON[m-1]}</span>
+                  {(i===0||m===1)&&<span className="rv-byr">{y}</span>}</div>;})()}
               </div>)}
             </div>
-            {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик {sp.map(s=>s.ym).join(", ")} — выше базовой линии (медиана+MAD по завершённым месяцам). Клик по столбцу — разобрать, что произошло.</div>:null;})()}
+            {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик: {sp.map(s=>rvYm(s.ym)).join(", ")} — выше базовой линии (медиана+MAD по завершённым месяцам). Клик по столбцу — разобрать, что произошло.</div>:null;})()}
           </>}
         </div>
         {/* THEMES */}
@@ -3646,7 +3674,7 @@ function ReviewsPage({params}){
                 <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
                 <div className={"rv-gbar"+(c.anomaly?" anom":"")} style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
               </div>
-              <div className="mono rv-gn">{fmtNum(c.n)}{c.per_100k?<span className="rv-gp"> · {c.per_100k}/100k</span>:""}</div>
+              <div className="mono rv-gn">{fmtNum(c.n)}{c.per_100k?<span className="rv-gp"> · {String(c.per_100k).replace(".",",")} на 100 тыс.</span>:""}</div>
             </div>
           ))}
         </div>
@@ -3668,7 +3696,7 @@ function ReviewsPage({params}){
             <span className="rv-radar-ico" aria-hidden="true"><IcoRadar/></span>
             <div style={{flex:1,minWidth:0}}>
               <div className="rv-ttl">Срочные аномалии</div>
-              <div className="rv-cap">резкие изменения за 7 дней{ov&&ov.as_of?` · ${ov.as_of}`:""}</div>
+              <div className="rv-cap">резкие изменения за 7 полных дней{anom&&anom.week_end?` · по ${rvDate(anom.week_end)}`:""}</div>
             </div>
             <span className={"rv-radar-live"+(anomBusy?" scan":"")} title="радар активен"/>
           </div>
@@ -3686,7 +3714,7 @@ function ReviewsPage({params}){
                   <span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
                     title={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
                     onClick={()=>pickTheme(d.key)} onKeyDown={onKey(()=>pickTheme(d.key))}>
-                    {d.short||d.label}<b>×{d.gap}</b></span>)}
+                    {d.short||d.label}<b>×{String(d.gap).replace(".",",")}</b></span>)}
               </div>
               <div className="rv-cap" style={{marginTop:8}}>
                 Всплеск — значимый рост к своей норме (от ×1,5 и 8 жалоб, с поправкой на число
@@ -3702,7 +3730,7 @@ function ReviewsPage({params}){
                   return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}
                         role="button" tabIndex={0} title={tip}
                         onClick={()=>setTheme(s.key)} onKeyDown={onKey(()=>setTheme(s.key))}>
-                    {s.short||s.label}<b>{s.new?"новое":"×"+s.ratio}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
+                    {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
                   </span>;
                 })}
               </div>
@@ -3779,7 +3807,7 @@ function ReviewsPage({params}){
        feed.map((r,i)=>(
         <div key={i} className="rv-rev">
           <div className="rv-rh">
-            <span>{r.date}</span>
+            <span>{rvDate(r.date)}</span>
             {/* Банк подписан явно. Сверка показала, что данные верны — жалоба
                 действительно принадлежит выбранному банку, — но в тексте часто
                 упомянут другой банк («перевёл в …»), и без подписи аудитор
@@ -3816,7 +3844,7 @@ function ReviewsPage({params}){
 
     {/* МОДАЛ: полный текст обращения */}
     {modalRev&&<RvModal onClose={()=>setModalRev(null)} title="Обращение клиента"
-        sub={[modalRev.bank,modalRev.date,modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
+        sub={[modalRev.bank,rvDate(modalRev.date),modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
       <div className="rv-rh" style={{marginBottom:10}}>
         <RvThemes list={modalRev.themes} src={modalRev.theme_src} active={theme}/>
         {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
@@ -3834,8 +3862,22 @@ function ReviewsPage({params}){
     {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
     {drill&&<RvModal side="right" onClose={()=>setDrill(null)} title={drill.label}
         sub={`${bank}${product?` · ${product}`:""}${drillItems?` · показано ${drillItems.length}`:""}`}>
+      {/* сначала цифры: чем срез отличается от нормы — модель потом объясняет,
+          а не решает сама, аномалия ли это */}
+      {drillProf&&drillProf.rows&&drillProf.rows.length>0&&<div className="rv-prof">
+        <div className="rv-prof-h">
+          <span>Чем отличается от нормы · {fmtNum(drillProf.n)} жалоб{plural(drillProf.n,"а","ы","")} · норма — {drillProf.base_label}</span>
+          {drillProf.flagged&&<span className="rv-tag compliance">аномалия</span>}
+        </div>
+        {drillProf.rows.slice(0,6).map(r=><div key={r.key} className="rv-prof-r">
+          <span className="rv-prof-l">{r.label}</span>
+          <span className="mono">{r.n}</span>
+          <span className="mono rv-prof-p">{pct1(r.pct)} <i>против {pct1(r.base_pct)}</i></span>
+          <span className={"mono "+(r.index>=1.5?"rv-up":r.index<=0.67?"rv-down":"rv-flat")}>×{String(r.index).replace(".",",")}</span>
+        </div>)}
+      </div>}
       <button className="rv-explain-btn" onClick={runExplain} disabled={explainBusy}>
-        {explainBusy?"Анализирую жалобы…":"✦ Объяснить причину (LLM)"}
+        {explainBusy?"Читаю жалобы…":"✦ Разобрать жалобы (ИИ)"}
       </button>
       {explain&&explain!=="__none__"&&<div className="rv-explain">{renderMD(explain)}</div>}
       {explain==="__none__"&&<div className="rv-explain rv-explain-err">Не удалось получить объяснение (LLM недоступен). Жалобы ниже — для ручного разбора.</div>}

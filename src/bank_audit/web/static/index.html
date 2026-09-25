@@ -1587,6 +1587,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-ttl{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:16px;letter-spacing:-.01em;color:var(--ink)}
 .rv-cap{font-size:11px;color:var(--ink-3);margin-top:2px;margin-bottom:14px;line-height:1.4}
 .rv-ct{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.rv-ct>div:first-child{min-width:0}
 
 /* filters */
 .rv-filters{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--hair)}
@@ -1615,11 +1616,13 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 
 /* trend bars */
 .rv-bars{display:flex;align-items:flex-end;gap:4px;height:130px;padding-top:8px}
-.rv-bcol{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:default}
+.rv-bcol{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:default}
 .rv-bar{width:100%;max-width:34px;background:var(--ink-4);border-radius:4px 4px 0 0;transition:background .12s;min-height:4px}
 .rv-bcol:hover .rv-bar{background:var(--ink-2)}
 .rv-bar.hot{background:var(--accent)}
-.rv-blab{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--ink-4);margin-top:6px;white-space:nowrap}
+.rv-blab{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--ink-4);margin-top:6px;white-space:nowrap;text-align:center;line-height:1.25}
+.rv-byr{display:block;color:var(--ink-3)}
+@media(max-width:520px){.rv-bcol:nth-child(even) .rv-blab:not(.yr) .rv-bmon{visibility:hidden}}
 .rv-spike{margin-top:12px;font-size:11px;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:8px 10px;line-height:1.4}
 
 /* two-col */
@@ -1678,7 +1681,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-search input::placeholder{color:var(--ink-4)}
 .rv-rev{padding:14px 0;border-top:1px solid var(--hair)}
 .rv-rev:first-of-type{border-top:none}
-.rv-rh{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3);margin-bottom:8px}
+.rv-rh{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3);margin-bottom:8px}
 .rv-pill{padding:2px 6px;border-radius:4px;background:var(--paper-2);border:1px solid var(--hair-2);color:var(--ink-2);font-size:10px}
 /* Банк обращения: тише темы, но читаемо — это опорный факт, а не украшение. */
 .rv-pill-bank{color:var(--ink-2);border-color:var(--hair-2);font-weight:600}
@@ -1764,6 +1767,14 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-explain-btn{width:100%;height:38px;border-radius:8px;border:1px solid color-mix(in oklab,var(--accent),transparent 55%);background:var(--accent-soft);color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;cursor:pointer;transition:background .12s}
 .rv-explain-btn:hover:not(:disabled){background:color-mix(in oklab,var(--accent),transparent 80%)}
 .rv-explain-btn:disabled{opacity:.6;cursor:default}
+.rv-prof{margin:0 0 12px;padding:10px 12px;border:1px solid var(--hair);border-radius:8px;background:var(--surface)}
+.rv-prof-h{display:flex;align-items:center;justify-content:space-between;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);margin-bottom:6px}
+.rv-prof-r{display:grid;grid-template-columns:1fr 32px 150px 44px;gap:8px;align-items:baseline;padding:4px 0;border-top:1px solid var(--hair);font-size:12.5px}
+.rv-prof-p{white-space:nowrap;text-align:right}
+.rv-prof-r:first-of-type{border-top:0}
+.rv-prof-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rv-prof-p i{font-style:normal;color:var(--ink-4)}
+@media(max-width:520px){.rv-prof-r{grid-template-columns:1fr 30px 44px}.rv-prof-p{display:none}}
 .rv-explain{margin:12px 0;padding:12px 14px;border-radius:8px;background:var(--paper-2);border:1px solid var(--hair);font-size:13px;line-height:1.55;color:var(--ink)}
 .rv-explain>*:first-child{margin-top:0}
 .rv-explain>*:last-child{margin-bottom:0}
@@ -1835,7 +1846,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .rv-filters{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .rv-fl,.rv-fl select{max-width:none;min-width:0;width:100%}
   .rv-chips{width:100%}.rv-chip{flex:1;text-align:center}
-  .rv-export{grid-column:1 / -1;margin-left:0;width:100%}
+  .rv-filters .rv-export{grid-column:1 / -1;margin-left:0;width:100%}
 }
 @media(max-width:520px){
   .rv-kpis{grid-template-columns:1fr}
@@ -2517,6 +2528,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-brief-v8"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-rv-w1b"></script>
 </body>
 </html>

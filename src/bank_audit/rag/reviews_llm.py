@@ -33,28 +33,34 @@ _SYSTEM = (
 )
 
 
-async def explain_segment(seg: dict, *, label: str) -> str | None:
-    """seg — результат reviews_dash.segment_reviews(). label — напр. «г. Якутск»."""
+async def explain_segment(seg: dict, *, label: str, profile: dict | None = None) -> str | None:
+    """seg — reviews_dash.segment_reviews(), profile — segment_profile(): чем
+    срез отличается от нормы. Модель сначала получает цифры, потом тексты, и не
+    называет аномалией срез, который правилами вкладки ею не отмечен."""
     texts = (seg or {}).get("texts") or []
     if not texts:
         return None
-    themes = seg.get("themes") or []
-    themes_str = ", ".join(f'{t["label"]} ({t["n"]})' for t in themes) or "—"
+    prof = profile or {}
+    rows = prof.get("rows") or []
+    table = "\n".join(f"  — {r['label']}: {r['n']} ({r['pct']}% против {r['base_pct']}% в норме, ×{r['index']})"
+                      for r in rows) or "  —"
+    flag = ("Срез ОТМЕЧЕН вкладкой как аномалия." if prof.get("flagged") else
+            "Срез НЕ отмечен вкладкой как аномалия: не называй его аномалией или всплеском, "
+            "опиши, чем структура жалоб отличается от нормы.")
     joined = "\n\n".join(f"— {t}" for t in texts[:20])
     user = (
-        f"Срез: {label}. Жалоб в выборке: {seg.get('n')}.\n"
-        f"Главные проблемы по разметке кодификатором: {themes_str}.\n\n"
-        f"Жалобы клиентов:\n{joined}\n\n"
-        "Дай аудитору: (1) вероятную причину всплеска/аномалии; "
-        "(2) 2–3 доминирующие темы своими словами; (3) что конкретно проверить. Кратко."
+        f"Срез: {label}. Жалоб в срезе: {prof.get('n') or seg.get('n')}; норма — {prof.get('base_label') or '—'}.\n"
+        f"{flag}\n"
+        f"Главные проблемы среза против нормы (посчитано кодом, числа не меняй):\n{table}\n\n"
+        f"Жалобы клиентов (выборка):\n{joined}\n\n"
+        "Дай аудитору коротко, по-русски: (1) чем срез отличается от нормы — опираясь на "
+        "таблицу; (2) 2–3 повторяющихся сюжета из жалоб своими словами; (3) что конкретно "
+        "проверить. Не больше 180 слов, без вступления."
     )
     try:
-        resp = await _client().chat.completions.create(
-            model=insight_model(),
-            messages=[{"role": "system", "content": _SYSTEM},
-                      {"role": "user", "content": user}],
-            temperature=0.2, max_tokens=2048)
-        return (resp.choices[0].message.content or "").strip() or None
+        from ..digest.writer import _chat
+        md, _ti, _to = await _chat(insight_model(), _SYSTEM, user, max_tokens=5000)
+        return md or None
     except Exception as e:  # noqa: BLE001 — деградируем мягко, объяснение не критично
         log.warning("reviews_llm.explain_segment упал: %s", e)
         return None
@@ -163,11 +169,15 @@ def signal_context(sig: dict, bank: str, product: str | None = None,
             items.append(f"  — {e.get('date') or ''}: {e.get('summary') or ''}{q}")
         blocks.append(f"ЖАЛОБЫ СИГНАЛА «{s['label']}» (показано {len(items)} из {s['week']}):\n"
                       + ("\n".join(items) or "  —"))
-    nov = rd.novel_week(bank, product=product, limit=20) or []
-    nov_lines = "\n".join(f"  — {n['new_topic']}: {n.get('summary') or ''}" for n in nov)
+    clusters = rd.novel_clusters(bank, product=product) or []
+    nov = []
+    for k, c in enumerate(clusters[:3], 1):
+        ex = "\n".join(f"    — {x['new_topic']}: {(x.get('summary') or '')[:220]}" for x in c["items"][:6])
+        nov.append(f"  СЮЖЕТ {k} ({c['n']} жалоб):\n{ex}")
     return ("\n\n".join(blocks)
-            + "\n\nЖАЛОБЫ НЕДЕЛИ, ДЛЯ КОТОРЫХ НЕТ ТОЧНОГО КОДА (как их назвала модель):\n"
-            + (nov_lines or "  —"))
+            + "\n\nНОВЫЕ СЮЖЕТЫ ВНЕ КОДИФИКАТОРА (сгруппированы кодом по сходству; других "
+              "«новых» не выдумывай):\n"
+            + ("\n".join(nov) if nov else "  нет — пункт «Новое» не пиши"))
 
 
 # ── Срочные аномалии за 7 дней (audit-радар, on-demand при загрузке блока) ───
