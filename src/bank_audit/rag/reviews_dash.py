@@ -1363,6 +1363,7 @@ def _attach_themes(items: list[dict]) -> None:
             "vulnerable": list(a["vulnerable"] or []),
             "amount": float(a["amount"]) if a["amount"] is not None else None,
             "confidence": "согласие двух моделей" if a["status"] == "agree" else "решено арбитром",
+            "event_date": str(a["event_date"]) if a.get("event_date") else None,
             "new_topic": a["new_topic"] if a["code_fit"] == "approx" or a["issue"] == "other" else None,
         }
 
@@ -1873,7 +1874,7 @@ def _ann_for(urls: list[str]) -> dict[str, dict]:
             rows = s.execute(text("""
                 SELECT a.url, a.status, a.kind, a.issue, a.issues2, a.esc, a.esc_to,
                        a.no_consent, a.misled, a.vulnerable, a.amount, a.summary, a.quote,
-                       a.quote_ok, a.code_fit, a.new_topic, a.product
+                       a.quote_ok, a.code_fit, a.new_topic, a.product, a.event_date
                 FROM review_annotation a
                 WHERE a.schema_version = :sv AND a.url = ANY(:u)
             """), {"sv": _ann_schema(), "u": urls}).mappings().all()

@@ -215,6 +215,53 @@ def reviews_by_urls(urls: list[str]) -> list[dict]:
     return items
 
 
+def similar(url: str, limit: int = 3, min_sim: float = 0.8) -> list[dict]:
+    """Похожие жалобы для читалки: тот же банк и та же главная проблема за год,
+    ближайшие по изложению. Считается по сохранённым векторам — без модели;
+    если у самой жалобы вектора ещё нет, досчитывается один."""
+    def _compute():
+        import numpy as np
+        with db.session() as s:
+            row = s.execute(text(f"""
+                SELECT i.bank, i.issue, a.summary FROM review_index i
+                JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+                WHERE i.url = :u AND {rd._CMP}"""), {"u": url, "sv": rd._ann_schema()}).first()
+        if not row or not row[2]:
+            return []
+        bank, issue, summary = row
+        vec = _vecs_for([url]).get(url)
+        if vec is None:
+            try:
+                from . import embedder
+                vec = embedder.embed_batch([summary[:400]])[0]
+                _store_vecs({url: vec})
+            except Exception as e:  # noqa: BLE001
+                log.info("similar: вектор не досчитался (%s)", e)
+                return []
+        with db.session() as s:
+            cand = s.execute(text(f"""
+                SELECT v.url, v.vec FROM review_summary_vec v
+                JOIN review_index i ON i.url = v.url
+                WHERE i.bank = :b AND i.issue = :iss AND {rd._CMP} AND i.url <> :u
+                  AND i.dt > now() - interval '365 days' AND i.dt <= now()
+                ORDER BY i.dt DESC LIMIT 3000"""), {"b": bank, "iss": issue, "u": url}).all()
+        if not cand:
+            return []
+        m = np.asarray([c[1] for c in cand], dtype=np.float32)
+        m /= np.linalg.norm(m, axis=1, keepdims=True) + 1e-9
+        q = np.asarray(vec, dtype=np.float32)
+        q /= np.linalg.norm(q) + 1e-9
+        sims = m @ q
+        order = [k for k in np.argsort(-sims)[:limit * 3] if sims[k] >= min_sim][:limit]
+        return [{"url": cand[k][0], "sim": round(float(sims[k]), 3)} for k in order]
+    hits = rd._cached(f"sim:{url}:{limit}", _compute, ttl=6 * 3600)
+    items = reviews_by_urls([h["url"] for h in hits])
+    by = {h["url"]: h["sim"] for h in hits}
+    for it in items:
+        it["sim"] = by.get(it["url"])
+    return items
+
+
 # ── Журнал сигналов ─────────────────────────────────────────────────────────
 # Сигнал недели живёт несколько дней подряд: окно скользит, и один всплеск
 # виден с понедельника по пятницу. Журнал хранит ЭПИЗОД — запись обновляется,

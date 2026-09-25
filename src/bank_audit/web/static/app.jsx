@@ -3268,8 +3268,11 @@ function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удало
 
 // Переиспользуемый оверлей: центральный модал (полный текст) или правый драуэр
 // (drill-in по городу/месяцу). Закрытие по клику-вне, ✕ и Esc.
-function RvModal({onClose,title,sub,side,children}){
-  const cardRef=useRef(null);
+function RvModal({onClose,title,sub,side,children,bare,wide,sheet}){
+  const cardRef=useRef(null), ovlRef=useRef(null);
+  // На телефоне окно с sheet — лист снизу: тянется пальцем 1:1, отпускается с
+  // инерцией (цель — по проекции скорости), закрывается смахиванием вниз.
+  const isSheet=!!sheet&&typeof window!=="undefined"&&window.matchMedia("(max-width: 760px)").matches;
   // Окно уходит тем же путём, каким пришло: центральное — сжимаясь на месте,
   // правая панель — вправо. Раньше оно появлялось с движением, а исчезало
   // мгновенно, и это читалось как сбой, а не как закрытие.
@@ -3290,6 +3293,9 @@ function RvModal({onClose,title,sub,side,children}){
       'a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])')||[])]
       .filter(el=>el.offsetWidth||el.offsetHeight);
     const h=e=>{
+      // окна бывают стопкой (читалка поверх панели среза): клавиши — только верхнему
+      const all=document.querySelectorAll(".rv-ovl-card");
+      if(all.length&&all[all.length-1]!==cardRef.current)return;
       if(e.key==="Escape"){close();return;}
       if(e.key!=="Tab")return;
       // Табуляция не должна уводить за пределы окна — иначе человек «проваливается»
@@ -3315,103 +3321,292 @@ function RvModal({onClose,title,sub,side,children}){
   },[close]);
   // ПОРТАЛ в body: у предка .fade-in есть transform (animation fill-mode both),
   // который иначе становится containing-block для position:fixed и «роняет» модал вниз.
+  const drag=useRef(null);
+  const onDown=e=>{
+    if(!isSheet||!e.target.closest("[data-drag]")||e.target.closest("button,a,input,select,textarea"))return;
+    const el=cardRef.current; if(!el)return;
+    if(drag.current&&drag.current.stop)drag.current.stop();
+    const m=new DOMMatrix(getComputedStyle(el).transform);           // подхватываем с текущего положения
+    drag.current={id:e.pointerId,y0:e.clientY,base:m.m42||0,y:m.m42||0,h:el.offsetHeight,hist:[[e.clientY,performance.now()]]};
+    el.setPointerCapture(e.pointerId); el.style.animation="none";
+  };
+  const place=y=>{ const el=cardRef.current,d=drag.current; if(!el||!d)return; d.y=y;
+    el.style.transform=`translateY(${y}px)`;
+    if(ovlRef.current)ovlRef.current.style.backgroundColor=`color-mix(in oklab,var(--ink),transparent ${78+22*Math.min(1,Math.max(0,y/d.h))}%)`; };
+  const onMove=e=>{ const d=drag.current; if(!d||d.id!==e.pointerId)return;
+    let y=d.base+(e.clientY-d.y0); if(y<0)y=rvRubber(y,d.h);        // вверх — сопротивление, а не упор
+    d.hist.push([e.clientY,performance.now()]); if(d.hist.length>6)d.hist.shift(); place(y); };
+  const onUp=e=>{ const d=drag.current; if(!d||d.id!==e.pointerId)return;
+    const [a,b]=[d.hist[0],d.hist[d.hist.length-1]]; const v=b[1]>a[1]?(b[0]-a[0])/((b[1]-a[1])/1000):0;
+    const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const dismiss=d.y+rvProject(v)>d.h*0.4;
+    if(dismiss&&reduce){onClose();return;}
+    d.stop=rvSpring(d.y,dismiss?d.h:0,v,{response:0.3,damping:dismiss?1:0.8},place,()=>{if(dismiss)onClose();}); };
   return ReactDOM.createPortal(
-    <div className={"rv-ovl"+(side==="right"?" rv-ovl-r":"")+(closing?" is-closing":"")} onClick={close}>
-      <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")}
-           ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true"
-           onClick={e=>e.stopPropagation()}>
-        <div className="rv-ovl-head">
+    <div ref={ovlRef} className={"rv-ovl"+(side==="right"&&!isSheet?" rv-ovl-r":"")+(isSheet?" rv-ovl-sheet":"")+(closing?" is-closing":"")} onClick={close}>
+      <div className={"rv-ovl-card"+(side==="right"&&!isSheet?" rv-ovl-right":"")+(wide?" rv-ovl-wide":"")+(isSheet?" rv-sheet":"")+(bare?" rv-ovl-bare":"")}
+           ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={bare?(title||"Жалоба"):undefined}
+           onClick={e=>e.stopPropagation()}
+           onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+        {isSheet&&<div className="rv-sheet-grab" data-drag="1" aria-hidden="true"><i/></div>}
+        {!bare&&<div className="rv-ovl-head">
           <div style={{minWidth:0}}>
             <div className="rv-ttl" style={{fontSize:14}}>{title}</div>
             {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
           </div>
           <button className="rv-ovl-x" onClick={close} aria-label="Закрыть">✕</button>
-        </div>
-        <div className="rv-ovl-body">{children}</div>
+        </div>}
+        {bare?(typeof children==="function"?children(close):children)
+          :<div className="rv-ovl-body">{typeof children==="function"?children(close):children}</div>}
       </div>
     </div>, document.body);
-}
-
-// Чипы тем обращения: главная и дополнительные проблемы из LLM-разметки.
-function RvThemes({list,src,active}){
-  // Темы — LLM-разметка по кодификатору: первая — главная проблема жалобы,
-  // дальше дополнительные. Свежий отзыв без разметки ещё размечается (до часа).
-  if(!list||!list.length) return src==="pending"
-    ?<span className="rv-tag other" title="отзыв ещё размечается — обычно до часа после сбора">размечается</span>
-    :null;
-  // Разметка мультитемная: у обращения бывает до двух тем, и обе верны
-  // («не выдаёт деньги по залогу» — это и задержка, и условия кредита).
-  // Но при фильтре по теме второй ярлык выглядел равноправным, и аудитор
-  // читал его как «выдача не по теме». Помечаем ту, из-за которой отзыв здесь.
-  return <>{list.slice(0,3).map((t,j)=>{
-    const hit=active&&t.key===active;
-    return <span key={j} className={"rv-tag "+(t.risk||"other")+(hit?" rv-tag-hit":"")}
-      title={hit?`${t.label} — тема, по которой отфильтрована лента`:t.label}>
-      {t.short||t.label}</span>;
-  })}</>;
-}
-
-// Разбор отзыва моделью: суть, признаки, насколько уверена разметка.
-const RV_ESC_TO={cbr:"ЦБ",court:"суд",prosecutor:"прокуратура",rpn:"Роспотребнадзор",
-  finombudsman:"финомбудсмен",police:"полиция",fas:"ФАС"};
-// Ответ банка и «решено» — со сбора площадок (banki.ru по номеру отзыва,
-// sravni по ссылке). Для аудита работы с обращениями: ответил ли банк и
-// признал ли клиент проблему решённой.
-function RvReply({b,date}){
-  if(!b)return null;
-  const old=date&&(Date.now()-new Date(String(date).slice(0,10)+"T00:00:00"))>3*864e5;
-  const res=b.resolved===true?<span className="rv-rp-b ok">решено</span>
-    :b.resolved===false&&(b.checked||b.src==="sravni.ru")?<span className="rv-rp-b">не решено</span>:null;
-  if(!b.answer)return (res||b.has_answer||(b.src==="banki.ru"&&old))?<div className="rv-rp">{res}
-    {b.has_answer&&<span className="rv-rp-n">есть ответ банка на {b.src}</span>}
-    {!b.has_answer&&b.src==="banki.ru"&&old&&<span className="rv-rp-n">банк не ответил</span>}</div>:null;
-  return <details className="rv-rp"><summary>{res}<span className="rv-rp-s">Ответ банка</span></summary>
-    <div className="rv-rp-t">{b.answer}</div></details>;
-}
-
-function RvAnn({a}){
-  if(!a) return null;
-  const flags=[];
-  if(a.esc==="filed") flags.push(["compliance","обратился: "+(a.esc_to||[]).map(x=>RV_ESC_TO[x]||x).join(", ")]);
-  else if(a.esc==="threat") flags.push(["conduct","грозит: "+(a.esc_to||[]).map(x=>RV_ESC_TO[x]||x).join(", ")]);
-  if(a.no_consent) flags.push(["conduct","без согласия клиента"]);
-  if(a.misled) flags.push(["conduct","ввели в заблуждение"]);
-  if(a.vulnerable&&a.vulnerable.length) flags.push(["other","уязвимый клиент"]);
-  if(a.amount) flags.push(["other",fmtNum(Math.round(a.amount))+" ₽"]);
-  if(!a.summary&&!flags.length) return null;
-  return <div className="rv-ann" title={"разметка ИИ: "+(a.confidence||"")}>
-    {a.summary&&<span className="rv-ann-s">Суть: {a.summary}</span>}
-    {flags.map(([r,t],i)=><span key={i} className={"rv-tag "+r}>{t}</span>)}
-    {a.new_topic&&<span className="rv-tag other" title="точного кода в кодификаторе нет — так проблему назвала модель">новое: {a.new_topic}</span>}
-  </div>;
-}
-
-// Карточка отзыва (переиспользуется в ленте, в модале и в драуэре).
-function RvReview({r,onOpen,full}){
-  const txt=r.text||"";
-  return <div className="rv-rev">
-    <div className="rv-rh">
-      <span>{rvDate(r.date)}</span>
-      <RvThemes list={r.themes} src={r.theme_src}/>
-      {r.product&&<span className="rv-pill rv-pill-dim" title="продукт по разметке ИИ">{r.product}</span>}
-      {r.city&&<span className="rv-pill">{r.city}</span>}
-      {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
-    </div>
-    <RvAnn a={r.ann}/>
-    <RvReply b={r.bank_reply} date={r.date}/>
-    <div className={"rv-rq"+(onOpen?" rv-rq-click":"")} role={onOpen?"button":undefined}
-         tabIndex={onOpen?0:undefined} onClick={onOpen||undefined}
-         onKeyDown={onOpen?(e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen();}}):undefined}>
-      {full?txt:(txt.slice(0,420)+(txt.length>420?"…":""))}
-      {onOpen&&txt.length>420&&<span className="rv-more"> читать полностью →</span>}
-    </div>
-  </div>;
 }
 
 // SVG-иконки радара (без эмодзи, currentColor, feather-стиль)
 const IcoRadar=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 13h4l2.5 6 4-14 2.5 9 1.5-4 1.5 3H22"/></svg>;
 const IcoCheck=()=> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.5 2.5 4.7-5.4"/></svg>;
 const IcoTrendUp=()=> <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>;
+
+// ── Карточка жалобы и читалка (волна D1) ─────────────────────────────────────
+// Иерархия карточки: мета → суть от ИИ (заголовок) → цитата клиента →
+// признаки. Сырой текст — только в читалке. Раньше самым заметным был сырой
+// текст, а суть и признаки терялись мелким серым шрифтом среди 6–9 плашек.
+const RvIco=({d,s=13,w=1.8,fill})=><svg width={s} height={s} viewBox="0 0 24 24" fill={fill||"none"} stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
+const RvIScale=p=><RvIco {...p} d={<><path d="M12 3v18"/><path d="M5 21h14"/><path d="M4 7h16"/><path d="M4 7l-3 7a3 3 0 0 0 6 0z"/><path d="M20 7l-3 7a3 3 0 0 0 6 0z"/></>}/>;
+const RvIUser=p=><RvIco {...p} d={<><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>}/>;
+const RvIBan=p=><RvIco {...p} d={<><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></>}/>;
+const RvIReply=p=><RvIco {...p} d={<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/>}/>;
+const RvICase=p=><RvIco {...p} d={<><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></>}/>;
+const RvIExt=p=><RvIco {...p} d={<><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></>}/>;
+const RvIX=p=><RvIco {...p} d={<><path d="M6 6l12 12"/><path d="M18 6L6 18"/></>}/>;
+const RvIUp=p=><RvIco {...p} d={<path d="M6 15l6-6 6 6"/>}/>;
+const RvIDown=p=><RvIco {...p} d={<path d="M6 9l6 6 6-6"/>}/>;
+const RvIDots=p=><RvIco {...p} w={0} fill="currentColor" d={<><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></>}/>;
+const RvILink=p=><RvIco {...p} d={<><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></>}/>;
+
+const RV_MON_GEN=["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const rvShortDate=d=>{const m=String(d||"").match(/^(\d{4})-(\d{2})-(\d{2})/);if(!m)return "";
+  const y=+m[1],cur=new Date().getFullYear();return `${+m[3]} ${RV_MON[+m[2]-1]}${y!==cur?" "+y:""}`;};
+const rvLongDate=d=>{const m=String(d||"").match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${+m[3]} ${RV_MON_GEN[+m[2]-1]} ${m[1]}`:"";};
+const rvAmount=v=>v==null?"":v>=1e6?`${String(Math.round(v/1e5)/10).replace(".",",")} млн ₽`:v>=1e3?`${Math.round(v/1e3)} тыс. ₽`:`${Math.round(v)} ₽`;
+const rvCap=s=>s?s[0].toUpperCase()+s.slice(1):s;
+
+// Текст площадки: восстановить пробел после точки перед заглавной («долга.Я»)
+// и разбить сплошной текст на абзацы по 3–4 предложения. Переносы строк
+// автора сохраняются.
+function rvParas(t){
+  const src=String(t||"").replace(/\r/g,"").replace(/([.!?…])(?=[А-ЯЁA-Z«"])/g,"$1 ").replace(/[ \t]{2,}/g," ");
+  const out=[];
+  src.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean).forEach(b=>{
+    if(b.length<520){out.push(b);return;}
+    const sent=b.split(/(?<=[.!?…])\s+(?=[А-ЯЁA-Z«"—])/);
+    let cur="";
+    sent.forEach(x=>{ if(cur&&(cur.length+x.length>420)){out.push(cur);cur=x;} else cur=cur?cur+" "+x:x; });
+    if(cur)out.push(cur);
+  });
+  return out;
+}
+// Цитата из разметки подсвечивается в тексте: это и есть «цитата сверена с
+// текстом». В цитате бывают склейки через «…» — подсвечиваем каждый кусок.
+const rvEsc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+function rvQuoteRx(q){
+  const parts=String(q||"").split(/\s*(?:…|\.\.\.)\s*/).map(x=>x.trim().replace(/^[«"]|[»"]$/g,"")).filter(x=>x.length>=12);
+  if(!parts.length)return null;
+  return new RegExp("("+parts.map(p=>rvEsc(p).replace(/\s+/g,"\\s+")).join("|")+")","gi");
+}
+function rvMarkPara(p,qrx,kq){
+  // ⟦…⟧ — попадания поиска (kbMark); внутри остального — цитата ИИ
+  return p.split(/(⟦[^⟧]*⟧)/g).map((seg,i)=>{
+    if(seg.startsWith("⟦"))return <mark key={kq+"s"+i} className="kb-hl">{seg.slice(1,-1)}</mark>;
+    if(!qrx)return <React.Fragment key={kq+"t"+i}>{seg}</React.Fragment>;
+    return seg.split(qrx).map((x,j)=>j%2?<mark key={kq+"q"+i+"_"+j} className="rv-qhl">{x}</mark>
+      :<React.Fragment key={kq+"t"+i+"_"+j}>{x}</React.Fragment>);
+  });
+}
+// Выдержка вокруг первого попадания поиска — вместо цитаты, если искали словами
+function rvSnippet(m,n=180){
+  const s=String(m||""),i=s.indexOf("⟦"); if(i<0)return null;
+  let a=Math.max(0,i-60); if(a>0){const sp=s.indexOf(" ",a);a=sp>0&&sp<i?sp+1:a;}
+  return (a>0?"…":"")+cutMark(s.slice(a),n)+(s.length-a>n?"…":"");
+}
+// Признаки жалобы — в порядке важности, с тоном: обратился (red) → грозит →
+// уязвимый → без согласия → ответ банка → сумма
+function rvSignals(r){
+  const a=r.ann||{}, b=r.bank_reply, out=[];
+  const to=(a.esc_to||[]).map(x=>RV_TO[x]||x).join(", ");
+  if(a.esc==="filed")out.push({k:"esc",tone:"neg",ic:RvIScale,t:"Обратился"+(to?": "+to:"")});
+  else if(a.esc==="threat")out.push({k:"esc",tone:"warn",ic:RvIScale,t:"Грозит"+(to?": "+to:"")});
+  if(a.vulnerable&&a.vulnerable.length)out.push({k:"vuln",tone:"warn",ic:RvIUser,
+    t:rvCap(a.vulnerable.map(x=>RV_VULN[x]||x).join(", "))});
+  if(a.no_consent)out.push({k:"nc",tone:"warn",ic:RvIBan,t:"Без согласия"});
+  if(b){ const old=r.date&&(Date.now()-new Date(String(r.date).slice(0,10)+"T00:00:00"))>3*864e5;
+    if(b.resolved===true)out.push({k:"rep",tone:"pos",ic:RvIReply,t:"Решено"});
+    else if(b.resolved===false&&(b.checked||b.src==="sravni.ru"))out.push({k:"rep",tone:"",ic:RvIReply,t:"Не решено"});
+    else if(b.answer||b.has_answer)out.push({k:"rep",tone:"",ic:RvIReply,t:"Банк ответил"});
+    else if(b.src==="banki.ru"&&old)out.push({k:"rep",tone:"",ic:RvIReply,t:"Без ответа банка"}); }
+  if(a.amount)out.push({k:"amt",tone:"",ic:null,t:rvAmount(a.amount)});
+  return out;
+}
+const rvSev=r=>{const a=r.ann||{};return a.esc==="filed"?"neg":(a.esc==="threat"||(a.vulnerable&&a.vulnerable.length))?"warn":"";};
+const rvFirst=t=>{const s=rvParas(t)[0]||"";const m=s.match(/^.{20,200}?[.!?…](?=\s|$)/);return m?m[0]:s.slice(0,180)+(s.length>180?"…":"");};
+
+// Прочитанные жалобы — только в этом браузере: удобство, а не данные
+const RV_READ_KEY="al-rv-read";
+function rvReadGet(){try{return new Set(JSON.parse(localStorage.getItem(RV_READ_KEY)||"[]"));}catch{return new Set();}}
+function rvReadAdd(u){try{const a=JSON.parse(localStorage.getItem(RV_READ_KEY)||"[]").filter(x=>x!==u);a.push(u);
+  localStorage.setItem(RV_READ_KEY,JSON.stringify(a.slice(-3000)));}catch{}}
+
+// Меню «⋯» карточки: действия, которым не место в самой карточке
+function RvMenu({items}){
+  const[open,setOpen]=useState(false),ref=useRef(null);
+  useEffect(()=>{ if(!open)return;
+    const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};
+    const k=e=>{if(e.key==="Escape"){e.stopPropagation();setOpen(false);}};
+    document.addEventListener("pointerdown",h);document.addEventListener("keydown",k,true);
+    return ()=>{document.removeEventListener("pointerdown",h);document.removeEventListener("keydown",k,true);};
+  },[open]);
+  return <span className="rv-menu" ref={ref} onClick={e=>e.stopPropagation()}>
+    <button className="rv-ib" aria-label="Действия" aria-haspopup="menu" aria-expanded={open}
+      onClick={()=>setOpen(o=>!o)}><RvIDots s={15}/></button>
+    {open&&<span className="rv-menu-pop" role="menu">
+      {items.filter(Boolean).map((it,i)=>it.href
+        ?<a key={i} role="menuitem" href={it.href} target="_blank" rel="noopener noreferrer" onClick={()=>setOpen(false)}>{it.ic}{it.t}</a>
+        :<button key={i} role="menuitem" onClick={()=>{setOpen(false);it.on();}}>{it.ic}{it.t}</button>)}
+    </span>}
+  </span>;
+}
+const rvCopy=u=>{try{navigator.clipboard.writeText(u);fbToast("Ссылка скопирована",false);}catch{}};
+
+function RvCard({r,sel,read,inCase,showBank,onOpen,onCase,onTheme,q,cardRef}){
+  const a=r.ann||{}, pending=!r.ann;
+  const title=a.summary||rvFirst(r.text);
+  const snip=q&&r.via!=="смысл"?rvSnippet(r.marked):null;
+  const sig=rvSignals(r).slice(0,3), sev=rvSev(r);
+  const themes=(r.themes||[]).slice(0,2);
+  const src=r.source&&r.source.includes(".")?r.source:(r.url?rvHost(r.url):"");
+  const meta=[rvShortDate(r.date),showBank&&r.bank,r.city,r.product,src].filter(Boolean);
+  return <article ref={cardRef} className={"rv-c"+(sel?" sel":"")+(read&&!sel?" read":"")+(sev?" s-"+sev:"")}
+      tabIndex={0} aria-label={title} onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"&&e.target===e.currentTarget){e.preventDefault();onOpen();}}}>
+    <div className="rv-c-meta">
+      <span className="rv-c-mt">{meta.join(" · ")}
+        {r.similar>0&&<> · ещё {r.similar} {plural(r.similar,"такая же","такие же","таких же")}</>}
+        {pending&&<> · разметка через ~час</>}
+        {r.via==="смысл"&&<> · <span title="слов запроса в тексте нет — подобрано по смыслу">по смыслу</span></>}
+      </span>
+      {inCase&&<span className="rv-c-in" title={`в деле «${inCase}»`}><RvICase s={12}/>в деле</span>}
+      <span className="rv-c-acts">
+        {!inCase&&onCase&&<button className="rv-c-add" onClick={e=>{e.stopPropagation();onCase();}}>В дело</button>}
+        <RvMenu items={[onCase&&{t:inCase?"Добавить в другое дело":"В аудит-дело",ic:<RvICase s={13}/>,on:onCase},
+          r.url&&{t:"Открыть на площадке",ic:<RvIExt s={13}/>,href:r.url},
+          r.url&&{t:"Скопировать ссылку",ic:<RvILink s={13}/>,on:()=>rvCopy(r.url)}]}/>
+      </span>
+    </div>
+    <div className={"rv-c-title"+(pending?" raw":"")}>{title}</div>
+    {snip?<div className="rv-c-snip">{kbMark(snip)}</div>
+      :a.quote?<div className="rv-c-quote">«{a.quote}»</div>:null}
+    {(sig.length>0||themes.length>0)&&<div className="rv-c-sig">
+      {sig.map(x=><span key={x.k} className={"rv-sg "+x.tone}>{x.ic&&<x.ic s={12}/>}{x.t}</span>)}
+      {themes.length>0&&<span className="rv-c-th">{themes.map((t,i)=><React.Fragment key={t.key}>
+        {i>0&&<span className="rv-c-dot">·</span>}
+        {onTheme?<button className="rv-c-tl" title={`${t.label} — показать жалобы этой темы`}
+          onClick={e=>{e.stopPropagation();onTheme(t.key);}}>{t.short||t.label}</button>
+          :<span className="rv-c-tl static">{t.short||t.label}</span>}</React.Fragment>)}</span>}
+    </div>}
+  </article>;
+}
+
+// Паспорт жалобы: всё, что известно из разметки и сбора, — таблицей, а не
+// россыпью плашек над текстом
+function RvPassport({r}){
+  const a=r.ann||{}, b=r.bank_reply, th=r.themes||[];
+  const rows=[];
+  if(th[0])rows.push(["Проблема",<>{th[0].label}<span className={"rv-risk "+(th[0].risk||"")}>{RV_RISK[th[0].risk]||""}</span></>]);
+  if(th.length>1)rows.push(["Также",th.slice(1).map(t=>t.label).join(" · ")]);
+  if(a.esc==="filed"||a.esc==="threat")rows.push(["Эскалация",<span className={a.esc==="filed"?"rv-tneg":"rv-twarn"}>
+    {(a.esc==="filed"?"Обратился":"Грозит")+((a.esc_to||[]).length?": "+a.esc_to.map(x=>RV_TO[x]||x).join(", "):"")}</span>]);
+  if(a.vulnerable&&a.vulnerable.length)rows.push(["Клиент",rvCap(a.vulnerable.map(x=>RV_VULN[x]||x).join(", "))]);
+  if(a.no_consent||a.misled)rows.push(["Практика",[a.no_consent&&"без согласия клиента",a.misled&&"ввели в заблуждение"].filter(Boolean).join(" · ")]);
+  if(a.amount)rows.push(["Сумма",<span title="сумма бывает и ущербом, и суммой самого продукта">{fmtNum(Math.round(a.amount))} ₽</span>]);
+  const pc=[r.product,r.city].filter(Boolean).join(" · "); if(pc)rows.push(["Продукт",pc]);
+  if(a.event_date)rows.push(["Событие",rvLongDate(a.event_date)]);
+  if(r.rating!=null)rows.push(["Оценка",<span className="rv-stars" aria-label={`${Math.round(r.rating)} из 5`}>
+    {[1,2,3,4,5].map(i=><i key={i} className={i<=Math.round(r.rating)?"on":""}>★</i>)}</span>]);
+  if(b){const st=b.resolved===true?"решено":b.resolved===false&&(b.checked||b.src==="sravni.ru")?"не решено":null;
+    const ans=b.answer?"ответил":b.has_answer?"ответ на площадке":"ответа нет";
+    rows.push(["Банк",[rvCap(ans),st].filter(Boolean).join(" · ")]);}
+  if(r.ann)rows.push(["Разметка",<>{rvCap(a.confidence||"")}{a.new_topic&&<span className="rv-dim"> · вне кодификатора: {a.new_topic}</span>}</>]);
+  return <dl className="rv-pass">{rows.map(([k,v])=><React.Fragment key={k}><dt>{k}</dt><dd>{v}</dd></React.Fragment>)}</dl>;
+}
+
+function RvReader({r,pos,total,ctx,onPrev,onNext,onClose,onCase,inCase,onOpenSim,showBank,embedded,onBack}){
+  const[sim,setSim]=useState(null),[repOpen,setRepOpen]=useState(false);
+  const bodyRef=useRef(null);
+  useEffect(()=>{ setSim(null);setRepOpen(false);
+    if(bodyRef.current)bodyRef.current.scrollTop=0;
+    if(!r||!r.url)return; rvReadAdd(r.url);
+    let ok=true; if(r.ann)apiFetch(`/api/reviews/similar?url=${encodeURIComponent(r.url)}`)
+      .then(d=>ok&&setSim(d.items||[])).catch(()=>ok&&setSim([]));
+    return ()=>{ok=false;}; },[r&&r.url]);
+  if(!r)return null;
+  const a=r.ann||{}, b=r.bank_reply;
+  const qrx=a.quote?rvQuoteRx(a.quote):null;
+  const paras=rvParas(r.marked||r.text);
+  const title=a.summary||rvFirst(r.text);
+  return <div className={"rv-rd"+(embedded?" emb":"")}>
+    <div className="rv-rd-head" data-drag="1">
+      <div className="rv-rd-nav">
+        {onBack&&<button className="rv-ib" onClick={onBack} aria-label="Назад к списку" title="назад">←</button>}
+        <button className="rv-ib" disabled={!onPrev} onClick={onPrev} aria-label="Предыдущая жалоба" title="предыдущая · K"><RvIUp s={16}/></button>
+        <button className="rv-ib" disabled={!onNext} onClick={onNext} aria-label="Следующая жалоба" title="следующая · J"><RvIDown s={16}/></button>
+        {total>1&&<span className="rv-rd-pos">{pos+1} из {total}{ctx?` · ${ctx}`:""}</span>}
+      </div>
+      <div className="rv-rd-acts">
+        {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={onCase}
+          title={inCase?`уже в деле «${inCase}» — можно добавить в другое`:"приобщить к аудит-делу · A"}>
+          <RvICase s={14}/>{inCase?"В деле":"В дело"}</button>}
+        {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer" title="открыть на площадке">
+          {rvHost(r.url)}<RvIExt s={13}/></a>}
+        {onClose&&<button className="rv-ib" onClick={onClose} aria-label="Закрыть" title="закрыть · Esc"><RvIX s={16}/></button>}
+      </div>
+    </div>
+    <div className="rv-rd-body" ref={bodyRef}>
+      <div className="rv-rd-meta">{[rvLongDate(r.date),showBank&&r.bank,r.source&&r.source.includes(".")?r.source:null].filter(Boolean).join(" · ")}
+        {r.similar>0&&<> · ещё {r.similar} {plural(r.similar,"такая же","такие же","таких же")}</>}</div>
+      <h2 className={"rv-rd-title"+(r.ann?"":" raw")}>{title}</h2>
+      {!r.ann&&<p className="rv-rd-pending">Жалоба ещё размечается — обычно до часа после сбора. Пока доступен только текст.</p>}
+      <RvPassport r={r}/>
+      <div className="rv-rd-sec">Текст клиента{a.quote&&<span className="rv-rd-sec-n"><mark className="rv-qhl">выделено</mark> — цитата, на которую опирается разметка</span>}</div>
+      <div className="rv-rd-text">{paras.map((p,i)=><p key={i}>{rvMarkPara(p,qrx,i)}</p>)}</div>
+      {b&&b.answer&&<div className={"rv-rd-reply"+(repOpen?" open":"")}>
+        <div className="rv-rd-sec">Ответ банка{b.resolved===true?" · решено":b.resolved===false&&b.checked?" · не решено":""}</div>
+        <div className="rv-rd-rtext">{rvParas(b.answer).map((p,i)=><p key={i}>{p}</p>)}</div>
+        {!repOpen&&b.answer.length>420&&<button className="rv-lnkb" onClick={()=>setRepOpen(true)}>Показать ответ полностью</button>}
+      </div>}
+      {sim&&sim.length>0&&<div className="rv-rd-sim">
+        <div className="rv-rd-sec">Похожие жалобы<span className="rv-rd-sec-n">тот же банк и проблема, близкое изложение</span></div>
+        {sim.map((x,i)=><button key={x.url} className="rv-rd-simi" onClick={()=>onOpenSim&&onOpenSim(sim,i)}>
+          <span className="rv-rd-simm">{[rvShortDate(x.date),x.city,x.product].filter(Boolean).join(" · ")}</span>
+          <span className="rv-rd-simt">{(x.ann&&x.ann.summary)||rvFirst(x.text)}</span></button>)}
+      </div>}
+    </div>
+  </div>;
+}
+
+// Пружина по Apple: затухание и отклик вместо длительности. Старт — с текущего
+// положения и скорости пальца, поэтому движение можно подхватить на лету.
+function rvSpring(from,to,v0,{response=0.32,damping=1}={},onFrame,onDone){
+  const k=Math.pow(2*Math.PI/response,2), c=4*Math.PI*damping/response;
+  let x=from,v=v0,last=performance.now(),raf=0;
+  const step=t=>{ const dt=Math.min(0.032,Math.max(0.001,(t-last)/1000)); last=t;
+    v+=(-k*(x-to)-c*v)*dt; x+=v*dt;
+    if(Math.abs(v)<4&&Math.abs(x-to)<0.4){onFrame(to);onDone&&onDone();return;}
+    onFrame(x); raf=requestAnimationFrame(step); };
+  raf=requestAnimationFrame(step);
+  return ()=>cancelAnimationFrame(raf);
+}
+const rvProject=(v,d=0.998)=>(v/1000)*d/(1-d);
+const rvRubber=(o,dim,c=0.55)=>(o*dim*c)/(dim+c*Math.abs(o));
 
 // ── Рабочее место аудитора (волна 4) ─────────────────────────────────────────
 const RV_TO={cbr:"ЦБ",court:"суд",rpn:"Роспотребнадзор",fas:"ФАС",prosecutor:"прокуратура",
@@ -3508,10 +3703,8 @@ function RvJournal({bank,product,onOpen}){
           {e.n_urls>0&&<button className="rv-jr-x" onClick={()=>toggle(e)}>{open===e.signal_id?"скрыть ▴":`жалобы сигнала · ${e.n_urls} ▾`}</button>}
           {e.verdict_by&&<span className="rv-jr-by">{e.verdict_by}</span>}
         </div>
-        {open===e.signal_id&&<div className="rv-jr-list">{!its[e.signal_id]?<Skel h={60}/>:its[e.signal_id].map((r,i)=>
-          <div key={i} className="rv-jr-r" role="button" tabIndex={0} onClick={()=>onOpen&&onOpen(r)}
-               onKeyDown={ev=>{if(ev.key==="Enter")onOpen&&onOpen(r);}}>
-            <span className="mono">{rvDate(r.date)}</span>{(r.ann&&r.ann.summary)||(r.text||"").slice(0,180)}</div>)}</div>}
+        {open===e.signal_id&&<div className="rv-jr-list rv-clist">{!its[e.signal_id]?<Skel h={60}/>:its[e.signal_id].map((r,i)=>
+          <RvCard key={r.url||i} r={r} onOpen={()=>onOpen&&onOpen(its[e.signal_id],i)}/>)}</div>}
       </div>;})}
   </div>;
 }
@@ -3564,7 +3757,16 @@ function ReviewsPage({params}){
   const[grp,setGrp]=useState(null),[grpItems,setGrpItems]=useState(null);
   const[mev,setMev]=useState(null);                     // изменения условий по продукту («Рынок»)
   const[sub,setSub]=useState(null);                     // подписка на сигналы среза
-  const[modalRev,setModalRev]=useState(null);            // полный текст отзыва
+  // Читалка жалобы: {list, idx, ctx, src, back}. src="feed" — список берётся
+  // живым из ленты (догрузка по J в конце), на широком экране читалка стоит
+  // рядом со списком; остальные источники — поверх, листом на телефоне.
+  const[rd,setRd]=useState(null);
+  const[caseUrls,setCaseUrls]=useState({});             // жалоба → дело, где она уже есть
+  const[readV,setReadV]=useState(0);
+  const readSet=useMemo(()=>rvReadGet(),[readV]);
+  const[cur,setCur]=useState(-1);                       // курсор клавиатуры в ленте
+  const[wide,setWide]=useState(()=>window.matchMedia("(min-width: 1280px)").matches);
+  const cardRefs=useRef({}), searchRef=useRef(null);
   const[drill,setDrill]=useState(null);                  // {type:'city'|'month',value,label}
   const[drillItems,setDrillItems]=useState(null),[drillBusy,setDrillBusy]=useState(false);
   const[explain,setExplain]=useState(null),[explainBusy,setExplainBusy]=useState(false);
@@ -3682,6 +3884,7 @@ function ReviewsPage({params}){
     +`&limit=20&offset=${off}`;
 
   useEffect(()=>{ setFeedBusy(true);setClsOn(false);setFeedMore(false);
+    setRd(x=>x&&x.src==="feed"?null:x); setCur(-1);
     apiFetch(feedQS(0))
       .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
                 setFeedMore(!!d.has_more);setFeedBusy(false);})
@@ -3690,11 +3893,57 @@ function ReviewsPage({params}){
 
   const loadMoreFeed=()=>{
     setFeedMoreBusy(true);
-    apiFetch(feedQS((feed||[]).length))
+    return apiFetch(feedQS((feed||[]).length))
       .then(d=>{setFeed(f=>(f||[]).concat(d.items||[]));setFeedMore(!!d.has_more);
                 setFeedMoreBusy(false);})
       .catch(()=>setFeedMoreBusy(false));
   };
+
+  useEffect(()=>{ const m=window.matchMedia("(min-width: 1280px)");
+    const h=()=>setWide(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
+  const loadCaseUrls=()=>apiFetch("/api/cases/review-urls").then(d=>setCaseUrls(d.urls||{})).catch(()=>{});
+  useEffect(()=>{loadCaseUrls();},[]);
+  const openReader=(list,idx,ctx,src)=>{ setRd({list,idx,ctx,src}); if(src==="feed")setCur(idx); };
+  const rdList=rd?(rd.src==="feed"?(feed||[]):rd.list):[];
+  const rdItem=rd?rdList[rd.idx]:null;
+  const split=!!(wide&&rd&&rd.src==="feed"&&rdItem);
+  const rdGo=d=>{ if(!rd)return; const n=rd.idx+d;
+    if(n>=0&&n<rdList.length){setRd(x=>({...x,idx:n})); if(rd.src==="feed")setCur(n); return;}
+    if(d>0&&rd.src==="feed"&&feedMore&&!feedMoreBusy)
+      loadMoreFeed().then(()=>{setRd(x=>x?({...x,idx:n}):x);setCur(n);}); };
+  const rdNav=rd?{pos:rd.idx,total:rdList.length,ctx:rd.ctx,
+    onPrev:rd.idx>0?()=>rdGo(-1):null,
+    onNext:(rd.idx<rdList.length-1||(rd.src==="feed"&&feedMore))?()=>rdGo(1):null}:null;
+  const openSim=(list,i)=>setRd(x=>({list,idx:i,ctx:"похожие",src:"sim",back:x}));
+  // отмеченное «прочитано» — перерисовать список, когда в читалке новая жалоба
+  useEffect(()=>{setReadV(v=>v+1);},[rdItem&&rdItem.url]);
+  // выбранная карточка ленты — в поле зрения (J/K и стрелки читалки)
+  const selIdx=rd&&rd.src==="feed"?rd.idx:cur;
+  useEffect(()=>{ const el=cardRefs.current[selIdx]; if(el&&selIdx>=0)
+    el.scrollIntoView({block:"nearest",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"}); },[selIdx]);
+  // Клавиатура: J/K — по списку, Enter — открыть, A — в дело, / — поиск, Esc — закрыть
+  useEffect(()=>{
+    const h=e=>{
+      if(e.defaultPrevented||e.metaKey||e.ctrlKey||e.altKey)return;
+      const t=e.target; if(t&&t.closest&&t.closest("input,textarea,select,[contenteditable='true']"))return;
+      if(pick)return;
+      const k=e.key.toLowerCase(), down=k==="j"||k==="о", up=k==="k"||k==="л", add=k==="a"||k==="ф";
+      const overlay=casesOpen||jrOpen||grp||drill;
+      if(k==="/"&&!overlay&&!(rd&&!split)){e.preventDefault();searchRef.current&&searchRef.current.focus();return;}
+      if(rd){
+        if(down){e.preventDefault();rdGo(1);} else if(up){e.preventDefault();rdGo(-1);}
+        else if(add&&rdItem){e.preventDefault();addCase(rdItem);}
+        else if(e.key==="Escape"&&split){e.preventDefault();setRd(null);}
+        return;
+      }
+      if(overlay||!feed||!feed.length||(fView==="groups"&&!q))return;
+      if(down){e.preventDefault();setCur(c=>Math.min(feed.length-1,c+1));}
+      else if(up){e.preventDefault();setCur(c=>Math.max(0,c-1));}
+      else if(e.key==="Enter"&&cur>=0){e.preventDefault();openReader(null,cur,null,"feed");}
+      else if(add&&cur>=0){e.preventDefault();addCase(feed[cur]);}
+    };
+    document.addEventListener("keydown",h); return ()=>document.removeEventListener("keydown",h);
+  });
 
   // on-demand: уточнить темы показанных отзывов через LLM (по кнопке)
   const classifyFeed=()=>{
@@ -3707,7 +3956,7 @@ function ReviewsPage({params}){
   };
 
   const addCase=(r)=>setPick([r]);
-  const onPicked=(c,n)=>{setPick(null);fbToast(n>1?`${n} жалоб приобщено к делу «${c.title}»`:`Приобщено к делу «${c.title}»`,false);};
+  const onPicked=(c,n)=>{setPick(null);loadCaseUrls();fbToast(n>1?`${n} жалоб приобщено к делу «${c.title}»`:`Приобщено к делу «${c.title}»`,false);};
   const toggleSub=async()=>{
     const prev=sub; setSub(!prev);
     try{ if(prev)await apiDel(`/api/reviews/subscription?bank=${enc(bank)}${pq()}`);
@@ -4065,13 +4314,14 @@ function ReviewsPage({params}){
           {!(fView==="groups"&&!q)&&(()=>{const n=(feed||[]).length,
                        dup=(feed||[]).reduce((a,r)=>a+(r.similar||0),0);
             return dup>0?<span className="rv-count-note" title="одинаковые тексты объединены в одну карточку">
-              {" "}· {n + dup} обращений в {n} карточках</span>:null;})()}
+              {" "}· {n + dup} {plural(n+dup,"жалоба","жалобы","жалоб")}, одинаковые объединены</span>:null;})()}
         </div>
           <div className="rv-cap">{theme||flag?<>
             {theme&&<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>}
             {theme&&flag&&<span className="rv-cap-sep"> · </span>}
             {flag&&<>признак: <b>{flagLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setFlag("")} onKeyDown={onKey(()=>setFlag(""))}>сбросить ✕</span></>}
-          </>:"у каждой жалобы — продукт, главная проблема и суть по разметке ИИ; цитата сверена с текстом"}</div></div>
+          </>:<span className="rv-legend"><i className="neg"/>обратился в ЦБ, суд и т. п.<i className="warn"/>грозит или уязвимый клиент
+            <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
         {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
         <a className="rv-export rv-export-a" download
            href={`/api/reviews/export.csv?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`}
@@ -4092,7 +4342,7 @@ function ReviewsPage({params}){
       </div>}
       <div className="rv-search">
         <span>⌕</span>
-        <input value={qInput} onChange={e=>setQInput(e.target.value)}
+        <input ref={searchRef} value={qInput} onChange={e=>setQInput(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter")setQ(qInput.trim());}}
           placeholder="Найти жалобы по смыслу: «не зачисляют выручку по эквайрингу», «навязали страховку»… (Enter)"/>
         {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}>✕</span>}
@@ -4140,6 +4390,8 @@ function ReviewsPage({params}){
       {!feedBusy&&!feedErr&&q&&feedMeta&&feedMeta.n_words===0&&feed&&feed.length>0&&
         <div className="rv-warn">Слов запроса в текстах нет — все отзывы ниже подобраны по смыслу.
           Это не значит, что жалоб по теме не было: возможно, клиенты называют её иначе.</div>}
+      <div className={"rv-fw"+(split?" split":"")}>
+      <div className="rv-fw-list">
       {fView==="groups"&&!q?(
         clBusy?<><Skel h={80}/><div style={{height:8}}/><Skel h={80}/></>:
         !cl||cl.__err?<RvNote err={cl&&cl.__err}/>:<>
@@ -4168,73 +4420,33 @@ function ReviewsPage({params}){
        !feed||!feed.length?<EmptyState text={q
          ?`По запросу «${q}» жалоб не нашлось — искали и по смыслу, и по словам, включая раскрытие сокращений. Возможно, по этой теме на банк действительно не жаловались; попробуйте снять фильтры или сузить формулировку.`
          :"Нет жалоб по выбранным фильтрам — попробуйте другой банк/продукт/тему."}/>:
-       feed.map((r,i)=>(
-        <div key={i} className="rv-rev">
-          <div className="rv-rh">
-            <span>{rvDate(r.date)}</span>
-            {/* Банк подписан явно. Сверка показала, что данные верны — жалоба
-                действительно принадлежит выбранному банку, — но в тексте часто
-                упомянут другой банк («перевёл в …»), и без подписи аудитор
-                читает обращение как чужое. Дважды приходило как дефект. */}
-            {r.bank&&<span className="rv-pill rv-pill-bank" title="банк, которому принадлежит обращение">{r.bank}</span>}
-            <RvThemes list={r.themes} src={r.theme_src} active={theme}/>
-            {r.product&&<span className="rv-pill rv-pill-dim" title="продукт по разметке ИИ">{r.product}</span>}
-            {r.city&&<span className="rv-pill">{r.city}</span>}
-            {/* Источник виден на каждой карточке: площадок теперь несколько, и
-                аудитор должен понимать, откуда жалоба, не открывая ссылку */}
-            {r.source&&<span className="rv-pill rv-pill-dim" title="площадка-источник отзыва">{r.source}</span>}
-            {r.rating!=null&&<span className="rv-pill rv-pill-dim" title="оценка автора">{"★".repeat(Math.max(1,Math.round(r.rating)))}</span>}
-            {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
-            {r.via&&<span className={"rv-via"+(r.via==="смысл"?" rv-via-soft":"")}
-              title={r.via==="смысл"
-                ?"слов запроса в тексте нет — отзыв подобран по смыслу, проверьте глазами"
-                :"слова запроса встречаются в тексте дословно (подсвечены)"}>
-              {r.via==="смысл"?"по смыслу":r.via==="слова"?"дословно":"дословно и по смыслу"}</span>}
-          </div>
-          <RvAnn a={r.ann}/>
-          <RvReply b={r.bank_reply} date={r.date}/>
-          <div className="rv-rq rv-rq-click" role="button" tabIndex={0} onClick={()=>setModalRev(r)} onKeyDown={onKey(()=>setModalRev(r))}>
-            {kbMark(cutMark(r.marked||r.text,420))}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
-          </div>
-          <div className="rv-rf">
-            {r.url&&<a href={r.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(r.url)} ↗</a>}
-            <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(r)} onKeyDown={onKey(()=>addCase(r))}>＋ в аудит-дело</span>
-          </div>
-        </div>
-       ))}
+       feed.map((r,i)=><RvCard key={r.url||i} r={r} showBank q={q}
+          sel={split?rd.idx===i:(!rd&&cur===i)} read={readSet.has(r.url)} inCase={caseUrls[r.url]}
+          cardRef={el=>{cardRefs.current[i]=el;}}
+          onOpen={()=>openReader(null,i,null,"feed")} onCase={()=>addCase(r)} onTheme={pickTheme}/>)}
        {feedMore&&!(fView==="groups"&&!q)&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
          disabled={feedMoreBusy}>
          {feedMoreBusy?"Загружаю…":`Показать ещё (сейчас ${(feed||[]).length})`}</button>}
+      </div>
+      {/* Читалка рядом со списком (от 1280 px): просмотр подряд без окон */}
+      {split&&<aside className="rv-fw-rd" aria-label="Выбранная жалоба">
+        <RvReader r={rdItem} {...rdNav} embedded showBank onClose={()=>setRd(null)}
+          onCase={()=>addCase(rdItem)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}/></aside>}
+      </div>
     </div>
 
     {jrOpen&&<RvModal side="right" onClose={()=>setJrOpen(false)} title="Журнал сигналов"
         sub={`${bank} · ${product||"все продукты"} · полгода`}>
-      <RvJournal bank={bank} product={product} onOpen={r=>setModalRev(r)}/></RvModal>}
+      <RvJournal bank={bank} product={product} onOpen={(list,i)=>openReader(list,i,"снимок сигнала","journal")}/></RvModal>}
     {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={`${grp.n} похожих жалоб`}
         sub={[grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
       <div className="rv-grp-acts"><button className="btn btn-sm btn-primary" disabled={!grpItems||!grpItems.length}
         onClick={()=>setPick(grpItems)}>＋ всю группу в аудит-дело</button></div>
-      {!grpItems?<Skel h={120}/>:grpItems.map((r,i)=><RvReview key={i} r={r} onOpen={()=>setModalRev(r)}/>)}
+      {!grpItems?<Skel h={120}/>:<div className="rv-clist">{grpItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
+        read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="group"&&rd.idx===i}
+        onOpen={()=>openReader(grpItems,i,`группа · ${grp.n}`,"group")} onCase={()=>addCase(r)}/>)}</div>}
     </RvModal>}
     {casesOpen&&<KbCases onClose={()=>setCasesOpen(false)}/>}
-
-    {/* МОДАЛ: полный текст обращения */}
-    {modalRev&&<RvModal onClose={()=>setModalRev(null)} title="Обращение клиента"
-        sub={[modalRev.bank,rvDate(modalRev.date),modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
-      <div className="rv-rh" style={{marginBottom:10}}>
-        <RvThemes list={modalRev.themes} src={modalRev.theme_src} active={theme}/>
-        {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
-      </div>
-      <RvAnn a={modalRev.ann}/>
-      <RvReply b={modalRev.bank_reply} date={modalRev.date}/>
-      {/* полный текст — с той же подсветкой, что и в карточке: аудитор открывает
-          отзыв именно чтобы проверить совпадение, терять его тут нельзя */}
-      <div className="rv-modal-text">{kbMark(modalRev.marked||modalRev.text)}</div>
-      <div className="rv-rf" style={{marginTop:16}}>
-        {modalRev.url&&<a href={modalRev.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(modalRev.url)} ↗</a>}
-        <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(modalRev)} onKeyDown={onKey(()=>addCase(modalRev))}>＋ в аудит-дело</span>
-      </div>
-    </RvModal>}
 
     {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
     {drill&&<RvModal side="right" onClose={()=>setDrill(null)} title={drill.label}
@@ -4261,9 +4473,16 @@ function ReviewsPage({params}){
       <div style={{marginTop:6}}>
         {drillBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
          !drillItems||!drillItems.length?<RvNote/>:
-         drillItems.map((r,i)=><RvReview key={i} r={r} onOpen={()=>setModalRev(r)}/>)}
+         <div className="rv-clist">{drillItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
+           read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="drill"&&rd.idx===i}
+           onOpen={()=>openReader(drillItems,i,drill.label,"drill")} onCase={()=>addCase(r)}/>)}</div>}
       </div>
     </RvModal>}
+    {/* Читалка поверх — из групп, срезов, журнала, похожих и на узком экране */}
+    {rd&&!split&&rdItem&&<RvModal side="right" wide sheet bare title="Жалоба" onClose={()=>setRd(null)}>
+      {close=><RvReader r={rdItem} {...rdNav} showBank onClose={close}
+        onCase={()=>addCase(rdItem)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}
+        onBack={rd.back?()=>setRd(rd.back):null}/>}</RvModal>}
     {pick&&<RvCasePick items={pick} onClose={()=>setPick(null)} onDone={onPicked}/>}
   </div>;
 }
@@ -7282,39 +7501,34 @@ function KbCoverage({onPick}){
 // Одно окно на «Базу знаний» и «Отзывы»: в деле документы и жалобы вперемешку.
 // Дело можно открыть команде и вести вместе, к каждому материалу — комментарий,
 // разбор моделью, выгрузка в Excel и Word.
-function RvCaseItem({it,onDrop,onNote,onOpenDoc}){
-  const r=it.review;
+// Жалоба дела — в виде карточки ленты: та же разметка, те же признаки
+const rvCaseCard=it=>{const r=it.review||{};
+  return {url:it.url,date:r.date,bank:r.bank,city:r.city,product:r.product,source:r.source,text:it.title||"",
+    ann:(r.summary||r.issue)?{summary:r.summary,quote:r.quote,esc:r.esc,esc_to:r.esc_to||[],
+      vulnerable:r.vulnerable||[],no_consent:r.no_consent,amount:r.amount}:null,
+    themes:r.issue_label?[{key:r.issue,label:r.issue_label,short:r.issue_label,risk:r.risk}]:[]};};
+
+function RvCaseItem({it,onDrop,onNote,onOpenDoc,onOpen}){
   const[note,setNote]=useState(it.note||"");
-  return <div className="kb-case-item rv-ci">
-    <div className="kb-case-it-h">
-      {r?<div className="rv-ci-meta">{[rvDate(r.date),r.bank,r.product,r.city,r.source].filter(Boolean).join(" · ")}</div>
-        :it.kind==="review"?<div className="rv-ci-meta">жалоба · разметки нет</div>
-        :<button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc&&onOpenDoc(it.ref_id)}>{it.title||it.url}</button>}
-      {it.can_remove&&<button className="kb-case-x" onClick={onDrop} title="Убрать из дела">✕</button>}
-    </div>
-    {r&&<>
-      <div className="rv-ci-tags">
-        {r.issue_label&&<span className={"rv-tag "+(r.risk||"ops")}>{r.issue_label}</span>}
-        {(r.esc==="filed"||r.esc==="threat")&&<span className="rv-ci-f">{r.esc==="filed"?"обратился":"грозит"}{r.esc_to.length?": "+r.esc_to.map(x=>RV_TO[x]||x).join(", "):""}</span>}
-        {r.vulnerable.length>0&&<span className="rv-ci-f">{r.vulnerable.map(x=>RV_VULN[x]||x).join(", ")}</span>}
-        {r.no_consent&&<span className="rv-ci-f">без согласия</span>}
-        {r.amount!=null&&<span className="rv-ci-f">{fmtNum(r.amount)} ₽</span>}
+  const doc=it.kind!=="review";
+  return <div className="rv-ci">
+    {doc?<div className="kb-case-item">
+      <div className="kb-case-it-h">
+        <button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc&&onOpenDoc(it.ref_id)}>{it.title||it.url}</button>
       </div>
-      <div className="rv-ci-s">{r.summary||(it.title||"").slice(0,300)}</div>
-      {r.quote&&<div className="rv-ci-q">«{r.quote}»</div>}
-    </>}
-    {!r&&it.kind==="review"&&<div className="rv-ci-s">{(it.title||"").slice(0,400)}</div>}
-    {it.kind==="document"&&<div className="kb-doc-meta">
-      {it.bank_name&&<span className="kb-bank">{it.bank_name}</span>}
-      {it.trust_score!=null&&<TrustDots score={it.trust_score}/>}
-      {it.fetched_at&&<span>обход {fmtDateMsk(it.fetched_at)}</span>}
-    </div>}
+      <div className="kb-doc-meta">
+        {it.bank_name&&<span className="kb-bank">{it.bank_name}</span>}
+        {it.trust_score!=null&&<TrustDots score={it.trust_score}/>}
+        {it.fetched_at&&<span>обход {fmtDateMsk(it.fetched_at)}</span>}
+        {it.url&&<a href={it.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(it.url)} ↗</a>}
+      </div></div>
+     :<RvCard r={rvCaseCard(it)} showBank onOpen={onOpen}/>}
     <div className="rv-ci-foot">
-      {it.url&&<a href={it.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(it.url)} ↗</a>}
-      {it.added_by&&<span className="rv-ci-by">приобщил: {it.added_by}</span>}
+      <textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="комментарий аудитора…"
+        onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
+      {it.can_remove&&<button className="rv-ib" onClick={onDrop} aria-label="Убрать из дела" title="убрать из дела"><RvIX s={14}/></button>}
     </div>
-    <textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="комментарий аудитора…"
-      onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
+    {it.added_by&&<div className="rv-ci-by">приобщил: {it.added_by}</div>}
   </div>;
 }
 
@@ -7325,6 +7539,7 @@ function KbCases({onClose,onOpenDoc}){
   const[newT,setNewT]=useState("");
   const[an,setAn]=useState(null),[anBusy,setAnBusy]=useState(false),[anErr,setAnErr]=useState(null);
   const[ren,setRen]=useState(null);
+  const[crd,setCrd]=useState(null);           // читалка жалоб дела: {list, idx}
   // старое «дело» из браузера (до серверных дел во вкладке «Отзывы»)
   const[legacy,setLegacy]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]");}catch{return [];}});
   const load=()=>apiFetch("/api/cases").then(d=>setList(d.cases||[])).catch(()=>setList([]));
@@ -7369,11 +7584,30 @@ function KbCases({onClose,onOpenDoc}){
       +" регулятора и судов по похожим случаям и что запросить у подразделения для проверки?");
   };
 
+  // жалобы дела открываются в читалке со всем составом дела — J/K по порядку
+  const openRev=async(it)=>{
+    const urls=(cur.items||[]).filter(x=>x.kind==="review"&&x.url).map(x=>x.url);
+    const d=await apiPost("/api/reviews/by-urls",{urls}).catch(()=>null);
+    const list=(d&&d.items)||[]; const i=list.findIndex(x=>x.url===it.url);
+    if(list.length)setCrd({list,idx:Math.max(0,i)}); };
+  useEffect(()=>{ if(!crd)return;
+    const h=e=>{ if(e.target&&e.target.closest&&e.target.closest("input,textarea"))return;
+      const k=e.key.toLowerCase();
+      if(k==="j"||k==="о")setCrd(x=>x&&x.idx<x.list.length-1?{...x,idx:x.idx+1}:x);
+      if(k==="k"||k==="л")setCrd(x=>x&&x.idx>0?{...x,idx:x.idx-1}:x); };
+    document.addEventListener("keydown",h); return ()=>document.removeEventListener("keydown",h); },[!!crd]);
+  const reader=crd&&<RvModal side="right" wide sheet bare title="Жалоба" onClose={()=>setCrd(null)}>
+    {close=><RvReader r={crd.list[crd.idx]} pos={crd.idx} total={crd.list.length} ctx={cur&&cur.title} showBank
+      inCase={cur&&cur.title} onClose={close}
+      onPrev={crd.idx>0?()=>setCrd(x=>({...x,idx:x.idx-1})):null}
+      onNext={crd.idx<crd.list.length-1?()=>setCrd(x=>({...x,idx:x.idx+1})):null}
+      onOpenSim={(list,i)=>setCrd({list,idx:i})}/>}</RvModal>;
+
   if(open&&!cur)return <RvModal side="right" title="Аудит-дело" onClose={()=>setOpen(null)}><Skel h={200}/></RvModal>;
   if(open&&cur){
     const items=cur.items||[], nRev=items.filter(i=>i.kind==="review").length;
     const stale=an&&cur.analysis_items&&cur.analysis_items!==items.length;
-    return <RvModal side="right" title={cur.title}
+    return <><RvModal side="right" title={cur.title}
       sub={`${items.length} матер.${nRev?` · жалоб ${nRev}`:""}${cur.shared?" · открыто команде":""}${!cur.mine?` · ведёт ${cur.owner}`:""}`}
       onClose={()=>{setOpen(null);setCur(null);load();}}>
       <button className="rv-cs-back" onClick={()=>{setOpen(null);setCur(null);load();}}>← все дела</button>
@@ -7405,11 +7639,12 @@ function KbCases({onClose,onOpenDoc}){
       </div>}
       {items.map((it,i)=><React.Fragment key={it.item_id}>
         <div className="rv-ci-n mono">[{i+1}]</div>
-        <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onNote={v=>saveNote(it,v)} onOpenDoc={onOpenDoc}/>
+        <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onNote={v=>saveNote(it,v)} onOpenDoc={onOpenDoc}
+          onOpen={()=>openRev(it)}/>
       </React.Fragment>)}
       {!items.length&&<div className="kb-empty">
-        Дело пустое. Приобщайте жалобы кнопкой «＋ в аудит-дело» в ленте «Отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
-    </RvModal>;
+        Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте «Отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
+    </RvModal>{reader}</>;
   }
 
   return <RvModal side="right" title="Аудит-дела"

@@ -1012,6 +1012,21 @@ def remove_case_item(case_id: int, item_id: int, username: str) -> bool:
     return True
 
 
+def case_review_urls(username: str) -> dict[str, str]:
+    """Какие жалобы уже приобщены к делам, доступным пользователю: ссылка →
+    название дела (последнего). Нужно ленте, чтобы показать «в деле»."""
+    rows = _rows(f"""
+        SELECT DISTINCT ON (i.url) i.url, c.title
+          FROM audit_case_item i JOIN audit_case c ON c.case_id = i.case_id
+         WHERE i.kind = 'review' AND i.url IS NOT NULL
+           AND (c.username = :u OR {_TEAM_SHARED}
+                OR EXISTS (SELECT 1 FROM audit_case_share sh
+                            WHERE sh.case_id = c.case_id AND sh.revoked_at IS NULL
+                              AND sh.shared_with = :u))
+         ORDER BY i.url, i.added_at DESC""", {"u": username})
+    return {r["url"]: r["title"] for r in rows}
+
+
 def update_case_item_note(case_id: int, item_id: int, username: str, note: str | None) -> bool:
     """Комментарий аудитора к материалу — зачем приобщён, что в нём важно."""
     if not _may_read_case(case_id, username):

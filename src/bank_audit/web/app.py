@@ -1892,6 +1892,12 @@ def reviews_by_urls(req: ReviewUrls):
     return {"items": _rw().reviews_by_urls(req.urls)}
 
 
+@app.get("/api/reviews/similar")
+def reviews_similar(url: str, limit: int = 3):
+    """Похожие жалобы для читалки: тот же банк и главная проблема, близкое изложение."""
+    return {"items": _rw().similar(url, max(1, min(limit, 6)))}
+
+
 @app.get("/api/reviews/signal-journal")
 def reviews_signal_journal(bank: str = "Сбербанк", product: Optional[str] = None,
                            days: int = 180):
@@ -3019,6 +3025,12 @@ def cases_create(req: CaseCreate, user: CurrentUser = Depends(get_current_user))
     if not (req.title or "").strip():
         raise HTTPException(400, "нужно название дела")
     return {"case_id": userdata.create_case(user.username, req.title.strip(), req.note)}
+
+
+@app.get("/api/cases/review-urls")
+def cases_review_urls(user: CurrentUser = Depends(get_current_user)):
+    """Жалобы, уже приобщённые к доступным делам, — для пометки «в деле» в ленте."""
+    return {"urls": userdata.case_review_urls(user.username)}
 
 
 @app.get("/api/cases/{case_id}")
