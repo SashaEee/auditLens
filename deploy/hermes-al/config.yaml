@@ -1,9 +1,80 @@
+# Конфиг hermes-al — отдельного Hermes для ИИ-аналитика AuditLens.
+# Шаблон: __LLM_API_KEY__ подставляет sync.sh из действующего конфига контейнера.
+# Ключ MCP читается из окружения (${AGENT_MCP_KEY} в /root/.hermes/.env).
+
 model:
-  default: zai-org/GLM-5.2
+  # Модель по умолчанию выбирается по регрессионному набору (auditlens agent-eval).
+  default: openai/gpt-oss-120b
   provider: custom
   base_url: https://foundation-models.api.cloud.ru/v1/
-  api_key: __LLM_API_KEY__   # из Infisical/.env, не коммитить настоящий
+  api_key: __LLM_API_KEY__
+
 agent:
-  max_turns: 20
-  reasoning_effort: low
+  max_turns: 40
+  reasoning_effort: medium
   verbose: false
+
+# Данные AuditLens — инструменты mcp_auditlens_* поверх штатного набора Hermes
+# (терминал, файлы, код, веб, память, навыки остаются как были).
+mcp_servers:
+  auditlens:
+    url: http://127.0.0.1:8000/mcp/
+    headers:
+      Authorization: "Bearer ${AGENT_MCP_KEY}"
+    timeout: 90
+    connect_timeout: 15
+
+skills:
+  # Агент сам пишет и правит навыки, без ручного одобрения (решение владельца).
+  # Страховка — регрессионный набор после обучения и резервные копии куратора.
+  write_approval: false
+  # Неприменимые к аналитику встроенные навыки: убираем из подсказки API-агента,
+  # чтобы 60+ чужих описаний не размывали выбор. С диска не удаляются.
+  platform_disabled:
+    api_server: [apple-notes, apple-reminders, findmy, imessage, openhue, xurl, yuanbao,
+                 hermes-themes, hermes-desktop-plugins, himalaya, obsidian, dogfood,
+                 architecture-diagram, ascii-art, ascii-video, baoyu-infographic,
+                 claude-design, comfyui, design-md, excalidraw, humanizer, manim-video, p5js,
+                 popular-web-designs, pretext, sketch, songwriting-and-ai-music,
+                 touchdesigner-mcp, gif-search, heartmula, songsee, youtube-content,
+                 huggingface-hub, lm-evaluation-harness, weights-and-biases, llama-cpp, vllm,
+                 audiocraft, segment-anything, codebase-inspection, github-auth,
+                 github-code-review, github-issues, github-pr-workflow,
+                 github-repo-management, node-inspect-debugger, python-debugpy,
+                 requesting-code-review, simplify-code, spike, systematic-debugging,
+                 test-driven-development, claude-code, codex, opencode, computer-use,
+                 airtable, google-workspace, maps, notion, petdex, teams-meeting-pipeline,
+                 tui-widgets, arxiv, polymarket, research-paper-writing]
+
+curator:
+  enabled: true
+  # Слияние похожих навыков в общие — агент пишет навыки после каждой сложной
+  # задачи, без слияния они дробятся на «один навык на один вопрос».
+  consolidate: true
+
+memory:
+  memory_enabled: true
+  # Профиль пользователя выключен: через API ходят все аудиторы под одним
+  # агентом, общий «профиль пользователя» смешал бы разных людей.
+  user_profile_enabled: false
+
+platforms:
+  api_server:
+    extra:
+      # Выбор модели на запрос (поле model в POST /v1/runs) — для сравнения
+      # моделей на регрессионном наборе без перезапуска агента.
+      model_routes:
+        oss: {model: openai/gpt-oss-120b, provider: custom,
+              base_url: "https://foundation-models.api.cloud.ru/v1/", api_key: __LLM_API_KEY__}
+        gpt54mini: {model: openai/gpt-5.4-mini, provider: custom,
+                    base_url: "https://foundation-models.api.cloud.ru/v1/", api_key: __LLM_API_KEY__}
+        gpt54: {model: openai/gpt-5.4, provider: custom,
+                base_url: "https://foundation-models.api.cloud.ru/v1/", api_key: __LLM_API_KEY__}
+        dsflash: {model: deepseek-ai/DeepSeek-V4-Flash, provider: custom,
+                  base_url: "https://foundation-models.api.cloud.ru/v1/", api_key: __LLM_API_KEY__}
+        dspro: {model: deepseek-ai/DeepSeek-V4-Pro, provider: custom,
+                base_url: "https://foundation-models.api.cloud.ru/v1/", api_key: __LLM_API_KEY__}
+        sonnet: {model: anthropic/claude-sonnet-4.6, provider: custom,
+                 base_url: "https://foundation-models.api.cloud.ru/v1/", api_key: __LLM_API_KEY__}
+        haiku: {model: anthropic/claude-haiku-4.5, provider: custom,
+                base_url: "https://foundation-models.api.cloud.ru/v1/", api_key: __LLM_API_KEY__}

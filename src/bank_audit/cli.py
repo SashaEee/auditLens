@@ -60,5 +60,39 @@ def serve(host: str, port: int, reload: bool):
         log_level="warning",
     )
 
-if __name__ == "__main__":
+@cli.command("agent-eval")
+@click.option("--model", default=None, help="маршрут модели Hermes (oss, gpt54mini, sonnet…)")
+@click.option("--cases", default=None, help="только эти кейсы через запятую: S1,P2")
+@click.option("--no-judge", is_flag=True, help="без судьи-модели, только детерминированные проверки")
+@click.option("--trigger", default="cli", help="метка запуска: cli | gate | schedule")
+@click.option("--json", "as_json", is_flag=True, help="итог одной строкой JSON (для скриптов)")
+def agent_eval(model, cases, no_judge, trigger, as_json):
+    """Регрессионный набор ИИ-аналитика: вопросы по всем вкладкам с живым эталоном."""
+    import asyncio
+    from .ai.agent_eval import run_eval
+    only = [c.strip() for c in cases.split(",")] if cases else None
+    res = asyncio.run(run_eval(model=model, only=only, use_judge=not no_judge, trigger=trigger))
+    if as_json:
+        click.echo(json.dumps({k: res[k] for k in ("run_id", "model", "score", "n_pass",
+                                                   "n_partial", "n_fail", "median_s")},
+                              ensure_ascii=False))
+        return
+    for c in res["cases"]:
+        bad = "; ".join(x["check"] for x in c.get("checks") or [] if not x["ok"])
+        jd = c.get("judge") or {}
+        click.echo(f"{c['id']:<3} {c['verdict']:<8} {c.get('seconds') or 0:>6.1f}с "
+                   f"судья={jd.get('score', '—')}  {c['title']}"
+                   + (f"  ✗ {bad}" if bad else "") + (f"  ⚠ {c['error']}" if c.get("error") else ""))
+    click.echo(f"итог: {res['score']} (зачёт {res['n_pass']}, частично {res['n_partial']}, "
+               f"провал {res['n_fail']}), медиана {res['median_s']} с, прогон {res['run_id']}")
+
+
+def main():
+    """Точка входа консольной команды `auditlens` (pyproject: bank_audit.cli:main).
+    Раньше её не было — команда падала с ImportError, работал только
+    `python -m bank_audit.cli`."""
     cli()
+
+
+if __name__ == "__main__":
+    main()

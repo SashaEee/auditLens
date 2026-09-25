@@ -9093,6 +9093,62 @@ function PuNewsQuality({q}){
   </div>;
 }
 
+// Качество ИИ-аналитика: регрессионный набор (вопросы по всем вкладкам с
+// эталоном из живых данных). Нужен, потому что агент учится сам — пишет себе
+// навыки, — и без замера деградацию заметил бы только аудитор.
+const PU_VERDICT={pass:["зачёт","ok"],partial:["частично",""],fail:["провал","bad"],skip:["пропуск",""]};
+function PuAgentEval(){
+  const[d,setD]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const[open,setOpen]=useState(null);
+  const load=useCallback(()=>{apiFetch("/api/admin/agent-eval").then(setD).catch(()=>setD({error:true}));},[]);
+  useEffect(()=>{load();},[load]);
+  useEffect(()=>{ if(!(d&&d.running))return; const t=setInterval(load,20000); return ()=>clearInterval(t); },[d,load]);
+  const start=()=>{setBusy(true);apiPost("/api/admin/agent-eval",{}).then(()=>setTimeout(load,1500))
+    .catch(()=>{}).finally(()=>setBusy(false));};
+  if(!d) return null;
+  const runs=d.runs||[], last=runs[0], cases=d.last_cases||[];
+  const prev=runs[1];
+  const delta=last&&prev&&last.score!=null&&prev.score!=null?Math.round((last.score-prev.score)*10)/10:null;
+  const num=x=>x==null?"—":String(x).replace(".",",");
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>ИИ-аналитик: регрессионный набор</span>
+      {last&&<span className={"pu-chip "+(last.score>=75?"ok":last.score<50?"bad":"")}>
+        {num(last.score)} из 100{delta!=null&&delta!==0?` · ${delta>0?"+":"−"}${num(Math.abs(delta))}`:""}</span>}
+      <button className="btn" style={{marginLeft:"auto"}} disabled={busy||d.running} onClick={start}>
+        {d.running?"Идёт прогон…":"Запустить прогон"}</button></div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      Вопросы по всем вкладкам; эталон считается в момент прогона теми же функциями, что
+      рисуют вкладки. Проверки: числа, темы, запреты (внутренние адреса, служебные ключи,
+      заглушки) и судья-модель. Раз в неделю прогон проверяет самообучение агента:
+      если качество упало, навыки откатываются.</p>
+    {runs.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Прогонов ещё не было.</div>:<>
+      <table className="pu-tbl" style={{marginBottom:12}}>
+        <thead><tr><th>когда</th><th>модель</th><th>запуск</th><th>итог</th><th>зачёт</th><th>частично</th><th>провал</th><th>медиана, с</th></tr></thead>
+        <tbody>{runs.slice(0,6).map(r=><tr key={r.run_id}>
+          <td>{fyDay(r.started_at)}</td><td>{r.model}</td><td>{r.trigger}</td>
+          <td><b className="tnum">{num(r.score)}</b></td><td>{r.n_pass}</td><td>{r.n_partial}</td>
+          <td style={r.n_fail>0?{color:"var(--neg)"}:null}>{r.n_fail}</td><td>{num(r.median_s)}</td>
+        </tr>)}</tbody></table>
+      <table className="pu-tbl">
+        <thead><tr><th>кейс</th><th>вкладка</th><th>итог</th><th>с</th><th>судья</th><th>что не так</th></tr></thead>
+        <tbody>{cases.map(c=>{const v=PU_VERDICT[c.verdict]||[c.verdict,""];
+          const bad=(c.checks||[]).filter(x=>!x.ok).map(x=>x.check+(x.detail!=null&&x.detail!==""?` (${x.detail})`:""));
+          const iss=((c.judge||{}).issues||[]).slice(0,2);
+          return <React.Fragment key={c.id}>
+            <tr onClick={()=>setOpen(open===c.id?null:c.id)} style={{cursor:"pointer"}}>
+              <td>{c.id} · {c.title}</td><td>{c.tab}</td>
+              <td><span className={"pu-chip "+v[1]}>{v[0]}</span></td>
+              <td>{num(c.seconds)}</td><td>{(c.judge||{}).score??"—"}</td>
+              <td style={{fontSize:12,color:"var(--ink-3)"}}>{c.error||[...bad,...iss].join("; ")||"—"}</td>
+            </tr>
+            {open===c.id&&c.answer&&<tr><td colSpan={6}>
+              <div style={{fontSize:12,color:"var(--ink-3)",margin:"4px 0 6px"}}>{c.question}</div>
+              <div className="chat-bubble" style={{maxWidth:"none"}}>{renderMD(c.answer)}</div></td></tr>}
+          </React.Fragment>;})}</tbody></table></>}
+  </div>;
+}
+
 // Полнота площадок отзывов: без неё падение сборщика видно только в ручном
 // аудите (к сентябрю 2026 наши сборщики принесли <1% потока, и никто не знал)
 function PuReviewSources({r}){
@@ -9720,6 +9776,7 @@ function PulsePage(){
       <PuCollect c={m.collect||{}}/>
       <PuSearch s={m.search||{}}/>
       <PuNewsQuality q={m.news_quality||{}}/>
+      <PuAgentEval/>
     </>}
 
     {tab==="tech"&&<>

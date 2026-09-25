@@ -42,6 +42,9 @@ logging.basicConfig(
 )
 
 
+_MCP_ON = bool(os.getenv("AGENT_MCP_KEY"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Фоновые циклы:
@@ -94,6 +97,13 @@ async def lifespan(app: FastAPI):
     # убивало на полуслове, документ оставался без фрагментов — и навсегда,
     # потому что повторная загрузка отсекалась как дубль.
     ingest_queue.start()
+    # MCP-сервер инструментов для агента Hermes (ai/mcp_server.py): его менеджер
+    # сессий должен жить всё время работы приложения.
+    from contextlib import AsyncExitStack
+    mcp_stack = AsyncExitStack()
+    if _MCP_ON:
+        from ..ai import mcp_server
+        await mcp_stack.enter_async_context(mcp_server.server().session_manager.run())
     try:
         # Reaper: зависшие 'running' запуски после рестарта → 'error'.
         # Best-effort: недоступная БД/неприменённые миграции не должны
@@ -104,6 +114,7 @@ async def lifespan(app: FastAPI):
             log.warning("[lifespan] reap_stale_runs failed", exc_info=True)
         yield
     finally:
+        await mcp_stack.aclose()
         for t in tasks:
             t.cancel()
         for t in tasks:
@@ -389,6 +400,39 @@ def admin_metrics(days: int = 14, user: CurrentUser = Depends(get_current_user))
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "admin only")
     return telemetry.metrics(days)
+
+
+_EVAL_TASK: Optional[asyncio.Task] = None
+
+
+@app.get("/api/admin/agent-eval")
+def admin_agent_eval(limit: int = 12, user: CurrentUser = Depends(get_current_user)):
+    """Регрессионный набор ИИ-аналитика: прогоны и кейсы последнего — карточка «Пульса»."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from ..ai import agent_eval
+    res = agent_eval.history(max(1, min(limit, 50)))
+    res["running"] = bool(_EVAL_TASK and not _EVAL_TASK.done())
+    return res
+
+
+class AgentEvalReq(BaseModel):
+    model: Optional[str] = None
+    judge: bool = True
+
+
+@app.post("/api/admin/agent-eval")
+async def admin_agent_eval_run(req: AgentEvalReq, user: CurrentUser = Depends(get_current_user)):
+    """Запустить прогон в фоне (один за раз): 14 вопросов, 3–8 минут."""
+    global _EVAL_TASK
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    if _EVAL_TASK and not _EVAL_TASK.done():
+        raise HTTPException(409, "прогон уже идёт")
+    from ..ai.agent_eval import run_eval
+    _EVAL_TASK = asyncio.create_task(run_eval(model=req.model or None, use_judge=req.judge,
+                                              trigger="admin"))
+    return {"started": True}
 
 
 @app.get("/api/admin/users")
@@ -3449,6 +3493,11 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     gaps: Optional[dict] = None
     ranking: Optional[dict] = None
     insights: Optional[list] = None
+    # Быстрый ответ: движок, шаги агента и сводка прогона — в meta сообщения,
+    # чтобы качество ИИ-аналитика можно было разбирать по истории, а не по памяти.
+    engine: Optional[str] = None
+    tools_used: list[str] = []
+    run_meta: Optional[dict] = None
 
     def _persist() -> int | None:
         """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
@@ -3476,8 +3525,14 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                         asyncio.create_task(generate_profile_note(username))
                 except Exception:
                     pass
-            userdata.add_message(session_id, "assistant", body, {
-                "sources": sources, "mode": mode, "report_id": report_id})
+            meta = {"sources": sources, "mode": mode, "report_id": report_id}
+            if engine:
+                meta["engine"] = engine
+            if tools_used:
+                meta["tools"] = tools_used[:60]
+            if run_meta:
+                meta["run"] = run_meta
+            userdata.add_message(session_id, "assistant", body, meta)
             # Достраиваем связь «документ → отчёт»: страницы уже легли в базу
             # знаний с run_id, а номер отчёта появился только сейчас.
             if report_id:
@@ -3525,6 +3580,12 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     insights = data["items"]
                 elif t == "mode":
                     mode = data.get("value")
+                elif t == "engine":
+                    engine = data.get("value")
+                elif t == "tool_call" and data.get("name"):
+                    tools_used.append(str(data["name"]))
+                elif t == "run_meta":
+                    run_meta = {k: v for k, v in data.items() if k != "type"}
                 elif t == "done" and not persisted:
                     # Персистим ДО done: клиент успевает получить report_id
                     # (кнопка «Поделиться» доступна сразу после прогона).
@@ -3739,6 +3800,14 @@ def readyz():
         return {"status": "ready"}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"db unavailable: {e}")
+
+
+# ── MCP: инструменты аналитика для агента Hermes ────────────────────────────
+# Только локально и с ключом AGENT_MCP_KEY (см. ai/mcp_server.Guard). Адрес для
+# Hermes — со слэшем на конце: http://127.0.0.1:8000/mcp/
+if _MCP_ON:
+    from ..ai import mcp_server as _mcp_server  # noqa: E402
+    app.mount("/mcp", _mcp_server.asgi_app(), name="mcp")
 
 
 # ── loophole module (mount router + static) ─────────────────────────────────

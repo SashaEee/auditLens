@@ -1,25 +1,42 @@
-"""Hermes-движок «Быстрого» режима: агент Nous Hermes вместо single-shot цикла.
+"""Быстрый режим ИИ-аналитика: агент Hermes (контейнер hermes-al).
 
-Архитектура: ОТДЕЛЬНЫЙ контейнер hermes-al (образ ~/hermes-al на VM, свой дом
-/root/.hermes в volume) — никак не связан с личным Hermes владельца. Внутри
-агент свободен: shell/python/веб; данные — через alsql (psql-обёртка: SELECT/
-INSERT/UPDATE свободно, DROP/DELETE отрезаны), новости — пул daily_digest +
-SearXNG, отзывы — локальный API AuditLens. Скиллы и память самообучаются.
+Hermes — харнесс агента: цикл с инструментами, навыки, память, самообучение.
+Что он умеет в AuditLens, задают не этот модуль, а его настройки
+(deploy/hermes-al): SOUL.md — кто он и как отвечает, навыки auditlens-* —
+методика по областям, MCP-сервер AuditLens (ai/mcp_server.py) — данные теми же
+функциями, что рисуют вкладки. Этот модуль только проводит вопрос туда и ответ
+обратно в чат.
 
-Протокол: POST /v1/runs → run_id → GET /v1/runs/{id}/events (SSE) →
-транслируем в наш стрим: assistant.delta → text-чанки, tool.started →
-tool_call (фронтовые индикаторы), run.completed → done.
+Протокол: POST /v1/runs → run_id → GET /v1/runs/{id}/events (SSE).
+  assistant.delta → текст, tool.started → шаг в интерфейсе,
+  run.completed → финал (поле output — авторитетный текст ответа).
 
-Контракт отказа: если Hermes упал ДО первого текст-чанка — поднимаем исключение,
-вызывающий (stream_analysis) прозрачно откатывается на нативный quick.
+Что делаем на своей стороне и почему:
+  • Контекст запроса — в штатное поле instructions (системное сообщение
+    прогона), а не приклеиванием правил к вопросу.
+  • Текст, написанный ДО очередного вызова инструмента («Сейчас посмотрю…»),
+    — рассуждение вслух, а не ответ: придерживаем начало ответа и сбрасываем
+    его, если за ним последовал инструмент.
+  • Пустой финал или заглушка («Давай разберусь детальнее.» — так кончался
+    бюджет шагов) — одна повторная попытка, затем откат на нативный цикл.
+  • Ссылки на внутренние адреса (127.0.0.1) у пользователя не откроются —
+    переписываем на страницы AuditLens или убираем.
+  • Пользователь ушёл — останавливаем прогон, чтобы агент не работал впустую.
+
+Контракт отказа: HermesNotStreamed — Hermes не дал ни слова ответа; вызывающий
+(stream_analysis) откатывается на нативный быстрый цикл.
 """
 from __future__ import annotations
 
+import asyncio
+import datetime as _dt
 import json
 import logging
 import os
 import re
+import time
 from typing import AsyncIterator
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -27,16 +44,26 @@ log = logging.getLogger(__name__)
 
 HERMES_API_URL = os.getenv("HERMES_API_URL", "http://127.0.0.1:8642").rstrip("/")
 HERMES_API_KEY = os.getenv("HERMES_API_KEY", "")
-HERMES_TIMEOUT_S = float(os.getenv("HERMES_TIMEOUT_S", "240"))
+# Предел всего прогона. Агенту дано до 40 шагов; типовой ответ — 20–60 с.
+HERMES_TIMEOUT_S = float(os.getenv("HERMES_TIMEOUT_S", "360"))
+# Повторять прогон с пустым финалом, только если с начала прошло меньше этого.
+HERMES_RETRY_BEFORE_S = float(os.getenv("HERMES_RETRY_BEFORE_S", "150"))
+# Маршрут модели (model_routes в конфиге Hermes); пусто — модель по умолчанию.
+HERMES_MODEL = os.getenv("HERMES_MODEL", "")
+# Сколько знаков ответа придержать, прежде чем показывать: короткий текст
+# перед вызовом инструмента — рассуждение, его не показываем.
+HOLD_CHARS = int(os.getenv("HERMES_HOLD_CHARS", "240"))
+
+MSK = ZoneInfo("Europe/Moscow")
 
 
 class HermesNotStreamed(RuntimeError):
-    """Hermes упал до первого текст-чанка — безопасно откатиться на нативный quick."""
+    """Hermes не дал ни слова ответа — безопасно откатиться на нативный цикл."""
 
 
 def _pick(ev: dict, *paths: str):
-    """Достаёт значение по нескольким путям вида 'data.delta' (форма событий
-    у Hermes слегка гуляет между версиями — парсим защитно)."""
+    """Значение по одному из путей вида 'data.delta' (форма событий Hermes
+    немного разная между версиями — разбираем защитно)."""
     for p in paths:
         cur = ev
         ok = True
@@ -51,38 +78,73 @@ def _pick(ev: dict, *paths: str):
     return None
 
 
-# Правила работы для быстрого режима. Своего системного слота у API движка нет
-# (POST /v1/runs принимает только input и историю), поэтому передаём их вместе с
-# заданием. Причина: на вопрос о требованиях по образовательному кредиту агент
-# не открыл НИ ОДНОГО источника и сочинил ответ по памяти — с несуществующей
-# «иноагентской образовательной программой» и наугад названным номером закона.
-# Аудитор такую выдачу проверить не может, а именно на это и жаловались.
-QUICK_RULES = """
----
-Правила ответа (внутренний инструмент аудита Сбербанка):
-1. Не отвечай по памяти. Каждое число и утверждение — из проверенного источника.
-   Порядок обращения: сначала собственные данные (витрина, база знаний, отзывы),
-   и только если без внешней страницы никак — веб. Это БЫСТРЫЙ режим: на веб
-   трать не больше двух-трёх попыток, а если страницы не открываются — не
-   продолжай их перебирать, а ответь тем, что есть, и честно скажи, чего не
-   хватило. Если источника не нашлось вовсе: «по доступным источникам данных нет».
-2. Нормы права проверяй по документам, а не по памяти. Номер акта, статью и дату
-   приводи как установленный факт только если видел их в источнике. Если номер
-   всплыл по памяти — можно назвать, но обязательно с пометкой «по памяти, не
-   подтверждено источником»: аудитор пойдёт проверять, и непомеченная ссылка
-   обойдётся дороже неточной.
-3. Различай «мы этого не собираем» и «этого нет у банка». Пустая выборка — не
-   доказательство отсутствия продукта.
-4. Точка зрения — аудитор Сбера: другие банки это бенчмарк, а не выбор клиента.
-5. Ответ обязателен всегда. Если источников мало — напиши, что удалось
-   установить, чего не хватает и где это искать. Молчание недопустимо: пустой
-   ответ для аудитора хуже неполного.
-"""
+# ── подписи шагов ────────────────────────────────────────────────────────────
+
+_BUILTIN_LABELS = {
+    "terminal": "Терминал", "process": "Терминал", "execute_code": "Код",
+    "skill_view": "Навык", "skills_list": "Навыки", "skill_manage": "Обучение",
+    "memory": "Память", "session_search": "История диалогов", "todo": "План",
+    "web_search": "Веб-поиск", "web_extract": "Чтение страницы",
+    "read_file": "Файл", "write_file": "Файл", "patch": "Файл",
+    "search_files": "Поиск по файлам", "delegate_task": "Помощник",
+    "vision_analyze": "Картинка",
+}
 
 
-# Ссылка на нормативный акт: номер закона, приказа, положения, постановления.
-_ACT_RE = re.compile(
-    r"(№\s?\d+[-\w]*|\b\d+[-‑]?ФЗ\b|\bФЗ[-\s]?№?\s?\d+)", re.IGNORECASE)
+def tool_label(name: str) -> str:
+    from .agent_tools import label_for
+    if name.startswith("mcp_auditlens_"):
+        return label_for(name)
+    if name.startswith("browser_"):
+        return "Браузер"
+    return _BUILTIN_LABELS.get(name, name)
+
+
+# ── чистка текста ────────────────────────────────────────────────────────────
+
+_LOCAL = r"https?://(?:127\.0\.0\.1|localhost|0\.0\.0\.0)(?::\d+)?"
+_LOCAL_PAGE_LINK = re.compile(r"\]\(" + _LOCAL + r"/?(#[a-z]+[^)\s]*)\)")
+_LOCAL_LINK = re.compile(r"\[([^\]]+)\]\(" + _LOCAL + r"[^)\s]*\)")
+_LOCAL_BARE = re.compile(r"`?" + _LOCAL + r"[^\s)`]*`?")
+
+
+def sanitize(text: str) -> str:
+    """Внутренние адреса → страницы AuditLens (#reviews?…) или просто текст."""
+    text = _LOCAL_PAGE_LINK.sub(r"](\1)", text)
+    text = _LOCAL_LINK.sub(r"\1", text)
+    return _LOCAL_BARE.sub("", text)
+
+
+def safe_cut(buf: str) -> int:
+    """Докуда можно отдать текст, не разорвав ссылку: до последнего пробела и
+    не дальше начала незакрытой markdown-ссылки."""
+    cut = max(buf.rfind(" "), buf.rfind("\n")) + 1
+    open_br = buf.rfind("[", 0, cut)
+    if open_br >= 0:
+        rest = buf[open_br:]
+        closed = re.match(r"\[[^\]]*\]\([^)]*\)", rest)
+        if not closed and ("](" in rest or "]" not in rest):
+            cut = min(cut, open_br)
+    return max(cut, 0)
+
+
+_STUB_RX = re.compile(
+    r"^\W*(давай(те)?\s+(разбер|посмотр|провер)|сейчас\s+(посмотр|провер|загруж|найд)|"
+    r"(одну\s+)?минут|я\s+(посмотрю|проверю|разберусь)|let me|i reached the iteration limit|"
+    r"i couldn'?t generate|nothing to report)", re.I)
+
+
+def is_stub(text: str) -> bool:
+    """Ответ-заглушка: пусто или короткая фраза «сейчас разберусь»."""
+    t = (text or "").strip()
+    if not t:
+        return True
+    return len(t) < 160 and bool(_STUB_RX.search(t))
+
+
+# ── нормативные акты ─────────────────────────────────────────────────────────
+
+_ACT_RE = re.compile(r"(№\s?\d+[-\w]*|\b\d+[-‑]?ФЗ\b|\bФЗ[-\s]?№?\s?\d+)", re.IGNORECASE)
 _LEGAL_WORD_RE = re.compile(
     r"закон|постановлен|приказ|положени|указани|инструкци|регламент|кодекс|"
     r"\bФЗ\b|\bст\.\s?\d|стать[еёяиую]", re.IGNORECASE)
@@ -93,56 +155,72 @@ LEGAL_NOTE = ("\n\n> ⚠ **Ссылки на нормативные акты п�
 
 
 def needs_legal_note(text: str) -> bool:
-    """Есть ли в ответе ссылка на НПА, которую аудитор пойдёт проверять.
-
-    Промптом это не лечится до конца: модель быстрого режима называет номера
-    актов по памяти даже там, где источник не открывался, — в проверке всплыл
-    несуществующий «приказ № 117-Э». Молча отдавать такую ссылку нельзя:
-    аудитор сошлётся на неё в работе.
-    """
+    """Есть ли в ответе ссылка на НПА, которую аудитор пойдёт проверять
+    (однажды агент назвал несуществующий «приказ № 117-Э»)."""
     if not text or not _ACT_RE.search(text):
         return False
     return bool(_LEGAL_WORD_RE.search(text))
 
 
-def _with_rules(question: str) -> str:
-    """Вопрос + правила. Отключается QUICK_RULES=off."""
-    if os.getenv("QUICK_RULES", "on").lower() in ("off", "0", "none"):
-        return question
-    return f"{question}\n{QUICK_RULES}"
+# ── прогон ───────────────────────────────────────────────────────────────────
+
+def instructions(retry: bool = False) -> str:
+    now = _dt.datetime.now(MSK)
+    s = (f"Сегодня {now:%d.%m.%Y}, {now:%H:%M} МСК. Вопрос задан в чате ИИ-аналитика "
+         "AuditLens; ответ увидит аудитор в этом же чате (markdown).")
+    if retry:
+        s += (" Предыдущая попытка закончилась без ответа. Ответь по данным, которые "
+              "дают инструменты AuditLens, за несколько шагов; чего не хватило — "
+              "назови одной строкой.")
+    return s
 
 
-async def stream_quick_hermes(question: str, history: list[dict],
-                              session_hint: str | None = None) -> AsyncIterator[str]:
-    headers = {"Content-Type": "application/json"}
+def _headers(session_hint: str | None) -> dict:
+    h = {"Content-Type": "application/json"}
     if HERMES_API_KEY:
-        headers["Authorization"] = f"Bearer {HERMES_API_KEY}"
+        h["Authorization"] = f"Bearer {HERMES_API_KEY}"
     if session_hint:
-        headers["X-Hermes-Session-Id"] = f"auditlens-{session_hint}"
+        h["X-Hermes-Session-Id"] = f"auditlens-{session_hint}"
+    return h
 
-    body: dict = {"input": _with_rules(question)}
+
+async def _stop(run_id: str, headers: dict) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as cl:
+            await cl.post(f"{HERMES_API_URL}/v1/runs/{run_id}/stop", headers=headers)
+    except Exception:  # noqa: BLE001 — остановка best-effort
+        pass
+
+
+async def _one_run(question: str, history: list[dict], headers: dict, model: str | None,
+                   retry: bool, deadline: float, trace: dict) -> AsyncIterator[dict]:
+    """Один прогон Hermes. Отдаёт события: {"tool": name} | {"delta": text} |
+    {"final": text, "usage": …}. Останавливает прогон, если его бросили."""
+    body: dict = {"input": question, "instructions": instructions(retry)}
+    if model:
+        body["model"] = model
     hist = [{"role": m.get("role"), "content": str(m.get("content") or "")}
             for m in (history or [])
             if m.get("role") in ("user", "assistant") and m.get("content")]
     if hist:
         body["conversation_history"] = hist[-8:]
-
-    emitted = False
-    said: list[str] = []       # накопленный ответ — для проверки ссылок на НПА
+    run_id = None
+    finished = False
     try:
-        async with httpx.AsyncClient(
-                timeout=httpx.Timeout(HERMES_TIMEOUT_S, connect=8.0)) as cl:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(HERMES_TIMEOUT_S, connect=8.0)) as cl:
             r = await cl.post(f"{HERMES_API_URL}/v1/runs", json=body, headers=headers)
             r.raise_for_status()
             rj = r.json()
             run_id = rj.get("run_id") or rj.get("id")
             if not run_id:
-                raise HermesNotStreamed(f"no run_id in {str(rj)[:200]}")
-
+                raise HermesNotStreamed(f"нет run_id: {str(rj)[:200]}")
+            trace.setdefault("run_ids", []).append(run_id)
             async with cl.stream("GET", f"{HERMES_API_URL}/v1/runs/{run_id}/events",
                                  headers=headers) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
+                    if time.monotonic() > deadline:
+                        raise asyncio.TimeoutError("прогон дольше предела")
                     line = (line or "").strip()
                     if not line.startswith("data:"):
                         continue
@@ -154,57 +232,110 @@ async def stream_quick_hermes(question: str, history: list[dict],
                     except ValueError:
                         continue
                     et = ev.get("event") or ev.get("type") or ""
-
                     if et in ("assistant.delta", "message.delta", "text.delta"):
-                        delta = _pick(ev, "data.delta", "delta", "data.text", "text")
-                        if delta:
-                            emitted = True
-                            said.append(str(delta))
-                            yield json.dumps({"type": "text", "chunk": str(delta)},
-                                             ensure_ascii=False)
+                        d = _pick(ev, "data.delta", "delta", "data.text", "text")
+                        if d:
+                            yield {"delta": str(d)}
                     elif et == "tool.started":
-                        name = _pick(ev, "tool", "data.tool", "data.tool_name",
-                                     "tool_name", "data.name", "name")
+                        name = _pick(ev, "tool", "data.tool", "data.tool_name", "tool_name",
+                                     "data.name", "name")
                         if name:
-                            yield json.dumps({"type": "tool_call",
-                                              "name": str(name)}, ensure_ascii=False)
-                    elif et in ("run.completed",):
-                        # финальный текст, если дельты не стримились (короткие ответы)
-                        if not emitted:
-                            final = _pick(ev, "output", "data.output",
-                                          "data.assistant_message.content",
-                                          "data.output_text", "data.content", "content")
-                            if final:
-                                emitted = True
-                                said.append(str(final))
-                                yield json.dumps({"type": "text", "chunk": str(final)},
-                                                 ensure_ascii=False)
-                        if emitted and needs_legal_note("".join(said)):
-                            yield json.dumps({"type": "text", "chunk": LEGAL_NOTE},
-                                             ensure_ascii=False)
-                        if not emitted:
-                            # Прогон завершился штатно, но БЕЗ единого слова.
-                            # Так бывает, когда агент израсходовал бюджет ходов
-                            # на инструменты (в логе движка: api_calls=14/14,
-                            # last_msg_role=tool, response_len=0) — например,
-                            # на браузерных попытках, падающих по таймауту.
-                            # Раньше мы просто слали «готово», и аудитор видел
-                            # пустой ответ. Откатываемся на собственный цикл:
-                            # текста наружу ещё не ушло, откат безопасен.
-                            raise HermesNotStreamed(
-                                "hermes завершил прогон без ответа (бюджет ходов "
-                                "израсходован на инструменты)")
-                        yield json.dumps({"type": "done"})
+                            yield {"tool": str(name)}
+                    elif et == "run.completed":
+                        finished = True
+                        yield {"final": str(_pick(ev, "output", "data.output",
+                                                  "data.assistant_message.content",
+                                                  "data.output_text", "data.content",
+                                                  "content") or ""),
+                               "usage": _pick(ev, "usage", "data.usage")}
                         return
                     elif et in ("run.failed", "run.cancelled"):
-                        err = str(_pick(ev, "data.error", "error") or et)
-                        raise RuntimeError(f"hermes run: {err[:200]}")
-            # стрим закрылся без run.completed
-            if emitted:
-                yield json.dumps({"type": "done"})
-                return
-            raise HermesNotStreamed("event stream ended without output")
-    except Exception:
-        if emitted:
+                        finished = True
+                        raise RuntimeError(f"hermes: {str(_pick(ev, 'data.error', 'error') or et)[:200]}")
+        raise HermesNotStreamed("поток событий закрылся без run.completed")
+    finally:
+        if run_id and not finished:
+            # пользователь ушёл, таймаут или сбой — агент не должен работать впустую
+            asyncio.ensure_future(_stop(run_id, headers))
+
+
+async def stream_quick_hermes(question: str, history: list[dict],
+                              session_hint: str | None = None,
+                              model: str | None = None) -> AsyncIterator[str]:
+    headers = _headers(session_hint)
+    model = model or HERMES_MODEL or None
+    t0 = time.monotonic()
+    deadline = t0 + HERMES_TIMEOUT_S
+    trace: dict = {"model": model or "default", "tools": []}
+    shown = False            # что-то из ответа уже отдано пользователю
+    said: list[str] = []     # отданный текст — для проверки ссылок на НПА
+    pending = ""             # придержанное начало ответа / хвост до безопасного разреза
+
+    def emit(text: str) -> str:
+        said.append(text)
+        return json.dumps({"type": "text", "chunk": text}, ensure_ascii=False)
+
+    usage = None
+    for attempt in (0, 1):
+        final = None
+        broken = False
+        try:
+            async for ev in _one_run(question, history, headers, model, attempt == 1,
+                                     deadline, trace):
+                if "tool" in ev:
+                    name = ev["tool"]
+                    trace["tools"].append(name)
+                    if not shown:
+                        pending = ""          # текст до инструмента — рассуждение вслух
+                    yield json.dumps({"type": "tool_call", "name": tool_label(name)},
+                                     ensure_ascii=False)
+                elif "delta" in ev:
+                    pending += ev["delta"]
+                    if not shown and len(pending) < HOLD_CHARS:
+                        continue
+                    cut = safe_cut(pending)
+                    if cut:
+                        shown = True
+                        yield emit(sanitize(pending[:cut]))
+                        pending = pending[cut:]
+                elif "final" in ev:
+                    final, usage = ev["final"], ev.get("usage")
+        except (HermesNotStreamed, asyncio.TimeoutError) as e:
+            log.warning("[hermes] прогон прерван: %s", e)
+            if not shown:
+                raise HermesNotStreamed(str(e) or "таймаут прогона") from None
+            broken = True
+        except Exception:
+            if not shown:
+                raise HermesNotStreamed("hermes недоступен") from None
             raise                       # частичный стрим — наверх, без отката
-        raise HermesNotStreamed("hermes unavailable") from None
+
+        if shown:
+            if pending:                 # хвост после последнего безопасного разреза
+                yield emit(sanitize(pending))
+                pending = ""
+            if broken:
+                yield emit("\n\n⚠ _Агент прервался, ответ может быть неполным._")
+                trace["broken"] = True
+            break
+        text = (final if final is not None and final.strip() else pending).strip()
+        if not is_stub(text):
+            shown = True
+            yield emit(sanitize(text))
+            break
+        elapsed = time.monotonic() - t0
+        log.warning("[hermes] попытка %d без ответа (%r, %.0f с)", attempt + 1, text[:80],
+                    elapsed)
+        trace["empty_attempts"] = attempt + 1
+        if attempt == 0 and elapsed < HERMES_RETRY_BEFORE_S:
+            pending = ""
+            continue
+        raise HermesNotStreamed("hermes завершил прогон без ответа")
+
+    if shown and needs_legal_note("".join(said)):
+        yield emit(LEGAL_NOTE)
+    trace["seconds"] = round(time.monotonic() - t0, 1)
+    if usage:
+        trace["usage"] = usage
+    yield json.dumps({"type": "run_meta", **trace}, ensure_ascii=False)
+    yield json.dumps({"type": "done"})
