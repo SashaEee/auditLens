@@ -3133,11 +3133,107 @@ html.dark .rv-ovl{background:rgb(0 0 0 / calc(.5 * var(--rv-scrim-k,1)))}
 .bf-t-delta.flat{color:var(--ink-3)}
 /* сравнение со вчера недоступно — сменилась методика */
 .bf-method{font-size:12px;color:var(--ink-2);margin:0 0 8px}
+
+/* ── «Обзор», волна O2: система «Отзывов» ─────────────────────────────────
+   Гарнитуры — Geist и Source Serif 4 (плюс фирменный Instrument Serif заголовка),
+   кегли 11/12/13/15/17/22/28 и 40 у заголовка,
+   моноширинный только для кодов, капслок — только надзаголовки, красный —
+   только «хуже, значимо, срочно», текст не светлее --ink-3 (≥4,5:1). */
+.ov .mono{font-family:inherit;font-variant-numeric:tabular-nums;letter-spacing:0}
+.ov .eyebrow{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-3)}
+/* шапка выпуска. Заголовок — фирменный: Instrument Serif и красный курсив
+   акцента (узнаваемый язык сводки, решение владельца), остальное — система */
+.ov .bf-hot{font-style:italic;color:var(--accent)}
+.ov .xp{border-bottom:1px dotted var(--ink-4)}
+.ov header .xp{border-bottom:1px dashed color-mix(in oklab,var(--accent),transparent 55%)}
+.ov .xp:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:3px}
+.ov .lede{font-size:17px;line-height:1.5;color:var(--ink-2)}
+.ov .bf-stamp,.ov .bf-live{font-family:inherit;font-size:12px;color:var(--ink-3)}
+.ov .bf-stampline{font-family:inherit;font-size:12px;line-height:1.6;color:var(--ink-3)}
+.ov .bf-stampline a{border-bottom-color:var(--ink-4)}
+.ov .bf-stampline a:hover{color:var(--ink)}
+.ov .bf-stale{font-family:inherit;font-size:12px}
+/* дополнение 15:00 — информация, а не тревога */
+.ov .bf-upd{border-left:1px solid var(--hair-2)}
+.ov .bf-upd-h{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-3)}
+.ov .bf-upd-dot{background:var(--ink-4)}
+.ov .bf-upd-k{font-family:inherit;font-size:12px;color:var(--ink-3);width:88px}
+.ov .bf-upd-t{font-size:13px}
+.ov .bf-upd-it:hover .bf-upd-t{color:var(--ink);text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
+/* пульс: подпись — надзаголовком, число — как KPI «Отзывов», без тревожных фонов */
+.ov .bf-method{color:var(--ink-3)}
+.ov .bf-t-cap{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-3);min-height:0}
+.ov .bf-t-chip{font-size:11px;font-weight:500;letter-spacing:0;text-transform:none;border:0;border-radius:0;padding:0;color:var(--neg)}
+.ov .bf-t-val{font-family:'Source Serif 4',Georgia,serif;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.ov .bf-t-hero .bf-t-val{font-size:28px}
+.ov .bf-t-val small{font-family:'Geist','Inter',-apple-system,sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink-3)}
+.ov .bf-t-sub{font-family:inherit;font-size:12px;line-height:1.45;color:var(--ink-3)}
+.ov .bf-t-delta.bad{color:var(--neg)}
+.ov .bf-t.alarm,.ov .bf-t.attn{background:var(--surface)}
+.ov .bf-t.alarm{box-shadow:inset 3px 0 0 var(--neg)}
+.ov .bf-t.attn{box-shadow:inset 3px 0 0 var(--warn)}
+/* карточки: серьёзность — одна полоса слева, остальное спокойно */
+.ov .bf-kicker{font-family:inherit;font-size:12px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-3)}
+.ov .bf-title{font-size:17px;line-height:1.3}
+.ov .bf-card.lead .bf-title{font-size:22px;line-height:1.25}
+.ov .bf-sowhat{font-size:13px;line-height:1.5}
+.ov .bf-idea{font-size:13px;line-height:1.5;color:var(--ink);border-left:0;padding-left:0}
+.ov .bf-idea-l{font-family:inherit;font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink-2)}
+.ov .bf-ev,.ov .bf-prov{font-family:inherit;font-size:12px;color:var(--ink-3)}
+.ov .bf-prov-sep{color:var(--ink-3)}
+.ov .xp-link{font-family:inherit;font-size:12px;letter-spacing:0;text-transform:none;color:var(--select)}
+.ov .bf-prov .xp{border-bottom:0}
+.ov .bf-btn{white-space:nowrap;font-size:12px}
+.ov .bf-btn.ai{font-family:inherit;font-size:12px;color:var(--ink-2);background:var(--surface);border-color:var(--hair-2)}
+.ov .bf-btn.ai:hover{color:var(--ink);border-color:var(--ink-4)}
+.ov .bf-fb-b{min-width:28px;min-height:28px;color:var(--ink-3)}
+.ov .bf-fb-b.on{color:var(--select);background:var(--select-soft)}
+.ov .bf-fb-b.on svg{fill:color-mix(in oklab,var(--select),transparent 80%)}
+.ov .bf-legend{font-family:inherit;font-size:12px;color:var(--ink-3)}
+.ov .bf-legend .sep{color:var(--ink-3)}
+.ov .bf-fon{font-size:13px}
+.ov .bf-fon-l{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-3)}
+/* разбор жалоб недели — как в «Отзывах»: уровень точкой и словом */
+.ov .bfb-item.lvl-high{border-left-color:var(--neg);background:none}
+.ov .bfb-badge{font-family:inherit;font-size:12px;font-weight:500;letter-spacing:0;text-transform:none;border:0;padding:0;background:none;
+  color:var(--ink-3);display:inline-flex;align-items:center;gap:5px}
+.ov .bfb-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ink-4)}
+.ov .lvl-high .bfb-badge,.ov .lvl-mid .bfb-badge{border:0;color:var(--ink-3)}
+.ov .lvl-high .bfb-badge::before{background:var(--neg)}
+.ov .lvl-mid .bfb-badge::before{background:var(--warn)}
+.ov .bfb-title{font-family:'Source Serif 4',Georgia,serif;font-size:15px;font-weight:600}
+.ov .bfb-body em{color:var(--ink);font-weight:600}
+.ov .bfb-act-l{font-family:inherit;font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink-2)}
+/* новости для аудитора: читаемый кегль, мета основным шрифтом */
+.ov .bf-news-cov{font-family:inherit;font-size:11px;color:var(--ink-3)}
+.ov .bf-news-g{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-3)}
+.ov .bf-news-t{font-size:13px;line-height:1.4}
+.ov .bf-news-s{font-size:12px;line-height:1.5}
+.ov .bf-news-m{font-family:inherit;font-size:11px;color:var(--ink-3)}
+.ov .bf-chip{font-family:inherit;font-size:11px;letter-spacing:0;text-transform:none;border:0;padding:0;color:var(--ink-3)}
+.ov .bf-reach{font-family:inherit;font-size:11px;letter-spacing:0}
+.ov .bf-reach.tg{color:var(--ink-3)}
+.ov .bf-news-empty{font-size:13px}
+/* тарифы: цифры табличным Geist, Δ — нейтрально (направление ставки ≠ «хорошо/плохо») */
+.ov thead th{font-family:inherit;font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink-2)}
+.ov .delta{font-family:inherit;font-size:13px;font-variant-numeric:tabular-nums}
+.ov .delta.pos,.ov .delta.neg{color:var(--ink-2)}
+.ov .badge{font-family:inherit;font-size:11px;letter-spacing:0}
+.ov .badge.warn{color:var(--warn-ink)}
+.ov table.m-cards td::before{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.04em}
+.ov table.m-cards td[data-label=""]{color:var(--ink-3)}
+/* подвал */
+.ov .bf-trust{font-family:inherit;font-size:12px;color:var(--ink-3)}
+/* расшифровка «как посчитано» (портал — общая с «Для вас»): без моноширинного и 9 px */
+.xp-h{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-3)}
+.xp-k{font-family:inherit;font-size:12px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-3)}
+.xp-note{font-family:inherit;font-size:12px;color:var(--ink-3)}
+@media(max-width:760px){.ov .lede{font-size:15px}.ov .bf-t-val{font-size:22px}}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-ov-o1"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-ov-o2"></script>
 </body>
 </html>

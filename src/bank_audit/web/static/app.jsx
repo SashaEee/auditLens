@@ -1018,9 +1018,9 @@ function BfFeedback({ins}){
       topics:[ins.kind||""],payload:{title:ins.title,ref:ins.ref,score:ins.score}}).catch(()=>{});
   };
   return <span className="bf-fb" role="group" aria-label="Оценка карточки">
-    <button className={"bf-fb-b"+(v==="useful"?" on":"")} onClick={()=>send("useful")} title="Полезно для работы" aria-label="Полезно">
+    <button className={"bf-fb-b"+(v==="useful"?" on":"")} onClick={()=>send("useful")} data-tip="Полезно для работы" aria-label="Полезно">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg></button>
-    <button className={"bf-fb-b"+(v==="noise"?" on":"")} onClick={()=>send("noise")} title="Не по делу" aria-label="Не по делу">
+    <button className={"bf-fb-b"+(v==="noise"?" on":"")} onClick={()=>send("noise")} data-tip="Не по делу" aria-label="Не по делу">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg></button>
   </span>;
 }
@@ -1053,7 +1053,7 @@ function BfCard({ins,idx,lead,now,sigs}){
     <h3 className="bf-title">{ovFixOnly(ins.title,sigs)}</h3>
     {ins.so_what&&<div className="bf-sowhat">{ovFixOnly(ins.so_what,sigs)}</div>}
     {ins.idea&&<div className="bf-idea"><span className="bf-idea-l">Что проверить</span>{ovFixOnly(ins.idea,sigs)}</div>}
-    {ins.evidence&&<div className="bf-ev" title="жалобы клиентов Сбера по связанным проблемам кодификатора">Наши данные · {ins.evidence}</div>}
+    {ins.evidence&&<div className="bf-ev" data-tip="жалобы клиентов Сбера по связанным проблемам кодификатора">Наши данные · {ins.evidence}</div>}
     {viz&&<div className="bf-viz">{viz}</div>}
     {(ins.provenance||xp.length>0)&&<div className="bf-prov">
       {xp.length>0
@@ -2230,7 +2230,7 @@ function OverviewPage(){
   const dmy=v=>v?String(v).slice(0,10).split("-").reverse().slice(0,2).join("."):"";
   const headAt=(sec.headline||{}).generated_at, updAt=(sec.update||{}).generated_at;
 
-  return <div className="fade-in">
+  return <div className="fade-in ov">
     <Sept3Strip/>
     <div className="fy-seg-mob"><OvSeg page="overview"/></div>
     {/* ⓪ ЛИЧНЫЙ СЛОЙ — опциональная полоса (prefs.personal_band_home), над передовицей */}
@@ -2248,7 +2248,7 @@ function OverviewPage(){
               {isToday&&updAt&&updAt>(headAt||"")&&!dg.meta.is_morning&&(sec.update||{}).payload&&(((sec.update.payload.items||[]).length)||((sec.update.payload.signals||[]).length))
                 ?<> · дополнено {msk(updAt)}</>:null}</span>}
           {me&&me.is_admin&&<button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
-            title="Перегенерировать выпуск (видно только владельцу)" aria-label="Перегенерировать выпуск">⟳</button>}
+            data-tip="Перегенерировать выпуск (видно только владельцу)" aria-label="Перегенерировать выпуск">⟳</button>}
         </div>
       </div>
       {generating&&!hl?
@@ -2261,7 +2261,7 @@ function OverviewPage(){
           <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
             {hh?<>{hl.slice(0,hh[0])}
               <Xp rows={leadXp} note={leadIns?leadIns.provenance:null}>
-                <em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>
+                <em className="bf-hot">{hl.slice(hh[0],hh[0]+hh[1])}</em>
               </Xp>
               {hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
           </h1>
@@ -2440,8 +2440,8 @@ function OverviewPage(){
       <aside className="bf-news">
         <div className="bf-news-h">
           <div className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</div>
-          {ST("news")==="stale"&&<span className="bf-stale" title="сбор или отбор новостей сегодня не удался — показан последний удачный выпуск">⚠ за {sec.news.stale_from}</span>}
-          {newsAll>0&&<span className="bf-news-cov" title={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
+          {ST("news")==="stale"&&<span className="bf-stale" data-tip="сбор или отбор новостей сегодня не удался — показан последний удачный выпуск">⚠ за {sec.news.stale_from}</span>}
+          {newsAll>0&&<span className="bf-news-cov" data-tip={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
             {newsOk}/{newsAll} ист.</span>}
         </div>
         {newsGroups.length?newsGroups.map(g=><div key={g.key}>
@@ -2459,9 +2459,9 @@ function OverviewPage(){
                       контура: шесть ТБ написали «не удаётся получить доступ к
                       сайту», ещё два — что t.me требует отдельной установки. */}
                   {it.reach==="telegram"&&<span className="bf-reach tg"
-                    title="Telegram — в контуре банка обычно не открывается без отдельной настройки">telegram</span>}
+                    data-tip="Telegram — в контуре банка обычно не открывается без отдельной настройки">telegram</span>}
                   {it.reach==="unreachable"&&<span className="bf-reach no"
-                    title="Источник не открылся из контура при сборе дайджеста — ссылка может не сработать и у вас">нет доступа</span>}
+                    data-tip="Источник не открылся из контура при сборе дайджеста — ссылка может не сработать и у вас">нет доступа</span>}
                   {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}
                   <Ic.ext/></div>
               </a>)}
@@ -2484,7 +2484,7 @@ function OverviewPage(){
       <div className="eyebrow-row">
         <div className="eyebrow" style={{marginBottom:10}}>Тарифные движения недели</div>
         {(tm.mass_updates||[]).length>0&&
-          <span className="badge warn" style={{cursor:"pointer"}} title="Открыть журнал изменений"
+          <span className="badge warn" style={{cursor:"pointer"}} data-tip="Открыть журнал изменений"
             onClick={()=>{const m=tm.mass_updates[0];location.hash="market?"+new URLSearchParams({cat:m.category||"",view:"changes"});}}>
             массовое движение: {tm.mass_updates.map(m=>CAT_LABELS[m.category]||m.category).join(", ")}{tm.after_pause?" · сбор после паузы":""}</span>}
       </div>
@@ -2504,8 +2504,8 @@ function OverviewPage(){
                 if(c.change_id)sp.set("change",c.change_id);
                 if(c.offer_id)sp.set("offer",c.offer_id);
                 location.hash="market?"+sp.toString();};
-              return <tr key={i} onClick={go} style={{cursor:"pointer"}} title="Открыть в журнале изменений">
-                <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}{c.is_sber&&<span className="badge solid" style={{marginLeft:8,fontSize:9}}>Сбер</span>}</div>
+              return <tr key={i} onClick={go} style={{cursor:"pointer"}} data-tip="Открыть в журнале изменений">
+                <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}</div>
                   <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
                 <td data-label="Продукт" style={{fontSize:12,color:"var(--ink-2)"}}>{c.title}{c._n>1&&<span className="t-cap"> · {c._n} {plural(c._n,"оффер","оффера","офферов")}</span>}</td>
                 <td className="right mono tnum" data-label="Было → стало">{ovN(c.from,2)}% → <b>{ovN(c.to,2)}%</b></td>
