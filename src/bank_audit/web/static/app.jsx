@@ -60,8 +60,8 @@ function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns}){
     <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
     <p className="aw-lede">Аналитик отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
     <div className="aw-modes">
-      <div><b>Быстрый ответ</b><span>до минуты · по данным AuditLens и открытым источникам</span></div>
-      <div><b>Отчёт · Deep Research</b><span>1–3 минуты · план, сбор, сверка чисел</span></div>
+      <div><b>Быстрый ответ</b><span>обычно меньше минуты · по данным AuditLens и открытым источникам</span></div>
+      <div><b>Отчёт · Deep Research</b><span>обычно 5–10 минут · план, сбор, сверка чисел</span></div>
     </div>
 
     {dayIns&&dayIns.length>0&&<section className="aw-sec" aria-labelledby="aw-day-h">
@@ -7171,7 +7171,7 @@ function AIPage(){
       {isRunning &&
         <div className="al-runbar">
           <span className="al-runbar-dot"/>
-          <span className="al-runbar-text">Идёт исследование — обычно 60–120с на реальных данных</span>
+          <span className="al-runbar-text">Идёт исследование — обычно 5–10 минут</span>
           <span className="al-runbar-el mono">{fmtEl(elapsed)}</span>
           <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current;if(el){stickRef.current=true;el.scrollTo({top:el.scrollHeight,behavior:"smooth"});}}}>Показать отчёт →</button>
         </div>}
@@ -7193,7 +7193,7 @@ function AIPage(){
                 <button className={"seg-btn"+(!deepMode?" on":"")} onClick={()=>setDeepMode(false)} disabled={loading}>Быстрый</button>
                 <button className={"seg-btn"+(deepMode?" on":"")} onClick={()=>setDeepMode(true)} disabled={loading} title="Deep Research: планировщик → мульти-агент → проверка фактов"><span className="seg-dot"/>Deep Research</button>
               </div>
-              <span className="composer-hint">{deepMode?"отчёт с источниками · обычно 1–3 мин":"быстрый ответ · до минуты"}</span>
+              <span className="composer-hint">{deepMode?"отчёт с источниками · обычно 5–10 мин":"быстрый ответ · обычно меньше минуты"}</span>
               <span className="composer-kbd">Enter ↵</span>
               {loading
                 ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
