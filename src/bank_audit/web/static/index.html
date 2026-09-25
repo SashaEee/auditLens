@@ -3144,8 +3144,6 @@ html.dark .rv-ovl{background:rgb(0 0 0 / calc(.5 * var(--rv-scrim-k,1)))}
 /* шапка выпуска. Заголовок — фирменный: Instrument Serif и красный курсив
    акцента (узнаваемый язык сводки, решение владельца), остальное — система */
 .ov .bf-hot{font-style:italic;color:var(--accent)}
-.ov .xp{border-bottom:1px dotted var(--ink-4)}
-.ov header .xp{border-bottom:1px dashed color-mix(in oklab,var(--accent),transparent 55%)}
 .ov .xp:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:3px}
 .ov .lede{font-size:17px;line-height:1.5;color:var(--ink-2)}
 .ov .bf-stamp,.ov .bf-live{font-family:inherit;font-size:12px;color:var(--ink-3)}
@@ -3160,18 +3158,14 @@ html.dark .rv-ovl{background:rgb(0 0 0 / calc(.5 * var(--rv-scrim-k,1)))}
 .ov .bf-upd-k{font-family:inherit;font-size:12px;color:var(--ink-3);width:88px}
 .ov .bf-upd-t{font-size:13px}
 .ov .bf-upd-it:hover .bf-upd-t{color:var(--ink);text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
-/* пульс: подпись — надзаголовком, число — как KPI «Отзывов», без тревожных фонов */
-.ov .bf-method{color:var(--ink-3)}
+/* пульс: шрифты — по системе; цветовая гамма (красный пунктир под цифрами,
+   тонированные фоны «внимание/тревога», дельты) — прежняя, решение владельца */
 .ov .bf-t-cap{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-3);min-height:0}
-.ov .bf-t-chip{font-size:11px;font-weight:500;letter-spacing:0;text-transform:none;border:0;border-radius:0;padding:0;color:var(--neg)}
+.ov .bf-t-chip{font-size:11px;letter-spacing:0;text-transform:none}
 .ov .bf-t-val{font-family:'Source Serif 4',Georgia,serif;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
 .ov .bf-t-hero .bf-t-val{font-size:28px}
 .ov .bf-t-val small{font-family:'Geist','Inter',-apple-system,sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink-3)}
 .ov .bf-t-sub{font-family:inherit;font-size:12px;line-height:1.45;color:var(--ink-3)}
-.ov .bf-t-delta.bad{color:var(--neg)}
-.ov .bf-t.alarm,.ov .bf-t.attn{background:var(--surface)}
-.ov .bf-t.alarm{box-shadow:inset 3px 0 0 var(--neg)}
-.ov .bf-t.attn{box-shadow:inset 3px 0 0 var(--warn)}
 /* карточки: серьёзность — одна полоса слева, остальное спокойно */
 .ov .bf-kicker{font-family:inherit;font-size:12px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-3)}
 .ov .bf-title{font-size:17px;line-height:1.3}
@@ -3228,7 +3222,8 @@ html.dark .rv-ovl{background:rgb(0 0 0 / calc(.5 * var(--rv-scrim-k,1)))}
 .xp-h{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-3)}
 .xp-k{font-family:inherit;font-size:12px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-3)}
 .xp-note{font-family:inherit;font-size:12px;color:var(--ink-3)}
-@media(max-width:760px){.ov .lede{font-size:15px}.ov .bf-t-val{font-size:22px}}
+@media(max-width:760px){.ov .lede{font-size:15px}.ov .bf-t-val{font-size:22px}
+  .ov .t-display{font-size:clamp(30px,8.5vw,40px)}}
 </style>
 </head>
 <body>
