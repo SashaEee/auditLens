@@ -342,8 +342,18 @@ def metrics(days: int = 14) -> dict:
             "collect": _collect_health(days),
             "search": _search_health(days),
             "news_quality": _news_quality(days),
+            "review_sources": _review_sources(),
             "personalization": _personalization(days),
             "topics": _team_topics(days)}
+
+
+def _review_sources() -> dict:
+    """Полнота площадок отзывов (rag.reviews_dash.source_health)."""
+    try:
+        from ..rag import reviews_dash as rd
+        return rd.source_health()
+    except Exception as e:  # noqa: BLE001 — блок «Пульса» не валит страницу
+        return {"error": str(e)[:200]}
 
 
 def _personalization(days: int) -> dict:

@@ -834,12 +834,54 @@ def _labels_for(urls: list[str]) -> dict[str, list[dict]]:
     return out
 
 
+_BANKI_ID = re.compile(r"banki\.ru/services/responses/bank/response/(\d+)")
+
+
+def _bank_reply_for(urls: list[str]) -> dict[str, dict]:
+    """Ответ банка и «решено» по показанным отзывам — из сбора площадок
+    (sources/review_streams): у banki.ru по номеру отзыва (корпус и наш сбор
+    дают одну и ту же жалобу под разными ссылками), у sravni — по ссылке."""
+    ids = {u: m.group(1) for u in urls if (m := _BANKI_ID.search(u or ""))}
+    sravni = [u for u in urls if "sravni.ru" in (u or "")]
+    out: dict[str, dict] = {}
+    if not ids and not sravni:
+        return out
+    try:
+        with db.session() as s:
+            if ids:
+                rows = s.execute(text("""
+                    SELECT source_review_id, raw FROM review
+                    WHERE source = 'banki_reviews' AND source_review_id = ANY(:ids)
+                      AND raw ? 'seen_at'"""), {"ids": list(set(ids.values()))}).all()
+                by = {r[0]: r[1] or {} for r in rows}
+                for u, rid in ids.items():
+                    raw = by.get(rid)
+                    if raw:
+                        out[u] = {"answer": raw.get("answer"), "resolved": raw.get("resolved"),
+                                  "checked": raw.get("countable"), "src": "banki.ru"}
+            if sravni:
+                rows = s.execute(text("""
+                    SELECT source_url, raw FROM review
+                    WHERE source = 'sravni_reviews' AND source_url = ANY(:u)"""), {"u": sravni}).all()
+                for u, raw in rows:
+                    raw = raw or {}
+                    out[u] = {"answer": None, "resolved": raw.get("problem_solved"),
+                              "has_answer": raw.get("company_response"), "src": "sravni.ru"}
+    except Exception as e:  # noqa: BLE001 — лента не должна падать из-за этого
+        log.warning("reviews_dash: ответ банка не забрался (%s)", e)
+    return out
+
+
 def _attach_themes(items: list[dict]) -> None:
     """Темы, разбор и человекочитаемый источник — общий финиш ленты и поиска."""
     for r in items:
         src = r.get("source")
         if src:
             r["source"] = _SOURCE_LABEL.get(src, src)
+    replies = _bank_reply_for([i["url"] for i in items if i.get("url")])
+    for r in items:
+        if r.get("url") in replies:
+            r["bank_reply"] = replies[r["url"]]
     ann = _ann_for([i["url"] for i in items if i.get("url")])
     for r in items:
         a = ann.get(r.get("url") or "")
@@ -955,6 +997,81 @@ def segment_reviews(bank: str, product: str | None = None, city: str | None = No
     texts = [(((r.get("ann") or {}).get("summary") or "") + " | " + (r["text"] or "")[:450])
              for r in revs[:25]]
     return {"n": len(revs), "themes": themes_, "samples": samples, "texts": texts}
+
+
+_SOURCE_RU = {"bankiru": "banki.ru — корпус", "banki_reviews": "banki.ru — наш сбор",
+              "sravni_reviews": "sravni.ru", "finuslugi_reviews": "finuslugi.ru",
+              "bankiros_reviews": "bankiros.ru"}
+
+
+def source_health() -> dict:
+    """Полнота площадок отзывов — для «Пульса».
+
+    Неделя — последние 7 полных дней с данными, норма — медиана 8 недель до
+    неё (по дате отзыва). Падение ниже 60% нормы — «просел», ноль при норме от
+    5 в неделю — «встал»; площадки с нормой меньше 5 в неделю помечаются
+    «малый поток» (finuslugi: около отзыва в день на всю площадку, это не
+    поломка). Отдельно — банки, пропавшие из корпуса (≥20 жалоб в месяц в
+    среднем за полгода до этого и ни одной за 45 дней): так в мае 2026 исчез
+    «Почта Банк», и вкладка молча показывала «1 жалоба за квартал»."""
+    out: dict = {"sources": [], "gone_banks": [], "week_end": week_end()}
+    with db.session() as s:
+        # корпус — по индексу; наши сборщики — по собранному: в индекс они
+        # намеренно пишут не всё (похвалу и дубли корпуса не берём), и объём
+        # индекса выглядел бы вечной «просадкой»
+        rows = s.execute(text(f"""
+            WITH e AS (SELECT {_WEEK_END} AS t)
+            SELECT i.source, floor(extract(epoch FROM e.t - i.dt) / 604800)::int AS w, count(*)
+            FROM review_index i, e
+            WHERE i.source = 'bankiru' AND i.dt >= e.t - interval '63 days' AND i.dt < e.t
+            GROUP BY 1, 2
+            UNION ALL
+            SELECT r.source, floor(extract(epoch FROM e.t - r.posted_at) / 604800)::int, count(*)
+            FROM review r, e
+            WHERE r.source IN ('banki_reviews', 'sravni_reviews', 'finuslugi_reviews', 'bankiros_reviews')
+              AND r.posted_at >= e.t - interval '63 days' AND r.posted_at < e.t
+            GROUP BY 1, 2""")).all()
+        runs = {r[0]: r for r in s.execute(text("""
+            SELECT DISTINCT ON (source) source, started_at, status, left(coalesce(error, ''), 160)
+            FROM extraction_run WHERE source LIKE '%review%'
+            ORDER BY source, started_at DESC""")).all()}
+        gone = s.execute(text(f"""
+            SELECT i.bank, count(*) FILTER (WHERE i.dt BETWEEN now() - interval '225 days'
+                                                          AND now() - interval '45 days') / 6.0 AS per_month,
+                   max(i.dt)::date AS last
+            FROM review_index i
+            WHERE i.source = 'bankiru' AND {_CMP} AND i.dt > now() - interval '225 days' AND i.dt <= now()
+            GROUP BY 1
+            HAVING count(*) FILTER (WHERE i.dt > now() - interval '45 days') = 0
+               AND count(*) FILTER (WHERE i.dt BETWEEN now() - interval '225 days'
+                                                  AND now() - interval '45 days') >= 120
+            ORDER BY 2 DESC""")).all()
+    import statistics
+    by: dict[str, list[int]] = {}
+    for src, w, n in rows:
+        if 0 <= int(w) <= 8:
+            by.setdefault(src, [0] * 9)[int(w)] += int(n)
+    for src in sorted(set(by) | set(_SOURCE_RU), key=lambda k: -(by.get(k, [0])[0])):
+        arr = by.get(src, [0] * 9)
+        norm = statistics.median(arr[1:9])
+        wk = arr[0]
+        if norm < 5:
+            status = "малый поток"
+        elif wk == 0:
+            status = "встал"
+        elif wk < 0.6 * norm:
+            status = "просел"
+        else:
+            status = "норма"
+        run = runs.get(src)
+        out["sources"].append({"source": src, "label": _SOURCE_RU.get(src, src), "week": wk,
+                               "norm": round(norm, 1), "status": status,
+                               "last_run": run[1].isoformat() if run else None,
+                               "last_run_status": run[2] if run else None,
+                               "last_error": (run[3] or None) if run else None})
+    out["gone_banks"] = [{"bank": b, "per_month": round(float(pm)), "last": str(last)}
+                         for b, pm, last in gone]
+    return out
 
 
 @_safe(None)

@@ -1767,6 +1767,16 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-explain-btn{width:100%;height:38px;border-radius:8px;border:1px solid color-mix(in oklab,var(--accent),transparent 55%);background:var(--accent-soft);color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;cursor:pointer;transition:background .12s}
 .rv-explain-btn:hover:not(:disabled){background:color-mix(in oklab,var(--accent),transparent 80%)}
 .rv-explain-btn:disabled{opacity:.6;cursor:default}
+.rv-rp{margin:6px 0 8px;font-size:12px;color:var(--ink-3)}
+.rv-rp summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:8px}
+.rv-rp summary::-webkit-details-marker{display:none}
+.rv-rp-s{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.03em;color:var(--ink-2);border-bottom:1px dashed var(--hair-2)}
+.rv-rp[open] .rv-rp-s{color:var(--ink)}
+.rv-rp-t{margin-top:6px;padding:8px 10px;border-left:2px solid var(--hair-2);background:var(--paper-2);border-radius:0 6px 6px 0;white-space:pre-line;color:var(--ink-2);line-height:1.5}
+.rv-rp-b{font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 5px;border-radius:4px;border:1px solid var(--hair-2);color:var(--ink-3)}
+.rv-rp-b.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 60%);background:color-mix(in oklab,var(--pos),transparent 90%)}
+.rv-rp-n{margin-left:8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4)}
+div.rv-rp{display:flex;align-items:center}
 .rv-prof{margin:0 0 12px;padding:10px 12px;border:1px solid var(--hair);border-radius:8px;background:var(--surface)}
 .rv-prof-h{display:flex;align-items:center;justify-content:space-between;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);margin-bottom:6px}
 .rv-prof-r{display:grid;grid-template-columns:1fr 32px 150px 44px;gap:8px;align-items:baseline;padding:4px 0;border-top:1px solid var(--hair);font-size:12.5px}
@@ -2528,6 +2538,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-rv-w1b"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-rv-w2"></script>
 </body>
 </html>

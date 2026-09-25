@@ -2332,7 +2332,7 @@ def ingest_run_all(background_tasks: BackgroundTasks):
     if _CAPTCHA_LOCK:
         raise HTTPException(409, "Сейчас решается капча — дождитесь её завершения")
     from ..config import load_sources
-    sources = list(load_sources().keys())
+    sources = [k for k, v in load_sources().items() if (v or {}).get("enabled", True)]
     background_tasks.add_task(_do_ingest_all, sources)
     return {"status": "started", "sources": sources}
 

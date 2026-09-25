@@ -238,10 +238,26 @@ def sync_local(batch: int = 400) -> dict:
         rows = s.execute(text("""
             SELECT r.review_id, r.source_url, r.source, r.rating, r.posted_at,
                    b.name AS bank, r.product_category::text AS product,
-                   coalesce(r.title, '') || ' ' || r.text AS body
+                   coalesce(r.title, '') || ' ' || r.text AS body,
+                   nullif(r.raw->>'city', '') AS city
             FROM review r JOIN bank b USING (bank_id)
             WHERE r.source = ANY(:src)
               AND r.source_url IS NOT NULL AND length(r.text) >= :minlen
+              -- sravni без идентификатора банка (ранний сборщик писал отзывы витрины
+              -- чужим банкам) — банк не проверить, в индекс не берём
+              AND NOT (r.source = 'sravni_reviews' AND r.raw->>'review_object_id' IS NULL)
+              -- похвала 4–5★ в анализ жалоб не идёт, а разметка каждой стоит денег
+              AND NOT (r.source IN ('banki_reviews', 'sravni_reviews') AND r.rating >= 4)
+              -- banki.ru: негатив приходит во внешнем корпусе; свой сбор индексируем,
+              -- только если корпус отзыв так и не получил (ждём трое суток)
+              AND NOT (r.source = 'banki_reviews' AND (
+                    r.posted_at > now() - interval '3 days'
+                    OR EXISTS (SELECT 1 FROM review_index c
+                                WHERE c.url IN ('https://www.banki.ru/services/responses/bank/response/'
+                                                || r.source_review_id,
+                                                'https://www.banki.ru/services/responses/bank/response/'
+                                                || r.source_review_id || '/')
+                                  AND c.source = 'bankiru')))
         """), {"minlen": _MIN_LEN, "src": known}).mappings().all()
 
     # дата позже завтрашнего дня — ошибка разбора площадки (09.12.2026 в
@@ -259,7 +275,7 @@ def sync_local(batch: int = 400) -> dict:
     for i in range(0, len(rows), batch):
         payload = [{"url": r["source_url"], "review_id": int(r["review_id"]),
                     "bank": canon_bank(canon.get(r["bank"], r["bank"])), "product": None,
-                    "dt": _dt(r["posted_at"]), "city": None,
+                    "dt": _dt(r["posted_at"]), "city": _city(r["city"]) if r["city"] else None,
                     "rating": float(r["rating"]) if r["rating"] is not None else None,
                     "source": r["source"], "body": r["body"], "esc": False}
                    for r in rows[i:i + batch]]
@@ -272,6 +288,7 @@ def sync_local(batch: int = 400) -> dict:
                 ON CONFLICT (url) DO UPDATE SET
                     review_id = EXCLUDED.review_id, bank = EXCLUDED.bank,
                     dt = EXCLUDED.dt, rating = EXCLUDED.rating,
+                    city = coalesce(EXCLUDED.city, review_index.city),
                     source = EXCLUDED.source, tsv = EXCLUDED.tsv
             """), payload)
         written += len(payload)

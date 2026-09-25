@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -192,7 +193,9 @@ def _run_ingest_all() -> None:
     try:
         from ..config import load_sources
         from ..orchestrator.runner import ingest
-        sources = list(load_sources().keys())
+        # enabled: false — источник заменён другим сбором (HTML-сборщики отзывов
+        # banki.ru и sravni → sources/review_streams по JSON площадок)
+        sources = [k for k, v in load_sources().items() if (v or {}).get("enabled", True)]
         log.info("daily ingest: старт, источники: %s", sources)
         for src in sources:
             try:
@@ -475,6 +478,10 @@ async def update_background_loop():
 FTS_SYNC_EVERY_S = int(os.getenv("BANKIRU_FTS_SYNC_EVERY_S", "3600"))
 
 
+REVIEW_STREAMS_EVERY_S = int(os.getenv("REVIEW_STREAMS_EVERY_S", str(12 * 3600)))
+_STREAMS_AT = 0.0
+
+
 async def bankiru_fts_background_loop():
     """Держит полнотекстовое зеркало корпуса отзывов в актуальном состоянии.
 
@@ -494,6 +501,20 @@ async def bankiru_fts_background_loop():
                          r["written"], r.get("seconds"))
         except Exception as e:  # noqa: BLE001
             log.warning("индекс отзывов, внешний корпус: %s", e)
+        try:
+            # Отзывы площадок из их JSON (banki.ru по Сберу, sravni по крупнейшим
+            # банкам) — дважды в сутки: ответ банка и «решено» появляются через
+            # дни после публикации, их надо перечитывать
+            global _STREAMS_AT
+            if time.time() - _STREAMS_AT > REVIEW_STREAMS_EVERY_S:
+                _STREAMS_AT = time.time()
+                from ..sources import review_streams
+                r = await asyncio.to_thread(review_streams.run_all)
+                log.info("отзывы площадок: banki %s, sravni %s",
+                         {k: r["banki"].get(k) for k in ("fresh", "status", "new")},
+                         {k: r["sravni"].get(k) for k in ("banks", "seen", "new")})
+        except Exception as e:  # noqa: BLE001
+            log.warning("отзывы площадок: %s", e)
         try:
             # Отзывы наших коллекторов: в индекс и со своими векторами. Идёт
             # ПОСЛЕ ночного сбора — тот пишет в таблицу review, а здесь

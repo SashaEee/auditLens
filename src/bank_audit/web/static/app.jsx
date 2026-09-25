@@ -3296,6 +3296,21 @@ function RvThemes({list,src,active}){
 // Разбор отзыва моделью: суть, признаки, насколько уверена разметка.
 const RV_ESC_TO={cbr:"ЦБ",court:"суд",prosecutor:"прокуратура",rpn:"Роспотребнадзор",
   finombudsman:"финомбудсмен",police:"полиция",fas:"ФАС"};
+// Ответ банка и «решено» — со сбора площадок (banki.ru по номеру отзыва,
+// sravni по ссылке). Для аудита работы с обращениями: ответил ли банк и
+// признал ли клиент проблему решённой.
+function RvReply({b,date}){
+  if(!b)return null;
+  const old=date&&(Date.now()-new Date(String(date).slice(0,10)+"T00:00:00"))>3*864e5;
+  const res=b.resolved===true?<span className="rv-rp-b ok">решено</span>
+    :b.resolved===false&&(b.checked||b.src==="sravni.ru")?<span className="rv-rp-b">не решено</span>:null;
+  if(!b.answer)return (res||b.has_answer||(b.src==="banki.ru"&&old))?<div className="rv-rp">{res}
+    {b.has_answer&&<span className="rv-rp-n">есть ответ банка на {b.src}</span>}
+    {!b.has_answer&&b.src==="banki.ru"&&old&&<span className="rv-rp-n">банк не ответил</span>}</div>:null;
+  return <details className="rv-rp"><summary>{res}<span className="rv-rp-s">Ответ банка</span></summary>
+    <div className="rv-rp-t">{b.answer}</div></details>;
+}
+
 function RvAnn({a}){
   if(!a) return null;
   const flags=[];
@@ -3325,6 +3340,7 @@ function RvReview({r,onOpen,full}){
       {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
     </div>
     <RvAnn a={r.ann}/>
+    <RvReply b={r.bank_reply} date={r.date}/>
     <div className={"rv-rq"+(onOpen?" rv-rq-click":"")} role={onOpen?"button":undefined}
          tabIndex={onOpen?0:undefined} onClick={onOpen||undefined}
          onKeyDown={onOpen?(e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen();}}):undefined}>
@@ -3828,6 +3844,7 @@ function ReviewsPage({params}){
               {r.via==="смысл"?"по смыслу":r.via==="слова"?"дословно":"дословно и по смыслу"}</span>}
           </div>
           <RvAnn a={r.ann}/>
+          <RvReply b={r.bank_reply} date={r.date}/>
           <div className="rv-rq rv-rq-click" role="button" tabIndex={0} onClick={()=>setModalRev(r)} onKeyDown={onKey(()=>setModalRev(r))}>
             {kbMark(cutMark(r.marked||r.text,420))}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
           </div>
@@ -3850,6 +3867,7 @@ function ReviewsPage({params}){
         {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
       </div>
       <RvAnn a={modalRev.ann}/>
+      <RvReply b={modalRev.bank_reply} date={modalRev.date}/>
       {/* полный текст — с той же подсветкой, что и в карточке: аудитор открывает
           отзыв именно чтобы проверить совпадение, терять его тут нельзя */}
       <div className="rv-modal-text">{kbMark(modalRev.marked||modalRev.text)}</div>
@@ -7675,6 +7693,30 @@ function PuNewsQuality({q}){
   </div>;
 }
 
+// Полнота площадок отзывов: без неё падение сборщика видно только в ручном
+// аудите (к сентябрю 2026 наши сборщики принесли <1% потока, и никто не знал)
+function PuReviewSources({r}){
+  const src=r.sources||[];
+  if(r.error)return <div className="pu-card"><div className="h"><span>Площадки отзывов</span></div>
+    <div style={{color:"var(--warn)",fontSize:12}}>{r.error}</div></div>;
+  const tone=st=>st==="встал"||st==="просел"?"bad":st==="норма"?"ok":"";
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>Площадки отзывов · неделя по {rvDate(r.week_end)}</span>
+      {src.some(x=>x.status==="встал"||x.status==="просел")&&<span className="pu-chip bad">есть просадка</span>}</div>
+    <table className="pu-tbl">
+      <thead><tr><th>площадка</th><th>за 7 дн</th><th>норма</th><th>статус</th><th>последний сбор</th></tr></thead>
+      <tbody>{src.map(x=><tr key={x.source}>
+        <td>{x.label}</td><td>{x.week}</td><td>{String(x.norm).replace(".",",")}</td>
+        <td><span className={"pu-chip "+tone(x.status)}>{x.status}</span></td>
+        <td title={x.last_error||""} style={x.last_run_status==="failed"?{color:"var(--warn)"}:null}>
+          {x.last_run?`${rvDate(x.last_run)} ${x.last_run.slice(11,16)}`:"—"}{x.last_run_status==="failed"?" · ошибка":""}</td>
+      </tr>)}</tbody></table>
+    {(r.gone_banks||[]).length>0&&<p className="t-cap" style={{margin:"10px 0 0"}}>
+      Пропали из корпуса (≥20 жалоб в месяц раньше, ни одной за 45 дней):{" "}
+      {r.gone_banks.map(g=>`${g.bank} (~${g.per_month}/мес, последняя ${rvDate(g.last)})`).join(", ")}</p>}
+  </div>;
+}
+
 function PuIngest({ing}){
   const q=ing.queue||{}, days=ing.per_day||[];
   const mx=Math.max(1,...days.map(d=>+d.n||0));
@@ -8255,6 +8297,7 @@ function PulsePage(){
 
     {tab==="data"&&<>
       <PuIngest ing={m.ingest||{}}/>
+      <PuReviewSources r={m.review_sources||{}}/>
       <PuCollect c={m.collect||{}}/>
       <PuSearch s={m.search||{}}/>
       <PuNewsQuality q={m.news_quality||{}}/>
