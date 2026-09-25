@@ -250,7 +250,7 @@ function EmptyOverviewCta(){
 
   return <div className="fade-in" style={{padding:"40px 0"}}>
     <header style={{marginBottom:32}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Bank Audit Platform</div>
+      <div className="eyebrow" style={{marginBottom:6}}>AuditLens · первый запуск</div>
       <h1 className="t-display" style={{maxWidth:"22ch",marginBottom:14}}>
         База пуста — нужно <em style={{fontStyle:"italic",color:"var(--accent)"}}>собрать данные</em>
       </h1>
@@ -356,6 +356,21 @@ function LoadingPage(){
       <Skel h={180}/>
     </div>
   </div>;
+}
+
+// Единая шапка вкладки (система «Отзывов»): надстрочник раздела, заголовок
+// Source Serif 28, строка-пояснение, действия справа. «Обзор» и «Для вас» —
+// исключение: у них фирменная передовица (Instrument Serif, красный курсив).
+function PageHead({eyebrow,title,meta,actions,children}){
+  return <header className="ph">
+    <div className="ph-main">
+      {eyebrow&&<div className="eyebrow ph-eb">{eyebrow}</div>}
+      <h1 className="ph-t">{title}</h1>
+      {meta&&<p className="ph-meta">{meta}</p>}
+      {children}
+    </div>
+    {actions&&<div className="ph-act">{actions}</div>}
+  </header>;
 }
 
 function ErrState({msg}){
@@ -1445,8 +1460,8 @@ const OVSEG_CSS=`
   box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.3,.7,.4,1);}
 .ovseg.fy .ovseg-thumb{transform:translateX(104px);}
 .ovseg button{position:relative;z-index:1;width:104px;height:26px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  font-size:12.5px;color:var(--ink-3);border-radius:7px;transition:color .15s;}
-.ovseg button.on{color:var(--ink);font-weight:500;}
+  font-size:12px;font-weight:500;color:var(--ink-3);border-radius:7px;transition:color .15s;}
+.ovseg button.on{color:var(--ink);font-weight:600;}
 .ovseg .sp{color:var(--accent);font-size:11px;line-height:1;}
 .ovseg-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);}
 .fy-seg-mob{display:none;margin-bottom:18px;}
@@ -2146,12 +2161,12 @@ function useNumberShortcuts(){
   },[]);
 }
 
-const SEGS=".seg, .rv-chips, .rv-tabs-l";
+const SEGS=".seg, .rv-chips, .rv-tabs-l, .ptabs, .tab-row";
 function useSlidingSegments(){
   useEffect(()=>{
     const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
     const place=(seg)=>{
-      const on=seg.querySelector(".seg-btn.on, .rv-chip.on, .rv-tab.on");
+      const on=seg.querySelector(".seg-btn.on, .rv-chip.on, .rv-tab.on, .ptab.on, .tab.active");
       let ind=seg.querySelector(":scope > .seg-ind");
       if(!on){ if(ind) ind.style.opacity="0"; return; }
       if(!ind){
@@ -3154,26 +3169,22 @@ function MarketPage({params}){
   const showBarCol=mcat.show_bar!==false&&showRateCol;
 
   return <div className="fade-in">
-    <header style={{marginBottom:20}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Рынок · позиция объекта аудита</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Позиция Сбера на рынке</h1>
-      <p className="t-cap" style={{maxWidth:"72ch"}}>
-        {sum?`${sum.offers} офферов · ${sum.banks} банков`:"…"}
+    <PageHead eyebrow="Рынок · позиция объекта аудита" title="Позиция Сбера на рынке"
+      meta={<>{sum?`${fmtNum(sum.offers)} офферов · ${fmtNum(sum.banks)} банков`:"…"}
         {sch&&sch.enabled?` · автосбор ежедневно ${String(sch.ingest_hour_msk).padStart(2,"0")}:00 МСК`:sch?" · автосбор выключен":""}
         {sum&&sum.last_run?` · срез ${fmtDateMsk(sum.last_run)}`:""}
-        {sch&&sch.stale&&<span className="mk-stale" title={`последний успешный сбор ${sch.last_ok_age_h!=null?sch.last_ok_age_h+" ч назад":"не зафиксирован"}; сторож догонит автоматически`}> · ⚠ данные устарели</span>}
-      </p>
-      <p className="mk-disc">Сравнение внутри сопоставимой выборки: ₽, лучший оффер банка, без промо-строк рейтингов. Для кредитных продуктов ниже ставка = лучше позиция. Наведите на любую цифру — покажем, как она посчитана.</p>
-    </header>
+        {sch&&sch.stale&&<span className="mk-stale" data-tip={`последний успешный сбор ${sch.last_ok_age_h!=null?sch.last_ok_age_h+" ч назад":"не зафиксирован"}; сторож догонит автоматически`}> · ⚠ данные устарели</span>}</>}
+      actions={<RvInfo label="Как читать" text="Как читать" align="right">Сравнение внутри сопоставимой выборки: рубли, лучший оффер банка, без промо-строк рейтингов. Для кредитных продуктов ниже ставка — лучше позиция. Наведите на любую цифру — покажем, как она посчитана.</RvInfo>}/>
 
     <div className="filter-row" style={{marginBottom:18}}>
-      <div className="tab-row">
-        <button className={`tab ${!cat&&view!=="changes"?"active":""}`} onClick={()=>{setCat(null);setView("vitrina");setDrawer(null);}}>Атлас</button>
+      <div className="ptabs" role="tablist" aria-label="Категории продуктов">
+        <button role="tab" aria-selected={!cat&&view!=="changes"} className={"ptab"+(!cat&&view!=="changes"?" on":"")}
+          onClick={()=>{setCat(null);setView("vitrina");setDrawer(null);}}>Атлас</button>
         {(meta||[]).filter(m=>m.n>0).map(m=>{
           const sb=A[m.id]&&A[m.id].sber;
-          return <button key={m.id} className={`tab ${cat===m.id?"active":""}`} onClick={()=>{setCat(m.id);setBank(null);}}>
-            {m.label}{sb&&<span className={"mk-rk"+(sb.beats_share<0.5?" bad":"")}
-              title={`Сбер — #${sb.rank} из ${A[m.id].n_banks} банков по лучшему офферу`}>#{sb.rank}</span>}
+          return <button key={m.id} role="tab" aria-selected={cat===m.id} className={"ptab"+(cat===m.id?" on":"")} onClick={()=>{setCat(m.id);setBank(null);}}>
+            {m.label}{sb&&<span className={"ptab-n"+(sb.beats_share<0.5?" bad":"")}
+              data-tip={`Сбер — #${sb.rank} из ${A[m.id].n_banks} банков по лучшему офферу`}>#{sb.rank}</span>}
           </button>;})}
       </div>
       <div className="search-wrap">
@@ -3300,7 +3311,7 @@ function MarketPage({params}){
         {view==="changes"&&<label className="mk-noise">
           <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум
         </label>}
-        {view==="changes"&&bank&&<button className="tab active" onClick={()=>setBank(null)}>банк: {bank} ✕</button>}
+        {view==="changes"&&bank&&<button className="rv-achip" onClick={()=>setBank(null)} aria-label={`Снять фильтр по банку ${bank}`}>банк: {bank}<RvIX s={12}/></button>}
       </div>
 
       {/* ВИТРИНА */}
@@ -7168,9 +7179,7 @@ function BanksPage(){
   if(err)return <ErrState msg={err}/>;
 
   return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Банки · рейтинг у {rated.length} из {banks.length} в справочнике</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Рейтинги и репутация</h1>
+    <PageHead eyebrow={`Банки · рейтинг у ${fmtNum(rated.length)} из ${fmtNum(banks.length)} в справочнике`} title="Рейтинги и репутация">
       <MethodNote title="Как считаются балл, место и доля решённых">
         <p><b>Балл и место</b> считает banki.ru, мы их только показываем. Балл — средневзвешенная оценка
           пользователей за последние 12 месяцев: учитываются отзывы, прошедшие проверку площадкой, свежие
@@ -7186,10 +7195,10 @@ function BanksPage(){
         <p className="t-cap">Расхождение с сайтом banki.ru объясняется срезом: мы показываем состояние
           на дату сбора, а площадка — на сейчас.</p>
       </MethodNote>
-      <p className="t-cap" style={{maxWidth:"72ch"}}>Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
+      <p className="ph-meta">Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
         по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать во вкладке «Отзывы».
         {freshest>0&&<> Данные рейтинга на {fmtDateMsk(new Date(freshest).toISOString())}.</>}</p>
-    </header>
+    </PageHead>
     <div className="filter-row">
       <div className="search-wrap">
         <Ic.search/>
@@ -7651,15 +7660,8 @@ function SourcesPage(){
   const isAdmin=!!(props_&&props_.is_admin);
 
   return <div className="fade-in">
-    <header style={{marginBottom:22}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Источники · доверие и покрытие</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Откуда инструмент берёт данные</h1>
-      <p className="t-cap" style={{maxWidth:"74ch"}}>
-        Для каждого раздела — свой набор источников и своя планка доверия. Здесь видно,
-        кто участвует в выводах, и можно предложить источник, которого не хватает:
-        требования к нему у каждого раздела отдельные.
-      </p>
-    </header>
+    <PageHead eyebrow="Источники · доверие и покрытие" title="Откуда инструмент берёт данные"
+      meta="Для каждого раздела — свой набор источников и своя планка доверия. Здесь видно, кто участвует в выводах, и можно предложить источник, которого не хватает: требования к нему у каждого раздела отдельные."/>
 
     <div className="src-grid">
       {(cat.purposes||[]).map(p=>
@@ -7954,12 +7956,12 @@ function KbDocCard({documentId,onClose}){
     <a className="btn btn-sm kb-card-open" href={doc.url} target="_blank"
        rel="noopener noreferrer">Открыть первоисточник ↗</a>
 
-    <div className="kb-tabs">
+    <div className="ptabs kb-ptabs" role="tablist" aria-label="Документ">
       {[["about","Текст"],["rev","История"],["case","В дело"]].map(([k,l])=>
-        <button key={k} className={"kb-tab"+(tab===k?" on":"")}
+        <button key={k} role="tab" aria-selected={tab===k} className={"ptab"+(tab===k?" on":"")}
                 onClick={()=>setTab(k)}>{l}
           {k==="rev"&&(d.revisions||[]).length>1&&
-            <i>{d.revisions.length}</i>}</button>)}
+            <span className="ptab-n">{d.revisions.length}</span>}</button>)}
     </div>
 
     {tab==="about"&&<div className="kb-preview">
@@ -8286,19 +8288,9 @@ function KnowledgePage({params}){
   return <div className="fade-in">
     {docId&&<KbDocCard documentId={docId} onClose={closeDoc}/>}
     {cases&&<KbCases onClose={()=>setCases(false)} onOpenDoc={id=>{setCases(false);openDoc(id);}}/>}
-    <header style={{marginBottom:20,display:"flex",justifyContent:"space-between",
-                    alignItems:"flex-start",gap:16,flexWrap:"wrap"}}>
-      <div>
-        <div className="eyebrow" style={{marginBottom:6}}>§ База знаний · доказательная база</div>
-        <h1 className="t-h" style={{marginBottom:6}}>Поиск по собранным документам</h1>
-        <p className="t-cap" style={{maxWidth:"76ch"}}>
-          Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы.
-          Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит
-          вести счёт», а можно вставить «ПСК» или номер пункта договора.
-        </p>
-      </div>
-      <button className="btn btn-sm" onClick={()=>setCases(true)}>Аудит-дела</button>
-    </header>
+    <PageHead eyebrow="База знаний · доказательная база" title="Поиск по собранным документам"
+      meta="Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы. Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит вести счёт», а можно вставить «ПСК» или номер пункта договора."
+      actions={<button className="btn btn-sm" onClick={()=>setCases(true)}>Аудит-дела</button>}/>
 
     <div className="kb-bar">
       <div className="kb-input-wrap">
@@ -9661,7 +9653,7 @@ const PROFILE_CSS=`
 .pf-avatar{width:60px;height:60px;flex:none;border-radius:16px;display:grid;place-items:center;
   font-size:22px;font-weight:600;color:var(--accent);background:var(--accent-soft);
   border:1px solid color-mix(in oklab,var(--accent),transparent 80%);letter-spacing:-.01em;}
-.pf-hero h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:32px;line-height:1.05;letter-spacing:-.01em;color:var(--ink);margin:3px 0 4px;}
+.pf-hero h1{margin:0 0 4px;}
 .pf-sub{font-size:12px;color:var(--ink-3);}
 .pf-card{padding:22px 24px;margin-bottom:16px;position:relative;}
 .pf-card-h{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;}
@@ -9833,9 +9825,9 @@ function ProfilePage(){
     <div className="pf-hero">
       <div className="pf-avatar">{initials(me&&me.name||data.name)}</div>
       <div>
-        <div className="eyebrow">§ Профиль · персонализация</div>
-        <h1>{data.name||(me&&me.name)||"Аудитор"}</h1>
-        <div className="pf-sub mono">{data.username} · внутренний аудит Сбербанка</div>
+        <div className="eyebrow ph-eb">Профиль · персонализация</div>
+        <h1 className="ph-t">{data.name||(me&&me.name)||"Аудитор"}</h1>
+        <div className="pf-sub">{data.username} · внутренний аудит Сбербанка</div>
       </div>
     </div>
 
@@ -10297,7 +10289,10 @@ function Shell(){
           {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
             <LoopholePage key={refreshTick}/>
           </div>}
-          {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
+          {/* ai-host--active: правило «без отступов» — только пока аналитик на экране.
+              Раньше .content:has(.chat-shell) срабатывало и на скрытой, но смонтированной
+              странице — после визита в аналитик у всех вкладок пропадали поля */}
+          {aiMounted&&<div className={page==="ai"?"ai-host ai-host--active":"ai-host"} style={{display:page==="ai"?"block":"none",height:"100%"}}>
             <PageBoundary pageKey="ai"><AIPage/></PageBoundary>
           </div>}
           {keptPages.map(id=>{

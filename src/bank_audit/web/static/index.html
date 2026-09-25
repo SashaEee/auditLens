@@ -107,7 +107,7 @@ input,select,textarea{font:inherit;color:inherit}
 .mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-feature-settings:"zero","ss01"}
 .serif{font-family:'Instrument Serif',Georgia,serif;font-weight:400;letter-spacing:-.01em}
 .tnum{font-variant-numeric:tabular-nums}
-.eyebrow{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
+.eyebrow{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
 #app{display:grid;grid-template-columns:var(--rail) 1fr;min-height:100vh}
 .rail{background:var(--paper);border-right:1px solid var(--hair);position:sticky;top:0;height:100vh;display:flex;flex-direction:column;padding:16px 14px 14px;}
 .rail-brand{display:flex;align-items:center;gap:10px;padding:6px 8px 20px}
@@ -173,7 +173,7 @@ input,select,textarea{font:inherit;color:inherit}
 .icon-btn:hover{background:var(--paper-2);border-color:var(--hair);color:var(--ink)}
 .icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .content{padding:28px 28px 64px;max-width:1480px;width:100%;margin:0 auto}
-.content:has(.loophole-host--active){padding:0;max-width:none;margin:0;display:flex;flex:1;min-height:0}
+.content:has(> .loophole-host--active){padding:0;max-width:none;margin:0;display:flex;flex:1;min-height:0}
 .loophole-host--active{width:100%;flex:1;min-height:0}
 .loophole-page{width:100%;height:100%;min-height:0;margin:0}
 .btn{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:6px;font-size:13px;font-weight:500;letter-spacing:-.005em;transition:background .12s,border-color .12s,color .12s,transform .06s;border:1px solid transparent;}
@@ -1455,7 +1455,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .content table,.dr-doc-main table{display:block;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
   .content thead th{position:static}
   /* ── ЧАТ: нативный — лента скроллится, композер прибит к низу ── */
-  .content:has(.chat-shell){padding:0;max-width:none}
+  .content:has(> .ai-host--active){padding:0;max-width:none}
   .chat-shell{grid-template-columns:1fr;height:calc(100dvh - var(--topbar));min-height:0}
   .chat-feed{padding:14px 16px 12px;overscroll-behavior:contain}
   .chat-msg{max-width:100%}
@@ -1697,7 +1697,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 /* высота — по чипам: на сенсорных экранах у них минимум 44px, и в
    фиксированной высоте контейнера подпись обрезалась */
 .rv-chips-sm{height:auto;flex:none}
-.rv-chips-sm .rv-chip{padding:0 9px;font-size:11px;min-height:26px}
+.rv-chips-sm .rv-chip{padding:0 9px;font-size:12px;min-height:26px}
 .rv-bar-exp{background:transparent!important;border:1px dashed color-mix(in oklab,var(--ink-4),transparent 15%);border-bottom:none;display:flex;align-items:flex-end;overflow:hidden}
 .rv-bar-in{width:100%;background:repeating-linear-gradient(45deg,var(--ink-4),var(--ink-4) 3px,color-mix(in oklab,var(--ink-4),transparent 55%) 3px,color-mix(in oklab,var(--ink-4),transparent 55%) 6px)}
 .rv-bcol:hover .rv-bar-exp{border-color:var(--ink-2)}
@@ -2688,7 +2688,7 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .content h1, .dg-h1, .dr-doc-main h1 { letter-spacing: -.022em; line-height: 1.06; }
 .content h2, .dr-doc-main h2 { letter-spacing: -.014em; line-height: 1.18; }
 .content h3, .dr-doc-main h3 { letter-spacing: -.008em; line-height: 1.28; }
-.eyebrow, .rail-section, .mono small, small.mono { letter-spacing: .07em; }
+.rail-section, .mono small, small.mono { letter-spacing: .07em; }
 
 /* ── Поверхности приходят и уходят одним путём. Модальное окно
    материализуется от центра, правая панель въезжает справа и уезжает
@@ -3352,11 +3352,63 @@ section>.ov-note:first-of-type{margin:0 0 10px}
   .ovseg button{height:40px!important}
   .ov .bf-refresh{width:44px;height:44px}
 }
+/* ══ Единая система вкладок (S1): шапка, вкладки раздела, переключатели ══════
+   Эталон — «Отзывы» (D1–D4): Geist + Source Serif 4, подвкладки с подложкой.
+   «Обзор» и «Для вас» сохраняют фирменную передовицу. */
+.ph{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin:2px 0 18px}
+.ph-main{flex:1 1 420px;min-width:0}
+.ph-eb{margin-bottom:6px}
+.ph-t{margin:0;font-family:'Source Serif 4',Georgia,serif;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.15;color:var(--ink);text-wrap:balance}
+.ph-meta{margin:6px 0 0;max-width:78ch;font-size:13px;line-height:1.5;color:var(--ink-3);text-wrap:pretty}
+.ph .method-note{margin:8px 0 0}
+.ph-act{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+@media(max-width:640px){.ph-t{font-size:24px}}
+/* вкладки раздела — как подвкладки «Отзывов» */
+.ptabs{position:relative;display:flex;align-items:center;gap:4px;min-width:0;max-width:100%;overflow-x:auto;scrollbar-width:none}
+.ptabs::-webkit-scrollbar{display:none}
+.ptab{position:relative;display:inline-flex;align-items:center;gap:6px;flex:none;height:34px;padding:0 14px;border:0;border-radius:9px;background:none;
+  font:inherit;font-size:13px;font-weight:500;color:var(--ink-3);white-space:nowrap;cursor:pointer;transition:background-color .12s,color .12s}
+.ptab:hover{color:var(--ink);background:var(--paper-2)}
+.ptab.on{color:var(--ink);font-weight:600;background:var(--surface);box-shadow:0 0 0 1px var(--hair-2),var(--shadow-1)}
+.ptab:active{transform:scale(.98)}
+.ptab:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.ptab-n{font-size:11px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.ptab-n.bad{color:var(--neg)}
+.ptabs>.seg-ind{border-radius:9px;background:var(--surface);box-shadow:0 0 0 1px var(--hair-2),var(--shadow-1)}
+.seg--ind .ptab{z-index:1}
+.seg--ind .ptab.on{background:transparent;box-shadow:none}
+.kb-ptabs{margin:8px 0 14px}
+/* переключатели значения (период, режим, вид) — один вид везде:
+   серая дорожка, белая подложка у выбранного, 12 px */
+.seg,.tab-row{position:relative;display:inline-flex;align-items:center;gap:2px;padding:2px;background:var(--paper-2);border:1px solid var(--hair-2);border-radius:9px}
+.seg-btn,.tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border:0;border-radius:7px;background:none;
+  font:inherit;font-size:12px;font-weight:500;color:var(--ink-3);white-space:nowrap;cursor:pointer;transition:color .12s}
+.seg-btn:hover,.tab:hover{color:var(--ink)}
+.seg-btn.on,.tab.active{color:var(--ink);font-weight:600;background:var(--surface);box-shadow:var(--shadow-1)}
+.seg-btn:focus-visible,.tab:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.seg-ind{border-radius:7px}
+.seg--ind .tab{position:relative;z-index:1}
+.seg--ind .tab.active{background:transparent;box-shadow:none}
+.rv-chips{border-radius:9px;border-color:var(--hair-2);background:var(--paper-2)}
+.rv-chip{font-size:12px}
+.seg--ind.rv-chips>.seg-ind{border-radius:8px}
+/* метка-пояснение «как считается» — как «Как читать» в «Отзывах» */
+.method-note-btn{height:28px;padding:0 8px 0 4px;border-radius:7px;font-size:12px;color:var(--ink-3);gap:6px}
+.method-note-btn:hover{color:var(--ink);background:var(--paper-2)}
+.method-note-mark{width:15px;height:15px;border:1.3px solid currentColor;font-size:10px;font-weight:600;color:inherit}
+.method-note-chev{font-family:inherit;font-size:12px;letter-spacing:0;color:var(--select)}
+/* фильтры-чипы «Рынка» (подвид): выбранный — синим, красный только для значимого */
+.mk-kind .chip{height:28px;padding:0 10px;border-color:var(--hair-2);background:var(--surface)}
+.mk-kind .chip i{font-family:inherit;font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink-3)}
+.mk-kind .chip.active{background:var(--select-soft);border-color:color-mix(in oklab,var(--select),transparent 55%);color:var(--ink);font-weight:500}
+/* ИИ-аналитик: надстрочник приветствия — тем же шрифтом, что везде */
+.aw-eyebrow{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em}
+@media(pointer:coarse){.ptab,.tab,.seg-btn{min-height:40px}.seg,.tab-row{padding:3px}}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-upd2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-s1c"></script>
 </body>
 </html>
