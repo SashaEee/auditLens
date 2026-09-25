@@ -169,18 +169,24 @@ def c_regulation() -> dict:
             "facts": {}}
 
 
+_FRAUD = ("fraud_loss", "unauthorized_access", "fraud_credit", "data_leak")
+
+
 def c_fraud() -> dict:
     ov = _j("complaints_overview", product="Вклад", days=180)
-    fraud = [t for t in ov.get("themes") or []
-             if t["theme"] in ("fraud_loss", "unauthorized_access", "fraud_credit",
-                               "block_161", "data_leak")]
+    fraud = [t for t in ov.get("themes") or [] if t["theme"] in _FRAUD]
+    cases = {t["theme"]: _j("complaint_search", query="мошенники", product="Вклад",
+                            theme=t["theme"], days=180, limit=10).get("complaints")
+             for t in fraud}
     return {"question": "Какие мошеннические схемы вокруг вкладов видны в жалобах клиентов "
                         "за последние полгода?",
             "words": ["вклад"], "min_words": 1,
             "judge_focus": "Ответ про вклады, а не про все жалобы банка; схемы описаны по "
-                           "самим жалобам; числа не взяты из общих тем банка; законы не "
-                           "выдуманы.",
-            "facts": {"deposit_fraud_themes_180d": fraud, "deposit_overview_180d": ov}}
+                           "самим жалобам (хищения, взлом, кредиты мошенников, утечки). "
+                           "Блокировки по 161-ФЗ — антифрод банка, не схема мошенников, но "
+                           "упоминание как следствия допустимо. Законы не выдуманы.",
+            "facts": {"deposit_fraud_themes_180d": fraud, "fraud_complaints": cases,
+                      "deposit_overview_180d": ov}}
 
 
 def c_news_link() -> dict | None:
@@ -275,7 +281,10 @@ def c_loophole() -> dict:
             "numbers": [("лазеек за 30 дней", r["n30"], max(2, r["n30"] * 0.05)),
                         ("про Сбер", r["sber"], max(2, r["sber"] * 0.05))],
             "judge_focus": "Числа совпадают с эталоном; сказано, что оценки предварительные.",
-            "facts": dict(r) | {"note": "оценки модели предварительные (status=preliminary)"}}
+            "facts": dict(r) | {"note": "оценки модели предварительные (status=preliminary); "
+                                "число за 30 дней растёт каждые несколько минут и зависит от "
+                                "границы окна (от текущего момента или от полуночи) — "
+                                "расхождение до 5% не ошибка"}}
 
 
 def c_week() -> dict:
@@ -315,8 +324,11 @@ def check_answer(answer: str, spec: dict, seconds: float) -> list[dict]:
     if is_stub(answer) or re.fullmatch(r"\W*нет данных\W*", answer or "", re.I):
         res.append({"check": "есть ответ", "ok": False, "hard": True, "detail": (answer or "")[:80]})
         return res
+    # адреса ссылок на страницы AuditLens (#reviews?theme=chargeback) — не текст для
+    # пользователя; внешние адреса проверяем (127.0.0.1 в ссылке тоже не откроется)
+    visible = re.sub(r"\]\(#[^)\s]*\)", "]", answer)
     for name, rx in FORBIDDEN:
-        m = rx.search(answer)
+        m = rx.search(visible)
         res.append({"check": f"нет: {name}", "ok": not m, "hard": True,
                     "detail": m.group(0) if m else None})
     for label, value, tol in spec.get("numbers") or []:

@@ -91,3 +91,9 @@ def test_mentions_phrase_and_short_names():
     one = E.check_answer("Главное: всплеск чарджбэка у Сбера, 15 за неделю.",
                          {"numbers": [], "words": [head], "min_words": 2}, 10)
     assert all(c["ok"] for c in one if c["check"].startswith("по теме"))
+
+
+def test_theme_key_inside_link_is_fine():
+    a = "Всплеск чарджбэка: 15 жалоб — [жалобы темы](#reviews?theme=chargeback&days=7)."
+    checks = E.check_answer(a, {"numbers": [("жалоб", 15, 1)]}, 10)
+    assert all(c["ok"] for c in checks)

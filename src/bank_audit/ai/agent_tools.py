@@ -186,11 +186,21 @@ def tool_complaint_signals(bank: str = SBER, product: Product | None = None) -> 
     wp = rd.week_pulse(bank, product) or {}
     ov = ws.get("overall") or {}
     keys = {s.get("key") for s in ws.get("signals") or []}
+    sigs = []
+    for i, s in enumerate(ws.get("signals") or []):
+        item = _signal(s, bank, product)
+        if i < 3:
+            # Жалобы, из которых сложился всплеск: причина почти всегда видна в
+            # них самих (одно событие, продавец, сервис), а не в названии темы.
+            ev = rd.signal_evidence(bank, s["key"], product, 7, 20) or []
+            item["complaints"] = [{k: e.get(k) for k in ("date", "city", "summary", "quote",
+                                                          "url")} for e in ev]
+        sigs.append(item)
     return out({
         "bank": bank, "product": product, "week_end": ws.get("week_end"),
         "overall": {"week": ov.get("week"), "norm_per_week": ov.get("baseline_week"),
                     "ratio": ov.get("ratio"), "market_ratio": ov.get("market_ratio")},
-        "signals": [_signal(s, bank, product) for s in ws.get("signals") or []],
+        "signals": sigs,
         "watch_faster_than_market": [_signal(s, bank, product)
                                      for s in (wp.get("diverge") or [])[:6]
                                      if s.get("key") not in keys],
@@ -642,8 +652,9 @@ TOOLS: list[ToolSpec] = [
              "и доказательствами, сводка жалоб недели, заметка о рынке, дополнение дня."),
     ToolSpec("complaint_signals", "Сигналы жалоб", tool_complaint_signals,
              "Всплески жалоб за последнюю неделю, как в «Отзывах»: тема, число за неделю, норма, "
-             "кратность к норме, то же у рынка, главный город; плюс темы, растущие быстрее "
-             "рынка ниже порога значимости. Что стоит за всплеском — в complaint_theme."),
+             "кратность к норме, то же у рынка, главный город и сами жалобы всплеска "
+             "(пересказ, цитата, ссылка); плюс темы, растущие быстрее рынка ниже порога "
+             "значимости. Полный разбор темы с текстами — complaint_theme."),
     ToolSpec("complaint_theme", "Разбор темы жалоб", tool_complaint_theme,
              "Одна тема жалоб целиком: недельный сигнал, сами жалобы (дата, город, продукт, "
              "пересказ, цитата, эскалация, начало текста, ссылка) и группы похожих жалоб. "
