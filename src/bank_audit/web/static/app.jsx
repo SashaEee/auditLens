@@ -6,6 +6,7 @@ const CAT_LABELS = {
   deposit:"Вклады", credit:"Кредиты", mortgage:"Ипотека",
   card_credit:"Кредитные карты", card_debit:"Дебетовые карты",
   auto_loan:"Автокредиты", metals:"Драгметаллы", other:"Прочее",
+  savings_account:"Накопительные счета", rko:"РКО для бизнеса",
 };
 // Темы жалоб (категории отзывов) — перевод ключей классификатора на русский
 const TOPIC_LABELS = {
@@ -732,31 +733,59 @@ function TipLayer(){
 // ─── «Как это посчитано» — раскрытие любой цифры брифинга ─────────────────────
 // Аудитор не должен гадать, откуда взялось «×2.1»: показываем формулу словами,
 // как считалась норма, на какой выборке и из какого источника.
-function xpRows(kind,d){
+// Числа «Обзора» по-русски: десятичная запятая, без хвостового «,0» — «3,4», «×4,4»
+const ovN=(v,dg=1)=>{ if(v==null||v==="")return "—"; const n=parseFloat(v); if(isNaN(n))return String(v);
+  return (Math.round(n*10**dg)/10**dg).toFixed(dg).replace(".",",").replace(/,0+$/,""); };
+const ovRaz=k=>{ const r=Math.round(k*10)/10; if(r!==Math.round(r))return "раза"; const n=Math.round(r);
+  return n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?"раза":"раз"; };
+const ovJ=n=>`${fmtNum(n)} ${plural(Math.round(n||0),"жалоба","жалобы","жалоб")}`;
+// Как честно сказать о рынке — та же логика, что reviews_dash.market_phrase:
+// «только у …» лишь при ровном рынке (×<1,15). 25.09 заголовок написал «только
+// у Сбера» при росте рынка ×1,93 — флаг bank_specific значит «сильно обгоняет».
+function ovMarketNote(ratio,mr,who="банка"){
+  if(!ratio)return null;
+  if(mr==null||mr<1.15)return `только у ${who}: по рынку тема ровная`;
+  const k=ratio/mr;
+  return k>=1.3?`в ${ovN(k)} ${ovRaz(k)} сильнее рынка (у рынка ×${ovN(mr)})`:`рынок растёт так же (×${ovN(mr)})`;
+}
+// Страховка для уже записанных выпусков: «только у Сбера», когда ни один
+// сигнал не ровный по рынку, — «у Сбера сильнее, чем по рынку»
+function ovFixOnly(text,sigs){
+  if(!text||!sigs||!sigs.length)return text;
+  if(sigs.some(x=>x&&x.ratio&&(x.market_ratio==null||x.market_ratio<1.15)))return text;
+  return String(text).replace(/только\s+у\s+(Сбера|Сбербанка|банка|нас)(?![а-яё])/gi,(m,w)=>`у ${w} сильнее, чем по рынку`);
+}
+
+function xpRows(kind,d,now){
   const R=[];
   if(kind==="review_spike"){
     if(d.week!=null&&d.baseline_week!=null)
-      R.push(["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`]);
+      R.push(["Расчёт",`${ovJ(d.week)} за 7 дней ÷ ${ovN(d.baseline_week)} — норма недели = ×${ovN(d.ratio)}`]);
     if(d.baseline_week!=null)
       // ВАЖНО: это среднее по окну 14–63 дня назад (7 недель), не медиана и не
       // «прошлые 6 недель» — последние две недели в норму НЕ входят, иначе
       // всплеск разбавлял бы сам себя
       R.push(["Норма",d.base_count!=null
-        ? `${d.base_count} жалоб за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks} = ${d.baseline_week} в неделю`
-        : `среднее за неделю по окну 14–63 дня назад — ${d.baseline_week} жалоб`]);
-    if(d.prev_week!=null) R.push(["Прошлая неделя",`${d.prev_week} жалоб`]);
+        ? `${ovJ(d.base_count)} за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks} = ${ovN(d.baseline_week)} в неделю`
+        : `среднее за неделю по окну 14–63 дня назад — ${ovN(d.baseline_week)}`]);
+    if(d.prev_week!=null) R.push(["Прошлая неделя",ovJ(d.prev_week)]);
     // масштаб: 6.7/нед — это ОДНА тема; без общего числа цифра кажется мелкой
     if(d.week_total)
       R.push(["Масштаб",`тема — ${Math.round(100*d.week/d.week_total)}% всех жалоб на Сбер за неделю (${d.week} из ${d.week_total})`]);
     if(d.market_ratio!=null)
-      R.push(["Рынок",`та же тема по рынку ×${d.market_ratio}` +
-        (d.bank_specific?" — значит всплеск наш, а не отраслевой":"")]);
+      R.push(["Рынок",`та же тема по рынку ×${ovN(d.market_ratio)} — `+(d.market_ratio<1.15
+        ?"рынок ровный, всплеск наш, а не отраслевой"
+        :`растёт и рынок; у Сбера ${(ovMarketNote(d.ratio,d.market_ratio)||"").replace(/\s*\(у рынка[^)]*\)/,"")}`)]);
+    // Выпуск — снимок на утро; к вечеру данные дополняются. Та же цифра сейчас
+    // — как в «Отзывах», чтобы расхождение не выглядело ошибкой
+    if(now&&(now.week!==d.week||Math.abs((now.baseline_week||0)-(d.baseline_week||0))>=0.05))
+      R.push(["Сейчас",`${ovJ(now.week)} за 7 дней при норме ${ovN(now.baseline_week)} — ×${ovN(now.ratio)}: после выпуска данные дополнились (так же в «Отзывах»)`]);
     R.push(["Выборка","только Сбербанк · жалобы со всех площадок, без похвалы, мусора и копий · главная проблема по разметке ИИ (кодификатор) · порог — статистически значимый рост к 7 прошлым неделям"]);
   } else if(kind==="tariff_move"){
     if(d.from!=null&&d.to!=null)
-      R.push(["Расчёт",`${d.from}% → ${d.to}% = ${d.delta>0?"+":""}${d.delta} п.п.`]);
+      R.push(["Расчёт",`${ovN(d.from,2)}% → ${ovN(d.to,2)}% = ${d.delta>0?"+":"−"}${ovN(Math.abs(d.delta),2)} п.п.`]);
     if(d.category) R.push(["Продукт",`${CAT_LABELS[d.category]||d.category} · ${d.title||""}`]);
-    R.push(["Порог","в движения недели попадают сдвиги от 0.05 п.п."]);
+    R.push(["Порог","в движения недели попадают сдвиги от 0,05 п.п."]);
     R.push(["Источник","журнал изменений тарифов (sravni.ru)"]);
   } else if(kind==="mass_move"){
     R.push(["Расчёт",`${d.n_banks} банков изменили условия за ${d.window_h||48} ч`]);
@@ -779,44 +808,53 @@ function xpRows(kind,d){
 
 // расшифровки плиток пульса: у каждой цифры своя формула и своя выборка
 const xpDiverge=d=>[
-  ["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`],
-  ["Норма",`${d.base_count} жалоб за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks}`],
+  ["Расчёт",`${ovJ(d.week)} за 7 дней ÷ ${ovN(d.baseline_week)} — норма недели = ×${ovN(d.ratio)}`],
+  ["Норма",`${ovJ(d.base_count)} за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks}`],
   ["Рынок",d.market_ratio!=null
-    ?`та же тема по всем банкам ×${d.market_ratio} — мы растём в ${d.gap} раза быстрее рынка`
+    ?`та же тема по всем банкам ×${ovN(d.market_ratio)} — мы растём в ${ovN(d.gap)} ${ovRaz(d.gap||0)} быстрее рынка`
     :"рыночный срез недоступен"],
   ["Почему здесь","из 41 проблемы кодификатора показана та, где наш рост сильнее всего обгоняет рыночный"],
   ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
-const xpEscalation=k=>[
+const xpEscalation=(k,now)=>[
   ["Значение",`${pct1(k.escalation_pct)} жалоб: клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор или к финомбудсмену (разметка ИИ)`],
+  ...(k.escalation_filed_pct!=null?[["Из них",`уже обратились ${pct1(k.escalation_filed_pct)}, грозят ${pct1(Math.round((k.escalation_pct-k.escalation_filed_pct)*10)/10)}`]]:[]),
+  // Порог 12% убран: у крупного банка он пробит всегда, и плитка горела
+  // постоянно. Сравниваем с рынком — как на вкладке «Отзывы»
+  ["Рынок",k.market_escalation_pct!=null
+    ?`у остальных банков ${pct1(k.market_escalation_pct)} — ${k.escalation_sig?"у Сбера значимо выше":"различие в пределах колебаний"}`
+    :"сравнение с рынком появится со следующего выпуска"],
   ["Как ищем","модель читает жалобу целиком и отмечает угрозу или уже поданное обращение; выборочная проверка — 99% верно"],
-  ["Порог","12% — принятый в инструменте уровень внимания"],
-  ["Выборка",`${fmtNum(k.total||0)} жалоб за 90 дней · только Сбербанк · все площадки`],
+  ["Выборка",`${ovJ(k.total||0)} за 90 дней · только Сбербанк · все площадки`],
+  ...(now&&now.escalation_pct!=null&&now.escalation_pct!==k.escalation_pct
+    ?[["Сейчас",`${pct1(now.escalation_pct)} — после выпуска данные дополнились (так же в «Отзывах»)`]]:[]),
 ];
-const xpWeek=(ov,k)=>[
-  ["Расчёт",`${ov.week} жалоб за последние 7 дней`],
+const xpWeek=(ov,k,now)=>[
+  ["Расчёт",`${ovJ(ov.week)} за последние 7 дней`],
   ["Норма",ov.baseline_week!=null
     ?`${Math.round(ov.baseline_week)} в неделю — среднее по окну 14–63 дня назад`:"—"],
-  ["Рынок",ov.market_ratio!=null?`по всем банкам ×${ov.market_ratio} к своей норме`:"—"],
-  ["Масштаб",k.total?`корпус ${fmtNum(k.total)} жалоб за 90 дн · доля в жалобах на все банки ${pct1(k.market_share_pct)} — без поправки на число клиентов`:"—"],
+  ["Рынок",ov.market_ratio!=null?`по всем банкам ×${ovN(ov.market_ratio)} к своей норме`:"—"],
+  ["Масштаб",k.total?`${ovJ(k.total)} за 90 дн · доля в жалобах на все банки ${pct1(k.market_share_pct)} — без поправки на число клиентов`:"—"],
   ["Канал","отзывы на площадках (banki.ru, sravni.ru, finuslugi.ru и др.) — один из каналов, не все обращения"],
+  ...(now&&now.week!=null&&now.week!==ov.week
+    ?[["Сейчас",`${ovJ(now.week)} за 7 дней — после выпуска данные дополнились`]]:[]),
 ];
 const xpOurChanges=tm=>[
   ["Значение",`${(tm.totals&&tm.totals.sber_changes_7d)||0} офферов Сбера со значимым изменением условий за 7 дней`],
-  ["Значимое","изменение нестаточного условия или сдвиг ставки от 0.01 п.п."],
+  ["Значимое","изменение нестатичного условия или сдвиг ставки от 0,01 п.п."],
   ["Зачем","проверить, что изменения тарифов прошли согласование и корректно отражены"],
   ["Источник","журнал изменений условий (sravni.ru), сверка ежедневная"],
 ];
 const xpUnclassified=u=>u?[
-  ["Значение",`${u.week} жалоб из ${u.week_total} за неделю (${u.pct}%) модель не отнесла ни к одной из 41 проблемы`],
-  ["Норма",`${u.baseline_week} в неделю по окну 14–63 дня назад`+(u.ratio!=null?` — сейчас ×${u.ratio}`:"")],
+  ["Значение",`${ovJ(u.week)} из ${fmtNum(u.week_total)} за неделю (${u.pct}%) модель не отнесла ни к одной из 41 проблемы`],
+  ["Норма",`${ovN(u.baseline_week)} в неделю по окну 14–63 дня назад`+(u.ratio!=null?` — сейчас ×${ovN(u.ratio)}`:"")],
   ["Что значит","либо инцидент нового типа, либо проблема, которой нет в кодификаторе — такие жалобы читаем первыми"],
   ["Зачем","картина по темам неполна на эту долю — это надо знать до выводов"],
 ]:[];
 const xpThemeUp=t=>[
-  ["Расчёт",`${t.n} жалоб за 90 дней против ${Math.round(t.n/(1+(t.delta_pct||0)/100))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
+  ["Расчёт",`${ovJ(t.n)} за 90 дней против ${fmtNum(Math.round(t.n/(1+(t.delta_pct||0)/100)))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
   ["Горизонт","квартал — медленные тренды, которых не видно в недельном окне"],
-  ["Порог","показываем тему с ростом от 50% и не менее 30 жалоб"],
+  ["Порог","рост от 50% и не менее 30 жалоб — и значимо быстрее общего потока жалоб (как на вкладке «Отзывы»)"],
   ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
 
@@ -856,24 +894,27 @@ function Xp({rows,children,note}){
 // «−22 ко вчера» под числом плитки: носитель смысла — изменение, а не уровень.
 // Сравниваются снапшоты выпусков (см. _digest_delta на бэке), поэтому дрейф
 // скользящего окна внутри дня сюда не попадает.
-function BfDelta({v,unit,invert}){
+function BfDelta({v,unit,invert,neutral}){
   if(v==null||v===0)return null;
   const better=invert?v<0:v>0;      // invert=true → рост это плохо
-  return <span className={"bf-t-delta "+(better?"good":"bad")}>
-    {v>0?"+":"−"}{Math.abs(v)}{unit||""} ко вчера</span>;
+  // neutral — у метрики нет «лучше/хуже» (сколько тарифов меняли сами):
+  // красный там читался как ухудшение
+  return <span className={"bf-t-delta "+(neutral?"flat":better?"good":"bad")}>
+    {v>0?"+":"−"}{ovN(Math.abs(v))}{unit||""} ко вчера</span>;
 }
 
 // Вердикт дня, если LLM не сформулировала: одна фраза по тем же числам.
-function bfVerdict(dv,esc,ovl,unc){
-  const bits=[];
+function bfVerdict(dv,kpi,ovl,unc){
+  const bits=[], k=kpi||{};
   if(dv&&dv.gap>=1.25)
-    bits.push(`Внимание на «${(dv.short||dv.label).toLowerCase()}»: ${dv.week} жалоб при норме ${dv.baseline_week}` +
+    bits.push(`Внимание на «${(dv.short||dv.label).toLowerCase()}»: ${ovJ(dv.week)} при норме ${ovN(dv.baseline_week)}` +
       (dv.market_ratio!=null&&dv.market_ratio<1.15?" — и это только у нас, по рынку тема ровная":""));
   else bits.push("Спокойное утро: тем с ростом сильнее рынка нет");
-  if(esc!=null&&esc>=12) bits.push(`эскалации в ЦБ и суд выше порога — ${pct1(esc)} при 12%`);
-  if(unc&&unc.ratio!=null&&unc.ratio>=1.3) bits.push(`жалоб вне известных тем больше обычного (${unc.week} против ${unc.baseline_week})`);
+  if(k.escalation_sig&&k.market_escalation_pct!=null)
+    bits.push(`эскалация выше рынка — ${pct1(k.escalation_pct)} против ${pct1(k.market_escalation_pct)}`);
+  if(unc&&unc.ratio!=null&&unc.ratio>=1.3) bits.push(`жалоб вне известных тем больше обычного (${unc.week} против ${ovN(unc.baseline_week)})`);
   if(bits.length===1&&ovl&&ovl.week!=null&&ovl.baseline_week!=null)
-    bits.push(`всего ${ovl.week} жалоб за неделю при норме ${Math.round(ovl.baseline_week)}`);
+    bits.push(`всего ${ovJ(ovl.week)} за неделю при норме ${Math.round(ovl.baseline_week)}`);
   return bits.join(", ")+".";
 }
 
@@ -929,8 +970,8 @@ function bfParseBrief(md){
   return out;
 }
 
-function BfBrief({markdown}){
-  const items=useMemo(()=>bfParseBrief(markdown),[markdown]);
+function BfBrief({markdown,skip}){
+  const items=useMemo(()=>bfParseBrief(markdown).filter(it=>!(skip&&skip(it))),[markdown,skip]);
   // не распарсилось — показываем как было, хуже не станет
   if(!items.length)return <div className="bf-brief">{renderMD(markdown)}</div>;
   const cls=it=>it.isNew?"new":/высок/i.test(it.level||"")?"high"
@@ -984,14 +1025,14 @@ function BfFeedback({ins}){
   </span>;
 }
 
-function BfCard({ins,idx,lead}){
+function BfCard({ins,idx,lead,now,sigs}){
   const d=ins.data||{};
-  const xp=xpRows(ins.kind,d);
+  const xp=xpRows(ins.kind,d,now);
   const viz=(()=>{
     if(ins.kind==="review_spike")
       return <>
         <Spark data={[d.baseline_week||0,d.prev_week||0,d.week||0]} w={64} h={20} color="var(--ink-3)"/>
-        {d.ratio&&<span className="mono tnum" style={{fontSize:12,fontWeight:600}}>×{d.ratio}</span>}
+        {d.ratio&&<span className="mono tnum" style={{fontSize:12,fontWeight:600}}>×{ovN(d.ratio)}</span>}
         {d.geo&&<span className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{d.geo.share}% · {d.geo.city}</span>}
       </>;
     if(ins.kind==="tariff_move")return <DeltaStrip from={d.from} to={d.to}/>;
@@ -1009,9 +1050,9 @@ function BfCard({ins,idx,lead}){
       {ins.after_pause&&<span className="badge warn" style={{fontSize:9}}>сбор после паузы</span>}
       <RiskGlyph likelihood={ins.likelihood} impact={ins.impact}/>
     </div>
-    <h3 className="bf-title">{ins.title}</h3>
-    {ins.so_what&&<div className="bf-sowhat">{ins.so_what}</div>}
-    {ins.idea&&<div className="bf-idea"><span className="bf-idea-l">Что проверить</span>{ins.idea}</div>}
+    <h3 className="bf-title">{ovFixOnly(ins.title,sigs)}</h3>
+    {ins.so_what&&<div className="bf-sowhat">{ovFixOnly(ins.so_what,sigs)}</div>}
+    {ins.idea&&<div className="bf-idea"><span className="bf-idea-l">Что проверить</span>{ovFixOnly(ins.idea,sigs)}</div>}
     {ins.evidence&&<div className="bf-ev" title="жалобы клиентов Сбера по связанным проблемам кодификатора">Наши данные · {ins.evidence}</div>}
     {viz&&<div className="bf-viz">{viz}</div>}
     {(ins.provenance||xp.length>0)&&<div className="bf-prov">
@@ -1769,9 +1810,9 @@ function ForYouPage(){
             <span className={"fy-sig-dot"+(s.level==="high"?" high":"")}/>
             <span className="fy-sig-l">{s.label}</span>
             <span className="fy-sig-n">{s.week!=null?s.week+" за 7 дн":""}
-              {s.ratio!=null?" · ×"+s.ratio+" к норме":""}
-              {s.gap!=null?" · ×"+s.gap+" к рынку":""}
-              {s.bank_specific?" · только у Сбера":""}</span>
+              {s.ratio!=null?" · ×"+ovN(s.ratio)+" к норме":""}
+              {s.gap!=null?" · ×"+ovN(s.gap)+" к рынку":""}
+              {s.bank_specific?(s.market_ratio!==undefined?(s.market_ratio==null||s.market_ratio<1.15?" · только у Сбера":""):" · сильнее рынка"):""}</span>
             {s.why_you&&<span className="fy-sig-why">{s.why_you}</span>}
           </div>)}
       </div>
@@ -2063,8 +2104,11 @@ function OverviewPage(){
   const[loading,setLoading]=useState(true);
   const[err,setErr]=useState(null);
   const[refreshBusy,setRefreshBusy]=useState(false);
+  const[live,setLive]=useState(null);    // те же функции, что у «Отзывов», сейчас
+  const me=useMe();
 
   const loadDigest=()=>apiFetch("/api/overview/digest").then(d=>{setDg(d);return d;});
+  useEffect(()=>{apiFetch("/api/overview/live").then(setLive).catch(()=>{});},[]);
   useEffect(()=>{
     Promise.allSettled([loadDigest(),apiFetch("/api/summary")]).then(([d,s])=>{
       if(s.status==="fulfilled")setSummary(s.value);
@@ -2081,12 +2125,20 @@ function OverviewPage(){
   },[refreshing]);
 
   const manualRefresh=()=>{
-    if(refreshBusy)return; setRefreshBusy(true);
+    if(refreshBusy)return;
+    // Выпуск один на всех. После полудня перегенерация забирает в сегодняшний
+    // выпуск новости, которые утром ушли бы в завтрашний, — спрашиваем явно
+    const late=+new Date().toLocaleString("en-GB",{timeZone:"Europe/Moscow",hour:"2-digit",hour12:false})>=12;
+    const ok=window.confirm(late
+      ?"Перегенерировать выпуск для всех?\n\nСейчас после 12:00: новости, попавшие в пересобранный выпуск, не войдут в завтрашний. Утренняя версия сохранится."
+      :"Перегенерировать выпуск для всех? Утренняя версия сохранится, новая займёт 1–2 минуты.");
+    if(!ok)return;
+    setRefreshBusy(true);
     // Оптимистично включаем «обновляется»: сервер мог ещё не закоммитить
     // mark_run, и мгновенный GET вернул бы refreshing=false — поллинг не
     // стартовал бы и юзер не увидел бы новый выпуск. Поллинг сам сойдётся.
     const optimistic=()=>setDg(d=>d&&({...d,meta:{...d.meta,refreshing:true}}));
-    apiPost("/api/overview/digest/refresh",{force:true})
+    apiPost("/api/overview/digest/refresh",{force:true,late})
       .then(optimistic)
       .catch(()=>{optimistic();/* 409 = уже генерится — тоже поллим */})
       .finally(()=>setRefreshBusy(false));
@@ -2125,13 +2177,22 @@ function OverviewPage(){
   const newsGroups=(nw.groups||[]).map(g=>({...g,items:(g.items||[]).filter(it=>
     !onCards.has(String(it.event_id!=null?it.event_id:it.url)))})).filter(g=>g.items.length);
   const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
-  const hl=head.headline||"", hot=head.hot||"";
+  const sigs=pulse.signals||[];
+  const hl=ovFixOnly(head.headline||"",sigs), hot=head.hot||"";
   // данные плиток пульса
-  const kpi=pulse.kpi||{}, esc=kpi.escalation_pct;
+  // сравнение эскалации с рынком: в снимке — с 26.09; для старых выпусков — по живым
+  const kpi0=pulse.kpi||{};
+  const kpi=kpi0.market_escalation_pct==null&&live&&live.market_escalation_pct!=null
+    ?{...kpi0,market_escalation_pct:live.market_escalation_pct,escalation_sig:live.escalation_sig,
+      escalation_filed_pct:kpi0.escalation_filed_pct!=null?kpi0.escalation_filed_pct:live.escalation_filed_pct}
+    :kpi0;
+  const esc=kpi.escalation_pct;
   const dlt=(dg&&dg.meta&&dg.meta.delta)||{};
   const dv=(pulse.diverge||[]).find(d=>d.gap!=null&&d.gap>=1.15)||null;  // ведущее расхождение
   const unc=pulse.unclassified||null;
-  const up=(pulse.themes_up||[])[0]||null;
+  // «Растёт за квартал» — только значимо быстрее общего потока (как в «Отзывах»);
+  // в снимках до 25.09 признака нет, и «каникулы +70%» при росте потока +17% шли сюда
+  const up=(pulse.themes_up||[]).find(t=>t.delta_sig)||null;
   const runsOk=(qo.runs||[]).filter(r=>r.status==="ok").length, runsAll=(qo.runs||[]).length;
   const hh=bfPickHot(hl,hot);   // [начало,длина] акцента — есть всегда, если есть заголовок
   // заголовок дня пишется по ведущему сигналу — его расчёт и раскрываем на акценте.
@@ -2152,7 +2213,22 @@ function OverviewPage(){
     // объяснения хуже, чем объяснение соседнего сигнала того же выпуска
     return insights.find(i=>xpRows(i.kind,i.data||{}).length)||insights[0];
   })();
-  const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{}):[];
+  const liveSig=k=>live&&k?((live.signals||[]).find(x=>x.key===k)||(live.diverge||[]).find(x=>x.key===k)||null):null;
+  const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{},liveSig((leadIns.data||{}).key)):[];
+  // ведущий повод — всплеск жалоб: плитка «Проверить сегодня» и пункт разбора
+  // про ту же тему повторяли заголовок (главный факт стоял на странице 4 раза)
+  const leadSpike=insights[0]&&insights[0].kind==="review_spike"?(insights[0].data||{}):null;
+  const heroDup=!!(leadSpike&&dv&&leadSpike.key===dv.key);
+  const leadStem=leadSpike?String(leadSpike.short||leadSpike.label||"").split(/[\s,]/)[0].toLowerCase():"";
+  // обычная функция, не хук: код ниже ранних return
+  const briefSkip=it=>!!(leadStem.length>=5&&
+    ((it.title||"")+" "+(it.body||"")).toLowerCase().includes(leadStem.slice(0,Math.max(5,leadStem.length-2))));
+  // ключевая ставка — с даты решения ЦБ (последняя смена в ряду), а не с даты выгрузки
+  const krSince=(()=>{const pts=kr.points||[]; if(!pts.length)return null;
+    let i=pts.length-1; while(i>0&&pts[i-1].rate===pts[i].rate)i--; return i>0?pts[i].date:null;})();
+  const msk=t=>t?new Date(t).toLocaleTimeString("ru",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit"}):"";
+  const dmy=v=>v?String(v).slice(0,10).split("-").reverse().slice(0,2).join("."):"";
+  const headAt=(sec.headline||{}).generated_at, updAt=(sec.update||{}).generated_at;
 
   return <div className="fade-in">
     <Sept3Strip/>
@@ -2163,14 +2239,16 @@ function OverviewPage(){
     <header style={{marginBottom:26}}>
       <div className="eyebrow-row">
         <div className="eyebrow">
-          Брифинг №{issueNum} · {issueDate.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · розница / УВА
+          Сводка · {issueDate.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · розница / УВА
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {refreshing?
             <span className="bf-live"><span className="dot"/>обновляется…</span>:
-            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до {String((dg&&dg.meta&&dg.meta.digest_hour_msk)??7).padStart(2,"0")}:00 МСК</span>}
-          <button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
-            title="Перегенерировать выпуск">⟳</button>
+            (headAt||genAt)&&<span className="bf-stamp">выпуск {msk(headAt||genAt)} МСК
+              {isToday&&updAt&&updAt>(headAt||"")&&!dg.meta.is_morning&&(sec.update||{}).payload&&(((sec.update.payload.items||[]).length)||((sec.update.payload.signals||[]).length))
+                ?<> · дополнено {msk(updAt)}</>:null}</span>}
+          {me&&me.is_admin&&<button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
+            title="Перегенерировать выпуск (видно только владельцу)" aria-label="Перегенерировать выпуск">⟳</button>}
         </div>
       </div>
       {generating&&!hl?
@@ -2190,16 +2268,16 @@ function OverviewPage(){
           {/* Вердикт дня вместо статистики генератора («3 риск-сигн · 8 новостей»
               ничего не меняли в решениях аудитора). Берём фразу от LLM, если она
               есть, иначе собираем детерминированно из тех же чисел. */}
-          <p className="lede" style={{maxWidth:"70ch"}}>{head.quiet_note||bfVerdict(dv,esc,ovl,unc)}</p>
+          <p className="lede" style={{maxWidth:"70ch"}}>{head.quiet_note||bfVerdict(dv,kpi,ovl,unc)}</p>
           <p className="bf-stampline">
-            {kpi.as_of?`жалобы на ${fmtDateMsk(kpi.as_of)}`:"данные обновляются"}
+            {kpi.as_of?`жалобы по ${dmy(kpi.as_of)}`:"данные обновляются"}
             {tm.totals&&tm.totals.last_ok_run&&<> · тарифы на {fmtDateMsk(tm.totals.last_ok_run)}</>}
             {runsAll>0&&<> · <a href="#sources" className={runsOk<runsAll?"warn":""}>источники {runsOk}/{runsAll}</a></>}
-            {kpi.total&&<> · корпус {fmtNum(kpi.total)} жалоб за 90 дн</>}
+            {kpi.total&&<> · {ovJ(kpi.total)} за 90 дн</>}
             {/* дата обязательна: голое число не отличить от вчерашнего, а ставка
                 вступает в силу конкретным днём — аудитор на неё ссылается */}
-            {kr.current!=null&&<> · ключевая ЦБ {kr.current}%
-              {kr.as_of&&<> с {fmtDateMsk(kr.as_of)}</>}</>}
+            {kr.current!=null&&<> · ключевая ЦБ {ovN(kr.current,2)}%
+              {krSince&&<> с {dmy(krSince)}</>}</>}
             {ST("headline")==="stale"&&<span className="bf-stale"> · ⚠ сводка за {sec.headline.stale_from}</span>}
             {ST("headline")==="degraded"&&<span className="bf-stale"> · ⚠ ИИ недоступен, сигналы детерминированные</span>}
             {/* ручное обновление не затирает утренний выпуск — он доступен отдельно */}
@@ -2223,7 +2301,7 @@ function OverviewPage(){
         {sg.map((x,i)=><a key={"s"+i} className="bf-upd-it" href="#reviews"
             onClick={()=>{try{sessionStorage.setItem("al-rv-prefilter",JSON.stringify({theme:x.key}));}catch{}}}>
           <span className="bf-upd-k">жалобы</span>
-          <span className="bf-upd-t">Всплеск «{x.label}»: {x.week} за 7 дней при норме ~{String(x.baseline_week).replace(".",",")}{x.bank_specific?" — только у Сбера":""}</span>
+          <span className="bf-upd-t">Всплеск «{x.label}»: {x.week} за 7 дней при норме ~{ovN(x.baseline_week)}{x.bank_specific?" — "+(x.market_ratio!==undefined?ovMarketNote(x.ratio,x.market_ratio,"Сбера"):"сильнее рынка"):""}</span>
         </a>)}
         {its.map((it,i)=><a key={"n"+i} className="bf-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
             onClick={()=>trkEvent({kind:"news_click",page:"overview",payload:{url:it.url,source:it.source,group:"update",title:it.title}})}>
@@ -2239,10 +2317,13 @@ function OverviewPage(){
         туда, где с этим работают, и раскрывается попапом «как посчитано».
         Коэффициент ×N на экран не выводится: только пара «факт · норма». */}
     <section style={{marginBottom:22}}>
-      <div className="bf-pulse">
+      {/* Сравнение «ко вчера» — только внутри одной методики: 24.09 жалобы
+          перешли на разметку ИИ, и дельты показывали смену счёта */}
+      {dlt.method_changed&&<div className="bf-method">Сравнение со вчера недоступно: методика подсчёта жалоб обновилась</div>}
+      <div className={"bf-pulse"+(heroDup?" nohero":"")}>
         {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
             Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
-        <div className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+        {!heroDup&&<div className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
              onClick={dv?()=>bfGoDrill({page:"reviews",params:{theme:dv.key}}):undefined}
              style={dv?{cursor:"pointer"}:undefined}>
           <div className="bf-t-cap">Проверить сегодня
@@ -2251,29 +2332,32 @@ function OverviewPage(){
             <Xp rows={xpDiverge(dv)} note="жалобы всех площадок · разметка ИИ">
               <span className="bf-t-val">{dv.short||dv.label}</span>
             </Xp>
-            <div className="bf-t-sub">{dv.week} жалоб · норма {dv.baseline_week}
+            <div className="bf-t-sub">{ovJ(dv.week)} · норма {ovN(dv.baseline_week)}
               {dv.market_ratio!=null&&<> · по рынку {dv.market_ratio>1.1?"тоже растёт":"без роста"}</>}
               {dlt.diverge_key===dv.key&&<BfDelta v={dlt.diverge_week} invert/>}</div>
           </>:<>
             <span className="bf-t-val">Ничего срочного</span>
             <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||40} проблем — значимых всплесков нет</div>
           </>}
-        </div>
+        </div>}
 
         {/* Регуляторный риск: доля жалоб с угрозой ЦБ/суда/ФАС */}
-        <a className={"bf-t"+(esc!=null&&esc>=12?" attn":"")} href="#reviews">
-          <div className="bf-t-cap">Дошло до ЦБ и суда</div>
-          <Xp rows={xpEscalation(kpi)} note="жалобы всех площадок · окно 90 дней">
+        {/* «Дошло до ЦБ и суда» считало и угрозы, а порог 12% у Сбера пробит
+            всегда — плитка горела постоянно. Теперь как в «Отзывах»: против рынка */}
+        <a className={"bf-t"+(kpi.escalation_sig?" attn":"")} href="#reviews">
+          <div className="bf-t-cap">Эскалация в ЦБ, суд и т. п.</div>
+          <Xp rows={xpEscalation(kpi,live)} note="жалобы всех площадок · окно 90 дней">
             <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
           </Xp>
-          <div className="bf-t-sub">порог 12%{kpi.total?` · из ${fmtNum(kpi.total)} жалоб за 90 дн`:""}
+          <div className="bf-t-sub">{kpi.market_escalation_pct!=null?`у рынка ${pct1(kpi.market_escalation_pct)}`:"грозят или обратились"}
+            {kpi.escalation_filed_pct!=null&&` · обратились ${pct1(kpi.escalation_filed_pct)}`}
             <BfDelta v={dlt.escalation_pct} unit=" пп" invert/></div>
         </a>
 
         {/* Объём недели — с нормой рядом, без коэффициента */}
         <a className="bf-t" href="#reviews">
           <div className="bf-t-cap">Жалобы · 7 дней</div>
-          <Xp rows={xpWeek(ovl,kpi)} note="жалобы всех площадок · разметка ИИ">
+          <Xp rows={xpWeek(ovl,kpi,live&&live.overall)} note="жалобы всех площадок · разметка ИИ">
             <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
               {ovl.baseline_week!=null&&<small> норма {Math.round(ovl.baseline_week)}</small>}</span>
           </Xp>
@@ -2289,7 +2373,7 @@ function OverviewPage(){
               <small> офферов</small></span>
           </Xp>
           <div className="bf-t-sub">за 7 дней · условия продуктов Сбера
-            <BfDelta v={dlt.sber_changes}/></div>
+            <BfDelta v={dlt.sber_changes} neutral/></div>
         </a>
 
         {/* Слепая зона: чего классификатор не видит */}
@@ -2311,10 +2395,10 @@ function OverviewPage(){
             <Xp rows={xpThemeUp(up)} note="жалобы всех площадок · 90 дней против предыдущих 90">
               <span className="bf-t-val">{up.short||up.label}</span>
             </Xp>
-            <div className="bf-t-sub">+{Math.round(up.delta_pct)}% к прошлому кварталу · {up.n} жалоб</div>
+            <div className="bf-t-sub">+{Math.round(up.delta_pct)}% к прошлому кварталу · {ovJ(up.n)}</div>
           </>:<>
             <span className="bf-t-val">Без роста</span>
-            <div className="bf-t-sub">ни одна тема не выросла заметно за квартал</div>
+            <div className="bf-t-sub">ни одна тема не растёт значимо быстрее общего потока жалоб</div>
           </>}
         </a>
       </div>
@@ -2325,7 +2409,8 @@ function OverviewPage(){
       <div>
         {insights.length?
           <><div className="bf-cards">
-            {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0}/>)}
+            {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0}
+              sigs={sigs} now={liveSig((ins.data||{}).key)}/>)}
           </div><BfLegend/></>:
           generating?
             <div className="bf-cards">
@@ -2336,10 +2421,10 @@ function OverviewPage(){
                 За сутки резких сигналов не выявлено{head.stats?` · проверено ${head.stats.checked_themes} тем жалоб`:""}</div>
             </div>}
         {head.market_note&&<div className="bf-fon"><span className="bf-fon-l">Фон рынка</span><span>{head.market_note}</span></div>}
-        {head.quiet_note&&<div className="bf-quiet"><span className="ok"><Ic.check/></span>{head.quiet_note}</div>}
+        {/* «…в пределах нормы» уже стоит подзаголовком под заголовком выпуска */}
 
         {/* ③b Анализ жалоб недели (LLM, reviews_brief) */}
-        {brief.markdown&&<div className="surface" style={{padding:"20px 24px",marginTop:16}}>
+        {brief.markdown&&bfParseBrief(brief.markdown).some(it=>!briefSkip(it))&&<div className="surface" style={{padding:"20px 24px",marginTop:16}}>
           <div className="eyebrow-row" style={{marginBottom:12}}>
             <div className="eyebrow">Анализ жалоб недели</div>
             <div style={{display:"flex",gap:10,alignItems:"center"}}>
@@ -2347,7 +2432,7 @@ function OverviewPage(){
               <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="reviews"}>К отзывам <Ic.ext/></button>
             </div>
           </div>
-          <BfBrief markdown={brief.markdown}/>
+          <BfBrief markdown={ovFixOnly(brief.markdown,sigs)} skip={briefSkip}/>
         </div>}
       </div>
 
@@ -2407,7 +2492,10 @@ function OverviewPage(){
         {(tm.top_changes||[]).length?
           <table className="m-cards">
             <thead><tr><th>Банк</th><th>Продукт</th><th className="right">Было → стало</th><th className="right">Δ</th><th className="right">Когда</th></tr></thead>
-            <tbody>{tm.top_changes.slice(0,10).map((c,i)=>{
+            <tbody>{(()=>{ // одинаковые по виду строки (разные офферы одного продукта) — одной
+              const g=[]; for(const c of tm.top_changes){ const k=[c.bank,c.title,c.from,c.to,String(c.changed_at||"").slice(0,10)].join("|");
+                const h=g.find(x=>x.k===k); if(h)h.n++; else g.push({k,c,n:1}); }
+              return g.slice(0,10).map(x=>({...x.c,_n:x.n})); })().map((c,i)=>{
               const up=c.to>c.from;
               // точный диплинк в журнал: свежие выпуски несут offer_id/change_id,
               // старые — хотя бы категорию
@@ -2419,9 +2507,9 @@ function OverviewPage(){
               return <tr key={i} onClick={go} style={{cursor:"pointer"}} title="Открыть в журнале изменений">
                 <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}{c.is_sber&&<span className="badge solid" style={{marginLeft:8,fontSize:9}}>Сбер</span>}</div>
                   <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
-                <td data-label="Продукт" style={{fontSize:12,color:"var(--ink-2)"}}>{c.title}</td>
-                <td className="right mono tnum" data-label="Было → стало">{c.from}% → <b>{c.to}%</b></td>
-                <td className="right" data-label="Δ"><span className={`delta ${up?"pos":"neg"}`}>{up?<Ic.arrow_up/>:<Ic.arrow_dn/>}{signed(c.delta)}</span></td>
+                <td data-label="Продукт" style={{fontSize:12,color:"var(--ink-2)"}}>{c.title}{c._n>1&&<span className="t-cap"> · {c._n} {plural(c._n,"оффер","оффера","офферов")}</span>}</td>
+                <td className="right mono tnum" data-label="Было → стало">{ovN(c.from,2)}% → <b>{ovN(c.to,2)}%</b></td>
+                <td className="right" data-label="Δ"><span className={`delta ${up?"pos":"neg"}`}>{up?<Ic.arrow_up/>:<Ic.arrow_dn/>}{c.delta>0?"+":"−"}{ovN(Math.abs(c.delta),2)}</span></td>
                 <td className="right mono tnum" data-label="Когда" style={{fontSize:11,color:"var(--ink-3)"}}>{fmtDate(c.changed_at)}</td>
               </tr>;})}
             </tbody>
@@ -2440,9 +2528,9 @@ function OverviewPage(){
     {/* ⑥ ПОДВАЛ ДОВЕРИЯ */}
     <div className="bf-trust">
       {qo.totals&&<span>{fmtNum(qo.totals.offers)} предложений · {qo.totals.banks} банков</span>}
-      {pulse.kpi&&pulse.kpi.as_of&&<span>отзывы: {fmtNum((pulse.kpi.total||0))} за 90 дн (обн. {pulse.kpi.as_of})</span>}
+      {pulse.kpi&&pulse.kpi.as_of&&<span>жалобы: {fmtNum((pulse.kpi.total||0))} за 90 дн (по {dmy(pulse.kpi.as_of)})</span>}
       {tm.totals&&tm.totals.last_ok_run&&<span>сбор тарифов: {fmtDate(tm.totals.last_ok_run)}</span>}
-      {dg&&dg.meta&&dg.meta.tokens&&dg.meta.tokens.in>0&&<span>дайджест: {Math.round((dg.meta.tokens.in+dg.meta.tokens.out)/1000)}k токенов/день · один на всех</span>}
+
       {qo.captcha_pending>0&&<a href="#sources">{qo.captcha_pending} капч(и) ждут решения</a>}
       <a href="#sources">Источники →</a>
     </div>
@@ -3751,7 +3839,7 @@ function RvJournal({bank,product,onOpen}){
         <div className="rv-jr-h"><span className="rv-jr-l">{e.label}</span>
           {e.level==="high"&&<span className="rv-tag compliance">сильный</span>}</div>
         <div className="rv-jr-m">{d1===d2?d1:`${d1} – ${d2}`} · пик {st.week} за 7 дн при норме ~{rvNum(st.baseline_week)}
-          {st.new?" · новое":st.ratio?` · ×${rvNum(st.ratio)}`:""}{st.bank_specific?" · только у банка":""}</div>
+          {st.new?" · новое":st.ratio?` · ×${rvNum(st.ratio)}`:""}{st.bank_specific?" · "+(ovMarketNote(st.ratio,st.market_ratio)||"сильнее рынка"):""}</div>
         <div className="rv-jr-a">
           <button className={"rv-jr-b ok"+(e.verdict==="confirmed"?" on":"")} onClick={()=>mark(e,"confirmed")}>подтвердился</button>
           <button className={"rv-jr-b no"+(e.verdict==="false"?" on":"")} onClick={()=>mark(e,"false")}>ложный</button>
@@ -4094,13 +4182,15 @@ function ReviewsPage({params}){
     onNext:(rd.idx<rdList.length-1||(rd.src==="feed"&&feedMore))?()=>rdGo(1):null}:null;
   const openSim=(list,i)=>setRd(x=>({list,idx:i,ctx:"похожие",src:"sim",back:x}));
   const vtOpen=(card,apply)=>{
-    if(!card||!wide||!document.startViewTransition||matchMedia("(prefers-reduced-motion: reduce)").matches){apply();return;}
+    // скрытая вкладка: переход браузер отменяет с ошибкой — сразу применяем
+    if(!card||!wide||!document.startViewTransition||document.hidden||matchMedia("(prefers-reduced-motion: reduce)").matches){apply();return;}
     const t=card.querySelector(".rv-c-title"); if(t)t.style.viewTransitionName="rv-vt-title";
     const old=document.querySelector(".rv-rd-title"); if(old)old.style.viewTransitionName="";
     const vt=document.startViewTransition(()=>{ if(t)t.style.viewTransitionName="";
       ReactDOM.flushSync(apply);
       const rt=document.querySelector(".rv-fw-rd .rv-rd-title"); if(rt)rt.style.viewTransitionName="rv-vt-title"; });
-    vt.finished.finally(()=>{ const rt=document.querySelector(".rv-rd-title"); if(rt)rt.style.viewTransitionName=""; });
+    vt.ready.catch(()=>{});   // прерванный переход — не ошибка: состояние уже применено
+    vt.finished.catch(()=>{}).finally(()=>{ const rt=document.querySelector(".rv-rd-title"); if(rt)rt.style.viewTransitionName=""; });
   };
   // отмеченное «прочитано» — перерисовать список, когда в читалке новая жалоба
   useEffect(()=>{setReadV(v=>v+1);},[rdItem&&rdItem.url]);
@@ -4349,7 +4439,7 @@ function ReviewsPage({params}){
               {!(anom.signals.length===1&&anom.summary)&&<div className="rv-radar-chips">
                 {anom.signals.map((s,i)=>{
                   const tip=`${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)`
-                    +(s.bank_specific?" · всплеск только у банка":"")
+                    +(s.bank_specific?" · "+(ovMarketNote(s.ratio,s.market_ratio)||"сильнее рынка"):"")
                     +(s.accel?` · ускоряется (${s.prev_week}→${s.week})`:"")
                     +(s.geo?` · ${s.geo.share}% из ${s.geo.city}`:"");
                   return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}

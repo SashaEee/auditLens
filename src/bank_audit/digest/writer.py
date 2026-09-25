@@ -151,7 +151,7 @@ async def reviews_brief(day: date) -> dict:
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_brief LLM failed: %s", e)
         md, ti, to = None, None, None
-    md = brief_items(md)
+    md = rd.fix_market_claims(brief_items(md), signals)
     ov = (sig or {}).get("overall") or {}
     return {"markdown": md or None, "calm": False, "overall": ov,
             **({"_llm_model": insight_model(), "_tokens_in": ti, "_tokens_out": to}
@@ -418,6 +418,17 @@ def _age_hours(iso_ts: str | None) -> float | None:
 
 
 
+def _flat(d: dict) -> bool:
+    """Рынок по теме ровный? Для старых снимков без поля — по market_ratio."""
+    from ..rag.reviews_dash import market_flat
+    return bool(d.get("market_flat")) if "market_flat" in d else market_flat(d.get("market_ratio"))
+
+
+def _mnote(d: dict) -> str:
+    from ..rag.reviews_dash import market_phrase
+    return d.get("market_note") or market_phrase(d.get("ratio"), d.get("market_ratio")) or "сильнее рынка"
+
+
 def _ai_prompt(kind: str, d: dict) -> str:
     if kind == "review_spike":
         geo = d.get("geo") or {}
@@ -427,7 +438,8 @@ def _ai_prompt(kind: str, d: dict) -> str:
         if geo:
             parts.append(f'{geo["share"]}% жалоб из г. {geo["city"]}')
         if d.get("bank_specific"):
-            parts.append("у рынка без Сбера роста нет")
+            parts.append("у рынка без Сбера роста нет" if _flat(d) else
+                         f'у Сбера {_mnote(d)}')
         parts.append("Найди вероятную причину, оцени регуляторный риск и предложи шаги аудита.")
         return ". ".join(parts)
     if kind == "tariff_move":
@@ -556,6 +568,12 @@ async def headline(day: date) -> dict:
             "provenance": _provenance(ld["kind"], d),
         })
     rp = (secs.get("reviews_pulse") or {}).get("payload") or {}
+    # страховка: «только у Сбера» при растущем рынке — неправда (25.09)
+    from ..rag.reviews_dash import fix_market_claims
+    sigs = rp.get("signals") or []
+    for ins in insights:
+        for f in ("title", "so_what", "idea"):
+            ins[f] = fix_market_claims(ins.get(f), sigs)
     nw = (secs.get("news") or {}).get("payload") or {}
     n_news = sum(len(g.get("items") or []) for g in (nw.get("groups") or []))
     # «где спокойно» — детерминированно: модель писала странное вроде
@@ -564,7 +582,7 @@ async def headline(day: date) -> dict:
     quiet = ("Жалобы клиентов по остальным проблемам кодификатора — в пределах нормы."
              if n_sig else "Значимых всплесков жалоб клиентов за неделю нет.")
     result["quiet_note"] = quiet
-    head = str(result.get("headline") or "")[:160]
+    head = fix_market_claims(str(result.get("headline") or "")[:160], sigs)
     if not head or not insights:
         head = head or (insights[0]["title"] if insights else f"Сводка за {today_ru()}")
     return {
@@ -759,7 +777,8 @@ def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str
                       "facts": (f'всплеск жалоб клиентов Сбера «{s_["label"]}»: {s_["week"]} за 7 дн '
                                 f'при норме ~{s_.get("baseline_week")}/нед'
                                 + (f', ×{s_["ratio"]}' if s_.get("ratio") else "")
-                                + (", только у Сбера" if s_.get("bank_specific") else "")
+                                + ((", только у Сбера — по рынку тема ровная" if _flat(s_)
+                                    else f", у Сбера {_mnote(s_)}") if s_.get("bank_specific") else "")
                                 + (f', {s_["geo"]["share"]}% из г. {s_["geo"]["city"]}' if s_.get("geo") else "")
                                 + ". Причину см. в анализе жалоб недели.")})
     tm = (secs.get("tariff_moves") or {}).get("payload") or {}
@@ -902,7 +921,8 @@ async def afternoon_update(day: date) -> dict:
                                   .get("signals") or [])}
     new_sig = [{"key": s["key"], "label": s["label"], "week": s["week"],
                 "baseline_week": s.get("baseline_week"), "ratio": s.get("ratio"),
-                "bank_specific": s.get("bank_specific")}
+                "bank_specific": s.get("bank_specific"),
+                "market_ratio": s.get("market_ratio"), "market_note": s.get("market_note")}
                for s in (sig.get("signals") or []) if s.get("key") not in had][:2]
     return {"since": since.isoformat(), "at": datetime.now(timezone.utc).isoformat(),
             "items": items, "signals": new_sig}

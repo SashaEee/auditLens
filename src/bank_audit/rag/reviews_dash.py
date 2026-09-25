@@ -1747,6 +1747,57 @@ def top_topic(bank: str, product: str | None, days: int = 90) -> dict | None:
 
 
 
+def _ru_num(x: float) -> str:
+    """1 знак после запятой по-русски, без «,0»: 2,1 · 4 · 1,9."""
+    t = f"{round(float(x), 1):.1f}".replace(".", ",")
+    return t[:-2] if t.endswith(",0") else t
+
+
+def _raz(k: float) -> str:
+    """«в 2,1 раза», «в 3 раза», «в 5 раз» — согласование с числом."""
+    r = round(float(k), 1)
+    if r != int(r):
+        return "раза"
+    n = int(r)
+    return "раза" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "раз"
+
+
+_FLAT = 1.15   # рынок по теме «ровный»: рост к своей норме меньше ×1,15
+
+
+def market_flat(market_ratio) -> bool:
+    return market_ratio is None or float(market_ratio) < _FLAT
+
+
+def market_phrase(ratio, market_ratio, who: str = "банка") -> str | None:
+    """Как честно сказать о рынке. «Только у …» — лишь когда рынок по теме
+    ровный: 25.09 заголовок написал «всплеск только у Сбера» при росте рынка
+    ×1,93 (флаг bank_specific значит «сильно обгоняет рынок», а не «рынок
+    стоит»). Иначе — во сколько раз наш рост сильнее рыночного."""
+    if not ratio:
+        return None
+    if market_flat(market_ratio):
+        return f"только у {who}: по рынку тема ровная"
+    k = float(ratio) / float(market_ratio)
+    if k >= 1.3:
+        return f"в {_ru_num(k)} {_raz(k)} сильнее рынка (у рынка ×{_ru_num(market_ratio)})"
+    return f"рынок растёт так же (×{_ru_num(market_ratio)})"
+
+
+_ONLY_RX = re.compile(r"только\s+у\s+(Сбера|Сбербанка|банка|нас)(?![а-яё])", re.I)
+
+
+def fix_market_claims(text: str | None, signals: list[dict] | None) -> str | None:
+    """Страховка на выходе модели: «только у Сбера/банка», когда ни один сигнал
+    не ровный по рынку, заменяем на «у … сильнее, чем по рынку». Если хоть
+    один сигнал ровный, фраза может быть правдой — не трогаем."""
+    if not text or not signals:
+        return text
+    if any(s.get("ratio") and market_flat(s.get("market_ratio")) for s in signals):
+        return text
+    return _ONLY_RX.sub(lambda m: f"у {m.group(1)} сильнее, чем по рынку", text)
+
+
 @_safe(None)
 def week_pulse(bank: str, product: str | None = None) -> dict | None:
     """Недельный срез для «пульса дня» на главной — БЕЗ порога сигнала:
@@ -1783,6 +1834,8 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
             "ratio": round(ratio, 2),
             "market_ratio": round(mratio, 2) if mratio else None,
             "gap": round(gap, 2) if gap else None,
+            "market_flat": market_flat(mratio),
+            "market_note": market_phrase(ratio, mratio),
         })
     diverge.sort(key=lambda d: ((d["gap"] or d["ratio"]), d["week"]), reverse=True)
     tw0, tb = int(brow["_tw0"]), int(brow["_tb"])
@@ -1871,7 +1924,9 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
                         "excess": round(excess, 1),
                         "p_value": round(p, 5), "q_value": round(qv[k], 5),
                         "new": bool(new), "accel": bool(accel),
-                        "market_ratio": mratio, "bank_specific": bool(bank_specific)})
+                        "market_ratio": mratio, "bank_specific": bool(bank_specific),
+                        "market_flat": market_flat(mratio),
+                        "market_note": market_phrase(ratio, mratio)})
         for s_ in out:
             strong = s_["q_value"] < 0.001 and s_["week"] >= 12
             s_["level"] = "high" if (strong or (s_["risk"] == "compliance" and s_["q_value"] < 0.01)

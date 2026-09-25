@@ -66,9 +66,14 @@ async def reviews_pulse(day: date) -> dict:
         wp = rd.week_pulse(bank) or {}
         unc = rd.unclassified_week(bank) or {}
         return {
+            # версия методики: «ко вчера» сравнивает только снимки одной версии —
+            # 25.09 вчерашний снимок был по старым меткам, и «+5,5 пп эскалации»,
+            # «−30 вне кодификатора» были сменой счёта, а не событием
+            "method": f"annotation:{rd._ann_schema()}",
             "kpi": {k: ov.get(k) for k in
                     ("total", "prev", "delta_pct", "delta_low_n", "market_share_pct",
-                     "market_rank", "market_banks", "escalation_pct", "as_of")},
+                     "market_rank", "market_banks", "escalation_pct", "as_of",
+                     "escalation_filed_pct", "market_escalation_pct", "escalation_sig")},
             "signals": wk.get("signals") or [],
             "overall": wk.get("overall") or {},
             "themes_up": themes_up,
@@ -316,6 +321,15 @@ async def tariff_moves(day: date) -> dict:
     try:
         from .news import fetch_key_rate
         out["key_rate"] = await asyncio.to_thread(fetch_key_rate)
+        # с какой даты действует текущее значение: «ключевая 14% с 24.09» писало
+        # дату выгрузки ряда, а не решения ЦБ
+        kr_ = out["key_rate"] or {}
+        pts = kr_.get("points") or []
+        if pts:
+            i = len(pts) - 1
+            while i > 0 and pts[i - 1].get("rate") == pts[-1].get("rate"):
+                i -= 1
+            kr_["since"] = pts[i].get("date") if i > 0 else None
     except Exception as e:  # noqa: BLE001
         log.info("key_rate fetch failed: %s", e)
         out["key_rate"] = None

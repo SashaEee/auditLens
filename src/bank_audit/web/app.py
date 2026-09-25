@@ -671,20 +671,34 @@ def _digest_delta(doc: dict) -> dict:
                 return None
 
         out = {"prev_date": prev_day}
-        out["week"] = _d2((now_rp.get("overall") or {}).get("week"),
-                          (was_rp.get("overall") or {}).get("week"))
-        out["escalation_pct"] = _d2((now_rp.get("kpi") or {}).get("escalation_pct"),
-                                    (was_rp.get("kpi") or {}).get("escalation_pct"))
-        out["unclassified"] = _d2((now_rp.get("unclassified") or {}).get("week"),
-                                  (was_rp.get("unclassified") or {}).get("week"))
         out["sber_changes"] = _d2((now_tm.get("totals") or {}).get("sber_changes_7d"),
                                   (was_tm.get("totals") or {}).get("sber_changes_7d"))
-        # ведущая тема: сравниваем только если тема ТА ЖЕ, иначе дельта врёт
-        nd = (now_rp.get("diverge") or [{}])[0]
-        wd = next((x for x in (was_rp.get("diverge") or []) if x.get("key") == nd.get("key")), None)
-        if nd.get("key") and wd:
-            out["diverge_key"] = nd["key"]
-            out["diverge_week"] = _d2(nd.get("week"), wd.get("week"))
+
+        def _method(pl: dict) -> str:
+            # старые снимки без поля: метод виден по источнику «вне кодификатора»
+            if pl.get("method"):
+                return str(pl["method"]).split(":")[0]
+            return str((pl.get("unclassified") or {}).get("src") or "?")
+
+        # Жалобы сравниваем только внутри одной методики: иначе «ко вчера»
+        # показывает смену счёта (25.09: «+5,5 пп эскалации» после перехода
+        # с меток на разметку ИИ), а не событие
+        if _method(now_rp) != _method(was_rp):
+            out["method_changed"] = True
+        else:
+            out["week"] = _d2((now_rp.get("overall") or {}).get("week"),
+                              (was_rp.get("overall") or {}).get("week"))
+            out["escalation_pct"] = _d2((now_rp.get("kpi") or {}).get("escalation_pct"),
+                                        (was_rp.get("kpi") or {}).get("escalation_pct"))
+            out["unclassified"] = _d2((now_rp.get("unclassified") or {}).get("week"),
+                                      (was_rp.get("unclassified") or {}).get("week"))
+            # ведущая тема: сравниваем только если тема ТА ЖЕ, иначе дельта врёт
+            nd = (now_rp.get("diverge") or [{}])[0]
+            wd = next((x for x in (was_rp.get("diverge") or [])
+                       if x.get("key") == nd.get("key")), None)
+            if nd.get("key") and wd:
+                out["diverge_key"] = nd["key"]
+                out["diverge_week"] = _d2(nd.get("week"), wd.get("week"))
         return {k: v for k, v in out.items() if v is not None}
     except Exception as e:  # noqa: BLE001 — дельта необязательна
         log.info("digest delta skipped: %s", e)
@@ -700,13 +714,49 @@ def overview_digest_dates():
 class DigestRefreshRequest(BaseModel):
     force: bool = True
     sections: Optional[list[str]] = None
+    late: bool = False          # явное «да» на перегенерацию после полудня
+
+
+@app.get("/api/overview/live")
+def overview_live():
+    """Те же цифры, что у вкладки «Отзывы», на текущий момент — без моделей.
+
+    Выпуск «Обзора» — снимок на утро, а жалобы за день дописываются: к вечеру
+    норма и число за неделю сдвигаются, и «×4,4» в выпуске против «×4,2» в
+    «Отзывах» выглядело ошибкой. Фронт показывает эти значения строкой
+    «Сейчас» в расшифровке, не переписывая утренний выпуск."""
+    rd = _rd()
+    bank = "Сбербанк"
+    wk = rd.weekly_signals(bank) or {}
+    ov = rd.overview(bank) or {}
+    wp = rd.week_pulse(bank) or {}
+    keys = ("key", "week", "baseline_week", "ratio", "market_ratio")
+    return {
+        "signals": [{k: x.get(k) for k in keys} for x in (wk.get("signals") or [])],
+        "diverge": [{k: x.get(k) for k in keys} for x in (wp.get("diverge") or [])],
+        "overall": wk.get("overall"), "week_end": wk.get("week_end"),
+        **{k: ov.get(k) for k in ("total", "escalation_pct", "escalation_filed_pct",
+                                  "market_escalation_pct", "escalation_sig")},
+    }
 
 
 @app.post("/api/overview/digest/refresh")
-async def overview_digest_refresh(req: DigestRefreshRequest):
-    """Ручной перезапуск (целиком или точечно: {"sections":["news","headline"]})."""
+async def overview_digest_refresh(req: DigestRefreshRequest,
+                                  user: CurrentUser = Depends(get_current_user)):
+    """Ручной перезапуск (целиком или точечно: {"sections":["news","headline"]}).
+
+    Только владельцу: выпуск один на всех, перегенерация тратит модели на всех,
+    а после полудня забирает в сегодняшний выпуск новости, которые утром ушли
+    бы в завтрашний (day_events исключает уже опубликованное). Поэтому после
+    12:00 МСК — только с явным late=true (фронт спрашивает подтверждение)."""
     from ..digest import store as digest_store
     from ..digest.scheduler import ensure_digest
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "Перегенерация выпуска доступна только владельцу")
+    from zoneinfo import ZoneInfo
+    if datetime.now(ZoneInfo("Europe/Moscow")).hour >= 12 and not req.late:
+        raise HTTPException(409, "После 12:00 перегенерация сдвигает новости завтрашнего "
+                                 "выпуска — нужно явное подтверждение (late=true)")
     if await asyncio.to_thread(digest_store.run_in_progress, _digest_today()):
         raise HTTPException(409, "Дайджест уже генерируется")
     asyncio.create_task(ensure_digest("manual", force=req.force,
@@ -2094,7 +2144,7 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
     if hit and _time.time() - hit[0] < 6 * 3600:
         return hit[1]
     context = await asyncio.to_thread(reviews_llm.signal_context, sig, bank, product or None)
-    brief = await reviews_llm.anomaly_brief(sig, context)
+    brief = _rd().fix_market_claims(await reviews_llm.anomaly_brief(sig, context), signals)
     out = {"summary": brief, "signals": signals, "overall": sig.get("overall"),
            "week_end": sig.get("week_end"), "calm": False}
     if brief:

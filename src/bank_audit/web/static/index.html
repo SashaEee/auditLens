@@ -3124,11 +3124,20 @@ html.dark .rv-ovl{background:rgb(0 0 0 / calc(.5 * var(--rv-scrim-k,1)))}
   .rv-tabs-l{padding:5px 0;margin:-5px 0}
   .rv-tab::after{content:"";position:absolute;inset:-5px 0}
 }
+
+/* ── «Обзор», волна O1 ────────────────────────────────────────────────── */
+/* без плитки-дубля заголовка широкая плитка занимает остаток сетки */
+.bf-pulse.nohero .bf-t-wide{grid-column:1/-1}
+@media(max-width:1100px){.bf-pulse.nohero .bf-t-wide{grid-column:span 2}}
+/* нейтральная дельта: у метрики нет «лучше/хуже» */
+.bf-t-delta.flat{color:var(--ink-3)}
+/* сравнение со вчера недоступно — сменилась методика */
+.bf-method{font-size:12px;color:var(--ink-2);margin:0 0 8px}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-rv-r3"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-ov-o1"></script>
 </body>
 </html>

@@ -135,10 +135,18 @@ def signal_lines(sig: dict) -> tuple[list[str], str]:
         if s.get("accel"):
             bits.append(f"ускоряется (нед: {s.get('prev_week')}→{s['week']})")
         mr = s.get("market_ratio")
-        if s.get("bank_specific"):
-            bits.append(f"ТОЛЬКО у банка (рынок без банка ×{mr if mr is not None else '~1'})")
-        elif mr is not None and mr >= 1.4:
-            bits.append(f"рынок тоже растёт ×{mr} (возможно отраслевое)")
+        # «только у банка» — лишь при ровном рынке; иначе во сколько раз сильнее
+        # (раньше при рынке ×2,09 модели писали «ТОЛЬКО у банка», и она
+        # повторяла это в заголовке)
+        if s.get("bank_specific") or (mr is not None and mr >= 1.4):
+            from .reviews_dash import market_flat, market_phrase
+            note = market_phrase(s.get("ratio"), mr)
+            if note and market_flat(mr):
+                bits.append("ТОЛЬКО у банка — " + note.split(": ", 1)[-1])
+            elif note and s.get("bank_specific"):
+                bits.append(f"у банка {note}")
+            elif mr is not None:
+                bits.append(f"рынок тоже растёт ×{mr} (возможно отраслевое)")
         if s.get("geo"):
             bits.append(f"{s['geo']['share']}% из г. {s['geo']['city']}")
         lines.append(f'- {s["label"]} [{s.get("level", "medium")}]: {s["week"]} за 7 дн; '

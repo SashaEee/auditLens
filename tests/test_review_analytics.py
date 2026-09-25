@@ -153,3 +153,42 @@ def test_pct_int_rounds_half_up_like_frontend():
     assert _pct_int(22.49) == 22
     assert _pct_int(None) == 0
     assert _int_sp(2428) == "2 428"
+
+
+def test_market_phrase_only_when_market_flat():
+    # 25.09: «всплеск только у Сбера» при росте рынка ×1,93 — неправда
+    from bank_audit.rag.reviews_dash import market_phrase, market_flat
+    assert market_flat(None) and market_flat(1.1) and not market_flat(1.93)
+    assert market_phrase(4.2, 1.05) == "только у банка: по рынку тема ровная"
+    assert market_phrase(4.2, 2.09) == "в 2 раза сильнее рынка (у рынка ×2,1)"
+    assert market_phrase(10, 2) == "в 5 раз сильнее рынка (у рынка ×2)"
+    assert market_phrase(4.4, 1.93).startswith("в 2,3 раза")
+    assert market_phrase(2.0, 1.8) == "рынок растёт так же (×1,8)"
+    assert market_phrase(None, 1.5) is None
+
+
+def test_fix_market_claims_rewrites_only_when_no_flat_signal():
+    from bank_audit.rag.reviews_dash import fix_market_claims
+    grow = [{"ratio": 4.4, "market_ratio": 1.93}]
+    assert (fix_market_claims("Всплеск на чарджбэк только у Сбера: 15 за неделю", grow)
+            == "Всплеск на чарджбэк у Сбера сильнее, чем по рынку: 15 за неделю")
+    assert fix_market_claims("рост, только у банка, ускоряется", grow) == \
+        "рост, у банка сильнее, чем по рынку, ускоряется"
+    # хоть один сигнал с ровным рынком — фраза может быть правдой
+    mixed = grow + [{"ratio": 3.0, "market_ratio": 1.0}]
+    assert fix_market_claims("только у Сбера", mixed) == "только у Сбера"
+    assert fix_market_claims(None, grow) is None
+
+
+def test_signal_lines_no_contradiction():
+    # модели больше не приходит «ТОЛЬКО у банка (рынок ×2,09)»
+    from bank_audit.rag.reviews_llm import signal_lines
+    sig = {"signals": [
+        {"label": "Чарджбэк", "week": 15, "ratio": 4.2, "baseline_week": 3.6,
+         "market_ratio": 2.09, "bank_specific": True},
+        {"label": "Каникулы", "week": 12, "ratio": 3.0, "baseline_week": 4.0,
+         "market_ratio": 1.0, "bank_specific": True},
+    ]}
+    lines, _ = signal_lines(sig)
+    assert "ТОЛЬКО" not in lines[0] and "в 2 раза сильнее рынка" in lines[0]
+    assert "ТОЛЬКО у банка — по рынку тема ровная" in lines[1]

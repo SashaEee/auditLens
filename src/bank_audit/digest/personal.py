@@ -526,7 +526,8 @@ def _my_signals(pvec: list[float] | None, dims: dict,
             break
         out.append({**{k2: c.get(k2) for k2 in
                        ("key", "label", "short", "risk", "week", "baseline_week",
-                        "ratio", "gap", "level", "new", "accel", "bank_specific")},
+                        "ratio", "gap", "level", "new", "accel", "bank_specific",
+                        "market_ratio", "market_note")},
                     "why_you": " · ".join(dict.fromkeys(why))[:60] or None})
     return out
 
