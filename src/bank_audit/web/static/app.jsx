@@ -759,9 +759,13 @@ function TipLayer(){
       if(!el||el===cur)return;
       open(el);
     };
+    // Закрываем, когда указатель или фокус ушли ЗА пределы элемента. Раньше
+    // проверялось, ОТКУДА ушли (e.target) — а это всегда сам элемент, и
+    // подсказка висела, пока не наведёшь на другую или не прокрутишь.
     const hide=e=>{
       if(!cur)return;
-      if(e&&e.target&&e.target.closest&&e.target.closest("[data-tip]")===cur&&e.type!=="scroll")return;
+      const to=e&&e.relatedTarget;
+      if(e&&e.type!=="scroll"&&to&&cur.contains(to))return;
       close();
     };
     const key=e=>{if(e.key==="Escape"&&cur)close();};
@@ -9826,6 +9830,7 @@ const PROFILE_CSS=`
   box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.2,0,0,1);}
 .pf-toggle.on span{transform:translateX(18px);}
 .pf-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;}
+.pf-about{margin:28px 2px 8px;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pf-saved{font-size:12px;color:var(--pos);font-family:inherit;font-variant-numeric:tabular-nums}
 .pf-save{font-size:13px;color:var(--paper);background:var(--ink);border-radius:9px;height:34px;padding:0 16px;font-weight:500;
   transition:transform .1s,filter .14s;}
@@ -9850,6 +9855,7 @@ const IcSpark=()=><svg width="12" height="12" viewBox="0 0 24 24" fill="currentC
 
 function ProfilePage(){
   const me=useMe();
+  const appInfo=useAppInfo();
   const[data,setData]=useState(null);
   const[selfDesc,setSelfDesc]=useState("");
   const[interests,setInterests]=useState({banks:[],products:[],pinned:[],muted:[],custom:[]});
@@ -10060,6 +10066,7 @@ function ProfilePage(){
         <button className="pf-save" onClick={saveSettings}>Сохранить</button>
       </div>
     </div>
+    <div className="pf-about">{appAbout(appInfo)}{appInfo?.env_label?" · стенд «"+appInfo.env_label+"»":""}</div>
   </div>;
 }
 
@@ -10093,6 +10100,30 @@ class PageBoundary extends React.Component{
 // hash → {p: id страницы, prm: параметры}. Диплинки несут срез в адресе:
 // #market?cat=deposit&view=changes&change=123. #sber — алиас (вкладки
 // объединены в «Позицию», 07.2026).
+// О продукте: версия, дата последнего обновления и среда. Один запрос на всю
+// страницу — его делят логотип (подсказка, метка стенда) и профиль.
+let appInfoReq=null;
+function useAppInfo(){
+  const[info,setInfo]=useState(null);
+  useEffect(()=>{
+    appInfoReq=appInfoReq||apiFetch("/api/meta/app").catch(()=>{appInfoReq=null;return null;});
+    let live=true; appInfoReq.then(d=>{if(live)setInfo(d);});
+    return()=>{live=false;};
+  },[]);
+  return info;
+}
+function appAbout(info){
+  if(!info)return "AuditLens";
+  const v=(info.version||"").split(".").slice(0,2).join(".");
+  let s="AuditLens"+(v&&v!=="0.0"?" "+v:"");
+  if(info.updated_at){
+    const d=new Date(info.updated_at);
+    const other=d.getFullYear()!==new Date().getFullYear();
+    s+=" · обновлён "+d.toLocaleDateString("ru",other?{day:"numeric",month:"long",year:"numeric"}:{day:"numeric",month:"long"});
+  }
+  return s;
+}
+
 function parseHash(){
   const h=(location.hash||"").slice(1);
   const qi=h.indexOf("?");
@@ -10125,6 +10156,7 @@ function Shell(){
   const[hasCaptcha,setHasCaptcha]=useState(false);
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
+  const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
@@ -10296,16 +10328,19 @@ function Shell(){
         .onb-callout::after{content:"";position:absolute;left:26px;bottom:-6px;width:11px;height:11px;background:var(--surface);
           border-right:1px solid var(--hair);border-bottom:1px solid var(--hair);transform:rotate(45deg);}`}</style>
       <aside className={"rail"+(navOpen?" open":"")}>
-        <div className="rail-brand">
-          <svg className="rail-mark" viewBox="0 0 100 100" role="img" aria-label="AuditLens">
+        {/* Логотип ведёт на «Обзор»; версия и дата обновления — в подсказке,
+            метка среды — только вне прода */}
+        <a className="rail-brand" href="#overview" data-tip={appAbout(appInfo)}
+           onClick={e=>{e.preventDefault();setNavOpen(false);
+             if(page==="overview")contentRef.current?.scrollTo({top:0,behavior:"smooth"});
+             else setPage("overview");}}>
+          <svg className="rail-mark" viewBox="0 0 100 100" aria-hidden="true">
             <path fill="#1F4DFF" d="M47.5 13 L59.5 13 L89.5 89 L75.5 89 Z"/>
             <path fill="currentColor" fillRule="evenodd" d="M47.5 13 L57.5 13 L83.5 89 L66.5 89 L58.5 67 L36.5 67 L27.5 89 L10.5 89 Z M47.5 36 L56.5 58 L38.5 58 Z"/>
           </svg>
-          <div>
-            <h1>AuditLens</h1>
-            <small>v1.0 · Internal</small>
-          </div>
-        </div>
+          <span className="rail-name">AuditLens</span>
+          {appInfo?.env_label&&<span className="rail-env">{appInfo.env_label}</span>}
+        </a>
         {Object.entries(groups).map(([gr,items])=>(
           <div key={gr}>
             <div className="rail-section">{gr}</div>

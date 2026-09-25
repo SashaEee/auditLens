@@ -1102,6 +1102,47 @@ def market_export(category: str = "deposit",
                              f'attachment; filename="{name}"'})
 
 
+# Среда из APP_ENV. В проде (пусто, prod, production) интерфейс без меток; на
+# остальных стендах у логотипа стоит метка, чтобы стенд не путали с продом.
+_ENV_LABELS = {"test": "Тест", "stage": "Тест", "staging": "Тест",
+               "dev": "Разработка", "local": "Локально", "pilot": "Пилот"}
+_APP_INFO: dict = {"at": 0.0, "info": None}
+
+
+def _code_updated_at() -> Optional[str]:
+    """Когда последний раз менялся код приложения: самый свежий файл пакета.
+    Выкладка (rsync, сборка образа, docker cp) сохраняет время файлов, поэтому
+    дата совпадает с последней правкой, а не с перезапуском контейнера."""
+    root = Path(__file__).resolve().parents[1]
+    newest = 0.0
+    for p in root.rglob("*"):
+        if "__pycache__" in p.parts or p.suffix not in (".py", ".jsx", ".html", ".css"):
+            continue
+        try:
+            newest = max(newest, p.stat().st_mtime)
+        except OSError:
+            continue
+    return datetime.fromtimestamp(newest, timezone.utc).isoformat() if newest else None
+
+
+@app.get("/api/meta/app")
+def meta_app():
+    """О продукте: версия, дата последнего обновления кода, среда."""
+    now = time.time()
+    if _APP_INFO["info"] is None or now - _APP_INFO["at"] > 600:
+        from .. import __version__
+        env = (os.getenv("APP_ENV") or "").strip().lower()
+        prod = env in ("", "prod", "production")
+        _APP_INFO["info"] = {
+            "version": __version__,
+            "updated_at": _code_updated_at(),
+            "env": env or "prod",
+            "env_label": None if prod else _ENV_LABELS.get(env, env.capitalize()),
+        }
+        _APP_INFO["at"] = now
+    return _APP_INFO["info"]
+
+
 @app.get("/api/meta/schedule")
 def meta_schedule():
     """Реальное расписание автообновления + свежесть данных.

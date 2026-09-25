@@ -112,10 +112,13 @@ input,select,textarea{font:inherit;color:inherit}
 .eyebrow{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
 #app{display:grid;grid-template-columns:var(--rail) 1fr;min-height:100vh}
 .rail{background:var(--paper);border-right:1px solid var(--hair);position:sticky;top:0;height:100vh;display:flex;flex-direction:column;padding:16px 14px 14px;}
-.rail-brand{display:flex;align-items:center;gap:10px;padding:6px 8px 20px}
-.rail-mark{width:26px;height:26px;color:var(--ink);display:block;flex:none}
-.rail-brand h1{font-size:14px;font-weight:600;letter-spacing:-.01em;line-height:1.1}
-.rail-brand small{font-size:10px;color:var(--ink-3);letter-spacing:.04em;font-family:'JetBrains Mono',monospace}
+/* Логотип: знак + название, без служебных подписей. На десктопе поднят на 8 px,
+   чтобы стоять на одной линии с крошкой в шапке (центр 28 px = середина --topbar). */
+.rail-brand{display:flex;align-items:center;gap:10px;width:fit-content;margin:-8px 0 22px;padding:6px 8px;border-radius:8px;color:var(--ink);text-decoration:none;-webkit-tap-highlight-color:transparent}
+.rail-brand:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.rail-mark{width:28px;height:28px;color:var(--ink);display:block;flex:none}
+.rail-name{font-size:16px;font-weight:600;letter-spacing:-.015em;line-height:1}
+.rail-env{font-size:11px;font-weight:500;line-height:1;padding:3px 6px;border-radius:4px;color:var(--warn-ink);background:color-mix(in oklab,var(--warn),transparent 86%)}
 .rail-section{padding:14px 8px 6px;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
 .rail-num{display:inline-block;width:18px;color:var(--ink-3);font-family:'JetBrains Mono',monospace;font-size:11px;margin-right:6px}
 .nav-item{display:flex;align-items:center;gap:2px;padding:6px 10px;border-radius:4px;color:var(--ink-2);font-size:13px;font-weight:450;cursor:pointer;transition:background .12s,color .12s;position:relative;}
@@ -1440,6 +1443,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   /* выезжающий drawer-рейл */
   .rail{position:fixed;left:0;top:0;height:100dvh;width:min(86vw,320px);transform:translateX(-100%);transition:transform .22s ease;z-index:60;box-shadow:var(--shadow-2);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:16px 14px calc(14px + env(safe-area-inset-bottom))}
   .rail.open{transform:translateX(0)}
+  .rail-brand{margin-top:0;min-height:44px}
   .mobile-nav{display:flex !important}
   .nav-item{padding:10px 10px;font-size:14px;min-height:44px}
   .user-chip{min-height:44px}
@@ -3496,6 +3500,6 @@ thead th{font-weight:600}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-ai6"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-brand3"></script>
 </body>
 </html>
