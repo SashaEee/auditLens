@@ -297,7 +297,6 @@ tbody tr.is-sber td:first-child{box-shadow:inset 3px 0 0 var(--sber)}
 /* Док композера: центрированная колонка 780px + градиент-подложка + сноска */
 .composer-dock{flex:none;padding:14px 32px 16px;background:linear-gradient(to top,var(--paper) 60%,transparent)}
 .composer-inner{max-width:780px;margin:0 auto}
-.composer-note{text-align:center;margin-top:8px;font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 /* ── Welcome (редакторский экран ИИ-аналитика) ── */
 .ai-welcome{max-width:760px;margin:0 auto;padding:7vh 32px 40px}
 .aw-eyebrow{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:16px;font-variant-numeric:tabular-nums}
@@ -1450,7 +1449,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .chat-msg.ai:has(.chat-bubble-deep){max-width:100%;margin:0}
   /* На мобильном док без отступов/градиента — поля даёт сам .chat-input-wrap */
   .composer-dock{padding:0;background:none}
-  .composer-note{display:none}
   /* Deep-консоль/quick на всю ширину */
   .dr-con-wrap,.quick-msg{max-width:100%}
   .dr-con-spine{padding:6px 12px 14px}
@@ -3478,6 +3476,6 @@ thead th{font-weight:600}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-s4g"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-ai1"></script>
 </body>
 </html>

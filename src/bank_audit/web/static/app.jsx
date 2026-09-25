@@ -7134,7 +7134,6 @@ function AIPage(){
                   </button>}
             </div>
           </div>
-          <div className="composer-note">Внутренний контур · данные не покидают периметр · Llama 3.3 70B</div>
         </div>
       </div>}
     </div>
