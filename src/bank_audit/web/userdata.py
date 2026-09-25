@@ -125,14 +125,27 @@ def add_message(session_id: int, role: str, content: str,
 
 
 def list_sessions(username: str, limit: int = 100) -> list[dict]:
-    """Сессии пользователя с превью последнего сообщения (для drawer истории)."""
+    """Сессии пользователя с превью последнего сообщения (для drawer истории).
+
+    first_q / n_answers / report_id — для стартовой страницы аналитика: склеить
+    повторы одного вопроса (15% сессий — тот же вопрос в течение суток), показать,
+    есть ли ответ или отчёт, и подсказать «вы уже спрашивали» при наборе."""
     return _rows("""
         SELECT cs.session_id, cs.title, cs.pinned, cs.created_at, cs.updated_at,
                (SELECT content FROM chat_message cm
                  WHERE cm.session_id = cs.session_id
                  ORDER BY cm.created_at DESC LIMIT 1) AS last_preview,
                (SELECT count(*) FROM chat_message cm
-                 WHERE cm.session_id = cs.session_id) AS n_messages
+                 WHERE cm.session_id = cs.session_id) AS n_messages,
+               (SELECT left(content, 300) FROM chat_message cm
+                 WHERE cm.session_id = cs.session_id AND cm.role = 'user'
+                 ORDER BY cm.created_at LIMIT 1) AS first_q,
+               (SELECT count(*) FROM chat_message cm
+                 WHERE cm.session_id = cs.session_id AND cm.role = 'assistant') AS n_answers,
+               (SELECT cm.meta->>'report_id' FROM chat_message cm
+                 WHERE cm.session_id = cs.session_id AND cm.role = 'assistant'
+                   AND cm.meta ? 'report_id'
+                 ORDER BY cm.created_at DESC LIMIT 1) AS report_id
         FROM chat_session cs
         WHERE cs.username = :u
         ORDER BY cs.pinned DESC, cs.updated_at DESC

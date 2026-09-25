@@ -298,18 +298,39 @@ tbody tr.is-sber td:first-child{box-shadow:inset 3px 0 0 var(--sber)}
 .composer-dock{flex:none;padding:14px 32px 16px;background:linear-gradient(to top,var(--paper) 60%,transparent)}
 .composer-inner{max-width:780px;margin:0 auto}
 /* ── Welcome (редакторский экран ИИ-аналитика) ── */
-.ai-welcome{max-width:760px;margin:0 auto;padding:7vh 32px 40px}
+.ai-welcome{max-width:760px;margin:0 auto;padding:6vh 32px 150px}
 .aw-eyebrow{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:16px;font-variant-numeric:tabular-nums}
-.aw-title{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:40px;line-height:1.1;letter-spacing:-.018em;margin:0 0 14px;color:var(--ink)}
-.aw-lede{font-size:16px;line-height:1.6;color:var(--ink-2);max-width:54ch;margin:0 0 28px}
-.aw-lede b{color:var(--ink);font-weight:600}
-.aw-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.aw-card{text-align:left;padding:14px 16px;border:1px solid var(--hair);background:var(--surface);border-radius:10px;display:flex;flex-direction:column;gap:8px;transition:border-color .14s,transform .12s,box-shadow .14s}
-.aw-card:hover{border-color:var(--ink-4);transform:translateY(-2px);box-shadow:var(--shadow-1)}
-.aw-card-eb{font-family:inherit;font-size:11px;letter-spacing:.06em;color:var(--ink-3);text-transform:uppercase;font-variant-numeric:tabular-nums}
-.aw-card-t{font-size:13px;line-height:1.45;color:var(--ink)}
-.aw-conn{margin-top:24px;font-family:inherit;font-size:11px;color:var(--ink-3);line-height:1.6;font-variant-numeric:tabular-nums}
-.aw-conn span{color:var(--ink-3)}
+.aw-title{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:36px;line-height:1.12;letter-spacing:-.018em;margin:0 0 12px;color:var(--ink);text-wrap:balance}
+.aw-lede{font-size:16px;line-height:1.6;color:var(--ink-2);max-width:60ch;margin:0 0 18px}
+/* два режима — словами, а не «планировщик, мульти-агентный сбор» */
+.aw-modes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 8px}
+.aw-modes>div{padding:10px 14px;border:1px solid var(--hair);border-radius:10px;background:var(--surface)}
+.aw-modes b{display:block;font-size:13px;font-weight:600;color:var(--ink)}
+.aw-modes span{display:block;margin-top:2px;font-size:12px;line-height:1.45;color:var(--ink-3)}
+.aw-sec{margin-top:26px}
+.aw-sec h2.eyebrow{margin:0 0 10px}
+/* поводы дня — как карточки «Что проверить» на «Обзоре» */
+.aw-day{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.aw-dcard{position:relative;display:flex;flex-direction:column;gap:6px;padding:14px 16px 12px 20px;text-align:left;font:inherit;color:inherit;
+  border:1px solid var(--hair);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-1);cursor:pointer;transition:box-shadow .15s,border-color .15s}
+.aw-dcard:hover{box-shadow:var(--shadow-2);border-color:var(--hair-2)}
+.aw-dcard:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.aw-dcard::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;background:var(--sev,var(--ink-4))}
+.aw-dcard[data-sev=risk]{--sev:var(--neg)}
+.aw-dcard[data-sev=watch]{--sev:var(--warn)}
+.aw-dcard[data-sev=good]{--sev:var(--pos)}
+.aw-dk{font-size:12px;font-weight:500;color:var(--ink-3)}
+.aw-dt{font-family:'Source Serif 4',Georgia,serif;font-size:15px;font-weight:600;line-height:1.35;color:var(--ink);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.aw-dgo{margin-top:auto;padding-top:4px;font-size:12px;font-weight:500;color:var(--select)}
+/* шаблоны задач — чипы «выбор» */
+.aw-tpls{display:flex;flex-wrap:wrap;gap:8px}
+.aw-tpl{height:32px;padding:0 14px;font-size:13px}
+/* «вы уже спрашивали» — над полем вопроса */
+.aw-dup{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 8px;padding:8px 12px;border-radius:10px;background:var(--select-soft);font-size:13px;color:var(--ink-2)}
+.aw-dup button{border:0;background:none;padding:0;font:inherit;font-weight:600;color:var(--select);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.aw-rec.none .m{color:var(--warn-ink)}
+@media(max-width:640px){.ai-welcome{padding:24px 16px 150px}.aw-title{font-size:28px}.aw-day{grid-template-columns:1fr}.aw-modes>div{padding:9px 12px}}
 .typing{display:inline-flex;gap:4px;padding:6px 0}
 .typing i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);animation:blink 1.2s infinite ease-in-out}
 .typing i:nth-child(2){animation-delay:.15s}
@@ -1463,9 +1484,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .composer-hint{display:none}
   .composer-kbd{display:none}
   .composer-send{height:36px;padding:0 14px;font-size:13px}
-  .ai-welcome{padding:5vh 16px 32px}
+  .ai-welcome{padding:5vh 16px 150px}
   .aw-title{font-size:28px}
-  .aw-cards{grid-template-columns:1fr}
   /* Deep Research графики в одну колонку (380px-min распирал) */
   .dr-charts-wrap{grid-template-columns:1fr;gap:14px}
 }
@@ -3476,6 +3496,6 @@ thead th{font-weight:600}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-ai1"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-ai5"></script>
 </body>
 </html>

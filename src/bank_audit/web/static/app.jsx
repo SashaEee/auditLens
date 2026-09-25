@@ -21,45 +21,86 @@ const TOPIC_LABELS = {
 const TL = t => TOPIC_LABELS[t] || t;
 const LOWER_IS_BETTER = new Set(["credit","mortgage","card_credit","auto_loan"]);
 const CATS_ORDER = ["deposit","credit","mortgage","card_credit","card_debit","auto_loan","metals"];
-const QUICK = [
-  {eb:"01 · Депозиты", t:"Сравни предложения по вкладам, выдели топ-5 и позицию Сбера."},
-  {eb:"02 · Риски",    t:"Какие основные жалобы у клиентов Сбербанка? Где подводные камни?"},
-  {eb:"03 · Ипотека",  t:"Сравни ипотечные ставки между Сбером и рынком, выдели программы с господдержкой."},
-  {eb:"04 · Динамика", t:"Покажи изменения условий за последние 7 дней — что выросло, что упало."},
-];
+// Стартовая страница ИИ-аналитика. По 90 дням: с четырёх фиксированных карточек
+// начиналось 11% сессий, остальные писали своё — жалобы по продукту, сравнение
+// с конкурентами, регулирование, мошенничество, разбор новостей. Поэтому: поводы
+// дня из выпуска, шаблоны под эти задачи (продукт и банки — из профиля) и история
+// без повторов. Всё подставляется в поле вопроса, а не отправляется сразу.
+const AW_PROD={deposit:["вклады","вкладов"],ipoteka:["ипотеку","ипотеки"],credit_card:["кредитные карты","кредитных карт"],
+  debit_card:["дебетовые карты","дебетовых карт"],consumer_loan:["потребительские кредиты","потребительских кредитов"],
+  auto:["автокредиты","автокредитов"],savings:["накопительные счета","накопительных счетов"],transfers:["переводы","переводов"],
+  acquiring:["эквайринг","эквайринга"],premium:["премиальные пакеты","премиальных пакетов"],rko:["РКО","РКО"]};
+const AW_BANK={vtb:"ВТБ",alfabank:"Альфа-Банка",tinkoff:"Т-Банка",gazprombank:"Газпромбанка",sovcombank:"Совкомбанка",
+  rshb:"Россельхозбанка",domrf:"банка ДОМ.РФ",psb:"ПСБ",raiffeisen:"Райффайзенбанка",mtsbank:"МТС Банка"};
+// slot — часть текста, которую человек, скорее всего, заменит: её выделяем
+const awTemplates=me=>{
+  const it=(me&&me.interests)||{};
+  const pk=(it.products||[]).find(k=>AW_PROD[k]);
+  const [acc,gen]=pk?AW_PROD[pk]:["продукт","продукта"];
+  const bs=(it.banks||[]).filter(k=>k!=="sberbank"&&AW_BANK[k]).slice(0,2).map(k=>AW_BANK[k]);
+  const banks=bs.length?bs.join(" и "):"ВТБ и Альфа-Банка";
+  return [
+    {k:"Жалобы по продукту",t:`Жалобы клиентов Сбера на ${acc} за последние 90 дней: главные темы, что растёт, характерные примеры`,slot:acc},
+    {k:"Сравнить с конкурентами",t:`Сравни условия ${gen} в Сбере и у ${banks}: ставки, комиссии, требования к клиенту`,slot:gen},
+    {k:"Изменения в регулировании",t:`Что изменилось в регулировании ${gen} в 2026 году: законы, указания ЦБ, сроки вступления в силу`,slot:gen},
+    {k:"Мошеннические схемы",t:`Мошеннические схемы вокруг ${gen}: как они устроены и какие риски создают для Сбера`,slot:gen},
+    {k:"Разобрать новость",t:"Разбери для аудита розницы Сбера новость: ссылка или текст новости",slot:"ссылка или текст новости"},
+  ];
+};
+// нормализация вопроса для склейки повторов и подсказки «уже спрашивали»
+const awNorm=s=>String(s||"").toLowerCase().replace(/ё/g,"е").replace(/[^a-zа-я0-9]+/g," ").trim();
+const AW_KIND={review_spike:"Жалобы · сигнал дня",news_alert:"Новость дня",tariff_move:"Тарифы",mass_move:"Тарифы · массово",
+  rate_move:"Ключевая ставка",connection:"Новость и данные"};
 
-// Редакторский экран приветствия ИИ-аналитика (новый дизайн)
-function AiWelcome({onPick,recent,onOpenHistory,onLoadSession}){
+function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns}){
   const me=useMe();
+  const tpl=awTemplates(me);
   return <div className="ai-welcome fade-in">
     <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-аналитик`:"ИИ-аналитик · AuditLens"}</div>
-    <h1 className="aw-title">Спросите об условиях<br/>банковского рынка</h1>
-    <p className="aw-lede">Сравнение тарифов, ставок и рисков по продуктам — с цитированием официальных источников и позицией Сбера. Для аудит-вывода включите <b>Deep&nbsp;Research</b>: планировщик, мульти-агентный сбор и проверка чисел.</p>
-    <div className="aw-cards">
-      {QUICK.map((s,i)=>(
-        <button key={i} className="aw-card" onClick={()=>onPick(s.t)}>
-          <span className="aw-card-eb">{s.eb}</span>
-          <span className="aw-card-t">{s.t}</span>
-        </button>
-      ))}
+    <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
+    <p className="aw-lede">Аналитик отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
+    <div className="aw-modes">
+      <div><b>Быстрый ответ</b><span>до минуты · по данным AuditLens и открытым источникам</span></div>
+      <div><b>Отчёт · Deep Research</b><span>1–3 минуты · план, сбор, сверка чисел</span></div>
     </div>
-    {recent&&recent.length>0 && <div className="aw-recent">
+
+    {dayIns&&dayIns.length>0&&<section className="aw-sec" aria-labelledby="aw-day-h">
+      <h2 className="eyebrow" id="aw-day-h">Сегодня в выпуске</h2>
+      <div className="aw-day">
+        {dayIns.map((ins,i)=><button key={i} type="button" className="aw-dcard" data-sev={ins.severity||undefined}
+            onClick={()=>onFill(ins.ai_prompt)}>
+          <span className="aw-dk">{AW_KIND[ins.kind]||"Повод дня"}</span>
+          <span className="aw-dt">{ins.title}</span>
+          <span className="aw-dgo">Подставить вопрос</span>
+        </button>)}
+      </div>
+    </section>}
+
+    <section className="aw-sec" aria-labelledby="aw-tpl-h">
+      <h2 className="eyebrow" id="aw-tpl-h">Начать с задачи</h2>
+      <div className="aw-tpls">
+        {tpl.map(x=><button key={x.k} type="button" className="chip aw-tpl" data-tip={x.t}
+            onClick={()=>onFill(x.t,x.slot)}>{x.k}</button>)}
+      </div>
+    </section>
+
+    {recent&&recent.length>0&&<section className="aw-sec aw-recent" aria-labelledby="aw-rec-h">
       <div className="aw-recent-h">
-        <span className="l">Продолжить</span>
-        <button onClick={onOpenHistory}>Вся история
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        <h2 className="eyebrow" id="aw-rec-h">Продолжить</h2>
+        <button type="button" onClick={onOpenHistory}>Вся история
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
         </button>
       </div>
       <div className="aw-recent-grid">
-        {recent.slice(0,4).map(s=>(
-          <button key={s.session_id} className="aw-rec" onClick={()=>onLoadSession&&onLoadSession(s.session_id)}>
-            <span className="t">{s.title||"Без названия"}</span>
-            <span className="m">{fmtHistTime(s.updated_at)} · {s.n_messages||0} сообщ.</span>
-          </button>
-        ))}
+        {recent.map(s=>{
+          const st=s.report_id?"отчёт":s.n_answers>0?"ответ":"без ответа";
+          return <button key={s.session_id} type="button" className={"aw-rec"+(s.n_answers>0||s.report_id?"":" none")}
+              onClick={()=>onLoadSession&&onLoadSession(s.session_id)} data-tip={s.first_q&&s.first_q.length>60?s.first_q:undefined}>
+            <span className="t">{s.title||s.first_q||"Без названия"}</span>
+            <span className="m">{fmtHistTime(s.updated_at)} · {st}{s.n_same>1?` · спрашивали ${s.n_same} ${plural(s.n_same,"раз","раза","раз")}`:""}</span>
+          </button>;})}
       </div>
-    </div>}
-    <div className="aw-conn">Подключено: <span>v_offer_current · v_review_topics · v_sber_vs_market</span> · глубина 30 дней</div>
+    </section>}
   </div>;
 }
 
@@ -6316,8 +6357,9 @@ const CP_CSS=`
 .hist-btn kbd{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);
   border:1px solid var(--hair);border-radius:4px;padding:0 4px;}
 /* welcome: «Продолжить» — недавние диалоги */
-.aw-recent{margin-top:30px;width:100%;max-width:640px;}
+.aw-recent{width:100%;}
 .aw-recent-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.aw-recent-h h2{margin:0;}
 .aw-recent-h .l{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .aw-recent-h button{min-height:24px;font-size:12px;font-weight:500;color:var(--select);display:inline-flex;align-items:center;gap:5px;transition:color .12s;}
 .aw-recent-h button:hover{text-decoration:underline;text-underline-offset:3px;}
@@ -6497,7 +6539,9 @@ function AIPage(){
   useEffect(()=>{ try{window.dispatchEvent(new CustomEvent("al-ai-state",
     {detail:{running:loading}}));}catch{} },[loading]);
   const[histOpen,setHistOpen]=useState(false);           // command palette истории
-  const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome
+  const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome (без повторов)
+  const[sessAll,setSessAll]=useState([]);                // вся история — для «вы уже спрашивали»
+  const[dayIns,setDayIns]=useState(null);                // поводы дня из выпуска «Обзора»
   const[elapsed,setElapsed]=useState(0);                 // таймер прогона deep
   const runStartRef=useRef(0);
   const feedRef=useRef();
@@ -6507,8 +6551,33 @@ function AIPage(){
   // Недавние диалоги для welcome-экрана (обновляются при возврате к пустой ленте).
   useEffect(()=>{
     if(!msgs.some(m=>m.role==="user"))
-      apiFetch("/api/chat/sessions").then(d=>setRecent((d.sessions||[]).slice(0,4))).catch(()=>{});
+      apiFetch("/api/chat/sessions").then(d=>{
+        const all=d.sessions||[]; setSessAll(all);
+        // один и тот же вопрос, заданный несколько раз, — одна строка с последней сессией
+        const groups=new Map();
+        const ok=x=>!!(x.report_id||x.n_answers>0);
+        for(const x of all){const k=awNorm(x.first_q||x.title).slice(0,90)||("#"+x.session_id);
+          const g=groups.get(k);
+          // открываем попытку с ответом, даже если последняя оборвалась
+          if(g){const n=g.n_same+1; if(!ok(g)&&ok(x))groups.set(k,{...x,n_same:n}); else g.n_same=n; continue;}
+          groups.set(k,{...x,n_same:1});}
+        setRecent([...groups.values()].slice(0,4));
+      }).catch(()=>{});
   },[msgs]);
+  // поводы дня: тот же выпуск, что на «Обзоре», и тот же готовый вопрос, что у «Спросить ИИ»
+  useEffect(()=>{
+    apiFetch("/api/overview/digest").then(d=>{
+      const ins=(((d.sections||{}).headline||{}).payload||{}).insights||[];
+      setDayIns(ins.filter(i=>i&&i.ai_prompt&&i.title).slice(0,2));
+    }).catch(()=>setDayIns([]));
+  },[]);
+  // шаблон или повод дня → в поле вопроса (не отправляем); slot выделяем, чтобы сразу вписать своё
+  const fillQ=(text,slot)=>{
+    setQ(text);
+    setTimeout(()=>{const el=inputRef.current; if(!el)return; el.focus();
+      const i=slot?text.indexOf(slot):-1;
+      if(i>=0)el.setSelectionRange(i,i+slot.length); else el.setSelectionRange(text.length,text.length);},30);
+  };
   // prefill из «Обзора» (✦ Спросить ИИ): композер заполняется, но НЕ отправляется —
   // пользователь видит и правит промпт (контроль + экономия токенов)
   useEffect(()=>{
@@ -6957,7 +7026,7 @@ function AIPage(){
               История <kbd>⌘K</kbd>
             </button>
           </div>}
-        {isEmpty && <AiWelcome onPick={send} recent={recent} onOpenHistory={()=>setHistOpen(true)} onLoadSession={openSession}/>}
+        {isEmpty && <AiWelcome onFill={fillQ} recent={recent} dayIns={dayIns} onOpenHistory={()=>setHistOpen(true)} onLoadSession={openSession}/>}
         {!isEmpty && msgs.map((m,i)=>{
           if(m.role==="clarify"){
             return <div key={i} className="chat-msg ai">
@@ -7109,10 +7178,14 @@ function AIPage(){
       {showComposer &&
       <div className="composer-dock">
         <div className="composer-inner">
+          {isEmpty&&(()=>{const n=awNorm(q); if(n.length<18)return null;
+            const hit=sessAll.find(x=>{const f=awNorm(x.first_q||x.title); return f&&(x.n_answers>0||x.report_id)&&(f===n||(n.length>=30&&f.startsWith(n.slice(0,60))));});
+            return hit?<div className="aw-dup" role="status">Вы уже спрашивали это {fmtHistTime(hit.updated_at)} —
+              <button type="button" onClick={()=>openSession(hit.session_id)}>открыть {hit.report_id?"отчёт":"ответ"}</button></div>:null;})()}
           <div className="chat-input-wrap">
             {deepMode && <div className="composer-accent"/>}
             <textarea ref={inputRef} className="chat-textarea" rows={1}
-              placeholder={deepMode?"Опишите задачу для глубокого исследования…":"Спросите об условиях, ставках, рисках или позиции Сбера…"}
+              placeholder={deepMode?"Опишите задачу для глубокого исследования…":"Спросите о продукте, жалобах, регулировании или новости…"}
               value={q} onChange={e=>setQ(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
             <div className="composer-bar">
@@ -7120,7 +7193,7 @@ function AIPage(){
                 <button className={"seg-btn"+(!deepMode?" on":"")} onClick={()=>setDeepMode(false)} disabled={loading}>Быстрый</button>
                 <button className={"seg-btn"+(deepMode?" on":"")} onClick={()=>setDeepMode(true)} disabled={loading} title="Deep Research: планировщик → мульти-агент → проверка фактов"><span className="seg-dot"/>Deep Research</button>
               </div>
-              <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"агент Hermes · БД, новости, веб"}</span>
+              <span className="composer-hint">{deepMode?"отчёт с источниками · обычно 1–3 мин":"быстрый ответ · до минуты"}</span>
               <span className="composer-kbd">Enter ↵</span>
               {loading
                 ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
