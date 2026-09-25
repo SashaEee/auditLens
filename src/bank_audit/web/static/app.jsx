@@ -6,7 +6,7 @@ const CAT_LABELS = {
   deposit:"Вклады", credit:"Кредиты", mortgage:"Ипотека",
   card_credit:"Кредитные карты", card_debit:"Дебетовые карты",
   auto_loan:"Автокредиты", metals:"Драгметаллы", other:"Прочее",
-  savings_account:"Накопительные счета", rko:"РКО для бизнеса",
+  savings_account:"Накопительные счета", rko:"РКО для бизнеса", microloan:"Микрозаймы",
 };
 // Темы жалоб (категории отзывов) — перевод ключей классификатора на русский
 const TOPIC_LABELS = {
@@ -735,7 +735,7 @@ function TipLayer(){
 // как считалась норма, на какой выборке и из какого источника.
 // Числа «Обзора» по-русски: десятичная запятая, без хвостового «,0» — «3,4», «×4,4»
 const ovN=(v,dg=1)=>{ if(v==null||v==="")return "—"; const n=parseFloat(v); if(isNaN(n))return String(v);
-  return (Math.round(n*10**dg)/10**dg).toFixed(dg).replace(".",",").replace(/,0+$/,""); };
+  return (Math.round(n*10**dg)/10**dg).toFixed(dg).replace(".",",").replace(/(,\d*?)0+$/,"$1").replace(/,$/,""); };
 const ovRaz=k=>{ const r=Math.round(k*10)/10; if(r!==Math.round(r))return "раза"; const n=Math.round(r);
   return n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?"раза":"раз"; };
 const ovJ=n=>`${fmtNum(n)} ${plural(Math.round(n||0),"жалоба","жалобы","жалоб")}`;
@@ -992,18 +992,6 @@ function BfBrief({markdown,skip}){
   </div>;
 }
 
-// Цвет карточки и точка в квадрате 3×3 кодировали риск и его матрицу, но нигде
-// не объяснялись — в обратной связи об этом написали трижды: «непонятна
-// расцветка», «непонятна световая палитра», «расшифруйте вероятность × влияние».
-function BfLegend(){
-  return <div className="bf-legend">
-    <span><i className="d risk"/>риск — требует действия</span>
-    <span><i className="d watch"/>следить — держим в поле зрения</span>
-    <span><i className="d good"/>спокойно — отклонений нет</span>
-    <span className="sep">·</span>
-    <span className="gl"><RiskGlyph likelihood={3} impact={3}/>положение точки: вероятность слева направо, влияние снизу вверх</span>
-  </div>;
-}
 
 // Оценка карточки аудитором: «Полезно» / «Не по делу». Это главный сигнал
 // качества передовицы — раньше о нём судили только по жалобам руководства.
@@ -1025,8 +1013,10 @@ function BfFeedback({ins}){
   </span>;
 }
 
-function BfCard({ins,idx,lead,now,sigs}){
+function BfCard({ins,idx,lead,now,sigs,compact}){
   const d=ins.data||{};
+  const[open,setOpen]=useState(!compact);
+  const closed=compact&&!open;
   const xp=xpRows(ins.kind,d,now);
   const viz=(()=>{
     if(ins.kind==="review_spike")
@@ -1044,13 +1034,16 @@ function BfCard({ins,idx,lead,now,sigs}){
       return <><RateStep points={(d.points||[]).slice(-30)}/><span className="mono tnum" style={{fontSize:13,fontWeight:600}}>{d.current}%</span></>;
     return null;
   })();
-  return <article className={`bf-card${lead?" lead":""}`} data-sev={ins.severity} style={{"--i":idx}}>
+  return <article className={`bf-card${lead?" lead":""}${compact?" c":""}${closed?" closed":""}`} data-sev={ins.severity} style={{"--i":idx}}>
     <div className="bf-kicker">
       {(BF_KIND[ins.kind]||{tag:ins.kind}).tag}
+      {ins.kind==="news_alert"&&(d.domain||d.ts)&&<span className="bf-k-src">{[d.domain,d.ts?fmtDateMsk(d.ts).replace(" МСК",""):null].filter(Boolean).join(" · ")}</span>}
       {ins.after_pause&&<span className="badge warn" style={{fontSize:9}}>сбор после паузы</span>}
       <RiskGlyph likelihood={ins.likelihood} impact={ins.impact}/>
     </div>
-    <h3 className="bf-title">{ovFixOnly(ins.title,sigs)}</h3>
+    <h3 className="bf-title">{compact
+      ?<button className="bf-t-btn" onClick={()=>setOpen(v=>!v)} aria-expanded={open}>{ovFixOnly(ins.title,sigs)}</button>
+      :ovFixOnly(ins.title,sigs)}</h3>
     {ins.so_what&&<div className="bf-sowhat">{ovFixOnly(ins.so_what,sigs)}</div>}
     {ins.idea&&<div className="bf-idea"><span className="bf-idea-l">Что проверить</span>{ovFixOnly(ins.idea,sigs)}</div>}
     {ins.evidence&&<div className="bf-ev" data-tip="жалобы клиентов Сбера по связанным проблемам кодификатора">Наши данные · {ins.evidence}</div>}
@@ -1062,6 +1055,8 @@ function BfCard({ins,idx,lead,now,sigs}){
       {xp.length>0&&ins.provenance?<span className="bf-prov-sep"> · </span>:null}
       {ins.provenance}
     </div>}
+    {compact&&<button className="bf-more" onClick={()=>setOpen(v=>!v)} aria-expanded={open}>
+      {open?"Свернуть":"Подробнее"}<span className="rv-ico-in" style={open?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>}
     <div className="bf-foot">
       <button className="bf-btn" onClick={()=>{trkEvent({kind:"ui",page:"overview",
           payload:{action:"insight_open",ref:ins.ref,kind:ins.kind}});bfGoDrill(ins.drill);}}>
@@ -2098,6 +2093,55 @@ function useSlidingSegments(){
   },[]);
 }
 
+// «Тарифы за неделю»: не выгрузка таблицей, а ответ — сколько всего, было ли
+// массовое движение, что меняли мы, что крупнее всего у других. Один продукт
+// банка — одна строка (разные офферы и повторы за неделю склеены); микрозаймы
+// с дневной ставкой в общий ряд не ставим — рядом с годовыми это вводит в заблуждение
+const OVT_OUT=new Set(["microloan"]);
+function OvTariffs({tm}){
+  const tot=tm.totals||{}, rows=tm.top_changes||[], mass=tm.mass_updates||[];
+  const go=c=>{const sp=new URLSearchParams({cat:c.category||"",view:"changes"});
+    if(c.bank_slug)sp.set("bank",c.bank_slug); if(c.change_id)sp.set("change",c.change_id);
+    if(c.offer_id)sp.set("offer",c.offer_id); location.hash="market?"+sp.toString();};
+  const group=list=>{const g=[]; for(const c of list){const k=c.bank+"|"+c.title;
+    const h=g.find(x=>x.k===k); if(h){h.n++;continue;} g.push({k,c,n:1});} return g;};
+  const sber=group(rows.filter(c=>c.is_sber));
+  const perBank={}, other=group(rows.filter(c=>!c.is_sber&&!OVT_OUT.has(c.category)))
+    .filter(x=>(perBank[x.c.bank]=(perBank[x.c.bank]||0)+1)<=2).slice(0,6);
+  const maxD=Math.max(1,...[...sber,...other].map(x=>Math.abs(x.c.delta||0)));
+  const day=t=>{try{return new Date(t).toLocaleDateString("ru",{day:"2-digit",month:"2-digit",timeZone:"Europe/Moscow"});}catch{return "";}};
+  const Row=({x,own})=>{const c=x.c, d=+c.delta||0, w=Math.min(50,Math.abs(d)/maxD*50);
+    return <button className={"ovt-r"+(own?" own":"")} onClick={()=>go(c)}
+        data-tip={`Открыть в журнале изменений «Рынка» · ${CAT_LABELS[c.category]||c.category}`}>
+      <span className="ovt-b"><b>{c.bank}</b>
+        <span>{c.title} · {CAT_LABELS[c.category]||c.category}{x.n>1?` · ${x.n} ${plural(x.n,"оффер","оффера","офферов")}`:""}</span></span>
+      <span className="ovt-rate">{ovN(c.from,2)} → <b>{ovN(c.to,2)}%</b></span>
+      <span className="ovt-d"><span className="ovt-bar" aria-hidden="true"><i/><b style={{left:(d<0?50-w:50)+"%",width:Math.max(w,1.5)+"%"}}/></span>
+        <span className="ovt-dv">{d>0?"+":"−"}{ovN(Math.abs(d),2)} п.п.</span></span>
+      <span className="ovt-dt">{day(c.changed_at)}</span>
+    </button>;};
+  return <section className="ovt">
+    <div className="ovt-h"><h2 className="eyebrow">Тарифы за неделю</h2>
+      <a className="ovt-all" href="#market?view=changes">Все изменения<Ic.ext/></a></div>
+    <div className="surface ovt-card">
+      <p className="ovt-sum">{fmtNum(tot.changes_7d||0)} {plural(tot.changes_7d||0,"изменение","изменения","изменений")} у {fmtNum(tot.banks_changed_7d||0)} {plural(tot.banks_changed_7d||0,"банка","банков","банков")}
+        {tot.sber_changes_7d!=null&&<> · у Сбера — {fmtNum(tot.sber_changes_7d)} {plural(tot.sber_changes_7d,"оффер","оффера","офферов")}</>}
+        {tm.after_pause&&<> · первый сбор после паузы</>}</p>
+      {mass.map((m,i)=><a key={i} className="ovt-mass" href={"#market?"+new URLSearchParams({cat:m.category||"",view:"changes"})}>
+        <span className="ovt-dot" aria-hidden="true"/>
+        <span><b>Массово: {(CAT_LABELS[m.category]||m.category||"").toLowerCase()}</b> — {m.n_banks} {plural(m.n_banks||0,"банк","банка","банков")} за {m.window_h||48} ч
+          {(m.banks||[]).length?`: ${m.banks.slice(0,4).join(", ")}${m.banks.length>4?" и др.":""}`:""}</span></a>)}
+      {(sber.length>0||tot.sber_changes_7d>0)&&<div className="ovt-g"><span className="ovt-sb" aria-hidden="true"/>Сбер
+        {tot.sber_changes_7d>0&&<a className="ovt-gl" href="#market?view=changes&bank=sberbank">все {fmtNum(tot.sber_changes_7d)} ›</a>}</div>}
+      {sber.map((x,i)=><Row key={"s"+i} x={x} own/>)}
+      {other.length>0&&<div className="ovt-g">Крупнейшие у других банков</div>}
+      {other.map((x,i)=><Row key={"o"+i} x={x}/>)}
+      {!sber.length&&!other.length&&<div className="ovt-empty">Изменений ставок за неделю не зафиксировано · под наблюдением {fmtNum(tot.banks_tracked||0)} {plural(tot.banks_tracked||0,"банк","банка","банков")}
+        {tot.last_ok_run&&<> · последний сбор {fmtDateMsk(tot.last_ok_run)}</>}</div>}
+    </div>
+  </section>;
+}
+
 function OverviewPage(){
   const[dg,setDg]=useState(null);
   const[summary,setSummary]=useState(null);
@@ -2105,7 +2149,30 @@ function OverviewPage(){
   const[err,setErr]=useState(null);
   const[refreshBusy,setRefreshBusy]=useState(false);
   const[live,setLive]=useState(null);    // те же функции, что у «Отзывов», сейчас
+  const[newsOpen,setNewsOpen]=useState(false);
   const me=useMe();
+  // Переход «Разобраться»/плитка/строка тарифов и «Назад» возвращали на верх
+  // страницы — читатель терял место. Запоминаем прокрутку при уходе со страницы
+  useEffect(()=>{
+    const K="al-ov-scroll";
+    // страница остаётся смонтированной (оболочка держит посещённые разделы), а
+    // useNavMemory при смене раздела поднимает прокрутку наверх — поэтому
+    // место восстанавливаем при возвращении на #overview, после этого сброса
+    const on=()=>{
+      const here=/^#(overview)?($|\?)/.test(location.hash||"#");
+      try{
+        if(!here){sessionStorage.setItem(K,JSON.stringify({y:window.scrollY,t:Date.now()}));return;}
+        const v=JSON.parse(sessionStorage.getItem(K)||"null"); sessionStorage.removeItem(K);
+        if(v&&Date.now()-v.t<30*60e3&&v.y>0)setTimeout(()=>window.scrollTo(0,v.y),160);
+      }catch{} };
+    window.addEventListener("hashchange",on);
+    return ()=>window.removeEventListener("hashchange",on);
+  },[]);
+  useEffect(()=>{ if(loading)return;
+    try{ const v=JSON.parse(sessionStorage.getItem("al-ov-scroll")||"null");
+      sessionStorage.removeItem("al-ov-scroll");
+      if(v&&Date.now()-v.t<30*60e3&&v.y>0)requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,v.y)));
+    }catch{} },[loading]);
 
   const loadDigest=()=>apiFetch("/api/overview/digest").then(d=>{setDg(d);return d;});
   useEffect(()=>{apiFetch("/api/overview/live").then(setLive).catch(()=>{});},[]);
@@ -2325,9 +2392,8 @@ function OverviewPage(){
       <div className="bf-pulse">
         {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
             Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
-        <div className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
-             onClick={dv?()=>bfGoDrill({page:"reviews",params:{theme:dv.key}}):undefined}
-             style={dv?{cursor:"pointer"}:undefined}>
+        <a className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+             href={dv?`#reviews?tab=complaints&theme=${dv.key}`:undefined}>
           <div className="bf-t-cap">Проверить сегодня
             {dv&&dv.gap>=1.25&&<span className="bf-t-chip">сильнее рынка</span>}</div>
           {dv?<>
@@ -2341,12 +2407,12 @@ function OverviewPage(){
             <span className="bf-t-val">Ничего срочного</span>
             <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||40} проблем — значимых всплесков нет</div>
           </>}
-        </div>
+        </a>
 
         {/* Регуляторный риск: доля жалоб с угрозой ЦБ/суда/ФАС */}
         {/* «Дошло до ЦБ и суда» считало и угрозы, а порог 12% у Сбера пробит
             всегда — плитка горела постоянно. Теперь как в «Отзывах»: против рынка */}
-        <a className={"bf-t"+(esc!=null&&(kpi.market_escalation_pct!=null?esc>kpi.market_escalation_pct:esc>=12)?" attn":"")} href="#reviews">
+        <a className={"bf-t"+(esc!=null&&(kpi.market_escalation_pct!=null?esc>kpi.market_escalation_pct:esc>=12)?" attn":"")} href="#reviews?tab=complaints&esc=1">
           <div className="bf-t-cap">Эскалация в ЦБ, суд и т. п.</div>
           <Xp rows={xpEscalation(kpi,live)} note="жалобы всех площадок · окно 90 дней">
             <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
@@ -2357,7 +2423,7 @@ function OverviewPage(){
         </a>
 
         {/* Объём недели — с нормой рядом, без коэффициента */}
-        <a className="bf-t" href="#reviews">
+        <a className="bf-t" href="#reviews?tab=complaints">
           <div className="bf-t-cap">Жалобы · 7 дней</div>
           <Xp rows={xpWeek(ovl,kpi,live&&live.overall)} note="жалобы всех площадок · разметка ИИ">
             <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
@@ -2379,7 +2445,7 @@ function OverviewPage(){
         </a>
 
         {/* Слепая зона: чего классификатор не видит */}
-        <a className={"bf-t"+(unc&&unc.ratio>=1.3?" attn":"")} href="#reviews">
+        <a className={"bf-t"+(unc&&unc.ratio>=1.3?" attn":"")} href="#reviews?tab=complaints&theme=other">
           <div className="bf-t-cap">Вне кодификатора</div>
           <Xp rows={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ">
             <span className="bf-t-val">{unc&&unc.week!=null?unc.week:"—"}
@@ -2391,7 +2457,7 @@ function OverviewPage(){
         </a>
 
         {/* Медленный тренд — то, чего не видно в недельном окне */}
-        <a className="bf-t bf-t-wide" href="#reviews">
+        <a className="bf-t bf-t-wide" href={up?`#reviews?tab=complaints&theme=${up.key}`:"#reviews?tab=problems"}>
           <div className="bf-t-cap">Растёт за квартал</div>
           {up?<>
             <Xp rows={xpThemeUp(up)} note="жалобы всех площадок · 90 дней против предыдущих 90">
@@ -2406,56 +2472,52 @@ function OverviewPage(){
       </div>
     </section>
 
-    {/* ③ СВОДКА ДНЯ + ④ НОВОСТИ */}
-    <section className="bf-core" style={{marginBottom:30}}>
+    {/* ③ ЧТО ПРОВЕРИТЬ + ④ НОВОСТИ. Раньше шесть карточек стояли в две узкие
+        колонки по ~450 px плюс колонка новостей — три одинаково плотных столбца.
+        Теперь ведущая карточка целиком, остальные — списком с раскрытием */}
+    <section className="bf-core" style={{marginBottom:24}}>
       <div>
+        <div className="ovc-h"><h2 className="eyebrow">Что проверить сегодня{insights.length?` · ${insights.length}`:""}</h2>
+          <RvInfo label="Как читать">Полоса слева — оценка повода: красная — риск, требует действия; янтарная — следить; зелёная — спокойно, отклонений нет. Квадрат 3×3 в углу — вероятность (слева направо) и влияние (снизу вверх). «Как посчитано» — формула и выборка каждого числа; «Разобраться» ведёт в срез данных, «Спросить ИИ» заполняет вопрос аналитику, не отправляя его.</RvInfo></div>
         {insights.length?
-          <><div className="bf-cards">
-            {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0}
+          <div className="bf-cards">
+            {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0} compact={i>0}
               sigs={sigs} now={liveSig((ins.data||{}).key)}/>)}
-          </div><BfLegend/></>:
+          </div>:
           generating?
             <div className="bf-cards">
-              {[0,1,2].map(i=><div key={i} className="skel" style={{height:150,borderRadius:10}}/>)}
+              {[0,1,2].map(i=><div key={i} className="skel" style={{height:i?96:220,borderRadius:10}}/>)}
             </div>:
             <div className="surface" style={{padding:"22px 24px"}}>
               <div className="rv-radar-calm"><span className="rv-radar-check"><Ic.check/></span>
                 За сутки резких сигналов не выявлено{head.stats?` · проверено ${head.stats.checked_themes} тем жалоб`:""}</div>
             </div>}
         {head.market_note&&<div className="bf-fon"><span className="bf-fon-l">Фон рынка</span><span>{head.market_note}</span></div>}
-        {/* «…в пределах нормы» уже стоит подзаголовком под заголовком выпуска */}
-
-        {/* ③b Анализ жалоб недели (LLM, reviews_brief) */}
-        {brief.markdown&&bfParseBrief(brief.markdown).some(it=>!briefSkip(it))&&<div className="surface" style={{padding:"20px 24px",marginTop:16}}>
-          <div className="eyebrow-row" style={{marginBottom:12}}>
-            <div className="eyebrow">Анализ жалоб недели</div>
-            <div style={{display:"flex",gap:10,alignItems:"center"}}>
-              {ST("reviews_brief")==="stale"&&<span className="bf-stale">за {sec.reviews_brief.stale_from}</span>}
-              <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="reviews"}>К отзывам <Ic.ext/></button>
-            </div>
-          </div>
-          <BfBrief markdown={ovFixOnly(brief.markdown,sigs)} skip={briefSkip}/>
-        </div>}
       </div>
 
-      {/* ④ Новости для аудитора (sticky) */}
+      {/* ④ Новости для аудитора — первые восемь, остальное по кнопке; колонка
+          больше не «липнет» выше экрана (1 300 px при экране 800) */}
       <aside className="bf-news">
         <div className="bf-news-h">
-          <div className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</div>
+          <h2 className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</h2>
           {ST("news")==="stale"&&<span className="bf-stale" data-tip="сбор или отбор новостей сегодня не удался — показан последний удачный выпуск">⚠ за {sec.news.stale_from}</span>}
           {newsAll>0&&<span className="bf-news-cov" data-tip={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
-            {newsOk}/{newsAll} ист.</span>}
+            {newsOk} из {newsAll} источников</span>}
         </div>
-        {newsGroups.length?newsGroups.map(g=><div key={g.key}>
+        {newsGroups.length?(()=>{
+          const NEWS_N=8, total=newsGroups.reduce((a,g)=>a+g.items.length,0);
+          let left=newsOpen?Infinity:NEWS_N;
+          const shown=newsGroups.map(g=>{const its=g.items.slice(0,Math.max(0,left)); left-=its.length; return {...g,items:its};}).filter(g=>g.items.length);
+          return <>{shown.map(g=><div key={g.key}>
             <div className="bf-news-g">{g.title||g.key}</div>
-            {(g.items||[]).map((it,i)=>
+            {g.items.map((it,i)=>
               <a key={i} className="bf-news-it" data-sev={it.severity} href={it.url}
                  target="_blank" rel="noopener noreferrer"
                  onClick={()=>trkEvent({kind:"news_click",page:"overview",
                    payload:{url:it.url,source:it.source,group:g.key,severity:it.severity,
                      title:it.title,slugs:it.products||[]}})}>
                 <div className="bf-news-t">{it.title}</div>
-                {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
+                {(it.why||it.summary)&&<div className="bf-news-s" data-tip={(it.why||it.summary).length>140?(it.why||it.summary):undefined}>{it.why||it.summary}</div>}
                 <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
                   {/* Аудитор должен знать ДО клика, откроется ли ссылка из
                       контура: шесть ТБ написали «не удаётся получить доступ к
@@ -2467,7 +2529,9 @@ function OverviewPage(){
                   {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}
                   <Ic.ext/></div>
               </a>)}
-          </div>):
+          </div>)}
+          {total>NEWS_N&&<button className="bf-news-more" onClick={()=>setNewsOpen(v=>!v)} aria-expanded={newsOpen}>
+            {newsOpen?"Свернуть":`Ещё ${total-NEWS_N} ${plural(total-NEWS_N,"новость","новости","новостей")}`}</button>}</>;})():
           ST("news")==="degraded"&&(nw.items_raw||[]).length?
             <div>
               <div className="bf-news-g" style={{color:"var(--warn)"}}>Без ИИ-отбора (сырая лента)</div>
@@ -2481,51 +2545,21 @@ function OverviewPage(){
       </aside>
     </section>
 
-    {/* ⑤ ТАРИФНЫЕ ДВИЖЕНИЯ НЕДЕЛИ */}
-    <section style={{marginBottom:26}}>
-      <div className="eyebrow-row">
-        <div className="eyebrow" style={{marginBottom:10}}>Тарифные движения недели</div>
-        {(tm.mass_updates||[]).length>0&&
-          <span className="badge warn" style={{cursor:"pointer"}} data-tip="Открыть журнал изменений"
-            onClick={()=>{const m=tm.mass_updates[0];location.hash="market?"+new URLSearchParams({cat:m.category||"",view:"changes"});}}>
-            массовое движение: {tm.mass_updates.map(m=>CAT_LABELS[m.category]||m.category).join(", ")}{tm.after_pause?" · сбор после паузы":""}</span>}
+    {/* ③b Анализ жалоб недели — во всю ширину под карточками и новостями
+        (раньше на узких экранах новости уходили под него, на 3 000+ px) */}
+    {brief.markdown&&bfParseBrief(brief.markdown).some(it=>!briefSkip(it))&&<section className="surface ovb" style={{padding:"20px 24px",marginBottom:24}}>
+      <div className="eyebrow-row" style={{marginBottom:12}}>
+        <h2 className="eyebrow" style={{margin:0}}>Анализ жалоб недели</h2>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          {ST("reviews_brief")==="stale"&&<span className="bf-stale">за {sec.reviews_brief.stale_from}</span>}
+          <a className="ovt-all" href="#reviews">Радар в «Отзывах»<Ic.ext/></a>
+        </div>
       </div>
-      <div className="surface" style={{overflow:"hidden"}}>
-        {(tm.top_changes||[]).length?
-          <table className="m-cards">
-            <thead><tr><th>Банк</th><th>Продукт</th><th className="right">Было → стало</th><th className="right">Δ</th><th className="right">Когда</th></tr></thead>
-            <tbody>{(()=>{ // одинаковые по виду строки (разные офферы одного продукта) — одной
-              const g=[]; for(const c of tm.top_changes){ const k=[c.bank,c.title,c.from,c.to,String(c.changed_at||"").slice(0,10)].join("|");
-                const h=g.find(x=>x.k===k); if(h)h.n++; else g.push({k,c,n:1}); }
-              return g.slice(0,10).map(x=>({...x.c,_n:x.n})); })().map((c,i)=>{
-              const up=c.to>c.from;
-              // точный диплинк в журнал: свежие выпуски несут offer_id/change_id,
-              // старые — хотя бы категорию
-              const go=()=>{const sp=new URLSearchParams({cat:c.category||"",view:"changes"});
-                if(c.bank_slug)sp.set("bank",c.bank_slug);
-                if(c.change_id)sp.set("change",c.change_id);
-                if(c.offer_id)sp.set("offer",c.offer_id);
-                location.hash="market?"+sp.toString();};
-              return <tr key={i} onClick={go} style={{cursor:"pointer"}} data-tip="Открыть в журнале изменений">
-                <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}</div>
-                  <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
-                <td data-label="Продукт" style={{fontSize:12,color:"var(--ink-2)"}}>{c.title}{c._n>1&&<span className="t-cap"> · {c._n} {plural(c._n,"оффер","оффера","офферов")}</span>}</td>
-                <td className="right mono tnum" data-label="Было → стало">{ovN(c.from,2)}% → <b>{ovN(c.to,2)}%</b></td>
-                <td className="right" data-label="Δ"><span className={`delta ${up?"pos":"neg"}`}>{up?<Ic.arrow_up/>:<Ic.arrow_dn/>}{c.delta>0?"+":"−"}{ovN(Math.abs(c.delta),2)}</span></td>
-                <td className="right mono tnum" data-label="Когда" style={{fontSize:11,color:"var(--ink-3)"}}>{fmtDate(c.changed_at)}</td>
-              </tr>;})}
-            </tbody>
-          </table>:
-          <div style={{padding:"20px 24px",fontSize:13,color:"var(--ink-3)"}}>
-            Изменений ставок за неделю не зафиксировано · под наблюдением {(tm.totals&&tm.totals.banks_tracked)||0} банков
-            {tm.totals&&tm.totals.last_ok_run&&<> · последний сбор {fmtDate(tm.totals.last_ok_run)}</>}
-          </div>}
-        {(tm.top_changes||[]).length>0&&<div style={{padding:"12px 20px",borderTop:"1px solid var(--hair)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span className="bf-stamp">{(tm.totals&&tm.totals.changes_7d)||0} изменений · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков за 7 дн</span>
-          <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="market?view=changes"}>Все изменения <Ic.ext/></button>
-        </div>}
-      </div>
-    </section>
+      <BfBrief markdown={ovFixOnly(brief.markdown,sigs)} skip={briefSkip}/>
+    </section>}
+
+    {/* ⑤ ТАРИФЫ ЗА НЕДЕЛЮ */}
+    <OvTariffs tm={tm}/>
 
     {/* ⑥ ПОДВАЛ ДОВЕРИЯ */}
     <div className="bf-trust">
@@ -3945,7 +3979,7 @@ function ReviewsPage({params}){
   const[days,setDays]=useState((preset&&preset.days)||(+P.days)||90);
   const[theme,setTheme]=useState((preset&&preset.theme)||P.theme||"");
   const[tab,setTab]=useState(()=>RV_TABS.some(([k])=>k===P.tab)?P.tab
-    :(preset&&preset.theme)||P.theme||P.flag||P.q?"complaints":"overview");
+    :(preset&&(preset.theme||preset.city||preset.esc))||P.theme||P.flag||P.q||P.esc||P.city?"complaints":"overview");
   const tabsRef=useRef(null);
   // активная подвкладка — в поле зрения, когда полоса вкладок шире экрана
   useEffect(()=>{ const el=tabsRef.current&&tabsRef.current.querySelector(".rv-tab.on");
@@ -3976,7 +4010,8 @@ function ReviewsPage({params}){
   const[busy,setBusy]=useState(true),[feedBusy,setFeedBusy]=useState(false);
   // Своё состояние догрузки: moreBusy живёт во вкладке «Рынок», переиспользовать
   // его отсюда нельзя.
-  const[escOnly,setEscOnly]=useState(false);            // только обращения с угрозой ЦБ/суд/ФАС
+  // только обращения с угрозой ЦБ/суд/ФАС; из адреса — ссылка с плитки «Обзора»
+  const[escOnly,setEscOnly]=useState(()=>P.esc==="1"||!!(preset&&preset.esc));
   const[sortBy,setSortBy]=useState("auto");             // порядок выдачи поиска
   const[feedMore,setFeedMore]=useState(false);          // есть ли ещё страницы
   const[feedTot,setFeedTot]=useState(null);             // {total, pending} по фильтру ленты
@@ -3985,7 +4020,8 @@ function ReviewsPage({params}){
   const[pick,setPick]=useState(null);                   // жалобы для приобщения к делу
   const[casesOpen,setCasesOpen]=useState(false);
   const[jrOpen,setJrOpen]=useState(false);
-  const[fCity,setFCity]=useState(""),[fSrc,setFSrc]=useState("");
+  // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
+  const[fCity,setFCity]=useState(()=>P.city||(preset&&preset.city)||""),[fSrc,setFSrc]=useState("");
   const[fOrder,setFOrder]=useState("date");             // date | severity (без поиска)
   const[fView,setFView]=useState("cards");              // cards | groups
   const[cl,setCl]=useState(null),[clBusy,setClBusy]=useState(false);
@@ -4029,7 +4065,8 @@ function ReviewsPage({params}){
     if(tab!=="overview")sp.set("tab",tab); if(bank!=="Сбербанк")sp.set("bank",bank);
     if(product)sp.set("product",product); if(days!==90)sp.set("days",String(days));
     if(theme)sp.set("theme",theme); if(flag)sp.set("flag",flag);
-    const qs=sp.toString(); history.replaceState(null,"","#reviews"+(qs?"?"+qs:"")); },[tab,bank,product,days,theme,flag]);
+    if(escOnly)sp.set("esc","1"); if(fCity)sp.set("city",fCity);
+    const qs=sp.toString(); history.replaceState(null,"","#reviews"+(qs?"?"+qs:"")); },[tab,bank,product,days,theme,flag,escOnly,fCity]);
   // адрес → состояние: ссылка #reviews?… при уже открытой странице (своё
   // зеркалирование идёт через replaceState и сюда не попадает)
   const paramsKey=JSON.stringify(P), firstParams=useRef(true);
@@ -4037,7 +4074,8 @@ function ReviewsPage({params}){
     const b=P.bank||"Сбербанк", pr=P.product||"", d=(+P.days)||90, th=P.theme||"", fl=P.flag||"";
     if(b!==bank){firstBankRun.current=true;setBank(b);} if(pr!==product)setProduct(pr); if(d!==days)setDays(d);
     if(th!==theme)setTheme(th); if(fl!==flag)setFlag(fl);
-    const t=RV_TABS.some(([k])=>k===P.tab)?P.tab:(th||fl||P.q?"complaints":"overview");
+    if((P.esc==="1")!==escOnly)setEscOnly(P.esc==="1"); if((P.city||"")!==fCity)setFCity(P.city||"");
+    const t=RV_TABS.some(([k])=>k===P.tab)?P.tab:(th||fl||P.q||P.esc||P.city?"complaints":"overview");
     if(t!==tab)goTab(t); },[paramsKey]);
   const[trBasis,setTrBasis]=useState("pub"),[trBusy,setTrBusy]=useState(true);
   const[trFocus,setTrFocus]=useState(null);             // столбец графика с остановкой Tab
@@ -4068,10 +4106,6 @@ function ReviewsPage({params}){
       .catch(()=>{setExplain("__none__");setExplainBusy(false);});
   };
 
-  // prefill-город из «Обзора» → сразу открываем drill-in драуэр
-  useEffect(()=>{
-    if(preset&&preset.city)openDrill("city",preset.city,`г. ${preset.city}`);
-  },[]);
 
   useEffect(()=>{
     apiFetch("/api/reviews/banks").then(d=>{

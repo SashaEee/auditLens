@@ -3221,11 +3221,78 @@ html.dark .rv-ovl{background:rgb(0 0 0 / calc(.5 * var(--rv-scrim-k,1)))}
 .xp-note{font-family:inherit;font-size:12px;color:var(--ink-3)}
 @media(max-width:760px){.ov .lede{font-size:15px}.ov .bf-t-val{font-size:22px}
   .ov .t-display{font-size:clamp(30px,8.5vw,40px)}}
+
+/* ── «Обзор»: всё ниже пульса ──────────────────────────────────────────── */
+.ov h2.eyebrow{margin:0}
+.ovc-h{display:flex;align-items:center;gap:8px;margin:0 0 10px}
+/* «Что проверить»: ведущая карточка целиком, остальные — списком с раскрытием */
+.ov .bf-cards{grid-template-columns:1fr;gap:10px}
+.ov .bf-card.c{padding:14px 16px 12px 20px;gap:6px}
+.ov .bf-card.c .bf-title{font-size:17px}
+.ov .bf-card.closed .bf-sowhat,.ov .bf-card.closed .bf-ev,.ov .bf-card.closed .bf-viz,
+.ov .bf-card.closed .bf-prov,.ov .bf-card.closed .bf-foot{display:none}
+.ov .bf-card.closed .bf-idea{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ov .bf-card.closed .bf-idea-l{display:inline;margin-right:4px}
+.ov .bf-card.closed .bf-idea-l::after{content:":"}
+.bf-t-btn{display:inline;padding:0;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.bf-t-btn:hover{text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:4px}
+.bf-t-btn:focus-visible,.bf-more:focus-visible,.bf-news-more:focus-visible,.ovt-r:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:4px}
+.bf-more{align-self:flex-start;display:inline-flex;align-items:center;gap:2px;padding:4px 0;border:0;background:none;font:inherit;
+  font-size:12px;font-weight:500;color:var(--select);cursor:pointer}
+.ov .bf-card.c:not(.closed) .bf-more{order:10}
+.ov .bf-k-src{font-weight:400;color:var(--ink-3)}
+.ov .bf-k-src::before{content:"·";margin-right:6px}
+/* новости: колонка не «липнет» выше экрана; пояснение — до трёх строк */
+.ov .bf-news{position:static}
+.ov .bf-news-s{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.bf-news-more{display:block;width:100%;padding:12px 16px;border:0;border-top:1px solid var(--hair);background:none;font:inherit;
+  font-size:13px;font-weight:500;color:var(--select);text-align:left;cursor:pointer}
+.bf-news-more:hover{background:var(--paper-2)}
+/* ── «Тарифы за неделю» ── */
+.ovt{margin-bottom:26px}
+.ovt-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+.ovt-all{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:500;color:var(--select);text-decoration:none;white-space:nowrap}
+.ovt-all:hover{text-decoration:underline;text-underline-offset:3px}
+.ovt-card{padding:6px 8px 10px}
+.ovt-sum{margin:10px 12px 10px;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.ovt-mass{display:flex;align-items:baseline;gap:10px;margin:0 4px 8px;padding:10px 12px;border-radius:10px;
+  background:color-mix(in oklab,var(--warn),transparent 88%);font-size:13px;line-height:1.45;color:var(--ink);text-decoration:none;transition:background-color .12s}
+.ovt-mass:hover{background:color-mix(in oklab,var(--warn),transparent 80%)}
+.ovt-mass b{font-weight:600}
+.ovt-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--warn);transform:translateY(-1px)}
+.ovt-g{display:flex;align-items:center;gap:7px;margin:14px 12px 4px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.ovt-sb{width:7px;height:7px;border-radius:50%;background:var(--sber)}
+.ovt-gl{margin-left:auto;font-weight:500;color:var(--select);text-decoration:none}
+.ovt-gl:hover{text-decoration:underline}
+.ovt-r{display:grid;grid-template-columns:minmax(0,1fr) 150px 190px 52px;gap:16px;align-items:center;width:100%;
+  padding:9px 12px;border:0;border-radius:8px;background:none;font:inherit;text-align:left;color:inherit;cursor:pointer;
+  transition:background-color .12s,transform .1s}
+.ovt-r:hover{background:var(--paper-2)}
+.ovt-r:active{transform:scale(.995)}
+.ovt-b{display:flex;flex-direction:column;gap:1px;min-width:0}
+.ovt-b b{font-size:13px;font-weight:600;color:var(--ink)}
+.ovt-b span{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ovt-rate{font-size:13px;font-variant-numeric:tabular-nums;color:var(--ink-2);text-align:right;white-space:nowrap}
+.ovt-rate b{color:var(--ink);font-weight:600}
+.ovt-d{display:grid;grid-template-columns:84px minmax(0,1fr);gap:10px;align-items:center}
+.ovt-bar{position:relative;height:6px;border-radius:3px;background:var(--paper-2)}
+.ovt-bar i{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--ink-4)}
+.ovt-bar b{position:absolute;top:0;bottom:0;border-radius:3px;background:var(--ink-3)}
+.ovt-r.own .ovt-bar b{background:var(--sber)}
+.ovt-dv{font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink-2);text-align:right;white-space:nowrap}
+.ovt-dt{font-size:12px;color:var(--ink-3);text-align:right;font-variant-numeric:tabular-nums}
+.ovt-empty{padding:14px 12px;font-size:13px;color:var(--ink-3)}
+@media(max-width:900px){.ovt-r{grid-template-columns:minmax(0,1fr) 130px 150px 44px;gap:12px}.ovt-d{grid-template-columns:56px minmax(0,1fr)}}
+@media(max-width:600px){
+  .ovt-r{grid-template-columns:minmax(0,1fr) auto;row-gap:4px;padding:10px 8px}
+  .ovt-b{grid-column:1;grid-row:1}.ovt-rate{grid-column:2;grid-row:1}
+  .ovt-d{grid-column:1;grid-row:2;grid-template-columns:56px auto;justify-content:start}.ovt-dt{grid-column:2;grid-row:2}
+}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-ov-o2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-ov-o4"></script>
 </body>
 </html>
