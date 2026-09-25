@@ -1488,174 +1488,229 @@ function FySpark({series,w=118,h=30}){
   </svg>;
 }
 
+// «Для вас» — на той же системе, что «Общий» (корень .ov): Geist + Source Serif 4,
+// без моноширинного; заголовок — фирменный (Instrument Serif, красный курсив).
 const FY_CSS=`
-.fy-head{margin-bottom:4px;}
-.fy-ai{color:var(--accent);}
-.fy-lede{font-family:'Source Serif 4',Georgia,serif;font-size:18.5px;line-height:1.56;color:var(--ink-2);max-width:66ch;text-wrap:pretty;}
-.fy-chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:15px;align-items:center;}
-.fy-chip{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);
-  border:1px solid var(--hair);border-radius:999px;padding:4px 11px;}
-.fy-chip.acc{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);background:var(--accent-soft);}
-.fy-tune{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);cursor:pointer;transition:color .12s;}
-.fy-tune:hover{color:var(--accent);}
-.fy-hint{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
-.fy-hint a{color:var(--accent);cursor:pointer;}
-.fy-sec{margin-top:30px;}
-.fy-checks-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-top:12px;}
-.fy-sig{margin-top:10px;}
-.fy-sig-row{display:flex;align-items:baseline;gap:11px;padding:9px 3px;border-top:1px solid var(--hair);cursor:pointer;transition:background .12s;}
-.fy-sig-row:last-child{border-bottom:1px solid var(--hair);}
-.fy-sig-row:hover{background:color-mix(in oklab,var(--surface),transparent 30%);}
-.fy-sig-dot{width:6px;height:6px;border-radius:50%;flex:none;align-self:center;background:var(--warn);}
-.fy-sig-dot.high{background:var(--neg);}
-.fy-sig-dot.calm{background:var(--pos);opacity:.55;}
-.fy-sig-l{flex:1;min-width:0;font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.fy-sig-n{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-3);white-space:nowrap;flex:none;}
-.fy-sig-why{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);white-space:nowrap;flex:none;}
-.fy-link{display:flex;gap:13px;align-items:flex-start;background:var(--surface);border:1px solid var(--hair);
-  border-left:3px solid var(--accent);border-radius:var(--r-lg);padding:14px 16px;margin-top:12px;cursor:pointer;transition:box-shadow .12s;}
-.fy-link:hover{box-shadow:var(--shadow-2);}
-.fy-link .lt{font-size:14px;font-weight:500;color:var(--ink);line-height:1.4;}
-.fy-link .lw{font-size:12.5px;color:var(--ink-3);margin-top:5px;line-height:1.5;}
-.fy-link .lp{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:7px;letter-spacing:.03em;}
-.fy-story{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--accent);border:1px solid color-mix(in oklab,var(--accent),transparent 75%);border-radius:4px;padding:1px 5px;flex:none;}
-.fy-ob{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:20px 22px;margin-bottom:24px;}
-.fy-ob .q{font-size:13.5px;font-weight:500;color:var(--ink);margin:14px 0 2px;}
-.fy-ob .q:first-of-type{margin-top:10px;}
-.fy-ob-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px;}
-.fy-ob-chip{border:1px solid var(--hair-2);border-radius:999px;padding:6px 14px;font-size:12.5px;color:var(--ink-2);
-  cursor:pointer;transition:border-color .12s,color .12s,background .12s;user-select:none;}
-.fy-ob-chip:hover{border-color:var(--accent);}
-.fy-ob-chip.on{background:color-mix(in oklab,var(--accent),transparent 88%);border-color:var(--accent);color:var(--accent);}
-.fy-ob-foot{display:flex;align-items:center;gap:14px;margin-top:18px;}
-.fy-ob-skip{font-size:12px;color:var(--ink-4);cursor:pointer;}
-.fy-ob-skip:hover{color:var(--ink-2);}
-.fy-check .src-chip{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-3);border:1px solid var(--hair-2);border-radius:4px;padding:1px 5px;margin-right:7px;cursor:pointer;}
-.fy-check .src-chip:hover{color:var(--accent);border-color:var(--accent);}
-.fy-check.taken{opacity:.62;}
-.fy-check.taken .t{text-decoration:none;}
-.fy-check .taken-mark{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--pos);margin-right:6px;}
-.fy-check{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);
-  padding:14px 16px;transition:border-color .15s,box-shadow .15s;}
-.fy-check:hover{border-color:color-mix(in oklab,var(--accent),transparent 78%);box-shadow:var(--shadow-1);}
-.fy-check .n{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);padding-top:2px;flex:none;}
-.fy-check .t{font-size:13.5px;font-weight:500;line-height:1.45;min-width:0;}
-.fy-check .w{font-size:12px;font-weight:400;color:var(--ink-3);margin-top:4px;line-height:1.5;}
-.fy-check .ask{margin-left:auto;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);flex:none;transition:color .12s,background .12s;}
-.fy-check .ask:hover{color:var(--accent);background:var(--accent-soft);}
-.fy-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:12px;margin-top:12px;}
-.fy-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px 13px;cursor:pointer;
-  transition:transform .15s,box-shadow .15s,border-color .15s;}
-.fy-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-2);border-color:var(--hair-2);}
-.fy-card .lbl{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);
-  margin-bottom:9px;display:flex;justify-content:space-between;gap:8px;}
-.fy-card .num{font-family:'Source Serif 4',Georgia,serif;font-size:29px;line-height:1;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
-.fy-card .num small{font-size:12px;color:var(--ink-3);font-family:'Geist','Inter',sans-serif;}
-.fy-card .delta{font-size:11.5px;font-weight:600;font-family:'Geist','Inter',sans-serif;}
-.fy-card .delta.up{color:var(--neg);}
-.fy-card .delta.down{color:var(--pos);}
-.fy-card .spark{display:block;margin:11px 0 6px;}
-.fy-card .meta{font-size:11.5px;color:var(--ink-3);line-height:1.5;}
-.fy-card .meta b{color:var(--ink-2);font-weight:500;}
-.fy-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-top:12px;grid-auto-flow:dense;}
-@media(max-width:1200px){.fy-grid{grid-template-columns:repeat(2,1fr);}}
-@media(max-width:560px){.fy-grid{grid-template-columns:1fr;}}
-.fy-tile{position:relative;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);
-  overflow:hidden;cursor:pointer;transition:transform .16s,box-shadow .16s;}
-.fy-tile:hover{transform:translateY(-2px);box-shadow:var(--shadow-2);}
-.fy-tile.hero{grid-column:span 2;grid-row:span 2;}
-@media(max-width:560px){.fy-tile.hero{grid-column:span 1;}}
-.fy-tile .img{height:96px;background-size:cover;background-position:center;flex:none;}
-.fy-tile.hero .img{flex:1;min-height:210px;height:auto;}
-.fy-tile .img.ph{display:grid;place-items:center;}
-.fy-tile .img.ph span{font-family:'Instrument Serif',serif;font-size:34px;color:color-mix(in oklab,var(--ink),transparent 60%);}
-.fy-g0{background:linear-gradient(135deg,var(--accent-soft),color-mix(in oklab,var(--accent),var(--paper) 80%));}
-.fy-g1{background:linear-gradient(135deg,var(--paper-2),color-mix(in oklab,var(--ink),var(--paper) 88%));}
-.fy-g2{background:linear-gradient(160deg,color-mix(in oklab,var(--pos),var(--paper) 86%),var(--paper-2));}
-.fy-g3{background:linear-gradient(150deg,color-mix(in oklab,var(--warn),var(--paper) 86%),var(--paper-2));}
-.fy-g4{background:linear-gradient(140deg,color-mix(in oklab,var(--accent),var(--paper) 90%),color-mix(in oklab,var(--ink),var(--paper) 92%));}
-.fy-tile .body{padding:12px 14px 13px;display:flex;flex-direction:column;gap:7px;flex:none;min-height:0;}
-.fy-tile .src{display:flex;align-items:center;gap:7px;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;
-  text-transform:uppercase;color:var(--ink-3);}
-.fy-tile .src .dt{margin-left:auto;color:var(--ink-4);text-transform:none;letter-spacing:0;}
-.fy-tile .sev{width:6px;height:6px;border-radius:50%;flex:none;}
-.fy-tile .sev.red{background:var(--neg);} .fy-tile .sev.amber{background:var(--warn);} .fy-tile .sev.green{background:var(--pos);}
-.fy-tile .tt{font-family:'Source Serif 4',Georgia,serif;font-size:14.5px;line-height:1.38;color:var(--ink);
-  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
-.fy-tile.hero .tt{font-size:19px;}
-.fy-tile .sum{font-size:12.5px;color:var(--ink-3);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.fy-tile .why{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.04em;}
-.fy-tile .acts{position:absolute;top:8px;right:8px;display:flex;gap:5px;opacity:0;transition:opacity .15s;z-index:2;}
-.fy-tile:hover .acts{opacity:1;}
-.fy-tile .acts button{width:26px;height:26px;border-radius:7px;background:color-mix(in oklab,var(--paper),transparent 10%);
-  backdrop-filter:blur(6px);border:1px solid var(--hair);display:grid;place-items:center;font-size:12px;color:var(--ink-2);transition:color .12s;}
-.fy-tile .acts button:hover{color:var(--accent);}
-.fy-tar{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
-@media(max-width:900px){.fy-tar{grid-template-columns:1fr;}}
-.fy-tar .surface{padding:15px 18px 8px;}
-.fy-tar-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:8px 0;border-top:1px solid var(--hair);font-size:13px;}
-.fy-tar-row:first-of-type{border-top:0;}
-.fy-tar-row .r{white-space:nowrap;font-size:12.5px;}
-.fy-trust{margin-top:36px;padding-top:14px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
-.fy-trust a{color:var(--ink-3);cursor:pointer;transition:color .12s;}
-.fy-trust a:hover{color:var(--accent);}
-.fy-tile .acts button.on{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%);}
-.fy-tile.liked{border-color:color-mix(in oklab,var(--accent),transparent 55%);}
-.fy-tile.liked::after{content:"✓ в фокусе";position:absolute;top:8px;left:8px;z-index:2;
-  font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.04em;color:var(--accent);
-  background:color-mix(in oklab,var(--paper),transparent 8%);backdrop-filter:blur(4px);
-  border:1px solid color-mix(in oklab,var(--accent),transparent 70%);padding:2px 7px;border-radius:999px;}
-.fy-check .acts2{margin-left:auto;display:flex;gap:2px;flex:none;}
-.fy-check .acts2 button{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
-  transition:color .12s,background .12s;}
-.fy-check .acts2 button:hover{color:var(--accent);background:var(--accent-soft);}
-.fy-check .acts2 button.on{color:var(--accent);background:var(--accent-soft);}
-.fy-pshint{margin-top:13px;display:inline-flex;align-items:center;gap:7px;cursor:pointer;
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.03em;color:var(--ink-3);
-  border:1px dashed color-mix(in oklab,var(--accent),transparent 65%);border-radius:999px;padding:5px 13px;
-  transition:color .12s,border-color .12s;}
-.fy-pshint:hover{color:var(--accent);border-color:var(--accent);}
-.fy-pshint .pc{color:var(--accent);font-weight:600;}
+.fyp .fy-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:14px}
+.fy-tp{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:999px;background:var(--paper-2);font-size:12px;color:var(--ink-2)}
+.fy-tp.acc{background:var(--accent-soft);color:var(--accent)}
+.fy-tune{display:inline-flex;align-items:center;min-height:26px;font-size:12px;font-weight:500;color:var(--select);text-decoration:none}
+.fy-tune:hover{text-decoration:underline;text-underline-offset:3px}
+.fy-ps{display:inline-flex;align-items:center;gap:8px;min-height:24px;margin-top:12px;font-size:12px;color:var(--ink-3);text-decoration:none}
+.fy-ps:hover{color:var(--ink)}
+.fy-ps-bar{position:relative;width:56px;height:4px;border-radius:2px;background:var(--hair-2);overflow:hidden}
+.fy-ps-bar i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent)}
+.fy-ps b{font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.fy-sec{margin-top:32px}
+.fy-h{display:flex;align-items:baseline;justify-content:space-between;gap:6px 12px;margin-bottom:10px;flex-wrap:wrap}
+.fy-h h2{margin:0}
+.fy-h-note{font-size:12px;color:var(--ink-3)}
+.fy-h-note .ai{color:var(--accent)}
+/* зацепки — карточки как «Что проверить» в «Общем» */
+.fy-cks{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.fy-ck{position:relative;display:flex;flex-direction:column;gap:6px;min-width:0;padding:14px 16px 12px 20px;
+  background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1)}
+.fy-ck::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;background:var(--accent)}
+.fy-ck.taken::before{background:var(--pos)}
+.fy-ck-k{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fy-ck-k a{position:relative;display:inline-flex;align-items:center;min-height:24px;color:var(--select);text-decoration:none}
+.fy-ck-k a:hover{text-decoration:underline;text-underline-offset:3px}
+.fy-ck-k .ok{color:var(--pos)}
+.fy-ck-t{margin:0;font-family:'Source Serif 4',Georgia,serif;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.01em;text-wrap:balance}
+.fy-ck-w{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2);text-wrap:pretty}
+.fy-ck-f{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid var(--hair)}
+.fy-ck.taken .fy-ck-t,.fy-ck.taken .fy-ck-w{color:var(--ink-3)}
+.fyp .bf-btn[aria-pressed=true]{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 55%)}
+/* сигналы и подписки — строки-ссылки в «Отзывы» */
+.fy-sgs{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1);overflow:hidden}
+.fy-sg{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:11px 16px;
+  border-top:1px solid var(--hair);color:inherit;text-decoration:none;transition:background-color .12s}
+.fy-sg:first-child{border-top:0}
+.fy-sg:hover{background:var(--paper-2)}
+.fy-sg:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.fy-sg-dot{align-self:start;margin-top:7px;width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.fy-sg-dot.high{background:var(--neg)}
+.fy-sg-dot.calm{background:var(--pos);opacity:.6}
+.fy-sg-b{min-width:0}
+.fy-sg-l{display:block;font-size:14px;font-weight:500;color:var(--ink)}
+.fy-sg-n{display:block;margin-top:1px;font-size:12px;line-height:1.45;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fy-sg-z{padding:2px 8px;border-radius:999px;background:var(--paper-2);font-size:11px;font-weight:500;color:var(--ink-2);white-space:nowrap}
+/* связка «новость × данные» */
+.fy-lks{display:grid;gap:10px}
+.fy-lk{position:relative;display:block;width:100%;padding:14px 16px 13px 20px;text-align:left;font:inherit;color:inherit;text-decoration:none;
+  background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1);cursor:pointer;transition:box-shadow .15s}
+.fy-lk:hover{box-shadow:var(--shadow-2)}
+.fy-lk::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;background:var(--sev,var(--select))}
+.fy-lk[data-sev=red]{--sev:var(--neg)}
+.fy-lk[data-sev=amber]{--sev:var(--warn)}
+.fy-lk[data-sev=green]{--sev:var(--pos)}
+.fy-lk-t{display:block;font-family:'Source Serif 4',Georgia,serif;font-size:16px;font-weight:600;line-height:1.35}
+.fy-lk-w{display:block;margin-top:4px;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.fy-lk-p{display:block;margin-top:6px;font-size:12px;color:var(--ink-3)}
+/* направления */
+.fy-fcs{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.fy-fc{display:flex;flex-direction:column;gap:6px;padding:14px 16px 12px;color:inherit;text-decoration:none;
+  background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1);transition:box-shadow .15s,transform .15s}
+.fy-fc:hover{box-shadow:var(--shadow-2);transform:translateY(-1px)}
+.fy-fc-l{font-size:12px;font-weight:600;color:var(--ink-3)}
+.fy-fc-n{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-family:'Source Serif 4',Georgia,serif;font-size:28px;font-weight:600;
+  line-height:1.1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.fy-fc-n small,.fy-fc-d{font-family:'Geist','Inter',-apple-system,sans-serif;letter-spacing:0}
+.fy-fc-n small{font-size:13px;font-weight:400;color:var(--ink-3)}
+.fy-fc-d{font-size:12px;font-weight:600}
+.fy-fc-d.up{color:var(--neg)}
+.fy-fc-d.down{color:var(--pos)}
+.fy-fc .spark{display:block;margin:2px 0}
+.fy-fc-m{font-size:12px;line-height:1.5;color:var(--ink-3)}
+.fy-fc-m b{font-weight:500;color:var(--ink-2)}
+/* новости — текстовые карточки: картинки с Telegram в контуре не грузятся */
+.fy-ns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:1100px){.fy-ns{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.fy-ns{grid-template-columns:1fr}}
+.fy-n{position:relative;display:flex;flex-direction:column;min-width:0;background:var(--surface);border:1px solid var(--hair);
+  border-radius:var(--r-lg);box-shadow:var(--shadow-1);transition:box-shadow .15s}
+.fy-n:hover{box-shadow:var(--shadow-2)}
+.fy-n.hero{grid-column:span 2}
+@media(max-width:640px){.fy-n.hero{grid-column:auto}}
+/* две колонки: нечётный хвост — на всю ширину, без пустой клетки */
+@media(min-width:641px) and (max-width:1100px){.fy-n.wide{grid-column:span 2}}
+.fy-n::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;background:var(--sev,transparent)}
+.fy-n[data-sev=red]{--sev:var(--neg)}
+.fy-n[data-sev=amber]{--sev:var(--warn)}
+.fy-n[data-sev=green]{--sev:var(--pos)}
+.fy-n.liked{border-color:color-mix(in oklab,var(--accent),transparent 60%)}
+.fy-n-a{flex:1;display:flex;flex-direction:column;gap:6px;padding:14px 16px 8px 20px;color:inherit;text-decoration:none;border-radius:var(--r-lg) var(--r-lg) 0 0}
+.fy-n-a:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.fy-n-k{font-size:12px;color:var(--ink-3)}
+.fy-n-t{font-family:'Source Serif 4',Georgia,serif;font-size:15px;font-weight:600;line-height:1.35;color:var(--ink);text-wrap:pretty}
+.fy-n-a:hover .fy-n-t{text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
+.fy-n.hero .fy-n-t{font-size:20px;line-height:1.3}
+.fy-n-s{font-size:13px;line-height:1.5;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.fy-n-f{display:flex;align-items:center;gap:8px;padding:0 10px 8px 20px}
+.fy-n-why{flex:1;min-width:0;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fy-n-why .on{color:var(--accent);font-weight:500}
+/* тарифы: диапазон ставок Сбера на шкале рынка */
+.fy-rg{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:0 24px;padding:0 4px}
+.fy-rg-r{display:flex;flex-direction:column;gap:6px;padding:10px 8px 8px;border-top:1px solid var(--hair)}
+.fy-rg-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:13px}
+.fy-rg-h b{font-weight:600}
+.fy-rg-h span{font-size:12px;color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums}
+.fy-rg-bar{position:relative;height:8px;border-radius:4px;background:var(--paper-2);box-shadow:inset 0 0 0 1px var(--hair)}
+.fy-rg-bar .s{position:absolute;top:0;bottom:0;min-width:4px;border-radius:4px;background:var(--sber)}
+.fy-rg-bar .m{position:absolute;top:-3px;bottom:-3px;width:2px;border-radius:1px;background:var(--ink-2)}
+.fy-rg-sc{display:flex;justify-content:space-between;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fy-rg-lg{display:flex;gap:6px 16px;flex-wrap:wrap;padding:8px 12px 4px;font-size:12px;color:var(--ink-3)}
+.fy-rg-lg i{display:inline-block;margin-right:6px;vertical-align:middle}
+.fy-rg-lg .s{width:14px;height:6px;border-radius:3px;background:var(--sber)}
+.fy-rg-lg .m{width:2px;height:10px;background:var(--ink-2)}
+.fy-trust{margin-top:36px;padding-top:14px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;align-items:center;gap:10px;
+  flex-wrap:wrap;font-size:12px;color:var(--ink-3)}
+.fy-trust a{display:inline-flex;align-items:center;min-height:24px;color:var(--select);text-decoration:none}
+.fy-trust a:hover{text-decoration:underline;text-underline-offset:3px}
+/* onboarding холодного старта */
+.fy-ob{margin:20px 0 4px;padding:20px 22px;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1)}
+.fy-ob .q{margin:16px 0 0;font-size:14px;font-weight:600;color:var(--ink)}
+.fy-ob-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.fy-ob-chip{min-height:32px;padding:0 14px;border:1px solid var(--hair-2);border-radius:999px;background:var(--surface);font:inherit;font-size:13px;
+  color:var(--ink-2);cursor:pointer;transition:border-color .12s,color .12s,background .12s}
+.fy-ob-chip:hover{border-color:var(--ink-4)}
+.fy-ob-chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.fy-ob-foot{display:flex;align-items:center;gap:14px;margin-top:18px;flex-wrap:wrap}
+.fy-ob-skip{min-height:32px;border:0;background:none;font:inherit;font-size:13px;color:var(--ink-3);cursor:pointer}
+.fy-ob-skip:hover{color:var(--ink)}
+@media(pointer:coarse){.fy-tune,.fy-ps,.fy-trust a,.fy-ob-skip,.fy-ob-chip{min-height:44px}
+  .fy-ck-k a::after{content:"";position:absolute;inset:-10px -8px}}
+@media(max-width:640px){.fy-sg{grid-template-columns:8px minmax(0,1fr)}.fy-sg-z{grid-column:2;justify-self:start}}
 `;
 
-// плитка новости (Perplexity-стиль): картинка или детерминированный градиент-фолбэк
-function FyTile({t,hero,fb,onFb}){
-  const[imgOk,setImgOk]=useState(true);
+const fyTg=u=>/^https:\/\/t\.me\//.test(u||"");
+const fyCap=t=>t?String(t)[0].toUpperCase()+String(t).slice(1):t;
+const fyDay=t=>{try{return new Date(t).toLocaleDateString("ru",{day:"numeric",month:"long",timeZone:"Europe/Moscow"});}catch{return "";}};
+// «Отзывы» с фильтрами — ссылкой (открывается в новой вкладке, пересылается);
+// вкладка «Жалобы» — когда есть тема, иначе обзор среза
+const fyRv=o=>{const sp=new URLSearchParams(); if(o&&o.theme)sp.set("tab","complaints");
+  for(const[k,v] of Object.entries(o||{}))if(v)sp.set(k,v); return "#reviews"+(sp.toString()?"?"+sp.toString():"");};
+const FY_SRC_L={reviews:"жалобы",news:"новости",tariffs:"тарифы"};
+const fySrcHref=c=>c.src==="reviews"?fyRv({bank:c.bank||"Сбербанк",product:c.product,theme:c.signal||(c.theme&&(c.theme.key||c.theme.slug))})
+  :c.src==="tariffs"?"#market?view=changes&bank=sberbank":c.src==="news"?"#overview":null;
+
+// Новость — текстовая карточка: ссылка на источник + действия рядом (не внутри
+// ссылки). Картинок нет: CDN Telegram в контуре банка закрыт, плитка была пустой.
+function FyNews({t,hero,wide,fb,onFb}){
   const src=fySrcName(t);
-  const open=()=>{if(!t.url)return;
-    trkEvent({kind:"news_click",page:"foryou",
-      payload:{url:t.url,source:t.source,reason:t.reason,
-        title:t.title,slugs:t.reason_slugs||[]}});
-    window.open(t.url,"_blank","noopener");};
-  return <div className={"fy-tile"+(hero?" hero":"")+(fb===1?" liked":"")} onClick={open} role="link" tabIndex={0}
-              title={t.reason?("Почему вам: "+t.reason
-                +(t.echo>1?" · подтвердили "+t.echo+" источника":"")
-                +(t.story_n?" · продолжение сюжета":"")):undefined}
-              onKeyDown={e=>{if(e.key==="Enter")open();}}>
-    {t.image&&imgOk
-      ?<div className="img" style={{backgroundImage:"url("+JSON.stringify(t.image)+")"}}>
-         <img src={t.image} alt="" style={{display:"none"}} loading="lazy" referrerPolicy="no-referrer" onError={()=>setImgOk(false)}/>
-       </div>
-      :<div className={"img ph fy-g"+(fyHash(t.source||t.domain||t.title||"")%5)}><span>{(src[0]||"·").toUpperCase()}</span></div>}
-    <div className="body">
-      <div className="src">
-        {t.severity&&<span className={"sev "+t.severity}/>}
-        {src}
-        {t.story_n>0&&<span className="fy-story">сюжет · эп. {t.story_n+1}</span>}
-        {t.ts&&<span className="dt">{new Date(t.ts).toLocaleDateString("ru",{day:"numeric",month:"short"})}</span>}
-      </div>
-      <div className="tt">{t.title}</div>
-      {hero&&t.summary?<div className="sum">{t.summary}</div>:null}
-      {t.reason&&<div className="why">{t.reason}</div>}
+  const why=t.reason?"Почему вам: "+t.reason
+    +(t.echo>1?` · подтвердили ${t.echo} ${plural(t.echo,"источник","источника","источников")}`:"")
+    +(t.story_n?" · продолжение сюжета":""):undefined;
+  return <article className={"fy-n"+(hero?" hero":"")+(wide?" wide":"")+(fb===1?" liked":"")} data-sev={t.severity||undefined}>
+    <a className="fy-n-a" href={t.url||undefined} target="_blank" rel="noopener noreferrer"
+       onClick={()=>trkEvent({kind:"news_click",page:"foryou",
+         payload:{url:t.url,source:t.source,reason:t.reason,title:t.title,slugs:t.reason_slugs||[]}})}>
+      <span className="fy-n-k">{src}
+        {fyTg(t.url)&&<span data-tip="Telegram — в контуре банка обычно не открывается без отдельной настройки"> · Telegram</span>}
+        {t.ts&&<> · {fyDay(t.ts)}</>}
+        {t.story_n>0&&<> · сюжет, эпизод {t.story_n+1}</>}</span>
+      <span className="fy-n-t">{t.title}</span>
+      {hero&&t.summary&&<span className="fy-n-s">{t.summary}</span>}
+    </a>
+    <div className="fy-n-f">
+      <span className="fy-n-why" data-tip={why}>{fb===1&&<span className="on">в фокусе · </span>}{t.reason||""}</span>
+      <span className="bf-fb" role="group" aria-label="Действия с новостью">
+        <button className="bf-fb-b" aria-label="Разобрать с ИИ" data-tip="Разобрать с ИИ"
+          onClick={()=>bfGoAI("Разбери подробно для внутреннего аудита Сбера: "+(t.title||""))}>✦</button>
+        <button className={"bf-fb-b"+(fb===1?" on":"")} aria-pressed={fb===1} aria-label="Интересно — больше такого"
+          data-tip="Интересно — больше такого" onClick={()=>onFb(t,1)}><IcTUp s={13}/></button>
+        <button className="bf-fb-b" aria-label="Не интересно — меньше такого"
+          data-tip="Не интересно — меньше такого" onClick={()=>onFb(t,-1)}><IcTDn s={13}/></button>
+      </span>
     </div>
-    <span className="acts" onClick={e=>e.stopPropagation()}>
-      <button title="Разобрать с ИИ" onClick={()=>bfGoAI("Разбери подробно для внутреннего аудита Сбера: "+(t.title||""))}>✦</button>
-      <button className={fb===1?"on":""} title="Интересно — больше такого" onClick={()=>onFb(t,1)}><IcTUp s={12}/></button>
-      <button title="Не интересно — меньше такого" onClick={()=>onFb(t,-1)}><IcTDn s={12}/></button>
-    </span>
+  </article>;
+}
+
+// Зацепка — карточка как «Что проверить» в «Общем». Раньше четыре значка
+// в строку сжимали текст до колонки в 80 px, а сам текст обрывался на полуслове.
+function FyCheck({c,i,taken,fb,onTake,onFb}){
+  const href=fySrcHref(c), sl=FY_SRC_L[c.src];
+  return <article className={"fy-ck"+(taken?" taken":"")}>
+    <div className="fy-ck-k">{taken?<span className="ok">✓ в работе</span>:String(i+1).padStart(2,"0")}
+      {sl&&<>{" · "}{href?<a href={href} data-tip="Открыть данные, на которых построена зацепка">{sl}</a>:sl}</>}</div>
+    <h3 className="fy-ck-t">{c.title}</h3>
+    {c.why&&<p className="fy-ck-w">{c.why}</p>}
+    <div className="fy-ck-f">
+      <button className="bf-btn" aria-pressed={!!taken} onClick={onTake}
+        data-tip={taken?"Снять отметку":"Отметить: взято в работу — не будем предлагать заново"}>{taken?"В работе":"В работу"}</button>
+      <button className="bf-btn ai" onClick={()=>bfGoAI("Проверка в Сбере: "+c.title+". "+(c.why||"")
+        +" Составь детальный план аудиторской проверки по этому пункту.")}>✦ План с ИИ</button>
+      <span className="bf-fb" role="group" aria-label="Оценка зацепки">
+        <button className={"bf-fb-b"+(fb===1?" on":"")} aria-pressed={fb===1} aria-label="Полезная зацепка"
+          data-tip="Полезная зацепка" onClick={()=>onFb(1)}><IcTUp s={13}/></button>
+        <button className="bf-fb-b" aria-label="Не то" data-tip="Не то — научимся точнее" onClick={()=>onFb(-1)}><IcTDn s={13}/></button>
+      </span>
+    </div>
+  </article>;
+}
+
+// Ставки Сбера на шкале рынка: диапазон Сбера (мин–макс) поверх рыночного
+// минимум–максимум с медианой. Раньше — «макс. Сбера против медианы рынка
+// +6,3 п.п.»: максимум сравнивался с медианой, разница выглядела как вывод.
+const FY_LOAN=new Set(["credit","mortgage","auto_loan","card_credit","microloan"]);
+function FyRange({r}){
+  const lo=+r.market_min, hi=+r.market_max, span=hi-lo;
+  const smax=+r.sber_max, smin=r.sber_min!=null?+r.sber_min:smax;
+  const ok=isFinite(lo)&&isFinite(hi)&&span>0&&isFinite(smax);
+  const pos=v=>Math.min(100,Math.max(0,(v-lo)/span*100));
+  const sb=smin!==smax?`${ovN(smin,2)}–${ovN(smax,2)}%`:`${ovN(smax,2)}%`;
+  const cat=CAT_LABELS[r.category]||r.category;
+  return <div className="fy-rg-r">
+    <div className="fy-rg-h"><b>{cat}</b>
+      <span>Сбер {sb}{r.market_median!=null&&<> · медиана рынка {ovN(r.market_median,2)}%</>}</span></div>
+    {ok&&<div className="fy-rg-bar" role="img"
+        aria-label={`${cat}: ставки Сбера ${sb}, рынок от ${ovN(lo,2)} до ${ovN(hi,2)}%`
+          +(r.market_median!=null?`, медиана ${ovN(r.market_median,2)}%`:"")}>
+      <span className="s" style={{left:pos(smin)+"%",width:Math.max(0,pos(smax)-pos(smin))+"%"}}/>
+      {r.market_median!=null&&<span className="m" style={{left:`calc(${pos(+r.market_median)}% - 1px)`}}/>}
+    </div>}
+    {ok&&<div className="fy-rg-sc"><span>{ovN(lo,2)}%</span>
+      <span>{FY_LOAN.has(r.category)?"выше — дороже клиенту":"выше — выгоднее вкладчику"}</span><span>{ovN(hi,2)}%</span></div>}
   </div>;
 }
 
@@ -1682,20 +1737,21 @@ function FyOnboarding({onDone,onSkip}){
     }catch{ setBusy(false); }
   };
   const nSel=Object.values(prods).filter(Boolean).length+Object.values(risks).filter(Boolean).length;
-  return <div className="fy-ob">
-    <div className="eyebrow">30 секунд — и страница станет вашей</div>
+  // обычная функция, не компонент: иначе чипы пересоздавались бы при каждом клике
+  const chips=(list,val,set)=><div className="fy-ob-chips">{list.map(([k,l])=>
+    <button key={k} type="button" className="fy-ob-chip" aria-pressed={!!val[k]} onClick={()=>tog(set)(k)}>{l}</button>)}</div>;
+  return <section className="fy-ob" aria-label="Настройка страницы">
+    <h2 className="eyebrow">30 секунд — и страница станет вашей</h2>
     <div className="q">Какие направления вы проверяете?</div>
-    <div className="fy-ob-chips">{OB_PRODUCTS.map(([k,l])=>
-      <span key={k} className={"fy-ob-chip"+(prods[k]?" on":"")} onClick={tog(setProds)(k)}>{l}</span>)}</div>
+    {chips(OB_PRODUCTS,prods,setProds)}
     <div className="q">Какие риски ближе к вашей работе?</div>
-    <div className="fy-ob-chips">{OB_RISKS.map(([k,l])=>
-      <span key={k} className={"fy-ob-chip"+(risks[k]?" on":"")} onClick={tog(setRisks)(k)}>{l}</span>)}</div>
+    {chips(OB_RISKS,risks,setRisks)}
     <div className="fy-ob-foot">
       <button className="btn btn-accent" disabled={busy||nSel===0} onClick={submit}>
         {busy?"Собираю вашу страницу… ~15 сек":"Собрать мою страницу"}</button>
-      <span className="fy-ob-skip" onClick={onSkip}>пропустить — показывать общее</span>
+      <button type="button" className="fy-ob-skip" onClick={onSkip}>Пропустить — показывать общее</button>
     </div>
-  </div>;
+  </section>;
 }
 
 function ForYouPage(){
@@ -1754,27 +1810,26 @@ function ForYouPage(){
     apiPost("/api/feedback",{kind:"check_taken",item_key:key,verdict:1,
       payload:{title:c.title,why:c.why}}).catch(()=>{});
   };
-  const goProfile=()=>{location.hash="profile";};
 
-  if(p===undefined) return <div className="fade-in">
+  if(p===undefined) return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style>
     <div className="fy-seg-mob"><OvSeg page="foryou"/></div>
     <div className="skel" style={{height:13,width:260,marginBottom:16,borderRadius:6}}/>
     <div className="skel" style={{height:44,width:"54%",marginBottom:10,borderRadius:8}}/>
     <div className="skel" style={{height:20,width:"68%",marginBottom:28,borderRadius:6}}/>
-    <div className="fy-grid">{[0,1,2,3,4].map(i=><div key={i} className="skel" style={{height:i===0?260:150,borderRadius:10,gridColumn:i===0?"span 2":undefined,gridRow:i===0?"span 2":undefined}}/>)}</div>
+    <div className="fy-cks">{[0,1,2].map(i=><div key={i} className="skel" style={{height:170,borderRadius:10}}/>)}</div>
   </div>;
 
-  if(err) return <div className="fade-in">
+  if(err) return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style><div className="fy-seg-mob"><OvSeg page="foryou"/></div>
     <ErrState msg="Не удалось собрать персональную страницу. Обновите страницу или попробуйте позже."/>
   </div>;
 
-  if(p===null) return <div className="fade-in">
+  if(p===null) return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style><div className="fy-seg-mob"><OvSeg page="foryou"/></div>
     <div style={{padding:"72px 24px",textAlign:"center",maxWidth:500,margin:"0 auto"}}>
-      <div style={{fontSize:24,marginBottom:12,color:"var(--accent)"}}>✦</div>
-      <div className="t-h" style={{marginBottom:8}}>Персонализация выключена</div>
+      <div style={{fontSize:24,marginBottom:12,color:"var(--accent)"}} aria-hidden="true">✦</div>
+      <h1 className="t-h" style={{marginBottom:8}}>Персонализация выключена</h1>
       <p className="t-cap" style={{marginBottom:20,textWrap:"pretty"}}>Включите персональный дайджест — и эта страница будет собираться каждое утро под вашу зону ответственности в Сбере: направления, новости, зацепки для проверок.</p>
       <button className="btn btn-accent" onClick={async()=>{try{await apiPut("/api/me",{prefs:{personal_digest:true}});setP(undefined);load();}catch{}}}>Включить персонализацию</button>
     </div>
@@ -1783,211 +1838,180 @@ function ForYouPage(){
   const hl=p.headline||"Ваша повестка на сегодня";
   const hh=bfPickHot(hl,p.hot||"");
   const genAt=p.generated_at?new Date(p.generated_at):null;
-  const tiles=(()=>{ const arr=(p.news||[]).filter(t=>t&&t.title&&!gone[t.title]).slice(0,8);
-    const hi=arr.findIndex(t=>t.image);
-    if(hi>0){const[t]=arr.splice(hi,1);arr.unshift(t);}
-    return arr; })();
-  const focus=p.focus||[], checks=p.checks||[];
+  // выпуск — тот же «Брифинг № <день года>», что в «Общем»: одна газета, два режима
+  const iss=p.digest_date?new Date(p.digest_date+"T12:00:00"):new Date();
+  const issueNum=Math.ceil((iss-new Date(iss.getFullYear(),0,0))/864e5);
+  const tiles=(p.news||[]).filter(t=>t&&t.title&&!gone[t.title]).slice(0,8);
+  const checks=(p.checks||[]).filter(c=>!goneChk[c.title]);
+  const signals=(p.signals||[]).filter(s=>s&&s.label);
+  const focus=p.focus||[];
   const tar=p.tariffs||{}, gap=tar.gap||[], moves=tar.moves||[];
-  // В «Отзывы» уходим с контекстом карточки: банк, продукт и та самая горячая
-  // тема, которая на карточке и названа. Иначе человек нажимает на конкретную
-  // жалобу, а попадает в общий список и не понимает, зачем его перебросили —
-  // ровно об этом дважды написали в обратной связи.
-  const openReviews=(c)=>{ try{sessionStorage.setItem("al-rv-prefilter",
-      JSON.stringify({bank:"Сбербанк",product:c.product||"",
-                      theme:(c.theme&&(c.theme.key||c.theme.slug))||""}));}catch{}
-    location.hash="reviews"; };
+  const mvS=ovtGroup(moves.filter(m=>m.is_sber));
+  const perBank={}, mvO=ovtGroup(moves.filter(m=>!m.is_sber&&!OVT_OUT.has(m.category)))
+    .filter(x=>(perBank[x.c.bank]=(perBank[x.c.bank]||0)+1)<=2);
+  const mv=[...mvS,...mvO].slice(0,6);
+  const maxD=Math.max(1,...mv.map(x=>Math.abs(+x.c.delta||0)));
+  const ps=me&&me.personalization, psNext=ps&&(ps.parts||[]).find(x=>!x.done&&x.cta);
+  const sgNote=s=>s.market_note||(s.market_ratio!=null&&s.ratio?ovMarketNote(s.ratio,s.market_ratio,"Сбера")
+    :s.gap!=null?`×${ovN(s.gap)} к рынку`:"");
 
-  return <div className="fade-in">
+  return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style>
     <div className="fy-seg-mob"><OvSeg page="foryou"/></div>
 
-    {/* ① персональный masthead */}
-    <header className="fy-head">
+    {/* ① персональная передовица */}
+    <header>
       <div className="eyebrow-row">
-        <div className="eyebrow">Для вас · {new Date().toLocaleDateString("ru",{day:"numeric",month:"long"})} · <span className="fy-ai">✦ собрано под ваш профиль</span></div>
+        <div className="eyebrow">Брифинг №{issueNum} · {iss.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · для вас</div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
-          {busy?
-            <span className="bf-live"><span className="dot"/>пересобираю…</span>:
-            genAt&&<span className="bf-stamp">обновлено {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})}</span>}
-          <button className="bf-refresh" onClick={refresh} disabled={busy} title="Пересобрать под профиль">⟳</button>
+          <span role="status">{busy
+            ?<span className="bf-live"><span className="dot" aria-hidden="true"/>пересобираю…</span>
+            :genAt&&<span className="bf-stamp">собрано {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"})} МСК</span>}</span>
+          <button className="bf-refresh" onClick={refresh} disabled={busy}
+            data-tip="Пересобрать страницу под профиль" aria-label="Пересобрать страницу под профиль">⟳</button>
         </div>
       </div>
       <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
-        {hh?<>{hl.slice(0,hh[0])}<em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl}
+        {hh?<>{hl.slice(0,hh[0])}<em className="bf-hot">{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl}
       </h1>
-      {p.lead?<p className="fy-lede">{p.lead}</p>
-        :!p.has_profile?<p className="fy-lede" style={{color:"var(--ink-3)"}}>Опишите в профиле, что вы проверяете в Сбере — и каждое утро здесь будет личная сводка. <a style={{color:"var(--accent)",cursor:"pointer"}} onClick={goProfile}>Настроить →</a></p>
-        :<p className="fy-lede" style={{color:"var(--ink-3)"}}>По вашим темам сегодня спокойно — ниже общая картина по вашим направлениям.</p>}
-      {(p.top_topics||[]).length>0&&<div className="fy-chips">
-        {p.top_topics.slice(0,5).map((t,i)=><span key={t} className={"fy-chip"+(i===0?" acc":"")}>{t}</span>)}
-        <span className="fy-tune" onClick={goProfile}>настроить →</span>
+      {p.lead?<p className="lede" style={{maxWidth:"70ch"}}>{p.lead}</p>
+        :!p.has_profile?<p className="lede" style={{maxWidth:"70ch",color:"var(--ink-3)"}}>Опишите в профиле, что вы проверяете в Сбере — и каждое утро здесь будет личная сводка. <a href="#profile" className="fy-tune">Настроить</a></p>
+        :<p className="lede" style={{maxWidth:"70ch",color:"var(--ink-3)"}}>По вашим темам сегодня спокойно — ниже общая картина по вашим направлениям.</p>}
+      {(p.top_topics||[]).length>0&&<div className="fy-meta">
+        {p.top_topics.slice(0,5).map((t,i)=><span key={t} className={"fy-tp"+(i===0?" acc":"")}>{fyCap(t)}</span>)}
+        <a className="fy-tune" href="#profile">Настроить темы</a>
       </div>}
-      {(()=>{ const ps=me&&me.personalization;
-        if(!ps) return null;
-        const next=(ps.parts||[]).find(x=>!x.done&&x.cta);
-        return <div className="fy-pshint" onClick={goProfile} title="Открыть профиль">
-          ✦ персонализация <span className="pc">{ps.score}%</span>
-          {ps.score<100&&next?<> · {next.cta} →</>:null}
-        </div>; })()}
+      {ps&&<a className="fy-ps" href="#profile">
+        <span className="fy-ps-bar" aria-hidden="true"><i style={{width:Math.max(0,Math.min(100,ps.score||0))+"%"}}/></span>
+        <span>Персонализация <b>{ps.score}%</b>{ps.score<100&&psNext?<> · {psNext.cta}</>:null}</span></a>}
     </header>
 
     {/* ①b onboarding холодного старта (этап D) */}
-    {p&&!p.has_profile&&!obGone&&!(me&&me.prefs&&me.prefs.onboarded)&&
+    {!p.has_profile&&!obGone&&!(me&&me.prefs&&me.prefs.onboarded)&&
       <FyOnboarding
         onDone={(np)=>{setObGone(true);if(np)setP(np);}}
         onSkip={async()=>{setObGone(true);
           try{await apiPut("/api/me",{prefs:{onboarded:true}});}catch{}}}/>}
 
     {/* ② что проверить сегодня (ИИ-зацепки) */}
-    {checks.filter(c=>!goneChk[c.title]).length>0&&<section className="fy-sec">
-      <div className="eyebrow">Что проверить сегодня · <span className="fy-ai">✦ по сигналам дня</span></div>
-      <div className="fy-checks-row">
-        {checks.filter(c=>!goneChk[c.title]).map((c,i)=><div key={c.title} className={"fy-check"+(tk[c.title]?" taken":"")}>
-          <span className="n">{tk[c.title]?<span className="taken-mark">✓</span>:String(i+1).padStart(2,"0")}</span>
-          <div className="t">
-            {c.src&&<span className="src-chip" title="Открыть источник сигнала"
-              onClick={()=>{
-                // Ведём в тот же срез, о котором говорит сигнал, а не в общий раздел.
-                if(c.src==="reviews"){
-                  try{sessionStorage.setItem("al-rv-prefilter",JSON.stringify({
-                    bank:c.bank||"Сбербанк", theme:(c.theme&&(c.theme.key||c.theme.slug))||"",
-                    product:c.product||""}));}catch{}
-                }
-                location.hash={reviews:"reviews",news:"overview",tariffs:"market"}[c.src]||"overview";
-              }}>
-              {{reviews:"жалобы",news:"новости",tariffs:"тарифы"}[c.src]}</span>}
-            {c.title}{c.why&&<div className="w">{c.why}</div>}</div>
-          <span className="acts2">
-            <button className={tk[c.title]?"on":""} title={tk[c.title]?"В работе — снять":"Взять в работу"}
-                    onClick={()=>onCheckTake(c)}>▸</button>
-            <button title="Составить план проверки с ИИ"
-                    onClick={()=>bfGoAI("Проверка в Сбере: "+c.title+". "+(c.why||"")+" Составь детальный план аудиторской проверки по этому пункту.")}>✦</button>
-            <button className={cfb[c.title]===1?"on":""} title="Полезная зацепка" onClick={()=>onCheckFb(c,1)}><IcTUp s={12}/></button>
-            <button title="Не то — научимся точнее" onClick={()=>onCheckFb(c,-1)}><IcTDn s={12}/></button>
-          </span>
-        </div>)}
+    {checks.length>0&&<section className="fy-sec">
+      <div className="fy-h"><h2 className="eyebrow">Что проверить сегодня · {checks.length}</h2>
+        <span className="fy-h-note"><span className="ai" aria-hidden="true">✦ </span>зацепки ИИ по сигналам дня</span></div>
+      <div className="fy-cks">
+        {checks.map((c,i)=><FyCheck key={c.title} c={c} i={i} taken={!!tk[c.title]} fb={cfb[c.title]||0}
+          onTake={()=>onCheckTake(c)} onFb={v=>onCheckFb(c,v)}/>)}
       </div>
     </section>}
 
-    {/* ②b сигналы недели по темам профиля (weekly_signals × профиль) */}
-    {(p.signals||[]).filter(s=>s&&s.label).length>0&&<section className="fy-sec">
-      <div className="eyebrow">Сигналы недели по вашим темам · жалобы Сбера</div>
-      <div className="fy-sig">
-        {(p.signals||[]).filter(s=>s&&s.label).map(s=>
-          <div key={s.key} className="fy-sig-row" title="Открыть тему в «Отзывах»"
-               onClick={()=>bfGoDrill({page:"reviews",params:{theme:s.key}})}>
-            <span className={"fy-sig-dot"+(s.level==="high"?" high":"")}/>
-            <span className="fy-sig-l">{s.label}</span>
-            <span className="fy-sig-n">{s.week!=null?s.week+" за 7 дн":""}
-              {s.ratio!=null?" · ×"+ovN(s.ratio)+" к норме":""}
-              {s.gap!=null?" · ×"+ovN(s.gap)+" к рынку":""}
-              {s.bank_specific?(s.market_ratio!==undefined?(s.market_ratio==null||s.market_ratio<1.15?" · только у Сбера":""):" · сильнее рынка"):""}</span>
-            {s.why_you&&<span className="fy-sig-why">{s.why_you}</span>}
-          </div>)}
+    {/* ②b сигналы недели по темам профиля — те же числа, что в «Общем» (снимок выпуска) */}
+    {signals.length>0&&<section className="fy-sec">
+      <div className="fy-h"><h2 className="eyebrow">Сигналы недели по вашим темам</h2>
+        <span className="fy-h-note">жалобы клиентов Сбера · по выпуску</span></div>
+      <div className="fy-sgs">
+        {signals.map(s=>{const mn=sgNote(s);
+          return <a key={s.key} className="fy-sg" href={fyRv({theme:s.key})}>
+            <span className={"fy-sg-dot"+(s.level==="high"?" high":"")} aria-hidden="true"/>
+            <span className="fy-sg-b"><span className="fy-sg-l">{s.label}</span>
+              <span className="fy-sg-n">{s.week!=null?ovJ(s.week)+" за 7 дней":""}
+                {s.baseline_week!=null?` · норма ${ovN(s.baseline_week)}`:""}
+                {s.ratio!=null?` · ×${ovN(s.ratio)}`:""}{mn?` · ${mn}`:""}</span></span>
+            {s.why_you&&<span className="fy-sg-z">{s.why_you}</span>}
+          </a>;})}
       </div>
     </section>}
 
     {/* ②b' подписки на сигналы («Отзывы» → «Следить»): банк и продукт аудитора */}
     {subs&&subs.length>0&&<section className="fy-sec">
-      <div className="eyebrow">Ваши подписки · всплески жалоб за 7 дней</div>
-      <div className="fy-sig">
+      <div className="fy-h"><h2 className="eyebrow">Ваши подписки</h2>
+        <span className="fy-h-note">всплески жалоб за 7 дней</span></div>
+      <div className="fy-sgs">
         {subs.map((x,i)=>{const hot=(x.signals||[]).length>0, w=x.watch||[];
-          const go=th=>bfGoDrill({page:"reviews",params:{bank:x.bank,product:x.product||"",theme:th||""}});
-          return <div key={i} className="fy-sig-row" title="Открыть срез в «Отзывах»"
-                      onClick={()=>go(hot?x.signals[0].key:"")}>
-            <span className={"fy-sig-dot"+(hot?(x.signals.some(s=>s.level==="high")?" high":""):w.length?"":" calm")}/>
-            <span className="fy-sig-l">{x.bank}{x.product?` · ${x.product}`:" · все продукты"}</span>
-            <span className="fy-sig-n">{hot?x.signals.map(s=>`${s.short||s.label} ${s.new?"новое":"×"+rvNum(s.ratio)}`).join(" · ")
-              :w.length?"быстрее рынка: "+w.map(d=>`${d.short||d.label} ×${rvNum(d.gap)}`).join(" · ")
-              :"спокойно"}</span>
-          </div>;})}
+          return <a key={i} className="fy-sg" href={fyRv({bank:x.bank,product:x.product,theme:hot?x.signals[0].key:""})}>
+            <span className={"fy-sg-dot"+(hot?(x.signals.some(s=>s.level==="high")?" high":""):w.length?"":" calm")} aria-hidden="true"/>
+            <span className="fy-sg-b"><span className="fy-sg-l">{x.bank}{x.product?` · ${x.product}`:" · все продукты"}</span>
+              <span className="fy-sg-n">{hot?x.signals.map(s=>`${s.short||s.label} ${s.new?"— новое":"×"+rvNum(s.ratio)}`).join(" · ")
+                :w.length?"быстрее рынка: "+w.map(d=>`${d.short||d.label} ×${rvNum(d.gap)}`).join(" · ")
+                :"спокойно"}</span></span>
+          </a>;})}
       </div>
     </section>}
 
     {/* ②c связка дня, касающаяся зоны пользователя (новость × наши данные) */}
     {(p.links||[]).length>0&&<section className="fy-sec">
-      <div className="eyebrow">Связка дня · <span className="fy-ai">✦ новость × данные по вашей зоне</span></div>
-      {(p.links||[]).map((l,i)=>
-        <div key={i} className="fy-link" onClick={()=>l.drill&&bfGoDrill(l.drill)}
-             title={l.drill?"Открыть данные":""}>
-          <div style={{minWidth:0}}>
-            <div className="lt">{l.title}</div>
-            {l.so_what&&<div className="lw">{l.so_what}</div>}
-            {l.provenance&&<div className="lp">{l.provenance}</div>}
-          </div>
-        </div>)}
+      <div className="fy-h"><h2 className="eyebrow">Связка дня</h2>
+        <span className="fy-h-note">новость × данные по вашей зоне</span></div>
+      <div className="fy-lks">
+        {(p.links||[]).map((l,i)=>{const d=l.drill||{};
+          const href=d.url||(d.page==="reviews"?fyRv(d.params):null);
+          const inner=<><span className="fy-lk-t">{l.title}</span>
+            {l.so_what&&<span className="fy-lk-w">{l.so_what}</span>}
+            {l.provenance&&<span className="fy-lk-p">{l.provenance}</span>}</>;
+          return href
+            ?<a key={i} className="fy-lk" data-sev={l.severity||undefined} href={href}
+                target={d.url?"_blank":undefined} rel={d.url?"noopener noreferrer":undefined}>{inner}</a>
+            :<button key={i} className="fy-lk" data-sev={l.severity||undefined} onClick={()=>bfGoDrill(l.drill)}>{inner}</button>;})}
+      </div>
     </section>}
 
-    {/* ③ стат-карты направлений */}
+    {/* ③ направления: жалобы Сбера за 90 дней */}
     {focus.length>0&&<section className="fy-sec">
-      <div className="eyebrow-row">
-        <div className="eyebrow">Ваши направления · жалобы Сбера · 90 дней</div>
-        {p.default_focus&&<span className="fy-hint">стартовый набор — <a onClick={goProfile}>уточните профиль</a></span>}
-      </div>
-      <div className="fy-cards">
-        {focus.map(c=>{
-          const st=c.stats;
+      <div className="fy-h"><h2 className="eyebrow">Ваши направления</h2>
+        <span className="fy-h-note">{p.default_focus?<>стартовый набор · <a className="fy-tune" href="#profile">уточнить профиль</a></>
+          :"жалобы клиентов Сбера · 90 дней"}</span></div>
+      <div className="fy-fcs">
+        {focus.map(c=>{const st=c.stats;
           const d=st&&typeof st.delta_pct==="number"?st.delta_pct:null;
-          return <div key={c.slug} className="fy-card" onClick={()=>openReviews(c)} title="Открыть в «Отзывах»">
+          return <a key={c.slug} className="fy-fc"
+              href={fyRv({bank:"Сбербанк",product:c.product,theme:c.theme&&(c.theme.key||c.theme.slug)})}>
             {/* «Место на рынке» по жалобам не показываем: без поправки на число
                 клиентов оно читается как «жалоб меньше, чем у конкурента» */}
-            <div className="lbl"><span>{c.label}</span></div>
-            {st?<div className="num tnum">{(st.total||0).toLocaleString("ru")}<small>жалоб</small>
-                {d!=null&&!st.delta_low_n&&<span className={"delta "+(d>0?"up":"down")}>{d>0?"+":""}{Math.round(d)}%</span>}</div>
-              :<div style={{fontSize:14,color:"var(--ink-3)",padding:"6px 0"}}>отдельного среза по продукту нет</div>}
+            <span className="fy-fc-l">{fyCap(c.label)}</span>
+            {st?<span className="fy-fc-n">{fmtNum(st.total||0)}<small>{plural(st.total||0,"жалоба","жалобы","жалоб")}</small>
+                {d!=null&&!st.delta_low_n&&<span className={"fy-fc-d "+(d>0?"up":"down")}
+                  data-tip="к предыдущим 90 дням">{d>0?"+":"−"}{Math.abs(Math.round(d))}%</span>}</span>
+              :<span className="fy-fc-m">отдельного среза по продукту нет</span>}
             <FySpark series={c.trend}/>
-            <div className="meta">
-              {c.theme?<>горячая тема: <b>{c.theme.label}</b>{typeof c.theme.delta_pct==="number"&&c.theme.delta_pct>0?" · +"+Math.round(c.theme.delta_pct)+"%":""}</>
-                :st&&st.market_share_pct!=null?<>доля рынка жалоб: {st.market_share_pct}%</>
-                :<span style={{color:"var(--ink-4)"}}>клик — все отзывы</span>}
-            </div>
-          </div>;})}
+            <span className="fy-fc-m">{c.theme?<>горячая тема: <b>{c.theme.label}</b>
+                {typeof c.theme.delta_pct==="number"&&c.theme.delta_pct>0?` · +${Math.round(c.theme.delta_pct)}%`:""}</>
+              :st&&st.market_share_pct!=null?<>доля рынка жалоб: {ovN(st.market_share_pct)}%</>
+              :"все отзывы по направлению"}</span>
+          </a>;})}
       </div>
     </section>}
 
-    {/* ④ новостная сетка (Perplexity-стиль) */}
+    {/* ④ новости под профиль — текстовые карточки */}
     {tiles.length>0&&<section className="fy-sec">
-      <div className="eyebrow-row">
-        <div className="eyebrow">Новости для вас · <span className="fy-ai">✦ отобрано по профилю</span></div>
-        <span className="fy-hint">👍/👎 на плитках учат подборку</span>
-      </div>
-      <div className="fy-grid">
-        {tiles.map((t,i)=><FyTile key={t.url||t.title} t={t} hero={i===0&&!!t.image}
-          fb={fb[t.url||t.title]||0} onFb={onTileFb}/>)}
+      <div className="fy-h"><h2 className="eyebrow">Новости для вас</h2>
+        <span className="fy-h-note">отобраны по профилю · 👍/👎 учат подборку</span></div>
+      <div className="fy-ns">
+        {(()=>{const hero=!!(tiles[0]&&tiles[0].summary), odd=(tiles.length-(hero?1:0))%2===1;
+          return tiles.map((t,i)=><FyNews key={t.url||t.title} t={t} hero={i===0&&hero}
+            wide={odd&&i===tiles.length-1&&!(i===0&&hero)} fb={fb[t.url||t.title]||0} onFb={onTileFb}/>);})()}
       </div>
     </section>}
 
-    {/* ⑤ тарифы: Сбер на фоне рынка */}
-    {(gap.length>0||moves.length>0)&&<section className="fy-sec">
-      <div className="eyebrow">Тарифы в ваших категориях{tar.key_rate!=null?" · ключевая "+tar.key_rate+"%":""}</div>
-      <div className="fy-tar">
-        {gap.length>0&&<div className="surface">
-          <div className="t-cap" style={{marginBottom:4}}>Сбер против рынка (макс. ставка)</div>
-          {gap.map(r=><div key={r.category} className="fy-tar-row">
-            <span>{CAT_LABELS[r.category]||r.category}</span>
-            <span className="mono tnum r">{r.sber_max!=null?(+r.sber_max).toFixed(2)+"%":"—"}
-              <span style={{color:"var(--ink-4)"}}> · медиана {r.market_median!=null?(+r.market_median).toFixed(2)+"%":"—"}</span>
-              {r.sber_vs_median_pp!=null&&<b style={{marginLeft:8,color:"var(--ink-2)"}}>{r.sber_vs_median_pp>0?"+":""}{(+r.sber_vs_median_pp).toFixed(2)} п.п.</b>}</span>
-          </div>)}
-        </div>}
-        {moves.length>0&&<div className="surface">
-          <div className="t-cap" style={{marginBottom:4}}>Движения за 7 дней</div>
-          {moves.map((m,i)=><div key={i} className="fy-tar-row">
-            <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-              {m.is_sber?<b style={{color:"var(--sber)"}}>Сбер</b>:m.bank}
-              <span style={{color:"var(--ink-4)"}}> · {CAT_LABELS[m.category]||m.category}</span></span>
-            <span className="mono tnum r">{m.from}→{m.to}
-              {typeof m.delta==="number"&&<b style={{marginLeft:6,color:"var(--ink-2)"}}>{m.delta>0?"+":""}{m.delta} п.п.</b>}</span>
-          </div>)}
-        </div>}
-      </div>
+    {/* ⑤ тарифы в категориях аудитора */}
+    {(gap.length>0||mv.length>0)&&<section className="fy-sec">
+      <div className="fy-h"><h2 className="eyebrow">Тарифы в ваших категориях</h2>
+        <span className="fy-h-note">{tar.key_rate!=null?`ключевая ЦБ ${ovN(tar.key_rate,2)}%`:""}</span></div>
+      {mv.length>0&&<div className="surface ovt-card" style={{marginBottom:12}}>
+        <div className="ovt-g" style={{marginTop:6}}>Изменения за 7 дней
+          <a className="ovt-gl" href="#market?view=changes">все изменения ›</a></div>
+        {mv.map((x,i)=><OvtRow key={i} x={x} own={x.c.is_sber} maxD={maxD}/>)}
+      </div>}
+      {gap.length>0&&<div className="surface ovt-card">
+        <div className="ovt-g" style={{marginTop:6}}>Ставки Сбера на фоне рынка</div>
+        <div className="fy-rg">{gap.map(r=><FyRange key={r.category} r={r}/>)}</div>
+        <div className="fy-rg-lg"><span><i className="s"/>от минимальной до максимальной ставки Сбера</span>
+          <span><i className="m"/>медиана рынка</span><span>шкала — от минимума до максимума рынка</span></div>
+      </div>}
     </section>}
 
     {/* ⑥ подвал-доверие */}
     <footer className="fy-trust">
-      <span>данные брифинга {p.digest_date||"—"} · заголовок, лид и зацепки — ИИ · 👍/👎 учат ваши рекомендации{p.feedback_used>0?" · учтено "+p.feedback_used+" ваших оценок":""}</span>
-      <a onClick={goProfile}>настроить профиль →</a>
+      <span>данные выпуска {p.digest_date?String(p.digest_date).split("-").reverse().slice(0,2).join("."):"—"}
+        {" · "}заголовок, лид и зацепки пишет ИИ по числам выпуска{p.feedback_used>0?` · учтено ${p.feedback_used} ${plural(p.feedback_used,"оценка","оценки","оценок")}`:""}</span>
+      <a href="#profile">Настроить профиль</a>
     </footer>
   </div>;
 }
@@ -2173,28 +2197,34 @@ function useSlidingSegments(){
 // банка — одна строка (разные офферы и повторы за неделю склеены); микрозаймы
 // с дневной ставкой в общий ряд не ставим — рядом с годовыми это вводит в заблуждение
 const OVT_OUT=new Set(["microloan"]);
+// Строка тарифного изменения — общая для «Общего» и «Для вас»: банк / продукт,
+// было → стало, шкала изменения, дата; клик — журнал «Рынка» на этом изменении.
+const ovtGo=c=>{const sp=new URLSearchParams({cat:c.category||"",view:"changes"});
+  if(c.bank_slug)sp.set("bank",c.bank_slug); if(c.change_id)sp.set("change",c.change_id);
+  if(c.offer_id)sp.set("offer",c.offer_id); location.hash="market?"+sp.toString();};
+// один продукт банка часто меняется сразу в нескольких офферах — одна строка
+const ovtGroup=list=>{const g=[]; for(const c of list){const k=c.bank+"|"+c.title;
+  const h=g.find(x=>x.k===k); if(h){h.n++;continue;} g.push({k,c,n:1});} return g;};
+const ovtDay=t=>{try{return new Date(t).toLocaleDateString("ru",{day:"2-digit",month:"2-digit",timeZone:"Europe/Moscow"});}catch{return "";}};
+function OvtRow({x,own,maxD}){
+  const c=x.c, d=+c.delta||0, w=Math.min(50,Math.abs(d)/(maxD||1)*50);
+  return <button className={"ovt-r"+(own?" own":"")} onClick={()=>ovtGo(c)}
+      data-tip={`Открыть в журнале изменений «Рынка» · ${CAT_LABELS[c.category]||c.category}`}>
+    <span className="ovt-b"><b>{c.bank}</b>
+      <span>{c.title||CAT_LABELS[c.category]||c.category}{c.title?` · ${CAT_LABELS[c.category]||c.category}`:""}{x.n>1?` · ${x.n} ${plural(x.n,"оффер","оффера","офферов")}`:""}</span></span>
+    <span className="ovt-rate">{ovN(c.from,2)} → <b>{ovN(c.to,2)}%</b></span>
+    <span className="ovt-d"><span className="ovt-bar" aria-hidden="true"><i/><b style={{left:(d<0?50-w:50)+"%",width:Math.max(w,1.5)+"%"}}/></span>
+      <span className="ovt-dv">{d>0?"+":"−"}{ovN(Math.abs(d),2)} п.п.</span></span>
+    <span className="ovt-dt">{ovtDay(c.changed_at)}</span>
+  </button>;
+}
 function OvTariffs({tm}){
   const tot=tm.totals||{}, rows=tm.top_changes||[], mass=tm.mass_updates||[];
-  const go=c=>{const sp=new URLSearchParams({cat:c.category||"",view:"changes"});
-    if(c.bank_slug)sp.set("bank",c.bank_slug); if(c.change_id)sp.set("change",c.change_id);
-    if(c.offer_id)sp.set("offer",c.offer_id); location.hash="market?"+sp.toString();};
-  const group=list=>{const g=[]; for(const c of list){const k=c.bank+"|"+c.title;
-    const h=g.find(x=>x.k===k); if(h){h.n++;continue;} g.push({k,c,n:1});} return g;};
-  const sber=group(rows.filter(c=>c.is_sber));
-  const perBank={}, other=group(rows.filter(c=>!c.is_sber&&!OVT_OUT.has(c.category)))
+  const sber=ovtGroup(rows.filter(c=>c.is_sber));
+  const perBank={}, other=ovtGroup(rows.filter(c=>!c.is_sber&&!OVT_OUT.has(c.category)))
     .filter(x=>(perBank[x.c.bank]=(perBank[x.c.bank]||0)+1)<=2).slice(0,6);
   const maxD=Math.max(1,...[...sber,...other].map(x=>Math.abs(x.c.delta||0)));
-  const day=t=>{try{return new Date(t).toLocaleDateString("ru",{day:"2-digit",month:"2-digit",timeZone:"Europe/Moscow"});}catch{return "";}};
-  const Row=({x,own})=>{const c=x.c, d=+c.delta||0, w=Math.min(50,Math.abs(d)/maxD*50);
-    return <button className={"ovt-r"+(own?" own":"")} onClick={()=>go(c)}
-        data-tip={`Открыть в журнале изменений «Рынка» · ${CAT_LABELS[c.category]||c.category}`}>
-      <span className="ovt-b"><b>{c.bank}</b>
-        <span>{c.title} · {CAT_LABELS[c.category]||c.category}{x.n>1?` · ${x.n} ${plural(x.n,"оффер","оффера","офферов")}`:""}</span></span>
-      <span className="ovt-rate">{ovN(c.from,2)} → <b>{ovN(c.to,2)}%</b></span>
-      <span className="ovt-d"><span className="ovt-bar" aria-hidden="true"><i/><b style={{left:(d<0?50-w:50)+"%",width:Math.max(w,1.5)+"%"}}/></span>
-        <span className="ovt-dv">{d>0?"+":"−"}{ovN(Math.abs(d),2)} п.п.</span></span>
-      <span className="ovt-dt">{day(c.changed_at)}</span>
-    </button>;};
+  const Row=({x,own})=><OvtRow x={x} own={own} maxD={maxD}/>;
   return <section className="ovt">
     <div className="ovt-h"><h2 className="eyebrow">Тарифы за неделю</h2>
       <a className="ovt-all" href="#market?view=changes">Все изменения<Ic.ext/></a></div>
@@ -2605,12 +2635,14 @@ function OverviewPage(){
                      title:it.title,slugs:it.products||[]}})}>
                 <div className="bf-news-t">{it.title}</div>
                 {(it.why||it.summary)&&<div className="bf-news-s" data-tip={(it.why||it.summary).length>140?(it.why||it.summary):undefined}>{it.why||it.summary}</div>}
-                <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
+                <div className="bf-news-m">
                   {/* Аудитор должен знать ДО клика, откроется ли ссылка из
-                      контура: шесть ТБ написали «не удаётся получить доступ к
-                      сайту», ещё два — что t.me требует отдельной установки. */}
-                  {it.reach==="telegram"&&<span className="bf-reach tg"
-                    data-tip="Telegram — в контуре банка обычно не открывается без отдельной настройки">telegram</span>}
+                      контура. Пометка reach потерялась при переходе на поток
+                      новостей (992b182) — Telegram узнаём по адресу сами и
+                      пишем словом вместо «t.me» */}
+                  {it.reach==="telegram"||fyTg(it.url)
+                    ?<span data-tip="Telegram — в контуре банка обычно не открывается без отдельной настройки">Telegram</span>
+                    :it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
                   {it.reach==="unreachable"&&<span className="bf-reach no"
                     data-tip="Источник не открылся из контура при сборе дайджеста — ссылка может не сработать и у вас">нет доступа</span>}
                   {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}

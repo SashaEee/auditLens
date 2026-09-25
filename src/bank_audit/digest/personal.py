@@ -46,6 +46,24 @@ def _label(t: str) -> str:
     return _LABEL.get(t, t)
 
 
+def _clip(text: str | None, n: int) -> str:
+    """Укоротить по границе предложения или слова, с «…».
+
+    Голый срез [:n] рвал текст на полуслове — на странице стояло «…сроков
+    направления увед» и «…процедуру на с», и это читалось как сбой."""
+    s = " ".join(str(text or "").split())
+    if len(s) <= n:
+        return s
+    cut = s[:n]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if end >= n * 0.6:
+        return cut[:end + 1]
+    sp = cut.rfind(" ")
+    if sp > n * 0.5:
+        cut = cut[:sp]
+    return cut.rstrip(" ,;:—–-") + "…"
+
+
 def _first_name(name: str) -> str:
     return (name or "").strip().split()[0] if (name or "").strip() else ""
 
@@ -296,7 +314,10 @@ def _client() -> AsyncOpenAI:
 
 # ── страница «Для вас» (v2) ───────────────────────────────────────────────────
 
-_PAGE_V = 2
+# 3: сигналы из снимка выпуска (числа как в «Общем»), правило «главного»,
+#    зацепки без обрыва на полуслове и с источником, без картинок Telegram
+# 4: у зацепки — ключ сигнала (ссылка «жалобы» ведёт в срез темы)
+_PAGE_V = 4
 
 # интерес-слаг → подписи продукта в индексе отзывов. Продукт ставит LLM-разметка
 # по кодификатору (rag/review_codebook.PRODUCTS), сравнение строгое, без регистра.
@@ -454,8 +475,9 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
         scored.append((s, {
             "title": title, "url": url or None, "domain": it.get("domain"),
             "source": it.get("source"), "ts": it.get("ts"),
-            "image": it.get("image") or e.get("image"),
-            "summary": (e.get("summary") or it.get("snippet") or "")[:220],
+            # картинки не отдаём: почти все — с CDN Telegram, в контуре банка он
+            # закрыт (пустая плитка), и браузер читателя ходил во внешний CDN
+            "summary": _clip(e.get("summary") or it.get("snippet") or "", 240),
             "severity": e.get("severity"), "group": e.get("group"),
             "story_n": int(e.get("story_n") or 0),
             "echo": int(it.get("echo") or 1),
@@ -471,17 +493,27 @@ _RISK_DIM = {"compliance": "compliance", "conduct": "conduct", "ops": "ops"}
 
 
 def _my_signals(pvec: list[float] | None, dims: dict,
-                prof: dict | None, k: int = 4) -> list[dict]:
+                prof: dict | None, k: int = 4,
+                sections: dict | None = None) -> list[dict]:
     """«Сигналы недели по вашим темам»: weekly_signals + расхождения с рынком,
     отранжированные близостью к профилю (семантика метки темы × вектор профиля,
     риск темы × измерения аудитора, вкус). До этапа B сигналы клались в payload
-    сырым срезом [:3] и на странице вообще не рендерились."""
-    try:
-        from ..rag import reviews_dash as rd
-        ws = rd.weekly_signals("Сбербанк") or {}
-        wp = rd.week_pulse("Сбербанк") or {}
-    except Exception:  # noqa: BLE001
-        return []
+    сырым срезом [:3] и на странице вообще не рендерились.
+
+    Источник — снимок выпуска (sections.reviews_pulse), а не живой пересчёт:
+    иначе «Общий» и «Для вас» — два режима одной страницы — показывали одну и
+    ту же тему с разными числами (×4,4 и ×4,2). Живой расчёт — только запасной."""
+    rp = ((sections or {}).get("reviews_pulse") or {}).get("payload") or {}
+    if rp.get("signals") is not None or rp.get("diverge") is not None:
+        ws = {"signals": rp.get("signals") or []}
+        wp = {"diverge": rp.get("diverge") or []}
+    else:
+        try:
+            from ..rag import reviews_dash as rd
+            ws = rd.weekly_signals("Сбербанк") or {}
+            wp = rd.week_pulse("Сбербанк") or {}
+        except Exception:  # noqa: BLE001
+            return []
     cands: dict[str, dict] = {}
     for s_ in (ws.get("signals") or []):
         cands[s_["key"]] = dict(s_)
@@ -574,11 +606,13 @@ def _tariff_block(sections: dict, focus: list[str]) -> dict:
         if m.get("is_sber") or (slug and slug in fset):
             moves.append({**{k: m.get(k) for k in
                              ("bank", "is_sber", "category", "title",
-                              "from", "to", "delta", "changed_at")}, "slug": slug})
-        if len(moves) >= 6:
+                              "from", "to", "delta", "changed_at",
+                              "bank_slug", "change_id", "offer_id")}, "slug": slug})
+        if len(moves) >= 12:
             break
     gap = [{"category": r.get("category"), "slug": _TARIFF_CAT_SLUG.get(str(r.get("category"))),
-            "sber_max": r.get("sber_max"), "market_max": r.get("market_max"),
+            "sber_max": r.get("sber_max"), "sber_min": r.get("sber_min"),
+            "market_max": r.get("market_max"), "market_min": r.get("market_min"),
             "market_median": r.get("market_median"),
             "sber_vs_median_pp": r.get("sber_vs_median_pp")}
            for r in (tm.get("sber_gap") or [])
@@ -600,7 +634,9 @@ _PAGE_SYS = (
     '"hot":"точная подстрока headline (2-4 слова) — самое горячее",'
     '"lead":"2-3 предложения: что важно именно ему сегодня и почему",'
     '"checks":[{"title":"что проверить в Сбере, 3-7 слов",'
-    '"why":"почему именно сейчас, 1 фраза со ссылкой на сигнал"}]}\n'
+    '"why":"почему именно сейчас, 1 фраза до 200 знаков со ссылкой на сигнал",'
+    '"src":"reviews | news | tariffs — откуда сигнал",'
+    '"signal":"ключ сигнала жалоб из [квадратных скобок], если src=reviews"}]}\n'
     "checks — 2-3 пункта, каждый привязан к конкретному сигналу из контекста. "
     "Если сигналов мало — честно скажи в lead, что по его темам в Сбере спокойно.\n"
     "МАЛАЯ БАЗА: если у направления помечено «база мала» — НЕ приводи процент "
@@ -609,20 +645,52 @@ _PAGE_SYS = (
     "оговаривай, что выборка мала для выводов о динамике.\n"
     "ОДНА ТЕМА — ОДНА ПРОВЕРКА: не строй несколько проверок на одном и том же "
     "сигнале. Если сигнал не относится к теме проверки — не выдумывай связь "
-    "(прибыль банка не является поводом для проверки банкротных дел)."
+    "(прибыль банка не является поводом для проверки банкротных дел).\n"
+    "ГЛАВНОЕ (headline) — по тому же критерию, что у общего выпуска: самый сильный "
+    "сигнал, который у Сбера растёт СИЛЬНЕЕ рынка. Если сигнал помечен «главное "
+    "общего выпуска» и касается зоны аудитора — headline про него (своими словами), "
+    "числа — ровно из контекста. Правило «вчера уже предлагалось» — только для "
+    "checks, не для headline. Сигнал с пометкой «рынок растёт так же» не называй "
+    "аномалией Сбера."
 )
+
+
+def _signal_line(s: dict, lead_key: str | None = None) -> str:
+    """Сигнал для редактора: факт, норма, рынок — теми же словами, что на
+    странице. Раньше уходило «Закрытие счетов (×2.15)» без рынка, и модель
+    ставила в заголовок тему, которая по рынку растёт так же."""
+    bits = [f"- [{s.get('key')}] {s.get('label')}: {s.get('week')} за 7 дн"]
+    if s.get("baseline_week") is not None:
+        bits.append(f"норма {float(s['baseline_week']):.1f}".replace(".", ","))
+    if s.get("ratio") is not None:
+        bits.append(f"×{float(s['ratio']):.1f}".replace(".", ","))
+    note = s.get("market_note")
+    if not note and s.get("ratio") and s.get("market_ratio") is not None:
+        try:
+            from ..rag import reviews_dash as rd
+            note = rd.market_phrase(s["ratio"], s["market_ratio"], "Сбера")
+        except Exception:  # noqa: BLE001
+            note = None
+    if note:
+        bits.append(str(note))
+    line = "; ".join(bits)
+    if lead_key and s.get("key") == lead_key:
+        line += " — ГЛАВНОЕ ОБЩЕГО ВЫПУСКА"
+    return line
 
 
 async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
                    signals: list[dict], tariffs: dict,
                    avoid: list[str] | None = None,
                    prev_checks: list[str] | None = None,
-                   taken: list[str] | None = None) -> dict:
+                   taken: list[str] | None = None,
+                   lead_key: str | None = None) -> dict:
     """Один LLM-вызов на весь разворот: headline + hot + lead + checks.
     avoid — отклонённые пользователем зацепки (не предлагать похожие);
     prev_checks — вчерашние (не повторять дословно): до этапа A страница могла
     предлагать одну и ту же зацепку неделю подряд, а дизлайк ни на что не влиял."""
     empty = {"headline": None, "hot": None, "lead": None, "checks": []}
+    sig_keys = {s.get("key") for s in (signals or []) if s.get("key")}
     ctx = [f"Сегодня: {today_ru()}", "Банк (объект аудита): СБЕРБАНК",
            f"Зона ответственности аудитора (его словами): {self_desc or '— (не описана)'}"]
     if cards:
@@ -649,8 +717,8 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
                 line += f"; горячая тема: {th.get('label')} ({th.get('n')} шт.)"
             ctx.append(line)
     if signals:
-        ctx.append("\nАномалии недели по Сберу: " + "; ".join(
-            f"{s.get('label')} (×{s.get('ratio')})" for s in signals if s.get("label")))
+        ctx.append("\nСигналы недели по Сберу (жалобы за 7 дней):")
+        ctx += [_signal_line(s, lead_key) for s in signals if s.get("label")]
     if tiles:
         ctx.append("\nНовости под его профиль (конкуренты — только бенчмарк):")
         ctx += [f"- {t['title']} [{t.get('reason') or '—'}]" for t in tiles[:6]]
@@ -680,7 +748,7 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
             r = await client.chat.completions.create(
                 model=insight_model(), messages=msgs, temperature=0.0, max_tokens=4000)
             parsed = _loose_json_loads((r.choices[0].message.content or "").strip())
-        headline = str(parsed.get("headline") or "").strip()[:90] or None
+        headline = _clip(parsed.get("headline"), 110) or None
         hot = str(parsed.get("hot") or "").strip()[:60] or None
         lead = str(parsed.get("lead") or "").strip() or None
         if lead and lead[-1] not in ".!?…»\"":
@@ -692,9 +760,20 @@ async def _page_ai(self_desc: str, cards: list[dict], tiles: list[dict],
             t = str((c or {}).get("title") or "").strip()
             if t:
                 src_ = str((c or {}).get("src") or "").strip()
-                checks.append({"title": t[:120],
-                               "why": str((c or {}).get("why") or "").strip()[:160],
+                sig = str((c or {}).get("signal") or "").strip().strip("[]")
+                checks.append({"title": _clip(t, 140),
+                               "why": _clip((c or {}).get("why"), 280),
+                               # ключ темы — ссылка «жалобы» ведёт в её срез, а не в общий
+                               "signal": sig if sig in sig_keys else None,
                                "src": src_ if src_ in ("reviews", "news", "tariffs") else None})
+        try:
+            from ..rag import reviews_dash as rd
+            headline = rd.fix_market_claims(headline, signals)
+            lead = rd.fix_market_claims(lead, signals)
+            for c in checks:
+                c["why"] = rd.fix_market_claims(c["why"], signals)
+        except Exception:  # noqa: BLE001
+            pass
         return {"headline": headline, "hot": hot, "lead": lead, "checks": checks}
     except Exception:
         log.warning("[personal] page LLM failed", exc_info=True)
@@ -770,7 +849,7 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
     tiles = _news_tiles(sections, prof["weights"], prof["custom"], reacts=reacts,
                         pvec=pvec, dims=dims, prof=prof)
     tariffs = _tariff_block(sections, focus)
-    signals = _my_signals(pvec, dims, prof)
+    signals = _my_signals(pvec, dims, prof, sections=sections)
     if not signals:                     # профиль пуст → общий срез, как раньше
         rp = (sections.get("reviews_pulse") or {}).get("payload") or {}
         signals = [{k: s.get(k) for k in
@@ -797,9 +876,13 @@ async def _build_foryou_locked(username: str, *, force: bool = False) -> dict | 
                        for c in ((y or {}).get("payload") or {}).get("checks") or []]
     except Exception:
         log.warning("[personal] avoid-lists failed", exc_info=True)
+    hd = (sections.get("headline") or {}).get("payload") or {}
+    ins0 = (hd.get("insights") or [{}])[0] or {}
+    lead_key = ((ins0.get("data") or {}).get("key")
+                if ins0.get("kind") == "review_spike" else None)
     ai = (await _page_ai(prof["self_desc"], cards, tiles, signals, tariffs,
                          avoid=avoid, prev_checks=[t for t in prev_checks if t],
-                         taken=taken)
+                         taken=taken, lead_key=lead_key)
           if (has_profile or cards or tiles)
           else {"headline": None, "hot": None, "lead": None, "checks": []})
 

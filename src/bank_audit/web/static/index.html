@@ -3320,6 +3320,8 @@ section>.ov-note:first-of-type{margin:0 0 10px}
   letter-spacing:0;text-transform:none;white-space:nowrap}
 .ov-pill.warn{background:color-mix(in oklab,var(--warn),transparent 86%);color:var(--warn-ink)}
 .ov .bf-news-g .ov-pill{margin-right:6px}
+/* «⟳» — квадратная кнопка-значок, а не узкая полоска со знаком 10 px */
+.ov .bf-refresh{width:32px;height:32px;padding:0;justify-content:center;font-family:inherit;font-size:16px;line-height:1;border-radius:8px}
 /* 3 колонки (761–1100 px): «Растёт за квартал» на всю строку — без пустой серой клетки */
 @media(min-width:761px) and (max-width:1100px){.ov .bf-t-wide{grid-column:1/-1}}
 /* «Что проверить»: плитками — ведущая во всю ширину, остальные по две */
@@ -3337,12 +3339,13 @@ section>.ov-note:first-of-type{margin:0 0 10px}
   .ov .bf-fb-b{position:relative}
   .ov .bf-btn,.ov .bf-more,.xp-b,.bf-news-more,.ovt-gl,.ovt-all,.ov .bf-refresh,.ov .bf-trust a{min-height:44px}
   .ovseg button{height:40px!important}
+  .ov .bf-refresh{width:44px;height:44px}
 }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-ov-o5"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-fy4"></script>
 </body>
 </html>
