@@ -667,38 +667,64 @@ function popPlace(el,{w=400,h=280,gap=12}={}){
   return {left,top,width:ww,arrow};
 }
 
-// Текстовая подсказка [data-tip] — тоже порталом (была CSS ::after, обрезалась)
+// Текстовая подсказка [data-tip] — тоже порталом (была CSS ::after, обрезалась).
+// Наведение и фокус с клавиатуры — сразу; на телефоне — долгое нажатие (тап
+// остаётся действием). Экранный диктор читает подсказку через aria-describedby.
 function TipLayer(){
   const[tip,setTip]=useState(null);
   useEffect(()=>{
-    let cur=null;
+    let cur=null, lp=0, lpFired=false;
+    const open=el=>{
+      const txt=el.getAttribute("data-tip");
+      if(!txt)return;
+      if(cur&&cur!==el)cur.removeAttribute("aria-describedby");
+      cur=el; el.setAttribute("aria-describedby","tip-pop");
+      setTip({txt,...popPlace(el,{w:320,h:120})});
+    };
+    const close=()=>{ if(cur)cur.removeAttribute("aria-describedby"); cur=null; setTip(null); };
     const show=e=>{
       const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
       if(!el||el===cur)return;
-      const txt=el.getAttribute("data-tip");
-      if(!txt)return;
-      cur=el;
-      setTip({txt,...popPlace(el,{w:320,h:120})});
+      open(el);
     };
     const hide=e=>{
       if(!cur)return;
       if(e&&e.target&&e.target.closest&&e.target.closest("[data-tip]")===cur&&e.type!=="scroll")return;
-      cur=null;setTip(null);
+      close();
     };
+    const key=e=>{if(e.key==="Escape"&&cur)close();};
+    const down=e=>{
+      if(e.pointerType!=="touch")return;
+      close(); clearTimeout(lp); lpFired=false;
+      const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
+      if(el)lp=setTimeout(()=>{lpFired=true;open(el);},450);
+    };
+    const cancel=()=>clearTimeout(lp);
+    const click=e=>{if(lpFired){lpFired=false;e.preventDefault();e.stopPropagation();}};
     document.addEventListener("mouseover",show);
     document.addEventListener("mouseout",hide);
     document.addEventListener("focusin",show);
     document.addEventListener("focusout",hide);
+    document.addEventListener("keydown",key);
+    document.addEventListener("pointerdown",down);
+    document.addEventListener("pointerup",cancel);
+    document.addEventListener("pointercancel",cancel);
+    document.addEventListener("click",click,true);
     window.addEventListener("scroll",hide,true);
     return()=>{document.removeEventListener("mouseover",show);
       document.removeEventListener("mouseout",hide);
       document.removeEventListener("focusin",show);
       document.removeEventListener("focusout",hide);
+      document.removeEventListener("keydown",key);
+      document.removeEventListener("pointerdown",down);
+      document.removeEventListener("pointerup",cancel);
+      document.removeEventListener("pointercancel",cancel);
+      document.removeEventListener("click",click,true);
       window.removeEventListener("scroll",hide,true);};
   },[]);
   if(!tip)return null;
   return ReactDOM.createPortal(
-    <div className={"tip-pop tip-a-"+tip.arrow}
+    <div id="tip-pop" role="tooltip" className={"tip-pop tip-a-"+tip.arrow}
          style={{left:tip.left,top:tip.top,maxWidth:tip.width}}>{tip.txt}</div>,
     document.body);
 }
@@ -3240,10 +3266,10 @@ const rvDeltaSig=(t,th)=>{
   const s=`${d>0?"↑":d<0?"↓":"→"} ${Math.abs(d)}%`;
   const ci=t.delta_ci?` · 95% ДИ ${rvSgn(t.delta_ci[0])}…${rvSgn(t.delta_ci[1])}%`:"";
   const all=th.overall_delta_pct!=null?` · все жалобы ${rvSgn(th.overall_delta_pct)}%`:"";
-  if(t.delta_low)return <span className="rv-flat rv-dlow" title={`${t.prev} → ${t.n}: мало данных для вывода`}>{s}</span>;
+  if(t.delta_low)return <span className="rv-flat rv-dlow" data-tip={`${t.prev} → ${t.n}: мало данных для вывода`}>{s}</span>;
   const up=t.delta_sig&&(t.excess||0)>0&&d>0, down=t.delta_sig&&(t.excess||0)<0&&d<0;
   return <span className={up?"rv-up":down?"rv-down":"rv-flat"}
-    title={`${t.prev} → ${t.n}${ci}${all} — ${up?"растёт значимо быстрее общего потока":down?"снижается значимо сильнее общего потока":"в пределах колебаний общего потока"}`}>{s}</span>;
+    data-tip={`${t.prev} → ${t.n}${ci}${all} — ${up?"растёт значимо быстрее общего потока":down?"снижается значимо сильнее общего потока":"в пределах колебаний общего потока"}`}>{s}</span>;
 };
 // Индекс по кварталам: четыре точки и пунктир ×1 — видно, отличие от рынка
 // устойчивое или сложилось за последний квартал. Шкала логарифмическая:
@@ -3251,13 +3277,12 @@ const rvDeltaSig=(t,th)=>{
 function RvSpark({vals,quarters}){
   const w=48,h=18,pad=2.5,nums=(vals||[]).filter(v=>v!=null);
   const tip=(vals||[]).map((v,i)=>`${quarters&&quarters[i]?`${rvDate(quarters[i].from)}–${rvDate(quarters[i].to)}`:`кв. ${i+1}`}: ${v==null?"мало данных":rvX(v)}`).join("\n");
-  if(nums.length<2)return <span className="rv-spark-na" title={tip||"по кварталам мало данных"}/>;
+  if(nums.length<2)return <span className="rv-spark-na" data-tip={tip||"по кварталам мало данных"}/>;
   const lg=v=>Math.log(Math.max(v,0.1));
   const lo=Math.min(lg(0.5),...nums.map(lg)),hi=Math.max(lg(2),...nums.map(lg));
   const x=i=>pad+i*(w-2*pad)/(vals.length-1),y=v=>h-pad-(lg(v)-lo)/(hi-lo)*(h-2*pad);
   let d="";vals.forEach((v,i)=>{if(v==null)return;d+=(i>0&&vals[i-1]!=null?"L":"M")+x(i).toFixed(1)+" "+y(v).toFixed(1);});
-  return <svg className="rv-spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={"индекс по кварталам: "+tip}>
-    <title>{tip}</title>
+  return <svg className="rv-spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={"индекс по кварталам: "+tip} data-tip={tip}>
     <line x1={pad} x2={w-pad} y1={y(1)} y2={y(1)} className="rv-spark-base"/>
     <path d={d} className="rv-spark-l"/>
     {vals.map((v,i)=>v==null?null:<circle key={i} cx={x(i)} cy={y(v)} r={i===vals.length-1?2.3:1.4} className={i===vals.length-1?"rv-spark-last":"rv-spark-p"}/>)}
@@ -3351,10 +3376,10 @@ function RvModal({onClose,title,sub,side,children,bare,wide,sheet}){
         {isSheet&&<div className="rv-sheet-grab" data-drag="1" aria-hidden="true"><i/></div>}
         {!bare&&<div className="rv-ovl-head">
           <div style={{minWidth:0}}>
-            <div className="rv-ttl" style={{fontSize:14}}>{title}</div>
+            <div className="rv-ttl" style={{fontSize:15}}>{title}</div>
             {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
           </div>
-          <button className="rv-ovl-x" onClick={close} aria-label="Закрыть">✕</button>
+          <button className="rv-ovl-x" onClick={close} aria-label="Закрыть"><RvIX s={15}/></button>
         </div>}
         {bare?(typeof children==="function"?children(close):children)
           :<div className="rv-ovl-body">{typeof children==="function"?children(close):children}</div>}
@@ -3381,6 +3406,9 @@ const RvIExt=p=><RvIco {...p} d={<><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><p
 const RvIX=p=><RvIco {...p} d={<><path d="M6 6l12 12"/><path d="M18 6L6 18"/></>}/>;
 const RvIUp=p=><RvIco {...p} d={<path d="M6 15l6-6 6 6"/>}/>;
 const RvIDown=p=><RvIco {...p} d={<path d="M6 9l6 6 6-6"/>}/>;
+const RvIChevR=p=><RvIco {...p} d={<path d="M9 6l6 6-6 6"/>}/>;
+const RvIChevL=p=><RvIco {...p} d={<path d="M15 6l-6 6 6 6"/>}/>;
+const RvIChevD=p=><RvIco {...p} d={<path d="M6 9l6 6 6-6"/>}/>;
 const RvIDots=p=><RvIco {...p} w={0} fill="currentColor" d={<><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></>}/>;
 const RvILink=p=><RvIco {...p} d={<><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></>}/>;
 
@@ -3492,9 +3520,9 @@ function RvCard({r,sel,read,inCase,showBank,onOpen,onCase,onTheme,q,cardRef}){
       <span className="rv-c-mt">{meta.join(" · ")}
         {r.similar>0&&<> · ещё {r.similar} {plural(r.similar,"такая же","такие же","таких же")}</>}
         {pending&&<> · разметка через ~час</>}
-        {r.via==="смысл"&&<> · <span title="слов запроса в тексте нет — подобрано по смыслу">по смыслу</span></>}
+        {r.via==="смысл"&&<> · <span data-tip="слов запроса в тексте нет — подобрано по смыслу">по смыслу</span></>}
       </span>
-      {inCase&&<span className="rv-c-in" title={`в деле «${inCase}»`}><RvICase s={12}/>в деле</span>}
+      {inCase&&<span className="rv-c-in" data-tip={`в деле «${inCase}»`}><RvICase s={12}/>в деле</span>}
       <span className="rv-c-acts">
         {!inCase&&onCase&&<button className="rv-c-add" onClick={e=>{e.stopPropagation();onCase();}}>В дело</button>}
         <RvMenu items={[onCase&&{t:inCase?"Добавить в другое дело":"В аудит-дело",ic:<RvICase s={13}/>,on:onCase},
@@ -3509,7 +3537,7 @@ function RvCard({r,sel,read,inCase,showBank,onOpen,onCase,onTheme,q,cardRef}){
       {sig.map(x=><span key={x.k} className={"rv-sg "+x.tone}>{x.ic&&<x.ic s={12}/>}{x.t}</span>)}
       {themes.length>0&&<span className="rv-c-th">{themes.map((t,i)=><React.Fragment key={t.key}>
         {i>0&&<span className="rv-c-dot">·</span>}
-        {onTheme?<button className="rv-c-tl" title={`${t.label} — показать жалобы этой темы`}
+        {onTheme?<button className="rv-c-tl" data-tip={`${t.label} — показать жалобы этой темы`}
           onClick={e=>{e.stopPropagation();onTheme(t.key);}}>{t.short||t.label}</button>
           :<span className="rv-c-tl static">{t.short||t.label}</span>}</React.Fragment>)}</span>}
     </div>}
@@ -3527,7 +3555,7 @@ function RvPassport({r}){
     {(a.esc==="filed"?"Обратился":"Грозит")+((a.esc_to||[]).length?": "+a.esc_to.map(x=>RV_TO[x]||x).join(", "):"")}</span>]);
   if(a.vulnerable&&a.vulnerable.length)rows.push(["Клиент",rvCap(a.vulnerable.map(x=>RV_VULN[x]||x).join(", "))]);
   if(a.no_consent||a.misled)rows.push(["Практика",[a.no_consent&&"без согласия клиента",a.misled&&"ввели в заблуждение"].filter(Boolean).join(" · ")]);
-  if(a.amount)rows.push(["Сумма",<span title="сумма бывает и ущербом, и суммой самого продукта">{fmtNum(Math.round(a.amount))} ₽</span>]);
+  if(a.amount)rows.push(["Сумма",<span data-tip="сумма бывает и ущербом, и суммой самого продукта">{fmtNum(Math.round(a.amount))} ₽</span>]);
   const pc=[r.product,r.city].filter(Boolean).join(" · "); if(pc)rows.push(["Продукт",pc]);
   if(a.event_date)rows.push(["Событие",rvLongDate(a.event_date)]);
   if(r.rating!=null)rows.push(["Оценка",<span className="rv-stars" aria-label={`${Math.round(r.rating)} из 5`}>
@@ -3556,18 +3584,18 @@ function RvReader({r,pos,total,ctx,onPrev,onNext,onClose,onCase,inCase,onOpenSim
   return <div className={"rv-rd"+(embedded?" emb":"")}>
     <div className="rv-rd-head" data-drag="1">
       <div className="rv-rd-nav">
-        {onBack&&<button className="rv-ib" onClick={onBack} aria-label="Назад к списку" title="назад">←</button>}
-        <button className="rv-ib" disabled={!onPrev} onClick={onPrev} aria-label="Предыдущая жалоба" title="предыдущая · K"><RvIUp s={16}/></button>
-        <button className="rv-ib" disabled={!onNext} onClick={onNext} aria-label="Следующая жалоба" title="следующая · J"><RvIDown s={16}/></button>
+        {onBack&&<button className="rv-ib" onClick={onBack} aria-label="Назад к списку" data-tip="назад">←</button>}
+        <button className="rv-ib" disabled={!onPrev} onClick={onPrev} aria-label="Предыдущая жалоба" data-tip="предыдущая · K"><RvIUp s={16}/></button>
+        <button className="rv-ib" disabled={!onNext} onClick={onNext} aria-label="Следующая жалоба" data-tip="следующая · J"><RvIDown s={16}/></button>
         {total>1&&<span className="rv-rd-pos">{pos+1} из {total}{ctx?` · ${ctx}`:""}</span>}
       </div>
       <div className="rv-rd-acts">
         {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={onCase}
-          title={inCase?`уже в деле «${inCase}» — можно добавить в другое`:"приобщить к аудит-делу · A"}>
+          data-tip={inCase?`уже в деле «${inCase}» — можно добавить в другое`:"приобщить к аудит-делу · A"}>
           <RvICase s={14}/>{inCase?"В деле":"В дело"}</button>}
-        {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer" title="открыть на площадке">
+        {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer" data-tip="открыть на площадке">
           {rvHost(r.url)}<RvIExt s={13}/></a>}
-        {onClose&&<button className="rv-ib" onClick={onClose} aria-label="Закрыть" title="закрыть · Esc"><RvIX s={16}/></button>}
+        {onClose&&<button className="rv-ib" onClick={onClose} aria-label="Закрыть" data-tip="закрыть · Esc"><RvIX s={16}/></button>}
       </div>
     </div>
     <div className="rv-rd-body" ref={bodyRef}>
@@ -3698,9 +3726,10 @@ function RvJournal({bank,product,onOpen}){
         <div className="rv-jr-m">{d1===d2?d1:`${d1} – ${d2}`} · пик {st.week} за 7 дн при норме ~{rvNum(st.baseline_week)}
           {st.new?" · новое":st.ratio?` · ×${rvNum(st.ratio)}`:""}{st.bank_specific?" · только у банка":""}</div>
         <div className="rv-jr-a">
-          <button className={"rv-jr-b ok"+(e.verdict==="confirmed"?" on":"")} onClick={()=>mark(e,"confirmed")}>✓ подтвердился</button>
-          <button className={"rv-jr-b no"+(e.verdict==="false"?" on":"")} onClick={()=>mark(e,"false")}>✕ ложный</button>
-          {e.n_urls>0&&<button className="rv-jr-x" onClick={()=>toggle(e)}>{open===e.signal_id?"скрыть ▴":`жалобы сигнала · ${e.n_urls} ▾`}</button>}
+          <button className={"rv-jr-b ok"+(e.verdict==="confirmed"?" on":"")} onClick={()=>mark(e,"confirmed")}>подтвердился</button>
+          <button className={"rv-jr-b no"+(e.verdict==="false"?" on":"")} onClick={()=>mark(e,"false")}>ложный</button>
+          {e.n_urls>0&&<button className="rv-jr-x" onClick={()=>toggle(e)}>{open===e.signal_id?<>скрыть<span className="rv-ico-in" style={{transform:"rotate(180deg)"}}><RvIChevD s={13}/></span></>
+            :<>жалобы сигнала · {e.n_urls}<span className="rv-ico-in"><RvIChevD s={13}/></span></>}</button>}
           {e.verdict_by&&<span className="rv-jr-by">{e.verdict_by}</span>}
         </div>
         {open===e.signal_id&&<div className="rv-jr-list rv-clist">{!its[e.signal_id]?<Skel h={60}/>:its[e.signal_id].map((r,i)=>
@@ -4023,7 +4052,7 @@ function ReviewsPage({params}){
           Позиции, которым приписано кратно больше обращений, чем их вообще
           упоминают, в срез не попадают вовсе. */}
       {product&&<span className="rv-warn-inline"
-        title="Продукт определён по тексту обращения, а не взят из метки площадки. На продуктах, которые клиент называет прямо, разметка точна; широкие позиции («подписки», «дистанционное обслуживание») собирают и неопределённое — проверяйте выборочно.">
+        data-tip="Продукт определён по тексту обращения, а не взят из метки площадки. На продуктах, которые клиент называет прямо, разметка точна; широкие позиции («подписки», «дистанционное обслуживание») собирают и неопределённое — проверяйте выборочно.">
         продукт определён по тексту</span>}
       <div className="rv-chips">
         {RV_PERIODS.map(([d,l])=><button key={d} className={"rv-chip"+(days===d?" on":"")} onClick={()=>setDays(d)}>{l}</button>)}
@@ -4031,11 +4060,11 @@ function ReviewsPage({params}){
       {/* подписка на сигналы среза: всплески по банку и продукту приходят в «Для вас» */}
       <div className="rv-facts">
       {sub!==null&&<button className={"rv-bell"+(sub?" on":"")} onClick={toggleSub}
-        title={sub?"Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться"
+        data-tip={sub?"Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться"
                   :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — всплески будут в «Для вас»`}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
         {sub?"Слежу":"Следить"}</button>}
-      <button className="rv-export" onClick={()=>setCasesOpen(true)} title="подборки жалоб и документов под проверку — общие для команды">Аудит-дела</button>
+      <button className="rv-export" onClick={()=>setCasesOpen(true)} data-tip="подборки жалоб и документов под проверку — общие для команды">Аудит-дела</button>
       </div>
     </div>
 
@@ -4046,7 +4075,7 @@ function ReviewsPage({params}){
       <span className="rv-chg-h">Что изменилось <i>к прошлым {days} дн</i></span>
       {chg.items&&chg.items.length?chg.items.map((it,i)=>
         <span key={i} className={"rv-chg-it "+it.dir+(it.kind==="signal"?" sig":"")+(it.key?" click":"")+(it.key&&theme===it.key?" on":"")}
-          title={it.detail} role={it.key?"button":undefined} tabIndex={it.key?0:undefined}
+          data-tip={it.detail} role={it.key?"button":undefined} tabIndex={it.key?0:undefined}
           onClick={it.key?()=>pickTheme(it.key):undefined}
           onKeyDown={it.key?onKey(()=>pickTheme(it.key)):undefined}>
           <b className="rv-chg-ar">{it.dir==="up"?"↑":"↓"}</b>{it.text}</span>)
@@ -4058,35 +4087,37 @@ function ReviewsPage({params}){
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Жалоб за {days} дн</div>
         <div className="rv-kv">{busy?"…":(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
-        <div className="rv-ks">{ov&&ov.delta_partial?<span title="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {pct1(Math.abs(ov.delta_pct))}</span>:<span className="rv-up">↑ {pct1(ov.delta_pct)}</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
+        <div className="rv-ks">{ov&&ov.delta_partial?<span data-tip="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {pct1(Math.abs(ov.delta_pct))}</span>:<span className="rv-up">↑ {pct1(ov.delta_pct)}</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
       </div>
       <div className="rv-card rv-kpi">
         <div className="rv-kl">Доля в жалобах на площадках</div>
         <div className="rv-kv">{busy?"…":pct1(ov&&ov.market_share_pct)}</div>
         {/* «4-е место» без поправки на число клиентов читалось как «у Сбера жалоб
             меньше, чем у Альфы». Место вернётся вместе с нормировкой */}
-        <div className="rv-ks" title="Доля всех жалоб на банки за период. Не нормирована на число клиентов: у крупного банка она ниже, чем у небольшого, чьи клиенты активнее пишут на площадках">
+        <div className="rv-ks" data-tip="Доля всех жалоб на банки за период. Не нормирована на число клиентов: у крупного банка она ниже, чем у небольшого, чьи клиенты активнее пишут на площадках">
           от всех банков · без поправки на число клиентов</div>
       </div>
       {/* Плашка ведёт к самим обращениям: аудиторы просили дважды — «хорошо бы
           при нажатии на эту иконку выводить такие обращения». Признак посчитан
           при индексации, поэтому фильтр дешёвый. */}
-      <div className={"rv-card rv-kpi rv-kpi-click"+(ov&&ov.escalation_pct>=12?" rv-alert":"")
-             +(escOnly?" rv-kpi-on":"")}
+      {/* Цвет — только при значимом превышении рынка: порог 12% у крупного
+          банка пробит всегда, и постоянно розовая плитка перестала быть сигналом */}
+      <div className={"rv-card rv-kpi rv-kpi-click"+(escOnly?" rv-kpi-on":"")}
            role="button" tabIndex={0}
-           title={escOnly?"показаны только такие обращения · нажмите, чтобы снять"
+           data-tip={escOnly?"показаны только такие обращения · нажмите, чтобы снять"
                          :"показать в ленте только жалобы, где клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор, к финомбудсмену или в полицию"}
            onClick={()=>setEscOnly(v=>!v)} onKeyDown={onKey(()=>setEscOnly(v=>!v))}>
-        <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_pct>=12&&<span className="rv-tag compliance">риск</span>}</div>
-        <div className="rv-kv rv-up">{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
+        <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_sig&&<span className="rv-tag compliance">выше рынка</span>}</div>
+        <div className={"rv-kv"+(ov&&ov.escalation_sig?" rv-up":"")}>{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
         <div className="rv-ks">{escOnly?"фильтр включён · нажмите, чтобы снять"
-          :(ov&&ov.escalation_filed_pct!=null?`обратились ${pct1(ov.escalation_filed_pct)} · грозят ${pct1(Math.round((ov.escalation_pct-ov.escalation_filed_pct)*10)/10)} · нажмите`:"грозят или обратились в ЦБ, суд, прокуратуру · нажмите")}</div>
+          :<>{ov&&ov.market_escalation_pct!=null&&<>у остальных банков {pct1(ov.market_escalation_pct)}<br/></>}
+            {ov&&ov.escalation_filed_pct!=null?`обратились ${pct1(ov.escalation_filed_pct)} · грозят ${pct1(Math.round((ov.escalation_pct-ov.escalation_filed_pct)*10)/10)}`:"грозят или обратились в ЦБ, суд, прокуратуру"}</>}</div>
       </div>
       <div className={"rv-card rv-kpi"+(th&&th.themes&&th.themes.length?" rv-kpi-click":"")
              +(th&&th.themes&&th.themes.length&&theme===th.themes[0].key?" rv-kpi-on":"")}
            role={th&&th.themes&&th.themes.length?"button":undefined}
            tabIndex={th&&th.themes&&th.themes.length?0:undefined}
-           title="показать в ленте обращения этой темы"
+           data-tip="показать в ленте обращения этой темы"
            onClick={()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);}}
            onKeyDown={onKey(()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);})}>
         <div className="rv-kl">Главная тема</div>
@@ -4121,7 +4152,7 @@ function ReviewsPage({params}){
                   `${rvDate(e.date)} · ${e.title}: `+Object.entries(e.diff||{}).map(([k,v])=>
                     `${MK_FLD[k]||k} ${mkFldVal(k,v.from)} → ${mkFldVal(k,v.to)}`).join("; ")).join("\n")
                   +(ev.length>5?`\n…ещё ${ev.length-5}`:""):"";
-                return <div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={tip+evTip}
+                return <div key={i} className={"rv-bcol"+(s.partial?" partial":"")} data-tip={tip+evTip}
                    role="button" tabIndex={0} onClick={()=>openDrill("month",mv,ml+(s.partial&&!trEv?" (неполный месяц)":""))}
                    onKeyDown={onKey(()=>openDrill("month",mv,ml))}>
                 {s.expected
@@ -4143,7 +4174,7 @@ function ReviewsPage({params}){
         <div className="rv-card">
           <div className="rv-ttl">Темы жалоб — риск-карта</div>
           <div className="rv-cap">доля от жалоб за {(th&&th.days)||days} дн · по главной проблеме (сумма 100%), разметка ИИ · клик → лента темы
-            {th&&th.delta_partial?<> · <span title="прошлый период ещё размечается — сравнение с ним дало бы ложный рост">динамика появится после разметки прошлого периода</span></>
+            {th&&th.delta_partial?<> · <span data-tip="прошлый период ещё размечается — сравнение с ним дало бы ложный рост">динамика появится после разметки прошлого периода</span></>
              :th&&th.overall_delta_pct!=null?<> · изменение к прошлым {(th&&th.days)||days} дн: цветом — значимо отличается от общего потока ({rvSgn(th.overall_delta_pct)}%), серым — в пределах колебаний</>:""}</div>
           {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:(()=>{
             const real=th.themes.filter(t=>t.key!=="other"), other=th.themes.find(t=>t.key==="other");
@@ -4154,7 +4185,7 @@ function ReviewsPage({params}){
                    role={clk?"button":undefined} tabIndex={clk?0:undefined} aria-pressed={clk?(theme===t.key):undefined}
                    onClick={clk?()=>pickTheme(t.key):undefined}
                    onKeyDown={clk?onKey(()=>pickTheme(t.key)):undefined}>
-                <div className="rv-tname" title={t.n_also?`ещё в ${t.n_also} жалобах упоминается как дополнительная проблема`:undefined}>{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
+                <div className="rv-tname" data-tip={t.n_also?`ещё в ${t.n_also} жалобах упоминается как дополнительная проблема`:undefined}>{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
                 <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
                 <div className="rv-tn mono">{fmtNum(t.n)}</div>
                 <div className="rv-ttr">{rvDeltaSig(t,th)}</div>
@@ -4163,7 +4194,8 @@ function ReviewsPage({params}){
             return <>
               {shown.map(row)}
               {real.length>12&&<div className="rv-th-toggle" role="button" tabIndex={0} onClick={()=>setThAll(!thAll)} onKeyDown={onKey(()=>setThAll(!thAll))}>
-                {thAll?"свернуть ▴":`ещё ${real.length-12} тем ▾`}</div>}
+                {thAll?<>свернуть<span className="rv-ico-in" style={{transform:"rotate(180deg)"}}><RvIChevD s={13}/></span></>
+                  :<>ещё {real.length-12} тем<span className="rv-ico-in"><RvIChevD s={13}/></span></>}</div>}
               {other&&row(other)}
             </>;
           })()}
@@ -4181,7 +4213,7 @@ function ReviewsPage({params}){
           {busy?<Skel h={220}/>:!ix||ix.__err||ix.bank_total==null?<RvNote err={ix&&ix.__err}/>:(()=>{
             const row=(r,worse)=><div key={r.key} className={"rv-ix"+(theme===r.key?" sel":"")}
                 role="button" tabIndex={0} onClick={()=>pickTheme(r.key)} onKeyDown={onKey(()=>pickTheme(r.key))}
-                title={`${r.label}: ${fmtNum(r.n)} жалоб — ${pct1(r.pct)} жалоб банка против ${pct1(r.market_pct)} у остальных банков · индекс ${rvX(r.index)}, 95% ДИ ${String(r.lo).replace(".",",")}–${String(r.hi).replace(".",",")}`}>
+                data-tip={`${r.label}: ${fmtNum(r.n)} жалоб — ${pct1(r.pct)} жалоб банка против ${pct1(r.market_pct)} у остальных банков · индекс ${rvX(r.index)}, 95% ДИ ${String(r.lo).replace(".",",")}–${String(r.hi).replace(".",",")}`}>
               <div className="rv-ix-l">
                 <div className="rv-ix-name">{r.label}</div>
                 <div className="rv-ix-sub">{pct1(r.pct)} жалоб · у рынка {pct1(r.market_pct)}{worse&&r.excess>0?<> · <b>+{fmtNum(r.excess)}</b> сверх рыночной структуры</>:""}</div>
@@ -4191,7 +4223,7 @@ function ReviewsPage({params}){
             </div>;
             const w=ix.worse||[], b=ix.better||[];
             return <>
-              <div className="rv-ix-h"><span>Хуже рынка</span><span className="rv-ix-hq" title="индекс по четырём кварталам, от старого к свежему; пунктир — уровень рынка">4 квартала</span></div>
+              <div className="rv-ix-h"><span>Хуже рынка</span><span className="rv-ix-hq" data-tip="индекс по четырём кварталам, от старого к свежему; пунктир — уровень рынка">4 квартала</span></div>
               {w.length?w.slice(0,6).map(r=>row(r,true)):<div className="rv-ix-none">значимых отличий в худшую сторону нет</div>}
               {b.length>0&&<><div className="rv-ix-h"><span>Лучше рынка</span></div>{b.slice(0,3).map(r=>row(r,false))}</>}
             </>;
@@ -4207,13 +4239,13 @@ function ReviewsPage({params}){
             <React.Fragment key={c.city}>
             {c.extra&&!ge.cities[i-1].extra&&<div className="rv-ix-h"><span>Выделяются вне топа</span></div>}
             <div className="rv-grow rv-grow-click" role="button" tabIndex={0}
-                 title={`Доля ${bank} в жалобах города ${pct1(c.share)} против ${pct1(c.base_share)} в остальных городах · ${rvX(c.index)}, 95% ДИ ${String(c.lo).replace(".",",")}–${String(c.hi).replace(".",",")}${c.low?" · мало данных для вывода":""}`}
+                 data-tip={`Доля ${bank} в жалобах города ${pct1(c.share)} против ${pct1(c.base_share)} в остальных городах · ${rvX(c.index)}, 95% ДИ ${String(c.lo).replace(".",",")}–${String(c.hi).replace(".",",")}${c.low?" · мало данных для вывода":""}`}
                  onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
                  onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
               <div style={{minWidth:0,flex:1}}>
                 <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag compliance">выше нормы</span>}{c.below&&<span className="rv-tag good">ниже нормы</span>}</div>
-                <div className={"rv-gbar"+(c.anomaly?" anom":"")} style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
-                {c.focus&&<div className="rv-gfocus" title={`${c.focus.label}: ${c.focus.n} жалоб в городе — в ${String(c.focus.index).replace(".",",")} раза чаще, чем в жалобах банка по стране`}>
+                <div className={"rv-gbar"+(c.anomaly?" anom":"")} style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--neg)":"var(--ink-4)"}}/>
+                {c.focus&&<div className="rv-gfocus" data-tip={`${c.focus.label}: ${c.focus.n} жалоб в городе — в ${String(c.focus.index).replace(".",",")} раза чаще, чем в жалобах банка по стране`}>
                   чаще, чем по стране: {c.focus.short||c.focus.label} {rvX(c.focus.index)}</div>}
               </div>
               <div className="mono rv-gn">{fmtNum(c.n)}<span className="rv-gp"> · {pct1(c.share)}</span>
@@ -4230,10 +4262,10 @@ function ReviewsPage({params}){
               <div className="rv-ttl">Срочные аномалии</div>
               <div className="rv-cap">резкие изменения за 7 полных дней{anom&&anom.week_end?` · по ${rvDate(anom.week_end)}`:""}</div>
             </div>
-            <span className={"rv-radar-live"+(anomBusy?" scan":"")} title="радар активен"/>
+            <span className={"rv-radar-live"+(anomBusy?" scan":"")} data-tip="радар активен"/>
           </div>
           <button className="rv-jr-open" onClick={()=>setJrOpen(true)}
-            title="все всплески за полгода со снимком жалоб и отметкой «подтвердился / ложный»">журнал сигналов →</button>
+            data-tip="все всплески за полгода со снимком жалоб и отметкой «подтвердился / ложный»">журнал сигналов<span className="rv-ico-in"><RvIChevR s={12}/></span></button>
           {anomBusy?
             <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
            :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?
@@ -4246,7 +4278,7 @@ function ReviewsPage({params}){
               <div className="rv-radar-chips">
                 {(anom.watch||[]).map((d,i)=>
                   <span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
-                    title={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
+                    data-tip={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
                     onClick={()=>pickTheme(d.key)} onKeyDown={onKey(()=>pickTheme(d.key))}>
                     {d.short||d.label}<b>×{String(d.gap).replace(".",",")}</b></span>)}
               </div>
@@ -4262,7 +4294,7 @@ function ReviewsPage({params}){
                     +(s.accel?` · ускоряется (${s.prev_week}→${s.week})`:"")
                     +(s.geo?` · ${s.geo.share}% из ${s.geo.city}`:"");
                   return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}
-                        role="button" tabIndex={0} title={tip}
+                        role="button" tabIndex={0} data-tip={tip}
                         onClick={()=>setTheme(s.key)} onKeyDown={onKey(()=>setTheme(s.key))}>
                     {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
                   </span>;
@@ -4293,7 +4325,7 @@ function ReviewsPage({params}){
             return <div key={it.flag} className={"rv-fi"+(flag===it.flag?" sel":"")+(it.flag==="vuln:any"?" tot":"")}
               role="button" tabIndex={0} aria-pressed={flag===it.flag}
               onClick={()=>pickFlag(it.flag)} onKeyDown={onKey(()=>pickFlag(it.flag))}
-              title={`${it.label}: ${fmtNum(it.n)} жалоб (${pct1(it.pct)})${it.filed!=null?`, из них уже обратились ${fmtNum(it.filed)}`:""} · у остальных банков ${pct1(it.market_pct)}${it.index!=null?` · ${rvX(it.index)}`:""}${it.caveat?` · ⚠ ${it.caveat}`:""}`}>
+              data-tip={`${it.label}: ${fmtNum(it.n)} жалоб (${pct1(it.pct)})${it.filed!=null?`, из них уже обратились ${fmtNum(it.filed)}`:""} · у остальных банков ${pct1(it.market_pct)}${it.index!=null?` · ${rvX(it.index)}`:""}${it.caveat?` · ⚠ ${it.caveat}`:""}`}>
               <span className="rv-fi-l">{it.label}{it.caveat&&<span className="rv-fi-cav" aria-label="есть оговорка">*</span>}</span>
               <span className="rv-fi-n mono">{fmtNum(it.n)}</span>
               <span className={"rv-fi-m mono"+(hi?" rv-up":lo?" rv-down":"")}>{pct1(it.pct)}<i> / {pct1(it.market_pct)}</i></span>
@@ -4313,20 +4345,20 @@ function ReviewsPage({params}){
               карточки и видел расхождение с плашкой. */}
           {!(fView==="groups"&&!q)&&(()=>{const n=(feed||[]).length,
                        dup=(feed||[]).reduce((a,r)=>a+(r.similar||0),0);
-            return dup>0?<span className="rv-count-note" title="одинаковые тексты объединены в одну карточку">
+            return dup>0?<span className="rv-count-note" data-tip="одинаковые тексты объединены в одну карточку">
               {" "}· {n + dup} {plural(n+dup,"жалоба","жалобы","жалоб")}, одинаковые объединены</span>:null;})()}
         </div>
           <div className="rv-cap">{theme||flag?<>
-            {theme&&<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>}
+            {theme&&<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить<span className="rv-ico-in"><RvIX s={12}/></span></span></>}
             {theme&&flag&&<span className="rv-cap-sep"> · </span>}
-            {flag&&<>признак: <b>{flagLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setFlag("")} onKeyDown={onKey(()=>setFlag(""))}>сбросить ✕</span></>}
+            {flag&&<>признак: <b>{flagLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setFlag("")} onKeyDown={onKey(()=>setFlag(""))}>сбросить<span className="rv-ico-in"><RvIX s={12}/></span></span></>}
           </>:<span className="rv-legend"><i className="neg"/>обратился в ЦБ, суд и т. п.<i className="warn"/>грозит или уязвимый клиент
             <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
         {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
         <a className="rv-export rv-export-a" download
            href={`/api/reviews/export.csv?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`}
-           title="Все жалобы с текущими фильтрами банка, продукта, темы, признака и периода — с разметкой ИИ и полным текстом (поиск в выгрузку не входит)"
-           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,days,esc:escOnly,flag}})}>↧ CSV</a>
+           data-tip="Все жалобы с текущими фильтрами банка, продукта, темы, признака и периода — с разметкой ИИ и полным текстом (поиск в выгрузку не входит)"
+           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,days,esc:escOnly,flag}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/>CSV</a>
       </div>
       {/* Порядок выдачи. Показываем только при запросе: лента без него и так
           идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
@@ -4335,17 +4367,17 @@ function ReviewsPage({params}){
         <span className="rv-sort-l">порядок:</span>
         {[["auto","по релевантности"],["date","по дате"]].map(([k,l])=>
           <button key={k} className={"rv-chip"+(sortBy===k?" on":"")}
-            title={k==="date"
+            data-tip={k==="date"
               ?"сначала свежие. Отбирает всё равно релевантность — порядок меняется внутри отобранного"
               :"сначала самые близкие к запросу"}
             onClick={()=>setSortBy(k)}>{l}</button>)}
       </div>}
       <div className="rv-search">
-        <span>⌕</span>
+        <span aria-hidden="true"><RvIco s={15} d={<><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></>}/></span>
         <input ref={searchRef} value={qInput} onChange={e=>setQInput(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter")setQ(qInput.trim());}}
           placeholder="Найти жалобы по смыслу: «не зачисляют выручку по эквайрингу», «навязали страховку»… (Enter)"/>
-        {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}>✕</span>}
+        {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}><RvIX s={14}/></span>}
       </div>
       {/* Фильтры ленты (Д5): город, площадка, признак; порядок «сначала
           серьёзные» и группы похожих — без поиска, у него своя выдача */}
@@ -4367,7 +4399,7 @@ function ReviewsPage({params}){
         {!q&&<div className="rv-chips rv-chips-sm" role="group" aria-label="порядок">
           {[["date","свежие"],["severity","сначала серьёзные"]].map(([k,l])=>
             <button key={k} className={"rv-chip"+(fOrder===k?" on":"")} onClick={()=>setFOrder(k)}
-              title={k==="severity"?"выше — кто уже обратился в ЦБ или суд, уязвимые клиенты, «без согласия», крупные суммы, проблемы класса «комплаенс»":"сначала свежие"}>{l}</button>)}
+              data-tip={k==="severity"?"выше — кто уже обратился в ЦБ или суд, уязвимые клиенты, «без согласия», крупные суммы, проблемы класса «комплаенс»":"сначала свежие"}>{l}</button>)}
         </div>}
         {!q&&<div className="rv-chips rv-chips-sm" role="group" aria-label="вид">
           {[["cards","карточки"],["groups","группы похожих"]].map(([k,l])=>
@@ -4380,10 +4412,10 @@ function ReviewsPage({params}){
       {!feedBusy&&!feedErr&&q&&feedMeta&&<div className="rv-sum">
         <span>искали по: <b>{(feedMeta.terms||[]).join(" · ")||q}</b></span>
         {feedMeta.added&&feedMeta.added.length>0&&
-          <span className="rv-sum-x" title="раскрыто автоматически: сокращения и то, как об этом пишут клиенты">
+          <span className="rv-sum-x" data-tip="раскрыто автоматически: сокращения и то, как об этом пишут клиенты">
             добавлено: {feedMeta.added.join(" · ")}</span>}
         {feedMeta.common&&feedMeta.common.length>0&&
-          <span className="rv-sum-x" title="эти слова встречаются почти в каждой жалобе и только размывают выдачу">
+          <span className="rv-sum-x" data-tip="эти слова встречаются почти в каждой жалобе и только размывают выдачу">
             не учитывали: {feedMeta.common.join(" · ")}</span>}
         <span className="rv-sum-x">дословных {feedMeta.n_words||0}, по смыслу {feedMeta.n_sense||0}</span>
       </div>}
@@ -4409,7 +4441,7 @@ function ReviewsPage({params}){
               <div className="rv-cl-s">{g.summary}</div>
               {g.quote&&<div className="rv-cl-q">«{g.quote}»</div>}
             </div>
-            <span className="rv-cl-go" aria-hidden="true">→</span>
+            <span className="rv-cl-go" aria-hidden="true"><RvIChevR s={16}/></span>
           </div>)}
         </>):
        feedBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
@@ -4466,7 +4498,7 @@ function ReviewsPage({params}){
         </div>)}
       </div>}
       <button className="rv-explain-btn" onClick={runExplain} disabled={explainBusy}>
-        {explainBusy?"Читаю жалобы…":"✦ Разобрать жалобы (ИИ)"}
+        {explainBusy?"Читаю жалобы…":"✦ Разобрать с ИИ"}
       </button>
       {explain&&explain!=="__none__"&&<div className="rv-explain">{renderMD(explain)}</div>}
       {explain==="__none__"&&<div className="rv-explain rv-explain-err">Не удалось получить объяснение (LLM недоступен). Жалобы ниже — для ручного разбора.</div>}
@@ -7520,13 +7552,13 @@ function RvCaseItem({it,onDrop,onNote,onOpenDoc,onOpen}){
         {it.bank_name&&<span className="kb-bank">{it.bank_name}</span>}
         {it.trust_score!=null&&<TrustDots score={it.trust_score}/>}
         {it.fetched_at&&<span>обход {fmtDateMsk(it.fetched_at)}</span>}
-        {it.url&&<a href={it.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(it.url)} ↗</a>}
+        {it.url&&<a href={it.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(it.url)}<span className="rv-ico-in"><RvIExt s={12}/></span></a>}
       </div></div>
      :<RvCard r={rvCaseCard(it)} showBank onOpen={onOpen}/>}
     <div className="rv-ci-foot">
       <textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="комментарий аудитора…"
         onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
-      {it.can_remove&&<button className="rv-ib" onClick={onDrop} aria-label="Убрать из дела" title="убрать из дела"><RvIX s={14}/></button>}
+      {it.can_remove&&<button className="rv-ib" onClick={onDrop} aria-label="Убрать из дела" data-tip="убрать из дела"><RvIX s={14}/></button>}
     </div>
     {it.added_by&&<div className="rv-ci-by">приобщил: {it.added_by}</div>}
   </div>;
@@ -7610,7 +7642,7 @@ function KbCases({onClose,onOpenDoc}){
     return <><RvModal side="right" title={cur.title}
       sub={`${items.length} матер.${nRev?` · жалоб ${nRev}`:""}${cur.shared?" · открыто команде":""}${!cur.mine?` · ведёт ${cur.owner}`:""}`}
       onClose={()=>{setOpen(null);setCur(null);load();}}>
-      <button className="rv-cs-back" onClick={()=>{setOpen(null);setCur(null);load();}}>← все дела</button>
+      <button className="rv-cs-back" onClick={()=>{setOpen(null);setCur(null);load();}}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
       {cur.note&&<p className="t-cap">{cur.note}</p>}
       {ren!==null&&<div className="rv-cp-new"><input className="input" value={ren} autoFocus onChange={e=>setRen(e.target.value)}
         onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape")setRen(null);}}/>
@@ -7620,7 +7652,7 @@ function KbCases({onClose,onOpenDoc}){
         <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}>Word</a>
         <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.csv`}>CSV</a>
         {cur.mine&&<button className="btn btn-sm btn-ghost" onClick={team}
-          title={cur.shared?"закрыть доступ коллегам":"коллеги увидят дело и смогут приобщать материалы и комментировать"}>
+          data-tip={cur.shared?"закрыть доступ коллегам":"коллеги увидят дело и смогут приобщать материалы и комментировать"}>
           {cur.shared?"Закрыть для команды":"Открыть команде"}</button>}
         {cur.mine&&ren===null&&<button className="btn btn-sm btn-ghost" onClick={()=>setRen(cur.title)}>Переименовать</button>}
         {cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={remove}>Удалить</button>}
@@ -7631,7 +7663,7 @@ function KbCases({onClose,onOpenDoc}){
           <span className="rv-cs-an-b">
             {!an&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
             {an&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
-            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} title="передать состав дела ИИ-аналитику: нормы, практика, что запросить">продолжить в ИИ-аналитике →</button>}
+            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-аналитику: нормы, практика, что запросить">продолжить в ИИ-аналитике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
           </span>
         </div>
         {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}

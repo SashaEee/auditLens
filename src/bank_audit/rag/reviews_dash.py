@@ -494,11 +494,26 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
                 {"d": days, **({"product": product} if product else {})}).all()
             asof = s.execute(text(
                 f"SELECT max(i.dt) FROM review_index i WHERE {idx} AND {_CMP}"), ip).scalar()
+            # эскалация у остальных банков — с чем сравнивать долю банка: порог
+            # 12% у крупного банка пробит всегда, и плитка была красной постоянно
+            m_n, m_esc = s.execute(text(
+                f"SELECT count(*), count(*) FILTER (WHERE i.esc) FROM review_index i"
+                f" WHERE i.bank <> :bank AND {_CMP}"
+                f" AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
+                + (" AND i.product = :product" if product else "")),
+                {"bank": bc, "d": days, **({"product": product} if product else {})}).one()
             by_src = [{"source": r[0], "n": int(r[1])} for r in s.execute(text(
                 f"SELECT i.source, count(*) FROM review_index i WHERE {idx} AND {_CMP}"
                 f" AND i.dt >= now() - make_interval(days => :d)"
                 f" GROUP BY 1 ORDER BY 2 DESC"), {**ip, "d": days}).all()]
         total_market = sum(int(r[1]) for r in mk) or 1
+        m_n, m_esc = int(m_n or 0), int(m_esc or 0)
+        esc_sig = False
+        if total_cur >= 30 and m_n >= 100:
+            p1, p0 = esc_cur / total_cur, m_esc / m_n
+            pp = (esc_cur + m_esc) / (total_cur + m_n)
+            se = math.sqrt(pp * (1 - pp) * (1 / total_cur + 1 / m_n)) if 0 < pp < 1 else 0
+            esc_sig = bool(se and _p2((p1 - p0) / se) < 0.01 and p0 and p1 / p0 >= 1.2)
         ready = _prev_ready(bc, days)
         delta = (round(100.0 * (total_cur - total_prev) / total_prev, 1)
                  if total_prev and ready else None)
@@ -513,6 +528,8 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
             "escalation_pct": round(100.0 * esc_cur / total_cur, 1) if total_cur else 0.0,
             "escalation_filed_pct": round(100.0 * filed / total_cur, 1) if total_cur else 0.0,
             "esc_n": esc_cur, "esc_prev_n": esc_prev,
+            "market_escalation_pct": round(100.0 * m_esc / m_n, 1) if m_n else None,
+            "escalation_sig": esc_sig,
             "as_of": asof.date().isoformat() if asof else None,
             "by_source": by_src, "src": "annotation",
             "coverage": _coverage(bc, days * 2),
