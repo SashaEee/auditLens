@@ -3061,11 +3061,74 @@ html:not(.dark) .rv-tabs{--ink-3:oklch(46% 0.012 260)}
   .rv-geo .rv-gi{align-self:start}
 }
 @media(max-width:520px){.rv-fi{grid-template-columns:minmax(0,1fr) 34px 86px;gap:6px}}
+
+/* ── Отзывы, волна R3 ─────────────────────────────────────────────────── */
+/* заголовки блоков — h2 (по ним ходит экранный чтец): поля браузера не нужны */
+.rv h2.rv-ttl,.rv-ovl h2.rv-ttl{margin:0}
+.rv h2.rv-kl{margin:0 0 10px}
+/* текст только для экранного чтеца */
+.rv-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* подложка окон — через множитель: лист, который тянут пальцем, плавно её
+   убирает в обеих темах (раньше инлайн-цвет на --ink осветлял тёмную тему) */
+.rv-ovl{background:color-mix(in oklab,var(--ink),transparent calc(100% - 22% * var(--rv-scrim-k,1)))}
+html.dark .rv-ovl{background:rgb(0 0 0 / calc(.5 * var(--rv-scrim-k,1)))}
+/* телефон: три KPI — сгруппированный список, а не экран из трёх плиток */
+@media(max-width:520px){
+  .rv-kpis3{gap:0}
+  .rv-kpis3>.rv-kpi{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;align-items:center;
+    padding:12px 16px;border-radius:0;margin-top:-1px;box-shadow:none}
+  .rv-kpis3>.rv-kpi:first-child{border-radius:var(--r-lg) var(--r-lg) 0 0;margin-top:0}
+  .rv-kpis3>.rv-kpi:last-child{border-radius:0 0 var(--r-lg) var(--r-lg)}
+  .rv-kpis3 .rv-kl{grid-column:1;grid-row:1;margin:0}
+  .rv-kpis3 .rv-ks{grid-column:1;grid-row:2;margin-top:3px}
+  .rv-kpis3 .rv-kv{grid-column:2;grid-row:1/span 2;font-size:24px;text-align:right}
+}
+/* телефон: в строке — город и «Фильтры», остальное в листе */
+.rv-ftbtn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;flex:none;border:1px solid var(--hair-2);
+  border-radius:9px;background:var(--surface);font:inherit;font-size:13px;color:var(--ink);cursor:pointer}
+.rv-ftbtn b{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;
+  background:var(--ink);color:var(--surface);font-size:11px;font-weight:600}
+.rv-ftbtn.on{border-color:var(--ink-3)}
+.rv-ftbtn:active{transform:scale(.97)}
+@media(max-width:760px){
+  .rv-ftools{overflow:visible;margin-right:0;padding-right:0}
+  .rv-ftools .rv-fsel{flex:1 1 auto;max-width:none;min-width:0;height:36px}
+}
+.rv-ovl-card.rv-sheet.rv-sheet-fit{height:auto;max-height:86vh}
+.rv-fts{display:flex;flex-direction:column;gap:16px;padding:2px 0 calc(8px + env(safe-area-inset-bottom))}
+.rv-fts-r{display:flex;flex-direction:column;gap:6px}
+.rv-fts-r>span{font-size:12px;color:var(--ink-3)}
+.rv-fts .rv-fsel{width:100%;max-width:none;height:44px;font-size:15px}
+.rv-fts .rv-chips{align-self:flex-start}
+.rv-fts .rv-chip{min-height:36px;font-size:13px}
+.rv-fts-go{height:48px;justify-content:center;font-size:15px;border-radius:12px;margin-top:2px}
+/* телефон: действия читалки — внизу листа, в зоне большого пальца */
+.rv-rd-foot{display:none}
+@media(max-width:760px){
+  .rv-sheet .rv-rd-foot{display:flex;gap:10px;flex:none;padding:10px 16px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--hair);background:var(--surface)}
+  .rv-sheet .rv-rd-foot .rv-bt{flex:1;height:46px;justify-content:center;font-size:15px;border-radius:12px}
+  .rv-sheet .rv-rd-acts .rv-bt{display:none}
+}
+/* легенда ленты: метка не отрывается от своей подписи при переносе */
+.rv-lg-i{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.rv-lg-i+.rv-lg-i{margin-left:6px}
+/* зоны нажатия: не меньше 24 px мышью (WCAG 2.2), около 44 px пальцем —
+   невидимым расширением, чтобы не раздувать вёрстку */
+.rv-info-b,.rv-jr-open,.rv-more-l,.rv-c-tl{position:relative}
+.rv-info-b::after,.rv-jr-open::after,.rv-more-l::after{content:"";position:absolute;inset:-6px -4px}
+@media(pointer:coarse){
+  .rv-info-b::after{inset:-10px}
+  .rv-jr-open::after,.rv-more-l::after{inset:-12px -6px}
+  .rv-c-tl::after{content:"";position:absolute;inset:-12px -3px}
+  .rv-tabs-l{padding:5px 0;margin:-5px 0}
+  .rv-tab::after{content:"";position:absolute;inset:-5px 0}
+}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-rv-r2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-rv-r3"></script>
 </body>
 </html>
