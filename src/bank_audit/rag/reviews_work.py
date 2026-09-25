@@ -137,8 +137,10 @@ def _clusters(bc, product, days, theme, flag, city, source, esc, limit) -> dict:
         except Exception as e:  # noqa: BLE001 — без векторов группы по тем, что есть
             log.info("clusters: векторы не досчитались (%s)", e)
     items = [r for r in rows if r["url"] in vecs]
+    # limited — упёрлись в limit: тогда «из N последних» в подписи честно, иначе
+    # база та же, что у вкладки, и отдельное число только расходилось бы с ней
     out = {"total": len(rows), "no_vec": len(rows) - len(items), "clusters": [],
-           "clustered": 0, "days": days}
+           "clustered": 0, "days": days, "limited": len(rows) >= limit}
     if len(items) < _CL_MIN:
         return out
     m = np.asarray([vecs[r["url"]] for r in items], dtype=np.float32)

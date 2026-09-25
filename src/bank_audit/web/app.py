@@ -2006,6 +2006,7 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
     return {"items": res["items"], "count": len(res["items"]),
             "mode": res["mode"], "error": res["error"],
             "has_more": bool(res.get("has_more")),
+            "total": res.get("total"), "pending": res.get("pending"),
             "search": res.get("search") or None}
 
 @app.get("/api/reviews/export.csv")

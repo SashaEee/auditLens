@@ -1234,15 +1234,25 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
             if sev else "")
     sev_col = f", {_severity_sql()} AS sev" if sev else ""
     order = "sev DESC NULLS LAST, i.dt DESC NULLS LAST" if sev else "i.dt DESC NULLS LAST"
+    where = f"""i.bank = :bank
+                  AND (i.dt IS NULL OR i.dt <= now())
+                  AND (CAST(:product AS text) IS NULL OR i.product = :product){extra}"""
     try:
         with db.session() as s:
+            # Сколько всего по этому фильтру — шапка ленты раньше считала только
+            # загруженную страницу («21 жалоба» рядом с «2 426» на вкладке).
+            # pending — свежие, ещё не размеченные: в счётчики вкладки они не входят
+            tot = None
+            if offset == 0:
+                n_all, n_pend = s.execute(text(
+                    f"SELECT count(*), count(*) FILTER (WHERE i.kind IS NULL)"
+                    f" FROM review_index i WHERE {where}"), p).one()
+                tot = {"total": int(n_all or 0) - int(n_pend or 0), "pending": int(n_pend or 0)}
             rows = [dict(r) for r in s.execute(text(f"""
                 SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt,
                        i.city, i.rating{sev_col}
                 FROM review_index i {join}
-                WHERE i.bank = :bank
-                  AND (i.dt IS NULL OR i.dt <= now())
-                  AND (CAST(:product AS text) IS NULL OR i.product = :product){extra}
+                WHERE {where}
                 ORDER BY {order}
                 LIMIT :lim
             """), p).mappings().all()]
@@ -1276,7 +1286,7 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     page = out[offset:offset + limit]
     _attach_themes(page)
     return {"items": page, "mode": "feed", "error": None,
-            "has_more": len(out) > offset + limit}
+            "has_more": len(out) > offset + limit, **(tot or {})}
 
 
 def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None,
@@ -1390,7 +1400,8 @@ def _attach_themes(items: list[dict]) -> None:
             "no_consent": bool(a["no_consent"]), "misled": bool(a["misled"]),
             "vulnerable": list(a["vulnerable"] or []),
             "amount": float(a["amount"]) if a["amount"] is not None else None,
-            "confidence": "согласие двух моделей" if a["status"] == "agree" else "решено арбитром",
+            "confidence": ("две модели согласны" if a["status"] == "agree"
+                           else "модели разошлись — решила третья"),
             "event_date": str(a["event_date"]) if a.get("event_date") else None,
             "new_topic": a["new_topic"] if a["code_fit"] == "approx" or a["issue"] == "other" else None,
         }

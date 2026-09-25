@@ -2970,11 +2970,35 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .rv-radar-live{margin-top:8px}
 @media(max-width:520px){.rv-radar-ico{display:none}}
 @media(prefers-reduced-motion:reduce){.rv-radar-live,.rv-radar-live.scan,.rv-radar-beam,.rv .skel{animation:none}}
+
+/* ── Отзывы, волна R1 ─────────────────────────────────────────────────── */
+/* Липкие слои вкладки: верхняя полоса + полоса подвкладок. Всё, что липнет
+   ниже (читалка рядом со списком) и к чему прокручиваем (карточки), считается
+   от одной переменной — иначе шапка читалки уезжала под подвкладки */
+.rv{--rv-tabs-h:50px;--rv-sticky:calc(var(--topbar) + var(--rv-tabs-h))}
+@media(max-width:760px){.rv{--rv-tabs-h:46px}}
+.rv-fw-rd{top:calc(var(--rv-sticky) + 10px);max-height:calc(100vh - var(--rv-sticky) - 20px)}
+.rv-c,.rv-cl,.rv-card{scroll-margin-top:calc(var(--rv-sticky) + 10px)}
+/* значки «Срочно»: число цветом уровня на мягкой подложке (было белое на
+   красном 2,9:1 и янтарное на сером 1,8:1) */
+.rv .rv-radar-chip b{background:color-mix(in oklab,var(--ink-3),transparent 84%);color:var(--ink)}
+.rv .rv-radar-chip.lvl-high b{background:color-mix(in oklab,var(--neg),transparent 82%);
+  color:color-mix(in oklab,var(--neg),var(--ink) 30%)}
+.rv .rv-radar-chip.lvl-watch b{background:color-mix(in oklab,var(--warn),transparent 82%);color:var(--warn-ink)}
+/* подложка окон: в тёмной теме затемняет, а не осветляет страницу */
+html.dark .rv-ovl{background:rgba(0,0,0,.5)}
+/* заголовки блоков: плотный интервал, при переносе строки не разъезжаются */
+.rv-ttl{line-height:1.25;text-wrap:balance}
+/* «журнал сигналов» выровнен по заголовку; на телефоне значка нет — и отступа */
+@media(max-width:520px){.rv-jr-open{margin-left:0}}
+/* светлая тема: полоса подвкладок лежит на фоне страницы, а не карточки —
+   третий серый там 4,2:1, берём на тон темнее */
+html:not(.dark) .rv-tabs{--ink-3:oklch(46% 0.012 260)}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-rv-d4c"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-rv-r1"></script>
 </body>
 </html>

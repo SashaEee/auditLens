@@ -3424,10 +3424,23 @@ const rvCap=s=>s?s[0].toUpperCase()+s.slice(1):s;
 // Текст площадки: восстановить пробел после точки перед заглавной («долга.Я»)
 // и разбить сплошной текст на абзацы по 3–4 предложения. Переносы строк
 // автора сохраняются.
+// Пробел после знака препинания перед заглавной: площадки теряют его
+// («долга.Я», «Сбербанк:Незамедлительно»). Той же функцией чистится цитата
+// разметки — иначе подсветка перестала бы находить её в тексте.
+const rvSpace=s=>String(s||"").replace(/([.!?…:;])(?=[А-ЯЁA-Z«"])/g,"$1 ").replace(/,(?=[А-ЯЁа-яёA-Za-z«"])/g,", ");
 function rvParas(t){
-  const src=String(t||"").replace(/\r/g,"").replace(/([.!?…])(?=[А-ЯЁA-Z«"])/g,"$1 ").replace(/[ \t]{2,}/g," ");
+  const src=rvSpace(String(t||"").replace(/\r/g,"")).replace(/[ \t]{2,}/g," ");
+  // Одиночный перенос внутри предложения (следующая строка со строчной, а
+  // предыдущая без точки) — это вёрстка площадки, а не абзац: склеиваем,
+  // иначе в читалке «рваные» короткие строки
+  const lines=[];
+  src.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean).forEach(x=>{
+    const prev=lines[lines.length-1];
+    if(prev&&/^[а-яёa-z(«"]/.test(x)&&!/[.!?…:;»"]$/.test(prev))lines[lines.length-1]=prev+" "+x;
+    else lines.push(x);
+  });
   const out=[];
-  src.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean).forEach(b=>{
+  lines.forEach(b=>{
     if(b.length<520){out.push(b);return;}
     const sent=b.split(/(?<=[.!?…])\s+(?=[А-ЯЁA-Z«"—])/);
     let cur="";
@@ -3440,7 +3453,7 @@ function rvParas(t){
 // текстом». В цитате бывают склейки через «…» — подсвечиваем каждый кусок.
 const rvEsc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
 function rvQuoteRx(q){
-  const parts=String(q||"").split(/\s*(?:…|\.\.\.)\s*/).map(x=>x.trim().replace(/^[«"]|[»"]$/g,"")).filter(x=>x.length>=12);
+  const parts=String(q||"").split(/\s*(?:…|\.\.\.)\s*/).map(x=>rvSpace(x.trim().replace(/^[«"]|[»"]$/g,""))).filter(x=>x.length>=12);
   if(!parts.length)return null;
   return new RegExp("("+parts.map(p=>rvEsc(p).replace(/\s+/g,"\\s+")).join("|")+")","gi");
 }
@@ -3866,6 +3879,7 @@ function ReviewsPage({params}){
   const[escOnly,setEscOnly]=useState(false);            // только обращения с угрозой ЦБ/суд/ФАС
   const[sortBy,setSortBy]=useState("auto");             // порядок выдачи поиска
   const[feedMore,setFeedMore]=useState(false);          // есть ли ещё страницы
+  const[feedTot,setFeedTot]=useState(null);             // {total, pending} по фильтру ленты
   const[feedMoreBusy,setFeedMoreBusy]=useState(false);
   // рабочее место аудитора: дела, фильтры ленты, группы, журнал, подписка
   const[pick,setPick]=useState(null);                   // жалобы для приобщения к делу
@@ -4035,8 +4049,9 @@ function ReviewsPage({params}){
     setRd(x=>x&&x.src==="feed"?null:x); setCur(-1);
     apiFetch(feedQS(0))
       .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
+                setFeedTot(d.total!=null?{total:d.total,pending:d.pending||0}:null);
                 setFeedMore(!!d.has_more);setFeedBusy(false);})
-      .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedBusy(false);});
+      .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedTot(null);setFeedBusy(false);});
   },[bank,product,theme,q,days,escOnly,sortBy,flag,fCity,fSrc,fOrder]);
 
   const loadMoreFeed=()=>{
@@ -4164,7 +4179,7 @@ function ReviewsPage({params}){
                 const hgt=v=>Math.max(2,Math.round(v/yMax*1000)/10)+"%";
                 const val=<span className="rv-bval">{s.spike?"пик · ":""}{fmtNum(s.n)}</span>;
                 const ev=!trEv&&mev&&mev.months?mev.months[s.ym]:null;
-                const evTip=ev?`\n\nИзменения условий ${bank} (${product}): ${ev.length}\n`+ev.slice(0,5).map(e=>
+                const evTip=ev?`\n\nИзменения условий · ${bank}, ${product}: ${ev.length}\n`+ev.slice(0,5).map(e=>
                   `${rvDate(e.date)} · ${e.title}: `+Object.entries(e.diff||{}).map(([k,v])=>
                     `${MK_FLD[k]||k} ${mkFldVal(k,v.from)} → ${mkFldVal(k,v.to)}`).join("; ")).join("\n")
                   +(ev.length>5?`\n…ещё ${ev.length-5}`:""):"";
@@ -4181,7 +4196,7 @@ function ReviewsPage({params}){
               </div>;})}
             </div></div></div>;})()}
             {!trEv&&mev&&mev.category&&<div className="rv-mev-note">
-              <span className="rv-mev on"/> изменения условий {bank} по продукту из журнала «Рынка»{mev.since?` (ведётся с ${rvDate(mev.since)})`:""} · наведите на месяц — что поменялось
+              <span className="rv-mev on"/> изменения условий по продукту ({bank}) из журнала «Рынка»{mev.since?` (ведётся с ${rvDate(mev.since)})`:""} · наведите на месяц — что поменялось
               {!Object.keys(mev.months||{}).length&&<> · за период изменений не было</>}</div>}
             {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">Пик: {sp.map(s=>rvYm(s.ym)).join(", ")} — заметно выше обычного уровня. Клик по столбцу — разобрать, что произошло.</div>:null;})()}
           </>}
@@ -4218,7 +4233,7 @@ function ReviewsPage({params}){
   const ixCard=full=>(<div className="rv-card">
           <div className="rv-th"><div className="rv-ttl">Где {bank} отличается от рынка</div>
             <RvInfo>Индекс — доля проблемы в жалобах банка, делённая на её долю у остальных банков. Сравнивается структура, а не объём, поэтому размер банка и активность его клиентов на площадках на индекс не влияют. Показаны только значимые отличия: 95% доверительный интервал, поправка на число проверенных проблем, от 10 жалоб у банка. Справа — индекс по четырём кварталам, пунктир — уровень рынка. Клик — жалобы этой проблемы.</RvInfo></div>
-          <div className="rv-cap">доля проблемы у {bank} против остальных банков · {(ix&&ix.days)||Math.max(days,90)} дн{product?` · ${product}`:""}</div>
+          <div className="rv-cap">доля проблемы в жалобах: {bank} против остальных банков · {(ix&&ix.days)||Math.max(days,90)} дн{product?` · ${product}`:""}</div>
           {busy&&!ix?<RvSkelRows n={full?10:5} h={42} gap={10}/>:!ix||ix.__err||ix.bank_total==null?<RvNote err={ix&&ix.__err}/>:(()=>{
             const row=(r,worse)=><div key={r.key} className={"rv-ix"+(theme===r.key?" sel":"")}
                 role="button" tabIndex={0} onClick={()=>pickTheme(r.key)} onKeyDown={onKey(()=>pickTheme(r.key))}
@@ -4242,13 +4257,13 @@ function ReviewsPage({params}){
         </div>);
   const geoCard=(<div className="rv-card">
           <div className="rv-th"><div className="rv-ttl">География</div>
-            <RvInfo>Индекс — доля {bank} в жалобах города против его доли в остальных городах{ge&&ge.national_share!=null?` (по стране ${pct1(ge.national_share)})`:""}. Население не используется: на площадки пишет не население, и деление на него раздувало города, где площадкой пользуются активнее. «Выше нормы» — значимо (95%, поправка на число городов), от ×1,3 и 30 жалоб. «Чаще, чем по стране» — проблема, которой в городе у банка заметно больше, чем у него же по стране. Клик — жалобы города.</RvInfo></div>
-          <div className="rv-cap">доля {bank} в жалобах города против остальных городов · {(ge&&ge.days)||days} дн</div>
+            <RvInfo>Индекс — доля жалоб на {bank} среди жалоб города против такой же доли в остальных городах{ge&&ge.national_share!=null?` (по стране ${pct1(ge.national_share)})`:""}. Население не используется: на площадки пишет не население, и деление на него раздувало города, где площадкой пользуются активнее. «Выше нормы» — значимо (95%, поправка на число городов), от ×1,3 и 30 жалоб. «Чаще, чем по стране» — проблема, которой в городе у банка заметно больше, чем у него же по стране. Клик — жалобы города.</RvInfo></div>
+          <div className="rv-cap">доля жалоб на {bank} в городе против остальных городов · {(ge&&ge.days)||days} дн</div>
           {busy&&!ge?<RvSkelRows n={8} h={44} gap={8}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:<div className="rv-geo-grid">{ge.cities.map((c,i)=>(
             <React.Fragment key={c.city}>
             {c.extra&&!ge.cities[i-1].extra&&<div className="rv-ix-h rv-geo-sep"><span>Выделяются вне топа</span></div>}
             <div className="rv-grow rv-grow-click" role="button" tabIndex={0}
-                 data-tip={`Доля ${bank} в жалобах города ${pct1(c.share)} против ${pct1(c.base_share)} в остальных городах · ${rvX(c.index)}, 95% ДИ ${String(c.lo).replace(".",",")}–${String(c.hi).replace(".",",")}${c.low?" · мало данных для вывода":""}`}
+                 data-tip={`Доля жалоб на ${bank} в городе ${pct1(c.share)} против ${pct1(c.base_share)} в остальных городах · ${rvX(c.index)}, 95% ДИ ${String(c.lo).replace(".",",")}–${String(c.hi).replace(".",",")}${c.low?" · мало данных для вывода":""}`}
                  onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
                  onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
               <div style={{minWidth:0,flex:1}}>
@@ -4316,7 +4331,7 @@ function ReviewsPage({params}){
       <div className="rv-ct"><div>
         <div className="rv-th"><div className="rv-ttl">Признаки риска</div>
           <RvInfo>Из разметки каждой жалобы: куда клиент грозит или уже обратился, уязвимые клиенты, практики и суммы. Цифры — доля у банка / у остальных банков, цветом — значимое отличие (поправка на число признаков). «Ввели в заблуждение» и суммы пока широкие: сумма бывает и ущербом, и суммой продукта. Клик — жалобы с признаком.</RvInfo></div>
-        <div className="rv-cap">доля в {fmtNum(rf.total)} жалобах {bank} за {rf.days} дн · у остальных банков</div>
+        <div className="rv-cap">доля в {fmtNum(rf.total)} жалобах на {bank} за {rf.days} дн · у остальных банков</div>
       </div>
         <div className="rv-flags-sum mono">обратились <b>{fmtNum(rf.filed)}</b> · грозят <b>{fmtNum(rf.threat)}</b></div>
       </div>
@@ -4368,14 +4383,20 @@ function ReviewsPage({params}){
   const feedCard=(<div className="rv-card">
       <div className="rv-ct">
         <div><div className="rv-ttl">Жалобы
-          {/* Плашка сверху считает ОБРАЩЕНИЯ, лента показывает КАРТОЧКИ, а
-              одинаковые тексты в ней объединены в одну со счётчиком «похожих».
-              Числа сходятся, но это нигде не было сказано — аудитор считал
-              карточки и видел расхождение с плашкой. */}
+          {/* Счётчик — всего по фильтру ленты (сервер считает тем же условием),
+              а не загруженная страница: «21 жалоба» рядом с «2 426» на вкладке
+              читалось как расхождение. Карточки и склейка дублей — в подсказке. */}
           {!(fView==="groups"&&!q)&&(()=>{const n=(feed||[]).length,
                        dup=(feed||[]).reduce((a,r)=>a+(r.similar||0),0);
-            return dup>0?<span className="rv-count-note" data-tip="одинаковые тексты объединены в одну карточку">
-              {" "}· {n + dup} {plural(n+dup,"жалоба","жалобы","жалоб")}, одинаковые объединены</span>:null;})()}
+            if(!n)return null;
+            const tip=`загружено ${n} ${plural(n,"карточка","карточки","карточек")}`
+              +(dup?` · ещё ${dup} ${plural(dup,"одинаковый текст объединён","одинаковых текста объединены","одинаковых текстов объединены")} в карточки со счётчиком «ещё N таких же»`:"")
+              +(feedMore?" · остальные — «Показать ещё» внизу":"");
+            if(feedTot&&!q)return <span className="rv-count-note" data-tip={tip}>
+              {" "}· {fmtNum(feedTot.total)} {plural(feedTot.total,"жалоба","жалобы","жалоб")}
+              {feedTot.pending?` + ${fmtNum(feedTot.pending)} на разметке`:""}</span>;
+            return dup>0?<span className="rv-count-note" data-tip={tip}>
+              {" "}· показаны {n + dup} {plural(n+dup,"жалоба","жалобы","жалоб")}, одинаковые объединены</span>:null;})()}
         </div>
           <div className="rv-cap">{<span className="rv-legend"><i className="neg"/>обратился в ЦБ, суд и т. п.<i className="warn"/>грозит или уязвимый клиент
             <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
@@ -4463,8 +4484,8 @@ function ReviewsPage({params}){
         clBusy?<RvSkelRows n={5} h={92} gap={12}/>:
         !cl||cl.__err?<RvNote err={cl&&cl.__err}/>:<>
           <div className="rv-cl-sum">{cl.clustered
-            ?<>В группах похожих — <b>{fmtNum(cl.clustered)}</b> из {fmtNum(cl.total)} последних жалоб ({cl.clusters.length} {plural(cl.clusters.length,"группа","группы","групп")}), остальные не повторяются</>
-            :`Среди ${fmtNum(cl.total)} последних жалоб повторяющихся историй нет — группа начинается с трёх похожих`}
+            ?<><b>{fmtNum(cl.clustered)}</b> {plural(cl.clustered,"жалоба","жалобы","жалоб")} в {cl.clusters.length} {plural(cl.clusters.length,"группе","группах","группах")} похожих историй{cl.limited?` (из ${fmtNum(cl.total)} последних)`:""}, остальные не повторяются</>
+            :`${cl.limited?`Среди ${fmtNum(cl.total)} последних жалоб`:"Среди жалоб за период"} повторяющихся историй нет — группа начинается с трёх похожих`}
             {cl.no_vec?<span className="rv-sum-x"> · ещё {cl.no_vec} без векторов — появятся в течение часа</span>:""}</div>
           {cl.clusters.map((g,i)=><div key={i} className="rv-cl" role="button" tabIndex={0}
               onClick={()=>openGroup(g)} onKeyDown={onKey(()=>openGroup(g))}>
@@ -4493,7 +4514,7 @@ function ReviewsPage({params}){
           onOpen={e=>vtOpen(e&&e.currentTarget,()=>openReader(null,i,null,"feed"))} onCase={()=>addCase(r)} onTheme={pickTheme}/>)}
        {feedMore&&!(fView==="groups"&&!q)&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
          disabled={feedMoreBusy}>
-         {feedMoreBusy?"Загружаю…":`Показать ещё (сейчас ${(feed||[]).length})`}</button>}
+         {feedMoreBusy?"Загружаю…":`Показать ещё · показано ${(feed||[]).length}${feedTot&&!q?` из ${fmtNum(feedTot.total+feedTot.pending)}`:""}`}</button>}
       </div>
       {/* Читалка рядом со списком (от 1280 px): просмотр подряд без окон */}
       {split&&<aside className="rv-fw-rd" aria-label="Выбранная жалоба">
