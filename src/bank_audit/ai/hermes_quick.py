@@ -93,7 +93,7 @@ _BUILTIN_LABELS = {
 
 def tool_label(name: str) -> str:
     from .agent_tools import label_for
-    if name.startswith("mcp_auditlens_"):
+    if re.match(r"mcp_+auditlens_+", name):
         return label_for(name)
     if name.startswith("browser_"):
         return "Браузер"
@@ -108,11 +108,43 @@ _LOCAL_LINK = re.compile(r"\[([^\]]+)\]\(" + _LOCAL + r"[^)\s]*\)")
 _LOCAL_BARE = re.compile(r"`?" + _LOCAL + r"[^\s)`]*`?")
 
 
+# Артефакты цитирования некоторых моделей: 【582†fragments】, 【…】
+_CITE_ART = re.compile(r"【[^】]{0,80}】")
+_LINK_TARGET = re.compile(r"(\]\([^)\s]*\))")
+_TOOL_NAME = re.compile(r"`?mcp_+auditlens_+[a-z_]+`?")
+
+
+def _theme_words() -> dict[str, str]:
+    """Служебный ключ темы → русская подпись (chargeback → «Чарджбэк»)."""
+    from ..rag import review_codebook as cb
+    return {k: v[1] for k, v in cb.ISSUES.items() if "_" in k or k == "chargeback"}
+
+
+_THEME_RX = None
+
+
+def _plain_keys(text: str) -> str:
+    """Ключи тем в тексте — на подписи; адреса ссылок (#reviews?theme=…) не трогаем."""
+    global _THEME_RX
+    words = _theme_words()
+    if _THEME_RX is None:
+        _THEME_RX = re.compile(r"`?\b(" + "|".join(sorted(words, key=len, reverse=True))
+                               + r")\b`?", re.I)
+    parts = _LINK_TARGET.split(text)
+    for i in range(0, len(parts), 2):          # нечётные — адреса ссылок
+        parts[i] = _THEME_RX.sub(lambda m: words.get(m.group(1).lower(), m.group(1)), parts[i])
+    return "".join(parts)
+
+
 def sanitize(text: str) -> str:
-    """Внутренние адреса → страницы AuditLens (#reviews?…) или просто текст."""
+    """Чистка ответа перед показом: внутренние адреса → страницы AuditLens или
+    текст; служебные ключи тем → русские подписи; артефакты цитирования — вон."""
     text = _LOCAL_PAGE_LINK.sub(r"](\1)", text)
     text = _LOCAL_LINK.sub(r"\1", text)
-    return _LOCAL_BARE.sub("", text)
+    text = _LOCAL_BARE.sub("", text)
+    text = _CITE_ART.sub("", text)
+    text = _TOOL_NAME.sub(lambda m: "«" + tool_label(m.group(0).strip("`")) + "»", text)
+    return _plain_keys(text)
 
 
 def safe_cut(buf: str) -> int:

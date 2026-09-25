@@ -16,7 +16,7 @@ metadata:
 Вкладка «Рынок» — витрина действующих предложений банков по категориям
 (вклады, накопительные счета, кредиты, ипотека, кредитные и дебетовые карты,
 автокредиты, РКО) и ранг Сбера по **метрике категории**. Инструменты
-`mcp_auditlens_market_position` и `mcp_auditlens_market_offers` отдают ровно эти
+`mcp__auditlens__market_position` и `mcp__auditlens__market_offers` отдают ровно эти
 данные.
 
 ## When to Use

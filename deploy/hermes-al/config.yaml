@@ -23,6 +23,10 @@ mcp_servers:
       Authorization: "Bearer ${AGENT_MCP_KEY}"
     timeout: 90
     connect_timeout: 15
+    # у сервера нет ресурсов и промптов — служебные инструменты для них не нужны
+    tools:
+      resources: false
+      prompts: false
 
 skills:
   # Агент сам пишет и правит навыки, без ручного одобрения (решение владельца).

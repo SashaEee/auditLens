@@ -14,7 +14,8 @@ run() { if [ $DRY = 1 ]; then echo "DRY: $*"; else "$@"; fi; }
 
 # Навыки, которые агент написал сам и которые учат вредному или неверному:
 # обход защиты сайтов (r.jina.ai, VPN, Tor), выдуманные номера актов,
-# несуществующие таблицы, записи одной сессии. Уходят в архив куратора —
+# несуществующие таблицы, записи одной сессии, ложные правила о полях
+# («fee_service = комиссия за снятие наличных, пусто = бесплатно» → «0 ₽»). Уходят в архив куратора —
 # оттуда восстанавливаются (hermes curator / перенос каталога обратно).
 ARCHIVE=(audit/audit-deposit-product-info audit/audit-deposit-regulation
          audit/audit-insurance-product-info audit-website-tech-stack
@@ -23,6 +24,7 @@ ARCHIVE=(audit/audit-deposit-product-info audit/audit-deposit-regulation
          audit/audit-regulatory-fines audit/audit-deposit-card-risk
          audit/audit-reviews-general audit/autocredit-reviews
          audit/audit-psk-market audit/audit-psk-recent-changes
+         audit-product-terms-queries
          news reviews-api sber-tone)
 
 TS=$(date +%Y%m%d-%H%M%S)
@@ -31,7 +33,7 @@ echo "1) резервная копия → ~/hermes-al/backups/hermes-al-$TS.tgz
 run sh -c "docker exec $C tar czf - -C $H config.yaml SOUL.md skills memories > ~/hermes-al/backups/hermes-al-$TS.tgz"
 
 echo "2) конфиг: ключ модели — из действующего конфига контейнера"
-KEY=$(docker exec $C python3 -c "import yaml;print(yaml.safe_load(open('$H/config.yaml'))['model']['api_key'])")
+KEY=$(docker exec $C /usr/local/lib/hermes-agent/venv/bin/python -c "import yaml;print(yaml.safe_load(open('$H/config.yaml'))['model']['api_key'])")
 [ -n "$KEY" ] || { echo "нет api_key в текущем конфиге"; exit 1; }
 TMP=$(mktemp -d)
 python3 - "$KEY" "$TMP/config.yaml" <<'PY'
@@ -47,7 +49,9 @@ MK=$(grep -E '^AGENT_MCP_KEY=' ~/auditlens/.env | head -1 | cut -d= -f2-)
 if docker exec $C grep -q '^AGENT_MCP_KEY=' $H/.env; then
   echo "   уже задан"
 else
-  run sh -c "printf 'AGENT_MCP_KEY=%s\n' '$MK' | docker exec -i $C sh -c 'cat >> $H/.env'"
+  # значение ключа не должно попадать ни в вывод, ни в строку команды
+  if [ $DRY = 1 ]; then echo "DRY: дописать AGENT_MCP_KEY=*** в $H/.env"
+  else printf 'AGENT_MCP_KEY=%s\n' "$MK" | docker exec -i $C sh -c "cat >> $H/.env"; fi
 fi
 
 echo "4) SOUL, стартовые навыки, память"

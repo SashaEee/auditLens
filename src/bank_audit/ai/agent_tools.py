@@ -690,7 +690,7 @@ BY_NAME = {t.name: t for t in TOOLS}
 
 
 def label_for(tool_name: str) -> str:
-    """Подпись шага для интерфейса (имя MCP-инструмента приходит с префиксом)."""
-    base = re.sub(r"^mcp_auditlens_", "", tool_name or "")
+    """Подпись шага для интерфейса (Hermes зовёт MCP-инструменты mcp__auditlens__<имя>)."""
+    base = re.sub(r"^mcp_+auditlens_+", "", tool_name or "")
     t = BY_NAME.get(base)
     return t.label if t else tool_name

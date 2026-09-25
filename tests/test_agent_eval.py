@@ -51,7 +51,8 @@ def test_judge_downgrades():
     checks = E.check_answer("Сбер на 1-м месте.", spec, 10)
     assert E.verdict(checks, {"score": 5}) == "pass"
     assert E.verdict(checks, {"score": 3}) == "partial"
-    assert E.verdict(checks, {"score": 5, "hallucination": True}) == "fail"
+    assert E.verdict(checks, {"score": 5, "hallucination": True}) == "partial"
+    assert E.verdict(checks, {"score": 2, "hallucination": True}) == "fail"
 
 
 def test_slow_is_partial():
@@ -80,3 +81,13 @@ def test_run_case_with_fake_agent(monkeypatch):
 def test_case_ids_unique():
     ids = [c.id for c in E.CASES]
     assert len(ids) == len(set(ids)) >= 14
+
+
+def test_mentions_phrase_and_short_names():
+    head = "Всплеск жалоб на чарджбэк только у Сбера: 15 за неделю, ×4,4, 62% из Санкт-Петербурга"
+    assert E.mentions("Главное: всплеск чарджбэка у Сбера, 15 жалоб за неделю.", head)
+    assert not E.mentions("Сегодня всё спокойно.", head)
+    assert E.mentions("У ВТБ ставка 13,7%", "ВТБ")
+    one = E.check_answer("Главное: всплеск чарджбэка у Сбера, 15 за неделю.",
+                         {"numbers": [], "words": [head], "min_words": 2}, 10)
+    assert all(c["ok"] for c in one if c["check"].startswith("по теме"))

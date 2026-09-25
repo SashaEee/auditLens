@@ -25,6 +25,16 @@ def test_sanitize_local_links():
     assert "API" in out and "127.0.0.1" not in out and "localhost" not in out
 
 
+def test_sanitize_theme_keys_and_citations():
+    s = ("Тема chargeback растёт, `block_161` тоже 【582†fragments】. "
+         "[жалобы](#reviews?theme=chargeback&days=7)")
+    out = H.sanitize(s)
+    assert "chargeback растёт" not in out and "block_161" not in out.split("](")[0]
+    assert "Чарджбэк" in out and "161-ФЗ" in out and "【" not in out
+    assert "(#reviews?theme=chargeback&days=7)" in out
+    assert H.sanitize("данные `mcp__auditlens__market_offers`") == "данные «Предложения банков»"
+
+
 def test_safe_cut_keeps_open_link():
     buf = "Главное: всплеск. Подробнее [в отзывах](#reviews?th"
     cut = H.safe_cut(buf)
@@ -47,7 +57,7 @@ def test_legal_note_trigger():
 
 
 def test_tool_labels():
-    assert H.tool_label("mcp_auditlens_complaint_theme") == "Разбор темы жалоб"
+    assert H.tool_label("mcp__auditlens__complaint_theme") == "Разбор темы жалоб"
     assert H.tool_label("skill_view") == "Навык"
     assert H.tool_label("browser_click") == "Браузер"
 
@@ -81,7 +91,7 @@ def _text(evs):
 def test_narration_before_tool_is_dropped(monkeypatch):
     answer = "**Главное:** всплеск чарджбэка — билеты на концерт. " * 8
     fake, _ = _fake_runs([{"delta": "Сейчас посмотрю сигналы."},
-                          {"tool": "mcp_auditlens_complaint_signals"},
+                          {"tool": "mcp__auditlens__complaint_signals"},
                           {"delta": answer}, {"final": answer}])
     monkeypatch.setattr(H, "_one_run", fake)
     evs = _collect(H.stream_quick_hermes("почему растёт чарджбэк", []))
@@ -89,7 +99,7 @@ def test_narration_before_tool_is_dropped(monkeypatch):
     assert _text(evs).strip() == answer.strip()
     assert {"type": "tool_call", "name": "Сигналы жалоб"} in evs
     meta = next(e for e in evs if e["type"] == "run_meta")
-    assert meta["tools"] == ["mcp_auditlens_complaint_signals"]
+    assert meta["tools"] == ["mcp__auditlens__complaint_signals"]
     assert evs[-1] == {"type": "done"}
 
 

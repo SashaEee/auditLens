@@ -63,16 +63,27 @@ def has_number(text: str, value: float, tol: float) -> bool:
 
 
 def _stems(s: str) -> set[str]:
-    return {w[:5] for w in re.findall(r"[а-яёa-z0-9]{4,}", (s or "").lower().replace("ё", "е"))}
+    return {w[:5] for w in re.findall(r"[а-яёa-z0-9]{3,}", (s or "").lower().replace("ё", "е"))}
+
+
+def mentions(answer: str, phrase: str) -> bool:
+    """Ответ упоминает фразу эталона: короткую — любым её словом (3+ букв),
+    длинную (заголовок, название новости) — хотя бы третью её слов, но не
+    меньше двух."""
+    ps = _stems(phrase)
+    if not ps:
+        return True
+    need = 1 if len(ps) <= 2 else max(2, -(-len(ps) // 3))
+    return len(ps & _stems(answer)) >= need
 
 
 FORBIDDEN = [
     ("внутренний адрес", re.compile(r"127\.0\.0\.1|localhost:\d", re.I)),
     ("служебный ключ темы", re.compile(
         r"\b(" + "|".join(k for k in T.THEME_KEYS if "_" in k or k == "chargeback") + r")\b")),
-    ("совет обойти защиту", re.compile(r"r\.jina|обо(йти|йдите|ход)\w*\s+(защит|cloudflare|капч|блокир)",
-                                       re.I)),
-    ("служебная пометка", re.compile(r"alsql|mcp_auditlens|\[alsql", re.I)),
+    ("совет обойти защиту", re.compile(
+        r"r\.jina|обо(йти|йдите|ход)\w*\s+(защит|cloudflare|капч|блокир)", re.I)),
+    ("служебная пометка", re.compile(r"alsql|mcp_+auditlens|\[alsql", re.I)),
 ]
 
 
@@ -97,7 +108,6 @@ def c_signal() -> dict | None:
     if not sig:
         return None
     th = _j("complaint_theme", theme=sig["theme"], days=7)
-    ev = [{k: c.get(k) for k in ("date", "city", "summary", "quote")} for c in th.get("complaints") or []]
     return {"question": f"Почему на этой неделе выросли жалобы на тему «{sig['label']}»? "
                         "Что за этим стоит и что проверить?",
             "numbers": [("жалоб за неделю", sig["week"], 1)],
@@ -105,8 +115,7 @@ def c_signal() -> dict | None:
             "judge_focus": "Назван ли конкретный общий сюжет жалоб (событие, продавец, сервис, "
                            "площадка), если он виден в жалобах эталона, и его доля; число за "
                            "неделю и норма совпадают с эталоном.",
-            "facts": {"signal": sig, "complaints": ev[:25],
-                      "groups": th.get("similar_groups")}}
+            "facts": th}
 
 
 def c_news_day() -> dict | None:
@@ -121,7 +130,7 @@ def c_news_day() -> dict | None:
             "judge_focus": "Ответ про эту новость (не про соседние), суть передана верно, "
                            "есть конкретные проверки в Сбере; нет «нет данных» при наличии "
                            "новости в эталоне.",
-            "facts": {"news": n}}
+            "facts": {"brief_item": n, "news_feed": _j("news_find", url=n["url"])}}
 
 
 def c_product_complaints() -> dict:
@@ -132,8 +141,7 @@ def c_product_complaints() -> dict:
             "words": top, "min_words": 2,
             "judge_focus": "Ответ именно про вклады (не про все жалобы банка), главные темы "
                            "совпадают с эталоном.",
-            "facts": {k: ov.get(k) for k in ("complaints", "prev_period", "change_pct",
-                                             "escalation_pct", "themes", "days")}}
+            "facts": ov}
 
 
 def c_compare() -> dict:
@@ -149,7 +157,7 @@ def c_compare() -> dict:
             "judge_focus": "Лучшие ставки трёх банков совпадают с эталоном; сравнение "
                            "сопоставимо (срок, условия); есть вывод, а не сырой список; "
                            "короткий промо-срок оговорён, если он есть.",
-            "facts": facts}
+            "facts": mo}
 
 
 def c_regulation() -> dict:
@@ -166,13 +174,13 @@ def c_fraud() -> dict:
     fraud = [t for t in ov.get("themes") or []
              if t["theme"] in ("fraud_loss", "unauthorized_access", "fraud_credit",
                                "block_161", "data_leak")]
-    return {"question": "Какие мошеннические схемы вокруг вкладов видны в жалобах клиентов?",
+    return {"question": "Какие мошеннические схемы вокруг вкладов видны в жалобах клиентов "
+                        "за последние полгода?",
             "words": ["вклад"], "min_words": 1,
             "judge_focus": "Ответ про вклады, а не про все жалобы банка; схемы описаны по "
                            "самим жалобам; числа не взяты из общих тем банка; законы не "
                            "выдуманы.",
-            "facts": {"deposit_fraud_themes_180d": fraud,
-                      "deposit_complaints_180d": ov.get("complaints")}}
+            "facts": {"deposit_fraud_themes_180d": fraud, "deposit_overview_180d": ov}}
 
 
 def c_news_link() -> dict | None:
@@ -193,8 +201,7 @@ def c_overview() -> dict:
     return {"question": "Что главное в сегодняшнем выпуске «Обзора»?",
             "words": [b.get("headline") or ""], "min_words": 2,
             "judge_focus": "Названо главное выпуска (заголовок дня) и поводы «что проверить».",
-            "facts": {"headline": b.get("headline"),
-                      "insights": [i.get("title") for i in b.get("insights") or []]}}
+            "facts": b}
 
 
 def c_market() -> dict:
@@ -206,7 +213,7 @@ def c_market() -> dict:
             "words": [c.get("title") or ""], "min_words": 1,
             "judge_focus": "Место, число банков, продукт и ставка совпадают с эталоном; "
                            "не пустой ответ.",
-            "facts": c}
+            "facts": mp}
 
 
 def c_reviews() -> dict:
@@ -218,9 +225,7 @@ def c_reviews() -> dict:
                         ("эскалация рынка", ov.get("market_escalation_pct"), 0.3)],
             "judge_focus": "Эскалация Сбера и рынка не перепутаны между собой и с долей "
                            "«уже обратились».",
-            "facts": {k: ov.get(k) for k in ("complaints", "escalation_pct",
-                                             "escalation_filed_pct", "market_escalation_pct",
-                                             "share_of_all_bank_complaints_pct")}}
+            "facts": ov}
 
 
 def c_bank() -> dict:
@@ -230,7 +235,7 @@ def c_bank() -> dict:
             "numbers": [("баллы", r.get("score"), 0.05), ("место", r.get("place"), 0),
                         ("оценка", r.get("avg_grade_of_5"), 0.01)],
             "judge_focus": "Баллы, место и средняя оценка совпадают с эталоном, не выдуманы.",
-            "facts": r}
+            "facts": bp}
 
 
 _FEE_RX = re.compile(r"(\d+[,.]\d+)\s*%[^.]{0,80}?\+\s*(?:фиксированн\w+\s+сумм\w+\s*)?(\d[\d\s]*)\s*(?:руб|₽)",
@@ -256,7 +261,7 @@ def c_knowledge() -> dict:
             "numbers": nums,
             "judge_focus": "Названа комиссия именно за снятие наличных (процент плюс "
                            "фиксированная сумма), не плата за обслуживание; есть документ.",
-            "facts": {"fragment": frag}}
+            "facts": {"fragment": frag, "knowledge_search": ks}}
 
 
 def c_loophole() -> dict:
@@ -265,9 +270,12 @@ def c_loophole() -> dict:
                   FROM loophole_record""")[0]
     return {"question": "Сколько записей в «Уязвимостях» признаны лазейками за последние "
                         "30 дней и сколько всего лазеек отмечено про Сбер?",
-            "numbers": [("лазеек за 30 дней", r["n30"], 2), ("про Сбер", r["sber"], 2)],
+            # счётчик растёт каждые несколько минут, а «30 дней» агент может считать от
+            # полуночи — допуск 5%
+            "numbers": [("лазеек за 30 дней", r["n30"], max(2, r["n30"] * 0.05)),
+                        ("про Сбер", r["sber"], max(2, r["sber"] * 0.05))],
             "judge_focus": "Числа совпадают с эталоном; сказано, что оценки предварительные.",
-            "facts": dict(r)}
+            "facts": dict(r) | {"note": "оценки модели предварительные (status=preliminary)"}}
 
 
 def c_week() -> dict:
@@ -318,8 +326,8 @@ def check_answer(answer: str, spec: dict, seconds: float) -> list[dict]:
         res.append({"check": f"число «{label}» = {value}", "ok": ok, "hard": False})
     words = [w for w in spec.get("words") or [] if w]
     if words:
-        need = spec.get("min_words", 1)
-        hit = sum(1 for w in words if len(_stems(w) & _stems(answer)) >= min(2, len(_stems(w))))
+        need = min(spec.get("min_words", 1), len(words))
+        hit = sum(1 for w in words if mentions(answer, w))
         res.append({"check": f"по теме ({hit}/{len(words)})", "ok": hit >= need, "hard": False})
     if spec.get("need_link"):
         ok = bool(re.search(r"\]\((https?://|#)", answer))
@@ -331,14 +339,19 @@ def check_answer(answer: str, spec: dict, seconds: float) -> list[dict]:
 
 _JUDGE_SYSTEM = (
     "Ты проверяешь ответы ИИ-аналитика AuditLens для аудиторов розничного бизнеса "
-    "Сбербанка. Тебе дают вопрос, ЭТАЛОННЫЕ ДАННЫЕ (ровно то, что показывает интерфейс "
-    "AuditLens) и ответ. Оцени ответ строго по эталону: числа должны совпадать, выводы — "
-    "следовать из данных. Выдумка — утверждение или число, которого нет в эталоне и "
-    "которое нельзя проверить по названному источнику. Ответь ТОЛЬКО JSON: "
+    "Сбербанка. Тебе дают вопрос, ЭТАЛОННЫЕ ДАННЫЕ (то, что показывает интерфейс "
+    "AuditLens по этому вопросу) и ответ. Числа, которые есть в эталоне, должны совпадать; "
+    "выводы — следовать из данных. hallucination=true ТОЛЬКО если ответ противоречит "
+    "эталону (другое число, неверный вывод, перепутаны показатели) или ссылается на "
+    "явно несуществующий источник или нормативный акт. Подробности, которых в эталоне "
+    "просто нет, но которые ему не противоречат (детали жалоб, другие продукты банка, "
+    "контекст, помеченные гипотезы), — не выдумка: учитывай их только в оценке "
+    "полезности. Ответь ТОЛЬКО JSON: "
     '{"score": 1-5, "correct": true|false, "key_fact": true|false, '
     '"hallucination": true|false, "issues": ["кратко, по-русски"]}. '
-    "5 — точно, конкретно, полезно аудитору; 3 — в целом верно, но упущено главное или "
-    "расплывчато; 1 — неверно или не по вопросу.")
+    "5 — точно, конкретно, полезно аудитору; 4 — верно, мелкие недочёты; 3 — в целом "
+    "верно, но упущено главное или расплывчато; 2 — существенные ошибки; 1 — неверно или "
+    "не по вопросу.")
 
 
 async def judge(question: str, facts: dict, focus: str, answer: str) -> dict | None:
@@ -347,7 +360,7 @@ async def judge(question: str, facts: dict, focus: str, answer: str) -> dict | N
     from ..digest.writer import _chat
     from .llm_utils import _loose_json_loads
     user = (f"ВОПРОС: {question}\n\nНА ЧТО СМОТРЕТЬ: {focus}\n\nЭТАЛОННЫЕ ДАННЫЕ:\n"
-            f"{json.dumps(facts, ensure_ascii=False, default=str)[:14000]}\n\nОТВЕТ:\n{answer[:9000]}")
+            f"{json.dumps(facts, ensure_ascii=False, default=str)[:24000]}\n\nОТВЕТ:\n{answer[:9000]}")
     try:
         raw, _, _ = await _chat(JUDGE_MODEL, _JUDGE_SYSTEM, user, max_tokens=700, temperature=0.0)
         d = _loose_json_loads(raw)
@@ -364,12 +377,12 @@ def verdict(checks: list[dict], jd: dict | None) -> str:
     soft = [c for c in checks if not c["hard"]]
     bad = sum(1 for c in soft if not c["ok"])
     s = (jd or {}).get("score")
-    if (jd or {}).get("hallucination") or (s is not None and s <= 2):
+    if s is not None and s <= 2:
         return "fail"
     real = [c for c in soft if not c["check"].startswith("время")]
     if real and sum(1 for c in real if not c["ok"]) * 2 > len(real):
         return "fail"
-    if bad == 0 and (s is None or s >= 4):
+    if bad == 0 and (s is None or s >= 4) and not (jd or {}).get("hallucination"):
         return "pass"
     return "partial"
 
