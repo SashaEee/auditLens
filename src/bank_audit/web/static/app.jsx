@@ -2255,6 +2255,8 @@ function OverviewPage(){
   const[refreshBusy,setRefreshBusy]=useState(false);
   const[live,setLive]=useState(null);    // те же функции, что у «Отзывов», сейчас
   const[newsOpen,setNewsOpen]=useState(false);
+  // дополнение 15:00 — свёрнуто в строку; раскрытие помним до конца сессии
+  const[updOpen,setUpdOpen]=useState(()=>{try{return sessionStorage.getItem("al-ov-upd")==="1";}catch{return false;}});
   const me=useMe();
   // Переход «Разобраться»/плитка/строка тарифов и «Назад» возвращали на верх
   // страницы — читатель терял место. Запоминаем прокрутку при уходе со страницы
@@ -2467,23 +2469,40 @@ function OverviewPage(){
         </>}
     </header>
 
-    {/* Дневное дополнение: что нового с утра. Утренний выпуск не меняется. */}
+    {/* Дневное дополнение: что нового с утра. Утренний выпуск не меняется.
+        Свёрнуто в одну строку: раньше блок в ~200 px стоял между заголовком
+        и пульсом и отодвигал главное; раскрывается по нажатию. */}
     {(()=>{const up=(sec.update||{}).payload||{};
       const its=up.items||[], sg=up.signals||[];
       if(!isToday||dg.meta.is_morning||(!its.length&&!sg.length))return null;
       const at=up.at?new Date(up.at).toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"}):"";
-      return <section className="bf-upd" aria-label="Дополнение к выпуску">
-        <div className="bf-upd-h"><span className="bf-upd-dot" aria-hidden="true"/>Дополнение {at} · что нового с утра</div>
-        {sg.map((x,i)=><a key={"s"+i} className="bf-upd-it" href="#reviews"
-            onClick={()=>{try{sessionStorage.setItem("al-rv-prefilter",JSON.stringify({theme:x.key}));}catch{}}}>
-          <span className="bf-upd-k">жалобы</span>
-          <span className="bf-upd-t">Всплеск «{x.label}»: {x.week} за 7 дней при норме ~{ovN(x.baseline_week)}{x.bank_specific?" — "+(x.market_ratio!==undefined?ovMarketNote(x.ratio,x.market_ratio,"Сбера"):"сильнее рынка"):""}</span>
-        </a>)}
-        {its.map((it,i)=><a key={"n"+i} className="bf-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
-            onClick={()=>trkEvent({kind:"news_click",page:"overview",payload:{url:it.url,source:it.source,group:"update",title:it.title}})}>
-          <span className="bf-upd-k">{it.domain}</span>
-          <span className="bf-upd-t">{it.title}{it.idea&&<span className="bf-upd-s"> — {it.idea}</span>}</span>
-        </a>)}
+      const what=[sg.length?`${sg.length} ${plural(sg.length,"всплеск","всплеска","всплесков")} жалоб`:null,
+        its.length?`${its.length} ${plural(its.length,"новость","новости","новостей")}`:null].filter(Boolean).join(" и ");
+      const first=sg.length?`Всплеск «${sg[0].label}»`:its[0].title;
+      const tog=()=>{const v=!updOpen; setUpdOpen(v); try{sessionStorage.setItem("al-ov-upd",v?"1":"0");}catch{}};
+      const mn=x=>x.market_note||(x.market_ratio!=null&&x.ratio?ovMarketNote(x.ratio,x.market_ratio,"Сбера"):x.bank_specific?"сильнее рынка":"");
+      return <section className={"ov-upd"+(updOpen?" open":"")} aria-label="Дополнение к выпуску">
+        <button type="button" className="ov-upd-bar" aria-expanded={updOpen} aria-controls="ov-upd-list" onClick={tog}>
+          <span className="ov-upd-dot" aria-hidden="true"/>
+          <span className="ov-upd-h"><b>Дополнено{at?` в ${at}`:""}</b> · {what} с утра</span>
+          {!updOpen&&<span className="ov-upd-first">{first}</span>}
+          <span className="ov-upd-tg">{updOpen?"Свернуть":"Показать"}
+            <span className="rv-ico-in" style={updOpen?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></span>
+        </button>
+        {updOpen&&<ul className="ov-upd-list" id="ov-upd-list">
+          {sg.map((x,i)=><li key={"s"+i}><a className="ov-upd-it" href={"#reviews?tab=complaints&theme="+encodeURIComponent(x.key||"")}>
+            <span className="ov-upd-k">Жалобы</span>
+            <span className="ov-upd-t">Всплеск «{x.label}»: {ovJ(x.week)} за 7 дней при норме {ovN(x.baseline_week)}</span>
+            {mn(x)&&<span className="ov-upd-s">{mn(x)}</span>}
+          </a></li>)}
+          {its.map((it,i)=><li key={"n"+i}><a className="ov-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
+              data-tip={it.idea&&it.idea.length>110?it.idea:undefined}
+              onClick={()=>trkEvent({kind:"news_click",page:"overview",payload:{url:it.url,source:it.source,group:"update",title:it.title}})}>
+            <span className="ov-upd-k">{fyTg(it.url)?"Telegram":it.domain}</span>
+            <span className="ov-upd-t">{it.title}</span>
+            {it.idea&&<span className="ov-upd-s">{it.idea}</span>}
+          </a></li>)}
+        </ul>}
       </section>;})()}
 
     {/* ② ПУЛЬС ДНЯ — сменный лист аудитора (без LLM).
