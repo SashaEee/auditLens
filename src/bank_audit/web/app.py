@@ -584,7 +584,8 @@ def summary():
         "banks":     scalar("SELECT count(*) FROM bank"),
         "offers":    scalar("SELECT count(*) FROM product_offer WHERE is_active"),
         "reviews":   scalar("SELECT count(*) FROM review"),
-        "changes":   scalar("SELECT count(*) FROM change_history WHERE changed_at > now()-interval '7d'"),
+        "changes":   scalar(f"SELECT count(*) FROM change_history ch {_CTX_JOIN_SQL}"
+                            f" WHERE ch.changed_at > now()-interval '7d' AND {_SAME_CTX_SQL}"),
         "flags_err": scalar("SELECT count(*) FROM quality_flag WHERE severity='error' AND created_at > now()-interval '1d'"),
         "flags_warn":scalar("SELECT count(*) FROM quality_flag WHERE severity='warn'  AND created_at > now()-interval '1d'"),
         "last_run":  scalar("SELECT max(finished_at) FROM extraction_run WHERE status='ok'"),
@@ -732,6 +733,16 @@ def _parse_rate_move(diff) -> tuple[Optional[float], Optional[float]]:
     return _f(rate.get("from")), _f(rate.get("to"))
 
 
+# Смена выдачи агрегатора (страница банка ↔ витрина с фильтром суммы) — не
+# изменение условий: до закрепления выдачи (normalizer/offers.py) ВТБ «Наличными»
+# давал два таких «изменения» каждое утро. Историю не удаляем, а не считаем.
+_SAME_CTX_SQL = """NOT (p.raw->'filter_context' IS NOT NULL
+                   AND n.raw->'filter_context' IS NOT NULL
+                   AND p.raw->'filter_context' <> n.raw->'filter_context')"""
+_CTX_JOIN_SQL = """LEFT JOIN product_terms p ON p.terms_id = ch.prev_terms_id
+          LEFT JOIN product_terms n ON n.terms_id = ch.new_terms_id"""
+
+
 @app.get("/api/recent-changes")
 def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = None,
                    offer_id: Optional[int] = None, days: int = 7,
@@ -741,7 +752,7 @@ def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = No
     в диффе ИЛИ |Δ ставки| ≥ 0.01 пп (микрошум расчётных ставок скрыт)."""
     days = max(1, min(days, 90))
     limit = max(1, min(limit, 200))
-    cond, params = [], {"days": days, "lim": limit, "off": max(0, offset)}
+    cond, params = [_SAME_CTX_SQL], {"days": days, "lim": limit, "off": max(0, offset)}
     if category:
         cond.append("o.category = :cat"); params["cat"] = category
     if bank_slug:
@@ -761,6 +772,7 @@ def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = No
           FROM change_history ch
           JOIN product_offer o USING(offer_id)
           JOIN bank b USING(bank_id)
+          {_CTX_JOIN_SQL}
          WHERE ch.changed_at > now() - make_interval(days => :days)
            AND {where}
          ORDER BY ch.changed_at DESC
@@ -1728,14 +1740,23 @@ def market_offer_history(offer_id: int):
     cur = q("SELECT * FROM v_market_rub_offer WHERE offer_id = :o", {"o": offer_id})
     if not cur:                       # оффер деактивирован/вне витрины — показываем как есть
         cur = q("SELECT * FROM v_offer_current WHERE offer_id = :o", {"o": offer_id})
+    # ряд ставки — только в выдаче текущей версии: иначе смена выдачи рисует пилу
     versions = q("""
-        SELECT rate_pct, valid_from, valid_to
-          FROM product_terms WHERE offer_id = :o
-         ORDER BY valid_from
+        WITH c AS (SELECT raw->'filter_context' AS fc FROM product_terms
+                    WHERE offer_id = :o AND valid_to IS NULL
+                    ORDER BY valid_from DESC LIMIT 1)
+        SELECT t.rate_pct, t.valid_from, t.valid_to
+          FROM product_terms t LEFT JOIN c ON true
+         WHERE t.offer_id = :o
+           AND (c.fc IS NULL OR t.raw->'filter_context' IS NULL
+                OR t.raw->'filter_context' = c.fc)
+         ORDER BY t.valid_from
     """, {"o": offer_id})
-    changes = q("""
-        SELECT change_id, changed_at, diff FROM change_history
-         WHERE offer_id = :o ORDER BY changed_at DESC LIMIT 60
+    changes = q(f"""
+        SELECT ch.change_id, ch.changed_at, ch.diff FROM change_history ch
+          {_CTX_JOIN_SQL}
+         WHERE ch.offer_id = :o AND {_SAME_CTX_SQL}
+         ORDER BY ch.changed_at DESC LIMIT 60
     """, {"o": offer_id})
     for ch in changes:
         f, t = _parse_rate_move(ch.get("diff"))

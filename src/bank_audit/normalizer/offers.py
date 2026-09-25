@@ -196,6 +196,33 @@ def _fix_category(d: OfferDraft) -> None:
         d.category = "savings_account"
 
 
+# ── одна карточка — несколько выдач ──────────────────────────────────────────
+# Идентификатор продукта агрегатора не зависит от выдачи, а продукт собирается
+# из нескольких: страница банка (общие условия) и витрины с фильтром суммы и
+# региона (условия под эту сумму). ВТБ «Наличными»: страница банка — 19,9 % на
+# 30 тыс.–7 млн, витрина «500 тыс. на 36 мес.» — 20,5 % на ступени 300 тыс.–1 млн.
+# Обе писались в одну карточку, и каждое утро журнал получал два «изменения»
+# туда и обратно (28 за две недели), а график ставки шёл пилой. Теперь у
+# продукта закреплена одна выдача: другая не переписывает условия, пока
+# закреплённая встречается в сборах. Переход — только на выдачу приоритетнее
+# (страница банка > витрина Москвы > другие регионы) или когда закреплённую
+# не видно дольше суток с запасом.
+_CTX_STICKY_H = 36
+
+
+def _ctx_rank(fc: dict | None) -> int:
+    fc = fc or {}
+    if fc.get("bank"):
+        return 0
+    return 1 if fc.get("region") in (None, "", "msk") else 2
+
+
+def _ctx_of(d: OfferDraft) -> dict | None:
+    raw = d.raw if isinstance(d.raw, dict) else {}
+    fc = raw.get("filter_context")
+    return fc if isinstance(fc, dict) and fc else None
+
+
 def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
                  source_page_id: int | None,
                  source_name: str = "sravni_aggregator") -> tuple[int, bool]:
@@ -236,16 +263,31 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
 
     new_digest = _digest(d)
     cur = session.execute(text("""
-        SELECT terms_id, digest FROM product_terms
+        SELECT terms_id, digest, raw->'filter_context',
+               coalesce((raw->>'ctx_seen_at')::timestamptz, valid_from)
+                   > now() - make_interval(hours => :sticky)
+          FROM product_terms
          WHERE offer_id=:o AND valid_to IS NULL
          ORDER BY valid_from DESC LIMIT 1
-    """), {"o": offer_id}).first()
+    """), {"o": offer_id, "sticky": _CTX_STICKY_H}).first()
 
     if doubt:
         _flag_quality(session, offer_id, "implausible_value", doubt)
 
+    new_fc = _ctx_of(d)
+    cur_fc = cur[2] if cur and isinstance(cur[2], dict) and cur[2] else None
     if cur and cur[1] == new_digest:
+        if new_fc is not None and new_fc == cur_fc:
+            # закреплённая выдача подтверждена этим сбором
+            session.execute(text("""
+                UPDATE product_terms
+                   SET raw = jsonb_set(coalesce(raw, '{}'::jsonb), '{ctx_seen_at}', to_jsonb(now()))
+                 WHERE terms_id = :t
+            """), {"t": cur[0]})
         return offer_id, False  # без изменений
+    if (cur and new_fc is not None and cur_fc is not None and new_fc != cur_fc
+            and _ctx_rank(new_fc) >= _ctx_rank(cur_fc) and cur[3]):
+        return offer_id, False  # другая выдача того же продукта, не изменение условий
 
     # закрываем текущую версию
     if cur:

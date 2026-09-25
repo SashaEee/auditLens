@@ -146,7 +146,13 @@ async def tariff_moves(day: date) -> dict:
               FROM change_history ch
               JOIN product_offer o USING (offer_id)
               JOIN bank b USING (bank_id)
+              LEFT JOIN product_terms p ON p.terms_id = ch.prev_terms_id
+              LEFT JOIN product_terms n ON n.terms_id = ch.new_terms_id
              WHERE ch.changed_at > now() - interval '10 days'
+               -- смена выдачи агрегатора — не изменение условий
+               AND NOT (p.raw->'filter_context' IS NOT NULL
+                        AND n.raw->'filter_context' IS NOT NULL
+                        AND p.raw->'filter_context' <> n.raw->'filter_context')
              ORDER BY ch.changed_at DESC
              LIMIT 3000
         """)
