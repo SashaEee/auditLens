@@ -1584,10 +1584,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 
 /* ─── REVIEWS · риск-радар голоса клиента ─────────────────────────────────── */
 .rv{max-width:1320px;margin:0 auto}
-.rv-src{font-size:11px;color:var(--ink-3);letter-spacing:.01em;margin-bottom:20px}
 /* размер всего корпуса — контекст, а не главное число: приглушаем,
    чтобы не спорил с цифрами по выбранному банку */
-.rv-src-all{color:var(--ink-3);padding-left:10px;border-left:1px solid var(--hair)}
+
 .rv-up{color:var(--neg);font-weight:600}
 .rv-down{color:var(--pos);font-weight:600}
 .rv-flat{color:var(--ink-3)}
@@ -1598,11 +1597,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-ct>div:first-child{min-width:0}
 
 /* filters */
-.rv-filters{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--hair)}
-.rv-fl{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ink-3)}
-.rv-fl select{height:34px;min-width:150px;max-width:230px;padding:0 12px;border-radius:6px;border:1px solid var(--hair-2);background:var(--surface);font-size:13px;color:var(--ink);font-family:'Geist',sans-serif;cursor:pointer}
-.rv-fl select:hover{border-color:var(--ink-4)}
-.rv-fl select:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px color-mix(in oklab,var(--ink),transparent 88%)}
+
 .rv-chips{display:flex;gap:0;border:1px solid var(--hair-2);border-radius:6px;overflow:hidden;height:34px}
 .rv-chip{padding:0 12px;font-size:11px;color:var(--ink-3);background:var(--surface);border:none;border-right:1px solid var(--hair-2);cursor:pointer;transition:background .12s,color .12s}
 .rv-chip:last-child{border-right:none}
@@ -1616,10 +1611,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 /* KPI */
 .rv-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
 .rv-kpi{padding:16px 20px}
-.rv-kpi.rv-alert{border-color:color-mix(in oklab,var(--neg),transparent 55%);background:color-mix(in oklab,var(--neg),var(--surface) 94%)}
 .rv-kl{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px;display:flex;align-items:center;gap:6px;min-height:13px}
 .rv-kv{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:28px;line-height:1.02;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--ink);word-break:break-word}
-.rv-kv-sm{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:17px;line-height:1.15;letter-spacing:-.01em;color:var(--ink);min-height:30px;display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis}
 .rv-ks{font-size:11px;color:var(--ink-3);margin-top:10px;line-height:1.4}
 
 /* trend bars */
@@ -1636,9 +1629,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 /* two-col */
 
 /* аналитика — 2 колонки: слева динамика+темы (шире), справа гео+рынок */
-.rv-main2{display:grid;grid-template-columns:1.4fr 1fr;gap:14px;align-items:stretch;margin-bottom:14px}
-.rv-col{display:flex;flex-direction:column;gap:14px;min-width:0}
-.rv-col>.rv-card:last-child{flex:1 1 auto}   /* нижняя карточка добирает высоту → колонки вровень, без бокового зазора */
+   /* нижняя карточка добирает высоту → колонки вровень, без бокового зазора */
 
 /* theme risk-map */
 .rv-trow{display:grid;grid-template-columns:1fr 120px 52px 56px;align-items:center;gap:12px;padding:8px 8px;border-radius:6px;cursor:pointer;transition:background .12s;border:1px solid transparent}
@@ -1690,14 +1681,11 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-kpi-click{cursor:pointer;transition:border-color .12s}
 .rv-kpi-click:hover{border-color:var(--ink-4)}
 .rv-kpi-on{border-color:var(--select);box-shadow:inset 0 0 0 1px var(--select)}
-.rv-warn-inline{font-size:11px;color:var(--ink-3);white-space:nowrap;align-self:center;border-bottom:1px dotted var(--hair-2)}
 .rv-sort{display:flex;align-items:center;gap:6px;margin:10px 0 2px}
 .rv-sort-l{font-size:11px;color:var(--ink-3)}
 .rv-more-btn{display:block;margin:14px auto 4px;min-width:260px}
 /* волна 3: что изменилось · против рынка по проблемам · гео-индекс · признаки риска */
 .rv-chg{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:0 0 14px;padding:10px 14px;border:1px solid var(--hair);border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--shadow-1)}
-.rv-chg-h{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-right:6px;white-space:nowrap}
-.rv-chg-h i{font-style:normal;text-transform:none;letter-spacing:0;color:var(--ink-3);margin-left:4px}
 .rv-chg-it{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--ink);padding:3px 10px;border-radius:999px;border:1px solid var(--hair-2);background:var(--paper-2);white-space:nowrap}
 .rv-chg-ar{font-weight:700}
 .rv-chg-it.up .rv-chg-ar{color:var(--neg)}
@@ -1714,7 +1702,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-bar-in{width:100%;background:repeating-linear-gradient(45deg,var(--ink-4),var(--ink-4) 3px,color-mix(in oklab,var(--ink-4),transparent 55%) 3px,color-mix(in oklab,var(--ink-4),transparent 55%) 6px)}
 .rv-bcol:hover .rv-bar-exp{border-color:var(--ink-2)}
 .rv-dlow{opacity:.55}
-.rv-cap-sep{color:var(--ink-3)}
 .rv-ix{display:grid;grid-template-columns:1fr 48px 44px;align-items:center;gap:10px;padding:7px 8px;border-radius:6px;cursor:pointer;border:1px solid transparent;transition:background .12s}
 .rv-ix:hover{background:var(--paper-2)}
 .rv-ix.sel{background:var(--select-soft);border-color:color-mix(in oklab,var(--select),transparent 70%)}
@@ -1769,9 +1756,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-bell{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:6px;border:1px solid var(--hair-2);background:var(--surface);font-size:11px;color:var(--ink-2);cursor:pointer;transition:border-color .12s,color .12s}
 .rv-bell:hover{border-color:var(--ink-4);color:var(--ink)}
 .rv-bell.on{border-color:color-mix(in oklab,var(--select),transparent 50%);color:var(--select);background:var(--select-soft)}
-.rv-facts{display:flex;gap:8px;margin-left:auto}
-.rv-facts .rv-export{margin-left:0}
-@media(max-width:760px){.rv-facts{grid-column:1 / -1;margin-left:0}.rv-facts>*{flex:1;justify-content:center}}
+@media(max-width:760px){}
 .rv-mev{display:block;width:7px;height:7px;margin:4px auto 0;transform:rotate(45deg);border-radius:1px;visibility:hidden;font-size:0}
 .rv-mev.on{visibility:visible;background:var(--warn)}
 .rv-mev-note{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px;color:var(--ink-3)}
@@ -1850,11 +1835,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv .mono,.rv-ovl .mono{font-family:inherit;font-variant-numeric:tabular-nums;letter-spacing:0}
 .rv .eyebrow{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em}
 .rv-kl{font-weight:600;letter-spacing:.06em}
-.rv-chg-h{font-weight:600;letter-spacing:.06em}
 .rv-ix-h,.rv-fg-h{font-size:12px;font-weight:600;color:var(--ink-2)}
 .rv-rd-sec{font-size:12px;font-weight:600;color:var(--ink-2)}
 .rv-cl-n span{font-size:11px;color:var(--ink-3)}
-.rv-fl{font-size:12px;font-weight:500;color:var(--ink-3)}
 /* разбор радара — общий с «Обзором» компонент; внутри вкладки — по системе D2:
    уровень точкой и словом, без капслока и моноширинного, акцент не красный */
 .rv .bfb-item.lvl-high{border-left-color:var(--neg);background:none}
@@ -2017,8 +2000,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-trow:focus-visible,.rv-clear:focus-visible,.rv-grow-click:focus-visible,.rv-bcol:focus-visible,.rv-ovl-x:focus-visible,.rv-explain-btn:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:4px}
 
 /* доверие к данным */
-.rv-disclaimer{font-size:11px;line-height:1.5;color:var(--ink-2);background:color-mix(in oklab,var(--warn),var(--surface) 90%);border:1px solid color-mix(in oklab,var(--warn),transparent 70%);border-radius:8px;padding:8px 12px;margin:0 0 16px}
-.rv-disclaimer b{color:var(--ink);font-weight:600}
+
 .rv-lown{color:var(--ink-3);font-size:11px}
 
 /* объяснение выдачи поиска: по каким словам искали и откуда взялся отзыв.
@@ -2130,22 +2112,16 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-radar-brief li::before{content:"";position:absolute;left:2px;top:6px;width:6px;height:6px;border-radius:50%;background:var(--ink-4)}
 .rv-radar-brief strong{font-weight:600;color:var(--ink)}
 
-@media(max-width:920px){
-  .rv-main2{grid-template-columns:1fr}
-  .rv-col>.rv-card:last-child{flex:0 1 auto}   /* в один столбец выравнивание высот не нужно */
+@media(max-width:920px){   /* в один столбец выравнивание высот не нужно */
   .rv-ovl-right{width:100%}
   .rv-kpis{grid-template-columns:repeat(2,1fr)}
   .rv-trow{grid-template-columns:1fr 80px 44px 50px}
 }
 @media(max-width:760px){
-  .rv-filters{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .rv-fl,.rv-fl select{max-width:none;min-width:0;width:100%}
   .rv-chips{width:100%}.rv-chip{flex:1;text-align:center}
-  .rv-filters .rv-export{grid-column:1 / -1;margin-left:0;width:100%}
 }
 @media(max-width:520px){
   .rv-kpis{grid-template-columns:1fr}
-  .rv-filters{grid-template-columns:1fr}
   .rv-trow{grid-template-columns:1fr 48px 44px}   /* прячем бар на узком */
   .rv-trow .rv-tbarw{display:none}
   .rv-ovl{padding:0}
@@ -2606,7 +2582,7 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 /* ── Отклик на нажатие. Реакция на pointer-down: к моменту, когда палец
    поднялся, интерфейс уже ответил. ── */
 .btn, .nav-item, .rail-item, .chip, .pill, .tile, .kpi-click, .rv-kpi-click,
-.rv-chip, .rv-fl, .rv-bcol, .rv-grow-click, .rv-export,
+.rv-chip, .rv-bcol, .rv-grow-click, .rv-export,
 .mk-click, .mk-arow, .mk-chrow, .mk-noise, .mk-sber-pin, .kb-tab, .kb-cell,
 .kb-tech, .kb-doc-a, .kb-case-it-t, .dr-think-head, .al-newq, .al-runbar-btn,
 .quick-upsell-btn, .s3-cal, .s3-portrait, .cp-row, [role="button"],
@@ -2621,8 +2597,7 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
               opacity var(--dur-quick) var(--ease-out);
 }
 .btn:active, .nav-item:active, .rail-item:active, .chip:active, .pill:active,
-.tile:active, .kpi-click:active, .rv-kpi-click:active, .rv-chip:active,
-.rv-fl:active, .rv-bcol:active, .rv-grow-click:active,
+.tile:active, .kpi-click:active, .rv-kpi-click:active, .rv-chip:active, .rv-bcol:active, .rv-grow-click:active,
 .rv-export:active, .mk-click:active, .mk-arow:active, .mk-chrow:active,
 .kb-tab:active, .kb-cell:active, .kb-tech:active, .dr-think-head:active,
 .al-newq:active, .al-runbar-btn:active, .quick-upsell-btn:active,
@@ -2820,11 +2795,106 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 }
 
 .rv-spike::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--neg);transform:translateY(-1px)}
+
+/* ── волна D3: шапка, подвкладки, «Главное», активные фильтры ─────────────── */
+.rv>.rv-card{margin-bottom:14px}
+.rv-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:2px 0 12px}
+.rv-h1{margin:0 6px 0 0;font-family:'Source Serif 4',Georgia,serif;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.1;color:var(--ink)}
+.rv-hfil{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1 1 auto;min-width:0}
+.rv-hsel{height:34px;max-width:240px;padding:0 30px 0 12px;border-radius:9px;border:1px solid var(--hair-2);background:var(--surface);font:inherit;font-size:13px;color:var(--ink);cursor:pointer}
+.rv-hsel:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.rv-hper{height:34px}
+.rv-hact{display:flex;align-items:center;gap:8px;margin-left:auto}
+.rv-hact-n{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--ink);color:var(--surface);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+.rv-bp{position:relative}
+.rv-bp-btn{display:inline-flex;align-items:center;gap:8px;height:34px;max-width:260px;padding:0 10px 0 12px;border-radius:9px;border:1px solid var(--hair-2);background:var(--surface);font:inherit;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer}
+.rv-bp-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rv-bp-btn:hover,.rv-bp-btn[aria-expanded="true"]{border-color:var(--ink-4)}
+.rv-bp-btn:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.rv-bp-pop{position:absolute;left:0;top:40px;z-index:50;width:330px;border:1px solid var(--hair);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-2);overflow:hidden;transform-origin:top left;animation:rv-pop .14s ease-out both}
+.rv-bp-in{display:block;width:100%;height:42px;padding:0 14px;border:0;border-bottom:1px solid var(--hair);background:transparent;font:inherit;font-size:13px;color:var(--ink);outline:none}
+.rv-bp-list{max-height:360px;overflow-y:auto;overscroll-behavior:contain;padding:6px}
+.rv-bp-g{padding:8px 8px 4px;font-size:12px;font-weight:600;color:var(--ink-3)}
+.rv-bp-o{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:7px 8px;border:0;border-radius:8px;background:none;font:inherit;font-size:13px;color:var(--ink);text-align:left;cursor:pointer}
+.rv-bp-o.act{background:var(--paper-2)}
+.rv-bp-o.cur .rv-bp-n{font-weight:600}
+.rv-bp-c{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.rv-bp-none{padding:12px 8px;font-size:13px;color:var(--ink-3)}
+.rv-tabs{position:sticky;top:var(--topbar);z-index:15;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 -8px 16px;padding:8px;
+  background:color-mix(in oklab,var(--paper),transparent 10%);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);box-shadow:0 1px 0 var(--hair)}
+.rv-tabs-l{display:flex;align-items:center;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:none}
+.rv-tabs-l::-webkit-scrollbar{display:none}
+.rv-tab{position:relative;display:inline-flex;align-items:center;gap:6px;flex:none;height:34px;padding:0 14px;border:0;border-radius:9px;background:none;font:inherit;font-size:13px;font-weight:500;color:var(--ink-3);white-space:nowrap;cursor:pointer;transition:background-color .12s,color .12s}
+.rv-tab:hover{color:var(--ink);background:var(--paper-2)}
+.rv-tab.on{color:var(--ink);font-weight:600;background:var(--surface);box-shadow:0 0 0 1px var(--hair-2),var(--shadow-1)}
+.rv-tab:active{transform:scale(.98)}
+.rv-tab:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.rv-tab-n{font-size:11px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.rv-tab-dot{width:6px;height:6px;border-radius:50%;background:var(--select)}
+.rv-tabs-r{display:flex;align-items:center;gap:8px;flex:none;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.rv-th{display:flex;align-items:center;gap:4px}
+.rv-info{position:relative;display:inline-flex;vertical-align:middle}
+.rv-info-b{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 4px;border:0;border-radius:6px;background:none;font:inherit;font-size:12px;color:var(--ink-3);cursor:pointer}
+.rv-info-b.t{padding:0 8px}
+.rv-info-b:hover,.rv-info-b.on{color:var(--ink);background:var(--paper-2)}
+.rv-info-b:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.rv-info-pop{position:absolute;left:-8px;top:30px;z-index:45;width:min(380px,calc(100vw - 32px));padding:14px 16px;border:1px solid var(--hair);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-2);
+  font-family:'Geist','Inter',system-ui,sans-serif;font-size:13px;font-weight:400;line-height:1.55;letter-spacing:0;text-transform:none;white-space:normal;text-align:left;color:var(--ink-2);
+  transform-origin:top left;animation:rv-pop .14s ease-out both}
+.rv-info.r .rv-info-pop{left:auto;right:0;transform-origin:top right}
+.rv-info-pop b{color:var(--ink);font-weight:600}
+.rv-hero{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px;align-items:stretch;margin-bottom:14px}
+.rv-lead{padding:20px 24px;display:flex;flex-direction:column}
+.rv-lead .rv-chg,.rv-lead .rv-chg-calm{margin-top:auto}
+.rv-kl .rv-tag{text-transform:none;letter-spacing:0;font-weight:500}
+.rv-lead-t{margin:10px 0 14px;font-family:'Source Serif 4',Georgia,serif;font-size:22px;font-weight:500;line-height:1.38;letter-spacing:-.01em;color:var(--ink);text-wrap:pretty}
+.rv-lead .rv-chg{margin:auto 0 0;padding:0;border:0;background:none;box-shadow:none}
+.rv-lead .rv-chg-calm{font-size:13px;color:var(--ink-3)}
+.rv-kpis3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.rv-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start;margin-bottom:14px}
+.rv-geo-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 36px}
+.rv-geo-sep{grid-column:1/-1}
+.rv-gfocus{white-space:normal;overflow:visible;text-overflow:clip}
+.rv-more-l{display:inline-flex;align-items:center;gap:2px;margin-top:10px;padding:0;border:0;background:none;font:inherit;font-size:13px;font-weight:500;color:var(--select);cursor:pointer}
+.rv-more-l:hover{text-decoration:underline;text-underline-offset:3px}
+.rv-radar-brief.clip{max-height:250px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 65%,transparent);mask-image:linear-gradient(#000 65%,transparent)}
+.rv-active{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-4px 0 14px}
+.rv-achip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px 0 12px;border-radius:999px;border:1px solid color-mix(in oklab,var(--select),transparent 60%);background:var(--select-soft);font:inherit;font-size:12px;font-weight:500;color:var(--ink);cursor:pointer}
+.rv-achip:hover{border-color:var(--select)}
+.rv-achip:active{transform:scale(.97)}
+.rv-achip svg{color:var(--ink-3)}
+.rv-areset{padding:0 6px;border:0;background:none;font:inherit;font-size:12px;color:var(--ink-3);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+@media(max-width:920px){.rv-hero,.rv-grid2{grid-template-columns:1fr}.rv-geo-grid{grid-template-columns:1fr}}
+@media(max-width:760px){
+  .rv-head{gap:10px;margin-bottom:10px}
+  .rv-h1{font-size:22px}
+  .rv-hfil{order:3;flex-basis:100%;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+  .rv-hsel{max-width:none;width:100%;min-width:0}
+  .rv-hper{grid-column:1/-1}
+  .rv-hact-l{display:none}
+  .rv-tabs{margin:0 -16px 12px;padding:6px 16px}
+  .rv-tabs-r .rv-asof{display:none}
+  .rv-tab{padding:0 10px}
+  .rv-tabs{gap:4px}
+  .rv-info-b.t span{display:none}
+  .rv-export-a .rv-csv-l{display:none}
+  .rv-tab-n{display:none}
+  .rv-card:has(> .rv-ct > .rv-export-a) > .rv-ct{flex-wrap:nowrap}
+  .rv-legend{font-size:11px}
+  .rv-kpis3{grid-template-columns:1fr}
+  .rv-lead{padding:16px 18px}
+  .rv-lead-t{font-size:17px}
+  .rv-ftools{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:-6px -16px 12px 0;padding-right:16px}
+  .rv-ftools::-webkit-scrollbar{display:none}
+  .rv-ftools>*,.rv-ftools .rv-chips-sm{flex:none;width:auto}
+  .rv-ftools .rv-fsel{flex:none;max-width:170px}
+  .rv-info-pop{position:fixed;left:16px;right:16px;top:auto;bottom:16px;width:auto}
+}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-rv-d2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-rv-d3"></script>
 </body>
 </html>
