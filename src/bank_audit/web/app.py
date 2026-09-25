@@ -1666,7 +1666,7 @@ def market_verdict(term: Optional[str] = None):
             "tied": sb.get("tied"), "tied_share": sb.get("tied_share"),
             "gap_median": gap, "gap_leader": sb.get("gap_leader"),
             "metric_label": c["metric_label"], "metric_unit": c["metric_unit"],
-            "gap_unit": (" пп" if c["metric_unit"].strip() == "%" else c["metric_unit"]),
+            "gap_unit": (" п.п." if c["metric_unit"].strip() == "%" else c["metric_unit"]),
             "value": sb.get("rate"), "title": sb.get("title"),
             "lower_is_better": c["lower_is_better"],
             # разбор условий (offer_enrichment): чем куплен ноль в цене и
@@ -1698,18 +1698,26 @@ def market_verdict(term: Optional[str] = None):
     cells.sort(key=lambda x: (bool(x.get("degenerate")),
                               x["percentile"] if x["percentile"] is not None else 999))
 
+    def _ru(v, dg: int = 2) -> str:
+        """Число по-русски: запятая, не больше dg знаков, без хвостовых нулей
+        (было «23.305%» и «3.79 пп» рядом с «23,31%» на остальных вкладках)."""
+        if v is None:
+            return "—"
+        t = f"{round(float(v), dg):.{dg}f}".rstrip("0").rstrip(".")
+        return t.replace(".", ",")
+
     def _phrase(c: dict) -> str:
         unit = c["metric_unit"]
         # разрыв между ДВУМЯ ставками измеряется в процентных пунктах, а не в
         # процентах: «хуже на 4.4 проц.» звучит как относительная разница и в
         # аудиторской формулировке это ошибка
-        gap_unit = " пп" if unit.strip() == "%" else unit
+        gap_unit = " п.п." if unit.strip() == "%" else unit
         val = c["value"]
         gap = c["gap_median"]
         worse = "хуже" if (gap or 0) * (1 if c["lower_is_better"] else -1) > 0 else "лучше"
-        return (f'{c["label"].lower()}: {val}{unit} против медианы рынка '
-                f'{round((val or 0) - (gap or 0), 2)}{unit} — '
-                f'{worse} на {abs(gap or 0)}{gap_unit}, место {c["rank"]} из {c["n_banks"]}')
+        return (f'{c["label"].lower()}: {_ru(val)}{unit} против медианы рынка '
+                f'{_ru((val or 0) - (gap or 0))}{unit} — '
+                f'{worse} на {_ru(abs(gap or 0))}{gap_unit}, место {c["rank"]} из {c["n_banks"]}')
 
     if weak:
         lead = "Отстаём — " + "; ".join(_phrase(c) for c in weak[:2]) + "."

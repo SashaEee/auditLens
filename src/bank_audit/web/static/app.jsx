@@ -64,8 +64,9 @@ function AiWelcome({onPick,recent,onOpenHistory,onLoadSession}){
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const pct  = (v,d=2) => v==null ? "—" : `${parseFloat(v).toFixed(d)}%`;
-const signed = (v,d=2) => { if(v==null)return "—"; const n=parseFloat(v); return(n>0?"+":"")+n.toFixed(d); };
+// десятичная запятая везде — как на «Обзоре» и в «Отзывах»
+const pct  = (v,d=2) => v==null ? "—" : `${parseFloat(v).toFixed(d).replace(".",",")}%`;
+const signed = (v,d=2) => { if(v==null)return "—"; const n=parseFloat(v); return(n>0?"+":n<0?"−":"")+Math.abs(n).toFixed(d).replace(".",","); };
 const fmtNum = n => n==null ? "—" : parseInt(n).toLocaleString("ru");
 // Safe render helper for unknown-type values (JSONB columns etc.)
 const str = v => v==null ? "" : typeof v==="object" ? JSON.stringify(v) : String(v);
@@ -85,7 +86,7 @@ const fmtDateMsk = s => {
   } catch { return String(s).slice(0,16); }
 };
 const fmtAmount = (min,max) => {
-  const f=n=>{if(!n)return null;n=parseFloat(n);if(n>=1e6)return`${+(n/1e6).toFixed(1)} млн`;if(n>=1e3)return`${Math.round(n/1e3)} тыс.`;return String(Math.round(n));};
+  const f=n=>{if(!n)return null;n=parseFloat(n);if(n>=1e6)return`${String(+(n/1e6).toFixed(1)).replace(".",",")} млн`;if(n>=1e3)return`${Math.round(n/1e3)} тыс.`;return String(Math.round(n));};
   const[a,b]=[f(min),f(max)];
   if(a&&b)return`${a} — ${b} ₽`;if(a)return`от ${a} ₽`;if(b)return`до ${b} ₽`;return "—";
 };
@@ -190,7 +191,7 @@ function HBars({rows,max,fmt=v=>v}){
 
 function BankAvatar({slug="",name="",isSber=false}){
   const letter=(name||slug||"?").charAt(0).toUpperCase();
-  return <div style={{width:28,height:28,borderRadius:6,background:isSber?"var(--sber)":"var(--paper-2)",color:isSber?"#fff":"var(--ink-2)",border:"1px solid "+(isSber?"var(--sber)":"var(--hair-2)"),display:"grid",placeItems:"center",fontWeight:600,fontSize:12,fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{letter}</div>;
+  return <div style={{width:28,height:28,borderRadius:6,background:isSber?"var(--sber)":"var(--paper-2)",color:isSber?"#fff":"var(--ink-2)",border:"1px solid "+(isSber?"var(--sber)":"var(--hair-2)"),display:"grid",placeItems:"center",fontWeight:600,fontSize:12,flexShrink:0}}>{letter}</div>;
 }
 
 // Полноэкранная заглушка для пустой БД с CTA-кнопкой запуска всех источников.
@@ -698,7 +699,20 @@ function TipLayer(){
       setTip({txt,...popPlace(el,{w:320,h:120})});
     };
     const close=()=>{ if(cur)cur.removeAttribute("aria-describedby"); cur=null; setTip(null); };
+    // Системные title (их ~1 700 на «Рынке», «Банках», «Базе знаний») — нашим слоем:
+    // при наведении переносим title в data-tip и снимаем его, чтобы браузер не
+    // показал свой серый ярлык через секунду. Кадр и SVG не трогаем.
+    const adopt=t=>{
+      const el=t&&t.closest&&t.closest("[title]");
+      if(!el||el.tagName==="IFRAME"||(el.closest&&el.closest("svg")))return;
+      const v=el.getAttribute("title"); el.removeAttribute("title");
+      if(!v)return;
+      if(!el.hasAttribute("data-tip")||el.hasAttribute("data-tip-t")){
+        el.setAttribute("data-tip",v); el.setAttribute("data-tip-t","");}
+      if(!el.hasAttribute("aria-label")&&!(el.textContent||"").trim())el.setAttribute("aria-label",v);
+    };
     const show=e=>{
+      adopt(e.target);
       const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
       if(!el||el===cur)return;
       open(el);
@@ -712,6 +726,7 @@ function TipLayer(){
     const down=e=>{
       if(e.pointerType!=="touch")return;
       close(); clearTimeout(lp); lpFired=false;
+      adopt(e.target);
       const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
       if(el)lp=setTimeout(()=>{lpFired=true;open(el);},450);
     };
@@ -1124,7 +1139,7 @@ function BfCard({ins,idx,lead,now,sigs,compact}){
     <div className="bf-kicker">
       {(BF_KIND[ins.kind]||{tag:ins.kind}).tag}
       {ins.kind==="news_alert"&&(d.domain||d.ts)&&<span className="bf-k-src">{[d.domain,d.ts?fmtDateMsk(d.ts).replace(" МСК",""):null].filter(Boolean).join(" · ")}</span>}
-      {ins.after_pause&&<span className="badge warn" style={{fontSize:9}}>сбор после паузы</span>}
+      {ins.after_pause&&<span className="badge warn">сбор после паузы</span>}
       <RiskGlyph likelihood={ins.likelihood} impact={ins.impact}/>
     </div>
     <h3 className="bf-title">{compact
@@ -1158,9 +1173,9 @@ function BfCard({ins,idx,lead,now,sigs,compact}){
 const PL_CSS=`
 .pl{margin-bottom:30px;}
 .pl-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:13px;flex-wrap:wrap;}
-.pl-hi{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);}
+.pl-hi{font-family:inherit;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);font-variant-numeric:tabular-nums}
 .pl-set{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--hair-2);background:var(--surface);border-radius:var(--r);
-  padding:4px 10px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);transition:color .12s,border-color .12s;}
+  padding:4px 10px;font-family:inherit;font-size:12px;color:var(--ink-3);transition:color .12s,border-color .12s;font-variant-numeric:tabular-nums}
 .pl-set:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 82%);}
 .pl-lede{font-family:'Source Serif 4',Georgia,serif;font-size:19px;line-height:1.56;letter-spacing:-.004em;color:var(--ink);
   text-wrap:pretty;max-width:64ch;}
@@ -1177,8 +1192,8 @@ const PL_CSS=`
 .pl-dot.sev-amber{background:var(--warn);}
 .pl-dot.sev-green{background:var(--pos);}
 .pl-fy-t{flex:1;min-width:0;font-size:13.5px;line-height:1.4;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pl-fy-tag{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);
-  white-space:nowrap;flex:none;transition:opacity .12s;}
+.pl-fy-tag{font-family:inherit;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);
+  white-space:nowrap;flex:none;transition:opacity .12s;font-variant-numeric:tabular-nums}
 .pl-fy-act{display:flex;gap:4px;align-items:center;flex:none;opacity:0;width:0;overflow:hidden;transition:opacity .14s;}
 .pl-fy-row:hover .pl-fy-tag{opacity:0;}
 .pl-fy-row:hover .pl-fy-act{opacity:1;width:auto;}
@@ -1245,12 +1260,12 @@ function PersonalBand(){
 const FB_CSS=`
 .fb-toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:400;background:var(--surface);
   border:1px solid var(--hair);border-radius:999px;box-shadow:var(--shadow-2);padding:9px 18px;
-  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-2);opacity:0;transition:opacity .25s,transform .25s;
-  pointer-events:none;max-width:min(88vw,500px);text-align:center;}
+  font-family:inherit;font-size:11px;color:var(--ink-2);opacity:0;transition:opacity .25s,transform .25s;
+  pointer-events:none;max-width:min(88vw,500px);text-align:center;font-variant-numeric:tabular-nums}
 .fb-toast.on{opacity:1;transform:translate(-50%,0);}
 .fb-toast .sp{color:var(--accent);}
 .aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
-.aifb-l{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);}
+.aifb-l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
 .aifb button.tb:hover{color:var(--ink-2);background:var(--paper-2);}
@@ -1267,19 +1282,19 @@ const FB_CSS=`
 .shr-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--hair);
   border-radius:8px;background:var(--surface);font-size:12px;color:var(--ink-2);transition:color .12s,border-color .12s;}
 .shr-btn:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
-.shr-btn .n{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent);background:var(--accent-soft);
-  border-radius:999px;padding:1px 6px;}
+.shr-btn .n{font-family:inherit;font-size:11px;color:var(--accent);background:var(--accent-soft);
+  border-radius:999px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .shr-pop{position:absolute;top:34px;right:0;z-index:90;width:302px;background:var(--surface);border:1px solid var(--hair);
   border-radius:12px;box-shadow:var(--shadow-2);padding:10px;animation:fade-in .15s ease-out;text-align:left;}
-.shr-h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-4);margin:2px 2px 8px;}
+.shr-h{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);margin:2px 2px 8px;font-variant-numeric:tabular-nums}
 .shr-row{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;border-radius:8px;font-size:12.5px;
   color:var(--ink-2);text-align:left;transition:background .12s;}
 .shr-row:hover{background:var(--paper-2);}
 .shr-row .ava{width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
   display:grid;place-items:center;font-size:10px;font-weight:600;flex:none;}
 .shr-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.shr-row .st{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
+.shr-row .st{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
 .shr-row.on .st{color:var(--pos);}
 .shr-row.on:hover .st{color:var(--neg);}
 .shr-div{border-top:1px solid var(--hair);margin:8px 0;}
@@ -1287,10 +1302,10 @@ const FB_CSS=`
   background:var(--paper);color:var(--ink);margin-bottom:6px;}
 .shr-list{max-height:210px;overflow:auto;}
 .shr-empty{font-size:12px;color:var(--ink-4);padding:10px;text-align:center;}
-.shr-foot{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:8px;
-  line-height:1.5;padding:0 2px;}
-.shr-owner{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);
-  border:1px solid var(--hair);border-radius:999px;padding:3px 10px;}
+.shr-foot{font-family:inherit;font-size:11px;color:var(--ink-3);margin-top:8px;
+  line-height:1.5;padding:0 2px;font-variant-numeric:tabular-nums}
+.shr-owner{font-family:inherit;font-size:11px;color:var(--ink-3);
+  border:1px solid var(--hair);border-radius:999px;padding:3px 10px;font-variant-numeric:tabular-nums}
 `;
 function fbToast(text,sparkle){
   try{
@@ -2740,7 +2755,7 @@ const mkGap=(v,m)=>{
   const a=Math.abs(n);
   if(m==="fee_service")return n===0?"наравне":sign+fmtNum(Math.round(a))+" ₽/год";
   if(m==="grace_days")return n===0?"наравне":sign+Math.round(a)+" дн";
-  return n===0?"наравне":sign+a.toFixed(2)+" пп";
+  return n===0?"наравне":sign+a.toFixed(2).replace(".",",")+" п.п.";
 };
 const mkMetric=(v,m)=>{
   if(v==null)return "—";
@@ -2847,7 +2862,7 @@ function MkTraffic({cells,onPick}){
       title={c.degenerate
         ? `${c.label} · ранг не показываем: на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`
         : `${c.label} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
-        +(c.gap_median!=null?` · ${mkGap(c.gap_median,null)}${c.gap_unit||c.metric_unit||""} к медиане`:"")
+        +(c.gap_median!=null?` · ${c.gap_median>0?"+":c.gap_median<0?"−":""}${ovN(Math.abs(c.gap_median),2)}${c.gap_unit||c.metric_unit||""} к медиане`:"")
         +(c.tied>1?` · наравне с ${c.tied} банками`:"")}>
       <span className="v serif">{c.degenerate?"–":(c.percentile!=null?c.percentile:"—")}</span>
       <span className="l">{c.label}</span>
@@ -3352,7 +3367,7 @@ function MarketPage({params}){
                 <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
                   <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
                   <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
-                    {isSber&&<div className="t-cap" style={{fontSize:10,color:"var(--sber)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
+                    {isSber&&<div className="t-cap" style={{fontSize:11,fontWeight:600,color:"var(--sber)",letterSpacing:".04em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
                 <td data-label="Продукт">{r.title}<OfferTerms o={r}/>
                   {r.product_kind&&<div className="ofkind" title="что это за продукт на самом деле — разобрано по тексту тарифа">{r.product_kind}</div>}</td>
@@ -3371,7 +3386,7 @@ function MarketPage({params}){
                       <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--sber)":"var(--ink-3)"}}/>
                     </div>
                     <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
-                      {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2)} пп`}</span>
+                      {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2).replace(".",",")} п.п.`}</span>
                   </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
                 </td>}
                 <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
@@ -3446,7 +3461,7 @@ function MarketPage({params}){
              </span>
              <span className="mk-chmove mono tnum">
                {showRateMove&&<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
-                  {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2)}</em>}</>}
+                  {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2).replace(".",",")}</em>}</>}
                {others.slice(0,3).map(o=><span key={o.k} className="mk-dv">
                  {o.label}: {mkFldVal(o.k,o.from)} → <b>{mkFldVal(o.k,o.to)}</b></span>)}
                {others.length>3&&<span className="mk-dv mk-an">ещё {others.length-3}</span>}
@@ -5836,7 +5851,7 @@ function ChartCanvas({spec, sources}){
             const v = ds.data[i];
             if(v==null) return;
             ctx.save();
-            ctx.font = "500 10.5px 'JetBrains Mono', monospace";
+            ctx.font = "500 11px Geist, Inter, system-ui, sans-serif";
             ctx.fillStyle = INK;
             ctx.textAlign = horizontal ? "left" : "center";
             ctx.textBaseline = horizontal ? "middle" : "bottom";
@@ -5868,7 +5883,7 @@ function ChartCanvas({spec, sources}){
         else{c2.moveTo(area.left,px);c2.lineTo(area.right,px);}
         c2.stroke();
         c2.setLineDash([]);
-        c2.font="500 9.5px 'JetBrains Mono', monospace"; c2.fillStyle=INK3;
+        c2.font="500 11px Geist, Inter, system-ui, sans-serif"; c2.fillStyle=INK3;
         const t=((rl.label||"")+" "+fmtVal(+rl.value)).trim();
         if(horizontal) c2.fillText(t, Math.min(px+5,area.right-60), area.top+10);
         else c2.fillText(t, area.left+5, Math.max(px-5,area.top+10));
@@ -5891,7 +5906,7 @@ function ChartCanvas({spec, sources}){
           c2.save();
           c2.beginPath(); c2.arc(cx,y,9,0,Math.PI*2);
           c2.fillStyle=posColor(lb,i); c2.fill();
-          c2.font="600 8px 'JetBrains Mono', monospace"; c2.fillStyle=PAPER;
+          c2.font="600 11px Geist, Inter, system-ui, sans-serif"; c2.fillStyle=PAPER;
           c2.textAlign="center"; c2.textBaseline="middle";
           c2.fillText(inits(lb),cx,y+0.5);
           c2.font="500 10.5px Geist, sans-serif";
@@ -6244,17 +6259,17 @@ const CP_CSS=`
   font-family:'Geist','Inter',sans-serif;letter-spacing:-.01em;}
 .cp-search input::placeholder{color:var(--ink-4);}
 .cp-search input:focus{outline:none;}
-.cp-esc{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);
-  border:1px solid var(--hair);border-radius:5px;padding:3px 7px;flex:none;}
+.cp-esc{font-family:inherit;font-size:11px;color:var(--ink-3);
+  border:1px solid var(--hair);border-radius:5px;padding:3px 7px;flex:none;font-variant-numeric:tabular-nums}
 .cp-seg{display:flex;gap:3px;padding:9px 14px 5px;}
 .cp-seg button{font-size:12px;color:var(--ink-3);padding:5px 11px;border-radius:7px;display:flex;
   align-items:center;gap:7px;transition:background .14s,color .14s;}
 .cp-seg button:hover{color:var(--ink-2);}
 .cp-seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:500;}
-.cp-seg .n{font-family:'JetBrains Mono',monospace;font-size:10px;font-variant-numeric:tabular-nums;opacity:.75;}
+.cp-seg .n{font-family:inherit;font-size:11px;font-variant-numeric:tabular-nums;opacity:.75;}
 .cp-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:3px 8px 10px;}
-.cp-group{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--ink-4);padding:13px 10px 5px;}
+.cp-group{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);padding:13px 10px 5px;font-variant-numeric:tabular-nums}
 .cp-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:9px;cursor:pointer;
   scroll-margin:10px;transition:background .12s;}
 .cp-row:active{transform:scale(.97);}
@@ -6266,7 +6281,7 @@ const CP_CSS=`
 .cp-t{font-size:13.5px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cp-p{font-size:12px;line-height:1.35;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
 .cp-meta{display:flex;align-items:center;gap:9px;flex:none;}
-.cp-time{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.cp-time{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .cp-acts{display:none;gap:2px;}
 .cp-row:hover .cp-acts,.cp-row.sel .cp-acts{display:flex;}
 .cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-4);display:grid;place-items:center;
@@ -6274,15 +6289,15 @@ const CP_CSS=`
 .cp-acts button:hover{background:var(--paper-2);color:var(--ink);}
 .cp-acts button.on{color:var(--accent);}
 .cp-banks{display:flex;gap:4px;}
-.cp-bank{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.03em;
-  color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;}
+.cp-bank{font-family:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .cp-owner{font-size:11px;color:var(--accent);white-space:nowrap;}
 .cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-4);text-align:center;}
 .cp-empty>svg{opacity:.45;}
 .cp-empty .t{font-size:14px;color:var(--ink-3);text-wrap:balance;max-width:320px;line-height:1.5;}
-.cp-empty .h{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);}
+.cp-empty .h{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .cp-foot{display:flex;align-items:center;gap:18px;padding:10px 16px;border-top:1px solid var(--hair);
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
+  font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .cp-foot span{display:inline-flex;align-items:center;gap:5px;}
 .cp-foot kbd{border:1px solid var(--hair);border-radius:4px;padding:1px 5px;color:var(--ink-3);
   min-width:16px;text-align:center;line-height:1.5;}
@@ -6297,7 +6312,7 @@ const CP_CSS=`
 /* welcome: «Продолжить» — недавние диалоги */
 .aw-recent{margin-top:30px;width:100%;max-width:640px;}
 .aw-recent-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
-.aw-recent-h .l{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);}
+.aw-recent-h .l{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .aw-recent-h button{font-size:11.5px;color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;transition:color .12s;}
 .aw-recent-h button:hover{color:var(--accent);}
 .aw-recent-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
@@ -6305,7 +6320,7 @@ const CP_CSS=`
   display:flex;flex-direction:column;gap:3px;transition:border-color .14s,transform .12s,box-shadow .14s;min-width:0;}
 .aw-rec:hover{border-color:var(--ink-4);transform:translateY(-2px);box-shadow:var(--shadow-1);}
 .aw-rec .t{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.aw-rec .m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;}
+.aw-rec .m{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
 `;
 
 // SVG-иконки (единый штрих, оптически выверенные)
@@ -7205,7 +7220,7 @@ function BanksPage(){
         <input className="input" placeholder="Поиск банка…" value={q} onChange={e=>setQ(e.target.value)}/>
       </div>
     </div>
-    <div className="surface" style={{overflow:"hidden"}}>
+    <div className="surface" style={{overflowX:"auto"}}>
       {!sorted.length?<EmptyState text="Нет данных о банках. Запустите сбор данных."/>:
       <table className="m-cards">
         <thead><tr>
@@ -7237,28 +7252,28 @@ function BanksPage(){
                     {/* технический слаг-заглушку (unknown_…) не показываем */}
                     {b.slug&&!/^unknown_/.test(b.slug)&&
                       <div className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{b.slug}</div>}
-                    {stale&&<div className="mono" style={{fontSize:10,color:"var(--warn)"}}
+                    {stale&&<div className="mono" style={{fontSize:11,color:"var(--warn-ink)"}}
                       title="Банк выпал из выдачи рейтинга — показано последнее известное значение">
                       рейтинг на {fmtDateMsk(b.rating_at)}</div>}
                   </div>
                 </div>
               </td>
               <td data-label="БАЛЛ · МЕСТО" className="right mono tnum">
-                {score>0?<>{score.toFixed(1)}
+                {score>0?<>{score.toFixed(1).replace(".",",")}
                   {b.place?<span style={{color:"var(--ink-3)"}}> · №{b.place}</span>:null}</>
                   :<span style={{color:"var(--ink-4)"}}>—</span>}
               </td>
               <td data-label="СР. ОЦЕНКА" className="right">
                 <span className="serif" style={{fontSize:22,fontWeight:400,color:grade>=4?"var(--pos)":grade>=3.5?"var(--warn)":"var(--neg)"}}>
-                  {grade>0?grade.toFixed(2):"—"}
+                  {grade>0?grade.toFixed(2).replace(".",","):"—"}
                 </span>
               </td>
               <td data-label="ОТЗЫВОВ" className="right mono tnum">
                 {b.total_reviews?<>{fmtNum(b.total_reviews)}
-                  {b.reviews_year?<div style={{fontSize:10,color:"var(--ink-4)"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
+                  {b.reviews_year?<div style={{fontSize:11,color:"var(--ink-3)",whiteSpace:"nowrap"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
                   :<span style={{color:"var(--ink-4)"}}>—</span>}
               </td>
-              <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${solved}%`:"—"}</td>
+              <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${String(solved).replace(".",",")}%`:"—"}</td>
               <td data-label="У НАС" className="right mono tnum">
                 {b.own_reviews?<span style={{color:"var(--accent)"}} title={b.own_last_dt?`свежий отзыв ${fmtDateMsk(b.own_last_dt)}`:""}>
                   {fmtNum(b.own_reviews)}</span>:<span style={{color:"var(--ink-4)"}}>—</span>}
@@ -7688,7 +7703,7 @@ function SourcesPage(){
             <td data-label="Статус">
               <span className={"badge "+(p.status==="approved"?"pos":p.status==="rejected"?"neg":"warn")}>
                 {SRC_STATUS_RU[p.status]||p.status}</span>
-              <div className="t-cap" style={{fontSize:10}}>{fmtDateMsk(p.created_at)}</div>
+              <div className="t-cap" style={{fontSize:11}}>{fmtDateMsk(p.created_at)}</div>
             </td>
             {isAdmin&&<td data-label="Автор" className="t-cap">{p.proposer_name||p.proposed_by}</td>}
             <td className="right">
@@ -8345,10 +8360,10 @@ function KnowledgePage({params}){
 
     {!res&&!err&&<>
       <div className="kb-what">
-        <div className="kb-what-k"><b>{st.documents||"—"}</b><span>документов доступно поиску</span></div>
-        <div className="kb-what-k"><b>{st.fragments||"—"}</b><span>проиндексированных фрагментов</span></div>
-        <div className="kb-what-k"><b>{st.banks||"—"}</b><span>банков в архиве</span></div>
-        <div className="kb-what-k"><b>{st.fresh_30d||"—"}</b><span>обновлено за месяц</span></div>
+        <div className="kb-what-k"><b>{st.documents?fmtNum(st.documents):"—"}</b><span>документов доступно поиску</span></div>
+        <div className="kb-what-k"><b>{st.fragments?fmtNum(st.fragments):"—"}</b><span>проиндексированных фрагментов</span></div>
+        <div className="kb-what-k"><b>{st.banks?fmtNum(st.banks):"—"}</b><span>банков в архиве</span></div>
+        <div className="kb-what-k"><b>{st.fresh_30d?fmtNum(st.fresh_30d):"—"}</b><span>обновлено за месяц</span></div>
       </div>
 
       {ov&&<div className="kb-grid2">
@@ -8402,7 +8417,7 @@ function KnowledgePage({params}){
       <div className="kb-tech-kv">
         <span>Последнее пополнение</span><b>{formatRelDate(st.last_fetch)}</b>
         <span>Порог доверия для поиска</span><b>0.50</b>
-        <span>Фрагментов в индексе</span><b>{st.fragments||"—"}</b>
+        <span>Фрагментов в индексе</span><b>{st.fragments?fmtNum(st.fragments):"—"}</b>
       </div>
     </details>
   </div>;
@@ -8423,60 +8438,60 @@ function LoopholePage(){
 const AD_CSS=`
 .pu-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 22px;}
 .pu-tile{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px 12px;}
-.pu-tile .l{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-4);margin-bottom:7px;display:flex;align-items:center;gap:6px;}
+.pu-tile .l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:7px;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
 .pu-tile .v{font-family:'Source Serif 4',Georgia,serif;font-size:27px;line-height:1;}
-.pu-tile .s{font-size:10.5px;color:var(--ink-4);margin-top:5px;font-family:'JetBrains Mono',monospace;}
+.pu-tile .s{font-size:12px;color:var(--ink-3);margin-top:5px;font-family:inherit;font-variant-numeric:tabular-nums}
 .pu-tile.neg .v{color:var(--neg);}
 .pu-live{width:6px;height:6px;border-radius:50%;background:var(--pos);animation:pulse 1.8s ease infinite;}
 .pu-sec{margin-top:24px;}
 .pu-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
 @media(max-width:1000px){.pu-grid2{grid-template-columns:1fr;}}
 .pu-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;}
-.pu-card .h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;}
+.pu-card .h{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}
 .pu-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px;}
 .pu-bar-row .lb{width:110px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .pu-bar-row .tr{flex:1;height:16px;background:var(--paper-2);border-radius:4px;overflow:hidden;}
 .pu-bar-row .fl{height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
   transition:width .5s ease;}
-.pu-bar-row .vv{width:100px;flex:none;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);}
+.pu-bar-row .vv{width:100px;flex:none;text-align:right;font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-kv{display:flex;justify-content:space-between;align-items:baseline;padding:7px 2px;border-top:1px solid var(--hair);font-size:12.5px;}
 .pu-kv:first-of-type{border-top:0;}
-.pu-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;}
+.pu-kv b{font-family:inherit;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
 .pu-heat{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:12px;}
-.pu-heat .hl{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--ink-4);align-self:center;}
+.pu-heat .hl{font-family:inherit;font-size:11px;color:var(--ink-3);align-self:center;font-variant-numeric:tabular-nums}
 .pu-heat .c{aspect-ratio:1;border-radius:2.5px;background:var(--paper-2);min-width:0;}
 .pu-tbl{width:100%;font-size:11.5px;border-collapse:collapse;}
-.pu-tbl th{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-4);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;}
+.pu-tbl th{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;font-variant-numeric:tabular-nums}
 .pu-tbl th:first-child{text-align:left;}
-.pu-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:'JetBrains Mono',monospace;
-  font-size:10.5px;text-align:right;color:var(--ink-2);}
+.pu-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:inherit;
+  font-size:12px;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .pu-tbl td:first-child{text-align:left;color:var(--ink);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .pu-tbl tr:last-child td{border-bottom:0;}
 .pu-err{display:flex;gap:9px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
 .pu-err:first-of-type{border-top:0;}
-.pu-err .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
-.pu-err .k{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--neg);flex:none;text-transform:uppercase;}
+.pu-err .t{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
+.pu-err .k{font-family:inherit;font-size:11px;color:var(--neg);flex:none;text-transform:uppercase;font-variant-numeric:tabular-nums}
 .pu-err .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
 .pu-feed-row{display:flex;gap:9px;align-items:center;padding:5px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
 .pu-feed-row:first-of-type{border-top:0;}
-.pu-feed-row .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;width:34px;}
+.pu-feed-row .t{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;width:34px;font-variant-numeric:tabular-nums}
 .pu-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
   display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
 .pu-feed-row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
-.pu-chip{font-family:'JetBrains Mono',monospace;font-size:9.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);}
+.pu-chip{font-family:inherit;font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-chip.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
 .pu-chip.bad{color:var(--neg);border-color:color-mix(in oklab,var(--neg),transparent 70%);}
-.pu-note{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);margin-top:10px;line-height:1.6;}
+.pu-note{font-family:inherit;font-size:11px;color:var(--ink-3);margin-top:10px;line-height:1.6;font-variant-numeric:tabular-nums}
 .pu-note .acc{color:var(--accent);}
 .pu-u{display:inline-flex;align-items:center;gap:8px;font-family:'Geist','Inter',sans-serif;font-size:12.5px;color:var(--ink);}
 .pu-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
   display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
-.pu-crown{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--accent);white-space:nowrap;
+.pu-crown{font-family:inherit;font-size:11px;color:var(--accent);white-space:nowrap;
   border:1px solid color-mix(in oklab,var(--accent),transparent 70%);background:var(--accent-soft);
-  border-radius:999px;padding:2px 7px;}
+  border-radius:999px;padding:2px 7px;font-variant-numeric:tabular-nums}
 .pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
 .pu-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
 .pu-team td:first-child{max-width:260px;}
@@ -8491,15 +8506,15 @@ const AD_CSS=`
 .pu-rowclick{cursor:pointer}
 .pu-rowclick:hover{background:var(--surface)}
 .pu-nm{display:block;font-weight:500}
-.pu-login{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4)}
-.pu-badge{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;
+.pu-login{display:block;font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pu-badge{display:inline-block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
   padding:1px 5px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-3);margin-left:6px}
 .pu-badge.on{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
 .pu-badge.tod{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
 .pu-badge.off{color:var(--ink-4);border:0}
 .pu-badge.adm{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
-.pu-pages{color:var(--ink-3);font-size:10.5px;max-width:210px}
-.pu-deep{font-style:normal;color:var(--ink-4);font-size:9.5px;margin-left:2px}
+.pu-pages{color:var(--ink-3);font-size:12px;max-width:210px}
+.pu-deep{font-style:normal;color:var(--ink-3);font-size:11px;margin-left:2px}
 .pu-badrow{background:color-mix(in oklab,var(--neg),transparent 94%)}
 .pu-qcell{max-width:420px}
 .pu-empty{color:var(--ink-4);font-size:12px;padding:10px 0}
@@ -8526,25 +8541,25 @@ const AD_CSS=`
   background:var(--hair);border-bottom:1px solid var(--hair)}
 .pu-drtiles>div{background:var(--paper);padding:11px 13px;display:flex;flex-direction:column;gap:1px}
 .pu-drtiles b{font-size:17px;font-weight:500}
-.pu-drtiles span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
+.pu-drtiles span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
 .pu-drtiles .neg b{color:var(--neg)}
 .pu-drsec{padding:16px 22px;border-bottom:1px solid var(--hair)}
-.pu-drh{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);margin-bottom:8px}
+.pu-drh{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);margin-bottom:8px}
 .pu-drp{font-size:12.5px;line-height:1.55;color:var(--ink-2);margin:0 0 6px}
 .pu-drtabs{display:flex;gap:4px;padding:12px 22px 0;flex-wrap:wrap}
 .pu-days{display:flex;align-items:flex-end;gap:3px;height:56px}
 .pu-dbar{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:9px}
 .pu-dbar i{display:block;width:100%;background:var(--accent);border-radius:2px 2px 0 0;opacity:.75}
-.pu-dbar span{font-size:8.5px;color:var(--ink-4);font-family:'JetBrains Mono',monospace}
+.pu-dbar span{font-size:11px;color:var(--ink-3);font-family:inherit;font-variant-numeric:tabular-nums}
 .pu-qrow{display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:1px solid var(--hair);
   font-size:12px}
 .pu-qrow:last-child{border-bottom:0}
-.pu-qrow .at{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);flex-shrink:0}
+.pu-qrow .at{font-family:inherit;font-size:11px;color:var(--ink-3);flex-shrink:0;font-variant-numeric:tabular-nums}
 .pu-qrow .qq{flex:1;color:var(--ink-2)}
-.pu-qrow .md{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-4);flex-shrink:0}
+.pu-qrow .md{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);flex-shrink:0}
 .pu-qrow.bad{background:color-mix(in oklab,var(--neg),transparent 95%)}
 .pu-vd{flex-shrink:0}
-.pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:'JetBrains Mono',monospace}
+.pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:inherit;font-variant-numeric:tabular-nums}
 .pu-trail .at{color:var(--ink-4)}
 .pu-trail .k{color:var(--ink-3);width:96px}
 .pu-trail .p{color:var(--ink-2);flex:1}
@@ -8553,16 +8568,16 @@ const AD_CSS=`
 .pu-cmp{padding:10px 0;border-bottom:1px solid var(--hair)}
 .pu-cmp:last-child{border-bottom:0}
 .pu-cmphead{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
-.pu-cmphead .md{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-4)}
-.pu-cmphead .at{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4)}
+.pu-cmphead .md{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
+.pu-cmphead .at{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-cmpbody{font-size:12.5px;color:var(--ink-2);margin-top:3px}
 .pu-cmpwhy{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
-.pu-cmpwhy span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--neg);
+.pu-cmpwhy span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--neg);
   border:1px solid color-mix(in oklab,var(--neg),transparent 72%);border-radius:3px;padding:1px 5px}
 .pu-cmpnote{font-size:12px;color:var(--ink-3);font-style:italic;margin-top:4px}
 .pu-msg{padding:10px 0;border-bottom:1px solid var(--hair)}
 .pu-msg:last-child{border-bottom:0}
-.pu-msghead{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-4);
+.pu-msghead{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);
   margin-bottom:4px}
 .pu-msg.user .pu-msgbody{font-size:13px;font-weight:500;color:var(--ink)}
 .pu-msg.assistant .pu-msgbody{font-size:12.5px;line-height:1.6;color:var(--ink-2)}
@@ -8591,11 +8606,11 @@ const AD_CSS=`
 .pu-reason{font-size:11.5px;color:var(--ink-2);background:var(--paper-2);
   border:1px solid var(--hair);border-radius:20px;padding:3px 10px;
   display:inline-flex;align-items:baseline;gap:6px;}
-.pu-reason.sm{font-size:10.5px;padding:2px 8px;}
+.pu-reason.sm{font-size:12px;padding:2px 8px;}
 .pu-reason.bad{border-color:color-mix(in oklab,var(--neg),transparent 60%);color:var(--neg);}
 .pu-reason.ok{border-color:color-mix(in oklab,var(--pos),transparent 60%);}
-.pu-reason i{font-style:normal;font-family:'JetBrains Mono',monospace;
-  font-size:10px;color:var(--ink-4);}
+.pu-reason i{font-style:normal;font-family:inherit;
+  font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 
 .pu-fb-seg{display:flex;gap:4px;margin-bottom:12px;}
 .pu-fb{padding:11px 13px;border-radius:9px;margin-bottom:8px;background:var(--paper-2);
@@ -8605,7 +8620,7 @@ const AD_CSS=`
 .pu-fb-h b{font-size:13px;font-weight:500;color:var(--ink);line-height:1.45;}
 .pu-fb-v{flex:none;}
 .pu-fb-m{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;
-  font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);}
+  font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-fb-m a{color:var(--accent);}
 .pu-fb-r{margin-top:7px;display:flex;gap:5px;flex-wrap:wrap;}
 .pu-fb-c{margin:7px 0 0;font-size:12.5px;color:var(--ink-2);font-style:italic;line-height:1.55;}
@@ -8617,7 +8632,7 @@ const AD_CSS=`
 .pu-chk{text-align:center;}
 .pu-chk .yes{color:var(--pos);}
 .pu-chk .no{color:var(--ink-4);}
-.pu-off{font-size:9.5px;color:var(--ink-4);border:1px solid var(--hair);
+.pu-off{font-size:11px;color:var(--ink-3);border:1px solid var(--hair);
   border-radius:4px;padding:0 4px;margin-left:6px;}
 
 .pu-todo{border-color:color-mix(in oklab,var(--accent),transparent 70%);}
@@ -8628,18 +8643,18 @@ const AD_CSS=`
 .pu-kv{display:grid;grid-template-columns:repeat(4,auto);gap:5px 20px;
   justify-content:start;font-size:12.5px;margin-bottom:4px;}
 .pu-kv span{color:var(--ink-4);}
-.pu-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-2);}
+.pu-kv b{font-family:inherit;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .pu-kv b.neg{color:var(--neg);}
 .pu-kv-row{display:flex;justify-content:space-between;padding:5px 2px;
   border-top:1px solid var(--hair);font-size:12.5px;}
-.pu-kv-row b{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-3);}
+.pu-kv-row b{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 
 `;
 const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
   ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",sources:"Источники",
   quality:"Качество",profile:"Профиль",pulse:"Пульс"};
 const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
-  if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1)+"ч"; };
+  if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1).replace(".",",")+"ч"; };
 
 // area-график: users (заливка) + views (тонкая линия), даты по оси
 function AdArea({data,h=130}){
@@ -8659,9 +8674,9 @@ function AdArea({data,h=130}){
     <path d={dV} fill="none" stroke="var(--ink-4)" strokeWidth="1" opacity=".55" strokeDasharray="3 3"/>
     <path d={dU} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round"/>
     <circle cx={px(vals.length-1)} cy={pyU(last.users)} r="2.6" fill="var(--accent)"/>
-    <text x="4" y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono">{dd(vals[0].d)}</text>
-    <text x={w-4} y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">{dd(last.d)}</text>
-    <text x={w-4} y="10" fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">макс {maxU} польз. · {maxV} просм.</text>
+    <text x="4" y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif">{dd(vals[0].d)}</text>
+    <text x={w-4} y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">{dd(last.d)}</text>
+    <text x={w-4} y="10" fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">макс {maxU} польз. · {maxV} просм.</text>
   </svg>;
 }
 
@@ -8696,14 +8711,14 @@ function AdDonut({parts,center,sub}){
         cum+=frac; return el;})}
       <text x="58" y="57" textAnchor="middle" fontSize="21" fontWeight="600" fill="var(--ink)"
         fontFamily="'Source Serif 4',Georgia,serif">{center}</text>
-      <text x="58" y="73" textAnchor="middle" fontSize="7.5" fill="var(--ink-4)"
-        fontFamily="'JetBrains Mono',monospace">{sub}</text>
+      <text x="58" y="73" textAnchor="middle" fontSize="10" fill="var(--ink-3)"
+        fontFamily="Geist, Inter, sans-serif">{sub}</text>
     </svg>
     <div style={{display:"flex",flexDirection:"column",gap:7}}>
       {(parts||[]).map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,fontSize:12}}>
         <span style={{width:9,height:9,borderRadius:3,background:p.color,flex:"none"}}/>
         <span style={{color:"var(--ink-2)"}}>{p.label}</span>
-        <b className="tnum" style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{p.value||0}</b>
+        <b className="tnum" style={{fontSize:11}}>{p.value||0}</b>
       </div>)}
     </div>
   </div>;
@@ -8727,9 +8742,9 @@ function AdCols({axis,a,b,h=118}){
         {am[d]>0&&<rect x={x} y={h-16-Math.max(ha,2)} width={bw} height={Math.max(ha,2)} rx="2" fill="var(--accent)" opacity=".88"/>}
         {bm[d]>0&&<rect x={x+bw+2} y={h-16-Math.max(hb,2)} width={bw} height={Math.max(hb,2)} rx="2" fill="var(--ink-3)" opacity=".65"/>}
       </g>;})}
-    <text x="16" y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono">{dd(days[0])}</text>
-    <text x={w-16} y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">{dd(days[days.length-1])}</text>
-    <text x={w-16} y="10" fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">макс {max}/день</text>
+    <text x="16" y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif">{dd(days[0])}</text>
+    <text x={w-16} y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">{dd(days[days.length-1])}</text>
+    <text x={w-16} y="10" fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">макс {max}/день</text>
   </svg>;
 }
 
@@ -9621,7 +9636,7 @@ function PulsePage(){
     {sess&&<PuSessionView sid={sess} onClose={()=>setSess(null)}/>}
 
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
-                 fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"var(--ink-4)"}}>
+                 fontSize:11,color:"var(--ink-3)"}}>
       телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS ·
       открытие чужого отчёта пишется в журнал (admin_report_open)
     </div>
@@ -9657,8 +9672,8 @@ const PROFILE_CSS=`
 .pf-sub{font-size:12px;color:var(--ink-3);}
 .pf-card{padding:22px 24px;margin-bottom:16px;position:relative;}
 .pf-card-h{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;}
-.pf-ai-badge{display:inline-flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;
-  letter-spacing:.05em;text-transform:uppercase;color:var(--accent);}
+.pf-ai-badge{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:11px;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--accent);font-variant-numeric:tabular-nums}
 .pf-ai-badge .sp{animation:pf-sparkle 3s ease-in-out infinite;}
 @keyframes pf-sparkle{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.86)}}
 .pf-ai{border:1px solid color-mix(in oklab,var(--accent),transparent 84%);
@@ -9680,15 +9695,15 @@ const PROFILE_CSS=`
 .pf-note-gen .dots i{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:pf-bounce 1.1s infinite;}
 .pf-note-gen .dots i:nth-child(2){animation-delay:.15s;} .pf-note-gen .dots i:nth-child(3){animation-delay:.3s;}
 @keyframes pf-bounce{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
-.pf-src{font-size:10.5px;color:var(--ink-4);margin-top:12px;font-family:'JetBrains Mono',monospace;display:flex;align-items:center;gap:6px;}
+.pf-src{font-size:12px;color:var(--ink-3);margin-top:12px;font-family:inherit;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
 .pf-src .live{width:5px;height:5px;border-radius:50%;background:var(--pos);}
-.pf-sub-h{font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);margin:16px 0 9px;}
+.pf-sub-h{font-size:11px;font-family:inherit;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin:16px 0 9px;font-variant-numeric:tabular-nums}
 .pf-sub-h:first-child{margin-top:2px;}
 .pf-topics{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
 .pf-topic{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;padding:5px 7px 5px 12px;border-radius:9px;
   background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2);transition:border-color .14s,background .14s,color .14s;}
 .pf-topic.anchor{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 80%);color:var(--accent);font-weight:500;}
-.pf-topic .lock{font-size:9px;opacity:.7;}
+.pf-topic .lock{font-size:11px;opacity:.8;}
 .pf-tacts{display:inline-flex;gap:0;max-width:0;overflow:hidden;transition:max-width .18s ease;}
 .pf-topic:hover .pf-tacts{max-width:28px;}
 .pf-tacts button{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;color:currentColor;opacity:.6;transition:opacity .12s,background .12s;}
@@ -9704,8 +9719,8 @@ const PROFILE_CSS=`
   padding:5px 12px;width:130px;transition:border-color .16s,border-style .16s,width .2s;font-family:inherit;}
 .pf-add input:focus{outline:none;border-color:var(--accent);border-style:solid;width:210px;}
 .pf-add input::placeholder{color:var(--ink-4);}
-.pf-muted-h{font-size:11px;color:var(--ink-4);margin-top:16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
-  font-family:'JetBrains Mono',monospace;transition:color .12s;}
+.pf-muted-h{font-size:11px;color:var(--ink-3);margin-top:16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  font-family:inherit;transition:color .12s;font-variant-numeric:tabular-nums}
 .pf-muted-h:hover{color:var(--ink-3);}
 .pf-muted-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}
 .pf-muted-chip{font-size:11.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--hair);color:var(--ink-4);
@@ -9716,7 +9731,7 @@ const PROFILE_CSS=`
 .pf-row-t{font-size:13.5px;color:var(--ink);}
 .pf-row-d{font-size:12px;color:var(--ink-3);margin-top:2px;max-width:44ch;}
 .pf-row-r{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none;}
-.pf-detected{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);display:inline-flex;align-items:center;gap:5px;}
+.pf-detected{font-family:inherit;font-size:11px;color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
 .pf-detected .d{width:5px;height:5px;border-radius:50%;background:var(--pos);}
 .pf-select{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
   font-size:13px;padding:8px 30px 8px 11px;min-width:210px;cursor:pointer;transition:border-color .14s;
@@ -9724,7 +9739,7 @@ const PROFILE_CSS=`
   background-repeat:no-repeat;background-position:right 10px center;}
 .pf-select:focus{outline:none;border-color:var(--accent);}
 .pf-input-sm{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
-  font-size:13px;padding:8px;font-family:'JetBrains Mono',monospace;min-width:60px;width:60px;text-align:center;transition:border-color .14s;}
+  font-size:13px;padding:8px;font-family:inherit;min-width:60px;width:60px;text-align:center;transition:border-color .14s;font-variant-numeric:tabular-nums}
 .pf-input-sm:focus{outline:none;border-color:var(--accent);}
 .pf-toggle{width:42px;height:24px;border-radius:999px;background:var(--hair-2);position:relative;flex:none;transition:background .18s;}
 .pf-toggle.on{background:var(--accent);}
@@ -9732,7 +9747,7 @@ const PROFILE_CSS=`
   box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.2,0,0,1);}
 .pf-toggle.on span{transform:translateX(18px);}
 .pf-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;}
-.pf-saved{font-size:12px;color:var(--pos);font-family:'JetBrains Mono',monospace;}
+.pf-saved{font-size:12px;color:var(--pos);font-family:inherit;font-variant-numeric:tabular-nums}
 .pf-save{font-size:13px;color:#fff;background:var(--accent);border-radius:9px;padding:9px 20px;font-weight:500;
   transition:transform .1s,filter .14s;}
 .pf-save:hover{filter:brightness(1.05);}
@@ -9865,13 +9880,13 @@ function ProfilePage(){
         .pf-power-row{display:flex;align-items:baseline;gap:10px;padding:7px 4px;border-top:1px solid var(--hair);
           font-size:13px;color:var(--ink-2);}
         .pf-power-row:first-child{border-top:0;}
-        .pf-power-row .tick{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);flex:none;width:14px;}
+        .pf-power-row .tick{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;width:14px;font-variant-numeric:tabular-nums}
         .pf-power-row.done .tick{color:var(--pos);}
         .pf-power-row.done{color:var(--ink-3);}
         .pf-power-row:not(.done){cursor:pointer;transition:color .12s;}
         .pf-power-row:not(.done):hover{color:var(--accent);}
         .pf-power-row .lbl{flex:1;min-width:0;}
-        .pf-power-row .pts{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);flex:none;}
+        .pf-power-row .pts{font-family:inherit;font-size:12px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
         .pf-power-row:not(.done) .pts{color:var(--accent);font-weight:600;}
         .pf-power-cap{font-size:11.5px;color:var(--ink-4);margin-top:10px;line-height:1.5;}
       `}</style>
