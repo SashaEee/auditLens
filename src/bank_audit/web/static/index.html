@@ -1916,6 +1916,8 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
   padding:16px 16px 14px 20px;box-shadow:var(--shadow-1);display:flex;flex-direction:column;gap:8px;min-width:0;
   animation:fade .25s ease both;animation-delay:calc(var(--i,0)*60ms)}
 .bf-card.lead{grid-column:1/-1}
+/* нечётное число карточек после ведущей — последняя на всю ширину, без дыры в сетке */
+.bf-cards>.bf-card:not(.lead):last-child:nth-child(even){grid-column:1/-1}
 .bf-card::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;
   background:var(--sev,var(--ink-4))}
 .bf-legend{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:10px 2px 0;
@@ -2515,6 +2517,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-brief-v7"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-brief-v8"></script>
 </body>
 </html>
