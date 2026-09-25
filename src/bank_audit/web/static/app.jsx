@@ -329,13 +329,12 @@ function EmptyOverviewCta(){
   </div>;
 }
 
+// Пустое состояние и ошибка — один блок (S3): значок в плашке, заголовок, пояснение
 function EmptyState({text="Данных нет",title="Ничего не найдено"}){
-  return <div style={{padding:"64px 24px",textAlign:"center"}}>
-    <div style={{display:"inline-flex",width:48,height:48,borderRadius:8,background:"var(--paper-2)",border:"1px solid var(--hair)",alignItems:"center",justifyContent:"center",marginBottom:12,color:"var(--ink-3)"}}>
-      <Ic.search width="20" height="20"/>
-    </div>
-    <div style={{fontWeight:500,marginBottom:4}}>{title}</div>
-    <div className="t-cap" style={{maxWidth:"42ch",margin:"0 auto"}}>{text}</div>
+  return <div className="st-block">
+    <div className="st-ic" aria-hidden="true"><Ic.search width="20" height="20"/></div>
+    <p className="st-t">{title}</p>
+    <p className="st-x">{text}</p>
   </div>;
 }
 
@@ -375,10 +374,12 @@ function PageHead({eyebrow,title,meta,actions,children}){
 }
 
 function ErrState({msg}){
-  return <div style={{padding:"64px 24px",textAlign:"center"}}>
-    <div style={{fontSize:28,marginBottom:12,color:"var(--neg)"}}>⚠</div>
-    <div style={{fontWeight:500,marginBottom:4}}>Ошибка загрузки</div>
-    <div className="t-cap" style={{maxWidth:"42ch",margin:"0 auto"}}>{msg}</div>
+  return <div className="st-block" role="alert">
+    <div className="st-ic err" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 16 16">
+      <path d="M8 2.2 14.3 13H1.7Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+      <path d="M8 6.5v3M8 11.2v.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
+    <p className="st-t">Не удалось загрузить</p>
+    <p className="st-x">{msg}</p>
   </div>;
 }
 
@@ -1582,7 +1583,7 @@ const FY_CSS=`
 .fy-fc{display:flex;flex-direction:column;gap:6px;padding:14px 16px 12px;color:inherit;text-decoration:none;
   background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1);transition:box-shadow .15s,transform .15s}
 .fy-fc:hover{box-shadow:var(--shadow-2);transform:translateY(-1px)}
-.fy-fc-l{font-size:12px;font-weight:600;color:var(--ink-3)}
+.fy-fc-l{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
 .fy-fc-n{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-family:'Source Serif 4',Georgia,serif;font-size:28px;font-weight:600;
   line-height:1.1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .fy-fc-n small,.fy-fc-d{font-family:'Geist','Inter',-apple-system,sans-serif;letter-spacing:0}
@@ -1641,10 +1642,10 @@ const FY_CSS=`
 .fy-ob{margin:20px 0 4px;padding:20px 22px;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1)}
 .fy-ob .q{margin:16px 0 0;font-size:14px;font-weight:600;color:var(--ink)}
 .fy-ob-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-.fy-ob-chip{min-height:32px;padding:0 14px;border:1px solid var(--hair-2);border-radius:999px;background:var(--surface);font:inherit;font-size:13px;
+.fy-ob-chip{min-height:28px;padding:0 12px;border:1px solid var(--hair-2);border-radius:999px;background:var(--surface);font:inherit;font-size:12px;font-weight:500;
   color:var(--ink-2);cursor:pointer;transition:border-color .12s,color .12s,background .12s}
 .fy-ob-chip:hover{border-color:var(--ink-4)}
-.fy-ob-chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.fy-ob-chip[aria-pressed=true]{background:var(--select-soft);border-color:color-mix(in oklab,var(--select),transparent 55%);color:var(--ink)}
 .fy-ob-foot{display:flex;align-items:center;gap:14px;margin-top:18px;flex-wrap:wrap}
 .fy-ob-skip{min-height:32px;border:0;background:none;font:inherit;font-size:13px;color:var(--ink-3);cursor:pointer}
 .fy-ob-skip:hover{color:var(--ink)}
@@ -5075,7 +5076,7 @@ function TrustMarks({score}){
   const tier = v>=0.85 ? "h" : v>=0.55 ? "m" : "l";
   const marks = v>=0.85 ? "●●●" : v>=0.55 ? "●●○" : v>0 ? "●○○" : "○○○";
   return <span className={`dr-trust-marks dr-trust-marks-${tier}`}
-               title={`trust ${v.toFixed(2)}`}>{marks}</span>;
+               title={`доверие ${v.toFixed(2).replace(".",",")}`}>{marks}</span>;
 }
 
 // Словарь должен совпадать с тем, что реально присылает разбор источников
@@ -5107,7 +5108,7 @@ function TrustDots({score}){
   if(!isFinite(w))return null;
   const lvl=w>=0.9?3:w>=0.7?2:w>=0.5?1:0;
   const label=w>=0.9?"первоисточник":w>=0.7?"проверенный":w>=0.5?"с оговоркой":"ниже порога";
-  return <span className="trust-dots" title={`доверие ${w.toFixed(2)} — ${label}`}>
+  return <span className="trust-dots" title={`доверие ${w.toFixed(2).replace(".",",")} — ${label}`}>
     {[1,2,3].map(i=><i key={i} className={i<=lvl?"on":""}/>)}
   </span>;
 }
@@ -7143,7 +7144,7 @@ function MethodNote({title, children}){
   return <div className="method-note">
     <button type="button" className="method-note-btn" onClick={()=>setOpen(o=>!o)}
             aria-expanded={open}>
-      <span className="method-note-mark">?</span>{title}
+      <span className="method-note-mark" aria-hidden="true"><RvIco s={15} d={<><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.6v.4"/></>}/></span>{title}
       <span className="method-note-chev">{open?"свернуть":"как это считается"}</span>
     </button>
     {open&&<div className="method-note-body">{children}</div>}
@@ -9678,9 +9679,9 @@ const PROFILE_CSS=`
 @keyframes pf-sparkle{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.86)}}
 .pf-ai{border:1px solid color-mix(in oklab,var(--accent),transparent 84%);
   background:linear-gradient(180deg,color-mix(in oklab,var(--accent-soft),transparent 62%),transparent 60%);}
-.pf-mini{font-size:11.5px;color:var(--ink-3);border:1px solid var(--hair);border-radius:7px;padding:5px 11px;
+.pf-mini{font-size:12px;font-weight:500;color:var(--ink-2);background:var(--surface);border:1px solid var(--hair-2);border-radius:7px;height:28px;padding:0 10px;
   transition:border-color .14s,color .14s,transform .1s;white-space:nowrap;}
-.pf-mini:hover:not(:disabled){border-color:var(--accent);color:var(--accent);}
+.pf-mini:hover:not(:disabled){border-color:var(--ink-4);color:var(--ink);}
 .pf-mini:active:not(:disabled){transform:scale(.96);}
 .pf-mini:disabled{opacity:.55;cursor:default;}
 .pf-hint{font-size:12.5px;line-height:1.5;color:var(--ink-3);margin-bottom:12px;max-width:64ch;text-wrap:pretty;}
@@ -9697,11 +9698,11 @@ const PROFILE_CSS=`
 @keyframes pf-bounce{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
 .pf-src{font-size:12px;color:var(--ink-3);margin-top:12px;font-family:inherit;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
 .pf-src .live{width:5px;height:5px;border-radius:50%;background:var(--pos);}
-.pf-sub-h{font-size:11px;font-family:inherit;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin:16px 0 9px;font-variant-numeric:tabular-nums}
+.pf-sub-h{font-size:11px;font-weight:600;font-family:inherit;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin:16px 0 9px;font-variant-numeric:tabular-nums}
 .pf-sub-h:first-child{margin-top:2px;}
 .pf-topics{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
-.pf-topic{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;padding:5px 7px 5px 12px;border-radius:9px;
-  background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2);transition:border-color .14s,background .14s,color .14s;}
+.pf-topic{display:inline-flex;align-items:center;gap:5px;min-height:28px;font-size:12px;font-weight:500;padding:0 6px 0 12px;border-radius:999px;
+  background:var(--paper-2);border:1px solid transparent;color:var(--ink-2);transition:border-color .14s,background .14s,color .14s;}
 .pf-topic.anchor{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 80%);color:var(--accent);font-weight:500;}
 .pf-topic .lock{font-size:11px;opacity:.8;}
 .pf-tacts{display:inline-flex;gap:0;max-width:0;overflow:hidden;transition:max-width .18s ease;}
@@ -9709,15 +9710,15 @@ const PROFILE_CSS=`
 .pf-tacts button{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;color:currentColor;opacity:.6;transition:opacity .12s,background .12s;}
 .pf-tacts button:hover{opacity:1;background:color-mix(in oklab,currentColor,transparent 88%);}
 .pf-rec{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
-.pf-rec-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:5px 12px;border-radius:9px;
-  border:1px dashed color-mix(in oklab,var(--accent),transparent 62%);background:none;color:var(--accent);
+.pf-rec-chip{display:inline-flex;align-items:center;gap:6px;height:28px;font-size:12px;font-weight:500;padding:0 12px;border-radius:999px;
+  border:1px dashed var(--hair-2);background:none;color:var(--ink-2);
   transition:background .14s,border-style .14s,transform .1s;animation:pf-pop .3s ease-out;}
-.pf-rec-chip:hover{background:var(--accent-soft);border-style:solid;}
+.pf-rec-chip:hover{background:var(--select-soft);border-style:solid;border-color:color-mix(in oklab,var(--select),transparent 55%);color:var(--ink);}
 .pf-rec-chip:active{transform:scale(.96);}
 @keyframes pf-pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
-.pf-add input{border:1px dashed var(--hair-2);border-radius:9px;background:none;color:var(--ink);font-size:12.5px;
-  padding:5px 12px;width:130px;transition:border-color .16s,border-style .16s,width .2s;font-family:inherit;}
-.pf-add input:focus{outline:none;border-color:var(--accent);border-style:solid;width:210px;}
+.pf-add input{border:1px dashed var(--hair-2);border-radius:999px;background:none;color:var(--ink);font-size:12px;
+  height:28px;padding:0 12px;width:130px;transition:border-color .16s,border-style .16s,width .2s;font-family:inherit;}
+.pf-add input:focus{outline:none;border-color:var(--select);border-style:solid;width:210px;}
 .pf-add input::placeholder{color:var(--ink-4);}
 .pf-muted-h{font-size:11px;color:var(--ink-3);margin-top:16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
   font-family:inherit;transition:color .12s;font-variant-numeric:tabular-nums}
@@ -9748,9 +9749,9 @@ const PROFILE_CSS=`
 .pf-toggle.on span{transform:translateX(18px);}
 .pf-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;}
 .pf-saved{font-size:12px;color:var(--pos);font-family:inherit;font-variant-numeric:tabular-nums}
-.pf-save{font-size:13px;color:#fff;background:var(--accent);border-radius:9px;padding:9px 20px;font-weight:500;
+.pf-save{font-size:13px;color:var(--paper);background:var(--ink);border-radius:9px;height:34px;padding:0 16px;font-weight:500;
   transition:transform .1s,filter .14s;}
-.pf-save:hover{filter:brightness(1.05);}
+.pf-save:hover{opacity:.88;}
 .pf-save:active{transform:scale(.97);}
 `;
 const BANK_RU={sberbank:"Сбербанк",vtb:"ВТБ",alfabank:"Альфа-Банк",tinkoff:"Т-Банк",gazprombank:"Газпромбанк",rshb:"Россельхозбанк",domrf:"Банк ДОМ.РФ",psb:"ПСБ",sovcombank:"Совкомбанк",mtsbank:"МТС-Банк",raiffeisen:"Райффайзен",otkritie:"Открытие"};
@@ -9884,10 +9885,10 @@ function ProfilePage(){
         .pf-power-row.done .tick{color:var(--pos);}
         .pf-power-row.done{color:var(--ink-3);}
         .pf-power-row:not(.done){cursor:pointer;transition:color .12s;}
-        .pf-power-row:not(.done):hover{color:var(--accent);}
+        .pf-power-row:not(.done):hover{color:var(--select);}
         .pf-power-row .lbl{flex:1;min-width:0;}
         .pf-power-row .pts{font-family:inherit;font-size:12px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
-        .pf-power-row:not(.done) .pts{color:var(--accent);font-weight:600;}
+        .pf-power-row:not(.done) .pts{color:var(--ink);font-weight:600;}
         .pf-power-cap{font-size:11.5px;color:var(--ink-4);margin-top:10px;line-height:1.5;}
       `}</style>
       <div className="eyebrow" style={{marginBottom:12}}>Сила персонализации · <span style={{color:"var(--accent)"}}>✦ растёт от ваших действий</span></div>

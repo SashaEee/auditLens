@@ -171,14 +171,14 @@ input,select,textarea{font:inherit;color:inherit}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
 .icon-btn{width:30px;height:30px;border-radius:6px;display:grid;place-items:center;color:var(--ink-2);border:1px solid transparent;transition:background .12s,border-color .12s,color .12s;}
 .icon-btn:hover{background:var(--paper-2);border-color:var(--hair);color:var(--ink)}
-.icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.icon-btn:focus-visible{outline:2px solid var(--select);outline-offset:2px}
 .content{padding:28px 28px 64px;max-width:1480px;width:100%;margin:0 auto}
 .content:has(> .loophole-host--active){padding:0;max-width:none;margin:0;display:flex;flex:1;min-height:0}
 .loophole-host--active{width:100%;flex:1;min-height:0}
 .loophole-page{width:100%;height:100%;min-height:0;margin:0}
 .btn{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:6px;font-size:13px;font-weight:500;letter-spacing:-.005em;transition:background .12s,border-color .12s,color .12s,transform .06s;border:1px solid transparent;}
 .btn:active{transform:translateY(0.5px)}
-.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn:focus-visible{outline:2px solid var(--select);outline-offset:2px}
 .btn-primary{background:var(--ink);color:var(--paper)}
 .btn-primary:hover{opacity:.88}
 .btn-accent{background:var(--accent);color:#fff}
@@ -212,7 +212,7 @@ tbody td.right{text-align:right}
 tbody tr{transition:background .1s}
 tbody tr:hover{background:var(--paper-2)}
 tbody tr:last-child td{border-bottom:0}
-tbody tr.is-sber td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
+tbody tr.is-sber td:first-child{box-shadow:inset 3px 0 0 var(--sber)}
 .spark{display:block}
 .hero-metric .num{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:96px;line-height:.95;letter-spacing:-.04em;font-variant-numeric:tabular-nums;}
 .hero-metric .num em{font-style:italic;color:var(--accent)}
@@ -1122,7 +1122,7 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 .kb-kind-n{width:150px;flex:none;color:var(--ink-2)}
 .kb-kind-bar{flex:1;height:6px;background:var(--paper-2);border-radius:4px;overflow:hidden}
 .kb-kind-bar i{display:block;height:100%;border-radius:4px;
-  background:color-mix(in oklab,var(--accent),transparent 45%)}
+  background:color-mix(in oklab,var(--ink-3),transparent 35%)}
 .kb-kind-v{width:44px;text-align:right;font-size:11px;color:var(--ink-3)}
 .kb-banks{display:flex;flex-wrap:wrap;gap:6px}
 .kb-bank-chip{border:1px solid var(--hair);background:var(--paper-2);border-radius:14px;
@@ -1407,7 +1407,7 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:4px;border:2px solid var(--paper)}
 ::-webkit-scrollbar-thumb:hover{background:var(--ink-4)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:4px}
 /* ── Адаптив под мобильные: drawer-рейл, нативный чат, тач-таргеты, таблицы ──
    Всё строго в @media(max-width:…) — десктоп (≥961px) не меняется. ── */
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -1524,7 +1524,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   table.m-cards thead{position:absolute;width:1px;height:1px;padding:0;margin:-0px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
   table.m-cards tbody{display:block}
   table.m-cards tr{display:block;background:var(--surface);border:1px solid var(--hair);border-radius:14px;padding:14px 16px;margin-bottom:10px;box-shadow:var(--shadow-1)}
-  table.m-cards tr.is-sber{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  table.m-cards tr.is-sber{border-color:var(--sber);box-shadow:0 0 0 1px var(--sber)}
   table.m-cards tr:hover td{background:transparent}
   table.m-cards td{display:flex;align-items:center;justify-content:space-between;gap:14px;width:auto;border:0;padding:4px 0;text-align:right;font-size:14px;white-space:normal}
   table.m-cards td::before{content:attr(data-label);color:var(--ink-3);font:500 10.5px/1.3 'JetBrains Mono',monospace;letter-spacing:.05em;text-transform:uppercase;text-align:left;flex:none;font-variant-numeric:tabular-nums}
@@ -3391,11 +3391,64 @@ section>.ov-note:first-of-type{margin:0 0 10px}
 /* ИИ-аналитик: надстрочник приветствия — тем же шрифтом, что везде */
 .aw-eyebrow{font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.06em}
 @media(pointer:coarse){.ptab,.tab,.seg-btn{min-height:40px}.seg,.tab-row{padding:3px}}
+/* ══ Единая система вкладок (S3): кнопки, чипы, карточки, показатели, состояния ══
+   Кнопки — три вида: основная (чернильная; красный у нас — риск и значимость),
+   обычная (контур), текстовая (синяя). Два размера: 34 и 28 px. */
+.btn{border-radius:9px}
+.btn-sm{border-radius:7px;font-weight:500}
+.btn:not(.btn-primary):not(.btn-accent){background:var(--surface);color:var(--ink-2);border-color:var(--hair-2)}
+.btn:not(.btn-primary):not(.btn-accent):hover{background:var(--surface);color:var(--ink);border-color:var(--ink-4)}
+.btn-primary,.btn-accent{background:var(--ink);color:var(--paper);border-color:var(--ink);filter:none}
+.btn-primary:hover,.btn-accent:hover{opacity:.88;filter:none}
+/* обычная — те же метрики у самописных кнопок разделов */
+.bf-btn,.btn-export{height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--hair-2);background:var(--surface);
+  font-family:inherit;font-size:12px;font-weight:500;color:var(--ink-2)}
+.bf-btn:hover,.btn-export:hover:not(:disabled){background:var(--surface);color:var(--ink);border-color:var(--ink-4)}
+.rv-bell{border-radius:9px;font-size:13px;font-weight:500}
+.icon-btn{border-radius:8px}
+/* текстовая — синяя, подчёркивание при наведении */
+.bf-more,.xp-b,.rv-more-l,.fy-tune,.ovt-gl,.ovt-all{color:var(--select)}
+/* чипы: «выбор» (переключается), «метка» (просто подпись); снимаемый фильтр — .rv-achip */
+.chip,.kb-bank-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--hair-2);border-radius:999px;
+  background:var(--surface);font:inherit;font-size:12px;font-weight:500;color:var(--ink-2);cursor:pointer;transition:border-color .12s,background-color .12s,color .12s}
+.chip:hover,.kb-bank-chip:hover{border-color:var(--ink-4);color:var(--ink)}
+.chip.active,.chip.on,.chip[aria-pressed=true]{background:var(--select-soft);border-color:color-mix(in oklab,var(--select),transparent 55%);color:var(--ink)}
+.chip i,.kb-bank-chip i{font-style:normal;font-size:11px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.badge{height:22px;padding:0 8px;border-radius:999px;border-color:transparent;background:var(--paper-2);font-size:11px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-2)}
+.badge.pos{color:var(--pos);background:color-mix(in oklab,var(--pos),transparent 88%);border-color:transparent}
+.badge.neg{color:var(--neg);background:color-mix(in oklab,var(--neg),transparent 88%);border-color:transparent}
+.badge.warn{color:var(--warn-ink);background:color-mix(in oklab,var(--warn),transparent 86%);border-color:transparent}
+.src-w{display:inline-flex;align-items:center;height:22px;padding:0 8px;border:0;border-radius:999px;background:var(--paper-2);
+  font-size:11px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-2)}
+.src-w.hi{color:var(--pos);background:color-mix(in oklab,var(--pos),transparent 88%)}
+.src-w.mid{color:var(--ink-2);background:var(--paper-2)}
+.src-w.lo{color:var(--warn-ink);background:color-mix(in oklab,var(--warn),transparent 86%)}
+.mk-kind .chip{font-weight:500}
+.ov .bf-fb-b,.bf-fb-b{border-radius:7px}
+/* карточки: одно скругление и одна тень у поднятых поверхностей */
+.surface{box-shadow:var(--shadow-1)}
+.surface-flat{border-radius:var(--r-lg)}
+/* плитка показателя: подпись → число → пояснение (как в «Отзывах») */
+.mk-kpi,.kb-what-k{display:flex;flex-direction:column;padding:16px 20px}
+.mk-kpi span,.kb-what-k span{order:-1;margin:0 0 10px;hyphens:auto;-webkit-hyphens:auto;overflow-wrap:break-word;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.mk-kpi b{font-size:28px;line-height:1.02;letter-spacing:-.02em}
+.kb-what-k b{line-height:1.02}
+.rv-ks{font-size:12px}
+thead th{font-weight:600}
+/* пустое состояние и ошибка — один блок */
+.st-block{padding:56px 24px;text-align:center}
+.st-ic{display:inline-grid;place-items:center;width:44px;height:44px;margin-bottom:12px;border-radius:12px;border:1px solid var(--hair);
+  background:var(--paper-2);color:var(--ink-3)}
+.st-ic.err{color:var(--warn-ink);background:color-mix(in oklab,var(--warn),transparent 88%);border-color:transparent}
+.st-t{margin:0 0 4px;font-size:15px;font-weight:600;color:var(--ink)}
+.st-x{max-width:46ch;margin:0 auto;font-size:13px;line-height:1.5;color:var(--ink-3)}
+/* «как считается» у «Банков» — тем же значком ⓘ, что «Как читать» */
+.method-note-mark{width:auto;height:auto;border:0;font-size:inherit}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-s2e"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-s3d"></script>
 </body>
 </html>
