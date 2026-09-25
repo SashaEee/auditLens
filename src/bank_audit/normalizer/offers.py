@@ -11,6 +11,22 @@ import logging
 from .. import db
 from ..hashing import stable_digest
 
+# Смена выдачи агрегатора (страница банка ↔ витрина с фильтром суммы) — не
+# изменение условий: до закрепления выдачи ВТБ «Наличными» давал два таких
+# «изменения» каждое утро. Историю не удаляем, а не считаем. Условия — для
+# запросов к change_history ch (журнал «Рынка» и связка с «Отзывами»).
+SAME_CTX_SQL = """NOT (p.raw->'filter_context' IS NOT NULL
+                   AND n.raw->'filter_context' IS NOT NULL
+                   AND p.raw->'filter_context' <> n.raw->'filter_context')"""
+CTX_JOIN_SQL = """LEFT JOIN product_terms p ON p.terms_id = ch.prev_terms_id
+          LEFT JOIN product_terms n ON n.terms_id = ch.new_terms_id"""
+# Значимое изменение: в диффе есть не только ставка, либо ставка сдвинулась
+# хотя бы на 0,01 п. п. (микрошум расчётных ставок не показываем)
+SIGNIFICANT_CHANGE_SQL = """((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
+                          WHERE k <> 'rate_pct') > 0
+                    OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
+                         - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)"""
+
 log = logging.getLogger(__name__)
 from ..models import OfferDraft
 from .rules import BANK_ALIASES, SBER_SLUGS, normalize_bank_key

@@ -343,6 +343,7 @@ def metrics(days: int = 14) -> dict:
             "search": _search_health(days),
             "news_quality": _news_quality(days),
             "review_sources": _review_sources(),
+            "signal_journal": _signal_journal(),
             "personalization": _personalization(days),
             "topics": _team_topics(days)}
 
@@ -352,6 +353,15 @@ def _review_sources() -> dict:
     try:
         from ..rag import reviews_dash as rd
         return rd.source_health()
+    except Exception as e:  # noqa: BLE001 — блок «Пульса» не валит страницу
+        return {"error": str(e)[:200]}
+
+
+def _signal_journal() -> dict:
+    """Точность сигналов «Отзывов» по отметкам аудиторов (reviews_work)."""
+    try:
+        from ..rag import reviews_work
+        return reviews_work.journal_stats(180)
     except Exception as e:  # noqa: BLE001 — блок «Пульса» не валит страницу
         return {"error": str(e)[:200]}
 

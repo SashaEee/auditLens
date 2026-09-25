@@ -540,6 +540,15 @@ async def bankiru_fts_background_loop():
             await asyncio.to_thread(review_annotate.apply_to_index)
         except Exception as e:  # noqa: BLE001
             log.warning("разметка отзывов: %s", e)
+        try:
+            # Векторы изложений новых жалоб — для групп похожих в ленте;
+            # ограничено по времени, недосчитанное доберёт следующий тик
+            from ..rag import reviews_work
+            r = await asyncio.to_thread(reviews_work.embed_summaries)
+            if r.get("done"):
+                log.info("векторы изложений: %d из %d за %s с", r["done"], r["todo"], r["seconds"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("векторы изложений: %s", e)
         await asyncio.sleep(FTS_SYNC_EVERY_S)
 
 

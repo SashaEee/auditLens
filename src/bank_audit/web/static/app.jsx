@@ -99,6 +99,7 @@ const fmtTerm = (min,max) => {
 const apiFetch = (path, opts) => fetch(path, opts).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json();});
 const apiPost  = (path,body) => fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 const apiDel   = (path) => fetch(path,{method:"DELETE"}).then(r=>r.json()).catch(()=>{});
+const apiPatch = (path,body) => fetch(path,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 const apiPut   = (path,body) => fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -771,7 +772,7 @@ const xpWeek=(ov,k)=>[
   ["Норма",ov.baseline_week!=null
     ?`${Math.round(ov.baseline_week)} в неделю — среднее по окну 14–63 дня назад`:"—"],
   ["Рынок",ov.market_ratio!=null?`по всем банкам ×${ov.market_ratio} к своей норме`:"—"],
-  ["Масштаб",k.total?`корпус ${fmtNum(k.total)} жалоб за 90 дн · доля рынка ${k.market_share_pct}% · ${k.market_rank}-е место из ${k.market_banks}`:"—"],
+  ["Масштаб",k.total?`корпус ${fmtNum(k.total)} жалоб за 90 дн · доля в жалобах на все банки ${pct1(k.market_share_pct)} — без поправки на число клиентов`:"—"],
   ["Канал","отзывы на площадках (banki.ru, sravni.ru, finuslugi.ru и др.) — один из каналов, не все обращения"],
 ];
 const xpOurChanges=tm=>[
@@ -1370,6 +1371,7 @@ const FY_CSS=`
 .fy-sig-row:hover{background:color-mix(in oklab,var(--surface),transparent 30%);}
 .fy-sig-dot{width:6px;height:6px;border-radius:50%;flex:none;align-self:center;background:var(--warn);}
 .fy-sig-dot.high{background:var(--neg);}
+.fy-sig-dot.calm{background:var(--pos);opacity:.55;}
 .fy-sig-l{flex:1;min-width:0;font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .fy-sig-n{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-3);white-space:nowrap;flex:none;}
 .fy-sig-why{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);white-space:nowrap;flex:none;}
@@ -1570,6 +1572,7 @@ function ForYouPage(){
   const[cfb,setCfb]=useState({});             // оценки зацепок
   const[tk,setTk]=useState({});               // зацепки «в работе»
   const[obGone,setObGone]=useState(false);    // onboarding скрыт в этой сессии
+  const[subs,setSubs]=useState(null);         // подписки на сигналы жалоб — живое состояние
   const load=()=>apiFetch("/api/overview/foryou")
     .then(d=>{setP(d.foryou||null);setErr(false);})
     .catch(()=>{setP(null);setErr(true);});
@@ -1577,6 +1580,9 @@ function ForYouPage(){
     apiFetch("/api/feedback?kind=news").then(d=>setFb(d.items||{})).catch(()=>{});
     apiFetch("/api/feedback?kind=check").then(d=>setCfb(d.items||{})).catch(()=>{});
     apiFetch("/api/feedback?kind=check_taken").then(d=>setTk(d.items||{})).catch(()=>{});
+    // не из утренней сборки страницы: подписка оформляется в течение дня,
+    // и всплеск должен быть виден сразу
+    apiFetch("/api/reviews/subscriptions").then(d=>setSubs(d.items||[])).catch(()=>setSubs([]));
   },[]);
   const refresh=async()=>{ if(busy)return; setBusy(true);
     try{const d=await apiPost("/api/overview/foryou/refresh",{});setP(d.foryou||null);}catch{}
@@ -1745,6 +1751,23 @@ function ForYouPage(){
       </div>
     </section>}
 
+    {/* ②b' подписки на сигналы («Отзывы» → «Следить»): банк и продукт аудитора */}
+    {subs&&subs.length>0&&<section className="fy-sec">
+      <div className="eyebrow">Ваши подписки · всплески жалоб за 7 дней</div>
+      <div className="fy-sig">
+        {subs.map((x,i)=>{const hot=(x.signals||[]).length>0, w=x.watch||[];
+          const go=th=>bfGoDrill({page:"reviews",params:{bank:x.bank,product:x.product||"",theme:th||""}});
+          return <div key={i} className="fy-sig-row" title="Открыть срез в «Отзывах»"
+                      onClick={()=>go(hot?x.signals[0].key:"")}>
+            <span className={"fy-sig-dot"+(hot?(x.signals.some(s=>s.level==="high")?" high":""):w.length?"":" calm")}/>
+            <span className="fy-sig-l">{x.bank}{x.product?` · ${x.product}`:" · все продукты"}</span>
+            <span className="fy-sig-n">{hot?x.signals.map(s=>`${s.short||s.label} ${s.new?"новое":"×"+rvNum(s.ratio)}`).join(" · ")
+              :w.length?"быстрее рынка: "+w.map(d=>`${d.short||d.label} ×${rvNum(d.gap)}`).join(" · ")
+              :"спокойно"}</span>
+          </div>;})}
+      </div>
+    </section>}
+
     {/* ②c связка дня, касающаяся зоны пользователя (новость × наши данные) */}
     {(p.links||[]).length>0&&<section className="fy-sec">
       <div className="eyebrow">Связка дня · <span className="fy-ai">✦ новость × данные по вашей зоне</span></div>
@@ -1770,7 +1793,9 @@ function ForYouPage(){
           const st=c.stats;
           const d=st&&typeof st.delta_pct==="number"?st.delta_pct:null;
           return <div key={c.slug} className="fy-card" onClick={()=>openReviews(c)} title="Открыть в «Отзывах»">
-            <div className="lbl"><span>{c.label}</span>{st&&st.market_rank?<span>#{st.market_rank} на рынке</span>:null}</div>
+            {/* «Место на рынке» по жалобам не показываем: без поправки на число
+                клиентов оно читается как «жалоб меньше, чем у конкурента» */}
+            <div className="lbl"><span>{c.label}</span></div>
             {st?<div className="num tnum">{(st.total||0).toLocaleString("ru")}<small>жалоб</small>
                 {d!=null&&!st.delta_low_n&&<span className={"delta "+(d>0?"up":"down")}>{d>0?"+":""}{Math.round(d)}%</span>}</div>
               :<div style={{fontSize:14,color:"var(--ink-3)",padding:"6px 0"}}>отдельного среза по продукту нет</div>}
@@ -3388,6 +3413,109 @@ const IcoRadar=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" 
 const IcoCheck=()=> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.5 2.5 4.7-5.4"/></svg>;
 const IcoTrendUp=()=> <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>;
 
+// ── Рабочее место аудитора (волна 4) ─────────────────────────────────────────
+const RV_TO={cbr:"ЦБ",court:"суд",rpn:"Роспотребнадзор",fas:"ФАС",prosecutor:"прокуратура",
+  finombudsman:"финомбудсмен",police:"полиция"};
+const RV_VULN={pensioner:"пенсионер",low_income:"низкий доход",svo:"участник СВО",
+  minor:"несовершеннолетний",disabled:"инвалид",ill:"тяжелобольной"};
+const rvNum=v=>v==null?"—":String(v).replace(".",",");
+// Признаки ленты: те же коды, что у панели «Признаки риска» (белый список на сервере)
+const RV_FLAG_OPTS=[
+  ["Эскалация",[["filed:cbr_court","Обратились в ЦБ или суд"],["esc:filed","Уже обратились куда-либо"],["esc:threat","Грозят обратиться"]]],
+  ["Куда",Object.entries(RV_TO).map(([k,v])=>["to:"+k,v[0].toUpperCase()+v.slice(1)])],
+  ["Уязвимые клиенты",[["vuln:any","Все уязвимые"],["vuln:pensioner","Пенсионеры"],["vuln:low_income","Низкий доход"],
+    ["vuln:svo","Участники СВО"],["vuln:minor","Несовершеннолетние"],["vuln:disabled","Инвалиды"],["vuln:ill","Тяжелобольные"]]],
+  ["Практики и суммы",[["no_consent","Без согласия"],["misled","Ввели в заблуждение"],["amount:1m","Сумма от 1 млн ₽"]]],
+];
+const RV_SOURCES=[["banki","banki.ru"],["sravni","sravni.ru"],["bankiros","bankiros.ru"],["finuslugi","finuslugi.ru"]];
+
+// Снимок жалобы при приобщении: если отзыв пропадёт с площадки, в деле
+// останется суть и начало текста
+const rvCaseSnap=r=>(((r.ann&&r.ann.summary)?r.ann.summary+"\n\n":"")+(r.text||"")).slice(0,1500);
+
+// Приобщение жалоб к серверному аудит-делу (то же, что в «Базе знаний»):
+// дело видит команда, к материалам пишут комментарии, выгружают в Excel и
+// Word. Раньше «дело» жило в браузере и пропадало вместе с ним.
+function RvCasePick({items,onClose,onDone}){
+  const[cases,setCases]=useState(null),[title,setTitle]=useState(""),[note,setNote]=useState("");
+  const[busy,setBusy]=useState(false),[err,setErr]=useState(null);
+  useEffect(()=>{apiFetch("/api/cases").then(d=>setCases(d.cases||[])).catch(()=>setCases([]));},[]);
+  const last=(()=>{try{return +localStorage.getItem("al-case-last")||0;}catch{return 0;}})();
+  const attach=async(c)=>{ setBusy(true);setErr(null);
+    try{
+      const payload=items.map(r=>({kind:"review",url:r.url,title:rvCaseSnap(r),note:note.trim()||null}));
+      if(payload.length===1)await apiPost(`/api/cases/${c.case_id}/items`,payload[0]);
+      else await apiPost(`/api/cases/${c.case_id}/items/bulk`,{items:payload});
+      try{localStorage.setItem("al-case-last",String(c.case_id));}catch{}
+      onDone&&onDone(c,items.length);
+    }catch{setErr("Не удалось приобщить: нет доступа к делу или сбой сети");setBusy(false);}
+  };
+  const create=async()=>{ if(!title.trim()||busy)return; setBusy(true);
+    try{const r=await apiPost("/api/cases",{title:title.trim()});await attach({case_id:r.case_id,title:title.trim()});}
+    catch{setErr("Не удалось создать дело");setBusy(false);} };
+  const list=(cases||[]).slice().sort((a,b)=>(b.case_id===last)-(a.case_id===last));
+  return <RvModal onClose={onClose} title={items.length>1?`В аудит-дело: ${items.length} жалоб`:"В аудит-дело"}
+      sub="дело видно вам и тем, кому вы его откроете">
+    <label className="rv-cp-note"><span>Комментарий <i>необязательно</i></span>
+      <input className="input" value={note} onChange={e=>setNote(e.target.value)}
+        placeholder="зачем приобщаете: «повышение ставки после отказа от подписки»"/></label>
+    {cases===null?<Skel h={60}/>:list.length>0&&<div className="rv-cp-list">
+      {list.map(c=><button key={c.case_id} className="rv-cp-case" disabled={busy} onClick={()=>attach(c)}>
+        <span className="rv-cp-t">{c.title}</span>
+        <span className="rv-cp-m">{c.items} матер.{c.shared?" · команда":""}{!c.mine?` · ${c.owner}`:""}{c.case_id===last?" · последнее":""}</span>
+      </button>)}</div>}
+    <div className="rv-cp-new">
+      <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")create();}}
+        placeholder={list.length?"…или новое дело: название":"Название нового дела"}/>
+      <button className="btn btn-primary btn-sm" disabled={!title.trim()||busy} onClick={create}>Создать и приобщить</button>
+    </div>
+    {err&&<div className="rv-cp-err">{err}</div>}
+  </RvModal>;
+}
+
+// Журнал сигналов: всплеск — эпизод со снимком жалоб, из которых он
+// сложился. Отметка «подтвердился / ложный» копит точность радара (видна в
+// «Пульсе»): без неё непонятно, можно ли сигналам доверять.
+function RvJournal({bank,product,onOpen}){
+  const[j,setJ]=useState(null),[open,setOpen]=useState(null),[its,setIts]=useState({});
+  const q=`bank=${encodeURIComponent(bank)}${product?`&product=${encodeURIComponent(product)}`:""}`;
+  const load=()=>apiFetch(`/api/reviews/signal-journal?${q}`).then(setJ).catch(()=>setJ({items:[],days:180}));
+  useEffect(()=>{load();},[bank,product]);
+  const mark=async(e,v)=>{ const nv=e.verdict===v?null:v;
+    setJ(x=>({...x,items:x.items.map(y=>y.signal_id===e.signal_id?{...y,verdict:nv}:y)}));
+    try{await apiPost(`/api/reviews/signal-journal/${e.signal_id}/verdict`,{verdict:nv});}catch{}
+    load(); };
+  const toggle=e=>{ if(open===e.signal_id){setOpen(null);return;} setOpen(e.signal_id);
+    if(!its[e.signal_id])apiFetch(`/api/reviews/signal-journal/${e.signal_id}/reviews`)
+      .then(d=>setIts(m=>({...m,[e.signal_id]:d.items||[]}))).catch(()=>setIts(m=>({...m,[e.signal_id]:[]}))); };
+  if(!j)return <Skel h={160}/>;
+  const L=j.items||[];
+  return <div className="rv-jr">
+    <div className="rv-jr-sum">{L.length?<>Эпизодов за {j.days} дн: <b>{L.length}</b> · отмечено {j.rated}
+      {j.precision!=null?<> · подтвердились <b>{j.precision}%</b></>:""}</>
+      :"Эпизодов пока нет: журнал пополняется, когда радар видит всплеск."}</div>
+    <p className="rv-jr-hint">Отметьте, подтвердился ли сигнал при проверке, — так копится точность радара.</p>
+    {L.map(e=>{const st=e.stats||{}, d1=rvDate(e.first_seen), d2=rvDate(e.last_seen);
+      return <div key={e.signal_id} className={"rv-jr-e"+(e.verdict?" v-"+e.verdict:"")}>
+        <div className="rv-jr-h"><span className="rv-jr-l">{e.label}</span>
+          {e.level==="high"&&<span className="rv-tag compliance">сильный</span>}</div>
+        <div className="rv-jr-m">{d1===d2?d1:`${d1} – ${d2}`} · пик {st.week} за 7 дн при норме ~{rvNum(st.baseline_week)}
+          {st.new?" · новое":st.ratio?` · ×${rvNum(st.ratio)}`:""}{st.bank_specific?" · только у банка":""}</div>
+        <div className="rv-jr-a">
+          <button className={"rv-jr-b ok"+(e.verdict==="confirmed"?" on":"")} onClick={()=>mark(e,"confirmed")}>✓ подтвердился</button>
+          <button className={"rv-jr-b no"+(e.verdict==="false"?" on":"")} onClick={()=>mark(e,"false")}>✕ ложный</button>
+          {e.n_urls>0&&<button className="rv-jr-x" onClick={()=>toggle(e)}>{open===e.signal_id?"скрыть ▴":`жалобы сигнала · ${e.n_urls} ▾`}</button>}
+          {e.verdict_by&&<span className="rv-jr-by">{e.verdict_by}</span>}
+        </div>
+        {open===e.signal_id&&<div className="rv-jr-list">{!its[e.signal_id]?<Skel h={60}/>:its[e.signal_id].map((r,i)=>
+          <div key={i} className="rv-jr-r" role="button" tabIndex={0} onClick={()=>onOpen&&onOpen(r)}
+               onKeyDown={ev=>{if(ev.key==="Enter")onOpen&&onOpen(r);}}>
+            <span className="mono">{rvDate(r.date)}</span>{(r.ann&&r.ann.summary)||(r.text||"").slice(0,180)}</div>)}</div>}
+      </div>;})}
+  </div>;
+}
+
 function ReviewsPage({params}){
   // Контекст перехода: карточка сигнала ведёт не «куда-то в Отзывы», а к своей
   // теме и своему банку. В обратной связи об этом писали дважды: «нажимаешь на
@@ -3425,7 +3553,17 @@ function ReviewsPage({params}){
   const[sortBy,setSortBy]=useState("auto");             // порядок выдачи поиска
   const[feedMore,setFeedMore]=useState(false);          // есть ли ещё страницы
   const[feedMoreBusy,setFeedMoreBusy]=useState(false);
-  const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
+  // рабочее место аудитора: дела, фильтры ленты, группы, журнал, подписка
+  const[pick,setPick]=useState(null);                   // жалобы для приобщения к делу
+  const[casesOpen,setCasesOpen]=useState(false);
+  const[jrOpen,setJrOpen]=useState(false);
+  const[fCity,setFCity]=useState(""),[fSrc,setFSrc]=useState("");
+  const[fOrder,setFOrder]=useState("date");             // date | severity (без поиска)
+  const[fView,setFView]=useState("cards");              // cards | groups
+  const[cl,setCl]=useState(null),[clBusy,setClBusy]=useState(false);
+  const[grp,setGrp]=useState(null),[grpItems,setGrpItems]=useState(null);
+  const[mev,setMev]=useState(null);                     // изменения условий по продукту («Рынок»)
+  const[sub,setSub]=useState(null);                     // подписка на сигналы среза
   const[modalRev,setModalRev]=useState(null);            // полный текст отзыва
   const[drill,setDrill]=useState(null);                  // {type:'city'|'month',value,label}
   const[drillItems,setDrillItems]=useState(null),[drillBusy,setDrillBusy]=useState(false);
@@ -3509,9 +3647,22 @@ function ReviewsPage({params}){
       .then(d=>{setTr(d);setTrBusy(false);}).catch(()=>{setTr({__err:true});setTrBusy(false);});
   },[bank,product,trBasis]);
 
-  useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");}
+  useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");setFCity("");}
     apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>setProds(d.items||[])).catch(()=>setProds([]));
   },[bank]);
+
+  useEffect(()=>{ setSub(null);
+    apiFetch(`/api/reviews/subscription?bank=${enc(bank)}${pq()}`).then(d=>setSub(!!d.subscribed)).catch(()=>setSub(null));
+    setMev(null);
+    if(product)apiFetch(`/api/reviews/market-events?bank=${enc(bank)}${pq()}`).then(setMev).catch(()=>setMev(null));
+  },[bank,product]);
+
+  // группы похожих — те же фильтры, что у ленты (без поиска: у него своя выдача)
+  useEffect(()=>{ if(fView!=="groups")return; setClBusy(true);
+    apiFetch(`/api/reviews/clusters?bank=${enc(bank)}${pq()}&days=${days}${theme?`&theme=${theme}`:""}`
+      +`${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${fSrc}`:""}${escOnly?"&esc=1":""}`)
+      .then(d=>{setCl(d);setClBusy(false);}).catch(()=>{setCl({__err:true});setClBusy(false);});
+  },[fView,bank,product,days,theme,flag,fCity,fSrc,escOnly]);
 
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
   useEffect(()=>{ setAnomBusy(true);setAnom(null);
@@ -3525,7 +3676,9 @@ function ReviewsPage({params}){
   // оставались прошлогодние жалобы.
   const feedQS=(off)=>`/api/reviews/feed?bank=${enc(bank)}${pq()}`
     +`${theme?`&theme=${theme}`:""}${q?`&q=${enc(q)}`:""}`
-    +`&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}${q&&sortBy==="date"?"&sort=date":""}`
+    +`&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`
+    +`${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${fSrc}`:""}`
+    +`${q?(sortBy==="date"?"&sort=date":""):(fOrder==="severity"?"&sort=severity":"")}`
     +`&limit=20&offset=${off}`;
 
   useEffect(()=>{ setFeedBusy(true);setClsOn(false);setFeedMore(false);
@@ -3533,7 +3686,7 @@ function ReviewsPage({params}){
       .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
                 setFeedMore(!!d.has_more);setFeedBusy(false);})
       .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedBusy(false);});
-  },[bank,product,theme,q,days,escOnly,sortBy,flag]);
+  },[bank,product,theme,q,days,escOnly,sortBy,flag,fCity,fSrc,fOrder]);
 
   const loadMoreFeed=()=>{
     setFeedMoreBusy(true);
@@ -3553,21 +3706,16 @@ function ReviewsPage({params}){
       .catch(()=>setClsBusy(false));
   };
 
-  const addCase=(r)=>{try{const k="al-case";const cur=JSON.parse(localStorage.getItem(k)||"[]");
-    if(!cur.find(x=>x.url===r.url)){cur.push({bank:r.bank,product:r.product,date:r.date,city:r.city,url:r.url,text:r.text});
-      localStorage.setItem(k,JSON.stringify(cur));setCaseN(cur.length);}}catch{}};
-  const exportCase=()=>{try{const cur=JSON.parse(localStorage.getItem("al-case")||"[]");
-    if(!cur.length)return;
-    const esc=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
-    // Точка с запятой, а не запятая: Excel в русской локали при запятой
-    // сваливает всю строку в одну ячейку — аудиторы писали, что выгрузка
-    // «требует дополнительного преобразования для читаемого вида».
-    const rows=[["банк","продукт","дата","город","ссылка","текст"].map(esc).join(";")]
-      .concat(cur.map(r=>[r.bank,r.product,r.date,r.city,r.url,
-                          (r.text||"").replace(/\s*\n+\s*/g," ")].map(esc).join(";")));
-    const blob=new Blob(["﻿"+rows.join("\n")],{type:"text/csv;charset=utf-8"});
-    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`audit-case-${Date.now().toString(36)}.csv`;
-    document.body.appendChild(a);a.click();a.remove();}catch{}};
+  const addCase=(r)=>setPick([r]);
+  const onPicked=(c,n)=>{setPick(null);fbToast(n>1?`${n} жалоб приобщено к делу «${c.title}»`:`Приобщено к делу «${c.title}»`,false);};
+  const toggleSub=async()=>{
+    const prev=sub; setSub(!prev);
+    try{ if(prev)await apiDel(`/api/reviews/subscription?bank=${enc(bank)}${pq()}`);
+         else await apiPost("/api/reviews/subscription",{bank,product:product||null});
+         fbToast(prev?"Подписка снята":`Сигналы по «${bank}${product?" · "+product:""}» будут в «Для вас»`,!prev);
+    }catch{setSub(prev);} };
+  const openGroup=g=>{ setGrp(g);setGrpItems(null);
+    apiPost("/api/reviews/by-urls",{urls:g.urls}).then(d=>setGrpItems(d.items||[])).catch(()=>setGrpItems([])); };
 
   const onKey=fn=>e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();fn();}};
   const themeLabel = theme && th && th.themes ? (th.themes.find(x=>x.key===theme)||{}).label : "";
@@ -3631,7 +3779,15 @@ function ReviewsPage({params}){
       <div className="rv-chips">
         {RV_PERIODS.map(([d,l])=><button key={d} className={"rv-chip"+(days===d?" on":"")} onClick={()=>setDays(d)}>{l}</button>)}
       </div>
-      <button className="rv-export" onClick={exportCase} disabled={!caseN}>↧ Аудит-дело{caseN?` · ${caseN}`:""}</button>
+      {/* подписка на сигналы среза: всплески по банку и продукту приходят в «Для вас» */}
+      <div className="rv-facts">
+      {sub!==null&&<button className={"rv-bell"+(sub?" on":"")} onClick={toggleSub}
+        title={sub?"Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться"
+                  :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — всплески будут в «Для вас»`}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        {sub?"Слежу":"Следить"}</button>}
+      <button className="rv-export" onClick={()=>setCasesOpen(true)} title="подборки жалоб и документов под проверку — общие для команды">Аудит-дела</button>
+      </div>
     </div>
 
     {/* ЧТО ИЗМЕНИЛОСЬ — только значимые изменения к прошлому такому же окну.
@@ -3711,17 +3867,26 @@ function ReviewsPage({params}){
                 const tip=trEv?`${rvYm(s.ym)}, события: ${fmtNum(s.n)}${s.expected?` · опубликовано ≈${s.complete_pct}%, по опыту дорастёт до ≈${fmtNum(s.expected)}`:s.partial?` · опубликовано ≈${s.complete_pct}%`:""}`
                   :`${rvYm(s.ym)}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`;
                 const hgt=v=>Math.max(4,Math.round(v/trendMax*100))+"%";
-                return <div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={tip}
+                const ev=!trEv&&mev&&mev.months?mev.months[s.ym]:null;
+                const evTip=ev?`\n\nИзменения условий ${bank} (${product}): ${ev.length}\n`+ev.slice(0,5).map(e=>
+                  `${rvDate(e.date)} · ${e.title}: `+Object.entries(e.diff||{}).map(([k,v])=>
+                    `${MK_FLD[k]||k} ${mkFldVal(k,v.from)} → ${mkFldVal(k,v.to)}`).join("; ")).join("\n")
+                  +(ev.length>5?`\n…ещё ${ev.length-5}`:""):"";
+                return <div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={tip+evTip}
                    role="button" tabIndex={0} onClick={()=>openDrill("month",mv,ml+(s.partial&&!trEv?" (неполный месяц)":""))}
                    onKeyDown={onKey(()=>openDrill("month",mv,ml))}>
                 {s.expected
                   ?<div className="rv-bar rv-bar-exp" style={{height:hgt(s.expected)}}><div className="rv-bar-in" style={{height:Math.round(s.n/s.expected*100)+"%"}}/></div>
                   :<div className={"rv-bar"+(s.spike?" hot":"")+(s.partial?" part":"")} style={{height:hgt(s.n)}}/>}
+                {!trEv&&mev&&mev.category&&<span className={"rv-mev"+(ev?" on":"")} aria-hidden={!ev}>{ev?(ev.length>1?ev.length:""):""}</span>}
                 {(()=>{const[y,m]=s.ym.split("-").map(Number);return <div className={"rv-blab"+((i===0||m===1)?" yr":"")}>
                   <span className="rv-bmon">{RV_MON[m-1]}</span>
                   {(i===0||m===1)&&<span className="rv-byr">{y}</span>}</div>;})()}
               </div>;})}
             </div>
+            {!trEv&&mev&&mev.category&&<div className="rv-mev-note">
+              <span className="rv-mev on"/> изменения условий {bank} по продукту из журнала «Рынка»{mev.since?` (ведётся с ${rvDate(mev.since)})`:""} · наведите на месяц — что поменялось
+              {!Object.keys(mev.months||{}).length&&<> · за период изменений не было</>}</div>}
             {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик: {sp.map(s=>rvYm(s.ym)).join(", ")} — выше базовой линии (медиана+MAD по завершённым месяцам). Клик по столбцу — разобрать, что произошло.</div>:null;})()}
           </>}
         </div>
@@ -3818,6 +3983,8 @@ function ReviewsPage({params}){
             </div>
             <span className={"rv-radar-live"+(anomBusy?" scan":"")} title="радар активен"/>
           </div>
+          <button className="rv-jr-open" onClick={()=>setJrOpen(true)}
+            title="все всплески за полгода со снимком жалоб и отметкой «подтвердился / ложный»">журнал сигналов →</button>
           {anomBusy?
             <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
            :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?
@@ -3895,7 +4062,7 @@ function ReviewsPage({params}){
               одинаковые тексты в ней объединены в одну со счётчиком «похожих».
               Числа сходятся, но это нигде не было сказано — аудитор считал
               карточки и видел расхождение с плашкой. */}
-          {(()=>{const n=(feed||[]).length,
+          {!(fView==="groups"&&!q)&&(()=>{const n=(feed||[]).length,
                        dup=(feed||[]).reduce((a,r)=>a+(r.similar||0),0);
             return dup>0?<span className="rv-count-note" title="одинаковые тексты объединены в одну карточку">
               {" "}· {n + dup} обращений в {n} карточках</span>:null;})()}
@@ -3930,6 +4097,33 @@ function ReviewsPage({params}){
           placeholder="Найти жалобы по смыслу: «не зачисляют выручку по эквайрингу», «навязали страховку»… (Enter)"/>
         {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}>✕</span>}
       </div>
+      {/* Фильтры ленты (Д5): город, площадка, признак; порядок «сначала
+          серьёзные» и группы похожих — без поиска, у него своя выдача */}
+      <div className="rv-ftools">
+        <select className="rv-fsel" value={fCity} onChange={e=>setFCity(e.target.value)} aria-label="Город">
+          <option value="">Все города</option>
+          {fCity&&!((ge&&ge.cities)||[]).some(c=>c.city===fCity)&&<option value={fCity}>{fCity}</option>}
+          {((ge&&ge.cities)||[]).map(c=><option key={c.city} value={c.city}>{c.city} · {fmtNum(c.n)}</option>)}
+        </select>
+        <select className="rv-fsel" value={fSrc} onChange={e=>setFSrc(e.target.value)} aria-label="Площадка">
+          <option value="">Все площадки</option>
+          {RV_SOURCES.map(([k,l])=><option key={k} value={k}>{l}</option>)}
+        </select>
+        <select className={"rv-fsel"+(flag?" on":"")} value={flag} onChange={e=>setFlag(e.target.value)} aria-label="Признак">
+          <option value="">Все жалобы</option>
+          {RV_FLAG_OPTS.map(([g,opts])=><optgroup key={g} label={g}>
+            {opts.map(([k,l])=><option key={k} value={k}>{l}</option>)}</optgroup>)}
+        </select>
+        {!q&&<div className="rv-chips rv-chips-sm" role="group" aria-label="порядок">
+          {[["date","свежие"],["severity","сначала серьёзные"]].map(([k,l])=>
+            <button key={k} className={"rv-chip"+(fOrder===k?" on":"")} onClick={()=>setFOrder(k)}
+              title={k==="severity"?"выше — кто уже обратился в ЦБ или суд, уязвимые клиенты, «без согласия», крупные суммы, проблемы класса «комплаенс»":"сначала свежие"}>{l}</button>)}
+        </div>}
+        {!q&&<div className="rv-chips rv-chips-sm" role="group" aria-label="вид">
+          {[["cards","карточки"],["groups","группы похожих"]].map(([k,l])=>
+            <button key={k} className={"rv-chip"+(fView===k?" on":"")} onClick={()=>setFView(k)}>{l}</button>)}
+        </div>}
+      </div>
       {/* По каким словам искали на самом деле. Аудитор должен видеть, что запрос
           расширили и что часть его слов архив счёл общеупотребительными — иначе
           выдача выглядит необъяснимой, и поиску перестают доверять. */}
@@ -3946,7 +4140,27 @@ function ReviewsPage({params}){
       {!feedBusy&&!feedErr&&q&&feedMeta&&feedMeta.n_words===0&&feed&&feed.length>0&&
         <div className="rv-warn">Слов запроса в текстах нет — все отзывы ниже подобраны по смыслу.
           Это не значит, что жалоб по теме не было: возможно, клиенты называют её иначе.</div>}
-      {feedBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
+      {fView==="groups"&&!q?(
+        clBusy?<><Skel h={80}/><div style={{height:8}}/><Skel h={80}/></>:
+        !cl||cl.__err?<RvNote err={cl&&cl.__err}/>:<>
+          <div className="rv-cl-sum">{cl.clustered
+            ?<>В группах похожих — <b>{fmtNum(cl.clustered)}</b> из {fmtNum(cl.total)} последних жалоб ({cl.clusters.length} {plural(cl.clusters.length,"группа","группы","групп")}), остальные не повторяются</>
+            :`Среди ${fmtNum(cl.total)} последних жалоб повторяющихся историй нет — группа начинается с трёх похожих`}
+            {cl.no_vec?<span className="rv-sum-x"> · ещё {cl.no_vec} без векторов — появятся в течение часа</span>:""}</div>
+          {cl.clusters.map((g,i)=><div key={i} className="rv-cl" role="button" tabIndex={0}
+              onClick={()=>openGroup(g)} onKeyDown={onKey(()=>openGroup(g))}>
+            <div className="rv-cl-n"><b>{g.n}</b><span>{plural(g.n,"жалоба","жалобы","жалоб")}</span></div>
+            <div className="rv-cl-b">
+              <div className="rv-cl-h">{g.short&&<span className={"rv-tag "+(g.risk||"ops")}>{g.short}</span>}
+                <span className="rv-cl-m">{g.first===g.last?rvDate(g.first):`${rvDate(g.first)} – ${rvDate(g.last)}`}
+                  {g.cities.length?` · ${g.cities.join(", ")}`:""}{g.esc?` · эскалация ${g.esc}`:""}{g.vuln?` · уязвимые ${g.vuln}`:""}</span></div>
+              <div className="rv-cl-s">{g.summary}</div>
+              {g.quote&&<div className="rv-cl-q">«{g.quote}»</div>}
+            </div>
+            <span className="rv-cl-go" aria-hidden="true">→</span>
+          </div>)}
+        </>):
+       feedBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
        feedErr?<EmptyState title={feedErr==="unknown_bank"?"Банка нет в корпусе":q?"Поиск не отработал":"Лента не загрузилась"}
          text={feedErr==="unknown_bank"?"Отзывов по этому банку у нас нет — выберите другой банк в списке выше.":
                feedErr==="network"?"Не удалось получить ответ сервера. Обновите страницу или повторите запрос.":
@@ -3988,10 +4202,21 @@ function ReviewsPage({params}){
           </div>
         </div>
        ))}
-       {feedMore&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
+       {feedMore&&!(fView==="groups"&&!q)&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
          disabled={feedMoreBusy}>
          {feedMoreBusy?"Загружаю…":`Показать ещё (сейчас ${(feed||[]).length})`}</button>}
     </div>
+
+    {jrOpen&&<RvModal side="right" onClose={()=>setJrOpen(false)} title="Журнал сигналов"
+        sub={`${bank} · ${product||"все продукты"} · полгода`}>
+      <RvJournal bank={bank} product={product} onOpen={r=>setModalRev(r)}/></RvModal>}
+    {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={`${grp.n} похожих жалоб`}
+        sub={[grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
+      <div className="rv-grp-acts"><button className="btn btn-sm btn-primary" disabled={!grpItems||!grpItems.length}
+        onClick={()=>setPick(grpItems)}>＋ всю группу в аудит-дело</button></div>
+      {!grpItems?<Skel h={120}/>:grpItems.map((r,i)=><RvReview key={i} r={r} onOpen={()=>setModalRev(r)}/>)}
+    </RvModal>}
+    {casesOpen&&<KbCases onClose={()=>setCasesOpen(false)}/>}
 
     {/* МОДАЛ: полный текст обращения */}
     {modalRev&&<RvModal onClose={()=>setModalRev(null)} title="Обращение клиента"
@@ -4039,6 +4264,7 @@ function ReviewsPage({params}){
          drillItems.map((r,i)=><RvReview key={i} r={r} onOpen={()=>setModalRev(r)}/>)}
       </div>
     </RvModal>}
+    {pick&&<RvCasePick items={pick} onClose={()=>setPick(null)} onDone={onPicked}/>}
   </div>;
 }
 
@@ -7053,57 +7279,159 @@ function KbCoverage({onPick}){
 }
 
 // ─── Дела ────────────────────────────────────────────────────────────────────
+// Одно окно на «Базу знаний» и «Отзывы»: в деле документы и жалобы вперемешку.
+// Дело можно открыть команде и вести вместе, к каждому материалу — комментарий,
+// разбор моделью, выгрузка в Excel и Word.
+function RvCaseItem({it,onDrop,onNote,onOpenDoc}){
+  const r=it.review;
+  const[note,setNote]=useState(it.note||"");
+  return <div className="kb-case-item rv-ci">
+    <div className="kb-case-it-h">
+      {r?<div className="rv-ci-meta">{[rvDate(r.date),r.bank,r.product,r.city,r.source].filter(Boolean).join(" · ")}</div>
+        :it.kind==="review"?<div className="rv-ci-meta">жалоба · разметки нет</div>
+        :<button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc&&onOpenDoc(it.ref_id)}>{it.title||it.url}</button>}
+      {it.can_remove&&<button className="kb-case-x" onClick={onDrop} title="Убрать из дела">✕</button>}
+    </div>
+    {r&&<>
+      <div className="rv-ci-tags">
+        {r.issue_label&&<span className={"rv-tag "+(r.risk||"ops")}>{r.issue_label}</span>}
+        {(r.esc==="filed"||r.esc==="threat")&&<span className="rv-ci-f">{r.esc==="filed"?"обратился":"грозит"}{r.esc_to.length?": "+r.esc_to.map(x=>RV_TO[x]||x).join(", "):""}</span>}
+        {r.vulnerable.length>0&&<span className="rv-ci-f">{r.vulnerable.map(x=>RV_VULN[x]||x).join(", ")}</span>}
+        {r.no_consent&&<span className="rv-ci-f">без согласия</span>}
+        {r.amount!=null&&<span className="rv-ci-f">{fmtNum(r.amount)} ₽</span>}
+      </div>
+      <div className="rv-ci-s">{r.summary||(it.title||"").slice(0,300)}</div>
+      {r.quote&&<div className="rv-ci-q">«{r.quote}»</div>}
+    </>}
+    {!r&&it.kind==="review"&&<div className="rv-ci-s">{(it.title||"").slice(0,400)}</div>}
+    {it.kind==="document"&&<div className="kb-doc-meta">
+      {it.bank_name&&<span className="kb-bank">{it.bank_name}</span>}
+      {it.trust_score!=null&&<TrustDots score={it.trust_score}/>}
+      {it.fetched_at&&<span>обход {fmtDateMsk(it.fetched_at)}</span>}
+    </div>}
+    <div className="rv-ci-foot">
+      {it.url&&<a href={it.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(it.url)} ↗</a>}
+      {it.added_by&&<span className="rv-ci-by">приобщил: {it.added_by}</span>}
+    </div>
+    <textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="комментарий аудитора…"
+      onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
+  </div>;
+}
+
 function KbCases({onClose,onOpenDoc}){
   const[list,setList]=useState(null);
   const[open,setOpen]=useState(null);
   const[cur,setCur]=useState(null);
+  const[newT,setNewT]=useState("");
+  const[an,setAn]=useState(null),[anBusy,setAnBusy]=useState(false),[anErr,setAnErr]=useState(null);
+  const[ren,setRen]=useState(null);
+  // старое «дело» из браузера (до серверных дел во вкладке «Отзывы»)
+  const[legacy,setLegacy]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]");}catch{return [];}});
   const load=()=>apiFetch("/api/cases").then(d=>setList(d.cases||[])).catch(()=>setList([]));
   // именно ()=>{load()}, а не useEffect(load,[]): load возвращает промис,
   // и React принял бы его за функцию очистки — падение при уходе со страницы
   useEffect(()=>{load();},[]);
-  useEffect(()=>{ if(open)apiFetch(`/api/cases/${open}`).then(setCur).catch(()=>{}); },[open]);
+  const reload=()=>apiFetch(`/api/cases/${open}`).then(c=>{setCur(c);setAn(c.analysis||null);}).catch(()=>{});
+  useEffect(()=>{ if(open){setCur(null);setAn(null);setAnErr(null);setRen(null);reload();} },[open]);
 
-  const drop=async(itemId)=>{
-    await apiDel(`/api/cases/${open}/items/${itemId}`);
-    apiFetch(`/api/cases/${open}`).then(setCur);
+  const drop=async(itemId)=>{ await apiDel(`/api/cases/${open}/items/${itemId}`); reload(); };
+  const saveNote=(it,v)=>{ if((it.note||"")===(v||""))return;
+    apiPatch(`/api/cases/${open}/items/${it.item_id}`,{note:v}).catch(()=>{}); };
+  const create=async()=>{ if(!newT.trim())return;
+    const r=await apiPost("/api/cases",{title:newT.trim()}).catch(()=>null);
+    setNewT(""); await load(); if(r)setOpen(r.case_id); };
+  const migrate=async()=>{
+    const r=await apiPost("/api/cases",{title:"Жалобы из браузера"}).catch(()=>null); if(!r)return;
+    await apiPost(`/api/cases/${r.case_id}/items/bulk`,{items:legacy.map(x=>({kind:"review",url:x.url,
+      title:(x.text||"").slice(0,1500)}))}).catch(()=>{});
+    try{localStorage.removeItem("al-case");}catch{}
+    setLegacy([]); await load(); setOpen(r.case_id); };
+  const runAn=async(force)=>{ setAnBusy(true);setAnErr(null);
+    try{const d=await apiPost(`/api/cases/${open}/analyze${force?"?force=1":""}`,{});setAn(d.analysis);}
+    catch{setAnErr("Модель не ответила — попробуйте ещё раз");}
+    setAnBusy(false); };
+  const team=async()=>{ await apiPost(`/api/cases/${open}/team`,{shared:!cur.shared}).catch(()=>{}); reload(); load(); };
+  const rename=async()=>{ if(ren&&ren.trim()&&ren.trim()!==cur.title)
+      await apiPatch(`/api/cases/${open}`,{title:ren.trim()}).catch(()=>{});
+    setRen(null); reload(); load(); };
+  const remove=async()=>{ if(!window.confirm(`Удалить дело «${cur.title}» со всеми материалами?`))return;
+    await apiDel(`/api/cases/${open}`); setOpen(null); setCur(null); load(); };
+  // «Продолжить в ИИ-аналитике»: в вопрос уходит состав дела — продукты и
+  // проблемы жалоб, — а аналитик ищет нормы, практику и что запросить
+  const goAI=()=>{
+    const rv=(cur.items||[]).map(i=>i.review).filter(Boolean);
+    const cnt=k=>{const m={};rv.forEach(x=>{if(x[k])m[x[k]]=(m[x[k]]||0)+1;});
+      return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k2,v])=>`${k2} (${v})`).join(", ");};
+    const banks=cnt("bank"), iss=cnt("issue_label"), prods=cnt("product");
+    bfGoAI(`По материалам аудит-дела «${cur.title}»: ${rv.length} жалоб клиентов`
+      +(banks?`, банки: ${banks}`:"")+(prods?`; продукты: ${prods}`:"")+(iss?`; главные проблемы: ${iss}`:"")
+      +". Какие требования Банка России и законодательства относятся к этим ситуациям, какова практика"
+      +" регулятора и судов по похожим случаям и что запросить у подразделения для проверки?");
   };
 
-  if(open&&cur)return <RvModal side="right" title={cur.title}
-      sub={`${(cur.items||[]).length} материалов`} onClose={()=>{setOpen(null);setCur(null);}}>
-    {cur.note&&<p className="t-cap">{cur.note}</p>}
-    <div className="kb-case-acts">
-      <a className="btn btn-sm" href={`/api/cases/${open}/export.csv`}>Выгрузить CSV</a>
-    </div>
-    {(cur.items||[]).map(it=><div key={it.item_id} className="kb-case-item">
-      <div className="kb-case-it-h">
-        <button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc(it.ref_id)}>
-          {it.title||it.url}</button>
-        {cur.mine&&<button className="kb-case-x" onClick={()=>drop(it.item_id)}
-                           title="Убрать из дела">✕</button>}
+  if(open&&!cur)return <RvModal side="right" title="Аудит-дело" onClose={()=>setOpen(null)}><Skel h={200}/></RvModal>;
+  if(open&&cur){
+    const items=cur.items||[], nRev=items.filter(i=>i.kind==="review").length;
+    const stale=an&&cur.analysis_items&&cur.analysis_items!==items.length;
+    return <RvModal side="right" title={cur.title}
+      sub={`${items.length} матер.${nRev?` · жалоб ${nRev}`:""}${cur.shared?" · открыто команде":""}${!cur.mine?` · ведёт ${cur.owner}`:""}`}
+      onClose={()=>{setOpen(null);setCur(null);load();}}>
+      <button className="rv-cs-back" onClick={()=>{setOpen(null);setCur(null);load();}}>← все дела</button>
+      {cur.note&&<p className="t-cap">{cur.note}</p>}
+      {ren!==null&&<div className="rv-cp-new"><input className="input" value={ren} autoFocus onChange={e=>setRen(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape")setRen(null);}}/>
+        <button className="btn btn-primary btn-sm" onClick={rename}>Сохранить</button></div>}
+      <div className="rv-cs-acts">
+        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.xlsx`}>Excel</a>
+        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}>Word</a>
+        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.csv`}>CSV</a>
+        {cur.mine&&<button className="btn btn-sm btn-ghost" onClick={team}
+          title={cur.shared?"закрыть доступ коллегам":"коллеги увидят дело и смогут приобщать материалы и комментировать"}>
+          {cur.shared?"Закрыть для команды":"Открыть команде"}</button>}
+        {cur.mine&&ren===null&&<button className="btn btn-sm btn-ghost" onClick={()=>setRen(cur.title)}>Переименовать</button>}
+        {cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={remove}>Удалить</button>}
       </div>
-      <div className="kb-doc-meta">
-        {it.bank_name&&<span className="kb-bank">{it.bank_name}</span>}
-        {it.trust_score!=null&&<TrustDots score={it.trust_score}/>}
-        {it.fetched_at&&<span>обход {fmtDateMsk(it.fetched_at)}</span>}
-      </div>
-      {it.note&&<p className="kb-case-note-t">{it.note}</p>}
-    </div>)}
-    {!(cur.items||[]).length&&<div className="kb-empty">
-      Дело пустое. Найдите документ и нажмите «В дело» в его карточке.</div>}
-  </RvModal>;
+      {items.length>0&&<div className="rv-cs-an">
+        <div className="rv-cs-an-h">
+          <span>Разбор дела <i>ИИ по материалам, со ссылками [N]</i></span>
+          <span className="rv-cs-an-b">
+            {!an&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
+            {an&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
+            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} title="передать состав дела ИИ-аналитику: нормы, практика, что запросить">продолжить в ИИ-аналитике →</button>}
+          </span>
+        </div>
+        {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}
+        {an&&<div className="rv-explain">{renderMD(an)}</div>}
+      </div>}
+      {items.map((it,i)=><React.Fragment key={it.item_id}>
+        <div className="rv-ci-n mono">[{i+1}]</div>
+        <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onNote={v=>saveNote(it,v)} onOpenDoc={onOpenDoc}/>
+      </React.Fragment>)}
+      {!items.length&&<div className="kb-empty">
+        Дело пустое. Приобщайте жалобы кнопкой «＋ в аудит-дело» в ленте «Отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
+    </RvModal>;
+  }
 
   return <RvModal side="right" title="Аудит-дела"
-      sub="подборки доказательств" onClose={onClose}>
+      sub="подборки жалоб и документов под проверку" onClose={onClose}>
+    {legacy.length>0&&<div className="rv-cs-legacy">
+      В этом браузере осталось старое аудит-дело: {legacy.length} {plural(legacy.length,"жалоба","жалобы","жалоб")}.
+      Перенесите его на сервер — там его увидят коллеги и не потеряет браузер.
+      <button className="btn btn-sm btn-primary" onClick={migrate}>Перенести в новое дело</button></div>}
+    <div className="rv-cp-new">
+      <input className="input" value={newT} onChange={e=>setNewT(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")create();}} placeholder="Новое дело: название проверки"/>
+      <button className="btn btn-sm" disabled={!newT.trim()} onClick={create}>Создать</button>
+    </div>
     {list===null?<Skel h={120}/>:!list.length?<div className="kb-empty">
       <b>Дел пока нет.</b>
-      <p>Дело — это подборка документов под одну проверку: нашли подтверждение,
-        приобщили, выгрузили в рабочий файл. Приобщать можно из карточки любого
-        документа в поиске.</p></div>:
+      <p>Дело — подборка доказательств под одну проверку: жалобы из «Отзывов» и
+        документы из «Базы знаний». Приобщили, прокомментировали, выгрузили в рабочий файл.</p></div>:
       list.map(c=><button key={c.case_id} className="kb-case-row"
           onClick={()=>setOpen(c.case_id)}>
         <span className="kb-case-row-t">{c.title}</span>
-        <span className="t-cap">{c.items} матер. · {fmtDateMsk(c.updated_at)}
-          {!c.mine&&" · от коллеги"}</span>
+        <span className="t-cap">{c.items} матер.{c.reviews?` · жалоб ${c.reviews}`:""} · {fmtDateMsk(c.updated_at)}
+          {c.shared?" · команда":""}{!c.mine?` · ${c.owner}`:""}</span>
       </button>)}
   </RvModal>;
 }
@@ -7851,6 +8179,24 @@ function PuReviewSources({r}){
   </div>;
 }
 
+// Точность радара «Отзывов»: эпизоды всплесков из журнала сигналов и
+// отметки аудиторов «подтвердился / ложный»
+function PuSignalJournal({j}){
+  if(!j||j.error)return null;
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>Точность сигналов «Отзывов» · {j.days} дн</span>
+      {j.precision!=null&&<span className={"pu-chip "+(j.precision>=70?"ok":j.precision<50?"bad":"")}>{j.precision}% подтвердились</span>}</div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      Эпизод — всплеск жалоб, записанный радаром вместе со снимком жалоб. Аудиторы отмечают
+      в журнале сигналов, подтвердился ли он при проверке. Эпизодов {j.episodes}, отмечено {j.rated}
+      {j.rated?` (подтвердились ${j.confirmed}, ложных ${j["false"]})`:""}.</p>
+    {(j.by_bank||[]).length>0&&<table className="pu-tbl">
+      <thead><tr><th>банк</th><th>эпизодов</th><th>отмечено</th><th>подтвердились</th></tr></thead>
+      <tbody>{j.by_bank.map(b=><tr key={b.bank}><td>{b.bank}</td><td>{b.episodes}</td><td>{b.rated}</td>
+        <td>{b.precision!=null?b.precision+"%":"—"}</td></tr>)}</tbody></table>}
+  </div>;
+}
+
 function PuIngest({ing}){
   const q=ing.queue||{}, days=ing.per_day||[];
   const mx=Math.max(1,...days.map(d=>+d.n||0));
@@ -8432,6 +8778,7 @@ function PulsePage(){
     {tab==="data"&&<>
       <PuIngest ing={m.ingest||{}}/>
       <PuReviewSources r={m.review_sources||{}}/>
+      <PuSignalJournal j={m.signal_journal}/>
       <PuCollect c={m.collect||{}}/>
       <PuSearch s={m.search||{}}/>
       <PuNewsQuality q={m.news_quality||{}}/>

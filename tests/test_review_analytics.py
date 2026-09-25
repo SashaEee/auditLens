@@ -75,3 +75,70 @@ def test_month_completeness_grows_with_time():
     older = _month_completeness("2026-06", dt.date(2026, 9, 25), cdf)
     old = _month_completeness("2025-06", dt.date(2026, 9, 25), cdf)
     assert fresh < older < old == pytest.approx(1.0)
+
+
+# ── Волна 4: рабочее место аудитора ─────────────────────────────────────────
+
+def test_filed_cbr_court_flag():
+    from bank_audit.rag.reviews_dash import _flag_sql, flag_label
+    assert "ARRAY['cbr', 'court']" in _flag_sql("filed:cbr_court")
+    assert flag_label("filed:cbr_court") == "обратились в ЦБ или суд"
+
+
+def test_source_clause_whitelist():
+    from bank_audit.rag.reviews_dash import _source_clause
+    p: dict = {}
+    assert _source_clause("i", "banki", p) and p["srcs"] == ["bankiru", "banki_reviews"]
+    assert _source_clause("i", None, {}) == ""
+    assert _source_clause("i", "evil'; drop", {}) is None
+
+
+def test_severity_uses_codebook_compliance():
+    from bank_audit.rag import review_codebook as cb
+    from bank_audit.rag.reviews_dash import _severity_sql
+    sql = _severity_sql()
+    comp = [k for k, v in cb.ISSUES.items() if v[3] == "compliance"]
+    assert comp and all(f"'{k}'" in sql for k in comp)
+    assert "WHEN 'filed' THEN 3" in sql
+
+
+_CASE = {"title": "Ставки по льготной ипотеке", "owner": "auditor", "shared": True,
+         "note": "проверка", "analysis": "### Итог\n- **важно** [1]",
+         "items": [
+             {"kind": "review", "url": "https://example.org/r/1", "title": "снимок", "note": "ключевой",
+              "added_by": "auditor",
+              "review": {"bank": "Банк", "date": "2026-09-12", "city": "Казань", "source": "banki.ru",
+                         "product": "Ипотека", "issue_label": "Одностороннее изменение условий",
+                         "risk": "conduct", "summary": "=HYPERLINK(\"x\")", "quote": "подняли ставку",
+                         "esc": "filed", "esc_to": ["cbr"], "vulnerable": ["pensioner"],
+                         "no_consent": False, "misled": False, "amount": 150000.0}},
+             {"kind": "document", "url": "https://example.org/d", "title": "Тарифы", "note": None,
+              "bank_name": "Банк", "fetched_at": "2026-09-01T10:00:00"}]}
+
+
+def test_case_digest_counts_by_code():
+    from bank_audit.rag.reviews_llm import case_digest
+    summary, listing = case_digest(_CASE)
+    assert "жалоб: 1" in summary and "документов: 1" in summary
+    assert "Уже обратились в ЦБ, суд и т. п.: 1" in summary
+    assert listing.startswith("[1] жалоба 2026-09-12") and "[2] документ: Тарифы" in listing
+
+
+def test_case_xlsx_does_not_execute_formulas():
+    import io
+    import openpyxl
+    from bank_audit.web.case_export import to_xlsx
+    ws = openpyxl.load_workbook(io.BytesIO(to_xlsx(_CASE)))["Материалы"]
+    head = [c.value for c in ws[1]]
+    cell = ws.cell(row=2, column=head.index("Суть") + 1)
+    assert cell.data_type == "s" and cell.value.startswith("=HYPERLINK")
+    assert ws.cell(row=2, column=head.index("Куда") + 1).value == "ЦБ"
+
+
+def test_case_docx_has_analysis_and_items():
+    import io
+    import docx
+    from bank_audit.web.case_export import to_docx
+    text_ = "\n".join(p.text for p in docx.Document(io.BytesIO(to_docx(_CASE))).paragraphs)
+    assert "Разбор материалов (ИИ)" in text_ and "[1] жалоба · 12.09.2026" in text_
+    assert "Признаки: обратился: ЦБ; уязвимый клиент: пенсионер" in text_

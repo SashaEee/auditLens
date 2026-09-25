@@ -733,14 +733,11 @@ def _parse_rate_move(diff) -> tuple[Optional[float], Optional[float]]:
     return _f(rate.get("from")), _f(rate.get("to"))
 
 
-# Смена выдачи агрегатора (страница банка ↔ витрина с фильтром суммы) — не
-# изменение условий: до закрепления выдачи (normalizer/offers.py) ВТБ «Наличными»
-# давал два таких «изменения» каждое утро. Историю не удаляем, а не считаем.
-_SAME_CTX_SQL = """NOT (p.raw->'filter_context' IS NOT NULL
-                   AND n.raw->'filter_context' IS NOT NULL
-                   AND p.raw->'filter_context' <> n.raw->'filter_context')"""
-_CTX_JOIN_SQL = """LEFT JOIN product_terms p ON p.terms_id = ch.prev_terms_id
-          LEFT JOIN product_terms n ON n.terms_id = ch.new_terms_id"""
+# Смена выдачи агрегатора — не изменение условий (normalizer/offers.py);
+# те же условия берёт связка «Отзывов» с «Рынком»
+from ..normalizer.offers import (CTX_JOIN_SQL as _CTX_JOIN_SQL,  # noqa: E402
+                                 SAME_CTX_SQL as _SAME_CTX_SQL,
+                                 SIGNIFICANT_CHANGE_SQL as _SIGNIFICANT_CHANGE_SQL)
 
 
 @app.get("/api/recent-changes")
@@ -760,10 +757,7 @@ def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = No
     if offer_id:
         cond.append("ch.offer_id = :oid"); params["oid"] = offer_id
     if significant:
-        cond.append("""((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
-                          WHERE k <> 'rate_pct') > 0
-                    OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
-                         - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)""")
+        cond.append(_SIGNIFICANT_CHANGE_SQL)
     where = " AND ".join(cond) if cond else "true"
     rows = q(f"""
         SELECT ch.change_id, ch.offer_id, ch.changed_at, ch.diff,
@@ -1874,6 +1868,93 @@ def reviews_changes(bank: str = "Сбербанк", product: Optional[str] = Non
     """Шапка «что изменилось»: только значимые изменения к прошлому окну."""
     return _rd().changes(bank, product or None, days) or {}
 
+def _rw():
+    from ..rag import reviews_work
+    return reviews_work
+
+
+@app.get("/api/reviews/clusters")
+def reviews_clusters(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90,
+                     theme: Optional[str] = None, flag: Optional[str] = None,
+                     city: Optional[str] = None, source: Optional[str] = None, esc: int = 0):
+    """Похожие жалобы группами — с теми же фильтрами, что у ленты."""
+    return _rw().clusters(bank, product or None, days, theme or None, flag or None,
+                          city or None, source or None, bool(esc)) or {}
+
+
+class ReviewUrls(BaseModel):
+    urls: list[str]
+
+
+@app.post("/api/reviews/by-urls")
+def reviews_by_urls(req: ReviewUrls):
+    """Карточки жалоб по списку ссылок — группа, снимок сигнала."""
+    return {"items": _rw().reviews_by_urls(req.urls)}
+
+
+@app.get("/api/reviews/signal-journal")
+def reviews_signal_journal(bank: str = "Сбербанк", product: Optional[str] = None,
+                           days: int = 180):
+    return _rw().journal(bank, product or None, days) or {}
+
+
+@app.get("/api/reviews/signal-journal/{signal_id}/reviews")
+def reviews_signal_reviews(signal_id: int):
+    """Снимок жалоб, из которых сложился сигнал, — на момент пика."""
+    rw = _rw()
+    return {"items": rw.reviews_by_urls(rw.journal_urls(signal_id))}
+
+
+class Verdict(BaseModel):
+    verdict: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.post("/api/reviews/signal-journal/{signal_id}/verdict")
+def reviews_signal_verdict(signal_id: int, req: Verdict,
+                           user: CurrentUser = Depends(get_current_user)):
+    if not _rw().set_verdict(signal_id, req.verdict or None, user.username, req.note):
+        raise HTTPException(400, "отметка не сохранилась")
+    return {"ok": True}
+
+
+class ReviewSub(BaseModel):
+    bank: str
+    product: Optional[str] = None
+
+
+@app.get("/api/reviews/subscriptions")
+def reviews_subs(user: CurrentUser = Depends(get_current_user)):
+    """Подписки на сигналы с текущим состоянием — для «Для вас»."""
+    return {"items": _rw().subs_status(user.username)}
+
+
+@app.get("/api/reviews/subscription")
+def reviews_sub_get(bank: str = "Сбербанк", product: Optional[str] = None,
+                    user: CurrentUser = Depends(get_current_user)):
+    return {"subscribed": _rw().is_subscribed(user.username, bank, product or None)}
+
+
+@app.post("/api/reviews/subscription")
+def reviews_sub_add(req: ReviewSub, user: CurrentUser = Depends(get_current_user)):
+    if not _rw().subs_add(user.username, req.bank, req.product or None):
+        raise HTTPException(400, "банк не найден")
+    return {"subscribed": True}
+
+
+@app.delete("/api/reviews/subscription")
+def reviews_sub_del(bank: str, product: Optional[str] = None,
+                    user: CurrentUser = Depends(get_current_user)):
+    _rw().subs_del(user.username, bank, product or None)
+    return {"subscribed": False}
+
+
+@app.get("/api/reviews/market-events")
+def reviews_market_events(bank: str = "Сбербанк", product: Optional[str] = None):
+    """Изменения условий банка по продукту помесячно — метки на графике жалоб."""
+    return _rw().market_events(bank, product or None)
+
+
 @app.get("/api/reviews/geo")
 def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None,
                 days: int = 365):
@@ -1904,7 +1985,7 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  city: Optional[str] = None, month: Optional[str] = None,
                  days: Optional[int] = None, esc: int = 0,
                  sort: str = "auto", limit: int = 20, offset: int = 0,
-                 flag: Optional[str] = None):
+                 flag: Optional[str] = None, source: Optional[str] = None):
     # days раньше здесь ОТСУТСТВОВАЛ: переключатель периода стоял на вкладке,
     # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
     # 3 месяца, а в списке отзывы за прошлый год».
@@ -1912,7 +1993,8 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                                 q=q or None, days=days or None,
                                 city=city or None, month=month or None,
                                 limit=limit, offset=max(0, offset),
-                                esc=bool(esc), sort=sort, flag=flag or None)
+                                esc=bool(esc), sort=sort, flag=flag or None,
+                                source=source or None)
     # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
     # search — по каким словам искали на самом деле и сколько попаданий дословных
     return {"items": res["items"], "count": len(res["items"]),
@@ -1924,14 +2006,16 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
 def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None,
                    theme: Optional[str] = None, city: Optional[str] = None,
                    month: Optional[str] = None, days: Optional[int] = None,
-                   esc: int = 0, limit: int = 10000, flag: Optional[str] = None):
+                   esc: int = 0, limit: int = 10000, flag: Optional[str] = None,
+                   source: Optional[str] = None):
     """Выгрузка жалоб с разметкой ИИ в CSV (UTF-8 с BOM — открывается в Excel)."""
     import csv
     import io
     from urllib.parse import quote as _q
     rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
                              days=days or None, city=city or None, month=month or None,
-                             esc=bool(esc), limit=limit, flag=flag or None)
+                             esc=bool(esc), limit=limit, flag=flag or None,
+                             source=source or None)
     if rows is None:
         raise HTTPException(404, "банк не найден")
     flag_name = _rd().flag_label(flag)
@@ -1985,6 +2069,13 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
     from ..rag import reviews_llm
     sig = await asyncio.to_thread(_rd().weekly_signals, bank, product or None)
     signals = (sig or {}).get("signals") or []
+    if signals:
+        # журнал сигналов: эпизод со снимком жалоб — для отметки аудитора
+        try:
+            await asyncio.to_thread(_rw().record_signals, sig, (sig or {}).get("bank") or bank,
+                                    product or None)
+        except Exception as e:  # noqa: BLE001 — радар не должен падать из-за журнала
+            log.warning("журнал сигналов: %s", e)
     if not signals:
         wp = await asyncio.to_thread(_rd().week_pulse, bank, product or None)
         watch = [d for d in ((wp or {}).get("diverge") or []) if (d.get("gap") or 0) >= 1.15]
@@ -2941,18 +3032,121 @@ def cases_get(case_id: int, user: CurrentUser = Depends(get_current_user)):
 @app.post("/api/cases/{case_id}/items")
 def cases_add_item(case_id: int, req: CaseItem,
                    user: CurrentUser = Depends(get_current_user)):
+    if req.kind not in ("document", "review", "offer", "report"):
+        raise HTTPException(400, "неизвестный вид материала")
     if not userdata.add_case_item(case_id, user.username, kind=req.kind,
                                   ref_id=req.ref_id, url=req.url,
                                   title=req.title, note=req.note):
-        raise HTTPException(403, "приобщать можно только в своё дело")
+        raise HTTPException(403, "нет доступа к делу")
     return {"ok": True}
+
+
+class CaseItemsBulk(BaseModel):
+    items: list[CaseItem]
+
+
+@app.post("/api/cases/{case_id}/items/bulk")
+def cases_add_items(case_id: int, req: CaseItemsBulk,
+                    user: CurrentUser = Depends(get_current_user)):
+    """Пачкой — перенос старого дела из браузера на сервер."""
+    n = userdata.add_case_items(case_id, user.username,
+                                [i.model_dump() for i in req.items
+                                 if i.kind in ("document", "review", "offer", "report")])
+    if n is None:
+        raise HTTPException(403, "нет доступа к делу")
+    return {"ok": True, "added": n}
+
+
+class CaseNote(BaseModel):
+    note: Optional[str] = None
+
+
+@app.patch("/api/cases/{case_id}/items/{item_id}")
+def cases_item_note(case_id: int, item_id: int, req: CaseNote,
+                    user: CurrentUser = Depends(get_current_user)):
+    if not userdata.update_case_item_note(case_id, item_id, user.username, req.note):
+        raise HTTPException(403, "нет доступа к делу")
+    return {"ok": True}
+
+
+class CaseUpdate(BaseModel):
+    title: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.patch("/api/cases/{case_id}")
+def cases_update(case_id: int, req: CaseUpdate,
+                 user: CurrentUser = Depends(get_current_user)):
+    if not userdata.update_case(case_id, user.username, title=req.title, note=req.note):
+        raise HTTPException(403, "менять дело может только владелец")
+    return {"ok": True}
+
+
+@app.post("/api/cases/{case_id}/team")
+def cases_team(case_id: int, req: dict, user: CurrentUser = Depends(get_current_user)):
+    """Открыть дело команде (вести вместе) или закрыть доступ."""
+    if not userdata.set_case_shared(case_id, user.username, bool(req.get("shared"))):
+        raise HTTPException(403, "открывать дело может только владелец")
+    return {"ok": True}
+
+
+@app.post("/api/cases/{case_id}/analyze")
+async def cases_analyze(case_id: int, force: int = 0,
+                        user: CurrentUser = Depends(get_current_user)):
+    """Разбор дела моделью: что объединяет материалы, признаки рисков, гипотезы
+    о причинах, что запросить, с чего начать. Хранится при деле и считается
+    заново, только если состав дела изменился (или по кнопке «обновить»)."""
+    import asyncio
+    from ..rag import reviews_llm
+    case = await asyncio.to_thread(userdata.get_case, case_id, user.username)
+    if not case:
+        raise HTTPException(404, "дело не найдено")
+    n = len(case.get("items") or [])
+    if not n:
+        raise HTTPException(400, "в деле нет материалов")
+    if case.get("analysis") and case.get("analysis_items") == n and not force:
+        return {"analysis": case["analysis"], "analysis_at": case.get("analysis_at"), "cached": True}
+    md = await reviews_llm.case_memo(case)
+    if not md:
+        raise HTTPException(503, "модель не ответила — повторите позже")
+    await asyncio.to_thread(userdata.save_case_analysis, case_id, user.username, md, n)
+    return {"analysis": md, "analysis_at": datetime.now(timezone.utc).isoformat(), "cached": False}
+
+
+def _case_or_404(case_id: int, username: str) -> dict:
+    case = userdata.get_case(case_id, username)
+    if not case:
+        raise HTTPException(404, "дело не найдено")
+    return case
+
+
+@app.get("/api/cases/{case_id}/export.xlsx")
+def cases_export_xlsx(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    from urllib.parse import quote as _q
+    from . import case_export
+    case = _case_or_404(case_id, user.username)
+    return Response(content=case_export.to_xlsx(case),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition":
+                             f"attachment; filename*=UTF-8''{_q('дело_' + case['title'][:60] + '.xlsx')}"})
+
+
+@app.get("/api/cases/{case_id}/export.docx")
+def cases_export_docx(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    from urllib.parse import quote as _q
+    from . import case_export
+    case = _case_or_404(case_id, user.username)
+    return Response(content=case_export.to_docx(case),
+                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition":
+                             f"attachment; filename*=UTF-8''{_q('дело_' + case['title'][:60] + '.docx')}"})
 
 
 @app.delete("/api/cases/{case_id}/items/{item_id}")
 def cases_del_item(case_id: int, item_id: int,
                    user: CurrentUser = Depends(get_current_user)):
     if not userdata.remove_case_item(case_id, item_id, user.username):
-        raise HTTPException(403, "нет прав")
+        raise HTTPException(403, "убрать материал может владелец дела или тот, кто его приобщил")
     return {"ok": True}
 
 
@@ -2995,8 +3189,8 @@ def cases_export(case_id: int, user: CurrentUser = Depends(get_current_user)):
         w.writerow([i,
                     {"document": "документ", "review": "отзыв",
                      "offer": "продукт", "report": "отчёт"}.get(it["kind"], it["kind"]),
-                    it.get("bank_name") or "",
-                    it.get("title") or "",
+                    (it.get("review") or {}).get("bank") or it.get("bank_name") or "",
+                    (it.get("review") or {}).get("summary") or it.get("title") or "",
                     it.get("url") or "",
                     it.get("trust_score") if it.get("trust_score") is not None else "",
                     str(it.get("fetched_at") or "")[:10],

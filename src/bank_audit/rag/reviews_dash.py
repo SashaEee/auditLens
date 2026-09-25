@@ -287,6 +287,8 @@ def _flag_sql(flag: str | None) -> str | None:
     esc = "coalesce(a.esc, 'none') <> 'none'"
     if flag in ("esc:filed", "esc:threat"):
         return f"a.esc = '{flag[4:]}'"
+    if flag == "filed:cbr_court":
+        return "a.esc = 'filed' AND a.esc_to && ARRAY['cbr', 'court']"
     if flag.startswith("to:") and flag[3:] in _ESC_TO:
         return f"{esc} AND '{flag[3:]}' = ANY(a.esc_to)"
     if flag == "vuln:any":
@@ -295,6 +297,37 @@ def _flag_sql(flag: str | None) -> str | None:
         return f"'{flag[5:]}' = ANY(a.vulnerable)"
     return {"no_consent": "a.no_consent", "misled": "a.misled",
             "amount": "a.amount IS NOT NULL", "amount:1m": "a.amount >= 1000000"}.get(flag)
+
+
+# Площадка — фильтр ленты. banki.ru — это и внешний корпус, и наш сбор с неё:
+# для аудитора одна площадка.
+_SOURCE_KEYS = {"banki": ("bankiru", "banki_reviews"), "sravni": ("sravni_reviews",),
+                "bankiros": ("bankiros_reviews",), "finuslugi": ("finuslugi_reviews",)}
+
+
+def _source_clause(alias: str, source: str | None, p: dict) -> str | None:
+    """"" — без фильтра, None — площадка неизвестна."""
+    if not source:
+        return ""
+    keys = _SOURCE_KEYS.get(source)
+    if not keys:
+        return None
+    p["srcs"] = list(keys)
+    return f" AND {alias}.source = ANY(:srcs)"
+
+
+def _severity_sql(alias_i: str = "i", alias_a: str = "a") -> str:
+    """Серьёзность жалобы для порядка «сначала серьёзные» — из признаков
+    разметки: уже обратился в ЦБ/суд/прокуратуру (3) или грозит (2), уязвимый
+    клиент (2), без согласия (1), сумма от 100 тыс. ₽ (1), проблема класса
+    «комплаенс» (1). Коды комплаенса — из кодификатора, не из запроса."""
+    comp = ", ".join(f"'{k}'" for k, v in cb.ISSUES.items() if v[3] == "compliance")
+    a, i = alias_a, alias_i
+    return (f"(CASE {a}.esc WHEN 'filed' THEN 3 WHEN 'threat' THEN 2 ELSE 0 END"
+            f" + CASE WHEN cardinality({a}.vulnerable) > 0 THEN 2 ELSE 0 END"
+            f" + CASE WHEN {a}.no_consent THEN 1 ELSE 0 END"
+            f" + CASE WHEN {a}.amount >= 100000 THEN 1 ELSE 0 END"
+            f" + CASE WHEN {i}.issue IN ({comp}) THEN 1 ELSE 0 END)")
 
 
 def flag_label(flag: str | None) -> str | None:
@@ -306,6 +339,7 @@ def flag_label(flag: str | None) -> str | None:
     if flag.startswith("vuln:"):
         return "уязвимые клиенты" if flag == "vuln:any" else _VULN[flag[5:]]
     return {"esc:filed": "уже обратились", "esc:threat": "грозят обратиться",
+            "filed:cbr_court": "обратились в ЦБ или суд",
             "no_consent": "без согласия", "misled": "ввели в заблуждение",
             "amount": "указана сумма", "amount:1m": "сумма от 1 млн ₽"}[flag]
 
@@ -1044,7 +1078,8 @@ _ESC_RU = {"none": "", "threat": "грозит", "filed": "обратился"}
 def export_rows(bank: str, product: str | None = None, theme: str | None = None,
                 days: int | None = None, city: str | None = None,
                 month: str | None = None, esc: bool = False,
-                limit: int = 10000, flag: str | None = None) -> list[dict] | None:
+                limit: int = 10000, flag: str | None = None,
+                source: str | None = None) -> list[dict] | None:
     """Жалобы с разметкой для выгрузки в таблицу — те же фильтры, что у ленты
     (без поиска по смыслу: он возвращает топ-300 похожих, а выгрузка — это
     полный срез). Раньше такой срез собирали вручную по запросу коллег."""
@@ -1058,7 +1093,9 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
         return []
     p: dict = {"bank": bc, "product": product, "lim": max(1, min(limit, 20000)),
                "sv": _ann_schema()}
-    extra = ""
+    extra = _source_clause("i", source, p)
+    if extra is None:
+        return []
     if days:
         extra += " AND i.dt >= now() - make_interval(days => :d)"
         p["d"] = days
@@ -1121,7 +1158,8 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
 def _feed_from_index(bc: str, product: str | None, theme: str | None,
                      days: int | None, city: str | None, month: str | None,
                      limit: int, offset: int = 0,
-                     esc: bool = False, flag: str | None = None) -> dict:
+                     esc: bool = False, flag: str | None = None,
+                     source: str | None = None, sort: str = "date") -> dict:
     """Лента по ЕДИНОМУ индексу — все источники в одном списке.
 
     Показываются жалобы из разметки и ещё не размеченные свежие отзывы (они
@@ -1131,7 +1169,9 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     жалобы, что в ней посчитаны."""
     fetch = min(max((limit + offset) * 5, 40), 600)
     p: dict = {"bank": bc, "product": product, "lim": fetch}
-    extra = ""
+    extra = _source_clause("i", source, p)
+    if extra is None:
+        return {"items": [], "mode": "feed", "error": "unknown_source"}
     if days:
         extra += " AND i.dt >= now() - make_interval(days => :d)"
         p["d"] = days
@@ -1158,16 +1198,24 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
         extra += f" AND {_CMP}"
     else:
         extra += f" AND (i.kind IS NULL OR {_CMP})"
+    # «Сначала серьёзные» — по признакам разметки; при равенстве свежие выше
+    sev = sort == "severity"
+    if sev:
+        p["sv"] = _ann_schema()
+    join = ("LEFT JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv"
+            if sev else "")
+    sev_col = f", {_severity_sql()} AS sev" if sev else ""
+    order = "sev DESC NULLS LAST, i.dt DESC NULLS LAST" if sev else "i.dt DESC NULLS LAST"
     try:
         with db.session() as s:
             rows = [dict(r) for r in s.execute(text(f"""
                 SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt,
-                       i.city, i.rating
-                FROM review_index i
+                       i.city, i.rating{sev_col}
+                FROM review_index i {join}
                 WHERE i.bank = :bank
                   AND (i.dt IS NULL OR i.dt <= now())
                   AND (CAST(:product AS text) IS NULL OR i.product = :product){extra}
-                ORDER BY i.dt DESC NULLS LAST
+                ORDER BY {order}
                 LIMIT :lim
             """), p).mappings().all()]
     except Exception as e:
@@ -1195,6 +1243,7 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
                     "url": r["url"], "text": body, "similar": 0,
                     "rating": float(r["rating"]) if r["rating"] is not None else None,
                     "source": r["source"],
+                    **({"sev": int(r["sev"] or 0)} if sev else {}),
                     "themes": []})
     page = out[offset:offset + limit]
     _attach_themes(page)
@@ -1336,7 +1385,8 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
                     q: str | None = None, days: int | None = None,
                     city: str | None = None, month: str | None = None,
                     limit: int = 20, offset: int = 0,
-                    esc: bool = False, sort: str = "auto", flag: str | None = None) -> dict:
+                    esc: bool = False, sort: str = "auto", flag: str | None = None,
+                    source: str | None = None) -> dict:
     """Лента доказательной базы. q → поиск; иначе свежие с фильтрами
     тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
     массовость это аудит-сигнал → поле `similar`.
@@ -1348,6 +1398,8 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
         return {"items": [], "mode": "search" if q else "feed", "error": "unknown_theme"}
     if _flag_sql(flag) is None:
         return {"items": [], "mode": "search" if q else "feed", "error": "unknown_flag"}
+    if _source_clause("i", source, {}) is None:
+        return {"items": [], "mode": "search" if q else "feed", "error": "unknown_source"}
     if q and q.strip():
         if bank and not bc:
             return {"items": [], "mode": "search", "error": "unknown_bank"}
@@ -1372,7 +1424,7 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
             log.warning("reviews_dash: поиск по %r упал: %s", q, e)
             return {"items": [], "mode": "search", "error": "search_failed"}
         keep = _keep_urls([r.get("url") for r in res if r.get("url")], theme=theme, esc=esc,
-                          product=product, flag=flag,
+                          product=product, flag=flag, source=source,
                           month=month if (month or "").startswith("ev:") else None)
         res = [r for r in res if r.get("url") in keep]
         if sort == "date":
@@ -1383,7 +1435,8 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
                 "has_more": len(res) > offset + limit}
     if not bc:
         return {"items": [], "mode": "feed", "error": "unknown_bank"}
-    return _feed_from_index(bc, product, theme, days, city, month, limit, offset, esc, flag)
+    return _feed_from_index(bc, product, theme, days, city, month, limit, offset, esc, flag,
+                            source=source, sort="severity" if sort == "severity" else "date")
 
 
 @_safe(None)
@@ -1832,7 +1885,7 @@ def _ann_for(urls: list[str]) -> dict[str, dict]:
 
 def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
                product: str | None = None, flag: str | None = None,
-               month: str | None = None) -> set[str]:
+               month: str | None = None, source: str | None = None) -> set[str]:
     """Какие из найденных отзывов показывать: жалобы (и ещё не размеченные),
     при заданной теме — с этой главной проблемой, при флажке — с эскалацией,
     при признаке — с этим признаком разметки."""
@@ -1848,6 +1901,9 @@ def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
     mc = _month_clause("i", month, p)
     if mc:
         cond.append(mc[len(" AND "):])
+    sc = _source_clause("i", source, p) or ""
+    if sc:
+        cond.append(sc[len(" AND "):])
     if theme:
         cond.append("i.issue = :t")
         p["t"] = theme
@@ -1868,7 +1924,7 @@ def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
         return set(urls)
     # отзыв, которого нет в индексе (вне окна зеркала), без темы не отбрасываем
     return ok | ({u for u in urls if u not in known}
-                 if not (theme or esc or product or fcond or month) else set())
+                 if not (theme or esc or product or fcond or month or sc) else set())
 
 
 def _nb_tail(x: int, weeks: list[int]) -> float:

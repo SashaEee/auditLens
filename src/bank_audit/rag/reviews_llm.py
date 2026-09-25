@@ -220,3 +220,94 @@ async def anomaly_brief(sig: dict, context: str) -> str | None:
     except Exception as e:  # noqa: BLE001
         log.warning("reviews_llm.anomaly_brief упал: %s", e)
         return None
+
+
+# ── Разбор аудит-дела ───────────────────────────────────────────────────────
+_CASE_SYSTEM = (
+    "Ты — старший аудитор службы внутреннего аудита банка. Тебе дают аудит-дело: "
+    "подборку жалоб клиентов с разметкой и документов, которые собрал коллега. "
+    "Пиши только то, что следует из материалов; на каждый вывод — ссылка на номер "
+    "материала [N]. Числа бери только из блока «Сводка» — он посчитан программой, "
+    "свои не придумывай. Не утверждай, что нарушение было: говори о признаках. "
+    "Деловой русский, без вступлений и общих слов."
+)
+_RISK_RU = {"compliance": "комплаенс", "conduct": "практики", "ops": "операции"}
+
+
+def case_digest(case: dict) -> tuple[str, str]:
+    """Сводка по делу, посчитанная кодом, и перечень материалов для модели."""
+    from collections import Counter
+    items = case.get("items") or []
+    revs = [it["review"] for it in items if it.get("review")]
+    lines = [f"Материалов: {len(items)}, из них жалоб: {len(revs)}, "
+             f"документов: {sum(1 for it in items if it['kind'] == 'document')}."]
+    if revs:
+        dates = sorted(r["date"] for r in revs if r.get("date"))
+        if dates:
+            lines.append(f"Период жалоб: {dates[0]} — {dates[-1]}.")
+        for label, cnt in (("Банки", Counter(r["bank"] for r in revs if r.get("bank"))),
+                           ("Продукты", Counter(r["product"] for r in revs if r.get("product"))),
+                           ("Главные проблемы", Counter(r["issue_label"] for r in revs
+                                                        if r.get("issue_label")))):
+            if cnt:
+                lines.append(f"{label}: " + ", ".join(f"{k} — {v}" for k, v in cnt.most_common(6)) + ".")
+        lines.append(
+            f"Уже обратились в ЦБ, суд и т. п.: {sum(1 for r in revs if r.get('esc') == 'filed')}; "
+            f"грозят: {sum(1 for r in revs if r.get('esc') == 'threat')}; "
+            f"уязвимые клиенты: {sum(1 for r in revs if r.get('vulnerable'))}; "
+            f"без согласия: {sum(1 for r in revs if r.get('no_consent'))}.")
+    listing = []
+    for n, it in enumerate(items[:60], 1):
+        r = it.get("review")
+        if r:
+            flags = [x for x in (
+                {"filed": "обратился", "threat": "грозит"}.get(r.get("esc") or ""),
+                ("уязвимый: " + ", ".join(r["vulnerable"])) if r.get("vulnerable") else None,
+                "без согласия" if r.get("no_consent") else None) if x]
+            s_ = (f"[{n}] жалоба {r.get('date') or ''} · {r.get('bank') or ''} · "
+                  f"{r.get('product') or 'продукт не определён'} · {r.get('issue_label') or ''}"
+                  f" ({_RISK_RU.get(r.get('risk') or '', '—')})"
+                  + (f" · {'; '.join(flags)}" if flags else "")
+                  + f": {r.get('summary') or it.get('title') or ''}")
+            if r.get("quote"):
+                s_ += f" Цитата: «{r['quote']}»"
+        elif it["kind"] == "review":
+            s_ = f"[{n}] жалоба (разметки нет): {(it.get('title') or '')[:400]}"
+        else:
+            s_ = (f"[{n}] документ: {it.get('title') or it.get('url') or ''}"
+                  + (f" ({it['bank_name']})" if it.get("bank_name") else ""))
+        if it.get("note"):
+            s_ += f" Комментарий аудитора: {it['note']}"
+        listing.append(s_)
+    if len(items) > 60:
+        listing.append(f"…показаны 60 материалов из {len(items)}.")
+    return "\n".join(lines), "\n".join(listing)
+
+
+async def case_memo(case: dict) -> str | None:
+    """Разбор дела для аудитора: что объединяет материалы, признаки рисков,
+    гипотезы о причинах в процессах, что запросить и с чего начать выборку."""
+    if not (case or {}).get("items"):
+        return None
+    summary, listing = case_digest(case)
+    user = (
+        f"Дело: «{case.get('title')}».\n"
+        + (f"Цель, которую записал аудитор: {case['note']}\n" if case.get("note") else "")
+        + f"\nСводка (посчитано программой, числа не меняй):\n{summary}\n\n"
+        f"Материалы:\n{listing}\n\n"
+        "Напиши разбор в Markdown ровно с пятью разделами (### заголовки):\n"
+        "### Что объединяет материалы — 2–4 пункта со ссылками [N].\n"
+        "### Признаки рисков — какие риски видны (комплаенс, практики, операции), "
+        "без утверждения, что нарушение было.\n"
+        "### Гипотезы о причинах — что могло сломаться в процессах банка.\n"
+        "### Что запросить у подразделения — конкретные документы, выгрузки, регламенты.\n"
+        "### С чего начать проверку — 3–5 материалов [N] и почему именно они.\n"
+        "Не больше 350 слов."
+    )
+    try:
+        from ..digest.writer import _chat
+        md, _ti, _to = await _chat(insight_model(), _CASE_SYSTEM, user, max_tokens=6000)
+        return (md or "").strip() or None
+    except Exception as e:  # noqa: BLE001 — дело открывается и без разбора
+        log.warning("reviews_llm.case_memo упал: %s", e)
+        return None

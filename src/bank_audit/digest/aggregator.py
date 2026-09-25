@@ -46,6 +46,12 @@ async def reviews_pulse(day: date) -> dict:
         bank = "Сбербанк"
         ov = rd.overview(bank) or {}
         wk = rd.weekly_signals(bank) or {}
+        try:
+            # журнал сигналов: всплески, попавшие в «Обзор», — эпизодом со снимком
+            from ..rag import reviews_work
+            reviews_work.record_signals(wk, bank, None, min_interval_s=0)
+        except Exception as e:  # noqa: BLE001 — выпуск не зависит от журнала
+            log.warning("журнал сигналов: %s", e)
         th = rd.themes(bank) or {}
         tr = rd.trend(bank) or {}
         # топ растущих тем: только значимо обгоняющие общий поток жалоб (Б4) —
