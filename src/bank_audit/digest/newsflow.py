@@ -697,22 +697,32 @@ async def merge_events(evs: list[dict]) -> list[dict]:
                 parent[find(j)] = find(i)
             elif sim >= _MERGE_ASK:
                 ask.append((i, j))
-    if ask:
-        listing = "\n".join(f"#{k + 1}: «{heads[i]}» || «{heads[j]}»" for k, (i, j) in enumerate(ask[:60]))
-        try:
-            raw, _a, _b = await _chat(S1_MODEL,
-                                      "Для каждой пары заголовков новостей ответь, об одном ли и том же "
-                                      "конкретном событии они (same) или о разных (diff). Одна тема — "
-                                      'ещё не одно событие. Ответ JSON: {"items":[{"n":1,"v":"same"}]}',
-                                      listing, max_tokens=1500)
-            d = _loose(raw) or {}
-            for it in d.get("items") or []:
-                k = int(it.get("n", 0)) - 1
-                if 0 <= k < len(ask) and str(it.get("v")).lower() == "same":
-                    i, j = ask[k]
-                    parent[find(j)] = find(i)
-        except Exception as ex:  # noqa: BLE001 — без проверки серой зоны просто не склеиваем
-            log.info("newsflow.merge: серая зона не проверена (%s)", ex)
+    # Пачки по 25 пар, запас по токенам и один повтор: 25.09 модель «думала» и
+    # обрывала ответ на 60 парах при лимите 1500 — серая зона не склеилась, и
+    # одна схема мошенничества вышла карточкой и строкой ленты.
+    for start in range(0, min(len(ask), 100), 25):
+        chunk = ask[start:start + 25]
+        listing = "\n".join(f"#{k + 1}: «{heads[i]}» || «{heads[j]}»" for k, (i, j) in enumerate(chunk))
+        for attempt in range(2):
+            try:
+                raw, _a, _b = await _chat(S1_MODEL,
+                                          "Для каждой пары заголовков новостей ответь, об одном ли и том же "
+                                          "конкретном событии они (same) или о разных (diff). Одна тема — "
+                                          'ещё не одно событие. Ответ JSON: {"items":[{"n":1,"v":"same"}]}',
+                                          listing, max_tokens=6000)
+                d = _loose(raw) or {}
+                items = d.get("items") or []
+                if not items:
+                    raise ValueError("пустой ответ")
+                for it in items:
+                    k = int(it.get("n", 0)) - 1
+                    if 0 <= k < len(chunk) and str(it.get("v")).lower() == "same":
+                        i, j = chunk[k]
+                        parent[find(j)] = find(i)
+                break
+            except Exception as ex:  # noqa: BLE001 — без проверки серой зоны просто не склеиваем
+                if attempt:
+                    log.warning("newsflow.merge: серая зона не проверена (%s)", ex)
     groups: dict[int, list[int]] = {}
     for i in range(len(evs)):
         groups.setdefault(find(i), []).append(i)

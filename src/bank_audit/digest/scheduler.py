@@ -377,11 +377,19 @@ async def foryou_pregen_loop():
     await asyncio.sleep(420)          # после старта — дать ядру собраться первым
     log.info("предгенерация «Для вас»: активные за 7 дн, тик раз в %d с",
              FORYOU_PREGEN_EVERY_S)
+    done_day = None
     while True:
+        wait_s = FORYOU_PREGEN_EVERY_S
         try:
             now = datetime.now(MSK)
-            if now.hour >= GEN_HOUR and await asyncio.to_thread(
-                    store.day_complete, _today_msk(), _pipe.REQUIRED):
+            ready = now.hour >= GEN_HOUR and await asyncio.to_thread(
+                store.day_complete, _today_msk(), _pipe.REQUIRED)
+            # выпуск ещё собирается — проверяем часто: 25.09 часовой тик пришёл
+            # за 5 секунд до конца сборки, и страницы появились только через час
+            if now.hour >= GEN_HOUR and not ready and done_day != _today_msk():
+                wait_s = 120
+            if ready:
+                done_day = _today_msk()
                 users = await asyncio.to_thread(_active_usernames)
                 built = 0
                 for u in users:
@@ -398,7 +406,7 @@ async def foryou_pregen_loop():
                              built, len(users))
         except Exception as e:  # noqa: BLE001
             log.warning("предгенерация «Для вас»: %s", e)
-        await asyncio.sleep(FORYOU_PREGEN_EVERY_S)
+        await asyncio.sleep(wait_s)
 
 
 # ── Ночной судья новостного выпуска (этап 6) ─────────────────────────────────
