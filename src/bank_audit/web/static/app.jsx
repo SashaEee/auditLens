@@ -861,8 +861,68 @@ const xpThemeUp=t=>[
 // обёртка вокруг числа: пунктирное подчёркивание + карточка-расшифровка.
 // Позиция выбирается по свободному месту: сбоку (не перекрывает текст вообще),
 // иначе снизу/сверху — попап не должен резать строку заголовка.
-function Xp({rows,children,note}){
+function XpPop({box,rows,note}){
+  // aria-hidden: диктор читает расшифровку из скрытого текста у триггера
+  return ReactDOM.createPortal(
+    <div className={"xp-pop xp-a-"+box.arrow} role="tooltip" aria-hidden="true"
+         style={{left:box.left,top:box.top,width:box.width}}>
+      <span className="xp-h">как это посчитано</span>
+      {rows.map(([k,v],i)=><span key={i} className="xp-row">
+        <span className="xp-k">{k}</span><span className="xp-v">{v}</span></span>)}
+      {note&&<span className="xp-note">{note}</span>}
+    </div>, document.body);
+}
+const xpText=(rows,note)=>(rows||[]).map(([k,v])=>`${k}: ${v}`).join("; ")+(note?`. ${note}`:"");
+let xpSeq=0;
+
+// Расшифровка кнопкой: касание и Enter открывают, повтор / Esc / касание мимо —
+// закрывают, мышью — по наведению. Внутри ссылки-плитки вложенный фокусируемый
+// span был недоступен на телефоне (касание уводило на страницу) — кнопка стоит
+// рядом со ссылкой, а не в ней. children — текстовый вид («как посчитано»),
+// без них — значок ⓘ в углу плитки.
+function XpBtn({rows,note,label,children}){
   const ref=useRef(null);
+  const id=useMemo(()=>"xp-d"+(++xpSeq),[]);
+  const[open,setOpen]=useState(false);
+  const[hov,setHov]=useState(false);
+  const[box,setBox]=useState(null);
+  const vis=open||hov;
+  useEffect(()=>{
+    if(!vis){setBox(null);return;}
+    if(ref.current)setBox(popPlace(ref.current,{w:400,h:Math.min(300,80+34*((rows||[]).length))}));
+    const off=()=>{setOpen(false);setHov(false);};
+    const out=e=>{if(ref.current&&!ref.current.contains(e.target))off();};
+    const key=e=>{if(e.key==="Escape"){off();ref.current&&ref.current.focus();}};
+    window.addEventListener("scroll",off,true);
+    window.addEventListener("resize",off);
+    document.addEventListener("pointerdown",out,true);
+    document.addEventListener("keydown",key);
+    return()=>{window.removeEventListener("scroll",off,true);window.removeEventListener("resize",off);
+      document.removeEventListener("pointerdown",out,true);document.removeEventListener("keydown",key);};
+  },[vis,rows]);
+  if(!rows||!rows.length)return children?<span>{children}</span>:null;
+  return <>
+    <button type="button" ref={ref} className={children?"xp-b":"xp-i"} aria-expanded={open}
+        aria-label={children?undefined:"Как посчитано: "+label} aria-describedby={id}
+        onClick={e=>{e.preventDefault();e.stopPropagation();setOpen(v=>!v);}}
+        onPointerEnter={e=>{if(e.pointerType==="mouse")setHov(true);}}
+        onPointerLeave={e=>{if(e.pointerType==="mouse")setHov(false);}}>
+      {children||<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.3"/>
+        <path d="M8 7.2v4M8 4.9v.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>}
+    </button>
+    {/* hidden — не видно и не попадает в имя заголовка/ссылки, но
+        aria-describedby читает текст и у скрытого элемента */}
+    <span id={id} hidden>{xpText(rows,note)}</span>
+    {box&&<XpPop box={box} rows={rows} note={note}/>}
+  </>;
+}
+
+// passive — число внутри ссылки: пунктир и расшифровка по наведению мышью,
+// но без фокуса (фокус и касание — у кнопки ⓘ рядом)
+function Xp({rows,children,note,passive}){
+  const ref=useRef(null);
+  const id=useMemo(()=>"xp-d"+(++xpSeq),[]);
   const[box,setBox]=useState(null);
   const show=useCallback(()=>{
     if(ref.current)setBox(popPlace(ref.current,{w:400,h:Math.min(300,80+34*((rows||[]).length))}));
@@ -877,18 +937,29 @@ function Xp({rows,children,note}){
       window.removeEventListener("resize",off);};
   },[box]);
   if(!rows||!rows.length)return children;
-  return <span className="xp" tabIndex={0} ref={ref}
+  if(passive)return <span className="xp" ref={ref} onMouseEnter={show} onMouseLeave={hide}>
+    {children}{box&&<XpPop box={box} rows={rows} note={note}/>}</span>;
+  return <span className="xp" tabIndex={0} ref={ref} aria-describedby={id}
       onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}>
-    {children}
-    {box&&ReactDOM.createPortal(
-      <div className={"xp-pop xp-a-"+box.arrow} role="tooltip"
-           style={{left:box.left,top:box.top,width:box.width}}>
-        <span className="xp-h">как это посчитано</span>
-        {rows.map(([k,v],i)=><span key={i} className="xp-row">
-          <span className="xp-k">{k}</span><span className="xp-v">{v}</span></span>)}
-        {note&&<span className="xp-note">{note}</span>}
-      </div>, document.body)}
+    {children}<span id={id} hidden>{xpText(rows,note)}</span>
+    {box&&<XpPop box={box} rows={rows} note={note}/>}
   </span>;
+}
+
+const OvWarnIc=()=><svg className="ov-note-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+  <path d="M8 2.2 14.3 13H1.7Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+  <path d="M8 6.5v3M8 11.2v.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>;
+const OvInfoIc=()=><svg className="ov-note-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+  <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.3"/>
+  <path d="M8 7.2v4M8 4.9v.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>;
+
+// Плитка пульса: ссылка на всю плитку + кнопка ⓘ рядом (не внутри ссылки).
+// Число внутри ссылки остаётся с фирменным пунктиром и расшифровкой по наведению.
+function BfTile({cls,href,xp,note,label,children}){
+  return <div className={"bf-t"+(cls||"")}>
+    {href?<a className="bf-t-a" href={href}>{children}</a>:<div className="bf-t-a">{children}</div>}
+    <XpBtn rows={xp} note={note} label={label}/>
+  </div>;
 }
 
 // «−22 ко вчера» под числом плитки: носитель смысла — изменение, а не уровень.
@@ -1050,7 +1121,7 @@ function BfCard({ins,idx,lead,now,sigs,compact}){
     {viz&&<div className="bf-viz">{viz}</div>}
     {(ins.provenance||xp.length>0)&&<div className="bf-prov">
       {xp.length>0
-        ?<Xp rows={xp} note={ins.provenance}><span className="xp-link">как посчитано</span></Xp>
+        ?<XpBtn rows={xp} note={ins.provenance}>как посчитано</XpBtn>
         :null}
       {xp.length>0&&ins.provenance?<span className="bf-prov-sep"> · </span>:null}
       {ins.provenance}
@@ -1384,11 +1455,15 @@ const OVSEG_CSS=`
 `;
 function OvSeg({page}){
   const go=(p)=>{ if(p===page)return; try{localStorage.setItem("al-ov-mode",p);}catch{} location.hash=p; };
+  // стрелки ←/→ переключают режим, как у вкладок
+  const key=e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();go(page==="overview"?"foryou":"overview");}};
+  const T=(p,label)=><button role="tab" aria-selected={page===p} tabIndex={page===p?0:-1}
+    className={page===p?"on":""} onClick={()=>go(p)} onKeyDown={key}>{label}</button>;
   return <div className={"ovseg"+(page==="foryou"?" fy":"")} role="tablist" aria-label="Режим обзора">
     <style>{OVSEG_CSS}</style>
-    <span className="ovseg-thumb"/>
-    <button className={page==="overview"?"on":""} onClick={()=>go("overview")}>Общий</button>
-    <button className={page==="foryou"?"on":""} onClick={()=>go("foryou")}><span className="sp">✦</span>Для вас</button>
+    <span className="ovseg-thumb" aria-hidden="true"/>
+    {T("overview","Общий")}
+    {T("foryou",<><span className="sp" aria-hidden="true">✦</span>Для вас</>)}
   </div>;
 }
 
@@ -2305,14 +2380,17 @@ function OverviewPage(){
     <header style={{marginBottom:26}}>
       <div className="eyebrow-row">
         <div className="eyebrow">
-          Сводка · {issueDate.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · розница / УВА
+          {/* «Брифинг № <день года>» — главная задумана как брифинг-газета, номер
+              выпуска часть этого языка (решение владельца, 25.09) */}
+          Брифинг №{issueNum} · {issueDate.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · розница / УВА
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
-          {refreshing?
-            <span className="bf-live"><span className="dot"/>обновляется…</span>:
+          {/* role=status: диктор объявляет «обновляется…» и новое время выпуска */}
+          <span role="status">{refreshing?
+            <span className="bf-live"><span className="dot" aria-hidden="true"/>обновляется…</span>:
             (headAt||genAt)&&<span className="bf-stamp">выпуск {msk(headAt||genAt)} МСК
               {isToday&&updAt&&updAt>(headAt||"")&&!dg.meta.is_morning&&(sec.update||{}).payload&&(((sec.update.payload.items||[]).length)||((sec.update.payload.signals||[]).length))
-                ?<> · дополнено {msk(updAt)}</>:null}</span>}
+                ?<> · дополнено {msk(updAt)}</>:null}</span>}</span>
           {me&&me.is_admin&&<button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
             data-tip="Перегенерировать выпуск (видно только владельцу)" aria-label="Перегенерировать выпуск">⟳</button>}
         </div>
@@ -2344,8 +2422,6 @@ function OverviewPage(){
                 вступает в силу конкретным днём — аудитор на неё ссылается */}
             {kr.current!=null&&<> · ключевая ЦБ {ovN(kr.current,2)}%
               {krSince&&<> с {dmy(krSince)}</>}</>}
-            {ST("headline")==="stale"&&<span className="bf-stale"> · ⚠ сводка за {sec.headline.stale_from}</span>}
-            {ST("headline")==="degraded"&&<span className="bf-stale"> · ⚠ ИИ недоступен, сигналы детерминированные</span>}
             {/* ручное обновление не затирает утренний выпуск — он доступен отдельно */}
             {dg.meta&&dg.meta.morning_at&&(dg.meta.is_morning
               ?<> · утренний выпуск · <a href="#overview"
@@ -2354,6 +2430,10 @@ function OverviewPage(){
                    onClick={e=>{e.preventDefault();apiFetch(`/api/overview/digest?date=${dg.date}&version=morning`).then(setDg).catch(()=>{});}}>
                    утренний выпуск</a></>)}
           </p>
+          {ST("headline")==="stale"&&<div className="ov-note warn" role="note">
+            <OvWarnIc/><span><b>Сводка за {dmy(sec.headline.stale_from)||sec.headline.stale_from}.</b> Сегодняшний выпуск не собрался — показан последний удачный; числа пульса ниже живые.</span></div>}
+          {ST("headline")==="degraded"&&<div className="ov-note warn" role="note">
+            <OvWarnIc/><span><b>ИИ недоступен.</b> Заголовок и поводы собраны по правилам, без редакции модели.</span></div>}
         </>}
     </header>
 
@@ -2382,22 +2462,24 @@ function OverviewPage(){
         ключевая ставка ушла в штамп. Каждая плитка = вопрос аудитора, ведёт
         туда, где с этим работают, и раскрывается попапом «как посчитано».
         Коэффициент ×N на экран не выводится: только пара «факт · норма». */}
-    <section style={{marginBottom:22}}>
+    <section style={{marginBottom:22}} aria-labelledby="ov-pulse-h">
+      <h2 id="ov-pulse-h" className="vh">Пульс дня</h2>
       {/* Сравнение «ко вчера» — только внутри одной методики: 24.09 жалобы
           перешли на разметку ИИ, и дельты показывали смену счёта */}
-      {dlt.method_changed&&<div className="bf-method">Сравнение со вчера недоступно: методика подсчёта жалоб обновилась</div>}
+      {dlt.method_changed&&<div className="ov-note" role="note"><OvInfoIc/><span>Сравнение со вчера недоступно: методика подсчёта жалоб обновилась</span></div>}
       {/* Плитка «Проверить сегодня» и тёплые фоны — цветовой язык пульса,
           по которому страницу узнают (решение владельца): даже когда тема та же,
           что в заголовке, плитка остаётся */}
       <div className="bf-pulse">
         {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
             Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
-        <a className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
-             href={dv?`#reviews?tab=complaints&theme=${dv.key}`:undefined}>
+        <BfTile cls={" bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+             href={dv?`#reviews?tab=complaints&theme=${dv.key}`:undefined}
+             xp={dv?xpDiverge(dv):null} note="жалобы всех площадок · разметка ИИ" label="Проверить сегодня">
           <div className="bf-t-cap">Проверить сегодня
             {dv&&dv.gap>=1.25&&<span className="bf-t-chip">сильнее рынка</span>}</div>
           {dv?<>
-            <Xp rows={xpDiverge(dv)} note="жалобы всех площадок · разметка ИИ">
+            <Xp passive rows={xpDiverge(dv)} note="жалобы всех площадок · разметка ИИ">
               <span className="bf-t-val">{dv.short||dv.label}</span>
             </Xp>
             <div className="bf-t-sub">{ovJ(dv.week)} · норма {ovN(dv.baseline_week)}
@@ -2407,60 +2489,65 @@ function OverviewPage(){
             <span className="bf-t-val">Ничего срочного</span>
             <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||40} проблем — значимых всплесков нет</div>
           </>}
-        </a>
+        </BfTile>
 
         {/* Регуляторный риск: доля жалоб с угрозой ЦБ/суда/ФАС */}
         {/* «Дошло до ЦБ и суда» считало и угрозы, а порог 12% у Сбера пробит
             всегда — плитка горела постоянно. Теперь как в «Отзывах»: против рынка */}
-        <a className={"bf-t"+(esc!=null&&(kpi.market_escalation_pct!=null?esc>kpi.market_escalation_pct:esc>=12)?" attn":"")} href="#reviews?tab=complaints&esc=1">
+        <BfTile cls={esc!=null&&(kpi.market_escalation_pct!=null?esc>kpi.market_escalation_pct:esc>=12)?" attn":""} href="#reviews?tab=complaints&esc=1"
+             xp={xpEscalation(kpi,live)} note="жалобы всех площадок · окно 90 дней" label="Эскалация в ЦБ, суд">
           <div className="bf-t-cap">Эскалация в ЦБ, суд и т. п.</div>
-          <Xp rows={xpEscalation(kpi,live)} note="жалобы всех площадок · окно 90 дней">
+          <Xp passive rows={xpEscalation(kpi,live)} note="жалобы всех площадок · окно 90 дней">
             <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
           </Xp>
           <div className="bf-t-sub">{kpi.market_escalation_pct!=null?`у рынка ${pct1(kpi.market_escalation_pct)}`:"грозят или обратились"}
             {kpi.escalation_filed_pct!=null&&` · обратились ${pct1(kpi.escalation_filed_pct)}`}
             <BfDelta v={dlt.escalation_pct} unit=" пп" invert/></div>
-        </a>
+        </BfTile>
 
         {/* Объём недели — с нормой рядом, без коэффициента */}
-        <a className="bf-t" href="#reviews?tab=complaints">
+        <BfTile href="#reviews?tab=complaints" xp={xpWeek(ovl,kpi,live&&live.overall)}
+             note="жалобы всех площадок · разметка ИИ" label="Жалобы за 7 дней">
           <div className="bf-t-cap">Жалобы · 7 дней</div>
-          <Xp rows={xpWeek(ovl,kpi,live&&live.overall)} note="жалобы всех площадок · разметка ИИ">
+          <Xp passive rows={xpWeek(ovl,kpi,live&&live.overall)} note="жалобы всех площадок · разметка ИИ">
             <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
               {ovl.baseline_week!=null&&<small> норма {Math.round(ovl.baseline_week)}</small>}</span>
           </Xp>
           <div className="bf-t-sub">жалобы всех площадок · разметка ИИ
             <BfDelta v={dlt.week} invert/></div>
-        </a>
+        </BfTile>
 
         {/* Что меняли МЫ САМИ — согласовано ли */}
-        <a className="bf-t" href="#market?view=changes&bank=sberbank">
+        <BfTile href="#market?view=changes&bank=sberbank" xp={xpOurChanges(tm)}
+             note="журнал изменений условий" label="Меняли сами">
           <div className="bf-t-cap">Меняли сами</div>
-          <Xp rows={xpOurChanges(tm)} note="журнал изменений условий">
+          <Xp passive rows={xpOurChanges(tm)} note="журнал изменений условий">
             <span className="bf-t-val">{(tm.totals&&tm.totals.sber_changes_7d)!=null?fmtNum(tm.totals.sber_changes_7d):"—"}
               <small> офферов</small></span>
           </Xp>
           <div className="bf-t-sub">за 7 дней · условия продуктов Сбера
             <BfDelta v={dlt.sber_changes}/></div>
-        </a>
+        </BfTile>
 
         {/* Слепая зона: чего классификатор не видит */}
-        <a className={"bf-t"+(unc&&unc.ratio>=1.3?" attn":"")} href="#reviews?tab=complaints&theme=other">
+        <BfTile cls={unc&&unc.ratio>=1.3?" attn":""} href="#reviews?tab=complaints&theme=other"
+             xp={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ" label="Вне кодификатора">
           <div className="bf-t-cap">Вне кодификатора</div>
-          <Xp rows={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ">
+          <Xp passive rows={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ">
             <span className="bf-t-val">{unc&&unc.week!=null?unc.week:"—"}
               {unc&&unc.pct!=null&&<small> · {unc.pct}%</small>}</span>
           </Xp>
           <div className="bf-t-sub">{unc&&unc.ratio!=null
             ?(unc.ratio>=1.3?"выше обычного — возможен новый инцидент":"как обычно")
             :"жалобы без подходящего кода"}<BfDelta v={dlt.unclassified} invert/></div>
-        </a>
+        </BfTile>
 
         {/* Медленный тренд — то, чего не видно в недельном окне */}
-        <a className="bf-t bf-t-wide" href={up?`#reviews?tab=complaints&theme=${up.key}`:"#reviews?tab=problems"}>
+        <BfTile cls=" bf-t-wide" href={up?`#reviews?tab=complaints&theme=${up.key}`:"#reviews?tab=problems"}
+             xp={up?xpThemeUp(up):null} note="жалобы всех площадок · 90 дней против предыдущих 90" label="Растёт за квартал">
           <div className="bf-t-cap">Растёт за квартал</div>
           {up?<>
-            <Xp rows={xpThemeUp(up)} note="жалобы всех площадок · 90 дней против предыдущих 90">
+            <Xp passive rows={xpThemeUp(up)} note="жалобы всех площадок · 90 дней против предыдущих 90">
               <span className="bf-t-val">{up.short||up.label}</span>
             </Xp>
             <div className="bf-t-sub">+{Math.round(up.delta_pct)}% к прошлому кварталу · {ovJ(up.n)}</div>
@@ -2468,7 +2555,7 @@ function OverviewPage(){
             <span className="bf-t-val">Без роста</span>
             <div className="bf-t-sub">ни одна тема не растёт значимо быстрее общего потока жалоб</div>
           </>}
-        </a>
+        </BfTile>
       </div>
     </section>
 
@@ -2500,7 +2587,7 @@ function OverviewPage(){
       <aside className="bf-news">
         <div className="bf-news-h">
           <h2 className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</h2>
-          {ST("news")==="stale"&&<span className="bf-stale" data-tip="сбор или отбор новостей сегодня не удался — показан последний удачный выпуск">⚠ за {sec.news.stale_from}</span>}
+          {ST("news")==="stale"&&<span className="ov-pill warn" data-tip="сбор или отбор новостей сегодня не удался — показан последний удачный выпуск">устарело · за {dmy(sec.news.stale_from)||sec.news.stale_from}</span>}
           {newsAll>0&&<span className="bf-news-cov" data-tip={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
             {newsOk} из {newsAll} источников</span>}
         </div>
@@ -2534,7 +2621,7 @@ function OverviewPage(){
             {newsOpen?"Свернуть":`Ещё ${total-NEWS_N} ${plural(total-NEWS_N,"новость","новости","новостей")}`}</button>}</>;})():
           ST("news")==="degraded"&&(nw.items_raw||[]).length?
             <div>
-              <div className="bf-news-g" style={{color:"var(--warn)"}}>Без ИИ-отбора (сырая лента)</div>
+              <div className="bf-news-g"><span className="ov-pill warn">без ИИ-отбора</span> сырая лента</div>
               {(nw.items_raw||[]).slice(0,10).map((it,i)=>
                 <a key={i} className="bf-news-it" href={it.url} target="_blank" rel="noopener noreferrer">
                   <div className="bf-news-t">{it.title}</div>
@@ -2551,7 +2638,7 @@ function OverviewPage(){
       <div className="eyebrow-row" style={{marginBottom:12}}>
         <h2 className="eyebrow" style={{margin:0}}>Анализ жалоб недели</h2>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          {ST("reviews_brief")==="stale"&&<span className="bf-stale">за {sec.reviews_brief.stale_from}</span>}
+          {ST("reviews_brief")==="stale"&&<span className="ov-pill warn" data-tip="разбор сегодня не пересчитался — показан последний удачный">устарело · за {dmy(sec.reviews_brief.stale_from)||sec.reviews_brief.stale_from}</span>}
           <a className="ovt-all" href="#reviews">Радар в «Отзывах»<Ic.ext/></a>
         </div>
       </div>
@@ -9902,9 +9989,10 @@ function Shell(){
   const[onbSeen,setOnbSeen]=useState(false);
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
-  // Load banks for context + sidebar badges
+  // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
+  // BanksCtx, у которого нет ни одного потребителя, — убран; страницы берут
+  // банки сами. Флажок капчи в меню остаётся.
   useEffect(()=>{
-    apiFetch("/api/banks").then(d=>{setBanks(d||[]);}).catch(()=>{});
     apiFetch("/api/sources").then(d=>{setHasCaptcha((d?.captcha_pending||[]).length>0);}).catch(()=>{});
   },[]);
 
