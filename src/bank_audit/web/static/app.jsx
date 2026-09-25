@@ -2215,10 +2215,9 @@ function OverviewPage(){
   })();
   const liveSig=k=>live&&k?((live.signals||[]).find(x=>x.key===k)||(live.diverge||[]).find(x=>x.key===k)||null):null;
   const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{},liveSig((leadIns.data||{}).key)):[];
-  // ведущий повод — всплеск жалоб: плитка «Проверить сегодня» и пункт разбора
-  // про ту же тему повторяли заголовок (главный факт стоял на странице 4 раза)
+  // ведущий повод — всплеск жалоб: пункт разбора про ту же тему повторял
+  // заголовок (плитку «Проверить сегодня» владелец оставил — это её цвет)
   const leadSpike=insights[0]&&insights[0].kind==="review_spike"?(insights[0].data||{}):null;
-  const heroDup=!!(leadSpike&&dv&&leadSpike.key===dv.key);
   const leadStem=leadSpike?String(leadSpike.short||leadSpike.label||"").split(/[\s,]/)[0].toLowerCase():"";
   // обычная функция, не хук: код ниже ранних return
   const briefSkip=it=>!!(leadStem.length>=5&&
@@ -2320,10 +2319,13 @@ function OverviewPage(){
       {/* Сравнение «ко вчера» — только внутри одной методики: 24.09 жалобы
           перешли на разметку ИИ, и дельты показывали смену счёта */}
       {dlt.method_changed&&<div className="bf-method">Сравнение со вчера недоступно: методика подсчёта жалоб обновилась</div>}
-      <div className={"bf-pulse"+(heroDup?" nohero":"")}>
+      {/* Плитка «Проверить сегодня» и тёплые фоны — цветовой язык пульса,
+          по которому страницу узнают (решение владельца): даже когда тема та же,
+          что в заголовке, плитка остаётся */}
+      <div className="bf-pulse">
         {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
             Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
-        {!heroDup&&<div className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+        <div className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
              onClick={dv?()=>bfGoDrill({page:"reviews",params:{theme:dv.key}}):undefined}
              style={dv?{cursor:"pointer"}:undefined}>
           <div className="bf-t-cap">Проверить сегодня
@@ -2339,12 +2341,12 @@ function OverviewPage(){
             <span className="bf-t-val">Ничего срочного</span>
             <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||40} проблем — значимых всплесков нет</div>
           </>}
-        </div>}
+        </div>
 
         {/* Регуляторный риск: доля жалоб с угрозой ЦБ/суда/ФАС */}
         {/* «Дошло до ЦБ и суда» считало и угрозы, а порог 12% у Сбера пробит
             всегда — плитка горела постоянно. Теперь как в «Отзывах»: против рынка */}
-        <a className={"bf-t"+(kpi.escalation_sig?" attn":"")} href="#reviews">
+        <a className={"bf-t"+(esc!=null&&(kpi.market_escalation_pct!=null?esc>kpi.market_escalation_pct:esc>=12)?" attn":"")} href="#reviews">
           <div className="bf-t-cap">Эскалация в ЦБ, суд и т. п.</div>
           <Xp rows={xpEscalation(kpi,live)} note="жалобы всех площадок · окно 90 дней">
             <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
@@ -2373,7 +2375,7 @@ function OverviewPage(){
               <small> офферов</small></span>
           </Xp>
           <div className="bf-t-sub">за 7 дней · условия продуктов Сбера
-            <BfDelta v={dlt.sber_changes} neutral/></div>
+            <BfDelta v={dlt.sber_changes}/></div>
         </a>
 
         {/* Слепая зона: чего классификатор не видит */}
