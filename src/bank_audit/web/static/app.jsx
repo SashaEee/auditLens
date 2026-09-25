@@ -9738,11 +9738,12 @@ const NAV=[
 ];
 const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,profile:ProfilePage,pulse:PulsePage};
 // Номера синхронизированы с порядком в меню; итог берётся из NAV, а не хардкодом
-const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],
-  market:["02","Рынок · позиция"],sber:["02","Рынок · позиция"],
-  reviews:["03","Отзывы"],ai:["04","ИИ-аналитик"],knowledge:["05","База знаний"],
-  loophole:["06","Уязвимости"],banks:["07","Банки"],sources:["08","Источники"],
-  profile:["·","Профиль"],pulse:["09","Пульс"]};
+// Названия разделов для крошки в шапке. Номер берётся из порядка меню (navOrder),
+// а не пишется здесь: захардкоженные номера разошлись с меню после перестановки
+// вкладок («Уязвимости» в меню 05, в шапке было 06).
+const PAGE_LABELS={overview:"Обзор",foryou:"Для вас",market:"Рынок · позиция",sber:"Рынок · позиция",
+  reviews:"Отзывы",ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",
+  sources:"Источники",profile:"Профиль",pulse:"Пульс"};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
@@ -10141,9 +10142,6 @@ function Shell(){
     return "overview"; });
   const[pageParams,setPageParams]=useState(()=>parseHash().prm);
   const[loopholeMounted,setLoopholeMounted]=useState(()=>(parseHash().p||"overview")==="loophole");
-  // Тик явного обновления «Лазеек»: кнопка ⟳ инкрементирует его только на этой
-  // странице, ремаунт по key перезагружает iframe модуля.
-  const[refreshTick,setRefreshTick]=useState(0);
   // ИИ-аналитик живёт в фоне: страница не размонтируется при уходе на другие
   // вкладки — прогон продолжается, по завершении сигналим точкой в rail и тостом.
   const[aiMounted,setAiMounted]=useState(()=>(parseHash().p||"overview")==="ai");
@@ -10296,7 +10294,9 @@ function Shell(){
   },[page]);
 
   const Page=PAGES_FN[page]||OverviewPage;
-  const[idx,label]=PAGE_LABELS[page]||["01","Обзор"];
+  const label=PAGE_LABELS[page]||"Обзор";
+  const navIdx=navOrder.indexOf(page==="foryou"?"overview":page);
+  const idx=navIdx>=0?String(navIdx+1).padStart(2,"0"):null;
 
   return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
     <div id="app">
@@ -10395,30 +10395,20 @@ function Shell(){
             <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
           </div>
           <div className="crumb">
-            {page!=="profile" && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
+            {idx && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
             <span style={{color:"var(--hair-2)"}}>—</span></>}
             <b>{label}</b>
           </div>
           {(page==="overview"||page==="foryou")&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
-          {/* на overview/foryou центр занят сегмент-пилюлей — мета убрана, чтобы не перекрывались на ~1024px */}
-          {page!=="overview"&&page!=="foryou"&&<div className="tb-meta desk-only">
-            <span className="live">данные актуальны</span>
-            <span>{new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК</span>
-            <span className="kbd">API</span>
-          </div>}
-          {/* на «Лазейках» ⟳ ремаунтит iframe модуля; на остальных страницах поведение прежнее */}
-          <button className="icon-btn" aria-label="обновить" title="Обновить страницу" onClick={()=>page==="loophole"&&setRefreshTick(t=>t+1)}>
-            <Ic.refresh/>
-          </button>
           <button className="icon-btn" aria-label="тема" onClick={()=>setTheme(theme==="dark"?"light":"dark")} title="Сменить тему">
             {theme==="dark"?<Ic.sun/>:<Ic.moon/>}
           </button>
         </div>
         <div className="content" ref={contentRef}>
           {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
-            <LoopholePage key={refreshTick}/>
+            <LoopholePage/>
           </div>}
           {/* ai-host--active: правило «без отступов» — только пока аналитик на экране.
               Раньше .content:has(.chat-shell) срабатывало и на скрытой, но смонтированной

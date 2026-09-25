@@ -171,8 +171,6 @@ input,select,textarea{font:inherit;color:inherit}
 .crumb b{color:var(--ink);font-weight:500}
 .crumb-idx{color:var(--ink-3)}
 .tb-spacer{flex:1}
-.tb-meta{display:flex;align-items:center;gap:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3)}
-.tb-meta .live::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--pos);margin-right:6px;vertical-align:middle;animation:pulse 1.8s ease-in-out infinite;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
 .icon-btn{width:30px;height:30px;border-radius:6px;display:grid;place-items:center;color:var(--ink-2);border:1px solid transparent;transition:background .12s,border-color .12s,color .12s;}
 .icon-btn:hover{background:var(--paper-2);border-color:var(--hair);color:var(--ink)}
@@ -3500,6 +3498,6 @@ thead th{font-weight:600}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-brand3"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-tb2"></script>
 </body>
 </html>
