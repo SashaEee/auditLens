@@ -2890,11 +2890,91 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
   .rv-ftools .rv-fsel{flex:none;max-width:170px}
   .rv-info-pop{position:fixed;left:16px;right:16px;top:auto;bottom:16px;width:auto}
 }
+
+/* ── волна D4: движение, графики, плотность, доступность ──────────────────── */
+/* график динамики: ось, сетка, значения над столбцами */
+.rv-chart{display:grid;grid-template-columns:40px minmax(0,1fr);gap:6px;margin-top:4px}
+.rv-yaxis{position:relative}
+.rv-yin{position:absolute;left:0;right:0;top:12px;bottom:30px}
+.rv-yin span{position:absolute;right:0;transform:translateY(50%);font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.rv-plot{position:relative}
+.rv-gridl{position:absolute;left:0;right:0;top:12px;bottom:30px;pointer-events:none}
+.rv-gridl i{position:absolute;left:0;right:0;height:0;border-top:1px dashed var(--hair-2)}
+.rv-plot .rv-bars{position:relative;height:196px;padding-top:12px;align-items:stretch}
+.rv-plot .rv-bcol{justify-content:flex-start}
+.rv-bwrap{position:relative;flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;min-height:0}
+.rv-plot .rv-bar{position:relative;min-height:2px;transform-origin:bottom;animation:rv-grow .42s cubic-bezier(.32,.72,0,1) both}
+.rv-plot .rv-bcol:nth-child(n){animation-delay:0s}
+@keyframes rv-grow{from{transform:scaleY(.02)}to{transform:none}}
+.rv-bar-exp{overflow:visible}
+.rv-bar-in{border-radius:3px 3px 0 0}
+.rv-bval{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:4px;font-size:11px;font-weight:500;color:var(--ink-2);
+  font-variant-numeric:tabular-nums;white-space:nowrap;opacity:0;transition:opacity .12s ease;pointer-events:none}
+.rv-bcol:hover .rv-bval,.rv-bcol:focus-visible .rv-bval,.rv-bcol.last .rv-bval{opacity:1}
+.rv-bar.hot .rv-bval{opacity:1;color:var(--neg);font-weight:600}
+.rv-plot .rv-blab{position:relative;height:30px;margin-top:0;padding-top:6px}
+.rv-plot .rv-blab .rv-mev{position:absolute;top:-4px;left:50%;margin:0 0 0 -3px;width:6px;height:6px}
+.rv-bcol:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:6px}
+@media(max-width:760px){.rv-chart{grid-template-columns:30px minmax(0,1fr);gap:4px}.rv-plot .rv-bars{height:170px}.rv-bcol.last .rv-bval{opacity:0}.rv-bar.hot .rv-bval{font-size:0}.rv-bar.hot .rv-bval::after{content:"пик";font-size:11px}}
+/* подвкладки: скользящая подложка общего механизма */
+.rv-tabs-l{position:relative}
+.rv-tabs-l>.seg-ind{border-radius:9px;background:var(--surface);box-shadow:0 0 0 1px var(--hair-2),var(--shadow-1)}
+.seg--ind .rv-tab{position:relative;z-index:1}
+.seg--ind .rv-tab.on{background:transparent;box-shadow:none}
+/* смена подвкладки — короткое появление, без сдвига макета */
+.rv-panel{animation:rv-panel-in .24s cubic-bezier(.32,.72,0,1) both}
+@keyframes rv-panel-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* переход «карточка → читалка» */
+::view-transition-group(rv-vt-title){animation-duration:.36s;animation-timing-function:cubic-bezier(.32,.72,0,1)}
+::view-transition-old(rv-vt-title),::view-transition-new(rv-vt-title){animation-duration:.36s;height:100%;object-fit:none;object-position:left top}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.2s}
+/* отклик на нажатие — сразу, на pointer-down */
+.rv-trow:active,.rv-ix:active,.rv-fi:active,.rv-grow-click:active,.rv-cl:active,.rv-chg-it.click:active,.rv-radar-chip:active,.rv-bp-o:active,.rv-rd-simi:active{transform:scale(.99)}
+.rv-bcol:active .rv-bar{filter:brightness(.92)}
+.rv-trow,.rv-ix,.rv-fi,.rv-grow-click,.rv-cl{transition:background-color .12s ease,transform .1s ease-out}
+/* скелетоны */
+.rv-skrows{display:flex;flex-direction:column}
+.rv-radar-scan{min-height:200px}
+.rv-panel{transition:opacity .2s ease}
+.rv-panel.dim{opacity:.5}
+/* плотность ленты */
+.rv-dens{border:1px solid var(--hair-2);background:var(--surface);width:30px;height:30px}
+.rv-dens.on{color:var(--select);border-color:color-mix(in oklab,var(--select),transparent 55%);background:var(--select-soft)}
+.rv-fw-list.dense .rv-c{padding:8px 14px 8px 20px}
+.rv-fw-list.dense .rv-c-title{-webkit-line-clamp:1;font-size:14px}
+.rv-fw-list.dense .rv-c-quote,.rv-fw-list.dense .rv-c-snip{display:none}
+.rv-fw-list.dense .rv-c-sig{margin-top:3px}
+.rv-fw-list.dense .rv-c.s-neg::before,.rv-fw-list.dense .rv-c.s-warn::before{top:10px;bottom:10px}
+/* меньше движения: всё мгновенно, но смысловые смены цвета остаются */
+@media(prefers-reduced-motion:reduce){.rv-panel,.rv-plot .rv-bar{animation:none}.rv-bval,.rv-trow,.rv-ix,.rv-fi,.rv-cl{transition:none}
+  .rv-trow:active,.rv-ix:active,.rv-fi:active,.rv-grow-click:active,.rv-cl:active,.rv-chg-it.click:active{transform:none}}
+/* меньше прозрачности: материалы — сплошные */
+@media(prefers-reduced-transparency:reduce){.rv-tabs{background:var(--paper);backdrop-filter:none;-webkit-backdrop-filter:none}
+  .rv-rd-head{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}}
+/* больше контраста: чёткие границы и тёмный вторичный текст */
+@media(prefers-contrast:more){.rv-card,.rv-c::after,.rv-tabs{border-color:var(--ink-3)}
+  .rv-cap,.rv-c-meta,.rv-c-tl,.rv-tab,.rv-yin span,.rv-blab,.rv-fi-n,.rv-bp-c{color:var(--ink-2)}
+  .rv-c::after{background:var(--ink-4)}
+  .rv-c.sel,.rv-achip,.rv-tab.on{outline:1px solid var(--ink)}}
+
+@media(max-width:520px){
+  .rv-plot .rv-blab:not(.yr) .rv-bmon{visibility:hidden}
+  .rv-plot .rv-bcol:nth-child(3n+1) .rv-blab .rv-bmon{visibility:visible}
+  .rv-plot .rv-bcol:has(+ .rv-bcol .rv-blab.yr) .rv-blab:not(.yr) .rv-bmon,
+  .rv-plot .rv-bcol:has(.rv-blab.yr) + .rv-bcol .rv-blab:not(.yr) .rv-bmon{visibility:hidden}
+}
+
+/* шапка «Срочно»: иконка и индикатор по строке заголовка, не по центру блока */
+.rv-radar-head{align-items:flex-start}
+.rv-radar-ico{margin-top:5px}
+.rv-radar-live{margin-top:8px}
+@media(max-width:520px){.rv-radar-ico{display:none}}
+@media(prefers-reduced-motion:reduce){.rv-radar-live,.rv-radar-live.scan,.rv-radar-beam,.rv .skel{animation:none}}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-rv-d3"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-rv-d4c"></script>
 </body>
 </html>

@@ -1010,6 +1010,17 @@ def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | 
     return _cached(f"rf:{bc}:{product}:{days}", _compute)
 
 
+def _int_sp(n: int) -> str:
+    return f"{n:,}".replace(",", "\u00a0")
+
+
+def _pct_int(x) -> int:
+    """Целый процент с округлением «половина вверх», как Math.round на фронте:
+    round() в Python банковский (22,5 → 22), и шапка расходилась с «Главным»."""
+    x = float(x or 0)
+    return int(math.floor(abs(x) + 0.5)) * (1 if x >= 0 else -1)
+
+
 @_safe(None)
 def changes(bank: str, product: str | None = None, days: int = 90) -> dict | None:
     """Шапка «что изменилось» для руководителя: только значимые изменения к
@@ -1028,8 +1039,8 @@ def changes(bank: str, product: str | None = None, days: int = 90) -> dict | Non
     if ch and ch["p"] < 0.05 and abs(ov.get("delta_pct") or 0) >= 10:
         up = n > prev
         items.append({"kind": "volume", "dir": "up" if up else "down",
-                      "text": f"Жалоб {'больше' if up else 'меньше'} на {abs(round(ov['delta_pct']))}%",
-                      "detail": f"{n} против {prev} за прошлые {days} дн, 95% ДИ {ch['lo']:+d}…{ch['hi']:+d}%"})
+                      "text": f"Жалоб {'больше' if up else 'меньше'} на {abs(_pct_int(ov['delta_pct']))}%",
+                      "detail": f"{_int_sp(n)} против {_int_sp(prev)} за прошлые {days} дн, 95% ДИ {ch['lo']:+d}…{ch['hi']:+d}%"})
     th = themes(bc, product, days) or {}
     rows = [t for t in th.get("themes") or [] if t.get("delta_sig") and t["key"] != "other"]
     ups = sorted([t for t in rows if (t.get("excess") or 0) > 0], key=lambda t: -t["excess"])[:2]
@@ -1041,7 +1052,7 @@ def changes(bank: str, product: str | None = None, days: int = 90) -> dict | Non
                       "detail": (f"{t['label']} — " + ("растёт быстрее общего потока жалоб"
                                                       if up else "снижается сильнее общего потока жалоб")
                                  + f" ({'+' if (ov.get('delta_pct') or 0) >= 0 else ''}"
-                                 f"{round(ov.get('delta_pct') or 0)}%)")})
+                                 f"{_pct_int(ov.get('delta_pct'))}%)")})
     e1, e0 = int(ov.get("esc_n") or 0), int(ov.get("esc_prev_n") or 0)
     if n and prev and (e1 + e0) >= 20:
         p1, p0 = e1 / n, e0 / prev

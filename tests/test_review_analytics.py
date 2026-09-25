@@ -142,3 +142,14 @@ def test_case_docx_has_analysis_and_items():
     text_ = "\n".join(p.text for p in docx.Document(io.BytesIO(to_docx(_CASE))).paragraphs)
     assert "Разбор материалов (ИИ)" in text_ and "[1] жалоба · 12.09.2026" in text_
     assert "Признаки: обратился: ЦБ; уязвимый клиент: пенсионер" in text_
+
+
+def test_pct_int_rounds_half_up_like_frontend():
+    # «Главное» считает Math.round, шапка — Python; банковское round(22.5)=22
+    # давало «больше на 23%» и «больше на 22%» на одном экране
+    from bank_audit.rag.reviews_dash import _pct_int, _int_sp
+    assert _pct_int(22.5) == 23
+    assert _pct_int(-22.5) == -23
+    assert _pct_int(22.49) == 22
+    assert _pct_int(None) == 0
+    assert _int_sp(2428) == "2 428"
