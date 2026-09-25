@@ -1764,7 +1764,7 @@ def market_verdict(term: Optional[str] = None):
     tsr = max(cells, key=lambda c: c.get("teaser", 0)) if cells else None
     if tsr and tsr.get("teaser", 0) >= 5:
         doubts.append(f'в «{tsr["label"].lower()}» у {tsr["teaser"]} предложений полная '
-                      f'стоимость выше заявленной ставки более чем на 5 пп — '
+                      f'стоимость выше заявленной ставки более чем на 5 п.п. — '
                       f'рекламная «ставка от» завышает их позицию')
     tie = next((c for c in cells if (c["tied"] or 0) > 1
                 and (c["tied_share"] or 0) > 0.2), None)

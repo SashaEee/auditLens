@@ -394,7 +394,7 @@ function StatRow({label,value,delta,sub,warn,neg}){
 }
 
 function PositionBar({value,median,max}){
-  if(value==null)return <span className="mono" style={{color:"var(--ink-4)"}}>—</span>;
+  if(value==null)return <span className="mono" style={{color:"var(--ink-3)"}}>—</span>;
   const vals=[value,median,max].filter(v=>v!=null).map(parseFloat);
   const lo=Math.min(...vals)*0.96,hi=Math.max(...vals)*1.04;
   const pos=v=>((parseFloat(v)-lo)/(hi-lo))*100;
@@ -1198,7 +1198,7 @@ const PL_CSS=`
 .pl-fy-act{display:flex;gap:4px;align-items:center;flex:none;opacity:0;width:0;overflow:hidden;transition:opacity .14s;}
 .pl-fy-row:hover .pl-fy-tag{opacity:0;}
 .pl-fy-row:hover .pl-fy-act{opacity:1;width:auto;}
-.pl-fy-act button{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:12px;color:var(--ink-4);transition:background .12s,color .12s;}
+.pl-fy-act button{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:12px;color:var(--ink-3);transition:background .12s,color .12s;}
 .pl-fy-act button:hover{background:var(--paper-2);}
 .pl-fy-act .ask:hover{color:var(--accent);}
 .pl-fy-act .mute:hover{color:var(--ink);}
@@ -1267,14 +1267,14 @@ const FB_CSS=`
 .fb-toast .sp{color:var(--accent);}
 .aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
 .aifb-l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
+.aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
 .aifb button.tb:hover{color:var(--ink-2);background:var(--paper-2);}
-.aifb button.tb.on{color:var(--accent);background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.aifb button.tb.on{color:var(--accent-ink);background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
 .aifb button.tb.on-neg{color:var(--neg);background:color-mix(in oklab,var(--neg),transparent 90%);border-color:color-mix(in oklab,var(--neg),transparent 75%);}
 .aifb-why{width:100%;display:flex;flex-wrap:wrap;gap:7px;align-items:center;animation:fade-in .2s ease-out;}
 .aifb-chip{font-size:11.5px;padding:5px 11px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);transition:all .12s;}
-.aifb-chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+.aifb-chip.on{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft);}
 .aifb-inp{flex:1;min-width:170px;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
   background:var(--paper);color:var(--ink);}
 .aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:500;}
@@ -1283,7 +1283,7 @@ const FB_CSS=`
 .shr-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--hair);
   border-radius:8px;background:var(--surface);font-size:12px;color:var(--ink-2);transition:color .12s,border-color .12s;}
 .shr-btn:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
-.shr-btn .n{font-family:inherit;font-size:11px;color:var(--accent);background:var(--accent-soft);
+.shr-btn .n{font-family:inherit;font-size:11px;color:var(--accent-ink);background:var(--accent-soft);
   border-radius:999px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .shr-pop{position:absolute;top:34px;right:0;z-index:90;width:302px;background:var(--surface);border:1px solid var(--hair);
   border-radius:12px;box-shadow:var(--shadow-2);padding:10px;animation:fade-in .15s ease-out;text-align:left;}
@@ -1292,7 +1292,7 @@ const FB_CSS=`
 .shr-row{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;border-radius:8px;font-size:12.5px;
   color:var(--ink-2);text-align:left;transition:background .12s;}
 .shr-row:hover{background:var(--paper-2);}
-.shr-row .ava{width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+.shr-row .ava{width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);
   display:grid;place-items:center;font-size:10px;font-weight:600;flex:none;}
 .shr-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .shr-row .st{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
@@ -1302,7 +1302,7 @@ const FB_CSS=`
 .shr-q{width:100%;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
   background:var(--paper);color:var(--ink);margin-bottom:6px;}
 .shr-list{max-height:210px;overflow:auto;}
-.shr-empty{font-size:12px;color:var(--ink-4);padding:10px;text-align:center;}
+.shr-empty{font-size:12px;color:var(--ink-3);padding:10px;text-align:center;}
 .shr-foot{font-family:inherit;font-size:11px;color:var(--ink-3);margin-top:8px;
   line-height:1.5;padding:0 2px;font-variant-numeric:tabular-nums}
 .shr-owner{font-family:inherit;font-size:11px;color:var(--ink-3);
@@ -1524,7 +1524,7 @@ function FySpark({series,w=118,h=30}){
 const FY_CSS=`
 .fyp .fy-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:14px}
 .fy-tp{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:999px;background:var(--paper-2);font-size:12px;color:var(--ink-2)}
-.fy-tp.acc{background:var(--accent-soft);color:var(--accent)}
+.fy-tp.acc{background:var(--accent-soft);color:var(--accent-ink)}
 .fy-tune{display:inline-flex;align-items:center;min-height:26px;font-size:12px;font-weight:500;color:var(--select);text-decoration:none}
 .fy-tune:hover{text-decoration:underline;text-underline-offset:3px}
 .fy-ps{display:inline-flex;align-items:center;gap:8px;min-height:24px;margin-top:12px;font-size:12px;color:var(--ink-3);text-decoration:none}
@@ -2219,7 +2219,12 @@ function useSlidingSegments(){
     });
     attach();
     addEventListener("resize",all);
-    return()=>{mo.disconnect();ro.disconnect();removeEventListener("resize",all);};
+    // ширины кнопок меняются, когда догружаются шрифты, а размер полосы — нет:
+    // без этого подложка оставалась там, где кнопка была до загрузки Geist
+    const fonts=document.fonts;
+    if(fonts){fonts.ready.then(all).catch(()=>{}); fonts.addEventListener&&fonts.addEventListener("loadingdone",all);}
+    return()=>{mo.disconnect();ro.disconnect();removeEventListener("resize",all);
+      fonts&&fonts.removeEventListener&&fonts.removeEventListener("loadingdone",all);};
   },[]);
 }
 
@@ -2582,7 +2587,7 @@ function OverviewPage(){
           </Xp>
           <div className="bf-t-sub">{kpi.market_escalation_pct!=null?`у рынка ${pct1(kpi.market_escalation_pct)}`:"грозят или обратились"}
             {kpi.escalation_filed_pct!=null&&` · обратились ${pct1(kpi.escalation_filed_pct)}`}
-            <BfDelta v={dlt.escalation_pct} unit=" пп" invert/></div>
+            <BfDelta v={dlt.escalation_pct} unit=" п.п." invert/></div>
         </BfTile>
 
         {/* Объём недели — с нормой рядом, без коэффициента */}
@@ -2876,7 +2881,7 @@ function MkTrust({c}){
   const b=[];
   if(c.degenerate) b.push([`ранг скрыт`,`на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`]);
   else if(c.at_best>2) b.push([`наравне ${c.at_best}`,"метрика не различает банки на лучшем значении"]);
-  if(c.teaser>0) b.push([`тизер ${c.teaser}`,"у стольких предложений полная стоимость выше заявленной ставки более чем на 5 пп"]);
+  if(c.teaser>0) b.push([`тизер ${c.teaser}`,"у стольких предложений полная стоимость выше заявленной ставки более чем на 5 п.п."]);
   if(c.banks_dropped>0) b.push([`выбыло ${c.banks_dropped}`,"банков не попало в сравнение: нет метрики, не банк или льготная программа"]);
   if(c.no_metric>0) b.push([`нет метрики ${c.no_metric}`,"столько предложений вне сравнения — поле не заполнено источником"]);
   if(c.subsidized_excluded>0) b.push([`исключено ${c.subsidized_excluded}`,"льготные программы: ставка установлена государством и одинакова у всех"]);
@@ -3388,7 +3393,7 @@ function MarketPage({params}){
                     </div>
                     <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
                       {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2).replace(".",",")} п.п.`}</span>
-                  </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
+                  </div>:<span className="mono" style={{color:"var(--ink-3)"}}>—</span>}
                 </td>}
                 <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
                 <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
@@ -5511,7 +5516,7 @@ function DeepConsole({m, loading, elapsed}){
     : s==="running"
       ? {background:"var(--accent)",borderColor:"var(--accent)",boxShadow:"0 0 0 4px var(--accent-soft)"}
       : {background:"transparent",borderColor:"var(--hair-2)"};
-  const titleStyle=(s)=> s==="pending" ? {color:"var(--ink-4)",fontWeight:450}
+  const titleStyle=(s)=> s==="pending" ? {color:"var(--ink-3)",fontWeight:450}
                        : s==="running" ? {color:"var(--ink)",fontWeight:600}
                        : {color:"var(--ink)",fontWeight:500};
   return <div className="dr-con-wrap">
@@ -5646,7 +5651,7 @@ function ClaimCheckRow({claimCheck, verification, sourcesCount}){
     </span>}
     {dropped>0 && <span className="dr-meta-pill warn">
       <span className="dot"/><b>{dropped}</b> отфильтровано
-        <span style={{color:"var(--ink-4)",marginLeft:6}}>(защита от галлюцинаций)</span>
+        <span style={{color:"var(--ink-3)",marginLeft:6}}>(защита от галлюцинаций)</span>
     </span>}
     {unver>0 && <span className="dr-meta-pill warn">
       <span className="dot"/><b>{unver}</b> требуют ручной проверки
@@ -6255,7 +6260,7 @@ const CP_CSS=`
   transition:transform .22s cubic-bezier(.2,0,0,1),opacity .2s ease;}
 .cp-ov.in .cp{transform:none;opacity:1;}
 .cp-search{display:flex;align-items:center;gap:11px;padding:16px 18px;border-bottom:1px solid var(--hair);}
-.cp-search>svg{color:var(--ink-4);flex:none;}
+.cp-search>svg{color:var(--ink-3);flex:none;}
 .cp-search input{flex:1;border:0;background:none;font-size:16px;line-height:1.3;color:var(--ink);
   font-family:'Geist','Inter',sans-serif;letter-spacing:-.01em;}
 .cp-search input::placeholder{color:var(--ink-4);}
@@ -6266,7 +6271,7 @@ const CP_CSS=`
 .cp-seg button{font-size:12px;color:var(--ink-3);padding:5px 11px;border-radius:7px;display:flex;
   align-items:center;gap:7px;transition:background .14s,color .14s;}
 .cp-seg button:hover{color:var(--ink-2);}
-.cp-seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:500;}
+.cp-seg button.on{background:var(--accent-soft);color:var(--accent-ink);font-weight:500;}
 .cp-seg .n{font-family:inherit;font-size:11px;font-variant-numeric:tabular-nums;opacity:.75;}
 .cp-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:3px 8px 10px;}
 .cp-group{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
@@ -6285,7 +6290,7 @@ const CP_CSS=`
 .cp-time{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .cp-acts{display:none;gap:2px;}
 .cp-row:hover .cp-acts,.cp-row.sel .cp-acts{display:flex;}
-.cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-4);display:grid;place-items:center;
+.cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-3);display:grid;place-items:center;
   transition:background .12s,color .12s;}
 .cp-acts button:hover{background:var(--paper-2);color:var(--ink);}
 .cp-acts button.on{color:var(--accent);}
@@ -6293,7 +6298,7 @@ const CP_CSS=`
 .cp-bank{font-family:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
   color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .cp-owner{font-size:11px;color:var(--accent);white-space:nowrap;}
-.cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-4);text-align:center;}
+.cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-3);text-align:center;}
 .cp-empty>svg{opacity:.45;}
 .cp-empty .t{font-size:14px;color:var(--ink-3);text-wrap:balance;max-width:320px;line-height:1.5;}
 .cp-empty .h{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
@@ -6308,20 +6313,21 @@ const CP_CSS=`
   box-shadow:var(--shadow-1);transition:border-color .14s,color .14s,transform .1s;}
 .hist-btn:hover{border-color:var(--ink-4);color:var(--ink);}
 .hist-btn:active{transform:scale(.97);}
-.hist-btn kbd{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);
+.hist-btn kbd{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);
   border:1px solid var(--hair);border-radius:4px;padding:0 4px;}
 /* welcome: «Продолжить» — недавние диалоги */
 .aw-recent{margin-top:30px;width:100%;max-width:640px;}
 .aw-recent-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
 .aw-recent-h .l{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.aw-recent-h button{font-size:11.5px;color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;transition:color .12s;}
-.aw-recent-h button:hover{color:var(--accent);}
+.aw-recent-h button{min-height:24px;font-size:12px;font-weight:500;color:var(--select);display:inline-flex;align-items:center;gap:5px;transition:color .12s;}
+.aw-recent-h button:hover{text-decoration:underline;text-underline-offset:3px;}
 .aw-recent-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 .aw-rec{text-align:left;padding:11px 13px;border:1px solid var(--hair);background:var(--surface);border-radius:10px;
   display:flex;flex-direction:column;gap:3px;transition:border-color .14s,transform .12s,box-shadow .14s;min-width:0;}
 .aw-rec:hover{border-color:var(--ink-4);transform:translateY(-2px);box-shadow:var(--shadow-1);}
 .aw-rec .t{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .aw-rec .m{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
+@media(pointer:coarse){.aw-recent-h button{min-height:44px}}
 `;
 
 // SVG-иконки (единый штрих, оптически выверенные)
@@ -7262,7 +7268,7 @@ function BanksPage(){
               <td data-label="БАЛЛ · МЕСТО" className="right mono tnum">
                 {score>0?<>{score.toFixed(1).replace(".",",")}
                   {b.place?<span style={{color:"var(--ink-3)"}}> · №{b.place}</span>:null}</>
-                  :<span style={{color:"var(--ink-4)"}}>—</span>}
+                  :<span style={{color:"var(--ink-3)"}}>—</span>}
               </td>
               <td data-label="СР. ОЦЕНКА" className="right">
                 <span className="serif" style={{fontSize:22,fontWeight:400,color:grade>=4?"var(--pos)":grade>=3.5?"var(--warn)":"var(--neg)"}}>
@@ -7272,12 +7278,12 @@ function BanksPage(){
               <td data-label="ОТЗЫВОВ" className="right mono tnum">
                 {b.total_reviews?<>{fmtNum(b.total_reviews)}
                   {b.reviews_year?<div style={{fontSize:11,color:"var(--ink-3)",whiteSpace:"nowrap"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
-                  :<span style={{color:"var(--ink-4)"}}>—</span>}
+                  :<span style={{color:"var(--ink-3)"}}>—</span>}
               </td>
               <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${String(solved).replace(".",",")}%`:"—"}</td>
               <td data-label="У НАС" className="right mono tnum">
                 {b.own_reviews?<span style={{color:"var(--accent)"}} title={b.own_last_dt?`свежий отзыв ${fmtDateMsk(b.own_last_dt)}`:""}>
-                  {fmtNum(b.own_reviews)}</span>:<span style={{color:"var(--ink-4)"}}>—</span>}
+                  {fmtNum(b.own_reviews)}</span>:<span style={{color:"var(--ink-3)"}}>—</span>}
               </td>
             </tr>;
           })}
@@ -8479,7 +8485,7 @@ const AD_CSS=`
 .pu-feed-row{display:flex;gap:9px;align-items:center;padding:5px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
 .pu-feed-row:first-of-type{border-top:0;}
 .pu-feed-row .t{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;width:34px;font-variant-numeric:tabular-nums}
-.pu-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+.pu-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);
   display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
 .pu-feed-row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
 .pu-chip{font-family:inherit;font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);font-variant-numeric:tabular-nums}
@@ -8488,9 +8494,9 @@ const AD_CSS=`
 .pu-note{font-family:inherit;font-size:11px;color:var(--ink-3);margin-top:10px;line-height:1.6;font-variant-numeric:tabular-nums}
 .pu-note .acc{color:var(--accent);}
 .pu-u{display:inline-flex;align-items:center;gap:8px;font-family:'Geist','Inter',sans-serif;font-size:12.5px;color:var(--ink);}
-.pu-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+.pu-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);
   display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
-.pu-crown{font-family:inherit;font-size:11px;color:var(--accent);white-space:nowrap;
+.pu-crown{font-family:inherit;font-size:11px;color:var(--accent-ink);white-space:nowrap;
   border:1px solid color-mix(in oklab,var(--accent),transparent 70%);background:var(--accent-soft);
   border-radius:999px;padding:2px 7px;font-variant-numeric:tabular-nums}
 .pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
@@ -8500,7 +8506,7 @@ const AD_CSS=`
 .pu-people-ctl{display:flex;align-items:center;gap:8px}
 .pu-search{font:inherit;font-size:11.5px;padding:3px 9px;border-radius:6px;
   border:1px solid var(--hair);background:var(--paper);color:var(--ink);width:210px}
-.pu-search:focus{outline:none;border-color:var(--accent)}
+.pu-search:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
 .pu-sel{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:6px;
   border:1px solid var(--hair);background:var(--paper);color:var(--ink-2)}
 .pu-tblwrap{overflow-x:auto;max-height:560px;overflow-y:auto}
@@ -8512,13 +8518,13 @@ const AD_CSS=`
   padding:1px 5px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-3);margin-left:6px}
 .pu-badge.on{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
 .pu-badge.tod{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
-.pu-badge.off{color:var(--ink-4);border:0}
+.pu-badge.off{color:var(--ink-3);border:0}
 .pu-badge.adm{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
 .pu-pages{color:var(--ink-3);font-size:12px;max-width:210px}
 .pu-deep{font-style:normal;color:var(--ink-3);font-size:11px;margin-left:2px}
 .pu-badrow{background:color-mix(in oklab,var(--neg),transparent 94%)}
 .pu-qcell{max-width:420px}
-.pu-empty{color:var(--ink-4);font-size:12px;padding:10px 0}
+.pu-empty{color:var(--ink-3);font-size:12px;padding:10px 0}
 .pu-link{background:none;border:0;padding:0;font:inherit;font-size:11px;color:var(--accent);
   cursor:pointer;white-space:nowrap}
 .pu-link:hover{text-decoration:underline}
@@ -8561,10 +8567,10 @@ const AD_CSS=`
 .pu-qrow.bad{background:color-mix(in oklab,var(--neg),transparent 95%)}
 .pu-vd{flex-shrink:0}
 .pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:inherit;font-variant-numeric:tabular-nums}
-.pu-trail .at{color:var(--ink-4)}
+.pu-trail .at{color:var(--ink-3)}
 .pu-trail .k{color:var(--ink-3);width:96px}
 .pu-trail .p{color:var(--ink-2);flex:1}
-.pu-trail .d{color:var(--ink-4)}
+.pu-trail .d{color:var(--ink-3)}
 .pu-report{font-size:13px;line-height:1.6}
 .pu-cmp{padding:10px 0;border-bottom:1px solid var(--hair)}
 .pu-cmp:last-child{border-bottom:0}
@@ -8632,7 +8638,7 @@ const AD_CSS=`
   background:color-mix(in oklab,var(--accent),transparent 40%);}
 .pu-chk{text-align:center;}
 .pu-chk .yes{color:var(--pos);}
-.pu-chk .no{color:var(--ink-4);}
+.pu-chk .no{color:var(--ink-3);}
 .pu-off{font-size:11px;color:var(--ink-3);border:1px solid var(--hair);
   border-radius:4px;padding:0 4px;margin-left:6px;}
 
@@ -8643,7 +8649,7 @@ const AD_CSS=`
 
 .pu-kv{display:grid;grid-template-columns:repeat(4,auto);gap:5px 20px;
   justify-content:start;font-size:12.5px;margin-bottom:4px;}
-.pu-kv span{color:var(--ink-4);}
+.pu-kv span{color:var(--ink-3);}
 .pu-kv b{font-family:inherit;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .pu-kv b.neg{color:var(--neg);}
 .pu-kv-row{display:flex;justify-content:space-between;padding:5px 2px;
@@ -8660,7 +8666,7 @@ const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
 // area-график: users (заливка) + views (тонкая линия), даты по оси
 function AdArea({data,h=130}){
   const w=640, vals=(data||[]);
-  if(vals.length<2) return <div style={{color:"var(--ink-4)",fontSize:12,padding:"20px 0"}}>Данные накапливаются — график появится после пары дней жизни телеметрии.</div>;
+  if(vals.length<2) return <div style={{color:"var(--ink-3)",fontSize:12,padding:"20px 0"}}>Данные накапливаются — график появится после пары дней жизни телеметрии.</div>;
   const maxU=Math.max(...vals.map(v=>v.users||0),1);
   const maxV=Math.max(...vals.map(v=>v.views||0),1);
   const px=(i)=>i/(vals.length-1)*(w-8)+4;
@@ -8731,7 +8737,7 @@ function AdCols({axis,a,b,h=118}){
   const am={};(a||[]).forEach(x=>am[x.d]=+x.n||0);
   const bm={};(b||[]).forEach(x=>bm[x.d]=+x.n||0);
   const days=(axis||[]).map(x=>x.d);
-  if(!days.length) return <div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>;
+  if(!days.length) return <div style={{color:"var(--ink-3)",fontSize:12}}>Накапливается.</div>;
   const max=Math.max(...days.map(d=>Math.max(am[d]||0,bm[d]||0)),1);
   const slot=(w-32)/days.length, bw=Math.max(3,Math.min(13,slot/2-2));
   const dd=(s)=>(s||"").slice(8,10)+"."+(s||"").slice(5,7);
@@ -8886,7 +8892,7 @@ function PuPersonalization({pz}){
   return <div className="pu-card pu-sec">
     <div className="h"><span>Персонализация «Для вас» · по людям</span>
       {pz.ctr!=null&&<span className="pu-chip">CTR плиток {pz.ctr}%</span>}</div>
-    {us.length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Данные копятся.</div>
+    {us.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Данные копятся.</div>
       :<table className="pu-tbl">
         <thead><tr><th>кто</th><th>сила профиля</th><th>просмотры</th><th>клики</th><th>оценок</th></tr></thead>
         <tbody>{us.map((u,i)=><tr key={i}>
@@ -8912,7 +8918,7 @@ function PuNewsQuality({q}){
         Рубрика — «повод для проверки аудитора розницы»: фон — ставки, тарифы, макро;
         пропущено — сильные поводы из потока, не попавшие в выпуск.
         {q.cards&&(q.cards.useful||q.cards.noise)?<> Аудиторы: полезно {q.cards.useful}, не по делу {q.cards.noise}.</>:null}</p>
-      {s.length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
+      {s.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>
           Судья ещё не оценил ни одного выпуска (первый прогон — в {""}
           {String(8).padStart(2,"0")}:00 МСК).</div>
         :<table className="pu-tbl">
@@ -8941,7 +8947,7 @@ function PuNewsQuality({q}){
           <td>{r.source}</td><td>{r.items}</td><td>{r.relevant}</td>
           <td style={r.items>=20&&!r.strong?{color:"var(--warn)"}:null}>{r.strong}</td><td>{r.published}</td>
         </tr>)}</tbody></table>}
-      {(q.top_clicked||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
+      {(q.top_clicked||[]).length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>
           Кликов ещё нет — трекинг включён с 05.08.</div>
         :(q.top_clicked||[]).map((r,i)=><div key={i} className="pu-err">
           <span className="k">{r.n}×</span>
@@ -9509,7 +9515,7 @@ function PulsePage(){
               parts={[
                 {label:"исследователи · ИИ и отчёты",value:sg.researchers||0,color:"var(--accent)"},
                 {label:"читатели новостей",value:sg.readers||0,color:"var(--warn)"},
-                {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-4)"},
+                {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-3)"},
                 {label:"спящие за период",value:sg.sleepers||0,color:"var(--hair-2)"},
               ]}/>
             <div className="pu-note">
@@ -9549,7 +9555,7 @@ function PulsePage(){
         <div className="pu-grid2">
           <div className="pu-card">
             <div className="h"><span>Страницы · {m.days} дн</span><span>просмотры · время</span></div>
-            {(m.pages||[]).length===0&&<div style={{color:"var(--ink-4)",fontSize:12}}>Пока пусто.</div>}
+            {(m.pages||[]).length===0&&<div style={{color:"var(--ink-3)",fontSize:12}}>Пока пусто.</div>}
             {(m.pages||[]).map(pg=><div key={pg.page} className="pu-bar-row">
               <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
               <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxPage)*100)+"%"}}/></span>
@@ -9585,7 +9591,7 @@ function PulsePage(){
         <div className="pu-grid2 pu-sec">
           <div className="pu-card">
             <div className="h"><span>Латентность API · 7 дн</span><span>мс</span></div>
-            {(m.latency||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>
+            {(m.latency||[]).length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Накапливается.</div>
               :<table className="pu-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
                 <tbody>{(m.latency||[]).map((r,i)=><tr key={i}>
                   <td title={r.path}>{(r.path||"").replace("/api/","")}</td>
@@ -9597,7 +9603,7 @@ function PulsePage(){
           <div className="pu-card">
             <div className="h"><span>Ошибки · последние</span>
               <span className={"pu-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
-            {nErr===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
+            {nErr===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
               :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="pu-err">
                 <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"js":"api"}</span>
                 <span className="m" title={e.msg||""}>{e.page||"—"}{e.status?" · "+e.status:""}{e.msg?" · "+e.msg:""}</span>
@@ -9667,7 +9673,7 @@ const PROFILE_CSS=`
 .pf-wrap{max-width:720px;}
 .pf-hero{display:flex;align-items:center;gap:18px;margin-bottom:24px;}
 .pf-avatar{width:60px;height:60px;flex:none;border-radius:16px;display:grid;place-items:center;
-  font-size:22px;font-weight:600;color:var(--accent);background:var(--accent-soft);
+  font-size:22px;font-weight:600;color:var(--accent-ink);background:var(--accent-soft);
   border:1px solid color-mix(in oklab,var(--accent),transparent 80%);letter-spacing:-.01em;}
 .pf-hero h1{margin:0 0 4px;}
 .pf-sub{font-size:12px;color:var(--ink-3);}
@@ -9687,7 +9693,7 @@ const PROFILE_CSS=`
 .pf-hint{font-size:12.5px;line-height:1.5;color:var(--ink-3);margin-bottom:12px;max-width:64ch;text-wrap:pretty;}
 .pf-ta{width:100%;min-height:80px;resize:vertical;border:1px solid var(--hair);border-radius:10px;background:var(--surface);
   color:var(--ink);font-size:13.5px;line-height:1.55;padding:12px 14px;font-family:'Geist','Inter',sans-serif;transition:border-color .14s;}
-.pf-ta:focus{outline:none;border-color:var(--accent);}
+.pf-ta:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
 .pf-ta::placeholder{color:var(--ink-4);}
 .pf-note{font-family:'Source Serif 4',serif;font-size:16.5px;line-height:1.56;color:var(--ink);text-wrap:pretty;}
 .pf-note-empty{font-size:13.5px;line-height:1.55;color:var(--ink-3);text-wrap:pretty;max-width:62ch;}
@@ -9703,11 +9709,11 @@ const PROFILE_CSS=`
 .pf-topics{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
 .pf-topic{display:inline-flex;align-items:center;gap:5px;min-height:28px;font-size:12px;font-weight:500;padding:0 6px 0 12px;border-radius:999px;
   background:var(--paper-2);border:1px solid transparent;color:var(--ink-2);transition:border-color .14s,background .14s,color .14s;}
-.pf-topic.anchor{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 80%);color:var(--accent);font-weight:500;}
-.pf-topic .lock{font-size:11px;opacity:.8;}
+.pf-topic.anchor{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 80%);color:var(--accent-ink);font-weight:500;}
+.pf-topic .lock{font-size:11px;}
 .pf-tacts{display:inline-flex;gap:0;max-width:0;overflow:hidden;transition:max-width .18s ease;}
-.pf-topic:hover .pf-tacts{max-width:28px;}
-.pf-tacts button{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;color:currentColor;opacity:.6;transition:opacity .12s,background .12s;}
+.pf-topic:hover .pf-tacts,.pf-topic:focus-within .pf-tacts{max-width:28px;}
+.pf-tacts button{width:24px;height:24px;border-radius:5px;display:grid;place-items:center;color:currentColor;opacity:.6;transition:opacity .12s,background .12s;}
 .pf-tacts button:hover{opacity:1;background:color-mix(in oklab,currentColor,transparent 88%);}
 .pf-rec{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
 .pf-rec-chip{display:inline-flex;align-items:center;gap:6px;height:28px;font-size:12px;font-weight:500;padding:0 12px;border-radius:999px;
@@ -9718,13 +9724,13 @@ const PROFILE_CSS=`
 @keyframes pf-pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
 .pf-add input{border:1px dashed var(--hair-2);border-radius:999px;background:none;color:var(--ink);font-size:12px;
   height:28px;padding:0 12px;width:130px;transition:border-color .16s,border-style .16s,width .2s;font-family:inherit;}
-.pf-add input:focus{outline:none;border-color:var(--select);border-style:solid;width:210px;}
+.pf-add input:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);border-style:solid;width:210px;}
 .pf-add input::placeholder{color:var(--ink-4);}
 .pf-muted-h{font-size:11px;color:var(--ink-3);margin-top:16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
   font-family:inherit;transition:color .12s;font-variant-numeric:tabular-nums}
 .pf-muted-h:hover{color:var(--ink-3);}
 .pf-muted-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}
-.pf-muted-chip{font-size:11.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--hair);color:var(--ink-4);
+.pf-muted-chip{font-size:11.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--hair);color:var(--ink-3);
   text-decoration:line-through;cursor:pointer;transition:color .12s,border-color .12s,text-decoration .12s;}
 .pf-muted-chip:hover{color:var(--ink-2);border-color:var(--ink-4);text-decoration:none;}
 .pf-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 0;border-bottom:1px solid var(--hair);}
@@ -9738,10 +9744,10 @@ const PROFILE_CSS=`
   font-size:13px;padding:8px 30px 8px 11px;min-width:210px;cursor:pointer;transition:border-color .14s;
   appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:right 10px center;}
-.pf-select:focus{outline:none;border-color:var(--accent);}
+.pf-select:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
 .pf-input-sm{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
   font-size:13px;padding:8px;font-family:inherit;min-width:60px;width:60px;text-align:center;transition:border-color .14s;font-variant-numeric:tabular-nums}
-.pf-input-sm:focus{outline:none;border-color:var(--accent);}
+.pf-input-sm:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
 .pf-toggle{width:42px;height:24px;border-radius:999px;background:var(--hair-2);position:relative;flex:none;transition:background .18s;}
 .pf-toggle.on{background:var(--accent);}
 .pf-toggle span{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--surface);
@@ -9753,6 +9759,8 @@ const PROFILE_CSS=`
   transition:transform .1s,filter .14s;}
 .pf-save:hover{opacity:.88;}
 .pf-save:active{transform:scale(.97);}
+@media(pointer:coarse){.pf-add input,.pf-select,.pf-input-sm{min-height:44px;height:44px}
+  .pf-toggle{position:relative}.pf-toggle::after{content:"";position:absolute;inset:-10px -2px}}
 `;
 const BANK_RU={sberbank:"Сбербанк",vtb:"ВТБ",alfabank:"Альфа-Банк",tinkoff:"Т-Банк",gazprombank:"Газпромбанк",rshb:"Россельхозбанк",domrf:"Банк ДОМ.РФ",psb:"ПСБ",sovcombank:"Совкомбанк",mtsbank:"МТС-Банк",raiffeisen:"Райффайзен",otkritie:"Открытие"};
 const PROD_RU={ipoteka:"Ипотека",deposit:"Вклады",credit_card:"Кредитные карты",debit_card:"Дебетовые карты",consumer_loan:"Потребкредиты",auto:"Автокредиты",rko:"РКО",savings:"Накопит. счета",acquiring:"Эквайринг",premium:"Премиальные пакеты",transfers:"Переводы и комиссии"};
@@ -9889,7 +9897,7 @@ function ProfilePage(){
         .pf-power-row .lbl{flex:1;min-width:0;}
         .pf-power-row .pts{font-family:inherit;font-size:12px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
         .pf-power-row:not(.done) .pts{color:var(--ink);font-weight:600;}
-        .pf-power-cap{font-size:11.5px;color:var(--ink-4);margin-top:10px;line-height:1.5;}
+        .pf-power-cap{font-size:11.5px;color:var(--ink-3);margin-top:10px;line-height:1.5;}
       `}</style>
       <div className="eyebrow" style={{marginBottom:12}}>Сила персонализации · <span style={{color:"var(--accent)"}}>✦ растёт от ваших действий</span></div>
       <div className="pf-power">
@@ -9929,7 +9937,7 @@ function ProfilePage(){
               </span>))}
           </div>
         : <div className="pf-topics"><span className="pf-topic anchor">Сбербанк <span className="lock">якорь</span></span>
-            <span className="t-cap" style={{color:"var(--ink-4)"}}>ваши продукты появятся после нескольких запросов</span></div>}
+            <span className="t-cap" style={{color:"var(--ink-3)"}}>ваши продукты появятся после нескольких запросов</span></div>}
 
       {recs.length>0 && <>
         <div className="pf-sub-h">Рекомендуем добавить</div>
@@ -10199,7 +10207,7 @@ function Shell(){
           animation:fade-in .3s ease-out;transition:transform .15s,border-color .15s;}
         .ai-ready:hover{transform:translateY(-2px);border-color:var(--accent);}
         .ai-ready .sp{color:var(--accent);}
-        .ai-ready .x{color:var(--ink-4);font-size:12px;padding:2px 4px;border-radius:5px;}
+        .ai-ready .x{color:var(--ink-3);font-size:12px;padding:2px 4px;border-radius:5px;}
         .ai-ready .x:hover{color:var(--ink);background:var(--paper-2);}
         @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
         .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
