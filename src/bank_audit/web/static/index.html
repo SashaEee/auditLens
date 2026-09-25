@@ -1665,12 +1665,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-gp{color:var(--ink-4)}
 
 /* vs market */
-.rv-vrow{display:grid;grid-template-columns:140px 1fr 52px;align-items:center;gap:12px;padding:4px 0}
-.rv-vname{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rv-vname.t{color:var(--ink);font-weight:600}
-.rv-vbar{height:15px;background:color-mix(in oklab,var(--ink-4),transparent 15%);border-radius:4px;min-width:4px;box-shadow:var(--shadow-1);transition:width .35s ease}
-.rv-vbar.t{background:linear-gradient(90deg,var(--accent),color-mix(in oklab,var(--accent),transparent 30%))}
-.rv-vp{font-size:11px;color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums}
 
 /* feed */
 .rv-search{position:relative;display:flex;align-items:center;gap:8px;margin:6px 0 16px;padding:0 12px;height:40px;border:1px solid var(--hair-2);border-radius:8px;background:var(--paper-2);transition:border-color .12s,box-shadow .12s}
@@ -1698,6 +1692,68 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-more-btn{display:block;margin:14px auto 4px;min-width:260px}
 .rv-rq{font-size:13px;line-height:1.55;color:var(--ink);font-family:'Source Serif 4',Georgia,serif;max-width:860px}
 .rv-rf{display:flex;align-items:center;gap:14px;margin-top:8px}
+/* волна 3: что изменилось · против рынка по проблемам · гео-индекс · признаки риска */
+.rv-chg{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:0 0 14px;padding:10px 14px;border:1px solid var(--hair);border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--shadow-1)}
+.rv-chg-h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-right:6px;white-space:nowrap}
+.rv-chg-h i{font-style:normal;text-transform:none;letter-spacing:0;color:var(--ink-4);margin-left:4px}
+.rv-chg-it{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--ink);padding:3px 10px;border-radius:999px;border:1px solid var(--hair-2);background:var(--paper-2);white-space:nowrap}
+.rv-chg-ar{font-weight:700}
+.rv-chg-it.up .rv-chg-ar{color:var(--neg)}
+.rv-chg-it.down .rv-chg-ar{color:var(--pos)}
+.rv-chg-it.sig{border-color:color-mix(in oklab,var(--accent),transparent 60%);background:var(--accent-soft)}
+.rv-chg-it.click{cursor:pointer;transition:border-color .12s}
+.rv-chg-it.click:hover,.rv-chg-it.on{border-color:var(--accent)}
+.rv-chg-calm{font-size:12.5px;color:var(--ink-3)}
+/* высота — по чипам: на сенсорных экранах у них минимум 44px, и в
+   фиксированной высоте контейнера подпись обрезалась */
+.rv-chips-sm{height:auto;flex:none}
+.rv-chips-sm .rv-chip{padding:0 9px;font-size:10px;min-height:26px}
+.rv-bar-exp{background:transparent!important;border:1px dashed color-mix(in oklab,var(--ink-4),transparent 15%);border-bottom:none;display:flex;align-items:flex-end;overflow:hidden}
+.rv-bar-in{width:100%;background:repeating-linear-gradient(45deg,var(--ink-4),var(--ink-4) 3px,color-mix(in oklab,var(--ink-4),transparent 55%) 3px,color-mix(in oklab,var(--ink-4),transparent 55%) 6px)}
+.rv-bcol:hover .rv-bar-exp{border-color:var(--ink-2)}
+.rv-dlow{opacity:.55}
+.rv-cap-sep{color:var(--ink-4)}
+.rv-ix{display:grid;grid-template-columns:1fr 48px 44px;align-items:center;gap:10px;padding:7px 8px;border-radius:6px;cursor:pointer;border:1px solid transparent;transition:background .12s}
+.rv-ix:hover{background:var(--paper-2)}
+.rv-ix.sel{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
+.rv-ix-l{min-width:0}
+.rv-ix-name{font-size:13px;color:var(--ink);line-height:1.3}
+.rv-ix-sub{font-size:11px;color:var(--ink-3);margin-top:2px;line-height:1.35}
+.rv-ix-sub b{font-weight:600;color:var(--ink-2)}
+.rv-ix-v{font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+.rv-ix-h{display:flex;justify-content:space-between;align-items:baseline;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);padding:10px 8px 4px;border-top:1px solid var(--hair);margin-top:4px}
+.rv-cap+.rv-ix-h{border-top:none;margin-top:0;padding-top:0}
+.rv-ix-hq{letter-spacing:.02em;text-transform:none;margin-right:50px}
+.rv-ix-none{font-size:12px;color:var(--ink-3);padding:6px 8px}
+.rv-spark{display:block;overflow:visible}
+.rv-spark-base{stroke:var(--ink-4);stroke-width:1;stroke-dasharray:2 2;opacity:.7}
+.rv-spark-l{fill:none;stroke:var(--ink-3);stroke-width:1.3;stroke-linejoin:round;stroke-linecap:round}
+.rv-spark-p{fill:var(--ink-3)}
+.rv-spark-last{fill:var(--ink)}
+.rv-spark-na{display:block;width:48px}
+.rv-gfocus{font-size:10.5px;color:var(--ink-3);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rv-gi{display:inline-block;min-width:38px;text-align:right;margin-left:8px}
+.rv-tag.good{color:var(--pos);background:color-mix(in oklab,var(--pos),transparent 88%);border:1px solid color-mix(in oklab,var(--pos),transparent 72%)}
+.rv-flags{margin-bottom:14px}
+.rv-flags-sum{font-size:11px;color:var(--ink-3);white-space:nowrap;padding-top:3px}
+.rv-flags-sum b{color:var(--ink);font-weight:600}
+.rv-flags-g{display:grid;grid-template-columns:repeat(3,1fr);gap:4px 28px}
+.rv-fg{min-width:0}
+.rv-fg-h{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);padding:0 8px 6px;border-bottom:1px solid var(--hair);margin-bottom:4px}
+.rv-fi{display:grid;grid-template-columns:1fr 40px 96px;gap:8px;align-items:baseline;padding:5px 8px;border-radius:6px;cursor:pointer;border:1px solid transparent;font-size:12.5px;transition:background .12s}
+.rv-fi:hover{background:var(--paper-2)}
+.rv-fi.sel{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
+.rv-fi.tot .rv-fi-l{font-weight:600}
+.rv-fi-l{min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rv-fi-cav{color:var(--warn);margin-left:2px}
+.rv-fi-n{text-align:right;color:var(--ink-3);font-size:11px;font-variant-numeric:tabular-nums}
+.rv-fi-m{text-align:right;font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:400;white-space:nowrap}
+.rv-fi-m i{font-style:normal;color:var(--ink-4);font-weight:400}
+.rv-fi-m.rv-up{color:var(--neg);font-weight:600}
+.rv-fi-m.rv-down{color:var(--pos);font-weight:600}
+.rv-flags-note{font-size:10.5px;color:var(--ink-4);margin-top:10px;padding:0 8px}
+@media(max-width:920px){.rv-flags-g{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.rv-flags-g{grid-template-columns:1fr;gap:12px}.rv-flags>.rv-ct{flex-direction:column;gap:0}.rv-flags-sum{margin-bottom:12px}.rv-fi-l{white-space:normal}.rv-ct{flex-wrap:wrap}.rv-chg-it{white-space:normal}}
 .rv-lnk{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);text-decoration:none}
 .rv-lnk:hover{text-decoration:underline}
 .rv-lnk2{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-3);cursor:pointer;transition:color .12s}
@@ -2538,6 +2594,6 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-rv-w2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-rv-w3"></script>
 </body>
 </html>

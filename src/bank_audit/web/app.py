@@ -1843,8 +1843,9 @@ def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = No
     return _rd().overview(bank, product or None, days) or {}
 
 @app.get("/api/reviews/trend")
-def reviews_trend(bank: str = "Сбербанк", product: Optional[str] = None):
-    return _rd().trend(bank, product or None) or {}
+def reviews_trend(bank: str = "Сбербанк", product: Optional[str] = None, basis: str = "pub"):
+    # basis=event — по дате самого события, а не отзыва (режим динамики)
+    return _rd().trend(bank, product or None, basis="event" if basis == "event" else "pub") or {}
 
 @app.get("/api/reviews/themes")
 def reviews_themes(bank: str = "Сбербанк", product: Optional[str] = None,
@@ -1857,6 +1858,21 @@ def reviews_themes(bank: str = "Сбербанк", product: Optional[str] = None
 @app.get("/api/reviews/vs-market")
 def reviews_vs_market(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
     return _rd().vs_market(bank, product or None, days) or {}
+
+@app.get("/api/reviews/issue-index")
+def reviews_issue_index(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 180):
+    """Где структура жалоб банка значимо отличается от остального рынка."""
+    return _rd().issue_index(bank, product or None, days) or {}
+
+@app.get("/api/reviews/risk-flags")
+def reviews_risk_flags(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
+    """Признаки риска из разметки: адресаты эскалации, уязвимые клиенты, практики."""
+    return _rd().risk_flags(bank, product or None, days) or {}
+
+@app.get("/api/reviews/changes")
+def reviews_changes(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
+    """Шапка «что изменилось»: только значимые изменения к прошлому окну."""
+    return _rd().changes(bank, product or None, days) or {}
 
 @app.get("/api/reviews/geo")
 def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None,
@@ -1887,7 +1903,8 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  theme: Optional[str] = None, q: Optional[str] = None,
                  city: Optional[str] = None, month: Optional[str] = None,
                  days: Optional[int] = None, esc: int = 0,
-                 sort: str = "auto", limit: int = 20, offset: int = 0):
+                 sort: str = "auto", limit: int = 20, offset: int = 0,
+                 flag: Optional[str] = None):
     # days раньше здесь ОТСУТСТВОВАЛ: переключатель периода стоял на вкладке,
     # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
     # 3 месяца, а в списке отзывы за прошлый год».
@@ -1895,7 +1912,7 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                                 q=q or None, days=days or None,
                                 city=city or None, month=month or None,
                                 limit=limit, offset=max(0, offset),
-                                esc=bool(esc), sort=sort)
+                                esc=bool(esc), sort=sort, flag=flag or None)
     # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
     # search — по каким словам искали на самом деле и сколько попаданий дословных
     return {"items": res["items"], "count": len(res["items"]),
@@ -1907,16 +1924,17 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
 def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None,
                    theme: Optional[str] = None, city: Optional[str] = None,
                    month: Optional[str] = None, days: Optional[int] = None,
-                   esc: int = 0, limit: int = 10000):
+                   esc: int = 0, limit: int = 10000, flag: Optional[str] = None):
     """Выгрузка жалоб с разметкой ИИ в CSV (UTF-8 с BOM — открывается в Excel)."""
     import csv
     import io
     from urllib.parse import quote as _q
     rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
                              days=days or None, city=city or None, month=month or None,
-                             esc=bool(esc), limit=limit)
+                             esc=bool(esc), limit=limit, flag=flag or None)
     if rows is None:
         raise HTTPException(404, "банк не найден")
+    flag_name = _rd().flag_label(flag)
     buf = io.StringIO()
     buf.write("\ufeff")
     cols = list(rows[0].keys()) if rows else ["дата", "банк", "суть", "ссылка"]
@@ -1925,7 +1943,7 @@ def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None
     # тексты отзывов чужие: «=», «+», «-», «@» в начале ячейки Excel исполнит как формулу
     w.writerows({k: ("'" + v if isinstance(v, str) and v[:1] in "=+-@" else v)
                  for k, v in r.items()} for r in rows)
-    name = f"жалобы_{bank}_{theme or product or 'все'}_{days or 'всё'}дн.csv"
+    name = f"жалобы_{bank}_{theme or flag_name or product or 'все'}_{days or 'всё'}дн.csv"
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
 
@@ -2019,7 +2037,7 @@ async def reviews_explain(bank: str = "Сбербанк", product: Optional[str]
     if city:
         parts.append(f"г. {city}")
     if month:
-        parts.append(f"месяц {month}")
+        parts.append(f"события месяца {month[3:]}" if month.startswith("ev:") else f"месяц {month}")
     label = f"{bank}" + (" · " + ", ".join(parts) if parts else "")
     summary = await reviews_llm.explain_segment(seg, label=label, profile=prof)
     out = {"summary": summary, "themes": seg["themes"], "samples": seg["samples"],

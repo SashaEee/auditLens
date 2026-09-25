@@ -48,9 +48,11 @@ async def reviews_pulse(day: date) -> dict:
         wk = rd.weekly_signals(bank) or {}
         th = rd.themes(bank) or {}
         tr = rd.trend(bank) or {}
-        # топ растущих тем: только осмысленные (порог по n гасит взрывные % у редких)
+        # топ растущих тем: только значимо обгоняющие общий поток жалоб (Б4) —
+        # «+77%» на 99 жалобах при общем росте +23% в пределах колебаний
         themes_up = [t for t in (th.get("themes") or [])
-                     if t.get("key") != "other"
+                     if t.get("key") != "other" and t.get("delta_sig")
+                     and (t.get("excess") or 0) > 0
                      and (t.get("delta_pct") or 0) >= 50 and (t.get("n") or 0) >= 30][:5]
         series = (tr.get("series") or [])[-8:]
         # «пульс дня» на главной: расхождение с рынком (есть всегда, в отличие

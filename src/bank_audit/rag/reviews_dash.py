@@ -2,15 +2,18 @@
 
 Агрегаты поверх корпуса banki.ru (БД `bankiru`, ~390к жалоб 1-2★, 2025-2026):
 KPI, помесячная динамика + детект спайков, таксономия тем с трендом и
-категорией риска, Сбер-vs-рынок, география (per-capita-аномалии), лента.
+категорией риска, индекс «банк против рынка» по проблемам, география
+(индекс доли банка в городе), признаки риска, лента.
 
 Все тяжёлые агрегаты bank-scoped (подмножество ≤50к строк) → быстро.
 Кэш на процесс с TTL (агрегаты считаются раз в ~час).
 """
 from __future__ import annotations
 
+import datetime as _dt
 import functools
 import logging
+import math
 import os
 import re
 import threading
@@ -162,47 +165,6 @@ def _median(xs: list[float]) -> float:
     m = n // 2
     return float(s[m]) if n % 2 else (s[m - 1] + s[m]) / 2.0
 
-# Население городов (тыс.) — для per-capita аномалий географии. Покрывает все
-# города РФ ~100k+ и региональные центры, чтобы per_100k и аномалии считались
-# не только по горстке миллионников. Ключи в нижнем регистре, ё→е (см. lookup).
-_POP = {
-    # миллионники
-    "москва": 13100, "санкт-петербург": 5600, "новосибирск": 1630, "екатеринбург": 1540,
-    "казань": 1310, "нижний новгород": 1200, "челябинск": 1180, "красноярск": 1190,
-    "самара": 1160, "уфа": 1150, "ростов-на-дону": 1140, "краснодар": 1100,
-    "омск": 1110, "воронеж": 1050, "пермь": 1030, "волгоград": 1000,
-    # 500k–1млн
-    "саратов": 880, "тюмень": 870, "тольятти": 680, "махачкала": 700, "барнаул": 620,
-    "ижевск": 650, "хабаровск": 610, "ульяновск": 620, "иркутск": 620, "владивосток": 600,
-    "ярославль": 580, "томск": 570, "оренбург": 550, "кемерово": 550, "новокузнецк": 540,
-    "набережные челны": 540, "рязань": 530, "ставрополь": 540, "севастополь": 510,
-    "пенза": 510, "балашиха": 510, "липецк": 500,
-    # 300k–500k
-    "чебоксары": 490, "калининград": 490, "киров": 480, "тула": 470, "сочи": 470,
-    "курск": 450, "улан-удэ": 440, "тверь": 420, "магнитогорск": 410, "иваново": 400,
-    "брянск": 400, "сургут": 400, "белгород": 390, "якутск": 380, "калуга": 360,
-    "владимир": 350, "архангельск": 350, "чита": 350, "симферополь": 340, "грозный": 330,
-    "волжский": 320, "смоленск": 320, "саранск": 320, "череповец": 310, "вологда": 310,
-    "подольск": 310, "орел": 300, "владикавказ": 300, "курган": 300,
-    # 200k–300k
-    "тамбов": 290, "нижневартовск": 280, "новороссийск": 280, "йошкар-ола": 280,
-    "петрозаводск": 280, "мурманск": 270, "кострома": 270, "стерлитамак": 270, "мытищи": 270,
-    "химки": 260, "нижнекамск": 240, "сыктывкар": 240, "нальчик": 240, "благовещенск": 240,
-    "комсомольск-на-амуре": 240, "королев": 230, "шахты": 230, "дзержинск": 230, "энгельс": 230,
-    "орск": 220, "ангарск": 220, "братск": 220, "великий новгород": 220, "старый оскол": 220,
-    "псков": 210, "люберцы": 210, "красногорск": 210, "бийск": 200, "южно-сахалинск": 200,
-    # 100k–200k
-    "армавир": 190, "балаково": 190, "абакан": 190, "прокопьевск": 190, "рыбинск": 180,
-    "северодвинск": 180, "норильск": 180, "петропавловск-камчатский": 180, "уссурийск": 180,
-    "сызрань": 170, "новочеркасск": 170, "электросталь": 160, "златоуст": 160,
-    "каменск-уральский": 160, "копейск": 150, "хасавюрт": 150, "пятигорск": 150, "керчь": 150,
-    "одинцово": 140, "домодедово": 140, "майкоп": 140, "ковров": 140, "кисловодск": 130,
-    "батайск": 130, "серпухов": 130, "каспийск": 130, "раменское": 130, "нефтеюганск": 130,
-    "дербент": 120, "новый уренгой": 120, "назрань": 120, "кызыл": 120, "орехово-зуево": 120,
-    "долгопрудный": 120, "димитровград": 110, "жуковский": 110, "реутов": 110, "пушкино": 110,
-    "ноябрьск": 110, "ханты-мансийск": 110, "муром": 105, "ачинск": 105, "новокуйбышевск": 100,
-    "элиста": 100, "магадан": 90, "биробиджан": 70, "горно-алтайск": 65, "салехард": 50,
-}
 
 # ── Кэш с TTL ───────────────────────────────────────────────────────────────
 _cache: dict[str, tuple[float, object]] = {}
@@ -291,6 +253,61 @@ _CMP = "i.kind IN ('complaint', 'mixed')"
 def _ann_schema() -> str:
     from .review_annotate import SCHEMA
     return SCHEMA
+
+
+# Срез «месяц»: «2026-05» — по дате отзыва, «ev:2026-05» — по дате события
+# (режим динамики «по дате события»). Один параметр проходит через ленту,
+# выгрузку, профиль среза и разбор моделью без смены их сигнатур.
+_MONTH_RX = re.compile(r"^(ev:)?(\d{4}-\d{2})$")
+
+
+def _month_clause(alias: str, month: str | None, p: dict) -> str:
+    if not month:
+        return ""
+    m = _MONTH_RX.match(month)
+    if not m:
+        return " AND false"
+    p["month"] = m.group(2)
+    col = f"{alias}.ev_date" if m.group(1) else f"{alias}.dt"
+    return f" AND date_trunc('month', {col}) = to_date(:month, 'YYYY-MM')"
+
+
+# Признаки риска из разметки — фильтр ленты и выгрузки. Коды — белый список:
+# значение попадает в SQL, поэтому всё, чего нет в списке, отвергается.
+_ESC_TO = {"cbr": "ЦБ", "court": "суд", "rpn": "Роспотребнадзор", "fas": "ФАС",
+           "prosecutor": "прокуратура", "finombudsman": "финомбудсмен", "police": "полиция"}
+_VULN = {"pensioner": "пенсионеры", "low_income": "низкий доход", "svo": "участники СВО",
+         "minor": "несовершеннолетние", "disabled": "инвалиды", "ill": "тяжелобольные"}
+
+
+def _flag_sql(flag: str | None) -> str | None:
+    """Условие на разметку `a` по коду признака; "" — фильтра нет, None — код неизвестен."""
+    if not flag:
+        return ""
+    esc = "coalesce(a.esc, 'none') <> 'none'"
+    if flag in ("esc:filed", "esc:threat"):
+        return f"a.esc = '{flag[4:]}'"
+    if flag.startswith("to:") and flag[3:] in _ESC_TO:
+        return f"{esc} AND '{flag[3:]}' = ANY(a.esc_to)"
+    if flag == "vuln:any":
+        return "cardinality(a.vulnerable) > 0"
+    if flag.startswith("vuln:") and flag[5:] in _VULN:
+        return f"'{flag[5:]}' = ANY(a.vulnerable)"
+    return {"no_consent": "a.no_consent", "misled": "a.misled",
+            "amount": "a.amount IS NOT NULL", "amount:1m": "a.amount >= 1000000"}.get(flag)
+
+
+def flag_label(flag: str | None) -> str | None:
+    """Подпись признака для ленты и имени выгрузки."""
+    if not flag or _flag_sql(flag) is None:
+        return None
+    if flag.startswith("to:"):
+        return f"обращение: {_ESC_TO[flag[3:]]}"
+    if flag.startswith("vuln:"):
+        return "уязвимые клиенты" if flag == "vuln:any" else _VULN[flag[5:]]
+    return {"esc:filed": "уже обратились", "esc:threat": "грозят обратиться",
+            "no_consent": "без согласия", "misled": "ввели в заблуждение",
+            "amount": "указана сумма", "amount:1m": "сумма от 1 млн ₽"}[flag]
 
 
 def _coverage(bank_canon: str | None, days: int) -> float | None:
@@ -421,10 +438,13 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
                 SELECT count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d)),
                        count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d2)
                                           AND i.dt <  now() - make_interval(days => :d)),
-                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d) AND i.esc)
+                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d) AND i.esc),
+                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d2)
+                                          AND i.dt <  now() - make_interval(days => :d) AND i.esc)
                 FROM review_index i WHERE {idx} AND {_CMP}
             """), {**ip, "d": days, "d2": days * 2}).one()
             total_cur, total_prev, esc_cur = int(cur[0]), int(cur[1]), int(cur[2])
+            esc_prev = int(cur[3])
             filed = int(s.execute(text(f"""
                 SELECT count(*) FROM review_index i
                 JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
@@ -458,6 +478,7 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
             "market_banks": len(mk),
             "escalation_pct": round(100.0 * esc_cur / total_cur, 1) if total_cur else 0.0,
             "escalation_filed_pct": round(100.0 * filed / total_cur, 1) if total_cur else 0.0,
+            "esc_n": esc_cur, "esc_prev_n": esc_prev,
             "as_of": asof.date().isoformat() if asof else None,
             "by_source": by_src, "src": "annotation",
             "coverage": _coverage(bc, days * 2),
@@ -465,11 +486,57 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
     return _cached(f"ov:{bc}:{product}:{days}", _compute)
 
 
+def _lag_cdf() -> list[float]:
+    """Доля жалоб, опубликованных не позже k дней после события (k = 0..730).
+
+    По всем банкам за год публикаций. Нужна режиму «по дате события»: месяц
+    события наполняется ещё месяцами (медиана задержки — неделя, у каждой
+    десятой — больше четырёх месяцев), и без поправки последние месяцы
+    выглядят спадом."""
+    def _compute():
+        with db.session() as s:
+            rows = s.execute(text(f"""
+                SELECT least(greatest(i.dt::date - i.ev_date, 0), 730), count(*)
+                FROM review_index i
+                WHERE {_CMP} AND i.ev_date IS NOT NULL AND i.ev_date <= i.dt::date + 1
+                  AND i.dt > now() - interval '365 days' AND i.dt <= now()
+                GROUP BY 1""")).all()
+        hist = [0] * 731
+        for k, n in rows:
+            hist[int(k)] += int(n)
+        tot = sum(hist) or 1
+        cdf, acc = [], 0
+        for n in hist:
+            acc += n
+            cdf.append(acc / tot)
+        return cdf
+    return _cached("lag_cdf", _compute, ttl=6 * 3600)
+
+
+def _month_completeness(ym: str, today, cdf: list[float]) -> float:
+    """Какая доля жалоб о событиях месяца ym уже опубликована к today."""
+    y, m = map(int, ym.split("-"))
+    d = _dt.date(y, m, 1)
+    vals = []
+    while d.month == m and d <= today:
+        vals.append(cdf[min((today - d).days, 730)])
+        d += _dt.timedelta(days=1)
+    return sum(vals) / len(vals) if vals else 0.0
+
+
 @_safe(None)
-def trend(bank: str, product: str | None = None, months: int = 14) -> dict | None:
+def trend(bank: str, product: str | None = None, months: int = 14,
+          basis: str = "pub") -> dict | None:
+    """Помесячная динамика жалоб. basis="event" — по дате самого события, а не
+    отзыва: четверть отзывов описывает события старше двух месяцев, и пик по
+    дате публикации запаздывает и размазывается. Считаются только жалобы с
+    датой события (её называют ~60%); месяцы, которые по опыту ещё не
+    наполнились до 90%, помечены неполными — с оценкой, сколько ещё придёт."""
     bc = resolve_bank(bank)
     if not bc:
         return None
+    if basis == "event":
+        return _cached(f"tre:{bc}:{product}:{months}", lambda: _trend_event(bc, product, months))
 
     def _compute():
         idx, ip = _idx_clause(bc, product)
@@ -491,19 +558,52 @@ def trend(bank: str, product: str | None = None, months: int = 14) -> dict | Non
             cov = (lab / tot) if tot else 1.0
             series.append({"ym": ym, "n": int(n), "partial": ym == cur_ym or cov < 0.97,
                            **({"labeled_pct": round(100 * cov)} if cov < 0.97 else {})})
-        complete = [s["n"] for s in series if not s["partial"]]
-        med = None
-        if len(complete) >= 4:
-            med = _median(complete)
-            mad = _median([abs(v - med) for v in complete]) or (
-                sum(abs(v - med) for v in complete) / len(complete))
-            thr = med + 2.0 * mad
-            for s in series:
-                s["pct_vs_median"] = round(100.0 * (s["n"] - med) / med) if med else 0
-                s["spike"] = (not s["partial"]) and s["n"] > thr and s["n"] >= med * 1.4
-        return {"bank": bc, "product": product, "series": series, "baseline": med}
+        return {"bank": bc, "product": product, "series": series,
+                "baseline": _mark_spikes(series), "basis": "pub"}
     return _cached(f"tr:{bc}:{product}:{months}", _compute)
 
+
+def _mark_spikes(series: list[dict]) -> float | None:
+    """Пик — месяц выше медианы + 2·MAD завершённых месяцев и не меньше ×1,4."""
+    complete = [s["n"] for s in series if not s["partial"]]
+    if len(complete) < 4:
+        return None
+    med = _median(complete)
+    mad = _median([abs(v - med) for v in complete]) or (
+        sum(abs(v - med) for v in complete) / len(complete))
+    thr = med + 2.0 * mad
+    for s in series:
+        s["pct_vs_median"] = round(100.0 * (s["n"] - med) / med) if med else 0
+        s["spike"] = (not s["partial"]) and s["n"] > thr and s["n"] >= med * 1.4
+    return med
+
+
+def _trend_event(bc: str, product: str | None, months: int) -> dict:
+    idx, ip = _idx_clause(bc, product)
+    with db.session() as s:
+        rows = s.execute(text(
+            f"SELECT to_char(date_trunc('month', i.ev_date), 'YYYY-MM') ym, count(*)"
+            f" FROM review_index i WHERE {idx} AND {_CMP}"
+            f" AND i.ev_date IS NOT NULL AND i.ev_date <= i.dt::date + 1"
+            f" AND i.ev_date >= date_trunc('month', now()) - make_interval(months => :m)"
+            f" GROUP BY 1 ORDER BY 1"), {**ip, "m": months - 1}).all()
+        with_ev, tot = s.execute(text(
+            f"SELECT count(i.ev_date), count(*) FROM review_index i WHERE {idx} AND {_CMP}"
+            f" AND i.dt >= now() - interval '365 days'"), ip).one()
+        today = s.execute(text("SELECT current_date")).scalar()
+    cdf = _lag_cdf()
+    series = []
+    for ym, n in rows:
+        c = _month_completeness(ym, today, cdf)
+        item = {"ym": ym, "n": int(n), "partial": c < 0.9}
+        if c < 0.9:
+            item["complete_pct"] = round(100 * c)
+            if c >= 0.3:
+                item["expected"] = round(int(n) / c)
+        series.append(item)
+    return {"bank": bc, "product": product, "series": series,
+            "baseline": _mark_spikes(series), "basis": "event",
+            "ev_share": round(100 * with_ev / tot) if tot else None}
 
 
 
@@ -538,7 +638,15 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
                   AND (CAST(:product AS text) IS NULL OR i.product = :product)
                 GROUP BY 1"""), p).all())
         total = sum(int(r[1]) for r in rows) or 1
+        total_prev = sum(int(r[2]) for r in rows)
         ready = _prev_ready(bc, days)
+        # Значимость изменения темы — против ОБЩЕГО потока: если жалоб в целом
+        # стало на 30% больше, тема с +35% не «растёт», она идёт вместе со всеми.
+        # Проверка: доля текущего окна в сумме двух окон у темы против той же
+        # доли у всех жалоб (биномиальная, нормальное приближение), с поправкой
+        # на число тем. Меньше 20 жалоб в двух окнах — «мало данных» (Б4).
+        share_cur = total / (total + total_prev) if total_prev else None
+        pv: dict[str, float] = {}
         out = []
         for code, n, prev in rows:
             o = cb.issue_obj(code)
@@ -547,12 +655,30 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
             n, prev = int(n), int(prev)
             if not n and not prev:
                 continue
-            out.append({**o, "n": n, "pct": round(100.0 * n / total, 1),
-                        "n_also": int(also.get(code, 0)),
-                        "delta_pct": (None if not ready else
-                                      round(100.0 * (n - prev) / prev) if prev else (None if n == 0 else 100))})
+            row = {**o, "n": n, "prev": prev, "pct": round(100.0 * n / total, 1),
+                   "n_also": int(also.get(code, 0)),
+                   "delta_pct": (None if not ready else
+                                 round(100.0 * (n - prev) / prev) if prev else (None if n == 0 else 100))}
+            if ready and share_cur is not None:
+                m = n + prev
+                row["delta_low"] = m < 20 or prev < 5
+                if not row["delta_low"]:
+                    z = (n - m * share_cur) / math.sqrt(m * share_cur * (1 - share_cur))
+                    pv[code] = _p2(z)
+                    ci = _rate_change(n, prev)
+                    if ci:
+                        row["delta_ci"] = [ci["lo"], ci["hi"]]
+                    row["excess"] = round(n - prev * total / total_prev)
+            out.append(row)
+        qv = _bh(pv) if pv else {}
+        for row in out:
+            if row["key"] in qv:
+                row["delta_sig"] = qv[row["key"]] < 0.05
         out.sort(key=lambda x: (x["key"] == "other", -x["n"]))
         return {"bank": bc, "product": product, "days": days, "total": total,
+                "total_prev": total_prev,
+                "overall_delta_pct": (round(100.0 * (total - total_prev) / total_prev)
+                                      if ready and total_prev else None),
                 "themes": out, "src": "annotation", "coverage": _coverage(bc, days * 2),
                 "delta_partial": not ready}
     return _cached(f"th:{bc}:{product}:{days}", _compute)
@@ -586,33 +712,305 @@ def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 
 
 
 @_safe(None)
+def issue_index(bank: str, product: str | None = None, days: int = 180) -> dict | None:
+    """Где структура жалоб банка отличается от рынка — по главной проблеме.
+
+    Индекс = доля проблемы в жалобах банка / её доля в жалобах ОСТАЛЬНЫХ
+    банков. Сравнивается структура, а не объём, поэтому ни размер банка, ни
+    то, насколько охотно его клиенты пишут на площадки, на индекс не влияют —
+    нормировка на число клиентов здесь не нужна. «Хуже рынка» — только
+    значимое отличие: 95% ДИ индекса, поправка на число проверенных проблем,
+    от 10 жалоб у банка и 30 у рынка, и практический порог (от ×1,25 или до
+    ×0,8). excess — сколько жалоб у банка сверх того, что было бы при
+    структуре рынка. Динамика — тот же индекс по четырём кварталам (90 дней).
+    Окно не короче 90 дней: на месяце почти все проблемы «мало данных»."""
+    bc = resolve_bank(bank)
+    if not bc:
+        return None
+    days = max(int(days or 180), 90)
+
+    def _compute():
+        p = {"bank": bc, "product": product, "d": days}
+        base = (f"{_CMP} AND i.bank IS NOT NULL"
+                " AND (CAST(:product AS text) IS NULL OR i.product = :product) AND i.dt <= now()")
+        with db.session() as s:
+            rows = s.execute(text(f"""
+                SELECT i.issue, (i.bank = :bank) AS own, count(*)
+                FROM review_index i
+                WHERE {base} AND i.dt >= now() - make_interval(days => :d)
+                GROUP BY 1, 2"""), p).all()
+            qrows = s.execute(text(f"""
+                SELECT i.issue, (i.bank = :bank) AS own,
+                       floor(extract(epoch FROM now() - i.dt) / 7776000)::int AS q, count(*)
+                FROM review_index i
+                WHERE {base} AND i.dt > now() - interval '360 days'
+                GROUP BY 1, 2, 3"""), p).all()
+            today = s.execute(text("SELECT current_date")).scalar()
+        a_: dict[str, int] = {}
+        c_: dict[str, int] = {}
+        for code, own, n in rows:
+            (a_ if own else c_)[code] = (a_ if own else c_).get(code, 0) + int(n)
+        B, C = sum(a_.values()), sum(c_.values())
+        if not B or not C:
+            return {"bank": bc, "product": product, "days": days, "bank_total": B,
+                    "market_total": C, "worse": [], "better": [], "tested": 0}
+        qa = [dict() for _ in range(4)]
+        qc = [dict() for _ in range(4)]
+        for code, own, q, n in qrows:
+            if 0 <= int(q) <= 3:
+                d = (qa if own else qc)[int(q)]
+                d[code] = d.get(code, 0) + int(n)
+        qB = [sum(d.values()) for d in qa]
+        qC = [sum(d.values()) for d in qc]
+        rows_out, pv = [], {}
+        for code in set(a_) | set(c_):
+            o = cb.issue_obj(code)
+            if not o or code in ("other", "no_issue"):
+                continue
+            a, c = a_.get(code, 0), c_.get(code, 0)
+            if a + c < 10:
+                continue
+            r = _ratio_ci(a, B, c, C)
+            if not r:
+                continue
+            pv[code] = r["p"]
+            trend_q = []
+            for k in (3, 2, 1, 0):                       # от старого квартала к свежему
+                ak, ck = qa[k].get(code, 0), qc[k].get(code, 0)
+                rk = _ratio_ci(ak, qB[k], ck, qC[k]) if ak >= 5 and ck >= 15 else None
+                trend_q.append(round(rk["rr"], 2) if rk else None)
+            rows_out.append({"key": code, "label": o["label"], "short": o.get("short"),
+                             "risk": o.get("risk"), "n": a, "market_n": c,
+                             "pct": round(100 * a / B, 1), "market_pct": round(100 * c / C, 1),
+                             "index": round(r["rr"], 1), "lo": round(r["lo"], 2),
+                             "hi": round(r["hi"], 2), "excess": round(a - B * c / C),
+                             "low": a < 10 or c < 30, "quarters": trend_q})
+        qv = _bh(pv)
+        for r in rows_out:
+            r["q"] = round(qv.get(r["key"], 1.0), 4)
+            r["sig"] = (r["q"] < 0.05 and not r["low"]
+                        and (r["index"] >= 1.25 or r["index"] <= 0.8))
+        worse = sorted([r for r in rows_out if r["sig"] and r["index"] > 1],
+                       key=lambda r: -r["excess"])
+        better = sorted([r for r in rows_out if r["sig"] and r["index"] < 1],
+                        key=lambda r: r["excess"])
+        quarters = [{"from": (today - _dt.timedelta(days=90 * (k + 1))).isoformat(),
+                     "to": (today - _dt.timedelta(days=90 * k)).isoformat()} for k in (3, 2, 1, 0)]
+        return {"bank": bc, "product": product, "days": days, "bank_total": B,
+                "market_total": C, "bank_share": round(100 * B / (B + C), 1),
+                "tested": len(pv), "worse": worse[:8], "better": better[:4],
+                "quarters": quarters}
+    return _cached(f"ii:{bc}:{product}:{days}", _compute)
+
+
+@_safe(None)
 def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) -> dict | None:
+    """География как индекс: доля банка в жалобах города против его доли в
+    остальной стране (Б2). Население города больше не используется: на
+    площадки пишет не население, и деление на него раздувало города, где
+    площадкой пользуются активнее, — так «аномалией» выглядел Краснодар.
+    Аномалия — значимо выше (95% ДИ, поправка на число городов), от ×1,3 и
+    от 30 жалоб. focus — проблема, которой у банка в этом городе заметно
+    больше, чем у него же по стране. Города сверх топа по объёму, но с
+    аномалией, добавляются в конец."""
     bc = resolve_bank(bank)
     if not bc:
         return None
 
     def _compute():
-        idx, ip = _idx_clause(bc, product)
+        p = {"bank": bc, "product": product, "d": days}
+        win = (f"{_CMP} AND coalesce(i.city, '') <> '' AND i.bank IS NOT NULL"
+               " AND (CAST(:product AS text) IS NULL OR i.product = :product)"
+               " AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()")
         with db.session() as s:
-            rows = s.execute(text(
-                f"SELECT i.city, count(*) n FROM review_index i"
-                f" WHERE {idx} AND {_CMP} AND i.city IS NOT NULL AND i.city <> ''"
-                f" AND i.dt >= now() - make_interval(days => :d)"
-                f" GROUP BY 1 ORDER BY 2 DESC LIMIT 40"), {**ip, "d": days}).all()
-        cities = []
-        for city, n in rows:
-            n = int(n)
-            pop = _POP.get(city.strip().lower().replace("ё", "е"))
-            per100k = round(n / (pop / 100.0), 1) if pop else None
-            cities.append({"city": city, "n": n, "per_100k": per100k})
-        known = [c["per_100k"] for c in cities if c["per_100k"] is not None]
-        if known:
-            known_sorted = sorted(known)
-            med = known_sorted[len(known_sorted) // 2]
-            for c in cities:
-                c["anomaly"] = bool(c["per_100k"] and c["per_100k"] > med * 2.2 and c["n"] >= 50)
-        return {"bank": bc, "product": product, "days": days, "cities": cities[:top]}
+            rows = s.execute(text(f"""
+                SELECT i.city, count(*) FILTER (WHERE i.bank = :bank), count(*)
+                FROM review_index i WHERE {win} GROUP BY 1"""), p).all()
+            mix = s.execute(text(f"""
+                SELECT i.city, i.issue, count(*) FROM review_index i
+                WHERE {win} AND i.bank = :bank GROUP BY 1, 2"""), p).all()
+        A = sum(int(r[1]) for r in rows)
+        T = sum(int(r[2]) for r in rows)
+        if not A or A == T:
+            return {"bank": bc, "product": product, "days": days, "cities": []}
+        nat: dict[str, int] = {}
+        by_city: dict[str, dict[str, int]] = {}
+        for city, code, n in mix:
+            nat[code] = nat.get(code, 0) + int(n)
+            by_city.setdefault(city, {})[code] = int(n)
+        cities, pv = [], {}
+        for city, a, t in rows:
+            a, t = int(a), int(t)
+            if not a:
+                continue
+            r = _ratio_ci(a, t, A - a, T - t)
+            if not r:
+                continue
+            if a >= 10:
+                pv[city] = r["p"]
+            c = {"city": city, "n": a, "share": round(100 * a / t, 1),
+                 "base_share": round(100 * (A - a) / (T - t), 1),
+                 "index": round(r["rr"], 1), "lo": round(r["lo"], 2), "hi": round(r["hi"], 2),
+                 "low": a < 30}
+            best = None
+            for code, n in (by_city.get(city) or {}).items():
+                o = cb.issue_obj(code)
+                if not o or code in ("other", "no_issue") or n < 5:
+                    continue
+                rc = _ratio_ci(n, a, nat[code] - n, A - a)
+                if not rc or rc["rr"] < 1.5 or rc["p"] >= 0.01:
+                    continue
+                ex = n - a * nat[code] / A
+                if ex >= 3 and (not best or ex > best["excess"]):
+                    best = {"key": code, "label": o["label"], "short": o.get("short"),
+                            "n": n, "index": round(rc["rr"], 1), "excess": round(ex)}
+            if best:
+                c["focus"] = best
+            cities.append(c)
+        qv = _bh(pv) if pv else {}
+        for c in cities:
+            q = qv.get(c["city"], 1.0)
+            c["anomaly"] = q < 0.05 and not c["low"] and c["index"] >= 1.3
+            c["below"] = q < 0.05 and not c["low"] and c["index"] <= 0.77
+        cities.sort(key=lambda c: -c["n"])
+        shown = cities[:top]
+        extra = [c for c in cities[top:] if c["anomaly"]]
+        extra.sort(key=lambda c: -(c["n"] - c["n"] / c["index"]))
+        return {"bank": bc, "product": product, "days": days,
+                "national_share": round(100 * A / T, 1),
+                "cities": shown + [dict(c, extra=True) for c in extra[:3]]}
     return _cached(f"geo:{bc}:{product}:{days}:{top}", _compute)
+
+
+_FLAG_GROUPS = [
+    ("esc", "Куда обращаются", [(f"to:{k}", v[:1].upper() + v[1:], None) for k, v in _ESC_TO.items()]),
+    ("vuln", "Уязвимые клиенты", [("vuln:any", "Все уязвимые", None)]
+     + [(f"vuln:{k}", v[:1].upper() + v[1:], None) for k, v in _VULN.items()]),
+    ("conduct", "Практики и суммы", [
+        ("no_consent", "Без согласия", None),
+        ("misled", "Ввели в заблуждение",
+         "признак пока широкий: сюда попадают и споры об условиях, не только введение в заблуждение при продаже"),
+        ("amount", "Указана сумма", "сумма бывает и ущербом, и суммой самого продукта — разделение в работе"),
+        ("amount:1m", "Сумма от 1 млн ₽", "сумма бывает и ущербом, и суммой самого продукта"),
+    ]),
+]
+
+
+@_safe(None)
+def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | None:
+    """Признаки риска из разметки: куда клиент грозит или уже обратился,
+    уязвимые клиенты, «без согласия», «ввели в заблуждение», суммы. Для
+    каждого — число и доля в жалобах банка против доли у остальных банков
+    (значимость — с поправкой на число признаков). Код признака — фильтр ленты."""
+    bc = resolve_bank(bank)
+    if not bc:
+        return None
+
+    def _compute():
+        codes = [f for _g, _l, items in _FLAG_GROUPS for f, _n, _c in items]
+        cols = ",\n".join(f"count(*) FILTER (WHERE {_flag_sql(f)})" for f in codes)
+        filed_cols = ",\n".join(f"count(*) FILTER (WHERE a.esc = 'filed' AND '{k}' = ANY(a.esc_to))"
+                                for k in _ESC_TO)
+        with db.session() as s:
+            rows = s.execute(text(f"""
+                SELECT (i.bank = :bank) AS own, count(*),
+                       count(*) FILTER (WHERE a.esc = 'filed'),
+                       count(*) FILTER (WHERE a.esc = 'threat'),
+                       {cols},
+                       {filed_cols}
+                FROM review_index i
+                JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+                WHERE {_CMP} AND i.bank IS NOT NULL
+                  AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                  AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+                GROUP BY 1"""), {"bank": bc, "product": product, "d": days,
+                                 "sv": _ann_schema()}).all()
+        own = next((r for r in rows if r[0]), None)
+        mkt = next((r for r in rows if not r[0]), None)
+        if not own or not mkt or not own[1]:
+            return {"bank": bc, "product": product, "days": days, "total": 0, "groups": []}
+        B, C = int(own[1]), int(mkt[1])
+        vals = {f: (int(own[4 + j]), int(mkt[4 + j])) for j, f in enumerate(codes)}
+        filed = {k: int(own[4 + len(codes) + j]) for j, k in enumerate(_ESC_TO)}
+        pv = {}
+        for f, (a, c) in vals.items():
+            r = _ratio_ci(a, B, c, C)
+            if r and a >= 5:
+                pv[f] = r["p"]
+        qv = _bh(pv) if pv else {}
+        groups = []
+        for g, label, items in _FLAG_GROUPS:
+            out = []
+            for f, name, caveat in items:
+                a, c = vals[f]
+                idx = (a / B) / (c / C) if c else None
+                it = {"flag": f, "label": name, "n": a, "pct": round(100 * a / B, 1),
+                      "market_pct": round(100 * c / C, 1),
+                      "index": round(idx, 1) if idx else None,
+                      "sig": qv.get(f, 1.0) < 0.05 and a >= 10}
+                if f.startswith("to:"):
+                    it["filed"] = filed[f[3:]]
+                if caveat:
+                    it["caveat"] = caveat
+                out.append(it)
+            groups.append({"key": g, "label": label, "items": out})
+        return {"bank": bc, "product": product, "days": days, "total": B,
+                "filed": int(own[2]), "threat": int(own[3]), "groups": groups}
+    return _cached(f"rf:{bc}:{product}:{days}", _compute)
+
+
+@_safe(None)
+def changes(bank: str, product: str | None = None, days: int = 90) -> dict | None:
+    """Шапка «что изменилось» для руководителя: только значимые изменения к
+    прошлому равному окну — объём, темы, опережающие общий поток, доля
+    эскалации — и всплеск текущей недели. Всё детерминировано; если значимого
+    нет, так и пишем: «спокойно» — тоже вывод."""
+    bc = resolve_bank(bank)
+    if not bc:
+        return None
+    ov = overview(bc, product, days) or {}
+    if ov.get("delta_partial"):
+        return {"days": days, "items": [], "partial": True}
+    items = []
+    n, prev = int(ov.get("total") or 0), int(ov.get("prev") or 0)
+    ch = _rate_change(n, prev)
+    if ch and ch["p"] < 0.05 and abs(ov.get("delta_pct") or 0) >= 10:
+        up = n > prev
+        items.append({"kind": "volume", "dir": "up" if up else "down",
+                      "text": f"Жалоб {'больше' if up else 'меньше'} на {abs(round(ov['delta_pct']))}%",
+                      "detail": f"{n} против {prev} за прошлые {days} дн, 95% ДИ {ch['lo']:+d}…{ch['hi']:+d}%"})
+    th = themes(bc, product, days) or {}
+    rows = [t for t in th.get("themes") or [] if t.get("delta_sig") and t["key"] != "other"]
+    ups = sorted([t for t in rows if (t.get("excess") or 0) > 0], key=lambda t: -t["excess"])[:2]
+    downs = sorted([t for t in rows if (t.get("excess") or 0) < 0], key=lambda t: t["excess"])[:1]
+    for t in ups + downs:
+        up = t["excess"] > 0
+        items.append({"kind": "theme", "dir": "up" if up else "down", "key": t["key"],
+                      "text": f"{t.get('short') or t['label']}: {t['prev']} → {t['n']}",
+                      "detail": (f"{t['label']} — " + ("растёт быстрее общего потока жалоб"
+                                                      if up else "снижается сильнее общего потока жалоб")
+                                 + f" ({'+' if (ov.get('delta_pct') or 0) >= 0 else ''}"
+                                 f"{round(ov.get('delta_pct') or 0)}%)")})
+    e1, e0 = int(ov.get("esc_n") or 0), int(ov.get("esc_prev_n") or 0)
+    if n and prev and (e1 + e0) >= 20:
+        p1, p0 = e1 / n, e0 / prev
+        pp = (e1 + e0) / (n + prev)
+        se = math.sqrt(pp * (1 - pp) * (1 / n + 1 / prev)) if 0 < pp < 1 else 0
+        if se and _p2((p1 - p0) / se) < 0.05 and abs(p1 - p0) >= 0.01:
+            items.append({"kind": "esc", "dir": "up" if p1 > p0 else "down",
+                          "text": (f"Эскалация {str(round(100 * p0, 1)).replace('.', ',')}% → "
+                                   f"{str(round(100 * p1, 1)).replace('.', ',')}%"),
+                          "detail": "доля жалоб с угрозой или обращением в ЦБ, суд, прокуратуру"})
+    wk = weekly_signals(bc, product) or {}
+    for sgl in (wk.get("signals") or [])[:1]:
+        items.append({"kind": "signal", "dir": "up", "key": sgl["key"],
+                      "text": (f"Всплеск недели: {sgl.get('short') or sgl['label']} "
+                               + ("— новое" if sgl.get("new") else
+                                  f"×{str(sgl.get('ratio')).replace('.', ',')}")),
+                      "detail": (f"{sgl['label']}: {sgl['week']} жалоб за 7 дней при норме "
+                                 f"~{str(sgl['baseline_week']).replace('.', ',')} в неделю")})
+    return {"days": days, "items": items, "partial": False,
+            "overall_delta_pct": ov.get("delta_pct")}
 
 
 @_safe(None)
@@ -646,7 +1044,7 @@ _ESC_RU = {"none": "", "threat": "грозит", "filed": "обратился"}
 def export_rows(bank: str, product: str | None = None, theme: str | None = None,
                 days: int | None = None, city: str | None = None,
                 month: str | None = None, esc: bool = False,
-                limit: int = 10000) -> list[dict] | None:
+                limit: int = 10000, flag: str | None = None) -> list[dict] | None:
     """Жалобы с разметкой для выгрузки в таблицу — те же фильтры, что у ленты
     (без поиска по смыслу: он возвращает топ-300 похожих, а выгрузка — это
     полный срез). Раньше такой срез собирали вручную по запросу коллег."""
@@ -654,6 +1052,9 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
     if not bc:
         return None
     if theme and theme not in cb.ISSUES:
+        return []
+    fcond = _flag_sql(flag)
+    if fcond is None:
         return []
     p: dict = {"bank": bc, "product": product, "lim": max(1, min(limit, 20000)),
                "sv": _ann_schema()}
@@ -664,14 +1065,14 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
     if city:
         extra += " AND i.city = :city"
         p["city"] = city
-    if month:
-        extra += " AND date_trunc('month', i.dt) = to_date(:month, 'YYYY-MM')"
-        p["month"] = month
+    extra += _month_clause("i", month, p)
     if esc:
         extra += " AND i.esc"
     if theme:
         extra += " AND i.issue = :tkey"
         p["tkey"] = theme
+    if fcond:
+        extra += f" AND {fcond}"
     with db.session() as s:
         rows = [dict(r) for r in s.execute(text(f"""
             SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt, i.city, i.rating,
@@ -720,7 +1121,7 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
 def _feed_from_index(bc: str, product: str | None, theme: str | None,
                      days: int | None, city: str | None, month: str | None,
                      limit: int, offset: int = 0,
-                     esc: bool = False) -> dict:
+                     esc: bool = False, flag: str | None = None) -> dict:
     """Лента по ЕДИНОМУ индексу — все источники в одном списке.
 
     Показываются жалобы из разметки и ещё не размеченные свежие отзывы (они
@@ -737,16 +1138,24 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     if city:
         extra += " AND i.city = :city"
         p["city"] = city
-    if month:
-        extra += " AND date_trunc('month', i.dt) = to_date(:month, 'YYYY-MM')"
-        p["month"] = month
+    extra += _month_clause("i", month, p)
     if esc:
         extra += " AND i.esc"
+    fcond = _flag_sql(flag)
+    if fcond is None:
+        return {"items": [], "mode": "feed", "error": "unknown_flag"}
+    if fcond:
+        # признак есть только у размеченной жалобы — неразмеченные свежие не берём
+        extra += (" AND EXISTS (SELECT 1 FROM review_annotation a WHERE a.url = i.url"
+                  f" AND a.schema_version = :sv AND {fcond})")
+        p["sv"] = _ann_schema()
     if theme:
         if theme not in cb.ISSUES:
             return {"items": [], "mode": "feed", "error": "unknown_theme"}
         extra += f" AND i.issue = :tkey AND {_CMP}"
         p["tkey"] = theme
+    elif fcond:
+        extra += f" AND {_CMP}"
     else:
         extra += f" AND (i.kind IS NULL OR {_CMP})"
     try:
@@ -807,9 +1216,7 @@ def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None
     if city:
         extra += " AND f.city = :city"
         p["city"] = city
-    if month:
-        extra += " AND date_trunc('month', f.dt) = to_date(:month, 'YYYY-MM')"
-        p["month"] = month
+    extra += _month_clause("f", month, p)
     with db.session() as s:
         return list(s.execute(text(f"""
             SELECT f.url FROM review_index f
@@ -925,12 +1332,11 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
 
 
 
-
 def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = None,
                     q: str | None = None, days: int | None = None,
                     city: str | None = None, month: str | None = None,
                     limit: int = 20, offset: int = 0,
-                    esc: bool = False, sort: str = "auto") -> dict:
+                    esc: bool = False, sort: str = "auto", flag: str | None = None) -> dict:
     """Лента доказательной базы. q → поиск; иначе свежие с фильтрами
     тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
     массовость это аудит-сигнал → поле `similar`.
@@ -940,6 +1346,8 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
     bc = resolve_bank(bank) if bank else None
     if theme and theme not in cb.ISSUES:
         return {"items": [], "mode": "search" if q else "feed", "error": "unknown_theme"}
+    if _flag_sql(flag) is None:
+        return {"items": [], "mode": "search" if q else "feed", "error": "unknown_flag"}
     if q and q.strip():
         if bank and not bc:
             return {"items": [], "mode": "search", "error": "unknown_bank"}
@@ -955,14 +1363,17 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
             # Продукт тоже отбираем по нашей разметке: у внешнего корпуса своя
             # метка площадки («Обслуживание юридических лиц» у 180 тыс. строк),
             # и смысловая часть поиска с ней почти ничего не находила.
+            # месяц события поиск по корпусу не знает — его отбирает _keep_urls
             res = search_reviews(q, bank=bc, product=None, since_days=days,
-                                 theme_rx=None, city=city, month=month, k=k,
-                                 strict=True, _meta=meta)
+                                 theme_rx=None, city=city,
+                                 month=None if (month or "").startswith("ev:") else month,
+                                 k=k, strict=True, _meta=meta)
         except Exception as e:
             log.warning("reviews_dash: поиск по %r упал: %s", q, e)
             return {"items": [], "mode": "search", "error": "search_failed"}
         keep = _keep_urls([r.get("url") for r in res if r.get("url")], theme=theme, esc=esc,
-                          product=product)
+                          product=product, flag=flag,
+                          month=month if (month or "").startswith("ev:") else None)
         res = [r for r in res if r.get("url") in keep]
         if sort == "date":
             res.sort(key=lambda r: (r.get("date") or ""), reverse=True)
@@ -972,7 +1383,7 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
                 "has_more": len(res) > offset + limit}
     if not bc:
         return {"items": [], "mode": "feed", "error": "unknown_bank"}
-    return _feed_from_index(bc, product, theme, days, city, month, limit, offset, esc)
+    return _feed_from_index(bc, product, theme, days, city, month, limit, offset, esc, flag)
 
 
 @_safe(None)
@@ -1080,23 +1491,30 @@ def segment_profile(bank: str, product: str | None = None, city: str | None = No
     """Чем срез (город или месяц) отличается от нормы — по главной проблеме.
 
     Город сравнивается со всей страной за тот же период, месяц — с шестью
-    предыдущими. Индекс = доля проблемы в срезе / доля в норме. flagged —
-    отмечен ли срез аномалией по правилам вкладки (гео — per-capita, месяц —
-    пик динамики): модель не должна называть аномалией то, что ею не отмечено,
-    как было с Краснодаром 25.09."""
+    предыдущими (месяц события «ev:YYYY-MM» — с шестью предыдущими месяцами
+    событий). Индекс = доля проблемы в срезе / доля в норме. flagged —
+    отмечен ли срез аномалией по правилам вкладки (гео — индекс доли банка в
+    городе, месяц — пик динамики): модель не должна называть аномалией то, что
+    ею не отмечено, как было с Краснодаром 25.09."""
     bc = resolve_bank(bank)
     if not bc or not (city or month):
         return None
-    p: dict = {"bank": bc, "product": product, "d": days, "city": city, "month": month}
+    p: dict = {"bank": bc, "product": product, "d": days, "city": city}
+    ev = bool(month and month.startswith("ev:"))
     if city:
         seg = "i.city = :city AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
         base = "i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
         base_label = f"вся страна за те же {days} дн"
     else:
-        seg = "date_trunc('month', i.dt) = to_date(:month, 'YYYY-MM')"
-        base = ("i.dt >= to_date(:month, 'YYYY-MM') - interval '6 months'"
-                " AND i.dt < to_date(:month, 'YYYY-MM')")
-        base_label = "6 предыдущих месяцев"
+        m = _MONTH_RX.match(month or "")
+        if not m:
+            return None
+        p["month"] = m.group(2)
+        col = "i.ev_date" if ev else "i.dt"
+        seg = f"date_trunc('month', {col}) = to_date(:month, 'YYYY-MM')"
+        base = (f"{col} >= to_date(:month, 'YYYY-MM') - interval '6 months'"
+                f" AND {col} < to_date(:month, 'YYYY-MM')")
+        base_label = "6 предыдущих месяцев" + (" событий" if ev else "")
     with db.session() as s:
         rows = s.execute(text(f"""
             SELECT i.issue, count(*) FILTER (WHERE {seg}) AS n, count(*) FILTER (WHERE {base}) AS b
@@ -1127,8 +1545,8 @@ def segment_profile(bank: str, product: str | None = None, city: str | None = No
         g = geo(bank, product, days=days, top=40) or {}
         flagged = any(c["city"] == city and c.get("anomaly") for c in g.get("cities") or [])
     else:
-        t = trend(bank, product) or {}
-        flagged = any(x.get("ym") == month and x.get("spike") for x in t.get("series") or [])
+        t = trend(bank, product, basis="event" if ev else "pub") or {}
+        flagged = any(x.get("ym") == p["month"] and x.get("spike") for x in t.get("series") or [])
     return {"n": n_seg, "base_n": n_base, "base_label": base_label, "rows": out[:8],
             "flagged": bool(flagged)}
 
@@ -1230,7 +1648,6 @@ def top_topic(bank: str, product: str | None, days: int = 90) -> dict | None:
     n, prev = int(row[1]), int(row[2])
     return {"key": row[0], "label": o.get("label"), "risk": o.get("risk"), "n": n,
             "delta_pct": (round(100.0 * (n - prev) / prev) if prev and _prev_ready(bc, days) else None)}
-
 
 
 
@@ -1414,13 +1831,23 @@ def _ann_for(urls: list[str]) -> dict[str, dict]:
 
 
 def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
-               product: str | None = None) -> set[str]:
+               product: str | None = None, flag: str | None = None,
+               month: str | None = None) -> set[str]:
     """Какие из найденных отзывов показывать: жалобы (и ещё не размеченные),
-    при заданной теме — с этой главной проблемой, при флажке — с эскалацией."""
+    при заданной теме — с этой главной проблемой, при флажке — с эскалацией,
+    при признаке — с этим признаком разметки."""
     if not urls:
         return set()
-    cond = [f"(i.kind IS NULL OR {_CMP})" if not theme else _CMP]
+    fcond = _flag_sql(flag) or ""
+    cond = [f"(i.kind IS NULL OR {_CMP})" if not (theme or fcond) else _CMP]
     p: dict = {"u": urls}
+    if fcond:
+        cond.append("EXISTS (SELECT 1 FROM review_annotation a WHERE a.url = i.url"
+                    f" AND a.schema_version = :sv AND {fcond})")
+        p["sv"] = _ann_schema()
+    mc = _month_clause("i", month, p)
+    if mc:
+        cond.append(mc[len(" AND "):])
     if theme:
         cond.append("i.issue = :t")
         p["t"] = theme
@@ -1440,7 +1867,8 @@ def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
         log.warning("reviews_dash: отбор выдачи по разметке не сработал (%s)", e)
         return set(urls)
     # отзыв, которого нет в индексе (вне окна зеркала), без темы не отбрасываем
-    return ok | ({u for u in urls if u not in known} if not (theme or esc or product) else set())
+    return ok | ({u for u in urls if u not in known}
+                 if not (theme or esc or product or fcond or month) else set())
 
 
 def _nb_tail(x: int, weeks: list[int]) -> float:
@@ -1448,7 +1876,6 @@ def _nb_tail(x: int, weeks: list[int]) -> float:
     распределение с разбросом, оценённым по самим неделям (жалобы идут
     волнами, и пуассоновский порог на них даёт ложные всплески). Если разброс
     не больше среднего — обычный Пуассон."""
-    import math
     n = len(weeks)
     m = sum(weeks) / n if n else 0.0
     m = max(m, 0.5)                               # нулевая база — не бесконечный рост
@@ -1483,6 +1910,38 @@ def _bh(pvals: dict[str, float]) -> dict[str, float]:
         prev = min(prev, p * m / rank)
         out[k] = prev
     return out
+
+
+def _p2(z: float) -> float:
+    """Двустороннее p-значение для нормальной z-статистики."""
+    return math.erfc(abs(z) / math.sqrt(2))
+
+
+def _ratio_ci(a: int, n1: int, c: int, n2: int) -> dict | None:
+    """Отношение долей (a/n1) / (c/n2) с 95% ДИ и p-значением.
+
+    Лог-нормальное приближение; ноль заменяется на 0,5, иначе интервал
+    бесконечен. Выборки должны быть независимы: банк против ОСТАЛЬНОГО рынка,
+    город против остальной страны — не против целого, в который входит сам."""
+    if n1 <= 0 or n2 <= 0:
+        return None
+    a_, c_ = (a if a > 0 else 0.5), (c if c > 0 else 0.5)
+    rr = (a_ / n1) / (c_ / n2)
+    var = 1 / a_ - 1 / n1 + 1 / c_ - 1 / n2
+    se = math.sqrt(var) if var > 0 else 0.0
+    return {"rr": rr, "lo": rr * math.exp(-1.96 * se), "hi": rr * math.exp(1.96 * se),
+            "p": _p2(math.log(rr) / se) if se else 1.0}
+
+
+def _rate_change(n: int, prev: int) -> dict | None:
+    """Изменение счётчика к прошлому равному окну: 95% ДИ в процентах и p
+    (пуассоновское отношение интенсивностей)."""
+    if n <= 0 or prev <= 0:
+        return None
+    se = math.sqrt(1 / n + 1 / prev)
+    lr = math.log(n / prev)
+    return {"lo": round(100 * (math.exp(lr - 1.96 * se) - 1)),
+            "hi": round(100 * (math.exp(lr + 1.96 * se) - 1)), "p": _p2(lr / se)}
 
 
 @_safe([])
