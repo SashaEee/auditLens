@@ -342,6 +342,9 @@ def journal(bank: str, product: str | None = None, days: int = 180) -> dict | No
             FROM signal_journal
             WHERE bank = :b AND product = :p AND last_seen > now() - make_interval(days => :d)
             ORDER BY last_seen DESC"""), {"b": bc, "p": product or "", "d": days}).mappings().all()]
+        # С какой даты журнал вообще ведётся: без неё «эпизодов за 180 дн: 1»
+        # читалось как «радар за полгода сработал один раз»
+        since = s.execute(text("SELECT min(first_seen) FROM signal_journal")).scalar()
     for r in rows:
         o = cb.issue_obj(r["issue"]) or {}
         r.update({"label": o.get("label") or r["issue"], "short": o.get("short"),
@@ -349,7 +352,8 @@ def journal(bank: str, product: str | None = None, days: int = 180) -> dict | No
         for k in ("first_seen", "last_seen", "verdict_at"):
             r[k] = r[k].isoformat() if r[k] else None
         r["week_end"] = r["week_end"].isoformat() if r["week_end"] else None
-    return {"bank": bc, "product": product, "days": days, **_precision(rows), "items": rows}
+    return {"bank": bc, "product": product, "days": days, **_precision(rows), "items": rows,
+            "since": since.date().isoformat() if since else None}
 
 
 def journal_urls(signal_id: int) -> list[str]:

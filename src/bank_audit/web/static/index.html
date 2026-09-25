@@ -2994,11 +2994,78 @@ html.dark .rv-ovl{background:rgba(0,0,0,.5)}
 /* светлая тема: полоса подвкладок лежит на фоне страницы, а не карточки —
    третий серый там 4,2:1, берём на тон темнее */
 html:not(.dark) .rv-tabs{--ink-3:oklch(46% 0.012 260)}
+
+/* ── Отзывы, волна R2 ─────────────────────────────────────────────────── */
+/* «Главное»: чипы сразу под фразой, свободное место — внизу карточки,
+   а не 175 px между текстом и чипами */
+.rv-lead-t{margin:10px 0 18px}
+.rv .rv-lead .rv-chg{margin:0}
+.rv-chg-l{font-size:12px;color:var(--ink-3);margin:0 0 8px}
+/* «Срочно»: разбор свёрнут до заголовка и нескольких строк */
+.rv-radar-brief.clip{max-height:176px}
+.rv-radar-links{display:flex;flex-wrap:wrap;align-items:center;gap:4px 18px}
+/* пик старше трёх полных месяцев: подписан, но нейтрален */
+.rv-bar.pk .rv-bval{opacity:1;color:var(--ink-2);font-weight:600}
+@media(max-width:760px){.rv-bar.pk .rv-bval{font-size:0}.rv-bar.pk .rv-bval::after{content:"пик";font-size:11px}}
+/* KPI: незначимое изменение — серым, без стрелки */
+.rv-ks .rv-flat{color:var(--ink-2);font-weight:500}
+/* «Где отличается от рынка»: подсказка, по чему отсортировано */
+.rv-ix-ord{font-style:normal;font-weight:400;color:var(--ink-3)}
+/* «Проблемы»: отличия и признаки рядом, темы строками в две колонки */
+.rv-prob{align-items:stretch}
+.rv-prob .rv-flags-g{grid-template-columns:1fr;gap:14px}
+.rv-prob .rv-fi-l{white-space:normal}
+.rv-trows{columns:2;column-gap:28px}
+.rv-trows .rv-trow{break-inside:avoid;grid-template-columns:minmax(0,1fr) 80px 44px 52px}
+.rv-cap{text-wrap:pretty}
+@media(max-width:520px){.rv-trows .rv-trow{grid-template-columns:minmax(0,1fr) 48px 44px}}
+@media(max-width:920px){.rv-trows{columns:1}}
+/* срез месяца / города: видимое число — то, по которому отсортировано */
+.rv-prof-r{grid-template-columns:minmax(0,1fr) 72px 112px 44px}
+.rv-prof-hd{font-size:11px;color:var(--ink-3);padding-top:0}
+.rv-prof-hd>span:nth-child(2){text-align:right}
+.rv-prof-l{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35}
+.rv-prof-x{text-align:right;font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink)}
+.rv-prof-r>span:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.rv-prof-none{font-size:12px;color:var(--ink-3);padding:4px 0}
+@media(max-width:520px){.rv-prof-r{grid-template-columns:minmax(0,1fr) 60px 44px}}
+/* журнал: с какой даты ведётся */
+.rv-jr-since{font-size:12px;color:var(--ink-2);padding:8px 10px;border-radius:8px;background:var(--paper-2);margin-bottom:10px}
+/* «География»: одна таблица, полоса — индекс вокруг ×1 */
+.rv-geo{display:flex;flex-direction:column}
+.rv-geo-r{display:grid;grid-template-columns:minmax(0,1fr) 180px 112px 48px;gap:16px;align-items:center;
+  padding:8px;border-radius:6px;cursor:pointer;transition:background-color .12s}
+.rv-geo-r:not(.rv-geo-hd):hover{background:var(--paper-2)}
+.rv-geo-r:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.rv-geo-r:not(.rv-geo-hd):active{transform:scale(.99)}
+.rv-geo-hd{cursor:default;font-size:11px;color:var(--ink-3);padding-top:0;padding-bottom:6px;border-bottom:1px solid var(--hair);border-radius:0;margin-bottom:2px}
+.rv-geo-hd>span:nth-child(3),.rv-geo-hd>span:nth-child(4){text-align:right}
+.rv-geo-sc{display:flex;justify-content:space-between}
+.rv-geo-sc i{font-style:normal}
+.rv-geo-c{min-width:0}
+.rv-geo .rv-gcity{margin:0}
+.rv-geo .rv-gfocus{margin-top:3px}
+.rv-geo-bar{position:relative;height:8px;border-radius:4px;background:var(--paper-2)}
+.rv-geo-bar i{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--ink-4)}
+.rv-geo-bar b{position:absolute;top:0;bottom:0;border-radius:4px}
+.rv-geo-r.low .rv-geo-bar b{opacity:.45}
+.rv-geo .rv-gn{text-align:right}
+.rv-geo .rv-gi{margin:0;min-width:0;text-align:right;font-size:13px;font-variant-numeric:tabular-nums}
+.rv-geo .rv-geo-sep{margin-top:6px}
+.rv-geo+.rv-more-l{margin-top:10px}
+@media(max-width:600px){
+  .rv-geo-hd{display:none}
+  .rv-geo-r{grid-template-columns:minmax(0,1fr) auto;row-gap:6px}
+  .rv-geo-c{grid-column:1;grid-row:1}.rv-geo .rv-gi{grid-column:2;grid-row:1}
+  .rv-geo-bar{grid-column:1;grid-row:2}.rv-geo .rv-gn{grid-column:2;grid-row:2}
+  .rv-geo .rv-gi{align-self:start}
+}
+@media(max-width:520px){.rv-fi{grid-template-columns:minmax(0,1fr) 34px 86px;gap:6px}}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-rv-r1"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-rv-r2"></script>
 </body>
 </html>

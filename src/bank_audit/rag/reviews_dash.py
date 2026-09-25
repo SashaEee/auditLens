@@ -927,8 +927,11 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
         shown = cities[:top]
         extra = [c for c in cities[top:] if c["anomaly"]]
         extra.sort(key=lambda c: -(c["n"] - c["n"] / c["index"]))
+        # more — сколько ещё городов с осмысленной базой (от 10 жалоб) не
+        # показано: для «ещё N городов» на вкладке
+        more = sum(1 for c in cities[top:] if c["n"] >= 10 and not c["anomaly"])
         return {"bank": bc, "product": product, "days": days,
-                "national_share": round(100 * A / T, 1),
+                "national_share": round(100 * A / T, 1), "more": more,
                 "cities": shown + [dict(c, extra=True) for c in extra[:3]]}
     return _cached(f"geo:{bc}:{product}:{days}:{top}", _compute)
 

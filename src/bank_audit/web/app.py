@@ -1963,8 +1963,8 @@ def reviews_market_events(bank: str = "Сбербанк", product: Optional[str]
 
 @app.get("/api/reviews/geo")
 def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None,
-                days: int = 365):
-    return _rd().geo(bank, product or None, days) or {}
+                days: int = 365, top: int = 8):
+    return _rd().geo(bank, product or None, days, top=max(1, min(int(top), 80))) or {}
 
 @app.get("/api/reviews/products")
 def reviews_products(bank: str = "Сбербанк", days: int = 365):

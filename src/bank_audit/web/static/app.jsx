@@ -3733,7 +3733,9 @@ function RvJournal({bank,product,onOpen}){
   if(!j)return <Skel h={160}/>;
   const L=j.items||[];
   return <div className="rv-jr">
-    <div className="rv-jr-sum">{L.length?<>Эпизодов за {j.days} дн: <b>{L.length}</b> · отмечено {j.rated}
+    {j.since&&(Date.now()-new Date(j.since).getTime())<j.days*864e5&&
+      <div className="rv-jr-since">Журнал ведётся с {rvDate(j.since)} — более ранних всплесков в нём нет.</div>}
+    <div className="rv-jr-sum">{L.length?<>Эпизодов: <b>{L.length}</b> · отмечено {j.rated}
       {j.precision!=null?<> · подтвердились <b>{j.precision}%</b></>:""}</>
       :"Эпизодов пока нет: журнал пополняется, когда радар видит всплеск."}</div>
     <p className="rv-jr-hint">Отметьте, подтвердился ли сигнал при проверке, — так копится точность радара.</p>
@@ -3869,6 +3871,7 @@ function ReviewsPage({params}){
   const[qInput,setQInput]=useState(P.q||"");
   const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
   const[ge,setGe]=useState(null),[prods,setProds]=useState([]);
+  const[geFull,setGeFull]=useState(null);               // «ещё N городов» — полный список
   const[feed,setFeed]=useState(null);
   const[feedErr,setFeedErr]=useState(null);                // упал поиск ≠ ничего не нашлось
   const[feedMeta,setFeedMeta]=useState(null);              // по каким словам искали на самом деле
@@ -3997,7 +4000,7 @@ function ReviewsPage({params}){
       apiFetch(`/api/reviews/risk-flags?bank=${enc(bank)}${pq()}&days=${days}`),
     ]).then(([o,h,x,g,f])=>{
       const V=s=>s.status==="fulfilled"?s.value:{__err:true};
-      setOv(V(o));setTh(V(h));setIx(V(x));setGe(V(g));setRf(V(f));setBusy(false);
+      setOv(V(o));setTh(V(h));setIx(V(x));setGe(V(g));setGeFull(null);setRf(V(f));setBusy(false);
     });
     // «что изменилось» — отдельно: в нём всплеск недели, он считается дольше
     setChg(null);
@@ -4147,7 +4150,6 @@ function ReviewsPage({params}){
   const trendMax = tr&&tr.series&&tr.series.length ? Math.max(...tr.series.map(s=>Math.max(s.n,s.expected||0)))||1 : 1;
   const trEv = tr&&tr.basis==="event";
   const thMax = th&&th.themes&&th.themes.length ? Math.max(...th.themes.map(t=>t.n))||1 : 1;
-  const geMax = ge&&ge.cities&&ge.cities.length ? Math.max(...ge.cities.map(c=>c.n))||1 : 1;
 
   // ── блоки подвкладок (волна D3: страница-простыня разложена по подвкладкам)
   const trendCard=(<div className="rv-card">
@@ -4177,6 +4179,9 @@ function ReviewsPage({params}){
                 const tip=trEv?`${rvYm(s.ym)}, события: ${fmtNum(s.n)}${s.expected?` · опубликовано ≈${s.complete_pct}%, по опыту дорастёт до ≈${fmtNum(s.expected)}`:s.partial?` · опубликовано ≈${s.complete_pct}%`:""}`
                   :`${rvYm(s.ym)}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`;
                 const hgt=v=>Math.max(2,Math.round(v/yMax*1000)/10)+"%";
+                // пик старше трёх полных месяцев — факт истории, не тревога:
+                // подписан, но не красный (красный — «хуже, значимо, срочно»)
+                const hot=s.spike&&lastFull>=0&&i>=lastFull-2;
                 const val=<span className="rv-bval">{s.spike?"пик · ":""}{fmtNum(s.n)}</span>;
                 const ev=!trEv&&mev&&mev.months?mev.months[s.ym]:null;
                 const evTip=ev?`\n\nИзменения условий · ${bank}, ${product}: ${ev.length}\n`+ev.slice(0,5).map(e=>
@@ -4188,7 +4193,7 @@ function ReviewsPage({params}){
                    onKeyDown={onKey(()=>openDrill("month",mv,ml))}>
                 <div className="rv-bwrap">{s.expected
                   ?<div className="rv-bar rv-bar-exp" style={{height:hgt(s.expected)}}>{val}<div className="rv-bar-in" style={{height:Math.round(s.n/s.expected*100)+"%"}}/></div>
-                  :<div className={"rv-bar"+(s.spike?" hot":"")+(s.partial?" part":"")} style={{height:hgt(s.n)}}>{val}</div>}</div>
+                  :<div className={"rv-bar"+(hot?" hot":s.spike?" pk":"")+(s.partial?" part":"")} style={{height:hgt(s.n)}}>{val}</div>}</div>
                 {(()=>{const[y,m]=s.ym.split("-").map(Number);return <div className={"rv-blab"+((i===0||m===1)?" yr":"")}>
                   {!trEv&&mev&&mev.category&&ev&&<span className="rv-mev on" aria-hidden="true"/>}
                   <span className="rv-bmon">{RV_MON[m-1]}</span>
@@ -4198,7 +4203,9 @@ function ReviewsPage({params}){
             {!trEv&&mev&&mev.category&&<div className="rv-mev-note">
               <span className="rv-mev on"/> изменения условий по продукту ({bank}) из журнала «Рынка»{mev.since?` (ведётся с ${rvDate(mev.since)})`:""} · наведите на месяц — что поменялось
               {!Object.keys(mev.months||{}).length&&<> · за период изменений не было</>}</div>}
-            {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">Пик: {sp.map(s=>rvYm(s.ym)).join(", ")} — заметно выше обычного уровня. Клик по столбцу — разобрать, что произошло.</div>:null;})()}
+            {(()=>{let lf=-1;tr.series.forEach((x,j)=>{if(!x.partial)lf=j;});
+              const sp=tr.series.filter((s,j)=>s.spike&&lf>=0&&j>=lf-2);
+              return sp.length?<div className="rv-spike">Пик: {sp.map(s=>rvYm(s.ym)).join(", ")} — заметно выше обычного уровня. Клик по столбцу — разобрать, что произошло.</div>:null;})()}
           </>}
         </div>);
   const themesCard=(<div className="rv-card">
@@ -4222,11 +4229,11 @@ function ReviewsPage({params}){
               </div>;
             };
             return <>
-              {shown.map(row)}
+              <div className="rv-trows">{shown.map(row)}</div>
               {real.length>12&&<div className="rv-th-toggle" role="button" tabIndex={0} onClick={()=>setThAll(!thAll)} onKeyDown={onKey(()=>setThAll(!thAll))}>
                 {thAll?<>свернуть<span className="rv-ico-in" style={{transform:"rotate(180deg)"}}><RvIChevD s={13}/></span></>
                   :<>ещё {real.length-12} тем<span className="rv-ico-in"><RvIChevD s={13}/></span></>}</div>}
-              {other&&row(other)}
+              {other&&<div className="rv-trows">{row(other)}</div>}
             </>;
           })()}
         </div>);
@@ -4240,14 +4247,14 @@ function ReviewsPage({params}){
                 data-tip={`${r.label}: ${fmtNum(r.n)} жалоб — ${pct1(r.pct)} жалоб банка против ${pct1(r.market_pct)} у остальных банков · индекс ${rvX(r.index)}, 95% ДИ ${String(r.lo).replace(".",",")}–${String(r.hi).replace(".",",")}`}>
               <div className="rv-ix-l">
                 <div className="rv-ix-name">{r.label}</div>
-                <div className="rv-ix-sub">{pct1(r.pct)} жалоб · у рынка {pct1(r.market_pct)}{worse&&r.excess>0?<> · <b>+{fmtNum(r.excess)}</b> сверх рыночной структуры</>:""}</div>
+                <div className="rv-ix-sub">{worse&&r.excess>0?<><b>+{fmtNum(r.excess)} {plural(r.excess,"жалоба","жалобы","жалоб")}</b> к норме рынка · </>:""}{pct1(r.pct)} против {pct1(r.market_pct)} у рынка</div>
               </div>
               <RvSpark vals={r.quarters} quarters={ix.quarters}/>
               <div className={"rv-ix-v mono "+(worse?"rv-up":"rv-down")}>{rvX(r.index)}</div>
             </div>;
             const w=ix.worse||[], b=ix.better||[];
             return <>
-              <div className="rv-ix-h"><span>Хуже рынка</span><span className="rv-ix-hq" data-tip="индекс по четырём кварталам, от старого к свежему; пунктир — уровень рынка">4 квартала</span></div>
+              <div className="rv-ix-h"><span>Хуже рынка <i className="rv-ix-ord" data-tip="сначала — где у банка больше всего жалоб сверх того, что было бы при структуре жалоб рынка; индекс справа — во сколько раз доля выше">· по числу лишних жалоб</i></span><span className="rv-ix-hq" data-tip="индекс по четырём кварталам, от старого к свежему; пунктир — уровень рынка">4 квартала</span></div>
               {w.length?w.slice(0,full?8:5).map(r=>row(r,true)):<div className="rv-ix-none">значимых отличий в худшую сторону нет</div>}
               {full&&b.length>0&&<><div className="rv-ix-h"><span>Лучше рынка</span></div>{b.slice(0,4).map(r=>row(r,false))}</>}
               {!full&&(w.length>5||b.length>0)&&<button className="rv-more-l" onClick={()=>goTab("problems")}>
@@ -4255,28 +4262,42 @@ function ReviewsPage({params}){
             </>;
           })()}
         </div>);
+  // «География»: полоса — индекс вокруг ×1 (вправо — чаще, чем в остальных
+  // городах, влево — реже), а не число жалоб: длиннее всех была Москва, то
+  // есть полоса показывала размер города, а вывод строился по индексу
+  const geoRows=(geFull&&geFull.cities)||(ge&&ge.cities)||[];
+  // ровно столько, сколько обещает кнопка: города от 10 жалоб идут первыми
+  const loadGeoAll=()=>apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}&days=${days}&top=${Math.min(80,8+((ge&&ge.more)||0))}`)
+    .then(d=>{if(d&&d.cities)setGeFull(d);}).catch(()=>{});
   const geoCard=(<div className="rv-card">
           <div className="rv-th"><div className="rv-ttl">География</div>
-            <RvInfo>Индекс — доля жалоб на {bank} среди жалоб города против такой же доли в остальных городах{ge&&ge.national_share!=null?` (по стране ${pct1(ge.national_share)})`:""}. Население не используется: на площадки пишет не население, и деление на него раздувало города, где площадкой пользуются активнее. «Выше нормы» — значимо (95%, поправка на число городов), от ×1,3 и 30 жалоб. «Чаще, чем по стране» — проблема, которой в городе у банка заметно больше, чем у него же по стране. Клик — жалобы города.</RvInfo></div>
+            <RvInfo>Индекс — доля жалоб на {bank} среди жалоб города против такой же доли в остальных городах{ge&&ge.national_share!=null?` (по стране ${pct1(ge.national_share)})`:""}. Полоса — индекс: вправо от ×1 — в городе жалуются на банк чаще, чем в остальных, влево — реже; цветом — значимо (95%, поправка на число городов, от ×1,3 и 30 жалоб). Население не используется: на площадки пишет не население. «Чаще, чем по стране» — проблема, которой в городе у банка заметно больше, чем у него же по стране. Клик — жалобы города.</RvInfo></div>
           <div className="rv-cap">доля жалоб на {bank} в городе против остальных городов · {(ge&&ge.days)||days} дн</div>
-          {busy&&!ge?<RvSkelRows n={8} h={44} gap={8}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:<div className="rv-geo-grid">{ge.cities.map((c,i)=>(
-            <React.Fragment key={c.city}>
-            {c.extra&&!ge.cities[i-1].extra&&<div className="rv-ix-h rv-geo-sep"><span>Выделяются вне топа</span></div>}
-            <div className="rv-grow rv-grow-click" role="button" tabIndex={0}
-                 data-tip={`Доля жалоб на ${bank} в городе ${pct1(c.share)} против ${pct1(c.base_share)} в остальных городах · ${rvX(c.index)}, 95% ДИ ${String(c.lo).replace(".",",")}–${String(c.hi).replace(".",",")}${c.low?" · мало данных для вывода":""}`}
-                 onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
-                 onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
-              <div style={{minWidth:0,flex:1}}>
-                <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag compliance">выше нормы</span>}{c.below&&<span className="rv-tag good">ниже нормы</span>}</div>
-                <div className={"rv-gbar"+(c.anomaly?" anom":"")} style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--neg)":"var(--ink-4)"}}/>
-                {c.focus&&<div className="rv-gfocus" data-tip={`${c.focus.label}: ${c.focus.n} жалоб в городе — в ${String(c.focus.index).replace(".",",")} раза чаще, чем в жалобах банка по стране`}>
-                  чаще, чем по стране: {c.focus.short||c.focus.label} {rvX(c.focus.index)}</div>}
-              </div>
-              <div className="mono rv-gn">{fmtNum(c.n)}<span className="rv-gp"> · {pct1(c.share)}</span>
-                <span className={"rv-gi "+(c.anomaly?"rv-up":c.below?"rv-down":"rv-flat")}>{rvX(c.index)}</span></div>
-            </div>
-            </React.Fragment>
-          ))}</div>}
+          {busy&&!ge?<RvSkelRows n={8} h={44} gap={8}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:<>
+          <div className="rv-geo">
+            <div className="rv-geo-r rv-geo-hd" aria-hidden="true"><span>город</span>
+              <span className="rv-geo-sc"><i>×0,5</i><i>×1</i><i>×2</i></span><span>жалоб · доля</span><span>индекс</span></div>
+            {geoRows.map((c,i)=>{
+              const lg=Math.max(-1,Math.min(1,Math.log2(c.index||1))), w=Math.abs(lg)*50;
+              const col=c.anomaly?"var(--neg)":c.below?"var(--pos)":"var(--ink-4)";
+              const open=()=>openDrill("city",c.city,`Жалобы · ${c.city}`);
+              return <React.Fragment key={c.city}>
+              {c.extra&&!(geoRows[i-1]||{}).extra&&<div className="rv-ix-h rv-geo-sep"><span>Выделяются вне топа</span></div>}
+              <div className={"rv-geo-r"+(c.low?" low":"")} role="button" tabIndex={0} onClick={open} onKeyDown={onKey(open)}
+                   data-tip={`Доля жалоб на ${bank} в городе ${pct1(c.share)} против ${pct1(c.base_share)} в остальных городах · ${rvX(c.index)}, 95% ДИ ${String(c.lo).replace(".",",")}–${String(c.hi).replace(".",",")}${c.low?" · мало данных для вывода":""}`}>
+                <div className="rv-geo-c">
+                  <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag compliance">выше нормы</span>}{c.below&&<span className="rv-tag good">ниже нормы</span>}</div>
+                  {c.focus&&<div className="rv-gfocus" data-tip={`${c.focus.label}: ${c.focus.n} жалоб в городе — в ${String(c.focus.index).replace(".",",")} раза чаще, чем в жалобах банка по стране`}>
+                    чаще, чем по стране: {c.focus.short||c.focus.label} {rvX(c.focus.index)}</div>}
+                </div>
+                <div className="rv-geo-bar" aria-hidden="true"><i/><b style={{left:(lg<0?50-w:50)+"%",width:Math.max(w,0.8)+"%",background:col}}/></div>
+                <div className="rv-gn">{fmtNum(c.n)}<span className="rv-gp"> · {pct1(c.share)}</span></div>
+                <div className={"rv-gi "+(c.anomaly?"rv-up":c.below?"rv-down":"rv-flat")}>{rvX(c.index)}</div>
+              </div></React.Fragment>;})}
+          </div>
+          {!geFull&&ge.more>0&&<button className="rv-more-l" onClick={loadGeoAll}>ещё {ge.more} {plural(ge.more,"город","города","городов")} от 10 жалоб<span className="rv-ico-in"><RvIChevD s={12}/></span></button>}
+          {geFull&&<button className="rv-more-l" onClick={()=>setGeFull(null)}>свернуть<span className="rv-ico-in" style={{transform:"rotate(180deg)"}}><RvIChevD s={12}/></span></button>}
+          </>}
         </div>);
   const radarCard=(<div className="rv-card rv-radar">
           <div className="rv-radar-head">
@@ -4308,7 +4329,7 @@ function ReviewsPage({params}){
               </div>
             </>
            :<>
-              <div className="rv-radar-chips">
+              {!(anom.signals.length===1&&anom.summary)&&<div className="rv-radar-chips">
                 {anom.signals.map((s,i)=>{
                   const tip=`${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)`
                     +(s.bank_specific?" · всплеск только у банка":"")
@@ -4320,10 +4341,14 @@ function ReviewsPage({params}){
                     {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
                   </span>;
                 })}
-              </div>
+              </div>}
               {anom.summary?<><div className={"rv-radar-brief"+(radarAll?"":" clip")}><BfBrief markdown={anom.summary}/></div>
-                <button className="rv-more-l" onClick={()=>setRadarAll(v=>!v)}>{radarAll?"Свернуть разбор":"Весь разбор"}
-                  <span className="rv-ico-in" style={radarAll?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button></>
+                <div className="rv-radar-links">
+                  <button className="rv-more-l" onClick={()=>setRadarAll(v=>!v)}>{radarAll?"Свернуть разбор":"Весь разбор"}
+                    <span className="rv-ico-in" style={radarAll?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>
+                  {anom.signals.length===1&&<button className="rv-more-l" onClick={()=>pickTheme(anom.signals[0].key)}
+                    data-tip={`${anom.signals[0].label}: жалобы периода`}>Жалобы сигнала<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+                </div></>
                 :<div className="rv-cap" style={{marginTop:6}}>LLM-разбор недоступен — см. всплески выше (числа за 7 дн точны).</div>}
             </>}
         </div>);
@@ -4358,12 +4383,21 @@ function ReviewsPage({params}){
   const leadText=(()=>{ if(!ov||ov.__err||ov.total==null)return null;
     const out=[], vol=chg&&chg.items&&chg.items.find(x=>x.kind==="volume");
     if(vol)out.push(`Жалоб ${vol.dir==="up"?"больше":"меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за прошлые ${days} дн: ${fmtNum(ov.total)} против ${fmtNum(ov.prev)}.`);
-    else out.push(`${fmtNum(ov.total)} ${plural(ov.total,"жалоба","жалобы","жалоб")} за ${days} дн`+(ov.delta_partial||!chg?".":" — без значимых изменений к прошлому периоду."));
+    // «без значимых изменений» рядом с чипами изменившихся тем читалось как
+    // «ничего не изменилось» — говорим именно про общее число
+    else if(ov.delta_partial||!chg)out.push(`${fmtNum(ov.total)} ${plural(ov.total,"жалоба","жалобы","жалоб")} за ${days} дн.`);
+    else out.push(`Общее число жалоб — на уровне прошлого периода: ${fmtNum(ov.total)} за ${days} дн.`);
     const w=ix&&ix.worse&&ix.worse[0];
     if(w)out.push(`Сильнее всего ${bank} отличается от рынка в теме «${w.label}»: ${pct1(w.pct)} жалоб против ${pct1(w.market_pct)} у остальных банков (${rvX(w.index)}).`);
     const sg=anom&&anom.signals&&anom.signals[0];
     if(sg)out.push(`На этой неделе всплеск: «${sg.short||sg.label}» ${sg.new?"— новое":rvX(sg.ratio)+" к норме"}.`);
     return out.join(" "); })();
+  // Значимость объёма и «остаток» чипов: объём и всплеск недели уже в фразе
+  // «Главного» — чипами дублировать их незачем (первый экран повторял
+  // «×4,2» четыре раза)
+  const volSig=!!(chg&&chg.items&&chg.items.find(x=>x.kind==="volume"));
+  const leadSig=!!(anom&&anom.signals&&anom.signals[0]);
+  const chgRest=chg&&!chg.partial&&chg.items?chg.items.filter(it=>it.kind!=="volume"&&!(it.kind==="signal"&&leadSig)):[];
   const vuln=rf&&rf.groups?((rf.groups.find(g=>g.key==="vuln")||{items:[]}).items.find(x=>x.flag==="vuln:any")||null):null;
   const srcShares=ov&&ov.by_source&&ov.by_source.length?rvSrcShares(ov.by_source):[];
   const pageInfo=<>
@@ -4587,15 +4621,16 @@ function ReviewsPage({params}){
           <div className="rv-kl">Главное за {days} дн</div>
           <div className="rv-lead-t">{busy&&!leadText?<RvSkelRows n={4} h={26} gap={10}/>:leadText||"Нет данных за выбранный период"}</div>
           {!chg&&<div className="rv-chg"><Skel w="55%" h={28}/></div>}
-          {chg&&!chg.partial&&chg.items&&chg.items.length>0&&<div className="rv-chg">
-            {chg.items.map((it,i)=>
+          {chgRest.length>0&&<div className="rv-chg-l">Заметно изменилось к прошлым {days} дн</div>}
+          {chgRest.length>0&&<div className="rv-chg">
+            {chgRest.map((it,i)=>
               <span key={i} className={"rv-chg-it "+it.dir+(it.kind==="signal"?" sig":"")+(it.key?" click":"")}
                 data-tip={it.detail} role={it.key?"button":undefined} tabIndex={it.key?0:undefined}
                 onClick={it.key?()=>pickTheme(it.key):undefined}
                 onKeyDown={it.key?onKey(()=>pickTheme(it.key)):undefined}>
                 <b className="rv-chg-ar">{it.dir==="up"?"↑":"↓"}</b>{it.text}</span>)}
           </div>}
-          {chg&&!chg.partial&&chg.items&&!chg.items.length&&<div className="rv-chg-calm">Значимых изменений к прошлым {days} дн нет — объём и структура жалоб в пределах обычных колебаний.</div>}
+          {chg&&!chg.partial&&chg.items&&!chgRest.length&&!(chg.items||[]).some(x=>x.kind==="volume")&&<div className="rv-chg-calm">Структура жалоб — в пределах обычных колебаний.</div>}
         </div>
         {radarCard}
       </div>
@@ -4604,7 +4639,9 @@ function ReviewsPage({params}){
              onClick={()=>goTab("complaints")} onKeyDown={onKey(()=>goTab("complaints"))}>
           <div className="rv-kl">Жалоб за {days} дн</div>
           <div className="rv-kv">{busy&&!ov?<Skel w="55%" h={30}/>:(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
-          <div className="rv-ks">{ov&&ov.delta_partial?<span data-tip="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {pct1(Math.abs(ov.delta_pct))}</span>:<span className="rv-up">↑ {pct1(ov.delta_pct)}</span>} к прошлому периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
+          <div className="rv-ks">{ov&&ov.delta_partial?<span data-tip="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{volSig
+            ?(ov.delta_pct<0?<span className="rv-down">↓ {Math.round(Math.abs(ov.delta_pct))}%</span>:<span className="rv-up">↑ {Math.round(ov.delta_pct)}%</span>)
+            :<span className="rv-flat" data-tip="в пределах обычных колебаний — не значимо">{ov.delta_pct<0?"−":"+"}{Math.round(Math.abs(ov.delta_pct))}%</span>} к прошлому периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
         </div>
         <div className={"rv-card rv-kpi rv-kpi-click"+(escOnly?" rv-kpi-on":"")} role="button" tabIndex={0}
              data-tip="жалобы, где клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор, к финомбудсмену или в полицию"
@@ -4627,8 +4664,11 @@ function ReviewsPage({params}){
     </>}
 
     {tab==="problems"&&<>
-      <div className="rv-grid2">{themesCard}{ixCard(true)}</div>
-      {flagsCard}
+      {/* Раньше темы (длинные) стояли рядом с отличиями (короче) — под правой
+          колонкой висело 320 px пустоты. Теперь рядом два блока сопоставимой
+          высоты, а темы — на всю ширину строками в две колонки */}
+      <div className="rv-grid2 rv-prob">{ixCard(true)}{flagsCard}</div>
+      {themesCard}
     </>}
 
     {tab==="geo"&&geoCard}
@@ -4637,7 +4677,7 @@ function ReviewsPage({params}){
     </div>
 
     {jrOpen&&<RvModal side="right" onClose={()=>setJrOpen(false)} title="Журнал сигналов"
-        sub={`${bank} · ${product||"все продукты"} · полгода`}>
+        sub={`${bank} · ${product||"все продукты"} · за полгода`}>
       <RvJournal bank={bank} product={product} onOpen={(list,i)=>openReader(list,i,"снимок сигнала","journal")}/></RvModal>}
     {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={`${grp.n} похожих жалоб`}
         sub={[grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
@@ -4656,15 +4696,21 @@ function ReviewsPage({params}){
           а не решает сама, аномалия ли это */}
       {drillProf&&drillProf.rows&&drillProf.rows.length>0&&<div className="rv-prof">
         <div className="rv-prof-h">
-          <span>Чем отличается от нормы · {fmtNum(drillProf.n)} жалоб{plural(drillProf.n,"а","ы","")} · норма — {drillProf.base_label}</span>
+          <span>Чем отличается от нормы · {fmtNum(drillProf.n)} {plural(drillProf.n,"жалоба","жалобы","жалоб")} · норма — {drillProf.base_label}</span>
           {drillProf.flagged&&<span className="rv-tag compliance">аномалия</span>}
         </div>
-        {drillProf.rows.slice(0,6).map(r=><div key={r.key} className="rv-prof-r">
-          <span className="rv-prof-l">{r.label}</span>
-          <span className="mono">{r.n}</span>
-          <span className="mono rv-prof-p">{pct1(r.pct)} <i>против {pct1(r.base_pct)}</i></span>
-          <span className={"mono "+(r.index>=1.5?"rv-up":r.index<=0.67?"rv-down":"rv-flat")}>×{String(r.index).replace(".",",")}</span>
-        </div>)}
+        {/* только настоящие отклонения: «+1 ×1» — шум, а не объяснение пика */}
+        {(()=>{const rows=drillProf.rows.filter(r=>(r.excess||0)>=3&&(r.index||0)>=1.2).slice(0,6);
+          return rows.length?<>
+          <div className="rv-prof-r rv-prof-hd" aria-hidden="true"><span>проблема</span><span>сверх нормы</span><span className="rv-prof-p">доля · норма</span><span/></div>
+          {rows.map(r=><div key={r.key} className="rv-prof-r"
+            data-tip={`${r.label}: ${fmtNum(r.n)} ${plural(r.n,"жалоба","жалобы","жалоб")} — ${pct1(r.pct)} против ${pct1(r.base_pct)} в норме; при обычной структуре было бы на ${fmtNum(Math.round(r.excess))} меньше`}>
+            <span className="rv-prof-l">{r.label}</span>
+            <span className="rv-prof-x">+{fmtNum(Math.round(r.excess))}</span>
+            <span className="rv-prof-p">{pct1(r.pct)} <i>· {pct1(r.base_pct)}</i></span>
+            <span className={r.index>=1.5?"rv-up":r.index<=0.67?"rv-down":"rv-flat"}>×{String(r.index).replace(".",",")}</span>
+          </div>)}</>
+          :<div className="rv-prof-none">Структура жалоб в срезе — как в норме.</div>;})()}
       </div>}
       <button className="rv-explain-btn" onClick={runExplain} disabled={explainBusy}>
         {explainBusy?"Читаю жалобы…":"✦ Разобрать с ИИ"}
