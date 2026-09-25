@@ -499,9 +499,11 @@ def _save(res: dict) -> int | None:
 
 def history(limit: int = 12) -> dict:
     """Прогоны для «Пульса»: последние с итогом, у последнего — все кейсы."""
+    # прогоны первой версии набора (с ложными срабатываниями) в истории не показываем
     rows = T._q("""SELECT run_id, started_at, finished_at, model, trigger, score, n_pass,
-                          n_partial, n_fail, median_s
-                     FROM agent_eval_run ORDER BY started_at DESC LIMIT :l""", {"l": limit})
+                          n_partial, n_fail, median_s, note
+                     FROM agent_eval_run WHERE coalesce(note, '') NOT LIKE 'набор v1%'
+                    ORDER BY started_at DESC LIMIT :l""", {"l": limit})
     last = None
     if rows:
         c = T._q("SELECT cases FROM agent_eval_run WHERE run_id = :r", {"r": rows[0]["run_id"]})

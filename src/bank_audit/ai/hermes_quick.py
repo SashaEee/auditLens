@@ -136,12 +136,33 @@ def _plain_keys(text: str) -> str:
     return "".join(parts)
 
 
+# Голые адреса: страница AuditLens (#reviews?theme=…) и http-ссылка вне markdown.
+# Рендер чата делает кликабельными только [текст](адрес), а чистка ключей тем
+# испортила бы голый адрес (theme=chargeback → theme=Чарджбэк — пустой фильтр).
+_APP_PAGES = "overview|foryou|reviews|market|banks|knowledge|sources|loophole"
+_BARE_APP = re.compile(r"(?<![\w(\[/=])`?(#(?:" + _APP_PAGES + r")\?[^\s)\]`]+)`?")
+_BARE_URL = re.compile(r"(?<![(\[\w])(https?://[^\s)\]<>`]+?)(?=[.,;:!?»]*(?:\s|$|\)))")
+
+
+def _linkify(text: str) -> str:
+    from urllib.parse import urlparse
+
+    def url(m):
+        u = m.group(1)
+        host = urlparse(u).netloc.removeprefix("www.") or u
+        return f"[{host}]({u})"
+    text = _BARE_APP.sub(lambda m: f"[открыть в AuditLens]({m.group(1)})", text)
+    return _BARE_URL.sub(url, text)
+
+
 def sanitize(text: str) -> str:
     """Чистка ответа перед показом: внутренние адреса → страницы AuditLens или
-    текст; служебные ключи тем → русские подписи; артефакты цитирования — вон."""
+    текст; голые адреса → ссылки; служебные ключи тем → русские подписи (адреса
+    ссылок не трогаем); артефакты цитирования — вон."""
     text = _LOCAL_PAGE_LINK.sub(r"](\1)", text)
     text = _LOCAL_LINK.sub(r"\1", text)
     text = _LOCAL_BARE.sub("", text)
+    text = _linkify(text)
     text = _CITE_ART.sub("", text)
     text = _TOOL_NAME.sub(lambda m: "«" + tool_label(m.group(0).strip("`")) + "»", text)
     return _plain_keys(text)
@@ -191,6 +212,8 @@ def needs_legal_note(text: str) -> bool:
     (однажды агент назвал несуществующий «приказ № 117-Э»)."""
     if not text or not _ACT_RE.search(text):
         return False
+    if re.search(r"\]\(https?://", text):
+        return False            # акты названы со ссылками на источник — проверяемо
     return bool(_LEGAL_WORD_RE.search(text))
 
 

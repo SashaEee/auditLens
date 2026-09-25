@@ -9097,6 +9097,11 @@ function PuNewsQuality({q}){
 // эталоном из живых данных). Нужен, потому что агент учится сам — пишет себе
 // навыки, — и без замера деградацию заметил бы только аудитор.
 const PU_VERDICT={pass:["зачёт","ok"],partial:["частично",""],fail:["провал","bad"],skip:["пропуск",""]};
+// маршруты моделей Hermes (model_routes) → названия моделей
+const PU_MODEL={default:"по умолчанию",oss:"gpt-oss-120b",gpt54mini:"gpt-5.4-mini",gpt54:"gpt-5.4",
+  sonnet:"claude-sonnet-4.6",haiku:"claude-haiku-4.5",dsflash:"DeepSeek-V4-Flash",dspro:"DeepSeek-V4-Pro"};
+const PU_TRIGGER={gate:"еженедельная проверка","gate-rollback":"после отката",compare:"сравнение моделей",
+  compare2:"сравнение моделей",admin:"вручную",cli:"консоль","baseline-rescored":"до переработки"};
 function PuAgentEval(){
   const[d,setD]=useState(null);
   const[busy,setBusy]=useState(false);
@@ -9108,7 +9113,7 @@ function PuAgentEval(){
     .catch(()=>{}).finally(()=>setBusy(false));};
   if(!d) return null;
   const runs=d.runs||[], last=runs[0], cases=d.last_cases||[];
-  const prev=runs[1];
+  const prev=last&&runs.slice(1).find(r=>r.model===last.model);
   const delta=last&&prev&&last.score!=null&&prev.score!=null?Math.round((last.score-prev.score)*10)/10:null;
   const num=x=>x==null?"—":String(x).replace(".",",");
   return <div className="pu-card pu-sec">
@@ -9125,8 +9130,9 @@ function PuAgentEval(){
     {runs.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Прогонов ещё не было.</div>:<>
       <table className="pu-tbl" style={{marginBottom:12}}>
         <thead><tr><th>когда</th><th>модель</th><th>запуск</th><th>итог</th><th>зачёт</th><th>частично</th><th>провал</th><th>медиана, с</th></tr></thead>
-        <tbody>{runs.slice(0,6).map(r=><tr key={r.run_id}>
-          <td>{fyDay(r.started_at)}</td><td>{r.model}</td><td>{r.trigger}</td>
+        <tbody>{runs.slice(0,10).map(r=><tr key={r.run_id}>
+          <td>{fyDay(r.finished_at||r.started_at)}</td><td>{PU_MODEL[r.model]||r.model}</td>
+          <td>{PU_TRIGGER[r.trigger]||r.trigger}</td>
           <td><b className="tnum">{num(r.score)}</b></td><td>{r.n_pass}</td><td>{r.n_partial}</td>
           <td style={r.n_fail>0?{color:"var(--neg)"}:null}>{r.n_fail}</td><td>{num(r.median_s)}</td>
         </tr>)}</tbody></table>
@@ -9740,6 +9746,7 @@ function PulsePage(){
     {tab==="reports"&&<PuReports days={days} onOpenReport={setRep} onOpenUser={setCard}/>}
 
     {tab==="ai"&&<>
+      <PuAgentEval/>
       <PuAiFeedback fb={m.ai_feedback||{}} onOpenReport={setRep} onOpenUser={setCard}/>
       <PuPersona p={m.persona||{}}/>
       <PuTopics t={m.topics}/>
@@ -9776,7 +9783,6 @@ function PulsePage(){
       <PuCollect c={m.collect||{}}/>
       <PuSearch s={m.search||{}}/>
       <PuNewsQuality q={m.news_quality||{}}/>
-      <PuAgentEval/>
     </>}
 
     {tab==="tech"&&<>

@@ -35,6 +35,18 @@ def test_sanitize_theme_keys_and_citations():
     assert H.sanitize("данные `mcp__auditlens__market_offers`") == "данные «Предложения банков»"
 
 
+def test_bare_addresses_become_links_and_keep_keys():
+    s = ("Тема в AuditLens: #reviews?theme=chargeback&days=7&tab=complaints\n"
+         "- https://www.banki.ru/services/responses/bank/response/13387250\n"
+         "Уже ссылка: [отзыв](https://www.banki.ru/x) и [тема](#reviews?theme=chargeback).")
+    out = H.sanitize(s)
+    assert "[открыть в AuditLens](#reviews?theme=chargeback&days=7&tab=complaints)" in out
+    assert "[banki.ru](https://www.banki.ru/services/responses/bank/response/13387250)" in out
+    assert "[отзыв](https://www.banki.ru/x)" in out and "[тема](#reviews?theme=chargeback)" in out
+    assert "Чарджбэк" not in out
+    assert H.sanitize("источник: https://cbr.ru/press/.") == "источник: [cbr.ru](https://cbr.ru/press/)."
+
+
 def test_safe_cut_keeps_open_link():
     buf = "Главное: всплеск. Подробнее [в отзывах](#reviews?th"
     cut = H.safe_cut(buf)
@@ -53,6 +65,7 @@ def test_is_stub(text, stub):
 
 def test_legal_note_trigger():
     assert H.needs_legal_note("по ст. 7 закона 161-ФЗ")
+    assert not H.needs_legal_note("по [закону 161-ФЗ](https://pravo.gov.ru/x)")
     assert not H.needs_legal_note("ставка 19% годовых")
 
 

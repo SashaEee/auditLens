@@ -3,8 +3,11 @@
 # Ключ MCP читается из окружения (${AGENT_MCP_KEY} в /root/.hermes/.env).
 
 model:
-  # Модель по умолчанию выбирается по регрессионному набору (auditlens agent-eval).
-  default: openai/gpt-oss-120b
+  # Выбрана по регрессионному набору 25.09 (auditlens agent-eval, 14 вопросов):
+  # gpt-5.4 86 (медиана 47 с), gpt-5.4-mini 82 (14 с), claude-sonnet-4.6 71 (30 с),
+  # DeepSeek-V4-Flash 64 (35 с), gpt-oss-120b 61 (11 с), claude-haiku-4.5 57 (20 с).
+  # Быстрому режиму нужна скорость: mini на один кейс ниже gpt-5.4 и втрое быстрее.
+  default: openai/gpt-5.4-mini
   provider: custom
   base_url: https://foundation-models.api.cloud.ru/v1/
   api_key: __LLM_API_KEY__
