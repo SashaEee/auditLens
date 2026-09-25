@@ -53,7 +53,9 @@ def test_loophole_page_fills_the_main_workspace():
     assert 'className="surface loophole-page"' in _main_jsx()
     assert 'height:"100%"' in jsx
     assert 'height:"calc(100vh-120px)"' not in jsx
-    assert ".content:has(.loophole-host--active)" in shell_css
+    # Только прямой активный хост: скрытые смонтированные страницы тоже лежат в
+    # .content, и правило без «>» срабатывало после визита на всех вкладках.
+    assert ".content:has(> .loophole-host--active)" in shell_css
 
 
 _CSS_NAMED_COLORS = frozenset(
