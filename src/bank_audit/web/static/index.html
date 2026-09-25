@@ -3,6 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<script>
+/* Тема до первой отрисовки. Интерфейс компилируется в браузере ~3 с, и без
+   этого в тёмной теме всё это время горел белый экран. Логика та же, что в
+   ThemeProvider: выбор человека, а пока он не выбирал — как в системе. */
+(function(){try{var c=localStorage.getItem("auditlens-theme-choice");
+if(c!=="dark"&&c!=="light")c=localStorage.getItem("auditlens-theme")==="dark"?"dark":null;
+var d=c?c==="dark":matchMedia("(prefers-color-scheme: dark)").matches;
+if(d)document.documentElement.classList.add("dark");}catch(e){}})();
+</script>
 <title>AuditLens — Bank Market Intelligence</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <!-- Все vendor-ресурсы САМОРАЗМЕЩЕНЫ (/static/vendor/): внешние CDN (unpkg,
@@ -102,6 +111,24 @@ html.dark{
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
+/* Системные элементы (выпадающие списки, календари, полосы в Firefox) — в цвет темы */
+html{color-scheme:light}html.dark{color-scheme:dark}
+/* Смена темы: см. themeSwitch в app.jsx. Пока идёт перекраска, переходы цвета
+   выключены — кроме иконки переключателя, её морф и есть анимация. */
+html.th-sw *,html.th-sw *::before,html.th-sw *::after{transition:none!important}
+@media (prefers-reduced-motion:no-preference){
+  html.th-sw .th-tg .th-ic *{transition:transform .5s cubic-bezier(.2,0,0,1),opacity .3s ease!important}
+}
+html.th-vt::view-transition-old(root),html.th-vt::view-transition-new(root){animation:none;mix-blend-mode:normal}
+html.th-fade::view-transition-old(root),html.th-fade::view-transition-new(root){animation-duration:.18s}
+.th-ic{display:block;overflow:visible}
+.th-ic .th-core{transform-box:fill-box;transform-origin:center;transform:scale(.55);transition:transform .5s cubic-bezier(.2,0,0,1)}
+.th-ic .th-mc{transform:translate(11px,-11px);transition:transform .5s cubic-bezier(.2,0,0,1)}
+.th-ic .th-rays{transform-box:view-box;transform-origin:12px 12px;transition:transform .5s cubic-bezier(.2,0,0,1),opacity .3s ease}
+.th-tg.dk .th-core{transform:none}
+.th-tg.dk .th-mc{transform:translate(5px,-4px)}
+.th-tg.dk .th-rays{transform:rotate(-70deg) scale(.4);opacity:0}
+@media (prefers-reduced-motion:reduce){.th-ic *{transition:none!important}}
 body{font-family:'Geist','Inter',system-ui,sans-serif;background:var(--paper);color:var(--ink);font-size:14px;line-height:1.5;font-feature-settings:"ss01","cv11";-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
 button{cursor:pointer;border:none;background:none;font:inherit;color:inherit;letter-spacing:inherit}
 a{color:inherit;text-decoration:none}
@@ -2785,6 +2812,7 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 /* ── Палец не должен целиться: минимальная зона нажатия на тач-экранах. ── */
 @media (pointer: coarse) {
   .btn, .nav-item, .chip, .pill, .rv-chip, .kb-tab { min-height: 44px; }
+  .topbar .icon-btn { min-width: 44px; min-height: 44px; }
   .btn-sm { min-height: 36px; }
 }
 
@@ -3498,6 +3526,6 @@ thead th{font-weight:600}
 <body>
 <div id="root"></div>
 <!-- ?v= — cache-bust: браузеры держали старый бандл после деплоев, менять при правках app.jsx -->
-<script type="text/babel" src="/static/app.jsx?v=20260925-tb2"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260925-theme3"></script>
 </body>
 </html>

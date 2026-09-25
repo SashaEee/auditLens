@@ -147,10 +147,68 @@ const apiPut   = (path,body) => fetch(path,{method:"PUT",headers:{"Content-Type"
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 const ThemeCtx = createContext({theme:"light",setTheme:()=>{}});
+// Тема. Пока человек сам не выбирал, она как в системе и меняется вместе с ней.
+// Выбор хранится в THEME_KEY. Старый ключ писался при каждом входе, поэтому
+// «light» в нём ничего не значит, а «dark» — значит: по умолчанию была светлая.
+// Та же логика стоит в index.html, до первой отрисовки.
+const THEME_KEY="auditlens-theme-choice";
+const readThemeChoice=()=>{ try{ const c=localStorage.getItem(THEME_KEY);
+  if(c==="dark"||c==="light")return c;
+  return localStorage.getItem("auditlens-theme")==="dark"?"dark":null; }catch{return null;} };
+const sysDark=matchMedia("(prefers-color-scheme: dark)");
+// Смена темы перекрашивает весь документ. Пока она идёт, переходы цвета
+// выключены (html.th-sw): иначе сотни элементов плавно меняют фон сами
+// по себе, и на слабых машинах кадры рвутся. Включаем их обратно через два
+// кадра, когда новая тема уже отрисована.
+function themeApply(dark){ const h=document.documentElement; h.classList.add("th-sw"); h.classList.toggle("dark",dark); }
+function themeSettle(){ requestAnimationFrame(()=>requestAnimationFrame(()=>document.documentElement.classList.remove("th-sw"))); }
+// Нажатие: новая тема раскрывается кругом из кнопки. Старый экран — снимок,
+// новый рисуется один раз, а круг двигает композитор, поэтому главный поток
+// в анимации почти не занят. Без View Transitions или в скрытой вкладке —
+// мгновенно. При «уменьшить движение» и на совсем слабых машинах
+// (≤2 ядер или ≤2 ГБ) — короткое перетекание вместо круга.
+// Двойной клик: второй переход прерывает первый, и завершение первого не должно
+// снимать классы, которые ещё нужны второму, — убирает их только последний.
+let themeGen=0;
+function themeSwitch(dark,origin,commit){
+  const h=document.documentElement, gen=++themeGen;
+  if(!document.startViewTransition||document.hidden){ themeApply(dark); commit(); themeSettle(); return; }
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const weak=(navigator.hardwareConcurrency||8)<=2||(navigator.deviceMemory||8)<=2;
+  const circle=!reduce&&!weak;
+  let x=innerWidth-40,y=28;
+  if(origin){ const r=origin.getBoundingClientRect(); x=r.left+r.width/2; y=r.top+r.height/2; }
+  const R=Math.ceil(Math.hypot(Math.max(x,innerWidth-x),Math.max(y,innerHeight-y)));
+  h.classList.remove("th-vt","th-fade"); h.classList.add(circle?"th-vt":"th-fade");
+  const vt=document.startViewTransition(()=>{ themeApply(dark); commit(); });
+  if(circle)vt.ready.then(()=>h.animate(
+    {clipPath:[`circle(0px at ${x}px ${y}px)`,`circle(${R}px at ${x}px ${y}px)`]},
+    {duration:420,easing:"cubic-bezier(.2,0,0,1)",pseudoElement:"::view-transition-new(root)"})).catch(()=>{});
+  vt.finished.catch(()=>{}).finally(()=>{ if(gen!==themeGen)return; h.classList.remove("th-vt","th-fade"); themeSettle(); });
+}
 function ThemeProvider({children}){
-  const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("auditlens-theme")||"light";}catch{return"light";}});
-  useEffect(()=>{document.documentElement.classList.toggle("dark",theme==="dark");try{localStorage.setItem("auditlens-theme",theme);}catch{}},[theme]);
+  const [choice,setChoice]=useState(readThemeChoice);
+  const [sys,setSys]=useState(()=>sysDark.matches?"dark":"light");
+  useEffect(()=>{ const h=e=>setSys(e.matches?"dark":"light");
+    sysDark.addEventListener("change",h); return()=>sysDark.removeEventListener("change",h); },[]);
+  const theme=choice||sys;
+  // Смена без нажатия (система переключилась на ночь): без анимации, но и без
+  // волны переходов. После нажатия класс уже стоит, и здесь ничего не делается.
+  useEffect(()=>{ const dark=theme==="dark";
+    if(document.documentElement.classList.contains("dark")!==dark){ themeApply(dark); themeSettle(); } },[theme]);
+  const setTheme=useCallback((next,origin)=>themeSwitch(next==="dark",origin,()=>{
+    setChoice(next); try{ localStorage.setItem(THEME_KEY,next); localStorage.removeItem("auditlens-theme"); }catch{} }),[]);
   return <ThemeCtx.Provider value={{theme,setTheme}}>{children}</ThemeCtx.Provider>;
+}
+// Солнце, которое становится луной: тень наезжает на диск, лучи уходят
+// поворотом. Показывает текущую тему.
+function ThemeIcon(){
+  return <svg className="th-ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <mask id="th-ic-m"><rect width="24" height="24" fill="#fff"/><circle className="th-mc" cx="12" cy="12" r="8" fill="#000"/></mask>
+    <circle className="th-core" cx="12" cy="12" r="8" fill="currentColor" mask="url(#th-ic-m)"/>
+    <path className="th-rays" d="M19 12h2.5M16.95 16.95l1.77 1.77M12 19v2.5M7.05 16.95l-1.77 1.77M5 12H2.5M7.05 7.05L5.28 5.28M12 5V2.5M16.95 7.05l1.77-1.77"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none"/>
+  </svg>;
 }
 const useTheme = () => useContext(ThemeCtx);
 const BanksCtx = createContext([]);
@@ -189,8 +247,6 @@ const Ic = {
   src:     p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 11v6c0 1.7 4 3 9 3s9-1.3 9-3v-6"/></svg>,
   shield:  p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 2l8 4v6c0 5-3.5 9.3-8 10-4.5-.7-8-5-8-10V6z"/></svg>,
   search:  p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>,
-  sun:     p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>,
-  moon:    p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>,
   refresh: p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3 12a9 9 0 0115.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 01-15.5 6.3L3 16"/><path d="M3 21v-5h5"/></svg>,
   send:    p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>,
   arrow_up:p=><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>,
@@ -481,6 +537,10 @@ function _inlineHTML(s, renderCitation=(n)=>`[${n}]`){
     // URL — через escAttr: кавычка в URL иначе выламывается из href-атрибута.
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
              (_,txt,url)=>`<a href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" class="md-link">${txt}</a>`)
+    // ссылки на страницы AuditLens ([жалобы](#reviews?theme=…)) — ИИ-аналитик
+    // ведёт на тот же срез, по которому посчитано число; открываются здесь же
+    .replace(/\[([^\]]+)\]\((#(?:overview|foryou|reviews|market|banks|knowledge|sources|loophole|ai)(?:\?[^)\s]*)?)\)/g,
+             (_,txt,href)=>`<a href="${escAttr(href)}" class="md-link md-inapp">${txt}</a>`)
     .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
     // __жирный__ (подчёркивания) — только на границах слова. NB: JS \w НЕ включает
     // кириллицу, поэтому класс слова задаём явно (иначе ломается имя_атрибута).
@@ -10402,8 +10462,11 @@ function Shell(){
           {(page==="overview"||page==="foryou")&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
-          <button className="icon-btn" aria-label="тема" onClick={()=>setTheme(theme==="dark"?"light":"dark")} title="Сменить тему">
-            {theme==="dark"?<Ic.sun/>:<Ic.moon/>}
+          <button className={"icon-btn th-tg"+(theme==="dark"?" dk":"")}
+                  aria-label={theme==="dark"?"Включить светлую тему":"Включить тёмную тему"}
+                  data-tip={theme==="dark"?"Светлая тема":"Тёмная тема"}
+                  onClick={e=>setTheme(theme==="dark"?"light":"dark",e.currentTarget)}>
+            <ThemeIcon/>
           </button>
         </div>
         <div className="content" ref={contentRef}>
