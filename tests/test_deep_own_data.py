@@ -223,12 +223,13 @@ def test_sections_lead_written_together_in_brief_order(monkeypatch):
     runstate.new_run()
     events, took = _run_dossier()
     order = [p for k, p in events if k == "section"]
-    assert order == ["voice", "conditions"]           # порядок и состав — из брифа
+    # порядок и состав — из брифа; лазейки (есть материал) — обязательно, после жалоб
+    assert order == ["voice", "loopholes", "conditions"]
     outline = next(p for k, p in events if k == "outline")
     assert outline == ["Резюме для руководителя проверки", "Что проверять",
-                       "Что стоит за всплеском", "Правила банка"]
+                       "Что стоит за всплеском", "Лазейки и уязвимости", "Правила банка"]
     # тело — одновременно (~0,3 с), затем резюме и план вместе по готовому телу (~0,3 с)
-    assert took < 0.3 * 3
+    assert took < 0.3 * 4
     lead_kw = [prompts[k] for k in ("summary", "checks")]
     assert all("текст раздела voice" in kw["prior_text"] for kw in lead_kw)
     text = "".join(p for k, p in events if k == "chunk")
@@ -464,3 +465,53 @@ def test_market_always_has_leaders_and_themes_have_list_boundary(fake_tools):
     own_data.collect_complaints(od2, PLAN, {"product": None, "themes": [], "days": 90}, "жалобы")
     text = "\n".join(od2.pages.values())
     assert "у тем вне списка — не больше 60 жалоб каждая" in text
+
+
+def test_market_section_puts_bank_sources_before_vitrine():
+    reg = FactRegistry()
+    own = {"#market?cat=deposit": {"kind": "market"}}
+    reg.add(subject="vtb", attribute="Ставка (витрина «Рынок»)", value="13,7", unit="%",
+            verbatim="ВТБ, «ВТБ Вклад»: Ставка 13,7%", url="#market?cat=deposit",
+            stance="declared")
+    reg.add(subject="vtb", attribute="ставка", value="до 19", unit="%",
+            verbatim="Краткосрочный вклад до 19% годовых", url="https://www.vtb.ru/x",
+            stance="declared")
+    got = dossier.facts_for("market", reg, PLAN, own)
+    assert [f.url for f in got] == ["https://www.vtb.ru/x", "#market?cat=deposit"]
+
+
+def test_common_prompt_has_comparability_rules():
+    text = dossier._common(PLAN, "q", {"sberbank": "Сбербанк"})
+    assert "СОПОСТАВИМОСТЬ" in text and "НЕ НАЙДЕНО ≠ НЕТ" in text
+    assert "ГИПОТЕЗА — НЕ ПРИГОВОР" in text and "ТОЧКА ОТСЧЁТА" not in text
+
+
+def test_voice_and_loopholes_are_kept_when_brief_drops_them(monkeypatch):
+    from bank_audit.research.gptr.brief import Brief
+    brief = Brief(answer="a", sections=[{"key": "market", "title": "Сравнение", "focus": "f"}])
+    _fake_writer(monkeypatch, brief, delay=0.01)
+    own = {"#reviews": {"kind": "complaints"}}
+    state = runstate.new_run()
+    state.own_meta.update(own)
+    monkeypatch.setattr(dossier, "facts_for", lambda key, reg, plan, own=None: [
+        SimpleNamespace(url="#reviews")])
+    plan2 = SimpleNamespace(**{**vars(PLAN), "subjects": ["sberbank", "vtb"]})
+    import asyncio
+
+    async def run():
+        return [ev async for ev in dossier.write_dossier(
+            None, "m", question="q", plan=plan2, registry=FactRegistry(), state=state,
+            brief_model="b")]
+    events = asyncio.run(run())
+    order = [p for k, p in events if k == "section"]
+    assert order[:3] == ["market", "voice", "loopholes"]
+
+
+def test_scope_keeps_complaints_and_loopholes_for_comparisons():
+    plan = SimpleNamespace(question_nature="tariff_product")
+    sc = own_data.normalize_scope({"complaints": False, "loopholes": False, "market": True,
+                                   "category": "deposit"}, "Сравни вклады Сбера и ВТБ", plan)
+    assert sc["complaints"] and sc["loopholes"]
+    reg = own_data.normalize_scope({"complaints": False}, "q",
+                                   SimpleNamespace(question_nature="regulatory"))
+    assert not reg["loopholes"]

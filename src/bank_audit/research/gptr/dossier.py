@@ -175,8 +175,15 @@ def facts_for(section: str, registry, plan, own: dict | None = None) -> list:
         return _cap_per(picked, lambda f: (f.subject, f.attribute),
                         _CONDITIONS_PER_CELL)
     if section == "market":
+        own = runstate.current().own_meta if own is None else own
         picked = [f for f in all_facts if f.stance == "declared"]
-        return _cap_per(picked, lambda f: (f.subject, f.attribute), _MARKET_PER_CELL)
+        # Витрина «Рынка» — сверочная (владелец 26.09: «там тупо цифры без
+        # подробностей»): её факты — после фактов из источников банков, чтобы
+        # таблица строилась по условиям банков, а витрина лишь сверяла.
+        vitrine = [f for f in picked if own.get(f.url, {}).get("kind") == "market"]
+        banks = [f for f in picked if own.get(f.url, {}).get("kind") != "market"]
+        return (_cap_per(banks, lambda f: (f.subject, f.attribute), _MARKET_PER_CELL)
+                + _cap_per(vitrine, lambda f: (f.subject, f.attribute), _MARKET_PER_CELL))
     if section == "voice":
         own = runstate.current().own_meta if own is None else own
         picked = [f for f in all_facts if f.stance == "observed"]
@@ -292,7 +299,22 @@ def _common(plan, question: str, labels: dict[str, str]) -> str:
         "абзацем «Вывод:» — одна-три фразы по существу; у подразделов своих "
         "«Вывод:» и «Итогов» нет.",
         "",
-        "ГИПОТЕЗА — НЕ ПРИГОВОР. Если довод банка может оказаться правомерным "
+        "СОПОСТАВИМОСТЬ. Расхождение, выигрыш или проигрыш — только между "
+        "сопоставимым: тот же продукт, срок, сумма, сегмент клиента, режим "
+        "(промо или базовые условия), дата и одна и та же граница. «от 1,3%» — "
+        "нижняя граница, а не ставка для заданного оборота; «до 6 лет включительно» "
+        "и «не достигший 7 лет» — одно и то же; выпуск цифровой карты за минуты и "
+        "доставка пластика за дни — разные этапы. Несопоставимое не ранжируй и не "
+        "называй расхождением: скажи, чего не хватает для сравнения.",
+        "",
+        "НЕ НАЙДЕНО ≠ НЕТ. Если чего-то нет в фактах, пиши «в прочитанных источниках "
+        "не найдено», а не «у банка нет» и не «банк не раскрывает»: страница могла "
+        "не прочитаться. Отсутствие продукта в витрине (там 5 лучших предложений "
+        "банка) не значит, что у банка его нет. Условия, заданные законом или "
+        "государственной программой, одинаковы для всех банков-участников — их "
+        "отсутствие на сайте конкурента не отличие.",
+        "",
+"ГИПОТЕЗА — НЕ ПРИГОВОР. Если довод банка может оказаться правомерным "
         "(например, операция была переводом, а не покупкой по карте), не объявляй "
         "его некорректным: назови, какой факт решит вопрос и где его взять. "
         "Прогноз — только из фактов: если событие ещё впереди (дата концерта, "
@@ -419,7 +441,10 @@ _SECTION_RULES = {
         "случаю объясни, ПОЧЕМУ так могло получиться — разные даты, разные "
         "сегменты клиентов, акция против базового тарифа, редакция страницы, "
         "ошибка агрегатора, — и какое значение аудитору принимать за рабочее "
-        "и почему. Не выбирай молча: покажи оба значения с якорями."
+        "и почему. Не выбирай молча: покажи оба значения с якорями. Только "
+        "существенное для ответа на вопрос — не больше пяти случаев, каждый в "
+        "две-четыре фразы; разные продукты, сроки или сегменты — это не "
+        "расхождение, их не включай."
     ),
     "checks": (
         "РАЗДЕЛ «ЧТО ПРОВЕРЯТЬ» — план действий для проверки. Блоки:\n"
@@ -660,6 +685,19 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
     # и отчёт описал один Сбер.
     if len(subjects) >= 2 and "market" in material and order[:1] != ["market"]:
         order = ["market"] + [k for k in order if k != "market"]
+    # Жалобы клиентов из AuditLens есть — раздел о них обязателен: это реальный
+    # опыт клиентов, которого нет у «просто нейросети». В сравнении — сразу после
+    # таблицы условий, в остальных вопросах — там, где его поставил бриф.
+    has_voice = any(own.get(getattr(f, "url", ""), {}).get("kind") in ("complaints", "review")
+                    for f in material.get("voice") or [])
+    if has_voice and "voice" not in order:
+        pos = 1 if order[:1] == ["market"] else 0
+        order = order[:pos] + ["voice"] + order[pos:]
+    # Лазейки из «Уязвимостей» найдены — раздел обязателен, сразу после жалоб.
+    if "loopholes" in material and "loopholes" not in order:
+        pos = order.index("voice") + 1 if "voice" in order else (
+            1 if order[:1] == ["market"] else 0)
+        order = order[:pos] + ["loopholes"] + order[pos:]
     if brief:
         ttl.update({s_["key"]: s_["title"] for s_ in brief.sections if s_["title"]})
     yield ("titles", dict(ttl))

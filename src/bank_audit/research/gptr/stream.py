@@ -104,6 +104,20 @@ _FOREIGN = re.compile(
     r"mtsbank|domrf|otpbank|rosbank)[\w-]*\.(by|kz|uz|kg|am|az|ge|md|ua|tj)$", re.I)
 
 
+def _unverified_item(x) -> dict:
+    if isinstance(x, dict):
+        return x
+    try:
+        v = float(x)
+        num = (f"{v:,.0f}".replace(",", " ") if v == int(v)
+               else f"{v:.2f}".rstrip("0").rstrip(".").replace(".", ","))
+    except (TypeError, ValueError):
+        num = str(x)
+    return {"claim": f"число {num}",
+            "issue": "не найдено в источнике рядом с цитатой — вероятно, посчитано "
+                     "в отчёте; сверить вручную"}
+
+
 def _foreign_affiliate(url: str) -> bool:
     return bool(_FOREIGN.search(urlparse(url).netloc.split(":")[0]))
 
@@ -539,7 +553,9 @@ async def stream_deep_research_gptr(question: str,
                 "method": "numbers_vs_read_pages",
                 "numeric_checked": verification["numeric_checked"],
                 "verified": verification["verified"],
-                "unverified": verification["unverified"],
+                # Интерфейс и PDF ждут записи {claim, issue}; голые числа давали
+                # «4 утверждения требуют проверки» с пустыми «» (26.09).
+                "unverified": [_unverified_item(x) for x in verification["unverified"]],
                 "unverified_count": len(verification["unverified"]),
                 "facts_total": len(registry.facts),
                 "citations": cit_stats.get("цитирований", 0),

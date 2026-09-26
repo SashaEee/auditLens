@@ -5393,9 +5393,9 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           // (то же что VerificationBanner в UI), а не как сырой markdown.
           verification: verification ? {
             unverified: (Array.isArray(verification.unverified)
-              ? verification.unverified : []).map(u => ({
-                claim: u.claim, issue: u.issue
-              })),
+              ? verification.unverified : []).map(u => (u && typeof u === "object")
+                ? ({claim: u.claim, issue: u.issue})
+                : ({claim: `число ${u}`, issue: "не найдено в источнике рядом с цитатой — сверить вручную"})),
             unanswered: verification.unanswered || [],
             critic_failed: verification.critic_failed === true,
           } : null,
@@ -5852,7 +5852,9 @@ function VerificationBanner({verification}){
     <div className="dr-verify dr-verify-warn">
       <div className="dr-verify-head">{u.length} {word} ручной проверки</div>
       <ul className="dr-verify-list">
-        {u.map((it,i)=><li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>)}
+        {u.map((it,i)=>(it && typeof it === "object")
+          ? <li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>
+          : <li key={i}><strong>число {String(it)}</strong> — не найдено в источнике рядом с цитатой, сверить вручную</li>)}
       </ul>
     </div>
   </React.Fragment>;
