@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, critic as al_critic, facts as al_facts
-from . import reviews as al_reviews, runstate
+from . import own_data as al_own, reviews as al_reviews, runstate
 from . import dossier as al_dossier
 from . import viz as al_viz
 from . import gaps as al_gaps, planner as al_planner
@@ -57,14 +57,27 @@ def _evt(d: dict) -> str:
 
 def _sources_ui(urls: list[str], pages: dict[str, str],
                 cited: dict[str, dict] | None = None,
-                dates: dict[str, str] | None = None) -> list[dict]:
-    """Карточки источников. Если передан cited — только процитированные."""
+                dates: dict[str, str] | None = None,
+                own: dict[str, dict] | None = None) -> list[dict]:
+    """Карточки источников. Если передан cited — только процитированные.
+    own — страницы собственных данных AuditLens: адрес ведёт на срез вкладки."""
     cited = cited or {}
     dates = dates or {}
+    own = own or {}
     out: list[dict] = []
     for i, url in enumerate(urls, 1):
-        domain = urlparse(url).netloc.removeprefix("www.")
         text = pages.get(url, "")
+        mine = own.get(url)
+        if mine and mine.get("kind") != "review":
+            out.append({
+                "n": i, "url": url, "title": mine.get("title", "")[:120],
+                "domain": "AuditLens", "bank_slug": None, "trust_score": 0.95,
+                "source_kind": "auditlens",
+                "excerpt": (cited.get(url, {}).get("excerpt") or text[:600]),
+                "facts": cited.get(url, {}).get("facts") or [],
+                "published": dates.get(url, ""), "dead": False})
+            continue
+        domain = urlparse(url).netloc.removeprefix("www.")
         out.append({
             "n": i, "url": url,
             "title": (text.splitlines()[0][:80] if text else url[:80]).lstrip("# "),
@@ -162,12 +175,11 @@ async def stream_deep_research_gptr(question: str,
                                agent="AuditLens",
                                role=_role_prompt(plan, question))
     # Три вещи, которые раньше шли по очереди, теперь идут вместе: сбор,
-    # разбор уже прочитанных страниц объектов и выгрузка жалоб из корпуса.
-    # Отзывы зависят только от плана и контракта — ждать сбора им незачем.
+    # разбор уже прочитанных страниц объектов и собственные данные AuditLens
+    # (аналитика жалоб, жалобы из разметки, лазейки). Им ждать сбора незачем.
     registry = al_facts.FactRegistry()
     collecting = {"on": True}
-    reviews_task = asyncio.ensure_future(asyncio.to_thread(
-        al_reviews.collect, plan, attributes))
+    own_task = asyncio.ensure_future(al_own.collect(client, fast, question, plan))
     eager_task = asyncio.ensure_future(al_facts.extract_while_collecting(
         registry, client, fast, state=state, attributes=attributes, plan=plan,
         running=lambda: collecting["on"],
@@ -200,17 +212,32 @@ async def stream_deep_research_gptr(question: str,
     pages = dict(state.pages)
     unreadable = dict(state.unreadable)
 
-    # Наблюдаемая сторона в первую очередь из собственного корпуса отзывов:
-    # там живые жалобы с датами и ссылками, тогда как веб отдаёт обзоры.
+    # Наблюдаемая сторона — прежде всего собственные данные: аналитика жалоб
+    # и жалобы из разметки тем же слоем, что вкладка «Отзывы»; веб даёт обзоры.
     runstate.bind(state)
-    review_records = await reviews_task
-    review_pages = al_reviews.as_pages(review_records)
-    if review_pages:
-        pages.update(review_pages)
+    own = await own_task
+    review_pages: dict[str, str] = {}
+    if own.complaints or own.loopholes or own.pages:
+        sc = own.scope or {}
         yield _evt({"type": "stage_status", "stage": "reviews",
-                    "label": f"Жалоб из корпуса: {len(review_pages)}",
-                    "detail": "отзывы клиентов с датами и ссылками",
+                    "label": f"Данные AuditLens: жалоб {own.complaints}, лазеек {own.loopholes}",
+                    "detail": ("срез: " + ", ".join(x for x in (
+                        sc.get("product") or "все продукты",
+                        f"{sc.get('days')} дн" if sc.get("days") else "",
+                        ("темы: " + ", ".join(sc.get("themes") or [])) if sc.get("themes") else "")
+                        if x)),
                     "estimate_s": 0})
+    if not own.complaints and getattr(plan, "subjects", None) and (own.scope or {}).get("relevant", True):
+        # Запасной путь — старый корпус banki.ru: объект вне разметки или сбой слоя.
+        review_records = await asyncio.to_thread(al_reviews.collect, plan, attributes)
+        runstate.bind(state)
+        review_pages = al_reviews.as_pages(review_records)
+        if review_pages:
+            pages.update(review_pages)
+            yield _evt({"type": "stage_status", "stage": "reviews",
+                        "label": f"Жалоб из старого корпуса: {len(review_pages)}",
+                        "detail": "разметки по объектам нет — запасной источник",
+                        "estimate_s": 0})
 
     # ── Факты ────────────────────────────────────────────────────────────
     # Между чтением и письмом появляется типизированный слой: каждый факт
@@ -233,6 +260,12 @@ async def stream_deep_research_gptr(question: str,
             "pages_total": len(pages), "facts": len(registry.facts),
             "ahead": len(eager_pages)}):
         yield ev
+    # Собственные данные — после извлечения: их факты собрал код (числа среза,
+    # пересказ и сверенная цитата разметки), пересказывать их моделью незачем.
+    runstate.bind(state)
+    for kw in own.facts:
+        registry.add(**kw)
+    pages.update(own.pages)
     if review_pages:
         al_reviews.stamp_dates(registry)
     # ── Критик ───────────────────────────────────────────────────────────
@@ -248,7 +281,7 @@ async def stream_deep_research_gptr(question: str,
                                f"{verdict.exact}, пересказов {verdict.close}"),
                     "estimate_s": 0})
 
-    by_stance = {"declared": 0, "observed": 0, "regulatory": 0}
+    by_stance = {"declared": 0, "observed": 0, "regulatory": 0, "loophole": 0}
     for f in registry.facts:
         by_stance[f.stance] = by_stance.get(f.stance, 0) + 1
     yield _evt({"type": "facts_summary", "total": len(registry.facts),
@@ -258,7 +291,8 @@ async def stream_deep_research_gptr(question: str,
     yield _evt({"type": "stage_status", "stage": "facts_ready",
                 "label": f"Фактов: {len(registry.facts)}",
                 "detail": (f"заявлено {by_stance['declared']}, со стороны "
-                           f"{by_stance['observed']}, норм {by_stance['regulatory']}"),
+                           f"{by_stance['observed']}, норм {by_stance['regulatory']}"
+                           + (f", лазеек {by_stance['loophole']}" if by_stance["loophole"] else "")),
                 "estimate_s": 0})
 
     # ── Отчёт ────────────────────────────────────────────────────────────
@@ -378,7 +412,8 @@ async def stream_deep_research_gptr(question: str,
     # отзыв, удалённый или перенесённый на banki.ru после сбора, давал в отчёте
     # живую с виду ссылку на 404 (аудиторы сообщали о ссылках на несуществующую
     # страницу. Проверяем ТОЛЬКО процитированные — их единицы.
-    corpus_urls = [c["url"] for c in cited_src if c["url"] in review_pages]
+    corpus_urls = [c["url"] for c in cited_src if c["url"] in review_pages
+                   or state.own_meta.get(c["url"], {}).get("kind") == "review"]
     if corpus_urls:
         dead = await asyncio.to_thread(al_reviews.check_alive, corpus_urls)
     else:
@@ -396,7 +431,7 @@ async def stream_deep_research_gptr(question: str,
         if meta.get("date"):
             pub_dates.setdefault(u, str(meta["date"])[:10])
     sources = _sources_ui([c["url"] for c in cited_src], pages, cited_map,
-                          pub_dates)
+                          pub_dates, dict(state.own_meta))
     dropped = len(pages) - len(sources)
     if sources:
         high = sum(1 for s in sources if s["trust_score"] >= 0.85)

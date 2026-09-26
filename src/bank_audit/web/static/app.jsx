@@ -5194,6 +5194,7 @@ function TrustMarks({score}){
 // а здесь их не было: регуляторный источник подписывался сырым «regulatory»,
 // и счётчик официальных источников в шапке всегда показывал ноль.
 const SOURCE_KIND_LABELS = {
+  auditlens:     "Данные AuditLens",
   bank_official: "Официальный сайт",
   regulator:     "Регулятор",
   regulatory:    "Регулятор",
@@ -5245,7 +5246,9 @@ const formatRelDate=(iso)=>{
     return d.toLocaleDateString("ru-RU",{year:"numeric",month:"short",day:"numeric"});
   }catch{return "";}
 };
-const domainOf=(url)=>{try{return new URL(url).hostname.replace(/^www\./,"");}catch{return "";}};
+// Источник отчёта из данных самого AuditLens — адрес вида «#reviews?…» (срез вкладки)
+const domainOf=(url)=>{if(String(url||"").startsWith("#"))return "AuditLens";
+  try{return new URL(url).hostname.replace(/^www\./,"");}catch{return "";}};
 
 // ─── Citation tooltip — appears on hover with 200ms delay.
 //     Premium: показываем не только метаданные, но и реальный excerpt
@@ -9115,11 +9118,14 @@ function PuAgentEval(){
   const[d,setD]=useState(null);
   const[busy,setBusy]=useState(false);
   const[open,setOpen]=useState(null);
-  const load=useCallback(()=>{apiFetch("/api/admin/agent-eval").then(setD).catch(()=>setD({error:true}));},[]);
-  useEffect(()=>{load();},[load]);
+  // режим: быстрый ответ (Hermes) или отчёт (deep research) — у каждого свой набор
+  const[eng,setEng]=useState("hermes");
+  const load=useCallback(()=>{apiFetch("/api/admin/agent-eval?engine="+eng).then(setD)
+    .catch(()=>setD({error:true}));},[eng]);
+  useEffect(()=>{setOpen(null);load();},[load]);
   useEffect(()=>{ if(!(d&&d.running))return; const t=setInterval(load,20000); return ()=>clearInterval(t); },[d,load]);
-  const start=()=>{setBusy(true);apiPost("/api/admin/agent-eval",{}).then(()=>setTimeout(load,1500))
-    .catch(()=>{}).finally(()=>setBusy(false));};
+  const start=()=>{setBusy(true);apiPost("/api/admin/agent-eval",{engine:eng==="deep"?"deep":"quick"})
+    .then(()=>setTimeout(load,1500)).catch(()=>{}).finally(()=>setBusy(false));};
   if(!d) return null;
   const runs=d.runs||[], last=runs[0], cases=d.last_cases||[];
   const prev=last&&runs.slice(1).find(r=>r.model===last.model);
@@ -9127,6 +9133,10 @@ function PuAgentEval(){
   const num=x=>x==null?"—":String(x).replace(".",",");
   return <div className="pu-card pu-sec">
     <div className="h"><span>ИИ-аналитик: регрессионный набор</span>
+      <div className="seg" style={{marginLeft:12}}>
+        {[["hermes","Быстрый ответ"],["deep","Отчёт"]].map(([k,l])=>
+          <button key={k} className={"seg-btn"+(eng===k?" on":"")} onClick={()=>setEng(k)}>{l}</button>)}
+      </div>
       {last&&<span className={"pu-chip "+(last.score>=75?"ok":last.score<50?"bad":"")}>
         {num(last.score)} из 100{delta!=null&&delta!==0?` · ${delta>0?"+":"−"}${num(Math.abs(delta))}`:""}</span>}
       <button className="btn" style={{marginLeft:"auto"}} disabled={busy||d.running} onClick={start}>

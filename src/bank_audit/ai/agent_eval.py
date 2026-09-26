@@ -344,6 +344,54 @@ CASES: list[Case] = [
 ]
 
 
+# ── кейсы отчёта (deep research) ─────────────────────────────────────────────
+# Те же живые эталоны, вопрос — под отчёт. Отчёт длинный и пишется минутами,
+# поэтому кроме чисел и темы проверяем: есть ли нужный раздел и не пишет ли
+# отчёт «рост не подтверждается», когда сигнал в данных есть (так было 26.09).
+
+_NOT_CONFIRMED = re.compile(
+    r"(рост|всплеск|динамик)[^.\n]{0,120}не подтвержд|не подтвержд[^.\n]{0,120}(рост|всплеск)",
+    re.I)
+DEEP_SLOW_S = float(os.getenv("AGENT_EVAL_DEEP_SLOW_S", "300"))
+
+
+def _deep(build: Callable[[], dict | None], question: Callable[[dict], str], **extra):
+    def run() -> dict | None:
+        spec = build()
+        if not spec:
+            return None
+        return spec | {"question": question(spec), "slow_s": DEEP_SLOW_S} | extra
+    return run
+
+
+def _sig_label(spec: dict) -> str:
+    return (spec.get("words") or ["тему"])[0]
+
+
+DEEP_CASES: list[Case] = [
+    Case("D1", "Отзывы", "отчёт: причина всплеска жалоб", _deep(
+        c_signal, lambda s: f"Почему на этой неделе выросли жалобы на «{_sig_label(s)}» в Сбере "
+                            "и что проверить?",
+        sections=["Голос клиента"],
+        forbid=[("всплеск «не подтверждается» при данных", _NOT_CONFIRMED)])),
+    Case("D2", "Отзывы", "отчёт: жалобы по продукту", _deep(
+        c_product_complaints,
+        lambda s: "Проанализируй жалобы клиентов Сбера на вклады за последние 90 дней: "
+                  "основные проблемы, динамика, что проверить.",
+        sections=["Голос клиента"])),
+    Case("D3", "Уязвимости", "отчёт: лазейки по продукту", _deep(
+        c_loopholes, lambda s: "Какие лазейки и уязвимости есть в Сбере по кредитным картам "
+                               "и что с ними делать аудиту?",
+        sections=["Лазейки"])),
+    Case("D4", "Рынок", "отчёт: сравнение с конкурентами", _deep(
+        c_compare, lambda s: "Сравни вклады Сбера с ВТБ и Газпромбанком: ставки, условия, "
+                             "позиция на рынке.")),
+    Case("D5", "База знаний", "отчёт: регулирование", _deep(
+        c_regulation, lambda s: "Что изменилось в регулировании вкладов в 2026 году и что это "
+                                "значит для Сбера?")),
+]
+
+
 # ── проверка ответа ──────────────────────────────────────────────────────────
 
 def check_answer(answer: str, spec: dict, seconds: float) -> list[dict]:
@@ -372,7 +420,15 @@ def check_answer(answer: str, spec: dict, seconds: float) -> list[dict]:
     if spec.get("need_link"):
         ok = bool(re.search(r"\]\((https?://|#)", answer))
         res.append({"check": "ссылки на источники", "ok": ok, "hard": False})
-    res.append({"check": f"время ≤ {int(SLOW_S)} с", "ok": seconds <= SLOW_S, "hard": False,
+    for title in spec.get("sections") or []:
+        ok = bool(re.search(r"^#{1,3}\s*" + re.escape(title), answer, re.M | re.I))
+        res.append({"check": f"раздел «{title}»", "ok": ok, "hard": False})
+    for name, rx in spec.get("forbid") or []:
+        m = rx.search(visible)
+        res.append({"check": f"нет: {name}", "ok": not m, "hard": True,
+                    "detail": m.group(0)[:120] if m else None})
+    slow = spec.get("slow_s") or SLOW_S
+    res.append({"check": f"время ≤ {int(slow)} с", "ok": seconds <= slow, "hard": False,
                 "detail": round(seconds, 1)})
     return res
 
@@ -394,13 +450,14 @@ _JUDGE_SYSTEM = (
     "не по вопросу.")
 
 
-async def judge(question: str, facts: dict, focus: str, answer: str) -> dict | None:
+async def judge(question: str, facts: dict, focus: str, answer: str,
+                answer_cap: int = 9000) -> dict | None:
     if not JUDGE_MODEL:
         return None
     from ..digest.writer import _chat
     from .llm_utils import _loose_json_loads
     user = (f"ВОПРОС: {question}\n\nНА ЧТО СМОТРЕТЬ: {focus}\n\nЭТАЛОННЫЕ ДАННЫЕ:\n"
-            f"{json.dumps(facts, ensure_ascii=False, default=str)[:24000]}\n\nОТВЕТ:\n{answer[:9000]}")
+            f"{json.dumps(facts, ensure_ascii=False, default=str)[:24000]}\n\nОТВЕТ:\n{answer[:answer_cap]}")
     try:
         raw, _, _ = await _chat(JUDGE_MODEL, _JUDGE_SYSTEM, user, max_tokens=700, temperature=0.0)
         d = _loose_json_loads(raw)
@@ -450,7 +507,29 @@ async def _ask(question: str, model: str | None, hint: str) -> dict:
             "seconds": round(time.monotonic() - t0, 1)}
 
 
-async def run_case(case: Case, model: str | None, use_judge: bool, tag: str) -> dict:
+async def _ask_deep(question: str) -> dict:
+    """Отчёт тем же конвейером, что в чате: резюме и план проверки — наверх."""
+    from ..research.gptr.stream import stream_deep_research_gptr
+    t0 = time.monotonic()
+    lead, body, stages, err = [], [], [], None
+    try:
+        async for raw in stream_deep_research_gptr(question, []):
+            ev = json.loads(raw)
+            t = ev.get("type")
+            if t == "text":
+                body.append(ev.get("chunk") or "")
+            elif t == "lead":
+                lead.append(ev.get("chunk") or "")
+            elif t == "stage_status" and ev.get("label"):
+                stages.append(f"{round(time.monotonic() - t0)}с {ev['label']}"[:90])
+    except Exception as e:  # noqa: BLE001
+        err = f"{type(e).__name__}: {e}"
+    return {"answer": "".join(lead) + "".join(body), "tools": stages[-25:], "meta": {},
+            "error": err, "seconds": round(time.monotonic() - t0, 1)}
+
+
+async def run_case(case: Case, model: str | None, use_judge: bool, tag: str,
+                   engine: str = "quick") -> dict:
     try:
         spec = await asyncio.to_thread(case.build)
     except Exception as e:  # noqa: BLE001 — эталон не собрался: кейс пропускаем, не валим прогон
@@ -459,15 +538,18 @@ async def run_case(case: Case, model: str | None, use_judge: bool, tag: str) -> 
     base = {"id": case.id, "tab": case.tab, "title": case.title}
     if not spec:
         return base | {"verdict": "skip", "note": "нет данных для эталона"}
-    r = await _ask(spec["question"], model, f"eval-{tag}-{case.id}")
+    deep = engine == "deep"
+    r = (await _ask_deep(spec["question"]) if deep
+         else await _ask(spec["question"], model, f"eval-{tag}-{case.id}"))
     checks = check_answer(r["answer"], spec, r["seconds"])
     jd = None
     if use_judge and r["answer"].strip():
         jd = await judge(spec["question"], spec.get("facts") or {}, spec.get("judge_focus", ""),
-                         r["answer"])
+                         r["answer"], answer_cap=40000 if deep else 9000)
     return base | {"question": spec["question"], "verdict": verdict(checks, jd),
                    "seconds": r["seconds"], "tools": r["tools"], "error": r["error"],
-                   "checks": checks, "judge": jd, "answer": r["answer"][:6000],
+                   "checks": checks, "judge": jd,
+                   "answer": r["answer"][:60000 if deep else 6000],
                    "empty_attempts": (r["meta"] or {}).get("empty_attempts")}
 
 
@@ -482,14 +564,16 @@ def summarize(results: list[dict]) -> dict:
 
 async def run_eval(model: str | None = None, only: list[str] | None = None,
                    use_judge: bool = True, trigger: str = "cli", concurrency: int = 2,
-                   save: bool = True) -> dict:
-    cases = [c for c in CASES if not only or c.id in only]
+                   save: bool = True, engine: str = "quick") -> dict:
+    """engine: quick — быстрый режим (Hermes), deep — отчёт (deep research)."""
+    pool = DEEP_CASES if engine == "deep" else CASES
+    cases = [c for c in pool if not only or c.id in only]
     tag = uuid.uuid4().hex[:8]
     sem = asyncio.Semaphore(max(1, concurrency))
 
     async def one(c):
         async with sem:
-            r = await run_case(c, model, use_judge, tag)
+            r = await run_case(c, model, use_judge, tag, engine)
             log.info("[agent-eval] %s %s %s с", c.id, r["verdict"], r.get("seconds"))
             return r
 
@@ -497,7 +581,7 @@ async def run_eval(model: str | None = None, only: list[str] | None = None,
     results = await asyncio.gather(*(one(c) for c in cases))
     summ = summarize(results)
     out = {"model": model or "default", "trigger": trigger, **summ, "cases": list(results),
-           "started": t0, "run_id": None}
+           "started": t0, "run_id": None, "engine": "deep" if engine == "deep" else "hermes"}
     if save:
         out["run_id"] = await asyncio.to_thread(_save, out)
     return out
@@ -511,10 +595,11 @@ def _save(res: dict) -> int | None:
             rid = s.execute(text("""
                 INSERT INTO agent_eval_run (started_at, finished_at, engine, model, trigger,
                                             score, n_pass, n_partial, n_fail, median_s, cases)
-                VALUES (to_timestamp(:t0), now(), 'hermes', :m, :tr, :sc, :p, :pa, :f, :med,
+                VALUES (to_timestamp(:t0), now(), :eng, :m, :tr, :sc, :p, :pa, :f, :med,
                         CAST(:cases AS jsonb))
                 RETURNING run_id"""), {
-                "t0": res["started"], "m": res["model"], "tr": res["trigger"],
+                "t0": res["started"], "eng": res.get("engine") or "hermes",
+                "m": res["model"], "tr": res["trigger"],
                 "sc": res["score"], "p": res["n_pass"], "pa": res["n_partial"],
                 "f": res["n_fail"], "med": res["median_s"],
                 "cases": json.dumps(res["cases"], ensure_ascii=False, default=str)}).scalar()
@@ -525,13 +610,15 @@ def _save(res: dict) -> int | None:
         return None
 
 
-def history(limit: int = 12) -> dict:
-    """Прогоны для «Пульса»: последние с итогом, у последнего — все кейсы."""
+def history(limit: int = 12, engine: str = "hermes") -> dict:
+    """Прогоны для «Пульса»: последние с итогом, у последнего — все кейсы.
+    engine: hermes — быстрый режим, deep — отчёт."""
     # прогоны первой версии набора (с ложными срабатываниями) в истории не показываем
     rows = T._q("""SELECT run_id, started_at, finished_at, model, trigger, score, n_pass,
                           n_partial, n_fail, median_s, note
                      FROM agent_eval_run WHERE coalesce(note, '') NOT LIKE 'набор v1%'
-                    ORDER BY started_at DESC LIMIT :l""", {"l": limit})
+                      AND engine = :e
+                    ORDER BY started_at DESC LIMIT :l""", {"l": limit, "e": engine})
     last = None
     if rows:
         c = T._q("SELECT cases FROM agent_eval_run WHERE run_id = :r", {"r": rows[0]["run_id"]})

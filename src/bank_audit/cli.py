@@ -66,12 +66,15 @@ def serve(host: str, port: int, reload: bool):
 @click.option("--no-judge", is_flag=True, help="без судьи-модели, только детерминированные проверки")
 @click.option("--trigger", default="cli", help="метка запуска: cli | gate | schedule")
 @click.option("--json", "as_json", is_flag=True, help="итог одной строкой JSON (для скриптов)")
-def agent_eval(model, cases, no_judge, trigger, as_json):
+@click.option("--engine", default="quick", type=click.Choice(["quick", "deep"]),
+              help="quick — быстрый режим (Hermes), deep — отчёт (deep research)")
+def agent_eval(model, cases, no_judge, trigger, as_json, engine):
     """Регрессионный набор ИИ-аналитика: вопросы по всем вкладкам с живым эталоном."""
     import asyncio
     from .ai.agent_eval import run_eval
     only = [c.strip() for c in cases.split(",")] if cases else None
-    res = asyncio.run(run_eval(model=model, only=only, use_judge=not no_judge, trigger=trigger))
+    res = asyncio.run(run_eval(model=model, only=only, use_judge=not no_judge, trigger=trigger,
+                               engine=engine))
     if as_json:
         click.echo(json.dumps({k: res[k] for k in ("run_id", "model", "score", "n_pass",
                                                    "n_partial", "n_fail", "median_s")},

@@ -245,7 +245,8 @@ def value_with_unit(f) -> str:
 
 
 def _side(stance: str) -> str:
-    return {"declared": "заявлено", "regulatory": "норма регулятора"}.get(stance, "наблюдается")
+    return {"declared": "заявлено", "regulatory": "норма регулятора",
+            "loophole": "лазейка"}.get(stance, "наблюдается")
 
 
 @dataclass

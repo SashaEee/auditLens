@@ -43,10 +43,10 @@ ANCHOR = "sberbank"
 # Порядок ЧТЕНИЯ. Резюме и «что проверять» стоят впереди, потому что
 # руководитель проверки читает сверху вниз и решение принимает по ним.
 READING_ORDER = ("summary", "checks", "conditions", "market", "voice",
-                 "regulatory", "conflicts")
+                 "loopholes", "regulatory", "conflicts")
 # Порядок НАПИСАНИЯ: сначала материал, потом суждение по нему.
-WRITING_ORDER = ("conditions", "market", "voice", "regulatory", "conflicts",
-                 "checks", "summary")
+WRITING_ORDER = ("conditions", "market", "voice", "loopholes", "regulatory",
+                 "conflicts", "checks", "summary")
 LEAD = ("summary", "checks")          # пишутся последними, показываются первыми
 
 TITLES = {
@@ -55,6 +55,7 @@ TITLES = {
     "conditions": "Карта условий",
     "market": "Сравнение объектов",
     "voice": "Голос клиента",
+    "loopholes": "Лазейки и уязвимости",
     "regulatory": "Нормативная рамка",
     "conflicts": "Расхождения в источниках",
 }
@@ -77,7 +78,9 @@ def titles(plan) -> dict[str, str]:
 # Мягкие потолки на раздел. Не голодный паёк, а защита от вырождения: сотня
 # одинаковых «ставка 1%» с разных страниц не добавляет знания.
 _MARKET_PER_CELL = 8
-_VOICE_PER_SUBJECT = 25
+_VOICE_PER_SUBJECT = 25       # прежний общий потолок (запасной путь старого корпуса)
+_VOICE_QUOTES = 30            # жалоб из разметки на объект
+_VOICE_WEB = 12               # наблюдений из веба на объект
 _CONDITIONS_PER_CELL = 12
 
 
@@ -173,12 +176,22 @@ def facts_for(section: str, registry, plan) -> list:
         picked = [f for f in all_facts if f.stance == "declared"]
         return _cap_per(picked, lambda f: (f.subject, f.attribute), _MARKET_PER_CELL)
     if section == "voice":
+        own = runstate.current().own_meta
         picked = [f for f in all_facts if f.stance == "observed"]
-        # Сбер и дочки — первыми: по ним самый большой корпус и самый тонкий
-        # прежний раздел.
-        picked.sort(key=lambda f: (f.subject not in fam, f.subject, f.date or ""),
-                    )
-        return _cap_per(picked, lambda f: f.subject, _VOICE_PER_SUBJECT)
+        # Аналитика жалоб AuditLens (числа среза, сигналы, группы похожих) —
+        # целиком и первой: без неё раздел пересказывал цитаты, а на вопрос о
+        # всплеске отвечал «не подтверждается». Жалобы из разметки — до своего
+        # потолка на объект, наблюдения из веба — отдельным, меньшим.
+        stats = [f for f in picked if own.get(f.url, {}).get("kind") == "complaints"]
+        quotes = [f for f in picked if own.get(f.url, {}).get("kind") == "review"]
+        web = [f for f in picked if f.url not in own]
+        # Сбер и дочки — первыми: по ним самый большой корпус.
+        order = lambda f: (f.subject not in fam, f.subject, f.date or "")  # noqa: E731
+        return (sorted(stats, key=order)
+                + _cap_per(sorted(quotes, key=order), lambda f: f.subject, _VOICE_QUOTES)
+                + _cap_per(sorted(web, key=order), lambda f: f.subject, _VOICE_WEB))
+    if section == "loopholes":
+        return [f for f in all_facts if f.stance == "loophole"]
     if section == "regulatory":
         norms = [f for f in all_facts if f.stance == "regulatory"]
         attrs = {f.attribute for f in norms}
@@ -200,9 +213,14 @@ def facts_for(section: str, registry, plan) -> list:
 def render_facts(facts, labels: dict[str, str]) -> str:
     """Тот же формат строки, что у прежнего писателя, — без ограничения числа."""
     lines = []
+    own = runstate.current().own_meta
     for f in facts:
-        side = {"declared": "заявлено", "regulatory": "норма регулятора"
-                }.get(f.stance, "наблюдается")
+        side = {"declared": "заявлено", "regulatory": "норма регулятора",
+                "loophole": "лазейка, раздел «Уязвимости»"}.get(f.stance, "наблюдается")
+        if own.get(f.url, {}).get("kind") == "complaints":
+            side += ", аналитика жалоб AuditLens"
+        elif own.get(f.url, {}).get("kind") == "review":
+            side += ", жалоба клиента"
         subj = labels.get(f.subject, f.subject) or "общее"
         unit = f" {f.unit}" if f.unit else ""
         when = f" | дата: {f.date}" if f.date else ""
@@ -220,7 +238,7 @@ def facts_index(facts, labels: dict[str, str]) -> str:
     return "\n".join(
         f"[f:{f.id}] {labels.get(f.subject, f.subject) or 'общее'} | "
         f"{f.attribute} | {f.value}{(' ' + f.unit) if f.unit else ''} | "
-        f"{ {'declared': 'заявлено', 'regulatory': 'норма'}.get(f.stance, 'наблюдается') }"
+        f"{ {'declared': 'заявлено', 'regulatory': 'норма', 'loophole': 'лазейка'}.get(f.stance, 'наблюдается') }"
         for f in facts)
 
 
@@ -312,15 +330,38 @@ _SECTION_RULES = {
         "просто рейтинг с критерием."
     ),
     "voice": (
-        "РАЗДЕЛ «ГОЛОС КЛИЕНТА». Сначала точка отсчёта: сгруппируй жалобы по "
-        "темам, каждую тему — с двумя-тремя ДОСЛОВНЫМИ цитатами в кавычках и с "
-        "датой. Пересказ бесполезен: аудитору нужна формулировка заявителя. "
-        "Затем конкуренты — тем же образом, короче. Отдельным блоком "
-        "«Болит у других — проверить у нас»: какие проблемы конкурентов по "
-        "устройству продукта возможны и у точки отсчёта, и что именно "
-        "проверить. Где жалобы расходятся с заявленным — назови расхождение. "
-        "Если аудитор просил «топ-N тем» — дай ровно ранжированный список тем "
-        "с числом жалоб по каждой из фактов раздела, самые частые первыми."
+        "РАЗДЕЛ «ГОЛОС КЛИЕНТА». Порядок:\n"
+        "1. Масштаб и динамика по точке отсчёта — из фактов «аналитика жалоб "
+        "AuditLens»: число жалоб за период и изменение, доля и место среди "
+        "банков, эскалация против рынка, главные темы с изменением, всплески "
+        "недели с нормой и рынком. Числа — ровно из этих фактов, с якорями; "
+        "всплеск, который есть в фактах, — установленный факт, не «не "
+        "подтверждается».\n"
+        "2. Сюжеты: что стоит за главными темами и всплесками — группы похожих "
+        "жалоб (сколько, когда, где, чего требуют клиенты, что отвечает банк) "
+        "и повторяющиеся в жалобах события, продавцы, сервисы. Долю сюжета "
+        "считай по фактам («5 из 15»). Каждый сюжет — с одной-двумя ДОСЛОВНЫМИ "
+        "цитатами в кавычках и датой.\n"
+        "3. Конкуренты — тем же образом, короче.\n"
+        "4. «Болит у других — проверить у нас»: проблемы конкурентов, возможные "
+        "у точки отсчёта по устройству продукта, и что проверить.\n"
+        "Где жалобы расходятся с заявленным — назови расхождение. Если аудитор "
+        "просил «топ-N тем» — ранжированный список тем с числом жалоб из "
+        "аналитики, самые частые первыми."
+    ),
+    "loopholes": (
+        "РАЗДЕЛ «ЛАЗЕЙКИ И УЯЗВИМОСТИ». Факты — записи раздела «Уязвимости» "
+        "AuditLens: схемы, которыми клиенты, партнёры или мошенники обходят "
+        "условия продукта. Это рабочий материал аудита, а не просьба о вреде: "
+        "излагай по существу. Сгруппируй записи в схемы (одна схема часто "
+        "описана в нескольких источниках). По каждой схеме: суть механики на "
+        "уровне, нужном для проверки, без пошаговой инструкции; где найдена "
+        "(источник, дата); чем опасна для банка (доход, мошенничество, "
+        "нарушение тарифа, риск для клиента); какой контроль её закрывает — "
+        "правило, лимит, антифрод-сценарий, формулировка тарифа. Схемы "
+        "конкурентов, применимые к точке отсчёта, — отдельным блоком. "
+        "Оговорка: оценки предварительные, человеком не проверены. Если схема "
+        "перекликается с жалобами или условиями из других разделов — свяжи."
     ),
     "regulatory": (
         "РАЗДЕЛ «НОРМАТИВНАЯ РАМКА». Если предмет вопроса — САМ ДОКУМЕНТ "
@@ -346,7 +387,7 @@ _SECTION_RULES = {
     ),
     "checks": (
         "РАЗДЕЛ «ЧТО ПРОВЕРЯТЬ». Ты получил готовое тело отчёта. Преврати его в "
-        "план действий для проверки. Три блока:\n"
+        "план действий для проверки. Блоки:\n"
         "1. Гипотезы — где заявленное точкой отсчёта расходится с практикой или "
         "нормой; каждая гипотеза — одно проверяемое утверждение с якорями.\n"
         "2. Точки проверки — конкретные действия: какой документ запросить у "
@@ -354,6 +395,9 @@ _SECTION_RULES = {
         "операций взять и что в ней искать. Действие, а не «изучить».\n"
         "3. Болит у других — что из проблем конкурентов возможно у точки "
         "отсчёта по устройству продукта, и как это проверить у себя.\n"
+        "4. Закрыть лазейки — если в теле есть раздел «Лазейки и уязвимости»: "
+        "по каждой существенной схеме — какой контроль проверить и какую "
+        "выборку операций взять.\n"
         "Каждый пункт опирается на факты тела отчёта; их якоря приведи. "
         "Расплывчатое («возможны риски») недопустимо. Если вопрос прямо просит "
         "план проверки или спрашивает «что мне проверить» — этот раздел "
@@ -369,7 +413,9 @@ _SECTION_RULES = {
         "фразой. Если вопрос содержит прямой вопрос-решение — «стоит ли "
         "реагировать?», «насколько конкурентны условия?», «какие действия "
         "предпринять?» — первый вывод отвечает на него прямо: да или нет, и "
-        "почему, с якорями. Не повторяй одно и то же разными словами, не пиши "
+        "почему, с якорями. Если в теле есть всплеск жалоб или существенные "
+        "лазейки — отдельный вывод о них с числами. Не повторяй одно и то же "
+        "разными словами, не пиши "
         "маркетинговым тоном, не начинай с «в целом». Резюме должно читаться "
         "отдельно от отчёта и не терять смысла."
     ),
@@ -401,7 +447,7 @@ def outline(plan, registry) -> list[str]:
 
 async def write_dossier(client, model: str, *, question: str, plan, registry,
                         gaps_text: str = "") -> AsyncIterator[tuple[str, str]]:
-    """Пишет разделы по очереди.
+    """Пишет разделы: с материалом — одновременно, резюме и план — после.
 
     Отдаёт события: ("section", key) в начале раздела тела, ("chunk", text)
     по мере генерации, ("lead", markdown) — резюме и план проверки, готовые
@@ -508,21 +554,51 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         ids = [int(x) for x in re.findall(r"[\[(]f:(\d+)[\])]", text or "")]
         return [by_id[i] for i in dict.fromkeys(ids) if i in by_id][:cap]
 
+    # Разделы с материалом друг от друга не зависят — пишутся одновременно.
+    # Замер 26.09: по очереди пять разделов занимали ~190 с из 493. В поток
+    # они идут в порядке чтения: первый — живьём, остальные к этому моменту
+    # дописаны или дописываются в фоне.
+    items = []
+    for key in WRITING_ORDER:
+        if key in LEAD:
+            continue
+        facts = facts_for(key, registry, plan)
+        if not facts:
+            log.info("досье: раздел %s пропущен — фактов нет", key)
+            continue
+        items.append((key, facts, section_prompt(key, plan, question, labels,
+                                                 facts_text=render_facts(facts, labels))))
+    queues: dict[str, asyncio.Queue] = {k: asyncio.Queue() for k, _, _ in items}
+    gate_w = asyncio.Semaphore(int(os.getenv("GPTR_SECTION_CONCURRENCY", "4")))
+
+    async def _produce(key: str, prompt: str) -> None:
+        runstate.bind(state)
+        q = queues[key]
+        try:
+            async with gate_w:
+                async for piece in al_viz.without_markers(
+                        _without_heading(_stream_section(client, model, prompt), ttl[key])):
+                    await q.put(piece)
+        except Exception as e:  # noqa: BLE001 — отдаём потребителю, он решит
+            await q.put(e)
+        finally:
+            await q.put(None)
+
+    writers = [asyncio.create_task(_produce(k, p)) for k, _, p in items]
+
     try:
-        for key in WRITING_ORDER:
-            if key in LEAD:
-                continue
-            facts = facts_for(key, registry, plan)
-            if not facts:
-                log.info("досье: раздел %s пропущен — фактов нет", key)
-                continue
+        if len(items) > 1:
+            yield ("status", f"Пишу разделы одновременно: {len(items)}")
+        for key, facts, _prompt in items:
             yield ("section", key)
             yield ("chunk", f"\n\n## {ttl[key]}\n\n")
-            prompt = section_prompt(key, plan, question, labels,
-                                    facts_text=render_facts(facts, labels))
             buf = []
-            async for piece in al_viz.without_markers(
-                    _without_heading(_stream_section(client, model, prompt), ttl[key])):
+            while True:
+                piece = await queues[key].get()
+                if piece is None:
+                    break
+                if isinstance(piece, Exception):
+                    raise piece
                 buf.append(piece)
                 yield ("chunk", piece)
                 for ev in _ready():
@@ -600,7 +676,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
                 yield ("viz", {"n": n_, "section": key_, "html": "", "logos": {},
                                "reason": f"дизайнер не успел за {int(al_viz.FINAL_WAIT)} с"})
     finally:
-        for t in tasks:
+        for t in list(tasks) + writers:
             if not t.done():
                 t.cancel()
 

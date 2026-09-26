@@ -208,6 +208,7 @@ def _render_sources_section(sources: list[dict]) -> str:
         "regulator": "Регулятор", "bank_official": "Офиц. сайт банка",
         "press": "Пресса", "analyst": "Аналитика",
         "aggregator": "Агрегатор", "social": "Соцсети", "blog": "Блог",
+        "auditlens": "Данные AuditLens",
     }
     rows = []
     for s in sources:
@@ -240,7 +241,9 @@ def _render_sources_section(sources: list[dict]) -> str:
             f'<div class="src-meta">'
               f'<div class="src-bank">{_esc(bank)}</div>'
               f'{title_html}'
-              f'<div class="src-url"><a href="{_esc(url)}">{_esc(url)}</a></div>'
+              + (f'<div class="src-url">AuditLens, срез вкладки: {_esc(url)}</div>'
+                 if url.startswith("#") else
+                 f'<div class="src-url"><a href="{_esc(url)}">{_esc(url)}</a></div>') +
               f'{f"<div class=\"src-head\">{_esc(head)}</div>" if head else ""}'
               f'{excerpt_html}'
               f'<div class="src-foot">'

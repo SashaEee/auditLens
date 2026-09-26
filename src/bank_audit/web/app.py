@@ -406,12 +406,14 @@ _EVAL_TASK: Optional[asyncio.Task] = None
 
 
 @app.get("/api/admin/agent-eval")
-def admin_agent_eval(limit: int = 12, user: CurrentUser = Depends(get_current_user)):
-    """Регрессионный набор ИИ-аналитика: прогоны и кейсы последнего — карточка «Пульса»."""
+def admin_agent_eval(limit: int = 12, engine: str = "hermes",
+                     user: CurrentUser = Depends(get_current_user)):
+    """Регрессионный набор ИИ-аналитика: прогоны и кейсы последнего — карточка «Пульса».
+    engine: hermes — быстрый режим, deep — отчёт."""
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "admin only")
     from ..ai import agent_eval
-    res = agent_eval.history(max(1, min(limit, 50)))
+    res = agent_eval.history(max(1, min(limit, 50)), "deep" if engine == "deep" else "hermes")
     res["running"] = bool(_EVAL_TASK and not _EVAL_TASK.done())
     return res
 
@@ -419,11 +421,13 @@ def admin_agent_eval(limit: int = 12, user: CurrentUser = Depends(get_current_us
 class AgentEvalReq(BaseModel):
     model: Optional[str] = None
     judge: bool = True
+    engine: str = "quick"
 
 
 @app.post("/api/admin/agent-eval")
 async def admin_agent_eval_run(req: AgentEvalReq, user: CurrentUser = Depends(get_current_user)):
-    """Запустить прогон в фоне (один за раз): 14 вопросов, 3–8 минут."""
+    """Запустить прогон в фоне (один за раз): быстрый режим — 15 вопросов за 3–8 минут,
+    отчёт — 5 вопросов за 15–25 минут."""
     global _EVAL_TASK
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "admin only")
@@ -431,7 +435,8 @@ async def admin_agent_eval_run(req: AgentEvalReq, user: CurrentUser = Depends(ge
         raise HTTPException(409, "прогон уже идёт")
     from ..ai.agent_eval import run_eval
     _EVAL_TASK = asyncio.create_task(run_eval(model=req.model or None, use_judge=req.judge,
-                                              trigger="admin"))
+                                              trigger="admin",
+                                              engine="deep" if req.engine == "deep" else "quick"))
     return {"started": True}
 
 
