@@ -515,3 +515,9 @@ def test_scope_keeps_complaints_and_loopholes_for_comparisons():
     reg = own_data.normalize_scope({"complaints": False}, "q",
                                    SimpleNamespace(question_nature="regulatory"))
     assert not reg["loopholes"]
+
+
+def test_prompts_know_today_to_tell_current_from_future_rules():
+    from bank_audit.clock import today_msk
+    text = dossier._common(PLAN, "q", {"sberbank": "Сбербанк"})
+    assert f"СЕГОДНЯ {today_msk().strftime('%d.%m.%Y')}" in text and "ДЕЙСТВУЕТ ИЛИ БУДЕТ" in text

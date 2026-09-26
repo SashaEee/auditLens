@@ -203,7 +203,10 @@ async def make_brief(client, model: str, *, question: str, plan, registry,
     own = state.own_meta
     roles = "\n".join(f"- {k}: {SECTION_ROLES[k]} (фактов: {available[k]})"
                       for k in default if k in available)
+    from ...clock import today_msk
     user = "\n".join([
+        f"# Сегодня\n{today_msk().strftime('%d.%m.%Y')} — правила с датой вступления позже "
+        f"сегодняшней будущие, не действующие",
         f"# Вопрос аудитора\n{question}",
         f"\n# Что хочет узнать\n{getattr(plan, 'intent_summary', '') or '—'}",
         f"\n# Доступные разделы (ключ: что в нём; порядок по умолчанию)\n{roles}",
