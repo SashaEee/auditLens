@@ -223,11 +223,11 @@ def test_sections_lead_written_together_in_brief_order(monkeypatch):
     runstate.new_run()
     events, took = _run_dossier()
     order = [p for k, p in events if k == "section"]
-    # порядок и состав — из брифа; лазейки (есть материал) — обязательно, после жалоб
-    assert order == ["voice", "loopholes", "conditions"]
+    # порядок и состав — из брифа; лазейки — только если их выбрал бриф
+    assert order == ["voice", "conditions"]
     outline = next(p for k, p in events if k == "outline")
     assert outline == ["Резюме для руководителя проверки", "Что проверять",
-                       "Что стоит за всплеском", "Лазейки и уязвимости", "Правила банка"]
+                       "Что стоит за всплеском", "Правила банка"]
     # тело — одновременно (~0,3 с), затем резюме и план вместе по готовому телу (~0,3 с)
     assert took < 0.3 * 4
     lead_kw = [prompts[k] for k in ("summary", "checks")]
@@ -486,7 +486,7 @@ def test_common_prompt_has_comparability_rules():
     assert "ГИПОТЕЗА — НЕ ПРИГОВОР" in text and "ТОЧКА ОТСЧЁТА" not in text
 
 
-def test_voice_and_loopholes_are_kept_when_brief_drops_them(monkeypatch):
+def test_voice_is_kept_when_brief_drops_it(monkeypatch):
     from bank_audit.research.gptr.brief import Brief
     brief = Brief(answer="a", sections=[{"key": "market", "title": "Сравнение", "focus": "f"}])
     _fake_writer(monkeypatch, brief, delay=0.01)
@@ -504,7 +504,7 @@ def test_voice_and_loopholes_are_kept_when_brief_drops_them(monkeypatch):
             brief_model="b")]
     events = asyncio.run(run())
     order = [p for k, p in events if k == "section"]
-    assert order[:3] == ["market", "voice", "loopholes"]
+    assert order[:2] == ["market", "voice"] and "loopholes" not in order
 
 
 def test_scope_keeps_complaints_and_loopholes_for_comparisons():
