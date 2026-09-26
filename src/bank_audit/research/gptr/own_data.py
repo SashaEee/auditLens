@@ -379,10 +379,12 @@ def _complaint_quotes(od: OwnData, slug: str, bank: str, items: list[dict],
                      "subject": slug}
         verbatim = quote if quote and quote in body else _first_sentence(body)
         themes = it.get("themes") or []
+        city = (it.get("city") or "").strip()
+        # Город — в значении: цитата в отчёте подписывается «город, дата».
         od.fact(subject=slug,
                 attribute=f"Жалоба: {label or (themes[0] if themes else 'прочее')}",
-                value=(it.get("summary") or verbatim)[:300], verbatim=verbatim, url=url,
-                date=str(it.get("date") or "")[:10])
+                value=(it.get("summary") or verbatim)[:300] + (f" ({city})" if city else ""),
+                verbatim=verbatim, url=url, date=str(it.get("date") or "")[:10])
         od.complaints += 1
 
 

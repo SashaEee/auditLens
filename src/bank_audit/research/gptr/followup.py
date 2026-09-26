@@ -28,6 +28,9 @@ from . import runstate
 log = logging.getLogger(__name__)
 
 _MAX_QUERIES = int(os.getenv("GPTR_FOLLOWUP_QUERIES", "4"))
+# Характеристика, под которую извлекаются факты страниц дослежки.
+EVENT_ATTRIBUTE = ("Внешнее событие за жалобами: что произошло, заявления сторон "
+                   "(организатор, площадка, продавец, регулятор), даты, правила")
 _MAX_PAGES = int(os.getenv("GPTR_FOLLOWUP_PAGES", "8"))
 _PAGE_TIMEOUT = float(os.getenv("GPTR_FOLLOWUP_PAGE_TIMEOUT", "25"))
 # Отзывы уже пришли из разметки — повторно их не ищем.

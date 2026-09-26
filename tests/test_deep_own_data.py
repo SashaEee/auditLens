@@ -219,8 +219,10 @@ def test_sections_lead_written_together_in_brief_order(monkeypatch):
     outline = next(p for k, p in events if k == "outline")
     assert outline == ["Резюме для руководителя проверки", "Что проверять",
                        "Что стоит за всплеском", "Правила банка"]
-    # тело, резюме и план — одновременно: ~0,3 с, а не 0,3 × 4
+    # тело — одновременно (~0,3 с), затем резюме и план вместе по готовому телу (~0,3 с)
     assert took < 0.3 * 3
+    lead_kw = [prompts[k] for k in ("summary", "checks")]
+    assert all("текст раздела voice" in kw["prior_text"] for kw in lead_kw)
     text = "".join(p for k, p in events if k == "chunk")
     assert "## Что стоит за всплеском" in text and "### Лишний заголовок" in text
     assert "\n## Лишний" not in text

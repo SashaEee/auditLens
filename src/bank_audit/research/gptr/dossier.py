@@ -189,8 +189,14 @@ def facts_for(section: str, registry, plan, own: dict | None = None) -> list:
         web = [f for f in picked if f.url not in own]
         # Сбер и дочки — первыми: по ним самый большой корпус.
         order = lambda f: (f.subject not in fam, f.subject, f.date or "")  # noqa: E731
+        # Внешнее событие за жалобами (дослежка) объясняет сюжет — его факты
+        # идут целиком и раньше прочего веба, иначе их срезал потолок.
+        from .followup import EVENT_ATTRIBUTE
+        event = [f for f in web if f.attribute == EVENT_ATTRIBUTE]
+        web = [f for f in web if f.attribute != EVENT_ATTRIBUTE]
         return (sorted(stats, key=order)
                 + _cap_per(sorted(quotes, key=order), lambda f: f.subject, _VOICE_QUOTES)
+                + event
                 + _cap_per(sorted(web, key=order), lambda f: f.subject, _VOICE_WEB))
     if section == "loopholes":
         return [f for f in all_facts if f.stance == "loophole"]
@@ -283,7 +289,8 @@ def _common(plan, question: str, labels: dict[str, str]) -> str:
         "СУЖДЕНИЕ. Ты обязан не только изложить, но и оценить: что это значит "
         "для проверки, где риск, что из этого следует. Вывод без факта "
         "недопустим, но и факт без вывода бесполезен. Раздел заканчивается "
-        "абзацем «Вывод:» — одна-три фразы по существу.",
+        "абзацем «Вывод:» — одна-три фразы по существу; у подразделов своих "
+        "«Вывод:» и «Итогов» нет.",
         "",
         "ЧЕСТНОСТЬ. Аудиторы пишут это в вопросах дословно, и это требование: "
         "«если информации нет или она неполная — не додумывай, честно укажи это "
@@ -478,8 +485,9 @@ _BODY_SCOPE = (
     "эти данные могут быть, а пробелы отчёта собирает отдельный блок. Не "
     "объясняй вопрос причинами, которых нет в твоих фактах.")
 _LEAD_SCOPE = (
-    "ТВОЙ МАТЕРИАЛ. Ты видишь все факты отчёта и бриф; разделы тела пишутся "
-    "одновременно с тобой по тому же брифу. Если на часть вопроса данных нет "
+    "ТВОЙ МАТЕРИАЛ. Ты видишь бриф, готовое тело отчёта и все факты. Главные "
+    "находки тела (событие, причина, довод банка, числа) обязаны попасть в твой "
+    "текст — не упрощай их и не спорь с ними. Если на часть вопроса данных нет "
     "во всех фактах — скажи это прямо одной фразой: «по … данных не нашлось».")
 
 
@@ -669,18 +677,18 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         finally:
             await q.put(None)
 
-    async def _lead(key: str) -> str:
+    async def _lead(key: str, prior: str) -> str:
         runstate.bind(state)
         prompt = section_prompt(key, plan, question, labels, facts_text=digest,
-                                gaps_text=gaps_text, brief=brief, order=order)
+                                prior_text=prior, gaps_text=gaps_text, brief=brief,
+                                order=order)
         async with gate_w:
             text = "".join([p async for p in al_viz.without_markers(
                 _without_heading(_stream_section(client, model, prompt), ttl[key]))])
         return _demote_text(text).strip()
 
     writers = [asyncio.create_task(_produce(k, p)) for k, _, p in items]
-    lead_tasks = {asyncio.create_task(_lead(k)): k for k in LEAD}
-    writers.extend(lead_tasks)
+    lead_tasks: dict[asyncio.Task, str] = {}
     lead: dict[str, str] = {}
     lead_slot: dict[str, int | None] = {}
 
@@ -694,7 +702,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
                 lead_slot[key] = _spawn(key, _cited(lead[key]), lead[key])
 
     try:
-        yield ("status", f"Пишу разделы одновременно: {len(items) + len(LEAD)}")
+        yield ("status", f"Пишу разделы одновременно: {len(items)}")
         for key, facts, _prompt in items:
             yield ("section", key)
             yield ("chunk", f"\n\n## {ttl[key]}\n\n")
@@ -719,9 +727,16 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
             for ev in _ready():
                 yield ev
 
-        pending = {t for t in lead_tasks if not t.done()}
-        if pending:
-            yield ("status", "Дописываю резюме и план проверки")
+        # Резюме и план проверки — по готовому телу. Замер 26.09: написанные
+        # одновременно с телом, они не видели его находок (событие за
+        # жалобами, довод банка про перевод по СБП) и путали «одну группу из 7»
+        # с «7 группами». Между собой — одновременно.
+        prior = "\n\n".join(f"## {ttl[k]}\n\n{body[k]}" for k in order if k in body)
+        for k in LEAD:
+            lead_tasks[asyncio.create_task(_lead(k, prior))] = k
+        writers.extend(lead_tasks)
+        pending = set(lead_tasks)
+        yield ("status", "Пишу резюме и план проверки по готовому отчёту")
         while pending:
             _done, pending = await asyncio.wait(pending, timeout=5.0,
                                                 return_when=asyncio.FIRST_COMPLETED)

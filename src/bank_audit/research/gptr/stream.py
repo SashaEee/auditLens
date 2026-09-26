@@ -298,11 +298,20 @@ async def stream_deep_research_gptr(question: str,
                 "estimate_s": 40})
     runstate.bind(state)
     async def _extract():
-        await al_facts.build_registry(
-            client, fast, pages=pages, attributes=attributes, plan=plan,
-            keep_pages=set(review_pages),
-            subject_hints=al_reviews.subject_hints(),
-            reg=registry, already=eager_pages)
+        # Страницы дослежки — мимо общего отбора и со своей характеристикой:
+        # отбор меряет близость к характеристикам продукта («сроки», «основания
+        # отказа»), и новость о событии за жалобами ему заведомо проигрывала —
+        # прочитанные 8 страниц не дали отчёту ни одного факта (26.09).
+        await asyncio.gather(
+            al_facts.build_registry(
+                client, fast, pages={u: t for u, t in pages.items() if u not in fu_pages},
+                attributes=attributes, plan=plan,
+                keep_pages=set(review_pages),
+                subject_hints=al_reviews.subject_hints(),
+                reg=registry, already=eager_pages),
+            al_facts.extract_into(
+                registry, client, fast, pages=fu_pages,
+                attributes=[*attributes, al_followup.EVENT_ATTRIBUTE], plan=plan))
 
     async for ev in _tick(_extract(), lambda: {
             "type": "progress", "stage": "facts",
