@@ -47,8 +47,11 @@ MAX_TAGS = 2_000
 QUOTE_CHARS = 300
 CITE_WINDOW = 250          # якорь источника — не дальше этого от числа
 TIMEOUT = 120.0            # одна задача дизайнера
-FINAL_WAIT = 240.0         # общий бюджет ожидания в конце письма
-CONCURRENCY = 3
+# Общий бюджет ожидания в конце письма. Замер 26.09: хвост «Рисую карточки:
+# осталось 1» занимал 30–60 с из 260–330 — ради одной карточки резюме.
+# Резюме и план теперь пишутся вместе с телом, их дизайнеры стартуют раньше.
+FINAL_WAIT = float(os.getenv("GPTR_VIZ_FINAL_WAIT", "90"))
+CONCURRENCY = int(os.getenv("GPTR_VIZ_CONCURRENCY", "4"))
 
 LOGO_DIR = os.getenv("AL_LOGO_DIR", "/app/assets/logos")
 PALETTE = ("--ink", "--ink-2", "--ink-3", "--ink-4", "--paper", "--paper-2",

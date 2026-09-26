@@ -106,3 +106,15 @@ def test_refusal_is_hard_fail():
     ok = E.check_answer("Схема: продление грейса до 150 дней — проверить правило MCC.",
                         {"numbers": []}, 10)
     assert E.verdict(ok, None) == "pass"
+
+
+def test_sources_digest_gives_judge_quotes_by_footnote():
+    from bank_audit.ai.agent_eval import sources_digest
+    src = [{"n": 3, "domain": "cbr.ru", "title": "Указание Банка России",
+            "facts": [{"verbatim": "страховое возмещение до 1,4 млн рублей"}]},
+           {"n": 4, "domain": "AuditLens", "title": "Отзывы: сводка", "facts": [],
+            "excerpt": "Жалоб за 90 дней: 35."}]
+    d = sources_digest(src)
+    assert "[3] cbr.ru — Указание Банка России: «страховое возмещение до 1,4 млн рублей»" in d
+    assert "[4] AuditLens — Отзывы: сводка: Жалоб за 90 дней: 35." in d
+    assert "ещё источников" in sources_digest(src * 50, cap=300)

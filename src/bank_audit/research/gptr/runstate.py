@@ -31,6 +31,9 @@ class RunState:
     # Страницы собственных данных AuditLens (аналитика жалоб, жалобы, лазейки):
     # url → {title, kind}. По ним раздел, источник и подпись стороны.
     own_meta: dict[str, dict] = field(default_factory=dict)
+    # Срез собственных данных (какие нужны: жалобы, лазейки, рынок) — по нему
+    # отчёт выбирает порядок разделов под тип вопроса.
+    own_scope: dict = field(default_factory=dict)
 
     def note_page(self, url: str, text: str) -> None:
         self.pages[url] = text

@@ -345,50 +345,209 @@ CASES: list[Case] = [
 
 
 # ── кейсы отчёта (deep research) ─────────────────────────────────────────────
-# Те же живые эталоны, вопрос — под отчёт. Отчёт длинный и пишется минутами,
-# поэтому кроме чисел и темы проверяем: есть ли нужный раздел и не пишет ли
-# отчёт «рост не подтверждается», когда сигнал в данных есть (так было 26.09).
+# Вопросы — из РЕАЛЬНОЙ истории отчётов (337 вопросов, июль–сентябрь 2026), в тех
+# же пропорциях: сравнение условий и рынка 43%, жалобы 17%, лазейки и схемы 10%,
+# клиентский путь 10%, нормы 9%, разбор новости 4%, всплеск жалоб 0,6%. Первая
+# версия набора (5 придуманных вопросов, три из них — про жалобы) мерила не то,
+# что спрашивают. Эталон — живые данные вкладок на момент прогона; где эталона
+# нет (веб: эквайринг, клиентский путь, нормы), судья сверяет утверждения с
+# цитатами источников самого отчёта. Состав разделов выбирает бриф, поэтому
+# раздел проверяется по смыслу заголовка, а не по точному названию.
 
 _NOT_CONFIRMED = re.compile(
     r"(рост|всплеск|динамик)[^.\n]{0,120}не подтвержд|не подтвержд[^.\n]{0,120}(рост|всплеск)",
     re.I)
+# Служебные фразы о «материалах» вместо ответа — признак отчёта, собранного из
+# разрозненных разделов (аудит 26.09).
+_META_TALK = re.compile(r"в переданных (фактах|данных|материал)|в материале раздела|"
+                        r"в теле отчёта|точк[аи] отсч[её]та", re.I)
 DEEP_SLOW_S = float(os.getenv("AGENT_EVAL_DEEP_SLOW_S", "300"))
+_BIG4 = ["Альфа", "Т-Банк", "ВТБ"]
 
 
-def _deep(build: Callable[[], dict | None], question: Callable[[dict], str], **extra):
+def _deep(build: Callable[[], dict | None], question: Callable[[dict], str] | None = None,
+          **extra):
     def run() -> dict | None:
         spec = build()
         if not spec:
             return None
-        return spec | {"question": question(spec), "slow_s": DEEP_SLOW_S} | extra
+        q = question(spec) if question else spec["question"]
+        return spec | {"question": q, "slow_s": DEEP_SLOW_S} | extra | {
+            "forbid": [("служебные фразы вместо ответа", _META_TALK),
+                       *extra.get("forbid", [])]}
     return run
 
 
-def _sig_label(spec: dict) -> str:
-    return (spec.get("words") or ["тему"])[0]
+def _web_case(question: str, words: list[str], focus: str, min_words: int = 2) -> Callable:
+    def build() -> dict:
+        return {"question": question, "words": words, "min_words": min_words,
+                "need_link": True, "judge_focus": focus, "facts": {}}
+    return build
 
+
+def c_top_deposits() -> dict:
+    mo = _j("market_offers", category="deposit", limit=10)
+    mp = _j("market_position", category="deposit")
+    top = mo.get("top") or []
+    sber = mo.get("sber_best") or {}
+    return {"question": "Сравни предложения по вкладам, выдели топ-5 и позицию Сбера.",
+            "numbers": [("лучшая ставка Сбера", sber.get("metric_value"), 0.05)]
+            if sber.get("metric_value") else [],
+            "words": [r["bank_name"] for r in top[:5] if r.get("bank_name")], "min_words": 3,
+            "judge_focus": "Топ-5 по ставке совпадает с витриной «Рынок» (эталон top) — банк, "
+                           "вклад, ставка, срок; место Сбера — как в market_position; промо и "
+                           "короткий срок оговорены рядом с числом; есть вывод.",
+            "facts": {"market_offers": mo, "market_position": mp}}
+
+
+def c_mortgage() -> dict:
+    mo = _j("market_offers", category="mortgage", limit=12)
+    mp = _j("market_position", category="mortgage")
+    return {"question": "Сравни ипотечные ставки между Сбером и рынком, выдели программы "
+                        "с господдержкой.",
+            "words": ["господдерж", "семейн"], "min_words": 1,
+            "judge_focus": "Ставки Сбера и рынка — из витрины «Рынок» (эталон), рыночная "
+                           "ипотека и программы с господдержкой разведены; место Сбера "
+                           "названо; льготные ставки не выданы за рыночные.",
+            "facts": {"market_offers": mo, "market_position": mp}}
+
+
+def c_offer_reaction() -> dict | None:
+    mo = _j("market_offers", category="credit", limit=20)
+    rival = next((r for r in mo.get("top") or [] if not r.get("is_sber")
+                  and r.get("metric_value") and r.get("title")), None)
+    if not rival:
+        return None
+    rate = str(rival["metric_value"]).replace(".", ",")
+    return {"question": f"Проанализируй позицию Сбера относительно оффера «{rival['title']}» "
+                        f"банка {rival['bank_name']} (кредиты, ставка {rate}%). Насколько "
+                        f"условия Сбера конкурентны и стоит ли реагировать?",
+            "numbers": [("ставка оффера", rival["metric_value"], 0.05)],
+            "words": [rival["bank_name"]], "min_words": 1,
+            "judge_focus": "Условия оффера и лучшее предложение Сбера — как в витрине; "
+                           "сопоставимость (срок, сумма, ПСК против рекламной ставки) "
+                           "оговорена; прямой ответ «стоит ли реагировать» с обоснованием.",
+            "facts": {"offer": rival,
+                      "by_bank": _j("market_offers", category="credit",
+                                    banks=[rival["bank_name"]]),
+                      "market_position": _j("market_position", category="credit")}}
+
+
+def c_main_complaints() -> dict:
+    ov = _j("complaints_overview", days=90)
+    top = [t["label"] for t in (ov.get("themes") or [])[:4]]
+    return {"question": "Какие основные жалобы у клиентов Сбербанка? Где подводные камни?",
+            "numbers": [("жалоб за 90 дней", ov.get("complaints"),
+                         max(5, (ov.get("complaints") or 0) * 0.05))],
+            "words": top, "min_words": 2,
+            "judge_focus": "Главные темы и числа — как в эталоне; «подводные камни» "
+                           "раскрыты сюжетами с цитатами клиентов, а не пересказом тарифов; "
+                           "есть динамика и что проверить.",
+            "facts": ov}
+
+
+def c_cc_complaints() -> dict:
+    ov = _j("complaints_overview", product="Кредитная карта", days=90)
+    top = [t["label"] for t in (ov.get("themes") or [])[:3]]
+    return {"question": "О каких проблемах с кредитными картами Сбербанка жалуются клиенты?",
+            "numbers": [("жалоб на кредитные карты", ov.get("complaints"),
+                         max(3, (ov.get("complaints") or 0) * 0.05))],
+            "words": top, "min_words": 2,
+            "judge_focus": "Ответ именно про кредитные карты; темы и числа — как в эталоне; "
+                           "сюжеты с дословными цитатами клиентов; что проверить.",
+            "facts": ov}
+
+
+def c_unique_rival_complaints() -> dict:
+    banks = {"ВТБ": "ВТБ", "Альфа-Банк": "Альфа-Банк", "Т-Банк": "Т-Банк",
+             "Сбербанк": "Сбербанк"}
+    facts = {}
+    for name in banks:
+        ov = _j("complaints_overview", bank=name, product="Кредитная карта", days=365)
+        facts[name] = {"complaints": ov.get("complaints"), "error": ov.get("error"),
+                       "themes": [(t["label"], t["n"], t.get("pct"))
+                                  for t in ov.get("themes") or []]}
+    return {"question": "Покажи жалобы клиентов на кредитные карты ВТБ, Альфы и Т-Банка за "
+                        "последние 12 месяцев, отдельно по каждому банку, и только те, "
+                        "которые уникальны для них и отсутствуют у клиентов Сбера.",
+            "words": ["ВТБ", "Альфа", "Т-Банк"], "min_words": 3,
+            "judge_focus": "По каждому банку отдельно — темы, которых нет или заметно "
+                           "меньше у Сбера (сравни доли тем в эталоне); числа — из эталона; "
+                           "с примерами жалоб; не выданы за уникальные темы, которые у "
+                           "Сбера тоже частые.",
+            "facts": facts}
+
+
+def c_news_deep() -> dict | None:
+    b = _j("day_brief")
+    news = [x for x in b.get("insights") or [] if x.get("url")]
+    if not news:
+        return None
+    n = news[0]
+    return {"question": f"Проанализируй новость для аудита розничного бизнеса Сбера: "
+                        f"«{n['title']}» ({n['url']}). Какие риски и какие действия стоит "
+                        f"предпринять?",
+            "words": [n["title"]], "min_words": 2,
+            "judge_focus": "Разобрана именно эта новость, суть верна; риски для Сбера "
+                           "конкретны (продукт, процесс, норма); действия — проверяемые шаги.",
+            "facts": {"brief_item": n, "news_feed": _j("news_find", url=n["url"])}}
+
+
+def c_spike_cta() -> dict | None:
+    """Вопрос в том виде, в каком его задаёт кнопка сигнала на «Обзоре»."""
+    spec = c_signal()
+    if not spec:
+        return None
+    sig = spec["facts"].get("weekly_signal") or _sig() or {}
+    city = (f" {sig.get('top_city_share_pct')}% жалоб из г. {sig['top_city']}."
+            if sig.get("top_city") else "")
+    norm = str(sig.get("norm_per_week") or "").replace(".", ",")
+    ratio = str(sig.get("ratio") or "").replace(".", ",")
+    q = (f"Разбери всплеск жалоб «{sig.get('label')}» у Сбербанка: {sig.get('week')} за 7 "
+         f"дней против ~{norm}/нед (×{ratio}).{city} Найди вероятную причину, оцени "
+         f"регуляторный риск и предложи шаги аудита.")
+    return spec | {"question": q,
+                   "judge_focus": spec["judge_focus"] + " Причина всплеска названа по "
+                   "жалобам (событие, продавец, сервис) и, если есть, по внешним источникам; "
+                   "география объяснена; шаги аудита — к этой причине."}
+
+
+_VOICE_RX = r"жалоб|клиент|всплеск|сюжет|стоит за|боль|проблем"
+_LOOP_RX = r"лазейк|уязвим|схем|обход"
 
 DEEP_CASES: list[Case] = [
-    Case("D1", "Отзывы", "отчёт: причина всплеска жалоб", _deep(
-        c_signal, lambda s: f"Почему на этой неделе выросли жалобы на «{_sig_label(s)}» в Сбере "
-                            "и что проверить?",
-        sections=["Голос клиента"],
-        forbid=[("всплеск «не подтверждается» при данных", _NOT_CONFIRMED)])),
-    Case("D2", "Отзывы", "отчёт: жалобы по продукту", _deep(
-        c_product_complaints,
-        lambda s: "Проанализируй жалобы клиентов Сбера на вклады за последние 90 дней: "
-                  "основные проблемы, динамика, что проверить.",
-        sections=["Голос клиента"])),
-    Case("D3", "Уязвимости", "отчёт: лазейки по продукту", _deep(
+    Case("D1", "Рынок", "топ-5 вкладов и позиция Сбера", _deep(c_top_deposits)),
+    Case("D2", "Рынок", "ипотека: Сбер и рынок, господдержка", _deep(c_mortgage)),
+    Case("D3", "Рынок", "эквайринг четырёх банков (веб)", _deep(_web_case(
+        "Сравни торговый эквайринг (POS-терминалы) для розницы в банках Сбер, Альфа-Банк, "
+        "Т-Банк, ВТБ при обороте по эквайрингу 500 тыс. — 3 млн ₽ в месяц, с акцентом на "
+        "комиссию за эквайринг", [*_BIG4, "комисси"],
+        "Комиссии и тарифы четырёх банков для заданного оборота — из источников со "
+        "ссылками, сопоставимо; позиция Сбера; неизвестное помечено, а не выдумано.", 3))),
+    Case("D4", "Рынок", "оффер конкурента: реагировать?", _deep(c_offer_reaction)),
+    Case("D5", "Процесс", "клиентский путь дебетовой карты (веб)", _deep(_web_case(
+        "Сравни пользовательский путь оформления и получения дебетовой карты для нового "
+        "клиента: Сбер, Альфа-Банк, Т-Банк, ВТБ", _BIG4,
+        "Шаги пути (заявка, проверка, доставка/выдача, активация), сроки и каналы по "
+        "каждому банку со ссылками; где Сбер проигрывает; без выдуманных шагов.", 3))),
+    Case("D6", "Отзывы", "основные жалобы Сбера", _deep(
+        c_main_complaints, section_rx=[("раздел о жалобах", _VOICE_RX)])),
+    Case("D7", "Отзывы", "жалобы по кредитным картам", _deep(
+        c_cc_complaints, section_rx=[("раздел о жалобах", _VOICE_RX)])),
+    Case("D8", "Отзывы", "уникальные жалобы конкурентов", _deep(c_unique_rival_complaints)),
+    Case("D9", "Уязвимости", "лазейки по кредитным картам", _deep(
         c_loopholes, lambda s: "Какие лазейки и уязвимости есть в Сбере по кредитным картам "
                                "и что с ними делать аудиту?",
-        sections=["Лазейки"])),
-    Case("D4", "Рынок", "отчёт: сравнение с конкурентами", _deep(
-        c_compare, lambda s: "Сравни вклады Сбера с ВТБ и Газпромбанком: ставки, условия, "
-                             "позиция на рынке.")),
-    Case("D5", "База знаний", "отчёт: регулирование", _deep(
-        c_regulation, lambda s: "Что изменилось в регулировании вкладов в 2026 году и что это "
-                                "значит для Сбера?")),
+        section_rx=[("раздел о лазейках", _LOOP_RX)])),
+    Case("D10", "Нормы", "раскрытие ПСК: Сбер и ВТБ (веб)", _deep(_web_case(
+        "Какие требования ЦБ к раскрытию полной стоимости кредита обязан соблюдать Сбер и "
+        "как это сравнимо с ВТБ", ["полной стоимости", "ВТБ"],
+        "Требования названы со ссылками на акты (353-ФЗ, указания ЦБ), номера не выдуманы; "
+        "что раскрывает Сбер и ВТБ — по источникам; расхождения с нормой выделены.", 2))),
+    Case("D11", "Обзор", "разбор новости дня", _deep(c_news_deep)),
+    Case("D12", "Отзывы", "всплеск жалоб (кнопка сигнала)", _deep(
+        c_spike_cta, section_rx=[("раздел о жалобах", _VOICE_RX)],
+        forbid=[("всплеск «не подтверждается» при данных", _NOT_CONFIRMED)])),
 ]
 
 
@@ -421,9 +580,10 @@ def check_answer(answer: str, spec: dict, seconds: float) -> list[dict]:
         # быстрый ответ ссылается markdown-ссылками, отчёт — сносками [n] на список источников
         ok = bool(re.search(r"\]\((https?://|#)", answer) or re.search(r"\[\d{1,3}\]", answer))
         res.append({"check": "ссылки на источники", "ok": ok, "hard": False})
-    for title in spec.get("sections") or []:
-        ok = bool(re.search(r"^#{1,3}\s*" + re.escape(title), answer, re.M | re.I))
-        res.append({"check": f"раздел «{title}»", "ok": ok, "hard": False})
+    heads = re.findall(r"^#{1,3}\s*(.+)$", answer or "", re.M)
+    for name, rx in spec.get("section_rx") or []:
+        ok = any(re.search(rx, h, re.I) for h in heads)
+        res.append({"check": name, "ok": ok, "hard": False})
     for name, rx in spec.get("forbid") or []:
         m = rx.search(visible)
         res.append({"check": f"нет: {name}", "ok": not m, "hard": True,
@@ -443,7 +603,13 @@ _JUDGE_SYSTEM = (
     "явно несуществующий источник или нормативный акт. Подробности, которых в эталоне "
     "просто нет, но которые ему не противоречат (детали жалоб, другие продукты банка, "
     "контекст, помеченные гипотезы), — не выдумка: учитывай их только в оценке "
-    "полезности. Ответь ТОЛЬКО JSON: "
+    "полезности. Если даны ИСТОЧНИКИ ОТЧЁТА — это страницы, которые отчёт прочитал, с "
+    "дословными цитатами: утверждение со сноской [n], которое подтверждает цитата "
+    "источника n, — не выдумка и не «неподтверждённое», даже если его нет в эталоне; "
+    "акт, названный в цитате источника, существует. Эталон важнее источников: "
+    "противоречие эталону — ошибка. Отчёт длинный по устройству (резюме, план "
+    "проверки, разделы) — длину не штрафуй, штрафуй разделы не по вопросу. "
+    "Ответь ТОЛЬКО JSON: "
     '{"score": 1-5, "correct": true|false, "key_fact": true|false, '
     '"hallucination": true|false, "issues": ["кратко, по-русски"]}. '
     "5 — точно, конкретно, полезно аудитору; 4 — верно, мелкие недочёты; 3 — в целом "
@@ -451,14 +617,32 @@ _JUDGE_SYSTEM = (
     "не по вопросу.")
 
 
+def sources_digest(sources: list[dict], cap: int = 16000) -> str:
+    """Источники отчёта для судьи: сноска → страница → дословные цитаты фактов."""
+    out, size = [], 0
+    for s in sources:
+        quotes = " ".join(f"«{f.get('verbatim')}»" for f in (s.get("facts") or [])[:6]
+                          if f.get("verbatim"))
+        line = f"[{s.get('n')}] {s.get('domain') or ''} — {s.get('title') or s.get('url')}: " + (
+            quotes or (s.get("excerpt") or "")[:300])
+        size += len(line)
+        if size > cap:
+            out.append(f"… ещё источников: {len(sources) - len(out)}")
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
 async def judge(question: str, facts: dict, focus: str, answer: str,
-                answer_cap: int = 9000) -> dict | None:
+                answer_cap: int = 9000, sources: str = "") -> dict | None:
     if not JUDGE_MODEL:
         return None
     from ..digest.writer import _chat
     from .llm_utils import _loose_json_loads
     user = (f"ВОПРОС: {question}\n\nНА ЧТО СМОТРЕТЬ: {focus}\n\nЭТАЛОННЫЕ ДАННЫЕ:\n"
-            f"{json.dumps(facts, ensure_ascii=False, default=str)[:24000]}\n\nОТВЕТ:\n{answer[:answer_cap]}")
+            f"{json.dumps(facts, ensure_ascii=False, default=str)[:24000]}\n\n"
+            + (f"ИСТОЧНИКИ ОТЧЁТА:\n{sources}\n\n" if sources else "")
+            + f"ОТВЕТ:\n{answer[:answer_cap]}")
     try:
         raw, _, _ = await _chat(JUDGE_MODEL, _JUDGE_SYSTEM, user, max_tokens=700, temperature=0.0)
         d = _loose_json_loads(raw)
@@ -509,12 +693,15 @@ async def _ask(question: str, model: str | None, hint: str) -> dict:
 
 
 async def _ask_deep(question: str) -> dict:
-    """Отчёт тем же конвейером, что в чате: резюме и план проверки — наверх."""
-    from ..research.gptr.stream import stream_deep_research_gptr
+    """Отчёт тем же входом, что в чате (stream_analysis с принудительным
+    отчётом): через ту же обёртку потока. Прямой вызов конвейера её обходил, и
+    набор не видел ошибку, которую видел пользователь, — раздел «Голос клиента»
+    терял данные AuditLens только за обёрткой (26.09)."""
+    from .analyst import stream_analysis
     t0 = time.monotonic()
-    lead, body, stages, err = [], [], [], None
+    lead, body, stages, sources, err = [], [], [], [], None
     try:
-        async for raw in stream_deep_research_gptr(question, []):
+        async for raw in stream_analysis(question, [], force_deep=True):
             ev = json.loads(raw)
             t = ev.get("type")
             if t == "text":
@@ -523,10 +710,13 @@ async def _ask_deep(question: str) -> dict:
                 lead.append(ev.get("chunk") or "")
             elif t == "stage_status" and ev.get("label"):
                 stages.append(f"{round(time.monotonic() - t0)}с {ev['label']}"[:90])
+            elif t == "sources":
+                sources = ev.get("sources") or []
     except Exception as e:  # noqa: BLE001
         err = f"{type(e).__name__}: {e}"
     return {"answer": "".join(lead) + "".join(body), "tools": stages[-25:], "meta": {},
-            "error": err, "seconds": round(time.monotonic() - t0, 1)}
+            "error": err, "seconds": round(time.monotonic() - t0, 1),
+            "sources": sources_digest(sources)}
 
 
 async def run_case(case: Case, model: str | None, use_judge: bool, tag: str,
@@ -546,11 +736,13 @@ async def run_case(case: Case, model: str | None, use_judge: bool, tag: str,
     jd = None
     if use_judge and r["answer"].strip():
         jd = await judge(spec["question"], spec.get("facts") or {}, spec.get("judge_focus", ""),
-                         r["answer"], answer_cap=40000 if deep else 9000)
+                         r["answer"], answer_cap=40000 if deep else 9000,
+                         sources=r.get("sources") or "")
     return base | {"question": spec["question"], "verdict": verdict(checks, jd),
                    "seconds": r["seconds"], "tools": r["tools"], "error": r["error"],
                    "checks": checks, "judge": jd,
                    "answer": r["answer"][:60000 if deep else 6000],
+                   **({"sources": r.get("sources") or ""} if deep else {}),
                    "empty_attempts": (r["meta"] or {}).get("empty_attempts")}
 
 
@@ -564,11 +756,14 @@ def summarize(results: list[dict]) -> dict:
 
 
 async def run_eval(model: str | None = None, only: list[str] | None = None,
-                   use_judge: bool = True, trigger: str = "cli", concurrency: int = 2,
+                   use_judge: bool = True, trigger: str = "cli",
+                   concurrency: int | None = None,
                    save: bool = True, engine: str = "quick") -> dict:
     """engine: quick — быстрый режим (Hermes), deep — отчёт (deep research)."""
     pool = DEEP_CASES if engine == "deep" else CASES
     cases = [c for c in pool if not only or c.id in only]
+    # Отчёт — минуты, 12 вопросов по два шли бы полчаса; провайдер держит три.
+    concurrency = concurrency or (3 if engine == "deep" else 2)
     tag = uuid.uuid4().hex[:8]
     sem = asyncio.Semaphore(max(1, concurrency))
 

@@ -605,12 +605,13 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
 
 # ── вход ─────────────────────────────────────────────────────────────────────
 
-async def collect(client, model: str, question: str, plan) -> OwnData:
+async def collect(client, model: str, question: str, plan, state=None) -> OwnData:
     """Всё собственное: срез, аналитика и цитаты жалоб, лазейки. Синхронные
     части — в пуле потоков; сбор идёт параллельно веб-поиску."""
     import asyncio
     od = OwnData()
-    state = runstate.current()
+    state = state or runstate.current()
+    runstate.bind(state)
     scope = await scope_for(client, model, question, plan)
     od.scope = scope
 
@@ -627,6 +628,7 @@ async def collect(client, model: str, question: str, plan) -> OwnData:
                 log.exception("собственные данные: %s", fn.__name__)
     await asyncio.to_thread(work)
     state.own_meta.update(od.meta)
+    state.own_scope = dict(scope)
     log.info("собственные данные: срез %s; страниц %d, фактов %d (жалоб %d, лазеек %d, "
              "рынок %d)", scope, len(od.pages), len(od.facts), od.complaints, od.loopholes,
              od.market)

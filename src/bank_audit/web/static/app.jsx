@@ -5373,8 +5373,12 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
             source_kind: s.source_kind, trust_score: s.trust_score,
             fetched_at: s.fetched_at, headings_path: s.headings_path,
             // Передаём дословную выдержку — чтобы в PDF под источником была
-            // та же цитата-доказательство, что в тултипе UI (item 62).
-            excerpts: s.excerpts,
+            // та же цитата-доказательство, что в тултипе UI (item 62). У отчёта
+            // (deep) выдержек нет — есть факты с дословными цитатами: берём их,
+            // иначе под источником в PDF было пусто.
+            excerpts: s.excerpts || (s.facts || []).map(f => f && f.verbatim)
+              .filter(Boolean).slice(0, 6),
+            domain: s.domain,
           })),
           meta: {
             audit_id: auditId,

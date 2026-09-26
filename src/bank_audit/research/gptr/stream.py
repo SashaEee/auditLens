@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from typing import AsyncIterator
@@ -21,6 +22,7 @@ from urllib.parse import urlparse
 from ...ai.hermes_quick import PlainKeysStream, plain_keys
 from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, critic as al_critic, facts as al_facts
+from . import followup as al_followup
 from . import own_data as al_own, reviews as al_reviews, runstate
 from . import dossier as al_dossier
 from . import viz as al_viz
@@ -93,6 +95,17 @@ def _sources_ui(urls: list[str], pages: dict[str, str],
             "dead": bool(cited.get(url, {}).get("dead")),
         })
     return out
+
+
+# Сколько ждём дослежку сверх основного сбора: обычно она успевает раньше.
+_FOLLOWUP_WAIT = float(os.getenv("GPTR_FOLLOWUP_WAIT", "40"))
+_FOREIGN = re.compile(
+    r"(^|\.)(sber|vtb|alfa|gazprombank|tbank|tinkoff|raiffeisen|psbank|sovcombank|rshb|"
+    r"mtsbank|domrf|otpbank|rosbank)[\w-]*\.(by|kz|uz|kg|am|az|ge|md|ua|tj)$", re.I)
+
+
+def _foreign_affiliate(url: str) -> bool:
+    return bool(_FOREIGN.search(urlparse(url).netloc.split(":")[0]))
 
 
 async def stream_deep_research_gptr(question: str,
@@ -180,7 +193,18 @@ async def stream_deep_research_gptr(question: str,
     # (аналитика жалоб, жалобы из разметки, лазейки). Им ждать сбора незачем.
     registry = al_facts.FactRegistry()
     collecting = {"on": True}
-    own_task = asyncio.ensure_future(al_own.collect(client, fast, question, plan))
+    own_task = asyncio.ensure_future(al_own.collect(client, fast, question, plan,
+                                                      state=state))
+
+    async def _followup() -> dict[str, str]:
+        # Дослежка сюжета из жалоб — как только готовы собственные данные,
+        # параллельно основному сбору (см. followup.py).
+        od = await own_task
+        runstate.bind(state)
+        if not od.complaints:
+            return {}
+        return await al_followup.collect(client, fast, question, od, state=state)
+    followup_task = asyncio.ensure_future(_followup())
     eager_task = asyncio.ensure_future(al_facts.extract_while_collecting(
         registry, client, fast, state=state, attributes=attributes, plan=plan,
         running=lambda: collecting["on"],
@@ -244,6 +268,25 @@ async def stream_deep_research_gptr(question: str,
                         "label": f"Жалоб из старого корпуса: {len(review_pages)}",
                         "detail": "разметки по объектам нет — запасной источник",
                         "estimate_s": 0})
+
+    try:
+        fu_pages = await asyncio.wait_for(asyncio.shield(followup_task), timeout=_FOLLOWUP_WAIT)
+    except Exception as e:  # noqa: BLE001 — дослежка необязательна
+        log.info("дослежка: %s", type(e).__name__)
+        followup_task.cancel()
+        fu_pages = {}
+    runstate.bind(state)
+    if fu_pages:
+        pages.update(fu_pages)
+        yield _evt({"type": "stage_status", "stage": "reviews",
+                    "label": f"Дослежка сюжета из жалоб: прочитано {len(fu_pages)}",
+                    "detail": "событие, продавец, правила — по тому, что называют клиенты",
+                    "estimate_s": 0})
+    for u in [u for u in pages if _foreign_affiliate(u)]:
+        # Сбер Банк Беларусь — другое юрлицо: его адреса и сроки попадали в
+        # отчёт как «сведения о Сбере» и порождали мнимые расхождения.
+        log.info("исключено: зарубежная дочка/одноимённый банк — %s", u[:90])
+        pages.pop(u, None)
 
     # ── Факты ────────────────────────────────────────────────────────────
     # Между чтением и письмом появляется типизированный слой: каждый факт
@@ -319,9 +362,7 @@ async def stream_deep_research_gptr(question: str,
     # Служебные ключи тем (chargeback, card_block…) — на подписи, как в быстром
     # режиме; адреса ссылок не трогаем.
     keys = PlainKeysStream()
-    _ttl = al_dossier.titles(plan)
-    yield _evt({"type": "outline",
-                "sections": al_dossier.outline(plan, registry)})
+    _ttl = al_dossier.titles(plan)     # заголовки уточнит бриф (событие titles)
     gaps_preview = al_gaps.render(al_gaps.collect(
         plan, registry=registry, attributes=attributes,
         pages=pages, unreadable=unreadable,
@@ -335,11 +376,17 @@ async def stream_deep_research_gptr(question: str,
     try:
         async for kind, payload in al_dossier.write_dossier(
                 client, writer_model, question=question, plan=plan,
-                registry=registry, gaps_text=gaps_preview):
-            if kind == "section":
+                registry=registry, gaps_text=gaps_preview, state=state):
+            if kind == "titles":
+                _ttl.update(payload)
+            elif kind == "outline":
+                # Оглавление — после брифа: состав разделов теперь зависит от
+                # вопроса, а не от шаблона.
+                yield _evt({"type": "outline", "sections": payload})
+            elif kind == "section":
                 yield _evt({"type": "stage_status", "stage": "analyst",
-                            "label": f"Пишу раздел: {_ttl[payload]}",
-                            "detail": "каждый раздел получает свои факты целиком"})
+                            "label": f"Пишу раздел: {_ttl.get(payload, payload)}",
+                            "detail": "разделы пишутся вокруг главного ответа"})
             elif kind == "chunk":
                 ready = keys.feed(guard.feed(renum.feed(payload)))
                 if ready:

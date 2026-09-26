@@ -169,40 +169,172 @@ def test_sources_ui_marks_auditlens_pages():
     assert src[0]["trust_score"] == 0.95
 
 
-def test_sections_written_in_parallel_but_streamed_in_order(monkeypatch):
+def _fake_writer(monkeypatch, brief=None, delay=0.3):
+    """Писатель без сети: раздел отвечает своим ключом, промпты копятся."""
+    import asyncio
+    prompts = {}
+    monkeypatch.setattr(dossier, "facts_for", lambda key, reg, plan, own=None: [object()])
+    monkeypatch.setattr(dossier, "render_facts", lambda facts, labels, own=None: "")
+    monkeypatch.setattr(dossier.al_brief, "facts_digest", lambda *a, **k: "")
+
+    def fake_prompt(key, *a, **kw):
+        prompts[key] = kw
+        return key
+    monkeypatch.setattr(dossier, "section_prompt", fake_prompt)
+
+    async def fake_brief(*a, **kw):
+        return brief
+    monkeypatch.setattr(dossier.al_brief, "make_brief", fake_brief)
+
+    async def fake_stream(client, model, prompt):
+        await asyncio.sleep(delay)
+        yield f"текст раздела {prompt}.\n## Лишний заголовок\nещё. "
+    monkeypatch.setattr(dossier, "_stream_section", fake_stream)
+    return prompts
+
+
+def _run_dossier(state=None):
     import asyncio
     import time
 
-    runstate.new_run()
-    body_keys = [k for k in dossier.WRITING_ORDER if k not in dossier.LEAD]
-    monkeypatch.setattr(dossier, "facts_for", lambda key, reg, plan: [object()])
-    monkeypatch.setattr(dossier, "section_prompt", lambda key, *a, **kw: key)
-    monkeypatch.setattr(dossier, "facts_index", lambda facts, labels: "")
-    monkeypatch.setattr(dossier, "render_facts", lambda facts, labels: "")
-    monkeypatch.setenv("GPTR_SECTION_CONCURRENCY", "8")
-
-    async def fake_stream(client, model, prompt):
-        await asyncio.sleep(0.3)
-        yield f"текст раздела {prompt}. "
-
-    monkeypatch.setattr(dossier, "_stream_section", fake_stream)
-    reg = FactRegistry()
-
     async def run():
         t0 = time.monotonic()
-        out = [ev async for ev in dossier.write_dossier(None, "m", question="q", plan=PLAN,
-                                                        registry=reg)]
+        out = [ev async for ev in dossier.write_dossier(
+            None, "m", question="q", plan=PLAN, registry=FactRegistry(), state=state,
+            brief_model="b")]
         return out, time.monotonic() - t0
+    return asyncio.run(run())
 
-    events, took = asyncio.run(run())
+
+def test_sections_lead_written_together_in_brief_order(monkeypatch):
+    from bank_audit.research.gptr.brief import Brief
+    brief = Brief(answer="Всплеск — билеты на концерт [f:1].", theses=["t"],
+                  sections=[{"key": "voice", "title": "Что стоит за всплеском", "focus": "f"},
+                            {"key": "conditions", "title": "Правила банка", "focus": "f"}])
+    prompts = _fake_writer(monkeypatch, brief)
+    runstate.new_run()
+    events, took = _run_dossier()
     order = [p for k, p in events if k == "section"]
-    assert order == body_keys
-    # тело — одновременно (~0,3 с), затем два раздела суждения тоже вместе (~0,3 с)
-    assert took < 0.3 * len(body_keys)
+    assert order == ["voice", "conditions"]           # порядок и состав — из брифа
+    outline = next(p for k, p in events if k == "outline")
+    assert outline == ["Резюме для руководителя проверки", "Что проверять",
+                       "Что стоит за всплеском", "Правила банка"]
+    # тело, резюме и план — одновременно: ~0,3 с, а не 0,3 × 4
+    assert took < 0.3 * 3
     text = "".join(p for k, p in events if k == "chunk")
-    for k in body_keys:
-        assert f"текст раздела {k}." in text
-    assert any(k == "lead" for k, _ in events)
+    assert "## Что стоит за всплеском" in text and "### Лишний заголовок" in text
+    assert "\n## Лишний" not in text
+    lead = next(p for k, p in events if k == "lead")
+    assert "текст раздела summary" in lead and "### Лишний заголовок" in lead
+    assert all(kw.get("brief") is brief for kw in prompts.values())
+
+
+def test_without_brief_default_order_by_question_type(monkeypatch):
+    _fake_writer(monkeypatch, None, delay=0.01)
+    state = runstate.new_run()
+    state.own_scope = {"complaints": True, "market": False}
+    events, _ = _run_dossier(state)
+    order = [p for k, p in events if k == "section"]
+    assert order[0] == "voice" and "conflicts" in order
+
+
+def test_voice_sees_own_data_when_each_step_runs_in_empty_context(fake_tools, monkeypatch):
+    """Как в интерфейсе: обёртка потока исполняет каждый шаг отдельной задачей
+    с пустым контекстом. Раньше раздел «Голос клиента» получал пустое состояние
+    и писал «данных аналитики жалоб нет» при 14 жалобах в реестре."""
+    import asyncio
+    import contextvars
+    od = own_data.OwnData()
+    own_data.collect_complaints(od, PLAN, {"product": None, "themes": [], "days": 7},
+                                "всплеск чарджбэка")
+    state = runstate.current()
+    state.own_meta.update(od.meta)
+    reg = FactRegistry()
+    for i in range(20):      # веб-факты с пустой датой вытесняли свои по лимиту
+        reg.add(subject="sberbank", attribute="мнение", value=f"веб {i}", unit="",
+                verbatim=f"длинная цитата из веба номер {i}", url=f"https://e.com/{i}",
+                stance="observed")
+    for kw in od.facts:
+        reg.add(**kw)
+    seen = {}
+
+    def fake_prompt(key, plan, question, labels, *, facts_text, **kw):
+        seen[key] = facts_text
+        return key
+    monkeypatch.setattr(dossier, "section_prompt", fake_prompt)
+
+    async def no_brief(*a, **kw):
+        return None
+    monkeypatch.setattr(dossier.al_brief, "make_brief", no_brief)
+
+    async def fake_stream(client, model, prompt):
+        yield "текст. "
+    monkeypatch.setattr(dossier, "_stream_section", fake_stream)
+
+    async def drive():
+        agen = dossier.write_dossier(None, "m", question="q", plan=PLAN, registry=reg,
+                                     state=state, brief_model="b")
+        while True:
+            try:
+                await asyncio.get_running_loop().create_task(
+                    agen.__anext__(), context=contextvars.Context())
+            except StopAsyncIteration:
+                return
+    asyncio.run(asyncio.wait_for(drive(), 10))
+    assert "аналитика жалоб AuditLens" in seen["voice"]
+    assert "15 жалоб при норме 3,6" in seen["voice"]
+
+
+def test_brief_parse_keeps_known_sections_once():
+    from bank_audit.research.gptr import brief as B
+    raw = json.dumps({"answer": "Ответ [f:1].", "theses": ["a", "b"],
+                      "sections": [{"key": "voice", "title": "«Что стоит за всплеском»",
+                                    "focus": "сюжеты"},
+                                   {"key": "voice", "title": "дубль"},
+                                   {"key": "market", "title": "Сбер против рынка"},
+                                   {"key": "nonsense", "title": "x"}]}, ensure_ascii=False)
+    b = B.parse("```json\n" + raw + "\n```", {"voice": 5, "conditions": 3, "market": 0})
+    assert [s["key"] for s in b.sections] == ["voice", "market"]
+    assert b.sections[0]["title"] == "Что стоит за всплеском"
+    assert b.skipped == ["conditions"] and b.ok()
+    rendered = b.render("voice")
+    assert "ГЛАВНЫЙ ОТВЕТ" in rendered and "← ТВОЙ РАЗДЕЛ" in rendered
+    assert B.default_order(SimpleNamespace(question_nature="regulatory"), {})[0] == "regulatory"
+    assert B.default_order(SimpleNamespace(question_nature="mixed"),
+                           {"market": True})[0] == "market"
+    assert B.default_order(SimpleNamespace(question_nature="mixed"),
+                           {"loopholes": True})[0] == "loopholes"
+
+
+def test_followup_reads_pages_for_entities_from_complaints(fake_tools, monkeypatch):
+    import asyncio
+    from bank_audit.research.gptr import followup
+    od = own_data.OwnData()
+    own_data.collect_complaints(od, PLAN, {"product": None, "themes": [], "days": 7},
+                                "всплеск чарджбэка")
+    text = followup.material(od.pages, od.meta)
+    assert "Группа похожих" in text and "Концерт отменили" in text
+
+    async def fake_queries(client, model, question, text_):
+        return ["концерт Канье Уэста Газпром Арена отмена"]
+    monkeypatch.setattr(followup, "queries_for", fake_queries)
+    import bank_audit.rag.web_search as ws
+    monkeypatch.setattr(ws, "search", lambda q, **kw: [
+        {"url": "https://news.example/arena"},
+        {"url": "https://www.banki.ru/services/responses/bank/response/1"}])
+    import bank_audit.research.gptr.scraper as sc
+
+    class FakeScraper:
+        def __init__(self, url, state=None):
+            self.url, self.state = url, state
+
+        def scrape(self):
+            self.state.note_page(self.url, "Арена заявила, что договор аренды не заключён.")
+            return "Арена заявила, что договор аренды не заключён.", [], "t"
+    monkeypatch.setattr(sc, "AuditLensScraper", FakeScraper)
+    state = runstate.current()
+    pages = asyncio.run(followup.collect(None, "m", "q", od, state=state))
+    assert list(pages) == ["https://news.example/arena"]      # отзывы повторно не ищем
 
 
 def test_pdf_sources_show_auditlens_slice_as_text():
