@@ -58,6 +58,12 @@ MARKET_OFFERS = {"category": "deposit", "label": "Вклады", "metric": "Ст
                          {"bank_name": "ВТБ", "title": "ВТБ Вклад", "segment": "mass",
                           "rate_pct": 13.7, "term_months_min": 18, "term_months_max": 18,
                           "valid_from": "2026-09-22 05:00", "metric_value": 13.7}]}}}
+MARKET_TOP = {"category": "deposit", "label": "Вклады", "metric": "Ставка", "metric_unit": "%",
+              "lower_is_better": False, "offers_total": 200,
+              "top": [{"bank_name": "Яндекс Банк", "title": "Вклад", "segment": "mass",
+                       "term_months_min": 6, "term_months_max": 6, "metric_value": 16.0},
+                      {"bank_name": "Сбербанк", "title": "Выгодный старт +", "segment": "mass",
+                       "term_months_min": 3, "term_months_max": 3, "metric_value": 19.0}]}
 MARKET_POSITION = {"as_of": "2026-09-25 05:56", "cells": [
     {"category": "deposit", "label": "Вклады", "rank": 1, "n_banks": 134, "metric_label": "Ставка",
      "metric_unit": "%", "title": "Выгодный старт +", "value": 19.0, "gap_median": 5.5,
@@ -84,6 +90,8 @@ def fake_tools(monkeypatch):
     def spec(name):
         def fn(**kw):
             calls.append((name, kw))
+            if name == "market_offers" and not kw.get("banks"):
+                return json.dumps(MARKET_TOP, ensure_ascii=False)
             return json.dumps(data[name], ensure_ascii=False)
         return T.ToolSpec(name, name, fn, "")
     monkeypatch.setattr(T, "BY_NAME", {n: spec(n) for n in data})
@@ -403,7 +411,7 @@ def test_market_pages_are_facts_with_right_banks(fake_tools):
     assert "срок 3 мес." in by_subj["sberbank"]["verbatim"]
     assert all(f["stance"] == "declared" and f["verbatim"] in od.pages[f["url"]]
                for f in od.facts)
-    place = od.pages["#market?cat=deposit"]
+    place = od.pages["#market?cat=deposit&view=position"]
     assert "1-е из 134 банков" in place and "Сегмент «Пенсионные»: 14-е из 33" in place
     assert "вклады" in place and "ипотека" not in place
     assert {m["kind"] for m in od.meta.values()} == {"market"}
@@ -441,3 +449,18 @@ def test_brief_drops_titles_that_duplicate_lead_sections():
         ensure_ascii=False)
     b = B.parse(raw, {"conditions": 3})
     assert b.sections[0]["title"] == ""
+
+
+def test_market_always_has_leaders_and_themes_have_list_boundary(fake_tools):
+    plan = SimpleNamespace(subjects=["sberbank", "vtb"],
+                           subject_labels={"sberbank": "Сбербанк", "vtb": "ВТБ"},
+                           anchor="sberbank", product="вклады")
+    od = own_data.OwnData()
+    own_data.collect_market(od, plan, {"category": "deposit", "market": True})
+    leaders = od.pages["#market?cat=deposit"]
+    assert "лидеры рынка" in leaders and "Яндекс Банк" in leaders
+    assert any(f["subject"] == "Яндекс Банк" for f in od.facts)   # банк вне плана — по имени
+    od2 = own_data.OwnData()
+    own_data.collect_complaints(od2, PLAN, {"product": None, "themes": [], "days": 90}, "жалобы")
+    text = "\n".join(od2.pages.values())
+    assert "у тем вне списка — не больше 60 жалоб каждая" in text

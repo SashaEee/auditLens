@@ -644,10 +644,15 @@ async def judge(question: str, facts: dict, focus: str, answer: str,
             + (f"ИСТОЧНИКИ ОТЧЁТА:\n{sources}\n\n" if sources else "")
             + f"ОТВЕТ:\n{answer[:answer_cap]}")
     try:
-        raw, _, _ = await _chat(JUDGE_MODEL, _JUDGE_SYSTEM, user, max_tokens=700, temperature=0.0)
+        # Отчёт длинный — рассуждающей модели 700 токенов не хватало, и у трёх
+        # кейсов из двенадцати оценки не было вовсе (26.09).
+        raw, _, _ = await _chat(JUDGE_MODEL, _JUDGE_SYSTEM, user,
+                                max_tokens=2500 if len(answer) > 9000 else 700,
+                                temperature=0.0)
         d = _loose_json_loads(raw)
         if isinstance(d, dict) and "score" in d:
             return {k: d.get(k) for k in ("score", "correct", "key_fact", "hallucination", "issues")}
+        log.warning("судья: ответ без оценки (%d знаков): %s", len(raw or ""), (raw or "")[:160])
     except Exception as e:  # noqa: BLE001 — судья не должен ронять прогон
         log.warning("судья: %s", e)
     return None

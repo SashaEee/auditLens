@@ -226,13 +226,23 @@ def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor:
                          f"обратились — {_f(ov.get('escalation_filed_pct'))}%"
                          + ("; отличие от рынка значимо." if ov.get("escalation_differs_significantly")
                             else "; отличие от рынка в пределах случайного."), "%"))
-    for t in (ov.get("themes") or [])[:8 if anchor else 5]:
+    # Все темы, что отдаёт сводка (до 14), у КАЖДОГО банка и граница списка.
+    # Урезанный список (8 у Сбера) отчёт читал как «этой темы у Сбера нет» и
+    # объявлял «уникальными» темы конкурентов, которые у Сбера тоже есть (26.09).
+    themes_all = ov.get("themes") or []
+    for t in themes_all:
         ch = t.get("change_pct")
         rows.append(line(f"Жалобы: тема «{t['label']}»", _n(t["n"]),
                          f"Тема «{t['label']}»: {_n(t['n'])} жалоб ({_f(t.get('pct'))}% всех)"
                          + (f", к прошлому периоду {_pct(ch)}"
                             + (" (значимо)" if t.get("change_significant") else "")
                             if ch is not None else "") + "."))
+    if themes_all:
+        tail = themes_all[-1].get("n")
+        rows.append(line("Жалобы: темы вне списка", _n(tail),
+                         f"Выше — {len(themes_all)} тем с наибольшим числом жалоб; у тем вне "
+                         f"списка — не больше {_n(tail)} жалоб каждая (это не значит, что "
+                         f"таких жалоб нет)."))
     if anchor:
         for fl in [x for x in ov.get("risk_flags") or [] if x.get("significant")][:4]:
             rows.append(line(f"Жалобы: признак «{fl['flag']}»", _f(fl.get("pct")),
@@ -537,6 +547,10 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
     mp = _j("market_position", category=cat)
     as_of = _dm(mp.get("as_of"))
     mo = _j("market_offers", category=cat, banks=others or None)
+    # Лидеры рынка — всегда. Вопрос «выдели топ-5 и позицию Сбера» кондуктор
+    # разворачивает в список банков (Альфа, ВТБ, ГПБ), и отчёт получал только их:
+    # топ «по витрине» без Яндекс Банка с 16% (26.09).
+    top = _j("market_offers", category=cat, limit=10) if others else mo
     metric, unit = mo.get("metric") or "метрика", mo.get("metric_unit") or ""
     label = mo.get("label") or cat
     caveat = mo.get("how_to_compare")
@@ -546,8 +560,8 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
             return by_name[name]
         return anchor if name == T.SBER or T._same_bank(T.SBER, name) else ""
 
-    groups = (mo.get("by_bank") or {}).items() if mo.get("by_bank") else \
-        [("", {"best": mo.get("top") or [], "offers_total": mo.get("offers_total")})]
+    groups = [("", {"best": top.get("top") or [], "offers_total": top.get("offers_total")})]
+    groups += list((mo.get("by_bank") or {}).items())
     for name, d in groups:
         offers = (d.get("best") or [])[:_OFFERS_PER_BANK if name else 10]
         if not offers:
@@ -571,7 +585,8 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
     cell = next((c for c in mp.get("cells") or [] if c.get("category") == cat), None)
     if not cell or not anchor:
         return
-    url = T.link_market(cat)
+    # свой адрес: страница лидеров уже живёт на #market?cat=…
+    url = T.link_market(cat) + "&view=position"
     lines = []
     if cell.get("degenerate"):
         lines.append(f"Место Сбербанка в категории «{label}» на {as_of} не определено: "
