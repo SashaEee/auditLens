@@ -74,6 +74,7 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict],
     table_rows: list[list[str]] = []
     list_buf: list[str] = []
     list_ordered = False
+    list_start = 1
     hnum = 0  # счётчик заголовков для якорей оглавления
 
     def _inline(s: str) -> str:
@@ -124,8 +125,11 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict],
         if not list_buf:
             return
         tag = "ol" if list_ordered else "ul"
-        out.append(f"<{tag}>" + "".join(f"<li>{_inline(x)}</li>"
-                                         for x in list_buf) + f"</{tag}>")
+        # Пункты «1. … (пустая строка) 2. …» приходят отдельными списками: без
+        # start каждый начинался с 1 — в PDF было «1. 1. 1. 1.» (26.09).
+        start = f' start="{list_start}"' if list_ordered and list_start > 1 else ""
+        out.append(f"<{tag}{start}>" + "".join(f"<li>{_inline(x)}</li>"
+                                                for x in list_buf) + f"</{tag}>")
         list_buf = []
 
     def _flush_table():
@@ -182,6 +186,8 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict],
         bullet_m  = re.match(r"^\s*[\-\*\+•]\s+(.+)$", ln)
         if ordered_m:
             if not list_ordered: _flush_list()
+            if not list_buf:
+                list_start = int(ordered_m.group(1))
             list_ordered = True
             list_buf.append(ordered_m.group(2))
             continue

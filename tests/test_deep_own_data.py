@@ -421,3 +421,23 @@ def test_report_stream_hides_theme_keys_but_not_links():
     out = "".join(ks.feed(p) for p in parts) + ks.finish()
     assert "chargeback:" not in out and "(#reviews?theme=chargeback)" in out
     assert "wrong_debit" not in out and out.startswith("Всплеск по теме ")
+
+
+def test_demote_keeps_anchors_and_cuts_anchor_notes():
+    t = dossier._demote_text("## Заг\nтекст [f:158 — в теле] и [f:12][f:3] конец\n# Итог")
+    assert t == "### Заг\nтекст [f:158] и [f:12][f:3] конец\n### Итог"
+
+
+def test_pdf_ordered_list_keeps_numbers_across_blank_lines():
+    from bank_audit.web.pdf_export import _md_to_html
+    html = _md_to_html("1. один\n\n2. два\n\n3. три", {})
+    assert '<ol start="2">' in html and '<ol start="3">' in html
+
+
+def test_brief_drops_titles_that_duplicate_lead_sections():
+    from bank_audit.research.gptr import brief as B
+    raw = json.dumps({"answer": "a", "sections": [
+        {"key": "conditions", "title": "Что проверить в процессе Сбера", "focus": "f"}]},
+        ensure_ascii=False)
+    b = B.parse(raw, {"conditions": 3})
+    assert b.sections[0]["title"] == ""

@@ -787,12 +787,15 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
 
 
 _H12 = re.compile(r"^#{1,2}(?=\s)", re.M)
+# Якорь с приписками («[f:158 — в теле]») перенумеровщик не узнаёт, и он уходит
+# в текст как есть (26.09) — приписку отрезаем.
+_ANCHOR_TAIL = re.compile(r"\[f:(\d+)[^\d\]\n][^\]\n]{0,59}\]")
 
 
 def _demote_text(text: str) -> str:
     """Внутри раздела — только подзаголовки. «# Что проверить» внутри «Карты
     условий» становился заголовком всего PDF и ломал оглавление (27 пунктов)."""
-    return _H12.sub("###", text or "")
+    return _ANCHOR_TAIL.sub(r"[f:\1]", _H12.sub("###", text or ""))
 
 
 async def _demote_headings(pieces: AsyncIterator[str]) -> AsyncIterator[str]:

@@ -171,6 +171,10 @@ def parse(raw: str, available: dict[str, int]) -> Brief:
             continue
         seen.add(key)
         title = re.sub(r"\s+", " ", str(s.get("title") or "")).strip().strip("«»\"")[:80]
+        # «Что проверить в процессе Сбера» рядом с «Что проверять» — два плана
+        # проверки в оглавлении; такой заголовок заменяем штатным.
+        if re.match(r"(что|как)\s+провер|резюме", title, re.I):
+            title = ""
         secs.append({"key": key, "title": title,
                      "focus": re.sub(r"\s+", " ", str(s.get("focus") or "")).strip()[:400]})
     return Brief(answer=str(data.get("answer") or "").strip(),
