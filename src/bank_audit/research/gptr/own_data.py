@@ -51,6 +51,7 @@ class OwnData:
     scope: dict = field(default_factory=dict)
     complaints: int = 0
     loopholes: int = 0
+    market: int = 0
 
     def page(self, url: str, title: str, lines: list[str], kind: str) -> str:
         text = "\n".join([title, *lines])
@@ -72,25 +73,50 @@ class OwnData:
 
 # ── срез вопроса ─────────────────────────────────────────────────────────────
 
-_SCOPE_SYSTEM = """Ты выбираешь срез данных о ЖАЛОБАХ КЛИЕНТОВ для аудиторского отчёта.
+_SCOPE_SYSTEM = """Ты выбираешь срез СОБСТВЕННЫХ ДАННЫХ AuditLens для аудиторского отчёта.
 По вопросу аудитора и плану выбери:
-- "product": продукт из перечня или null, если вопрос не про один продукт;
+- "product": продукт из перечня, только если вопрос прямо про этот продукт; иначе null.
+  Вопрос о теме жалоб без продукта («жалобы на чарджбэк») — null: срез задаёт тема;
 - "themes": 0–3 ключа тем жалоб из перечня, только если вопрос про конкретную проблему
   (для «почему растут жалобы на X» — тема X); иначе [];
 - "days": 7 — вопрос про эту неделю или всплеск; 90 — по умолчанию; 180 или 365 —
   если спрошен длинный период;
-- "relevant": false, только если жалобы клиентов к вопросу отношения не имеют
-  (например, вопрос о тексте нормативного документа).
-Ответ — строго JSON: {"product": ..., "themes": [...], "days": ..., "relevant": ...}"""
+- "complaints": true, если ответу нужны жалобы клиентов — вопрос о жалобах, проблемах
+  клиентов, качестве, рисках продукта или общий разбор продукта для проверки; false —
+  вопрос только о сравнении условий и ставок, только о лазейках или о тексте нормы;
+- "loopholes": true, если ответу нужны схемы обхода условий и злоупотреблений — вопрос
+  о лазейках, уязвимостях, мошенничестве или общий разбор продукта для проверки;
+  false — вопрос о жалобах на конкретную тему, о сравнении условий, о регулировании;
+- "category": категория витрины «Рынок» из перечня (ключ) или null;
+- "market": true, если ответу нужны условия продуктов банков — ставки, комиссии,
+  сравнение с конкурентами, позиция на рынке; иначе false.
+Ответ — строго JSON: {"product": ..., "themes": [...], "days": ..., "complaints": ...,
+"loopholes": ..., "category": ..., "market": ...}"""
+
+# Слова подписей продуктов, которые ничего не различают: «карта» есть и в
+# дебетовой, и в кредитной, «кредит» — в половине перечня.
+_GENERIC = {"карта", "счёт", "счет", "кредит", "бизнес"}
+
+
+def product_named(label: str, text_: str) -> bool:
+    """Продукт назван в тексте: хоть одно различающее слово подписи встречается
+    основой. Замер 26.09: на «почему выросли жалобы на чарджбэк» модель
+    выбрала «Дебетовую карту» — и отчёт получил 21 жалобу недели вместо 15 по
+    сигналу банка. Продукт, которого в вопросе нет, срез сужать не должен."""
+    low = (text_ or "").lower()
+    stems = [w[:5] for w in re.findall(r"[а-яёa-z]{3,}", label.lower()) if w not in _GENERIC]
+    return any(st in low for st in stems)
 
 
 async def scope_for(client, model: str, question: str, plan) -> dict:
-    """Срез жалоб под вопрос: продукт и темы — из перечней кодификатора."""
+    """Срез собственных данных под вопрос: продукт, темы и категория — из
+    перечней; какие данные нужны — решает модель, продукт проверяет код."""
     from .facts import call_model
     user = (f"# Вопрос\n{question}\n\n# Что хочет аудитор\n"
             f"{getattr(plan, 'intent_summary', '') or '—'}\n\n# Предмет\n"
             f"{getattr(plan, 'product', '') or '—'}\n\n# Продукты\n"
-            + "; ".join(T.PRODUCT_LABELS) + "\n\n# Темы (ключ — подпись)\n" + T.THEMES_HELP)
+            + "; ".join(T.PRODUCT_LABELS) + "\n\n# Темы (ключ — подпись)\n" + T.THEMES_HELP
+            + "\n\n# Категории «Рынка» (ключ — подпись)\n" + T.CATEGORIES_HELP)
     kw: dict = {"model": model, "temperature": 0.0, "max_tokens": 300,
                 "response_format": {"type": "json_object"},
                 "messages": [{"role": "system", "content": _SCOPE_SYSTEM},
@@ -100,17 +126,33 @@ async def scope_for(client, model: str, question: str, plan) -> dict:
         resp = await call_model(client, model, kw)
         data = json.loads((resp.choices[0].message.content or "").strip())
     except Exception as e:  # noqa: BLE001 — без среза отчёт строится на сводке банка
-        log.info("срез жалоб: %s — беру сводку по банку", type(e).__name__)
+        log.info("срез данных: %s — беру сводку по банку", type(e).__name__)
         data = {}
+    return normalize_scope(data, question, plan)
+
+
+def normalize_scope(data: dict, question: str, plan) -> dict:
     product = data.get("product") if data.get("product") in T.PRODUCT_LABELS else None
+    if product and not product_named(product, question):
+        log.info("срез данных: продукт «%s» в вопросе не назван — без продукта", product)
+        product = None
     themes = [t for t in (data.get("themes") or []) if t in T.THEME_KEYS][:3]
     try:
         days = int(data.get("days") or 90)
     except (TypeError, ValueError):
         days = 90
     days = min((7, 30, 90, 180, 365), key=lambda d: abs(d - days))
-    relevant = data.get("relevant") is not False
-    return {"product": product, "themes": themes, "days": days, "relevant": relevant}
+    category = data.get("category") if data.get("category") in T.CATEGORY_IDS else None
+    nature = (getattr(plan, "question_nature", "") or "").lower()
+
+    def flag(key: str, default: bool) -> bool:
+        v = data.get(key)
+        return default if v is None else v is not False
+
+    return {"product": product, "themes": themes, "days": days,
+            "complaints": flag("complaints", data.get("relevant") is not False),
+            "loopholes": flag("loopholes", nature != "regulatory") and nature != "regulatory",
+            "category": category, "market": flag("market", False) and bool(category)}
 
 
 # ── жалобы ───────────────────────────────────────────────────────────────────
@@ -152,12 +194,13 @@ def _bank_name(slug: str, labels: dict[str, str]) -> str:
 
 
 def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor: bool,
-                         signal_themes: list[str]) -> None:
+                         signal_themes: list[str]) -> list[str]:
+    """Страницы жалоб по банку; возвращает разобранные темы (для точки отсчёта)."""
     product, days = scope["product"], scope["days"]
     base_days = max(days, 90)          # сводке нужен квартал: неделя без базы не читается
     ov = _j("complaints_overview", bank=bank, product=product, days=base_days)
     if ov.get("error") or not ov.get("complaints"):
-        return
+        return []
     who = bank + (f" · {product}" if product else "")
     url = T.link_reviews(bank, product, days=base_days)
     lines: list[str] = []
@@ -200,6 +243,19 @@ def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor:
             rows.append(line("Жалобы: город выше обычного", _n(c["n"]),
                              f"Город выше обычной доли: {c['city']} — {_n(c['n'])} жалоб "
                              f"(индекс {_f(c.get('index'))})."))
+        # Динамика по месяцам и конкуренты по числу жалоб. Без них отчёт на
+        # «жалобы на вклады за 90 дней: динамика» писал «динамику построить
+        # невозможно» и «сопоставить с конкурентами нельзя» (замер 26.09).
+        tr = _trend_line(bank, product, base_days)
+        if tr:
+            rows.append(line("Жалобы: по месяцам", tr[0], tr[1]))
+        banks = [b for b in ov.get("banks_by_complaints") or [] if b.get("n")]
+        if len(banks) > 1:
+            rows.append(line("Жалобы: банки по числу жалоб", _n(len(banks)),
+                             f"Банки по числу жалоб за {base_days} дней"
+                             + (f" (продукт «{product}»)" if product else "") + ": "
+                             + "; ".join(f"{b['bank']} — {_n(b['n'])} ({_f(b.get('pct'))}%)"
+                                         for b in banks) + "."))
     title = f"AuditLens · Отзывы: {who} — сводка жалоб за {base_days} дней"
     od.page(url, title, lines, "complaints")
     for attribute, value, unit, text_ in rows:
@@ -207,7 +263,7 @@ def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor:
                 url=url, date=str(ov.get("as_of") or "")[:10])
 
     if not anchor:
-        return
+        return []
     # Сигналы недели и разбор тем среза — только для точки отсчёта
     sig = _j("complaint_signals", bank=bank, product=product)
     s_url = T.link_reviews(bank, product, days=7)
@@ -237,6 +293,11 @@ def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor:
                     date=str(sig.get("week_end") or "")[:10])
 
     themes = list(dict.fromkeys([*scope["themes"], *signal_themes]))[:4]
+    if not themes:
+        # Вопрос не про одну проблему — берём крупнейшие темы среза: группы
+        # похожих и жалобы по ним дают сюжеты, а не случайную выборку поиска
+        # (поиском по «вклады Сбербанка» отчёт получал 7 жалоб из 35).
+        themes = [t["theme"] for t in (ov.get("themes") or [])[:3] if t.get("theme")]
     for key in themes:
         tdays = 7 if (key in signal_themes or days <= 7) else days
         th = _j("complaint_theme", theme=key, bank=bank, product=product, days=tdays)
@@ -267,6 +328,37 @@ def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor:
                 od.fact(subject=slug, attribute=attribute, value=value, verbatim=text_,
                         url=t_url, date=str(th.get("week_end") or "")[:10])
         _complaint_quotes(od, slug, bank, th.get("complaints") or [], label)
+    return themes
+
+
+_MONTHS = ("янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек")
+
+
+def _trend_line(bank: str, product: str | None, days: int) -> tuple[str, str] | None:
+    """Помесячный ряд жалоб строкой страницы: значение факта и сама строка."""
+    months = max(4, min(13, days // 30 + 2))
+    try:
+        tr = T._rd().trend(bank, product, months) or {}
+    except Exception as e:  # noqa: BLE001 — ряд не обязателен
+        log.info("жалобы %s: ряд по месяцам — %s", bank, type(e).__name__)
+        return None
+    series = [x for x in tr.get("series") or [] if x.get("ym")]
+    if len(series) < 3:
+        return None
+
+    def ym(x) -> str:
+        y, m = x["ym"].split("-")
+        return f"{_MONTHS[int(m) - 1]} {y}"
+    parts = [f"{ym(x)} — {_n(x['n'])}" + (" (месяц не завершён)" if x.get("partial") else "")
+             for x in series]
+    txt = "Жалобы по месяцам (по дате отзыва): " + "; ".join(parts) + "."
+    if tr.get("baseline") is not None:
+        txt += f" Медиана завершённых месяцев — {_f(tr['baseline'])}."
+        spikes = [x for x in series if x.get("spike")]
+        txt += (" Пики выше обычного: " + ", ".join(
+            f"{ym(x)} ({_pct(x.get('pct_vs_median'))} к медиане)" for x in spikes) + "."
+                if spikes else " Месяцев выше обычного уровня нет.")
+    return ", ".join(_n(x["n"]) for x in series), txt
 
 
 def _complaint_quotes(od: OwnData, slug: str, bank: str, items: list[dict],
@@ -314,13 +406,13 @@ def collect_complaints(od: OwnData, plan, scope: dict, question: str) -> None:
     for slug in subjects:
         bank = _bank_name(slug, labels)
         try:
-            _complaints_for_bank(od, slug, bank, scope, slug == anchor, signal_themes)
+            done = _complaints_for_bank(od, slug, bank, scope, slug == anchor, signal_themes)
         except Exception as e:  # noqa: BLE001 — банк без корпуса не должен ронять сбор
             log.info("жалобы %s: %s", bank, type(e).__name__)
             continue
-        # Жалобы-цитаты по предмету, если тема не задана (для темы они уже пришли
-        # выборкой сигнала или лентой по теме).
-        if slug != anchor or not (scope["themes"] or signal_themes):
+        # Жалобы-цитаты по предмету — конкурентам и точке отсчёта, если темы не
+        # разобраны (для темы они уже пришли выборкой сигнала или лентой).
+        if slug != anchor or not done:
             query = (getattr(plan, "product", "") or question)[:120]
             res = _j("complaint_search", query=query, bank=bank, product=scope["product"],
                      days=max(scope["days"], 90),
@@ -377,6 +469,140 @@ def collect_loopholes(od: OwnData, plan, question: str) -> None:
         od.loopholes += 1
 
 
+# ── рынок ────────────────────────────────────────────────────────────────────
+# Замер 26.09: на «сравни вклады Сбера с ВТБ и Газпромбанком» отчёт приписал
+# ВТБ 19% (это промо Сбера на 3 месяца) — ставки он собирал из веба, где у
+# каждого банка своя витрина и свои даты. Вкладка «Рынок» сравнивает все банки
+# по одной методике на одну дату; отчёт получает её как страницы данных.
+
+MARKET = "market"
+_OFFERS_PER_BANK = int(os.getenv("GPTR_OWN_OFFERS", "5"))
+
+
+def _range(a, b, unit: str) -> str:
+    if a is None and b is None:
+        return ""
+    if a is None or b is None or float(a) == float(b):
+        return f"{_f(a if a is not None else b, 2)}{unit}"
+    return f"{_f(a, 2)}–{_f(b, 2)}{unit}"
+
+
+def _offer_line(r: dict, metric: str, unit: str) -> str:
+    seg = dict(T._cm.SEGMENTS).get(r.get("segment") or "", "")
+    bits = [f"{metric} {_f(r.get('metric_value'), 2)}{unit}"]
+    if r.get("rate_min") is not None or r.get("rate_max") is not None:
+        bits.append("ставка " + _range(r.get("rate_min"), r.get("rate_max"), "%"))
+    if r.get("psk_min") is not None or r.get("psk_max") is not None:
+        bits.append("ПСК " + _range(r.get("psk_min"), r.get("psk_max"), "%"))
+    if r.get("term_months_min") is not None or r.get("term_months_max") is not None:
+        bits.append("срок " + _range(r.get("term_months_min"), r.get("term_months_max"), " мес."))
+    if r.get("amount_min"):
+        bits.append(f"сумма от {_n(r['amount_min'])} ₽")
+    for key, name in (("fee_open", "выпуск"), ("fee_service", "обслуживание")):
+        if r.get(key) not in (None, ""):
+            bits.append(f"{name}: {r[key]}")
+    if r.get("grace_days"):
+        bits.append(f"льготный период {_n(r['grace_days'])} дн.")
+    if r.get("cashback_pct"):
+        bits.append(f"кэшбэк до {_f(r['cashback_pct'])}%")
+    for key, name in (("capitalization", "капитализация"), ("replenishable", "пополнение"),
+                      ("early_withdraw", "досрочное снятие")):
+        if r.get(key) is not None:
+            bits.append(f"{name}: {'да' if r[key] else 'нет'}")
+    if seg and seg != "Массовый":
+        bits.append(f"сегмент: {seg.lower()}")
+    for key in ("rate_requires", "conditions"):
+        if r.get(key):
+            bits.append(f"условие: {str(r[key]).strip()[:220]}")
+    if r.get("valid_from"):
+        bits.append(f"данные на {_dm(r['valid_from'])}")
+    txt = f"{r.get('bank_name')}, «{(r.get('title') or '').strip()}»: " + "; ".join(bits) + "."
+    if r.get("implausible_reason"):
+        txt += f" Сомнение витрины: {r['implausible_reason']}."
+    return txt
+
+
+def collect_market(od: OwnData, plan, scope: dict) -> None:
+    cat = scope.get("category")
+    if not (cat and scope.get("market")):
+        return
+    labels = dict(getattr(plan, "subject_labels", None) or {})
+    subjects = [s for s in (getattr(plan, "subjects", None) or []) if s][:_MAX_BANKS]
+    from .dossier import anchor_of
+    anchor = anchor_of(plan) or (subjects[0] if subjects else "")
+    by_name = {_bank_name(s, labels): s for s in subjects}
+    others = [n for n, s in by_name.items() if s != anchor]
+    mp = _j("market_position", category=cat)
+    as_of = _dm(mp.get("as_of"))
+    mo = _j("market_offers", category=cat, banks=others or None)
+    metric, unit = mo.get("metric") or "метрика", mo.get("metric_unit") or ""
+    label = mo.get("label") or cat
+    caveat = mo.get("how_to_compare")
+
+    def slug_for(name: str) -> str:
+        if name in by_name:
+            return by_name[name]
+        return anchor if name == T.SBER or T._same_bank(T.SBER, name) else ""
+
+    groups = (mo.get("by_bank") or {}).items() if mo.get("by_bank") else \
+        [("", {"best": mo.get("top") or [], "offers_total": mo.get("offers_total")})]
+    for name, d in groups:
+        offers = (d.get("best") or [])[:_OFFERS_PER_BANK if name else 10]
+        if not offers:
+            continue
+        url = T.link_market(cat, name or None)
+        head = (f"Витрина «Рынок», категория «{label}», {name or 'лидеры рынка'}: "
+                f"предложений — {_n(d.get('offers_total'))}; лучшие по метрике «{metric}» "
+                f"({'меньше — лучше' if mo.get('lower_is_better') else 'больше — лучше'}).")
+        lines = [head] + [_offer_line(r, metric, unit) for r in offers]
+        if caveat:
+            lines.append(f"Как сравнивать: {caveat}")
+        od.page(url, f"AuditLens · Рынок: {label} — {name or 'лидеры'}", lines, MARKET)
+        for r, txt in zip(offers, lines[1:]):
+            # банк вне плана — своим именем: без субъекта предложение попало бы
+            # в «Карту условий» Сбера как общий факт о предмете
+            od.fact(subject=slug_for(r.get("bank_name") or name) or (r.get("bank_name") or name),
+                    attribute=f"{metric} (витрина «Рынок»)",
+                    value=_f(r.get("metric_value"), 2), unit=unit.strip(), verbatim=txt,
+                    url=url, stance="declared", date=str(r.get("valid_from") or "")[:10])
+            od.market += 1
+    cell = next((c for c in mp.get("cells") or [] if c.get("category") == cat), None)
+    if not cell or not anchor:
+        return
+    url = T.link_market(cat)
+    lines = []
+    if cell.get("degenerate"):
+        lines.append(f"Место Сбербанка в категории «{label}» на {as_of} не определено: "
+                     f"метрика «{cell.get('metric_label')}» не различает банки.")
+    elif cell.get("rank"):
+        lines.append(
+            f"Место Сбербанка в категории «{label}» по метрике «{cell.get('metric_label')}» "
+            f"на {as_of}: {cell['rank']}-е из {cell.get('n_banks')} банков; лучшее "
+            f"предложение «{cell.get('title')}» — {_f(cell.get('value'), 2)}"
+            f"{cell.get('metric_unit') or ''}; разрыв с медианой рынка — "
+            f"{_f(cell.get('gap_median'), 2)}{cell.get('gap_unit') or ''}, с лидером — "
+            f"{_f(cell.get('gap_leader'), 2)}{cell.get('gap_unit') or ''}.")
+    seg_names = dict(T._cm.SEGMENTS)
+    for c in cell.get("comparable") or []:
+        lines.append(
+            f"Сегмент «{seg_names.get(c.get('segment'), c.get('segment'))}»: "
+            f"{c.get('rank')}-е из {c.get('n_banks')}; у Сбербанка «{c.get('title')}» — "
+            f"{_f(c.get('value'), 2)}{cell.get('metric_unit') or ''}, медиана рынка — "
+            f"{_f(c.get('median'), 2)}, лидер — {_f(c.get('leader'), 2)}.")
+    low = label.lower()
+    lines += [f"Оговорка методики: {x}." for x in mp.get("method_caveats") or []
+              if low[:5] in str(x).lower()]
+    if not lines:
+        return
+    od.page(url, f"AuditLens · Рынок: {label} — место Сбербанка", lines, MARKET)
+    for txt in lines:
+        if txt.startswith(("Место", "Сегмент")):
+            od.fact(subject=anchor, attribute="Место на рынке (витрина «Рынок»)",
+                    value=txt.split(": ", 1)[-1][:120], verbatim=txt, url=url,
+                    stance="declared", date=str(mp.get("as_of") or "")[:10])
+            od.market += 1
+
+
 # ── вход ─────────────────────────────────────────────────────────────────────
 
 async def collect(client, model: str, question: str, plan) -> OwnData:
@@ -387,22 +613,21 @@ async def collect(client, model: str, question: str, plan) -> OwnData:
     state = runstate.current()
     scope = await scope_for(client, model, question, plan)
     od.scope = scope
-    nature = (getattr(plan, "question_nature", "") or "").lower()
 
     def work():
         runstate.bind(state)
-        if scope["relevant"]:
+        for need, fn, args in ((scope["complaints"], collect_complaints, (od, plan, scope, question)),
+                               (scope["loopholes"], collect_loopholes, (od, plan, question)),
+                               (scope["market"], collect_market, (od, plan, scope))):
+            if not need:
+                continue
             try:
-                collect_complaints(od, plan, scope, question)
+                fn(*args)
             except Exception:
-                log.exception("собственные данные: жалобы")
-        if nature != "regulatory":
-            try:
-                collect_loopholes(od, plan, question)
-            except Exception:
-                log.exception("собственные данные: лазейки")
+                log.exception("собственные данные: %s", fn.__name__)
     await asyncio.to_thread(work)
     state.own_meta.update(od.meta)
-    log.info("собственные данные: срез %s; страниц %d, фактов %d (жалоб %d, лазеек %d)",
-             scope, len(od.pages), len(od.facts), od.complaints, od.loopholes)
+    log.info("собственные данные: срез %s; страниц %d, фактов %d (жалоб %d, лазеек %d, "
+             "рынок %d)", scope, len(od.pages), len(od.facts), od.complaints, od.loopholes,
+             od.market)
     return od

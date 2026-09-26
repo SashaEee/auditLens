@@ -45,6 +45,11 @@ THEMES_HELP = "; ".join(f"{k} — {_cb.ISSUES[k][0]}" for k in THEME_KEYS)
 CATEGORIES_HELP = "; ".join(f"{c['id']} — {c['label']}" for c in _cm.CATEGORIES)
 
 
+def theme_label(key: str) -> str:
+    """Подпись темы для человека: служебный ключ в интерфейс не выходит."""
+    return _cb.ISSUES[key][0] if key in _cb.ISSUES else key
+
+
 # ── вывод ────────────────────────────────────────────────────────────────────
 
 def _clean(v):

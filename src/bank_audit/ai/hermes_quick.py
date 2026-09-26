@@ -150,6 +150,38 @@ def _plain_keys(text: str) -> str:
     return "".join(parts)
 
 
+plain_keys = _plain_keys
+
+
+class PlainKeysStream:
+    """_plain_keys для текста, идущего кусками (отчёт): ключ может разрезаться
+    между кусками («charge|back»), ссылка — на адресе («](#reviews?theme=ch|…»).
+    Придерживаем хвост из латиницы и незакрытый адрес ссылки до следующего
+    куска; остальное чистим и отдаём сразу."""
+
+    _TAIL = re.compile(r"[A-Za-z_]+$")
+
+    def __init__(self):
+        self._buf = ""
+
+    def feed(self, chunk: str) -> str:
+        buf = self._buf + (chunk or "")
+        cut = len(buf)
+        link = buf.rfind("](")
+        if link >= 0 and ")" not in buf[link + 2:] and len(buf) - link < 400:
+            cut = link
+        else:
+            m = self._TAIL.search(buf)
+            if m:
+                cut = m.start()
+        self._buf = buf[cut:]
+        return _plain_keys(buf[:cut]) if cut else ""
+
+    def finish(self) -> str:
+        out, self._buf = self._buf, ""
+        return _plain_keys(out) if out else ""
+
+
 # Голые адреса: страница AuditLens (#reviews?theme=…) и http-ссылка вне markdown.
 # Рендер чата делает кликабельными только [текст](адрес), а чистка ключей тем
 # испортила бы голый адрес (theme=chargeback → theme=Чарджбэк — пустой фильтр).

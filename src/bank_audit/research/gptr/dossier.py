@@ -221,6 +221,8 @@ def render_facts(facts, labels: dict[str, str]) -> str:
             side += ", аналитика жалоб AuditLens"
         elif own.get(f.url, {}).get("kind") == "review":
             side += ", жалоба клиента"
+        elif own.get(f.url, {}).get("kind") == "market":
+            side += ", витрина «Рынок» AuditLens"
         subj = labels.get(f.subject, f.subject) or "общее"
         unit = f" {f.unit}" if f.unit else ""
         when = f" | дата: {f.date}" if f.date else ""
@@ -327,7 +329,16 @@ _SECTION_RULES = {
         "напиши, почему, и что можно сказать без порядка. Если аудитор просил "
         "«топ-N и позицию» — дай ранжированный список и отдельной фразой "
         "место точки отсчёта в нём: «N-й из M по …». Если точки отсчёта нет — "
-        "просто рейтинг с критерием."
+        "просто рейтинг с критерием.\n"
+        "Факты «витрина «Рынок» AuditLens» — основа сравнения: все банки по "
+        "одной методике и на одну дату, с местом точки отсчёта среди всех "
+        "банков. Сводную таблицу и место строй по ним; значения из веба — "
+        "дополнение: если они расходятся с витриной, это другой продукт, "
+        "другая дата или акция — назови расхождение, не подменяй. Ставку "
+        "приписывай только тому банку, у которого она в факте. Промо-условия "
+        "(короткий срок, только новые деньги, требования к пакету) оговаривай "
+        "рядом с числом: лучшая ставка на 3 месяца и базовая на год — "
+        "несопоставимы."
     ),
     "voice": (
         "РАЗДЕЛ «ГОЛОС КЛИЕНТА». Порядок:\n"
@@ -405,7 +416,9 @@ _SECTION_RULES = {
         "и ожидаемыми документами."
     ),
     "summary": (
-        "РАЗДЕЛ «РЕЗЮМЕ». Ты получил готовое тело отчёта и план проверки. "
+        "РАЗДЕЛ «РЕЗЮМЕ». Ты получил готовое тело отчёта; план проверки "
+        "пишется рядом отдельным разделом — не пересказывай его, последним "
+        "выводом назови одно главное, что проверить первым. "
         "Напиши 5–7 главных выводов для руководителя проверки. Каждый вывод — "
         "связный абзац в две-четыре фразы: с самого важного факта (число, "
         "расхождение, ограничение), затем что это значит для проверки, затем "
@@ -569,7 +582,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         items.append((key, facts, section_prompt(key, plan, question, labels,
                                                  facts_text=render_facts(facts, labels))))
     queues: dict[str, asyncio.Queue] = {k: asyncio.Queue() for k, _, _ in items}
-    gate_w = asyncio.Semaphore(int(os.getenv("GPTR_SECTION_CONCURRENCY", "4")))
+    gate_w = asyncio.Semaphore(int(os.getenv("GPTR_SECTION_CONCURRENCY", "6")))
 
     async def _produce(key: str, prompt: str) -> None:
         runstate.bind(state)
@@ -620,23 +633,31 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         index = facts_index(list(registry.facts), labels)
         lead: dict[str, str] = {}
         lead_slot: dict[str, int | None] = {}
-        for key in ("checks", "summary"):
+
+        async def _lead(key: str) -> str:
+            runstate.bind(state)
             prompt = section_prompt(key, plan, question, labels, facts_text=index,
-                                    prior_text=prior + ("\n\n## " + ttl["checks"]
-                                                        + "\n\n" + lead["checks"]
-                                                        if "checks" in lead else ""),
-                                    gaps_text=gaps_text)
-            buf = []
-            async for piece in al_viz.without_markers(
-                    _without_heading(_stream_section(client, model, prompt), ttl[key])):
-                buf.append(piece)
-                for ev in _ready():
-                    yield ev
-            lead[key] = "".join(buf).strip()
-            log.info("досье: раздел %s — %d символов", key, len(lead[key]))
-            # Дизайнер плана стартует сразу, не дожидаясь резюме: факты —
-            # только те, на которые раздел сам сослался.
-            lead_slot[key] = _spawn(key, _cited(lead[key]), lead[key])
+                                    prior_text=prior, gaps_text=gaps_text)
+            return "".join([p async for p in al_viz.without_markers(
+                _without_heading(_stream_section(client, model, prompt), ttl[key]))]).strip()
+
+        # План проверки и резюме — одновременно, оба по готовому телу. По
+        # очереди они занимали ~120 с из 330 (замер 26.09), а резюме из плана
+        # брало только «что проверить первым» — это есть и в теле.
+        lead_tasks = {asyncio.create_task(_lead(k)): k for k in ("checks", "summary")}
+        writers.extend(lead_tasks)
+        yield ("status", "Пишу выводы и план проверки")
+        pending = set(lead_tasks)
+        while pending:
+            done, pending = await asyncio.wait(pending, timeout=5.0,
+                                               return_when=asyncio.FIRST_COMPLETED)
+            for t in done:
+                key = lead_tasks[t]
+                lead[key] = t.result()
+                log.info("досье: раздел %s — %d символов", key, len(lead[key]))
+                # Дизайнер стартует сразу, как готов его раздел: факты — только
+                # те, на которые раздел сам сослался.
+                lead_slot[key] = _spawn(key, _cited(lead[key]), lead[key])
             for ev in _ready():
                 yield ev
 

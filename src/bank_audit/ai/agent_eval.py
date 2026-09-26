@@ -418,7 +418,8 @@ def check_answer(answer: str, spec: dict, seconds: float) -> list[dict]:
         hit = sum(1 for w in words if mentions(answer, w))
         res.append({"check": f"по теме ({hit}/{len(words)})", "ok": hit >= need, "hard": False})
     if spec.get("need_link"):
-        ok = bool(re.search(r"\]\((https?://|#)", answer))
+        # быстрый ответ ссылается markdown-ссылками, отчёт — сносками [n] на список источников
+        ok = bool(re.search(r"\]\((https?://|#)", answer) or re.search(r"\[\d{1,3}\]", answer))
         res.append({"check": "ссылки на источники", "ok": ok, "hard": False})
     for title in spec.get("sections") or []:
         ok = bool(re.search(r"^#{1,3}\s*" + re.escape(title), answer, re.M | re.I))

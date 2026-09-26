@@ -47,11 +47,38 @@ LOOPHOLES = {"stats": {"collected_since": "2026-07-01", "all_banks_total": 289,
                           "found": "2026-07-27", "bank_tag": "sberbank"}]}
 
 
+MARKET_OFFERS = {"category": "deposit", "label": "Вклады", "metric": "Ставка", "metric_unit": "%",
+                 "lower_is_better": False, "how_to_compare": None,
+                 "by_bank": {
+                     "Сбербанк": {"offers_total": 9, "best": [
+                         {"bank_name": "Сбербанк", "title": "Выгодный старт +", "segment": "mass",
+                          "rate_pct": 19.0, "term_months_min": 3, "term_months_max": 3,
+                          "valid_from": "2026-09-05 16:00", "metric_value": 19.0}]},
+                     "ВТБ": {"offers_total": 2, "best": [
+                         {"bank_name": "ВТБ", "title": "ВТБ Вклад", "segment": "mass",
+                          "rate_pct": 13.7, "term_months_min": 18, "term_months_max": 18,
+                          "valid_from": "2026-09-22 05:00", "metric_value": 13.7}]}}}
+MARKET_POSITION = {"as_of": "2026-09-25 05:56", "cells": [
+    {"category": "deposit", "label": "Вклады", "rank": 1, "n_banks": 134, "metric_label": "Ставка",
+     "metric_unit": "%", "title": "Выгодный старт +", "value": 19.0, "gap_median": 5.5,
+     "gap_leader": 0.0, "gap_unit": " п.п.", "degenerate": False,
+     "comparable": [{"segment": "pension", "n_banks": 33, "rank": 14, "value": 12.65,
+                     "title": "Пенсионный Максимум", "median": 12.5, "leader": 15.5}]}],
+    "method_caveats": ["у 23 предложений в «вклады» метрика не заполнена — они вне сравнения",
+                       "в «ипотека» льготные программы исключены"]}
+TREND = {"series": [{"ym": "2026-06", "n": 10, "partial": False, "spike": False},
+                    {"ym": "2026-07", "n": 11, "partial": False, "spike": False},
+                    {"ym": "2026-08", "n": 26, "partial": False, "spike": True,
+                     "pct_vs_median": 136},
+                    {"ym": "2026-09", "n": 8, "partial": True}], "baseline": 11.0}
+
+
 @pytest.fixture
 def fake_tools(monkeypatch):
     data = {"complaints_overview": OVERVIEW, "complaint_signals": SIGNALS,
             "complaint_theme": THEME, "loopholes": LOOPHOLES,
-            "complaint_search": {"complaints": []}}
+            "complaint_search": {"complaints": []},
+            "market_offers": MARKET_OFFERS, "market_position": MARKET_POSITION}
     calls = []
 
     def spec(name):
@@ -60,6 +87,7 @@ def fake_tools(monkeypatch):
             return json.dumps(data[name], ensure_ascii=False)
         return T.ToolSpec(name, name, fn, "")
     monkeypatch.setattr(T, "BY_NAME", {n: spec(n) for n in data})
+    monkeypatch.setattr(T, "_rd", lambda: SimpleNamespace(trend=lambda *a, **k: TREND))
     runstate.new_run()
     return calls
 
@@ -169,7 +197,7 @@ def test_sections_written_in_parallel_but_streamed_in_order(monkeypatch):
     events, took = asyncio.run(run())
     order = [p for k, p in events if k == "section"]
     assert order == body_keys
-    # тело — одновременно (~0,3 с), затем два раздела суждения по очереди (~0,6 с)
+    # тело — одновременно (~0,3 с), затем два раздела суждения тоже вместе (~0,3 с)
     assert took < 0.3 * len(body_keys)
     text = "".join(p for k, p in events if k == "chunk")
     for k in body_keys:
@@ -186,3 +214,76 @@ def test_pdf_sources_show_auditlens_slice_as_text():
          "trust_score": 0.98}])
     assert "AuditLens, срез вкладки: #reviews?theme=chargeback&amp;days=7" in html
     assert '<a href="https://cbr.ru/x">' in html and "Данные AuditLens" in html
+
+
+def test_scope_drops_product_not_named_in_question():
+    plan = SimpleNamespace(question_nature="quality")
+    q = "Почему на этой неделе выросли жалобы на чарджбэк в Сбере?"
+    sc = own_data.normalize_scope({"product": "Дебетовая карта", "themes": ["chargeback"],
+                                   "days": 7, "complaints": True}, q, plan)
+    assert sc["product"] is None and sc["themes"] == ["chargeback"] and sc["days"] == 7
+    sc = own_data.normalize_scope({"product": "Вклад", "days": 90},
+                                  "Жалобы клиентов на вклады за 90 дней", plan)
+    assert sc["product"] == "Вклад"
+    assert own_data.product_named("Кредитная карта", "лазейки по кредитным картам")
+    assert not own_data.product_named("Дебетовая карта", "лазейки по кредитным картам")
+    # рынок — только с категорией из перечня; регулирование — без лазеек
+    assert not own_data.normalize_scope({"market": True}, "q", plan)["market"]
+    assert own_data.normalize_scope({"market": True, "category": "deposit"}, "q", plan)["market"]
+    reg = own_data.normalize_scope({"loopholes": True}, "q",
+                                   SimpleNamespace(question_nature="regulatory"))
+    assert not reg["loopholes"]
+
+
+def test_summary_page_has_monthly_trend_and_banks(fake_tools, monkeypatch):
+    ov = dict(OVERVIEW, banks_by_complaints=[
+        {"bank": "Альфа-Банк", "n": 76, "pct": 14.4}, {"bank": "Сбербанк", "n": 35, "pct": 6.6}])
+    tools = dict(T.BY_NAME)
+    tools["complaints_overview"] = T.ToolSpec("complaints_overview", "", lambda **kw: json.dumps(
+        ov, ensure_ascii=False), "")
+    monkeypatch.setattr(T, "BY_NAME", tools)
+    od = own_data.OwnData()
+    own_data.collect_complaints(od, PLAN, {"product": "Вклад", "themes": [], "days": 90},
+                                "жалобы на вклады: динамика")
+    text = "\n".join(od.pages.values())
+    assert "Жалобы по месяцам (по дате отзыва): июн 2026 — 10; июл 2026 — 11; авг 2026 — 26" in text
+    assert "сен 2026 — 8 (месяц не завершён)" in text and "авг 2026 (+136% к медиане)" in text
+    assert "Альфа-Банк — 76 (14,4%); Сбербанк — 35 (6,6%)" in text
+    # темы не заданы — крупнейшие темы среза разобраны лентой, поиск для Сбера не нужен
+    assert ("complaint_theme", {"theme": "chargeback", "bank": "Сбербанк", "product": "Вклад",
+                                "days": 90}) in fake_tools
+    assert not any(n == "complaint_search" for n, _ in fake_tools)
+    for f in od.facts:
+        assert f["verbatim"] in od.pages[f["url"]]
+
+
+def test_market_pages_are_facts_with_right_banks(fake_tools):
+    plan = SimpleNamespace(subjects=["sberbank", "vtb"],
+                           subject_labels={"sberbank": "Сбербанк", "vtb": "ВТБ"},
+                           anchor="sberbank", product="вклады")
+    od = own_data.OwnData()
+    own_data.collect_market(od, plan, {"category": "deposit", "market": True})
+    assert ("market_offers", {"category": "deposit", "banks": ["ВТБ"]}) in fake_tools
+    by_subj = {f["subject"]: f for f in od.facts if "Ставка" in f["attribute"]}
+    assert by_subj["vtb"]["value"] == "13,7" and by_subj["sberbank"]["value"] == "19"
+    assert "срок 3 мес." in by_subj["sberbank"]["verbatim"]
+    assert all(f["stance"] == "declared" and f["verbatim"] in od.pages[f["url"]]
+               for f in od.facts)
+    place = od.pages["#market?cat=deposit"]
+    assert "1-е из 134 банков" in place and "Сегмент «Пенсионные»: 14-е из 33" in place
+    assert "вклады" in place and "ипотека" not in place
+    assert {m["kind"] for m in od.meta.values()} == {"market"}
+    # без флага рынка — ничего
+    od2 = own_data.OwnData()
+    own_data.collect_market(od2, plan, {"category": "deposit", "market": False})
+    assert not od2.pages
+
+
+def test_report_stream_hides_theme_keys_but_not_links():
+    from bank_audit.ai.hermes_quick import PlainKeysStream
+    ks = PlainKeysStream()
+    parts = ["Всплеск по теме charge", "back: 15 жалоб. См. [срез](#reviews?th",
+             "eme=chargeback) и wrong_", "debit."]
+    out = "".join(ks.feed(p) for p in parts) + ks.finish()
+    assert "chargeback:" not in out and "(#reviews?theme=chargeback)" in out
+    assert "wrong_debit" not in out and out.startswith("Всплеск по теме ")

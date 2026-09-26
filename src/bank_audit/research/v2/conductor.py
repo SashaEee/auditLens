@@ -235,6 +235,14 @@ def detect_client_segment(text: str) -> str:
     return "business" if any(m in t for m in _BUSINESS_MARKERS) else "retail"
 
 
+# Рассуждение кондуктора. Замер 26.09 на пяти вопросах набора: high — медиана
+# 57 с, medium — 27 с при тех же объектах, продукте, признаке жалоб и агентах
+# сбора. План — первый шаг отчёта, ждёт каждый прогон.
+_PLAN_EFFORT = ({"reasoning_effort": os.getenv("CONDUCTOR_REASONING_EFFORT", "medium")}
+                if os.getenv("CONDUCTOR_REASONING_EFFORT", "medium") not in ("", "default")
+                else None)
+
+
 async def plan_research(client: AsyncOpenAI, model: str,
                           question: str, history: list[dict] | None = None,
                           on_reasoning=None,
@@ -263,7 +271,7 @@ async def plan_research(client: AsyncOpenAI, model: str,
             raw, _r, _t = await stream_completion(
                 client, on_reasoning=on_reasoning,
                 model=model, messages=messages, temperature=0.0,
-                max_tokens=8000, extra_body=deep_reasoning_extra())
+                max_tokens=8000, extra_body=deep_reasoning_extra(_PLAN_EFFORT))
             raw = (raw or "").strip()
         else:
             from ...ai.llm_utils import drop_known_rejected, remember_rejected
@@ -271,7 +279,7 @@ async def plan_research(client: AsyncOpenAI, model: str,
                 "model": model, "messages": messages,
                 "temperature": 0.0,
                 "max_tokens": 8000,   # 3000 рвало план на 5 банках → fallback
-                "extra_body": deep_reasoning_extra(),
+                "extra_body": deep_reasoning_extra(_PLAN_EFFORT),
             }
             drop_known_rejected(model, kwargs)
             try:

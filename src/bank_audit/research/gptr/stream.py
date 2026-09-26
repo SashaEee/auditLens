@@ -18,6 +18,7 @@ import time
 from typing import AsyncIterator
 from urllib.parse import urlparse
 
+from ...ai.hermes_quick import PlainKeysStream, plain_keys
 from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, critic as al_critic, facts as al_facts
 from . import own_data as al_own, reviews as al_reviews, runstate
@@ -219,15 +220,20 @@ async def stream_deep_research_gptr(question: str,
     review_pages: dict[str, str] = {}
     if own.complaints or own.loopholes or own.pages:
         sc = own.scope or {}
+        got = [f"жалоб {own.complaints}" if sc.get("complaints", True) else "",
+               f"лазеек {own.loopholes}" if sc.get("loopholes", True) else "",
+               f"предложений рынка {own.market}" if own.market else ""]
+        themes = [al_own.T.theme_label(k) for k in sc.get("themes") or []]
         yield _evt({"type": "stage_status", "stage": "reviews",
-                    "label": f"Данные AuditLens: жалоб {own.complaints}, лазеек {own.loopholes}",
+                    "label": "Данные AuditLens: " + ", ".join(x for x in got if x),
                     "detail": ("срез: " + ", ".join(x for x in (
                         sc.get("product") or "все продукты",
                         f"{sc.get('days')} дн" if sc.get("days") else "",
-                        ("темы: " + ", ".join(sc.get("themes") or [])) if sc.get("themes") else "")
+                        ("темы: " + ", ".join(themes)) if themes else "")
                         if x)),
                     "estimate_s": 0})
-    if not own.complaints and getattr(plan, "subjects", None) and (own.scope or {}).get("relevant", True):
+    if (not own.complaints and getattr(plan, "subjects", None)
+            and (own.scope or {}).get("complaints", True)):
         # Запасной путь — старый корпус banki.ru: объект вне разметки или сбой слоя.
         review_records = await asyncio.to_thread(al_reviews.collect, plan, attributes)
         runstate.bind(state)
@@ -310,6 +316,9 @@ async def stream_deep_research_gptr(question: str,
     # нумерация по первому упоминанию, в порядке потока.
     renum = al_cit.StreamRenumberer(registry)
     guard = al_viz.MarkerGuard()      # маркер не должен родиться из обрывков и якоря
+    # Служебные ключи тем (chargeback, card_block…) — на подписи, как в быстром
+    # режиме; адреса ссылок не трогаем.
+    keys = PlainKeysStream()
     _ttl = al_dossier.titles(plan)
     yield _evt({"type": "outline",
                 "sections": al_dossier.outline(plan, registry)})
@@ -332,14 +341,14 @@ async def stream_deep_research_gptr(question: str,
                             "label": f"Пишу раздел: {_ttl[payload]}",
                             "detail": "каждый раздел получает свои факты целиком"})
             elif kind == "chunk":
-                ready = guard.feed(renum.feed(payload))
+                ready = keys.feed(guard.feed(renum.feed(payload)))
                 if ready:
                     body_parts.append(ready)
                     yield _evt({"type": "text", "chunk": ready})
             elif kind == "marker":
                 # Место блока визуализации. Сначала сбрасываем придержанный
                 # хвост перенумеровщика, иначе якорь вылез бы после маркера.
-                tail = guard.feed(renum.finish()) + guard.finish()
+                tail = keys.feed(guard.feed(renum.finish()) + guard.finish()) + keys.finish()
                 if tail:
                     body_parts.append(tail)
                     yield _evt({"type": "text", "chunk": tail})
@@ -368,13 +377,13 @@ async def stream_deep_research_gptr(question: str,
                 # тот же: якоря получат следующие номера, но каждый ведёт на
                 # свой источник. finish() сбрасывает придержанный хвост тела
                 # ДО подачи резюме, чтобы обрывок якоря не приклеился к нему.
-                tail = guard.feed(renum.finish()) + guard.finish()
+                tail = keys.feed(guard.feed(renum.finish()) + guard.finish()) + keys.finish()
                 if tail:
                     body_parts.append(tail)
                     yield _evt({"type": "text", "chunk": tail})
                 lead_guard = al_viz.MarkerGuard()
-                lead_text = al_viz.restore_lead_markers(
-                    lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish())
+                lead_text = plain_keys(al_viz.restore_lead_markers(
+                    lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish()))
                 yield _evt({"type": "lead", "chunk": lead_text})
     except Exception as e:
         log.exception("gptr: написание")
@@ -393,7 +402,7 @@ async def stream_deep_research_gptr(question: str,
             return
         body_parts.append(note)
         yield _evt({"type": "text", "chunk": note})
-    rest = guard.feed(renum.finish()) + guard.finish()
+    rest = keys.feed(guard.feed(renum.finish()) + guard.finish()) + keys.finish()
     if rest:
         body_parts.append(rest)
         yield _evt({"type": "text", "chunk": rest})
