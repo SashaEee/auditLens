@@ -660,24 +660,30 @@ def tool_loopholes(query: str, bank: str = SBER, days: int | None = None,
                                                  -(r.get("relevance") or 0)))
     older = [r for r in rows if not in_period(r)]
     rows = [r for r in rows if in_period(r)][:limit] or rows[:limit]
+    # Имена показателей говорят, чей это счётчик: модель путала «все банки за 30
+    # дней» со «Сбер» (217 «по Сберу» вместо 90).
     stats = _q("""SELECT min(collected_at) AS collected_since,
-                         count(*) FILTER (WHERE is_loophole) AS loopholes_total,
+                         count(*) FILTER (WHERE is_loophole) AS all_banks_total,
                          count(*) FILTER (WHERE is_loophole
                                           AND collected_at > now() - interval '30 days')
-                             AS loopholes_30d,
+                             AS all_banks_found_last_30d,
                          count(*) FILTER (WHERE is_loophole AND bank_slug = :s)
-                             AS about_bank_tagged,
+                             AS this_bank_tagged_total,
+                         count(*) FILTER (WHERE is_loophole AND bank_slug = :s
+                                          AND collected_at > now() - interval '30 days')
+                             AS this_bank_tagged_last_30d,
                          count(*) FILTER (WHERE is_loophole AND status = 'preliminary')
-                             AS preliminary
+                             AS all_banks_preliminary
                     FROM loophole_record""", {"s": slug or ""})[0]
     return out({
         "section": "«Уязвимости»: схемы обхода условий продуктов, найденные в интернете и "
                    "отзывах и признанные моделью лазейками",
         "query": query, "searched_for": q, "bank": bank, "days": days,
         "stats": stats,
-        "stats_meaning": "loopholes_total — за всё время сбора (с collected_since); "
-                         "loopholes_30d — найдено системой за 30 дней; about_bank_tagged — "
-                         "с проставленным банком (у многих банк виден только в тексте)",
+        "stats_meaning": "all_banks_* — все банки; this_bank_* — записи с меткой банка "
+                         "из поля bank (у многих банк виден только в тексте, их больше); "
+                         "*_total — за всё время сбора (с collected_since); *_last_30d — "
+                         "найдено системой за 30 дней",
         "status_meaning": "preliminary — оценка модели, человеком ещё не проверена",
         "older_than_period": len(older) if days else None,
         "records": [{"record_id": r["record_id"], "about_bank": about(r),
