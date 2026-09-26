@@ -115,7 +115,7 @@ where = ["src"]
 # Не-Python данные внутри пакета (чтобы пережили non-editable wheel-сборку образа):
 # фронт SPA (index.html/app.jsx и пр.) и SQL аналитических вью.
 [tool.setuptools.package-data]
-bank_audit = ["web/static/*", "web/static/**/*", "analytics/*.sql"]
+bank_audit = ["web/static/*", "web/static/**/*", "web/export_fonts/*", "analytics/*.sql"]
 
 [tool.ruff]
 line-length = 100

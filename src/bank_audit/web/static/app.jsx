@@ -4883,10 +4883,10 @@ function ReviewsPage({params}){
           <div className="rv-cap">{<span className="rv-legend"><span className="rv-lg-i"><i className="neg"/>обратился в ЦБ, суд и т. п.</span><span className="rv-lg-i"><i className="warn"/>грозит или уязвимый клиент</span>
             <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
         {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
-        <a className="rv-export rv-export-a" download aria-label="Выгрузить жалобы в CSV"
-           href={`/api/reviews/export.csv?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`}
-           data-tip="Все жалобы с текущими фильтрами банка, продукта, темы, признака и периода — с разметкой ИИ и полным текстом (поиск в выгрузку не входит)"
-           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,days,esc:escOnly,flag}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">CSV</span></a>
+        <a className="rv-export rv-export-a" download aria-label="Выгрузить жалобы в Excel"
+           href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`}
+           data-tip="Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака и периода — с разметкой ИИ и полным текстом, сводки (поиск в выгрузку не входит)"
+           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,days,esc:escOnly,flag}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">Excel</span></a>
       </div>
       {/* Порядок выдачи. Показываем только при запросе: лента без него и так
           идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
@@ -8347,9 +8347,10 @@ function KbCases({onClose,onOpenDoc}){
         onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape")setRen(null);}}/>
         <button className="btn btn-primary btn-sm" onClick={rename}>Сохранить</button></div>}
       <div className="rv-cs-acts">
-        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.xlsx`}>Excel</a>
-        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}>Word</a>
-        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.csv`}>CSV</a>
+        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.xlsx`}
+           data-tip="Excel в стиле AuditLens: дело в цифрах, графики, материалы с разметкой и комментариями">Excel</a>
+        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}
+           data-tip="Word в стиле AuditLens: обложка, разбор, графики и карточки материалов; шрифты встроены">Word</a>
         {cur.mine&&<button className="btn btn-sm btn-ghost" onClick={team}
           data-tip={cur.shared?"закрыть доступ коллегам":"коллеги увидят дело и смогут приобщать материалы и комментировать"}>
           {cur.shared?"Закрыть для команды":"Открыть команде"}</button>}

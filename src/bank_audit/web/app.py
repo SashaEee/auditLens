@@ -2187,6 +2187,36 @@ def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
 
 
+@app.get("/api/reviews/export.xlsx")
+def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] = None,
+                        theme: Optional[str] = None, city: Optional[str] = None,
+                        month: Optional[str] = None, days: Optional[int] = None,
+                        esc: int = 0, limit: int = 10000, flag: Optional[str] = None,
+                        source: Optional[str] = None):
+    """Выгрузка жалоб в Excel в стиле AuditLens: обзор с показателями и
+    графиками, полный срез с разметкой ИИ, сводки, описание выгрузки."""
+    from urllib.parse import quote as _q
+    from ..rag import review_codebook as _cb
+    from . import reviews_export
+    rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
+                             days=days or None, city=city or None, month=month or None,
+                             esc=bool(esc), limit=limit, flag=flag or None,
+                             source=source or None)
+    if rows is None:
+        raise HTTPException(404, "банк не найден")
+    theme_label = (_cb.ISSUES[theme][0] if theme and theme in _cb.ISSUES else theme) or None
+    flag_name = _rd().flag_label(flag)
+    body = reviews_export.to_xlsx(rows, {
+        "bank": bank, "product": product or None, "theme": theme_label, "city": city or None,
+        "month": month or None, "days": days or None, "esc": bool(esc), "flag": flag_name,
+        "source": source or None}, limit=limit)
+    name = (f"AuditLens_жалобы_{bank}_{theme_label or flag_name or product or 'все'}_"
+            f"{days or 'всё'}дн.xlsx")
+    return Response(content=body,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
+
+
 @app.get("/api/reviews/feed-classified")
 async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,
                                   theme: Optional[str] = None, q: Optional[str] = None,
@@ -3289,7 +3319,7 @@ def cases_export_xlsx(case_id: int, user: CurrentUser = Depends(get_current_user
     return Response(content=case_export.to_xlsx(case),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition":
-                             f"attachment; filename*=UTF-8''{_q('дело_' + case['title'][:60] + '.xlsx')}"})
+                             f"attachment; filename*=UTF-8''{_q('AuditLens_дело_' + case['title'][:60] + '.xlsx')}"})
 
 
 @app.get("/api/cases/{case_id}/export.docx")
@@ -3300,7 +3330,7 @@ def cases_export_docx(case_id: int, user: CurrentUser = Depends(get_current_user
     return Response(content=case_export.to_docx(case),
                     media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     headers={"Content-Disposition":
-                             f"attachment; filename*=UTF-8''{_q('дело_' + case['title'][:60] + '.docx')}"})
+                             f"attachment; filename*=UTF-8''{_q('AuditLens_дело_' + case['title'][:60] + '.docx')}"})
 
 
 @app.delete("/api/cases/{case_id}/items/{item_id}")

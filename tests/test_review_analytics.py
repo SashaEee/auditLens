@@ -129,19 +129,22 @@ def test_case_xlsx_does_not_execute_formulas():
     import openpyxl
     from bank_audit.web.case_export import to_xlsx
     ws = openpyxl.load_workbook(io.BytesIO(to_xlsx(_CASE)))["Материалы"]
-    head = [c.value for c in ws[1]]
-    cell = ws.cell(row=2, column=head.index("Суть") + 1)
+    head = [c.value for c in ws[4]]              # над таблицей — заголовок и штамп
+    cell = ws.cell(row=5, column=head.index("Суть") + 1)
     assert cell.data_type == "s" and cell.value.startswith("=HYPERLINK")
-    assert ws.cell(row=2, column=head.index("Куда") + 1).value == "ЦБ"
+    assert ws.cell(row=5, column=head.index("Куда") + 1).value == "ЦБ"
 
 
 def test_case_docx_has_analysis_and_items():
     import io
     import docx
     from bank_audit.web.case_export import to_docx
-    text_ = "\n".join(p.text for p in docx.Document(io.BytesIO(to_docx(_CASE))).paragraphs)
-    assert "Разбор материалов (ИИ)" in text_ and "[1] жалоба · 12.09.2026" in text_
-    assert "Признаки: обратился: ЦБ; уязвимый клиент: пенсионер" in text_
+    d = docx.Document(io.BytesIO(to_docx(_CASE)))
+    # материалы — карточками-таблицами, поэтому текст собираем и из ячеек
+    text_ = "\n".join([p.text for p in d.paragraphs] + [
+        p.text for t in d.tables for row in t.rows for c in row.cells for p in c.paragraphs])
+    assert "Разбор материалов" in text_ and "[1] ЖАЛОБА · 12.09.2026" in text_
+    assert "обратился: ЦБ  ·  уязвимый клиент: пенсионер" in text_
 
 
 def test_pct_int_rounds_half_up_like_frontend():
