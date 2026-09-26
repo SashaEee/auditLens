@@ -761,13 +761,20 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
     lead_slot: dict[str, int | None] = {}
 
     def _take_lead() -> None:
-        """Готовые резюме и план — сразу дизайнеру: факты — только те, на
-        которые раздел сам сослался."""
+        """Готовые резюме и план — сразу дизайнеру. Факты — те, на которые
+        раздел сослался; карточке резюме — ещё и факты тела: видя только
+        ссылки резюме, дизайнер писал «ВТБ — нет данных» там, где в теле
+        отчёта 140 жалоб (26.09)."""
         for t, key in lead_tasks.items():
             if t.done() and key not in lead:
                 lead[key] = t.result()
                 log.info("досье: раздел %s — %d символов", key, len(lead[key]))
-                lead_slot[key] = _spawn(key, _cited(lead[key]), lead[key])
+                facts = _cited(lead[key])
+                if key == "summary":
+                    seen = {f.id for f in facts}
+                    facts += [f for f in _cited("".join(body.values()), 200)
+                              if f.id not in seen][:max(0, 60 - len(facts))]
+                lead_slot[key] = _spawn(key, facts, lead[key])
 
     try:
         yield ("status", f"Пишу разделы одновременно: {len(items)}")
