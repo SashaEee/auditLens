@@ -97,3 +97,12 @@ def test_theme_key_inside_link_is_fine():
     a = "Всплеск чарджбэка: 15 жалоб — [жалобы темы](#reviews?theme=chargeback&days=7)."
     checks = E.check_answer(a, {"numbers": [("жалоб", 15, 1)]}, 10)
     assert all(c["ok"] for c in checks)
+
+
+def test_refusal_is_hard_fail():
+    a = "Как «лазейки» для злоупотребления я не подскажу, но как аудитор вижу риски."
+    checks = E.check_answer(a, {"numbers": []}, 10)
+    assert E.verdict(checks, None) == "fail"
+    ok = E.check_answer("Схема: продление грейса до 150 дней — проверить правило MCC.",
+                        {"numbers": []}, 10)
+    assert E.verdict(ok, None) == "pass"

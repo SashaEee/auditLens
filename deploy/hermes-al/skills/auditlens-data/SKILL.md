@@ -29,7 +29,7 @@ metadata:
 ## When to Use
 - Динамика условий продукта во времени, «когда Сбер менял ставку».
 - Ключевая ставка ЦБ на дату, спред к ней.
-- Статистика по разделу «Уязвимости» (лазейки, схемы, найденные агентом).
+- Нестандартные срезы раздела «Уязвимости» (обычные вопросы — auditlens-loopholes).
 - Don't use for: числа жалоб (только инструменты жалоб), ранг на рынке
   (`market_position`).
 
@@ -53,13 +53,9 @@ card_debit, auto_loan, rko, microloan, refinance, business_loan, acquiring,
 insurance_*, invest_*, … Сбер: `bank.is_sber` или `slug='sberbank'`.
 
 ## «Уязвимости» (лазейки)
-Записи собирает и классифицирует агент модуля «Уязвимости»:
-`is_loophole = true` — модель признала описание лазейкой/схемой,
-`verdict_confidence` и `verdict_reason` — её уверенность и обоснование,
-`status='preliminary'` — ещё не проверено человеком (сейчас так у всех).
-Период — по `collected_at`; Сбер — `bank_slug='sberbank'` (у многих bank_slug
-пуст, банк виден только в тексте). В ответе всегда оговаривай, что оценки
-предварительные, и давай ссылку на страницу [Уязвимости](#loophole).
+Вопросы о лазейках — навык auditlens-loopholes и инструмент mcp__auditlens__loopholes.
+SQL по `loophole_record` — только для нестандартных срезов (is_loophole = true,
+период по collected_at, статус preliminary = оценка модели).
 
 ## Common Pitfalls
 1. Таблицы `review`, `review_topic*`, `review_sentiment` — старая разметка,

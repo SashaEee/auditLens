@@ -73,6 +73,10 @@ def test_tool_labels():
     assert H.tool_label("mcp__auditlens__complaint_theme") == "Разбор темы жалоб"
     assert H.tool_label("skill_view") == "Навык"
     assert H.tool_label("browser_click") == "Браузер"
+    assert H.tool_label("skill_view", 'name="auditlens-complaints"') == "Навык: жалобы"
+    assert H.tool_label("skill_view", "hermes-agent-skill-authoring") == \
+        "Навык: hermes-agent-skill-authoring"
+    assert H.tool_label("mcp__auditlens__loopholes") == "Уязвимости"
 
 
 # ── поток ответа ─────────────────────────────────────────────────────────────
@@ -253,3 +257,9 @@ def test_mcp_tool_error_is_data(monkeypatch):
     (r,) = _rpc(M, ("tools/call", {"name": "day_brief", "arguments": {}}, None, None))
     text = r.json()["result"]["content"][0]["text"]
     assert json.loads(text)["error"].startswith("инструмент упал")
+
+
+def test_loophole_query_noise_stripped():
+    q = T._LH_NOISE.sub(" ", "какие лазейки и уязвимости есть в Сбере по кредитным картам")
+    assert "лазейк" not in q and "уязвим" not in q and "Сбер" not in q
+    assert "кредитным картам" in q

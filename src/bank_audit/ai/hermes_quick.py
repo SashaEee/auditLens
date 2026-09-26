@@ -91,13 +91,27 @@ _BUILTIN_LABELS = {
 }
 
 
-def tool_label(name: str) -> str:
+_SKILL_LABELS = {
+    "auditlens-complaints": "жалобы", "auditlens-market": "рынок",
+    "auditlens-research": "документы и новости", "auditlens-data": "база данных",
+    "auditlens-loopholes": "уязвимости",
+}
+
+
+def tool_label(name: str, preview: str | None = None) -> str:
+    """Подпись шага. Для навыка — какой именно («Навык: жалобы»): четыре
+    одинаковых «Навык» подряд ничего не говорят пользователю."""
     from .agent_tools import label_for
     if re.match(r"mcp_+auditlens_+", name):
         return label_for(name)
     if name.startswith("browser_"):
         return "Браузер"
-    return _BUILTIN_LABELS.get(name, name)
+    base = _BUILTIN_LABELS.get(name, name)
+    if name == "skill_view" and preview:
+        m = re.search(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)+", preview)
+        if m:
+            return f"{base}: {_SKILL_LABELS.get(m.group(0), m.group(0))}"
+    return base
 
 
 # ── чистка текста ────────────────────────────────────────────────────────────
@@ -295,7 +309,10 @@ async def _one_run(question: str, history: list[dict], headers: dict, model: str
                         name = _pick(ev, "tool", "data.tool", "data.tool_name", "tool_name",
                                      "data.name", "name")
                         if name:
-                            yield {"tool": str(name)}
+                            yield {"tool": str(name),
+                                   "preview": str(_pick(ev, "preview", "data.preview") or "")}
+                    elif et == "tool.completed" and _pick(ev, "error", "data.error") is True:
+                        yield {"tool_error": str(_pick(ev, "tool", "data.tool") or "")}
                     elif et == "run.completed":
                         finished = True
                         yield {"final": str(_pick(ev, "output", "data.output",
@@ -337,12 +354,15 @@ async def stream_quick_hermes(question: str, history: list[dict],
         try:
             async for ev in _one_run(question, history, headers, model, attempt == 1,
                                      deadline, trace):
-                if "tool" in ev:
+                if "tool_error" in ev:
+                    trace.setdefault("tool_errors", []).append(ev["tool_error"])
+                elif "tool" in ev:
                     name = ev["tool"]
                     trace["tools"].append(name)
                     if not shown:
                         pending = ""          # текст до инструмента — рассуждение вслух
-                    yield json.dumps({"type": "tool_call", "name": tool_label(name)},
+                    yield json.dumps({"type": "tool_call",
+                                      "name": tool_label(name, ev.get("preview"))},
                                      ensure_ascii=False)
                 elif "delta" in ev:
                     pending += ev["delta"]

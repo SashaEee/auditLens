@@ -6126,14 +6126,23 @@ const TOOL_LABELS = {
   get_bank_features:    "Условия банка",
 };
 
+// Одинаковые шаги агента подряд — одним «Поиск жалоб ×4»: список из повторов
+// («Навык, Навык, Навык, Навык») ничего не говорит пользователю.
+function collapseTools(tools){
+  const steps=[];
+  for(const t of tools||[]){const l=TOOL_LABELS[t]||t, p=steps[steps.length-1];
+    if(p&&p.lbl===l)p.n++; else steps.push({lbl:l,n:1});}
+  return steps;
+}
+
 function ToolsTimeline({tools, active}){
   if(!tools||!tools.length) return null;
+  const steps=collapseTools(tools);
   return <div className="tools-tl">
-    {tools.map((t,i)=>{
-      const lbl = TOOL_LABELS[t] || t;
-      const isLast = i===tools.length-1;
+    {steps.map(({lbl,n},i)=>{
+      const isLast = i===steps.length-1;
       return <span key={i} className={`tools-tl-step${active&&isLast?" tools-tl-active":""}`}>
-        <span className="tools-tl-label">{lbl}</span>
+        <span className="tools-tl-label">{lbl}{n>1?` ×${n}`:""}</span>
         {!isLast && <span className="tools-tl-arrow">·</span>}
       </span>;
     })}
@@ -7197,10 +7206,10 @@ function AIPage(){
             <div className="who">AuditLens AI{m.engine==="hermes"?" · Hermes ✦":""}</div>
             {m.tools&&m.tools.length>0 &&
               <div className="quick-tools">
-                {m.tools.map((t,ti)=>(
+                {collapseTools(m.tools).map(({lbl,n},ti,arr)=>(
                   <span key={ti} className="quick-tool">
-                    <span className="quick-tool-dot" style={ti===m.tools.length-1&&thinking?{background:"var(--accent)",animation:"pulse 1.4s ease-in-out infinite"}:null}/>
-                    {TOOL_LABELS[t]||t}
+                    <span className="quick-tool-dot" style={ti===arr.length-1&&thinking?{background:"var(--accent)",animation:"pulse 1.4s ease-in-out infinite"}:null}/>
+                    {lbl}{n>1?<span className="quick-tool-n"> ×{n}</span>:null}
                   </span>))}
               </div>}
             {thinking

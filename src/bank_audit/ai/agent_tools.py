@@ -615,6 +615,86 @@ def tool_read_page(url: str, query: str | None = None) -> str:
                           for x in (idx.get("file_links") or [])[:8]]})
 
 
+# Слова, которые есть почти в каждой записи раздела (или задаются фильтром банка),
+# только размывают поиск: «лазейки по кредиткам Сбера» ≈ «кредитные карты».
+_LH_NOISE = re.compile(r"\b(лазейк\w*|уязвим\w*|схем\w*|сбер\w*|банк\w*)\b", re.I)
+
+
+def tool_loopholes(query: str, bank: str = SBER, days: int | None = None,
+                   limit: int = 12) -> str:
+    """Раздел «Уязвимости»: записи, признанные лазейками, штатным поиском модуля."""
+    from ..loophole import repository as lr
+    limit = max(1, min(int(limit or 12), 30))
+    q = re.sub(r"\s+", " ", _LH_NOISE.sub(" ", query or "")).strip() or (query or "")
+    slug = _bank_slug(bank) if bank else None
+    word = (bank or "").lower().replace("банк", "").strip()[:5]
+    found: dict[int, dict] = {}
+    # Период поиску модуля не передаём: он режет по дате публикации исходной
+    # статьи, а схема 2020 года может работать и сейчас. Период — ниже, по
+    # дате, когда запись нашла система. Банк у многих записей не проставлен
+    # (виден только в тексте) — ищем и с фильтром банка, и по тексту.
+    if slug:
+        for r in lr.search_relevant(q, bank_slugs=[slug], only_loophole=True, limit=limit * 2):
+            found.setdefault(r["record_id"], r)
+    for r in lr.search_relevant(f"{q} {bank or ''}".strip(), only_loophole=True,
+                                limit=limit * 3):
+        found.setdefault(r["record_id"], r)
+    ids = list(found)
+    extra = {x["record_id"]: x for x in _q(
+        """SELECT record_id, left(raw_text, 900) AS text, status, published_at, collected_at
+             FROM loophole_record WHERE record_id = ANY(:i)""", {"i": ids})} if ids else {}
+
+    def about(r) -> bool:
+        if slug and r.get("bank_slug") == slug:
+            return True
+        hay = f"{r.get('title') or ''} {r.get('snippet') or ''} {r.get('verdict_reason') or ''}"
+        return bool(word) and word in hay.lower()
+
+    since = _dt.datetime.now(MSK) - _dt.timedelta(days=int(days)) if days else None
+
+    def in_period(r) -> bool:
+        c = (extra.get(r["record_id"]) or {}).get("collected_at")
+        return since is None or (c is not None and c >= since)
+
+    rows = sorted(found.values(), key=lambda r: (not in_period(r), not about(r),
+                                                 -(r.get("relevance") or 0)))
+    older = [r for r in rows if not in_period(r)]
+    rows = [r for r in rows if in_period(r)][:limit] or rows[:limit]
+    stats = _q("""SELECT min(collected_at) AS collected_since,
+                         count(*) FILTER (WHERE is_loophole) AS loopholes_total,
+                         count(*) FILTER (WHERE is_loophole
+                                          AND collected_at > now() - interval '30 days')
+                             AS loopholes_30d,
+                         count(*) FILTER (WHERE is_loophole AND bank_slug = :s)
+                             AS about_bank_tagged,
+                         count(*) FILTER (WHERE is_loophole AND status = 'preliminary')
+                             AS preliminary
+                    FROM loophole_record""", {"s": slug or ""})[0]
+    return out({
+        "section": "«Уязвимости»: схемы обхода условий продуктов, найденные в интернете и "
+                   "отзывах и признанные моделью лазейками",
+        "query": query, "searched_for": q, "bank": bank, "days": days,
+        "stats": stats,
+        "stats_meaning": "loopholes_total — за всё время сбора (с collected_since); "
+                         "loopholes_30d — найдено системой за 30 дней; about_bank_tagged — "
+                         "с проставленным банком (у многих банк виден только в тексте)",
+        "status_meaning": "preliminary — оценка модели, человеком ещё не проверена",
+        "older_than_period": len(older) if days else None,
+        "records": [{"record_id": r["record_id"], "about_bank": about(r),
+                     "title": clip(r.get("title"), 200),
+                     "why_loophole": r.get("verdict_reason"),
+                     "confidence": r.get("verdict_confidence"),
+                     "found_by": r.get("via"),
+                     "text": clip((extra.get(r["record_id"]) or {}).get("text")
+                                  or r.get("snippet"), 900),
+                     "source": r.get("domain"), "url": r.get("url"),
+                     "published": (extra.get(r["record_id"]) or {}).get("published_at"),
+                     "found": (extra.get(r["record_id"]) or {}).get("collected_at"),
+                     "status": (extra.get(r["record_id"]) or {}).get("status"),
+                     "bank_tag": r.get("bank_slug")} for r in rows],
+        "link": "#loophole"})
+
+
 def tool_sql(query: str) -> str:
     """SELECT к основной базе в транзакции только для чтения."""
     sql = (query or "").strip().rstrip(";").strip()
@@ -692,6 +772,14 @@ TOOLS: list[ToolSpec] = [
              "сайтами, fresh_days — только свежее."),
     ToolSpec("read_page", "Чтение страницы", tool_read_page,
              "Текст страницы или PDF по ссылке (с отбором мест по query) и ссылки на файлы."),
+    ToolSpec("loopholes", "Уязвимости", tool_loopholes,
+             "Раздел «Уязвимости»: лазейки — схемы, которыми клиенты, партнёры или "
+             "мошенники обходят условия продуктов банка (продление грейса, обход лимитов и "
+             "комиссий, двойные бонусы, вывод кредитных средств). Поиск по словам и смыслу "
+             "(query: продукт или механика, например «кредитная карта», «грейс», «снятие "
+             "наличных»); days — только если в вопросе задан период (схема старой "
+             "публикации может работать и сейчас). Статистика раздела, записи с причиной, "
+             "текстом, источником, датами и статусом проверки."),
     ToolSpec("sql", "SQL к базе", tool_sql,
              "SELECT к основной базе AuditLens (транзакция только для чтения, до 200 строк). "
              "Схема и ловушки — в навыке auditlens-data."),
