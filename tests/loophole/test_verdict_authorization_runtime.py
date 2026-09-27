@@ -124,6 +124,7 @@ def test_authorized_catalog_verdict_can_be_changed(browser, protected_context):
         dialog.wait_for(state="detached")
         assert page.evaluate("window.__verdictRequests") == [{
             "record_ids": [1], "classification": "not_confirmed", "comment": "Проверено экспертом",
+            "source": "base",
         }]
     finally:
         page.close()

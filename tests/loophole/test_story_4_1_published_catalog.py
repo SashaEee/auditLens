@@ -48,4 +48,5 @@ def test_catalog_ui_uses_published_endpoint_and_debounces_text_search():
     ).read_text(encoding="utf-8")
 
     assert "${API}/catalog" in jsx
-    assert "setTimeout(() => loadRecords(), 350)" in jsx
+    # Антидребезг — только при наборе текста; фильтры и первое открытие — сразу.
+    assert "setTimeout(() => loadRecords(), typing ? 350 : 0)" in jsx

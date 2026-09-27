@@ -63,6 +63,11 @@ STUB = r"""
 window.__calls = [];
 window.__cfg = %(cfg)s;
 const RECS = %(records)s, SUMMARY = %(summary)s;
+if (window.__cfg.rich) {
+  Object.assign(RECS[1], {headline: "Подмена QR-кода поверх кода магазина",
+    summary_doubt: "похоже на новость без описания приёма.", copy_ids: [1]});
+  Object.assign(RECS[0], {copy_ids: [2]});
+}
 const J = (v, s = 200) => new Response(JSON.stringify(v), {status: s, headers: {"Content-Type": "application/json"}});
 const SSE = events => new Response(events.map(([n, d]) => "event: " + n + "\ndata: " + JSON.stringify(d)).join("\n\n") + "\n\n",
   {status: 200, headers: {"Content-Type": "text/event-stream"}});
@@ -103,7 +108,10 @@ window.fetch = async (input, init = {}) => {
       verdict_reason: r.record_id === 3 ? "Подтверждено экспертом" : r.verdict_reason,
       summary: null, provenance: null,
       decisions: r.verdict_model === "manual" ? [{decision_id: 9, decision: r.classification,
-        decided_by: "expert.ivanova", decided_at: "2026-09-25T10:00:00+03:00", comment: "Подтверждено"}] : []}));
+        decided_by: "expert.ivanova", decided_at: "2026-09-25T10:00:00+03:00", comment: "Подтверждено"}] : [],
+      expert_decisions: cfg.rich && r.verdict_model === "manual" ? [{decision_id: 1, decided_by: "expert.petrov",
+        decided_at: "2026-09-26T12:00:00+03:00", previous: "not_confirmed", decision: r.classification,
+        comment: "Перепроверил: механизм работает", source: "base"}] : []}));
   }
   m = url.match(/\/records\/(\d+)\/summary/);
   if (m) return J({summary: "Суть записи " + m[1] + ": механизм и кто теряет.", generated: true});
@@ -149,17 +157,19 @@ window.fetch = async (input, init = {}) => {
 
 def _html(**cfg) -> str:
     cfg = {"contexts": CONTEXTS, "authz": "ok", "many": False, "catalogFails": False,
-           "empty": False, "exportFails": False, "contentFailed": False, **cfg}
+           "empty": False, "exportFails": False, "contentFailed": False, "rich": False, **cfg}
+    compiled = cfg.pop("compiled", False)
     stub = STUB % {"cfg": json.dumps(cfg, ensure_ascii=False),
                    "records": json.dumps(RECORDS, ensure_ascii=False),
                    "summary": json.dumps(SUMMARY, ensure_ascii=False)}
-    vendor = "".join(f"<script>{(VENDOR / name).read_text(encoding='utf-8')}</script>"
-                     for name in ("react.min.js", "react-dom.min.js", "babel.min.js"))
+    names = ("react.min.js", "react-dom.min.js") + (() if compiled else ("babel.min.js",))
+    vendor = "".join(f"<script>{(VENDOR / name).read_text(encoding='utf-8')}</script>" for name in names)
+    app = (f"<script>{(STATIC / 'loophole.js').read_text(encoding='utf-8')}</script>" if compiled
+           else f'<script type="text/babel">{(STATIC / "loophole.jsx").read_text(encoding="utf-8")}</script>')
     return ('<!doctype html><html lang="ru"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<style>{(STATIC / 'loophole.css').read_text(encoding='utf-8')}</style></head>"
-            f'<body><div id="loophole-root"></div>{vendor}<script>{stub}</script>'
-            f'<script type="text/babel">{(STATIC / "loophole.jsx").read_text(encoding="utf-8")}</script>'
+            f'<body><div id="loophole-root"></div>{vendor}<script>{stub}</script>{app}'
             "</body></html>")
 
 
@@ -284,7 +294,7 @@ def test_reader_opens_record_and_keyboard_moves_through_list(browser):
     expect(reader.locator(".lp-rd-title")).to_have_text("Кэшбэк за переводы между своими картами")
     page.locator(".lp-c").nth(1).click()
     expect(reader.locator(".lp-rd-title")).to_have_text("Подмена QR-кода на кассе")
-    expect(page.locator(".lp-c").nth(1)).to_have_attribute("aria-selected", "true")
+    expect(page.locator(".lp-c-title").nth(1)).to_have_attribute("aria-current", "true")
     page.locator("body").click(position={"x": 5, "y": 5})
     page.keyboard.press("j")
     expect(reader.locator(".lp-rd-title")).to_have_text("Льготный период при частичном погашении")
@@ -559,3 +569,102 @@ def test_legacy_source_panel_is_kept_unchanged_and_isolated():
     new = set(re.findall(r"\.(lp-[a-z0-9-]+)", css[:css.index("Наследие модуля")]))
     old = set(re.findall(r"\.(lp-[a-z0-9-]+)", legacy))
     assert new & old <= {"lp-btn-primary"}
+
+
+
+# ── Исправления после аудита 27.09 ──────────────────────────────────────────
+
+
+def test_prebuilt_page_runs_without_babel(browser):
+    page = _open(browser, compiled=True)
+    expect(page.get_by_role("heading", name="Уязвимости", level=1)).to_be_visible()
+    assert page.evaluate("typeof window.Babel") == "undefined"
+    assert not page._lp_errors
+    page.close()
+
+
+def test_not_confirmed_shows_no_probability_and_cards_say_what_is_checked(browser):
+    page = _open(browser)
+    cards = page.locator(".lp-kpi")
+    expect(cards.nth(2)).to_contain_text("проверено экспертом:")
+    page.locator(".lp-hid").get_by_role("button", name="Показать все").click()
+    item = page.locator(".lp-c", has_text="Списание за неактивность")
+    expect(item).not_to_contain_text("вероятность")
+    item.click()
+    facts = page.locator(".lp-rd .lp-facts")
+    expect(facts).to_contain_text("находки нет")
+    expect(page.locator(".lp-rd")).not_to_contain_text("Уверенность модели")
+    page.close()
+
+
+def test_new_selection_opens_its_first_record_and_arrows_move_through_list(browser):
+    page = _open(browser)
+    page.locator(".lp-c").nth(2).click()
+    expect(page.locator(".lp-rd .lp-rd-title")).to_have_text("Льготный период при частичном погашении")
+    page.get_by_role("group", name="Тип записи").get_by_role("button", name=re.compile("^Схемы")).click()
+    # Карточка прошлой выборки не остаётся: открыта первая запись новой.
+    expect(page.locator(".lp-rd .lp-rd-title")).to_have_text("Подмена QR-кода на кассе")
+    page.get_by_role("group", name="Тип записи").get_by_role("button", name="Уязвимости и схемы").click()
+    page.locator(".lp-c-title").first.focus()
+    page.keyboard.press("ArrowDown")
+    expect(page.locator(".lp-c-title").nth(1)).to_be_focused()
+    expect(page.locator(".lp-rd .lp-rd-title")).to_have_text("Подмена QR-кода на кассе")
+    page.close()
+
+
+def test_headline_doubt_and_expert_history_in_the_card(browser):
+    page = _open(browser, rich=True)
+    page.locator(".lp-c").nth(1).click()
+    reader = page.locator(".lp-rd")
+    expect(reader.locator(".lp-rd-title")).to_have_text("Подмена QR-кода поверх кода магазина")
+    expect(reader.locator(".lp-rd-topic")).to_have_text("Тема: Подмена QR-кода на кассе")
+    expect(reader.locator(".lp-callout-doubt")).to_contain_text(
+        "Модель сомневается: похоже на новость без описания приёма.")
+    expect(reader).to_contain_text("Копии")
+    page.locator(".lp-c", has_text="Льготный период").click()
+    expect(reader.locator(".lp-tl")).to_contain_text(
+        "Решение ЦК КС (expert.petrov): не подтверждено → уязвимость")
+    expect(reader.locator(".lp-tl")).to_contain_text("«Перепроверил: механизм работает»")
+    page.close()
+
+
+def test_queue_decision_applies_to_exact_copies(browser):
+    page = _open(browser, rich=True, clock=True)
+    page.get_by_role("tab", name=re.compile("Очередь")).click()
+    items = page.locator(".lp-qi")
+    expect(items).to_have_count(2)
+    expect(items.first).to_contain_text("+1 копия")
+    copies = page.get_by_label(re.compile("Применить и к 1 копии в очереди"))
+    expect(copies).to_be_checked()
+    page.get_by_role("radio", name=re.compile("Не подтверждено")).click()
+    page.get_by_label("Комментарий участника ЦК").fill("Одна и та же новость")
+    page.get_by_role("button", name="Сохранить решение").click()
+    expect(items).to_have_count(0)
+    expect(page.locator(".lp-toast")).to_contain_text("для 2 записей")
+    page.clock.run_for(10_500)
+    page.wait_for_timeout(200)
+    body = _calls(page, r"/records/verdict$", "POST")[-1]["body"]
+    assert sorted(body["record_ids"]) == [1, 2] and body["source"] == "queue"
+    page.close()
+
+
+def test_new_research_reuses_the_empty_one(browser):
+    page = _open(browser)
+    page.get_by_role("tab", name="Исследовать").click()
+    expect(page.get_by_role("heading", name="Что проверить?")).to_be_visible()
+    page.get_by_role("button", name="Новое исследование", exact=True).click()
+    page.wait_for_timeout(300)
+    assert not _calls(page, r"/workspace$", "POST")
+    expect(page.get_by_label("Сообщение аналитику")).to_be_focused()
+    page.close()
+
+
+def test_phone_opens_record_at_the_card_not_at_page_top(browser):
+    page = _open(browser, width=390)
+    page.locator(".lp-c").nth(1).click()
+    page.wait_for_timeout(200)
+    assert page.evaluate("window.scrollY") > 300
+    expect(page.locator(".lp-rd .lp-rd-title")).to_be_focused()
+    top = page.locator(".lp-rd-head").bounding_box()["y"]
+    assert top < 200
+    page.close()

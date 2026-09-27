@@ -579,7 +579,8 @@ def record_content(
         "title", "url", "domain", "bank_slug", "snippet", "is_loophole", "classification",
         "verdict_confidence", "verdict_reason", "classifier_verdict_reason", "verdict_model",
         "classified_at", "status", "published_at", "collected_at", "summary",
-        "awaiting", "reviewed", "provenance", "decisions",
+        "awaiting", "reviewed", "provenance", "decisions", "expert_decisions",
+        "headline", "summary_doubt", "bank_inferred", "copy_ids",
     )
     return {
         "record_id": record_id,
@@ -682,6 +683,8 @@ class VerdictRequest(BaseModel):
         default=None, pattern="^(vulnerability|fraud_scheme|not_confirmed)$",
     )
     comment: str | None = None
+    # Откуда решение: очередь ЦК КС, смена вердикта в базе или копии записи.
+    source: str | None = Field(default=None, pattern="^(queue|base|copies)$")
 
     @model_validator(mode="after")
     def resolve_classification(self):
@@ -720,6 +723,10 @@ def mark_verdict(
         if record is None:
             skipped.append(rid)
             continue
+        previous = record.get("classification") or (
+            "vulnerability" if record.get("is_loophole") is True
+            else "not_confirmed" if record.get("is_loophole") is False else None
+        )
         repo.update_verdict(
             rid,
             is_loophole=body.is_loophole,
@@ -728,6 +735,10 @@ def mark_verdict(
             model="manual",
             classification=body.classification,
             session=session,
+        )
+        repo.add_record_decision(
+            rid, decided_by=user_id, previous=previous, decision=body.classification,
+            comment=body.comment, source=body.source, session=session,
         )
         if body.is_loophole:
             if repo.get_kb_example_by_record(rid, session=session) is None:

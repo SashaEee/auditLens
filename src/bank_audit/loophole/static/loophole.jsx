@@ -25,6 +25,12 @@ function bankName(slug) {
   const value = String(slug || "").trim();
   return value ? (BANK_NAMES[value.toLowerCase()] || value) : "—";
 }
+// Коды, которыми сборщик помечает «банк не определён»: в интерфейсе — пусто.
+const UNKNOWN_BANKS = new Set(["", "all", "generic", "other"]);
+function knownBank(slug) {
+  const value = String(slug || "").trim();
+  return UNKNOWN_BANKS.has(value.toLowerCase()) ? null : bankName(value);
+}
 // Сбер — объект аудита: выделяется зелёным, как во всей системе AuditLens.
 function bankClass(slug) {
   return /^sber/i.test(String(slug || "")) ? "lp-bank lp-bank-sber" : "lp-bank";
@@ -623,6 +629,7 @@ function LoopholeApp() {
   }, [authz]);
 
   // Загружаем записи.
+  const typedTextRef = useRef("");
   const loadRecords = useCallback(async () => {
     const requestGeneration = ++recordsRequestRef.current;
     setLoading(true);
@@ -677,7 +684,11 @@ function LoopholeApp() {
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
-    const timer = setTimeout(() => loadRecords(), 350);
+    // Антидребезг нужен только при наборе текста; клики по фильтрам и первое
+    // открытие вкладки загружают сразу.
+    const typing = typedTextRef.current !== fText;
+    typedTextRef.current = fText;
+    const timer = setTimeout(() => loadRecords(), typing ? 350 : 0);
     return () => clearTimeout(timer);
   }, [loadRecords, authz, fText]);
 
@@ -823,6 +834,21 @@ function LoopholeApp() {
 
   const createResearch = async (showResearch = true) => {
     if (chatBusyRef.current || clarifyBusyRef.current || researchActionRef.current) return;
+    // Кнопка «Новое исследование»: пустое исследование уже есть — открываем его,
+    // а не создаём ещё одно (раньше 3 из 4 оставались без единого вопроса).
+    // Вызовы после удаления и при первом входе (showResearch = false) создают как прежде.
+    const reuse = showResearch && !researchError;
+    if (reuse && workspaceId && !researchReadOnly && !chat.length) {
+      if (showResearch) setView("ai_research");
+      setTimeout(() => chatInputRef.current && chatInputRef.current.focus(), 0);
+      return;
+    }
+    const empty = researches.find(item => item.has_messages === false && item.workspace_id !== workspaceId);
+    if (reuse && empty) {
+      if (showResearch) setView("ai_research");
+      await openResearch({id: empty.workspace_id});
+      return;
+    }
     researchActionRef.current = true;
     setResearchActionBusy(true);
     const generation = ++researchRequestRef.current;
@@ -968,14 +994,14 @@ function LoopholeApp() {
   }, []);
 
   // ── Ручная маркировка: POST /records/verdict + toast результата ──────────
-  const markVerdict = async (ids, classification, comment, {quiet = false} = {}) => {
+  const markVerdict = async (ids, classification, comment, {quiet = false, source = null} = {}) => {
     if (!canMarkVerdict || !ids.length || markBusy) return false;
     setMarkBusy(true);
     try {
       const r = await fetch(`${API}/records/verdict`, {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          record_ids: ids, classification, comment: comment || null,
+          record_ids: ids, classification, comment: comment || null, source,
         }),
       });
       const d = await r.json().catch(() => null);
@@ -1908,7 +1934,8 @@ function LoopholeApp() {
     if (!v) return "—";
     const date = new Date(v);
     if (Number.isNaN(date.getTime())) return "—";
-    const hasTime = /[T ]\d{2}:\d{2}/.test(String(v));
+    // Дата без времени (или ровно полночь) — только число: «00:00» — вымышленная точность.
+    const hasTime = /[T ]\d{2}:\d{2}/.test(String(v)) && (date.getHours() || date.getMinutes());
     return hasTime
       ? date.toLocaleString("ru-RU", {
           day: "2-digit", month: "2-digit", year: "numeric",
@@ -1999,6 +2026,7 @@ function LoopholeApp() {
   // ── Сводка над базой и счётчики фильтров ──────────────────────────────────
   const [summaryData, setSummaryData] = useState(null);
   const summaryRequestRef = useRef(0);
+  const summaryTextRef = useRef("");
   const loadSummary = useCallback(async () => {
     const generation = ++summaryRequestRef.current;
     const params = new URLSearchParams();
@@ -2020,13 +2048,19 @@ function LoopholeApp() {
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
-    const timer = setTimeout(() => loadSummary(), 350);
+    const typing = summaryTextRef.current !== fText;
+    summaryTextRef.current = fText;
+    const timer = setTimeout(() => loadSummary(), typing ? 350 : 0);
     return () => clearTimeout(timer);
   }, [loadSummary, authz]);
 
   // ── Состояние интерфейса ───────────────────────────────────────────────────
   const [fPeriod, setFPeriod] = useState("all");   // all | 7 | 30 | 90 | custom
   const [selId, setSelId] = useState(null);
+  // Запись, открытая из исследования: её карточка видна, даже если её нет в
+  // текущей выборке; смена фильтров это снимает.
+  const [pinnedId, setPinnedId] = useState(null);
+  const qCardRef = useRef(null);
   const [readerOpen, setReaderOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
@@ -2077,7 +2111,7 @@ function LoopholeApp() {
     return entry && entry.data ? entry.data : null;
   };
   const selRecord = (selId != null && (records.find(r => r.record_id === selId)
-      || (detailOf(selId) ? {record_id: selId, ...detailOf(selId)} : null)))
+      || (pinnedId === selId && detailOf(selId) ? {record_id: selId, ...detailOf(selId)} : null)))
     || records[0] || null;
   const selRecordId = selRecord ? selRecord.record_id : null;
 
@@ -2107,7 +2141,8 @@ function LoopholeApp() {
     setSummaries(prev => ({...prev, [id]: {loading: true}}));
     fetch(`${API}/records/${id}/summary`, {method: "POST"})
       .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
-      .then(d => setSummaries(prev => ({...prev, [id]: {loading: false, text: d.summary, reason: d.reason}})))
+      .then(d => setSummaries(prev => ({...prev, [id]: {loading: false, text: d.summary,
+        headline: d.headline, doubt: d.doubt, reason: d.reason}})))
       .catch(() => setSummaries(prev => ({...prev, [id]: {loading: false, text: null, reason: "llm_error"}})));
   };
 
@@ -2119,14 +2154,29 @@ function LoopholeApp() {
   }, [currentReaderRecord && currentReaderRecord.record_id, !!currentReaderDetail]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Новая выборка на узком экране показывает список, а не карточку прежней записи.
-  useEffect(() => { setReaderOpen(false); },
+  // Новая выборка открывает свою первую запись, а не карточку прежней.
+  useEffect(() => { setReaderOpen(false); setSelId(null); setPinnedId(null); },
     [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort]);
+
+  // Узкий экран: открытая запись — к началу карточки (под липкими вкладками),
+  // фокус на её заголовок, чтобы экранное чтение продолжилось с него.
+  const showReader = (node) => {
+    if (window.innerWidth >= 900) return;
+    setTimeout(() => {
+      const target = node && node.current;
+      if (!target) return;
+      const top = target.getBoundingClientRect().top + window.scrollY - 64;
+      window.scrollTo({top: Math.max(0, top)});
+      const title = target.querySelector(".lp-rd-title");
+      if (title) title.focus({preventScroll: true});
+    }, 0);
+  };
 
   const pickRecord = (id) => {
     setSelId(id);
     setReaderOpen(true);
     if (readerRef.current) readerRef.current.scrollTop = 0;
-    if (window.innerWidth < 900) window.scrollTo({top: 0});
+    showReader(readerRef);
   };
   const moveRecord = (delta) => {
     if (!records.length) return;
@@ -2143,6 +2193,7 @@ function LoopholeApp() {
   const openRecordInBase = (record) => {
     setView("catalog");
     setSelId(record.record_id);
+    setPinnedId(record.record_id);
     setReaderOpen(true);
     loadContent(record.record_id);
     window.scrollTo({top: 0});
@@ -2209,7 +2260,7 @@ function LoopholeApp() {
     const bits = [KIND_LABELS[kind][0], bankName(record.bank_slug) !== "—" ? bankName(record.bank_slug) : null,
       detail.summary || record.summary || record.verdict_reason].filter(Boolean);
     return {kind: "document", url: record.url || null,
-      title: (record.title || record.snippet || "Запись «Уязвимостей»").slice(0, 300),
+      title: (record.headline || record.title || record.snippet || "Запись «Уязвимостей»").slice(0, 300),
       note: bits.join(" · ").slice(0, 900)};
   };
   const addToCase = async (caseRow, record) => {
@@ -2283,13 +2334,17 @@ function LoopholeApp() {
       pendingRef.current = null;
       try {
         navigator.sendBeacon(`${API}/records/verdict`, new Blob([JSON.stringify({
-          record_ids: [pending.id], classification: pending.cls, comment: pending.comment,
+          record_ids: pending.ids, classification: pending.cls, comment: pending.comment, source: "queue",
         })], {type: "application/json"}));
       } catch { /* браузер без sendBeacon — решение останется в очереди */ }
     };
     window.addEventListener("pagehide", flush);
     return () => { window.removeEventListener("pagehide", flush); flush(); };
   }, []);
+
+  // Копии записи, которые ещё ждут решения в очереди.
+  const queueCopies = (rec) => (rec.copy_ids || []).filter(id =>
+    queueRecords.some(q => q.record_id === id) && !hiddenQueueIds.has(id));
 
   const saveDecision = () => {
     const rec = qSel;
@@ -2301,17 +2356,20 @@ function LoopholeApp() {
       return;
     }
     commitPending();
+    // Точные копии в очереди решаются вместе с записью, если эксперт не снял галочку.
+    const copies = d.applyCopies === false ? [] : queueCopies(rec);
+    const payload = {id: rec.record_id, ids: [rec.record_id, ...copies], cls: d.cls, comment};
     const i = queueList.findIndex(r => r.record_id === rec.record_id);
-    const next = queueList[i + 1] || queueList[i - 1] || null;
-    const payload = {id: rec.record_id, cls: d.cls, comment};
-    setHiddenQueueIds(prev => new Set(prev).add(payload.id));
+    const rest = queueList.filter(r => !payload.ids.includes(r.record_id));
+    const next = rest.find((r, k) => queueList.indexOf(r) > i) || rest[rest.length - 1] || null;
+    setHiddenQueueIds(prev => new Set([...prev, ...payload.ids]));
     setQueueSelectedId(next ? next.record_id : null);
     setDrafts(prev => { const copy = {...prev}; delete copy[payload.id]; return copy; });
     const restore = () => setHiddenQueueIds(prev => {
-      const copy = new Set(prev); copy.delete(payload.id); return copy;
+      const copy = new Set(prev); payload.ids.forEach(id => copy.delete(id)); return copy;
     });
     const commit = async () => {
-      const ok = await markVerdict([payload.id], payload.cls, payload.comment, {quiet: true});
+      const ok = await markVerdict(payload.ids, payload.cls, payload.comment, {quiet: true, source: "queue"});
       if (ok) {
         setReviewedCount(n => n + 1);
         loadQueue();
@@ -2327,7 +2385,9 @@ function LoopholeApp() {
       }
     }, 10000);
     pendingRef.current = {...payload, timer, commit};
-    showToast(`Решение «${KIND_LABELS[payload.cls][0]}» запишется через 10 секунд`, "info", {
+    const many = payload.ids.length > 1
+      ? ` для ${fmtInt(payload.ids.length)} ${lpPlural(payload.ids.length, "записи", "записей", "записей")}` : "";
+    showToast(`Решение «${KIND_LABELS[payload.cls][0]}»${many} запишется через 10 секунд`, "info", {
       ttl: 10000,
       undo: () => {
         if (!pendingRef.current || pendingRef.current.id !== payload.id) return;
@@ -2335,7 +2395,8 @@ function LoopholeApp() {
         pendingRef.current = null;
         restore();
         setQueueSelectedId(payload.id);
-        setDrafts(prev => ({...prev, [payload.id]: {cls: payload.cls, comment: payload.comment}}));
+        setDrafts(prev => ({...prev, [payload.id]: {cls: payload.cls, comment: payload.comment,
+          applyCopies: payload.ids.length > 1 || undefined}}));
       },
     });
   };
@@ -2457,9 +2518,9 @@ function LoopholeApp() {
         <div className="lp-eyebrow">Анализ · схемы и лазейки</div>
         <h1 className="lp-ph-t">Уязвимости</h1>
         <p className="lp-ph-meta">
-          Лазейки и мошеннические схемы в продуктах банков. Записи приходят из обсуждений
-          на форумах, с сайтов банков и из исследований агента; окончательный вердикт
-          выносит эксперт ЦК КС.
+          Лазейки и мошеннические схемы в продуктах банков. Записи собираются из обсуждений
+          на форумах и в соцсетях, новостей и сайтов банков; модель отмечает возможные находки,
+          окончательный вердикт выносит эксперт ЦК КС.
         </p>
       </div>
       {canAdmin && <div className="lp-ph-act">
@@ -2527,6 +2588,8 @@ function LoopholeApp() {
       <span className="lp-ks">{sub}</span>
     </button>
   );
+  const reviewedLine = (all, awaitingN) => !all ? "пока нет"
+    : `проверено экспертом: ${fmtInt(all - awaitingN)} из ${fmtInt(all)}`;
   const kpis = (
     <div className="lp-kpis">
       {kpi({on: fVerification === "awaiting", label: "Ждут проверки",
@@ -2539,13 +2602,11 @@ function LoopholeApp() {
         onClick: () => applyPeriod(fPeriod === "7" ? "all" : "7")})}
       {kpi({on: fClassification === "vulnerability", label: "Уязвимости", tone: "neg",
         value: totals && totals.vulnerability,
-        sub: totals ? (totals.awaiting_vulnerability
-          ? `ждут проверки: ${fmtInt(totals.awaiting_vulnerability)}` : "все проверены") : "…",
+        sub: totals ? reviewedLine(totals.vulnerability, totals.awaiting_vulnerability) : "…",
         onClick: () => setFClassification(c => c === "vulnerability" ? "confirmed" : "vulnerability")})}
       {kpi({on: fClassification === "fraud_scheme", label: "Мошеннические схемы", tone: "legal",
         value: totals && totals.fraud_scheme,
-        sub: totals ? (totals.awaiting_fraud_scheme
-          ? `ждут проверки: ${fmtInt(totals.awaiting_fraud_scheme)}` : "все проверены") : "…",
+        sub: totals ? reviewedLine(totals.fraud_scheme, totals.awaiting_fraud_scheme) : "…",
         onClick: () => setFClassification(c => c === "fraud_scheme" ? "confirmed" : "fraud_scheme")})}
     </div>
   );
@@ -2658,8 +2719,10 @@ function LoopholeApp() {
       <i style={{width: `${p || 0}%`}}></i></span>;
   };
 
+  const kindWord = (kind) => (KIND_LABELS[kind] || KIND_LABELS.none)[0].toLowerCase();
   const historyEvents = (r) => {
     const events = [];
+    const expert = r.expert_decisions || [];
     const domain = r.domain || hostOf(r.url);
     if (r.published_at) events.push({at: r.published_at, t: `Опубликовано${domain ? ` на ${domain}` : ""}`});
     events.push({at: r.collected_at, t: r.provenance ? "Найдено AI-исследованием и добавлено в базу"
@@ -2673,10 +2736,16 @@ function LoopholeApp() {
         c: classifierText && !/^Предварительн/.test(classifierText) ? classifierText : null});
     } else if (r.verdict_model === "manual") {
       if (classifierText) events.push({at: r.collected_at, t: "Модель отметила запись", c: classifierText});
-      const manual = r.verdict_reason && !/^manual:/.test(r.verdict_reason) ? r.verdict_reason : null;
-      events.push({at: r.classified_at, t: `Эксперт ЦК КС: ${KIND_LABELS[recordKind(r)][0].toLowerCase()}`,
-        c: manual, key: true});
+      if (!expert.length) {
+        const manual = r.verdict_reason && !/^manual:/.test(r.verdict_reason) ? r.verdict_reason : null;
+        events.push({at: r.classified_at, t: `Эксперт ЦК КС: ${kindWord(recordKind(r))}`, c: manual, key: true});
+      }
     }
+    // Журнал решений: кто решил, что было и что стало.
+    expert.forEach(d => events.push({at: d.decided_at,
+      t: `Решение ЦК КС (${d.decided_by === "anonymous" ? "без авторизации" : d.decided_by}): `
+        + (d.previous && d.previous !== d.decision ? `${kindWord(d.previous)} → ` : "") + kindWord(d.decision),
+      c: d.comment, key: true}));
     (r.decisions || []).forEach(d => events.push({at: d.decided_at,
       t: `Решение ЦК КС (${d.decided_by}): ${decisionLabel(d.decision).toLowerCase()}`, c: d.comment, key: true}));
     return events.filter(e => e.at || e.key);
@@ -2694,6 +2763,12 @@ function LoopholeApp() {
     const awaiting = !reviewed && (r.awaiting === true || (r.is_loophole === true && !manual));
     const sum = summaries[r.record_id];
     const summaryText = r.summary || (sum && sum.text);
+    const headline = r.headline || (sum && sum.headline);
+    const doubt = String(r.summary_doubt || (sum && sum.doubt) || "").replace(/\.$/, "");
+    const bank = knownBank(r.bank_slug);
+    // Заголовок находки от модели; название ветки форума — строкой ниже.
+    const topic = headline && r.title && r.title.trim() !== headline ? r.title.trim() : null;
+    const copyIds = r.copy_ids || [];
     const classifierText = r.classifier_verdict_reason || r.verdict_reason;
     const domain = r.domain || hostOf(r.url);
     const fragment = (r.snippet || "").trim();
@@ -2706,13 +2781,16 @@ function LoopholeApp() {
     return (
       <div className="lp-rd-body">
         <div className="lp-rd-meta">
-          <span className={bankClass(r.bank_slug)}>{bankName(r.bank_slug)}</span>
-          {domain && <><span aria-hidden="true">·</span><span>{domain}</span></>}
-          {r.url && <><span aria-hidden="true">·</span>
-            <a className="lp-link" href={r.url} target="_blank" rel="noopener noreferrer">
-              открыть источник<Icon name="ext" size={12} /></a></>}
+          {[bank && <span key="b" className={bankClass(r.bank_slug)}
+                          title={r.bank_inferred ? "Банк определён моделью по тексту записи" : undefined}>
+              {bank}{r.bank_inferred && <span className="lp-sr-only"> (определён по тексту)</span>}</span>,
+            domain && <span key="d">{domain}</span>,
+            r.url && <a key="u" className="lp-link" href={r.url} target="_blank" rel="noopener noreferrer">
+              открыть источник<Icon name="ext" size={12} /></a>]
+            .filter(Boolean).flatMap((node, i) => i ? [<span key={"s" + i} aria-hidden="true">·</span>, node] : [node])}
         </div>
-        <h2 className="lp-rd-title">{r.title || r.snippet || "Без заголовка"}</h2>
+        <h2 className="lp-rd-title" tabIndex={-1}>{headline || r.title || r.snippet || "Без заголовка"}</h2>
+        {topic && <p className="lp-rd-topic">Тема: {topic}</p>}
         <div className="lp-rd-badges">
           <KindBadge kind={kind} />
           {reviewed ? <span className="lp-st lp-st-done"><Icon name="check" size={14} />Проверено экспертом
@@ -2720,6 +2798,12 @@ function LoopholeApp() {
             : awaiting ? <span className="lp-st lp-st-pend"><Icon name="clock" size={14} />Ждёт проверки экспертом ЦК КС</span>
             : null}
         </div>
+        {positive && doubt && (
+          <div className="lp-callout lp-callout-doubt">
+            <Icon name="info" />
+            <span><b>Модель сомневается:</b> {doubt}. Это подсказка эксперту, вердикт не меняется.</span>
+          </div>
+        )}
         {ctx === "base" && awaiting && (
           <div className="lp-callout">
             <Icon name="clock" />
@@ -2733,8 +2817,9 @@ function LoopholeApp() {
         <dl className="lp-facts">
           <div><dt>Опубликовано</dt><dd>{r.published_at ? fmtDate(r.published_at) : "дата не найдена"}</dd></div>
           <div><dt>Собрано</dt><dd>{fmtDate(r.collected_at)}</dd></div>
-          <div><dt>{manual ? "Вердикт" : "Вероятность"}</dt>
-            <dd>{manual ? "решение эксперта" : conf != null ? `${conf}% · ${confWord(r.verdict_confidence)}` : "нет оценки"}</dd></div>
+          <div><dt>{manual ? "Вердикт" : positive ? "Вероятность" : "Вердикт модели"}</dt>
+            <dd>{manual ? "решение эксперта" : !positive ? (kind === "none" ? "без вердикта" : "находки нет")
+              : conf != null ? `${conf}% · ${confWord(r.verdict_confidence)}` : "нет оценки"}</dd></div>
         </dl>
         {positive ? (
           <section className="lp-rsec">
@@ -2770,7 +2855,7 @@ function LoopholeApp() {
           </div>
           {isFull && fullText && <div className="lp-fulltext">{fullText}</div>}
         </section>
-        {!manual && conf != null && (
+        {!manual && positive && conf != null && (
           <section className="lp-rsec">
             <h3>Уверенность модели</h3>
             <div className="lp-confbig">{confBar(r.verdict_confidence, true)}
@@ -2778,6 +2863,15 @@ function LoopholeApp() {
             <p className="lp-note">{positive
               ? `Насколько запись похожа на ${KIND_LABELS[kind][0].toLowerCase()} по оценке модели.`
               : "Оценка модели для этой записи."} Это не вероятность ущерба и не решение эксперта.</p>
+          </section>
+        )}
+        {copyIds.length > 0 && (
+          <section className="lp-rsec">
+            <h3>Копии</h3>
+            <p className="lp-muted-p">Тот же фрагмент есть ещё в {fmtInt(copyIds.length)} {lpPlural(copyIds.length, "записи", "записях", "записях")}:{" "}
+              {copyIds.map((id, i) => <React.Fragment key={id}>{i ? ", " : ""}
+                <button type="button" className="lp-btn-text lp-inline" onClick={() => openRecordInBase({record_id: id})}>№{id}</button>
+              </React.Fragment>)}</p>
           </section>
         )}
         <section className="lp-rsec">
@@ -2844,13 +2938,14 @@ function LoopholeApp() {
     const manual = r.verdict_model === "manual";
     const awaiting = !manual && !r.reviewed && (r.awaiting === true || r.is_loophole === true);
     const line = positive ? (r.summary || r.verdict_reason) : null;
-    const conf = manual ? null : pctOf(r.verdict_confidence);
+    // Вероятность — только у находок: у «не подтверждено» она читалась бы
+    // как «вероятно уязвимость».
+    const conf = manual || !positive ? null : pctOf(r.verdict_confidence);
+    const bank = knownBank(r.bank_slug);
     return (
-      <div key={r.record_id} id={`lp-item-${r.record_id}`}
+      <div key={r.record_id} id={`lp-item-${r.record_id}`} role="listitem"
            className={"lp-c" + (on ? " lp-c-on" : "") + (selectMode ? " lp-c-chk" : "")}
-           role="option" aria-selected={on} tabIndex={0}
-           onClick={() => pickRecord(r.record_id)}
-           onKeyDown={e => { if (e.key === "Enter") pickRecord(r.record_id); }}>
+           onClick={() => pickRecord(r.record_id)}>
         {selectMode && (
           <label className="lp-c-box" htmlFor={`lp-select-record-${r.record_id}`}
                  onClick={e => e.stopPropagation()}>
@@ -2860,13 +2955,15 @@ function LoopholeApp() {
           </label>
         )}
         <div className="lp-c-meta">
-          <span className={bankClass(r.bank_slug)}>{bankName(r.bank_slug)}</span>
-          <span aria-hidden="true">·</span>
+          {bank && <><span className={bankClass(r.bank_slug)}>{bank}</span><span aria-hidden="true">·</span></>}
           <span className="lp-c-mt">{[r.domain || hostOf(r.url), fmtDay(r.published_at || r.collected_at)]
             .filter(Boolean).join(" · ")}</span>
           <KindBadge kind={kind} />
         </div>
-        <div className="lp-c-title"><Hl text={r.title || r.snippet || "Без заголовка"} q={fText} /></div>
+        <button type="button" className="lp-c-title" aria-current={on ? "true" : undefined}
+                onClick={e => { e.stopPropagation(); pickRecord(r.record_id); }}>
+          <Hl text={r.headline || r.title || r.snippet || "Без заголовка"} q={fText} />
+        </button>
         {line ? <div className="lp-c-snip"><Hl text={line} q={fText} /></div>
           : r.snippet ? <div className="lp-c-quote">«<Hl text={r.snippet} q={fText} />»</div> : null}
         <div className="lp-c-sig">
@@ -2875,12 +2972,26 @@ function LoopholeApp() {
           {awaiting && <span className="lp-pend">ждёт проверки</span>}
           {(manual || r.reviewed) && <span className="lp-done">проверено</span>}
           {r.provenance && <span>из исследования</span>}
+          {positive && r.summary_doubt && <span className="lp-doubt" title={r.summary_doubt}>модель сомневается</span>}
+          {(r.copy_ids || []).length > 0 && <span>копий: {fmtInt(r.copy_ids.length)}</span>}
           {r.content_status === "truncated" && <span className="lp-tag">текст обрезан</span>}
           {(r.content_status === "fetch_failed" || r.content_status === "empty") &&
             <span className="lp-tag lp-tag-warn">текст не загружен</span>}
         </div>
       </div>
     );
+  };
+
+  // Стрелки вверх/вниз переводят фокус и выбор по заголовкам списка.
+  const onListKeys = (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const titles = [...e.currentTarget.querySelectorAll(".lp-c-title")];
+    const i = titles.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    const next = titles[Math.max(0, Math.min(titles.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
+    next.focus();
+    next.click();
   };
 
   const notConfirmedHidden = fClassification === "confirmed" && types ? types.not_confirmed : 0;
@@ -2917,7 +3028,7 @@ function LoopholeApp() {
           <button type="button" className="lp-btn-text" onClick={() => setFClassification("all")}>Показать все</button>
         </div>
       )}
-      <div role="listbox" aria-label="Записи базы">{records.map(listItem)}</div>
+      <div role="list" aria-label="Записи базы" onKeyDown={onListKeys}>{records.map(listItem)}</div>
       {records.length < recordsTotal && (
         <div className="lp-more">
           <button type="button" className="lp-btn" disabled={loading} onClick={() => setPage(p => p + 1)}>
@@ -2996,6 +3107,14 @@ function LoopholeApp() {
             </button>
           ))}
         </div>
+        {queueCopies(r).length > 0 && (
+          <label className="lp-dcopies" htmlFor="lp-apply-copies">
+            <input id="lp-apply-copies" type="checkbox" checked={d.applyCopies !== false}
+                   onChange={e => setDraft(r.record_id, {applyCopies: e.target.checked})} />
+            Применить и к {fmtInt(queueCopies(r).length)} {lpPlural(queueCopies(r).length, "копии", "копиям", "копиям")} в очереди
+            <span className="lp-muted"> — тот же фрагмент: №{queueCopies(r).join(", №")}</span>
+          </label>
+        )}
         <label className="lp-sr-only" htmlFor="lp-queue-comment-input">Комментарий участника ЦК</label>
         <textarea id="lp-queue-comment-input" ref={commentRef} className="lp-dcom" rows={3}
                   value={d.comment} onChange={e => setDraft(r.record_id, {comment: e.target.value})}
@@ -3050,22 +3169,25 @@ function LoopholeApp() {
             </div>
             {queueList.map(r => {
               const active = qSel && qSel.record_id === r.record_id;
-              const meta = [r.bank_slug ? bankName(r.bank_slug) : null,
+              const meta = [knownBank(r.bank_slug),
                 r.collected_at ? `собрано ${fmtDay(r.collected_at)}` : null].filter(Boolean).join(" · ");
+              const copiesHere = queueCopies(r).length;
               return (
                 <button key={r.record_id} id={`lp-qi-${r.record_id}`} type="button"
                         className={"lp-qi" + (active ? " lp-qi-on" : "")} aria-current={active ? "true" : undefined}
-                        onClick={() => { setQueueSelectedId(r.record_id); setQOpen(true); }}>
-                  <span className="lp-qi-t">{r.title || r.snippet || "Без заголовка"}</span>
+                        onClick={() => { setQueueSelectedId(r.record_id); setQOpen(true); showReader(qCardRef); }}>
+                  <span className="lp-qi-t">{r.headline || r.title || r.snippet || "Без заголовка"}</span>
                   <span className="lp-qi-m">{meta || "банк и дата не указаны"}
                     <KindBadge kind={recordKind(r)} />
                     {pctOf(r.verdict_confidence) != null && <span className="lp-tnum">{pctOf(r.verdict_confidence)}%</span>}
+                    {r.summary_doubt && <span className="lp-doubt">сомнение</span>}
+                    {copiesHere > 0 && <span>+{fmtInt(copiesHere)} {lpPlural(copiesHere, "копия", "копии", "копий")}</span>}
                   </span>
                 </button>
               );
             })}
           </section>
-          {qSel && <section className="lp-card lp-qcard" aria-label="Карточка проверки" aria-live="polite">
+          {qSel && <section className="lp-card lp-qcard" ref={qCardRef} aria-label="Карточка проверки" aria-live="polite">
             {readerHead(qSel, queueList, "queue")}
             {recordBody(qSel, "queue")}
             {canMarkVerdict ? decisionPanel(qSel) : (
@@ -3250,7 +3372,7 @@ function LoopholeApp() {
                 : f.awaiting ? <span className="lp-pend">ждёт проверки</span> : null}
               {!manual && pctOf(f.verdict_confidence) != null && <span className="lp-muted">вероятность {pctOf(f.verdict_confidence)}%</span>}
             </span>
-            <span className="lp-cand-t">{f.title || f.snippet || "Без заголовка"}</span>
+            <span className="lp-cand-t">{f.headline || f.title || f.snippet || "Без заголовка"}</span>
             {(f.summary || f.verdict_reason) && <span className="lp-cand-d">{f.summary || f.verdict_reason}</span>}
             <span className="lp-cand-m"><span className={bankClass(f.bank_slug)}>{bankName(f.bank_slug)}</span>
               <span>{[f.domain || hostOf(f.url), fmtDay(f.published_at || f.collected_at)].filter(Boolean).join(" · ")}</span>
@@ -3350,7 +3472,7 @@ function LoopholeApp() {
                 onClick={() => workspaceId ? loadResearchList() : initializeResearch()}>Повторить загрузку истории</button></div>}
       {!historyListLoading && !historyListError && !researches.length && <p className="lp-muted">Исследований пока нет.</p>}
       <div className="lp-hist-list">
-        {researches.map(item => {
+        {researches.filter(item => item.has_messages !== false || item.workspace_id === workspaceId).map(item => {
           const fullName = String(item.name || "Без названия").trim() || "Без названия";
           const active = workspaceId === item.workspace_id && !researchReadOnly;
           return (
@@ -3433,7 +3555,8 @@ function LoopholeApp() {
       // Банки текущего среза (со счётчиками); пока сводки нет — справочник.
       // Коды-синонимы одного банка (sber / sberbank) показываются одной строкой.
       const byName = new Map();
-      for (const slug of (bankFacet.length ? bankFacet.map(b => b.slug) : bankOptions)) {
+      for (const slug of (bankFacet.length ? bankFacet.map(b => b.slug) : bankOptions)
+        .filter(slug => knownBank(slug))) {
         const name = bankName(slug);
         if (!byName.has(name) || bankCount(slug) > bankCount(byName.get(name))) byName.set(name, slug);
       }
@@ -3562,7 +3685,7 @@ function LoopholeApp() {
     const ready = !!cls && !!comment && !unchanged;
     const save = async () => {
       if (!ready) return;
-      const ok = await markVerdict([rec.record_id], cls, comment);
+      const ok = await markVerdict([rec.record_id], cls, comment, {source: "base"});
       if (ok) { setVerdictModal(null); setMarkComment(""); }
     };
     return (
@@ -3632,7 +3755,7 @@ function LoopholeApp() {
   );
 
   return (
-    <div className="lp-app">
+    <main className="lp-app">
       {pageHead}
       {tabsBar}
       {view === "catalog" && catalogPanel}
@@ -3816,7 +3939,7 @@ function LoopholeApp() {
           )}
         </div>
       )}
-    </div>
+    </main>
   );
 }
 

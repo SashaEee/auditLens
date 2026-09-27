@@ -174,11 +174,13 @@ def _contrast(pal: dict[str, str], fg: str, bg: str) -> float:
 # ── AC1: только саморазмещённые vendor-ресурсы ────────────────────────────────
 
 def test_vendor_scripts_selfhosted():
-    """React, ReactDOM и Babel — из /static/vendor/, как у основного сайта."""
+    """React и ReactDOM — из /static/vendor/, как у основного сайта. Babel в
+    браузер больше не грузится: JSX предсобран в loophole.js (28.09)."""
     html = _html()
     assert 'src="/static/vendor/react.min.js"' in html
     assert 'src="/static/vendor/react-dom.min.js"' in html
-    assert 'src="/static/vendor/babel.min.js"' in html
+    assert 'src="/static/loophole/loophole.js"' in html
+    assert "babel.min.js" not in html
 
 
 def test_vendor_fonts_selfhosted():

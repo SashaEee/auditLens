@@ -3857,7 +3857,7 @@ def _loophole_html_with_bust() -> str:
     css кэшируется эвристически и не ревалидируется)."""
     html_path = LOOPHOLE_STATIC_DIR / "loophole.html"
     html = html_path.read_text(encoding="utf-8")
-    for name, attr in (("loophole.jsx", "src"), ("loophole.css", "href")):
+    for name, attr in (("loophole.js", "src"), ("loophole.jsx", "src"), ("loophole.css", "href")):
         asset = LOOPHOLE_STATIC_DIR / name
         if asset.exists():
             v = int(asset.stat().st_mtime)

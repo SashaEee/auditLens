@@ -132,3 +132,16 @@ def test_summary_is_requested_only_for_findings():
     jsx = _norm(JSX)
     assert _norm('const POSITIVE_KINDS = new Set(["vulnerability", "fraud_scheme"]);') in jsx
     assert _norm("if (!POSITIVE_KINDS.has(kind)) return;") in jsx
+
+
+def test_loophole_js_is_built_from_current_jsx():
+    """Страница грузит предсобранный loophole.js: он должен совпадать с исходником."""
+    import hashlib
+
+    built = (STATIC / "loophole.js").read_text(encoding="utf-8")
+    sha = hashlib.sha256(JSX.encode("utf-8")).hexdigest()
+    assert f"sha256 {sha}" in built.splitlines()[0], (
+        "loophole.jsx изменён без пересборки: node scripts/build_loophole_js.mjs")
+    html = (STATIC / "loophole.html").read_text(encoding="utf-8")
+    assert '<script src="/static/loophole/loophole.js"></script>' in html
+    assert "babel.min.js" not in html and "text/babel" not in html

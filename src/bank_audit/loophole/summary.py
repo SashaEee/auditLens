@@ -1,11 +1,16 @@
-"""Суть записи — пересказ механизма находки моделью для карточки «Уязвимостей».
+"""Суть записи — карточка находки от модели для «Уязвимостей».
 
-Правило владельца: суть составляется ТОЛЬКО для уязвимостей и мошеннических
+Правило владельца: модель вызывается ТОЛЬКО для уязвимостей и мошеннических
 схем. 99% базы — «не подтверждено»; для них модель не вызывается, в карточке
 показывается короткий комментарий классификатора, пришедший в том же вызове,
-что и вердикт. Суть сохраняется в loophole_record.summary: лениво при первом
-открытии записи и разовым проходом по уже найденным находкам
-(``python -m bank_audit.loophole.summary --limit 400``).
+что и вердикт.
+
+Один вызов на запись возвращает JSON: суть (механизм и кто теряет), заголовок
+находки вместо названия ветки форума, банк из текста (ставится, только если
+сборщик банк не определил) и сомнение модели — «похоже на рекламу / новость /
+жалобу», чтобы эксперт ЦК КС видел вероятный шум. Результат сохраняется в
+loophole_record: лениво при первом открытии записи и разовым проходом
+(``python -m bank_audit.loophole.summary --limit 400 [--refresh]``).
 
 Текст перед отправкой в модель маскируется (pii_mask) — как весь модуль.
 """
@@ -13,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
+import re
 from typing import Any
 
 from . import repository as repo
@@ -26,14 +33,47 @@ log = logging.getLogger(__name__)
 POSITIVE = {"vulnerability", "fraud_scheme"}
 _TEXT_LIMIT = 6000
 _SUMMARY_LIMIT = 700
+_HEADLINE_LIMIT = 110
+_DOUBT_LIMIT = 160
 
-SYSTEM_PROMPT = """Ты — аналитик внутреннего аудита банка. По записи (обсуждение на форуме, страница сайта банка или найденный агентом материал) опиши аудитору суть найденной уязвимости или мошеннической схемы.
+SYSTEM_PROMPT = """Ты — аналитик внутреннего аудита банка. Классификатор отметил запись (обсуждение на форуме, пост в соцсети, новость или страница сайта банка) как возможную лазейку или мошенническую схему. Подготовь для аудитора карточку находки.
 
-Два-три предложения по-русски:
-1) механизм: что именно делают и через какой продукт, канал или условие;
-2) чем это выгодно злоумышленнику и где теряет банк или клиент.
+Верни СТРОГО JSON без markdown и пояснений:
+{"headline": "...", "summary": "...", "bank": "..." или null, "doubt": "..." или null}
 
-Опирайся только на текст записи, ничего не выдумывай. Не пересказывай текст дословно, не приводи персональные данные, ссылки и цитаты. Без вступлений, заголовков, списков и markdown."""
+headline — заголовок находки до 90 знаков: что делают и в каком продукте, например «Кэшбэк за переводы между своими картами через СБП». Не название ветки форума, без точки в конце.
+summary — два-три предложения по-русски: механизм (что делают, через какой продукт, канал или условие) и кто теряет — банк или клиент. Клиента, который пользуется условиями продукта без обмана, называй клиентом. «Злоумышленник» — только для обмана, подделки, обналичивания, чужих данных и счетов.
+bank — банк, о продукте которого речь, как его называют в тексте («Сбербанк», «ВТБ», «Т-Банк»); null, если банк не назван или банков несколько.
+doubt — если лазейки или схемы в тексте на самом деле нет, коротко почему: «реклама карты по партнёрской ссылке», «новость без описания приёма», «жалоба клиента», «обычное использование продукта». Иначе null. Не придумывай механизм и ущерб, которых в тексте нет.
+
+Опирайся только на текст записи. Не пересказывай его дословно, не приводи персональные данные, ссылки и цитаты."""
+
+# Название банка из ответа модели → код bank_slug системы. Неизвестный банк
+# сохраняется названием: интерфейс показывает код как есть.
+_BANK_ALIASES = {
+    "sberbank": ("сбербанк", "сбер", "сбер банк", "пао сбербанк", "сбербанк россии"),
+    "vtb": ("втб", "банк втб"),
+    "alfabank": ("альфа-банк", "альфа банк", "альфабанк", "альфа"),
+    "tbank": ("т-банк", "т банк", "тинькофф", "тинькофф банк", "тбанк"),
+    "gazprombank": ("газпромбанк",),
+    "raiffeisen": ("райффайзенбанк", "райффайзен", "райфайзен", "райффайзен банк"),
+    "rosbank": ("росбанк",),
+    "sovcombank": ("совкомбанк",),
+    "mtsbank": ("мтс банк", "мтс-банк", "мтс деньги"),
+    "pochtabank": ("почта банк",),
+    "otkritie": ("открытие", "банк открытие"),
+    "psb": ("псб", "промсвязьбанк"),
+    "rshb": ("россельхозбанк", "рсхб"),
+    "domrf": ("банк дом.рф", "дом.рф", "дом рф"),
+    "ozonbank": ("озон банк", "ozon банк"),
+    "yandex": ("яндекс банк", "яндекс пэй"),
+    "uralsib": ("уралсиб",),
+    "akbars": ("ак барс", "ак барс банк"),
+    "mkb": ("мкб", "московский кредитный банк"),
+    "homecredit": ("хоум банк", "хоум кредит", "хоум кредит банк"),
+    "renaissance": ("ренессанс банк", "ренессанс кредит"),
+}
+_BANK_BY_NAME = {name: slug for slug, names in _BANK_ALIASES.items() for name in names}
 
 # Одна генерация на запись в процессе: два одновременных открытия карточки
 # не должны вызывать модель дважды.
@@ -56,36 +96,85 @@ def _source_text(record: dict) -> str:
     return masked
 
 
-def _clean(raw: str) -> str:
+def _clip(raw: Any, limit: int) -> str:
     text = " ".join(str(raw or "").replace("**", "").split())
-    if len(text) > _SUMMARY_LIMIT:
-        cut = text[:_SUMMARY_LIMIT]
+    if len(text) > limit:
+        cut = text[:limit]
         text = (cut.rsplit(". ", 1)[0] + ".") if ". " in cut else cut.rstrip() + "…"
     return text
 
 
-async def summarize_record(record_id: int, *, llm: Any = None, session=None) -> dict:
-    """Возвращает суть записи, при необходимости составив её.
+def _clean(raw: str) -> str:
+    return _clip(raw, _SUMMARY_LIMIT)
 
-    ``{"summary": str | None, "generated": bool, "reason": str | None}``;
-    reason — почему сути нет: ``not_found``, ``not_finding``, ``empty``, ``llm_error``.
+
+def normalize_bank(name: Any) -> str | None:
+    """Название банка из ответа модели → код системы (или само название)."""
+    value = " ".join(str(name or "").replace("«", "").replace("»", "").split()).strip(" .")
+    if not value or value.lower() in {"null", "none", "нет", "не указан", "несколько"}:
+        return None
+    return _BANK_BY_NAME.get(value.lower(), value[:60])
+
+
+def parse_card(raw: str) -> dict:
+    """Ответ модели → {summary, headline, bank, doubt}. Не JSON — весь текст суть."""
+    text = str(raw or "").strip()
+    fenced = re.search(r"\{.*\}", text, re.S)
+    data: Any = None
+    if fenced:
+        try:
+            data = json.loads(fenced.group(0))
+        except ValueError:
+            data = None
+    if not isinstance(data, dict):
+        return {"summary": _clean(text), "headline": None, "bank": None, "doubt": None}
+    headline = _clip(data.get("headline"), _HEADLINE_LIMIT).rstrip(".") or None
+    doubt = _clip(data.get("doubt"), _DOUBT_LIMIT) or None
+    if doubt and doubt.lower() in {"null", "none", "нет"}:
+        doubt = None
+    return {"summary": _clean(data.get("summary")), "headline": headline,
+            "bank": normalize_bank(data.get("bank")), "doubt": doubt}
+
+
+def _cached(record: dict) -> dict:
+    return {"summary": record.get("summary"), "headline": record.get("headline"),
+            "doubt": record.get("summary_doubt"), "bank": record.get("bank_slug"),
+            "generated": False, "reason": None}
+
+
+def _refused(reason: str) -> dict:
+    return {"summary": None, "headline": None, "doubt": None, "bank": None,
+            "generated": False, "reason": reason}
+
+
+async def summarize_record(
+    record_id: int, *, llm: Any = None, refresh: bool = False, session=None,
+) -> dict:
+    """Возвращает карточку находки, при необходимости составив её.
+
+    ``{"summary", "headline", "doubt", "bank", "generated", "reason"}``; reason —
+    почему сути нет: ``not_found``, ``not_finding``, ``empty``, ``llm_error``.
+    refresh=True пересоставляет суть, составленную до заголовков (headline пуст).
     """
+    def ready(rec: dict | None) -> bool:
+        return bool(rec and rec.get("summary") and (rec.get("headline") or not refresh))
+
     record = repo.get_record_detail(record_id, session=session)
     if record is None:
-        return {"summary": None, "generated": False, "reason": "not_found"}
-    if record.get("summary"):
-        return {"summary": record["summary"], "generated": False, "reason": None}
+        return _refused("not_found")
+    if ready(record):
+        return _cached(record)
     if not is_finding(record):
-        return {"summary": None, "generated": False, "reason": "not_finding"}
+        return _refused("not_finding")
     lock = _inflight.setdefault(record_id, asyncio.Lock())
     try:
         async with lock:
             fresh = repo.get_record_detail(record_id, session=session)
-            if fresh and fresh.get("summary"):
-                return {"summary": fresh["summary"], "generated": False, "reason": None}
+            if ready(fresh):
+                return _cached(fresh)
             text = _source_text(record)
             if not text:
-                return {"summary": None, "generated": False, "reason": "empty"}
+                return _refused("empty")
             if llm is None:
                 llm = _default_llm()
             try:
@@ -96,28 +185,30 @@ async def summarize_record(record_id: int, *, llm: Any = None, session=None) -> 
                             {"role": "user", "content": text}]
             try:
                 response = await llm.ainvoke(messages)
-                summary = _clean(getattr(response, "content", None) or str(response))
+                card = parse_card(getattr(response, "content", None) or str(response))
             except Exception as exc:  # сбой модели не ломает карточку
                 log.warning("[summary] запись %s: модель недоступна: %s", record_id, exc)
-                return {"summary": None, "generated": False, "reason": "llm_error"}
-            if not summary:
-                return {"summary": None, "generated": False, "reason": "empty"}
+                return _refused("llm_error")
+            if not card["summary"]:
+                return _refused("empty")
             repo.set_record_summary(
-                record_id, summary, LoopholeSettings.load().effective_classify_model(),
+                record_id, card["summary"], LoopholeSettings.load().effective_classify_model(),
+                headline=card["headline"], doubt=card["doubt"], bank=card["bank"],
                 session=session,
             )
-            return {"summary": summary, "generated": True, "reason": None}
+            return {**card, "generated": True, "reason": None}
     finally:
         if not lock.locked():
             _inflight.pop(record_id, None)
 
 
-async def backfill(limit: int = 400, *, session=None) -> dict:
-    """Разовый проход: суть для уже найденных уязвимостей и схем без сути."""
-    ids = repo.list_records_needing_summary(limit=limit, session=session)
+async def backfill(limit: int = 400, *, refresh: bool = False, session=None) -> dict:
+    """Разовый проход: суть для находок без сути; refresh — и для составленных
+    до заголовков, банка и сомнения."""
+    ids = repo.list_records_needing_summary(limit=limit, refresh=refresh, session=session)
     done = failed = 0
     for record_id in ids:
-        result = await summarize_record(record_id, session=session)
+        result = await summarize_record(record_id, refresh=refresh, session=session)
         if result.get("generated"):
             done += 1
         elif result.get("reason") == "llm_error":
@@ -130,11 +221,13 @@ async def backfill(limit: int = 400, *, session=None) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Суть для найденных уязвимостей и схем")
     parser.add_argument("--limit", type=int, default=400)
+    parser.add_argument("--refresh", action="store_true",
+                        help="пересоставить суть, составленную до заголовков и сомнения")
     args = parser.parse_args()
     from .. import db
     db.init()
     with db.session() as session:
-        print(asyncio.run(backfill(args.limit, session=session)))
+        print(asyncio.run(backfill(args.limit, refresh=args.refresh, session=session)))
 
 
 if __name__ == "__main__":

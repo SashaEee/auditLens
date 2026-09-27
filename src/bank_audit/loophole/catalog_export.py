@@ -43,7 +43,8 @@ COLUMNS = [
     ("published", "Дата публикации", 13), ("collected", "Собрано", 13),
     ("bank", "Банк", 16), ("type", "Вердикт", 20), ("check", "Проверка", 16),
     ("confidence", "Вероятность", 12), ("title", "Запись", 48),
-    ("summary", "Суть / комментарий классификатора", 60), ("domain", "Источник", 18),
+    ("summary", "Суть / комментарий классификатора", 60),
+    ("doubt", "Сомнение модели", 28), ("domain", "Источник", 18),
     ("url", "Ссылка", 40),
 ]
 
@@ -207,13 +208,15 @@ def to_xlsx(records: list[dict], filters: dict) -> bytes:
         data.append([
             _dt(r.get("published_at")), _dt(r.get("collected_at")),
             bank_name(r.get("bank_slug")), TYPE_LABELS.get(kind, "Без вердикта"), _check(r),
-            float(conf) if conf is not None else None, r.get("title") or r.get("snippet") or "",
-            summary or "", r.get("domain") or "", r.get("url") or "",
+            float(conf) if conf is not None else None,
+            r.get("headline") or r.get("title") or r.get("snippet") or "",
+            summary or "", r.get("summary_doubt") or "", r.get("domain") or "", r.get("url") or "",
         ])
     XL.table(ws, 4, [label for _, label, _ in COLUMNS], data,
              formats={"Дата публикации": "dd.mm.yyyy hh:mm", "Собрано": "dd.mm.yyyy hh:mm",
                       "Вероятность": "0%"},
-             wrap={"Запись", "Суть / комментарий классификатора"}, links={"Ссылка"})
+             wrap={"Запись", "Суть / комментарий классификатора", "Сомнение модели"},
+             links={"Ссылка"})
     for i, r in enumerate(records):
         kind = _kind(r)
         cell = ws.cell(row=5 + i, column=4)

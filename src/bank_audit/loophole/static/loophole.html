@@ -12,7 +12,6 @@
   <link rel="stylesheet" href="/static/loophole/loophole.css">
   <script src="/static/vendor/react.min.js"></script>
   <script src="/static/vendor/react-dom.min.js"></script>
-  <script src="/static/vendor/babel.min.js"></script>
   <script>
   // Синхронизация темы (story 1.2): в same-origin iframe html.dark следует за
   // родительским документом через MutationObserver; при прямом открытии
@@ -41,6 +40,7 @@
 </head>
 <body>
   <div id="loophole-root"></div>
-  <script type="text/babel" src="/static/loophole/loophole.jsx"></script>
+  <!-- Предсобранный JSX (scripts/build_loophole_js.mjs): без Babel в браузере. -->
+  <script src="/static/loophole/loophole.js"></script>
 </body>
 </html>

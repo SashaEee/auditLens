@@ -15,10 +15,12 @@ os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 from bank_audit.web.app import _loophole_html_with_bust
 
 
-def test_bust_applied_to_jsx_and_css():
+def test_bust_applied_to_built_js_and_css():
+    """С 28.09 страница грузит предсобранный loophole.js (без Babel в браузере)."""
     html = _loophole_html_with_bust()
-    assert 'src="/static/loophole/loophole.jsx?v=' in html
+    assert 'src="/static/loophole/loophole.js?v=' in html
     assert 'href="/static/loophole/loophole.css?v=' in html
-    # Голых ссылок без версии не осталось.
-    assert 'src="/static/loophole/loophole.jsx"' not in html
+    # Голых ссылок без версии не осталось, JSX в браузере больше не собирается.
+    assert 'src="/static/loophole/loophole.js"' not in html
     assert 'href="/static/loophole/loophole.css"' not in html
+    assert "babel.min.js" not in html and 'type="text/babel"' not in html

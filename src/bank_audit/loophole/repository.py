@@ -420,10 +420,12 @@ _ANY_DECISION_SQL = (
     "ON decision.snapshot_id = snapshot.snapshot_id "
     "WHERE verification_import.record_id = record.record_id)"
 )
+# «Сначала новые» — по дате публикации (как фильтр периода и плитка «новые за
+# 7 дней»), а у записей без неё — по дате сбора. Индекс — миграция 080.
 _CATALOG_SORTS = {
-    "new": "record.collected_at DESC, record.record_id DESC",
-    "conf": "COALESCE(record.verdict_confidence, -1) DESC, record.collected_at DESC, "
-            "record.record_id DESC",
+    "new": "COALESCE(record.published_at, record.collected_at) DESC, record.record_id DESC",
+    "conf": "COALESCE(record.verdict_confidence, -1) DESC, "
+            "COALESCE(record.published_at, record.collected_at) DESC, record.record_id DESC",
 }
 
 
@@ -550,7 +552,7 @@ def list_catalog_cases(
         rows = s.execute(
             text(
                 "SELECT record.record_id, record.title, record.url, record.snippet, record.domain, "
-                "record.summary, "
+                "record.summary, record.headline, record.summary_doubt, record.bank_inferred, "
                 f"CASE WHEN {_AWAITING_SQL} THEN 1 ELSE 0 END AS awaiting, "
                 f"CASE WHEN {_REVIEWED_SQL} OR {_ANY_DECISION_SQL} THEN 1 ELSE 0 END AS reviewed, "
                 "record.trust_score, record.bank_slug, record.keyword, record.is_loophole, "
@@ -566,11 +568,14 @@ def list_catalog_cases(
             ),
             params,
         ).mappings().all()
+        copies = _finding_copies(s)
         catalog: list[dict] = []
         for row in rows:
             record = _record_dict(row)
             record["awaiting"] = bool(record.get("awaiting"))
             record["reviewed"] = bool(record.get("reviewed"))
+            record["bank_inferred"] = bool(record.get("bank_inferred"))
+            record["copy_ids"] = copies.get(record["record_id"], [])
             research_id = record.pop("provenance_research_id", None)
             source_id = record.pop("provenance_source_id", None)
             imported_at = record.pop("provenance_imported_at", None)
@@ -725,7 +730,7 @@ def get_record_detail(record_id: int, *, session=None) -> dict | None:
         row = s.execute(
             text(
                 f"SELECT {_RECORD_FIELDS}, classifier_verdict_reason, summary, summary_model, "
-                "summarized_at, "
+                "summarized_at, headline, summary_doubt, bank_inferred, "
                 f"CASE WHEN {_AWAITING_SQL} THEN 1 ELSE 0 END AS awaiting, "
                 f"CASE WHEN {_REVIEWED_SQL} OR {_ANY_DECISION_SQL} THEN 1 ELSE 0 END AS reviewed "
                 f"FROM {schema.T_RECORD} AS record WHERE record.record_id = :id"
@@ -753,6 +758,9 @@ def get_record_detail(record_id: int, *, session=None) -> dict | None:
         record["decisions"] = _verification_decisions_by_record(
             [record_id], session=s,
         ).get(record_id, [])
+        record["bank_inferred"] = bool(record.get("bank_inferred"))
+        record["expert_decisions"] = list_record_decisions(record_id, session=s)
+        record["copy_ids"] = _finding_copies(s).get(record_id, [])
         return record
 
 
@@ -766,6 +774,7 @@ def list_workspace_findings(workspace_id: int, *, limit: int = 200, session=None
                 "record.domain, record.bank_slug, record.is_loophole, record.classification, "
                 "record.verdict_confidence, record.verdict_reason, record.verdict_model, "
                 "record.status, record.published_at, record.collected_at, record.summary, "
+                "record.headline, record.summary_doubt, "
                 "record.content_status, imported.research_id, imported.imported_at, "
                 f"CASE WHEN {_AWAITING_SQL} THEN 1 ELSE 0 END AS awaiting, "
                 f"CASE WHEN {_REVIEWED_SQL} OR {_ANY_DECISION_SQL} THEN 1 ELSE 0 END AS reviewed "
@@ -787,31 +796,110 @@ def list_workspace_findings(workspace_id: int, *, limit: int = 200, session=None
         return findings
 
 
-def set_record_summary(record_id: int, summary: str, model: str, *, session=None) -> None:
-    """Сохраняет суть записи (пересказ механизма находки моделью)."""
+# Коды банка, которые сборщик ставит, когда банк не определил: их модель
+# может заменить банком из текста (bank_inferred = TRUE).
+_UNKNOWN_BANK_SQL = "(bank_slug IS NULL OR bank_slug IN ('', 'all', 'generic', 'other'))"
+
+
+def set_record_summary(
+    record_id: int, summary: str, model: str, *, headline: str | None = None,
+    doubt: str | None = None, bank: str | None = None, session=None,
+) -> None:
+    """Сохраняет суть записи, заголовок находки и сомнение модели. Банк из
+    текста ставится только туда, где сборщик банк не определил."""
     with _session(session) as s:
         s.execute(
             text(
                 f"UPDATE {schema.T_RECORD} SET summary = :summary, summary_model = :model, "
+                "headline = :headline, summary_doubt = :doubt, "
+                f"bank_inferred = CASE WHEN CAST(:bank AS TEXT) IS NOT NULL AND {_UNKNOWN_BANK_SQL} "
+                "THEN TRUE ELSE bank_inferred END, "
+                f"bank_slug = CASE WHEN CAST(:bank AS TEXT) IS NOT NULL AND {_UNKNOWN_BANK_SQL} "
+                "THEN CAST(:bank AS TEXT) ELSE bank_slug END, "
                 "summarized_at = CURRENT_TIMESTAMP WHERE record_id = :id"
             ),
-            {"summary": summary, "model": model, "id": record_id},
+            {"summary": summary, "model": model, "headline": headline, "doubt": doubt,
+             "bank": bank, "id": record_id},
         )
 
 
-def list_records_needing_summary(*, limit: int = 100, session=None) -> list[int]:
-    """Находки (уязвимости и схемы) без сути — для разового прохода."""
+def list_records_needing_summary(
+    *, limit: int = 100, refresh: bool = False, session=None,
+) -> list[int]:
+    """Находки (уязвимости и схемы) без сути — для разового прохода.
+    refresh=True — ещё и составленные до заголовков (headline пуст)."""
+    missing = "(record.summary IS NULL OR record.headline IS NULL)" if refresh \
+        else "record.summary IS NULL"
     with _session(session) as s:
         return [
             int(r[0]) for r in s.execute(
                 text(
                     f"SELECT record.record_id FROM {schema.T_RECORD} AS record "
-                    f"WHERE {_POSITIVE_SQL} AND record.summary IS NULL "
+                    f"WHERE {_POSITIVE_SQL} AND {missing} "
                     "ORDER BY record.collected_at DESC LIMIT :limit"
                 ),
                 {"limit": limit},
             ).all()
         ]
+
+
+def _copy_key(snippet: str | None) -> str:
+    return " ".join(str(snippet or "").lower().split())[:200]
+
+
+def _finding_copies(s) -> dict[int, list[int]]:
+    """Точные копии среди находок: одинаковый фрагмент (без регистра и
+    пробелов). Одна ссылка — не копия: из одной статьи агент выделяет разные
+    находки, а у веток форума общий адрес."""
+    return _group_copies(s.execute(
+        text(f"SELECT record.record_id, record.snippet FROM {schema.T_RECORD} AS record "
+             f"WHERE {_POSITIVE_SQL}")
+    ).all())
+
+
+def _group_copies(pairs) -> dict[int, list[int]]:
+    groups: dict[str, list[int]] = {}
+    for record_id, snippet in pairs:
+        key = _copy_key(snippet)
+        if len(key) >= 20:
+            groups.setdefault(key, []).append(int(record_id))
+    copies: dict[int, list[int]] = {}
+    for ids in groups.values():
+        if len(ids) > 1:
+            for record_id in ids:
+                copies[record_id] = sorted(i for i in ids if i != record_id)
+    return copies
+
+
+def add_record_decision(
+    record_id: int, *, decided_by: str, previous: str | None, decision: str,
+    comment: str | None, source: str | None, session=None,
+) -> None:
+    """Журнал решений эксперта по записи: кто, когда, что было и что стало."""
+    with _session(session) as s:
+        s.execute(
+            text(
+                "INSERT INTO loophole_record_decision "
+                "(record_id, decided_by, previous, decision, comment, source) "
+                "VALUES (:id, :by, :prev, :dec, :comment, :source)"
+            ),
+            {"id": record_id, "by": decided_by, "prev": previous, "dec": decision,
+             "comment": comment, "source": source},
+        )
+
+
+def list_record_decisions(record_id: int, *, session=None) -> list[dict]:
+    with _session(session) as s:
+        rows = s.execute(
+            text(
+                "SELECT decision_id, decided_by, decided_at, previous, decision, comment, source "
+                "FROM loophole_record_decision WHERE record_id = :id "
+                "ORDER BY decided_at, decision_id"
+            ),
+            {"id": record_id},
+        ).mappings().all()
+        return [{**dict(r), "decided_at": str(r["decided_at"]) if r["decided_at"] else None}
+                for r in rows]
 
 
 def list_bank_slugs(*, session=None) -> list[str]:
@@ -1064,6 +1152,9 @@ def _workspace_summary(row) -> dict:
     """Старые области с именем default получают заголовок из первого запроса."""
     result = dict(row)
     first_query = result.pop("first_query", None)
+    # Пустое исследование (ни одного вопроса) не показывается в истории и
+    # переиспользуется кнопкой «Новое исследование».
+    result["has_messages"] = first_query is not None
     if not result["name"] or result["name"] == "default":
         result["name"] = " ".join(str(first_query or "Новое исследование").split())[:120]
     return result
@@ -1164,7 +1255,8 @@ def list_verification_queue(*, limit: int = 500, sort: str = "old", session=None
             f"SELECT record_id, title, url, snippet, domain, trust_score, "
             "bank_slug, keyword, verdict_confidence, verdict_reason, status, "
             "published_at, collected_at, classified_at, classifier_verdict_reason, "
-            "classification, is_loophole, verdict_model, summary, content_status "
+            "classification, is_loophole, verdict_model, summary, content_status, "
+            "headline, summary_doubt, bank_inferred "
             f"FROM {schema.T_RECORD} "
             f"{_QUEUE_WHERE}"
             f"ORDER BY {_QUEUE_SORTS[sort]} LIMIT :limit"
@@ -1173,8 +1265,13 @@ def list_verification_queue(*, limit: int = 500, sort: str = "old", session=None
         decisions = _verification_decisions_by_record(
             [rec["record_id"] for rec in records], session=s,
         )
+        # Копии — внутри самой очереди (без ещё одного запроса): решение
+        # эксперта можно применить к ним разом.
+        copies = _group_copies((rec["record_id"], rec.get("snippet")) for rec in records)
         for rec in records:
             rec["decisions"] = decisions.get(rec["record_id"], [])
+            rec["bank_inferred"] = bool(rec.get("bank_inferred"))
+            rec["copy_ids"] = copies.get(rec["record_id"], [])
         return records
 
 
