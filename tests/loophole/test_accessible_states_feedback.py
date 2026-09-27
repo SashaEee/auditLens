@@ -215,14 +215,15 @@ def test_modals_dialog_semantics():
 
 
 def test_focus_visible_ring_for_interactive_controls():
-    """Видимое :focus-visible кольцо accent 2px у кнопок и ссылок."""
+    """Видимое :focus-visible кольцо 2px у кнопок и ссылок — графит --select,
+    как во всей системе AuditLens (красный означает риск)."""
     css = CSS
     assert re.search(r"\.lp-btn:focus-visible\s*[,{]", css)
     # Проверяем тело именно того правила, что начинается с .lp-btn:focus-visible.
     block = re.search(r"\.lp-btn:focus-visible[^{}]*\{([^}]*)\}", css)
     assert block, "нет правила, начинающегося с .lp-btn:focus-visible"
     body = block.group(1)
-    assert "outline: 2px solid var(--accent)" in body
+    assert "outline: 2px solid var(--select)" in body
 
 
 def test_targets_at_least_28px():
@@ -572,15 +573,27 @@ def _contrast_ratio(first: float, second: float) -> float:
 
 
 def test_dark_solid_accent_foreground_meets_wcag():
-    """Текст на сплошном accent в тёмной теме имеет контраст не ниже 4.5:1."""
+    """Текст на сплошной заливке имеет контраст не ниже 4.5:1 в обеих темах.
+
+    Основные действия — чернильные (--ink с текстом --paper), как во всей
+    системе AuditLens; красная заливка осталась только у действия-риска
+    «отметить как лазейку» (.lp-mark-btn-bad).
+    """
     dark_accent = _theme_token("html.dark", "--accent")
     dark_on_accent = _theme_token("html.dark", "--on-accent-solid")
     ratio = _contrast_ratio(_oklch_luminance(dark_accent), _oklch_luminance(dark_on_accent))
     assert ratio >= 4.5, f"контраст тёмного accent равен {ratio:.2f}:1"
-    for selector in (".lp-chat-send", ".lp-btn-primary", ".lp-phase-active", ".lp-mark-btn-bad"):
+    for theme in (":root", "html.dark"):
+        ink = _oklch_luminance(_theme_token(theme, "--ink"))
+        paper = _oklch_luminance(_theme_token(theme, "--paper"))
+        assert _contrast_ratio(ink, paper) >= 4.5, f"{theme}: --paper на --ink ниже 4.5:1"
+    for selector in (".lp-chat-send", ".lp-btn-primary", ".lp-phase-active"):
         block = _block(CSS, selector)
-        assert "background: var(--accent)" in block
-        assert "color: var(--on-accent-solid)" in block
+        assert "background: var(--ink)" in block
+        assert "color: var(--paper)" in block
+    block = _block(CSS, ".lp-mark-btn-bad")
+    assert "background: var(--accent)" in block
+    assert "color: var(--on-accent-solid)" in block
 
 
 def test_dark_solid_danger_foreground_meets_wcag():

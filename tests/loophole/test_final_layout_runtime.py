@@ -328,7 +328,11 @@ def _open(
     initial_chat_failure: bool = False,
     report_snapshot_id: int | None = None,
 ):
-    page = browser.new_page(viewport={"width": width, "height": 900})
+    # Время фикстур задано в UTC+8: без явного пояса ожидания «09:15» зависели
+    # от часового пояса машины, на которой идут тесты.
+    page = browser.new_page(
+        viewport={"width": width, "height": 900}, timezone_id="Asia/Singapore",
+    )
     page.set_default_timeout(15_000)
     page.set_content(
         _runtime_html(
@@ -925,7 +929,8 @@ def test_catalog_exposes_read_only_published_loophole_scope_without_false_query_
     try:
         assert page.locator("#lp-filter-verdict").count() == 0
         assert page.locator("#lp-filter-status").count() == 0
-        assert page.get_by_label("Тип записи").input_value() == "all"
+        # По умолчанию — только находки: 99% базы на проде — «не подтверждено».
+        assert page.get_by_label("Тип записи").input_value() == "confirmed"
         # Декоративный индикатор «Состояния базы» удалён из фильтров каталога.
         assert page.locator(".lp-scope-indicator").count() == 0
 
@@ -1032,6 +1037,8 @@ def test_parser_targets_link_only_safe_web_addresses(browser: Browser):
     try:
         page.get_by_role("tab", name="Добавить источник").click()
         target_list = page.locator(".lp-parser-targets")
+        # Список парсеров грузится асинхронно — ждём его, а не читаем пустым.
+        target_list.locator("a").first.wait_for(state="visible")
         links = target_list.locator("a").evaluate_all(
             """elements => elements.map(element => ({
               text: element.textContent,

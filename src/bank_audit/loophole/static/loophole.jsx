@@ -10,6 +10,39 @@ const EXPORT_LIMIT = 10000;
 // Размер страницы общей базы (дублирует верхнюю границу limit на бэкенде).
 const PAGE_SIZE = 50;
 
+// Названия банков вместо кодов bank_slug — только отображение: фильтры и API
+// по-прежнему работают с кодом. Неизвестный код показывается как есть.
+const BANK_NAMES = {
+  sberbank: "Сбербанк", sber: "Сбербанк", vtb: "ВТБ", alfabank: "Альфа-Банк",
+  alfa: "Альфа-Банк", tbank: "Т-Банк", tinkoff: "Т-Банк", gazprombank: "Газпромбанк",
+  gpb: "Газпромбанк", raiffeisen: "Райффайзенбанк", rosbank: "Росбанк",
+  sovcombank: "Совкомбанк", mtsbank: "МТС Банк", mts: "МТС Банк",
+  pochtabank: "Почта Банк", otkritie: "Открытие", psb: "ПСБ", rshb: "Россельхозбанк",
+  domrf: "Банк ДОМ.РФ", ozon: "Озон Банк", ozonbank: "Озон Банк", yandex: "Яндекс Банк",
+  uralsib: "Уралсиб", akbars: "Ак Барс", mkb: "МКБ", homecredit: "Хоум Банк",
+  renaissance: "Ренессанс Банк", all: "Все банки", generic: "Банк не указан",
+  other: "Другие банки",
+};
+function bankName(slug) {
+  const value = String(slug || "").trim();
+  return value ? (BANK_NAMES[value.toLowerCase()] || value) : "—";
+}
+// Сбер — объект аудита: выделяется зелёным, как во всей системе AuditLens.
+function bankClass(slug) {
+  return /^sber/i.test(String(slug || "")) ? "lp-bank lp-bank-sber" : "lp-bank";
+}
+
+// Сводный аудит: события и решения по-русски; неизвестный код — как есть.
+const AUDIT_ACTION_LABELS = {
+  role_grant: "Назначение эксперта ЦК КС", role_assign: "Назначение эксперта ЦК КС",
+  role_revoke: "Отзыв роли ЦК КС", queue_access: "Открытие очереди верификации",
+  verification_decide: "Решение ЦК КС", mark_verdict: "Ручной вердикт",
+  membership_check: "Проверка доступа к модулю", admin_roles_read: "Просмотр ролей",
+  admin_audit_read: "Просмотр сводного аудита",
+  parser_development_request_create: "Заявка на парсер",
+};
+const AUDIT_DECISION_LABELS = {allow: "разрешено", deny: "отказано"};
+
 // Фазы, которые реально сообщает nanobot-пайплайн, включая финальное done.
 // Пользователь видит только русские подписи, протокольные ключи не меняются.
 const PHASES = ["clarify", "execute", "answer", "done"];
@@ -385,7 +418,9 @@ function LoopholeApp() {
   const [fFrom, setFFrom] = useState("");
   const [fTo, setFTo] = useState("");
   const [fVerification, setFVerification] = useState("all");
-  const [fClassification, setFClassification] = useState("all");
+  // По умолчанию — только находки: на проде 99% базы — «не подтверждено»,
+  // и уязвимости со схемами тонули среди них.
+  const [fClassification, setFClassification] = useState("confirmed");
   // Сортировка
   const [sortKey, setSortKey] = useState("verdict_confidence");
   const [sortDir, setSortDir] = useState("desc");
@@ -650,7 +685,7 @@ function LoopholeApp() {
   // Сброс фильтров каталога — действие «Сбросить» (фильтры + пустая выборка).
   const resetFilters = () => {
     setFText(""); setFBanks([]); setFFrom(""); setFTo(""); setFVerification("all");
-    setFClassification("all"); setPage(0);
+    setFClassification("confirmed"); setPage(0);
   };
 
   // ── CSV-экспорт выделенных записей ─────────────────────────────────────────
@@ -1914,7 +1949,10 @@ function LoopholeApp() {
     const value = String(name || "Без названия").trim() || "Без названия";
     return value.length <= 64 ? value : `${value.slice(0, 63)}…`;
   };
-  const fmtNum = (v) => v != null ? Number(v).toFixed(2) : "—";
+  // Уверенность модели — в процентах, как числа во всей системе.
+  const fmtNum = (v) => v != null && Number.isFinite(Number(v))
+    ? `${Math.round(Number(v) * 100)}%` : "—";
+  const confWidth = (v) => `${Math.max(0, Math.min(100, Math.round(Number(v) * 100)))}%`;
 
   const RECORD_STATUS_LABELS = {
     published: "подтверждено",
@@ -1963,8 +2001,8 @@ function LoopholeApp() {
   const verdictLabel = (r) => ({
     vulnerability: "уязвимость",
     fraud_scheme: "мошенническая схема",
-    not_confirmed: "ни уязвимость, ни мошенническая схема",
-  }[recordClassification(r)] || "не размечено");
+    not_confirmed: "не подтверждено",
+  }[recordClassification(r)] || "без вердикта");
   // Метки решений ЦК КС (loophole_verification_decision.decision) для карточки
   // очереди и модалки вердикта.
   const decisionLabel = (value) => ({
@@ -2039,13 +2077,12 @@ function LoopholeApp() {
 
   // Бейдж статуса контента в строке таблицы.
   const contentBadge = (r) => {
-    if (r.content_status === "full")
-      return <span className="lp-content-badge" title="Полный контент сохранён">📄</span>;
+    // Полный текст — норма (почти все записи), метка только у отклонений.
     if (r.content_status === "truncated")
-      return <span className="lp-content-badge" title="Контент обрезан по лимиту">✂</span>;
+      return <span className="lp-content-tag" title="Контент обрезан по лимиту">обрезан</span>;
     if (r.content_status === "fetch_failed" || r.content_status === "empty")
-      return <span className="lp-content-badge" title="Контент не загружен">⚠</span>;
-    return null; // legacy/нет данных
+      return <span className="lp-content-tag lp-content-tag-warn" title="Контент не загружен">не загружен</span>;
+    return null; // full / legacy / нет данных
   };
 
   // Развёрнутый блок контента под строкой. opts.alwaysFull — режим карточки
@@ -2070,9 +2107,9 @@ function LoopholeApp() {
     return (
       <div className="lp-content-block" onClick={e => e.stopPropagation()}>
         <div className="lp-content-head">
-          {d.content_status === "full" && <span className="lp-content-badge">📄 полный</span>}
-          {d.content_status === "truncated" && <span className="lp-content-badge">✂ обрезан{sizeKb ? ` до ${sizeKb} КБ` : ""}</span>}
-          {failed && <span className="lp-content-badge">⚠ контент не загружен</span>}
+          {d.content_status === "full" && <span className="lp-content-badge">Полный текст</span>}
+          {d.content_status === "truncated" && <span className="lp-content-badge">Обрезан{sizeKb ? ` до ${sizeKb} КБ` : ""}</span>}
+          {failed && <span className="lp-content-badge lp-content-tag-warn">Контент не загружен</span>}
           {sizeKb != null && <span className="lp-content-meta">{sizeKb} КБ</span>}
           {sourceLink}
           {d.fetched_at && <span className="lp-content-meta">загружено {fmtDate(d.fetched_at)}</span>}
@@ -2140,13 +2177,20 @@ function LoopholeApp() {
       {/* ── Основная область: поверхность выбранного рабочего контекста ──────── */}
       <main className="lp-main">
         <header className="lp-main-header">
-          <h1>
-            {view === "ai_research" ? "AI-исследования"
-              : view === "sources" ? "Заявка на разработку парсера"
-              : view === "queue" ? "Очередь верификации"
-              : view === "admin" ? "Управление доступом"
-              : "Лазейки и мошеннические схемы в продуктах банка"}
-          </h1>
+          <div className="lp-page-head">
+            <div className="lp-page-eyebrow">Анализ · схемы и лазейки</div>
+            <h1>
+              {view === "ai_research" ? "AI-исследования"
+                : view === "sources" ? "Заявка на разработку парсера"
+                : view === "queue" ? "Очередь верификации"
+                : view === "admin" ? "Управление доступом"
+                : "Лазейки и мошеннические схемы в продуктах банка"}
+            </h1>
+            {view === "catalog" && <p className="lp-page-meta">
+              Записи из обсуждений на форумах, с сайтов банков и из исследований агента.
+              Окончательный вердикт выносит эксперт ЦК КС.
+            </p>}
+          </div>
           <div className="lp-header-actions">
             {view === "ai_research" && (
               <button className="lp-btn" onClick={() => setChatOpen(o => !o)}>
@@ -2203,7 +2247,7 @@ function LoopholeApp() {
                  role="tabpanel" aria-labelledby="lp-tab-catalog">
         {/* Фильтры */}
         <div className="lp-filters">
-          <div className="lp-filter">
+          <div className="lp-filter lp-filter-search">
             <label htmlFor="lp-filter-text">Поиск по тексту</label>
             <input id="lp-filter-text" type="text" value={fText} onChange={e => setFText(e.target.value)}
                    placeholder="название, фрагмент, ключевое слово…"/>
@@ -2221,7 +2265,7 @@ function LoopholeApp() {
                              ? prev.filter(x => x !== b)
                              : [...prev, b]);
                          }}/>
-                  {b}
+                  {bankName(b)}
                 </label>
               ))}
             </div>
@@ -2250,11 +2294,11 @@ function LoopholeApp() {
             <label htmlFor="lp-filter-classification">Тип записи</label>
             <select id="lp-filter-classification" value={fClassification}
                     onChange={e => setFClassification(e.target.value)}>
-              <option value="all">Все</option>
               <option value="confirmed">Уязвимости и мошеннические схемы</option>
               <option value="vulnerability">Уязвимости</option>
               <option value="fraud_scheme">Мошеннические схемы</option>
-              <option value="not_confirmed">Ни уязвимость, ни мошенническая схема</option>
+              <option value="not_confirmed">Не подтверждено</option>
+              <option value="all">Все записи</option>
             </select>
           </div>
           <div className="lp-filter lp-filter-reset">
@@ -2302,8 +2346,9 @@ function LoopholeApp() {
                   </th>
                   <th className="lp-col-narrow2" {...sortableThProps("verdict_confidence")}>
                     <button type="button" className="lp-sort-button"
+                            title="Предварительная вероятность: оценка модели, а не решение эксперта"
                             onClick={() => toggleSort("verdict_confidence")}>
-                      Предварительная вероятность{sortArrow("verdict_confidence")}
+                      Вероятность{sortArrow("verdict_confidence")}
                     </button>
                   </th>
                   <th {...sortableThProps("classification")}>
@@ -2370,14 +2415,26 @@ function LoopholeApp() {
                           </div>
                         )}
                       </td>
-                      <td className="lp-col-narrow2">{r.bank_slug || "—"}</td>
-                      <td className="lp-col-narrow2">{fmtNum(r.verdict_confidence)}</td>
+                      <td className="lp-col-narrow2">
+                        <span className={bankClass(r.bank_slug)}>{bankName(r.bank_slug)}</span>
+                      </td>
+                      <td className="lp-col-narrow2">
+                        {r.verdict_confidence != null ? (
+                          <span className="lp-conf">
+                            <span className="lp-conf-bar" aria-hidden="true">
+                              <i style={{width: confWidth(r.verdict_confidence)}}></i>
+                            </span>
+                            {fmtNum(r.verdict_confidence)}
+                          </span>
+                        ) : "—"}
+                      </td>
                       <td onClick={e => e.stopPropagation()}>
                         <VerdictControl type={canMarkVerdict ? "button" : undefined}
                                 className={"lp-verdict-chip " +
                                   (r.is_loophole === true ? "lp-verdict-chip-bad"
                                  : r.is_loophole === false ? "lp-verdict-chip-ok"
-                                 : "lp-verdict-chip-na")}
+                                 : "lp-verdict-chip-na")
+                                  + " lp-verdict-" + (recordClassification(r) || "none")}
                                 style={canMarkVerdict ? undefined : {cursor: "default"}}
                                 title={canMarkVerdict ? "Изменить вердикт" : undefined}
                                 onClick={canMarkVerdict
@@ -2780,7 +2837,11 @@ function LoopholeApp() {
                           <span className="lp-queue-index">{index + 1}.</span>
                           <span className="lp-queue-card-copy">
                             <strong>{record.title || record.snippet || "—"}</strong>
-                            <small>{record.bank_slug || "—"} · {fmtDate(record.published_at)}</small>
+                            <small>
+                              {[record.bank_slug ? bankName(record.bank_slug) : null,
+                                record.published_at ? fmtDate(record.published_at) : null]
+                                .filter(Boolean).join(" · ") || "Банк и дата не указаны"}
+                            </small>
                           </span>
                           <span className="lp-queue-confidence">
                             <small>Предварительная вероятность</small>{fmtNum(record.verdict_confidence)}
@@ -2795,7 +2856,7 @@ function LoopholeApp() {
                       <div className="lp-eyebrow">Карточка проверки</div>
                       <h2>{queueSelected.title || queueSelected.snippet || "—"}</h2>
                       <div className="lp-queue-detail-grid">
-                        <div><span>Банк</span><strong>{queueSelected.bank_slug || "—"}</strong></div>
+                        <div><span>Банк</span><strong className={bankClass(queueSelected.bank_slug)}>{bankName(queueSelected.bank_slug)}</strong></div>
                         <div><span>Предварительная вероятность</span><strong>{fmtNum(queueSelected.verdict_confidence)}</strong></div>
                         <div><span>Статус</span><strong>{recordStatusLabel(queueSelected.status)}</strong></div>
                         <div><span>Дата публикации</span><strong>{fmtDate(queueSelected.published_at)}</strong></div>
@@ -2970,8 +3031,10 @@ function LoopholeApp() {
                       <tbody>
                         {adminAudit.map(e => (
                           <tr key={e.action + ":" + e.decision}>
-                            <td>{e.action}</td>
-                            <td><span className="lp-status">{e.decision}</span></td>
+                            <td>{AUDIT_ACTION_LABELS[e.action] || e.action}</td>
+                            <td><span className={"lp-status" + (e.decision === "deny" ? " lp-audit-deny" : "")}>
+                              {AUDIT_DECISION_LABELS[e.decision] || e.decision}
+                            </span></td>
                             <td className="lp-col-narrow2">{e.count}</td>
                             <td className="lp-cell-date lp-col-narrow1">{fmtDate(e.last_at)}</td>
                           </tr>
@@ -3054,8 +3117,9 @@ function LoopholeApp() {
               <div className="lp-subtasks-title">Подзадачи</div>
               {subtasks.map((s, i) => (
                 <div key={i} className="lp-subtask">
-                  <span className={"lp-subtask-icon lp-subtask-" + s.status}>
-                    {s.status === "done" ? "✅" : s.status === "error" ? "❌" : "⏳"}
+                  <span className={"lp-subtask-icon lp-subtask-" + s.status}
+                        title={s.status === "done" ? "Готово" : s.status === "error" ? "Ошибка" : "Выполняется"}>
+                    <span className="lp-subtask-dot" aria-hidden="true"></span>
                   </span>
                   <span className="lp-subtask-title">{s.title}</span>
                 </div>
@@ -3182,7 +3246,7 @@ function LoopholeApp() {
             onClick={() => textClarification ? submitAnswers() : sendChat()}
             disabled={agentBusy || researchLoading || researchActionBusy || !workspaceId || !chatInput.trim() || selectionQuestions.length > 0}
           >
-            {agentBusy ? "…" : "➤"}
+            {agentBusy ? "…" : "↑"}
           </button>
         </div>}
       </aside>)}
@@ -3239,7 +3303,7 @@ function LoopholeApp() {
                     {rec.title || rec.snippet || "—"}
                   </div>
                   <div className="lp-verdict-meta">
-                    <span>{rec.bank_slug || "банк не указан"}</span>
+                    <span>{rec.bank_slug ? bankName(rec.bank_slug) : "банк не указан"}</span>
                     <span>доверие {fmtNum(rec.verdict_confidence)}</span>
                     <span>опубликовано {fmtDate(rec.published_at)}</span>
                     <span>собрано {fmtDate(rec.collected_at)}</span>

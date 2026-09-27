@@ -84,7 +84,8 @@ def test_browser_marks_filters_and_reloads_with_real_api(browser, client, sessio
         expect(page.get_by_text("Нет записей по выбранным фильтрам.")).to_be_visible()
         page.reload()
         expect(rows).to_have_count(2)
-        expect(record_filter).to_have_value("all")
+        # После перезагрузки — фильтр по умолчанию: только находки.
+        expect(record_filter).to_have_value("confirmed")
         expect(rows.filter(has_text="Первый кейс").locator(".lp-verdict-chip")).to_have_text("уязвимость")
         page.screenshot(path=str(tmp_path / f"classification-catalog-{width}.png"), full_page=True)
         assert not errors

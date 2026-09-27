@@ -1,5 +1,9 @@
 /* loophole — стили: правый sidebar-чат (AI-agent) + основная область с таблицей.
-   Шрифты: Source Serif 4 / Geist / JetBrains Mono (саморазмещённые, /static/vendor/). */
+   Шрифты: Source Serif 4 / Geist / JetBrains Mono (саморазмещённые, /static/vendor/).
+   Система AuditLens (волны S1–S4 основного сайта): текст и числа — Geist с табличными
+   цифрами, заголовки и крупные числа — Source Serif 4, моноширинный — только код и логи.
+   Основная кнопка чернильная; красный означает риск (уязвимость, ошибка, удаление);
+   выделение и фокус — нейтральный графит (--select). */
 
 /* Токены AuditLens (story 1.2) — единая визуальная система с основным сайтом,
    значения verbatim из index.html. Класс html.dark переключается скриптом
@@ -20,11 +24,23 @@
   --pos:          oklch(48% 0.10 150);
   --warn:         oklch(55% 0.13 75);
   --neg:          oklch(58% 0.18 25);
+  /* Добавлены волнами S2–S4 основного сайта (verbatim из index.html). */
+  --sber:         oklch(46% 0.13 152);
+  --sber-soft:    oklch(46% 0.13 152 / 0.10);
+  --select:       oklch(40% 0.045 255);
+  --select-soft:  oklch(40% 0.045 255 / 0.07);
+  --qhl:          oklch(88% 0.09 85 / 0.55);
+  --info:         oklch(52% 0.13 245);
+  --legal:        oklch(48% 0.18 295);
+  --warn-ink:     oklch(45% 0.09 75);
+  --accent-ink:   oklch(47% 0.19 25);
+  --shadow-1: 0 1px 0 oklch(0% 0 0 / .04), 0 1px 2px oklch(0% 0 0 / .03);
+  --shadow-2: 0 1px 0 oklch(0% 0 0 / .04), 0 4px 16px oklch(0% 0 0 / .06);
   --on-danger-solid: oklch(100% 0 0);
   --shadow-offcanvas: oklch(0% 0 0 / 0.35);
   --phase-done-bg: oklch(48% 0.10 150 / 0.18);
   --tool-events-bg: var(--paper-2);
-  --option-selected-bg: var(--accent-soft);
+  --option-selected-bg: var(--select-soft);
   --modal-overlay: oklch(15% 0.008 260 / 0.55);
   --shadow-dialog: oklch(0% 0 0 / 0.25);
   --verdict-neg-border: oklch(58% 0.18 25 / 0.35);
@@ -54,11 +70,22 @@ html.dark {
   --pos:          oklch(72% 0.14 150);
   --warn:         oklch(80% 0.14 75);
   --neg:          oklch(70% 0.18 25);
+  --sber:         oklch(70% 0.14 152);
+  --sber-soft:    oklch(70% 0.14 152 / 0.14);
+  --select:       oklch(80% 0.05 255);
+  --select-soft:  oklch(80% 0.05 255 / 0.10);
+  --qhl:          oklch(60% 0.10 85 / 0.35);
+  --info:         oklch(72% 0.12 245);
+  --legal:        oklch(72% 0.14 295);
+  --warn-ink:     oklch(78% 0.10 75);
+  --accent-ink:   oklch(74% 0.16 25);
+  --shadow-1: 0 1px 0 oklch(0% 0 0 / .3), 0 1px 2px oklch(0% 0 0 / .25);
+  --shadow-2: 0 1px 0 oklch(0% 0 0 / .3), 0 4px 16px oklch(0% 0 0 / .35);
   --on-danger-solid: oklch(15% 0.008 260);
   --shadow-offcanvas: oklch(0% 0 0 / 0.35);
   --phase-done-bg: oklch(72% 0.14 150 / 0.18);
   --tool-events-bg: var(--paper-2);
-  --option-selected-bg: var(--accent-soft);
+  --option-selected-bg: var(--select-soft);
   --modal-overlay: oklch(0% 0 0 / 0.55);
   --shadow-dialog: oklch(0% 0 0 / 0.25);
   --verdict-neg-border: oklch(70% 0.18 25 / 0.35);
@@ -74,14 +101,14 @@ html.dark {
 }
 
 /* Алиасы наследия модуля на единые токены: правила ниже не переопределяют
-   палитру, поэтому тёмная тема подхватывается автоматически. Оба muted-уровня
-   ведут на --ink-2: --ink-3 даёт контраст ниже 4.5:1 на светлых поверхностях,
-   а история требует 4.5:1 для текста. */
+   палитру, поэтому тёмная тема подхватывается автоматически. --muted — вторичный
+   текст (--ink-2), --muted-2 — подписи и мета (--ink-3): после волны S4 основного
+   сайта --ink-3 держит не меньше 5:1 на всех поверхностях обеих тем. */
 :root {
   --bg: var(--paper);
   --fg: var(--ink);
   --muted: var(--ink-2);
-  --muted-2: var(--ink-2);
+  --muted-2: var(--ink-3);
   --border: var(--hair-2);
   --border-soft: var(--hair);
   --panel: var(--surface);
@@ -91,7 +118,7 @@ html.dark {
      light/dark переключаются только через html.dark. */
   --sidebar-bg: var(--surface);
   --sidebar-fg: var(--ink);
-  --sidebar-muted: var(--ink-2);
+  --sidebar-muted: var(--ink-3);
   --sidebar-border: var(--hair);
   --sidebar-input: var(--paper-2);
   --user-bubble: var(--paper-2);
@@ -117,6 +144,15 @@ html.dark {
   --mono: "JetBrains Mono", ui-monospace, monospace;
   --sans: "Geist", system-ui, sans-serif;
   --serif: "Source Serif 4", Georgia, serif;
+  /* Геометрия и движение основного сайта: радиусы, пружина Apple-типа,
+     длительности отклика; поле страницы — как у .content. */
+  --r-sm: 4px; --r: 6px; --r-lg: 10px;
+  --ease-out: cubic-bezier(.22,.61,.36,1);
+  --ease-spring: cubic-bezier(.32,.72,0,1);
+  --dur-press: 90ms; --dur-quick: 180ms; --dur-base: 280ms;
+  --press: .985;
+  --lp-gutter: 28px;
+  --row-hover: var(--paper-2);
 }
 
 * { box-sizing: border-box; }
@@ -131,6 +167,9 @@ html, body {
   font-family: var(--sans);
   font-size: 14px;
   line-height: 1.5;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* Высота — от геометрии iframe (100%), без viewport-единиц (story 1.3). */
@@ -169,17 +208,19 @@ html, body {
   border-bottom: 1px solid var(--sidebar-border);
 }
 .lp-agent-avatar {
-  width: 36px; height: 36px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--on-accent);
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--paper);
   display: flex; align-items: center; justify-content: center;
-  font-weight: 600; font-size: 0.8rem;
+  font-weight: 600; font-size: 12px; letter-spacing: .02em;
   flex-shrink: 0;
 }
-.lp-agent-name { font-weight: 600; font-size: 0.95rem; }
+.lp-agent-name {
+  font-weight: 600; font-size: 14px; letter-spacing: -.005em;
+}
 .lp-agent-status {
-  font-size: 0.78rem; color: var(--sidebar-muted);
+  font-size: 12px; color: var(--sidebar-muted);
   display: flex; align-items: center; gap: 6px;
 }
 .lp-dot {
@@ -200,8 +241,8 @@ html, body {
   min-height: 0;
 }
 .lp-chat-empty {
-  color: var(--sidebar-muted);
-  font-size: 0.85rem;
+  color: var(--ink-2);
+  font-size: 13px;
   line-height: 1.6;
   padding: 8px 4px;
 }
@@ -217,9 +258,9 @@ html, body {
 .lp-bubble {
   min-width: 0;
   max-width: 92%;
-  border-radius: 12px;
-  padding: 8px 12px;
-  font-size: 0.88rem;
+  border-radius: 14px;
+  padding: 9px 12px;
+  font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -228,21 +269,22 @@ html, body {
   align-self: flex-end;
   background: var(--user-bubble);
   color: var(--on-user-bubble);
-  border: 1px solid var(--accent);
+  border: 1px solid var(--hair);
   border-bottom-right-radius: 4px;
 }
 .lp-bubble-assistant {
   align-self: flex-start;
-  background: var(--sidebar-input);
+  background: var(--surface);
   color: var(--sidebar-fg);
   border: 1px solid var(--sidebar-border);
   border-bottom-left-radius: 4px;
 }
 .lp-bubble-role {
-  font-size: 0.72rem;
-  opacity: 0.7;
+  font-size: 11px;
+  color: var(--ink-3);
   margin-bottom: 2px;
   font-weight: 600;
+  letter-spacing: .02em;
 }
 .lp-bubble-content { white-space: pre-wrap; }
 .lp-tool-events { white-space: normal; }
@@ -274,28 +316,40 @@ html, body {
   resize: none;
   background: var(--sidebar-input);
   color: var(--sidebar-fg);
-  border: 1px solid var(--sidebar-border);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border: 1px solid var(--hair-2);
+  border-radius: 12px;
+  padding: 9px 12px;
   font-family: var(--sans);
-  font-size: 0.88rem;
-  line-height: 1.4;
+  font-size: 14px;
+  line-height: 1.45;
+  transition: border-color var(--dur-quick), box-shadow var(--dur-quick), background-color var(--dur-quick);
 }
-.lp-chat-input:focus { outline: none; border-color: var(--accent); }
+.lp-chat-input:focus {
+  outline: none;
+  border-color: var(--select);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--select), transparent 80%);
+}
 .lp-chat-input::placeholder { color: var(--sidebar-muted); }
 .lp-chat-send {
   align-self: flex-end;
-  background: var(--accent);
-  color: var(--on-accent-solid);
+  background: var(--ink);
+  color: var(--paper);
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   width: 38px; height: 38px;
-  font-size: 1rem;
+  font-size: 16px;
+  font-weight: 600;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
+  transition: opacity var(--dur-quick), transform var(--dur-press) var(--ease-out);
 }
-.lp-chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
-.lp-chat-send:not(:disabled):hover { opacity: 0.9; }
+.lp-chat-send:disabled {
+  opacity: 0.25; cursor: not-allowed;
+}
+.lp-chat-send:not(:disabled):hover {
+  opacity: 0.88;
+}
 
 /* ── Main area ───────────────────────────────────────────────────────────── */
 .lp-main {
@@ -307,88 +361,119 @@ html, body {
 }
 .lp-main-header {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   flex-wrap: wrap;      /* действия переносятся на вторую строку (story 1.3) */
-  row-gap: 8px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  column-gap: 20px;
+  row-gap: 10px;
+  padding: 22px var(--lp-gutter) 14px;
+  background: transparent;
   flex-shrink: 0;
 }
 .lp-main-header h1 {
   font-family: var(--serif);
-  font-size: 1.5rem;
+  font-size: 28px;
   font-weight: 600;
-  margin: 0;
+  letter-spacing: -.02em;
+  line-height: 1.15;
+  margin: 4px 0 0;
+  color: var(--ink);
+  text-wrap: balance;
 }
 .lp-header-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
-/* Рабочие контексты финального макета: спокойная линейная навигация с
-   доступным активным состоянием, без конкурирующих акцентных кнопок. */
+/* Рабочие контексты: вкладки раздела основной системы (.ptab / .rv-tab) —
+   активная вкладка поднимается на поверхность с тонким кольцом, без красного. */
 .lp-context-nav {
   display: flex;
-  gap: 22px;
+  gap: 4px;
   flex-wrap: wrap;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  padding: 8px calc(var(--lp-gutter) - 8px);
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--hair);
+  background: transparent;
   flex-shrink: 0;
 }
 .lp-context-tab {
-  min-height: 44px;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: 9px;
   background: transparent;
-  color: var(--muted);
-  font: 500 0.84rem var(--sans);
+  color: var(--ink-3);
+  font: 500 13px var(--sans);
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color var(--dur-quick), color var(--dur-quick), box-shadow var(--dur-quick), transform var(--dur-press) var(--ease-out);
 }
-.lp-context-tab:hover { color: var(--fg); }
+.lp-context-tab:hover {
+  color: var(--fg); background: var(--paper-2);
+}
 .lp-context-tab-active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--hair-2), var(--shadow-1);
 }
 .lp-context-tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: 2px solid var(--select);
+  outline-offset: 1px;
 }
 .lp-count-badge {
-  background: var(--accent-soft);
-  color: var(--accent);
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 0.8rem;
+  background: var(--paper-2);
+  color: var(--ink-2);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Кнопки ──────────────────────────────────────────────────────────────── */
 /* Мишень не меньше 28px (story 1.4). */
 .lp-btn {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  padding: 6px 14px;
-  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--hair-2);
+  padding: 7px 14px;
+  border-radius: var(--r);
   cursor: pointer;
   font-family: var(--sans);
-  font-size: 0.85rem;
-  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  letter-spacing: -.005em;
+  color: var(--ink-2);
+  text-decoration: none;
   min-height: 28px;
+  transition: background-color var(--dur-quick), border-color var(--dur-quick), color var(--dur-quick), opacity var(--dur-quick), transform var(--dur-press) var(--ease-out);
 }
-.lp-btn:hover { background: var(--border-soft); }
-.lp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.lp-btn:hover {
+  background: var(--paper-2); color: var(--ink); border-color: var(--ink-4);
+}
+.lp-btn:disabled {
+  opacity: 0.45; cursor: not-allowed;
+}
 .lp-btn-primary {
-  background: var(--accent);
-  color: var(--on-accent-solid);
-  border-color: var(--accent);
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+  /* Переход в основное состояние (выбраны строки) — сразу, без анимации фона. */
+  transition: opacity var(--dur-quick), transform var(--dur-press) var(--ease-out);
 }
-.lp-btn-primary:hover { opacity: 0.9; background: var(--accent); }
+.lp-btn-primary:hover {
+  opacity: 0.88; background: var(--ink); color: var(--paper); border-color: var(--ink);
+}
 /* Деструктивное действие (подтверждение удаления). */
 .lp-btn-danger {
   background: var(--neg);
@@ -397,7 +482,21 @@ html, body {
 }
 .lp-btn-danger:hover { opacity: 0.9; background: var(--neg); }
 
-/* Видимое кольцо фокуса accent 2px для интерактивных контролов (story 1.4). */
+/* Видимое кольцо фокуса 2px для интерактивных контролов (story 1.4) — графит
+   --select, как во всей системе: красный на вкладке означает риск (волна D1).
+   Поля ввода подсвечиваются рамкой и ореолом в собственных :focus-правилах. */
+/* Поля ввода: фокус с клавиатуры и мыши виден рамкой и ореолом --select,
+   без второго кольца outline поверх. */
+.lp-filter input:focus-visible,
+.lp-filter select:focus-visible,
+.lp-chat-input:focus-visible,
+.lp-question-other textarea:focus-visible,
+.lp-mark-comment:focus-visible,
+.lp-verdict-field textarea:focus-visible {
+  outline: none;
+  border-color: var(--select);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--select), transparent 80%);
+}
 .lp-btn:focus-visible,
 .lp-chat-send:focus-visible,
 .lp-chat-close:focus-visible,
@@ -405,16 +504,10 @@ html, body {
 .lp-content-toggle:focus-visible,
 .lp-row-details:focus-visible,
 .lp-sort-button:focus-visible,
-.lp-filter input:focus-visible,
-.lp-filter select:focus-visible,
-.lp-chat-input:focus-visible,
-.lp-question-other textarea:focus-visible,
 .lp-parsers-create input:focus-visible,
 .lp-parser-edit input:focus-visible,
-.lp-mark-comment:focus-visible,
-.lp-verdict-field textarea:focus-visible,
 .lp-layout a:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--select);
   outline-offset: 2px;
 }
 
@@ -435,10 +528,10 @@ html, body {
 .lp-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
-  padding: 14px 24px;
+  gap: 12px 16px;
+  padding: 16px 20px 14px;
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hair);
   flex-shrink: 0;
   align-items: flex-end;
 }
@@ -449,49 +542,62 @@ html, body {
   min-width: 0;
   flex-direction: column;
 }
-.lp-filter { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+.lp-filter {
+  display: flex; flex-direction: column; gap: 6px; min-width: 140px;
+}
 .lp-filter label {
-  font-size: 0.75rem;
-  color: var(--muted);
+  font-size: 12px;
+  color: var(--muted-2);
   font-weight: 500;
 }
 .lp-filter input, .lp-filter select {
   font-family: var(--sans);
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  font-size: 0.85rem;
-  background: var(--panel);
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hair-2);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--paper-2);
   color: var(--fg);
+  transition: border-color var(--dur-quick), box-shadow var(--dur-quick), background-color var(--dur-quick);
 }
 .lp-filter input:focus, .lp-filter select:focus {
-  outline: none; border-color: var(--accent);
+  outline: none;
+  border-color: var(--select);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--select), transparent 80%);
 }
 .lp-period { display: flex; align-items: center; gap: 6px; }
-.lp-period input { width: 130px; }
+.lp-period input {
+  width: 140px;
+}
 .lp-filter-reset { min-width: auto; }
-.lp-filter-reset .lp-btn { padding: 6px 14px; }
+.lp-filter-reset .lp-btn {
+  padding: 7px 14px;
+}
 
 .lp-bank-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  max-width: 380px;
+  max-width: 460px;
 }
 .lp-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  font-size: 0.78rem;
+  padding: 0 11px;
+  border: 1px solid var(--hair-2);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   user-select: none;
-  color: var(--muted);
+  color: var(--ink-2);
   background: var(--panel);
   position: relative;
   min-height: 28px;   /* мишень не меньше 28px (story 1.4) */
+  transition: border-color var(--dur-quick), background-color var(--dur-quick), color var(--dur-quick);
 }
 /* Чекбокс скрыт визуально, но остаётся в Tab-последовательности (story 1.4):
    display: none делал чип недоступным с клавиатуры. */
@@ -504,16 +610,18 @@ html, body {
   pointer-events: none;
 }
 .lp-chip:focus-within {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--select);
   outline-offset: 2px;
 }
 .lp-chip-on {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 500;
+  background: var(--select-soft);
+  border-color: color-mix(in oklab, var(--select), transparent 55%);
+  color: var(--ink);
+  font-weight: 600;
 }
-.lp-muted { color: var(--muted-2); font-size: 0.8rem; }
+.lp-muted {
+  color: var(--muted-2); font-size: 12px;
+}
 
 /* ── Таблица ─────────────────────────────────────────────────────────────── */
 .lp-table-wrap {
@@ -524,10 +632,11 @@ html, body {
 }
 .lp-table {
   width: 100%;
-  min-width: 1040px;
+  min-width: 760px;
   border-collapse: collapse;
   background: var(--panel);
-  font-size: 0.85rem;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 .lp-table thead {
   position: sticky;
@@ -535,24 +644,34 @@ html, body {
   z-index: 1;
 }
 .lp-table th, .lp-table td {
-  padding: 9px 12px;
+  padding: 10px 12px;
   text-align: left;
-  border-bottom: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--hair);
   vertical-align: top;
 }
 .lp-table th {
-  background: var(--paper-2);
+  background: var(--panel);
+  font-size: 12px;
   font-weight: 600;
-  color: var(--fg);
+  color: var(--ink-3);
+  border-bottom-color: var(--hair-2);
   cursor: default;
   white-space: nowrap;
   user-select: none;
 }
-.lp-table th:hover { background: var(--hair); }
-.lp-table th.lp-col-check:hover { background: var(--paper-2); }
+.lp-table th:hover {
+  background: var(--paper-2);
+}
+.lp-table th.lp-col-check:hover {
+  background: var(--panel);
+}
 .lp-table tbody tr { cursor: default; }
-.lp-table tbody tr:hover { background: var(--paper); }
-.lp-row-sel { background: var(--accent-soft) !important; }
+.lp-table tbody tr:hover {
+  background: var(--paper-2);
+}
+.lp-row-sel {
+  background: var(--select-soft) !important;
+}
 
 .lp-col-check { width: 32px; text-align: center; }
 .lp-checkbox-hit {
@@ -565,10 +684,14 @@ html, body {
 }
 .lp-checkbox-hit input {
   margin: 0;
-  accent-color: var(--accent);
+  accent-color: var(--ink);
 }
-.lp-cell-title { min-width: 240px; max-width: 420px; }
-.lp-title-text { font-weight: 500; }
+.lp-cell-title {
+  min-width: 220px;
+}
+.lp-title-text {
+  font-weight: 500; color: var(--ink);
+}
 .lp-sort-button {
   display: inline-flex;
   align-items: center;
@@ -604,48 +727,53 @@ html, body {
   align-items: center;
   justify-content: center;
   flex: 0 0 28px;
-  color: var(--accent);
+  color: var(--ink-3);
 }
 .lp-reason {
-  font-size: 0.75rem;
-  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted-2);
   margin-top: 2px;
+  padding-left: 32px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 380px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  max-width: 560px;
 }
-.lp-cell-date { white-space: nowrap; color: var(--muted); }
+.lp-cell-date {
+  white-space: nowrap; color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
 .lp-cell-url a {
   display: inline-flex;
   align-items: center;
   min-width: 28px;
   min-height: 28px;
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--select);
   text-decoration: none;
 }
 .lp-cell-url a:hover { text-decoration: underline; }
 
 .lp-status {
-  font-family: var(--mono);
-  font-size: 0.74rem;
-  color: var(--muted);
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
 }
 .lp-status-preliminary {
   display: inline-flex;
-  padding: 2px 6px;
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  color: var(--accent);
+  align-items: center;
+  gap: 6px;
+  color: var(--warn-ink);
 }
 
 .lp-empty-state {
-  padding: 60px 24px;
+  padding: 56px 24px;
   text-align: center;
-  color: var(--muted);
-  font-size: 0.95rem;
+  color: var(--muted-2);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .lp-pagination {
@@ -654,11 +782,12 @@ html, body {
   justify-content: center;
   gap: 12px;
   padding: 10px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hair);
 }
 .lp-pagination-info {
-  font-size: 0.85rem;
-  color: var(--muted);
+  font-size: 12px;
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Скроллбары ──────────────────────────────────────────────────────────── */
@@ -666,7 +795,7 @@ html, body {
 .lp-table-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
 .lp-chat-messages::-webkit-scrollbar-thumb,
 .lp-table-wrap::-webkit-scrollbar-thumb {
-  background: var(--muted-2);
+  background: var(--hair-2);
   border-radius: 4px;
 }
 .lp-chat-messages::-webkit-scrollbar-track,
@@ -720,15 +849,14 @@ html, body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 22px 24px 32px;
+  padding: 0 var(--lp-gutter) 32px;
   color: var(--fg);
 }
 .lp-research-shell {
   display: grid;
   grid-template-columns: minmax(220px, 250px) minmax(0, 1fr);
-  gap: 18px;
-  max-width: 1200px;
-  margin: 0 auto;
+  gap: 16px;
+  margin: 0;
   align-items: start;
 }
 .lp-research-content { min-width: 0; }
@@ -744,8 +872,9 @@ html, body {
   min-width: 0;
   padding: 14px;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
 }
 .lp-research-history-head,
 .lp-research-current {
@@ -756,8 +885,12 @@ html, body {
   gap: 12px;
 }
 .lp-research-history h2,
-.lp-research-current h3 { margin: 4px 0; overflow-wrap: anywhere; }
-.lp-research-history h2 { font: 600 1.05rem var(--serif); }
+.lp-research-current h3 {
+  font-size: 15px; font-weight: 600;
+}
+.lp-research-history h2 {
+  font: 600 17px/1.3 var(--serif); letter-spacing: -.01em;
+}
 .lp-research-current h3 { font-size: 0.95rem; }
 .lp-research-history-list {
   display: grid;
@@ -774,8 +907,9 @@ html, body {
   overflow: hidden;
   color: var(--fg);
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  transition: border-color var(--dur-quick), background-color var(--dur-quick);
 }
 .lp-research-history-open {
   display: grid;
@@ -793,15 +927,20 @@ html, body {
 }
 .lp-research-history-open strong {
   overflow: hidden;
-  font-size: 0.82rem;
-  line-height: 1.3;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lp-research-history-item time { color: var(--muted); font-size: 0.72rem; }
-.lp-research-history-active { border-color: var(--accent); background: var(--paper-2); }
+.lp-research-history-item time {
+  color: var(--muted-2); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.lp-research-history-active {
+  border-color: color-mix(in oklab, var(--select), transparent 60%); background: var(--select-soft);
+}
 .lp-research-history-open:focus-visible,
-.lp-research-history-delete:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.lp-research-history-delete:focus-visible { outline: 2px solid var(--select); outline-offset: -2px; }
 .lp-research-history-open:disabled,
 .lp-research-history-delete:disabled { opacity: 0.55; cursor: wait; }
 .lp-research-history-delete {
@@ -809,14 +948,14 @@ html, body {
   top: 5px;
   right: 5px;
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--muted);
+  color: var(--muted-2);
   font: 1.2rem/1 var(--sans);
   cursor: pointer;
 }
@@ -829,32 +968,38 @@ html, body {
 .lp-research-share,
 .lp-research-report-select { display: grid; gap: 8px; margin: 14px 0; min-width: 0; }
 .lp-research-share label,
-.lp-research-report-select label { font-size: 0.78rem; color: var(--muted); }
+.lp-research-report-select label {
+  font-size: 12px; color: var(--muted-2);
+}
 .lp-research-share input,
 .lp-research-report-select select {
   width: 100%;
   min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hair-2);
+  border-radius: 8px;
   background: var(--paper-2);
   color: var(--fg);
   font: inherit;
+  font-size: 13px;
 }
 .lp-research-report-select select { text-overflow: ellipsis; }
 .lp-research-card {
   min-width: 0;
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 18px 20px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
   background: var(--panel);
+  box-shadow: var(--shadow-1);
 }
 .lp-research-card h2 {
   font-family: var(--serif);
-  font-size: 1.05rem;
+  font-size: 17px;
   font-weight: 600;
+  letter-spacing: -.01em;
   color: var(--fg);
-  margin: 3px 0 14px;
+  margin: 4px 0 14px;
 }
 .lp-research-card-head {
   display: flex;
@@ -867,9 +1012,10 @@ html, body {
 .lp-research-result-actions { flex-shrink: 0; }
 .lp-safe-markdown { min-width: 0; overflow-wrap: anywhere; }
 .lp-research-card-head strong {
-  color: var(--accent);
-  font-family: var(--mono);
-  font-size: 0.85rem;
+  color: var(--ink-3);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .lp-research-kv {
   display: grid;
@@ -883,32 +1029,33 @@ html, body {
 .lp-research-kv dt,
 .lp-queue-detail-grid span {
   color: var(--muted-2);
-  font-size: 0.72rem;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 .lp-research-kv dd {
   margin: 0;
   line-height: 1.45;
 }
 .lp-research-progress {
-  height: 7px;
+  height: 4px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--border-soft);
+  background: var(--hair);
 }
 .lp-research-progress span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--accent);
-  transition: width 180ms ease;
+  background: var(--ink);
+  transition: width var(--dur-base) var(--ease-out);
 }
 .lp-research-task-summary {
   margin: 12px 0 8px;
-  color: var(--muted);
-  font-size: 0.78rem;
+  color: var(--muted-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .lp-research-task-list {
   display: grid;
@@ -921,30 +1068,38 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 .lp-research-task-list li > span {
   width: 8px;
   height: 8px;
   flex: none;
-  border: 1px solid var(--muted-2);
+  border: 1px solid var(--hair-2);
   border-radius: 50%;
 }
 .lp-research-task-done > span { border-color: var(--pos); background: var(--pos); }
-.lp-research-task-running > span { border-color: var(--accent); background: var(--accent); }
+.lp-research-task-running > span {
+  border-color: var(--ink); background: var(--ink);
+}
 .lp-research-task-error > span { border-color: var(--neg); background: var(--neg); }
 .lp-research-evidence { grid-column: 1 / -1; }
 .lp-research-evidence p {
   margin: 0;
-  color: var(--muted);
+  color: var(--ink-2);
   line-height: 1.55;
 }
-.lp-safe-markdown p { margin: 8px 0; color: var(--muted); line-height: 1.55; }
+.lp-safe-markdown p {
+  margin: 8px 0; color: var(--ink-2); line-height: 1.6;
+}
 .lp-safe-markdown h3, .lp-safe-markdown h4,
 .lp-safe-markdown h5, .lp-safe-markdown h6 { margin: 12px 0 6px; color: var(--ink); }
-.lp-safe-markdown ul, .lp-safe-markdown ol { margin: 8px 0; padding-left: 20px; color: var(--muted); }
+.lp-safe-markdown ul, .lp-safe-markdown ol {
+  margin: 8px 0; padding-left: 20px; color: var(--ink-2);
+}
 .lp-safe-markdown li { margin: 3px 0; line-height: 1.5; }
-.lp-safe-markdown a { color: var(--accent); overflow-wrap: anywhere; }
+.lp-safe-markdown a {
+  color: var(--select); overflow-wrap: anywhere;
+}
 .lp-safe-markdown code {
   font-family: var(--mono);
   font-size: 0.86em;
@@ -982,14 +1137,13 @@ html, body {
   gap: 8px 16px;
   margin-top: 14px;
   color: var(--muted-2);
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .lp-research-chat-note {
-  max-width: 960px;
-  margin: 14px auto 0;
-  color: var(--muted);
-  font-size: 0.8rem;
+  margin: 14px 0 0;
+  color: var(--muted-2);
+  font-size: 12px;
 }
 
 /* ── Очередь верификации: master-detail без новых API/действий ──────────── */
@@ -999,15 +1153,16 @@ html, body {
   gap: 16px;
   height: 100%;
   min-height: 0;
-  padding: 18px 24px 24px;
+  padding: 0 var(--lp-gutter) 24px;
 }
 .lp-queue-list,
 .lp-queue-detail {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
   background: var(--panel);
+  box-shadow: var(--shadow-1);
 }
 .lp-queue-list { overflow-y: auto; }
 .lp-queue-list-head {
@@ -1015,47 +1170,61 @@ html, body {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hair);
   color: var(--muted-2);
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 .lp-queue-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   width: 100%;
-  gap: 9px;
+  gap: 10px;
   align-items: start;
-  padding: 13px 14px;
+  padding: 12px 14px;
   border: 0;
-  border-bottom: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--hair);
   background: transparent;
   color: var(--fg);
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--dur-quick);
 }
 .lp-queue-card:last-child { border-bottom: 0; }
 .lp-queue-card:hover { background: var(--row-hover); }
-.lp-queue-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.lp-queue-card:focus-visible { outline: 2px solid var(--select); outline-offset: -2px; }
 .lp-queue-card-active {
-  box-shadow: inset 3px 0 0 var(--accent);
-  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--select);
+  background: var(--select-soft);
 }
-.lp-queue-index { color: var(--accent); font-family: var(--mono); font-size: 0.72rem; }
+.lp-queue-index {
+  color: var(--muted-2); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+/* На подложке выбранной карточки --ink-3 в тёмной теме даёт 4,45:1 — на ступень темнее. */
+.lp-queue-card-active .lp-queue-index,
+.lp-queue-card-active .lp-queue-card-copy small,
+.lp-queue-card-active .lp-queue-confidence small { color: var(--ink-2); }
 .lp-queue-card-copy { display: grid; gap: 5px; min-width: 0; }
-.lp-queue-card-copy strong { font-size: 0.83rem; line-height: 1.35; }
-.lp-queue-card-copy small { color: var(--muted); font-size: 0.7rem; }
+.lp-queue-card-copy strong {
+  font-size: 13px; font-weight: 600; line-height: 1.38;
+}
+.lp-queue-card-copy small {
+  color: var(--muted-2); font-size: 12px;
+}
 .lp-queue-confidence {
   display: grid;
   gap: 2px;
   color: var(--fg);
-  font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   text-align: right;
 }
-.lp-queue-confidence small { color: var(--muted-2); font-size: 0.58rem; }
+.lp-queue-confidence small {
+  color: var(--muted-2); font-size: 11px; font-weight: 400;
+}
 .lp-queue-detail {
   align-self: start;
   padding: 18px;
@@ -1064,8 +1233,10 @@ html, body {
 .lp-queue-detail h2 {
   margin: 4px 0 16px;
   font-family: var(--serif);
-  font-size: 1.15rem;
-  line-height: 1.35;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  line-height: 1.3;
 }
 .lp-queue-detail-grid {
   display: grid;
@@ -1075,32 +1246,38 @@ html, body {
 .lp-queue-detail-grid div {
   display: grid;
   gap: 4px;
-  padding: 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
 }
-.lp-queue-detail-grid strong { font-size: 0.8rem; font-weight: 500; }
+.lp-queue-detail-grid strong {
+  font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums;
+}
 .lp-queue-reason {
   margin-top: 14px;
   padding: 13px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
-  border-radius: 7px;
-  background: var(--accent-soft);
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: var(--paper-2);
 }
 .lp-queue-reason h3 { margin: 0 0 6px; font-size: 0.78rem; }
-.lp-queue-reason p { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
+.lp-queue-reason p {
+  margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.5;
+}
 /* Решения ЦК КС в карточке проверки: тот же каркас, что у комментария
    классификатора, но нейтральный фон; внутри — список append-only решений
    с меткой типа, комментарием, автором и датой. */
 .lp-queue-decisions {
   margin-top: 14px;
   padding: 13px 14px;
-  border: 1px solid var(--border-soft);
-  border-radius: 7px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
   background: var(--paper-2);
 }
 .lp-queue-decisions h3 { margin: 0 0 6px; font-size: 0.78rem; }
-.lp-queue-decisions p { margin: 0; color: var(--muted); font-size: 0.8rem; }
+.lp-queue-decisions p {
+  margin: 0; color: var(--ink-2); font-size: 13px;
+}
 .lp-queue-decisions-list {
   list-style: none;
   margin: 0;
@@ -1112,35 +1289,39 @@ html, body {
   display: grid;
   gap: 3px;
   padding: 9px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
   background: var(--panel);
 }
 .lp-queue-decision-type {
   justify-self: start;
   padding: 2px 8px;
-  border-radius: 999px;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  background: var(--accent-soft);
-  color: var(--muted);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  background: var(--paper-2);
+  color: var(--ink-2);
 }
-.lp-decision-vulnerability { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
-.lp-decision-fraud_scheme { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
-.lp-decision-not_confirmed { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.lp-decision-vulnerability {
+  background: color-mix(in oklab, var(--neg), transparent 90%); color: var(--accent-ink);
+}
+.lp-decision-fraud_scheme {
+  background: color-mix(in oklab, var(--legal), transparent 90%); color: var(--legal);
+}
+.lp-decision-not_confirmed {
+  background: var(--paper-2); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--hair-2);
+}
 .lp-queue-decision-comment {
   color: var(--fg);
-  font-size: 0.8rem;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .lp-queue-decision-meta {
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 .lp-queue-detail-actions {
   display: flex;
@@ -1213,7 +1394,7 @@ html, body {
 .lp-source-card textarea { resize: vertical; min-height: 96px; }
 .lp-source-card input:focus-visible,
 .lp-source-card textarea:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--select);
   outline-offset: 2px;
 }
 .lp-source-card .lp-btn-primary { align-self: flex-start; margin-top: 4px; }
@@ -1242,17 +1423,20 @@ html, body {
 .lp-chat-close {
   margin-left: auto;
   flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  border: 1px solid var(--sidebar-border);
-  background: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
   color: var(--sidebar-muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
+  transition: background-color var(--dur-quick), color var(--dur-quick);
 }
-.lp-chat-close:hover { color: var(--sidebar-fg); }
+.lp-chat-close:hover {
+  color: var(--sidebar-fg); background: var(--paper-2);
+}
 
 /* ── Phase bar (индикатор фаз пайплайна) ─────────────────────────────────── */
 .lp-phase-bar {
@@ -1265,21 +1449,21 @@ html, body {
   flex-shrink: 0;
 }
 .lp-phase-bar-done {
-  border-bottom-color: var(--ok);
+  border-bottom-color: var(--sidebar-border);
 }
 .lp-phase-step {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 8px;
-  border-radius: 12px;
+  padding: 4px 9px 4px 5px;
+  border-radius: 999px;
   border: 1px solid var(--sidebar-border);
   background: var(--sidebar-input);
   color: var(--sidebar-muted);
-  font-size: 0.7rem;
+  font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  transition: background-color var(--dur-quick), color var(--dur-quick), border-color var(--dur-quick);
 }
 .lp-phase-dot {
   display: inline-flex;
@@ -1294,22 +1478,22 @@ html, body {
   font-weight: 700;
 }
 .lp-phase-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent-solid);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
 }
 .lp-phase-active .lp-phase-dot {
-  background: var(--on-accent);
-  color: var(--accent);
+  background: var(--paper);
+  color: var(--ink);
 }
 .lp-phase-done {
-  background: var(--phase-done-bg);
-  border-color: var(--ok);
-  color: var(--sidebar-tool-result);
+  background: color-mix(in oklab, var(--pos), transparent 90%);
+  border-color: color-mix(in oklab, var(--pos), transparent 60%);
+  color: var(--pos);
 }
 .lp-phase-done .lp-phase-dot {
-  background: var(--ok);
-  color: var(--on-accent);
+  background: var(--pos);
+  color: var(--surface);
 }
 .lp-phase-label {
   font-family: var(--sans);
@@ -1332,9 +1516,8 @@ html, body {
   align-items: center;
   gap: 3px;
   padding: 2px 7px;
-  border-radius: 9px;
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  border-radius: 999px;
+  font-size: 11px;
   background: var(--sidebar-input);
   color: var(--sidebar-muted);
   border: 1px solid var(--sidebar-border);
@@ -1354,9 +1537,10 @@ html, body {
   gap: 4px;
 }
 .lp-subtasks-title {
-  font-size: 0.72rem;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--sidebar-muted);
   margin-bottom: 2px;
 }
@@ -1365,14 +1549,14 @@ html, body {
   align-items: center;
   gap: 8px;
   padding: 3px 0;
-  font-size: 0.8rem;
+  font-size: 13px;
   color: var(--sidebar-fg);
 }
 .lp-subtask-icon {
   width: 18px;
   display: inline-flex;
+  align-items: center;
   justify-content: center;
-  font-size: 0.85rem;
 }
 .lp-subtask-title { font-family: var(--sans); }
 
@@ -1386,22 +1570,36 @@ html, body {
 .lp-subagent-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .lp-subagent-status { color: var(--ink-3); margin-left: auto; font-size: 11px; }
 .lp-subagent-indicator { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-4); }
-.lp-subagent-indicator.is-active { background: var(--accent); animation: lp-subagent-pulse 1.5s infinite; }
+.lp-subagent-indicator.is-active {
+  background: var(--ink); animation: lp-subagent-pulse 1.5s infinite;
+}
 .lp-subagent-completed .lp-subagent-indicator { background: var(--pos); }
 .lp-subagent-failed .lp-subagent-indicator { background: var(--neg); }
 .lp-subagent-query { margin-top: 6px; color: var(--ink-2); }
-.lp-subagent-steps { display: flex; gap: 8px; margin: 8px 0; color: var(--ink-4); font-size: 11px; }
+.lp-subagent-steps {
+  display: flex; gap: 8px; margin: 8px 0; color: var(--ink-3); font-size: 11px;
+}
 .lp-subagent-steps .is-reached { color: var(--ink-2); }
 .lp-subagent-count, .lp-subagent-note { color: var(--ink-3); font-size: 11px; margin: 0; }
 .lp-subagent-results { border-top: 1px solid var(--hair); padding-top: 8px; margin-top: 8px; }
 .lp-subagent-results summary { cursor: pointer; color: var(--ink-2); }
 .lp-subagent-item { margin: 10px 0; }
-.lp-subagent-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10px; color: var(--ink-3); margin-bottom: 4px; }
-.lp-subagent-label { border: 1px solid var(--hair); padding: 2px 5px; border-radius: 4px; }
-.lp-subagent-label-loophole { color: var(--pos); background: var(--verdict-pos-bg); }
-.lp-subagent-label-fraud { color: var(--neg); background: var(--verdict-neg-bg); }
+.lp-subagent-item-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-3); margin-bottom: 4px;
+}
+.lp-subagent-label {
+  border: 1px solid var(--hair); padding: 2px 6px; border-radius: 4px; font-weight: 500;
+}
+.lp-subagent-label-loophole {
+  color: var(--accent-ink); background: color-mix(in oklab, var(--neg), transparent 92%);
+}
+.lp-subagent-label-fraud {
+  color: var(--legal); background: color-mix(in oklab, var(--legal), transparent 92%);
+}
 .lp-subagent-item a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
-.lp-subagent-item p { color: var(--ink-3); margin: 3px 0 0; font-size: 11px; }
+.lp-subagent-item p {
+  color: var(--ink-3); margin: 3px 0 0; font-size: 12px;
+}
 @keyframes lp-subagent-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .lp-subagent-indicator.is-active { animation: none; } }
 
@@ -1414,12 +1612,11 @@ html, body {
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
-  border-left: 3px solid var(--accent);
 }
 .lp-questions-header {
-  font-size: 0.72rem;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   color: var(--sidebar-muted);
   font-weight: 600;
 }
@@ -1429,7 +1626,7 @@ html, body {
   gap: 8px;
 }
 .lp-question-text {
-  font-size: 0.88rem;
+  font-size: 14px;
   color: var(--sidebar-fg);
   line-height: 1.45;
 }
@@ -1445,25 +1642,29 @@ html, body {
   align-items: flex-start;
   min-height: 28px;
   gap: 8px;
-  padding: 6px 10px;
-  border: 1px solid var(--sidebar-border);
-  border-radius: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--hair-2);
+  border-radius: 10px;
   background: var(--sidebar-input);
   cursor: pointer;
-  font-size: 0.84rem;
+  font-size: 13px;
   color: var(--sidebar-fg);
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--dur-quick), background-color var(--dur-quick);
 }
-.lp-option:hover { border-color: var(--sidebar-border-hover); }
-.lp-option input { margin-top: 3px; accent-color: var(--accent); }
+.lp-option:hover {
+  border-color: var(--ink-4);
+}
+.lp-option input {
+  margin-top: 3px; accent-color: var(--ink);
+}
 .lp-option-on {
-  border-color: var(--accent);
+  border-color: var(--select);
   background: var(--option-selected-bg);
 }
 .lp-option-label { flex: 1; line-height: 1.4; }
 .lp-option-rec {
-  color: var(--warn);
-  font-size: 0.72rem;
+  color: var(--warn-ink);
+  font-size: 12px;
   margin-left: 4px;
 }
 .lp-question-other {
@@ -1472,7 +1673,7 @@ html, body {
   gap: 4px;
 }
 .lp-question-other label {
-  font-size: 0.72rem;
+  font-size: 12px;
   color: var(--sidebar-muted);
 }
 .lp-question-other textarea {
@@ -1488,7 +1689,8 @@ html, body {
 }
 .lp-question-other textarea:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--select);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--select), transparent 80%);
 }
 .lp-question-actions {
   display: flex;
@@ -1498,9 +1700,10 @@ html, body {
 }
 .lp-clarify-hint,
 .lp-clarify-error {
-  color: var(--sidebar-muted);
-  font-size: 0.78rem;
-  line-height: 1.4;
+  padding: 8px 16px;
+  border-top: 1px solid var(--sidebar-border);
+  background: var(--verdict-neg-bg);
+  color: var(--accent-ink);
 }
 .lp-clarify-error {
   padding: 8px 16px;
@@ -1512,7 +1715,8 @@ html, body {
 /* ── Кнопка маленькая ────────────────────────────────────────────────────── */
 .lp-btn-sm {
   padding: 4px 10px;
-  font-size: 0.78rem;
+  font-size: 12px;
+  line-height: 18px;
   min-height: 28px;   /* мишень не меньше 28px (story 1.4) */
 }
 
@@ -1541,11 +1745,11 @@ html, body {
   width: min(720px, 92vw);
   max-height: 80vh;
   background: var(--panel);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   box-shadow: 0 16px 48px var(--shadow-dialog);
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hair);
   overflow: hidden;
   font-family: var(--sans);
 }
@@ -1553,15 +1757,17 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
-  background: var(--paper-2);
+  gap: 12px;
+  padding: 16px 14px 14px 20px;
+  border-bottom: 1px solid var(--hair);
+  background: var(--panel);
 }
 .lp-parsers-header h2 {
   margin: 0;
   font-family: var(--serif);
-  font-size: 1.05rem;
+  font-size: 19px;
   font-weight: 600;
+  letter-spacing: -.01em;
 }
 .lp-parsers-create {
   display: flex;
@@ -1581,8 +1787,7 @@ html, body {
   color: var(--fg);
 }
 .lp-parsers-create input:focus {
-  outline: none;
-  border-color: var(--accent);
+  outline: none; border-color: var(--select);
 }
 .lp-parsers-list {
   flex: 1;
@@ -1733,67 +1938,70 @@ html, body {
 }
 
 /* ── Ручная маркировка вердиктов ─────────────────────────────────────────── */
-/* Язык основной системы: mono-лейблы uppercase, точки-индикаторы, hairline,
-   3px radius у бейджей, 6px у кнопок. */
+/* Язык основной системы: подписи Geist 11px, точки-индикаторы, hairline,
+   4–6px radius у бейджей. Цвет вердикта: уязвимость — красный (риск),
+   мошенническая схема — фиолетовый (--legal), не подтверждено — нейтральный. */
 
 /* Вердикт-чип в таблице — точка входа в маркировку. */
 .lp-verdict-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-height: 28px;   /* мишень не меньше 28px (story 1.4) */
-  padding: 0 7px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  font-family: var(--mono);
-  font-size: 10.5px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid var(--hair-2);
+  background: var(--paper-2);
+  font-family: inherit;
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.02em;
   white-space: nowrap;
-  color: var(--muted);
+  color: var(--ink-2);
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  transition: border-color var(--dur-quick), background-color var(--dur-quick), transform var(--dur-press) var(--ease-out);
 }
-.lp-verdict-chip:hover { border-color: var(--muted-2); }
-.lp-verdict-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lp-verdict-chip:hover {
+  border-color: var(--ink-4);
+}
+.lp-verdict-chip:focus-visible { outline: 2px solid var(--select); outline-offset: 2px; }
 .lp-verdict-dot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
   flex: none;
 }
 .lp-verdict-chip-bad {
-  color: var(--bad);
+  color: var(--accent-ink);
   border-color: var(--verdict-neg-border);
   background: var(--verdict-neg-bg);
 }
 .lp-verdict-chip-bad:hover { border-color: var(--verdict-neg-hover); }
 .lp-verdict-chip-ok {
-  color: var(--ok);
-  border-color: var(--verdict-pos-border);
-  background: var(--verdict-pos-bg);
+  color: var(--ink-2);
+  border-color: var(--hair-2);
+  background: var(--paper-2);
 }
-.lp-verdict-chip-ok:hover { border-color: var(--verdict-pos-hover); }
-.lp-verdict-chip-na { border-style: dashed; }
+.lp-verdict-chip-ok:hover {
+  border-color: var(--ink-4);
+}
+.lp-verdict-chip-na {
+  border-style: dashed; background: transparent; color: var(--ink-3);
+}
 
 /* Признак ручного вердикта рядом с чипом. */
 .lp-manual-mark {
   display: inline-flex;
   align-items: center;
-  height: 18px;
-  margin-left: 4px;
+  height: 20px;
+  margin-left: 6px;
   padding: 0 6px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
+  border-radius: 4px;
+  border: 1px solid var(--hair-2);
   background: var(--panel);
-  font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ink-3);
   vertical-align: middle;
 }
 
@@ -1816,20 +2024,19 @@ html, body {
   flex: none;
 }
 .lp-mark-eyebrow {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-2);
 }
 .lp-mark-count {
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--panel);
+  font-variant-numeric: tabular-nums;
+  color: var(--paper);
   background: var(--ink);
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 1px 6px;
 }
 .lp-mark-comment {
@@ -1846,8 +2053,8 @@ html, body {
 }
 .lp-mark-comment:focus {
   outline: none;
-  border-color: var(--ink);
-  box-shadow: 0 0 0 3px var(--focus-shadow);
+  border-color: var(--select);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--select), transparent 80%);
 }
 .lp-mark-comment::placeholder { color: var(--muted-2); }
 .lp-mark-actions {
@@ -1871,7 +2078,7 @@ html, body {
   transition: background 0.12s, border-color 0.12s, filter 0.12s;
 }
 .lp-mark-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.lp-mark-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lp-mark-btn:focus-visible { outline: 2px solid var(--select); outline-offset: 2px; }
 .lp-mark-btn-bad { background: var(--accent); color: var(--on-accent-solid); }
 .lp-mark-btn-bad:not(:disabled):hover { filter: brightness(1.06); }
 .lp-mark-btn-ok {
@@ -1887,27 +2094,29 @@ html, body {
 .lp-verdict-dialog { width: min(520px, 92vw); }
 .lp-verdict-header { align-items: flex-start; }
 .lp-eyebrow {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.1em;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-2);
-  margin-bottom: 3px;
+  margin-bottom: 4px;
 }
 .lp-dialog-x {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   flex: none;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--muted);
-  font-size: 13px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
+  transition: background-color var(--dur-quick), color var(--dur-quick);
 }
-.lp-dialog-x:hover { background: var(--border-soft); color: var(--fg); }
+.lp-dialog-x:hover {
+  background: var(--paper-2); color: var(--fg);
+}
 .lp-verdict-body {
   display: flex;
   flex-direction: column;
@@ -1930,9 +2139,9 @@ html, body {
   flex-wrap: wrap;
   gap: 4px 12px;
   margin-top: 4px;
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 /* Read-only блок решений ЦК КС в модалке вердикта: переиспользует элементы
    карточки (.lp-queue-decision*), виден только для записей очереди. */
@@ -1945,10 +2154,9 @@ html, body {
   border-radius: 8px;
 }
 .lp-verdict-decisions-title {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-2);
 }
@@ -1975,10 +2183,9 @@ html, body {
   gap: 5px;
 }
 .lp-verdict-field label {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted-2);
 }
@@ -1986,18 +2193,19 @@ html, body {
   resize: vertical;
   min-height: 44px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid var(--hair-2);
+  border-radius: 8px;
   font-family: var(--sans);
-  font-size: 0.85rem;
-  line-height: 1.45;
-  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--paper-2);
   color: var(--fg);
 }
 .lp-verdict-field textarea:focus {
   outline: none;
-  border-color: var(--ink);
-  box-shadow: 0 0 0 3px var(--focus-shadow);
+  border-color: var(--select);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--select), transparent 80%);
 }
 .lp-verdict-field textarea::placeholder { color: var(--muted-2); }
 .lp-verdict-options {
@@ -2010,16 +2218,16 @@ html, body {
   align-items: flex-start;
   gap: 10px;
   padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--hair-2);
+  border-radius: 10px;
   background: var(--panel);
   font-family: var(--sans);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  transition: border-color var(--dur-quick), background-color var(--dur-quick), transform var(--dur-press) var(--ease-out);
 }
 .lp-verdict-option:disabled { opacity: 0.55; cursor: wait; }
-.lp-verdict-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lp-verdict-option:focus-visible { outline: 2px solid var(--select); outline-offset: 2px; }
 .lp-verdict-option .lp-verdict-dot {
   width: 7px;
   height: 7px;
@@ -2037,19 +2245,21 @@ html, body {
   color: var(--fg);
 }
 .lp-verdict-option-desc {
-  font-size: 0.74rem;
-  color: var(--muted);
-  line-height: 1.35;
+  font-size: 12px;
+  color: var(--muted-2);
+  line-height: 1.4;
 }
 .lp-verdict-option-bad .lp-verdict-dot { background: var(--bad); }
 .lp-verdict-option-bad:not(:disabled):hover {
   border-color: var(--verdict-neg-hover);
   background: var(--verdict-neg-bg);
 }
-.lp-verdict-option-ok .lp-verdict-dot { background: var(--ok); }
+.lp-verdict-option-ok .lp-verdict-dot {
+  background: var(--ink-3);
+}
 .lp-verdict-option-ok:not(:disabled):hover {
-  border-color: var(--verdict-pos-hover);
-  background: var(--verdict-pos-bg);
+  border-color: var(--ink-4);
+  background: var(--paper-2);
 }
 .lp-verdict-foot {
   display: flex;
@@ -2059,58 +2269,61 @@ html, body {
   padding-top: 12px;
 }
 .lp-verdict-current {
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--muted-2);
 }
 .lp-verdict-foot .lp-btn { margin-left: auto; }
 
-/* Toast: surface-карточка с левым баром (как .alert в основной системе). */
+/* Toast: светлая карточка внизу по центру (как .fb-toast основного сайта);
+   тип — точкой слева: информация — графит, успех — зелёный, ошибка — красный. */
 .lp-toast {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
   z-index: 1001;
-  max-width: 380px;
-  padding: 10px 14px 10px 18px;
+  width: max-content;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 10px 12px 10px 14px;
   background: var(--panel);
   color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px var(--shadow-toast);
-  font-size: 0.83rem;
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  box-shadow: var(--shadow-2);
+  font-size: 13px;
   line-height: 1.45;
-  overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
+  animation: lp-toast-in var(--dur-base) var(--ease-spring) both;
 }
 .lp-toast::before {
   content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--bad);
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-3);
 }
 /* Типы toast (story 1.4): информационный, успешный, ошибочный. */
-.lp-toast-info::before { background: var(--accent); }
+.lp-toast-info::before {
+  background: var(--ink-3);
+}
 .lp-toast-success::before { background: var(--pos); }
 .lp-toast-error::before { background: var(--neg); }
 .lp-toast-action {
   flex: none;
   min-height: 28px;
-  padding: 3px 8px;
+  padding: 0 8px;
   border: 0;
-  border-bottom: 1px solid currentColor;
+  border-radius: 6px;
   background: transparent;
-  color: var(--accent);
-  font: 600 0.78rem var(--sans);
+  color: var(--select);
+  font: 600 13px var(--sans);
   cursor: pointer;
 }
 .lp-toast-action:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--select);
   outline-offset: 2px;
 }
 
@@ -2149,11 +2362,13 @@ html, body {
 }
 
 @media (max-width: 735px) {
-  .lp-main-header { align-items: flex-start; padding: 14px 16px; }
-  .lp-main-header h1 { font-size: 1.25rem; }
+  :root { --lp-gutter: 16px; }
+  .lp-main-header { align-items: flex-start; padding: 16px var(--lp-gutter) 10px; }
+  .lp-main-header h1 { font-size: 24px; }
+  .lp-page-meta { display: none; }
   .lp-header-actions { width: 100%; }
-  .lp-context-nav { gap: 14px; padding: 0 16px; }
-  .lp-context-tab { min-height: 38px; }
+  .lp-context-nav { gap: 4px; padding: 6px calc(var(--lp-gutter) - 6px); margin-bottom: 12px; }
+  .lp-context-tab { min-height: 36px; padding: 0 12px; }
   .lp-filters {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2170,17 +2385,19 @@ html, body {
 @media (max-width: 479px) {
   .lp-main-header { padding: 12px; }
   .lp-header-actions { gap: 6px; }
-  .lp-context-nav { gap: 10px 14px; padding: 0 12px; }
-  .lp-context-tab { font-size: 0.78rem; }
+  .lp-context-nav { gap: 2px; padding: 6px 10px; }
+  .lp-context-tab { font-size: 12px; padding: 0 10px; }
   .lp-filters { grid-template-columns: 1fr; padding: 10px 12px; }
   .lp-sources-surface { padding: 12px; }
   .lp-research-history-list { grid-template-columns: minmax(0, 1fr); }
   .lp-source-card { padding: 14px; }
-  .lp-toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+  .lp-toast { left: 12px; right: 12px; bottom: 12px; max-width: none; width: auto; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .lp-verdict-chip, .lp-mark-btn, .lp-verdict-option { transition: none; }
+  .lp-btn, .lp-chip, .lp-context-tab, .lp-chat-send, .lp-queue-card { transition: none; }
+  .lp-toast, .lp-subtask-dot { animation: none; }
 }
 
 /* ── Разворачивающийся полный контент записи ───────────────────────────── */
@@ -2188,22 +2405,36 @@ html, body {
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--accent);
+  color: var(--ink-3);
   font-size: 13px;
   padding: 0 6px 0 0;
   line-height: 1;
   min-width: 28px;    /* мишень не меньше 28px (story 1.4) */
   min-height: 28px;
 }
-.lp-content-toggle:hover { color: var(--accent); }
-.lp-content-badge { margin-left: 6px; font-size: 12px; }
+.lp-content-toggle:hover {
+  color: var(--ink);
+}
+.lp-content-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 4px;
+  border: 1px solid var(--hair-2);
+  background: var(--panel);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
 .lp-content-row > td {
   background: var(--paper-2);
-  padding: 0 16px 12px 40px;
+  padding: 0 16px 14px 44px;
 }
 .lp-content-block {
-  border-left: 2px solid var(--accent);
-  padding: 8px 12px;
+  border-left: 3px solid var(--hair-2);
+  padding: 10px 14px;
 }
 .lp-content-head {
   display: flex;
@@ -2211,8 +2442,8 @@ html, body {
   align-items: center;
   flex-wrap: wrap;
   font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 6px;
+  color: var(--muted-2);
+  margin-bottom: 8px;
 }
 /* Ссылка — --fg + underline: --accent на --paper-2 даёт 4.27:1 в light-теме
    (ниже порога 4.5:1 из AC3 story 1.2); токены менять нельзя (verbatim). */
@@ -2228,7 +2459,7 @@ html, body {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
   color: var(--fg);
   max-height: 320px;
   overflow: hidden;
@@ -2239,7 +2470,7 @@ html, body {
 .lp-content-note { margin-top: 6px; font-size: 12px; color: var(--muted); }
 .lp-content-loading, .lp-content-error {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--muted-2);
   padding: 8px 12px;
 }
 
@@ -2250,23 +2481,32 @@ html, body {
   gap: 16px;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 24px 24px;
+  padding: 0 var(--lp-gutter) 24px;
 }
 .lp-admin-section {
   min-width: 0;
   align-self: start;
   overflow: hidden;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 18px 20px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
   background: var(--panel);
+  box-shadow: var(--shadow-1);
 }
 .lp-admin .lp-col-narrow1,
 .lp-admin .lp-col-narrow2 { display: table-cell; }
-.lp-admin .lp-table { min-width: 0; font-size: 0.78rem; }
+.lp-admin .lp-table {
+  min-width: 0; font-size: 13px;
+}
 .lp-admin .lp-table th,
 .lp-admin .lp-table td { padding: 8px 10px; }
-.lp-admin-section h2 { margin: 0 0 8px; font-size: 16px; }
+.lp-admin-section h2 {
+  margin: 0 0 6px;
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
 .lp-admin-form {
   display: flex;
   gap: 8px;
@@ -2275,16 +2515,154 @@ html, body {
 }
 .lp-admin-form input {
   font-family: var(--sans);
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  font-size: 0.85rem;
-  background: var(--panel);
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hair-2);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--paper-2);
   color: var(--fg);
   min-width: 240px;
 }
-.lp-admin-form input:focus { outline: none; border-color: var(--accent); }
+.lp-admin-form input:focus {
+  outline: none;
+  border-color: var(--select);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--select), transparent 80%);
+}
 .lp-admin-form input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+}
+
+/* ── Система AuditLens: шапка страницы, названия банков, уверенность ───── */
+/* Пустые состояния и отказы — как .st-block основного сайта. */
+.lp-empty-state h1,
+.lp-empty-state h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.005em;
+  color: var(--ink);
+}
+.lp-empty-state p { max-width: 52ch; margin: 0 auto 14px; }
+.lp-empty-state p:last-child { margin-bottom: 0; }
+.lp-page-head { min-width: 0; }
+.lp-page-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+.lp-page-meta {
+  margin: 6px 0 0;
+  max-width: 78ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-2);
+  text-wrap: pretty;
+}
+/* Общая база — карточка на поле страницы, как «Жалобы» во вкладке «Отзывы». */
+.lp-catalog-panel {
+  margin: 0 var(--lp-gutter) var(--lp-gutter);
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+.lp-filter-search { flex: 1 1 260px; }
+.lp-filter-search input { width: 100%; }
+.lp-bank { color: var(--ink-2); }
+/* Строка Сбера — зелёным, как во всей системе: объект аудита, а не тревога. */
+.lp-bank-sber { color: var(--sber); font-weight: 500; }
+.lp-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.lp-conf-bar {
+  position: relative;
+  width: 36px;
+  height: 4px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--hair-2);
+  overflow: hidden;
+}
+.lp-conf-bar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: var(--ink-3);
+}
+.lp-content-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--hair-2);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.lp-content-tag-warn {
+  color: var(--warn-ink);
+  border-color: color-mix(in oklab, var(--warn), transparent 60%);
+}
+.lp-verdict-chip.lp-verdict-fraud_scheme {
+  color: var(--legal);
+  border-color: color-mix(in oklab, var(--legal), transparent 65%);
+  background: color-mix(in oklab, var(--legal), transparent 92%);
+}
+.lp-verdict-chip.lp-verdict-fraud_scheme:hover {
+  border-color: color-mix(in oklab, var(--legal), transparent 40%);
+}
+.lp-status-preliminary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.lp-audit-deny { color: var(--warn-ink); }
+.lp-subtask-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink);
+  animation: lp-pulse 1.2s infinite;
+}
+.lp-subtask-done .lp-subtask-dot { background: var(--pos); animation: none; }
+.lp-subtask-error .lp-subtask-dot { background: var(--neg); animation: none; }
+
+/* ── Отклик на нажатие: масштаб как у основного сайта (--press) ────────── */
+.lp-context-tab-active:hover { background: var(--surface); color: var(--ink); }
+.lp-chip:hover { border-color: var(--ink-4); color: var(--ink); }
+.lp-queue-card:hover { background: var(--row-hover); }
+.lp-btn:not(:disabled):active,
+.lp-chip:active,
+.lp-verdict-chip:active,
+.lp-verdict-option:not(:disabled):active { transform: scale(var(--press)); }
+.lp-context-tab:active { transform: scale(.98); }
+.lp-chat-send:not(:disabled):active { transform: scale(.94); }
+@keyframes lp-toast-in {
+  from { opacity: 0; translate: 0 12px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+/* Телефон: фильтры занимают почти весь экран — прокручивается вся карточка
+   базы, фильтры уезжают вверх, таблице достаётся экран. Правило стоит после
+   .lp-catalog-panel, иначе его overflow: hidden перебивал бы прокрутку. */
+@media (max-width: 735px) {
+  .lp-catalog-panel { overflow-y: auto; }
+  .lp-catalog-panel .lp-table-wrap { flex: none; }
 }

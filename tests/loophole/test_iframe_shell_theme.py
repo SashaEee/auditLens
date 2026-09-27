@@ -30,6 +30,10 @@ AUDITLENS_TOKENS = (
     "--ink", "--ink-2", "--ink-3", "--ink-4",
     "--hair", "--hair-2",
     "--accent", "--accent-soft", "--pos", "--warn", "--neg",
+    # Волны S2–S4 основного сайта: выделение/фокус, текст на мягких подложках,
+    # цвет Сбера и мошеннических схем, подсветка поиска, тени.
+    "--sber", "--sber-soft", "--select", "--select-soft", "--qhl", "--info",
+    "--legal", "--warn-ink", "--accent-ink", "--shadow-1", "--shadow-2",
 )
 
 
@@ -99,7 +103,13 @@ def _blocks(text: str, selector: str) -> list[str]:
 
 
 def _tokens(block: str) -> dict[str, str]:
-    """`--name: value;` → dict; первая встреча побеждает (light-значение)."""
+    """`--name: value;` → dict; первая встреча побеждает (light-значение).
+
+    Комментарии вырезаются: в палитре index.html есть пояснения вида
+    «отдельный токен, а не --pos: …», и без этого разбор принимал текст
+    комментария за значение токена.
+    """
+    block = re.sub(r"/\*.*?\*/", "", block, flags=re.DOTALL)
     out: dict[str, str] = {}
     for name, value in re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", block):
         out.setdefault(name, value.strip())
