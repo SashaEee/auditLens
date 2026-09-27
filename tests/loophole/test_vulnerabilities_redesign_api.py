@@ -334,3 +334,10 @@ def test_new_first_uses_publication_date_and_empty_research_is_marked(client, se
     marks = {w["workspace_id"]: w["has_messages"]
              for w in client.get(f"{API}/workspaces", headers=access._HEADERS).json()["workspaces"]}
     assert marks[empty] is False and marks[used] is True
+
+
+def test_bank_names_from_model_map_to_system_codes():
+    assert summary_mod.normalize_bank("МТС") == "mtsbank"
+    assert summary_mod.normalize_bank("«Т-Банк»") == "tbank"
+    assert summary_mod.normalize_bank("Примсоцбанк") == "Примсоцбанк"   # неизвестный — названием
+    assert summary_mod.normalize_bank("null") is None and summary_mod.normalize_bank("") is None
