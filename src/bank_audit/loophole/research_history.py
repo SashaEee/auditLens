@@ -40,6 +40,8 @@ def history_payload(workspace: dict, user_id: str, *, session) -> dict:
         "workspace": workspace,
         "messages": public_messages,
         "reports": [dict(row) for row in reports],
+        # Находки исследования: записи, попавшие из его источников в общую базу.
+        "findings": repo.list_workspace_findings(workspace_id, session=session),
         "read_only": workspace["user_id"] != user_id,
     }
 

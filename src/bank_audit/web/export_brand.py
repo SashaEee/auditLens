@@ -53,6 +53,7 @@ C = {
     "warn_soft": "FBF3E4",
     "neg": "CF4040",
     "select": "374960",
+    "legal": "683EB6",      # oklch(48% .18 295) — мошеннические схемы
     "info": "036EAE",
     "info_soft": "DFF1FF",
     "mark": "1F4DFF",       # синий штрих знака «A»

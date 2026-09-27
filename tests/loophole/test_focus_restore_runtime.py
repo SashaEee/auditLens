@@ -63,7 +63,7 @@ def test_available_tab_keeps_focus_and_parser_tab_is_hidden():
             page.set_default_timeout(10_000)
             page.set_default_navigation_timeout(10_000)
             page.set_content(_runtime_html(), wait_until="load")
-            ai_research_tab = page.get_by_role("tab", name="AI-исследования")
+            ai_research_tab = page.get_by_role("tab", name="Исследовать")
             ai_research_tab.wait_for(state="visible")
             assert page.get_by_role("tab", name="Добавить источник").count() == 0
             ai_research_tab.click()
@@ -72,7 +72,7 @@ def test_available_tab_keeps_focus_and_parser_tab_is_hidden():
                   const active = document.activeElement;
                   return active instanceof HTMLButtonElement
                     && active.getAttribute("role") === "tab"
-                    && active.textContent.includes("AI-исследования")
+                    && active.textContent.includes("Исследовать")
                     && !active.disabled;
                 }"""
             )

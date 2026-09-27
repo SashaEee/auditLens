@@ -132,9 +132,9 @@ def test_record_boolean_is_normalized_for_browser_json_on_sqlite(session):
 def test_selected_checkbox_uses_auditlens_accent_color():
     """Выбор строк не откатывается к синему системному checkbox и не красный:
     в системе AuditLens красный означает риск, выбор — чернильный, в тон
-    основной кнопке CSV."""
+    основной кнопке."""
     css = CSS.read_text(encoding="utf-8")
-    rule = re.search(r"\.lp-checkbox-hit input\s*\{(?P<body>[^}]*)\}", css)
+    rule = re.search(r"\.lp-c-box input\s*\{(?P<body>[^}]*)\}", css)
 
     assert rule is not None
     assert "accent-color: var(--ink)" in rule.group("body")

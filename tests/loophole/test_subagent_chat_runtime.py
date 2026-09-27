@@ -1,4 +1,4 @@
-"""Карточки subagents в реальном React/Babel при управляемом SSE-потоке."""
+"""Ход исследования и карточки subagents в реальном React/Babel при управляемом SSE."""
 from pathlib import Path
 
 import pytest
@@ -39,21 +39,24 @@ def test_tool_activity_is_inside_message_and_long_report_fits(browser, width):
         page.wait_for_function("() => !!window.__emit")
         page.evaluate("""() => window.__emit('tool_call', {name: 'audit_web_fetch',
           args:'private-tool-arguments', result:'private-tool-result'})""")
-        activity = page.locator(".lp-bubble-assistant .lp-tool-events")
-        expect(activity).to_contain_text("Чтение источника")
-        expect(activity).to_contain_text("Выполняется")
+        # Ход работы — карточка шагов: счётчики вызовов, без аргументов и ответов инструментов.
+        activity = page.locator(".lp-steps")
+        expect(activity).to_contain_text("Исследование идёт")
+        expect(activity.locator(".lp-step", has_text="Чтение страниц")).to_contain_text("1 страница")
         expect(page.locator('body')).not_to_contain_text('private-tool-arguments')
         expect(page.locator('body')).not_to_contain_text('private-tool-result')
-        expect(page.locator(".lp-typing-dots")).to_have_count(0)
         page.evaluate("() => window.__emit('tool_result', {name: 'audit_web_fetch', status:'failed'})")
-        expect(activity).to_contain_text("Ошибка")
+        expect(activity).to_contain_text("не открылось: 1")
         page.evaluate("() => window.__emit('tool_call', {name: 'audit_web_search'})")
         page.evaluate("() => window.__fail()")
-        expect(activity).to_contain_text("Прервано")
+        # Обрыв не прячет ход работы: видно, что исследование прервано и на каком шаге.
+        expect(activity).to_contain_text("Исследование прервано")
+        expect(activity.locator(".lp-step-stop")).to_contain_text("прервано")
         page.get_by_label("Сообщение аналитику").fill("Продолжить")
         page.get_by_role("button", name="Отправить сообщение").click()
-        expect(activity).not_to_contain_text("Выполняется")
-        expect(page.locator(".lp-agent-activity")).to_have_count(1)
+        expect(activity).to_contain_text("Исследование идёт")
+        expect(activity).not_to_contain_text("прервано")
+        expect(activity).to_have_count(1)
         page.evaluate("""() => {
           window.__emit('phase', {phase:'execute'});
           window.__emit('subagent', {id:'subagent-1', title:'Карты', status:'failed',
@@ -62,14 +65,14 @@ def test_tool_activity_is_inside_message_and_long_report_fits(browser, width):
             title:'Карты', status:'completed', total:1, completed:1, items:[]});
         }""")
         expect(page.locator('.lp-subagent-card').last).to_contain_text("замена 1")
-        if width == 1440:
-            expect(page.get_by_text("Выполнено подзадач: 1 из 1")).to_be_visible()
+        expect(activity.locator(".lp-step", has_text="Разметка материалов")).to_contain_text(
+            "2 исследователя")
         long_report = ("Подробный результат исследования. " * 100 + "\nhttps://example.test/"
                        + "длинныйпуть" * 100)
         page.evaluate("text => window.__emit('token', text)", long_report)
-        expect(page.locator(".lp-bubble-content").last).to_contain_text("Подробный результат")
-        assert page.evaluate("""() => [...document.querySelectorAll('.lp-bubble')].every(e =>
-          e.scrollWidth <= e.clientWidth + 1 && e.scrollHeight <= e.clientHeight + 1)""")
+        expect(page.locator(".lp-msg-body").last).to_contain_text("Подробный результат")
+        assert page.evaluate("""() => [...document.querySelectorAll('.lp-msg-body')].every(e =>
+          e.scrollWidth <= e.clientWidth + 1)""")
         assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
         preview = Path("workspace/subagent-qa")
         preview.mkdir(parents=True, exist_ok=True)
@@ -144,8 +147,8 @@ def test_subagent_cards_stream_labels_and_interrupt_without_stale_state(browser,
           'event: phase\ndata: {"phase":"execute","stage":"research_tools",'
           + '"elapsed_seconds":12,"message":"Проверка источников"}\n\n'))""")
         expect(cards.first).to_contain_text("Сообщение о подмене банковского сайта")
-        if width == 1440:
-            expect(page.get_by_text("Выполнено подзадач: 1 из 2")).to_be_visible()
+        expect(page.get_by_role("status", name="Текущий этап исследования")).to_contain_text(
+            "Проверка источников · 12 с")
         preview = Path("workspace/subagent-qa")
         preview.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(preview / f"chat-{width}.png"), full_page=True)

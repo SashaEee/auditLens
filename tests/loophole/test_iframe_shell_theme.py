@@ -296,11 +296,11 @@ def test_text_contrast_floor_4_5():
             assert ratio >= 4.5, (
                 f"{theme}: {fg} на {bg} = {ratio:.2f}:1 — ниже порога 4.5:1"
             )
-        # Семантический текст на подложке --paper-2 (раскрытый контент записи):
-        # quality-ревью story 1.2 нашло там нарушение AC3 в light-теме
-        # (--warn = 3.13:1, --accent = 4.27:1). Токены verbatim, поэтому guard
-        # проверяет цвет, который фактически назначен правилом.
-        for selector in (".lp-content-note", ".lp-content-head a"):
+        # Текст на подложке --paper-2 (счётчики сегментов, шапки блоков
+        # находок и ранних отчётов): quality-ревью story 1.2 нашло там нарушение
+        # AC3 в light-теме (--warn = 3.13:1, --accent = 4.27:1). Токены verbatim,
+        # поэтому guard проверяет цвет, который фактически назначен правилом.
+        for selector in (".lp-seg-n", ".lp-cands-h span", ".lp-reports-h span"):
             fg = _rule_text_color(css, selector)
             ratio = _contrast(pal, fg, "--paper-2")
             assert ratio >= 4.5, (
