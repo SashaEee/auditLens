@@ -248,3 +248,28 @@ def test_news_section_drops_repeats_and_marks_weekend(monkeypatch):
     assert out["repeats"][0]["prev"]["date"] == "2026-09-27"
     assert out["scope"]["days_off"] == ["2026-09-26", "2026-09-27"]
     assert seen["republish_from"] == date(2026, 9, 26) and seen["before"] == date(2026, 9, 26)
+
+
+def test_story_that_led_before_does_not_lead_again(monkeypatch):
+    """Понедельник не повторяет заголовок субботы, хотя новости выходных в ленте."""
+    top = [{"ref": "news:1", "data": {"title": "С 15 октября операторы блокируют немаркированные звонки"}, "facts": ""},
+           {"ref": "news:2", "data": {"title": "ЦБ выдаёт предписания против рассрочки со скрытой платой"}, "facts": ""}]
+    prev = [{"date": date(2026, 9, 26), "headline": "С 15 октября операторы могут блокировать звонки банков",
+             "lead_title": "С 15 октября операторы блокируют немаркированные звонки банков"}]
+    seen = []
+
+    async def chat(model, system, user, max_tokens):
+        seen.append(user)
+        return '{"items":[{"n":1,"v":"same"},{"n":2,"v":"diff"}]}', 1, 1
+    monkeypatch.setattr(nf, "_chat", chat)
+    asyncio.run(writer._mark_led_before(top, prev))
+    assert top[0]["repeat"] and top[0]["led_before"] and not top[1].get("repeat")
+    assert "26.09: С 15 октября" in seen[0]
+    assert [x["ref"] for x in writer._fresh_first(top)] == ["news:2", "news:1"]
+
+    async def down(*a, **k):
+        raise RuntimeError("нет модели")
+    monkeypatch.setattr(nf, "_chat", down)
+    fresh = [{"ref": "news:1", "data": {"title": "x"}, "facts": ""}]
+    asyncio.run(writer._mark_led_before(fresh, prev))
+    assert not fresh[0].get("repeat")

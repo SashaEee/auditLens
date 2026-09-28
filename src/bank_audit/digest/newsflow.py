@@ -715,7 +715,7 @@ def day_events(window_h: float = 26, reg_window_h: float = 96,
 HOLIDAYS = {date.fromisoformat(x.strip()) for x in os.getenv("DIGEST_HOLIDAYS", "").split(",")
             if x.strip()}
 NEWS_MAX = int(os.getenv("DIGEST_NEWS_MAX", "14"))
-NEWS_MAX_AFTER_OFF = int(os.getenv("DIGEST_NEWS_MAX_AFTER_OFF", "20"))
+NEWS_MAX_AFTER_OFF = int(os.getenv("DIGEST_NEWS_MAX_AFTER_OFF", "24"))
 
 
 def is_workday(d: date) -> bool:
@@ -789,7 +789,9 @@ async def merge_events(evs: list[dict]) -> list[dict]:
                 raw, _a, _b = await _chat(S1_MODEL,
                                           "Для каждой пары заголовков новостей ответь, об одном ли и том же "
                                           "конкретном событии они (same) или о разных (diff). Одна тема — "
-                                          'ещё не одно событие. Ответ JSON: {"items":[{"n":1,"v":"same"}]}',
+                                          "ещё не одно событие. Если один заголовок — сводка нескольких "
+                                          "новостей и одна из них — событие из другого заголовка, это same. "
+                                          'Ответ JSON: {"items":[{"n":1,"v":"same"}]}',
                                           listing, max_tokens=6000)
                 d = _loose(raw) or {}
                 items = d.get("items") or []

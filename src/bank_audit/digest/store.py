@@ -159,6 +159,7 @@ def recent_headlines(day: date, limit: int = 5) -> list[dict]:
         ins = doc.get("insights") or []
         out.append({"date": d, "headline": doc.get("headline") or "",
                     "lead_ref": (ins[0] or {}).get("ref") if ins else None,
+                    "lead_title": (ins[0] or {}).get("title") if ins else None,
                     "refs": [i.get("ref") for i in ins if i.get("ref")]})
     return out
 

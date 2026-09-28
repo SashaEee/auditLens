@@ -481,12 +481,14 @@ async def headline(day: date) -> dict:
     from . import newsflow as nf
     scope = nf.issue_scope(day)
     secs = await asyncio.to_thread(store._read_day_rows, day)
-    # «не повторяй прошлые заголовки» — о выпусках, которые читали: после
-    # выходных это последний рабочий день, а не суббота и воскресенье
-    prev = await asyncio.to_thread(store.recent_headlines, scope["republish_from"], 3)
+    # прошлые выпуски — все, включая выходные: новости выходных в понедельник
+    # снова в ленте, но заголовок субботы понедельник не повторяет
+    prev = await asyncio.to_thread(store.recent_headlines, day, 3)
     prev_leads = {p["lead_ref"] for p in prev if p.get("lead_ref")}
     leads, bg = await asyncio.to_thread(_build_leads, secs, prev_leads)
     top = await asyncio.to_thread(_distinct_leads, [ld for ld in leads if ld["score"] >= 6])
+    top = top[:8]
+    await _mark_led_before(top, prev)
     top = _fresh_first(top)[:6]
 
     result, ti, to, model, degraded = None, 0, 0, None, False
@@ -851,6 +853,45 @@ def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str
     for b in (nw.get("background") or [])[:5]:
         bg.append(f'новость: {b.get("title")}')
     return leads, bg
+
+
+_LED_SYSTEM = (
+    "Для каждого повода ответь, тот же ли это сюжет, что открывал один из прошлых выпусков "
+    "(same), или другой (diff). Тот же сюжет — то же событие, решение, закон, схема или "
+    "всплеск, даже в пересказе другого издания или с новыми подробностями; одна тема — ещё "
+    'не тот же сюжет. Ответ JSON: {"items":[{"n":1,"v":"diff"}]}'
+)
+
+
+async def _mark_led_before(top: list[dict], prev: list[dict]) -> None:
+    """Повод, сюжет которого уже открывал один из последних выпусков, помечается
+    repeat — и не открывает выпуск (_fresh_first). Номер события для этого не
+    годится: 27 и 28.09 одну историю открыли две разные статьи, а понедельник
+    после выходных повторил бы заголовок субботы. Сбой модели — без пометок."""
+    olds = [p for p in prev if p.get("headline")]
+    if not top or not olds:
+        return
+    from . import newsflow as nf
+    listing = ("ПРОШЛЫЕ ВЫПУСКИ ОТКРЫВАЛИСЬ:\n"
+               + "\n".join(f'- {_dm(str(p["date"]))}: {p["headline"]}'
+                           + (f' ({p["lead_title"]})' if p.get("lead_title") else "") for p in olds)
+               + "\n\nПОВОДЫ:\n"
+               + "\n".join(f'#{k + 1}: {ld["data"].get("title") or ld["data"].get("label") or ld["facts"][:200]}'
+                           for k, ld in enumerate(top)))
+    try:
+        raw, _a, _b = await nf._chat(nf.S1_MODEL, _LED_SYSTEM, listing, max_tokens=2000)
+        items = (nf._loose(raw) or {}).get("items") or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("headline: проверка прошлых заголовков не удалась (%s)", e)
+        return
+    for it in items:
+        try:
+            k = int(it.get("n", 0)) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0 <= k < len(top) and str(it.get("v") or "").strip().lower() == "same":
+            top[k]["repeat"] = True
+            top[k]["led_before"] = True
 
 
 def _fresh_first(leads: list[dict]) -> list[dict]:
