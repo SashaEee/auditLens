@@ -15,6 +15,7 @@ import json
 import logging
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import text
 
@@ -38,6 +39,16 @@ def _eng():
 
 # ── запись ────────────────────────────────────────────────────────────────────
 
+def _json_default(o):
+    """numeric из базы (Decimal) и даты — в JSON. 28.09 одна уверенность находки
+    в Decimal уронила весь заголовок: выпуск показал вчерашнюю сводку."""
+    if isinstance(o, Decimal):
+        return float(o)
+    if isinstance(o, (date, datetime)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
 def upsert(day: date, section: str, payload: dict, *, status: str = "ok",
            llm_model: str | None = None, tokens_in: int | None = None,
            tokens_out: int | None = None, gen_ms: int | None = None,
@@ -53,7 +64,7 @@ def upsert(day: date, section: str, payload: dict, *, status: str = "ok",
                 llm_model = EXCLUDED.llm_model, tokens_in = EXCLUDED.tokens_in,
                 tokens_out = EXCLUDED.tokens_out, gen_ms = EXCLUDED.gen_ms,
                 error = EXCLUDED.error
-        """), {"d": day, "sec": section, "p": json.dumps(payload, ensure_ascii=False),
+        """), {"d": day, "sec": section, "p": json.dumps(payload, ensure_ascii=False, default=_json_default),
                "st": status, "sf": stale_from, "m": llm_model, "ti": tokens_in,
                "to": tokens_out, "ms": gen_ms, "err": error})
 

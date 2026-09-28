@@ -679,18 +679,35 @@ def _evidence_line(ev: dict | None) -> str:
 
 
 def _new_sber_loopholes() -> list[dict]:
+    """Свежие находки «Уязвимостей» по Сберу для повода выпуска.
+
+    Уверенность в базе — numeric: без float() в поводе оказывался Decimal, и
+    28.09 заголовок выпуска не сохранился (показан вчерашний). Заголовок находки
+    (headline) короче названия ветки форума; находки, в которых модель сама
+    сомневается («похоже на рекламу»), до проверки экспертом в выпуск не идут."""
     try:
         with db.session() as s:
             rows = s.execute(text("""
-                SELECT record_id, coalesce(title, left(snippet, 120)) AS title, url, verdict_reason,
-                       verdict_confidence, collected_at
+                SELECT record_id,
+                       coalesce(nullif(headline, ''), title, left(snippet, 120)) AS title,
+                       url, verdict_reason, verdict_confidence, collected_at
                 FROM auditlens.loophole_record
                 WHERE is_loophole AND bank_slug = 'sberbank' AND verdict_confidence >= 0.85
+                  AND coalesce(summary_doubt, '') = ''
                   AND collected_at > now() - interval '72 hours'
                 ORDER BY verdict_confidence DESC, collected_at DESC LIMIT 3""")).mappings().all()
-        return [dict(r) for r in rows]
     except Exception:  # noqa: BLE001
         return []
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d.get("verdict_confidence") is not None:
+            d["verdict_confidence"] = float(d["verdict_confidence"])
+        if hasattr(d.get("collected_at"), "isoformat"):
+            d["collected_at"] = d["collected_at"].isoformat()
+        d["title"] = " ".join(str(d.get("title") or "").split())[:180]
+        out.append(d)
+    return out
 
 
 def _sber_rating_move() -> dict | None:
@@ -798,7 +815,7 @@ def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str
         break
     for lp in _new_sber_loopholes()[:1]:
         leads.append({"ref": f"loop:{lp['record_id']}", "kind": "loophole", "score": 6.0,
-                      "data": {**lp, "collected_at": str(lp.get("collected_at"))},
+                      "data": lp,
                       "facts": f'новая лазейка в продуктах Сбера (предварительно): {lp.get("title")}. '
                                f'{lp.get("verdict_reason") or ""}'})
     rm = _sber_rating_move()
