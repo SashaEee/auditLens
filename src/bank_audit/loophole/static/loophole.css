@@ -629,9 +629,10 @@ html, body {
 .lp-cell-url a:hover { text-decoration: underline; }
 
 .lp-status {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 0.74rem;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .lp-status-preliminary {
   display: inline-flex;
@@ -868,8 +869,9 @@ html, body {
 .lp-safe-markdown { min-width: 0; overflow-wrap: anywhere; }
 .lp-research-card-head strong {
   color: var(--accent);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
 }
 .lp-research-kv {
   display: grid;
@@ -982,8 +984,9 @@ html, body {
   gap: 8px 16px;
   margin-top: 14px;
   color: var(--muted-2);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
 }
 .lp-research-chat-note {
   max-width: 960px;
@@ -1017,10 +1020,11 @@ html, body {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
   color: var(--muted-2);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
 .lp-queue-card {
   display: grid;
@@ -1043,7 +1047,9 @@ html, body {
   box-shadow: inset 3px 0 0 var(--accent);
   background: var(--accent-soft);
 }
-.lp-queue-index { color: var(--accent); font-family: var(--mono); font-size: 0.72rem; }
+.lp-queue-index { color: var(--accent); font-family: var(--sans); font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
 .lp-queue-card-copy { display: grid; gap: 5px; min-width: 0; }
 .lp-queue-card-copy strong { font-size: 0.83rem; line-height: 1.35; }
 .lp-queue-card-copy small { color: var(--muted); font-size: 0.7rem; }
@@ -1051,11 +1057,12 @@ html, body {
   display: grid;
   gap: 2px;
   color: var(--fg);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 0.78rem;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
-.lp-queue-confidence small { color: var(--muted-2); font-size: 0.58rem; }
+.lp-queue-confidence small { color: var(--muted-2); font-size: 11px; }
 .lp-queue-detail {
   align-self: start;
   padding: 18px;
@@ -1120,13 +1127,14 @@ html, body {
   justify-self: start;
   padding: 2px 8px;
   border-radius: 999px;
-  font-family: var(--mono);
-  font-size: 10px;
+  font-family: var(--sans);
+  font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   background: var(--accent-soft);
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .lp-decision-vulnerability { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
 .lp-decision-fraud_scheme { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
@@ -1138,9 +1146,10 @@ html, body {
   overflow-wrap: anywhere;
 }
 .lp-queue-decision-meta {
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-family: var(--sans);
+  font-size: 12px;
   color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 .lp-queue-detail-actions {
   display: flex;
@@ -1396,7 +1405,7 @@ html, body {
 .lp-subagent-results { border-top: 1px solid var(--hair); padding-top: 8px; margin-top: 8px; }
 .lp-subagent-results summary { cursor: pointer; color: var(--ink-2); }
 .lp-subagent-item { margin: 10px 0; }
-.lp-subagent-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10px; color: var(--ink-3); margin-bottom: 4px; }
+.lp-subagent-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-3); margin-bottom: 4px; }
 .lp-subagent-label { border: 1px solid var(--hair); padding: 2px 5px; border-radius: 4px; }
 .lp-subagent-label-loophole { color: var(--pos); background: var(--verdict-pos-bg); }
 .lp-subagent-label-fraud { color: var(--neg); background: var(--verdict-neg-bg); }
@@ -1746,14 +1755,15 @@ html, body {
   border-radius: 3px;
   border: 1px solid var(--border);
   background: var(--panel);
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-family: var(--sans);
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.02em;
   white-space: nowrap;
   color: var(--muted);
   cursor: pointer;
   transition: border-color 0.12s, background 0.12s;
+  font-variant-numeric: tabular-nums;
 }
 .lp-verdict-chip:hover { border-color: var(--muted-2); }
 .lp-verdict-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1788,13 +1798,14 @@ html, body {
   border-radius: 3px;
   border: 1px solid var(--border);
   background: var(--panel);
-  font-family: var(--mono);
-  font-size: 9.5px;
+  font-family: var(--sans);
+  font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--muted);
   vertical-align: middle;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Панель массовой маркировки — плавающая surface-карточка под фильтрами. */
@@ -1816,21 +1827,23 @@ html, body {
   flex: none;
 }
 .lp-mark-eyebrow {
-  font-family: var(--mono);
-  font-size: 10px;
+  font-family: var(--sans);
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 .lp-mark-count {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
   font-weight: 600;
   color: var(--panel);
   background: var(--ink);
   border-radius: 3px;
   padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
 }
 .lp-mark-comment {
   flex: 1;
@@ -1887,13 +1900,14 @@ html, body {
 .lp-verdict-dialog { width: min(520px, 92vw); }
 .lp-verdict-header { align-items: flex-start; }
 .lp-eyebrow {
-  font-family: var(--mono);
-  font-size: 10px;
+  font-family: var(--sans);
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.1em;
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--muted-2);
   margin-bottom: 3px;
+  font-variant-numeric: tabular-nums;
 }
 .lp-dialog-x {
   width: 30px;
@@ -1930,9 +1944,10 @@ html, body {
   flex-wrap: wrap;
   gap: 4px 12px;
   margin-top: 4px;
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-family: var(--sans);
+  font-size: 12px;
   color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 /* Read-only блок решений ЦК КС в модалке вердикта: переиспользует элементы
    карточки (.lp-queue-decision*), виден только для записей очереди. */
@@ -1945,12 +1960,13 @@ html, body {
   border-radius: 8px;
 }
 .lp-verdict-decisions-title {
-  font-family: var(--mono);
-  font-size: 10px;
+  font-family: var(--sans);
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 .lp-verdict-decisions-empty { margin: 0; color: var(--muted); font-size: 0.8rem; }
 .lp-verdict-decisions-list {
@@ -1975,12 +1991,13 @@ html, body {
   gap: 5px;
 }
 .lp-verdict-field label {
-  font-family: var(--mono);
-  font-size: 10px;
+  font-family: var(--sans);
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 .lp-verdict-field textarea {
   resize: vertical;
@@ -2059,9 +2076,10 @@ html, body {
   padding-top: 12px;
 }
 .lp-verdict-current {
-  font-family: var(--mono);
-  font-size: 10.5px;
+  font-family: var(--sans);
+  font-size: 12px;
   color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 .lp-verdict-foot .lp-btn { margin-left: auto; }
 
