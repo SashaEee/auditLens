@@ -31,7 +31,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import text
 
@@ -58,6 +58,11 @@ _EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200
 _HASHTAG = re.compile(r"(^|\s)#[\w\d_]+")
 _ROUNDUP = re.compile(r"могли пропустить|главное за (день|неделю|сутки)|главные новости|"
                       r"коротко о главном|дайджест", re.I)
+# Обзор или дайджест недели ведущей записью события — плохой выбор: длинный
+# текст обо всём сразу, модель оценивала его «в среднем» (27.09 «Главное о
+# кредитах за неделю» — 4 из 10, хотя внутри решение ЦБ).
+_DIGEST_TITLE = re.compile(r"дайджест|могли пропустить|итоги недели|обзор недели|"
+                           r"главное (?:о|об|за|по)\b.{0,40}(?:недел|сутки|день|месяц)", re.I)
 _BULLET = re.compile(r"^\s*(?:[\U0001F000-\U0001FAFF☀-➿←-⇿■-◿"
                      r"️•·▪–—\-]+|\d{1,2}[.)])\s*")
 
@@ -405,7 +410,12 @@ S2_SYSTEM = (
     "«Ключевая ставка пойдёт вниз весной 2027: мнение аналитика» — 3; «Сбербанк тестирует выдачу "
     "карт через банкоматы» — 7; «Google может ограничить установку российских приложений на "
     "Android» — 8; «Задержаны организаторы кол-центров с инвестиционной схемой хищения» — 7; "
-    "«ЦБ определил порядок допуска криптобирж в реестр» — 4.\n"
+    "«ЦБ определил порядок допуска криптобирж в реестр» — 4; интервью «Эксперт рассказала, кому "
+    "банки одобряют кредиты», где сказано, что с 1 октября банкам снова сократят квоту на выдачу "
+    "кредитов закредитованным, — 8, и headline про квоту, а не про интервью.\n"
+    "Обзоры, дайджесты, интервью и советы экспертов оценивай по САМОЙ важной для аудита розницы "
+    "новости внутри и пиши headline про неё. Норматив или решение регулятора с датой вступления в "
+    "ближайшие месяцы — повод (7–9), даже если он упомянут между делом.\n"
     "category — одно из: enforcement (санкции и штрафы регулятора, прокуратура), regulation "
     "(законы, нормативы, проекты требований, разъяснения ЦБ), fraud (схемы мошенничества), "
     "incident (сбои, аварии), data_leak (утечки данных), sber (событие самого Сбера), court "
@@ -430,6 +440,13 @@ S2_FIELDS = ('{"n":1,"value":0,"category":"...","headline":"до 90 знаков
              '"stale":false}')
 
 
+def _lead_key(x: dict, auth: dict) -> tuple:
+    """Порядок записей события: сначала не обзоры, затем авторитетность
+    источника, полнота текста и время."""
+    return (bool(_DIGEST_TITLE.search(x.get("title") or "")), auth.get(x["source"], 5),
+            -len(x.get("body") or ""), x.get("ts") or datetime.max.replace(tzinfo=timezone.utc))
+
+
 def _event_rows(ids: list[int] | None = None, since_h: float = 30) -> list[dict]:
     """События окна: ведущая запись (самый длинный текст у самого авторитетного
     источника) и заголовки остальных источников события."""
@@ -447,8 +464,7 @@ def _event_rows(ids: list[int] | None = None, since_h: float = 30) -> list[dict]
     out = []
     auth = getattr(nm, "_AUTHORITY", {})
     for eid, items in ev.items():
-        items.sort(key=lambda x: (auth.get(x["source"], 5), -len(x["body"] or ""),
-                                  x["ts"] or datetime.max.replace(tzinfo=timezone.utc)))
+        items.sort(key=lambda x: _lead_key(x, auth))
         lead = items[0]
         lead_s2 = next((x for x in items if x["s2"]), None)
         out.append({"event_id": eid, "lead": lead, "items": items,
@@ -636,32 +652,97 @@ _GROUP_OF = {"sber": "sber", "enforcement": "regulatory", "regulation": "regulat
              "other": "other"}
 
 
-def day_events(window_h: float = 26, reg_window_h: float = 96) -> list[dict]:
+# Норматив с близкой датой вступления на границе отбора (5 из 10) — в выпуск.
+# 25–28.09 «с 1 октября банкам снова сократят квоту на выдачу кредитов
+# закредитованным» четыре дня лежало с оценкой 5 внутри интервью эксперта;
+# судья выпуска дважды отметил её как пропущенную (оценил на 8).
+DATED_FLOOR_DAYS = int(os.getenv("NEWSFLOW_DATED_FLOOR_DAYS", "31"))
+
+
+def _dated_floor(e: dict, today: date) -> None:
+    s2 = e.get("s2") or {}
+    if (e.get("value") or 0) != 5 or s2.get("category") not in ("regulation", "enforcement"):
+        return
+    try:
+        left = (date.fromisoformat(s2.get("deadline") or "") - today).days
+    except ValueError:
+        return
+    if 0 <= left <= DATED_FLOOR_DAYS:
+        e["value"] = 6
+        e["floor"] = "dated_regulation"
+
+
+def day_events(window_h: float = 26, reg_window_h: float = 96,
+               republish_from: date | None = None) -> list[dict]:
     """Оценённые события для выпуска: окно суток (регуляторика — 4 дня: решение
-    пятницы доживает до понедельника), ещё не опубликованные в прошлые дни."""
+    пятницы доживает до понедельника), ещё не опубликованные в прошлые дни.
+
+    republish_from — с какого дня публикации снова допускаются: в выпуске после
+    выходных это суббота (выпуски выходных почти никто не читает), в обычный
+    день — сегодня (повторная сборка того же дня)."""
     today = datetime.now(MSK).date()
-    evs = _event_rows(since_h=reg_window_h)
+    republish_from = republish_from or today
+    # целые часы: окно в SQL — make_interval(hours => int)
+    evs = _event_rows(since_h=int(max(window_h, reg_window_h)) + 1)
     out = []
     for e in evs:
         if e["s2"] is None:
             continue
         cat = (e["s2"] or {}).get("category")
         age_h = ((datetime.now(timezone.utc) - e["ts"]).total_seconds() / 3600.0) if e["ts"] else 0
-        limit_h = reg_window_h if cat in ("enforcement", "regulation", "court") else window_h
+        limit_h = max(reg_window_h, window_h) if cat in ("enforcement", "regulation", "court") else window_h
         if age_h > limit_h:
             continue
-        pub = [x.get("published_on") for x in e["items"]]
         with db.session() as s:
             prev = s.execute(text("""SELECT min(published_on) FROM news_item
                                      WHERE event_id = :e AND published_on IS NOT NULL"""),
                              {"e": e["event_id"]}).scalar()
-        if prev and prev < today:
+        if prev and prev < republish_from:
             continue
-        del pub
+        _dated_floor(e, today)
         e["group"] = _GROUP_OF.get(cat, "other")
         out.append(e)
     out.sort(key=lambda e: (-(e["value"] or 0), -e["n_sources"]))
     return out
+
+
+# ── Окно выпуска: после выходных — за выходные ───────────────────────────────
+# В субботу и воскресенье «Обзор» открывают 1–2 человека, в будни 6–12 (замер
+# 14–28.09). Понедельничный выпуск был выпуском за одно воскресенье — 28.09 в
+# нём было 4 новости, а 26 новостей выпусков субботы и воскресенья почти никто
+# не видел. Выпуск первого рабочего дня после нерабочих собирается с утра
+# последнего рабочего дня, и новости выпусков выходных в него снова допускаются.
+HOLIDAYS = {date.fromisoformat(x.strip()) for x in os.getenv("DIGEST_HOLIDAYS", "").split(",")
+            if x.strip()}
+NEWS_MAX = int(os.getenv("DIGEST_NEWS_MAX", "14"))
+NEWS_MAX_AFTER_OFF = int(os.getenv("DIGEST_NEWS_MAX_AFTER_OFF", "20"))
+
+
+def is_workday(d: date) -> bool:
+    return d.weekday() < 5 and d not in HOLIDAYS
+
+
+def issue_scope(day: date, now: datetime | None = None) -> dict:
+    """Что охватывает выпуск дня: окна отбора, с какого дня можно повторять
+    вышедшее, сколько новостей показывать и подпись для страницы."""
+    now = now or datetime.now(MSK)
+    off: list[date] = []
+    prev = day - timedelta(days=1)
+    while not is_workday(prev) and len(off) < 14:
+        off.append(prev)
+        prev -= timedelta(days=1)
+    if not is_workday(day) or not off:
+        return {"after_off": False, "window_h": 26.0, "reg_window_h": 96.0,
+                "republish_from": day, "news_max": NEWS_MAX}
+    gen_h = int(os.getenv("DIGEST_GEN_HOUR_MSK", "7"))
+    # с запасом в 2 часа до утреннего выпуска последнего рабочего дня: что
+    # тогда вышло, отсекает дата публикации, а оценённое позже — не теряется
+    since = datetime(prev.year, prev.month, prev.day, gen_h, tzinfo=MSK) - timedelta(hours=2)
+    window_h = max(26.0, (now - since).total_seconds() / 3600.0 + 1)
+    return {"after_off": True, "window_h": window_h, "reg_window_h": max(96.0, window_h),
+            "republish_from": min(off), "news_max": NEWS_MAX_AFTER_OFF,
+            "since": since.isoformat(), "days_off": [d.isoformat() for d in sorted(off)],
+            "prev_workday": prev.isoformat()}
 
 
 _MERGE_AUTO = float(os.getenv("NEWSFLOW_MERGE_AUTO", "0.80"))
@@ -735,6 +816,122 @@ async def merge_events(evs: list[dict]) -> list[dict]:
         lead["items"] = [x for m in members for x in m["items"]]
         out.append(lead)
     out.sort(key=lambda e: (-(e["value"] or 0), -e["n_sources"]))
+    return out
+
+
+# ── Повторы и сюжеты ─────────────────────────────────────────────────────────
+# 27 и 28.09 выпуск открывался одним и тем же — «с 1 октября наличные через
+# чужой банкомат по СБП»: вчера статья banki.ru, сегодня РИА. Новая статья
+# стала новым событием (склейка по тексту для одного сюжета из разных изданий
+# даёт ~0,5), а «уже публиковалось» проверялось по номеру события. Теперь
+# кандидаты выпуска сверяются с вышедшим за 14 дней по заголовкам в едином
+# стиле (s2.headline): близкие пары решает дешёвая модель — то же событие,
+# продолжение сюжета или другое, и есть ли существенный новый факт.
+# То же событие без нового факта — повтор, в выпуск не идёт; с новым фактом
+# или новым развитием — продолжение сюжета: выходит с пометкой и не открывает
+# выпуск.
+REPEAT_AUTO = float(os.getenv("NEWSFLOW_REPEAT_AUTO", "0.80"))
+REPEAT_ASK = float(os.getenv("NEWSFLOW_REPEAT_ASK", "0.66"))
+STORY_DAYS = int(os.getenv("NEWSFLOW_STORY_DAYS", "14"))
+
+_REPEAT_SYSTEM = (
+    "Ты сверяешь новости сегодняшнего выпуска с уже вышедшими. Для каждой пары «БЫЛО» и "
+    "«СЕЙЧАС» ответь rel: same — то же самое событие (тот же закон, решение, схема, "
+    "инцидент, запуск); story — новое развитие того же сюжета (решение по делу, реакция "
+    "регулятора или банков, вступление в силу, новые данные по тому же случаю); diff — "
+    "разные события (общая тема — ещё не сюжет). new — существенный новый факт в «СЕЙЧАС», "
+    "которого нет в «БЫЛО», одной фразой до 20 слов: новое решение, дата, сумма, масштаб, "
+    "реакция. Пересказ другими словами и подробности того же — не новое, тогда new пустой. "
+    'Ответ JSON: {"items":[{"n":1,"rel":"same","new":""}]}'
+)
+
+
+def _head(e: dict) -> str:
+    return ((e.get("s2") or {}).get("headline") or e["lead"]["title"] or "")[:200]
+
+
+def published_episodes(before: date, days: int = STORY_DAYS) -> list[dict]:
+    """Вышедшие в выпусках события до дня before: дата выхода, заголовок в
+    едином стиле и суть (с ведущей записи, у которой есть оценка)."""
+    with db.session() as s:
+        rows = s.execute(text("""
+            SELECT DISTINCT ON (event_id) event_id, published_on,
+                   coalesce(s2->>'headline', title) AS head,
+                   coalesce(s2->>'summary', '') AS summary, url
+            FROM news_item
+            WHERE published_on IS NOT NULL AND event_id IS NOT NULL
+              AND published_on < :b AND published_on >= :f
+            ORDER BY event_id, (s2 IS NULL), published_on, id
+        """), {"b": before, "f": before - timedelta(days=days)}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def classify_repeats(cands: list[dict], before: date) -> dict[int, dict]:
+    """event_id кандидата → {"kind": "repeat"|"continuation", "new_fact", "prev",
+    "episodes"}. Кандидаты без пары в прошлых выпусках в ответ не попадают.
+    Модель недоступна — близкие (≥ REPEAT_AUTO) считаются продолжением, а не
+    повтором: лучше показать с пометкой, чем потерять новость."""
+    if not cands:
+        return {}
+    prev = [p for p in await asyncio.to_thread(published_episodes, before) if title_ok(p["head"])]
+    if not prev:
+        return {}
+    from ..rag import embedder
+    vc = await asyncio.to_thread(embedder.embed_batch, [_head(e) for e in cands])
+    vp = await asyncio.to_thread(embedder.embed_batch, [p["head"] for p in prev])
+    sims = [[embedder.cosine_similarity(a, b) for b in vp] for a in vc]
+    pairs = []
+    for i, row in enumerate(sims):
+        j = max(range(len(prev)), key=row.__getitem__)
+        if row[j] >= REPEAT_ASK:
+            pairs.append((i, j, row[j]))
+    verdict: dict[int, tuple[str, str]] = {}
+    for start in range(0, len(pairs), 20):
+        chunk = pairs[start:start + 20]
+        listing = "\n\n".join(
+            f"#{k + 1}\nБЫЛО ({prev[j]['published_on']:%d.%m}): «{prev[j]['head']}» — "
+            f"{(prev[j]['summary'] or '')[:300]}\n"
+            f"СЕЙЧАС: «{_head(cands[i])}» — {((cands[i].get('s2') or {}).get('summary') or '')[:300]}"
+            for k, (i, j, _sim) in enumerate(chunk))
+        for attempt in range(2):
+            try:
+                raw, _a, _b = await _chat(S1_MODEL, _REPEAT_SYSTEM, listing, max_tokens=4000)
+                items = (_loose(raw) or {}).get("items") or []
+                if not items:
+                    raise ValueError("пустой ответ")
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    k = int(it.get("n", 0)) - 1
+                    if 0 <= k < len(chunk):
+                        verdict[chunk[k][0]] = (str(it.get("rel") or "").strip().lower(),
+                                                clean_line(str(it.get("new") or ""))[:200])
+                break
+            except Exception as ex:  # noqa: BLE001 — без проверки: близкие — продолжением
+                if attempt:
+                    log.warning("newsflow.repeats: пары не проверены (%s)", ex)
+    out: dict[int, dict] = {}
+    for i, j, sim in pairs:
+        rel, new = verdict.get(i, ("", ""))
+        if not rel:
+            if sim < REPEAT_AUTO:
+                continue
+            rel = "story"
+        if rel not in ("same", "story"):
+            continue
+        eps = {(p["published_on"], p["head"], p["url"]) for jj, p in enumerate(prev)
+               if jj == j or sims[i][jj] >= REPEAT_AUTO}
+        out[cands[i]["event_id"]] = {
+            "kind": "repeat" if rel == "same" and not new else "continuation",
+            "new_fact": new, "sim": round(sim, 3),
+            "prev": {"title": prev[j]["head"][:160], "url": prev[j]["url"],
+                     "date": prev[j]["published_on"].isoformat()},
+            "episodes": [{"title": h[:140], "url": u, "date": d.isoformat()}
+                         for d, h, u in sorted(eps)[-3:]]}
+    if out:
+        log.info("newsflow.repeats: повторов %d, продолжений %d",
+                 sum(1 for v in out.values() if v["kind"] == "repeat"),
+                 sum(1 for v in out.values() if v["kind"] == "continuation"))
     return out
 
 

@@ -238,61 +238,6 @@ def _news_bodies(urls: list[str]) -> dict[str, str]:
 # Порог «это продолжение того же сюжета» (косинус заголовков). Сравниваем
 # ИСХОДНЫЕ заголовки (src_title), а не переписанные редакцией — в памяти лежат
 # исходники пула.
-_STORY_T = float(os.getenv("DIGEST_NEWS_STORY_T", "0.70"))
-
-
-def _news_stories(groups: list[dict]) -> int:
-    """Сюжеты: сегодняшняя публикация — продолжение публиковавшегося в прошлые
-    дни (эмбеддинг-близость заголовков к digest_news_seen за 14 дн). Пишет в
-    item["story"] прошлые эпизоды; headline получает пометку «продолжение
-    сюжета». Best-effort: сбой — просто без сюжетов."""
-    try:
-        from sqlalchemy import text as _t
-        from .. import db
-        from ..rag import embedder
-        with db.session() as s:
-            prev = s.execute(_t("""
-                SELECT title, url,
-                       (picked_at AT TIME ZONE 'Europe/Moscow')::date AS d
-                FROM digest_news_seen
-                WHERE picked
-                  AND picked_at >= now() - interval '14 days'
-                  AND (picked_at AT TIME ZONE 'Europe/Moscow')::date
-                      < (now() AT TIME ZONE 'Europe/Moscow')::date
-                  AND coalesce(title, '') <> ''
-            """)).all()
-        if not prev:
-            return 0
-        cur = [it for g in groups for it in (g.get("items") or [])]
-        if not cur:
-            return 0
-        v_prev = embedder.embed_batch([p[0] for p in prev])
-        v_cur = embedder.embed_batch(
-            [it.get("src_title") or it.get("title") or "" for it in cur])
-        n_st = 0
-        for k, it in enumerate(cur):
-            eps = [{"title": p[0][:140], "url": p[1], "date": str(p[2]),
-                    "sim": round(embedder.cosine_similarity(v_cur[k], v_prev[j]), 3)}
-                   for j, p in enumerate(prev)
-                   if embedder.cosine_similarity(v_cur[k], v_prev[j]) >= _STORY_T]
-            if eps:
-                eps.sort(key=lambda e: e["date"])
-                it["story"] = eps[-3:]      # последние три эпизода
-                n_st += 1
-        if n_st:
-            log.info("news: сюжетов-продолжений %d", n_st)
-        return n_st
-    except Exception as e:  # noqa: BLE001
-        log.info("news: сюжеты пропущены (%s)", e)
-        return 0
-
-
-
-
-
-
-
-
 async def news(day: date) -> dict:
     """Новости выпуска из полного потока (digest/newsflow): весь день идёт сбор
     и оценка, здесь — хвост за последние минуты и выбор.
@@ -307,12 +252,23 @@ async def news(day: date) -> dict:
         await nf.tick()
     except Exception as e:  # noqa: BLE001 — хвост, основной сбор шёл весь день
         log.warning("news: хвостовой проход потока не удался (%s)", e)
-    evs = await asyncio.to_thread(nf.day_events)
+    scope = nf.issue_scope(day)
+    evs = await asyncio.to_thread(nf.day_events, scope["window_h"], scope["reg_window_h"],
+                                  scope["republish_from"])
     evs = await nf.merge_events(evs)
     hl = await asyncio.to_thread(nf.health)
     if not evs:
         raise RuntimeError("в потоке нет оценённых событий за окно")
-    shown = [e for e in evs if (e["value"] or 0) >= 6][:_NEWS_MAX]
+    cands = [e for e in evs if (e["value"] or 0) >= 6]
+    # сверка с вышедшим: повтор без нового факта не публикуется, продолжение
+    # сюжета — с пометкой (см. newsflow.classify_repeats)
+    try:
+        rep = await nf.classify_repeats(cands[:scope["news_max"] + 12], scope["republish_from"])
+    except Exception as e:  # noqa: BLE001 — сверка не должна ронять секцию
+        log.warning("news: сверка с вышедшим не удалась (%s)", e)
+        rep = {}
+    repeats = [e for e in cands if (rep.get(e["event_id"]) or {}).get("kind") == "repeat"]
+    shown = [e for e in cands if e not in repeats][:scope["news_max"]]
     background = [e for e in evs if (e["value"] or 0) <= 5
                   and (e["s2"] or {}).get("category") in _BG_CATS][:8]
     order = {k: i for i, (k, _t) in enumerate(_NEWS_GROUPS)}
@@ -320,12 +276,12 @@ async def news(day: date) -> dict:
     groups: dict[str, dict] = {}
     for e in shown:
         it = _news_item(e)
+        _attach_continuity(it, rep.get(e["event_id"]))
         g = groups.setdefault(e["group"], {"key": e["group"], "title": titles.get(e["group"], "Прочее важное"),
                                            "items": []})
         g["items"].append(it)
     glist = sorted(groups.values(), key=lambda g: (-max(i["score"] for i in g["items"]),
                                                    order.get(g["key"], 9)))
-    await asyncio.to_thread(_news_stories, glist)
     try:
         await asyncio.to_thread(nf.mark_published,
                                 [i for e in shown for i in (e.get("merged_ids") or [e["event_id"]])])
@@ -350,7 +306,14 @@ async def news(day: date) -> dict:
                             "value": e["value"]} for e in background],
             "sources": sources, "raw_count": hl["items_24h"], "pool": pool,
             "triage": {"stream_24h": hl["items_24h"], "relevant_24h": hl["relevant_24h"],
-                       "events": len(evs), "kept": len(shown)},
+                       "events": len(evs), "kept": len(shown),
+                       "repeats": len(repeats),
+                       "continuations": sum(1 for v in rep.values() if v["kind"] == "continuation"),
+                       "window_h": round(scope["window_h"], 1)},
+            "repeats": [{"title": _news_item(e)["title"], "url": e["lead"]["url"],
+                         "prev": (rep.get(e["event_id"]) or {}).get("prev")} for e in repeats],
+            **({"scope": {k: scope[k] for k in ("since", "days_off", "prev_workday")}}
+               if scope["after_off"] else {}),
             "_llm_model": nf.S2_MODEL}
 
 
@@ -486,7 +449,9 @@ def _provenance(kind: str, d: dict) -> str:
     if kind == "news_alert":
         src = d.get("domain") or d.get("source") or "пресса"
         n = int(d.get("echo") or 1)
-        return f'{src}' + (f' · ещё {n - 1} ист.' if n > 1 else "")
+        cont = d.get("continues") or {}
+        return (f'{src}' + (f' · ещё {n - 1} ист.' if n > 1 else "")
+                + (f' · продолжение сюжета от {_dm(cont.get("date"))}' if cont else ""))
     if kind == "loophole":
         return "вкладка «Уязвимости» · предварительная классификация"
     if kind == "bank_rating":
@@ -513,12 +478,16 @@ def _fallback_headline(leads: list[dict]) -> dict:
 
 
 async def headline(day: date) -> dict:
+    from . import newsflow as nf
+    scope = nf.issue_scope(day)
     secs = await asyncio.to_thread(store._read_day_rows, day)
-    prev = await asyncio.to_thread(store.recent_headlines, day, 3)
+    # «не повторяй прошлые заголовки» — о выпусках, которые читали: после
+    # выходных это последний рабочий день, а не суббота и воскресенье
+    prev = await asyncio.to_thread(store.recent_headlines, scope["republish_from"], 3)
     prev_leads = {p["lead_ref"] for p in prev if p.get("lead_ref")}
     leads, bg = await asyncio.to_thread(_build_leads, secs, prev_leads)
     top = await asyncio.to_thread(_distinct_leads, [ld for ld in leads if ld["score"] >= 6])
-    top = top[:6]
+    top = _fresh_first(top)[:6]
 
     result, ti, to, model, degraded = None, 0, 0, None, False
     if top or bg:
@@ -526,7 +495,10 @@ async def headline(day: date) -> dict:
         prev_block = ("\n\nЗАГОЛОВКИ ПРОШЛЫХ ВЫПУСКОВ (не повторяй формулировки):\n"
                       + "\n".join(f'- {p["date"]}: {p["headline"]}' for p in prev if p.get("headline"))
                       if prev else "")
-        user = (f"Дата выпуска: {today_ru()}.\nПОВОДЫ (по убыванию важности):\n"
+        span = (f"Выпуск первого рабочего дня после выходных: поводы с {_dm(scope['since'])} "
+                f"(выходные {', '.join(_dm(d) for d in scope['days_off'])}) — не пиши «за сутки».\n"
+                if scope["after_off"] else "")
+        user = (f"Дата выпуска: {today_ru()}.\n{span}ПОВОДЫ (по убыванию важности):\n"
                 + ("\n".join(lines) or "— поводов с высокой ценностью нет")
                 + "\n\nФОН РЫНКА:\n" + ("\n".join(f"- {b}" for b in bg) or "—")
                 + prev_block
@@ -601,7 +573,6 @@ async def headline(day: date) -> dict:
     }
 
 
-_NEWS_MAX = int(os.getenv("DIGEST_NEWS_MAX", "14"))
 
 
 _BG_CATS = ("market_background", "macro", "competitor_risk")
@@ -631,6 +602,26 @@ def _news_item(e: dict) -> dict:
             "score": v, "event": s2.get("category"), "echo": e["n_sources"],
             "event_id": e["event_id"], "image": lead.get("image"), "products": [],
             "tag": lead.get("rtype")}
+
+
+def _dm(iso: str | None) -> str:
+    """«2026-09-27» → «27.09»."""
+    try:
+        d = date.fromisoformat(str(iso)[:10])
+        return f"{d.day:02d}.{d.month:02d}"
+    except ValueError:
+        return str(iso or "")
+
+
+def _attach_continuity(it: dict, r: dict | None) -> None:
+    """Продолжение сюжета: прошлые эпизоды (item["story"] — формат, который
+    читают «Для вас» и страница), что было и что нового."""
+    if not r or r.get("kind") != "continuation":
+        return
+    it["story"] = r.get("episodes") or []
+    it["continues"] = r.get("prev")
+    if r.get("new_fact"):
+        it["new_fact"] = r["new_fact"]
 
 
 _UNFAV = {"deposit": -1, "savings_account": -1, "credit": 1, "mortgage": 1, "auto_loan": 1,
@@ -778,9 +769,15 @@ def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str
                 score += 0.3
             if ev and ev.get("up"):
                 score += 0.5
+            cont = it.get("continues") or None
+            if cont:                       # сюжет уже выходил — не повод открывать выпуск
+                score -= 1.0
             leads.append({"ref": f"news:{it.get('event_id') or it.get('url')}", "kind": "news_alert",
-                          "score": score, "data": {**it, "evidence": ev},
-                          "facts": (f'новость ({it.get("domain")}, ценность {int(v)}/10): {it.get("title")}. '
+                          "score": score, "data": {**it, "evidence": ev}, "repeat": bool(cont),
+                          "facts": ((f'[продолжение сюжета, выходил {_dm(cont.get("date"))}: '
+                                     f'«{cont.get("title")}»; новое: {it.get("new_fact") or "—"}] '
+                                     if cont else "")
+                                    + f'новость ({it.get("domain")}, ценность {int(v)}/10): {it.get("title")}. '
                                     f'{it.get("summary") or ""} Затронуто: {it.get("sber") or "—"}. '
                                     f'Идея проверки от отбора: {it.get("idea") or "—"}'
                                     + (f'. Срок: {it["deadline"]}' if it.get("deadline") else "")
@@ -856,6 +853,18 @@ def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str
     return leads, bg
 
 
+def _fresh_first(leads: list[dict]) -> list[dict]:
+    """Продолжение уже выходившего сюжета не открывает выпуск: первым встаёт
+    самый весомый новый повод, остальной порядок прежний. 27 и 28.09 выпуск
+    дважды открывался одной и той же новостью из разных изданий."""
+    if not leads or not leads[0].get("repeat"):
+        return leads
+    k = next((i for i, ld in enumerate(leads) if not ld.get("repeat")), None)
+    if k is None:
+        return leads
+    return [leads[k]] + leads[:k] + leads[k + 1:]
+
+
 def _distinct_leads(leads: list[dict]) -> list[dict]:
     """Два повода об одном сюжете — одна карточка (оставляем более весомый).
     Пример 24.09: «ЦБ и НСПК дорабатывают «Добрую волю»» и «НСПК тестирует
@@ -896,8 +905,10 @@ async def afternoon_update(day: date) -> dict:
     Утренний выпуск не меняется. Берутся только события из непрерывного потока
     с ценностью от 7, появившиеся после утренней сборки и не опубликованные
     утром (в том числе тем же сюжетом из другого источника), плюс всплески жалоб,
-    которых утром не было. Всё уже оценено потоком — моделей здесь нет, кроме
-    склейки сюжетов."""
+    которых утром не было. Всё уже оценено потоком — модели здесь только для
+    склейки сюжетов и сверки с вышедшим (повтор не идёт, продолжение — с
+    пометкой). Вышедшее в дополнении отмечается опубликованным: наутро оно не
+    повторяется."""
     from datetime import datetime, timedelta, timezone
     from . import newsflow as nf
     from ..rag import reviews_dash as rd
@@ -916,23 +927,25 @@ async def afternoon_update(day: date) -> dict:
            if (e["value"] or 0) >= 7 and e["ts"] and e["ts"] > since
            and not any(x.get("published_on") for x in e["items"])]
     evs = await nf.merge_events(evs) if evs else []
-    # тот же сюжет, что утром, но из новой статьи — не дополнение
-    morning = [i.get("title") or "" for g in ((news_sec.get("payload") or {}).get("groups") or [])
-               for i in g.get("items") or []]
-    morning += [i.get("title") or "" for i in
-                ((secs.get("headline") or {}).get("payload") or {}).get("insights") or []]
-    fresh = evs
-    if evs and morning:
-        try:
-            from ..rag import embedder
-            mv = embedder.embed_batch([t[:200] for t in morning if t])
-            ev_titles = [((e["s2"] or {}).get("headline") or e["lead"]["title"])[:200] for e in evs]
-            fv = embedder.embed_batch(ev_titles)
-            fresh = [e for e, v in zip(evs, fv)
-                     if not any(embedder.cosine_similarity(v, m) >= 0.72 for m in mv)]
-        except Exception:  # noqa: BLE001 — без векторов сравниваем только по событиям
-            fresh = evs
-    items = [_news_item(e) for e in fresh[:3]]
+    # тот же сюжет, что утром или в прошлые дни, но из новой статьи — не
+    # дополнение; новое развитие сюжета — с пометкой
+    try:
+        rep = await nf.classify_repeats(evs, day + timedelta(days=1)) if evs else {}
+    except Exception as e:  # noqa: BLE001
+        log.warning("дополнение: сверка с вышедшим не удалась (%s)", e)
+        rep = {}
+    fresh = [e for e in evs if (rep.get(e["event_id"]) or {}).get("kind") != "repeat"]
+    items = []
+    for e in fresh[:3]:
+        it = _news_item(e)
+        _attach_continuity(it, rep.get(e["event_id"]))
+        items.append(it)
+    # вышедшее в дополнении наутро не повторяется
+    try:
+        await asyncio.to_thread(nf.mark_published,
+                                [i for e in fresh[:3] for i in (e.get("merged_ids") or [e["event_id"]])])
+    except Exception:  # noqa: BLE001
+        log.warning("дополнение: отметка публикации не удалась", exc_info=True)
     sig = await asyncio.to_thread(rd.weekly_signals, "Сбербанк", None) or {}
     had = {s.get("key") for s in (((secs.get("reviews_pulse") or {}).get("payload") or {})
                                   .get("signals") or [])}

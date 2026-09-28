@@ -2777,6 +2777,10 @@ function OverviewPage(){
       <aside className="bf-news">
         <div className="bf-news-h">
           <h2 className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</h2>
+          {/* выпуск после выходных собран за выходные: в субботу и воскресенье
+              «Обзор» почти никто не открывает */}
+          {nw.scope&&<span className="bf-news-cov" data-tip={`Первый рабочий день после выходных: новости с ${fmtDateMsk(nw.scope.since)}, включая вышедшие в выпусках ${(nw.scope.days_off||[]).map(dmy).join(" и ")}`}>
+            за выходные</span>}
           {ST("news")==="stale"&&<span className="ov-pill warn" data-tip="сбор или отбор новостей сегодня не удался — показан последний удачный выпуск">устарело · за {dmy(sec.news.stale_from)||sec.news.stale_from}</span>}
           {newsAll>0&&<span className="bf-news-cov" data-tip={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
             {newsOk} из {newsAll} источников</span>}
@@ -2806,6 +2810,9 @@ function OverviewPage(){
                   {it.reach==="unreachable"&&<span className="bf-reach no"
                     data-tip="Источник не открылся из контура при сборе дайджеста — ссылка может не сработать и у вас">нет доступа</span>}
                   {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}
+                  {/* сюжет уже выходил: что было и что нового */}
+                  {it.continues&&<span className="bf-chip" data-tip={`Было ${dmy(it.continues.date)}: «${it.continues.title}»`+(it.new_fact?`\nНовое: ${it.new_fact}`:"")}>
+                    продолжение · {dmy(it.continues.date)}</span>}
                   <Ic.ext/></div>
               </a>)}
           </div>)}
