@@ -51,6 +51,7 @@ _INDEX_LINES = int(os.getenv("GPTR_BRIEF_INDEX_LINES", "420"))
 @dataclass
 class Brief:
     answer: str = ""
+    title: str = ""        # название отчёта: история, обложка PDF, имя файла
     theses: list[str] = field(default_factory=list)
     sections: list[dict] = field(default_factory=list)   # {key, title, focus}
     skipped: list[str] = field(default_factory=list)
@@ -97,7 +98,12 @@ _SYSTEM = """Ты — руководитель аналитической гру
 ВСЕ проверенные факты по вопросу аудитора. Реши, что отчёт отвечает, и как он построен.
 
 Верни строго JSON:
-{"answer": "...", "theses": ["...", ...], "sections": [{"key": "...", "title": "...", "focus": "..."}, ...]}
+{"report_title": "...", "answer": "...", "theses": ["...", ...], "sections": [{"key": "...", "title": "...", "focus": "..."}, ...]}
+
+report_title — название всего отчёта для истории и обложки: 3–9 слов о предмете (продукт,
+банки, тема, период), например «Эквайринг для малого бизнеса: Сбер против Т-Банка и ВТБ»,
+«Жалобы на чарджбэк: причины всплеска». Без глаголов-команд из вопроса («Сделай»,
+«Сравни»), без слов «отчёт», «анализ», «исследование», без кавычек и точки в конце.
 
 answer — прямой ответ на вопрос в 2–4 фразах: главное число или вывод, причина, что это
 значит для проверки. Каждое число и утверждение — с якорем [f:N] из фактов. Если на часть
@@ -186,7 +192,9 @@ def parse(raw: str, available: dict[str, int]) -> Brief:
             title = ""
         secs.append({"key": key, "title": title,
                      "focus": re.sub(r"\s+", " ", str(s.get("focus") or "")).strip()[:400]})
+    from ...ai.report_title import clean_title
     return Brief(answer=str(data.get("answer") or "").strip(),
+                 title=clean_title(data.get("report_title")),
                  theses=[str(t).strip() for t in data.get("theses") or [] if str(t).strip()][:6],
                  sections=secs,
                  skipped=[k for k in available if k not in seen])

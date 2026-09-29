@@ -207,6 +207,44 @@ def save_report(username: str, session_id: int | None, question: str,
           "banks": banks or []}))
 
 
+def set_report_title(report_id: int, title: str) -> None:
+    """Название отчёта, составленное после сохранения (быстрая модель в фоне)."""
+    if not title:
+        return
+    with db.session() as s:
+        s.execute(text("UPDATE report SET title = :t WHERE report_id = :r"),
+                  {"t": title[:200], "r": report_id})
+
+
+def title_session_from_report(session_id: int | None, title: str) -> bool:
+    """Название беседы — по первому отчёту, если его ещё никто не менял:
+    до 29.09 беседа называлась первым вопросом («да, сведи в таблицу»).
+    Переименованную вручную беседу не трогаем."""
+    if not session_id or not title:
+        return False
+    row = _one("""SELECT s.title,
+                         (SELECT m.content FROM chat_message m
+                           WHERE m.session_id = s.session_id AND m.role = 'user'
+                           ORDER BY m.created_at LIMIT 1) AS first_q
+                    FROM chat_session s WHERE s.session_id = :s""", {"s": session_id})
+    if not row or row.get("title") != _title_from_question(row.get("first_q") or ""):
+        return False
+    with db.session() as s:
+        s.execute(text("UPDATE chat_session SET title = :t WHERE session_id = :s"),
+                  {"t": title[:200], "s": session_id})
+    return True
+
+
+def session_questions(session_id: int | None, limit: int = 8) -> list[str]:
+    """Вопросы беседы по порядку — контекст для названия уточняющего отчёта."""
+    if not session_id:
+        return []
+    rows = _rows("""SELECT content FROM chat_message
+                    WHERE session_id = :s AND role = 'user'
+                    ORDER BY created_at LIMIT :n""", {"s": session_id, "n": limit})
+    return [r["content"] for r in rows if r.get("content")]
+
+
 def count_reports(username: str) -> int:
     return int(_scalar("SELECT count(*) FROM report WHERE username = :u", {"u": username}) or 0)
 

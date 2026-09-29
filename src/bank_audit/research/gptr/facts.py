@@ -381,6 +381,51 @@ async def plan_attributes(client, model: str, question: str, plan) -> Contract:
                     observed=observed, regulatory=regulatory)
 
 
+# Характеристика факта попадает в подписи таблиц отчёта и PDF: 29.09 там стояло
+# «Сбербанк — СБП/QR, tariffs and commissions». Модель иногда пишет ключ
+# по-английски — переводим частые, остальное хотя бы без подчёркиваний.
+_ATTR_PHRASES = {
+    "tariffs and commissions": "тарифы и комиссии", "fees and commissions": "тарифы и комиссии",
+    "cost of service": "стоимость обслуживания", "service cost": "стоимость обслуживания",
+    "delivery time": "срок доставки", "settlement time": "срок зачисления",
+    "customer complaints": "жалобы клиентов", "client type": "тип клиента",
+    "promo conditions": "условия акции", "identification channels": "каналы идентификации",
+    "maximal rate": "максимальная ставка", "max rate": "максимальная ставка",
+    "maximum rate": "максимальная ставка", "min rate": "минимальная ставка",
+    "full cost disclosure": "раскрытие полной стоимости",
+    "rate access discrepancy": "расхождение доступной ставки",
+    "no withdrawal no topup": "без пополнения и снятия",
+    "condition without withdrawal and replenishment": "без пополнения и снятия",
+    "deposit currency": "валюта вклада", "deposit amount": "сумма вклада",
+    "interest rate": "процентная ставка", "grace period": "льготный период",
+    "annual fee": "годовое обслуживание", "credit limit": "кредитный лимит",
+    "processing time": "срок рассмотрения", "issue time": "срок выпуска",
+}
+_ATTR_WORDS = {
+    "rate": "ставка", "term": "срок", "currency": "валюта", "channel": "канал",
+    "channels": "каналы", "fee": "комиссия", "fees": "комиссии", "commission": "комиссия",
+    "commissions": "комиссии", "tariff": "тариф", "tariffs": "тарифы", "limit": "лимит",
+    "limits": "лимиты", "amount": "сумма", "cashback": "кэшбэк", "conditions": "условия",
+    "condition": "условие", "cost": "стоимость", "price": "цена", "period": "период",
+    "requirements": "требования", "documents": "документы", "insurance": "страховка",
+    "bonus": "бонус", "delivery": "доставка", "complaints": "жалобы", "term_months": "срок",
+}
+
+
+def ru_attribute(attr: str) -> str:
+    """Характеристика факта по-русски: русская — как есть, частые английские
+    ключи переводятся, прочие — хотя бы без подчёркиваний."""
+    a = re.sub(r"\s+", " ", str(attr or "")).strip()
+    if not a or re.search("[А-Яа-яЁё]", a):
+        return a
+    key = re.sub(r"[_\-]+", " ", a).strip().lower()
+    if key in _ATTR_PHRASES:
+        return _ATTR_PHRASES[key]
+    if key in _ATTR_WORDS:
+        return _ATTR_WORDS[key]
+    return key
+
+
 _EXTRACT_SYSTEM = """Ты извлекаешь ПРОВЕРЯЕМЫЕ факты со страницы для аудита.
 
 Правила, нарушение любого делает результат негодным:
@@ -393,6 +438,8 @@ _EXTRACT_SYSTEM = """Ты извлекаешь ПРОВЕРЯЕМЫЕ факты
    "unit" — единица, если применимо ("%", "₽", "дн.", "мес."), иначе "".
 5. Факты о ЛЮБОЙ из перечисленных характеристик, даже если страница
    рассказывает о них вскользь.
+6. "attribute" — одна из перечисленных характеристик, дословно и по-русски,
+   без английских ключей и подчёркиваний.
 
 Ответ — строго JSON: {"facts":[{"subject","attribute","value","unit","verbatim"}]}
 "subject" — один из данных слугов объектов или "" если факт общий."""
@@ -576,7 +623,7 @@ async def extract_into(reg: FactRegistry, client, model: str, *,
             if subj and subj not in subjects:
                 subj = ""
             reg.add(subject=subj,
-                    attribute=str(it.get("attribute") or "").strip()[:120],
+                    attribute=ru_attribute(it.get("attribute"))[:120],
                     value=str(it.get("value") or "").strip()[:300],
                     unit=str(it.get("unit") or "").strip()[:20],
                     verbatim=str(it.get("verbatim") or "").strip()[:600],

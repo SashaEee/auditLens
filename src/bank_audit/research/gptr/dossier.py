@@ -720,6 +720,9 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
     # в «90 схем Сбера к вопросу не относятся» (26.09). Иначе — строка в плане.
     if brief:
         ttl.update({s_["key"]: s_["title"] for s_ in brief.sections if s_["title"]})
+        if brief.title:
+            # название отчёта — для истории, «Поделиться» и обложки PDF
+            yield ("report_title", brief.title)
     yield ("titles", dict(ttl))
     yield ("outline", [ttl[k] for k in LEAD] + [ttl[k] for k in order])
     if not order:

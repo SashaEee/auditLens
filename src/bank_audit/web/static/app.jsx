@@ -5362,7 +5362,7 @@ function MatrixExportButton({matrix, question, streaming}){
   </span>;
 }
 
-function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps}){
+function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps, reportId, title}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
     if(busy || streaming) return;
@@ -5375,6 +5375,10 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
         body: JSON.stringify({
           question: question,
           report_md: report,   // [[CHART:i]]-маркеры остаются: PDF ставит графики по местам
+          // Название и дата — из сохранённого отчёта (сервер берёт по номеру
+          // и проверяет доступ); название из потока — запас, пока отчёт не сохранён.
+          report_id: reportId || null,
+          title: title || null,
           sources: (sources || []).map(s => ({
             n: s.n, url: s.url, bank_name: s.bank_name, title: s.title,
             source_kind: s.source_kind, trust_score: s.trust_score,
@@ -5422,19 +5426,23 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
         }),
       });
       if(!resp.ok) {
-        const err = await resp.text();
-        alert(`PDF generation failed: ${err.slice(0,200)}`);
+        fbToast("Не удалось собрать PDF — попробуйте ещё раз");
         return;
       }
       const blob = await resp.blob();
       const url  = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `auditlens_${auditId}.pdf`;
+      // Имя файла — с сервера: «AuditLens — <название> — <дата>.pdf»
+      const cd = resp.headers.get("Content-Disposition")||"";
+      const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+      let fname = `auditlens_${auditId}.pdf`;
+      try{ if(star) fname = decodeURIComponent(star[1]); }catch{}
+      a.download = fname;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(url), 4000);
     } catch(e) {
-      alert(`Ошибка экспорта: ${e.message}`);
+      fbToast("Не удалось собрать PDF — проверьте соединение");
     } finally { setBusy(false); }
   };
   return <button className="btn-export" onClick={handle}
@@ -6926,8 +6934,11 @@ function AIPage(){
                 updateLast(()=>({ranking:data}));
               }else if(data.type==="insights"&&Array.isArray(data.items)){
                 updateLast(()=>({insights:data.items}));
+              }else if(data.type==="report_title"&&data.title){
+                updateLast(()=>({title:data.title}));
               }else if(data.type==="report_saved"){
-                updateLast(()=>({report_id:data.report_id}));   // «Поделиться» сразу после прогона
+                // «Поделиться» сразу после прогона; название — из брифа или черновое
+                updateLast(m=>({report_id:data.report_id,title:m.title||data.title||undefined}));
               }else if(data.type==="done"){
                 break outer;
               }
@@ -7053,7 +7064,8 @@ function AIPage(){
         try{
           const r=await apiFetch(`/api/reports/${m.report_id}`); const p=r.payload||{};
           Object.assign(m,{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
-                           gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null});
+                           gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null,
+                           title:r.title||undefined});
         }catch{}
       }));
       setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
@@ -7074,7 +7086,8 @@ function AIPage(){
                 // сохранённый отчёт больше не «чище» живого прогона.
                 verification:p.verification||null,gaps:p.gaps||null,
                 ranking:p.ranking||null,insights:p.insights||null,
-                report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name}]);
+                report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name,
+                title:r.title||undefined}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
@@ -7142,7 +7155,7 @@ function AIPage(){
                 </div>
               ) : (<>
                 <div className="dr-doc-toolbar">
-                  <span className="who">AuditLens · аналитический отчёт</span>
+                  <span className="who" title={m.title?"AuditLens · аналитический отчёт":undefined}>{m.title||"AuditLens · аналитический отчёт"}</span>
                   {m.report_owner&&me&&m.report_owner!==me.username&&
                     <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
                   {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!streaming&&
@@ -7152,7 +7165,8 @@ function AIPage(){
                                      sources={m.sources||[]} verification={m.verification}
                                      claimCheck={m.claimCheck} streaming={streaming}
                                      charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
-                                     insights={m.insights} gaps={m.gaps}/>}
+                                     insights={m.insights} gaps={m.gaps}
+                                     reportId={m.report_id} title={m.title}/>}
                   {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
                 </div>
                 <div className="chat-bubble chat-bubble-deep">
@@ -7190,7 +7204,8 @@ function AIPage(){
                                            sources={m.sources||[]} verification={m.verification}
                                            claimCheck={m.claimCheck} streaming={false}
                                            charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
-                                           insights={m.insights} gaps={m.gaps}/>
+                                           insights={m.insights} gaps={m.gaps}
+                                           reportId={m.report_id} title={m.title}/>
                           {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={false}/>}
                           <span className="dr-doc-footer-hint">
                             Готовый отчёт для аудита · нумерация страниц, источники, A4

@@ -1011,7 +1011,8 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 @media(max-width:760px){.s3-line span{display:none}.s3-line b{font-size:13px}}
 @media(prefers-reduced-motion:reduce){.s3-leaf{transition:none}.s3-berry{animation-duration:.01s}}
 .dr-viz{margin:16px 0 20px;max-width:100%;overflow:hidden;position:relative;contain:layout paint;isolation:isolate;font-family:'Geist',system-ui,sans-serif;font-size:13px;line-height:1.35;color:var(--ink)}
-.dr-viz .viz{width:100%;max-width:100%}
+/* свой банк в визуализациях — зелёным, как во всей системе: красный = риск */
+.dr-viz .viz{width:100%;max-width:100%;--accent:var(--sber);--accent-soft:var(--sber-soft)}
 .dr-viz svg{max-width:100%;height:auto;max-height:600px}
 .dr-viz svg text:not([fill]){fill:var(--ink)}
 .dr-viz-rejected{color:var(--ink-3);font-style:italic}
