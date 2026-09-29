@@ -34,6 +34,7 @@ def test_heuristic_title_drops_the_command():
 
 def test_clean_title_and_default_detection():
     assert rt.clean_title("«Отчёт: эквайринг для МСБ.»") == "Эквайринг для МСБ"
+    assert rt.clean_title("«Своё дело» Сбербанка для самозанятых") == "«Своё дело» Сбербанка для самозанятых"
     # до 29.09 в базе лежало начало вопроса, обрезанное на 80-м знаке вместе с пробелом
     stored = " ".join(Q484.split())[:80]
     assert stored.endswith(" ") and rt.is_default_title(stored, Q484)

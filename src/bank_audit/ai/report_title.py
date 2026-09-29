@@ -37,8 +37,12 @@ _SHORT_REPLY = re.compile(r"^(?:да|нет|ок|окей|давай|ага|уг
 def clean_title(raw: str | None) -> str:
     """Название из ответа модели: одна строка, без кавычек, точки в конце и
     служебных слов; обрезка по границе слова."""
-    s = re.sub(r"\s+", " ", str(raw or "")).strip()
-    s = s.strip("«»\"'“”„ ").rstrip(".").strip()
+    s = re.sub(r"\s+", " ", str(raw or "")).strip().rstrip(".").strip()
+    # Кавычки снимаются, только если ими обёрнуто всё название: «Своё дело»
+    # в начале — часть названия (29.09 отрезалась открывающая).
+    while len(s) >= 2 and s[0] in "«\"“„'" and s[-1] in "»\"”'" \
+            and s.count("«") <= 1 and s.count("»") <= 1:
+        s = s[1:-1].strip().rstrip(".").strip()
     s = _BAD_START.sub("", s).strip()
     if len(s) > TITLE_MAX:
         cut = s[:TITLE_MAX].rsplit(" ", 1)[0].rstrip(",;:—- ")
