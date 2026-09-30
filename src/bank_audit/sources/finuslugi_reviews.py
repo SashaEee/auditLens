@@ -37,7 +37,7 @@ import logging
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable
 
@@ -111,10 +111,27 @@ def _match_company(companies: dict[str, dict], want: str) -> str | None:
     exact = [cid for cid, c in companies.items() if _norm_name(c.get("name")) == target]
     if exact:
         return min(exact, key=int)      # при дублях берём меньший id — он старше
+    # по нашему справочнику банков: площадка переименовывает («Тинькофф» → «Т-Банк»,
+    # «Промсвязьбанк» → «Банк ПСБ»), и таргеты молча падали каждую ночь с 10.09
+    try:
+        from ..rag.bankiru_reviews import resolve_bank
+        canon = resolve_bank(want)
+        same = [cid for cid, c in companies.items()
+                if canon and resolve_bank(c.get("name") or "") == canon]
+        if len(same) == 1:
+            return same[0]
+    except Exception:  # noqa: BLE001 — справочник корпуса недоступен
+        pass
     # запасной проход: имя площадки содержит наше целиком («Сбербанк России»)
     part = [cid for cid, c in companies.items()
             if target in _norm_name(c.get("name")).split(" (")[0]]
     return min(part, key=int) if part else None
+
+
+# Время в ленте — московское, без пояса. До 30.09 писали его как UTC: отзыв в
+# 22:30 уезжал на следующие сутки. Часы публикации это подтверждают: 5% отзывов
+# в «23» — как у sravni в 23 МСК, а не в 2 часа ночи.
+_MSK = timezone(timedelta(hours=3))
 
 
 def _parse_date(raw: Any) -> datetime | None:
@@ -122,7 +139,7 @@ def _parse_date(raw: Any) -> datetime | None:
         return None
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d.%m.%Y"):
         try:
-            dt = datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(raw, fmt).replace(tzinfo=_MSK)
         except ValueError:
             continue
         # у части отзывов дата — заглушка 1971-01-01; это не ошибка разбора, а

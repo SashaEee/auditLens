@@ -277,6 +277,11 @@ sravni_reviews:
 # Дополняет banki/sravni — другая аудитория, ~10 свежих отзывов на банк.
 bankiros_reviews:
   adapter: bank_audit.sources.bankiros_reviews:BankirosReviewsAdapter
+  # Выключен 30.09: площадка почти без жалоб. Лента по дате (/review/show-more)
+  # за 30 дней по 14 банкам — 319 отзывов, из них 1–2★ один (за 90 дней — 8 из
+  # 533); остальное похвала (у Альфы и Совкомбанка по 100+ пятёрок в месяц).
+  # Собранное раньше остаётся в индексе.
+  enabled: false
   # как источник подписан на вкладке «Источники». Держим в конфиге,
   # а не в коде витрины: новый коллектор приносит своё описание сам
   display:
@@ -352,11 +357,11 @@ finuslugi_reviews:
     - { name: sber_reviews,        bank_name: "Сбербанк",        max_pages: 8 }
     - { name: vtb_reviews,         bank_name: "ВТБ",             max_pages: 6 }
     - { name: alfabank_reviews,    bank_name: "Альфа-Банк",      max_pages: 6 }
-    - { name: tbank_reviews,       bank_name: "Тинькофф",        max_pages: 6 }
+    - { name: tbank_reviews,       bank_name: "Т-Банк",          max_pages: 6 }
     - { name: sovcombank_reviews,  bank_name: "Совкомбанк",      max_pages: 6 }
     - { name: gazprombank_reviews, bank_name: "Газпромбанк",     max_pages: 4 }
     - { name: rshb_reviews,        bank_name: "Россельхозбанк",  max_pages: 4 }
-    - { name: psb_reviews,         bank_name: "Промсвязьбанк",   max_pages: 4 }
+    - { name: psb_reviews,         bank_name: "ПСБ",             max_pages: 4 }
     - { name: otkritie_reviews,    bank_name: "Открытие",        max_pages: 3 }
     - { name: raiffeisen_reviews,  bank_name: "Райффайзенбанк",  max_pages: 3 }
     - { name: mtsbank_reviews,     bank_name: "МТС Банк",        max_pages: 3 }

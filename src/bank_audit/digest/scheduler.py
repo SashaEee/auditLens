@@ -120,30 +120,55 @@ import threading
 INGEST_MUTEX = threading.Lock()
 
 
+def nightly_sources() -> list[str]:
+    """Источники ночного сбора — включённые в config/sources.yaml.
+
+    Отзывы banki.ru и sravni сюда не входят (enabled: false): их собирает
+    review_streams дважды в сутки и пишет в тот же журнал extraction_run."""
+    from ..config import load_sources
+    return [k for k, v in load_sources().items() if (v or {}).get("enabled", True)]
+
+
+def _tariff_sources() -> list[str]:
+    """Ночные источники без отзывных — по ним судим о свежести тарифов."""
+    from ..config import load_sources
+    cfg = load_sources()
+    return [k for k in nightly_sources()
+            if "review" not in str((cfg.get(k) or {}).get("adapter", "")).lower()]
+
+
 def _ingest_ran_today() -> bool:
-    """Был ли сегодня (МСК) ЗАВЕРШЁННЫЙ прогон сбора (или живой свежий).
+    """Был ли сегодня (МСК) ЗАВЕРШЁННЫЙ прогон ночного сбора (или живой свежий).
     Убитый деплоем прогон (вечный running) не считаем — иначе полдня без сбора
-    «засчитывается» как выполненный."""
+    «засчитывается» как выполненный.
+
+    Только источники ночного сбора: с 25.09 журнал пишет и review_streams, он
+    отрабатывал до 05:00 — и сбор тарифов и отзывов не шёл 26–30.09."""
     with db.session() as s:
         row = s.execute(text("""
             SELECT count(*) FROM extraction_run
              WHERE started_at >= (now() AT TIME ZONE 'Europe/Moscow')::date
                                   AT TIME ZONE 'Europe/Moscow'
+               AND source = ANY(:src)
                AND (finished_at IS NOT NULL
                     OR started_at > now() - interval '30 minutes')
-        """)).scalar()
+        """), {"src": nightly_sources()}).scalar()
     return bool(row and int(row) > 0)
 
 
 def last_ok_ingest_age_h() -> float | None:
-    """Часы с последнего успешного сбора тарифов (None — не было никогда)."""
+    """Часы с последнего успешного сбора тарифов (None — не было никогда).
+
+    Раньше — по source LIKE 'sravni%': туда попал отзывный sravni_reviews,
+    который пишет дважды в сутки, и сторож считал тарифы свежими пять дней
+    подряд, пока ночной сбор не шёл."""
     with db.session() as s:
         v = s.execute(text("""
             SELECT extract(epoch FROM now() - max(finished_at)) / 3600.0
               FROM extraction_run
              WHERE status = 'ok' AND finished_at IS NOT NULL
-               AND source LIKE 'sravni%'
-        """)).scalar()
+               AND source = ANY(:src)
+        """), {"src": _tariff_sources()}).scalar()
     return float(v) if v is not None else None
 
 
@@ -191,11 +216,10 @@ def _run_ingest_all() -> None:
         log.info("daily ingest: пропуск — сбор уже идёт")
         return
     try:
-        from ..config import load_sources
         from ..orchestrator.runner import ingest
         # enabled: false — источник заменён другим сбором (HTML-сборщики отзывов
         # banki.ru и sravni → sources/review_streams по JSON площадок)
-        sources = [k for k, v in load_sources().items() if (v or {}).get("enabled", True)]
+        sources = nightly_sources()
         log.info("daily ingest: старт, источники: %s", sources)
         for src in sources:
             try:
@@ -248,6 +272,7 @@ async def ingest_background_loop():
 
     async def _maybe_run(reason: str) -> None:
         if await asyncio.to_thread(_ingest_ran_today):
+            log.info("daily ingest: %s — сегодня уже был, пропуск", reason)
             return
         log.info("daily ingest: старт (%s)", reason)
         await asyncio.to_thread(_run_ingest_all)

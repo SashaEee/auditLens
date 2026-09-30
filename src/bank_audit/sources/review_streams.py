@@ -235,12 +235,36 @@ def sravni_orgs(c: httpx.Client | None = None) -> list[dict]:
             c.close()
 
 
-def _sravni_match(orgs: list[dict], canon: str) -> dict | None:
-    from ..rag.bankiru_reviews import resolve_bank as canon_of
-    for o in orgs:
-        if o["name"] == canon or canon_of(o["name"]) == canon:
-            return o
-    return None
+def _sravni_total(c: httpx.Client, org_id: str) -> tuple[int, str]:
+    """Сколько у организации отзывов и дата последнего — чтобы из однофамильцев
+    выбрать живую карточку."""
+    d = _get_json(c, SRAVNI_API, {"filterBy": "all", "orderBy": "byDate", "pageIndex": 0, "pageSize": 1,
+                                  "reviewObjectId": org_id, "reviewObjectType": "banks"})
+    it = d.get("items") or [{}]
+    return int(d.get("total") or 0), str(it[0].get("date") or "")
+
+
+def _sravni_match(orgs: list[dict], canon: str, c: httpx.Client | None = None) -> dict | None:
+    """Карточка банка в справочнике площадки.
+
+    Раньше брали ПЕРВУЮ организацию, чьё имя резолвер сводит к банку, и 25–30.09
+    Т-Банк читался с «РОСТ БАНК» (30 отзывов 2016 г. вместо 68 601), ВТБ — с
+    «ВТБ 24» (1 отзыв вместо 10 374), Уралсиб — с «Уралсиб-Юг» (0 вместо 1 410).
+    Теперь: точное имя; иначе единственный кандидат; иначе — самая активная
+    карточка (больше отзывов, потом свежее)."""
+    from ..rag.bankiru_reviews import _norm, resolve_bank as canon_of
+    exact = [o for o in orgs if _norm(o["name"]) == _norm(canon)]
+    cands = exact or [o for o in orgs if canon_of(o["name"]) == canon]
+    if len(cands) <= 1 or c is None:
+        return cands[0] if cands else None
+    scored = []
+    for o in cands[:8]:
+        try:
+            scored.append((_sravni_total(c, o["id"]), o))
+        except Exception:  # noqa: BLE001 — не ответила: считаем пустой
+            scored.append(((0, ""), o))
+        time.sleep(_PAUSE_S / 2)
+    return max(scored, key=lambda t: t[0])[1]
 
 
 def _sravni_row(session, it: dict, org: dict) -> bool:
@@ -264,16 +288,18 @@ def _sravni_row(session, it: dict, org: dict) -> bool:
                   body=clean_text(it.get("text")), raw=raw, status=it.get("ratingStatus"))
 
 
-def sravni_sync(banks: list[str], pages: int = 4, page_size: int = 50) -> dict:
-    """Отзывы банков по дате до прошлой встречи (по номеру отзыва)."""
-    out = {"banks": 0, "seen": 0, "new": 0, "unmatched": []}
+def sravni_sync(banks: list[str], pages: int = 4, page_size: int = 50,
+                first_days: int = 60, first_pages: int = 40) -> dict:
+    """Отзывы банков по дате до прошлой встречи (по номеру отзыва). Карточку,
+    которую читаем впервые, догружаем на first_days назад."""
+    out = {"banks": 0, "seen": 0, "new": 0, "unmatched": [], "first": []}
     run = _run_start("sravni_reviews", "api")
     err = None
     try:
         with _client() as c:
             orgs = sravni_orgs(c)
             for canon in banks:
-                org = _sravni_match(orgs, canon)
+                org = _sravni_match(orgs, canon, c)
                 if not org:
                     out["unmatched"].append(canon)
                     continue
@@ -281,7 +307,11 @@ def sravni_sync(banks: list[str], pages: int = 4, page_size: int = 50) -> dict:
                 wm_key = f"sravni_last_id:{org['id']}"
                 last = int(_state_get(wm_key) or 0)
                 top = last
-                for page in range(pages):
+                first = last == 0
+                border = (datetime.now(timezone.utc) - timedelta(days=first_days)).isoformat()
+                if first:
+                    out["first"].append(org["alias"])
+                for page in range(first_pages if first else pages):
                     time.sleep(_PAUSE_S)
                     d = _get_json(c, SRAVNI_API, {"filterBy": "all", "orderBy": "byDate", "pageIndex": page,
                                                    "pageSize": page_size, "reviewObjectId": org["id"],
@@ -294,6 +324,8 @@ def sravni_sync(banks: list[str], pages: int = 4, page_size: int = 50) -> dict:
                     ids = [int(it["id"]) for it in items if str(it.get("id", "")).isdigit()]
                     top = max([top] + ids)
                     if not items or (ids and min(ids) <= last):
+                        break
+                    if first and min(str(it.get("date") or "9") for it in items) < border:
                         break
                 _state_set(wm_key, str(top))
     except Exception as e:  # noqa: BLE001

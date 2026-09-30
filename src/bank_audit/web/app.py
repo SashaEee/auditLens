@@ -1208,10 +1208,13 @@ def meta_schedule():
     """Реальное расписание автообновления + свежесть данных.
     UI берёт часы отсюда, а не хардкодом: смена INGEST_HOUR_MSK в env
     сразу отражается в интерфейсе."""
-    from ..digest.scheduler import ingest_schedule
+    from ..digest.scheduler import ingest_schedule, nightly_sources
     sch = ingest_schedule()
+    # только ночной сбор: отзывы площадок пишут журнал дважды в сутки, и «обновлено
+    # час назад» показывалось, пока тарифы стояли с 25.09
     sch["last_run"] = scalar(
-        "SELECT max(finished_at) FROM extraction_run WHERE status='ok'")
+        "SELECT max(finished_at) FROM extraction_run WHERE status='ok' AND source = ANY(:src)",
+        {"src": nightly_sources()})
     return sch
 
 
