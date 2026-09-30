@@ -875,6 +875,10 @@ const ovN=(v,dg=1)=>{ if(v==null||v==="")return "—"; const n=parseFloat(v); if
 const ovRaz=k=>{ const r=Math.round(k*10)/10; if(r!==Math.round(r))return "раза"; const n=Math.round(r);
   return n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?"раза":"раз"; };
 const ovJ=n=>`${fmtNum(n)} ${plural(Math.round(n||0),"жалоба","жалобы","жалоб")}`;
+// «2026-09-25» → «25.09» — дата подъёма сигнала жалоб
+const sigDm=v=>{const m=String(v||"").match(/^\d{4}-(\d{2})-(\d{2})/);return m?`${m[2]}.${m[1]}`:"";};
+// Сигнал держится с прошлых дней — продолжение, а не новый всплеск (с 30.09)
+const sigCont=d=>!!(d&&d.status==="continuing"&&d.since);
 // Как честно сказать о рынке — та же логика, что reviews_dash.market_phrase:
 // «только у …» лишь при ровном рынке (×<1,15). 25.09 заголовок написал «только
 // у Сбера» при росте рынка ×1,93 — флаг bank_specific значит «сильно обгоняет».
@@ -905,6 +909,14 @@ function xpRows(kind,d,now){
         ? `${ovJ(d.base_count)} за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks} = ${ovN(d.baseline_week)} в неделю`
         : `среднее за неделю по окну 14–63 дня назад — ${ovN(d.baseline_week)}`]);
     if(d.prev_week!=null) R.push(["Прошлая неделя",ovJ(d.prev_week)]);
+    // продолжение и затяжной рост: без этих строк сигнал, поднятый неделю
+    // назад, читался как сегодняшний всплеск
+    if(sigCont(d))
+      R.push(["Держится",`с ${sigDm(d.since)} — ${d.days_on}-й день`
+        +(d.baseline_before!=null&&Math.abs(d.baseline_before-(d.baseline_week||0))>=0.3
+          ?`; до всплеска норма была ${ovN(d.baseline_before)} в неделю — с ней и сравниваем, пока сигнал держится`:"")]);
+    if(d.sustained&&d.prev_week!=null)
+      R.push(["Две недели",`${ovJ(d.prev_week)} и ${ovJ(d.week)} подряд при норме ${ovN(d.baseline_week)} — рост держится, а не разовый`]);
     // масштаб: 6.7/нед — это ОДНА тема; без общего числа цифра кажется мелкой
     if(d.week_total)
       R.push(["Масштаб",`тема — ${Math.round(100*d.week/d.week_total)}% всех жалоб на Сбер за неделю (${d.week} из ${d.week_total})`]);
@@ -916,7 +928,7 @@ function xpRows(kind,d,now){
     // — как в «Отзывах», чтобы расхождение не выглядело ошибкой
     if(now&&(now.week!==d.week||Math.abs((now.baseline_week||0)-(d.baseline_week||0))>=0.05))
       R.push(["Сейчас",`${ovJ(now.week)} за 7 дней при норме ${ovN(now.baseline_week)} — ×${ovN(now.ratio)}: после выпуска данные дополнились (так же в «Отзывах»)`]);
-    R.push(["Выборка","только Сбербанк · жалобы со всех площадок, без похвалы, мусора и копий · главная проблема по разметке ИИ (кодификатор) · порог — статистически значимый рост к 7 прошлым неделям"]);
+    R.push(["Выборка","только Сбербанк · жалобы со всех площадок, без похвалы, мусора и копий · главная проблема по разметке ИИ (кодификатор) · порог — статистически значимый рост за неделю или две недели подряд к 7 прошлым неделям; поднятый сигнал держится, пока жалоб заметно больше нормы до всплеска"]);
   } else if(kind==="tariff_move"){
     if(d.from!=null&&d.to!=null)
       R.push(["Расчёт",`${ovN(d.from,2)}% → ${ovN(d.to,2)}% = ${d.delta>0?"+":"−"}${ovN(Math.abs(d.delta),2)} п.п.`]);
@@ -1230,6 +1242,7 @@ function BfCard({ins,idx,lead,now,sigs,compact}){
       return <>
         <Spark data={[d.baseline_week||0,d.prev_week||0,d.week||0]} w={64} h={20} color="var(--ink-3)"/>
         {d.ratio&&<span className="mono tnum" style={{fontSize:12,fontWeight:600}}>×{ovN(d.ratio)}</span>}
+        {sigCont(d)&&<span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>с {sigDm(d.since)}</span>}
         {d.geo&&<span className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{d.geo.share}% · {d.geo.city}</span>}
       </>;
     if(ins.kind==="tariff_move")return <DeltaStrip from={d.from} to={d.to}/>;
@@ -4759,11 +4772,13 @@ function ReviewsPage({params}){
                   const tip=`${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)`
                     +(s.bank_specific?" · "+(ovMarketNote(s.ratio,s.market_ratio)||"сильнее рынка"):"")
                     +(s.accel?` · ускоряется (${s.prev_week}→${s.week})`:"")
+                    +(sigCont(s)?` · держится с ${sigDm(s.since)}`+(s.baseline_before!=null?` (до всплеска норма ~${s.baseline_before}/нед)`:""):"")
+                    +(s.sustained?` · две недели подряд (${s.prev_week} и ${s.week})`:"")
                     +(s.geo?` · ${s.geo.share}% из ${s.geo.city}`:"");
                   return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}
                         role="button" tabIndex={0} data-tip={tip}
                         onClick={()=>pickTheme(s.key)} onKeyDown={onKey(()=>pickTheme(s.key))}>
-                    {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
+                    {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}{sigCont(s)&&<span className="rv-radar-since">с {sigDm(s.since)}</span>}
                   </span>;
                 })}
               </div>}

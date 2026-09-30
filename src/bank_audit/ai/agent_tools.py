@@ -138,6 +138,10 @@ def _signal(s: dict, bank: str, product: str | None) -> dict:
             "ratio": s.get("ratio"), "market_ratio": s.get("market_ratio"),
             "market_note": s.get("market_note"), "bank_specific": s.get("bank_specific"),
             "new": s.get("new"), "accelerating": s.get("accel"), "level": s.get("level"),
+            # продолжение ли это и с какого дня: «держится с 25.09» — не новый всплеск
+            "status": s.get("status"), "since": s.get("since"),
+            "two_weeks_in_a_row": s.get("sustained"),
+            "norm_before_spike": s.get("baseline_before"),
             "top_city": g.get("city"), "top_city_share_pct": g.get("share"),
             "link": link_reviews(bank, product, s.get("key"), 7)}
 
