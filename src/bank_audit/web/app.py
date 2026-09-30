@@ -3966,9 +3966,12 @@ def _index_html_with_bust() -> str:
                       f'<script src="/static/app.js?v={v}"></script>', html)
         return html
     if jsx_path.exists():
+        # и поверх прописанного руками ?v=: с 26.09 в index.html стояла
+        # фиксированная версия, замена её не находила, и правки app.jsx
+        # 28–30.09 браузеры могли не увидеть
         v = int(jsx_path.stat().st_mtime)
-        html = html.replace('src="/static/app.jsx"',
-                              f'src="/static/app.jsx?v={v}"')
+        html = re.sub(r'src="/static/app\.jsx(?:\?v=[^"]*)?"',
+                      f'src="/static/app.jsx?v={v}"', html)
     return html
 
 
