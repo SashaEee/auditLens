@@ -1591,29 +1591,41 @@ function PfRing({score}){
 // ─── «Общий / Для вас»: сегмент-переключатель + персональный разворот ─────────
 const OVSEG_CSS=`
 .ovseg{position:relative;display:inline-flex;padding:3px;background:var(--paper-2);border:1px solid var(--hair);border-radius:10px;user-select:none;}
-.ovseg-thumb{position:absolute;top:3px;left:3px;height:calc(100% - 6px);width:104px;background:var(--surface);border-radius:7px;
+.ovseg-thumb{position:absolute;top:3px;left:3px;height:calc(100% - 6px);width:108px;background:var(--surface);border-radius:7px;
   box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.3,.7,.4,1);}
-.ovseg.fy .ovseg-thumb{transform:translateX(104px);}
-.ovseg button{position:relative;z-index:1;width:104px;height:26px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+.ovseg.m1 .ovseg-thumb{transform:translateX(108px);}
+.ovseg.m2 .ovseg-thumb{transform:translateX(216px);}
+.ovseg button{position:relative;z-index:1;width:108px;height:26px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   font-size:12px;font-weight:500;color:var(--ink-3);border-radius:7px;transition:color .15s;}
 .ovseg button.on{color:var(--ink);font-weight:600;}
 .ovseg .sp{color:var(--accent);font-size:11px;line-height:1;}
 .ovseg-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);}
+/* три режима шире двух: на узком экране переключатель встаёт за крошкой, а не по центру поверх неё */
+@media(max-width:1180px){.ovseg-wrap{position:static;transform:none;margin-left:16px}}
 .fy-seg-mob{display:none;margin-bottom:18px;}
 /* 960px — тот же брейкпоинт, что у .desk-only: без «мёртвой зоны» 901-960 */
 @media(max-width:960px){.fy-seg-mob{display:flex;justify-content:center;}}
 `;
+// Режимы раздела «Новостные обзоры». «Рынок · позиция» с 01.10 — не отдельный
+// пункт меню, а третий режим здесь: из выпуска в «Рынок» и обратно переходили
+// чаще всего (145 и 101 раз за месяц).
+const OV_MODES=["overview","foryou","market"];
 function OvSeg({page}){
-  const go=(p)=>{ if(p===page)return; try{localStorage.setItem("al-ov-mode",p);}catch{} location.hash=p; };
+  const cur=page==="sber"?"market":page;
+  const i=Math.max(0,OV_MODES.indexOf(cur));
+  // запоминаем только «Выпуск дня»/«Для вас»: вход в приложение — всегда выпуск
+  const go=(p)=>{ if(p===cur)return; if(p!=="market"){try{localStorage.setItem("al-ov-mode",p);}catch{}} location.hash=p; };
   // стрелки ←/→ переключают режим, как у вкладок
-  const key=e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();go(page==="overview"?"foryou":"overview");}};
-  const T=(p,label)=><button role="tab" aria-selected={page===p} tabIndex={page===p?0:-1}
-    className={page===p?"on":""} onClick={()=>go(p)} onKeyDown={key}>{label}</button>;
-  return <div className={"ovseg"+(page==="foryou"?" fy":"")} role="tablist" aria-label="Режим обзора">
+  const key=e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();
+    go(OV_MODES[(i+(e.key==="ArrowRight"?1:OV_MODES.length-1))%OV_MODES.length]);}};
+  const T=(p,label)=><button role="tab" aria-selected={cur===p} tabIndex={cur===p?0:-1}
+    className={cur===p?"on":""} onClick={()=>go(p)} onKeyDown={key}>{label}</button>;
+  return <div className={"ovseg"+(i?" m"+i:"")} role="tablist" aria-label="Режим раздела «Новостные обзоры»">
     <style>{OVSEG_CSS}</style>
     <span className="ovseg-thumb" aria-hidden="true"/>
-    {T("overview","Общий")}
+    {T("overview","Выпуск дня")}
     {T("foryou",<><span className="sp" aria-hidden="true">✦</span>Для вас</>)}
+    {T("market","Рынок · позиция")}
   </div>;
 }
 
@@ -3316,6 +3328,7 @@ function MarketPage({params}){
   const showBarCol=mcat.show_bar!==false&&showRateCol;
 
   return <div className="fade-in">
+    <div className="fy-seg-mob"><OvSeg page="market"/></div>
     <PageHead eyebrow="Рынок · позиция объекта аудита" title="Позиция Сбера на рынке"
       meta={<>{sum?`${fmtNum(sum.offers)} офферов · ${fmtNum(sum.banks)} банков`:"…"}
         {sch&&sch.enabled?` · автосбор ежедневно ${String(sch.ingest_hour_msk).padStart(2,"0")}:00 МСК`:sch?" · автосбор выключен":""}
@@ -9916,16 +9929,21 @@ function PulsePage(){
 // Названия разделов (переименованы 01.10.2026 по просьбе коллег). В тексте их
 // не склоняем: «в разделе «Аудит отзывов»», а не «в «Аудите отзывов»».
 // was — прежнее имя: его называет разовая заметка о переименовании (до RENAMED_UNTIL).
+// Порядок — как попросило руководство (аудит первым). Вход в приложение и логотип
+// всё равно ведут на «Новостные обзоры»: с выпуска начинается 85% рабочих дней.
+// «Рынок · позиция» — режим «Новостных обзоров» (OvSeg), группа «Данные» свёрнута.
 const NAV=[
-  {id:"overview",label:"Новостные обзоры", icon:Ic.news,   group:"Анализ", was:"Обзор"},
   {id:"reviews", label:"Аудит отзывов",    icon:Ic.msg,    group:"Анализ", was:"Отзывы"},
-  {id:"ai",      label:"ИИ-помощник",      icon:Ic.spark,  group:"Анализ", was:"ИИ-аналитик"},
   {id:"loophole",label:"Аудит уязвимостей",icon:Ic.shield, group:"Анализ", was:"Уязвимости"},
-  {id:"market",  label:"Рынок · позиция",  icon:Ic.market, group:"Данные"},
+  {id:"overview",label:"Новостные обзоры", icon:Ic.news,   group:"Анализ", was:"Обзор"},
+  {id:"ai",      label:"ИИ-помощник",      icon:Ic.spark,  group:"Анализ", was:"ИИ-аналитик"},
   {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Данные"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
 ];
+// режимы внутри разделов: в меню подсвечивается раздел, в крошке — его номер и имя
+const SECTION_OF={foryou:"overview",market:"overview",sber:"overview"};
+const DATA_IDS=new Set(["knowledge","banks","sources","pulse"]);
 const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,profile:ProfilePage,pulse:PulsePage};
 // Номера синхронизированы с порядком в меню; итог берётся из NAV, а не хардкодом
 // Названия разделов для крошки в шапке. Номер берётся из порядка меню (navOrder),
@@ -10349,7 +10367,7 @@ function Shell(){
   const[me,setMe]=useState(null);
   const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
-  const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001")==="1";}catch{return false;}});
+  const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001b")==="1";}catch{return false;}});
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
@@ -10437,11 +10455,13 @@ function Shell(){
   // запоминаем последний режим «Обзора» (Общий/Для вас) — возвращаем туда же
   useEffect(()=>{ if(page==="overview"||page==="foryou"){try{localStorage.setItem("al-ov-mode",page);}catch{}} },[page]);
 
-  const navOrder=useMemo(()=>{
-    const items=(me&&me.is_admin)?[...NAV,{id:"pulse"}]:NAV;
-    const g={};items.forEach(n=>{(g[n.group||"Данные"]=g[n.group||"Данные"]||[]).push(n.id);});
-    return Object.values(g).flat();
-  },[me]);
+  // номера — только у основных разделов: справочные свёрнуты и без номеров
+  const navOrder=useMemo(()=>NAV.filter(n=>n.group==="Анализ").map(n=>n.id),[]);
+  // «Данные» свёрнуты; раскрываются по щелчку (запоминаем) и сами — когда открыт их раздел
+  const[dataOpen,setDataOpen]=useState(()=>{try{return localStorage.getItem("al-rail-data")==="1";}catch{return false;}});
+  useEffect(()=>{ if(DATA_IDS.has(page)) setDataOpen(true); },[page]);
+  const toggleData=()=>setDataOpen(v=>{ const nv=!v;
+    try{localStorage.setItem("al-rail-data",nv?"1":"0");}catch{} return nv; });
   const groups=useMemo(()=>{
     const items=(me&&me.is_admin)?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
     const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
@@ -10488,10 +10508,11 @@ function Shell(){
   },[page]);
 
   const Page=PAGES_FN[page]||OverviewPage;
+  const section=SECTION_OF[page]||page;
   const label=PAGE_LABELS[page]||"Новостные обзоры";
   // заголовок вкладки браузера — по разделу: в истории и закладках видно, где был
   useEffect(()=>{ document.title=`${label} · AuditLens`; },[label]);
-  const navIdx=navOrder.indexOf(page==="foryou"?"overview":page);
+  const navIdx=navOrder.indexOf(section);
   const idx=navIdx>=0?String(navIdx+1).padStart(2,"0"):null;
 
   return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
@@ -10512,8 +10533,21 @@ function Shell(){
         @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
         .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
         .nav-lbl{min-width:0;white-space:nowrap}
-        .onb-callout.ren-callout .t b{color:var(--ink)}
-        .onb-callout.ren-callout .go{background:var(--ink);color:var(--paper)}
+        .rail-fold{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border-radius:4px;transition:color .12s}
+        .rail-fold:hover{color:var(--ink)}
+        .rail-fold:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+        .rail-chev{flex:none;transition:transform .15s}
+        .rail-fold[aria-expanded="true"] .rail-chev{transform:rotate(90deg)}
+        .rail-fold-n{letter-spacing:.04em}
+        .ren-toast{position:fixed;left:calc(var(--rail) + 20px);bottom:20px;z-index:300;max-width:380px;
+          background:var(--surface);border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);
+          padding:13px 16px;animation:fade-in .3s ease-out}
+        .ren-toast .t{font-size:12.5px;line-height:1.5;color:var(--ink-2);margin-bottom:11px;text-wrap:pretty}
+        .ren-toast .t b{color:var(--ink);font-weight:600}
+        .ren-toast .go{font-size:11.5px;padding:6px 12px;border-radius:8px;background:var(--ink);color:var(--paper);
+          font-weight:500;transition:transform .1s}
+        .ren-toast .go:active{transform:scale(.96)}
+        @media(max-width:960px){.ren-toast{left:16px;right:16px;bottom:16px;max-width:none}}
         .rail-foot{position:relative;}
         .onb-callout{position:absolute;left:6px;right:6px;bottom:64px;z-index:60;background:var(--surface);
           border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:fade-in .3s ease-out;}
@@ -10540,22 +10574,33 @@ function Shell(){
           <span className="rail-name">AuditLens</span>
           {appInfo?.env_label&&<span className="rail-env">{appInfo.env_label}</span>}
         </a>
-        {Object.entries(groups).map(([gr,items])=>(
-          <div key={gr}>
-            <div className="rail-section">{gr}</div>
+        {Object.entries(groups).map(([gr,items])=>{
+          const fold=gr==="Данные", open=!fold||dataOpen;
+          const foldDot=fold&&!open&&hasCaptcha;
+          return <div key={gr}>
+            {fold
+              ? <button type="button" className="rail-section rail-fold" aria-expanded={open}
+                        aria-controls="rail-data" onClick={toggleData}>
+                  <svg className="rail-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                  {gr}{!open&&<span className="rail-fold-n">· {items.length}</span>}
+                  {foldDot&&<span className="nav-dot"/>}
+                </button>
+              : <div className="rail-section">{gr}</div>}
+            {open&&<div id={fold?"rail-data":undefined}>
             {items.map(n=>{
-              const active=page===n.id||(n.id==="overview"&&page==="foryou");
+              const active=page===n.id||SECTION_OF[page]===n.id;
               // сквозная нумерация по всем группам: раньше был сдвиг «+5» под
               // фиксированный размер группы «Анализ», из-за чего после
               // удаления/добавления вкладок номера дублировались (два «06»)
-              const num=navOrder.indexOf(n.id)+1;
+              const num=navOrder.indexOf(n.id)+1;   // 0 — справочный, без номера
               const dot=n.id==="sources"&&hasCaptcha;
               const count=null;
               // ИИ-аналитик: пульсирующая точка = прогон идёт; зелёная = отчёт готов
               const aiDot=n.id==="ai"&&(aiBusy||aiReady);
               return <button key={n.id} className={`nav-item ${active?"active":""}`}
                              onClick={()=>{setPage(n.id);setNavOpen(false);}}>
-                <span className="rail-num">{String(num).padStart(2,"0")}</span>
+                <span className="rail-num">{num?String(num).padStart(2,"0"):""}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
                 <span className="nav-lbl">{n.label}</span>
                 {dot&&<span className="nav-dot"/>}
@@ -10564,8 +10609,9 @@ function Shell(){
                 {count&&<span className="nav-count">{count}</span>}
               </button>;
             })}
-          </div>
-        ))}
+            </div>}
+          </div>;
+        })}
         <div className="rail-foot">
           {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile";
             return showOnb ? <div className="onb-callout">
@@ -10574,12 +10620,6 @@ function Shell(){
                 <button className="go" onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}>Настроить</button>
                 <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
               </div>
-            </div> : (!renameSeen&&renamedFresh()) ? <div className="onb-callout ren-callout" role="status">
-              <div className="t"><b>Разделы переименованы.</b>{" "}
-                {NAV.filter(n=>n.was).map((n,i)=>`«${n.was}» — ${i?"":"теперь "}«${n.label}»`).join(", ")}.
-                «Рынок · позиция» — в группе «Данные».</div>
-              <div className="b"><button className="go" onClick={()=>{setRenameSeen(true);
-                try{localStorage.setItem("al-rename-1001","1");}catch{}}}>Понятно</button></div>
             </div> : null; })()}
           <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title="Профиль и персонализация"
                   onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}
@@ -10593,6 +10633,15 @@ function Shell(){
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
+      {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
+      {!renameSeen&&renamedFresh()&&<div className="ren-toast" role="status">
+        <div className="t"><b>Меню обновлено.</b>{" "}
+          {NAV.filter(n=>n.was).map(n=>`«${n.was}» → «${n.label}»`).join(", ")}.
+          «Рынок · позиция» — переключатель в разделе «Новостные обзоры», справочные
+          разделы — в свёрнутой группе «Данные».</div>
+        <button type="button" className="go" onClick={()=>{setRenameSeen(true);
+          try{localStorage.setItem("al-rename-1001b","1");}catch{}}}>Понятно</button>
+      </div>}
 
       <div className="main">
         <div className="topbar">
@@ -10602,9 +10651,9 @@ function Shell(){
           <div className="crumb">
             {idx && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
             <span style={{color:"var(--hair-2)"}}>—</span></>}
-            <b>{label}</b>
+            <b>{PAGE_LABELS[section]||label}</b>
           </div>
-          {(page==="overview"||page==="foryou")&&
+          {section==="overview"&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
           <button className={"icon-btn th-tg"+(theme==="dark"?" dk":"")}
