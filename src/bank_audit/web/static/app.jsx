@@ -9915,7 +9915,7 @@ function PulsePage(){
 
 // Названия разделов (переименованы 01.10.2026 по просьбе коллег). В тексте их
 // не склоняем: «в разделе «Аудит отзывов»», а не «в «Аудите отзывов»».
-// was — прежнее имя: подсказка под пунктом меню до RENAMED_UNTIL.
+// was — прежнее имя: его называет разовая заметка о переименовании (до RENAMED_UNTIL).
 const NAV=[
   {id:"overview",label:"Новостные обзоры", icon:Ic.news,   group:"Анализ", was:"Обзор"},
   {id:"reviews", label:"Аудит отзывов",    icon:Ic.msg,    group:"Анализ", was:"Отзывы"},
@@ -9934,7 +9934,7 @@ const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:S
 const PAGE_LABELS={overview:"Новостные обзоры",foryou:"Для вас",market:"Рынок · позиция",sber:"Рынок · позиция",
   reviews:"Аудит отзывов",ai:"ИИ-помощник",knowledge:"База знаний",loophole:"Аудит уязвимостей",banks:"Банки",
   sources:"Источники",profile:"Профиль",pulse:"Пульс"};
-// до этой даты под переименованными пунктами меню видно прежнее имя
+// до этой даты в меню показывается заметка о переименовании (пока её не закрыли)
 const RENAMED_UNTIL="2026-10-15";
 const renamedFresh=()=>new Date().toISOString().slice(0,10)<=RENAMED_UNTIL;
 
@@ -10511,8 +10511,7 @@ function Shell(){
         .ai-ready .x:hover{color:var(--ink);background:var(--paper-2);}
         @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
         .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
-        .nav-lbl{display:flex;flex-direction:column;align-items:flex-start;text-align:left;min-width:0;white-space:nowrap;line-height:1.25}
-        .nav-was{font-size:11px;color:var(--ink-3);font-weight:400;margin-top:1px}
+        .nav-lbl{min-width:0;white-space:nowrap}
         .onb-callout.ren-callout .t b{color:var(--ink)}
         .onb-callout.ren-callout .go{background:var(--ink);color:var(--paper)}
         .rail-foot{position:relative;}
@@ -10558,8 +10557,7 @@ function Shell(){
                              onClick={()=>{setPage(n.id);setNavOpen(false);}}>
                 <span className="rail-num">{String(num).padStart(2,"0")}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
-                <span className="nav-lbl">{n.label}
-                  {n.was&&renamedFresh()&&<small className="nav-was">было «{n.was}»</small>}</span>
+                <span className="nav-lbl">{n.label}</span>
                 {dot&&<span className="nav-dot"/>}
                 {aiDot&&<span className={"nav-dot"+(aiBusy?" ai-run":" ai-done")}/>}
                 {n.badge&&<span className="nav-badge">{n.badge}</span>}
@@ -10577,9 +10575,9 @@ function Shell(){
                 <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
               </div>
             </div> : (!renameSeen&&renamedFresh()) ? <div className="onb-callout ren-callout" role="status">
-              <div className="t"><b>Разделы переименованы.</b> Прежние названия подписаны в меню
-                до {new Date(RENAMED_UNTIL).toLocaleDateString("ru",{day:"numeric",month:"long"})}.
-                «Рынок · позиция» теперь в группе «Данные».</div>
+              <div className="t"><b>Разделы переименованы.</b>{" "}
+                {NAV.filter(n=>n.was).map((n,i)=>`«${n.was}» — ${i?"":"теперь "}«${n.label}»`).join(", ")}.
+                «Рынок · позиция» — в группе «Данные».</div>
               <div className="b"><button className="go" onClick={()=>{setRenameSeen(true);
                 try{localStorage.setItem("al-rename-1001","1");}catch{}}}>Понятно</button></div>
             </div> : null; })()}
