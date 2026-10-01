@@ -56,9 +56,9 @@ function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns}){
   const me=useMe();
   const tpl=awTemplates(me);
   return <div className="ai-welcome fade-in">
-    <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-аналитик`:"ИИ-аналитик · AuditLens"}</div>
+    <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-помощник`:"ИИ-помощник · AuditLens"}</div>
     <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
-    <p className="aw-lede">Аналитик отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
+    <p className="aw-lede">Помощник отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
     <div className="aw-modes">
       <div><b>Быстрый ответ</b><span>обычно меньше минуты · по данным AuditLens и открытым источникам</span></div>
       <div><b>Отчёт · Deep Research</b><span>обычно 5–10 минут · план, сбор, сверка чисел</span></div>
@@ -239,6 +239,7 @@ const greeting = (me) => {
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Ic = {
   grid:    p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...p}><rect x="3" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1"/></svg>,
+  news:    p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 4h12a1 1 0 011 1v13a2 2 0 01-2 2H6a2 2 0 01-2-2V9h3"/><path d="M7 4v14a2 2 0 01-2 2"/><path d="M11 8h5v3.5h-5z"/><path d="M11 15h5"/></svg>,
   market:  p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3 17l6-6 4 4 8-9"/><path d="M21 6h-5"/><path d="M21 6v5"/></svg>,
   scale:   p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 4v16"/><path d="M5 8h14"/><path d="M5 8l-2 6a4 4 0 008 0z"/><path d="M19 8l-2 6a4 4 0 008 0z"/></svg>,
   msg:     p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8z"/></svg>,
@@ -927,7 +928,7 @@ function xpRows(kind,d,now){
     // Выпуск — снимок на утро; к вечеру данные дополняются. Та же цифра сейчас
     // — как в «Отзывах», чтобы расхождение не выглядело ошибкой
     if(now&&(now.week!==d.week||Math.abs((now.baseline_week||0)-(d.baseline_week||0))>=0.05))
-      R.push(["Сейчас",`${ovJ(now.week)} за 7 дней при норме ${ovN(now.baseline_week)} — ×${ovN(now.ratio)}: после выпуска данные дополнились (так же в «Отзывах»)`]);
+      R.push(["Сейчас",`${ovJ(now.week)} за 7 дней при норме ${ovN(now.baseline_week)} — ×${ovN(now.ratio)}: после выпуска данные дополнились (так же в разделе «Аудит отзывов»)`]);
     R.push(["Выборка","только Сбербанк · жалобы со всех площадок, без похвалы, мусора и копий · главная проблема по разметке ИИ (кодификатор) · порог — статистически значимый рост за неделю или две недели подряд к 7 прошлым неделям; поднятый сигнал держится, пока жалоб заметно больше нормы до всплеска"]);
   } else if(kind==="tariff_move"){
     if(d.from!=null&&d.to!=null)
@@ -975,7 +976,7 @@ const xpEscalation=(k,now)=>[
   ["Как ищем","модель читает жалобу целиком и отмечает угрозу или уже поданное обращение; выборочная проверка — 99% верно"],
   ["Выборка",`${ovJ(k.total||0)} за 90 дней · только Сбербанк · все площадки`],
   ...(now&&now.escalation_pct!=null&&now.escalation_pct!==k.escalation_pct
-    ?[["Сейчас",`${pct1(now.escalation_pct)} — после выпуска данные дополнились (так же в «Отзывах»)`]]:[]),
+    ?[["Сейчас",`${pct1(now.escalation_pct)} — после выпуска данные дополнились (так же в разделе «Аудит отзывов»)`]]:[]),
 ];
 const xpWeek=(ov,k,now)=>[
   ["Расчёт",`${ovJ(ov.week)} за последние 7 дней`],
@@ -1002,7 +1003,7 @@ const xpUnclassified=u=>u?[
 const xpThemeUp=t=>[
   ["Расчёт",`${ovJ(t.n)} за 90 дней против ${fmtNum(Math.round(t.n/(1+(t.delta_pct||0)/100)))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
   ["Горизонт","квартал — медленные тренды, которых не видно в недельном окне"],
-  ["Порог","рост от 50% и не менее 30 жалоб — и значимо быстрее общего потока жалоб (как на вкладке «Отзывы»)"],
+  ["Порог","рост от 50% и не менее 30 жалоб — и значимо быстрее общего потока жалоб (как в разделе «Аудит отзывов»)"],
   ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
 
@@ -2851,7 +2852,7 @@ function OverviewPage(){
         <h2 className="eyebrow" style={{margin:0}}>Анализ жалоб недели</h2>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
           {ST("reviews_brief")==="stale"&&<span className="ov-pill warn" data-tip="разбор сегодня не пересчитался — показан последний удачный">устарело · за {dmy(sec.reviews_brief.stale_from)||sec.reviews_brief.stale_from}</span>}
-          <a className="ovt-all" href="#reviews">Радар в «Отзывах»<Ic.ext/></a>
+          <a className="ovt-all" href="#reviews">Радар в разделе «Аудит отзывов»<Ic.ext/></a>
         </div>
       </div>
       <BfBrief markdown={ovFixOnly(brief.markdown,sigs)} skip={briefSkip}/>
@@ -5025,7 +5026,7 @@ function ReviewsPage({params}){
   return <div className="fade-in rv">
     {/* ШАПКА — одна строка: срез слева, действия страницы справа */}
     <div className="rv-head">
-      <h1 className="rv-h1">Отзывы</h1>
+      <h1 className="rv-h1">Аудит отзывов</h1>
       <div className="rv-hfil">
         {fine&&bankItems.length?<RvBankPicker bank={bank} items={bankItems} onChange={setBank}/>
           :<select className="rv-hsel" value={bank} onChange={e=>setBank(e.target.value)} aria-label="Банк">
@@ -6615,7 +6616,7 @@ function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
         {empty
           ? <div className="cp-empty">
               {tab==="chats"?<IcChat/>:<IcDoc/>}
-              <div className="t">{loading?"Загрузка…":(query?"Ничего не найдено":(tab==="chats"?"Здесь появятся ваши диалоги с ИИ-аналитиком":"Здесь появятся ваши аудит-отчёты"))}</div>
+              <div className="t">{loading?"Загрузка…":(query?"Ничего не найдено":(tab==="chats"?"Здесь появятся ваши диалоги с ИИ-помощником":"Здесь появятся ваши аудит-отчёты"))}</div>
               {!query&&!loading&&<div className="h">задайте вопрос, чтобы начать</div>}
             </div>
           : (tab==="chats"?chatRows:reportRows)}
@@ -7404,12 +7405,12 @@ function BanksPage(){
           «Отзывов» — читать долю в отрыве от неё нельзя.</p>
         <p><b>«У нас»</b> — сколько обращений по этому банку лежит в нашем корпусе. Это другая величина:
           мы собираем отзывы с нескольких площадок и не фильтруем их по проверке, поэтому число обычно
-          больше. По нему можно открыть и прочитать сами обращения во вкладке «Отзывы».</p>
+          больше. По нему можно открыть и прочитать сами обращения в разделе «Аудит отзывов».</p>
         <p className="t-cap">Расхождение с сайтом banki.ru объясняется срезом: мы показываем состояние
           на дату сбора, а площадка — на сейчас.</p>
       </MethodNote>
       <p className="ph-meta">Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
-        по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать во вкладке «Отзывы».
+        по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать в разделе «Аудит отзывов».
         {freshest>0&&<> Данные рейтинга на {fmtDateMsk(new Date(freshest).toISOString())}.</>}</p>
     </PageHead>
     <div className="filter-row">
@@ -7757,7 +7758,7 @@ function SrcProposeForm({purpose,onDone}){
   if(done)return <div className="src-done">
     <div className="src-done-t">Заявка принята — {done.domain}</div>
     <p>Команда рассмотрит источник. При одобрении вы увидите его
-      {purpose.id==="ai"?" в новых отчётах ИИ-аналитика"
+      {purpose.id==="ai"?" в новых отчётах ИИ-помощника"
         :purpose.id==="digest"?" в новых утренних выпусках"
         :purpose.id==="reviews"?" в анализе отзывов после следующего сбора"
         :" в витрине тарифов после следующего сбора"}.
@@ -8012,7 +8013,7 @@ function KbDoc({g,onOpen}){
 // совпадение», а происхождение и история: кто и когда это принёс, что в тексте
 // поменялось с прошлого обхода, можно ли приобщить к делу.
 
-const KB_ORIGIN_RU={report:"из отчёта ИИ-аналитика",quick:"из быстрого ответа",
+const KB_ORIGIN_RU={report:"из отчёта ИИ-помощника",quick:"из быстрого ответа",
   crawl:"из планового сбора",manual:"добавлен вручную",refresh:"при перепроверке"};
 
 function KbRevisions({doc,revisions}){
@@ -8030,7 +8031,7 @@ function KbRevisions({doc,revisions}){
 
   if(!revisions||revisions.length<2)return <div className="kb-norev">
     Версия от {fmtDateMsk(doc.fetched_at)}. Других версий страницы в архиве нет —
-    она переобходится, когда ИИ-аналитик снова к ней обращается.
+    она переобходится, когда ИИ-помощник снова к ней обращается.
   </div>;
 
   return <div className="kb-rev">
@@ -8400,7 +8401,7 @@ function KbCases({onClose,onOpenDoc}){
           <span className="rv-cs-an-b">
             {!an&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
             {an&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
-            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-аналитику: нормы, практика, что запросить">продолжить в ИИ-аналитике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-помощнику: нормы, практика, что запросить">продолжить в ИИ-помощнике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
           </span>
         </div>
         {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}
@@ -8412,7 +8413,7 @@ function KbCases({onClose,onOpenDoc}){
           onOpen={()=>openRev(it)}/>
       </React.Fragment>)}
       {!items.length&&<div className="kb-empty">
-        Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте «Отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
+        Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте раздела «Аудит отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
     </RvModal>{reader}</>;
   }
 
@@ -8429,7 +8430,7 @@ function KbCases({onClose,onOpenDoc}){
     </div>
     {list===null?<Skel h={120}/>:!list.length?<div className="kb-empty">
       <b>Дел пока нет.</b>
-      <p>Дело — подборка доказательств под одну проверку: жалобы из «Отзывов» и
+      <p>Дело — подборка доказательств под одну проверку: жалобы из раздела «Аудит отзывов» и
         документы из «Базы знаний». Приобщили, прокомментировали, выгрузили в рабочий файл.</p></div>:
       list.map(c=><button key={c.case_id} className="kb-case-row"
           onClick={()=>setOpen(c.case_id)}>
@@ -8627,7 +8628,7 @@ function KnowledgePage({params}){
 function LoopholePage(){
   return <section className="surface loophole-page" style={{padding:0,overflow:"hidden"}}>
     <iframe src="/static/loophole/loophole.html"
-            title="Уязвимости и мошеннические схемы"
+            title="Аудит уязвимостей"
             style={{width:"100%",height:"100%",border:"none",display:"block"}}/>
   </section>;
 }
@@ -8849,8 +8850,8 @@ const AD_CSS=`
 .pu-kv-row b{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 
 `;
-const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
-  ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",sources:"Источники",
+const AD_PAGE_RU={overview:"Новостные обзоры",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Аудит отзывов",
+  ai:"ИИ-помощник",knowledge:"База знаний",loophole:"Аудит уязвимостей",banks:"Банки",sources:"Источники",
   quality:"Качество",profile:"Профиль",pulse:"Пульс"};
 const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
   if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1).replace(".",",")+"ч"; };
@@ -8994,7 +8995,7 @@ function PuAiFeedback({fb,onOpenReport,onOpenUser}){
       ? <div className="pu-empty">
           <b>Ответы ИИ пока никто не оценивал.</b>
           <p>За период выдано {fb.answers||0} ответов. Кнопки 👍/👎 стоят под каждым
-             ответом ИИ-аналитика; при 👎 открывается выбор причины и поле комментария —
+             ответом ИИ-помощника; при 👎 открывается выбор причины и поле комментария —
              это и попадёт сюда.</p>
         </div>
       : <>
@@ -9176,7 +9177,7 @@ function PuAgentEval(){
   const delta=last&&prev&&last.score!=null&&prev.score!=null?Math.round((last.score-prev.score)*10)/10:null;
   const num=x=>x==null?"—":String(x).replace(".",",");
   return <div className="pu-card pu-sec">
-    <div className="h"><span>ИИ-аналитик: регрессионный набор</span>
+    <div className="h"><span>ИИ-помощник: регрессионный набор</span>
       <div className="seg" style={{marginLeft:12}}>
         {[["hermes","Быстрый ответ"],["deep","Отчёт"]].map(([k,l])=>
           <button key={k} className={"seg-btn"+(eng===k?" on":"")} onClick={()=>setEng(k)}>{l}</button>)}
@@ -9247,7 +9248,7 @@ function PuReviewSources({r}){
 function PuSignalJournal({j}){
   if(!j||j.error)return null;
   return <div className="pu-card pu-sec">
-    <div className="h"><span>Точность сигналов «Отзывов» · {j.days} дн</span>
+    <div className="h"><span>Точность сигналов · Аудит отзывов · {j.days} дн</span>
       {j.precision!=null&&<span className={"pu-chip "+(j.precision>=70?"ok":j.precision<50?"bad":"")}>{j.precision}% подтвердились</span>}</div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
       Эпизод — всплеск жалоб, записанный радаром вместе со снимком жалоб. Аудиторы отмечают
@@ -9267,7 +9268,7 @@ function PuIngest({ing}){
     <div className="h"><span>Фоновая индексация</span>
       <span className="mono">воркеров {q.workers??"—"}</span></div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
-      Страницы, которые ИИ-аналитик читает по дороге, попадают в базу знаний
+      Страницы, которые ИИ-помощник читает по дороге, попадают в базу знаний
       фоном. Счётчики очереди обнуляются при перезапуске — пустая очередь не
       означает, что фон не работает.
     </p>
@@ -9781,8 +9782,8 @@ function PulsePage(){
               ]}/>
             <div className="pu-note">
               {sg.readers>0
-                ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Обзор»/«Для вас») — точка роста для ИИ-аналитика</>
-                : "читатели ≥60% просмотров в «Обзоре»/«Для вас» без единого ИИ-запроса"}
+                ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Новостные обзоры» и «Для вас») — точка роста для ИИ-помощника</>
+                : "читатели ≥60% просмотров в разделе «Новостные обзоры» без единого ИИ-запроса"}
             </div>
           </div>
           <div className="pu-card">
@@ -9912,12 +9913,15 @@ function PulsePage(){
   </div>;
 }
 
+// Названия разделов (переименованы 01.10.2026 по просьбе коллег). В тексте их
+// не склоняем: «в разделе «Аудит отзывов»», а не «в «Аудите отзывов»».
+// was — прежнее имя: подсказка под пунктом меню до RENAMED_UNTIL.
 const NAV=[
-  {id:"overview",label:"Обзор",       icon:Ic.grid,   group:"Анализ"},
-  {id:"market",  label:"Рынок · позиция",icon:Ic.market, group:"Анализ"},
-  {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
-  {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
-  {id:"loophole",label:"Уязвимости",     icon:Ic.shield, group:"Анализ"},
+  {id:"overview",label:"Новостные обзоры", icon:Ic.news,   group:"Анализ", was:"Обзор"},
+  {id:"reviews", label:"Аудит отзывов",    icon:Ic.msg,    group:"Анализ", was:"Отзывы"},
+  {id:"ai",      label:"ИИ-помощник",      icon:Ic.spark,  group:"Анализ", was:"ИИ-аналитик"},
+  {id:"loophole",label:"Аудит уязвимостей",icon:Ic.shield, group:"Анализ", was:"Уязвимости"},
+  {id:"market",  label:"Рынок · позиция",  icon:Ic.market, group:"Данные"},
   {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Данные"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
@@ -9927,9 +9931,12 @@ const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:S
 // Названия разделов для крошки в шапке. Номер берётся из порядка меню (navOrder),
 // а не пишется здесь: захардкоженные номера разошлись с меню после перестановки
 // вкладок («Уязвимости» в меню 05, в шапке было 06).
-const PAGE_LABELS={overview:"Обзор",foryou:"Для вас",market:"Рынок · позиция",sber:"Рынок · позиция",
-  reviews:"Отзывы",ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",
+const PAGE_LABELS={overview:"Новостные обзоры",foryou:"Для вас",market:"Рынок · позиция",sber:"Рынок · позиция",
+  reviews:"Аудит отзывов",ai:"ИИ-помощник",knowledge:"База знаний",loophole:"Аудит уязвимостей",banks:"Банки",
   sources:"Источники",profile:"Профиль",pulse:"Пульс"};
+// до этой даты под переименованными пунктами меню видно прежнее имя
+const RENAMED_UNTIL="2026-10-15";
+const renamedFresh=()=>new Date().toISOString().slice(0,10)<=RENAMED_UNTIL;
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
@@ -10143,7 +10150,7 @@ function ProfilePage(){
         : data.profile_note
           ? <><p className="pf-note">{data.profile_note}</p>
               <div className="pf-src"><span className="live"/>обновляется автоматически по вашим запросам и описанию</div></>
-          : <p className="pf-note-empty">Здесь ИИ соберёт краткий портрет ваших интересов — автоматически, по мере ваших запросов и из описания выше. Задайте пару вопросов ИИ-аналитику или нажмите «Пересобрать».</p>}
+          : <p className="pf-note-empty">Здесь ИИ соберёт краткий портрет ваших интересов — автоматически, по мере ваших запросов и из описания выше. Задайте пару вопросов ИИ-помощнику или нажмите «Пересобрать».</p>}
     </div>
 
     {/* Сила персонализации: сколько система уже знает + что даст больше всего */}
@@ -10182,7 +10189,7 @@ function ProfilePage(){
         </div>
       </div>
       <div className="pf-power-cap">Оценки 👍/👎 на «Для вас» и полосе учат ВАШИ рекомендации; оценки ответов
-        ИИ-аналитика уходят команде — по ним мы чиним инструмент. Каждый пункт выше показывает свой вклад.</div>
+        ИИ-помощника уходят команде — по ним мы чиним инструмент. Каждый пункт выше показывает свой вклад.</div>
     </div>}
 
     {/* Темы в фокусе — определяет система, ручное вторично */}
@@ -10237,7 +10244,7 @@ function ProfilePage(){
         </div>
       </div>
       <div className="pf-row">
-        <div><div className="pf-row-t">Страница «Для вас»</div><div className="pf-row-d">Личный разворот в «Обзоре»: направления, новости и зацепки под ваш профиль, каждое утро</div></div>
+        <div><div className="pf-row-t">Страница «Для вас»</div><div className="pf-row-d">Личный разворот в разделе «Новостные обзоры»: направления, новости и зацепки под ваш профиль, каждое утро</div></div>
         <button className={"pf-toggle"+(personalDigest?" on":"")} onClick={()=>setPersonalDigest(v=>!v)} aria-label="переключить"><span/></button>
       </div>
       <div className="pf-row">
@@ -10342,6 +10349,7 @@ function Shell(){
   const[me,setMe]=useState(null);
   const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
+  const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001")==="1";}catch{return false;}});
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
@@ -10480,7 +10488,9 @@ function Shell(){
   },[page]);
 
   const Page=PAGES_FN[page]||OverviewPage;
-  const label=PAGE_LABELS[page]||"Обзор";
+  const label=PAGE_LABELS[page]||"Новостные обзоры";
+  // заголовок вкладки браузера — по разделу: в истории и закладках видно, где был
+  useEffect(()=>{ document.title=`${label} · AuditLens`; },[label]);
   const navIdx=navOrder.indexOf(page==="foryou"?"overview":page);
   const idx=navIdx>=0?String(navIdx+1).padStart(2,"0"):null;
 
@@ -10501,6 +10511,10 @@ function Shell(){
         .ai-ready .x:hover{color:var(--ink);background:var(--paper-2);}
         @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
         .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
+        .nav-lbl{display:flex;flex-direction:column;align-items:flex-start;text-align:left;min-width:0;white-space:nowrap;line-height:1.25}
+        .nav-was{font-size:11px;color:var(--ink-3);font-weight:400;margin-top:1px}
+        .onb-callout.ren-callout .t b{color:var(--ink)}
+        .onb-callout.ren-callout .go{background:var(--ink);color:var(--paper)}
         .rail-foot{position:relative;}
         .onb-callout{position:absolute;left:6px;right:6px;bottom:64px;z-index:60;background:var(--surface);
           border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:fade-in .3s ease-out;}
@@ -10544,7 +10558,8 @@ function Shell(){
                              onClick={()=>{setPage(n.id);setNavOpen(false);}}>
                 <span className="rail-num">{String(num).padStart(2,"0")}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
-                {n.label}
+                <span className="nav-lbl">{n.label}
+                  {n.was&&renamedFresh()&&<small className="nav-was">было «{n.was}»</small>}</span>
                 {dot&&<span className="nav-dot"/>}
                 {aiDot&&<span className={"nav-dot"+(aiBusy?" ai-run":" ai-done")}/>}
                 {n.badge&&<span className="nav-badge">{n.badge}</span>}
@@ -10561,6 +10576,12 @@ function Shell(){
                 <button className="go" onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}>Настроить</button>
                 <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
               </div>
+            </div> : (!renameSeen&&renamedFresh()) ? <div className="onb-callout ren-callout" role="status">
+              <div className="t"><b>Разделы переименованы.</b> Прежние названия подписаны в меню
+                до {new Date(RENAMED_UNTIL).toLocaleDateString("ru",{day:"numeric",month:"long"})}.
+                «Рынок · позиция» теперь в группе «Данные».</div>
+              <div className="b"><button className="go" onClick={()=>{setRenameSeen(true);
+                try{localStorage.setItem("al-rename-1001","1");}catch{}}}>Понятно</button></div>
             </div> : null; })()}
           <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title="Профиль и персонализация"
                   onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}

@@ -463,7 +463,7 @@ def _provenance(kind: str, d: dict) -> str:
         return (f'{src}' + (f' · ещё {n - 1} ист.' if n > 1 else "")
                 + (f' · продолжение сюжета от {_dm(cont.get("date"))}' if cont else ""))
     if kind == "loophole":
-        return "вкладка «Уязвимости» · предварительная классификация"
+        return "раздел «Аудит уязвимостей» · предварительная классификация"
     if kind == "bank_rating":
         return f'народный рейтинг banki.ru · {d.get("base_date")} → {d.get("as_of")}, держится 2 дня'
     return ""

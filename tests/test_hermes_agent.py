@@ -76,7 +76,7 @@ def test_tool_labels():
     assert H.tool_label("skill_view", 'name="auditlens-complaints"') == "Навык: жалобы"
     assert H.tool_label("skill_view", "hermes-agent-skill-authoring") == \
         "Навык: hermes-agent-skill-authoring"
-    assert H.tool_label("mcp__auditlens__loopholes") == "Уязвимости"
+    assert H.tool_label("mcp__auditlens__loopholes") == "Аудит уязвимостей"
 
 
 # ── поток ответа ─────────────────────────────────────────────────────────────

@@ -28,7 +28,7 @@ Critic регуляркой сверяет каждое число в текст
   это плоские SQL-файлы в `migrations/` (см. §6).
 - **Frontend:** React 18 **без сборки и без node** — `index.html` + `app.jsx`,
   Babel-standalone транспилирует JSX прямо в браузере. Графики — Chart.js.
-  Модуль «Уязвимостей» во фрейме предсобран (см. §7 и `DESIGN.md`).
+  Модуль раздела «Аудит уязвимостей» во фрейме предсобран (см. §7 и `DESIGN.md`).
 - **LLM:** любой OpenAI-совместимый эндпоинт (прод — Foundation Models Cloud.ru).
   Пять тиров моделей: FAST / SMART / REASONING / ANALYST / INSIGHT + деградационная
   цепочка `явный аргумент → спец-env → SMART/FAST → LLM_MODEL_NAME → хардкод`
@@ -63,7 +63,7 @@ src/bank_audit/
 ├── research/               # legacy-пайплайн v1 (orchestrator, query_planner, gap_filler…)
 ├── ai/                     # analyst.py (быстрый ответ), clarify.py, llm_utils.py (тиры, reasoning_effort)
 ├── rag/                    # embedder, indexer, retriever, crawler, trust.py, отзывы (review_topics и пр.)
-├── digest/                 # «Обзор» — ежедневный брифинг (детерминированный SQL + 3 LLM-вызова/сутки)
+├── digest/                 # «Новостные обзоры» — ежедневный брифинг (детерминированный SQL + 3 LLM-вызова/сутки)
 ├── loophole/               # «Лазейки» — nanobot-агент: chat/, parsers/, kb/, pii_mask.py,
 │   │                       #   repository.py, authorization.py (server-side RBAC, story 1.1)
 ├── sources/ collectors/    # адаптеры источников (banki/sravni/cbr/finuslugi…), browser.py/http.py
@@ -161,8 +161,11 @@ auditlens quality                      # data-quality чеки
   **без `Co-Authored-By`-трейлеров**; фича-ветки → PR в `main`.
 - Фронт основного сайта — `index.html` + `app.jsx`, **без сборки**: правишь файл,
   обновляешь страницу; ошибки парсинга JSX смотреть в консоли DevTools. Исключение —
-  модуль «Уязвимостей»: `loophole.jsx` предсобирается в `loophole.js`
+  модуль раздела «Аудит уязвимостей»: `loophole.jsx` предсобирается в `loophole.js`
   (`node scripts/build_loophole_js.mjs`, в коммит оба файла; тест сверяет sha256).
+- **Названия разделов** (с 01.10.2026): «Новостные обзоры», «Аудит отзывов», «ИИ-помощник»,
+  «Аудит уязвимостей»; в тексте не склоняются — «в разделе «Аудит отзывов»». Адреса
+  (`#overview`, `#reviews`, `#ai`, `#loophole`) и ключи прежние.
 - **Интерфейс — по `DESIGN.md`** (токены, компоненты, тексты, раскладка, доступность,
   проверка). Читать перед любой правкой UI; `design-qa.md` — журнал прежнего макета.
 
