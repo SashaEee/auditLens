@@ -10266,7 +10266,7 @@ function ProfilePage(){
         <button className={"pf-toggle"+(personalDigest?" on":"")} onClick={()=>setPersonalDigest(v=>!v)} aria-label="переключить"><span/></button>
       </div>
       <div className="pf-row">
-        <div><div className="pf-row-t">Личная полоса в «Общем»</div><div className="pf-row-d">Краткая выжимка из «Для вас» над общим брифингом</div></div>
+        <div><div className="pf-row-t">Личная полоса в режиме «Выпуск дня»</div><div className="pf-row-d">Краткая выжимка из «Для вас» над общим брифингом</div></div>
         <button className={"pf-toggle"+(bandHome?" on":"")} onClick={()=>setBandHome(v=>!v)} aria-label="переключить"><span/></button>
       </div>
       <div className="pf-row">
