@@ -92,9 +92,9 @@ check("правило различать в промпте", "РАЗЛИЧАЙ �
 
 print("быстрый режим: заземление и страховки")
 HQ = (ROOT / "src/bank_audit/ai/hermes_quick.py").read_text()
-check("правила передаются с заданием", "QUICK_RULES" in HQ and "_with_rules(question)" in HQ)
-check("правила отключаемы", 'os.getenv("QUICK_RULES"' in HQ)
-check("ответ обязателен", "Ответ обязателен всегда" in HQ)
+SOUL = (ROOT / "deploy/hermes-al/SOUL.md").read_text()
+check("правила — системным сообщением прогона", '"instructions": instructions(' in HQ)
+check("ответ обязателен", "Ответ обязателен всегда" in SOUL)
 check("пустой прогон уходит в откат",
       "hermes завершил прогон без ответа" in HQ)
 check("ссылка на НПА помечается", "Ссылки на нормативные акты проверьте" in HQ)

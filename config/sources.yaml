@@ -241,6 +241,9 @@ banki_ratings:
 # ── Отзывы: browser-collector с OPENCLAW_BROWSER_PROFILE ──────────────────────
 banki_reviews:
   adapter: bank_audit.sources.banki_reviews:BankiReviewsAdapter
+  # HTML-сбор заменён JSON-выдачей площадки (sources/review_streams.py): у 23
+  # из 25 банков адрес был неверный, ответ банка и «решено» не сохранялись
+  enabled: false
   # как источник подписан на вкладке «Источники». Держим в конфиге,
   # а не в коде витрины: новый коллектор приносит своё описание сам
   display:
@@ -255,6 +258,9 @@ banki_reviews:
 
 sravni_reviews:
   adapter: bank_audit.sources.sravni_reviews:SravniReviewsAdapter
+  # заменён API площадки (sources/review_streams.py): со страниц /bank/<alias>/
+  # с неверным алиасом приходила общая витрина, отзывы чужих банков
+  enabled: false
   # как источник подписан на вкладке «Источники». Держим в конфиге,
   # а не в коде витрины: новый коллектор приносит своё описание сам
   display:

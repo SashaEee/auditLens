@@ -109,7 +109,9 @@ async def collect_once(
                 # (article:published_time / datePublished), но запись её не
                 # получала: published_at был пуст у ВСЕХ записей. Отсюда и
                 # «NEW» на статье позапрошлого года, и фильтр по периоду,
-                # который фильтровать было нечем (обратная связь ТБ).
+                # который фильтровать было нечем (обратная связь пользователей).
+                # fetch_and_parse берёт её из разметки или видимого текста;
+                # при неуспешном fetch даты нет — остаётся NULL.
                 published = _to_dt(page.published_at)
             else:
                 content = content_fetch.FullContent(
@@ -136,9 +138,6 @@ async def collect_once(
                 content_status=content.status,
                 raw_text_len=content.length,
                 raw_text_truncated=content.truncated,
-                # Дата вычислена в fetch_and_parse (разметка или видимый текст);
-                # при неуспешном fetch страницы даты нет — остаётся NULL.
-                published_at=page.published_at if page is not None else None,
             )
             rid = repo.insert_record(rec, session=session)
             if rid is None:

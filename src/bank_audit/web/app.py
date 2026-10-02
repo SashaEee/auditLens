@@ -42,6 +42,9 @@ logging.basicConfig(
 )
 
 
+_MCP_ON = bool(os.getenv("AGENT_MCP_KEY"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Фоновые циклы:
@@ -52,7 +55,8 @@ async def lifespan(app: FastAPI):
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
     from ..digest.scheduler import (bankiru_fts_background_loop, digest_background_loop,
                                     foryou_pregen_loop, ingest_background_loop,
-                                    judge_background_loop, keyrate_background_loop)
+                                    judge_background_loop, keyrate_background_loop,
+                                    newsflow_background_loop, update_background_loop)
     from ..rag import ingest_queue
     from ..loophole.parsers.scheduler import (
         ENABLED as PARSER_SCHED_ENABLED,
@@ -75,6 +79,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(bankiru_fts_background_loop()),
         # ночной судья новостного выпуска → метрика мусора в Пульсе (этап 6)
         asyncio.create_task(judge_background_loop()),
+        asyncio.create_task(newsflow_background_loop()),
+        asyncio.create_task(update_background_loop()),
         # предгенерация «Для вас» для активных: первый заход дня без 21с LLM
         asyncio.create_task(foryou_pregen_loop()),
     ]
@@ -91,6 +97,13 @@ async def lifespan(app: FastAPI):
     # убивало на полуслове, документ оставался без фрагментов — и навсегда,
     # потому что повторная загрузка отсекалась как дубль.
     ingest_queue.start()
+    # MCP-сервер инструментов для агента Hermes (ai/mcp_server.py): его менеджер
+    # сессий должен жить всё время работы приложения.
+    from contextlib import AsyncExitStack
+    mcp_stack = AsyncExitStack()
+    if _MCP_ON:
+        from ..ai import mcp_server
+        await mcp_stack.enter_async_context(mcp_server.server().session_manager.run())
     try:
         # Reaper: зависшие 'running' запуски после рестарта → 'error'.
         # Best-effort: недоступная БД/неприменённые миграции не должны
@@ -101,6 +114,7 @@ async def lifespan(app: FastAPI):
             log.warning("[lifespan] reap_stale_runs failed", exc_info=True)
         yield
     finally:
+        await mcp_stack.aclose()
         for t in tasks:
             t.cancel()
         for t in tasks:
@@ -325,7 +339,7 @@ def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user
     """Единая точка оценок 👍/👎. Контентные (news/for_you/check) учат ЕГО
     рекомендации; ai_answer — контур качества (разбор командой);
     check_taken — «взял в работу» (влияет на генерацию зацепок, не на ранк)."""
-    if body.kind not in ("news", "for_you", "check", "ai_answer", "check_taken") \
+    if body.kind not in ("news", "for_you", "check", "ai_answer", "check_taken", "digest_card") \
             or body.verdict not in (1, -1) or not body.item_key:
         raise HTTPException(400, "bad feedback")
     res = userdata.save_feedback(user.username, body.kind, body.item_key[:500],
@@ -345,7 +359,7 @@ def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user
 @app.get("/api/feedback")
 def get_feedback(kind: str, user: CurrentUser = Depends(get_current_user)):
     """Карта оценок пользователя по kind — для рендера уже проставленных."""
-    if kind not in ("news", "for_you", "check", "ai_answer", "check_taken"):
+    if kind not in ("news", "for_you", "check", "ai_answer", "check_taken", "digest_card"):
         raise HTTPException(400, "bad kind")
     return {"items": userdata.feedback_map(user.username, kind)}
 
@@ -386,6 +400,44 @@ def admin_metrics(days: int = 14, user: CurrentUser = Depends(get_current_user))
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "admin only")
     return telemetry.metrics(days)
+
+
+_EVAL_TASK: Optional[asyncio.Task] = None
+
+
+@app.get("/api/admin/agent-eval")
+def admin_agent_eval(limit: int = 12, engine: str = "hermes",
+                     user: CurrentUser = Depends(get_current_user)):
+    """Регрессионный набор ИИ-аналитика: прогоны и кейсы последнего — карточка «Пульса».
+    engine: hermes — быстрый режим, deep — отчёт."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from ..ai import agent_eval
+    res = agent_eval.history(max(1, min(limit, 50)), "deep" if engine == "deep" else "hermes")
+    res["running"] = bool(_EVAL_TASK and not _EVAL_TASK.done())
+    return res
+
+
+class AgentEvalReq(BaseModel):
+    model: Optional[str] = None
+    judge: bool = True
+    engine: str = "quick"
+
+
+@app.post("/api/admin/agent-eval")
+async def admin_agent_eval_run(req: AgentEvalReq, user: CurrentUser = Depends(get_current_user)):
+    """Запустить прогон в фоне (один за раз): быстрый режим — 15 вопросов за 3–8 минут,
+    отчёт — 5 вопросов за 15–25 минут."""
+    global _EVAL_TASK
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    if _EVAL_TASK and not _EVAL_TASK.done():
+        raise HTTPException(409, "прогон уже идёт")
+    from ..ai.agent_eval import run_eval
+    _EVAL_TASK = asyncio.create_task(run_eval(model=req.model or None, use_judge=req.judge,
+                                              trigger="admin",
+                                              engine="deep" if req.engine == "deep" else "quick"))
+    return {"started": True}
 
 
 @app.get("/api/admin/users")
@@ -581,7 +633,8 @@ def summary():
         "banks":     scalar("SELECT count(*) FROM bank"),
         "offers":    scalar("SELECT count(*) FROM product_offer WHERE is_active"),
         "reviews":   scalar("SELECT count(*) FROM review"),
-        "changes":   scalar("SELECT count(*) FROM change_history WHERE changed_at > now()-interval '7d'"),
+        "changes":   scalar(f"SELECT count(*) FROM change_history ch {_CTX_JOIN_SQL}"
+                            f" WHERE ch.changed_at > now()-interval '7d' AND {_SAME_CTX_SQL}"),
         "flags_err": scalar("SELECT count(*) FROM quality_flag WHERE severity='error' AND created_at > now()-interval '1d'"),
         "flags_warn":scalar("SELECT count(*) FROM quality_flag WHERE severity='warn'  AND created_at > now()-interval '1d'"),
         "last_run":  scalar("SELECT max(finished_at) FROM extraction_run WHERE status='ok'"),
@@ -596,7 +649,7 @@ def _digest_today():
 
 
 @app.get("/api/overview/digest")
-async def overview_digest(date: Optional[str] = None):
+async def overview_digest(date: Optional[str] = None, version: Optional[str] = None):
     """Выпуск дня (или последний доступный ≤ сегодня). Без date при отсутствии
     сегодняшнего выпуска lazy-запускает генерацию в фоне и СРАЗУ отдаёт вчерашний
     с meta.refreshing=true — никогда не пустой экран и не 500."""
@@ -610,10 +663,10 @@ async def overview_digest(date: Optional[str] = None):
             want = _date.fromisoformat(date)
         except ValueError:
             raise HTTPException(400, f"плохая дата: {date}")
-    doc = await asyncio.to_thread(digest_store.read_latest, today, want)
+    doc = await asyncio.to_thread(digest_store.read_latest, today, want, version == "morning")
     if date and doc["meta"]["empty"]:
         raise HTTPException(404, f"дайджест за {date} не найден")
-    if not date and not doc["meta"]["refreshing"]:
+    if not date and not version and not doc["meta"]["refreshing"]:
         # lazy catch-up и при ПОЛНОМ отсутствии выпуска, и при упавшем на середине
         # прогоне (часть секций есть, но день не полон) — иначе висит до утра.
         # Ночью (до GEN_HOUR) не генерим и refreshing не включаем — иначе фронт
@@ -667,20 +720,34 @@ def _digest_delta(doc: dict) -> dict:
                 return None
 
         out = {"prev_date": prev_day}
-        out["week"] = _d2((now_rp.get("overall") or {}).get("week"),
-                          (was_rp.get("overall") or {}).get("week"))
-        out["escalation_pct"] = _d2((now_rp.get("kpi") or {}).get("escalation_pct"),
-                                    (was_rp.get("kpi") or {}).get("escalation_pct"))
-        out["unclassified"] = _d2((now_rp.get("unclassified") or {}).get("week"),
-                                  (was_rp.get("unclassified") or {}).get("week"))
         out["sber_changes"] = _d2((now_tm.get("totals") or {}).get("sber_changes_7d"),
                                   (was_tm.get("totals") or {}).get("sber_changes_7d"))
-        # ведущая тема: сравниваем только если тема ТА ЖЕ, иначе дельта врёт
-        nd = (now_rp.get("diverge") or [{}])[0]
-        wd = next((x for x in (was_rp.get("diverge") or []) if x.get("key") == nd.get("key")), None)
-        if nd.get("key") and wd:
-            out["diverge_key"] = nd["key"]
-            out["diverge_week"] = _d2(nd.get("week"), wd.get("week"))
+
+        def _method(pl: dict) -> str:
+            # старые снимки без поля: метод виден по источнику «вне кодификатора»
+            if pl.get("method"):
+                return str(pl["method"]).split(":")[0]
+            return str((pl.get("unclassified") or {}).get("src") or "?")
+
+        # Жалобы сравниваем только внутри одной методики: иначе «ко вчера»
+        # показывает смену счёта (25.09: «+5,5 пп эскалации» после перехода
+        # с меток на разметку ИИ), а не событие
+        if _method(now_rp) != _method(was_rp):
+            out["method_changed"] = True
+        else:
+            out["week"] = _d2((now_rp.get("overall") or {}).get("week"),
+                              (was_rp.get("overall") or {}).get("week"))
+            out["escalation_pct"] = _d2((now_rp.get("kpi") or {}).get("escalation_pct"),
+                                        (was_rp.get("kpi") or {}).get("escalation_pct"))
+            out["unclassified"] = _d2((now_rp.get("unclassified") or {}).get("week"),
+                                      (was_rp.get("unclassified") or {}).get("week"))
+            # ведущая тема: сравниваем только если тема ТА ЖЕ, иначе дельта врёт
+            nd = (now_rp.get("diverge") or [{}])[0]
+            wd = next((x for x in (was_rp.get("diverge") or [])
+                       if x.get("key") == nd.get("key")), None)
+            if nd.get("key") and wd:
+                out["diverge_key"] = nd["key"]
+                out["diverge_week"] = _d2(nd.get("week"), wd.get("week"))
         return {k: v for k, v in out.items() if v is not None}
     except Exception as e:  # noqa: BLE001 — дельта необязательна
         log.info("digest delta skipped: %s", e)
@@ -696,13 +763,49 @@ def overview_digest_dates():
 class DigestRefreshRequest(BaseModel):
     force: bool = True
     sections: Optional[list[str]] = None
+    late: bool = False          # явное «да» на перегенерацию после полудня
+
+
+@app.get("/api/overview/live")
+def overview_live():
+    """Те же цифры, что у вкладки «Отзывы», на текущий момент — без моделей.
+
+    Выпуск «Обзора» — снимок на утро, а жалобы за день дописываются: к вечеру
+    норма и число за неделю сдвигаются, и «×4,4» в выпуске против «×4,2» в
+    «Отзывах» выглядело ошибкой. Фронт показывает эти значения строкой
+    «Сейчас» в расшифровке, не переписывая утренний выпуск."""
+    rd = _rd()
+    bank = "Сбербанк"
+    wk = rd.weekly_signals(bank) or {}
+    ov = rd.overview(bank) or {}
+    wp = rd.week_pulse(bank) or {}
+    keys = ("key", "week", "baseline_week", "ratio", "market_ratio")
+    return {
+        "signals": [{k: x.get(k) for k in keys} for x in (wk.get("signals") or [])],
+        "diverge": [{k: x.get(k) for k in keys} for x in (wp.get("diverge") or [])],
+        "overall": wk.get("overall"), "week_end": wk.get("week_end"),
+        **{k: ov.get(k) for k in ("total", "escalation_pct", "escalation_filed_pct",
+                                  "market_escalation_pct", "escalation_sig")},
+    }
 
 
 @app.post("/api/overview/digest/refresh")
-async def overview_digest_refresh(req: DigestRefreshRequest):
-    """Ручной перезапуск (целиком или точечно: {"sections":["news","headline"]})."""
+async def overview_digest_refresh(req: DigestRefreshRequest,
+                                  user: CurrentUser = Depends(get_current_user)):
+    """Ручной перезапуск (целиком или точечно: {"sections":["news","headline"]}).
+
+    Только владельцу: выпуск один на всех, перегенерация тратит модели на всех,
+    а после полудня забирает в сегодняшний выпуск новости, которые утром ушли
+    бы в завтрашний (day_events исключает уже опубликованное). Поэтому после
+    12:00 МСК — только с явным late=true (фронт спрашивает подтверждение)."""
     from ..digest import store as digest_store
     from ..digest.scheduler import ensure_digest
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "Перегенерация выпуска доступна только владельцу")
+    from zoneinfo import ZoneInfo
+    if datetime.now(ZoneInfo("Europe/Moscow")).hour >= 12 and not req.late:
+        raise HTTPException(409, "После 12:00 перегенерация сдвигает новости завтрашнего "
+                                 "выпуска — нужно явное подтверждение (late=true)")
     if await asyncio.to_thread(digest_store.run_in_progress, _digest_today()):
         raise HTTPException(409, "Дайджест уже генерируется")
     asyncio.create_task(ensure_digest("manual", force=req.force,
@@ -729,6 +832,13 @@ def _parse_rate_move(diff) -> tuple[Optional[float], Optional[float]]:
     return _f(rate.get("from")), _f(rate.get("to"))
 
 
+# Смена выдачи агрегатора — не изменение условий (normalizer/offers.py);
+# те же условия берёт связка «Отзывов» с «Рынком»
+from ..normalizer.offers import (CTX_JOIN_SQL as _CTX_JOIN_SQL,  # noqa: E402
+                                 SAME_CTX_SQL as _SAME_CTX_SQL,
+                                 SIGNIFICANT_CHANGE_SQL as _SIGNIFICANT_CHANGE_SQL)
+
+
 @app.get("/api/recent-changes")
 def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = None,
                    offer_id: Optional[int] = None, days: int = 7,
@@ -738,7 +848,7 @@ def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = No
     в диффе ИЛИ |Δ ставки| ≥ 0.01 пп (микрошум расчётных ставок скрыт)."""
     days = max(1, min(days, 90))
     limit = max(1, min(limit, 200))
-    cond, params = [], {"days": days, "lim": limit, "off": max(0, offset)}
+    cond, params = [_SAME_CTX_SQL], {"days": days, "lim": limit, "off": max(0, offset)}
     if category:
         cond.append("o.category = :cat"); params["cat"] = category
     if bank_slug:
@@ -746,10 +856,7 @@ def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = No
     if offer_id:
         cond.append("ch.offer_id = :oid"); params["oid"] = offer_id
     if significant:
-        cond.append("""((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
-                          WHERE k <> 'rate_pct') > 0
-                    OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
-                         - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)""")
+        cond.append(_SIGNIFICANT_CHANGE_SQL)
     where = " AND ".join(cond) if cond else "true"
     rows = q(f"""
         SELECT ch.change_id, ch.offer_id, ch.changed_at, ch.diff,
@@ -758,6 +865,7 @@ def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = No
           FROM change_history ch
           JOIN product_offer o USING(offer_id)
           JOIN bank b USING(bank_id)
+          {_CTX_JOIN_SQL}
          WHERE ch.changed_at > now() - make_interval(days => :days)
            AND {where}
          ORDER BY ch.changed_at DESC
@@ -1041,6 +1149,47 @@ def market_export(category: str = "deposit",
                     media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition":
                              f'attachment; filename="{name}"'})
+
+
+# Среда из APP_ENV. В проде (пусто, prod, production) интерфейс без меток; на
+# остальных стендах у логотипа стоит метка, чтобы стенд не путали с продом.
+_ENV_LABELS = {"test": "Тест", "stage": "Тест", "staging": "Тест",
+               "dev": "Разработка", "local": "Локально", "pilot": "Пилот"}
+_APP_INFO: dict = {"at": 0.0, "info": None}
+
+
+def _code_updated_at() -> Optional[str]:
+    """Когда последний раз менялся код приложения: самый свежий файл пакета.
+    Выкладка (rsync, сборка образа, docker cp) сохраняет время файлов, поэтому
+    дата совпадает с последней правкой, а не с перезапуском контейнера."""
+    root = Path(__file__).resolve().parents[1]
+    newest = 0.0
+    for p in root.rglob("*"):
+        if "__pycache__" in p.parts or p.suffix not in (".py", ".jsx", ".html", ".css"):
+            continue
+        try:
+            newest = max(newest, p.stat().st_mtime)
+        except OSError:
+            continue
+    return datetime.fromtimestamp(newest, timezone.utc).isoformat() if newest else None
+
+
+@app.get("/api/meta/app")
+def meta_app():
+    """О продукте: версия, дата последнего обновления кода, среда."""
+    now = time.time()
+    if _APP_INFO["info"] is None or now - _APP_INFO["at"] > 600:
+        from .. import __version__
+        env = (os.getenv("APP_ENV") or "").strip().lower()
+        prod = env in ("", "prod", "production")
+        _APP_INFO["info"] = {
+            "version": __version__,
+            "updated_at": _code_updated_at(),
+            "env": env or "prod",
+            "env_label": None if prod else _ENV_LABELS.get(env, env.capitalize()),
+        }
+        _APP_INFO["at"] = now
+    return _APP_INFO["info"]
 
 
 @app.get("/api/meta/schedule")
@@ -1607,7 +1756,7 @@ def market_verdict(term: Optional[str] = None):
             "tied": sb.get("tied"), "tied_share": sb.get("tied_share"),
             "gap_median": gap, "gap_leader": sb.get("gap_leader"),
             "metric_label": c["metric_label"], "metric_unit": c["metric_unit"],
-            "gap_unit": (" пп" if c["metric_unit"].strip() == "%" else c["metric_unit"]),
+            "gap_unit": (" п.п." if c["metric_unit"].strip() == "%" else c["metric_unit"]),
             "value": sb.get("rate"), "title": sb.get("title"),
             "lower_is_better": c["lower_is_better"],
             # разбор условий (offer_enrichment): чем куплен ноль в цене и
@@ -1639,18 +1788,26 @@ def market_verdict(term: Optional[str] = None):
     cells.sort(key=lambda x: (bool(x.get("degenerate")),
                               x["percentile"] if x["percentile"] is not None else 999))
 
+    def _ru(v, dg: int = 2) -> str:
+        """Число по-русски: запятая, не больше dg знаков, без хвостовых нулей
+        (было «23.305%» и «3.79 пп» рядом с «23,31%» на остальных вкладках)."""
+        if v is None:
+            return "—"
+        t = f"{round(float(v), dg):.{dg}f}".rstrip("0").rstrip(".")
+        return t.replace(".", ",")
+
     def _phrase(c: dict) -> str:
         unit = c["metric_unit"]
         # разрыв между ДВУМЯ ставками измеряется в процентных пунктах, а не в
         # процентах: «хуже на 4.4 проц.» звучит как относительная разница и в
         # аудиторской формулировке это ошибка
-        gap_unit = " пп" if unit.strip() == "%" else unit
+        gap_unit = " п.п." if unit.strip() == "%" else unit
         val = c["value"]
         gap = c["gap_median"]
         worse = "хуже" if (gap or 0) * (1 if c["lower_is_better"] else -1) > 0 else "лучше"
-        return (f'{c["label"].lower()}: {val}{unit} против медианы рынка '
-                f'{round((val or 0) - (gap or 0), 2)}{unit} — '
-                f'{worse} на {abs(gap or 0)}{gap_unit}, место {c["rank"]} из {c["n_banks"]}')
+        return (f'{c["label"].lower()}: {_ru(val)}{unit} против медианы рынка '
+                f'{_ru((val or 0) - (gap or 0))}{unit} — '
+                f'{worse} на {_ru(abs(gap or 0))}{gap_unit}, место {c["rank"]} из {c["n_banks"]}')
 
     if weak:
         lead = "Отстаём — " + "; ".join(_phrase(c) for c in weak[:2]) + "."
@@ -1697,7 +1854,7 @@ def market_verdict(term: Optional[str] = None):
     tsr = max(cells, key=lambda c: c.get("teaser", 0)) if cells else None
     if tsr and tsr.get("teaser", 0) >= 5:
         doubts.append(f'в «{tsr["label"].lower()}» у {tsr["teaser"]} предложений полная '
-                      f'стоимость выше заявленной ставки более чем на 5 пп — '
+                      f'стоимость выше заявленной ставки более чем на 5 п.п. — '
                       f'рекламная «ставка от» завышает их позицию')
     tie = next((c for c in cells if (c["tied"] or 0) > 1
                 and (c["tied_share"] or 0) > 0.2), None)
@@ -1725,14 +1882,23 @@ def market_offer_history(offer_id: int):
     cur = q("SELECT * FROM v_market_rub_offer WHERE offer_id = :o", {"o": offer_id})
     if not cur:                       # оффер деактивирован/вне витрины — показываем как есть
         cur = q("SELECT * FROM v_offer_current WHERE offer_id = :o", {"o": offer_id})
+    # ряд ставки — только в выдаче текущей версии: иначе смена выдачи рисует пилу
     versions = q("""
-        SELECT rate_pct, valid_from, valid_to
-          FROM product_terms WHERE offer_id = :o
-         ORDER BY valid_from
+        WITH c AS (SELECT raw->'filter_context' AS fc FROM product_terms
+                    WHERE offer_id = :o AND valid_to IS NULL
+                    ORDER BY valid_from DESC LIMIT 1)
+        SELECT t.rate_pct, t.valid_from, t.valid_to
+          FROM product_terms t LEFT JOIN c ON true
+         WHERE t.offer_id = :o
+           AND (c.fc IS NULL OR t.raw->'filter_context' IS NULL
+                OR t.raw->'filter_context' = c.fc)
+         ORDER BY t.valid_from
     """, {"o": offer_id})
-    changes = q("""
-        SELECT change_id, changed_at, diff FROM change_history
-         WHERE offer_id = :o ORDER BY changed_at DESC LIMIT 60
+    changes = q(f"""
+        SELECT ch.change_id, ch.changed_at, ch.diff FROM change_history ch
+          {_CTX_JOIN_SQL}
+         WHERE ch.offer_id = :o AND {_SAME_CTX_SQL}
+         ORDER BY ch.changed_at DESC LIMIT 60
     """, {"o": offer_id})
     for ch in changes:
         f, t = _parse_rate_move(ch.get("diff"))
@@ -1819,8 +1985,9 @@ def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = No
     return _rd().overview(bank, product or None, days) or {}
 
 @app.get("/api/reviews/trend")
-def reviews_trend(bank: str = "Сбербанк", product: Optional[str] = None):
-    return _rd().trend(bank, product or None) or {}
+def reviews_trend(bank: str = "Сбербанк", product: Optional[str] = None, basis: str = "pub"):
+    # basis=event — по дате самого события, а не отзыва (режим динамики)
+    return _rd().trend(bank, product or None, basis="event" if basis == "event" else "pub") or {}
 
 @app.get("/api/reviews/themes")
 def reviews_themes(bank: str = "Сбербанк", product: Optional[str] = None,
@@ -1834,14 +2001,124 @@ def reviews_themes(bank: str = "Сбербанк", product: Optional[str] = None
 def reviews_vs_market(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
     return _rd().vs_market(bank, product or None, days) or {}
 
+@app.get("/api/reviews/issue-index")
+def reviews_issue_index(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 180):
+    """Где структура жалоб банка значимо отличается от остального рынка."""
+    return _rd().issue_index(bank, product or None, days) or {}
+
+@app.get("/api/reviews/risk-flags")
+def reviews_risk_flags(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
+    """Признаки риска из разметки: адресаты эскалации, уязвимые клиенты, практики."""
+    return _rd().risk_flags(bank, product or None, days) or {}
+
+@app.get("/api/reviews/changes")
+def reviews_changes(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
+    """Шапка «что изменилось»: только значимые изменения к прошлому окну."""
+    return _rd().changes(bank, product or None, days) or {}
+
+def _rw():
+    from ..rag import reviews_work
+    return reviews_work
+
+
+@app.get("/api/reviews/clusters")
+def reviews_clusters(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90,
+                     theme: Optional[str] = None, flag: Optional[str] = None,
+                     city: Optional[str] = None, source: Optional[str] = None, esc: int = 0):
+    """Похожие жалобы группами — с теми же фильтрами, что у ленты."""
+    return _rw().clusters(bank, product or None, days, theme or None, flag or None,
+                          city or None, source or None, bool(esc)) or {}
+
+
+class ReviewUrls(BaseModel):
+    urls: list[str]
+
+
+@app.post("/api/reviews/by-urls")
+def reviews_by_urls(req: ReviewUrls):
+    """Карточки жалоб по списку ссылок — группа, снимок сигнала."""
+    return {"items": _rw().reviews_by_urls(req.urls)}
+
+
+@app.get("/api/reviews/similar")
+def reviews_similar(url: str, limit: int = 3):
+    """Похожие жалобы для читалки: тот же банк и главная проблема, близкое изложение."""
+    return {"items": _rw().similar(url, max(1, min(limit, 6)))}
+
+
+@app.get("/api/reviews/signal-journal")
+def reviews_signal_journal(bank: str = "Сбербанк", product: Optional[str] = None,
+                           days: int = 180):
+    return _rw().journal(bank, product or None, days) or {}
+
+
+@app.get("/api/reviews/signal-journal/{signal_id}/reviews")
+def reviews_signal_reviews(signal_id: int):
+    """Снимок жалоб, из которых сложился сигнал, — на момент пика."""
+    rw = _rw()
+    return {"items": rw.reviews_by_urls(rw.journal_urls(signal_id))}
+
+
+class Verdict(BaseModel):
+    verdict: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.post("/api/reviews/signal-journal/{signal_id}/verdict")
+def reviews_signal_verdict(signal_id: int, req: Verdict,
+                           user: CurrentUser = Depends(get_current_user)):
+    if not _rw().set_verdict(signal_id, req.verdict or None, user.username, req.note):
+        raise HTTPException(400, "отметка не сохранилась")
+    return {"ok": True}
+
+
+class ReviewSub(BaseModel):
+    bank: str
+    product: Optional[str] = None
+
+
+@app.get("/api/reviews/subscriptions")
+def reviews_subs(user: CurrentUser = Depends(get_current_user)):
+    """Подписки на сигналы с текущим состоянием — для «Для вас»."""
+    return {"items": _rw().subs_status(user.username)}
+
+
+@app.get("/api/reviews/subscription")
+def reviews_sub_get(bank: str = "Сбербанк", product: Optional[str] = None,
+                    user: CurrentUser = Depends(get_current_user)):
+    return {"subscribed": _rw().is_subscribed(user.username, bank, product or None)}
+
+
+@app.post("/api/reviews/subscription")
+def reviews_sub_add(req: ReviewSub, user: CurrentUser = Depends(get_current_user)):
+    if not _rw().subs_add(user.username, req.bank, req.product or None):
+        raise HTTPException(400, "банк не найден")
+    return {"subscribed": True}
+
+
+@app.delete("/api/reviews/subscription")
+def reviews_sub_del(bank: str, product: Optional[str] = None,
+                    user: CurrentUser = Depends(get_current_user)):
+    _rw().subs_del(user.username, bank, product or None)
+    return {"subscribed": False}
+
+
+@app.get("/api/reviews/market-events")
+def reviews_market_events(bank: str = "Сбербанк", product: Optional[str] = None):
+    """Изменения условий банка по продукту помесячно — метки на графике жалоб."""
+    return _rw().market_events(bank, product or None)
+
+
 @app.get("/api/reviews/geo")
 def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None,
-                days: int = 365):
-    return _rd().geo(bank, product or None, days) or {}
+                days: int = 365, top: int = 8):
+    return _rd().geo(bank, product or None, days, top=max(1, min(int(top), 80))) or {}
 
 @app.get("/api/reviews/products")
 def reviews_products(bank: str = "Сбербанк", days: int = 365):
-    return _rd().products(bank, days) or {}
+    # все продукты кодификатора: при топ-10 вклады, страхование, инвестиции и
+    # ещё полтора десятка продуктов в фильтре выбрать было нельзя
+    return _rd().products(bank, days, top=60) or {}
 
 @app.get("/api/reviews/corpus")
 def reviews_corpus(bank: Optional[str] = None):
@@ -1852,15 +2129,17 @@ def reviews_corpus(bank: Optional[str] = None):
 
 @app.get("/api/reviews/theme-defs")
 def reviews_theme_defs():
-    from ..rag.reviews_dash import THEMES
-    return [{"key": t["key"], "label": t["label"], "risk": t["risk"]} for t in THEMES]
+    """Проблемы кодификатора LLM-разметки: ключ, подпись, группа, риск."""
+    from ..rag import review_codebook as cb
+    return cb.complaint_issues()
 
 @app.get("/api/reviews/feed")
 def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  theme: Optional[str] = None, q: Optional[str] = None,
                  city: Optional[str] = None, month: Optional[str] = None,
                  days: Optional[int] = None, esc: int = 0,
-                 sort: str = "auto", limit: int = 20, offset: int = 0):
+                 sort: str = "auto", limit: int = 20, offset: int = 0,
+                 flag: Optional[str] = None, source: Optional[str] = None):
     # days раньше здесь ОТСУТСТВОВАЛ: переключатель периода стоял на вкладке,
     # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
     # 3 месяца, а в списке отзывы за прошлый год».
@@ -1868,13 +2147,75 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                                 q=q or None, days=days or None,
                                 city=city or None, month=month or None,
                                 limit=limit, offset=max(0, offset),
-                                esc=bool(esc), sort=sort)
+                                esc=bool(esc), sort=sort, flag=flag or None,
+                                source=source or None)
     # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
     # search — по каким словам искали на самом деле и сколько попаданий дословных
     return {"items": res["items"], "count": len(res["items"]),
             "mode": res["mode"], "error": res["error"],
             "has_more": bool(res.get("has_more")),
+            "total": res.get("total"), "pending": res.get("pending"),
             "search": res.get("search") or None}
+
+@app.get("/api/reviews/export.csv")
+def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None,
+                   theme: Optional[str] = None, city: Optional[str] = None,
+                   month: Optional[str] = None, days: Optional[int] = None,
+                   esc: int = 0, limit: int = 10000, flag: Optional[str] = None,
+                   source: Optional[str] = None):
+    """Выгрузка жалоб с разметкой ИИ в CSV (UTF-8 с BOM — открывается в Excel)."""
+    import csv
+    import io
+    from urllib.parse import quote as _q
+    rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
+                             days=days or None, city=city or None, month=month or None,
+                             esc=bool(esc), limit=limit, flag=flag or None,
+                             source=source or None)
+    if rows is None:
+        raise HTTPException(404, "банк не найден")
+    flag_name = _rd().flag_label(flag)
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    cols = list(rows[0].keys()) if rows else ["дата", "банк", "суть", "ссылка"]
+    w = csv.DictWriter(buf, fieldnames=cols, delimiter=";")
+    w.writeheader()
+    # тексты отзывов чужие: «=», «+», «-», «@» в начале ячейки Excel исполнит как формулу
+    w.writerows({k: ("'" + v if isinstance(v, str) and v[:1] in "=+-@" else v)
+                 for k, v in r.items()} for r in rows)
+    name = f"жалобы_{bank}_{theme or flag_name or product or 'все'}_{days or 'всё'}дн.csv"
+    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
+
+
+@app.get("/api/reviews/export.xlsx")
+def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] = None,
+                        theme: Optional[str] = None, city: Optional[str] = None,
+                        month: Optional[str] = None, days: Optional[int] = None,
+                        esc: int = 0, limit: int = 10000, flag: Optional[str] = None,
+                        source: Optional[str] = None):
+    """Выгрузка жалоб в Excel в стиле AuditLens: обзор с показателями и
+    графиками, полный срез с разметкой ИИ, сводки, описание выгрузки."""
+    from urllib.parse import quote as _q
+    from ..rag import review_codebook as _cb
+    from . import reviews_export
+    rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
+                             days=days or None, city=city or None, month=month or None,
+                             esc=bool(esc), limit=limit, flag=flag or None,
+                             source=source or None)
+    if rows is None:
+        raise HTTPException(404, "банк не найден")
+    theme_label = (_cb.ISSUES[theme][0] if theme and theme in _cb.ISSUES else theme) or None
+    flag_name = _rd().flag_label(flag)
+    body = reviews_export.to_xlsx(rows, {
+        "bank": bank, "product": product or None, "theme": theme_label, "city": city or None,
+        "month": month or None, "days": days or None, "esc": bool(esc), "flag": flag_name,
+        "source": source or None}, limit=limit)
+    name = (f"AuditLens_жалобы_{bank}_{theme_label or flag_name or product or 'все'}_"
+            f"{days or 'всё'}дн.xlsx")
+    return Response(content=body,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
+
 
 @app.get("/api/reviews/feed-classified")
 async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,
@@ -1882,77 +2223,104 @@ async def reviews_feed_classified(bank: str = "Сбербанк", product: Optio
                                   city: Optional[str] = None, month: Optional[str] = None,
                                   days: Optional[int] = None,
                                   limit: int = 20, offset: int = 0):
-    """Лента + LLM-уточнение тем показанных отзывов (on-demand, по кнопке).
-    Regex-темы остаются fallback'ом, если LLM не разобрал строку."""
+    """Прежняя кнопка «Уточнить темы»: модель на лету придумывала отзыву
+    свободную тему, не совпадавшую ни с панелью, ни с фильтрами. Теперь каждый
+    отзыв размечен заранее по кодификатору — отдаём ту же ленту, что /feed.
+    Эндпоинт оставлен для совместимости со старым фронтом в кэше браузеров."""
     import asyncio
     import functools
-    from ..rag import reviews_llm
-    # через _ex, а не list_reviews: иначе уточнение тем перезаписывает ленту
-    # объектами без подсветки и признака «дословно/по смыслу», и аудитор молча
-    # теряет объяснение выдачи, нажав соседнюю кнопку
-    # Именованные аргументы, а не позиционные: прежний вызов подставлял None
-    # пятым по счёту и тем самым молча выбрасывал период, а любой новый
-    # параметр в середине сигнатуры сдвинул бы весь хвост.
     res = await asyncio.to_thread(
         functools.partial(_rd().list_reviews_ex, bank,
                           product=product or None, theme=theme or None,
                           q=q or None, days=days or None,
                           city=city or None, month=month or None,
                           limit=limit, offset=max(0, offset)))
-    items = res["items"]
-    if not items:
-        return {"items": [], "count": 0, "llm": False, "search": res.get("search") or None}
-    cls = await reviews_llm.classify_reviews(items)
-    llm_ok = False
-    for it, c in zip(items, cls):
-        if c and c.get("themes"):
-            it["themes"] = c["themes"]
-            it["theme_src"] = "llm"
-            llm_ok = True
-    return {"items": items, "count": len(items), "llm": llm_ok,
+    return {"items": res["items"], "count": len(res["items"]), "llm": False,
             "search": res.get("search") or None}
+
+
+_ANOM_CACHE: dict[str, tuple[float, dict]] = {}
+
 
 @app.get("/api/reviews/anomalies")
 async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[str] = None):
-    """Срочные аномалии за 7 дней (audit-радар): детерминированные недельные
-    всплески тем/модулей + краткое LLM-объяснение. Грузится отдельно от дашборда."""
+    """Срочные аномалии за 7 дней (audit-радар): статистически значимые
+    всплески жалоб по главной проблеме + объяснение модели по жалобам самого
+    сигнала. Разбор кэшируется, пока не изменился набор сигналов: раньше
+    модель вызывалась на каждое открытие вкладки и каждый раз писала новый
+    текст, спорящий со сводкой обзора."""
     import asyncio
+    import time as _time
     from ..rag import reviews_llm
     sig = await asyncio.to_thread(_rd().weekly_signals, bank, product or None)
     signals = (sig or {}).get("signals") or []
+    if signals:
+        # журнал сигналов: эпизод со снимком жалоб — для отметки аудитора
+        try:
+            await asyncio.to_thread(_rw().record_signals, sig, (sig or {}).get("bank") or bank,
+                                    product or None)
+        except Exception as e:  # noqa: BLE001 — радар не должен падать из-за журнала
+            log.warning("журнал сигналов: %s", e)
     if not signals:
-        # Порог всплеска (×1.8) не пробит — но это НЕ значит «всё спокойно»:
-        # тема может расти вдвое быстрее рынка при ×1.6. Радар обязан показать
-        # такое как наблюдение, иначе он противоречит анализу недели, где эта
-        # же тема идёт первым пунктом (жалоба владельца 23.07.2026).
         wp = await asyncio.to_thread(_rd().week_pulse, bank, product or None)
         watch = [d for d in ((wp or {}).get("diverge") or []) if (d.get("gap") or 0) >= 1.15]
         return {"summary": None, "signals": [], "watch": watch[:4],
                 "overall": (sig or {}).get("overall"),
-                "calm": not watch}
-    recent = await asyncio.to_thread(_rd().list_reviews, bank, product or None, None, None, 7, None, None, 50)
-    unclassified = [r for r in recent if not r.get("themes")]   # кандидаты в новые инциденты
-    brief = await reviews_llm.anomaly_brief(sig, recent[:14], unclassified[:14])
-    return {"summary": brief, "signals": signals, "overall": sig.get("overall"), "calm": False}
+                "week_end": (sig or {}).get("week_end"), "calm": not watch}
+    key = f"{bank}|{product}|" + ",".join(f"{s['key']}:{s['week']}" for s in signals)
+    hit = _ANOM_CACHE.get(key)
+    if hit and _time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    context = await asyncio.to_thread(reviews_llm.signal_context, sig, bank, product or None)
+    brief = _rd().fix_market_claims(await reviews_llm.anomaly_brief(sig, context), signals)
+    out = {"summary": brief, "signals": signals, "overall": sig.get("overall"),
+           "week_end": sig.get("week_end"), "calm": False}
+    if brief:
+        _ANOM_CACHE[key] = (_time.time(), out)
+    return out
+
+_EXPLAIN_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+@app.get("/api/reviews/segment-profile")
+def reviews_segment_profile(bank: str = "Сбербанк", product: Optional[str] = None,
+                            city: Optional[str] = None, month: Optional[str] = None,
+                            days: int = 90):
+    """Чем город или месяц отличается от нормы — цифры для панели, без модели."""
+    return _rd().segment_profile(bank, product or None, city or None, month or None, days) or {}
+
 
 @app.get("/api/reviews/explain")
 async def reviews_explain(bank: str = "Сбербанк", product: Optional[str] = None,
-                          city: Optional[str] = None, month: Optional[str] = None):
-    """On-demand LLM-объяснение причины гео-аномалии или пика динамики (по кнопке)."""
+                          city: Optional[str] = None, month: Optional[str] = None,
+                          days: int = 90):
+    """Разбор среза моделью (по кнопке): сначала цифры против нормы, потом
+    тексты. Кэш на 6 часов — повторное открытие не ждёт модель 25 секунд."""
     import asyncio
+    import time as _time
     from ..rag import reviews_llm
+    key = f"{bank}|{product}|{city}|{month}|{days}"
+    hit = _EXPLAIN_CACHE.get(key)
+    if hit and _time.time() - hit[0] < 6 * 3600:
+        return hit[1]
     seg = await asyncio.to_thread(_rd().segment_reviews, bank, product or None,
                                   city or None, month or None)
     if not seg or not seg.get("n"):
         return {"summary": None, "themes": [], "samples": [], "n": 0}
+    prof = await asyncio.to_thread(_rd().segment_profile, bank, product or None,
+                                   city or None, month or None, days)
     parts = []
     if city:
         parts.append(f"г. {city}")
     if month:
-        parts.append(f"месяц {month}")
+        parts.append(f"события месяца {month[3:]}" if month.startswith("ev:") else f"месяц {month}")
     label = f"{bank}" + (" · " + ", ".join(parts) if parts else "")
-    summary = await reviews_llm.explain_segment(seg, label=label)
-    return {"summary": summary, "themes": seg["themes"], "samples": seg["samples"], "n": seg["n"]}
+    summary = await reviews_llm.explain_segment(seg, label=label, profile=prof)
+    out = {"summary": summary, "themes": seg["themes"], "samples": seg["samples"],
+           "n": seg["n"], "profile": prof}
+    if summary:
+        _EXPLAIN_CACHE[key] = (_time.time(), out)
+    return out
 
 
 # ── banks & ratings ───────────────────────────────────────────────────────────
@@ -2005,6 +2373,8 @@ def banks():
                    round(avg(rating)::numeric, 2) avg_rating
               FROM review_index
              WHERE bank IS NOT NULL AND (dt IS NULL OR dt <= now())
+               -- мусор вместо текста и копии одного отзыва — не отзывы
+               AND coalesce(kind, '') NOT IN ('junk', 'dup')
              GROUP BY bank
         """):
             own[r["bank"]] = r
@@ -2256,7 +2626,7 @@ def ingest_run_all(background_tasks: BackgroundTasks):
     if _CAPTCHA_LOCK:
         raise HTTPException(409, "Сейчас решается капча — дождитесь её завершения")
     from ..config import load_sources
-    sources = list(load_sources().keys())
+    sources = [k for k, v in load_sources().items() if (v or {}).get("enabled", True)]
     background_tasks.add_task(_do_ingest_all, sources)
     return {"status": "started", "sources": sources}
 
@@ -2836,6 +3206,12 @@ def cases_create(req: CaseCreate, user: CurrentUser = Depends(get_current_user))
     return {"case_id": userdata.create_case(user.username, req.title.strip(), req.note)}
 
 
+@app.get("/api/cases/review-urls")
+def cases_review_urls(user: CurrentUser = Depends(get_current_user)):
+    """Жалобы, уже приобщённые к доступным делам, — для пометки «в деле» в ленте."""
+    return {"urls": userdata.case_review_urls(user.username)}
+
+
 @app.get("/api/cases/{case_id}")
 def cases_get(case_id: int, user: CurrentUser = Depends(get_current_user)):
     case = userdata.get_case(case_id, user.username)
@@ -2847,18 +3223,121 @@ def cases_get(case_id: int, user: CurrentUser = Depends(get_current_user)):
 @app.post("/api/cases/{case_id}/items")
 def cases_add_item(case_id: int, req: CaseItem,
                    user: CurrentUser = Depends(get_current_user)):
+    if req.kind not in ("document", "review", "offer", "report"):
+        raise HTTPException(400, "неизвестный вид материала")
     if not userdata.add_case_item(case_id, user.username, kind=req.kind,
                                   ref_id=req.ref_id, url=req.url,
                                   title=req.title, note=req.note):
-        raise HTTPException(403, "приобщать можно только в своё дело")
+        raise HTTPException(403, "нет доступа к делу")
     return {"ok": True}
+
+
+class CaseItemsBulk(BaseModel):
+    items: list[CaseItem]
+
+
+@app.post("/api/cases/{case_id}/items/bulk")
+def cases_add_items(case_id: int, req: CaseItemsBulk,
+                    user: CurrentUser = Depends(get_current_user)):
+    """Пачкой — перенос старого дела из браузера на сервер."""
+    n = userdata.add_case_items(case_id, user.username,
+                                [i.model_dump() for i in req.items
+                                 if i.kind in ("document", "review", "offer", "report")])
+    if n is None:
+        raise HTTPException(403, "нет доступа к делу")
+    return {"ok": True, "added": n}
+
+
+class CaseNote(BaseModel):
+    note: Optional[str] = None
+
+
+@app.patch("/api/cases/{case_id}/items/{item_id}")
+def cases_item_note(case_id: int, item_id: int, req: CaseNote,
+                    user: CurrentUser = Depends(get_current_user)):
+    if not userdata.update_case_item_note(case_id, item_id, user.username, req.note):
+        raise HTTPException(403, "нет доступа к делу")
+    return {"ok": True}
+
+
+class CaseUpdate(BaseModel):
+    title: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.patch("/api/cases/{case_id}")
+def cases_update(case_id: int, req: CaseUpdate,
+                 user: CurrentUser = Depends(get_current_user)):
+    if not userdata.update_case(case_id, user.username, title=req.title, note=req.note):
+        raise HTTPException(403, "менять дело может только владелец")
+    return {"ok": True}
+
+
+@app.post("/api/cases/{case_id}/team")
+def cases_team(case_id: int, req: dict, user: CurrentUser = Depends(get_current_user)):
+    """Открыть дело команде (вести вместе) или закрыть доступ."""
+    if not userdata.set_case_shared(case_id, user.username, bool(req.get("shared"))):
+        raise HTTPException(403, "открывать дело может только владелец")
+    return {"ok": True}
+
+
+@app.post("/api/cases/{case_id}/analyze")
+async def cases_analyze(case_id: int, force: int = 0,
+                        user: CurrentUser = Depends(get_current_user)):
+    """Разбор дела моделью: что объединяет материалы, признаки рисков, гипотезы
+    о причинах, что запросить, с чего начать. Хранится при деле и считается
+    заново, только если состав дела изменился (или по кнопке «обновить»)."""
+    import asyncio
+    from ..rag import reviews_llm
+    case = await asyncio.to_thread(userdata.get_case, case_id, user.username)
+    if not case:
+        raise HTTPException(404, "дело не найдено")
+    n = len(case.get("items") or [])
+    if not n:
+        raise HTTPException(400, "в деле нет материалов")
+    if case.get("analysis") and case.get("analysis_items") == n and not force:
+        return {"analysis": case["analysis"], "analysis_at": case.get("analysis_at"), "cached": True}
+    md = await reviews_llm.case_memo(case)
+    if not md:
+        raise HTTPException(503, "модель не ответила — повторите позже")
+    await asyncio.to_thread(userdata.save_case_analysis, case_id, user.username, md, n)
+    return {"analysis": md, "analysis_at": datetime.now(timezone.utc).isoformat(), "cached": False}
+
+
+def _case_or_404(case_id: int, username: str) -> dict:
+    case = userdata.get_case(case_id, username)
+    if not case:
+        raise HTTPException(404, "дело не найдено")
+    return case
+
+
+@app.get("/api/cases/{case_id}/export.xlsx")
+def cases_export_xlsx(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    from urllib.parse import quote as _q
+    from . import case_export
+    case = _case_or_404(case_id, user.username)
+    return Response(content=case_export.to_xlsx(case),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition":
+                             f"attachment; filename*=UTF-8''{_q('AuditLens_дело_' + case['title'][:60] + '.xlsx')}"})
+
+
+@app.get("/api/cases/{case_id}/export.docx")
+def cases_export_docx(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    from urllib.parse import quote as _q
+    from . import case_export
+    case = _case_or_404(case_id, user.username)
+    return Response(content=case_export.to_docx(case),
+                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition":
+                             f"attachment; filename*=UTF-8''{_q('AuditLens_дело_' + case['title'][:60] + '.docx')}"})
 
 
 @app.delete("/api/cases/{case_id}/items/{item_id}")
 def cases_del_item(case_id: int, item_id: int,
                    user: CurrentUser = Depends(get_current_user)):
     if not userdata.remove_case_item(case_id, item_id, user.username):
-        raise HTTPException(403, "нет прав")
+        raise HTTPException(403, "убрать материал может владелец дела или тот, кто его приобщил")
     return {"ok": True}
 
 
@@ -2901,8 +3380,8 @@ def cases_export(case_id: int, user: CurrentUser = Depends(get_current_user)):
         w.writerow([i,
                     {"document": "документ", "review": "отзыв",
                      "offer": "продукт", "report": "отчёт"}.get(it["kind"], it["kind"]),
-                    it.get("bank_name") or "",
-                    it.get("title") or "",
+                    (it.get("review") or {}).get("bank") or it.get("bank_name") or "",
+                    (it.get("review") or {}).get("summary") or it.get("title") or "",
                     it.get("url") or "",
                     it.get("trust_score") if it.get("trust_score") is not None else "",
                     str(it.get("fetched_at") or "")[:10],
@@ -3049,6 +3528,11 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     gaps: Optional[dict] = None
     ranking: Optional[dict] = None
     insights: Optional[list] = None
+    # Быстрый ответ: движок, шаги агента и сводка прогона — в meta сообщения,
+    # чтобы качество ИИ-аналитика можно было разбирать по истории, а не по памяти.
+    engine: Optional[str] = None
+    tools_used: list[str] = []
+    run_meta: Optional[dict] = None
 
     def _persist() -> int | None:
         """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
@@ -3076,8 +3560,14 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                         asyncio.create_task(generate_profile_note(username))
                 except Exception:
                     pass
-            userdata.add_message(session_id, "assistant", body, {
-                "sources": sources, "mode": mode, "report_id": report_id})
+            meta = {"sources": sources, "mode": mode, "report_id": report_id}
+            if engine:
+                meta["engine"] = engine
+            if tools_used:
+                meta["tools"] = tools_used[:60]
+            if run_meta:
+                meta["run"] = run_meta
+            userdata.add_message(session_id, "assistant", body, meta)
             # Достраиваем связь «документ → отчёт»: страницы уже легли в базу
             # знаний с run_id, а номер отчёта появился только сейчас.
             if report_id:
@@ -3125,6 +3615,12 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     insights = data["items"]
                 elif t == "mode":
                     mode = data.get("value")
+                elif t == "engine":
+                    engine = data.get("value")
+                elif t == "tool_call" and data.get("name"):
+                    tools_used.append(str(data["name"]))
+                elif t == "run_meta":
+                    run_meta = {k: v for k, v in data.items() if k != "type"}
                 elif t == "done" and not persisted:
                     # Персистим ДО done: клиент успевает получить report_id
                     # (кнопка «Поделиться» доступна сразу после прогона).
@@ -3341,6 +3837,14 @@ def readyz():
         raise HTTPException(status_code=503, detail=f"db unavailable: {e}")
 
 
+# ── MCP: инструменты аналитика для агента Hermes ────────────────────────────
+# Только локально и с ключом AGENT_MCP_KEY (см. ai/mcp_server.Guard). Адрес для
+# Hermes — со слэшем на конце: http://127.0.0.1:8000/mcp/
+if _MCP_ON:
+    from ..ai import mcp_server as _mcp_server  # noqa: E402
+    app.mount("/mcp", _mcp_server.asgi_app(), name="mcp")
+
+
 # ── loophole module (mount router + static) ─────────────────────────────────
 from ..loophole.web import router as loophole_router  # noqa: E402
 app.include_router(loophole_router, prefix="/api/loophole")
@@ -3353,7 +3857,7 @@ def _loophole_html_with_bust() -> str:
     css кэшируется эвристически и не ревалидируется)."""
     html_path = LOOPHOLE_STATIC_DIR / "loophole.html"
     html = html_path.read_text(encoding="utf-8")
-    for name, attr in (("loophole.jsx", "src"), ("loophole.css", "href")):
+    for name, attr in (("loophole.js", "src"), ("loophole.jsx", "src"), ("loophole.css", "href")):
         asset = LOOPHOLE_STATIC_DIR / name
         if asset.exists():
             v = int(asset.stat().st_mtime)

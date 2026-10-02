@@ -96,6 +96,20 @@ SOURCES: list[dict] = [
     # предупреждения о мошенничестве госагентство часто даёт первым).
     {"key": "tg_rbc",        "kind": "tg",  "url": "https://t.me/s/rbc_news",             "tag": "market", "dimension": "market", "cls": "gen"},
     {"key": "ria_novosti",   "kind": "rss", "url": "https://ria.ru/export/rss2/archive/index.xml", "tag": "market", "dimension": "market", "cls": "gen"},
+    # ── регуляторы и первоисточники (волна 1 «Обзора», проверены 24.09.2026) ──
+    # Ленты ведомств — обо всём подряд (ЖКХ, госслужба, здравоохранение): отсев
+    # делает ступень 1, поэтому источник берётся целиком, а не по ключевым словам.
+    {"key": "fas_news",      "kind": "rss", "url": "https://fas.gov.ru/news.rss", "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    # Официальное опубликование: законы (блок президента) и акты ведомств, в т. ч.
+    # указания ЦБ. Заголовок — «Приказ … № N» и название с новой строки → склеиваем.
+    {"key": "pravo_laws",    "kind": "rss", "url": "http://publication.pravo.gov.ru/api/rss?block=president&pageSize=200", "tag": "regulator", "dimension": "compliance", "cls": "gen", "title_join": True},
+    {"key": "pravo_acts",    "kind": "rss", "url": "http://publication.pravo.gov.ru/api/rss?block=federal_authorities&pageSize=200", "tag": "regulator", "dimension": "compliance", "cls": "gen", "title_join": True},
+    {"key": "tg_fincult",    "kind": "tg",  "url": "https://t.me/s/fincult_info",       "tag": "scheme",    "dimension": "fraud",      "cls": "bank"},
+    {"key": "tg_vsrf",       "kind": "tg",  "url": "https://t.me/s/vsrf_ru",            "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_duma",       "kind": "tg",  "url": "https://t.me/s/dumainfo",           "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_minfin",     "kind": "tg",  "url": "https://t.me/s/minfin",             "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_mintsifry",  "kind": "tg",  "url": "https://t.me/s/mintsifry",          "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_rospotreb",  "kind": "tg",  "url": "https://t.me/s/rospotrebnadzor_ru", "tag": "regulator", "dimension": "compliance", "cls": "gen"},
 ]
 
 # Точечные поисковые запросы (SearXNG). У выдачи нет дат → берём мало и метим.
@@ -307,9 +321,15 @@ def _fetch_search() -> tuple[list[dict], dict]:
         from ..rag.web_search import search
         dim = {"incident": "ops", "scheme": "fraud", "regulator": "compliance"}
         for query, tag in SEARCH_QUERIES:
-            for r in search(query, max_results=4, cache_ttl_seconds=6 * 3600):
+            # Свежесть просим у самого поиска (Яндекс понимает date:>): окно то
+            # же, что у пула новостей. Без этого поиск отдавал вечнозелёные
+            # страницы, которые потом всё равно выбрасывались как старые.
+            fresh = _WINDOW_REG_H if tag == "regulator" else _WINDOW_H
+            for r in search(query, max_results=4, cache_ttl_seconds=6 * 3600,
+                            fresh_hours=fresh, caller="digest_news"):
                 items.append({"title": (r.get("title") or "")[:220],
                               "url": r.get("url") or "", "ts": None,
+                              "ts_hint": r.get("date"),
                               "snippet": (r.get("snippet") or "")[:300],
                               "source": "web_search", "tag": tag, "cls": "bank",
                               "dimension": dim.get(tag, "market"), "image": None})
@@ -448,9 +468,20 @@ def _resolve_undated(items: list[dict]) -> list[dict]:
             except (ValueError, KeyError):
                 pass
         it["ts"] = _page_date(u)
+        if not it["ts"] and it.get("ts_hint"):
+            # Последний довод — дата из поисковой выдачи (у Яндекса это время
+            # изменения страницы, а не публикации). Поэтому только после даты
+            # из адреса, текста и метаданных самой страницы.
+            try:
+                it["ts"] = datetime.fromisoformat(str(it["ts_hint"])[:10]).replace(
+                    tzinfo=timezone.utc)
+            except ValueError:
+                pass
 
     with cf.ThreadPoolExecutor(max_workers=4) as ex:
         list(ex.map(_try, undated))
+    for it in items:
+        it.pop("ts_hint", None)
     kept = [i for i in items if i.get("ts")]
     if len(kept) < len(items):
         log.info("выброшено недатируемых: %d (из них поиск: %d)",

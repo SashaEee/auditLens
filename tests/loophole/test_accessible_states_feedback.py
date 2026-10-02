@@ -60,22 +60,6 @@ def _media_body(css: str, condition: str) -> str:
 
 # ── AC1: загрузка / пустой результат / ошибка — три разные поверхности ──────
 
-def test_catalog_loading_surface():
-    """Пока идёт запрос записей, каталог показывает поверхность загрузки,
-    а не пустую таблицу и не «нет записей»."""
-    jsx = _norm(JSX)
-    assert "Загрузка записей…" in JSX
-    # Загрузка — отдельная ветка разметки до проверки на пустой результат.
-    assert _norm("{loading?(") in jsx
-
-
-def test_catalog_empty_state_has_reset_action():
-    """Пустой результат содержит действие «Сбросить» (сброс фильтров)."""
-    m = re.search(r'Нет записей по выбранным фильтрам\.(.{0,400})', JSX, re.DOTALL)
-    assert m, "не найдена поверхность пустого результата каталога"
-    assert "Сбросить" in m.group(1)
-
-
 def test_catalog_error_state_not_masked_as_empty():
     """Ошибка загрузки записей — отдельная поверхность с «Повторить»:
     состояние ошибки хранится отдельно и не проваливается в «нет записей»."""
@@ -123,22 +107,6 @@ def test_single_typed_toast():
         _norm("const showToast=(text,kind") in jsx
 
 
-def test_toast_variants_in_css():
-    """У toast есть визуальные варианты info/success/error на токенах."""
-    for kind in ("info", "success", "error"):
-        block = _block(CSS, f".lp-toast-{kind}::before")
-        assert "var(--" in block
-
-
-def test_export_csv_uses_toast_not_alert():
-    """Ошибки и подсказки CSV-экспорта уходят в toast (раньше — alert())."""
-    m = re.search(r"const exportCSV = useCallback\(async \(\) => \{(.*?)\}, \[", JSX, re.DOTALL)
-    assert m, "не найдено тело exportCSV"
-    body = m.group(1)
-    assert "alert" not in body
-    assert "showToast(" in body
-
-
 def test_delete_parser_requires_modal_confirmation():
     """Деструктивное удаление парсера — через модальное подтверждение
     с описанием последствия, а не window.confirm()."""
@@ -170,159 +138,7 @@ def test_focus_layer_hook_exists():
     assert "restoreTarget.focus()" in JSX
 
 
-def test_focus_layer_used_by_all_layers():
-    """Ловушку фокуса используют off-canvas чат и оставшиеся модалки."""
-    jsx = _norm(JSX)
-    # Чат (off-canvas), вердикт, подтверждения удаления и отзыва роли.
-    assert jsx.count("useFocusLayer(") >= 5  # объявление + 4 слоя
-    assert _norm("useFocusLayer(chatModalOpen,") in jsx
-    assert _norm("useFocusLayer(!!verdictModal,") in jsx
-    assert _norm("useFocusLayer(!!deleteConfirm,") in jsx
-    assert _norm("useFocusLayer(!!revokeConfirm,") in jsx
-
-
-def test_chat_panel_modal_semantics_are_limited_to_compact_mode():
-    """Панель — модальный dialog только в compact-режиме; desktop — complementary."""
-    m = re.search(r"<aside[^>]*className=\"lp-sidebar\"[^>]*>", JSX)
-    assert m, "не найден aside панели чата"
-    tag = m.group(0)
-    assert 'role={chatModalOpen ? "dialog" : "complementary"}' in tag
-    assert 'aria-modal={chatModalOpen ? "true" : undefined}' in tag
-    assert 'aria-labelledby="lp-chat-title"' in tag
-    assert 'id="lp-chat-title"' in JSX
-
-
-def test_chat_open_focuses_heading_not_textarea():
-    """При открытии панели фокус — на заголовок панели (дизайн-контракт §4),
-    а не в textarea."""
-    jsx = _norm(JSX)
-    assert "chatTitleRef" in jsx
-    # Старый эффект «фокус в поле ввода при открытии» удалён.
-    assert "chatInputRef.current.focus()" not in jsx
-    # Заголовок фокусируем программно (tabIndex -1, в Tab-последовательности нет).
-    assert re.search(r'id="lp-chat-title"[^>]*tabIndex=\{-1\}', JSX) or \
-        re.search(r'tabIndex=\{-1\}[^>]*id="lp-chat-title"', JSX)
-
-
-def test_modals_dialog_semantics():
-    """Все оставшиеся модалки имеют role=dialog, aria-modal и подпись."""
-    assert JSX.count('role="dialog"') >= 3
-    assert JSX.count('aria-modal="true"') >= 3
-    for labelledby in ("lp-verdict-title", "lp-confirm-title", "lp-revoke-title"):
-        assert f'aria-labelledby="{labelledby}"' in JSX
-        assert f'id="{labelledby}"' in JSX
-    assert 'aria-labelledby="lp-parsers-title"' not in JSX
-
-
-def test_focus_visible_ring_for_interactive_controls():
-    """Видимое :focus-visible кольцо accent 2px у кнопок и ссылок."""
-    css = CSS
-    assert re.search(r"\.lp-btn:focus-visible\s*[,{]", css)
-    # Проверяем тело именно того правила, что начинается с .lp-btn:focus-visible.
-    block = re.search(r"\.lp-btn:focus-visible[^{}]*\{([^}]*)\}", css)
-    assert block, "нет правила, начинающегося с .lp-btn:focus-visible"
-    body = block.group(1)
-    assert "outline: 2px solid var(--accent)" in body
-
-
-def test_targets_at_least_28px():
-    """Интерактивные мишени не меньше 28px."""
-    css = CSS
-    for sel in (".lp-btn", ".lp-btn-sm", ".lp-verdict-chip", ".lp-content-toggle"):
-        assert re.search(r"min-(?:height|width):\s*28px", _block(css, sel)), (
-            f"{sel}: нет мишени >= 28px"
-        )
-
-
-def test_chip_checkbox_keyboard_reachable():
-    """Чекбокс чипа банков не display:none (иначе недоступен с клавиатуры):
-    скрыт визуально, фокус виден через :focus-within на чипе."""
-    block = _block(CSS, ".lp-chip input")
-    assert "display: none" not in block
-    assert "opacity: 0" in block or "clip" in block
-    assert re.search(r"\.lp-chip:focus-within\s*\{[^}]*outline", CSS)
-
-
-def test_chat_width_300px_between_1100_and_1399():
-    """При 1100–1399px закреплённая панель чата — 300px (контракт §4/§5)."""
-    body = _media_body(CSS, "(max-width: 1399px)")
-    m = re.search(r"\.lp-layout-chat\s*\{([^}]*)\}", body)
-    assert m, "в @media (max-width: 1399px) нет правила .lp-layout-chat"
-    assert "300px" in m.group(1)
-
-
-def test_escape_still_closes_chat():
-    """Escape закрывает панель чата (через общий слой), разговор сохраняется."""
-    assert "setChatOpen(false)" in JSX
-
-
-def test_table_sort_keyboard_accessible():
-    """Сортировка таблицы доступна с клавиатуры и передаёт aria-sort:
-    интерактивные заголовки колонок — семантические и фокусируемые."""
-    jsx = _norm(JSX)
-    assert "sortableThProps" in jsx
-    assert "aria-sort" in jsx
-    assert JSX.count('className="lp-sort-button"') >= 7
-    assert re.search(r'<button\s+type="button"\s+className="lp-sort-button"', JSX)
-    assert not re.search(r"<th\b[^>]*\bon(?:Click|KeyDown)=", JSX)
-
-
 # ── Инварианты quality-ревью 1.4 ─────────────────────────────────────────────
-def test_record_details_use_native_buttons_not_interactive_rows():
-    """Каталог раскрывает детали, а queue master-detail выбирается нативной кнопкой."""
-    assert not re.search(r"<tr\b[^>]*\bon(?:Click|KeyDown)=", JSX)
-    assert JSX.count('className="lp-row-details"') >= 1
-    assert JSX.count("aria-expanded={expanded.has(r.record_id)}") >= 1
-    assert JSX.count(
-        "aria-controls={expanded.has(r.record_id) ? `lp-record-details-${r.record_id}` : undefined}"
-    ) >= 1
-    assert JSX.count("onClick={() => toggleContent(r.record_id)}") >= 1
-    assert "lp-queue-card-active" in JSX
-    assert 'aria-current={active ? "true" : undefined}' in JSX
-    assert "onClick={() => setQueueSelectedId(record.record_id)}" in JSX
-    # Вложенные checkbox, кнопка вердикта и ссылки не поднимают click выше себя.
-    assert JSX.count("onClick={e => e.stopPropagation()}") >= 3
-
-
-def test_catalog_checkbox_targets_are_native_labels_at_least_28px():
-    """Выбор всех и одной записи доступен указателем по площади минимум 28px,
-    не только через скрытую подпись размером 1px."""
-    assert '<label className="lp-checkbox-hit" htmlFor="lp-select-all">' in JSX
-    assert re.search(
-        r'<label className="lp-checkbox-hit"\s+'
-        r'htmlFor=\{`lp-select-record-\$\{r\.record_id\}`\}>',
-        JSX,
-    )
-    assert not re.search(
-        r'<label className="lp-sr-only" htmlFor=\{?`?lp-select-', JSX
-    )
-    block = _block(CSS, ".lp-checkbox-hit")
-    assert "min-width: 28px" in block
-    assert "min-height: 28px" in block
-
-
-def test_clickable_backdrops_are_named_non_tabstop_native_buttons():
-    """Фоны, закрывающие чат и модалки, — кнопки с именем, но не новая
-    Tab-остановка за пределами активного dialog."""
-    assert not re.search(
-        r'<div\b[^>]*className="lp-(?:chat-backdrop|parsers-modal)"[^>]*onClick=',
-        JSX,
-    )
-    chat = re.search(r'<button\b(?=[^>]*className="lp-chat-backdrop")[^>]*>', JSX)
-    assert chat, "фон чата должен быть нативной кнопкой"
-    assert 'type="button"' in chat.group(0)
-    assert 'aria-label="Закрыть чат"' in chat.group(0)
-    assert "tabIndex={-1}" in chat.group(0)
-    assert "aria-hidden" not in chat.group(0)
-    modal_buttons = re.findall(
-        r'<button\b(?=[^>]*className="lp-modal-backdrop")'
-        r'(?=[^>]*type="button")(?=[^>]*aria-label="Закрыть диалог")'
-        r'(?=[^>]*tabIndex=\{-1\})[^>]*>',
-        JSX,
-    )
-    assert len(modal_buttons) >= 3
-
-
 def test_parser_running_badge_is_russian_without_changing_machine_predicate():
     """Пользователь видит русский статус, а условие по машинному is_running
     остаётся отдельным от локализованного текста."""
@@ -333,17 +149,6 @@ def test_parser_running_badge_is_russian_without_changing_machine_predicate():
     assert badge, "не найдена ветка статуса запущенного парсера"
     assert "выполняется" in badge.group(1)
     assert "running" not in badge.group(1)
-
-
-def test_collapsed_row_button_omits_controls_for_absent_details_region():
-    """При свёрнутой строке каталога aria-controls не указывает на отсутствующий region."""
-    controls = (
-        "aria-controls={expanded.has(r.record_id) "
-        "? `lp-record-details-${r.record_id}` : undefined}"
-    )
-    assert JSX.count(controls) >= 1
-    assert JSX.count("aria-expanded={expanded.has(r.record_id)}") >= 1
-    assert JSX.count('id={`lp-record-details-${r.record_id}`}') >= 1
 
 
 def _load_records_body() -> str:
@@ -451,81 +256,6 @@ def test_parser_loading_empty_and_error_states_are_distinguishable():
     assert "onClick={loadParsers}" in markup
 
 
-def test_export_csv_reports_network_failures_in_error_toast():
-    """Сетевой сбой экспорта CSV виден через существующий error-toast."""
-    m = re.search(r"const exportCSV = useCallback\(async \(\) => \{(.*?)\}, \[", JSX, re.DOTALL)
-    assert m, "не найдено тело exportCSV"
-    catch = re.search(r"catch \(e\) \{(.*?)\}", m.group(1), re.DOTALL)
-    assert catch, "exportCSV не перехватывает сетевой сбой"
-    assert "showToast(" in catch.group(1)
-    assert '"error"' in catch.group(1)
-
-
-def test_queue_empty_state_has_reset_action():
-    """Пустая очередь даёт безопасное действие сброса/повторной загрузки."""
-    m = re.search(r"queueRecords\.length === 0 \? \((.*?)\) : \(", JSX, re.DOTALL)
-    assert m, "не найдена ветка пустой очереди"
-    assert "Сбросить" in m.group(1)
-    assert "onClick={loadQueue}" in m.group(1)
-
-
-def test_icon_controls_and_inputs_have_russian_accessible_names():
-    """Иконки и поля имеют русские доступные имена через label или aria-label."""
-    chat_send = re.search(r'<button\s+className="lp-chat-send"(.*?)</button>', JSX, re.DOTALL)
-    assert chat_send and 'aria-label="Отправить сообщение"' in chat_send.group(1)
-    for control_id in (
-        "lp-filter-text",
-        "lp-filter-from",
-        "lp-filter-to",
-        "lp-chat-input",
-        "lp-parser-url",
-        "lp-parser-description",
-    ):
-        assert f'htmlFor="{control_id}"' in JSX
-        assert f'id="{control_id}"' in JSX
-    assert 'id="lp-filter-verdict"' not in JSX
-    assert 'id="lp-filter-status"' not in JSX
-    assert '<label htmlFor="lp-filter-classification">Тип записи</label>' in JSX
-    # Декоративный индикатор «Состояния базы» удалён из фильтров каталога.
-    assert "lp-scope-indicator" not in JSX
-    assert "lp-filter-scope" not in JSX
-    assert "lp-bulk-comment" not in JSX
-    assert 'htmlFor="lp-select-all"' in JSX
-    assert 'id="lp-select-all"' in JSX
-    assert 'htmlFor={`lp-select-record-${r.record_id}`}' in JSX
-    assert 'id={`lp-select-record-${r.record_id}`}' in JSX
-    for value in ("new", "classified", "exported"):
-        assert f'<option value="{value}">' not in JSX
-
-
-def test_new_controls_and_links_have_hit_targets_and_visible_focus():
-    """Новые кнопки и ссылки не меньше 28px; outline:none не скрывает фокус."""
-    for selector in (
-        ".lp-row-details",
-        ".lp-sort-button",
-        ".lp-cell-url a",
-        ".lp-content-head a",
-    ):
-        block = _block(CSS, selector)
-        assert "min-width: 28px" in block
-        assert "min-height: 28px" in block
-    parser_targets = re.search(
-        r"\.lp-parser-targets a,\s*\.lp-parser-target-plain\s*\{([^}]*)\}",
-        CSS,
-    )
-    assert parser_targets
-    assert "min-width: 28px" in parser_targets.group(1)
-    assert "min-height: 28px" in parser_targets.group(1)
-    for selector in (
-        ".lp-question-other textarea",
-        ".lp-parsers-create input",
-        ".lp-parser-edit input",
-        ".lp-mark-comment",
-        ".lp-verdict-field textarea",
-    ):
-        assert f"{selector}:focus-visible" in CSS
-
-
 def test_toast_timer_cleared_on_unmount():
     """Таймер toast очищается при размонтировании (setState после unmount)."""
     effects = re.findall(
@@ -569,29 +299,6 @@ def _oklch_luminance(value: str) -> float:
 def _contrast_ratio(first: float, second: float) -> float:
     """Контраст WCAG из двух относительных яркостей."""
     return (max(first, second) + 0.05) / (min(first, second) + 0.05)
-
-
-def test_dark_solid_accent_foreground_meets_wcag():
-    """Текст на сплошном accent в тёмной теме имеет контраст не ниже 4.5:1."""
-    dark_accent = _theme_token("html.dark", "--accent")
-    dark_on_accent = _theme_token("html.dark", "--on-accent-solid")
-    ratio = _contrast_ratio(_oklch_luminance(dark_accent), _oklch_luminance(dark_on_accent))
-    assert ratio >= 4.5, f"контраст тёмного accent равен {ratio:.2f}:1"
-    for selector in (".lp-chat-send", ".lp-btn-primary", ".lp-phase-active", ".lp-mark-btn-bad"):
-        block = _block(CSS, selector)
-        assert "background: var(--accent)" in block
-        assert "color: var(--on-accent-solid)" in block
-
-
-def test_dark_solid_danger_foreground_meets_wcag():
-    """Текст на сплошном danger в тёмной теме имеет контраст не ниже 4.5:1."""
-    dark_danger = _theme_token("html.dark", "--neg")
-    dark_on_danger = _theme_token("html.dark", "--on-danger-solid")
-    ratio = _contrast_ratio(_oklch_luminance(dark_danger), _oklch_luminance(dark_on_danger))
-    assert ratio >= 4.5, f"контраст тёмного danger равен {ratio:.2f}:1"
-    block = _block(CSS, ".lp-btn-danger")
-    assert "background: var(--neg)" in block
-    assert "color: var(--on-danger-solid)" in block
 
 
 def test_focus_trap_cycles_from_programmatic_title_on_shift_tab():
@@ -687,17 +394,3 @@ def test_parser_request_emits_one_typed_toast_for_each_remote_outcome():
     assert '"error"' in body
     assert "if (!r.ok)" in body
     assert "catch (e)" in body
-
-
-def test_internal_trust_is_absent_and_publication_date_is_sortable():
-    """Внутренний trust не виден, а дата публикации остаётся сортируемой."""
-    assert "trust_score" not in JSX
-    assert "Надёжность" not in JSX
-    assert "Trust" not in JSX
-    button = re.search(
-        r'toggleSort\("published_at"\)\}>(.*?)</button>',
-        JSX,
-        re.DOTALL,
-    )
-    assert button, "не найдена кнопка сортировки published_at"
-    assert "Дата публикации" in button.group(1)

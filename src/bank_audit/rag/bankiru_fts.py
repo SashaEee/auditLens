@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 
 from sqlalchemy import text
@@ -45,11 +46,11 @@ _UPSERT = text("""
     ON CONFLICT (url) DO UPDATE SET
         review_id = EXCLUDED.review_id,
         bank      = EXCLUDED.bank,
-        product   = EXCLUDED.product,
         dt        = EXCLUDED.dt,
-        city      = EXCLUDED.city,
-        tsv       = EXCLUDED.tsv,
-        esc       = EXCLUDED.esc
+        city      = coalesce(EXCLUDED.city, review_index.city),
+        tsv       = EXCLUDED.tsv
+    -- product и esc не переписываем: их ставит LLM-разметка
+    -- (review_annotate.apply_to_index), а метка площадки и регулярка неверны
     WHERE review_index.dt IS NULL
        OR (EXCLUDED.dt IS NOT NULL AND EXCLUDED.dt >= review_index.dt)
 """)
@@ -57,6 +58,19 @@ _UPSERT = text("""
 
 _ESC_RE = None
 
+
+
+# Площадка переименовывает банки, и история одного банка распадается на два
+# названия: «Точка» до февраля 2026 и «Точка Банк» после, «Долинск» и «Долинск
+# Банк». Старое имя ведём в новое при индексации (исторические строки —
+# миграция 072). «Почта Банк» сюда не входит: с мая 2026 его отзывы на площадке
+# идут под ВТБ, это слияние, а не переименование, и склеивать его нельзя.
+BANK_RENAMES = {"Точка": "Точка Банк", "SBI Bank": "SBI Банк",
+                "А7-финансы ПСБ": "А7 Финансы - ПСБ", "Долинск": "Долинск Банк"}
+
+
+def canon_bank(name: str | None) -> str | None:
+    return BANK_RENAMES.get(name, name) if name else name
 
 def _is_escalation(body: str) -> bool:
     """Грозит ли клиент уйти в ЦБ, суд, ФАС или прокуратуру.
@@ -81,6 +95,11 @@ def _city(location: str | None) -> str | None:
     """location в источнике вида «Москва (Московская область)» — витрина везде
     берёт часть до скобки, зеркало обязано резать так же."""
     head = (location or "").split(" (")[0].strip()
+    # «Москва и область» площадка ведёт отдельным городом, и столица в
+    # географии раскалывалась надвое (1 691 жалоба жила отдельно от Москвы)
+    m = re.match(r"^(.+?) и (?:область|[А-ЯЁ][а-яё]+ская область)$", head)
+    if m:
+        head = m.group(1).strip()
     return head or None
 
 
@@ -125,9 +144,11 @@ def sync(max_batches: int | None = None) -> dict:
             """), {"since": since_id, "minlen": _MIN_LEN, "lim": _BATCH}).all()
         if not rows:
             break
-        payload = [{"url": r[1], "review_id": r[0], "bank": r[2], "product": r[3],
+        # продукт и эскалацию новой строке проставит разметка (в течение часа);
+        # до неё строка не входит в счётчики жалоб
+        payload = [{"url": r[1], "review_id": r[0], "bank": canon_bank(r[2]), "product": None,
                     "dt": r[4], "city": _city(r[5]), "body": r[6],
-                    "esc": _is_escalation(r[6])} for r in rows]
+                    "esc": False} for r in rows]
         # сессия на батч, а не на весь прогон: иначе бэкфилл держит одну
         # транзакцию на сотни тысяч строк и блокирует вакуум
         with db.session() as s:
@@ -217,20 +238,46 @@ def sync_local(batch: int = 400) -> dict:
         rows = s.execute(text("""
             SELECT r.review_id, r.source_url, r.source, r.rating, r.posted_at,
                    b.name AS bank, r.product_category::text AS product,
-                   coalesce(r.title, '') || ' ' || r.text AS body
+                   coalesce(r.title, '') || ' ' || r.text AS body,
+                   nullif(r.raw->>'city', '') AS city
             FROM review r JOIN bank b USING (bank_id)
             WHERE r.source = ANY(:src)
               AND r.source_url IS NOT NULL AND length(r.text) >= :minlen
+              -- sravni без идентификатора банка (ранний сборщик писал отзывы витрины
+              -- чужим банкам) — банк не проверить, в индекс не берём
+              AND NOT (r.source = 'sravni_reviews' AND r.raw->>'review_object_id' IS NULL)
+              -- похвала 4–5★ в анализ жалоб не идёт, а разметка каждой стоит денег
+              AND NOT (r.source IN ('banki_reviews', 'sravni_reviews') AND r.rating >= 4)
+              -- banki.ru: негатив приходит во внешнем корпусе; свой сбор индексируем,
+              -- только если корпус отзыв так и не получил (ждём трое суток)
+              AND NOT (r.source = 'banki_reviews' AND (
+                    r.posted_at > now() - interval '3 days'
+                    OR EXISTS (SELECT 1 FROM review_index c
+                                WHERE c.url IN ('https://www.banki.ru/services/responses/bank/response/'
+                                                || r.source_review_id,
+                                                'https://www.banki.ru/services/responses/bank/response/'
+                                                || r.source_review_id || '/')
+                                  AND c.source = 'bankiru')))
         """), {"minlen": _MIN_LEN, "src": known}).mappings().all()
+
+    # дата позже завтрашнего дня — ошибка разбора площадки (09.12.2026 в
+    # сентябре), а не отзыв из будущего: без даты он не попадёт в динамику
+    from datetime import datetime, timedelta, timezone
+    horizon = datetime.now(timezone.utc) + timedelta(days=1)
+
+    def _dt(v):
+        if v is None:
+            return None
+        vv = v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        return None if vv > horizon else v
 
     written = 0
     for i in range(0, len(rows), batch):
         payload = [{"url": r["source_url"], "review_id": int(r["review_id"]),
-                    "bank": canon.get(r["bank"], r["bank"]), "product": r["product"],
-                    "dt": r["posted_at"], "city": None,
+                    "bank": canon_bank(canon.get(r["bank"], r["bank"])), "product": None,
+                    "dt": _dt(r["posted_at"]), "city": _city(r["city"]) if r["city"] else None,
                     "rating": float(r["rating"]) if r["rating"] is not None else None,
-                    "source": r["source"], "body": r["body"],
-                    "esc": _is_escalation(r["body"])}
+                    "source": r["source"], "body": r["body"], "esc": False}
                    for r in rows[i:i + batch]]
         with db.session() as s:
             s.execute(text("""
@@ -241,8 +288,8 @@ def sync_local(batch: int = 400) -> dict:
                 ON CONFLICT (url) DO UPDATE SET
                     review_id = EXCLUDED.review_id, bank = EXCLUDED.bank,
                     dt = EXCLUDED.dt, rating = EXCLUDED.rating,
-                    source = EXCLUDED.source, tsv = EXCLUDED.tsv,
-                    esc = EXCLUDED.esc
+                    city = coalesce(EXCLUDED.city, review_index.city),
+                    source = EXCLUDED.source, tsv = EXCLUDED.tsv
             """), payload)
         written += len(payload)
 

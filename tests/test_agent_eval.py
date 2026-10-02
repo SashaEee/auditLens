@@ -1,0 +1,120 @@
+"""Регрессионный набор ИИ-аналитика: разбор чисел, проверки ответа, итог прогона."""
+from __future__ import annotations
+
+import asyncio
+
+from bank_audit.ai import agent_eval as E
+
+
+def test_numbers_in_russian_text():
+    xs = E.numbers_in("2 419 жалоб, эскалация 20,7% против 19,8%, ×4,2, 33.0 балла, 17-е")
+    for v in (2419, 20.7, 19.8, 4.2, 33.0, 17):
+        assert v in xs
+    assert E.has_number("ставка 19% годовых", 19.0, 0.05)
+    assert not E.has_number("ставка 18,9%", 19.0, 0.05)
+
+
+def _spec(**kw):
+    return {"numbers": [], "words": [], **kw}
+
+
+def test_forbidden_is_hard_fail():
+    a = "Смотрите [тут](http://127.0.0.1:8000/#reviews). Тема chargeback растёт."
+    checks = E.check_answer(a, _spec(), 20)
+    bad = {c["check"] for c in checks if not c["ok"]}
+    assert "нет: внутренний адрес" in bad and "нет: служебный ключ темы" in bad
+    assert E.verdict(checks, None) == "fail"
+
+
+def test_bypass_advice_forbidden():
+    checks = E.check_answer("Можно обойти защиту Cloudflare через r.jina.ai", _spec(), 5)
+    assert E.verdict(checks, None) == "fail"
+
+
+def test_stub_is_fail():
+    assert E.verdict(E.check_answer("Давай разберусь детальнее.", _spec(), 5), None) == "fail"
+    assert E.verdict(E.check_answer("Нет данных.", _spec(), 5), None) == "fail"
+
+
+def test_numbers_and_words():
+    spec = _spec(numbers=[("жалоб", 15, 1), ("норма", 3.6, 0.1)],
+                 words=["Оспаривание операций и возвраты (чарджбэк)"], min_words=1)
+    good = ("**Всплеск оспаривания операций:** 15 жалоб за неделю при норме ~3,6. "
+            "Сюжет — билеты на отменённый концерт.")
+    assert E.verdict(E.check_answer(good, spec, 30), {"score": 5}) == "pass"
+    vague = "Клиенты жалуются на возвраты, их стало больше."
+    assert E.verdict(E.check_answer(vague, spec, 30), {"score": 3}) == "fail"
+
+
+def test_judge_downgrades():
+    spec = _spec(numbers=[("место", 1, 0)])
+    checks = E.check_answer("Сбер на 1-м месте.", spec, 10)
+    assert E.verdict(checks, {"score": 5}) == "pass"
+    assert E.verdict(checks, {"score": 3}) == "partial"
+    assert E.verdict(checks, {"score": 5, "hallucination": True}) == "partial"
+    assert E.verdict(checks, {"score": 2, "hallucination": True}) == "fail"
+
+
+def test_slow_is_partial():
+    checks = E.check_answer("Сбер на 1-м месте.", _spec(numbers=[("место", 1, 0)]), 999)
+    assert E.verdict(checks, None) == "partial"
+
+
+def test_summarize():
+    s = E.summarize([{"verdict": "pass", "seconds": 10}, {"verdict": "partial", "seconds": 30},
+                     {"verdict": "fail", "seconds": 50}, {"verdict": "skip"}])
+    assert s == {"score": 50.0, "n_pass": 1, "n_partial": 1, "n_fail": 1, "median_s": 30}
+
+
+def test_run_case_with_fake_agent(monkeypatch):
+    async def fake_ask(question, model, hint):
+        return {"answer": "Сбер — **1-е место из 134**, «Выгодный старт +» 19%.",
+                "tools": ["Позиция на рынке"], "meta": {}, "error": None, "seconds": 12.0}
+    monkeypatch.setattr(E, "_ask", fake_ask)
+    case = E.Case("X", "Рынок", "место", lambda: {
+        "question": "место?", "numbers": [("место", 1, 0), ("банков", 134, 0), ("ставка", 19, 0.05)],
+        "words": ["Выгодный старт +"], "min_words": 1, "facts": {}})
+    r = asyncio.run(E.run_case(case, None, False, "t"))
+    assert r["verdict"] == "pass" and r["tools"] == ["Позиция на рынке"]
+
+
+def test_case_ids_unique():
+    ids = [c.id for c in E.CASES]
+    assert len(ids) == len(set(ids)) >= 14
+
+
+def test_mentions_phrase_and_short_names():
+    head = "Всплеск жалоб на чарджбэк только у Сбера: 15 за неделю, ×4,4, 62% из Санкт-Петербурга"
+    assert E.mentions("Главное: всплеск чарджбэка у Сбера, 15 жалоб за неделю.", head)
+    assert not E.mentions("Сегодня всё спокойно.", head)
+    assert E.mentions("У ВТБ ставка 13,7%", "ВТБ")
+    one = E.check_answer("Главное: всплеск чарджбэка у Сбера, 15 за неделю.",
+                         {"numbers": [], "words": [head], "min_words": 2}, 10)
+    assert all(c["ok"] for c in one if c["check"].startswith("по теме"))
+
+
+def test_theme_key_inside_link_is_fine():
+    a = "Всплеск чарджбэка: 15 жалоб — [жалобы темы](#reviews?theme=chargeback&days=7)."
+    checks = E.check_answer(a, {"numbers": [("жалоб", 15, 1)]}, 10)
+    assert all(c["ok"] for c in checks)
+
+
+def test_refusal_is_hard_fail():
+    a = "Как «лазейки» для злоупотребления я не подскажу, но как аудитор вижу риски."
+    checks = E.check_answer(a, {"numbers": []}, 10)
+    assert E.verdict(checks, None) == "fail"
+    ok = E.check_answer("Схема: продление грейса до 150 дней — проверить правило MCC.",
+                        {"numbers": []}, 10)
+    assert E.verdict(ok, None) == "pass"
+
+
+def test_sources_digest_gives_judge_quotes_by_footnote():
+    from bank_audit.ai.agent_eval import sources_digest
+    src = [{"n": 3, "domain": "cbr.ru", "title": "Указание Банка России",
+            "facts": [{"verbatim": "страховое возмещение до 1,4 млн рублей"}]},
+           {"n": 4, "domain": "AuditLens", "title": "Отзывы: сводка", "facts": [],
+            "excerpt": "Жалоб за 90 дней: 35."}]
+    d = sources_digest(src)
+    assert "[3] cbr.ru — Указание Банка России: «страховое возмещение до 1,4 млн рублей»" in d
+    assert "[4] AuditLens — Отзывы: сводка: Жалоб за 90 дней: 35." in d
+    assert "ещё источников" in sources_digest(src * 50, cap=300)

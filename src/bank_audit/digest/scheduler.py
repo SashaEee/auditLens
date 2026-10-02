@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -75,6 +76,11 @@ async def ensure_digest(trigger: str, day: date | None = None, force: bool = Fal
                     return False
                 if not force and store.day_complete(day, pipeline.REQUIRED):
                     return False   # перепроверка под локом
+                if force:
+                    # ручное обновление не затирает выпуск бесследно: прежняя
+                    # версия секций уходит в архив (24.09 обновление в 16:00
+                    # заменило утренний выпуск худшим и без следа)
+                    store.archive_day(day)
                 store.mark_run(day, trigger)
                 # отдельный event-loop в worker-потоке: генерация (LLM, fetch)
                 # не блокирует основной цикл FastAPI
@@ -187,7 +193,9 @@ def _run_ingest_all() -> None:
     try:
         from ..config import load_sources
         from ..orchestrator.runner import ingest
-        sources = list(load_sources().keys())
+        # enabled: false — источник заменён другим сбором (HTML-сборщики отзывов
+        # banki.ru и sravni → sources/review_streams по JSON площадок)
+        sources = [k for k, v in load_sources().items() if (v or {}).get("enabled", True)]
         log.info("daily ingest: старт, источники: %s", sources)
         for src in sources:
             try:
@@ -372,11 +380,19 @@ async def foryou_pregen_loop():
     await asyncio.sleep(420)          # после старта — дать ядру собраться первым
     log.info("предгенерация «Для вас»: активные за 7 дн, тик раз в %d с",
              FORYOU_PREGEN_EVERY_S)
+    done_day = None
     while True:
+        wait_s = FORYOU_PREGEN_EVERY_S
         try:
             now = datetime.now(MSK)
-            if now.hour >= GEN_HOUR and await asyncio.to_thread(
-                    store.day_complete, _today_msk(), _pipe.REQUIRED):
+            ready = now.hour >= GEN_HOUR and await asyncio.to_thread(
+                store.day_complete, _today_msk(), _pipe.REQUIRED)
+            # выпуск ещё собирается — проверяем часто: 25.09 часовой тик пришёл
+            # за 5 секунд до конца сборки, и страницы появились только через час
+            if now.hour >= GEN_HOUR and not ready and done_day != _today_msk():
+                wait_s = 120
+            if ready:
+                done_day = _today_msk()
                 users = await asyncio.to_thread(_active_usernames)
                 built = 0
                 for u in users:
@@ -393,7 +409,7 @@ async def foryou_pregen_loop():
                              built, len(users))
         except Exception as e:  # noqa: BLE001
             log.warning("предгенерация «Для вас»: %s", e)
-        await asyncio.sleep(FORYOU_PREGEN_EVERY_S)
+        await asyncio.sleep(wait_s)
 
 
 # ── Ночной судья новостного выпуска (этап 6) ─────────────────────────────────
@@ -423,10 +439,47 @@ async def judge_background_loop():
             await asyncio.sleep(1800)
 
 
+# Дневное дополнение «что нового с утра» (0 — выключено). Утренний выпуск не
+# трогает: отдельная секция update.
+UPDATE_HOUR = int(os.getenv("DIGEST_UPDATE_HOUR_MSK", "15"))
+
+
+async def update_background_loop():
+    from . import writer
+    if UPDATE_HOUR <= 0:
+        return
+    await asyncio.sleep(300)
+    log.info("дополнение выпуска: расписание %02d:00 МСК", UPDATE_HOUR)
+    while True:
+        try:
+            now = datetime.now(MSK)
+            day = _today_msk()
+            # догон после рестарта — только в рабочие часы: вечером дополнение
+            # уже никто не прочтёт, а утром его перекроет новый выпуск
+            if UPDATE_HOUR <= now.hour < UPDATE_HOUR + 5 and await asyncio.to_thread(
+                    store.day_complete, day, ("news", "headline")) and "update" not in \
+                    await asyncio.to_thread(store.live_sections, day):
+                p = await writer.afternoon_update(day)
+                await asyncio.to_thread(store.upsert, day, "update", p)
+                log.info("дополнение выпуска: новостей %d, сигналов %d",
+                         len(p.get("items") or []), len(p.get("signals") or []))
+            nxt = now.replace(hour=UPDATE_HOUR, minute=0, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            await asyncio.sleep((nxt - datetime.now(MSK)).total_seconds())
+        except Exception as e:  # noqa: BLE001
+            log.warning("дополнение выпуска: %s", e)
+            await asyncio.sleep(1800)
+
+
 # Корпус отзывов наполняет чужой крон, и мы не знаем его расписания, поэтому
 # догоняем зеркало часто и небольшими порциями, а не раз в сутки: инкремент по
 # водяному знаку почти бесплатен, когда догонять нечего.
 FTS_SYNC_EVERY_S = int(os.getenv("BANKIRU_FTS_SYNC_EVERY_S", "3600"))
+
+
+REVIEW_STREAMS_EVERY_S = int(os.getenv("REVIEW_STREAMS_EVERY_S", str(12 * 3600)))
+_STREAMS_AT = 0.0
 
 
 async def bankiru_fts_background_loop():
@@ -449,6 +502,20 @@ async def bankiru_fts_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("индекс отзывов, внешний корпус: %s", e)
         try:
+            # Отзывы площадок из их JSON (banki.ru по Сберу, sravni по крупнейшим
+            # банкам) — дважды в сутки: ответ банка и «решено» появляются через
+            # дни после публикации, их надо перечитывать
+            global _STREAMS_AT
+            if time.time() - _STREAMS_AT > REVIEW_STREAMS_EVERY_S:
+                _STREAMS_AT = time.time()
+                from ..sources import review_streams
+                r = await asyncio.to_thread(review_streams.run_all)
+                log.info("отзывы площадок: banki %s, sravni %s",
+                         {k: r["banki"].get(k) for k in ("fresh", "status", "new")},
+                         {k: r["sravni"].get(k) for k in ("banks", "seen", "new")})
+        except Exception as e:  # noqa: BLE001
+            log.warning("отзывы площадок: %s", e)
+        try:
             # Отзывы наших коллекторов: в индекс и со своими векторами. Идёт
             # ПОСЛЕ ночного сбора — тот пишет в таблицу review, а здесь
             # собранное становится видимым на вкладке и находимым поиском.
@@ -459,18 +526,52 @@ async def bankiru_fts_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("индекс отзывов, свои коллекторы: %s", e)
         try:
-            # Инкрементальная разметка тем: без неё свежая неделя оставалась
-            # без меток до ручного assign (замер 05.08: 36 процентов окна),
-            # и сигналы главной на разметке было не построить.
-            from ..rag import review_topics
-            await asyncio.to_thread(review_topics.label_new)
-            # Продукт — второе измерение той же разметки. Без этого свежие
-            # обращения оставались бы без продукта, и срез по нему тихо терял
-            # бы последние дни, притом что по темам они уже видны.
-            if review_topics.active_version(review_topics.PRODUCT):
-                await asyncio.to_thread(review_topics.label_new,
-                                        dim=review_topics.PRODUCT)
-                await asyncio.to_thread(review_topics.apply_product_labels)
+            # LLM-разметка новых отзывов по кодификатору и перенос в индекс.
+            # Без неё свежие отзывы не входят в счётчики жалоб. Если идёт
+            # массовый прогон отдельным процессом, тик пропускает разметку
+            # (общий замок), но перенос в индекс делает — иначе размеченное
+            # прогоном не дошло бы до вкладки.
+            from ..rag import review_annotate
+            r = await review_annotate.run(
+                limit=int(os.getenv("REVIEW_ANN_TICK_LIMIT", "3000")), daily=True)
+            if r.get("done"):
+                log.info("разметка отзывов: %d за тик, %.1f ₽ за сутки, остановка: %s",
+                         r["done"], r.get("rub") or 0, r.get("stop"))
+            await asyncio.to_thread(review_annotate.apply_to_index)
         except Exception as e:  # noqa: BLE001
-            log.warning("инкрементальная разметка отзывов: %s", e)
+            log.warning("разметка отзывов: %s", e)
+        try:
+            # Векторы изложений новых жалоб — для групп похожих в ленте;
+            # ограничено по времени, недосчитанное доберёт следующий тик
+            from ..rag import reviews_work
+            r = await asyncio.to_thread(reviews_work.embed_summaries)
+            if r.get("done"):
+                log.info("векторы изложений: %d из %d за %s с", r["done"], r["todo"], r["seconds"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("векторы изложений: %s", e)
         await asyncio.sleep(FTS_SYNC_EVERY_S)
+
+
+NEWSFLOW_EVERY_S = int(os.getenv("NEWSFLOW_EVERY_S", "1200"))
+
+
+async def newsflow_background_loop():
+    """Непрерывный сбор новостей «Обзора» (digest/newsflow): каждые 20 минут
+    все источники, первичный отсев, полный текст, склейка и оценка сильной
+    моделью. Выпуск по-прежнему один — в 07:00; частый сбор нужен, чтобы к
+    нему в хранилище был весь суточный поток: веб-превью Telegram показывает
+    ~20 последних постов, у Banksta это четыре часа, и сбор раз в сутки видел
+    только ночной хвост."""
+    from . import newsflow
+    await asyncio.sleep(120)
+    log.info("поток новостей: сбор раз в %d с", NEWSFLOW_EVERY_S)
+    while True:
+        try:
+            r = await newsflow.tick()
+            log.info("поток новостей: новых %s, ступень 1 — %s, ступень 2 — %s",
+                     (r.get("collect") or {}).get("added"),
+                     (r.get("stage1") or {}).get("scored"),
+                     (r.get("stage2") or {}).get("scored"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("поток новостей: %s", e)
+        await asyncio.sleep(NEWSFLOW_EVERY_S)

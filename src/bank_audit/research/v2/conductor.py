@@ -235,6 +235,14 @@ def detect_client_segment(text: str) -> str:
     return "business" if any(m in t for m in _BUSINESS_MARKERS) else "retail"
 
 
+# Рассуждение кондуктора. Замер 26.09 на пяти вопросах набора: high — медиана
+# 57 с, medium — 27 с при тех же объектах, продукте, признаке жалоб и агентах
+# сбора. План — первый шаг отчёта, ждёт каждый прогон.
+_PLAN_EFFORT = ({"reasoning_effort": os.getenv("CONDUCTOR_REASONING_EFFORT", "medium")}
+                if os.getenv("CONDUCTOR_REASONING_EFFORT", "medium") not in ("", "default")
+                else None)
+
+
 async def plan_research(client: AsyncOpenAI, model: str,
                           question: str, history: list[dict] | None = None,
                           on_reasoning=None,
@@ -263,29 +271,30 @@ async def plan_research(client: AsyncOpenAI, model: str,
             raw, _r, _t = await stream_completion(
                 client, on_reasoning=on_reasoning,
                 model=model, messages=messages, temperature=0.0,
-                max_tokens=8000, extra_body=deep_reasoning_extra())
+                max_tokens=8000, extra_body=deep_reasoning_extra(_PLAN_EFFORT))
             raw = (raw or "").strip()
         else:
+            from ...ai.llm_utils import drop_known_rejected, remember_rejected
             kwargs = {
                 "model": model, "messages": messages,
                 "temperature": 0.0,
                 "max_tokens": 8000,   # 3000 рвало план на 5 банках → fallback
-                "extra_body": deep_reasoning_extra(),
+                "extra_body": deep_reasoning_extra(_PLAN_EFFORT),
             }
+            drop_known_rejected(model, kwargs)
             try:
                 resp = await client.chat.completions.create(**kwargs)
             except Exception as e:
-                # Провайдер отвергает параметр — снимаем и повторяем. Иначе
-                # план молча подменяется заглушкой: claude-opus отвергает
-                # temperature, и вместо разбора вопроса конвейер получал
-                # рамку по умолчанию за 0,9 с, чего в логе никто не читал.
-                from ...ai.llm_utils import _rejected_param
-                param = _rejected_param(e)
-                if not param or param not in kwargs:
+                # Провайдер отвергает параметр — снимаем, запоминаем за моделью
+                # и повторяем. Иначе план молча подменяется заглушкой:
+                # claude-opus отвергает temperature, и вместо разбора вопроса
+                # конвейер получал рамку по умолчанию за 0,9 с, чего в логе
+                # никто не читал.
+                param = remember_rejected(model, e, kwargs)
+                if not param:
                     raise
-                log.warning("[conductor] %s не принимает %s — повторяем без него",
-                            model, param)
-                kwargs.pop(param, None)
+                log.warning("[conductor] %s не принимает %s — запомнили, "
+                            "повторяем без него", model, param)
                 resp = await client.chat.completions.create(**kwargs)
             raw = (resp.choices[0].message.content or "").strip()
     except Exception as e:

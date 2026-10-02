@@ -380,76 +380,7 @@ def test_update_verdict_freeze_is_idempotent_for_legacy_records(session):
 # ── Контракт JSX: карточка проверки ──────────────────────────────────────────
 
 
-def test_card_shows_decisions_with_type_comment_author_and_date():
-    """AC1: секция «Решения ЦК КС» показывает тип, комментарий, автора и дату."""
-    card = _norm(_queue_card())
-    assert _norm("Решения ЦК КС") in card
-    assert _norm("{decisionLabel(d.decision)}") in card
-    assert _norm("{d.comment}") in card
-    assert _norm("{d.decided_by}") in card
-    assert _norm("{fmtDate(d.decided_at)}") in card
-    # Порядок решений в ответе очереди сохраняется (decided_at, decision_id).
-    assert _norm("queueSelected.decisions.map(d =>") in card
-
-
-def test_card_classifier_comment_uses_frozen_source():
-    """AC4/AC5: карточка берёт комментарий классификатора из freeze-колонки
-    с fallback на verdict_reason."""
-    card = _norm(_queue_card())
-    assert _norm("queueSelected.classifier_verdict_reason ?? queueSelected.verdict_reason") in card
-
-
-def test_classifier_source_falls_back_to_verdict_reason():
-    """Матрица «legacy-перезапись до миграции»: пустой freeze → fallback на
-    текущий verdict_reason на обеих поверхностях."""
-    jsx = _norm(_jsx())
-    assert jsx.count(_norm("classifier_verdict_reason ?? queueSelected.verdict_reason")) == 1
-    assert _norm("rec.classifier_verdict_reason ?? rec.verdict_reason") in jsx
-
-
-def test_empty_decisions_state_is_neutral():
-    """AC3 / матрица «решений нет»: пустое состояние с поясняющим текстом."""
-    empty = _norm(EMPTY_STATE)
-    assert empty in _norm(_queue_card())
-    assert empty in _norm(_verdict_modal())
-
-
 # ── Контракт JSX: модалка «Вердикт записи» ───────────────────────────────────
-
-
-def test_modal_readonly_block_before_auditor_comment_field():
-    """AC2: read-only блок решений стоит перед полем «Комментарий аудитора»,
-    само поле и выбор типа работают как прежде."""
-    modal = _verdict_modal()
-    assert _norm('<div className="lp-verdict-decisions">') in _norm(modal)
-    positions = [
-        modal.index("lp-verdict-decisions"),
-        modal.index('id="lp-mark-comment"'),
-        modal.index("lp-verdict-options"),
-    ]
-    assert positions == sorted(positions), "блок решений должен быть до поля комментария"
-    # Существующие поля модалки не тронуты.
-    assert _norm("<label htmlFor=\"lp-mark-comment\">Комментарий аудитора</label>") in _norm(modal)
-    for value in ("vulnerability", "fraud_scheme", "not_confirmed"):
-        assert _norm(f'choose("{value}")') in _norm(modal)
-    assert _norm("markVerdict([rec.record_id], val, markComment.trim())") in _norm(modal)
-
-
-def test_modal_block_hidden_without_decisions_field():
-    """AC6 / матрица «модалка из каталога»: блок рендерится только при
-    Array.isArray(rec.decisions) — каталожные записи без поля блок не получают."""
-    modal = _norm(_verdict_modal())
-    assert _norm("{Array.isArray(rec.decisions) && (") in modal
-    assert _norm("lp-verdict-decisions") in modal
-
-
-def test_modal_classifier_comment_visible_for_non_manual_verdict():
-    """AC4 / матрица «есть комментарий классификатора»: строка видна при
-    verdict_model !== "manual" и непустом тексте (freeze ?? текущий)."""
-    modal = _norm(_verdict_modal())
-    assert _norm('rec.verdict_model !== "manual"') in modal
-    assert _norm("Комментарий классификатора:") in modal
-    assert _norm("{rec.classifier_verdict_reason ?? rec.verdict_reason}") in modal
 
 
 def test_decision_labels_cover_all_decision_types():
@@ -468,37 +399,16 @@ def test_decision_labels_cover_all_decision_types():
 
 def test_queue_endpoint_keeps_expert_gate():
     """Матрица «не-эксперт»: GET /queue по-прежнему fail-closed за ролью
-    ccks_expert и отвечает {records, count}."""
+    ccks_expert и отвечает {records, count, total}; порядок задаёт сервер."""
     endpoint = re.search(r'@router\.get\("/queue"\)(.*?)(?=@router\.|\Z)', _web(), re.DOTALL)
     assert endpoint, "не найден эндпоинт GET /queue"
     body = _norm(endpoint.group(1))
-    assert _norm("authorization.require_role(user_id, authorization.ROLE_CCKS_EXPERT") in body
-    assert _norm("repo.list_verification_queue(session=session)") in body
-    assert _norm('return {"records": records, "count": len(records)}') in body
+    gate = body.index(_norm("authorization.require_role(user_id, authorization.ROLE_CCKS_EXPERT"))
+    assert gate < body.index(_norm("repo.list_verification_queue(sort=sort, session=session)"))
+    assert _norm('return {"records": records, "count": len(records), "total": total}') in body
 
 
 # ── Контракт CSS ─────────────────────────────────────────────────────────────
-
-
-def test_card_and_modal_decision_blocks_have_styles():
-    """Секция карточки и read-only блок модалки оформлены в стиле существующих
-    (.lp-queue-reason / .lp-verdict-record), метка типа — бейдж с цветом."""
-    css = _css()
-    assert "margin-top: 14px" in _block(css, ".lp-queue-decisions")
-    assert "font-size: 0.78rem" in _block(css, ".lp-queue-decisions h3")
-    assert _block(css, ".lp-queue-decisions-list")
-    assert _block(css, ".lp-queue-decision")
-    assert _block(css, ".lp-queue-decision-type")
-    for decision in ("vulnerability", "fraud_scheme", "not_confirmed"):
-        assert _block(css, f".lp-decision-{decision}")
-    assert "padding: 10px 12px" in _block(css, ".lp-verdict-decisions")
-    assert _block(css, ".lp-verdict-decisions-title")
-    assert _block(css, ".lp-verdict-decisions-list")
-    assert _block(css, ".lp-verdict-decisions-empty")
-    assert _block(css, ".lp-verdict-classifier-comment")
-    # Карточка и модалка используют один и тот же элемент решения.
-    jsx = _norm(_jsx())
-    assert jsx.count(_norm('className="lp-queue-decision"')) == 2
 
 
 # ── Greenplum-контракт миграции 068 ──────────────────────────────────────────

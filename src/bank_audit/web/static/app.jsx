@@ -6,6 +6,7 @@ const CAT_LABELS = {
   deposit:"Вклады", credit:"Кредиты", mortgage:"Ипотека",
   card_credit:"Кредитные карты", card_debit:"Дебетовые карты",
   auto_loan:"Автокредиты", metals:"Драгметаллы", other:"Прочее",
+  savings_account:"Накопительные счета", rko:"РКО для бизнеса", microloan:"Микрозаймы",
 };
 // Темы жалоб (категории отзывов) — перевод ключей классификатора на русский
 const TOPIC_LABELS = {
@@ -20,51 +21,93 @@ const TOPIC_LABELS = {
 const TL = t => TOPIC_LABELS[t] || t;
 const LOWER_IS_BETTER = new Set(["credit","mortgage","card_credit","auto_loan"]);
 const CATS_ORDER = ["deposit","credit","mortgage","card_credit","card_debit","auto_loan","metals"];
-const QUICK = [
-  {eb:"01 · Депозиты", t:"Сравни предложения по вкладам, выдели топ-5 и позицию Сбера."},
-  {eb:"02 · Риски",    t:"Какие основные жалобы у клиентов Сбербанка? Где подводные камни?"},
-  {eb:"03 · Ипотека",  t:"Сравни ипотечные ставки между Сбером и рынком, выдели программы с господдержкой."},
-  {eb:"04 · Динамика", t:"Покажи изменения условий за последние 7 дней — что выросло, что упало."},
-];
+// Стартовая страница ИИ-аналитика. По 90 дням: с четырёх фиксированных карточек
+// начиналось 11% сессий, остальные писали своё — жалобы по продукту, сравнение
+// с конкурентами, регулирование, мошенничество, разбор новостей. Поэтому: поводы
+// дня из выпуска, шаблоны под эти задачи (продукт и банки — из профиля) и история
+// без повторов. Всё подставляется в поле вопроса, а не отправляется сразу.
+const AW_PROD={deposit:["вклады","вкладов"],ipoteka:["ипотеку","ипотеки"],credit_card:["кредитные карты","кредитных карт"],
+  debit_card:["дебетовые карты","дебетовых карт"],consumer_loan:["потребительские кредиты","потребительских кредитов"],
+  auto:["автокредиты","автокредитов"],savings:["накопительные счета","накопительных счетов"],transfers:["переводы","переводов"],
+  acquiring:["эквайринг","эквайринга"],premium:["премиальные пакеты","премиальных пакетов"],rko:["РКО","РКО"]};
+const AW_BANK={vtb:"ВТБ",alfabank:"Альфа-Банка",tinkoff:"Т-Банка",gazprombank:"Газпромбанка",sovcombank:"Совкомбанка",
+  rshb:"Россельхозбанка",domrf:"банка ДОМ.РФ",psb:"ПСБ",raiffeisen:"Райффайзенбанка",mtsbank:"МТС Банка"};
+// slot — часть текста, которую человек, скорее всего, заменит: её выделяем
+const awTemplates=me=>{
+  const it=(me&&me.interests)||{};
+  const pk=(it.products||[]).find(k=>AW_PROD[k]);
+  const [acc,gen]=pk?AW_PROD[pk]:["продукт","продукта"];
+  const bs=(it.banks||[]).filter(k=>k!=="sberbank"&&AW_BANK[k]).slice(0,2).map(k=>AW_BANK[k]);
+  const banks=bs.length?bs.join(" и "):"ВТБ и Альфа-Банка";
+  return [
+    {k:"Жалобы по продукту",t:`Жалобы клиентов Сбера на ${acc} за последние 90 дней: главные темы, что растёт, характерные примеры`,slot:acc},
+    {k:"Сравнить с конкурентами",t:`Сравни условия ${gen} в Сбере и у ${banks}: ставки, комиссии, требования к клиенту`,slot:gen},
+    {k:"Изменения в регулировании",t:`Что изменилось в регулировании ${gen} в 2026 году: законы, указания ЦБ, сроки вступления в силу`,slot:gen},
+    {k:"Мошеннические схемы",t:`Мошеннические схемы вокруг ${gen}: как они устроены и какие риски создают для Сбера`,slot:gen},
+    {k:"Разобрать новость",t:"Разбери для аудита розницы Сбера новость: ссылка или текст новости",slot:"ссылка или текст новости"},
+  ];
+};
+// нормализация вопроса для склейки повторов и подсказки «уже спрашивали»
+const awNorm=s=>String(s||"").toLowerCase().replace(/ё/g,"е").replace(/[^a-zа-я0-9]+/g," ").trim();
+const AW_KIND={review_spike:"Жалобы · сигнал дня",news_alert:"Новость дня",tariff_move:"Тарифы",mass_move:"Тарифы · массово",
+  rate_move:"Ключевая ставка",connection:"Новость и данные"};
 
-// Редакторский экран приветствия ИИ-аналитика (новый дизайн)
-function AiWelcome({onPick,recent,onOpenHistory,onLoadSession}){
+function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns}){
   const me=useMe();
+  const tpl=awTemplates(me);
   return <div className="ai-welcome fade-in">
     <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-аналитик`:"ИИ-аналитик · AuditLens"}</div>
-    <h1 className="aw-title">Спросите об условиях<br/>банковского рынка</h1>
-    <p className="aw-lede">Сравнение тарифов, ставок и рисков по продуктам — с цитированием официальных источников и позицией Сбера. Для аудит-вывода включите <b>Deep&nbsp;Research</b>: планировщик, мульти-агентный сбор и проверка чисел.</p>
-    <div className="aw-cards">
-      {QUICK.map((s,i)=>(
-        <button key={i} className="aw-card" onClick={()=>onPick(s.t)}>
-          <span className="aw-card-eb">{s.eb}</span>
-          <span className="aw-card-t">{s.t}</span>
-        </button>
-      ))}
+    <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
+    <p className="aw-lede">Аналитик отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
+    <div className="aw-modes">
+      <div><b>Быстрый ответ</b><span>обычно меньше минуты · по данным AuditLens и открытым источникам</span></div>
+      <div><b>Отчёт · Deep Research</b><span>обычно 5–10 минут · план, сбор, сверка чисел</span></div>
     </div>
-    {recent&&recent.length>0 && <div className="aw-recent">
+
+    {dayIns&&dayIns.length>0&&<section className="aw-sec" aria-labelledby="aw-day-h">
+      <h2 className="eyebrow" id="aw-day-h">Сегодня в выпуске</h2>
+      <div className="aw-day">
+        {dayIns.map((ins,i)=><button key={i} type="button" className="aw-dcard" data-sev={ins.severity||undefined}
+            onClick={()=>onFill(ins.ai_prompt)}>
+          <span className="aw-dk">{AW_KIND[ins.kind]||"Повод дня"}</span>
+          <span className="aw-dt">{ins.title}</span>
+          <span className="aw-dgo">Подставить вопрос</span>
+        </button>)}
+      </div>
+    </section>}
+
+    <section className="aw-sec" aria-labelledby="aw-tpl-h">
+      <h2 className="eyebrow" id="aw-tpl-h">Начать с задачи</h2>
+      <div className="aw-tpls">
+        {tpl.map(x=><button key={x.k} type="button" className="chip aw-tpl" data-tip={x.t}
+            onClick={()=>onFill(x.t,x.slot)}>{x.k}</button>)}
+      </div>
+    </section>
+
+    {recent&&recent.length>0&&<section className="aw-sec aw-recent" aria-labelledby="aw-rec-h">
       <div className="aw-recent-h">
-        <span className="l">Продолжить</span>
-        <button onClick={onOpenHistory}>Вся история
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        <h2 className="eyebrow" id="aw-rec-h">Продолжить</h2>
+        <button type="button" onClick={onOpenHistory}>Вся история
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
         </button>
       </div>
       <div className="aw-recent-grid">
-        {recent.slice(0,4).map(s=>(
-          <button key={s.session_id} className="aw-rec" onClick={()=>onLoadSession&&onLoadSession(s.session_id)}>
-            <span className="t">{s.title||"Без названия"}</span>
-            <span className="m">{fmtHistTime(s.updated_at)} · {s.n_messages||0} сообщ.</span>
-          </button>
-        ))}
+        {recent.map(s=>{
+          const st=s.report_id?"отчёт":s.n_answers>0?"ответ":"без ответа";
+          return <button key={s.session_id} type="button" className={"aw-rec"+(s.n_answers>0||s.report_id?"":" none")}
+              onClick={()=>onLoadSession&&onLoadSession(s.session_id)} data-tip={s.first_q&&s.first_q.length>60?s.first_q:undefined}>
+            <span className="t">{s.title||s.first_q||"Без названия"}</span>
+            <span className="m">{fmtHistTime(s.updated_at)} · {st}{s.n_same>1?` · спрашивали ${s.n_same} ${plural(s.n_same,"раз","раза","раз")}`:""}</span>
+          </button>;})}
       </div>
-    </div>}
-    <div className="aw-conn">Подключено: <span>v_offer_current · v_review_topics · v_sber_vs_market</span> · глубина 30 дней</div>
+    </section>}
   </div>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const pct  = (v,d=2) => v==null ? "—" : `${parseFloat(v).toFixed(d)}%`;
-const signed = (v,d=2) => { if(v==null)return "—"; const n=parseFloat(v); return(n>0?"+":"")+n.toFixed(d); };
+// десятичная запятая везде — как на «Обзоре» и в «Отзывах»
+const pct  = (v,d=2) => v==null ? "—" : `${parseFloat(v).toFixed(d).replace(".",",")}%`;
+const signed = (v,d=2) => { if(v==null)return "—"; const n=parseFloat(v); return(n>0?"+":n<0?"−":"")+Math.abs(n).toFixed(d).replace(".",","); };
 const fmtNum = n => n==null ? "—" : parseInt(n).toLocaleString("ru");
 // Safe render helper for unknown-type values (JSONB columns etc.)
 const str = v => v==null ? "" : typeof v==="object" ? JSON.stringify(v) : String(v);
@@ -84,7 +127,7 @@ const fmtDateMsk = s => {
   } catch { return String(s).slice(0,16); }
 };
 const fmtAmount = (min,max) => {
-  const f=n=>{if(!n)return null;n=parseFloat(n);if(n>=1e6)return`${+(n/1e6).toFixed(1)} млн`;if(n>=1e3)return`${Math.round(n/1e3)} тыс.`;return String(Math.round(n));};
+  const f=n=>{if(!n)return null;n=parseFloat(n);if(n>=1e6)return`${String(+(n/1e6).toFixed(1)).replace(".",",")} млн`;if(n>=1e3)return`${Math.round(n/1e3)} тыс.`;return String(Math.round(n));};
   const[a,b]=[f(min),f(max)];
   if(a&&b)return`${a} — ${b} ₽`;if(a)return`от ${a} ₽`;if(b)return`до ${b} ₽`;return "—";
 };
@@ -99,14 +142,73 @@ const fmtTerm = (min,max) => {
 const apiFetch = (path, opts) => fetch(path, opts).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json();});
 const apiPost  = (path,body) => fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 const apiDel   = (path) => fetch(path,{method:"DELETE"}).then(r=>r.json()).catch(()=>{});
+const apiPatch = (path,body) => fetch(path,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 const apiPut   = (path,body) => fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error(`${r.status}`);return r.json();});
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 const ThemeCtx = createContext({theme:"light",setTheme:()=>{}});
+// Тема. Пока человек сам не выбирал, она как в системе и меняется вместе с ней.
+// Выбор хранится в THEME_KEY. Старый ключ писался при каждом входе, поэтому
+// «light» в нём ничего не значит, а «dark» — значит: по умолчанию была светлая.
+// Та же логика стоит в index.html, до первой отрисовки.
+const THEME_KEY="auditlens-theme-choice";
+const readThemeChoice=()=>{ try{ const c=localStorage.getItem(THEME_KEY);
+  if(c==="dark"||c==="light")return c;
+  return localStorage.getItem("auditlens-theme")==="dark"?"dark":null; }catch{return null;} };
+const sysDark=matchMedia("(prefers-color-scheme: dark)");
+// Смена темы перекрашивает весь документ. Пока она идёт, переходы цвета
+// выключены (html.th-sw): иначе сотни элементов плавно меняют фон сами
+// по себе, и на слабых машинах кадры рвутся. Включаем их обратно через два
+// кадра, когда новая тема уже отрисована.
+function themeApply(dark){ const h=document.documentElement; h.classList.add("th-sw"); h.classList.toggle("dark",dark); }
+function themeSettle(){ requestAnimationFrame(()=>requestAnimationFrame(()=>document.documentElement.classList.remove("th-sw"))); }
+// Нажатие: новая тема раскрывается кругом из кнопки. Старый экран — снимок,
+// новый рисуется один раз, а круг двигает композитор, поэтому главный поток
+// в анимации почти не занят. Без View Transitions или в скрытой вкладке —
+// мгновенно. При «уменьшить движение» и на совсем слабых машинах
+// (≤2 ядер или ≤2 ГБ) — короткое перетекание вместо круга.
+// Двойной клик: второй переход прерывает первый, и завершение первого не должно
+// снимать классы, которые ещё нужны второму, — убирает их только последний.
+let themeGen=0;
+function themeSwitch(dark,origin,commit){
+  const h=document.documentElement, gen=++themeGen;
+  if(!document.startViewTransition||document.hidden){ themeApply(dark); commit(); themeSettle(); return; }
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const weak=(navigator.hardwareConcurrency||8)<=2||(navigator.deviceMemory||8)<=2;
+  const circle=!reduce&&!weak;
+  let x=innerWidth-40,y=28;
+  if(origin){ const r=origin.getBoundingClientRect(); x=r.left+r.width/2; y=r.top+r.height/2; }
+  const R=Math.ceil(Math.hypot(Math.max(x,innerWidth-x),Math.max(y,innerHeight-y)));
+  h.classList.remove("th-vt","th-fade"); h.classList.add(circle?"th-vt":"th-fade");
+  const vt=document.startViewTransition(()=>{ themeApply(dark); commit(); });
+  if(circle)vt.ready.then(()=>h.animate(
+    {clipPath:[`circle(0px at ${x}px ${y}px)`,`circle(${R}px at ${x}px ${y}px)`]},
+    {duration:420,easing:"cubic-bezier(.2,0,0,1)",pseudoElement:"::view-transition-new(root)"})).catch(()=>{});
+  vt.finished.catch(()=>{}).finally(()=>{ if(gen!==themeGen)return; h.classList.remove("th-vt","th-fade"); themeSettle(); });
+}
 function ThemeProvider({children}){
-  const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("auditlens-theme")||"light";}catch{return"light";}});
-  useEffect(()=>{document.documentElement.classList.toggle("dark",theme==="dark");try{localStorage.setItem("auditlens-theme",theme);}catch{}},[theme]);
+  const [choice,setChoice]=useState(readThemeChoice);
+  const [sys,setSys]=useState(()=>sysDark.matches?"dark":"light");
+  useEffect(()=>{ const h=e=>setSys(e.matches?"dark":"light");
+    sysDark.addEventListener("change",h); return()=>sysDark.removeEventListener("change",h); },[]);
+  const theme=choice||sys;
+  // Смена без нажатия (система переключилась на ночь): без анимации, но и без
+  // волны переходов. После нажатия класс уже стоит, и здесь ничего не делается.
+  useEffect(()=>{ const dark=theme==="dark";
+    if(document.documentElement.classList.contains("dark")!==dark){ themeApply(dark); themeSettle(); } },[theme]);
+  const setTheme=useCallback((next,origin)=>themeSwitch(next==="dark",origin,()=>{
+    setChoice(next); try{ localStorage.setItem(THEME_KEY,next); localStorage.removeItem("auditlens-theme"); }catch{} }),[]);
   return <ThemeCtx.Provider value={{theme,setTheme}}>{children}</ThemeCtx.Provider>;
+}
+// Солнце, которое становится луной: тень наезжает на диск, лучи уходят
+// поворотом. Показывает текущую тему.
+function ThemeIcon(){
+  return <svg className="th-ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <mask id="th-ic-m"><rect width="24" height="24" fill="#fff"/><circle className="th-mc" cx="12" cy="12" r="8" fill="#000"/></mask>
+    <circle className="th-core" cx="12" cy="12" r="8" fill="currentColor" mask="url(#th-ic-m)"/>
+    <path className="th-rays" d="M19 12h2.5M16.95 16.95l1.77 1.77M12 19v2.5M7.05 16.95l-1.77 1.77M5 12H2.5M7.05 7.05L5.28 5.28M12 5V2.5M16.95 7.05l1.77-1.77"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none"/>
+  </svg>;
 }
 const useTheme = () => useContext(ThemeCtx);
 const BanksCtx = createContext([]);
@@ -145,8 +247,6 @@ const Ic = {
   src:     p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 11v6c0 1.7 4 3 9 3s9-1.3 9-3v-6"/></svg>,
   shield:  p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 2l8 4v6c0 5-3.5 9.3-8 10-4.5-.7-8-5-8-10V6z"/></svg>,
   search:  p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>,
-  sun:     p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>,
-  moon:    p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>,
   refresh: p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3 12a9 9 0 0115.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 01-15.5 6.3L3 16"/><path d="M3 21v-5h5"/></svg>,
   send:    p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>,
   arrow_up:p=><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>,
@@ -188,7 +288,7 @@ function HBars({rows,max,fmt=v=>v}){
 
 function BankAvatar({slug="",name="",isSber=false}){
   const letter=(name||slug||"?").charAt(0).toUpperCase();
-  return <div style={{width:28,height:28,borderRadius:6,background:isSber?"var(--sber)":"var(--paper-2)",color:isSber?"#fff":"var(--ink-2)",border:"1px solid "+(isSber?"var(--sber)":"var(--hair-2)"),display:"grid",placeItems:"center",fontWeight:600,fontSize:12,fontFamily:"'JetBrains Mono',monospace",flexShrink:0}}>{letter}</div>;
+  return <div style={{width:28,height:28,borderRadius:6,background:isSber?"var(--sber)":"var(--paper-2)",color:isSber?"#fff":"var(--ink-2)",border:"1px solid "+(isSber?"var(--sber)":"var(--hair-2)"),display:"grid",placeItems:"center",fontWeight:600,fontSize:12,flexShrink:0}}>{letter}</div>;
 }
 
 // Полноэкранная заглушка для пустой БД с CTA-кнопкой запуска всех источников.
@@ -248,7 +348,7 @@ function EmptyOverviewCta(){
 
   return <div className="fade-in" style={{padding:"40px 0"}}>
     <header style={{marginBottom:32}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Bank Audit Platform</div>
+      <div className="eyebrow" style={{marginBottom:6}}>AuditLens · первый запуск</div>
       <h1 className="t-display" style={{maxWidth:"22ch",marginBottom:14}}>
         База пуста — нужно <em style={{fontStyle:"italic",color:"var(--accent)"}}>собрать данные</em>
       </h1>
@@ -326,13 +426,12 @@ function EmptyOverviewCta(){
   </div>;
 }
 
+// Пустое состояние и ошибка — один блок (S3): значок в плашке, заголовок, пояснение
 function EmptyState({text="Данных нет",title="Ничего не найдено"}){
-  return <div style={{padding:"64px 24px",textAlign:"center"}}>
-    <div style={{display:"inline-flex",width:48,height:48,borderRadius:8,background:"var(--paper-2)",border:"1px solid var(--hair)",alignItems:"center",justifyContent:"center",marginBottom:12,color:"var(--ink-3)"}}>
-      <Ic.search width="20" height="20"/>
-    </div>
-    <div style={{fontWeight:500,marginBottom:4}}>{title}</div>
-    <div className="t-cap" style={{maxWidth:"42ch",margin:"0 auto"}}>{text}</div>
+  return <div className="st-block">
+    <div className="st-ic" aria-hidden="true"><Ic.search width="20" height="20"/></div>
+    <p className="st-t">{title}</p>
+    <p className="st-x">{text}</p>
   </div>;
 }
 
@@ -356,11 +455,28 @@ function LoadingPage(){
   </div>;
 }
 
+// Единая шапка вкладки (система «Отзывов»): надстрочник раздела, заголовок
+// Source Serif 28, строка-пояснение, действия справа. «Обзор» и «Для вас» —
+// исключение: у них фирменная передовица (Instrument Serif, красный курсив).
+function PageHead({eyebrow,title,meta,actions,children}){
+  return <header className="ph">
+    <div className="ph-main">
+      {eyebrow&&<div className="eyebrow ph-eb">{eyebrow}</div>}
+      <h1 className="ph-t">{title}</h1>
+      {meta&&<p className="ph-meta">{meta}</p>}
+      {children}
+    </div>
+    {actions&&<div className="ph-act">{actions}</div>}
+  </header>;
+}
+
 function ErrState({msg}){
-  return <div style={{padding:"64px 24px",textAlign:"center"}}>
-    <div style={{fontSize:28,marginBottom:12,color:"var(--neg)"}}>⚠</div>
-    <div style={{fontWeight:500,marginBottom:4}}>Ошибка загрузки</div>
-    <div className="t-cap" style={{maxWidth:"42ch",margin:"0 auto"}}>{msg}</div>
+  return <div className="st-block" role="alert">
+    <div className="st-ic err" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 16 16">
+      <path d="M8 2.2 14.3 13H1.7Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+      <path d="M8 6.5v3M8 11.2v.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
+    <p className="st-t">Не удалось загрузить</p>
+    <p className="st-x">{msg}</p>
   </div>;
 }
 
@@ -375,7 +491,7 @@ function StatRow({label,value,delta,sub,warn,neg}){
 }
 
 function PositionBar({value,median,max}){
-  if(value==null)return <span className="mono" style={{color:"var(--ink-4)"}}>—</span>;
+  if(value==null)return <span className="mono" style={{color:"var(--ink-3)"}}>—</span>;
   const vals=[value,median,max].filter(v=>v!=null).map(parseFloat);
   const lo=Math.min(...vals)*0.96,hi=Math.max(...vals)*1.04;
   const pos=v=>((parseFloat(v)-lo)/(hi-lo))*100;
@@ -421,6 +537,10 @@ function _inlineHTML(s, renderCitation=(n)=>`[${n}]`){
     // URL — через escAttr: кавычка в URL иначе выламывается из href-атрибута.
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
              (_,txt,url)=>`<a href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" class="md-link">${txt}</a>`)
+    // ссылки на страницы AuditLens ([жалобы](#reviews?theme=…)) — ИИ-аналитик
+    // ведёт на тот же срез, по которому посчитано число; открываются здесь же
+    .replace(/\[([^\]]+)\]\((#(?:overview|foryou|reviews|market|banks|knowledge|sources|loophole|ai)(?:\?[^)\s]*)?)\)/g,
+             (_,txt,href)=>`<a href="${escAttr(href)}" class="md-link md-inapp">${txt}</a>`)
     .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
     // __жирный__ (подчёркивания) — только на границах слова. NB: JS \w НЕ включает
     // кириллицу, поэтому класс слова задаём явно (иначе ломается имя_атрибута).
@@ -613,7 +733,9 @@ const BF_KIND={
   tariff_move:{tag:"Тарифы"},
   rate_move:{tag:"Ключевая ставка"},
   news_alert:{tag:"Новость"},
-  exploit:{tag:"Уязвимости"},          // будущий источник соседней команды
+  loophole:{tag:"Уязвимости · Сбер"},
+  bank_rating:{tag:"Банки · рейтинг"},
+  exploit:{tag:"Уязвимости"},
 };
 
 // ── мост телеметрии для компонентов ──────────────────────────────────────────
@@ -664,38 +786,82 @@ function popPlace(el,{w=400,h=280,gap=12}={}){
   return {left,top,width:ww,arrow};
 }
 
-// Текстовая подсказка [data-tip] — тоже порталом (была CSS ::after, обрезалась)
+// Текстовая подсказка [data-tip] — тоже порталом (была CSS ::after, обрезалась).
+// Наведение и фокус с клавиатуры — сразу; на телефоне — долгое нажатие (тап
+// остаётся действием). Экранный диктор читает подсказку через aria-describedby.
 function TipLayer(){
   const[tip,setTip]=useState(null);
   useEffect(()=>{
-    let cur=null;
-    const show=e=>{
-      const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
-      if(!el||el===cur)return;
+    let cur=null, lp=0, lpFired=false;
+    const open=el=>{
       const txt=el.getAttribute("data-tip");
       if(!txt)return;
-      cur=el;
+      if(cur&&cur!==el)cur.removeAttribute("aria-describedby");
+      cur=el; el.setAttribute("aria-describedby","tip-pop");
       setTip({txt,...popPlace(el,{w:320,h:120})});
     };
+    const close=()=>{ if(cur)cur.removeAttribute("aria-describedby"); cur=null; setTip(null); };
+    // Системные title (их ~1 700 на «Рынке», «Банках», «Базе знаний») — нашим слоем:
+    // при наведении переносим title в data-tip и снимаем его, чтобы браузер не
+    // показал свой серый ярлык через секунду. Кадр и SVG не трогаем.
+    const adopt=t=>{
+      const el=t&&t.closest&&t.closest("[title]");
+      if(!el||el.tagName==="IFRAME"||(el.closest&&el.closest("svg")))return;
+      const v=el.getAttribute("title"); el.removeAttribute("title");
+      if(!v)return;
+      if(!el.hasAttribute("data-tip")||el.hasAttribute("data-tip-t")){
+        el.setAttribute("data-tip",v); el.setAttribute("data-tip-t","");}
+      if(!el.hasAttribute("aria-label")&&!(el.textContent||"").trim())el.setAttribute("aria-label",v);
+    };
+    const show=e=>{
+      adopt(e.target);
+      const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
+      if(!el||el===cur)return;
+      open(el);
+    };
+    // Закрываем, когда указатель или фокус ушли ЗА пределы элемента. Раньше
+    // проверялось, ОТКУДА ушли (e.target) — а это всегда сам элемент, и
+    // подсказка висела, пока не наведёшь на другую или не прокрутишь.
     const hide=e=>{
       if(!cur)return;
-      if(e&&e.target&&e.target.closest&&e.target.closest("[data-tip]")===cur&&e.type!=="scroll")return;
-      cur=null;setTip(null);
+      const to=e&&e.relatedTarget;
+      if(e&&e.type!=="scroll"&&to&&cur.contains(to))return;
+      close();
     };
+    const key=e=>{if(e.key==="Escape"&&cur)close();};
+    const down=e=>{
+      if(e.pointerType!=="touch")return;
+      close(); clearTimeout(lp); lpFired=false;
+      adopt(e.target);
+      const el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
+      if(el)lp=setTimeout(()=>{lpFired=true;open(el);},450);
+    };
+    const cancel=()=>clearTimeout(lp);
+    const click=e=>{if(lpFired){lpFired=false;e.preventDefault();e.stopPropagation();}};
     document.addEventListener("mouseover",show);
     document.addEventListener("mouseout",hide);
     document.addEventListener("focusin",show);
     document.addEventListener("focusout",hide);
+    document.addEventListener("keydown",key);
+    document.addEventListener("pointerdown",down);
+    document.addEventListener("pointerup",cancel);
+    document.addEventListener("pointercancel",cancel);
+    document.addEventListener("click",click,true);
     window.addEventListener("scroll",hide,true);
     return()=>{document.removeEventListener("mouseover",show);
       document.removeEventListener("mouseout",hide);
       document.removeEventListener("focusin",show);
       document.removeEventListener("focusout",hide);
+      document.removeEventListener("keydown",key);
+      document.removeEventListener("pointerdown",down);
+      document.removeEventListener("pointerup",cancel);
+      document.removeEventListener("pointercancel",cancel);
+      document.removeEventListener("click",click,true);
       window.removeEventListener("scroll",hide,true);};
   },[]);
   if(!tip)return null;
   return ReactDOM.createPortal(
-    <div className={"tip-pop tip-a-"+tip.arrow}
+    <div id="tip-pop" role="tooltip" className={"tip-pop tip-a-"+tip.arrow}
          style={{left:tip.left,top:tip.top,maxWidth:tip.width}}>{tip.txt}</div>,
     document.body);
 }
@@ -703,31 +869,59 @@ function TipLayer(){
 // ─── «Как это посчитано» — раскрытие любой цифры брифинга ─────────────────────
 // Аудитор не должен гадать, откуда взялось «×2.1»: показываем формулу словами,
 // как считалась норма, на какой выборке и из какого источника.
-function xpRows(kind,d){
+// Числа «Обзора» по-русски: десятичная запятая, без хвостового «,0» — «3,4», «×4,4»
+const ovN=(v,dg=1)=>{ if(v==null||v==="")return "—"; const n=parseFloat(v); if(isNaN(n))return String(v);
+  return (Math.round(n*10**dg)/10**dg).toFixed(dg).replace(".",",").replace(/(,\d*?)0+$/,"$1").replace(/,$/,""); };
+const ovRaz=k=>{ const r=Math.round(k*10)/10; if(r!==Math.round(r))return "раза"; const n=Math.round(r);
+  return n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?"раза":"раз"; };
+const ovJ=n=>`${fmtNum(n)} ${plural(Math.round(n||0),"жалоба","жалобы","жалоб")}`;
+// Как честно сказать о рынке — та же логика, что reviews_dash.market_phrase:
+// «только у …» лишь при ровном рынке (×<1,15). 25.09 заголовок написал «только
+// у Сбера» при росте рынка ×1,93 — флаг bank_specific значит «сильно обгоняет».
+function ovMarketNote(ratio,mr,who="банка"){
+  if(!ratio)return null;
+  if(mr==null||mr<1.15)return `только у ${who}: по рынку тема ровная`;
+  const k=ratio/mr;
+  return k>=1.3?`в ${ovN(k)} ${ovRaz(k)} сильнее рынка (у рынка ×${ovN(mr)})`:`рынок растёт так же (×${ovN(mr)})`;
+}
+// Страховка для уже записанных выпусков: «только у Сбера», когда ни один
+// сигнал не ровный по рынку, — «у Сбера сильнее, чем по рынку»
+function ovFixOnly(text,sigs){
+  if(!text||!sigs||!sigs.length)return text;
+  if(sigs.some(x=>x&&x.ratio&&(x.market_ratio==null||x.market_ratio<1.15)))return text;
+  return String(text).replace(/только\s+у\s+(Сбера|Сбербанка|банка|нас)(?![а-яё])/gi,(m,w)=>`у ${w} сильнее, чем по рынку`);
+}
+
+function xpRows(kind,d,now){
   const R=[];
   if(kind==="review_spike"){
     if(d.week!=null&&d.baseline_week!=null)
-      R.push(["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`]);
+      R.push(["Расчёт",`${ovJ(d.week)} за 7 дней ÷ ${ovN(d.baseline_week)} — норма недели = ×${ovN(d.ratio)}`]);
     if(d.baseline_week!=null)
       // ВАЖНО: это среднее по окну 14–63 дня назад (7 недель), не медиана и не
       // «прошлые 6 недель» — последние две недели в норму НЕ входят, иначе
       // всплеск разбавлял бы сам себя
       R.push(["Норма",d.base_count!=null
-        ? `${d.base_count} жалоб за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks} = ${d.baseline_week} в неделю`
-        : `среднее за неделю по окну 14–63 дня назад — ${d.baseline_week} жалоб`]);
-    if(d.prev_week!=null) R.push(["Прошлая неделя",`${d.prev_week} жалоб`]);
+        ? `${ovJ(d.base_count)} за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks} = ${ovN(d.baseline_week)} в неделю`
+        : `среднее за неделю по окну 14–63 дня назад — ${ovN(d.baseline_week)}`]);
+    if(d.prev_week!=null) R.push(["Прошлая неделя",ovJ(d.prev_week)]);
     // масштаб: 6.7/нед — это ОДНА тема; без общего числа цифра кажется мелкой
     if(d.week_total)
       R.push(["Масштаб",`тема — ${Math.round(100*d.week/d.week_total)}% всех жалоб на Сбер за неделю (${d.week} из ${d.week_total})`]);
     if(d.market_ratio!=null)
-      R.push(["Рынок",`та же тема по рынку ×${d.market_ratio}` +
-        (d.bank_specific?" — значит всплеск наш, а не отраслевой":"")]);
-    R.push(["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★) · темы по ключевым словам"]);
+      R.push(["Рынок",`та же тема по рынку ×${ovN(d.market_ratio)} — `+(d.market_ratio<1.15
+        ?"рынок ровный, всплеск наш, а не отраслевой"
+        :`растёт и рынок; у Сбера ${(ovMarketNote(d.ratio,d.market_ratio)||"").replace(/\s*\(у рынка[^)]*\)/,"")}`)]);
+    // Выпуск — снимок на утро; к вечеру данные дополняются. Та же цифра сейчас
+    // — как в «Отзывах», чтобы расхождение не выглядело ошибкой
+    if(now&&(now.week!==d.week||Math.abs((now.baseline_week||0)-(d.baseline_week||0))>=0.05))
+      R.push(["Сейчас",`${ovJ(now.week)} за 7 дней при норме ${ovN(now.baseline_week)} — ×${ovN(now.ratio)}: после выпуска данные дополнились (так же в «Отзывах»)`]);
+    R.push(["Выборка","только Сбербанк · жалобы со всех площадок, без похвалы, мусора и копий · главная проблема по разметке ИИ (кодификатор) · порог — статистически значимый рост к 7 прошлым неделям"]);
   } else if(kind==="tariff_move"){
     if(d.from!=null&&d.to!=null)
-      R.push(["Расчёт",`${d.from}% → ${d.to}% = ${d.delta>0?"+":""}${d.delta} п.п.`]);
+      R.push(["Расчёт",`${ovN(d.from,2)}% → ${ovN(d.to,2)}% = ${d.delta>0?"+":"−"}${ovN(Math.abs(d.delta),2)} п.п.`]);
     if(d.category) R.push(["Продукт",`${CAT_LABELS[d.category]||d.category} · ${d.title||""}`]);
-    R.push(["Порог","в движения недели попадают сдвиги от 0.05 п.п."]);
+    R.push(["Порог","в движения недели попадают сдвиги от 0,05 п.п."]);
     R.push(["Источник","журнал изменений тарифов (sravni.ru)"]);
   } else if(kind==="mass_move"){
     R.push(["Расчёт",`${d.n_banks} банков изменили условия за ${d.window_h||48} ч`]);
@@ -750,52 +944,121 @@ function xpRows(kind,d){
 
 // расшифровки плиток пульса: у каждой цифры своя формула и своя выборка
 const xpDiverge=d=>[
-  ["Расчёт",`${d.week} жалоб за 7 дней ÷ ${d.baseline_week} — норма недели = ×${d.ratio}`],
-  ["Норма",`${d.base_count} жалоб за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks}`],
+  ["Расчёт",`${ovJ(d.week)} за 7 дней ÷ ${ovN(d.baseline_week)} — норма недели = ×${ovN(d.ratio)}`],
+  ["Норма",`${ovJ(d.base_count)} за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks}`],
   ["Рынок",d.market_ratio!=null
-    ?`та же тема по всем банкам ×${d.market_ratio} — мы растём в ${d.gap} раза быстрее рынка`
+    ?`та же тема по всем банкам ×${ovN(d.market_ratio)} — мы растём в ${ovN(d.gap)} ${ovRaz(d.gap||0)} быстрее рынка`
     :"рыночный срез недоступен"],
-  ["Почему здесь","из 22 тем показана та, где наш рост сильнее всего обгоняет рыночный"],
-  ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
+  ["Почему здесь","из 41 проблемы кодификатора показана та, где наш рост сильнее всего обгоняет рыночный"],
+  ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
-const xpEscalation=k=>[
-  ["Значение",`${pct1(k.escalation_pct)} жалоб содержат угрозу обращения в ЦБ, суд, ФАС или прокуратуру`],
-  ["Как ищем","по формулировкам жалобы: «жалоба в ЦБ», «подам иск», «в прокуратуру» и подобным"],
-  ["Порог","12% — принятый в инструменте уровень внимания"],
-  ["Выборка",`${fmtNum(k.total||0)} жалоб за 90 дней · только Сбербанк · banki.ru`],
+const xpEscalation=(k,now)=>[
+  ["Значение",`${pct1(k.escalation_pct)} жалоб: клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор или к финомбудсмену (разметка ИИ)`],
+  ...(k.escalation_filed_pct!=null?[["Из них",`уже обратились ${pct1(k.escalation_filed_pct)}, грозят ${pct1(Math.round((k.escalation_pct-k.escalation_filed_pct)*10)/10)}`]]:[]),
+  // Порог 12% убран: у крупного банка он пробит всегда, и плитка горела
+  // постоянно. Сравниваем с рынком — как на вкладке «Отзывы»
+  ["Рынок",k.market_escalation_pct!=null
+    ?`у остальных банков ${pct1(k.market_escalation_pct)} — ${k.escalation_sig?"у Сбера значимо выше":"различие в пределах колебаний"}`
+    :"сравнение с рынком появится со следующего выпуска"],
+  ["Как ищем","модель читает жалобу целиком и отмечает угрозу или уже поданное обращение; выборочная проверка — 99% верно"],
+  ["Выборка",`${ovJ(k.total||0)} за 90 дней · только Сбербанк · все площадки`],
+  ...(now&&now.escalation_pct!=null&&now.escalation_pct!==k.escalation_pct
+    ?[["Сейчас",`${pct1(now.escalation_pct)} — после выпуска данные дополнились (так же в «Отзывах»)`]]:[]),
 ];
-const xpWeek=(ov,k)=>[
-  ["Расчёт",`${ov.week} жалоб за последние 7 дней`],
+const xpWeek=(ov,k,now)=>[
+  ["Расчёт",`${ovJ(ov.week)} за последние 7 дней`],
   ["Норма",ov.baseline_week!=null
     ?`${Math.round(ov.baseline_week)} в неделю — среднее по окну 14–63 дня назад`:"—"],
-  ["Рынок",ov.market_ratio!=null?`по всем банкам ×${ov.market_ratio} к своей норме`:"—"],
-  ["Масштаб",k.total?`корпус ${fmtNum(k.total)} жалоб за 90 дн · доля рынка ${k.market_share_pct}% · ${k.market_rank}-е место из ${k.market_banks}`:"—"],
-  ["Канал","banki.ru, негативные отзывы 1–2★ — один из каналов, не все обращения"],
+  ["Рынок",ov.market_ratio!=null?`по всем банкам ×${ovN(ov.market_ratio)} к своей норме`:"—"],
+  ["Масштаб",k.total?`${ovJ(k.total)} за 90 дн · доля в жалобах на все банки ${pct1(k.market_share_pct)} — без поправки на число клиентов`:"—"],
+  ["Канал","отзывы на площадках (banki.ru, sravni.ru, finuslugi.ru и др.) — один из каналов, не все обращения"],
+  ...(now&&now.week!=null&&now.week!==ov.week
+    ?[["Сейчас",`${ovJ(now.week)} за 7 дней — после выпуска данные дополнились`]]:[]),
 ];
 const xpOurChanges=tm=>[
   ["Значение",`${(tm.totals&&tm.totals.sber_changes_7d)||0} офферов Сбера со значимым изменением условий за 7 дней`],
-  ["Значимое","изменение нестаточного условия или сдвиг ставки от 0.01 п.п."],
+  ["Значимое","изменение нестатичного условия или сдвиг ставки от 0,01 п.п."],
   ["Зачем","проверить, что изменения тарифов прошли согласование и корректно отражены"],
   ["Источник","журнал изменений условий (sravni.ru), сверка ежедневная"],
 ];
 const xpUnclassified=u=>u?[
-  ["Значение",`${u.week} жалоб из ${u.week_total} за неделю (${u.pct}%) не попали ни в одну из 22 тем`],
-  ["Норма",`${u.baseline_week} в неделю по окну 14–63 дня назад`+(u.ratio!=null?` — сейчас ×${u.ratio}`:"")],
-  ["Что значит","классификатор их не видит: либо инцидент вне таксономии, либо пробел в правилах"],
+  ["Значение",`${ovJ(u.week)} из ${fmtNum(u.week_total)} за неделю (${u.pct}%) модель не отнесла ни к одной из 41 проблемы`],
+  ["Норма",`${ovN(u.baseline_week)} в неделю по окну 14–63 дня назад`+(u.ratio!=null?` — сейчас ×${ovN(u.ratio)}`:"")],
+  ["Что значит","либо инцидент нового типа, либо проблема, которой нет в кодификаторе — такие жалобы читаем первыми"],
   ["Зачем","картина по темам неполна на эту долю — это надо знать до выводов"],
 ]:[];
 const xpThemeUp=t=>[
-  ["Расчёт",`${t.n} жалоб за 90 дней против ${Math.round(t.n/(1+(t.delta_pct||0)/100))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
+  ["Расчёт",`${ovJ(t.n)} за 90 дней против ${fmtNum(Math.round(t.n/(1+(t.delta_pct||0)/100)))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
   ["Горизонт","квартал — медленные тренды, которых не видно в недельном окне"],
-  ["Порог","показываем тему с ростом от 50% и не менее 30 жалоб"],
-  ["Выборка","только Сбербанк · негативные отзывы banki.ru (1–2★)"],
+  ["Порог","рост от 50% и не менее 30 жалоб — и значимо быстрее общего потока жалоб (как на вкладке «Отзывы»)"],
+  ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
 
 // обёртка вокруг числа: пунктирное подчёркивание + карточка-расшифровка.
 // Позиция выбирается по свободному месту: сбоку (не перекрывает текст вообще),
 // иначе снизу/сверху — попап не должен резать строку заголовка.
-function Xp({rows,children,note}){
+function XpPop({box,rows,note}){
+  // aria-hidden: диктор читает расшифровку из скрытого текста у триггера
+  return ReactDOM.createPortal(
+    <div className={"xp-pop xp-a-"+box.arrow} role="tooltip" aria-hidden="true"
+         style={{left:box.left,top:box.top,width:box.width}}>
+      <span className="xp-h">как это посчитано</span>
+      {rows.map(([k,v],i)=><span key={i} className="xp-row">
+        <span className="xp-k">{k}</span><span className="xp-v">{v}</span></span>)}
+      {note&&<span className="xp-note">{note}</span>}
+    </div>, document.body);
+}
+const xpText=(rows,note)=>(rows||[]).map(([k,v])=>`${k}: ${v}`).join("; ")+(note?`. ${note}`:"");
+let xpSeq=0;
+
+// Расшифровка кнопкой: касание и Enter открывают, повтор / Esc / касание мимо —
+// закрывают, мышью — по наведению. Внутри ссылки-плитки вложенный фокусируемый
+// span был недоступен на телефоне (касание уводило на страницу) — кнопка стоит
+// рядом со ссылкой, а не в ней. children — текстовый вид («как посчитано»),
+// без них — значок ⓘ в углу плитки.
+function XpBtn({rows,note,label,children}){
   const ref=useRef(null);
+  const id=useMemo(()=>"xp-d"+(++xpSeq),[]);
+  const[open,setOpen]=useState(false);
+  const[hov,setHov]=useState(false);
+  const[box,setBox]=useState(null);
+  const vis=open||hov;
+  useEffect(()=>{
+    if(!vis){setBox(null);return;}
+    if(ref.current)setBox(popPlace(ref.current,{w:400,h:Math.min(300,80+34*((rows||[]).length))}));
+    const off=()=>{setOpen(false);setHov(false);};
+    const out=e=>{if(ref.current&&!ref.current.contains(e.target))off();};
+    const key=e=>{if(e.key==="Escape"){off();ref.current&&ref.current.focus();}};
+    window.addEventListener("scroll",off,true);
+    window.addEventListener("resize",off);
+    document.addEventListener("pointerdown",out,true);
+    document.addEventListener("keydown",key);
+    return()=>{window.removeEventListener("scroll",off,true);window.removeEventListener("resize",off);
+      document.removeEventListener("pointerdown",out,true);document.removeEventListener("keydown",key);};
+  },[vis,rows]);
+  if(!rows||!rows.length)return children?<span>{children}</span>:null;
+  return <>
+    <button type="button" ref={ref} className={children?"xp-b":"xp-i"} aria-expanded={open}
+        aria-label={children?undefined:"Как посчитано: "+label} aria-describedby={id}
+        onClick={e=>{e.preventDefault();e.stopPropagation();setOpen(v=>!v);}}
+        onPointerEnter={e=>{if(e.pointerType==="mouse")setHov(true);}}
+        onPointerLeave={e=>{if(e.pointerType==="mouse")setHov(false);}}>
+      {children||<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.3"/>
+        <path d="M8 7.2v4M8 4.9v.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>}
+    </button>
+    {/* hidden — не видно и не попадает в имя заголовка/ссылки, но
+        aria-describedby читает текст и у скрытого элемента */}
+    <span id={id} hidden>{xpText(rows,note)}</span>
+    {box&&<XpPop box={box} rows={rows} note={note}/>}
+  </>;
+}
+
+// passive — число внутри ссылки: пунктир и расшифровка по наведению мышью,
+// но без фокуса (фокус и касание — у кнопки ⓘ рядом)
+function Xp({rows,children,note,passive}){
+  const ref=useRef(null);
+  const id=useMemo(()=>"xp-d"+(++xpSeq),[]);
   const[box,setBox]=useState(null);
   const show=useCallback(()=>{
     if(ref.current)setBox(popPlace(ref.current,{w:400,h:Math.min(300,80+34*((rows||[]).length))}));
@@ -810,41 +1073,55 @@ function Xp({rows,children,note}){
       window.removeEventListener("resize",off);};
   },[box]);
   if(!rows||!rows.length)return children;
-  return <span className="xp" tabIndex={0} ref={ref}
+  if(passive)return <span className="xp" ref={ref} onMouseEnter={show} onMouseLeave={hide}>
+    {children}{box&&<XpPop box={box} rows={rows} note={note}/>}</span>;
+  return <span className="xp" tabIndex={0} ref={ref} aria-describedby={id}
       onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}>
-    {children}
-    {box&&ReactDOM.createPortal(
-      <div className={"xp-pop xp-a-"+box.arrow} role="tooltip"
-           style={{left:box.left,top:box.top,width:box.width}}>
-        <span className="xp-h">как это посчитано</span>
-        {rows.map(([k,v],i)=><span key={i} className="xp-row">
-          <span className="xp-k">{k}</span><span className="xp-v">{v}</span></span>)}
-        {note&&<span className="xp-note">{note}</span>}
-      </div>, document.body)}
+    {children}<span id={id} hidden>{xpText(rows,note)}</span>
+    {box&&<XpPop box={box} rows={rows} note={note}/>}
   </span>;
+}
+
+const OvWarnIc=()=><svg className="ov-note-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+  <path d="M8 2.2 14.3 13H1.7Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+  <path d="M8 6.5v3M8 11.2v.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>;
+const OvInfoIc=()=><svg className="ov-note-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+  <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.3"/>
+  <path d="M8 7.2v4M8 4.9v.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>;
+
+// Плитка пульса: ссылка на всю плитку + кнопка ⓘ рядом (не внутри ссылки).
+// Число внутри ссылки остаётся с фирменным пунктиром и расшифровкой по наведению.
+function BfTile({cls,href,xp,note,label,children}){
+  return <div className={"bf-t"+(cls||"")}>
+    {href?<a className="bf-t-a" href={href}>{children}</a>:<div className="bf-t-a">{children}</div>}
+    <XpBtn rows={xp} note={note} label={label}/>
+  </div>;
 }
 
 // «−22 ко вчера» под числом плитки: носитель смысла — изменение, а не уровень.
 // Сравниваются снапшоты выпусков (см. _digest_delta на бэке), поэтому дрейф
 // скользящего окна внутри дня сюда не попадает.
-function BfDelta({v,unit,invert}){
+function BfDelta({v,unit,invert,neutral}){
   if(v==null||v===0)return null;
   const better=invert?v<0:v>0;      // invert=true → рост это плохо
-  return <span className={"bf-t-delta "+(better?"good":"bad")}>
-    {v>0?"+":"−"}{Math.abs(v)}{unit||""} ко вчера</span>;
+  // neutral — у метрики нет «лучше/хуже» (сколько тарифов меняли сами):
+  // красный там читался как ухудшение
+  return <span className={"bf-t-delta "+(neutral?"flat":better?"good":"bad")}>
+    {v>0?"+":"−"}{ovN(Math.abs(v))}{unit||""} ко вчера</span>;
 }
 
 // Вердикт дня, если LLM не сформулировала: одна фраза по тем же числам.
-function bfVerdict(dv,esc,ovl,unc){
-  const bits=[];
+function bfVerdict(dv,kpi,ovl,unc){
+  const bits=[], k=kpi||{};
   if(dv&&dv.gap>=1.25)
-    bits.push(`Внимание на «${(dv.short||dv.label).toLowerCase()}»: ${dv.week} жалоб при норме ${dv.baseline_week}` +
+    bits.push(`Внимание на «${(dv.short||dv.label).toLowerCase()}»: ${ovJ(dv.week)} при норме ${ovN(dv.baseline_week)}` +
       (dv.market_ratio!=null&&dv.market_ratio<1.15?" — и это только у нас, по рынку тема ровная":""));
   else bits.push("Спокойное утро: тем с ростом сильнее рынка нет");
-  if(esc!=null&&esc>=12) bits.push(`эскалации в ЦБ и суд выше порога — ${pct1(esc)} при 12%`);
-  if(unc&&unc.ratio!=null&&unc.ratio>=1.3) bits.push(`жалоб вне известных тем больше обычного (${unc.week} против ${unc.baseline_week})`);
+  if(k.escalation_sig&&k.market_escalation_pct!=null)
+    bits.push(`эскалация выше рынка — ${pct1(k.escalation_pct)} против ${pct1(k.market_escalation_pct)}`);
+  if(unc&&unc.ratio!=null&&unc.ratio>=1.3) bits.push(`жалоб вне известных тем больше обычного (${unc.week} против ${ovN(unc.baseline_week)})`);
   if(bits.length===1&&ovl&&ovl.week!=null&&ovl.baseline_week!=null)
-    bits.push(`всего ${ovl.week} жалоб за неделю при норме ${Math.round(ovl.baseline_week)}`);
+    bits.push(`всего ${ovJ(ovl.week)} за неделю при норме ${Math.round(ovl.baseline_week)}`);
   return bits.join(", ")+".";
 }
 
@@ -900,8 +1177,8 @@ function bfParseBrief(md){
   return out;
 }
 
-function BfBrief({markdown}){
-  const items=useMemo(()=>bfParseBrief(markdown),[markdown]);
+function BfBrief({markdown,skip}){
+  const items=useMemo(()=>bfParseBrief(markdown).filter(it=>!(skip&&skip(it))),[markdown,skip]);
   // не распарсилось — показываем как было, хуже не станет
   if(!items.length)return <div className="bf-brief">{renderMD(markdown)}</div>;
   const cls=it=>it.isNew?"new":/высок/i.test(it.level||"")?"high"
@@ -922,27 +1199,37 @@ function BfBrief({markdown}){
   </div>;
 }
 
-// Цвет карточки и точка в квадрате 3×3 кодировали риск и его матрицу, но нигде
-// не объяснялись — в обратной связи об этом написали трижды: «непонятна
-// расцветка», «непонятна световая палитра», «расшифруйте вероятность × влияние».
-function BfLegend(){
-  return <div className="bf-legend">
-    <span><i className="d risk"/>риск — требует действия</span>
-    <span><i className="d watch"/>следить — держим в поле зрения</span>
-    <span><i className="d good"/>спокойно — отклонений нет</span>
-    <span className="sep">·</span>
-    <span className="gl"><RiskGlyph likelihood={3} impact={3}/>положение точки: вероятность слева направо, влияние снизу вверх</span>
-  </div>;
+
+// Оценка карточки аудитором: «Полезно» / «Не по делу». Это главный сигнал
+// качества передовицы — раньше о нём судили только по жалобам руководства.
+function BfFeedback({ins}){
+  const key="bf-fb:"+(ins.ref||"")+":"+new Date().toISOString().slice(0,10);
+  const[v,setV]=useState(()=>{try{return localStorage.getItem(key)||"";}catch{return "";}});
+  const send=verdict=>{
+    if(v===verdict)return;
+    setV(verdict);
+    try{localStorage.setItem(key,verdict);}catch{}
+    apiPost("/api/feedback",{kind:"digest_card",item_key:key.slice(6),verdict:verdict==="useful"?1:-1,
+      topics:[ins.kind||""],payload:{title:ins.title,ref:ins.ref,score:ins.score}}).catch(()=>{});
+  };
+  return <span className="bf-fb" role="group" aria-label="Оценка карточки">
+    <button className={"bf-fb-b"+(v==="useful"?" on":"")} onClick={()=>send("useful")} data-tip="Полезно для работы" aria-label="Полезно">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg></button>
+    <button className={"bf-fb-b"+(v==="noise"?" on":"")} onClick={()=>send("noise")} data-tip="Не по делу" aria-label="Не по делу">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg></button>
+  </span>;
 }
 
-function BfCard({ins,idx,lead}){
+function BfCard({ins,idx,lead,now,sigs,compact}){
   const d=ins.data||{};
-  const xp=xpRows(ins.kind,d);
+  const[open,setOpen]=useState(!compact);
+  const closed=compact&&!open;
+  const xp=xpRows(ins.kind,d,now);
   const viz=(()=>{
     if(ins.kind==="review_spike")
       return <>
         <Spark data={[d.baseline_week||0,d.prev_week||0,d.week||0]} w={64} h={20} color="var(--ink-3)"/>
-        {d.ratio&&<span className="mono tnum" style={{fontSize:12,fontWeight:600}}>×{d.ratio}</span>}
+        {d.ratio&&<span className="mono tnum" style={{fontSize:12,fontWeight:600}}>×{ovN(d.ratio)}</span>}
         {d.geo&&<span className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{d.geo.share}% · {d.geo.city}</span>}
       </>;
     if(ins.kind==="tariff_move")return <DeltaStrip from={d.from} to={d.to}/>;
@@ -954,27 +1241,36 @@ function BfCard({ins,idx,lead}){
       return <><RateStep points={(d.points||[]).slice(-30)}/><span className="mono tnum" style={{fontSize:13,fontWeight:600}}>{d.current}%</span></>;
     return null;
   })();
-  return <article className={`bf-card${lead?" lead":""}`} data-sev={ins.severity} style={{"--i":idx}}>
+  return <article className={`bf-card${lead?" lead":""}${compact?" c":""}${closed?" closed":""}`} data-sev={ins.severity} style={{"--i":idx}}>
     <div className="bf-kicker">
       {(BF_KIND[ins.kind]||{tag:ins.kind}).tag}
-      {ins.after_pause&&<span className="badge warn" style={{fontSize:9}}>сбор после паузы</span>}
+      {ins.kind==="news_alert"&&(d.domain||d.ts)&&<span className="bf-k-src">{[d.domain,d.ts?fmtDateMsk(d.ts).replace(" МСК",""):null].filter(Boolean).join(" · ")}</span>}
+      {ins.after_pause&&<span className="badge warn">сбор после паузы</span>}
       <RiskGlyph likelihood={ins.likelihood} impact={ins.impact}/>
     </div>
-    <h3 className="bf-title">{ins.title}</h3>
-    {ins.so_what&&<div className="bf-sowhat">{ins.so_what}</div>}
+    <h3 className="bf-title">{compact
+      ?<button className="bf-t-btn" onClick={()=>setOpen(v=>!v)} aria-expanded={open}>{ovFixOnly(ins.title,sigs)}</button>
+      :ovFixOnly(ins.title,sigs)}</h3>
+    {ins.so_what&&<div className="bf-sowhat">{ovFixOnly(ins.so_what,sigs)}</div>}
+    {ins.idea&&<div className="bf-idea"><span className="bf-idea-l">Что проверить</span>{ovFixOnly(ins.idea,sigs)}</div>}
+    {ins.evidence&&<div className="bf-ev" data-tip="жалобы клиентов Сбера по связанным проблемам кодификатора">Наши данные · {ins.evidence}</div>}
     {viz&&<div className="bf-viz">{viz}</div>}
     {(ins.provenance||xp.length>0)&&<div className="bf-prov">
       {xp.length>0
-        ?<Xp rows={xp} note={ins.provenance}><span className="xp-link">как посчитано</span></Xp>
+        ?<XpBtn rows={xp} note={ins.provenance}>как посчитано</XpBtn>
         :null}
       {xp.length>0&&ins.provenance?<span className="bf-prov-sep"> · </span>:null}
       {ins.provenance}
     </div>}
+    {compact&&<button className="bf-more" onClick={()=>setOpen(v=>!v)} aria-expanded={open}>
+      {open?"Свернуть":"Подробнее"}<span className="rv-ico-in" style={open?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>}
     <div className="bf-foot">
-      <button className="bf-btn" onClick={()=>bfGoDrill(ins.drill)}>
+      <button className="bf-btn" onClick={()=>{trkEvent({kind:"ui",page:"overview",
+          payload:{action:"insight_open",ref:ins.ref,kind:ins.kind}});bfGoDrill(ins.drill);}}>
         {ins.kind==="news_alert"?"Источник":"Разобраться"} <Ic.ext/>
       </button>
       {ins.ai_prompt&&<button className="bf-btn ai" onClick={()=>bfGoAI(ins.ai_prompt)}>✦ Спросить ИИ</button>}
+      <BfFeedback ins={ins}/>
     </div>
   </article>;
 }
@@ -983,9 +1279,9 @@ function BfCard({ins,idx,lead}){
 const PL_CSS=`
 .pl{margin-bottom:30px;}
 .pl-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:13px;flex-wrap:wrap;}
-.pl-hi{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);}
+.pl-hi{font-family:inherit;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);font-variant-numeric:tabular-nums}
 .pl-set{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--hair-2);background:var(--surface);border-radius:var(--r);
-  padding:4px 10px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);transition:color .12s,border-color .12s;}
+  padding:4px 10px;font-family:inherit;font-size:12px;color:var(--ink-3);transition:color .12s,border-color .12s;font-variant-numeric:tabular-nums}
 .pl-set:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 82%);}
 .pl-lede{font-family:'Source Serif 4',Georgia,serif;font-size:19px;line-height:1.56;letter-spacing:-.004em;color:var(--ink);
   text-wrap:pretty;max-width:64ch;}
@@ -1002,12 +1298,12 @@ const PL_CSS=`
 .pl-dot.sev-amber{background:var(--warn);}
 .pl-dot.sev-green{background:var(--pos);}
 .pl-fy-t{flex:1;min-width:0;font-size:13.5px;line-height:1.4;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pl-fy-tag{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);
-  white-space:nowrap;flex:none;transition:opacity .12s;}
+.pl-fy-tag{font-family:inherit;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);
+  white-space:nowrap;flex:none;transition:opacity .12s;font-variant-numeric:tabular-nums}
 .pl-fy-act{display:flex;gap:4px;align-items:center;flex:none;opacity:0;width:0;overflow:hidden;transition:opacity .14s;}
 .pl-fy-row:hover .pl-fy-tag{opacity:0;}
 .pl-fy-row:hover .pl-fy-act{opacity:1;width:auto;}
-.pl-fy-act button{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:12px;color:var(--ink-4);transition:background .12s,color .12s;}
+.pl-fy-act button{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:12px;color:var(--ink-3);transition:background .12s,color .12s;}
 .pl-fy-act button:hover{background:var(--paper-2);}
 .pl-fy-act .ask:hover{color:var(--accent);}
 .pl-fy-act .mute:hover{color:var(--ink);}
@@ -1070,20 +1366,20 @@ function PersonalBand(){
 const FB_CSS=`
 .fb-toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:400;background:var(--surface);
   border:1px solid var(--hair);border-radius:999px;box-shadow:var(--shadow-2);padding:9px 18px;
-  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-2);opacity:0;transition:opacity .25s,transform .25s;
-  pointer-events:none;max-width:min(88vw,500px);text-align:center;}
+  font-family:inherit;font-size:11px;color:var(--ink-2);opacity:0;transition:opacity .25s,transform .25s;
+  pointer-events:none;max-width:min(88vw,500px);text-align:center;font-variant-numeric:tabular-nums}
 .fb-toast.on{opacity:1;transform:translate(-50%,0);}
 .fb-toast .sp{color:var(--accent);}
 .aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
-.aifb-l{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);}
-.aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
+.aifb-l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
 .aifb button.tb:hover{color:var(--ink-2);background:var(--paper-2);}
-.aifb button.tb.on{color:var(--accent);background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.aifb button.tb.on{color:var(--accent-ink);background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
 .aifb button.tb.on-neg{color:var(--neg);background:color-mix(in oklab,var(--neg),transparent 90%);border-color:color-mix(in oklab,var(--neg),transparent 75%);}
 .aifb-why{width:100%;display:flex;flex-wrap:wrap;gap:7px;align-items:center;animation:fade-in .2s ease-out;}
 .aifb-chip{font-size:11.5px;padding:5px 11px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);transition:all .12s;}
-.aifb-chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+.aifb-chip.on{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft);}
 .aifb-inp{flex:1;min-width:170px;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
   background:var(--paper);color:var(--ink);}
 .aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:500;}
@@ -1092,34 +1388,34 @@ const FB_CSS=`
 .shr-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--hair);
   border-radius:8px;background:var(--surface);font-size:12px;color:var(--ink-2);transition:color .12s,border-color .12s;}
 .shr-btn:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
-.shr-btn .n{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent);background:var(--accent-soft);
-  border-radius:999px;padding:1px 6px;}
+.shr-btn .n{font-family:inherit;font-size:11px;color:var(--accent-ink);background:var(--accent-soft);
+  border-radius:999px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .shr-pop{position:absolute;top:34px;right:0;z-index:90;width:302px;background:var(--surface);border:1px solid var(--hair);
   border-radius:12px;box-shadow:var(--shadow-2);padding:10px;animation:fade-in .15s ease-out;text-align:left;}
-.shr-h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-4);margin:2px 2px 8px;}
+.shr-h{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);margin:2px 2px 8px;font-variant-numeric:tabular-nums}
 .shr-row{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;border-radius:8px;font-size:12.5px;
   color:var(--ink-2);text-align:left;transition:background .12s;}
 .shr-row:hover{background:var(--paper-2);}
-.shr-row .ava{width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+.shr-row .ava{width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);
   display:grid;place-items:center;font-size:10px;font-weight:600;flex:none;}
 .shr-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.shr-row .st{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
+.shr-row .st{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
 .shr-row.on .st{color:var(--pos);}
 .shr-row.on:hover .st{color:var(--neg);}
 .shr-div{border-top:1px solid var(--hair);margin:8px 0;}
 .shr-q{width:100%;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
   background:var(--paper);color:var(--ink);margin-bottom:6px;}
 .shr-list{max-height:210px;overflow:auto;}
-.shr-empty{font-size:12px;color:var(--ink-4);padding:10px;text-align:center;}
-.shr-foot{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:8px;
-  line-height:1.5;padding:0 2px;}
-.shr-owner{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);
-  border:1px solid var(--hair);border-radius:999px;padding:3px 10px;}
+.shr-empty{font-size:12px;color:var(--ink-3);padding:10px;text-align:center;}
+.shr-foot{font-family:inherit;font-size:11px;color:var(--ink-3);margin-top:8px;
+  line-height:1.5;padding:0 2px;font-variant-numeric:tabular-nums}
+.shr-owner{font-family:inherit;font-size:11px;color:var(--ink-3);
+  border:1px solid var(--hair);border-radius:999px;padding:3px 10px;font-variant-numeric:tabular-nums}
 `;
 function fbToast(text,sparkle){
   try{
-    const el=document.createElement("div"); el.className="fb-toast";
+    const el=document.createElement("div"); el.className="fb-toast"; el.setAttribute("role","status");
     if(sparkle){const s=document.createElement("span");s.className="sp";s.textContent="✦ ";el.appendChild(s);}
     el.appendChild(document.createTextNode(text));
     document.body.appendChild(el);
@@ -1285,8 +1581,8 @@ const OVSEG_CSS=`
   box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.3,.7,.4,1);}
 .ovseg.fy .ovseg-thumb{transform:translateX(104px);}
 .ovseg button{position:relative;z-index:1;width:104px;height:26px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  font-size:12.5px;color:var(--ink-3);border-radius:7px;transition:color .15s;}
-.ovseg button.on{color:var(--ink);font-weight:500;}
+  font-size:12px;font-weight:500;color:var(--ink-3);border-radius:7px;transition:color .15s;}
+.ovseg button.on{color:var(--ink);font-weight:600;}
 .ovseg .sp{color:var(--accent);font-size:11px;line-height:1;}
 .ovseg-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);}
 .fy-seg-mob{display:none;margin-bottom:18px;}
@@ -1295,11 +1591,15 @@ const OVSEG_CSS=`
 `;
 function OvSeg({page}){
   const go=(p)=>{ if(p===page)return; try{localStorage.setItem("al-ov-mode",p);}catch{} location.hash=p; };
+  // стрелки ←/→ переключают режим, как у вкладок
+  const key=e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();go(page==="overview"?"foryou":"overview");}};
+  const T=(p,label)=><button role="tab" aria-selected={page===p} tabIndex={page===p?0:-1}
+    className={page===p?"on":""} onClick={()=>go(p)} onKeyDown={key}>{label}</button>;
   return <div className={"ovseg"+(page==="foryou"?" fy":"")} role="tablist" aria-label="Режим обзора">
     <style>{OVSEG_CSS}</style>
-    <span className="ovseg-thumb"/>
-    <button className={page==="overview"?"on":""} onClick={()=>go("overview")}>Общий</button>
-    <button className={page==="foryou"?"on":""} onClick={()=>go("foryou")}><span className="sp">✦</span>Для вас</button>
+    <span className="ovseg-thumb" aria-hidden="true"/>
+    {T("overview","Общий")}
+    {T("foryou",<><span className="sp" aria-hidden="true">✦</span>Для вас</>)}
   </div>;
 }
 
@@ -1324,173 +1624,229 @@ function FySpark({series,w=118,h=30}){
   </svg>;
 }
 
+// «Для вас» — на той же системе, что «Общий» (корень .ov): Geist + Source Serif 4,
+// без моноширинного; заголовок — фирменный (Instrument Serif, красный курсив).
 const FY_CSS=`
-.fy-head{margin-bottom:4px;}
-.fy-ai{color:var(--accent);}
-.fy-lede{font-family:'Source Serif 4',Georgia,serif;font-size:18.5px;line-height:1.56;color:var(--ink-2);max-width:66ch;text-wrap:pretty;}
-.fy-chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:15px;align-items:center;}
-.fy-chip{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);
-  border:1px solid var(--hair);border-radius:999px;padding:4px 11px;}
-.fy-chip.acc{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);background:var(--accent-soft);}
-.fy-tune{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);cursor:pointer;transition:color .12s;}
-.fy-tune:hover{color:var(--accent);}
-.fy-hint{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
-.fy-hint a{color:var(--accent);cursor:pointer;}
-.fy-sec{margin-top:30px;}
-.fy-checks-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-top:12px;}
-.fy-sig{margin-top:10px;}
-.fy-sig-row{display:flex;align-items:baseline;gap:11px;padding:9px 3px;border-top:1px solid var(--hair);cursor:pointer;transition:background .12s;}
-.fy-sig-row:last-child{border-bottom:1px solid var(--hair);}
-.fy-sig-row:hover{background:color-mix(in oklab,var(--surface),transparent 30%);}
-.fy-sig-dot{width:6px;height:6px;border-radius:50%;flex:none;align-self:center;background:var(--warn);}
-.fy-sig-dot.high{background:var(--neg);}
-.fy-sig-l{flex:1;min-width:0;font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.fy-sig-n{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-3);white-space:nowrap;flex:none;}
-.fy-sig-why{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);white-space:nowrap;flex:none;}
-.fy-link{display:flex;gap:13px;align-items:flex-start;background:var(--surface);border:1px solid var(--hair);
-  border-left:3px solid var(--accent);border-radius:var(--r-lg);padding:14px 16px;margin-top:12px;cursor:pointer;transition:box-shadow .12s;}
-.fy-link:hover{box-shadow:var(--shadow-2);}
-.fy-link .lt{font-size:14px;font-weight:500;color:var(--ink);line-height:1.4;}
-.fy-link .lw{font-size:12.5px;color:var(--ink-3);margin-top:5px;line-height:1.5;}
-.fy-link .lp{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);margin-top:7px;letter-spacing:.03em;}
-.fy-story{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--accent);border:1px solid color-mix(in oklab,var(--accent),transparent 75%);border-radius:4px;padding:1px 5px;flex:none;}
-.fy-ob{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:20px 22px;margin-bottom:24px;}
-.fy-ob .q{font-size:13.5px;font-weight:500;color:var(--ink);margin:14px 0 2px;}
-.fy-ob .q:first-of-type{margin-top:10px;}
-.fy-ob-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px;}
-.fy-ob-chip{border:1px solid var(--hair-2);border-radius:999px;padding:6px 14px;font-size:12.5px;color:var(--ink-2);
-  cursor:pointer;transition:border-color .12s,color .12s,background .12s;user-select:none;}
-.fy-ob-chip:hover{border-color:var(--accent);}
-.fy-ob-chip.on{background:color-mix(in oklab,var(--accent),transparent 88%);border-color:var(--accent);color:var(--accent);}
-.fy-ob-foot{display:flex;align-items:center;gap:14px;margin-top:18px;}
-.fy-ob-skip{font-size:12px;color:var(--ink-4);cursor:pointer;}
-.fy-ob-skip:hover{color:var(--ink-2);}
-.fy-check .src-chip{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-3);border:1px solid var(--hair-2);border-radius:4px;padding:1px 5px;margin-right:7px;cursor:pointer;}
-.fy-check .src-chip:hover{color:var(--accent);border-color:var(--accent);}
-.fy-check.taken{opacity:.62;}
-.fy-check.taken .t{text-decoration:none;}
-.fy-check .taken-mark{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--pos);margin-right:6px;}
-.fy-check{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);
-  padding:14px 16px;transition:border-color .15s,box-shadow .15s;}
-.fy-check:hover{border-color:color-mix(in oklab,var(--accent),transparent 78%);box-shadow:var(--shadow-1);}
-.fy-check .n{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);padding-top:2px;flex:none;}
-.fy-check .t{font-size:13.5px;font-weight:500;line-height:1.45;min-width:0;}
-.fy-check .w{font-size:12px;font-weight:400;color:var(--ink-3);margin-top:4px;line-height:1.5;}
-.fy-check .ask{margin-left:auto;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);flex:none;transition:color .12s,background .12s;}
-.fy-check .ask:hover{color:var(--accent);background:var(--accent-soft);}
-.fy-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:12px;margin-top:12px;}
-.fy-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px 13px;cursor:pointer;
-  transition:transform .15s,box-shadow .15s,border-color .15s;}
-.fy-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-2);border-color:var(--hair-2);}
-.fy-card .lbl{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);
-  margin-bottom:9px;display:flex;justify-content:space-between;gap:8px;}
-.fy-card .num{font-family:'Source Serif 4',Georgia,serif;font-size:29px;line-height:1;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
-.fy-card .num small{font-size:12px;color:var(--ink-3);font-family:'Geist','Inter',sans-serif;}
-.fy-card .delta{font-size:11.5px;font-weight:600;font-family:'Geist','Inter',sans-serif;}
-.fy-card .delta.up{color:var(--neg);}
-.fy-card .delta.down{color:var(--pos);}
-.fy-card .spark{display:block;margin:11px 0 6px;}
-.fy-card .meta{font-size:11.5px;color:var(--ink-3);line-height:1.5;}
-.fy-card .meta b{color:var(--ink-2);font-weight:500;}
-.fy-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-top:12px;grid-auto-flow:dense;}
-@media(max-width:1200px){.fy-grid{grid-template-columns:repeat(2,1fr);}}
-@media(max-width:560px){.fy-grid{grid-template-columns:1fr;}}
-.fy-tile{position:relative;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);
-  overflow:hidden;cursor:pointer;transition:transform .16s,box-shadow .16s;}
-.fy-tile:hover{transform:translateY(-2px);box-shadow:var(--shadow-2);}
-.fy-tile.hero{grid-column:span 2;grid-row:span 2;}
-@media(max-width:560px){.fy-tile.hero{grid-column:span 1;}}
-.fy-tile .img{height:96px;background-size:cover;background-position:center;flex:none;}
-.fy-tile.hero .img{flex:1;min-height:210px;height:auto;}
-.fy-tile .img.ph{display:grid;place-items:center;}
-.fy-tile .img.ph span{font-family:'Instrument Serif',serif;font-size:34px;color:color-mix(in oklab,var(--ink),transparent 60%);}
-.fy-g0{background:linear-gradient(135deg,var(--accent-soft),color-mix(in oklab,var(--accent),var(--paper) 80%));}
-.fy-g1{background:linear-gradient(135deg,var(--paper-2),color-mix(in oklab,var(--ink),var(--paper) 88%));}
-.fy-g2{background:linear-gradient(160deg,color-mix(in oklab,var(--pos),var(--paper) 86%),var(--paper-2));}
-.fy-g3{background:linear-gradient(150deg,color-mix(in oklab,var(--warn),var(--paper) 86%),var(--paper-2));}
-.fy-g4{background:linear-gradient(140deg,color-mix(in oklab,var(--accent),var(--paper) 90%),color-mix(in oklab,var(--ink),var(--paper) 92%));}
-.fy-tile .body{padding:12px 14px 13px;display:flex;flex-direction:column;gap:7px;flex:none;min-height:0;}
-.fy-tile .src{display:flex;align-items:center;gap:7px;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;
-  text-transform:uppercase;color:var(--ink-3);}
-.fy-tile .src .dt{margin-left:auto;color:var(--ink-4);text-transform:none;letter-spacing:0;}
-.fy-tile .sev{width:6px;height:6px;border-radius:50%;flex:none;}
-.fy-tile .sev.red{background:var(--neg);} .fy-tile .sev.amber{background:var(--warn);} .fy-tile .sev.green{background:var(--pos);}
-.fy-tile .tt{font-family:'Source Serif 4',Georgia,serif;font-size:14.5px;line-height:1.38;color:var(--ink);
-  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
-.fy-tile.hero .tt{font-size:19px;}
-.fy-tile .sum{font-size:12.5px;color:var(--ink-3);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.fy-tile .why{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.04em;}
-.fy-tile .acts{position:absolute;top:8px;right:8px;display:flex;gap:5px;opacity:0;transition:opacity .15s;z-index:2;}
-.fy-tile:hover .acts{opacity:1;}
-.fy-tile .acts button{width:26px;height:26px;border-radius:7px;background:color-mix(in oklab,var(--paper),transparent 10%);
-  backdrop-filter:blur(6px);border:1px solid var(--hair);display:grid;place-items:center;font-size:12px;color:var(--ink-2);transition:color .12s;}
-.fy-tile .acts button:hover{color:var(--accent);}
-.fy-tar{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
-@media(max-width:900px){.fy-tar{grid-template-columns:1fr;}}
-.fy-tar .surface{padding:15px 18px 8px;}
-.fy-tar-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:8px 0;border-top:1px solid var(--hair);font-size:13px;}
-.fy-tar-row:first-of-type{border-top:0;}
-.fy-tar-row .r{white-space:nowrap;font-size:12.5px;}
-.fy-trust{margin-top:36px;padding-top:14px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
-.fy-trust a{color:var(--ink-3);cursor:pointer;transition:color .12s;}
-.fy-trust a:hover{color:var(--accent);}
-.fy-tile .acts button.on{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%);}
-.fy-tile.liked{border-color:color-mix(in oklab,var(--accent),transparent 55%);}
-.fy-tile.liked::after{content:"✓ в фокусе";position:absolute;top:8px;left:8px;z-index:2;
-  font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.04em;color:var(--accent);
-  background:color-mix(in oklab,var(--paper),transparent 8%);backdrop-filter:blur(4px);
-  border:1px solid color-mix(in oklab,var(--accent),transparent 70%);padding:2px 7px;border-radius:999px;}
-.fy-check .acts2{margin-left:auto;display:flex;gap:2px;flex:none;}
-.fy-check .acts2 button{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--ink-4);
-  transition:color .12s,background .12s;}
-.fy-check .acts2 button:hover{color:var(--accent);background:var(--accent-soft);}
-.fy-check .acts2 button.on{color:var(--accent);background:var(--accent-soft);}
-.fy-pshint{margin-top:13px;display:inline-flex;align-items:center;gap:7px;cursor:pointer;
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.03em;color:var(--ink-3);
-  border:1px dashed color-mix(in oklab,var(--accent),transparent 65%);border-radius:999px;padding:5px 13px;
-  transition:color .12s,border-color .12s;}
-.fy-pshint:hover{color:var(--accent);border-color:var(--accent);}
-.fy-pshint .pc{color:var(--accent);font-weight:600;}
+.fyp .fy-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:14px}
+.fy-tp{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:999px;background:var(--paper-2);font-size:12px;color:var(--ink-2)}
+.fy-tp.acc{background:var(--accent-soft);color:var(--accent-ink)}
+.fy-tune{display:inline-flex;align-items:center;min-height:26px;font-size:12px;font-weight:500;color:var(--select);text-decoration:none}
+.fy-tune:hover{text-decoration:underline;text-underline-offset:3px}
+.fy-ps{display:inline-flex;align-items:center;gap:8px;min-height:24px;margin-top:12px;font-size:12px;color:var(--ink-3);text-decoration:none}
+.fy-ps:hover{color:var(--ink)}
+.fy-ps-bar{position:relative;width:56px;height:4px;border-radius:2px;background:var(--hair-2);overflow:hidden}
+.fy-ps-bar i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent)}
+.fy-ps b{font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.fy-sec{margin-top:32px}
+.fy-h{display:flex;align-items:baseline;justify-content:space-between;gap:6px 12px;margin-bottom:10px;flex-wrap:wrap}
+.fy-h h2{margin:0}
+.fy-h-note{font-size:12px;color:var(--ink-3)}
+.fy-h-note .ai{color:var(--accent)}
+/* зацепки — карточки как «Что проверить» в «Общем» */
+.fy-cks{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.fy-ck{position:relative;display:flex;flex-direction:column;gap:6px;min-width:0;padding:14px 16px 12px 20px;
+  background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1)}
+.fy-ck::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;background:var(--accent)}
+.fy-ck.taken::before{background:var(--pos)}
+.fy-ck-k{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fy-ck-k a{position:relative;display:inline-flex;align-items:center;min-height:24px;color:var(--select);text-decoration:none}
+.fy-ck-k a:hover{text-decoration:underline;text-underline-offset:3px}
+.fy-ck-k .ok{color:var(--pos)}
+.fy-ck-t{margin:0;font-family:'Source Serif 4',Georgia,serif;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.01em;text-wrap:balance}
+.fy-ck-w{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2);text-wrap:pretty}
+.fy-ck-f{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid var(--hair)}
+.fy-ck.taken .fy-ck-t,.fy-ck.taken .fy-ck-w{color:var(--ink-3)}
+.fyp .bf-btn[aria-pressed=true]{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 55%)}
+/* сигналы и подписки — строки-ссылки в «Отзывы» */
+.fy-sgs{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1);overflow:hidden}
+.fy-sg{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:11px 16px;
+  border-top:1px solid var(--hair);color:inherit;text-decoration:none;transition:background-color .12s}
+.fy-sg:first-child{border-top:0}
+.fy-sg:hover{background:var(--paper-2)}
+.fy-sg:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.fy-sg-dot{align-self:start;margin-top:7px;width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.fy-sg-dot.high{background:var(--neg)}
+.fy-sg-dot.calm{background:var(--pos);opacity:.6}
+.fy-sg-b{min-width:0}
+.fy-sg-l{display:block;font-size:14px;font-weight:500;color:var(--ink)}
+.fy-sg-n{display:block;margin-top:1px;font-size:12px;line-height:1.45;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fy-sg-z{padding:2px 8px;border-radius:999px;background:var(--paper-2);font-size:11px;font-weight:500;color:var(--ink-2);white-space:nowrap}
+/* связка «новость × данные» */
+.fy-lks{display:grid;gap:10px}
+.fy-lk{position:relative;display:block;width:100%;padding:14px 16px 13px 20px;text-align:left;font:inherit;color:inherit;text-decoration:none;
+  background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1);cursor:pointer;transition:box-shadow .15s}
+.fy-lk:hover{box-shadow:var(--shadow-2)}
+.fy-lk::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;background:var(--sev,var(--select))}
+.fy-lk[data-sev=red]{--sev:var(--neg)}
+.fy-lk[data-sev=amber]{--sev:var(--warn)}
+.fy-lk[data-sev=green]{--sev:var(--pos)}
+.fy-lk-t{display:block;font-family:'Source Serif 4',Georgia,serif;font-size:16px;font-weight:600;line-height:1.35}
+.fy-lk-w{display:block;margin-top:4px;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.fy-lk-p{display:block;margin-top:6px;font-size:12px;color:var(--ink-3)}
+/* направления */
+.fy-fcs{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.fy-fc{display:flex;flex-direction:column;gap:6px;padding:14px 16px 12px;color:inherit;text-decoration:none;
+  background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1);transition:box-shadow .15s,transform .15s}
+.fy-fc:hover{box-shadow:var(--shadow-2);transform:translateY(-1px)}
+.fy-fc-l{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.fy-fc-n{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-family:'Source Serif 4',Georgia,serif;font-size:28px;font-weight:600;
+  line-height:1.1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.fy-fc-n small,.fy-fc-d{font-family:'Geist','Inter',-apple-system,sans-serif;letter-spacing:0}
+.fy-fc-n small{font-size:13px;font-weight:400;color:var(--ink-3)}
+.fy-fc-d{font-size:12px;font-weight:600}
+.fy-fc-d.up{color:var(--neg)}
+.fy-fc-d.down{color:var(--pos)}
+.fy-fc .spark{display:block;margin:2px 0}
+.fy-fc-m{font-size:12px;line-height:1.5;color:var(--ink-3)}
+.fy-fc-m b{font-weight:500;color:var(--ink-2)}
+/* новости — текстовые карточки: картинки с Telegram в контуре не грузятся */
+.fy-ns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:1100px){.fy-ns{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.fy-ns{grid-template-columns:1fr}}
+.fy-n{position:relative;display:flex;flex-direction:column;min-width:0;background:var(--surface);border:1px solid var(--hair);
+  border-radius:var(--r-lg);box-shadow:var(--shadow-1);transition:box-shadow .15s}
+.fy-n:hover{box-shadow:var(--shadow-2)}
+.fy-n.hero{grid-column:span 2}
+@media(max-width:640px){.fy-n.hero{grid-column:auto}}
+/* две колонки: нечётный хвост — на всю ширину, без пустой клетки */
+@media(min-width:641px) and (max-width:1100px){.fy-n.wide{grid-column:span 2}}
+.fy-n::before{content:"";position:absolute;left:0;top:13px;bottom:13px;width:3px;border-radius:4px;background:var(--sev,transparent)}
+.fy-n[data-sev=red]{--sev:var(--neg)}
+.fy-n[data-sev=amber]{--sev:var(--warn)}
+.fy-n[data-sev=green]{--sev:var(--pos)}
+.fy-n.liked{border-color:color-mix(in oklab,var(--accent),transparent 60%)}
+.fy-n-a{flex:1;display:flex;flex-direction:column;gap:6px;padding:14px 16px 8px 20px;color:inherit;text-decoration:none;border-radius:var(--r-lg) var(--r-lg) 0 0}
+.fy-n-a:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.fy-n-k{font-size:12px;color:var(--ink-3)}
+.fy-n-t{font-family:'Source Serif 4',Georgia,serif;font-size:15px;font-weight:600;line-height:1.35;color:var(--ink);text-wrap:pretty}
+.fy-n-a:hover .fy-n-t{text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
+.fy-n.hero .fy-n-t{font-size:20px;line-height:1.3}
+.fy-n-s{font-size:13px;line-height:1.5;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.fy-n-f{display:flex;align-items:center;gap:8px;padding:0 10px 8px 20px}
+.fy-n-why{flex:1;min-width:0;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fy-n-why .on{color:var(--accent);font-weight:500}
+/* тарифы: диапазон ставок Сбера на шкале рынка */
+.fy-rg{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:0 24px;padding:0 4px}
+.fy-rg-r{display:flex;flex-direction:column;gap:6px;padding:10px 8px 8px;border-top:1px solid var(--hair)}
+.fy-rg-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:13px}
+.fy-rg-h b{font-weight:600}
+.fy-rg-h span{font-size:12px;color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums}
+.fy-rg-bar{position:relative;height:8px;border-radius:4px;background:var(--paper-2);box-shadow:inset 0 0 0 1px var(--hair)}
+.fy-rg-bar .s{position:absolute;top:0;bottom:0;min-width:4px;border-radius:4px;background:var(--sber)}
+.fy-rg-bar .m{position:absolute;top:-3px;bottom:-3px;width:2px;border-radius:1px;background:var(--ink-2)}
+.fy-rg-sc{display:flex;justify-content:space-between;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fy-rg-lg{display:flex;gap:6px 16px;flex-wrap:wrap;padding:8px 12px 4px;font-size:12px;color:var(--ink-3)}
+.fy-rg-lg i{display:inline-block;margin-right:6px;vertical-align:middle}
+.fy-rg-lg .s{width:14px;height:6px;border-radius:3px;background:var(--sber)}
+.fy-rg-lg .m{width:2px;height:10px;background:var(--ink-2)}
+.fy-trust{margin-top:36px;padding-top:14px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;align-items:center;gap:10px;
+  flex-wrap:wrap;font-size:12px;color:var(--ink-3)}
+.fy-trust a{display:inline-flex;align-items:center;min-height:24px;color:var(--select);text-decoration:none}
+.fy-trust a:hover{text-decoration:underline;text-underline-offset:3px}
+/* onboarding холодного старта */
+.fy-ob{margin:20px 0 4px;padding:20px 22px;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-1)}
+.fy-ob .q{margin:16px 0 0;font-size:14px;font-weight:600;color:var(--ink)}
+.fy-ob-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.fy-ob-chip{min-height:28px;padding:0 12px;border:1px solid var(--hair-2);border-radius:999px;background:var(--surface);font:inherit;font-size:12px;font-weight:500;
+  color:var(--ink-2);cursor:pointer;transition:border-color .12s,color .12s,background .12s}
+.fy-ob-chip:hover{border-color:var(--ink-4)}
+.fy-ob-chip[aria-pressed=true]{background:var(--select-soft);border-color:color-mix(in oklab,var(--select),transparent 55%);color:var(--ink)}
+.fy-ob-foot{display:flex;align-items:center;gap:14px;margin-top:18px;flex-wrap:wrap}
+.fy-ob-skip{min-height:32px;border:0;background:none;font:inherit;font-size:13px;color:var(--ink-3);cursor:pointer}
+.fy-ob-skip:hover{color:var(--ink)}
+@media(pointer:coarse){.fy-tune,.fy-ps,.fy-trust a,.fy-ob-skip,.fy-ob-chip{min-height:44px}
+  .fy-ck-k a::after{content:"";position:absolute;inset:-10px -8px}}
+@media(max-width:640px){.fy-sg{grid-template-columns:8px minmax(0,1fr)}.fy-sg-z{grid-column:2;justify-self:start}}
 `;
 
-// плитка новости (Perplexity-стиль): картинка или детерминированный градиент-фолбэк
-function FyTile({t,hero,fb,onFb}){
-  const[imgOk,setImgOk]=useState(true);
+const fyTg=u=>/^https:\/\/t\.me\//.test(u||"");
+const fyCap=t=>t?String(t)[0].toUpperCase()+String(t).slice(1):t;
+const fyDay=t=>{try{return new Date(t).toLocaleDateString("ru",{day:"numeric",month:"long",timeZone:"Europe/Moscow"});}catch{return "";}};
+// «Отзывы» с фильтрами — ссылкой (открывается в новой вкладке, пересылается);
+// вкладка «Жалобы» — когда есть тема, иначе обзор среза
+const fyRv=o=>{const sp=new URLSearchParams(); if(o&&o.theme)sp.set("tab","complaints");
+  for(const[k,v] of Object.entries(o||{}))if(v)sp.set(k,v); return "#reviews"+(sp.toString()?"?"+sp.toString():"");};
+const FY_SRC_L={reviews:"жалобы",news:"новости",tariffs:"тарифы"};
+const fySrcHref=c=>c.src==="reviews"?fyRv({bank:c.bank||"Сбербанк",product:c.product,theme:c.signal||(c.theme&&(c.theme.key||c.theme.slug))})
+  :c.src==="tariffs"?"#market?view=changes&bank=sberbank":c.src==="news"?"#overview":null;
+
+// Новость — текстовая карточка: ссылка на источник + действия рядом (не внутри
+// ссылки). Картинок нет: CDN Telegram в контуре банка закрыт, плитка была пустой.
+function FyNews({t,hero,wide,fb,onFb}){
   const src=fySrcName(t);
-  const open=()=>{if(!t.url)return;
-    trkEvent({kind:"news_click",page:"foryou",
-      payload:{url:t.url,source:t.source,reason:t.reason,
-        title:t.title,slugs:t.reason_slugs||[]}});
-    window.open(t.url,"_blank","noopener");};
-  return <div className={"fy-tile"+(hero?" hero":"")+(fb===1?" liked":"")} onClick={open} role="link" tabIndex={0}
-              title={t.reason?("Почему вам: "+t.reason
-                +(t.echo>1?" · подтвердили "+t.echo+" источника":"")
-                +(t.story_n?" · продолжение сюжета":"")):undefined}
-              onKeyDown={e=>{if(e.key==="Enter")open();}}>
-    {t.image&&imgOk
-      ?<div className="img" style={{backgroundImage:"url("+JSON.stringify(t.image)+")"}}>
-         <img src={t.image} alt="" style={{display:"none"}} loading="lazy" referrerPolicy="no-referrer" onError={()=>setImgOk(false)}/>
-       </div>
-      :<div className={"img ph fy-g"+(fyHash(t.source||t.domain||t.title||"")%5)}><span>{(src[0]||"·").toUpperCase()}</span></div>}
-    <div className="body">
-      <div className="src">
-        {t.severity&&<span className={"sev "+t.severity}/>}
-        {src}
-        {t.story_n>0&&<span className="fy-story">сюжет · эп. {t.story_n+1}</span>}
-        {t.ts&&<span className="dt">{new Date(t.ts).toLocaleDateString("ru",{day:"numeric",month:"short"})}</span>}
-      </div>
-      <div className="tt">{t.title}</div>
-      {hero&&t.summary?<div className="sum">{t.summary}</div>:null}
-      {t.reason&&<div className="why">{t.reason}</div>}
+  const why=t.reason?"Почему вам: "+t.reason
+    +(t.echo>1?` · подтвердили ${t.echo} ${plural(t.echo,"источник","источника","источников")}`:"")
+    +(t.story_n?" · продолжение сюжета":""):undefined;
+  return <article className={"fy-n"+(hero?" hero":"")+(wide?" wide":"")+(fb===1?" liked":"")} data-sev={t.severity||undefined}>
+    <a className="fy-n-a" href={t.url||undefined} target="_blank" rel="noopener noreferrer"
+       onClick={()=>trkEvent({kind:"news_click",page:"foryou",
+         payload:{url:t.url,source:t.source,reason:t.reason,title:t.title,slugs:t.reason_slugs||[]}})}>
+      <span className="fy-n-k">{src}
+        {fyTg(t.url)&&<span data-tip="Telegram — в контуре банка обычно не открывается без отдельной настройки"> · Telegram</span>}
+        {t.ts&&<> · {fyDay(t.ts)}</>}
+        {t.story_n>0&&<> · сюжет, эпизод {t.story_n+1}</>}</span>
+      <span className="fy-n-t">{t.title}</span>
+      {hero&&t.summary&&<span className="fy-n-s">{t.summary}</span>}
+    </a>
+    <div className="fy-n-f">
+      <span className="fy-n-why" data-tip={why}>{fb===1&&<span className="on">в фокусе · </span>}{t.reason||""}</span>
+      <span className="bf-fb" role="group" aria-label="Действия с новостью">
+        <button className="bf-fb-b" aria-label="Разобрать с ИИ" data-tip="Разобрать с ИИ"
+          onClick={()=>bfGoAI("Разбери подробно для внутреннего аудита Сбера: "+(t.title||""))}>✦</button>
+        <button className={"bf-fb-b"+(fb===1?" on":"")} aria-pressed={fb===1} aria-label="Интересно — больше такого"
+          data-tip="Интересно — больше такого" onClick={()=>onFb(t,1)}><IcTUp s={13}/></button>
+        <button className="bf-fb-b" aria-label="Не интересно — меньше такого"
+          data-tip="Не интересно — меньше такого" onClick={()=>onFb(t,-1)}><IcTDn s={13}/></button>
+      </span>
     </div>
-    <span className="acts" onClick={e=>e.stopPropagation()}>
-      <button title="Разобрать с ИИ" onClick={()=>bfGoAI("Разбери подробно для внутреннего аудита Сбера: "+(t.title||""))}>✦</button>
-      <button className={fb===1?"on":""} title="Интересно — больше такого" onClick={()=>onFb(t,1)}><IcTUp s={12}/></button>
-      <button title="Не интересно — меньше такого" onClick={()=>onFb(t,-1)}><IcTDn s={12}/></button>
-    </span>
+  </article>;
+}
+
+// Зацепка — карточка как «Что проверить» в «Общем». Раньше четыре значка
+// в строку сжимали текст до колонки в 80 px, а сам текст обрывался на полуслове.
+function FyCheck({c,i,taken,fb,onTake,onFb}){
+  const href=fySrcHref(c), sl=FY_SRC_L[c.src];
+  return <article className={"fy-ck"+(taken?" taken":"")}>
+    <div className="fy-ck-k">{taken?<span className="ok">✓ в работе</span>:String(i+1).padStart(2,"0")}
+      {sl&&<>{" · "}{href?<a href={href} data-tip="Открыть данные, на которых построена зацепка">{sl}</a>:sl}</>}</div>
+    <h3 className="fy-ck-t">{c.title}</h3>
+    {c.why&&<p className="fy-ck-w">{c.why}</p>}
+    <div className="fy-ck-f">
+      <button className="bf-btn" aria-pressed={!!taken} onClick={onTake}
+        data-tip={taken?"Снять отметку":"Отметить: взято в работу — не будем предлагать заново"}>{taken?"В работе":"В работу"}</button>
+      <button className="bf-btn ai" onClick={()=>bfGoAI("Проверка в Сбере: "+c.title+". "+(c.why||"")
+        +" Составь детальный план аудиторской проверки по этому пункту.")}>✦ План с ИИ</button>
+      <span className="bf-fb" role="group" aria-label="Оценка зацепки">
+        <button className={"bf-fb-b"+(fb===1?" on":"")} aria-pressed={fb===1} aria-label="Полезная зацепка"
+          data-tip="Полезная зацепка" onClick={()=>onFb(1)}><IcTUp s={13}/></button>
+        <button className="bf-fb-b" aria-label="Не то" data-tip="Не то — научимся точнее" onClick={()=>onFb(-1)}><IcTDn s={13}/></button>
+      </span>
+    </div>
+  </article>;
+}
+
+// Ставки Сбера на шкале рынка: диапазон Сбера (мин–макс) поверх рыночного
+// минимум–максимум с медианой. Раньше — «макс. Сбера против медианы рынка
+// +6,3 п.п.»: максимум сравнивался с медианой, разница выглядела как вывод.
+const FY_LOAN=new Set(["credit","mortgage","auto_loan","card_credit","microloan"]);
+function FyRange({r}){
+  const lo=+r.market_min, hi=+r.market_max, span=hi-lo;
+  const smax=+r.sber_max, smin=r.sber_min!=null?+r.sber_min:smax;
+  const ok=isFinite(lo)&&isFinite(hi)&&span>0&&isFinite(smax);
+  const pos=v=>Math.min(100,Math.max(0,(v-lo)/span*100));
+  const sb=smin!==smax?`${ovN(smin,2)}–${ovN(smax,2)}%`:`${ovN(smax,2)}%`;
+  const cat=CAT_LABELS[r.category]||r.category;
+  return <div className="fy-rg-r">
+    <div className="fy-rg-h"><b>{cat}</b>
+      <span>Сбер {sb}{r.market_median!=null&&<> · медиана рынка {ovN(r.market_median,2)}%</>}</span></div>
+    {ok&&<div className="fy-rg-bar" role="img"
+        aria-label={`${cat}: ставки Сбера ${sb}, рынок от ${ovN(lo,2)} до ${ovN(hi,2)}%`
+          +(r.market_median!=null?`, медиана ${ovN(r.market_median,2)}%`:"")}>
+      <span className="s" style={{left:pos(smin)+"%",width:Math.max(0,pos(smax)-pos(smin))+"%"}}/>
+      {r.market_median!=null&&<span className="m" style={{left:`calc(${pos(+r.market_median)}% - 1px)`}}/>}
+    </div>}
+    {ok&&<div className="fy-rg-sc"><span>{ovN(lo,2)}%</span>
+      <span>{FY_LOAN.has(r.category)?"выше — дороже клиенту":"выше — выгоднее вкладчику"}</span><span>{ovN(hi,2)}%</span></div>}
   </div>;
 }
 
@@ -1517,20 +1873,21 @@ function FyOnboarding({onDone,onSkip}){
     }catch{ setBusy(false); }
   };
   const nSel=Object.values(prods).filter(Boolean).length+Object.values(risks).filter(Boolean).length;
-  return <div className="fy-ob">
-    <div className="eyebrow">30 секунд — и страница станет вашей</div>
+  // обычная функция, не компонент: иначе чипы пересоздавались бы при каждом клике
+  const chips=(list,val,set)=><div className="fy-ob-chips">{list.map(([k,l])=>
+    <button key={k} type="button" className="fy-ob-chip" aria-pressed={!!val[k]} onClick={()=>tog(set)(k)}>{l}</button>)}</div>;
+  return <section className="fy-ob" aria-label="Настройка страницы">
+    <h2 className="eyebrow">30 секунд — и страница станет вашей</h2>
     <div className="q">Какие направления вы проверяете?</div>
-    <div className="fy-ob-chips">{OB_PRODUCTS.map(([k,l])=>
-      <span key={k} className={"fy-ob-chip"+(prods[k]?" on":"")} onClick={tog(setProds)(k)}>{l}</span>)}</div>
+    {chips(OB_PRODUCTS,prods,setProds)}
     <div className="q">Какие риски ближе к вашей работе?</div>
-    <div className="fy-ob-chips">{OB_RISKS.map(([k,l])=>
-      <span key={k} className={"fy-ob-chip"+(risks[k]?" on":"")} onClick={tog(setRisks)(k)}>{l}</span>)}</div>
+    {chips(OB_RISKS,risks,setRisks)}
     <div className="fy-ob-foot">
       <button className="btn btn-accent" disabled={busy||nSel===0} onClick={submit}>
         {busy?"Собираю вашу страницу… ~15 сек":"Собрать мою страницу"}</button>
-      <span className="fy-ob-skip" onClick={onSkip}>пропустить — показывать общее</span>
+      <button type="button" className="fy-ob-skip" onClick={onSkip}>Пропустить — показывать общее</button>
     </div>
-  </div>;
+  </section>;
 }
 
 function ForYouPage(){
@@ -1544,6 +1901,7 @@ function ForYouPage(){
   const[cfb,setCfb]=useState({});             // оценки зацепок
   const[tk,setTk]=useState({});               // зацепки «в работе»
   const[obGone,setObGone]=useState(false);    // onboarding скрыт в этой сессии
+  const[subs,setSubs]=useState(null);         // подписки на сигналы жалоб — живое состояние
   const load=()=>apiFetch("/api/overview/foryou")
     .then(d=>{setP(d.foryou||null);setErr(false);})
     .catch(()=>{setP(null);setErr(true);});
@@ -1551,6 +1909,9 @@ function ForYouPage(){
     apiFetch("/api/feedback?kind=news").then(d=>setFb(d.items||{})).catch(()=>{});
     apiFetch("/api/feedback?kind=check").then(d=>setCfb(d.items||{})).catch(()=>{});
     apiFetch("/api/feedback?kind=check_taken").then(d=>setTk(d.items||{})).catch(()=>{});
+    // не из утренней сборки страницы: подписка оформляется в течение дня,
+    // и всплеск должен быть виден сразу
+    apiFetch("/api/reviews/subscriptions").then(d=>setSubs(d.items||[])).catch(()=>setSubs([]));
   },[]);
   const refresh=async()=>{ if(busy)return; setBusy(true);
     try{const d=await apiPost("/api/overview/foryou/refresh",{});setP(d.foryou||null);}catch{}
@@ -1585,27 +1946,26 @@ function ForYouPage(){
     apiPost("/api/feedback",{kind:"check_taken",item_key:key,verdict:1,
       payload:{title:c.title,why:c.why}}).catch(()=>{});
   };
-  const goProfile=()=>{location.hash="profile";};
 
-  if(p===undefined) return <div className="fade-in">
+  if(p===undefined) return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style>
     <div className="fy-seg-mob"><OvSeg page="foryou"/></div>
     <div className="skel" style={{height:13,width:260,marginBottom:16,borderRadius:6}}/>
     <div className="skel" style={{height:44,width:"54%",marginBottom:10,borderRadius:8}}/>
     <div className="skel" style={{height:20,width:"68%",marginBottom:28,borderRadius:6}}/>
-    <div className="fy-grid">{[0,1,2,3,4].map(i=><div key={i} className="skel" style={{height:i===0?260:150,borderRadius:10,gridColumn:i===0?"span 2":undefined,gridRow:i===0?"span 2":undefined}}/>)}</div>
+    <div className="fy-cks">{[0,1,2].map(i=><div key={i} className="skel" style={{height:170,borderRadius:10}}/>)}</div>
   </div>;
 
-  if(err) return <div className="fade-in">
+  if(err) return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style><div className="fy-seg-mob"><OvSeg page="foryou"/></div>
     <ErrState msg="Не удалось собрать персональную страницу. Обновите страницу или попробуйте позже."/>
   </div>;
 
-  if(p===null) return <div className="fade-in">
+  if(p===null) return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style><div className="fy-seg-mob"><OvSeg page="foryou"/></div>
     <div style={{padding:"72px 24px",textAlign:"center",maxWidth:500,margin:"0 auto"}}>
-      <div style={{fontSize:24,marginBottom:12,color:"var(--accent)"}}>✦</div>
-      <div className="t-h" style={{marginBottom:8}}>Персонализация выключена</div>
+      <div style={{fontSize:24,marginBottom:12,color:"var(--accent)"}} aria-hidden="true">✦</div>
+      <h1 className="t-h" style={{marginBottom:8}}>Персонализация выключена</h1>
       <p className="t-cap" style={{marginBottom:20,textWrap:"pretty"}}>Включите персональный дайджест — и эта страница будет собираться каждое утро под вашу зону ответственности в Сбере: направления, новости, зацепки для проверок.</p>
       <button className="btn btn-accent" onClick={async()=>{try{await apiPut("/api/me",{prefs:{personal_digest:true}});setP(undefined);load();}catch{}}}>Включить персонализацию</button>
     </div>
@@ -1614,192 +1974,180 @@ function ForYouPage(){
   const hl=p.headline||"Ваша повестка на сегодня";
   const hh=bfPickHot(hl,p.hot||"");
   const genAt=p.generated_at?new Date(p.generated_at):null;
-  const tiles=(()=>{ const arr=(p.news||[]).filter(t=>t&&t.title&&!gone[t.title]).slice(0,8);
-    const hi=arr.findIndex(t=>t.image);
-    if(hi>0){const[t]=arr.splice(hi,1);arr.unshift(t);}
-    return arr; })();
-  const focus=p.focus||[], checks=p.checks||[];
+  // выпуск — тот же «Брифинг № <день года>», что в «Общем»: одна газета, два режима
+  const iss=p.digest_date?new Date(p.digest_date+"T12:00:00"):new Date();
+  const issueNum=Math.ceil((iss-new Date(iss.getFullYear(),0,0))/864e5);
+  const tiles=(p.news||[]).filter(t=>t&&t.title&&!gone[t.title]).slice(0,8);
+  const checks=(p.checks||[]).filter(c=>!goneChk[c.title]);
+  const signals=(p.signals||[]).filter(s=>s&&s.label);
+  const focus=p.focus||[];
   const tar=p.tariffs||{}, gap=tar.gap||[], moves=tar.moves||[];
-  // В «Отзывы» уходим с контекстом карточки: банк, продукт и та самая горячая
-  // тема, которая на карточке и названа. Иначе человек нажимает на конкретную
-  // жалобу, а попадает в общий список и не понимает, зачем его перебросили —
-  // ровно об этом дважды написали в обратной связи.
-  const openReviews=(c)=>{ try{sessionStorage.setItem("al-rv-prefilter",
-      JSON.stringify({bank:"Сбербанк",product:c.product||"",
-                      theme:(c.theme&&(c.theme.key||c.theme.slug))||""}));}catch{}
-    location.hash="reviews"; };
+  const mvS=ovtGroup(moves.filter(m=>m.is_sber));
+  const perBank={}, mvO=ovtGroup(moves.filter(m=>!m.is_sber&&!OVT_OUT.has(m.category)))
+    .filter(x=>(perBank[x.c.bank]=(perBank[x.c.bank]||0)+1)<=2);
+  const mv=[...mvS,...mvO].slice(0,6);
+  const maxD=Math.max(1,...mv.map(x=>Math.abs(+x.c.delta||0)));
+  const ps=me&&me.personalization, psNext=ps&&(ps.parts||[]).find(x=>!x.done&&x.cta);
+  const sgNote=s=>s.market_note||(s.market_ratio!=null&&s.ratio?ovMarketNote(s.ratio,s.market_ratio,"Сбера")
+    :s.gap!=null?`×${ovN(s.gap)} к рынку`:"");
 
-  return <div className="fade-in">
+  return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style>
     <div className="fy-seg-mob"><OvSeg page="foryou"/></div>
 
-    {/* ① персональный masthead */}
-    <header className="fy-head">
+    {/* ① персональная передовица */}
+    <header>
       <div className="eyebrow-row">
-        <div className="eyebrow">Для вас · {new Date().toLocaleDateString("ru",{day:"numeric",month:"long"})} · <span className="fy-ai">✦ собрано под ваш профиль</span></div>
+        <div className="eyebrow">Брифинг №{issueNum} · {iss.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · для вас</div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
-          {busy?
-            <span className="bf-live"><span className="dot"/>пересобираю…</span>:
-            genAt&&<span className="bf-stamp">обновлено {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})}</span>}
-          <button className="bf-refresh" onClick={refresh} disabled={busy} title="Пересобрать под профиль">⟳</button>
+          <span role="status">{busy
+            ?<span className="bf-live"><span className="dot" aria-hidden="true"/>пересобираю…</span>
+            :genAt&&<span className="bf-stamp">собрано {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"})} МСК</span>}</span>
+          <button className="bf-refresh" onClick={refresh} disabled={busy}
+            data-tip="Пересобрать страницу под профиль" aria-label="Пересобрать страницу под профиль">⟳</button>
         </div>
       </div>
       <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
-        {hh?<>{hl.slice(0,hh[0])}<em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl}
+        {hh?<>{hl.slice(0,hh[0])}<em className="bf-hot">{hl.slice(hh[0],hh[0]+hh[1])}</em>{hl.slice(hh[0]+hh[1])}</>:hl}
       </h1>
-      {p.lead?<p className="fy-lede">{p.lead}</p>
-        :!p.has_profile?<p className="fy-lede" style={{color:"var(--ink-3)"}}>Опишите в профиле, что вы проверяете в Сбере — и каждое утро здесь будет личная сводка. <a style={{color:"var(--accent)",cursor:"pointer"}} onClick={goProfile}>Настроить →</a></p>
-        :<p className="fy-lede" style={{color:"var(--ink-3)"}}>По вашим темам сегодня спокойно — ниже общая картина по вашим направлениям.</p>}
-      {(p.top_topics||[]).length>0&&<div className="fy-chips">
-        {p.top_topics.slice(0,5).map((t,i)=><span key={t} className={"fy-chip"+(i===0?" acc":"")}>{t}</span>)}
-        <span className="fy-tune" onClick={goProfile}>настроить →</span>
+      {p.lead?<p className="lede" style={{maxWidth:"70ch"}}>{p.lead}</p>
+        :!p.has_profile?<p className="lede" style={{maxWidth:"70ch",color:"var(--ink-3)"}}>Опишите в профиле, что вы проверяете в Сбере — и каждое утро здесь будет личная сводка. <a href="#profile" className="fy-tune">Настроить</a></p>
+        :<p className="lede" style={{maxWidth:"70ch",color:"var(--ink-3)"}}>По вашим темам сегодня спокойно — ниже общая картина по вашим направлениям.</p>}
+      {(p.top_topics||[]).length>0&&<div className="fy-meta">
+        {p.top_topics.slice(0,5).map((t,i)=><span key={t} className={"fy-tp"+(i===0?" acc":"")}>{fyCap(t)}</span>)}
+        <a className="fy-tune" href="#profile">Настроить темы</a>
       </div>}
-      {(()=>{ const ps=me&&me.personalization;
-        if(!ps) return null;
-        const next=(ps.parts||[]).find(x=>!x.done&&x.cta);
-        return <div className="fy-pshint" onClick={goProfile} title="Открыть профиль">
-          ✦ персонализация <span className="pc">{ps.score}%</span>
-          {ps.score<100&&next?<> · {next.cta} →</>:null}
-        </div>; })()}
+      {ps&&<a className="fy-ps" href="#profile">
+        <span className="fy-ps-bar" aria-hidden="true"><i style={{width:Math.max(0,Math.min(100,ps.score||0))+"%"}}/></span>
+        <span>Персонализация <b>{ps.score}%</b>{ps.score<100&&psNext?<> · {psNext.cta}</>:null}</span></a>}
     </header>
 
     {/* ①b onboarding холодного старта (этап D) */}
-    {p&&!p.has_profile&&!obGone&&!(me&&me.prefs&&me.prefs.onboarded)&&
+    {!p.has_profile&&!obGone&&!(me&&me.prefs&&me.prefs.onboarded)&&
       <FyOnboarding
         onDone={(np)=>{setObGone(true);if(np)setP(np);}}
         onSkip={async()=>{setObGone(true);
           try{await apiPut("/api/me",{prefs:{onboarded:true}});}catch{}}}/>}
 
     {/* ② что проверить сегодня (ИИ-зацепки) */}
-    {checks.filter(c=>!goneChk[c.title]).length>0&&<section className="fy-sec">
-      <div className="eyebrow">Что проверить сегодня · <span className="fy-ai">✦ по сигналам дня</span></div>
-      <div className="fy-checks-row">
-        {checks.filter(c=>!goneChk[c.title]).map((c,i)=><div key={c.title} className={"fy-check"+(tk[c.title]?" taken":"")}>
-          <span className="n">{tk[c.title]?<span className="taken-mark">✓</span>:String(i+1).padStart(2,"0")}</span>
-          <div className="t">
-            {c.src&&<span className="src-chip" title="Открыть источник сигнала"
-              onClick={()=>{
-                // Ведём в тот же срез, о котором говорит сигнал, а не в общий раздел.
-                if(c.src==="reviews"){
-                  try{sessionStorage.setItem("al-rv-prefilter",JSON.stringify({
-                    bank:c.bank||"Сбербанк", theme:(c.theme&&(c.theme.key||c.theme.slug))||"",
-                    product:c.product||""}));}catch{}
-                }
-                location.hash={reviews:"reviews",news:"overview",tariffs:"market"}[c.src]||"overview";
-              }}>
-              {{reviews:"жалобы",news:"новости",tariffs:"тарифы"}[c.src]}</span>}
-            {c.title}{c.why&&<div className="w">{c.why}</div>}</div>
-          <span className="acts2">
-            <button className={tk[c.title]?"on":""} title={tk[c.title]?"В работе — снять":"Взять в работу"}
-                    onClick={()=>onCheckTake(c)}>▸</button>
-            <button title="Составить план проверки с ИИ"
-                    onClick={()=>bfGoAI("Проверка в Сбере: "+c.title+". "+(c.why||"")+" Составь детальный план аудиторской проверки по этому пункту.")}>✦</button>
-            <button className={cfb[c.title]===1?"on":""} title="Полезная зацепка" onClick={()=>onCheckFb(c,1)}><IcTUp s={12}/></button>
-            <button title="Не то — научимся точнее" onClick={()=>onCheckFb(c,-1)}><IcTDn s={12}/></button>
-          </span>
-        </div>)}
+    {checks.length>0&&<section className="fy-sec">
+      <div className="fy-h"><h2 className="eyebrow">Что проверить сегодня · {checks.length}</h2>
+        <span className="fy-h-note"><span className="ai" aria-hidden="true">✦ </span>зацепки ИИ по сигналам дня</span></div>
+      <div className="fy-cks">
+        {checks.map((c,i)=><FyCheck key={c.title} c={c} i={i} taken={!!tk[c.title]} fb={cfb[c.title]||0}
+          onTake={()=>onCheckTake(c)} onFb={v=>onCheckFb(c,v)}/>)}
       </div>
     </section>}
 
-    {/* ②b сигналы недели по темам профиля (weekly_signals × профиль) */}
-    {(p.signals||[]).filter(s=>s&&s.label).length>0&&<section className="fy-sec">
-      <div className="eyebrow">Сигналы недели по вашим темам · жалобы Сбера</div>
-      <div className="fy-sig">
-        {(p.signals||[]).filter(s=>s&&s.label).map(s=>
-          <div key={s.key} className="fy-sig-row" title="Открыть тему в «Отзывах»"
-               onClick={()=>bfGoDrill({page:"reviews",params:{theme:s.key}})}>
-            <span className={"fy-sig-dot"+(s.level==="high"?" high":"")}/>
-            <span className="fy-sig-l">{s.label}</span>
-            <span className="fy-sig-n">{s.week!=null?s.week+" за 7 дн":""}
-              {s.ratio!=null?" · ×"+s.ratio+" к норме":""}
-              {s.gap!=null?" · ×"+s.gap+" к рынку":""}
-              {s.bank_specific?" · только у Сбера":""}</span>
-            {s.why_you&&<span className="fy-sig-why">{s.why_you}</span>}
-          </div>)}
+    {/* ②b сигналы недели по темам профиля — те же числа, что в «Общем» (снимок выпуска) */}
+    {signals.length>0&&<section className="fy-sec">
+      <div className="fy-h"><h2 className="eyebrow">Сигналы недели по вашим темам</h2>
+        <span className="fy-h-note">жалобы клиентов Сбера · по выпуску</span></div>
+      <div className="fy-sgs">
+        {signals.map(s=>{const mn=sgNote(s);
+          return <a key={s.key} className="fy-sg" href={fyRv({theme:s.key})}>
+            <span className={"fy-sg-dot"+(s.level==="high"?" high":"")} aria-hidden="true"/>
+            <span className="fy-sg-b"><span className="fy-sg-l">{s.label}</span>
+              <span className="fy-sg-n">{s.week!=null?ovJ(s.week)+" за 7 дней":""}
+                {s.baseline_week!=null?` · норма ${ovN(s.baseline_week)}`:""}
+                {s.ratio!=null?` · ×${ovN(s.ratio)}`:""}{mn?` · ${mn}`:""}</span></span>
+            {s.why_you&&<span className="fy-sg-z">{s.why_you}</span>}
+          </a>;})}
+      </div>
+    </section>}
+
+    {/* ②b' подписки на сигналы («Отзывы» → «Следить»): банк и продукт аудитора */}
+    {subs&&subs.length>0&&<section className="fy-sec">
+      <div className="fy-h"><h2 className="eyebrow">Ваши подписки</h2>
+        <span className="fy-h-note">всплески жалоб за 7 дней</span></div>
+      <div className="fy-sgs">
+        {subs.map((x,i)=>{const hot=(x.signals||[]).length>0, w=x.watch||[];
+          return <a key={i} className="fy-sg" href={fyRv({bank:x.bank,product:x.product,theme:hot?x.signals[0].key:""})}>
+            <span className={"fy-sg-dot"+(hot?(x.signals.some(s=>s.level==="high")?" high":""):w.length?"":" calm")} aria-hidden="true"/>
+            <span className="fy-sg-b"><span className="fy-sg-l">{x.bank}{x.product?` · ${x.product}`:" · все продукты"}</span>
+              <span className="fy-sg-n">{hot?x.signals.map(s=>`${s.short||s.label} ${s.new?"— новое":"×"+rvNum(s.ratio)}`).join(" · ")
+                :w.length?"быстрее рынка: "+w.map(d=>`${d.short||d.label} ×${rvNum(d.gap)}`).join(" · ")
+                :"спокойно"}</span></span>
+          </a>;})}
       </div>
     </section>}
 
     {/* ②c связка дня, касающаяся зоны пользователя (новость × наши данные) */}
     {(p.links||[]).length>0&&<section className="fy-sec">
-      <div className="eyebrow">Связка дня · <span className="fy-ai">✦ новость × данные по вашей зоне</span></div>
-      {(p.links||[]).map((l,i)=>
-        <div key={i} className="fy-link" onClick={()=>l.drill&&bfGoDrill(l.drill)}
-             title={l.drill?"Открыть данные":""}>
-          <div style={{minWidth:0}}>
-            <div className="lt">{l.title}</div>
-            {l.so_what&&<div className="lw">{l.so_what}</div>}
-            {l.provenance&&<div className="lp">{l.provenance}</div>}
-          </div>
-        </div>)}
+      <div className="fy-h"><h2 className="eyebrow">Связка дня</h2>
+        <span className="fy-h-note">новость × данные по вашей зоне</span></div>
+      <div className="fy-lks">
+        {(p.links||[]).map((l,i)=>{const d=l.drill||{};
+          const href=d.url||(d.page==="reviews"?fyRv(d.params):null);
+          const inner=<><span className="fy-lk-t">{l.title}</span>
+            {l.so_what&&<span className="fy-lk-w">{l.so_what}</span>}
+            {l.provenance&&<span className="fy-lk-p">{l.provenance}</span>}</>;
+          return href
+            ?<a key={i} className="fy-lk" data-sev={l.severity||undefined} href={href}
+                target={d.url?"_blank":undefined} rel={d.url?"noopener noreferrer":undefined}>{inner}</a>
+            :<button key={i} className="fy-lk" data-sev={l.severity||undefined} onClick={()=>bfGoDrill(l.drill)}>{inner}</button>;})}
+      </div>
     </section>}
 
-    {/* ③ стат-карты направлений */}
+    {/* ③ направления: жалобы Сбера за 90 дней */}
     {focus.length>0&&<section className="fy-sec">
-      <div className="eyebrow-row">
-        <div className="eyebrow">Ваши направления · жалобы Сбера · 90 дней</div>
-        {p.default_focus&&<span className="fy-hint">стартовый набор — <a onClick={goProfile}>уточните профиль</a></span>}
-      </div>
-      <div className="fy-cards">
-        {focus.map(c=>{
-          const st=c.stats;
+      <div className="fy-h"><h2 className="eyebrow">Ваши направления</h2>
+        <span className="fy-h-note">{p.default_focus?<>стартовый набор · <a className="fy-tune" href="#profile">уточнить профиль</a></>
+          :"жалобы клиентов Сбера · 90 дней"}</span></div>
+      <div className="fy-fcs">
+        {focus.map(c=>{const st=c.stats;
           const d=st&&typeof st.delta_pct==="number"?st.delta_pct:null;
-          return <div key={c.slug} className="fy-card" onClick={()=>openReviews(c)} title="Открыть в «Отзывах»">
-            <div className="lbl"><span>{c.label}</span>{st&&st.market_rank?<span>#{st.market_rank} на рынке</span>:null}</div>
-            {st?<div className="num tnum">{(st.total||0).toLocaleString("ru")}<small>жалоб</small>
-                {d!=null&&!st.delta_low_n&&<span className={"delta "+(d>0?"up":"down")}>{d>0?"+":""}{Math.round(d)}%</span>}</div>
-              :<div style={{fontSize:14,color:"var(--ink-3)",padding:"6px 0"}}>отдельного среза по продукту нет</div>}
+          return <a key={c.slug} className="fy-fc"
+              href={fyRv({bank:"Сбербанк",product:c.product,theme:c.theme&&(c.theme.key||c.theme.slug)})}>
+            {/* «Место на рынке» по жалобам не показываем: без поправки на число
+                клиентов оно читается как «жалоб меньше, чем у конкурента» */}
+            <span className="fy-fc-l">{fyCap(c.label)}</span>
+            {st?<span className="fy-fc-n">{fmtNum(st.total||0)}<small>{plural(st.total||0,"жалоба","жалобы","жалоб")}</small>
+                {d!=null&&!st.delta_low_n&&<span className={"fy-fc-d "+(d>0?"up":"down")}
+                  data-tip="к предыдущим 90 дням">{d>0?"+":"−"}{Math.abs(Math.round(d))}%</span>}</span>
+              :<span className="fy-fc-m">отдельного среза по продукту нет</span>}
             <FySpark series={c.trend}/>
-            <div className="meta">
-              {c.theme?<>горячая тема: <b>{c.theme.label}</b>{typeof c.theme.delta_pct==="number"&&c.theme.delta_pct>0?" · +"+Math.round(c.theme.delta_pct)+"%":""}</>
-                :st&&st.market_share_pct!=null?<>доля рынка жалоб: {st.market_share_pct}%</>
-                :<span style={{color:"var(--ink-4)"}}>клик — все отзывы</span>}
-            </div>
-          </div>;})}
+            <span className="fy-fc-m">{c.theme?<>горячая тема: <b>{c.theme.label}</b>
+                {typeof c.theme.delta_pct==="number"&&c.theme.delta_pct>0?` · +${Math.round(c.theme.delta_pct)}%`:""}</>
+              :st&&st.market_share_pct!=null?<>доля рынка жалоб: {ovN(st.market_share_pct)}%</>
+              :"все отзывы по направлению"}</span>
+          </a>;})}
       </div>
     </section>}
 
-    {/* ④ новостная сетка (Perplexity-стиль) */}
+    {/* ④ новости под профиль — текстовые карточки */}
     {tiles.length>0&&<section className="fy-sec">
-      <div className="eyebrow-row">
-        <div className="eyebrow">Новости для вас · <span className="fy-ai">✦ отобрано по профилю</span></div>
-        <span className="fy-hint">👍/👎 на плитках учат подборку</span>
-      </div>
-      <div className="fy-grid">
-        {tiles.map((t,i)=><FyTile key={t.url||t.title} t={t} hero={i===0&&!!t.image}
-          fb={fb[t.url||t.title]||0} onFb={onTileFb}/>)}
+      <div className="fy-h"><h2 className="eyebrow">Новости для вас</h2>
+        <span className="fy-h-note">отобраны по профилю · 👍/👎 учат подборку</span></div>
+      <div className="fy-ns">
+        {(()=>{const hero=!!(tiles[0]&&tiles[0].summary), odd=(tiles.length-(hero?1:0))%2===1;
+          return tiles.map((t,i)=><FyNews key={t.url||t.title} t={t} hero={i===0&&hero}
+            wide={odd&&i===tiles.length-1&&!(i===0&&hero)} fb={fb[t.url||t.title]||0} onFb={onTileFb}/>);})()}
       </div>
     </section>}
 
-    {/* ⑤ тарифы: Сбер на фоне рынка */}
-    {(gap.length>0||moves.length>0)&&<section className="fy-sec">
-      <div className="eyebrow">Тарифы в ваших категориях{tar.key_rate!=null?" · ключевая "+tar.key_rate+"%":""}</div>
-      <div className="fy-tar">
-        {gap.length>0&&<div className="surface">
-          <div className="t-cap" style={{marginBottom:4}}>Сбер против рынка (макс. ставка)</div>
-          {gap.map(r=><div key={r.category} className="fy-tar-row">
-            <span>{CAT_LABELS[r.category]||r.category}</span>
-            <span className="mono tnum r">{r.sber_max!=null?(+r.sber_max).toFixed(2)+"%":"—"}
-              <span style={{color:"var(--ink-4)"}}> · медиана {r.market_median!=null?(+r.market_median).toFixed(2)+"%":"—"}</span>
-              {r.sber_vs_median_pp!=null&&<b style={{marginLeft:8,color:"var(--ink-2)"}}>{r.sber_vs_median_pp>0?"+":""}{(+r.sber_vs_median_pp).toFixed(2)} п.п.</b>}</span>
-          </div>)}
-        </div>}
-        {moves.length>0&&<div className="surface">
-          <div className="t-cap" style={{marginBottom:4}}>Движения за 7 дней</div>
-          {moves.map((m,i)=><div key={i} className="fy-tar-row">
-            <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-              {m.is_sber?<b style={{color:"var(--sber)"}}>Сбер</b>:m.bank}
-              <span style={{color:"var(--ink-4)"}}> · {CAT_LABELS[m.category]||m.category}</span></span>
-            <span className="mono tnum r">{m.from}→{m.to}
-              {typeof m.delta==="number"&&<b style={{marginLeft:6,color:"var(--ink-2)"}}>{m.delta>0?"+":""}{m.delta} п.п.</b>}</span>
-          </div>)}
-        </div>}
-      </div>
+    {/* ⑤ тарифы в категориях аудитора */}
+    {(gap.length>0||mv.length>0)&&<section className="fy-sec">
+      <div className="fy-h"><h2 className="eyebrow">Тарифы в ваших категориях</h2>
+        <span className="fy-h-note">{tar.key_rate!=null?`ключевая ЦБ ${ovN(tar.key_rate,2)}%`:""}</span></div>
+      {mv.length>0&&<div className="surface ovt-card" style={{marginBottom:12}}>
+        <div className="ovt-g" style={{marginTop:6}}>Изменения за 7 дней
+          <a className="ovt-gl" href="#market?view=changes">все изменения ›</a></div>
+        {mv.map((x,i)=><OvtRow key={i} x={x} own={x.c.is_sber} maxD={maxD}/>)}
+      </div>}
+      {gap.length>0&&<div className="surface ovt-card">
+        <div className="ovt-g" style={{marginTop:6}}>Ставки Сбера на фоне рынка</div>
+        <div className="fy-rg">{gap.map(r=><FyRange key={r.category} r={r}/>)}</div>
+        <div className="fy-rg-lg"><span><i className="s"/>от минимальной до максимальной ставки Сбера</span>
+          <span><i className="m"/>медиана рынка</span><span>шкала — от минимума до максимума рынка</span></div>
+      </div>}
     </section>}
 
     {/* ⑥ подвал-доверие */}
     <footer className="fy-trust">
-      <span>данные брифинга {p.digest_date||"—"} · заголовок, лид и зацепки — ИИ · 👍/👎 учат ваши рекомендации{p.feedback_used>0?" · учтено "+p.feedback_used+" ваших оценок":""}</span>
-      <a onClick={goProfile}>настроить профиль →</a>
+      <span>данные выпуска {p.digest_date?String(p.digest_date).split("-").reverse().slice(0,2).join("."):"—"}
+        {" · "}заголовок, лид и зацепки пишет ИИ по числам выпуска{p.feedback_used>0?` · учтено ${p.feedback_used} ${plural(p.feedback_used,"оценка","оценки","оценок")}`:""}</span>
+      <a href="#profile">Настроить профиль</a>
     </footer>
   </div>;
 }
@@ -1934,12 +2282,12 @@ function useNumberShortcuts(){
   },[]);
 }
 
-const SEGS=".seg, .rv-chips";
+const SEGS=".seg, .rv-chips, .rv-tabs-l, .ptabs, .tab-row";
 function useSlidingSegments(){
   useEffect(()=>{
     const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
     const place=(seg)=>{
-      const on=seg.querySelector(".seg-btn.on, .rv-chip.on");
+      const on=seg.querySelector(".seg-btn.on, .rv-chip.on, .rv-tab.on, .ptab.on, .tab.active");
       let ind=seg.querySelector(":scope > .seg-ind");
       if(!on){ if(ind) ind.style.opacity="0"; return; }
       if(!ind){
@@ -1949,7 +2297,9 @@ function useSlidingSegments(){
       const s=seg.getBoundingClientRect(), b=on.getBoundingClientRect();
       ind.style.opacity="1";
       ind.style.width=b.width+"px"; ind.style.height=b.height+"px";
-      ind.style.transform=`translate(${b.left-s.left}px, ${b.top-s.top}px)`;
+      // + прокрутка: подложка лежит внутри прокручиваемой полосы (подвкладки на
+      // телефоне), и без неё отставала от активной кнопки на величину сдвига
+      ind.style.transform=`translate(${b.left-s.left+seg.scrollLeft}px, ${b.top-s.top+seg.scrollTop}px)`;
       if(reduce) ind.style.transition="none";
     };
     const all=()=>document.querySelectorAll(SEGS).forEach(place);
@@ -1974,8 +2324,68 @@ function useSlidingSegments(){
     });
     attach();
     addEventListener("resize",all);
-    return()=>{mo.disconnect();ro.disconnect();removeEventListener("resize",all);};
+    // ширины кнопок меняются, когда догружаются шрифты, а размер полосы — нет:
+    // без этого подложка оставалась там, где кнопка была до загрузки Geist
+    const fonts=document.fonts;
+    if(fonts){fonts.ready.then(all).catch(()=>{}); fonts.addEventListener&&fonts.addEventListener("loadingdone",all);}
+    return()=>{mo.disconnect();ro.disconnect();removeEventListener("resize",all);
+      fonts&&fonts.removeEventListener&&fonts.removeEventListener("loadingdone",all);};
   },[]);
+}
+
+// «Тарифы за неделю»: не выгрузка таблицей, а ответ — сколько всего, было ли
+// массовое движение, что меняли мы, что крупнее всего у других. Один продукт
+// банка — одна строка (разные офферы и повторы за неделю склеены); микрозаймы
+// с дневной ставкой в общий ряд не ставим — рядом с годовыми это вводит в заблуждение
+const OVT_OUT=new Set(["microloan"]);
+// Строка тарифного изменения — общая для «Общего» и «Для вас»: банк / продукт,
+// было → стало, шкала изменения, дата; клик — журнал «Рынка» на этом изменении.
+const ovtGo=c=>{const sp=new URLSearchParams({cat:c.category||"",view:"changes"});
+  if(c.bank_slug)sp.set("bank",c.bank_slug); if(c.change_id)sp.set("change",c.change_id);
+  if(c.offer_id)sp.set("offer",c.offer_id); location.hash="market?"+sp.toString();};
+// один продукт банка часто меняется сразу в нескольких офферах — одна строка
+const ovtGroup=list=>{const g=[]; for(const c of list){const k=c.bank+"|"+c.title;
+  const h=g.find(x=>x.k===k); if(h){h.n++;continue;} g.push({k,c,n:1});} return g;};
+const ovtDay=t=>{try{return new Date(t).toLocaleDateString("ru",{day:"2-digit",month:"2-digit",timeZone:"Europe/Moscow"});}catch{return "";}};
+function OvtRow({x,own,maxD}){
+  const c=x.c, d=+c.delta||0, w=Math.min(50,Math.abs(d)/(maxD||1)*50);
+  return <button className={"ovt-r"+(own?" own":"")} onClick={()=>ovtGo(c)}
+      data-tip={`Открыть в журнале изменений «Рынка» · ${CAT_LABELS[c.category]||c.category}`}>
+    <span className="ovt-b"><b>{c.bank}</b>
+      <span>{c.title||CAT_LABELS[c.category]||c.category}{c.title?` · ${CAT_LABELS[c.category]||c.category}`:""}{x.n>1?` · ${x.n} ${plural(x.n,"оффер","оффера","офферов")}`:""}</span></span>
+    <span className="ovt-rate">{ovN(c.from,2)} → <b>{ovN(c.to,2)}%</b></span>
+    <span className="ovt-d"><span className="ovt-bar" aria-hidden="true"><i/><b style={{left:(d<0?50-w:50)+"%",width:Math.max(w,1.5)+"%"}}/></span>
+      <span className="ovt-dv">{d>0?"+":"−"}{ovN(Math.abs(d),2)} п.п.</span></span>
+    <span className="ovt-dt">{ovtDay(c.changed_at)}</span>
+  </button>;
+}
+function OvTariffs({tm}){
+  const tot=tm.totals||{}, rows=tm.top_changes||[], mass=tm.mass_updates||[];
+  const sber=ovtGroup(rows.filter(c=>c.is_sber));
+  const perBank={}, other=ovtGroup(rows.filter(c=>!c.is_sber&&!OVT_OUT.has(c.category)))
+    .filter(x=>(perBank[x.c.bank]=(perBank[x.c.bank]||0)+1)<=2).slice(0,6);
+  const maxD=Math.max(1,...[...sber,...other].map(x=>Math.abs(x.c.delta||0)));
+  const Row=({x,own})=><OvtRow x={x} own={own} maxD={maxD}/>;
+  return <section className="ovt">
+    <div className="ovt-h"><h2 className="eyebrow">Тарифы за неделю</h2>
+      <a className="ovt-all" href="#market?view=changes">Все изменения<Ic.ext/></a></div>
+    <div className="surface ovt-card">
+      <p className="ovt-sum">{fmtNum(tot.changes_7d||0)} {plural(tot.changes_7d||0,"изменение","изменения","изменений")} у {fmtNum(tot.banks_changed_7d||0)} {plural(tot.banks_changed_7d||0,"банка","банков","банков")}
+        {tot.sber_changes_7d!=null&&<> · у Сбера — {fmtNum(tot.sber_changes_7d)} {plural(tot.sber_changes_7d,"оффер","оффера","офферов")}</>}
+        {tm.after_pause&&<> · первый сбор после паузы</>}</p>
+      {mass.map((m,i)=><a key={i} className="ovt-mass" href={"#market?"+new URLSearchParams({cat:m.category||"",view:"changes"})}>
+        <span className="ovt-dot" aria-hidden="true"/>
+        <span><b>Массово: {(CAT_LABELS[m.category]||m.category||"").toLowerCase()}</b> — {m.n_banks} {plural(m.n_banks||0,"банк","банка","банков")} за {m.window_h||48} ч
+          {(m.banks||[]).length?`: ${m.banks.slice(0,4).join(", ")}${m.banks.length>4?" и др.":""}`:""}</span></a>)}
+      {(sber.length>0||tot.sber_changes_7d>0)&&<div className="ovt-g"><span className="ovt-sb" aria-hidden="true"/>Сбер
+        {tot.sber_changes_7d>0&&<a className="ovt-gl" href="#market?view=changes&bank=sberbank">все {fmtNum(tot.sber_changes_7d)} ›</a>}</div>}
+      {sber.map((x,i)=><Row key={"s"+i} x={x} own/>)}
+      {other.length>0&&<div className="ovt-g">Крупнейшие у других банков</div>}
+      {other.map((x,i)=><Row key={"o"+i} x={x}/>)}
+      {!sber.length&&!other.length&&<div className="ovt-empty">Изменений ставок за неделю не зафиксировано · под наблюдением {fmtNum(tot.banks_tracked||0)} {plural(tot.banks_tracked||0,"банк","банка","банков")}
+        {tot.last_ok_run&&<> · последний сбор {fmtDateMsk(tot.last_ok_run)}</>}</div>}
+    </div>
+  </section>;
 }
 
 function OverviewPage(){
@@ -1984,8 +2394,36 @@ function OverviewPage(){
   const[loading,setLoading]=useState(true);
   const[err,setErr]=useState(null);
   const[refreshBusy,setRefreshBusy]=useState(false);
+  const[live,setLive]=useState(null);    // те же функции, что у «Отзывов», сейчас
+  const[newsOpen,setNewsOpen]=useState(false);
+  // дополнение 15:00 — свёрнуто в строку; раскрытие помним до конца сессии
+  const[updOpen,setUpdOpen]=useState(()=>{try{return sessionStorage.getItem("al-ov-upd")==="1";}catch{return false;}});
+  const me=useMe();
+  // Переход «Разобраться»/плитка/строка тарифов и «Назад» возвращали на верх
+  // страницы — читатель терял место. Запоминаем прокрутку при уходе со страницы
+  useEffect(()=>{
+    const K="al-ov-scroll";
+    // страница остаётся смонтированной (оболочка держит посещённые разделы), а
+    // useNavMemory при смене раздела поднимает прокрутку наверх — поэтому
+    // место восстанавливаем при возвращении на #overview, после этого сброса
+    const on=()=>{
+      const here=/^#(overview)?($|\?)/.test(location.hash||"#");
+      try{
+        if(!here){sessionStorage.setItem(K,JSON.stringify({y:window.scrollY,t:Date.now()}));return;}
+        const v=JSON.parse(sessionStorage.getItem(K)||"null"); sessionStorage.removeItem(K);
+        if(v&&Date.now()-v.t<30*60e3&&v.y>0)setTimeout(()=>window.scrollTo(0,v.y),160);
+      }catch{} };
+    window.addEventListener("hashchange",on);
+    return ()=>window.removeEventListener("hashchange",on);
+  },[]);
+  useEffect(()=>{ if(loading)return;
+    try{ const v=JSON.parse(sessionStorage.getItem("al-ov-scroll")||"null");
+      sessionStorage.removeItem("al-ov-scroll");
+      if(v&&Date.now()-v.t<30*60e3&&v.y>0)requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,v.y)));
+    }catch{} },[loading]);
 
   const loadDigest=()=>apiFetch("/api/overview/digest").then(d=>{setDg(d);return d;});
+  useEffect(()=>{apiFetch("/api/overview/live").then(setLive).catch(()=>{});},[]);
   useEffect(()=>{
     Promise.allSettled([loadDigest(),apiFetch("/api/summary")]).then(([d,s])=>{
       if(s.status==="fulfilled")setSummary(s.value);
@@ -2002,12 +2440,20 @@ function OverviewPage(){
   },[refreshing]);
 
   const manualRefresh=()=>{
-    if(refreshBusy)return; setRefreshBusy(true);
+    if(refreshBusy)return;
+    // Выпуск один на всех. После полудня перегенерация забирает в сегодняшний
+    // выпуск новости, которые утром ушли бы в завтрашний, — спрашиваем явно
+    const late=+new Date().toLocaleString("en-GB",{timeZone:"Europe/Moscow",hour:"2-digit",hour12:false})>=12;
+    const ok=window.confirm(late
+      ?"Перегенерировать выпуск для всех?\n\nСейчас после 12:00: новости, попавшие в пересобранный выпуск, не войдут в завтрашний. Утренняя версия сохранится."
+      :"Перегенерировать выпуск для всех? Утренняя версия сохранится, новая займёт 1–2 минуты.");
+    if(!ok)return;
+    setRefreshBusy(true);
     // Оптимистично включаем «обновляется»: сервер мог ещё не закоммитить
     // mark_run, и мгновенный GET вернул бы refreshing=false — поллинг не
     // стартовал бы и юзер не увидел бы новый выпуск. Поллинг сам сойдётся.
     const optimistic=()=>setDg(d=>d&&({...d,meta:{...d.meta,refreshing:true}}));
-    apiPost("/api/overview/digest/refresh",{force:true})
+    apiPost("/api/overview/digest/refresh",{force:true,late})
       .then(optimistic)
       .catch(()=>{optimistic();/* 409 = уже генерится — тоже поллим */})
       .finally(()=>setRefreshBusy(false));
@@ -2041,15 +2487,27 @@ function OverviewPage(){
   const avgDelta=deltas.length?deltas.reduce((a,b)=>a+b,0)/deltas.length:null;
   const ovl=pulse.overall||{};
   const insights=head.insights||[];
-  const newsGroups=nw.groups||[];
+  // новость, уже развёрнутая карточкой, в колонке не повторяется
+  const onCards=new Set(insights.map(i=>String(i.ref||"")).filter(r=>r.startsWith("news:")).map(r=>r.slice(5)));
+  const newsGroups=(nw.groups||[]).map(g=>({...g,items:(g.items||[]).filter(it=>
+    !onCards.has(String(it.event_id!=null?it.event_id:it.url)))})).filter(g=>g.items.length);
   const newsOk=(nw.sources||[]).filter(s=>s.ok).length, newsAll=(nw.sources||[]).length;
-  const hl=head.headline||"", hot=head.hot||"";
+  const sigs=pulse.signals||[];
+  const hl=ovFixOnly(head.headline||"",sigs), hot=head.hot||"";
   // данные плиток пульса
-  const kpi=pulse.kpi||{}, esc=kpi.escalation_pct;
+  // сравнение эскалации с рынком: в снимке — с 26.09; для старых выпусков — по живым
+  const kpi0=pulse.kpi||{};
+  const kpi=kpi0.market_escalation_pct==null&&live&&live.market_escalation_pct!=null
+    ?{...kpi0,market_escalation_pct:live.market_escalation_pct,escalation_sig:live.escalation_sig,
+      escalation_filed_pct:kpi0.escalation_filed_pct!=null?kpi0.escalation_filed_pct:live.escalation_filed_pct}
+    :kpi0;
+  const esc=kpi.escalation_pct;
   const dlt=(dg&&dg.meta&&dg.meta.delta)||{};
   const dv=(pulse.diverge||[]).find(d=>d.gap!=null&&d.gap>=1.15)||null;  // ведущее расхождение
   const unc=pulse.unclassified||null;
-  const up=(pulse.themes_up||[])[0]||null;
+  // «Растёт за квартал» — только значимо быстрее общего потока (как в «Отзывах»);
+  // в снимках до 25.09 признака нет, и «каникулы +70%» при росте потока +17% шли сюда
+  const up=(pulse.themes_up||[]).find(t=>t.delta_sig)||null;
   const runsOk=(qo.runs||[]).filter(r=>r.status==="ok").length, runsAll=(qo.runs||[]).length;
   const hh=bfPickHot(hl,hot);   // [начало,длина] акцента — есть всегда, если есть заголовок
   // заголовок дня пишется по ведущему сигналу — его расчёт и раскрываем на акценте.
@@ -2070,9 +2528,23 @@ function OverviewPage(){
     // объяснения хуже, чем объяснение соседнего сигнала того же выпуска
     return insights.find(i=>xpRows(i.kind,i.data||{}).length)||insights[0];
   })();
-  const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{}):[];
+  const liveSig=k=>live&&k?((live.signals||[]).find(x=>x.key===k)||(live.diverge||[]).find(x=>x.key===k)||null):null;
+  const leadXp=leadIns?xpRows(leadIns.kind,leadIns.data||{},liveSig((leadIns.data||{}).key)):[];
+  // ведущий повод — всплеск жалоб: пункт разбора про ту же тему повторял
+  // заголовок (плитку «Проверить сегодня» владелец оставил — это её цвет)
+  const leadSpike=insights[0]&&insights[0].kind==="review_spike"?(insights[0].data||{}):null;
+  const leadStem=leadSpike?String(leadSpike.short||leadSpike.label||"").split(/[\s,]/)[0].toLowerCase():"";
+  // обычная функция, не хук: код ниже ранних return
+  const briefSkip=it=>!!(leadStem.length>=5&&
+    ((it.title||"")+" "+(it.body||"")).toLowerCase().includes(leadStem.slice(0,Math.max(5,leadStem.length-2))));
+  // ключевая ставка — с даты решения ЦБ (последняя смена в ряду), а не с даты выгрузки
+  const krSince=(()=>{const pts=kr.points||[]; if(!pts.length)return null;
+    let i=pts.length-1; while(i>0&&pts[i-1].rate===pts[i].rate)i--; return i>0?pts[i].date:null;})();
+  const msk=t=>t?new Date(t).toLocaleTimeString("ru",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit"}):"";
+  const dmy=v=>v?String(v).slice(0,10).split("-").reverse().slice(0,2).join("."):"";
+  const headAt=(sec.headline||{}).generated_at, updAt=(sec.update||{}).generated_at;
 
-  return <div className="fade-in">
+  return <div className="fade-in ov">
     <Sept3Strip/>
     <div className="fy-seg-mob"><OvSeg page="overview"/></div>
     {/* ⓪ ЛИЧНЫЙ СЛОЙ — опциональная полоса (prefs.personal_band_home), над передовицей */}
@@ -2081,14 +2553,19 @@ function OverviewPage(){
     <header style={{marginBottom:26}}>
       <div className="eyebrow-row">
         <div className="eyebrow">
+          {/* «Брифинг № <день года>» — главная задумана как брифинг-газета, номер
+              выпуска часть этого языка (решение владельца, 25.09) */}
           Брифинг №{issueNum} · {issueDate.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · розница / УВА
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
-          {refreshing?
-            <span className="bf-live"><span className="dot"/>обновляется…</span>:
-            genAt&&<span className="bf-stamp">сводка {genAt.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК · действует до {String((dg&&dg.meta&&dg.meta.digest_hour_msk)??7).padStart(2,"0")}:00 МСК</span>}
-          <button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
-            title="Перегенерировать выпуск">⟳</button>
+          {/* role=status: диктор объявляет «обновляется…» и новое время выпуска */}
+          <span role="status">{refreshing?
+            <span className="bf-live"><span className="dot" aria-hidden="true"/>обновляется…</span>:
+            (headAt||genAt)&&<span className="bf-stamp">выпуск {msk(headAt||genAt)} МСК
+              {isToday&&updAt&&updAt>(headAt||"")&&!dg.meta.is_morning&&(sec.update||{}).payload&&(((sec.update.payload.items||[]).length)||((sec.update.payload.signals||[]).length))
+                ?<> · дополнено {msk(updAt)}</>:null}</span>}</span>
+          {me&&me.is_admin&&<button className="bf-refresh" onClick={manualRefresh} disabled={refreshBusy||refreshing}
+            data-tip="Перегенерировать выпуск (видно только владельцу)" aria-label="Перегенерировать выпуск">⟳</button>}
         </div>
       </div>
       {generating&&!hl?
@@ -2101,28 +2578,73 @@ function OverviewPage(){
           <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:12}}>
             {hh?<>{hl.slice(0,hh[0])}
               <Xp rows={leadXp} note={leadIns?leadIns.provenance:null}>
-                <em style={{fontStyle:"italic",color:"var(--accent)"}}>{hl.slice(hh[0],hh[0]+hh[1])}</em>
+                <em className="bf-hot">{hl.slice(hh[0],hh[0]+hh[1])}</em>
               </Xp>
               {hl.slice(hh[0]+hh[1])}</>:hl||"Сводка дня"}
           </h1>
           {/* Вердикт дня вместо статистики генератора («3 риск-сигн · 8 новостей»
               ничего не меняли в решениях аудитора). Берём фразу от LLM, если она
               есть, иначе собираем детерминированно из тех же чисел. */}
-          <p className="lede" style={{maxWidth:"70ch"}}>{head.quiet_note||bfVerdict(dv,esc,ovl,unc)}</p>
+          <p className="lede" style={{maxWidth:"70ch"}}>{head.quiet_note||bfVerdict(dv,kpi,ovl,unc)}</p>
           <p className="bf-stampline">
-            {kpi.as_of?`жалобы на ${fmtDateMsk(kpi.as_of)}`:"данные обновляются"}
+            {kpi.as_of?`жалобы по ${dmy(kpi.as_of)}`:"данные обновляются"}
             {tm.totals&&tm.totals.last_ok_run&&<> · тарифы на {fmtDateMsk(tm.totals.last_ok_run)}</>}
             {runsAll>0&&<> · <a href="#sources" className={runsOk<runsAll?"warn":""}>источники {runsOk}/{runsAll}</a></>}
-            {kpi.total&&<> · корпус {fmtNum(kpi.total)} жалоб за 90 дн</>}
+            {kpi.total&&<> · {ovJ(kpi.total)} за 90 дн</>}
             {/* дата обязательна: голое число не отличить от вчерашнего, а ставка
                 вступает в силу конкретным днём — аудитор на неё ссылается */}
-            {kr.current!=null&&<> · ключевая ЦБ {kr.current}%
-              {kr.as_of&&<> с {fmtDateMsk(kr.as_of)}</>}</>}
-            {ST("headline")==="stale"&&<span className="bf-stale"> · ⚠ сводка за {sec.headline.stale_from}</span>}
-            {ST("headline")==="degraded"&&<span className="bf-stale"> · ⚠ ИИ недоступен, сигналы детерминированные</span>}
+            {kr.current!=null&&<> · ключевая ЦБ {ovN(kr.current,2)}%
+              {krSince&&<> с {dmy(krSince)}</>}</>}
+            {/* ручное обновление не затирает утренний выпуск — он доступен отдельно */}
+            {dg.meta&&dg.meta.morning_at&&(dg.meta.is_morning
+              ?<> · утренний выпуск · <a href="#overview"
+                   onClick={e=>{e.preventDefault();loadDigest().catch(()=>{});}}>текущая версия</a></>
+              :<> · обновлено вручную · <a href="#overview"
+                   onClick={e=>{e.preventDefault();apiFetch(`/api/overview/digest?date=${dg.date}&version=morning`).then(setDg).catch(()=>{});}}>
+                   утренний выпуск</a></>)}
           </p>
+          {ST("headline")==="stale"&&<div className="ov-note warn" role="note">
+            <OvWarnIc/><span><b>Сводка за {dmy(sec.headline.stale_from)||sec.headline.stale_from}.</b> Сегодняшний выпуск не собрался — показан последний удачный; числа пульса ниже живые.</span></div>}
+          {ST("headline")==="degraded"&&<div className="ov-note warn" role="note">
+            <OvWarnIc/><span><b>ИИ недоступен.</b> Заголовок и поводы собраны по правилам, без редакции модели.</span></div>}
         </>}
     </header>
+
+    {/* Дневное дополнение: что нового с утра. Утренний выпуск не меняется.
+        Свёрнуто в одну строку: раньше блок в ~200 px стоял между заголовком
+        и пульсом и отодвигал главное; раскрывается по нажатию. */}
+    {(()=>{const up=(sec.update||{}).payload||{};
+      const its=up.items||[], sg=up.signals||[];
+      if(!isToday||dg.meta.is_morning||(!its.length&&!sg.length))return null;
+      const at=up.at?new Date(up.at).toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"}):"";
+      const what=[sg.length?`${sg.length} ${plural(sg.length,"всплеск","всплеска","всплесков")} жалоб`:null,
+        its.length?`${its.length} ${plural(its.length,"новость","новости","новостей")}`:null].filter(Boolean).join(" и ");
+      const first=sg.length?`Всплеск «${sg[0].label}»`:its[0].title;
+      const tog=()=>{const v=!updOpen; setUpdOpen(v); try{sessionStorage.setItem("al-ov-upd",v?"1":"0");}catch{}};
+      const mn=x=>x.market_note||(x.market_ratio!=null&&x.ratio?ovMarketNote(x.ratio,x.market_ratio,"Сбера"):x.bank_specific?"сильнее рынка":"");
+      return <section className={"ov-upd"+(updOpen?" open":"")} aria-label="Дополнение к выпуску">
+        <button type="button" className="ov-upd-bar" aria-expanded={updOpen} aria-controls="ov-upd-list" onClick={tog}>
+          <span className="ov-upd-dot" aria-hidden="true"/>
+          <span className="ov-upd-h"><b>Дополнено{at?` в ${at}`:""}</b> · {what} с утра</span>
+          {!updOpen&&<span className="ov-upd-first">{first}</span>}
+          <span className="ov-upd-tg">{updOpen?"Свернуть":"Показать"}
+            <span className="rv-ico-in" style={updOpen?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></span>
+        </button>
+        {updOpen&&<ul className="ov-upd-list" id="ov-upd-list">
+          {sg.map((x,i)=><li key={"s"+i}><a className="ov-upd-it" href={"#reviews?tab=complaints&theme="+encodeURIComponent(x.key||"")}>
+            <span className="ov-upd-k">Жалобы</span>
+            <span className="ov-upd-t">Всплеск «{x.label}»: {ovJ(x.week)} за 7 дней при норме {ovN(x.baseline_week)}</span>
+            {mn(x)&&<span className="ov-upd-s">{mn(x)}</span>}
+          </a></li>)}
+          {its.map((it,i)=><li key={"n"+i}><a className="ov-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
+              data-tip={it.idea&&it.idea.length>110?it.idea:undefined}
+              onClick={()=>trkEvent({kind:"news_click",page:"overview",payload:{url:it.url,source:it.source,group:"update",title:it.title}})}>
+            <span className="ov-upd-k">{fyTg(it.url)?"Telegram":it.domain}</span>
+            <span className="ov-upd-t">{it.title}</span>
+            {it.idea&&<span className="ov-upd-s">{it.idea}</span>}
+          </a></li>)}
+        </ul>}
+      </section>;})()}
 
     {/* ② ПУЛЬС ДНЯ — сменный лист аудитора (без LLM).
         Отбор переработан 23.07.2026 по отзыву аудиторов «бесполезная»: рыночные
@@ -2130,150 +2652,175 @@ function OverviewPage(){
         ключевая ставка ушла в штамп. Каждая плитка = вопрос аудитора, ведёт
         туда, где с этим работают, и раскрывается попапом «как посчитано».
         Коэффициент ×N на экран не выводится: только пара «факт · норма». */}
-    <section style={{marginBottom:22}}>
+    <section style={{marginBottom:22}} aria-labelledby="ov-pulse-h">
+      <h2 id="ov-pulse-h" className="vh">Пульс дня</h2>
+      {/* Сравнение «ко вчера» — только внутри одной методики: 24.09 жалобы
+          перешли на разметку ИИ, и дельты показывали смену счёта */}
+      {dlt.method_changed&&<div className="ov-note" role="note"><OvInfoIc/><span>Сравнение со вчера недоступно: методика подсчёта жалоб обновилась</span></div>}
+      {/* Плитка «Проверить сегодня» и тёплые фоны — цветовой язык пульса,
+          по которому страницу узнают (решение владельца): даже когда тема та же,
+          что в заголовке, плитка остаётся */}
       <div className="bf-pulse">
         {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
             Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
-        <div className={"bf-t bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
-             onClick={dv?()=>bfGoDrill({page:"reviews",params:{theme:dv.key}}):undefined}
-             style={dv?{cursor:"pointer"}:undefined}>
+        <BfTile cls={" bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+             href={dv?`#reviews?tab=complaints&theme=${dv.key}`:undefined}
+             xp={dv?xpDiverge(dv):null} note="жалобы всех площадок · разметка ИИ" label="Проверить сегодня">
           <div className="bf-t-cap">Проверить сегодня
             {dv&&dv.gap>=1.25&&<span className="bf-t-chip">сильнее рынка</span>}</div>
           {dv?<>
-            <Xp rows={xpDiverge(dv)} note="banki.ru · негативные отзывы 1–2★">
+            <Xp passive rows={xpDiverge(dv)} note="жалобы всех площадок · разметка ИИ">
               <span className="bf-t-val">{dv.short||dv.label}</span>
             </Xp>
-            <div className="bf-t-sub">{dv.week} жалоб · норма {dv.baseline_week}
+            <div className="bf-t-sub">{ovJ(dv.week)} · норма {ovN(dv.baseline_week)}
               {dv.market_ratio!=null&&<> · по рынку {dv.market_ratio>1.1?"тоже растёт":"без роста"}</>}
               {dlt.diverge_key===dv.key&&<BfDelta v={dlt.diverge_week} invert/>}</div>
           </>:<>
             <span className="bf-t-val">Ничего срочного</span>
-            <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||22} тем — превышений нет</div>
+            <div className="bf-t-sub">проверено {(head.stats&&head.stats.checked_themes)||40} проблем — значимых всплесков нет</div>
           </>}
-        </div>
+        </BfTile>
 
         {/* Регуляторный риск: доля жалоб с угрозой ЦБ/суда/ФАС */}
-        <a className={"bf-t"+(esc!=null&&esc>=12?" attn":"")} href="#reviews">
-          <div className="bf-t-cap">Дошло до ЦБ и суда</div>
-          <Xp rows={xpEscalation(kpi)} note="banki.ru · окно 90 дней">
+        {/* «Дошло до ЦБ и суда» считало и угрозы, а порог 12% у Сбера пробит
+            всегда — плитка горела постоянно. Теперь как в «Отзывах»: против рынка */}
+        <BfTile cls={esc!=null&&(kpi.market_escalation_pct!=null?esc>kpi.market_escalation_pct:esc>=12)?" attn":""} href="#reviews?tab=complaints&esc=1"
+             xp={xpEscalation(kpi,live)} note="жалобы всех площадок · окно 90 дней" label="Эскалация в ЦБ, суд">
+          <div className="bf-t-cap">Эскалация в ЦБ, суд и т. п.</div>
+          <Xp passive rows={xpEscalation(kpi,live)} note="жалобы всех площадок · окно 90 дней">
             <span className="bf-t-val">{esc!=null?pct1(esc):"—"}</span>
           </Xp>
-          <div className="bf-t-sub">порог 12%{kpi.total?` · из ${fmtNum(kpi.total)} жалоб за 90 дн`:""}
-            <BfDelta v={dlt.escalation_pct} unit=" пп" invert/></div>
-        </a>
+          <div className="bf-t-sub">{kpi.market_escalation_pct!=null?`у рынка ${pct1(kpi.market_escalation_pct)}`:"грозят или обратились"}
+            {kpi.escalation_filed_pct!=null&&` · обратились ${pct1(kpi.escalation_filed_pct)}`}
+            <BfDelta v={dlt.escalation_pct} unit=" п.п." invert/></div>
+        </BfTile>
 
         {/* Объём недели — с нормой рядом, без коэффициента */}
-        <a className="bf-t" href="#reviews">
+        <BfTile href="#reviews?tab=complaints" xp={xpWeek(ovl,kpi,live&&live.overall)}
+             note="жалобы всех площадок · разметка ИИ" label="Жалобы за 7 дней">
           <div className="bf-t-cap">Жалобы · 7 дней</div>
-          <Xp rows={xpWeek(ovl,kpi)} note="banki.ru · негативные отзывы 1–2★">
+          <Xp passive rows={xpWeek(ovl,kpi,live&&live.overall)} note="жалобы всех площадок · разметка ИИ">
             <span className="bf-t-val">{ovl.week!=null?fmtNum(ovl.week):"—"}
               {ovl.baseline_week!=null&&<small> норма {Math.round(ovl.baseline_week)}</small>}</span>
           </Xp>
-          <div className="bf-t-sub">banki.ru · 1–2★{kpi.market_rank?` · ${kpi.market_rank}-е место из ${kpi.market_banks}`:""}
+          <div className="bf-t-sub">жалобы всех площадок · разметка ИИ
             <BfDelta v={dlt.week} invert/></div>
-        </a>
+        </BfTile>
 
         {/* Что меняли МЫ САМИ — согласовано ли */}
-        <a className="bf-t" href="#market?view=changes&bank=sberbank">
+        <BfTile href="#market?view=changes&bank=sberbank" xp={xpOurChanges(tm)}
+             note="журнал изменений условий" label="Меняли сами">
           <div className="bf-t-cap">Меняли сами</div>
-          <Xp rows={xpOurChanges(tm)} note="журнал изменений условий">
+          <Xp passive rows={xpOurChanges(tm)} note="журнал изменений условий">
             <span className="bf-t-val">{(tm.totals&&tm.totals.sber_changes_7d)!=null?fmtNum(tm.totals.sber_changes_7d):"—"}
               <small> офферов</small></span>
           </Xp>
           <div className="bf-t-sub">за 7 дней · условия продуктов Сбера
             <BfDelta v={dlt.sber_changes}/></div>
-        </a>
+        </BfTile>
 
         {/* Слепая зона: чего классификатор не видит */}
-        <a className={"bf-t"+(unc&&unc.ratio>=1.3?" attn":"")} href="#reviews">
-          <div className="bf-t-cap">Вне известных тем</div>
-          <Xp rows={xpUnclassified(unc)} note="классификатор тем · 22 темы">
+        <BfTile cls={unc&&unc.ratio>=1.3?" attn":""} href="#reviews?tab=complaints&theme=other"
+             xp={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ" label="Вне кодификатора">
+          <div className="bf-t-cap">Вне кодификатора</div>
+          <Xp passive rows={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ">
             <span className="bf-t-val">{unc&&unc.week!=null?unc.week:"—"}
               {unc&&unc.pct!=null&&<small> · {unc.pct}%</small>}</span>
           </Xp>
           <div className="bf-t-sub">{unc&&unc.ratio!=null
             ?(unc.ratio>=1.3?"выше обычного — возможен новый инцидент":"как обычно")
-            :"жалобы без темы"}<BfDelta v={dlt.unclassified} invert/></div>
-        </a>
+            :"жалобы без подходящего кода"}<BfDelta v={dlt.unclassified} invert/></div>
+        </BfTile>
 
         {/* Медленный тренд — то, чего не видно в недельном окне */}
-        <a className="bf-t bf-t-wide" href="#reviews">
+        <BfTile cls=" bf-t-wide" href={up?`#reviews?tab=complaints&theme=${up.key}`:"#reviews?tab=problems"}
+             xp={up?xpThemeUp(up):null} note="жалобы всех площадок · 90 дней против предыдущих 90" label="Растёт за квартал">
           <div className="bf-t-cap">Растёт за квартал</div>
           {up?<>
-            <Xp rows={xpThemeUp(up)} note="banki.ru · окно 90 дней против предыдущих 90">
+            <Xp passive rows={xpThemeUp(up)} note="жалобы всех площадок · 90 дней против предыдущих 90">
               <span className="bf-t-val">{up.short||up.label}</span>
             </Xp>
-            <div className="bf-t-sub">+{Math.round(up.delta_pct)}% к прошлому кварталу · {up.n} жалоб</div>
+            <div className="bf-t-sub">+{Math.round(up.delta_pct)}% к прошлому кварталу · {ovJ(up.n)}</div>
           </>:<>
             <span className="bf-t-val">Без роста</span>
-            <div className="bf-t-sub">ни одна тема не выросла заметно за квартал</div>
+            <div className="bf-t-sub">ни одна тема не растёт значимо быстрее общего потока жалоб</div>
           </>}
-        </a>
+        </BfTile>
       </div>
     </section>
 
-    {/* ③ СВОДКА ДНЯ + ④ НОВОСТИ */}
-    <section className="bf-core" style={{marginBottom:30}}>
+    {/* ③ ЧТО ПРОВЕРИТЬ + ④ НОВОСТИ. Раньше шесть карточек стояли в две узкие
+        колонки по ~450 px плюс колонка новостей — три одинаково плотных столбца.
+        Теперь ведущая карточка целиком, остальные — списком с раскрытием */}
+    <section className="bf-core" style={{marginBottom:24}}>
       <div>
+        <div className="ovc-h"><h2 className="eyebrow">Что проверить сегодня{insights.length?` · ${insights.length}`:""}</h2>
+          <RvInfo label="Как читать">Полоса слева — оценка повода: красная — риск, требует действия; янтарная — следить; зелёная — спокойно, отклонений нет. Квадрат 3×3 в углу — вероятность (слева направо) и влияние (снизу вверх). «Как посчитано» — формула и выборка каждого числа; «Разобраться» ведёт в срез данных, «Спросить ИИ» заполняет вопрос аналитику, не отправляя его.</RvInfo></div>
         {insights.length?
-          <><div className="bf-cards">
-            {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0}/>)}
-          </div><BfLegend/></>:
+          <div className="bf-cards">
+            {insights.map((ins,i)=><BfCard key={ins.ref||i} ins={ins} idx={i} lead={i===0} compact={i>0}
+              sigs={sigs} now={liveSig((ins.data||{}).key)}/>)}
+          </div>:
           generating?
             <div className="bf-cards">
-              {[0,1,2].map(i=><div key={i} className="skel" style={{height:150,borderRadius:10}}/>)}
+              {[0,1,2].map(i=><div key={i} className="skel" style={{height:i?96:220,borderRadius:10}}/>)}
             </div>:
             <div className="surface" style={{padding:"22px 24px"}}>
               <div className="rv-radar-calm"><span className="rv-radar-check"><Ic.check/></span>
                 За сутки резких сигналов не выявлено{head.stats?` · проверено ${head.stats.checked_themes} тем жалоб`:""}</div>
             </div>}
-        {head.quiet_note&&<div className="bf-quiet"><span className="ok"><Ic.check/></span>{head.quiet_note}</div>}
-
-        {/* ③b Анализ жалоб недели (LLM, reviews_brief) */}
-        {brief.markdown&&<div className="surface" style={{padding:"20px 24px",marginTop:16}}>
-          <div className="eyebrow-row" style={{marginBottom:12}}>
-            <div className="eyebrow">Анализ жалоб недели</div>
-            <div style={{display:"flex",gap:10,alignItems:"center"}}>
-              {ST("reviews_brief")==="stale"&&<span className="bf-stale">за {sec.reviews_brief.stale_from}</span>}
-              <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="reviews"}>К отзывам <Ic.ext/></button>
-            </div>
-          </div>
-          <BfBrief markdown={brief.markdown}/>
-        </div>}
+        {head.market_note&&<div className="bf-fon"><span className="bf-fon-l">Фон рынка</span><span>{head.market_note}</span></div>}
       </div>
 
-      {/* ④ Новости для аудитора (sticky) */}
+      {/* ④ Новости для аудитора — первые восемь, остальное по кнопке; колонка
+          больше не «липнет» выше экрана (1 300 px при экране 800) */}
       <aside className="bf-news">
         <div className="bf-news-h">
-          <div className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</div>
-          {newsAll>0&&<span className="bf-news-cov" title={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
-            {newsOk}/{newsAll} ист.</span>}
+          <h2 className="eyebrow" style={{marginBottom:0}}>Новости для аудитора</h2>
+          {/* выпуск после выходных собран за выходные: в субботу и воскресенье
+              «Обзор» почти никто не открывает */}
+          {nw.scope&&<span className="bf-news-cov" data-tip={`Первый рабочий день после выходных: новости с ${fmtDateMsk(nw.scope.since)}, включая вышедшие в выпусках ${(nw.scope.days_off||[]).map(dmy).join(" и ")}`}>
+            за выходные</span>}
+          {ST("news")==="stale"&&<span className="ov-pill warn" data-tip="сбор или отбор новостей сегодня не удался — показан последний удачный выпуск">устарело · за {dmy(sec.news.stale_from)||sec.news.stale_from}</span>}
+          {newsAll>0&&<span className="bf-news-cov" data-tip={(nw.sources||[]).map(s=>`${s.name}: ${s.ok?"ок":s.skipped_reason||"—"}`).join("\n")}>
+            {newsOk} из {newsAll} источников</span>}
         </div>
-        {newsGroups.length?newsGroups.map(g=><div key={g.key}>
+        {newsGroups.length?(()=>{
+          const NEWS_N=8, total=newsGroups.reduce((a,g)=>a+g.items.length,0);
+          let left=newsOpen?Infinity:NEWS_N;
+          const shown=newsGroups.map(g=>{const its=g.items.slice(0,Math.max(0,left)); left-=its.length; return {...g,items:its};}).filter(g=>g.items.length);
+          return <>{shown.map(g=><div key={g.key}>
             <div className="bf-news-g">{g.title||g.key}</div>
-            {(g.items||[]).map((it,i)=>
+            {g.items.map((it,i)=>
               <a key={i} className="bf-news-it" data-sev={it.severity} href={it.url}
                  target="_blank" rel="noopener noreferrer"
                  onClick={()=>trkEvent({kind:"news_click",page:"overview",
                    payload:{url:it.url,source:it.source,group:g.key,severity:it.severity,
                      title:it.title,slugs:it.products||[]}})}>
                 <div className="bf-news-t">{it.title}</div>
-                {(it.why||it.summary)&&<div className="bf-news-s">{it.why||it.summary}</div>}
-                <div className="bf-news-m">{it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
+                {(it.why||it.summary)&&<div className="bf-news-s" data-tip={(it.why||it.summary).length>140?(it.why||it.summary):undefined}>{it.why||it.summary}</div>}
+                <div className="bf-news-m">
                   {/* Аудитор должен знать ДО клика, откроется ли ссылка из
-                      контура: шесть ТБ написали «не удаётся получить доступ к
-                      сайту», ещё два — что t.me требует отдельной установки. */}
-                  {it.reach==="telegram"&&<span className="bf-reach tg"
-                    title="Telegram — в контуре банка обычно не открывается без отдельной настройки">telegram</span>}
+                      контура. Пометка reach потерялась при переходе на поток
+                      новостей (992b182) — Telegram узнаём по адресу сами и
+                      пишем словом вместо «t.me» */}
+                  {it.reach==="telegram"||fyTg(it.url)
+                    ?<span data-tip="Telegram — в контуре банка обычно не открывается без отдельной настройки">Telegram</span>
+                    :it.domain}{it.ts?` · ${fmtDateMsk(it.ts)}`:""}
                   {it.reach==="unreachable"&&<span className="bf-reach no"
-                    title="Источник не открылся из контура при сборе дайджеста — ссылка может не сработать и у вас">нет доступа</span>}
+                    data-tip="Источник не открылся из контура при сборе дайджеста — ссылка может не сработать и у вас">нет доступа</span>}
                   {(it.products||[]).map(p=><span key={p} className="bf-chip">{PROD_RU[p]||p}</span>)}
+                  {/* сюжет уже выходил: что было и что нового */}
+                  {it.continues&&<span className="bf-chip" data-tip={`Было ${dmy(it.continues.date)}: «${it.continues.title}»`+(it.new_fact?`\nНовое: ${it.new_fact}`:"")}>
+                    продолжение · {dmy(it.continues.date)}</span>}
                   <Ic.ext/></div>
               </a>)}
-          </div>):
+          </div>)}
+          {total>NEWS_N&&<button className="bf-news-more" onClick={()=>setNewsOpen(v=>!v)} aria-expanded={newsOpen}>
+            {newsOpen?"Свернуть":`Ещё ${total-NEWS_N} ${plural(total-NEWS_N,"новость","новости","новостей")}`}</button>}</>;})():
           ST("news")==="degraded"&&(nw.items_raw||[]).length?
             <div>
-              <div className="bf-news-g" style={{color:"var(--warn)"}}>Без ИИ-отбора (сырая лента)</div>
+              <div className="bf-news-g"><span className="ov-pill warn">без ИИ-отбора</span> сырая лента</div>
               {(nw.items_raw||[]).slice(0,10).map((it,i)=>
                 <a key={i} className="bf-news-it" href={it.url} target="_blank" rel="noopener noreferrer">
                   <div className="bf-news-t">{it.title}</div>
@@ -2284,55 +2831,28 @@ function OverviewPage(){
       </aside>
     </section>
 
-    {/* ⑤ ТАРИФНЫЕ ДВИЖЕНИЯ НЕДЕЛИ */}
-    <section style={{marginBottom:26}}>
-      <div className="eyebrow-row">
-        <div className="eyebrow" style={{marginBottom:10}}>Тарифные движения недели</div>
-        {(tm.mass_updates||[]).length>0&&
-          <span className="badge warn" style={{cursor:"pointer"}} title="Открыть журнал изменений"
-            onClick={()=>{const m=tm.mass_updates[0];location.hash="market?"+new URLSearchParams({cat:m.category||"",view:"changes"});}}>
-            массовое движение: {tm.mass_updates.map(m=>CAT_LABELS[m.category]||m.category).join(", ")}{tm.after_pause?" · сбор после паузы":""}</span>}
+    {/* ③b Анализ жалоб недели — во всю ширину под карточками и новостями
+        (раньше на узких экранах новости уходили под него, на 3 000+ px) */}
+    {brief.markdown&&bfParseBrief(brief.markdown).some(it=>!briefSkip(it))&&<section className="surface ovb" style={{padding:"20px 24px",marginBottom:24}}>
+      <div className="eyebrow-row" style={{marginBottom:12}}>
+        <h2 className="eyebrow" style={{margin:0}}>Анализ жалоб недели</h2>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          {ST("reviews_brief")==="stale"&&<span className="ov-pill warn" data-tip="разбор сегодня не пересчитался — показан последний удачный">устарело · за {dmy(sec.reviews_brief.stale_from)||sec.reviews_brief.stale_from}</span>}
+          <a className="ovt-all" href="#reviews">Радар в «Отзывах»<Ic.ext/></a>
+        </div>
       </div>
-      <div className="surface" style={{overflow:"hidden"}}>
-        {(tm.top_changes||[]).length?
-          <table className="m-cards">
-            <thead><tr><th>Банк</th><th>Продукт</th><th className="right">Было → стало</th><th className="right">Δ</th><th className="right">Когда</th></tr></thead>
-            <tbody>{tm.top_changes.slice(0,10).map((c,i)=>{
-              const up=c.to>c.from;
-              // точный диплинк в журнал: свежие выпуски несут offer_id/change_id,
-              // старые — хотя бы категорию
-              const go=()=>{const sp=new URLSearchParams({cat:c.category||"",view:"changes"});
-                if(c.bank_slug)sp.set("bank",c.bank_slug);
-                if(c.change_id)sp.set("change",c.change_id);
-                if(c.offer_id)sp.set("offer",c.offer_id);
-                location.hash="market?"+sp.toString();};
-              return <tr key={i} onClick={go} style={{cursor:"pointer"}} title="Открыть в журнале изменений">
-                <td className="m-primary" data-label="Банк"><div style={{fontWeight:500}}>{c.bank}{c.is_sber&&<span className="badge solid" style={{marginLeft:8,fontSize:9}}>Сбер</span>}</div>
-                  <div className="t-cap" style={{fontSize:11}}>{CAT_LABELS[c.category]||c.category}</div></td>
-                <td data-label="Продукт" style={{fontSize:12,color:"var(--ink-2)"}}>{c.title}</td>
-                <td className="right mono tnum" data-label="Было → стало">{c.from}% → <b>{c.to}%</b></td>
-                <td className="right" data-label="Δ"><span className={`delta ${up?"pos":"neg"}`}>{up?<Ic.arrow_up/>:<Ic.arrow_dn/>}{signed(c.delta)}</span></td>
-                <td className="right mono tnum" data-label="Когда" style={{fontSize:11,color:"var(--ink-3)"}}>{fmtDate(c.changed_at)}</td>
-              </tr>;})}
-            </tbody>
-          </table>:
-          <div style={{padding:"20px 24px",fontSize:13,color:"var(--ink-3)"}}>
-            Изменений ставок за неделю не зафиксировано · под наблюдением {(tm.totals&&tm.totals.banks_tracked)||0} банков
-            {tm.totals&&tm.totals.last_ok_run&&<> · последний сбор {fmtDate(tm.totals.last_ok_run)}</>}
-          </div>}
-        {(tm.top_changes||[]).length>0&&<div style={{padding:"12px 20px",borderTop:"1px solid var(--hair)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span className="bf-stamp">{(tm.totals&&tm.totals.changes_7d)||0} изменений · {(tm.totals&&tm.totals.banks_changed_7d)||0} банков за 7 дн</span>
-          <button className="btn btn-ghost btn-sm" onClick={()=>location.hash="market?view=changes"}>Все изменения <Ic.ext/></button>
-        </div>}
-      </div>
-    </section>
+      <BfBrief markdown={ovFixOnly(brief.markdown,sigs)} skip={briefSkip}/>
+    </section>}
+
+    {/* ⑤ ТАРИФЫ ЗА НЕДЕЛЮ */}
+    <OvTariffs tm={tm}/>
 
     {/* ⑥ ПОДВАЛ ДОВЕРИЯ */}
     <div className="bf-trust">
       {qo.totals&&<span>{fmtNum(qo.totals.offers)} предложений · {qo.totals.banks} банков</span>}
-      {pulse.kpi&&pulse.kpi.as_of&&<span>отзывы: {fmtNum((pulse.kpi.total||0))} за 90 дн (обн. {pulse.kpi.as_of})</span>}
+      {pulse.kpi&&pulse.kpi.as_of&&<span>жалобы: {fmtNum((pulse.kpi.total||0))} за 90 дн (по {dmy(pulse.kpi.as_of)})</span>}
       {tm.totals&&tm.totals.last_ok_run&&<span>сбор тарифов: {fmtDate(tm.totals.last_ok_run)}</span>}
-      {dg&&dg.meta&&dg.meta.tokens&&dg.meta.tokens.in>0&&<span>дайджест: {Math.round((dg.meta.tokens.in+dg.meta.tokens.out)/1000)}k токенов/день · один на всех</span>}
+
       {qo.captcha_pending>0&&<a href="#sources">{qo.captcha_pending} капч(и) ждут решения</a>}
       <a href="#sources">Источники →</a>
     </div>
@@ -2353,7 +2873,7 @@ const mkGap=(v,m)=>{
   const a=Math.abs(n);
   if(m==="fee_service")return n===0?"наравне":sign+fmtNum(Math.round(a))+" ₽/год";
   if(m==="grace_days")return n===0?"наравне":sign+Math.round(a)+" дн";
-  return n===0?"наравне":sign+a.toFixed(2)+" пп";
+  return n===0?"наравне":sign+a.toFixed(2).replace(".",",")+" п.п.";
 };
 const mkMetric=(v,m)=>{
   if(v==null)return "—";
@@ -2460,7 +2980,7 @@ function MkTraffic({cells,onPick}){
       title={c.degenerate
         ? `${c.label} · ранг не показываем: на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`
         : `${c.label} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
-        +(c.gap_median!=null?` · ${mkGap(c.gap_median,null)}${c.gap_unit||c.metric_unit||""} к медиане`:"")
+        +(c.gap_median!=null?` · ${c.gap_median>0?"+":c.gap_median<0?"−":""}${ovN(Math.abs(c.gap_median),2)}${c.gap_unit||c.metric_unit||""} к медиане`:"")
         +(c.tied>1?` · наравне с ${c.tied} банками`:"")}>
       <span className="v serif">{c.degenerate?"–":(c.percentile!=null?c.percentile:"—")}</span>
       <span className="l">{c.label}</span>
@@ -2473,7 +2993,7 @@ function MkTrust({c}){
   const b=[];
   if(c.degenerate) b.push([`ранг скрыт`,`на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`]);
   else if(c.at_best>2) b.push([`наравне ${c.at_best}`,"метрика не различает банки на лучшем значении"]);
-  if(c.teaser>0) b.push([`тизер ${c.teaser}`,"у стольких предложений полная стоимость выше заявленной ставки более чем на 5 пп"]);
+  if(c.teaser>0) b.push([`тизер ${c.teaser}`,"у стольких предложений полная стоимость выше заявленной ставки более чем на 5 п.п."]);
   if(c.banks_dropped>0) b.push([`выбыло ${c.banks_dropped}`,"банков не попало в сравнение: нет метрики, не банк или льготная программа"]);
   if(c.no_metric>0) b.push([`нет метрики ${c.no_metric}`,"столько предложений вне сравнения — поле не заполнено источником"]);
   if(c.subsidized_excluded>0) b.push([`исключено ${c.subsidized_excluded}`,"льготные программы: ставка установлена государством и одинакова у всех"]);
@@ -2782,26 +3302,22 @@ function MarketPage({params}){
   const showBarCol=mcat.show_bar!==false&&showRateCol;
 
   return <div className="fade-in">
-    <header style={{marginBottom:20}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Рынок · позиция объекта аудита</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Позиция Сбера на рынке</h1>
-      <p className="t-cap" style={{maxWidth:"72ch"}}>
-        {sum?`${sum.offers} офферов · ${sum.banks} банков`:"…"}
+    <PageHead eyebrow="Рынок · позиция объекта аудита" title="Позиция Сбера на рынке"
+      meta={<>{sum?`${fmtNum(sum.offers)} офферов · ${fmtNum(sum.banks)} банков`:"…"}
         {sch&&sch.enabled?` · автосбор ежедневно ${String(sch.ingest_hour_msk).padStart(2,"0")}:00 МСК`:sch?" · автосбор выключен":""}
         {sum&&sum.last_run?` · срез ${fmtDateMsk(sum.last_run)}`:""}
-        {sch&&sch.stale&&<span className="mk-stale" title={`последний успешный сбор ${sch.last_ok_age_h!=null?sch.last_ok_age_h+" ч назад":"не зафиксирован"}; сторож догонит автоматически`}> · ⚠ данные устарели</span>}
-      </p>
-      <p className="mk-disc">Сравнение внутри сопоставимой выборки: ₽, лучший оффер банка, без промо-строк рейтингов. Для кредитных продуктов ниже ставка = лучше позиция. Наведите на любую цифру — покажем, как она посчитана.</p>
-    </header>
+        {sch&&sch.stale&&<span className="mk-stale" data-tip={`последний успешный сбор ${sch.last_ok_age_h!=null?sch.last_ok_age_h+" ч назад":"не зафиксирован"}; сторож догонит автоматически`}> · ⚠ данные устарели</span>}</>}
+      actions={<RvInfo label="Как читать" text="Как читать" align="right">Сравнение внутри сопоставимой выборки: рубли, лучший оффер банка, без промо-строк рейтингов. Для кредитных продуктов ниже ставка — лучше позиция. Наведите на любую цифру — покажем, как она посчитана.</RvInfo>}/>
 
     <div className="filter-row" style={{marginBottom:18}}>
-      <div className="tab-row">
-        <button className={`tab ${!cat&&view!=="changes"?"active":""}`} onClick={()=>{setCat(null);setView("vitrina");setDrawer(null);}}>Атлас</button>
+      <div className="ptabs" role="tablist" aria-label="Категории продуктов">
+        <button role="tab" aria-selected={!cat&&view!=="changes"} className={"ptab"+(!cat&&view!=="changes"?" on":"")}
+          onClick={()=>{setCat(null);setView("vitrina");setDrawer(null);}}>Атлас</button>
         {(meta||[]).filter(m=>m.n>0).map(m=>{
           const sb=A[m.id]&&A[m.id].sber;
-          return <button key={m.id} className={`tab ${cat===m.id?"active":""}`} onClick={()=>{setCat(m.id);setBank(null);}}>
-            {m.label}{sb&&<span className={"mk-rk"+(sb.beats_share<0.5?" bad":"")}
-              title={`Сбер — #${sb.rank} из ${A[m.id].n_banks} банков по лучшему офферу`}>#{sb.rank}</span>}
+          return <button key={m.id} role="tab" aria-selected={cat===m.id} className={"ptab"+(cat===m.id?" on":"")} onClick={()=>{setCat(m.id);setBank(null);}}>
+            {m.label}{sb&&<span className={"ptab-n"+(sb.beats_share<0.5?" bad":"")}
+              data-tip={`Сбер — #${sb.rank} из ${A[m.id].n_banks} банков по лучшему офферу`}>#{sb.rank}</span>}
           </button>;})}
       </div>
       <div className="search-wrap">
@@ -2928,7 +3444,7 @@ function MarketPage({params}){
         {view==="changes"&&<label className="mk-noise">
           <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум
         </label>}
-        {view==="changes"&&bank&&<button className="tab active" onClick={()=>setBank(null)}>банк: {bank} ✕</button>}
+        {view==="changes"&&bank&&<button className="rv-achip" onClick={()=>setBank(null)} aria-label={`Снять фильтр по банку ${bank}`}>банк: {bank}<RvIX s={12}/></button>}
       </div>
 
       {/* ВИТРИНА */}
@@ -2969,7 +3485,7 @@ function MarketPage({params}){
                 <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
                   <BankAvatar slug={r.bank_slug} name={r.bank_name} isSber={isSber}/>
                   <div><div style={{fontWeight:500}}>{r.bank_name||r.bank_slug}</div>
-                    {isSber&&<div className="t-cap" style={{fontSize:10,color:"var(--sber)",fontFamily:"'JetBrains Mono',monospace",letterSpacing:".06em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
+                    {isSber&&<div className="t-cap" style={{fontSize:11,fontWeight:600,color:"var(--sber)",letterSpacing:".04em"}}>СБЕР · ОБЪЕКТ АУДИТА</div>}
                   </div></div></td>
                 <td data-label="Продукт">{r.title}<OfferTerms o={r}/>
                   {r.product_kind&&<div className="ofkind" title="что это за продукт на самом деле — разобрано по тексту тарифа">{r.product_kind}</div>}</td>
@@ -2988,8 +3504,8 @@ function MarketPage({params}){
                       <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--sber)":"var(--ink-3)"}}/>
                     </div>
                     <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
-                      {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2)} пп`}</span>
-                  </div>:<span className="mono" style={{color:"var(--ink-4)"}}>—</span>}
+                      {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2).replace(".",",")} п.п.`}</span>
+                  </div>:<span className="mono" style={{color:"var(--ink-3)"}}>—</span>}
                 </td>}
                 <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
                 <td className="mono tnum" data-label="Срок" style={{color:"var(--ink-2)",fontSize:12}}>{fmtTerm(r.term_months_min,r.term_months_max)}</td>
@@ -3063,7 +3579,7 @@ function MarketPage({params}){
              </span>
              <span className="mk-chmove mono tnum">
                {showRateMove&&<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
-                  {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2)}</em>}</>}
+                  {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2).replace(".",",")}</em>}</>}
                {others.slice(0,3).map(o=><span key={o.k} className="mk-dv">
                  {o.label}: {mkFldVal(o.k,o.from)} → <b>{mkFldVal(o.k,o.to)}</b></span>)}
                {others.length>3&&<span className="mk-dv mk-an">ещё {others.length-3}</span>}
@@ -3133,17 +3649,65 @@ const RV_BANKS=["Сбербанк","ВТБ","Т-Банк","Альфа-Банк",
 const RV_PERIODS=[[90,"3 мес"],[180,"6 мес"],[365,"12 мес"]];
 const RV_RISK={compliance:"комплаенс",conduct:"практики",ops:"операции"};
 const pct1=v=>v==null?"—":String(v).replace(".",",")+"%";
+const rvHost=u=>{try{return new URL(u).hostname.replace(/^www\./,"");}catch(e){return "источник";}};
+const RV_MON=["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"];
+const RV_MON_FULL=["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+// «2025-08» → «август 2025»: подпись «25.08» читалась как дата 25 августа
+const rvYm=ym=>{const[y,m]=String(ym||"").split("-").map(Number);return y&&m?`${RV_MON_FULL[m-1]} ${y}`:(ym||"");};
+const rvDate=d=>{const m=String(d||"").match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}.${m[2]}.${m[1]}`:(d||"");};
+// площадки жалоб за период — по доле, наш сбор banki.ru сливается с корпусом той же площадки
+const RV_SRC={bankiru:"banki.ru",banki_reviews:"banki.ru",sravni_reviews:"sravni.ru",
+  finuslugi_reviews:"finuslugi.ru",bankiros_reviews:"bankiros.ru"};
+const rvSrcShares=list=>{const m={};let t=0;(list||[]).forEach(x=>{const k=RV_SRC[x.source]||x.source;m[k]=(m[k]||0)+x.n;t+=x.n;});
+  return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,n])=>({k,n,p:t?n/t*100:0}));};
 const rvDelta=(d)=> d==null ? <span className="rv-flat">→</span>
   : d>4 ? <span className="rv-up">↑ {d}%</span>
   : d<-4 ? <span className="rv-down">↓ {Math.abs(d)}%</span>
   : <span className="rv-flat">→ {d>=0?"+":""}{d}%</span>;
+// Изменение темы со значимостью (Б4): цвет — только у изменений, значимо
+// отличающихся от общего потока жалоб; остальное серым, с интервалом в подсказке.
+const rvSgn=v=>(v>0?"+":"")+v;
+const rvX=v=>v==null?"—":"×"+String(v).replace(".",",");
+const rvDeltaSig=(t,th)=>{
+  if(th.delta_partial)return <span className="rv-flat">·</span>;
+  const d=t.delta_pct; if(d==null)return <span className="rv-flat">→</span>;
+  const s=`${d>0?"↑":d<0?"↓":"→"} ${Math.abs(d)}%`;
+  const ci=t.delta_ci?` · 95% ДИ ${rvSgn(t.delta_ci[0])}…${rvSgn(t.delta_ci[1])}%`:"";
+  const all=th.overall_delta_pct!=null?` · все жалобы ${rvSgn(th.overall_delta_pct)}%`:"";
+  if(t.delta_low)return <span className="rv-flat rv-dlow" data-tip={`${t.prev} → ${t.n}: мало данных для вывода`}>{s}</span>;
+  const up=t.delta_sig&&(t.excess||0)>0&&d>0, down=t.delta_sig&&(t.excess||0)<0&&d<0;
+  return <span className={up?"rv-up":down?"rv-down":"rv-flat"}
+    data-tip={`${t.prev} → ${t.n}${ci}${all} — ${up?"растёт значимо быстрее общего потока":down?"снижается значимо сильнее общего потока":"в пределах колебаний общего потока"}`}>{s}</span>;
+};
+// Индекс по кварталам: четыре точки и пунктир ×1 — видно, отличие от рынка
+// устойчивое или сложилось за последний квартал. Шкала логарифмическая:
+// ×0,5 и ×2 — одинаково далеко от рынка.
+function RvSpark({vals,quarters}){
+  const w=48,h=18,pad=2.5,nums=(vals||[]).filter(v=>v!=null);
+  const ql=q=>{ const a=new Date(q.from+"T00:00:00"); a.setDate(a.getDate()+1); const b=new Date(q.to+"T00:00:00");
+    return `${RV_MON[a.getMonth()]}${a.getFullYear()!==b.getFullYear()?" "+a.getFullYear():""}–${RV_MON[b.getMonth()]} ${b.getFullYear()}`; };
+  const tip="Индекс к рынку по кварталам\n"+(vals||[]).map((v,i)=>`${quarters&&quarters[i]?ql(quarters[i]):`кв. ${i+1}`}: ${v==null?"мало данных":rvX(v)}`).join("\n");
+  if(nums.length<2)return <span className="rv-spark-na" data-tip={tip||"по кварталам мало данных"}/>;
+  const lg=v=>Math.log(Math.max(v,0.1));
+  const lo=Math.min(lg(0.5),...nums.map(lg)),hi=Math.max(lg(2),...nums.map(lg));
+  const x=i=>pad+i*(w-2*pad)/(vals.length-1),y=v=>h-pad-(lg(v)-lo)/(hi-lo)*(h-2*pad);
+  let d="";vals.forEach((v,i)=>{if(v==null)return;d+=(i>0&&vals[i-1]!=null?"L":"M")+x(i).toFixed(1)+" "+y(v).toFixed(1);});
+  return <svg className="rv-spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={"индекс по кварталам: "+tip} data-tip={tip}>
+    <line x1={pad} x2={w-pad} y1={y(1)} y2={y(1)} className="rv-spark-base"/>
+    <path d={d} className="rv-spark-l"/>
+    {vals.map((v,i)=>v==null?null:<circle key={i} cx={x(i)} cy={y(v)} r={i===vals.length-1?2.3:1.4} className={i===vals.length-1?"rv-spark-last":"rv-spark-p"}/>)}
+  </svg>;
+}
 // Сбой загрузки панели ≠ «данных нет» — для аудитора это важное различие.
 function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удалось загрузить — обновите страницу":"Нет данных за выбранный период"}</div>;}
 
 // Переиспользуемый оверлей: центральный модал (полный текст) или правый драуэр
 // (drill-in по городу/месяцу). Закрытие по клику-вне, ✕ и Esc.
-function RvModal({onClose,title,sub,side,children}){
-  const cardRef=useRef(null);
+function RvModal({onClose,title,sub,side,children,bare,wide,sheet,fit}){
+  const cardRef=useRef(null), ovlRef=useRef(null);
+  // На телефоне окно с sheet — лист снизу: тянется пальцем 1:1, отпускается с
+  // инерцией (цель — по проекции скорости), закрывается смахиванием вниз.
+  const isSheet=!!sheet&&typeof window!=="undefined"&&window.matchMedia("(max-width: 760px)").matches;
   // Окно уходит тем же путём, каким пришло: центральное — сжимаясь на месте,
   // правая панель — вправо. Раньше оно появлялось с движением, а исчезало
   // мгновенно, и это читалось как сбой, а не как закрытие.
@@ -3164,6 +3728,9 @@ function RvModal({onClose,title,sub,side,children}){
       'a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])')||[])]
       .filter(el=>el.offsetWidth||el.offsetHeight);
     const h=e=>{
+      // окна бывают стопкой (читалка поверх панели среза): клавиши — только верхнему
+      const all=document.querySelectorAll(".rv-ovl-card");
+      if(all.length&&all[all.length-1]!==cardRef.current)return;
       if(e.key==="Escape"){close();return;}
       if(e.key!=="Tab")return;
       // Табуляция не должна уводить за пределы окна — иначе человек «проваливается»
@@ -3189,62 +3756,490 @@ function RvModal({onClose,title,sub,side,children}){
   },[close]);
   // ПОРТАЛ в body: у предка .fade-in есть transform (animation fill-mode both),
   // который иначе становится containing-block для position:fixed и «роняет» модал вниз.
+  const drag=useRef(null);
+  const onDown=e=>{
+    if(!isSheet||!e.target.closest("[data-drag]")||e.target.closest("button,a,input,select,textarea"))return;
+    const el=cardRef.current; if(!el)return;
+    if(drag.current&&drag.current.stop)drag.current.stop();
+    const m=new DOMMatrix(getComputedStyle(el).transform);           // подхватываем с текущего положения
+    drag.current={id:e.pointerId,y0:e.clientY,base:m.m42||0,y:m.m42||0,h:el.offsetHeight,hist:[[e.clientY,performance.now()]]};
+    el.setPointerCapture(e.pointerId); el.style.animation="none";
+  };
+  const place=y=>{ const el=cardRef.current,d=drag.current; if(!el||!d)return; d.y=y;
+    el.style.transform=`translateY(${y}px)`;
+    if(ovlRef.current)ovlRef.current.style.setProperty("--rv-scrim-k",String(1-Math.min(1,Math.max(0,y/d.h)))); };
+  const onMove=e=>{ const d=drag.current; if(!d||d.id!==e.pointerId)return;
+    let y=d.base+(e.clientY-d.y0); if(y<0)y=rvRubber(y,d.h);        // вверх — сопротивление, а не упор
+    d.hist.push([e.clientY,performance.now()]); if(d.hist.length>6)d.hist.shift(); place(y); };
+  const onUp=e=>{ const d=drag.current; if(!d||d.id!==e.pointerId)return;
+    const [a,b]=[d.hist[0],d.hist[d.hist.length-1]]; const v=b[1]>a[1]?(b[0]-a[0])/((b[1]-a[1])/1000):0;
+    const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const dismiss=d.y+rvProject(v)>d.h*0.4;
+    if(dismiss&&reduce){onClose();return;}
+    d.stop=rvSpring(d.y,dismiss?d.h:0,v,{response:0.3,damping:dismiss?1:0.8},place,()=>{if(dismiss)onClose();}); };
   return ReactDOM.createPortal(
-    <div className={"rv-ovl"+(side==="right"?" rv-ovl-r":"")+(closing?" is-closing":"")} onClick={close}>
-      <div className={"rv-ovl-card"+(side==="right"?" rv-ovl-right":"")}
-           ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true"
-           onClick={e=>e.stopPropagation()}>
-        <div className="rv-ovl-head">
+    <div ref={ovlRef} className={"rv-ovl"+(side==="right"&&!isSheet?" rv-ovl-r":"")+(isSheet?" rv-ovl-sheet":"")+(closing?" is-closing":"")} onClick={close}>
+      <div className={"rv-ovl-card"+(side==="right"&&!isSheet?" rv-ovl-right":"")+(wide?" rv-ovl-wide":"")+(isSheet?" rv-sheet":"")+(isSheet&&fit?" rv-sheet-fit":"")+(bare?" rv-ovl-bare":"")}
+           ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={bare?(title||"Жалоба"):(title||undefined)}
+           onClick={e=>e.stopPropagation()}
+           onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+        {isSheet&&<div className="rv-sheet-grab" data-drag="1" aria-hidden="true"><i/></div>}
+        {!bare&&<div className="rv-ovl-head">
           <div style={{minWidth:0}}>
-            <div className="rv-ttl" style={{fontSize:14}}>{title}</div>
+            <h2 className="rv-ttl" style={{fontSize:15}}>{title}</h2>
             {sub&&<div className="rv-cap" style={{margin:"2px 0 0"}}>{sub}</div>}
           </div>
-          <button className="rv-ovl-x" onClick={close} aria-label="Закрыть">✕</button>
-        </div>
-        <div className="rv-ovl-body">{children}</div>
+          <button className="rv-ovl-x" onClick={close} aria-label="Закрыть"><RvIX s={15}/></button>
+        </div>}
+        {bare?(typeof children==="function"?children(close):children)
+          :<div className="rv-ovl-body">{typeof children==="function"?children(close):children}</div>}
       </div>
     </div>, document.body);
-}
-
-// Чипы тем обращения (классификация): regex-baseline или LLM-уточнённые.
-function RvThemes({list,src,active}){
-  if(!list||!list.length) return <span className="rv-tag other">Прочее</span>;
-  // Разметка мультитемная: у обращения бывает до двух тем, и обе верны
-  // («не выдаёт деньги по залогу» — это и задержка, и условия кредита).
-  // Но при фильтре по теме второй ярлык выглядел равноправным, и аудитор
-  // читал его как «выдача не по теме». Помечаем ту, из-за которой отзыв здесь.
-  return <>{list.slice(0,3).map((t,j)=>{
-    const hit=active&&t.key===active;
-    return <span key={j} className={"rv-tag "+(t.risk||"other")+(hit?" rv-tag-hit":"")}
-      title={hit?`${t.label} — тема, по которой отфильтрована лента`:t.label}>
-      {t.short||t.label}</span>;
-  })}{src==="llm"&&<span className="rv-llm" title="темы уточнены ИИ">✦</span>}</>;
-}
-
-// Карточка отзыва (переиспользуется в ленте, в модале и в драуэре).
-function RvReview({r,onOpen,full}){
-  const txt=r.text||"";
-  return <div className="rv-rev">
-    <div className="rv-rh">
-      <span>{r.date}</span>
-      <RvThemes list={r.themes} src={r.theme_src}/>
-      {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
-      {r.city&&<span className="rv-pill">{r.city}</span>}
-      {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
-    </div>
-    <div className={"rv-rq"+(onOpen?" rv-rq-click":"")} role={onOpen?"button":undefined}
-         tabIndex={onOpen?0:undefined} onClick={onOpen||undefined}
-         onKeyDown={onOpen?(e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen();}}):undefined}>
-      {full?txt:(txt.slice(0,420)+(txt.length>420?"…":""))}
-      {onOpen&&txt.length>420&&<span className="rv-more"> читать полностью →</span>}
-    </div>
-  </div>;
 }
 
 // SVG-иконки радара (без эмодзи, currentColor, feather-стиль)
 const IcoRadar=()=> <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 13h4l2.5 6 4-14 2.5 9 1.5-4 1.5 3H22"/></svg>;
 const IcoCheck=()=> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.5 2.5 4.7-5.4"/></svg>;
 const IcoTrendUp=()=> <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>;
+
+// ── Карточка жалобы и читалка (волна D1) ─────────────────────────────────────
+// Иерархия карточки: мета → суть от ИИ (заголовок) → цитата клиента →
+// признаки. Сырой текст — только в читалке. Раньше самым заметным был сырой
+// текст, а суть и признаки терялись мелким серым шрифтом среди 6–9 плашек.
+const RvIco=({d,s=13,w=1.8,fill})=><svg width={s} height={s} viewBox="0 0 24 24" fill={fill||"none"} stroke="currentColor" strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
+const RvIScale=p=><RvIco {...p} d={<><path d="M12 3v18"/><path d="M5 21h14"/><path d="M4 7h16"/><path d="M4 7l-3 7a3 3 0 0 0 6 0z"/><path d="M20 7l-3 7a3 3 0 0 0 6 0z"/></>}/>;
+const RvIUser=p=><RvIco {...p} d={<><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>}/>;
+const RvIBan=p=><RvIco {...p} d={<><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></>}/>;
+const RvIReply=p=><RvIco {...p} d={<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/>}/>;
+const RvICase=p=><RvIco {...p} d={<><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></>}/>;
+const RvIExt=p=><RvIco {...p} d={<><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></>}/>;
+const RvIX=p=><RvIco {...p} d={<><path d="M6 6l12 12"/><path d="M18 6L6 18"/></>}/>;
+const RvIUp=p=><RvIco {...p} d={<path d="M6 15l6-6 6 6"/>}/>;
+const RvIDown=p=><RvIco {...p} d={<path d="M6 9l6 6 6-6"/>}/>;
+const RvIChevR=p=><RvIco {...p} d={<path d="M9 6l6 6-6 6"/>}/>;
+const RvIChevL=p=><RvIco {...p} d={<path d="M15 6l-6 6 6 6"/>}/>;
+const RvIChevD=p=><RvIco {...p} d={<path d="M6 9l6 6 6-6"/>}/>;
+const RvIDots=p=><RvIco {...p} w={0} fill="currentColor" d={<><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></>}/>;
+const RvILink=p=><RvIco {...p} d={<><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></>}/>;
+
+const RV_MON_GEN=["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const rvShortDate=d=>{const m=String(d||"").match(/^(\d{4})-(\d{2})-(\d{2})/);if(!m)return "";
+  const y=+m[1],cur=new Date().getFullYear();return `${+m[3]} ${RV_MON[+m[2]-1]}${y!==cur?" "+y:""}`;};
+const rvLongDate=d=>{const m=String(d||"").match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${+m[3]} ${RV_MON_GEN[+m[2]-1]} ${m[1]}`:"";};
+const rvAmount=v=>v==null?"":v>=1e6?`${String(Math.round(v/1e5)/10).replace(".",",")} млн ₽`:v>=1e3?`${Math.round(v/1e3)} тыс. ₽`:`${Math.round(v)} ₽`;
+const rvCap=s=>s?s[0].toUpperCase()+s.slice(1):s;
+
+// Текст площадки: восстановить пробел после точки перед заглавной («долга.Я»)
+// и разбить сплошной текст на абзацы по 3–4 предложения. Переносы строк
+// автора сохраняются.
+// Пробел после знака препинания перед заглавной: площадки теряют его
+// («долга.Я», «Сбербанк:Незамедлительно»). Той же функцией чистится цитата
+// разметки — иначе подсветка перестала бы находить её в тексте.
+const rvSpace=s=>String(s||"").replace(/([.!?…:;])(?=[А-ЯЁA-Z«"])/g,"$1 ").replace(/,(?=[А-ЯЁа-яёA-Za-z«"])/g,", ");
+function rvParas(t){
+  const src=rvSpace(String(t||"").replace(/\r/g,"")).replace(/[ \t]{2,}/g," ");
+  // Одиночный перенос внутри предложения (следующая строка со строчной, а
+  // предыдущая без точки) — это вёрстка площадки, а не абзац: склеиваем,
+  // иначе в читалке «рваные» короткие строки
+  const lines=[];
+  src.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean).forEach(x=>{
+    const prev=lines[lines.length-1];
+    if(prev&&/^[а-яёa-z(«"]/.test(x)&&!/[.!?…:;»"]$/.test(prev))lines[lines.length-1]=prev+" "+x;
+    else lines.push(x);
+  });
+  const out=[];
+  lines.forEach(b=>{
+    if(b.length<520){out.push(b);return;}
+    const sent=b.split(/(?<=[.!?…])\s+(?=[А-ЯЁA-Z«"—])/);
+    let cur="";
+    sent.forEach(x=>{ if(cur&&(cur.length+x.length>420)){out.push(cur);cur=x;} else cur=cur?cur+" "+x:x; });
+    if(cur)out.push(cur);
+  });
+  return out;
+}
+// Цитата из разметки подсвечивается в тексте: это и есть «цитата сверена с
+// текстом». В цитате бывают склейки через «…» — подсвечиваем каждый кусок.
+const rvEsc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+function rvQuoteRx(q){
+  const parts=String(q||"").split(/\s*(?:…|\.\.\.)\s*/).map(x=>rvSpace(x.trim().replace(/^[«"]|[»"]$/g,""))).filter(x=>x.length>=12);
+  if(!parts.length)return null;
+  return new RegExp("("+parts.map(p=>rvEsc(p).replace(/\s+/g,"\\s+")).join("|")+")","gi");
+}
+function rvMarkPara(p,qrx,kq){
+  // ⟦…⟧ — попадания поиска (kbMark); внутри остального — цитата ИИ
+  return p.split(/(⟦[^⟧]*⟧)/g).map((seg,i)=>{
+    if(seg.startsWith("⟦"))return <mark key={kq+"s"+i} className="kb-hl">{seg.slice(1,-1)}</mark>;
+    if(!qrx)return <React.Fragment key={kq+"t"+i}>{seg}</React.Fragment>;
+    return seg.split(qrx).map((x,j)=>j%2?<mark key={kq+"q"+i+"_"+j} className="rv-qhl">{x}</mark>
+      :<React.Fragment key={kq+"t"+i+"_"+j}>{x}</React.Fragment>);
+  });
+}
+// Выдержка вокруг первого попадания поиска — вместо цитаты, если искали словами
+function rvSnippet(m,n=180){
+  const s=String(m||""),i=s.indexOf("⟦"); if(i<0)return null;
+  let a=Math.max(0,i-60); if(a>0){const sp=s.indexOf(" ",a);a=sp>0&&sp<i?sp+1:a;}
+  return (a>0?"…":"")+cutMark(s.slice(a),n)+(s.length-a>n?"…":"");
+}
+// Признаки жалобы — в порядке важности, с тоном: обратился (red) → грозит →
+// уязвимый → без согласия → ответ банка → сумма
+function rvSignals(r){
+  const a=r.ann||{}, b=r.bank_reply, out=[];
+  const to=(a.esc_to||[]).map(x=>RV_TO[x]||x).join(", ");
+  if(a.esc==="filed")out.push({k:"esc",tone:"neg",ic:RvIScale,t:"Обратился"+(to?": "+to:"")});
+  else if(a.esc==="threat")out.push({k:"esc",tone:"warn",ic:RvIScale,t:"Грозит"+(to?": "+to:"")});
+  if(a.vulnerable&&a.vulnerable.length)out.push({k:"vuln",tone:"warn",ic:RvIUser,
+    t:rvCap(a.vulnerable.map(x=>RV_VULN[x]||x).join(", "))});
+  if(a.no_consent)out.push({k:"nc",tone:"warn",ic:RvIBan,t:"Без согласия"});
+  if(b){ const old=r.date&&(Date.now()-new Date(String(r.date).slice(0,10)+"T00:00:00"))>3*864e5;
+    if(b.resolved===true)out.push({k:"rep",tone:"pos",ic:RvIReply,t:"Решено"});
+    else if(b.resolved===false&&(b.checked||b.src==="sravni.ru"))out.push({k:"rep",tone:"",ic:RvIReply,t:"Не решено"});
+    else if(b.answer||b.has_answer)out.push({k:"rep",tone:"",ic:RvIReply,t:"Банк ответил"});
+    else if(b.src==="banki.ru"&&old)out.push({k:"rep",tone:"",ic:RvIReply,t:"Без ответа банка"}); }
+  if(a.amount)out.push({k:"amt",tone:"",ic:null,t:rvAmount(a.amount)});
+  return out;
+}
+const rvSev=r=>{const a=r.ann||{};return a.esc==="filed"?"neg":(a.esc==="threat"||(a.vulnerable&&a.vulnerable.length))?"warn":"";};
+const rvFirst=t=>{const s=rvParas(t)[0]||"";const m=s.match(/^.{20,200}?[.!?…](?=\s|$)/);return m?m[0]:s.slice(0,180)+(s.length>180?"…":"");};
+
+// Прочитанные жалобы — только в этом браузере: удобство, а не данные
+const RV_READ_KEY="al-rv-read";
+function rvReadGet(){try{return new Set(JSON.parse(localStorage.getItem(RV_READ_KEY)||"[]"));}catch{return new Set();}}
+function rvReadAdd(u){try{const a=JSON.parse(localStorage.getItem(RV_READ_KEY)||"[]").filter(x=>x!==u);a.push(u);
+  localStorage.setItem(RV_READ_KEY,JSON.stringify(a.slice(-3000)));}catch{}}
+
+// Меню «⋯» карточки: действия, которым не место в самой карточке
+function RvMenu({items}){
+  const[open,setOpen]=useState(false),ref=useRef(null);
+  useEffect(()=>{ if(!open)return;
+    const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};
+    const k=e=>{if(e.key==="Escape"){e.stopPropagation();setOpen(false);}};
+    document.addEventListener("pointerdown",h);document.addEventListener("keydown",k,true);
+    return ()=>{document.removeEventListener("pointerdown",h);document.removeEventListener("keydown",k,true);};
+  },[open]);
+  return <span className="rv-menu" ref={ref} onClick={e=>e.stopPropagation()}>
+    <button className="rv-ib" aria-label="Действия" aria-haspopup="menu" aria-expanded={open}
+      onClick={()=>setOpen(o=>!o)}><RvIDots s={15}/></button>
+    {open&&<span className="rv-menu-pop" role="menu">
+      {items.filter(Boolean).map((it,i)=>it.href
+        ?<a key={i} role="menuitem" href={it.href} target="_blank" rel="noopener noreferrer" onClick={()=>setOpen(false)}>{it.ic}{it.t}</a>
+        :<button key={i} role="menuitem" onClick={()=>{setOpen(false);it.on();}}>{it.ic}{it.t}</button>)}
+    </span>}
+  </span>;
+}
+const rvCopy=u=>{try{navigator.clipboard.writeText(u);fbToast("Ссылка скопирована",false);}catch{}};
+
+function RvCard({r,sel,read,inCase,showBank,onOpen,onCase,onTheme,q,cardRef}){
+  const a=r.ann||{}, pending=!r.ann;
+  const title=a.summary||rvFirst(r.text);
+  const snip=q&&r.via!=="смысл"?rvSnippet(r.marked):null;
+  const sig=rvSignals(r).slice(0,3), sev=rvSev(r);
+  const themes=(r.themes||[]).slice(0,2);
+  const src=r.source&&r.source.includes(".")?r.source:(r.url?rvHost(r.url):"");
+  const meta=[rvShortDate(r.date),showBank&&r.bank,r.city,r.product,src].filter(Boolean);
+  return <article ref={cardRef} className={"rv-c"+(sel?" sel":"")+(read&&!sel?" read":"")+(sev?" s-"+sev:"")}
+      tabIndex={0} aria-label={title} aria-current={sel?"true":undefined} onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"&&e.target===e.currentTarget){e.preventDefault();onOpen();}}}>
+    <div className="rv-c-meta">
+      <span className="rv-c-mt">{meta.join(" · ")}
+        {r.similar>0&&<> · ещё {r.similar} {plural(r.similar,"такая же","такие же","таких же")}</>}
+        {pending&&<> · разметка через ~час</>}
+        {r.via==="смысл"&&<> · <span data-tip="слов запроса в тексте нет — подобрано по смыслу">по смыслу</span></>}
+      </span>
+      {inCase&&<span className="rv-c-in" data-tip={`в деле «${inCase}»`}><RvICase s={12}/>в деле</span>}
+      <span className="rv-c-acts">
+        {!inCase&&onCase&&<button className="rv-c-add" onClick={e=>{e.stopPropagation();onCase();}}>В дело</button>}
+        <RvMenu items={[onCase&&{t:inCase?"Добавить в другое дело":"В аудит-дело",ic:<RvICase s={13}/>,on:onCase},
+          r.url&&{t:"Открыть на площадке",ic:<RvIExt s={13}/>,href:r.url},
+          r.url&&{t:"Скопировать ссылку",ic:<RvILink s={13}/>,on:()=>rvCopy(r.url)}]}/>
+      </span>
+    </div>
+    <div className={"rv-c-title"+(pending?" raw":"")}>{title}</div>
+    {snip?<div className="rv-c-snip">{kbMark(snip)}</div>
+      :a.quote?<div className="rv-c-quote">«{a.quote}»</div>:null}
+    {(sig.length>0||themes.length>0)&&<div className="rv-c-sig">
+      {sig.map(x=><span key={x.k} className={"rv-sg "+x.tone}>{x.ic&&<x.ic s={12}/>}{x.t}</span>)}
+      {themes.length>0&&<span className="rv-c-th">{themes.map((t,i)=><React.Fragment key={t.key}>
+        {i>0&&<span className="rv-c-dot">·</span>}
+        {onTheme?<button className="rv-c-tl" data-tip={`${t.label} — показать жалобы этой темы`}
+          onClick={e=>{e.stopPropagation();onTheme(t.key);}}>{t.short||t.label}</button>
+          :<span className="rv-c-tl static">{t.short||t.label}</span>}</React.Fragment>)}</span>}
+    </div>}
+  </article>;
+}
+
+// Паспорт жалобы: всё, что известно из разметки и сбора, — таблицей, а не
+// россыпью плашек над текстом
+function RvPassport({r}){
+  const a=r.ann||{}, b=r.bank_reply, th=r.themes||[];
+  const rows=[];
+  if(th[0])rows.push(["Проблема",<>{th[0].label}<span className={"rv-risk "+(th[0].risk||"")}>{RV_RISK[th[0].risk]||""}</span></>]);
+  if(th.length>1)rows.push(["Также",th.slice(1).map(t=>t.label).join(" · ")]);
+  if(a.esc==="filed"||a.esc==="threat")rows.push(["Эскалация",<span className={a.esc==="filed"?"rv-tneg":"rv-twarn"}>
+    {(a.esc==="filed"?"Обратился":"Грозит")+((a.esc_to||[]).length?": "+a.esc_to.map(x=>RV_TO[x]||x).join(", "):"")}</span>]);
+  if(a.vulnerable&&a.vulnerable.length)rows.push(["Клиент",rvCap(a.vulnerable.map(x=>RV_VULN[x]||x).join(", "))]);
+  if(a.no_consent||a.misled)rows.push(["Практика",[a.no_consent&&"без согласия клиента",a.misled&&"ввели в заблуждение"].filter(Boolean).join(" · ")]);
+  if(a.amount)rows.push(["Сумма",<span data-tip="сумма бывает и ущербом, и суммой самого продукта">{fmtNum(Math.round(a.amount))} ₽</span>]);
+  const pc=[r.product,r.city].filter(Boolean).join(" · "); if(pc)rows.push(["Продукт",pc]);
+  if(a.event_date)rows.push(["Событие",rvLongDate(a.event_date)]);
+  if(r.rating!=null)rows.push(["Оценка",<span className="rv-stars" aria-label={`${Math.round(r.rating)} из 5`}>
+    {[1,2,3,4,5].map(i=><i key={i} className={i<=Math.round(r.rating)?"on":""}>★</i>)}</span>]);
+  if(b){const st=b.resolved===true?"решено":b.resolved===false&&(b.checked||b.src==="sravni.ru")?"не решено":null;
+    const ans=b.answer?"ответил":b.has_answer?"ответ на площадке":"ответа нет";
+    rows.push(["Банк",[rvCap(ans),st].filter(Boolean).join(" · ")]);}
+  if(r.ann)rows.push(["Разметка",<>{rvCap(a.confidence||"")}{a.new_topic&&<span className="rv-dim"> · вне кодификатора: {a.new_topic}</span>}</>]);
+  return <dl className="rv-pass">{rows.map(([k,v])=><React.Fragment key={k}><dt>{k}</dt><dd>{v}</dd></React.Fragment>)}</dl>;
+}
+
+function RvReader({r,pos,total,ctx,onPrev,onNext,onClose,onCase,inCase,onOpenSim,showBank,embedded,onBack}){
+  const[sim,setSim]=useState(null),[repOpen,setRepOpen]=useState(false);
+  const bodyRef=useRef(null);
+  useEffect(()=>{ setSim(null);setRepOpen(false);
+    if(bodyRef.current)bodyRef.current.scrollTop=0;
+    if(!r||!r.url)return; rvReadAdd(r.url);
+    let ok=true; if(r.ann)apiFetch(`/api/reviews/similar?url=${encodeURIComponent(r.url)}`)
+      .then(d=>ok&&setSim(d.items||[])).catch(()=>ok&&setSim([]));
+    return ()=>{ok=false;}; },[r&&r.url]);
+  if(!r)return null;
+  const a=r.ann||{}, b=r.bank_reply;
+  const qrx=a.quote?rvQuoteRx(a.quote):null;
+  const paras=rvParas(r.marked||r.text);
+  const title=a.summary||rvFirst(r.text);
+  return <div className={"rv-rd"+(embedded?" emb":"")}>
+    <div className="rv-rd-head" data-drag="1">
+      <div className="rv-rd-nav">
+        {onBack&&<button className="rv-ib" onClick={onBack} aria-label="Назад к списку" data-tip="назад">←</button>}
+        <button className="rv-ib" disabled={!onPrev} onClick={onPrev} aria-label="Предыдущая жалоба" data-tip="предыдущая · K"><RvIUp s={16}/></button>
+        <button className="rv-ib" disabled={!onNext} onClick={onNext} aria-label="Следующая жалоба" data-tip="следующая · J"><RvIDown s={16}/></button>
+        {total>1&&<span className="rv-rd-pos">{pos+1} из {total}{ctx?` · ${ctx}`:""}</span>}
+      </div>
+      <div className="rv-rd-acts">
+        {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={onCase}
+          data-tip={inCase?`уже в деле «${inCase}» — можно добавить в другое`:"приобщить к аудит-делу · A"}>
+          <RvICase s={14}/>{inCase?"В деле":"В дело"}</button>}
+        {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer" data-tip="открыть на площадке">
+          {rvHost(r.url)}<RvIExt s={13}/></a>}
+        {onClose&&<button className="rv-ib" onClick={onClose} aria-label="Закрыть" data-tip="закрыть · Esc"><RvIX s={16}/></button>}
+      </div>
+    </div>
+    <div className="rv-rd-body" ref={bodyRef}>
+      <div className="rv-rd-meta">{[rvLongDate(r.date),showBank&&r.bank,r.source&&r.source.includes(".")?r.source:null].filter(Boolean).join(" · ")}
+        {r.similar>0&&<> · ещё {r.similar} {plural(r.similar,"такая же","такие же","таких же")}</>}</div>
+      <h2 className={"rv-rd-title"+(r.ann?"":" raw")}>{title}</h2>
+      {!r.ann&&<p className="rv-rd-pending">Жалоба ещё размечается — обычно до часа после сбора. Пока доступен только текст.</p>}
+      <RvPassport r={r}/>
+      <div className="rv-rd-sec">Текст клиента{a.quote&&<span className="rv-rd-sec-n"><mark className="rv-qhl">выделено</mark> — цитата, на которую опирается разметка</span>}</div>
+      <div className="rv-rd-text">{paras.map((p,i)=><p key={i}>{rvMarkPara(p,qrx,i)}</p>)}</div>
+      {b&&b.answer&&<div className={"rv-rd-reply"+(repOpen?" open":"")}>
+        <div className="rv-rd-sec">Ответ банка{b.resolved===true?" · решено":b.resolved===false&&b.checked?" · не решено":""}</div>
+        <div className="rv-rd-rtext">{rvParas(b.answer).map((p,i)=><p key={i}>{p}</p>)}</div>
+        {!repOpen&&b.answer.length>420&&<button className="rv-lnkb" onClick={()=>setRepOpen(true)}>Показать ответ полностью</button>}
+      </div>}
+      {sim&&sim.length>0&&<div className="rv-rd-sim">
+        <div className="rv-rd-sec">Похожие жалобы<span className="rv-rd-sec-n">тот же банк и проблема, близкое изложение</span></div>
+        {sim.map((x,i)=><button key={x.url} className="rv-rd-simi" onClick={()=>onOpenSim&&onOpenSim(sim,i)}>
+          <span className="rv-rd-simm">{[rvShortDate(x.date),x.city,x.product].filter(Boolean).join(" · ")}</span>
+          <span className="rv-rd-simt">{(x.ann&&x.ann.summary)||rvFirst(x.text)}</span></button>)}
+      </div>}
+    </div>
+    {!embedded&&(onCase||r.url)&&<div className="rv-rd-foot">
+      {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={onCase}>
+        <RvICase s={15}/>{inCase?"В деле":"В дело"}</button>}
+      {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer">{rvHost(r.url)}<RvIExt s={13}/></a>}
+    </div>}
+  </div>;
+}
+
+// Пружина по Apple: затухание и отклик вместо длительности. Старт — с текущего
+// положения и скорости пальца, поэтому движение можно подхватить на лету.
+function rvSpring(from,to,v0,{response=0.32,damping=1}={},onFrame,onDone){
+  const k=Math.pow(2*Math.PI/response,2), c=4*Math.PI*damping/response;
+  let x=from,v=v0,last=performance.now(),raf=0;
+  const step=t=>{ const dt=Math.min(0.032,Math.max(0.001,(t-last)/1000)); last=t;
+    v+=(-k*(x-to)-c*v)*dt; x+=v*dt;
+    if(Math.abs(v)<4&&Math.abs(x-to)<0.4){onFrame(to);onDone&&onDone();return;}
+    onFrame(x); raf=requestAnimationFrame(step); };
+  raf=requestAnimationFrame(step);
+  return ()=>cancelAnimationFrame(raf);
+}
+// Верх оси — ближайшее «круглое» число сверху (1; 1,2; 1,5; 2; 2,5; 3; 4; 5; 6; 8 × 10ⁿ)
+const rvNice=v=>{ if(!(v>0))return 1; const p=Math.pow(10,Math.floor(Math.log10(v)));
+  for(const m of [1,1.2,1.5,2,2.5,3,4,5,6,8,10]){ if(m*p>=v)return m*p; } return 10*p; };
+const rvProject=(v,d=0.998)=>(v/1000)*d/(1-d);
+const rvRubber=(o,dim,c=0.55)=>(o*dim*c)/(dim+c*Math.abs(o));
+
+// ── Рабочее место аудитора (волна 4) ─────────────────────────────────────────
+const RV_TO={cbr:"ЦБ",court:"суд",rpn:"Роспотребнадзор",fas:"ФАС",prosecutor:"прокуратура",
+  finombudsman:"финомбудсмен",police:"полиция"};
+const RV_VULN={pensioner:"пенсионер",low_income:"низкий доход",svo:"участник СВО",
+  minor:"несовершеннолетний",disabled:"инвалид",ill:"тяжелобольной"};
+const rvNum=v=>v==null?"—":String(v).replace(".",",");
+// Признаки ленты: те же коды, что у панели «Признаки риска» (белый список на сервере)
+const RV_FLAG_OPTS=[
+  ["Эскалация",[["filed:cbr_court","Обратились в ЦБ или суд"],["esc:filed","Уже обратились куда-либо"],["esc:threat","Грозят обратиться"]]],
+  ["Куда",Object.entries(RV_TO).map(([k,v])=>["to:"+k,v[0].toUpperCase()+v.slice(1)])],
+  ["Уязвимые клиенты",[["vuln:any","Все уязвимые"],["vuln:pensioner","Пенсионеры"],["vuln:low_income","Низкий доход"],
+    ["vuln:svo","Участники СВО"],["vuln:minor","Несовершеннолетние"],["vuln:disabled","Инвалиды"],["vuln:ill","Тяжелобольные"]]],
+  ["Практики и суммы",[["no_consent","Без согласия"],["misled","Ввели в заблуждение"],["amount:1m","Сумма от 1 млн ₽"]]],
+];
+const RV_SOURCES=[["banki","banki.ru"],["sravni","sravni.ru"],["bankiros","bankiros.ru"],["finuslugi","finuslugi.ru"]];
+
+// Снимок жалобы при приобщении: если отзыв пропадёт с площадки, в деле
+// останется суть и начало текста
+const rvCaseSnap=r=>(((r.ann&&r.ann.summary)?r.ann.summary+"\n\n":"")+(r.text||"")).slice(0,1500);
+
+// Приобщение жалоб к серверному аудит-делу (то же, что в «Базе знаний»):
+// дело видит команда, к материалам пишут комментарии, выгружают в Excel и
+// Word. Раньше «дело» жило в браузере и пропадало вместе с ним.
+function RvCasePick({items,onClose,onDone}){
+  const[cases,setCases]=useState(null),[title,setTitle]=useState(""),[note,setNote]=useState("");
+  const[busy,setBusy]=useState(false),[err,setErr]=useState(null);
+  useEffect(()=>{apiFetch("/api/cases").then(d=>setCases(d.cases||[])).catch(()=>setCases([]));},[]);
+  const last=(()=>{try{return +localStorage.getItem("al-case-last")||0;}catch{return 0;}})();
+  const attach=async(c)=>{ setBusy(true);setErr(null);
+    try{
+      const payload=items.map(r=>({kind:"review",url:r.url,title:rvCaseSnap(r),note:note.trim()||null}));
+      if(payload.length===1)await apiPost(`/api/cases/${c.case_id}/items`,payload[0]);
+      else await apiPost(`/api/cases/${c.case_id}/items/bulk`,{items:payload});
+      try{localStorage.setItem("al-case-last",String(c.case_id));}catch{}
+      onDone&&onDone(c,items.length);
+    }catch{setErr("Не удалось приобщить: нет доступа к делу или сбой сети");setBusy(false);}
+  };
+  const create=async()=>{ if(!title.trim()||busy)return; setBusy(true);
+    try{const r=await apiPost("/api/cases",{title:title.trim()});await attach({case_id:r.case_id,title:title.trim()});}
+    catch{setErr("Не удалось создать дело");setBusy(false);} };
+  const list=(cases||[]).slice().sort((a,b)=>(b.case_id===last)-(a.case_id===last));
+  return <RvModal onClose={onClose} title={items.length>1?`В аудит-дело: ${items.length} жалоб`:"В аудит-дело"}
+      sub="дело видно вам и тем, кому вы его откроете">
+    <label className="rv-cp-note"><span>Комментарий <i>необязательно</i></span>
+      <input className="input" value={note} onChange={e=>setNote(e.target.value)}
+        placeholder="зачем приобщаете: «повышение ставки после отказа от подписки»"/></label>
+    {cases===null?<Skel h={60}/>:list.length>0&&<div className="rv-cp-list">
+      {list.map(c=><button key={c.case_id} className="rv-cp-case" disabled={busy} onClick={()=>attach(c)}>
+        <span className="rv-cp-t">{c.title}</span>
+        <span className="rv-cp-m">{c.items} матер.{c.shared?" · команда":""}{!c.mine?` · ${c.owner}`:""}{c.case_id===last?" · последнее":""}</span>
+      </button>)}</div>}
+    <div className="rv-cp-new">
+      <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")create();}}
+        placeholder={list.length?"…или новое дело: название":"Название нового дела"}/>
+      <button className="btn btn-primary btn-sm" disabled={!title.trim()||busy} onClick={create}>Создать и приобщить</button>
+    </div>
+    {err&&<div className="rv-cp-err">{err}</div>}
+  </RvModal>;
+}
+
+// Журнал сигналов: всплеск — эпизод со снимком жалоб, из которых он
+// сложился. Отметка «подтвердился / ложный» копит точность радара (видна в
+// «Пульсе»): без неё непонятно, можно ли сигналам доверять.
+function RvJournal({bank,product,onOpen}){
+  const[j,setJ]=useState(null),[open,setOpen]=useState(null),[its,setIts]=useState({});
+  const q=`bank=${encodeURIComponent(bank)}${product?`&product=${encodeURIComponent(product)}`:""}`;
+  const load=()=>apiFetch(`/api/reviews/signal-journal?${q}`).then(setJ).catch(()=>setJ({items:[],days:180}));
+  useEffect(()=>{load();},[bank,product]);
+  const mark=async(e,v)=>{ const nv=e.verdict===v?null:v;
+    setJ(x=>({...x,items:x.items.map(y=>y.signal_id===e.signal_id?{...y,verdict:nv}:y)}));
+    try{await apiPost(`/api/reviews/signal-journal/${e.signal_id}/verdict`,{verdict:nv});}catch{}
+    load(); };
+  const toggle=e=>{ if(open===e.signal_id){setOpen(null);return;} setOpen(e.signal_id);
+    if(!its[e.signal_id])apiFetch(`/api/reviews/signal-journal/${e.signal_id}/reviews`)
+      .then(d=>setIts(m=>({...m,[e.signal_id]:d.items||[]}))).catch(()=>setIts(m=>({...m,[e.signal_id]:[]}))); };
+  if(!j)return <Skel h={160}/>;
+  const L=j.items||[];
+  return <div className="rv-jr">
+    {j.since&&(Date.now()-new Date(j.since).getTime())<j.days*864e5&&
+      <div className="rv-jr-since">Журнал ведётся с {rvDate(j.since)} — более ранних всплесков в нём нет.</div>}
+    <div className="rv-jr-sum">{L.length?<>Эпизодов: <b>{L.length}</b> · отмечено {j.rated}
+      {j.precision!=null?<> · подтвердились <b>{j.precision}%</b></>:""}</>
+      :"Эпизодов пока нет: журнал пополняется, когда радар видит всплеск."}</div>
+    <p className="rv-jr-hint">Отметьте, подтвердился ли сигнал при проверке, — так копится точность радара.</p>
+    {L.map(e=>{const st=e.stats||{}, d1=rvDate(e.first_seen), d2=rvDate(e.last_seen);
+      return <div key={e.signal_id} className={"rv-jr-e"+(e.verdict?" v-"+e.verdict:"")}>
+        <div className="rv-jr-h"><span className="rv-jr-l">{e.label}</span>
+          {e.level==="high"&&<span className="rv-tag compliance">сильный</span>}</div>
+        <div className="rv-jr-m">{d1===d2?d1:`${d1} – ${d2}`} · пик {st.week} за 7 дн при норме ~{rvNum(st.baseline_week)}
+          {st.new?" · новое":st.ratio?` · ×${rvNum(st.ratio)}`:""}{st.bank_specific?" · "+(ovMarketNote(st.ratio,st.market_ratio)||"сильнее рынка"):""}</div>
+        <div className="rv-jr-a">
+          <button className={"rv-jr-b ok"+(e.verdict==="confirmed"?" on":"")} onClick={()=>mark(e,"confirmed")}>подтвердился</button>
+          <button className={"rv-jr-b no"+(e.verdict==="false"?" on":"")} onClick={()=>mark(e,"false")}>ложный</button>
+          {e.n_urls>0&&<button className="rv-jr-x" onClick={()=>toggle(e)}>{open===e.signal_id?<>скрыть<span className="rv-ico-in" style={{transform:"rotate(180deg)"}}><RvIChevD s={13}/></span></>
+            :<>жалобы сигнала · {e.n_urls}<span className="rv-ico-in"><RvIChevD s={13}/></span></>}</button>}
+          {e.verdict_by&&<span className="rv-jr-by">{e.verdict_by}</span>}
+        </div>
+        {open===e.signal_id&&<div className="rv-jr-list rv-clist">{!its[e.signal_id]?<Skel h={60}/>:its[e.signal_id].map((r,i)=>
+          <RvCard key={r.url||i} r={r} onOpen={()=>onOpen&&onOpen(its[e.signal_id],i)}/>)}</div>}
+      </div>;})}
+  </div>;
+}
+
+// «ⓘ Как считается»: методика блока — по кнопке, а не строками мелкого
+// серого текста под каждым заголовком (волна D3)
+// Скелетон списка: строки той же высоты, что и настоящие, — блок не прыгает
+function RvSkelRows({n=6,h=40,gap=8}){
+  return <div className="rv-skrows" style={{gap}} aria-hidden="true">
+    {Array.from({length:n},(_,i)=><Skel key={i} h={h} style={{opacity:1-i*(0.6/n)}}/>)}</div>;
+}
+
+function RvInfo({children,label="Как считается",text,align="left"}){
+  const[open,setOpen]=useState(false),ref=useRef(null);
+  useEffect(()=>{ if(!open)return;
+    const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};
+    const k=e=>{if(e.key==="Escape"){e.stopPropagation();setOpen(false);}};
+    document.addEventListener("pointerdown",h);document.addEventListener("keydown",k,true);
+    return ()=>{document.removeEventListener("pointerdown",h);document.removeEventListener("keydown",k,true);}; },[open]);
+  return <span className={"rv-info"+(align==="right"?" r":"")} ref={ref} onClick={e=>e.stopPropagation()}>
+    <button className={"rv-info-b"+(open?" on":"")+(text?" t":"")} aria-label={label} aria-expanded={open}
+      onClick={()=>setOpen(o=>!o)}>
+      <RvIco s={15} d={<><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.6v.4"/></>}/>{text&&<span>{text}</span>}</button>
+    {open&&<span className="rv-info-pop" role="dialog" aria-label={label}>{children}</span>}
+  </span>;
+}
+
+// Выбор банка с поиском: 60+ банков в системном списке приходилось листать.
+// На телефоне остаётся системный список — он там удобнее.
+function RvBankPicker({bank,items,onChange}){
+  const[open,setOpen]=useState(false),[q,setQ]=useState(""),[act,setAct]=useState(0);
+  const ref=useRef(null),inRef=useRef(null),listRef=useRef(null);
+  useEffect(()=>{ if(!open)return; setQ("");setAct(0);
+    const t=setTimeout(()=>inRef.current&&inRef.current.focus(),0);
+    const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};
+    document.addEventListener("pointerdown",h);
+    return ()=>{clearTimeout(t);document.removeEventListener("pointerdown",h);}; },[open]);
+  const norm=v=>String(v||"").toLowerCase().replace(/ё/g,"е");
+  const stale=x=>x.last&&(Date.now()-new Date(x.last+"T00:00:00"))>60*864e5;
+  const found=q?items.filter(x=>norm(x.bank).includes(norm(q))):items;
+  const top=q?found:found.slice(0,15), rest=q?[]:found.slice(15).sort((a,b)=>a.bank.localeCompare(b.bank,"ru"));
+  const flat=[...top,...rest];
+  useEffect(()=>{ const el=listRef.current&&listRef.current.querySelector(`[data-i="${act}"]`);
+    if(el)el.scrollIntoView({block:"nearest"}); },[act]);
+  const pick=x=>{onChange(x.bank);setOpen(false);};
+  const key=e=>{
+    if(e.key==="ArrowDown"){e.preventDefault();setAct(a=>Math.min(flat.length-1,a+1));}
+    else if(e.key==="ArrowUp"){e.preventDefault();setAct(a=>Math.max(0,a-1));}
+    else if(e.key==="Enter"){e.preventDefault();if(flat[act])pick(flat[act]);}
+    else if(e.key==="Escape"){e.preventDefault();e.stopPropagation();setOpen(false);} };
+  const row=(x,i)=><button key={x.bank} data-i={i} id={"rv-bp-"+i} role="option" aria-selected={i===act} tabIndex={-1}
+      className={"rv-bp-o"+(i===act?" act":"")+(x.bank===bank?" cur":"")}
+      onMouseEnter={()=>setAct(i)} onClick={()=>pick(x)}>
+    <span className="rv-bp-n">{x.bank}</span>
+    <span className="rv-bp-c">{stale(x)?`нет отзывов с ${rvDate(x.last).slice(3)}`:fmtNum(x.n)}</span></button>;
+  return <div className="rv-bp" ref={ref}>
+    <button className="rv-bp-btn" aria-haspopup="listbox" aria-expanded={open} onClick={()=>setOpen(o=>!o)}>
+      <span>{bank}</span><RvIChevD s={14}/></button>
+    {open&&<div className="rv-bp-pop">
+      <input ref={inRef} className="rv-bp-in" value={q} onChange={e=>{setQ(e.target.value);setAct(0);}}
+        onKeyDown={key} placeholder="Найти банк…" aria-label="Найти банк" role="combobox" aria-expanded="true"
+        aria-controls="rv-bp-list" aria-autocomplete="list" aria-activedescendant={flat[act]?"rv-bp-"+act:undefined}/>
+      <div className="rv-bp-list" role="listbox" id="rv-bp-list" aria-label="Банки" ref={listRef}>
+        {!flat.length&&<div className="rv-bp-none">Не нашлось: у банка могло не быть жалоб за год</div>}
+        {!q&&top.length>0&&<div className="rv-bp-g">Крупнейшие по жалобам за год</div>}
+        {top.map((x,i)=>row(x,i))}
+        {rest.length>0&&<div className="rv-bp-g">Остальные — по алфавиту</div>}
+        {rest.map((x,i)=>row(x,top.length+i))}
+      </div></div>}
+  </div>;
+}
+
+const RV_TABS=[["overview","Обзор"],["problems","Проблемы"],["geo","География"],["complaints","Жалобы"]];
 
 function ReviewsPage({params}){
   // Контекст перехода: карточка сигнала ведёт не «куда-то в Отзывы», а к своей
@@ -3256,21 +4251,40 @@ function ReviewsPage({params}){
     const p=JSON.parse(sessionStorage.getItem("al-rv-prefilter")||"null");
     sessionStorage.removeItem("al-rv-prefilter");return p;
   }catch{return null;}})();
-  const[bank,setBank]=useState((preset&&preset.bank)||"Сбербанк");
+  // Срез и подвкладка живут в адресе (#reviews?tab=complaints&theme=…): ссылкой
+  // можно поделиться, F5 ничего не теряет
+  const[bank,setBank]=useState((preset&&preset.bank)||P.bank||"Сбербанк");
   const[bankList,setBankList]=useState(RV_BANKS);
-  const[product,setProduct]=useState((preset&&preset.product)||"");
+  const[bankItems,setBankItems]=useState([]);   // {bank,n,last} — жалобы за год
+  const[product,setProduct]=useState((preset&&preset.product)||P.product||"");
   const firstBankRun=useRef(true);   // не сбрасывать префилл продукта при монтировании
-  const[days,setDays]=useState((preset&&preset.days)||90);
-  const[theme,setTheme]=useState((preset&&preset.theme)||"");
+  const[days,setDays]=useState((preset&&preset.days)||(+P.days)||90);
+  const[theme,setTheme]=useState((preset&&preset.theme)||P.theme||"");
+  const[tab,setTab]=useState(()=>RV_TABS.some(([k])=>k===P.tab)?P.tab
+    :(preset&&(preset.theme||preset.city||preset.esc))||P.theme||P.flag||P.q||P.esc||P.city?"complaints":"overview");
+  const tabsRef=useRef(null);
+  // активная подвкладка — в поле зрения, когда полоса вкладок шире экрана
+  useEffect(()=>{ const el=tabsRef.current&&tabsRef.current.querySelector(".rv-tab.on");
+    if(el&&el.scrollIntoView)el.scrollIntoView({block:"nearest",inline:"nearest"}); },[tab]);
+  // Переход на подвкладку: если шапка подвкладок уже уехала вверх — вернуть к ней
+  const goTab=t=>{ setTab(t);
+    if(t!=="complaints")setRd(x=>x&&x.src==="feed"?null:x);
+    const el=tabsRef.current; if(!el)return;
+    const top=el.getBoundingClientRect().top+window.scrollY-(parseInt(getComputedStyle(document.documentElement).getPropertyValue("--topbar"))||56);
+    if(window.scrollY>top)window.scrollTo({top,behavior:"auto"}); };
   const[q,setQ]=useState(P.q||"");
   // Тема — это фильтр, и человек ждёт от неё именно фильтрации. Пока в
   // строке поиска что-то есть, выдачу определяет поиск, и клик по теме
   // выглядит как «ничего не произошло»: в обратной связи так и написали —
   // «приходится удалять из поискового окна все символы». Делаем это сами.
-  const pickTheme=(key)=>{ setQ(""); setQInput(""); setTheme(t=>t===key?"":key); };
+  // Клик по теме где угодно — это «покажи эти жалобы»: фильтр и переход на «Жалобы»
+  const pickTheme=(key)=>{ setQ(""); setQInput("");
+    if(theme===key&&tab==="complaints"){setTheme("");return;}
+    setTheme(key); goTab("complaints"); };
   const[qInput,setQInput]=useState(P.q||"");
   const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
-  const[vm,setVm]=useState(null),[ge,setGe]=useState(null),[prods,setProds]=useState([]);
+  const[ge,setGe]=useState(null),[prods,setProds]=useState([]);
+  const[geFull,setGeFull]=useState(null);               // «ещё N городов» — полный список
   const[feed,setFeed]=useState(null);
   const[feedErr,setFeedErr]=useState(null);                // упал поиск ≠ ничего не нашлось
   const[feedMeta,setFeedMeta]=useState(null);              // по каким словам искали на самом деле
@@ -3278,25 +4292,86 @@ function ReviewsPage({params}){
   const[busy,setBusy]=useState(true),[feedBusy,setFeedBusy]=useState(false);
   // Своё состояние догрузки: moreBusy живёт во вкладке «Рынок», переиспользовать
   // его отсюда нельзя.
-  const[escOnly,setEscOnly]=useState(false);            // только обращения с угрозой ЦБ/суд/ФАС
+  // только обращения с угрозой ЦБ/суд/ФАС; из адреса — ссылка с плитки «Обзора»
+  const[escOnly,setEscOnly]=useState(()=>P.esc==="1"||!!(preset&&preset.esc));
   const[sortBy,setSortBy]=useState("auto");             // порядок выдачи поиска
   const[feedMore,setFeedMore]=useState(false);          // есть ли ещё страницы
+  const[feedTot,setFeedTot]=useState(null);             // {total, pending} по фильтру ленты
   const[feedMoreBusy,setFeedMoreBusy]=useState(false);
-  const[caseN,setCaseN]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]").length;}catch{return 0;}});
-  const[modalRev,setModalRev]=useState(null);            // полный текст отзыва
+  // рабочее место аудитора: дела, фильтры ленты, группы, журнал, подписка
+  const[pick,setPick]=useState(null);                   // жалобы для приобщения к делу
+  const[casesOpen,setCasesOpen]=useState(false);
+  const[jrOpen,setJrOpen]=useState(false);
+  // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
+  const[fCity,setFCity]=useState(()=>P.city||(preset&&preset.city)||""),[fSrc,setFSrc]=useState("");
+  const[fOrder,setFOrder]=useState("date");             // date | severity (без поиска)
+  const[fView,setFView]=useState("cards");              // cards | groups
+  const[cl,setCl]=useState(null),[clBusy,setClBusy]=useState(false);
+  const[grp,setGrp]=useState(null),[grpItems,setGrpItems]=useState(null);
+  const[mev,setMev]=useState(null);                     // изменения условий по продукту («Рынок»)
+  const[sub,setSub]=useState(null);                     // подписка на сигналы среза
+  // Читалка жалобы: {list, idx, ctx, src, back}. src="feed" — список берётся
+  // живым из ленты (догрузка по J в конце), на широком экране читалка стоит
+  // рядом со списком; остальные источники — поверх, листом на телефоне.
+  const[rd,setRd]=useState(null);
+  const[caseUrls,setCaseUrls]=useState({});             // жалоба → дело, где она уже есть
+  const[readV,setReadV]=useState(0);
+  const readSet=useMemo(()=>rvReadGet(),[readV]);
+  const[cur,setCur]=useState(-1);                       // курсор клавиатуры в ленте
+  const[wide,setWide]=useState(()=>window.matchMedia("(min-width: 1280px)").matches);
+  const[narrow,setNarrow]=useState(()=>window.matchMedia("(max-width: 760px)").matches);
+  const[ftOpen,setFtOpen]=useState(false);              // лист фильтров ленты (телефон)
+  const cardRefs=useRef({}), searchRef=useRef(null);
   const[drill,setDrill]=useState(null);                  // {type:'city'|'month',value,label}
   const[drillItems,setDrillItems]=useState(null),[drillBusy,setDrillBusy]=useState(false);
   const[explain,setExplain]=useState(null),[explainBusy,setExplainBusy]=useState(false);
+  const[drillProf,setDrillProf]=useState(null);   // чем срез отличается от нормы — цифры без модели
   const[clsBusy,setClsBusy]=useState(false),[clsOn,setClsOn]=useState(false);
   const[thAll,setThAll]=useState(false);   // показать все темы риск-карты vs топ-12
   const[anom,setAnom]=useState(null),[anomBusy,setAnomBusy]=useState(false);  // радар аномалий
+  const[ix,setIx]=useState(null),[rf,setRf]=useState(null),[chg,setChg]=useState(null);
+  const[flag,setFlag]=useState(P.flag||"");            // признак риска — фильтр ленты
+  const[casesN,setCasesN]=useState(null);              // сколько дел видно пользователю
+  const[radarAll,setRadarAll]=useState(false);         // разбор радара целиком
+  // «Удобно / Компактно»: руководителю — воздух, аудитору, который листает
+  // сотню жалоб, — плотность. Запоминается в этом браузере.
+  const[dense,setDense]=useState(()=>{try{return localStorage.getItem("al-rv-density")==="dense";}catch{return false;}});
+  const toggleDense=()=>setDense(d=>{const n=!d;try{localStorage.setItem("al-rv-density",n?"dense":"comfy");}catch{}return n;});
+  const[fine,setFine]=useState(()=>window.matchMedia("(hover: hover) and (min-width: 761px)").matches);
+  useEffect(()=>{ const m=window.matchMedia("(hover: hover) and (min-width: 761px)");
+    const h=()=>setFine(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
+  const loadCasesN=()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).length)).catch(()=>{});
+  useEffect(()=>{loadCasesN();},[]);
+  // состояние → адрес
+  useEffect(()=>{ const sp=new URLSearchParams();
+    if(tab!=="overview")sp.set("tab",tab); if(bank!=="Сбербанк")sp.set("bank",bank);
+    if(product)sp.set("product",product); if(days!==90)sp.set("days",String(days));
+    if(theme)sp.set("theme",theme); if(flag)sp.set("flag",flag);
+    if(escOnly)sp.set("esc","1"); if(fCity)sp.set("city",fCity);
+    const qs=sp.toString(); history.replaceState(null,"","#reviews"+(qs?"?"+qs:"")); },[tab,bank,product,days,theme,flag,escOnly,fCity]);
+  // адрес → состояние: ссылка #reviews?… при уже открытой странице (своё
+  // зеркалирование идёт через replaceState и сюда не попадает)
+  const paramsKey=JSON.stringify(P), firstParams=useRef(true);
+  useEffect(()=>{ if(firstParams.current){firstParams.current=false;return;}
+    const b=P.bank||"Сбербанк", pr=P.product||"", d=(+P.days)||90, th=P.theme||"", fl=P.flag||"";
+    if(b!==bank){firstBankRun.current=true;setBank(b);} if(pr!==product)setProduct(pr); if(d!==days)setDays(d);
+    if(th!==theme)setTheme(th); if(fl!==flag)setFlag(fl);
+    if((P.esc==="1")!==escOnly)setEscOnly(P.esc==="1"); if((P.city||"")!==fCity)setFCity(P.city||"");
+    const t=RV_TABS.some(([k])=>k===P.tab)?P.tab:(th||fl||P.q||P.esc||P.city?"complaints":"overview");
+    if(t!==tab)goTab(t); },[paramsKey]);
+  const[trBasis,setTrBasis]=useState("pub"),[trBusy,setTrBusy]=useState(true);
+  const[trFocus,setTrFocus]=useState(null);             // столбец графика с остановкой Tab
+  const pickFlag=(k)=>{ if(flag===k&&tab==="complaints"){setFlag("");return;} setFlag(k); goTab("complaints"); };
+  const toggleEsc=()=>{ if(escOnly){setEscOnly(false);return;} setEscOnly(true); goTab("complaints"); };
 
   const enc=encodeURIComponent;
   const pq=()=>product?`&product=${enc(product)}`:"";
 
   // drill-in: открыть боковую панель по городу/месяцу, подгрузить жалобы среза
   const openDrill=(type,value,label)=>{
-    setDrill({type,value,label});setExplain(null);setExplainBusy(false);
+    setDrill({type,value,label});setExplain(null);setExplainBusy(false);setDrillProf(null);
+    apiFetch(`/api/reviews/segment-profile?bank=${enc(bank)}${pq()}&${type==="city"?"city":"month"}=${enc(value)}&days=${days}`)
+      .then(setDrillProf).catch(()=>setDrillProf(null));
     setDrillItems(null);setDrillBusy(true);
     // Клик по городу открывал жалобы за ВЕСЬ корпус (с 2010 года), хотя карта
     // построена по выбранному периоду: цифра в карточке и число строк в
@@ -3307,20 +4382,16 @@ function ReviewsPage({params}){
   };
   const runExplain=()=>{
     if(!drill)return; setExplainBusy(true);
-    const f=drill.type==="city"?`&city=${enc(drill.value)}`:`&month=${enc(drill.value)}`;
+    const f=drill.type==="city"?`&city=${enc(drill.value)}&days=${days}`:`&month=${enc(drill.value)}`;
     apiFetch(`/api/reviews/explain?bank=${enc(bank)}${pq()}${f}`)
       .then(d=>{setExplain(d&&d.summary?d.summary:"__none__");setExplainBusy(false);})
       .catch(()=>{setExplain("__none__");setExplainBusy(false);});
   };
 
-  // prefill-город из «Обзора» → сразу открываем drill-in драуэр
-  useEffect(()=>{
-    if(preset&&preset.city)openDrill("city",preset.city,`г. ${preset.city}`);
-  },[]);
 
   useEffect(()=>{
     apiFetch("/api/reviews/banks").then(d=>{
-      if(d&&d.items&&d.items.length)setBankList(d.items.map(x=>x.bank));
+      if(d&&d.items&&d.items.length){setBankList(d.items.map(x=>x.bank));setBankItems(d.items);}
     }).catch(()=>{});
   },[]);
 
@@ -3336,22 +4407,45 @@ function ReviewsPage({params}){
     // allSettled: падение одной панели не должно стирать остальные четыре.
     Promise.allSettled([
       apiFetch(`/api/reviews/overview?bank=${enc(bank)}${pq()}&days=${days}`),
-      apiFetch(`/api/reviews/trend?bank=${enc(bank)}${pq()}`),
       // Период — тот же, что у KPI. Раньше темы и география считались по
       // своим зашитым окнам, и переключатель на них не влиял: аудиторы писали,
       // что «за квартал, за год и за всё время» показывается одно и то же.
       apiFetch(`/api/reviews/themes?bank=${enc(bank)}${pq()}&days=${days}`),
-      apiFetch(`/api/reviews/vs-market?bank=${enc(bank)}${pq()}&days=${days}`),
+      apiFetch(`/api/reviews/issue-index?bank=${enc(bank)}${pq()}&days=${days}`),
       apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}&days=${days}`),
-    ]).then(([o,t,h,v,g])=>{
+      apiFetch(`/api/reviews/risk-flags?bank=${enc(bank)}${pq()}&days=${days}`),
+    ]).then(([o,h,x,g,f])=>{
       const V=s=>s.status==="fulfilled"?s.value:{__err:true};
-      setOv(V(o));setTr(V(t));setTh(V(h));setVm(V(v));setGe(V(g));setBusy(false);
+      setOv(V(o));setTh(V(h));setIx(V(x));setGe(V(g));setGeFull(null);setRf(V(f));setBusy(false);
     });
+    // «что изменилось» — отдельно: в нём всплеск недели, он считается дольше
+    setChg(null);
+    apiFetch(`/api/reviews/changes?bank=${enc(bank)}${pq()}&days=${days}`)
+      .then(setChg).catch(()=>setChg(null));
   },[bank,product,days]);
 
-  useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");}
+  // динамика не зависит от периода, зато переключается между датой отзыва и события
+  useEffect(()=>{ setTrBusy(true);
+    apiFetch(`/api/reviews/trend?bank=${enc(bank)}${pq()}${trBasis==="event"?"&basis=event":""}`)
+      .then(d=>{setTr(d);setTrBusy(false);}).catch(()=>{setTr({__err:true});setTrBusy(false);});
+  },[bank,product,trBasis]);
+
+  useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");setFCity("");}
     apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>setProds(d.items||[])).catch(()=>setProds([]));
   },[bank]);
+
+  useEffect(()=>{ setSub(null);
+    apiFetch(`/api/reviews/subscription?bank=${enc(bank)}${pq()}`).then(d=>setSub(!!d.subscribed)).catch(()=>setSub(null));
+    setMev(null);
+    if(product)apiFetch(`/api/reviews/market-events?bank=${enc(bank)}${pq()}`).then(setMev).catch(()=>setMev(null));
+  },[bank,product]);
+
+  // группы похожих — те же фильтры, что у ленты (без поиска: у него своя выдача)
+  useEffect(()=>{ if(fView!=="groups")return; setClBusy(true);
+    apiFetch(`/api/reviews/clusters?bank=${enc(bank)}${pq()}&days=${days}${theme?`&theme=${theme}`:""}`
+      +`${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${fSrc}`:""}${escOnly?"&esc=1":""}`)
+      .then(d=>{setCl(d);setClBusy(false);}).catch(()=>{setCl({__err:true});setClBusy(false);});
+  },[fView,bank,product,days,theme,flag,fCity,fSrc,escOnly]);
 
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
   useEffect(()=>{ setAnomBusy(true);setAnom(null);
@@ -3365,23 +4459,89 @@ function ReviewsPage({params}){
   // оставались прошлогодние жалобы.
   const feedQS=(off)=>`/api/reviews/feed?bank=${enc(bank)}${pq()}`
     +`${theme?`&theme=${theme}`:""}${q?`&q=${enc(q)}`:""}`
-    +`&days=${days}${escOnly?"&esc=1":""}${q&&sortBy==="date"?"&sort=date":""}`
+    +`&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`
+    +`${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${fSrc}`:""}`
+    +`${q?(sortBy==="date"?"&sort=date":""):(fOrder==="severity"?"&sort=severity":"")}`
     +`&limit=20&offset=${off}`;
 
   useEffect(()=>{ setFeedBusy(true);setClsOn(false);setFeedMore(false);
+    setRd(x=>x&&x.src==="feed"?null:x); setCur(-1);
     apiFetch(feedQS(0))
       .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
+                setFeedTot(d.total!=null?{total:d.total,pending:d.pending||0}:null);
                 setFeedMore(!!d.has_more);setFeedBusy(false);})
-      .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedBusy(false);});
-  },[bank,product,theme,q,days,escOnly,sortBy]);
+      .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedTot(null);setFeedBusy(false);});
+  },[bank,product,theme,q,days,escOnly,sortBy,flag,fCity,fSrc,fOrder]);
 
   const loadMoreFeed=()=>{
     setFeedMoreBusy(true);
-    apiFetch(feedQS((feed||[]).length))
+    return apiFetch(feedQS((feed||[]).length))
       .then(d=>{setFeed(f=>(f||[]).concat(d.items||[]));setFeedMore(!!d.has_more);
                 setFeedMoreBusy(false);})
       .catch(()=>setFeedMoreBusy(false));
   };
+
+  useEffect(()=>{ const m=window.matchMedia("(min-width: 1280px)");
+    const h=()=>setWide(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
+  useEffect(()=>{ const m=window.matchMedia("(max-width: 760px)");
+    const h=()=>setNarrow(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
+  const loadCaseUrls=()=>apiFetch("/api/cases/review-urls").then(d=>setCaseUrls(d.urls||{})).catch(()=>{});
+  useEffect(()=>{loadCaseUrls();},[]);
+  const openReader=(list,idx,ctx,src)=>{ setRd({list,idx,ctx,src}); if(src==="feed")setCur(idx); };
+  const rdList=rd?(rd.src==="feed"?(feed||[]):rd.list):[];
+  const rdItem=rd?rdList[rd.idx]:null;
+  const split=!!(wide&&rd&&rd.src==="feed"&&rdItem&&tab==="complaints");
+  const rdGo=d=>{ if(!rd)return; const n=rd.idx+d;
+    if(n>=0&&n<rdList.length){setRd(x=>({...x,idx:n})); if(rd.src==="feed")setCur(n); return;}
+    if(d>0&&rd.src==="feed"&&feedMore&&!feedMoreBusy)
+      loadMoreFeed().then(()=>{setRd(x=>x?({...x,idx:n}):x);setCur(n);}); };
+  const rdNav=rd?{pos:rd.idx,total:rdList.length,ctx:rd.ctx,
+    onPrev:rd.idx>0?()=>rdGo(-1):null,
+    onNext:(rd.idx<rdList.length-1||(rd.src==="feed"&&feedMore))?()=>rdGo(1):null}:null;
+  const openSim=(list,i)=>setRd(x=>({list,idx:i,ctx:"похожие",src:"sim",back:x}));
+  const vtOpen=(card,apply)=>{
+    // скрытая вкладка: переход браузер отменяет с ошибкой — сразу применяем
+    if(!card||!wide||!document.startViewTransition||document.hidden||matchMedia("(prefers-reduced-motion: reduce)").matches){apply();return;}
+    const t=card.querySelector(".rv-c-title"); if(t)t.style.viewTransitionName="rv-vt-title";
+    const old=document.querySelector(".rv-rd-title"); if(old)old.style.viewTransitionName="";
+    const vt=document.startViewTransition(()=>{ if(t)t.style.viewTransitionName="";
+      ReactDOM.flushSync(apply);
+      const rt=document.querySelector(".rv-fw-rd .rv-rd-title"); if(rt)rt.style.viewTransitionName="rv-vt-title"; });
+    vt.ready.catch(()=>{});   // прерванный переход — не ошибка: состояние уже применено
+    vt.finished.catch(()=>{}).finally(()=>{ const rt=document.querySelector(".rv-rd-title"); if(rt)rt.style.viewTransitionName=""; });
+  };
+  // отмеченное «прочитано» — перерисовать список, когда в читалке новая жалоба
+  useEffect(()=>{setReadV(v=>v+1);},[rdItem&&rdItem.url]);
+  // выбранная карточка ленты — в поле зрения (J/K и стрелки читалки)
+  const selIdx=rd&&rd.src==="feed"?rd.idx:cur;
+  useEffect(()=>{ const el=cardRefs.current[selIdx]; if(el&&selIdx>=0)
+    el.scrollIntoView({block:"nearest",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"}); },[selIdx]);
+  // Клавиатура: J/K — по списку, Enter — открыть, A — в дело, / — поиск, Esc — закрыть
+  useEffect(()=>{
+    const h=e=>{
+      if(e.defaultPrevented||e.metaKey||e.ctrlKey||e.altKey)return;
+      const t=e.target; if(t&&t.closest&&t.closest("input,textarea,select,[contenteditable='true']"))return;
+      if(pick)return;
+      const k=e.key.toLowerCase(), down=k==="j"||k==="о", up=k==="k"||k==="л", add=k==="a"||k==="ф";
+      const overlay=casesOpen||jrOpen||grp||drill;
+      if(k==="/"&&!overlay&&!(rd&&!split)){e.preventDefault();
+        if(tab!=="complaints")goTab("complaints");
+        setTimeout(()=>searchRef.current&&searchRef.current.focus(),30);return;}
+      if(rd&&rd.src==="feed"&&tab!=="complaints")return;
+      if(rd){
+        if(down){e.preventDefault();rdGo(1);} else if(up){e.preventDefault();rdGo(-1);}
+        else if(add&&rdItem){e.preventDefault();addCase(rdItem);}
+        else if(e.key==="Escape"&&split){e.preventDefault();setRd(null);}
+        return;
+      }
+      if(tab!=="complaints"||overlay||!feed||!feed.length||(fView==="groups"&&!q))return;
+      if(down){e.preventDefault();setCur(c=>Math.min(feed.length-1,c+1));}
+      else if(up){e.preventDefault();setCur(c=>Math.max(0,c-1));}
+      else if(e.key==="Enter"&&cur>=0){e.preventDefault();openReader(null,cur,null,"feed");}
+      else if(add&&cur>=0){e.preventDefault();addCase(feed[cur]);}
+    };
+    document.addEventListener("keydown",h); return ()=>document.removeEventListener("keydown",h);
+  });
 
   // on-demand: уточнить темы показанных отзывов через LLM (по кнопке)
   const classifyFeed=()=>{
@@ -3393,200 +4553,189 @@ function ReviewsPage({params}){
       .catch(()=>setClsBusy(false));
   };
 
-  const addCase=(r)=>{try{const k="al-case";const cur=JSON.parse(localStorage.getItem(k)||"[]");
-    if(!cur.find(x=>x.url===r.url)){cur.push({bank:r.bank,product:r.product,date:r.date,city:r.city,url:r.url,text:r.text});
-      localStorage.setItem(k,JSON.stringify(cur));setCaseN(cur.length);}}catch{}};
-  const exportCase=()=>{try{const cur=JSON.parse(localStorage.getItem("al-case")||"[]");
-    if(!cur.length)return;
-    const esc=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
-    // Точка с запятой, а не запятая: Excel в русской локали при запятой
-    // сваливает всю строку в одну ячейку — аудиторы писали, что выгрузка
-    // «требует дополнительного преобразования для читаемого вида».
-    const rows=[["банк","продукт","дата","город","ссылка","текст"].map(esc).join(";")]
-      .concat(cur.map(r=>[r.bank,r.product,r.date,r.city,r.url,
-                          (r.text||"").replace(/\s*\n+\s*/g," ")].map(esc).join(";")));
-    const blob=new Blob(["﻿"+rows.join("\n")],{type:"text/csv;charset=utf-8"});
-    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`audit-case-${Date.now().toString(36)}.csv`;
-    document.body.appendChild(a);a.click();a.remove();}catch{}};
+  const addCase=(r)=>setPick([r]);
+  const onPicked=(c,n)=>{setPick(null);loadCaseUrls();loadCasesN();fbToast(n>1?`${n} жалоб приобщено к делу «${c.title}»`:`Приобщено к делу «${c.title}»`,false);};
+  const toggleSub=async()=>{
+    const prev=sub; setSub(!prev);
+    try{ if(prev)await apiDel(`/api/reviews/subscription?bank=${enc(bank)}${pq()}`);
+         else await apiPost("/api/reviews/subscription",{bank,product:product||null});
+         fbToast(prev?"Подписка снята":`Сигналы по «${bank}${product?" · "+product:""}» будут в «Для вас»`,!prev);
+    }catch{setSub(prev);} };
+  const openGroup=g=>{ setGrp(g);setGrpItems(null);
+    apiPost("/api/reviews/by-urls",{urls:g.urls}).then(d=>setGrpItems(d.items||[])).catch(()=>setGrpItems([])); };
 
   const onKey=fn=>e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();fn();}};
   const themeLabel = theme && th && th.themes ? (th.themes.find(x=>x.key===theme)||{}).label : "";
-  const trendMax = tr&&tr.series&&tr.series.length ? Math.max(...tr.series.map(s=>s.n))||1 : 1;
+  const flagLabel = flag ? ((rf&&rf.groups||[]).flatMap(g=>g.items).find(x=>x.flag===flag)||{label:flag}).label : "";
+  const trendMax = tr&&tr.series&&tr.series.length ? Math.max(...tr.series.map(s=>Math.max(s.n,s.expected||0)))||1 : 1;
+  const trEv = tr&&tr.basis==="event";
   const thMax = th&&th.themes&&th.themes.length ? Math.max(...th.themes.map(t=>t.n))||1 : 1;
-  const vmMax = vm&&vm.rows&&vm.rows.length ? Math.max(...vm.rows.map(r=>r.pct))||1 : 1;
-  const geMax = ge&&ge.cities&&ge.cities.length ? Math.max(...ge.cities.map(c=>c.n))||1 : 1;
 
-  return <div className="fade-in rv">
-    <div className="eyebrow" style={{marginBottom:6}}>§ Отзывы · аудит-сигналы</div>
-    <h1 className="t-h" style={{marginBottom:4,fontFamily:"'Source Serif 4',Georgia,serif",fontWeight:600,letterSpacing:"-.015em"}}>Голос клиента — риск-радар</h1>
-    {/* Состав корпуса берётся из индекса, а не пишется в вёрстке: площадок
-        теперь несколько, и зашитая строка про одну из них была бы неправдой */}
-    <div className="rv-src">
-      {corp&&corp.sources&&corp.sources.length
-        ? <>{/* сначала — по выбранному банку, потом размер всего корпуса.
-               Одной цифрой нельзя: «18 603 по 220 банкам» читается так, будто
-               это весь корпус, хотя относится только к выбранному банку */}
-           <b>{bank}</b>{": "}
-           {corp.sources.map((s,i)=><span key={i}>{i?" · ":""}
-             <b title={s.from&&s.to?`отзывы с ${s.from} по ${s.to}`:""}>{s.source}</b> {fmtNum(s.n)}</span>)}
-           {" — "}{fmtNum(corp.total)}{" отзыв"}{plural(corp.total,"","а","ов")}
-           {corp.corpus_total?<span className="rv-src-all">{" · корпус: "}{fmtNum(corp.corpus_total)}{" по "}{corp.banks}{" банкам"}</span>:""}</>
-        : "источники загружаются…"}
-      {ov&&ov.as_of?<> · данные по {ov.as_of}</>:""}
-    </div>
-    <div className="rv-disclaimer">⚠ Корпус — <b>только негатив (1–2★)</b>. Все метрики — динамика и структура <b>внутри жалоб</b>, а не доля недовольных клиентов. «Доля рынка» и «место» отражают объём выгрузки banki.ru, <b>не нормированы на клиентскую базу</b> банка.</div>
-
-    <div className="rv-filters">
-      <label className="rv-fl">Банк
-        <select value={bank} onChange={e=>setBank(e.target.value)}>
-          {bankList.map(b=><option key={b} value={b}>{b}</option>)}
-        </select>
-      </label>
-      <label className="rv-fl">Продукт
-        <select value={product} onChange={e=>setProduct(e.target.value)}>
-          <option value="">Все продукты</option>
-          {prods.map(p=><option key={p.product} value={p.product}>{p.product} ({fmtNum(p.n)})</option>)}
-        </select>
-      </label>
-      {/* Продукт определяем МЫ по тексту: метка площадки была неверна у 86-93
-          процентов обращений всех банков. Наша разметка точна на продуктах,
-          которые клиент называет прямо (вклад, ипотека, автокредит, эскроу), и
-          заметно слабее на широких позициях вроде «подписок» и «дистанционного
-          обслуживания» — туда стягивается то, что не отнеслось ни к чему.
-          Позиции, которым приписано кратно больше обращений, чем их вообще
-          упоминают, в срез не попадают вовсе. */}
-      {product&&<span className="rv-warn-inline"
-        title="Продукт определён по тексту обращения, а не взят из метки площадки. На продуктах, которые клиент называет прямо, разметка точна; широкие позиции («подписки», «дистанционное обслуживание») собирают и неопределённое — проверяйте выборочно.">
-        продукт определён по тексту</span>}
-      <div className="rv-chips">
-        {RV_PERIODS.map(([d,l])=><button key={d} className={"rv-chip"+(days===d?" on":"")} onClick={()=>setDays(d)}>{l}</button>)}
-      </div>
-      <button className="rv-export" onClick={exportCase} disabled={!caseN}>↧ Аудит-дело{caseN?` · ${caseN}`:""}</button>
-    </div>
-
-    {/* KPI */}
-    <div className="rv-kpis">
-      <div className="rv-card rv-kpi">
-        <div className="rv-kl">Жалоб за {days} дн</div>
-        <div className="rv-kv">{busy?"…":(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
-        <div className="rv-ks">{ov&&ov.delta_pct!=null?<>{ov.delta_pct<0?<span className="rv-down">↓ {Math.abs(ov.delta_pct)}%</span>:<span className="rv-up">↑ {ov.delta_pct}%</span>} к пред. периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
-      </div>
-      <div className="rv-card rv-kpi">
-        <div className="rv-kl">Доля рынка жалоб</div>
-        <div className="rv-kv">{busy?"…":pct1(ov&&ov.market_share_pct)}</div>
-        <div className="rv-ks">{ov&&ov.market_rank?`${ov.market_rank}-е место · ⓘ без нормировки на базу`:"—"}</div>
-      </div>
-      {/* Плашка ведёт к самим обращениям: аудиторы просили дважды — «хорошо бы
-          при нажатии на эту иконку выводить такие обращения». Признак посчитан
-          при индексации, поэтому фильтр дешёвый. */}
-      <div className={"rv-card rv-kpi rv-kpi-click"+(ov&&ov.escalation_pct>=12?" rv-alert":"")
-             +(escOnly?" rv-kpi-on":"")}
-           role="button" tabIndex={0}
-           title={escOnly?"показаны только такие обращения · нажмите, чтобы снять"
-                         :"показать в ленте только обращения с угрозой ЦБ / суда / ФАС"}
-           onClick={()=>setEscOnly(v=>!v)} onKeyDown={onKey(()=>setEscOnly(v=>!v))}>
-        <div className="rv-kl">Регуляторная эскалация {ov&&ov.escalation_pct>=12&&<span className="rv-tag compliance">риск</span>}</div>
-        <div className="rv-kv rv-up">{busy?"…":pct1(ov&&ov.escalation_pct)}</div>
-        <div className="rv-ks">{escOnly?"фильтр включён · нажмите, чтобы снять":"упоминают ЦБ / суд / ФАС · нажмите"}</div>
-      </div>
-      <div className={"rv-card rv-kpi"+(th&&th.themes&&th.themes.length?" rv-kpi-click":"")
-             +(th&&th.themes&&th.themes.length&&theme===th.themes[0].key?" rv-kpi-on":"")}
-           role={th&&th.themes&&th.themes.length?"button":undefined}
-           tabIndex={th&&th.themes&&th.themes.length?0:undefined}
-           title="показать в ленте обращения этой темы"
-           onClick={()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);}}
-           onKeyDown={onKey(()=>{if(th&&th.themes&&th.themes.length)pickTheme(th.themes[0].key);})}>
-        <div className="rv-kl">Главная тема</div>
-        <div className="rv-kv-sm">{busy?"…":(th&&th.themes&&th.themes.length?th.themes[0].label:"—")}</div>
-        <div className="rv-ks">{th&&th.themes&&th.themes.length?`${pct1(th.themes[0].pct)} жалоб за ${th.days||days} дн · ${RV_RISK[th.themes[0].risk]}`:""}</div>
-      </div>
-    </div>
-
-    {/* АНАЛИТИКА — 2 колонки: слева динамика+темы, справа география+рынок */}
-    <div className="rv-main2">
-      <div className="rv-col">
-        {/* TREND */}
-        <div className="rv-card">
-          <div className="rv-ct"><div><div className="rv-ttl">Динамика жалоб</div><div className="rv-cap">помесячно за 14 месяцев · переключатель периода на неё не влияет: пики считаются по завершённым месяцам · клик по столбцу → жалобы месяца{tr&&tr.series&&tr.series.some(s=>s.partial)?" · последний месяц неполный (штриховка)":""}</div></div></div>
-          {busy?<Skel h={150}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
+  // ── блоки подвкладок (волна D3: страница-простыня разложена по подвкладкам)
+  const trendCard=(<div className="rv-card">
+          <div className="rv-ct"><div><div className="rv-th"><h2 className="rv-ttl">Динамика жалоб</h2>
+              <RvInfo>{trEv
+                ?<>По дате события, которую называет клиент, — она есть у {tr&&tr.ev_share!=null?tr.ev_share+"%":"части"} жалоб. О последних месяцах жалобы ещё приходят: пунктир — сколько ожидается по опыту. Клик по столбцу — жалобы о событиях месяца.</>
+                :<>По дате отзыва, помесячно за 14 месяцев; переключатель периода на график не влияет. Пик — месяц выше медианы + 2·MAD завершённых месяцев. Последний месяц неполный (штриховка). Клик по столбцу — жалобы месяца.</>}</RvInfo></div>
+              <div className="rv-cap">{trEv?"по дате события · помесячно":"помесячно за 14 месяцев"}</div></div>
+            {/* Четверть отзывов описывает события старше двух месяцев: по дате
+                отзыва пик запаздывает и размазывается (Б5) */}
+            <div className="rv-chips rv-chips-sm" role="group" aria-label="по какой дате считать">
+              {[["pub","дата отзыва"],["event","дата события"]].map(([k,l])=>
+                <button key={k} className={"rv-chip"+(trBasis===k?" on":"")} onClick={()=>setTrBasis(k)}>{l}</button>)}
+            </div></div>
+          {trBusy&&!tr?<Skel h={196}/>:!tr||!tr.series||!tr.series.length?<RvNote err={tr&&tr.__err}/>:<>
+            {/* Ось с «круглыми» делениями и сетка: высоту столбца есть с чем
+                сравнить. Значение — над столбцом при наведении, у пика и
+                последнего полного месяца — всегда. */}
+            {(()=>{const yMax=rvNice(trendMax), ticks=[yMax/2,yMax], lastFull=(()=>{let k=-1;tr.series.forEach((x,j)=>{if(!x.partial)k=j;});return k;})();
+            return <div className="rv-chart">
+            <div className="rv-yaxis" aria-hidden="true"><div className="rv-yin">{ticks.map(t=><span key={t} style={{bottom:(t/yMax*100)+"%"}}>{fmtNum(t)}</span>)}</div></div>
+            <div className="rv-plot">
+            <div className="rv-gridl" aria-hidden="true">{ticks.map(t=><i key={t} style={{bottom:(t/yMax*100)+"%"}}/>)}</div>
             <div className="rv-bars">
-              {tr.series.map((s,i)=><div key={i} className={"rv-bcol"+(s.partial?" partial":"")} title={`${s.ym}: ${fmtNum(s.n)}${s.partial?" (неполный месяц)":""}`}
-                   role="button" tabIndex={0} onClick={()=>openDrill("month",s.ym,`Жалобы за ${s.ym}${s.partial?" (неполный месяц)":""}`)}
-                   onKeyDown={onKey(()=>openDrill("month",s.ym,`Жалобы за ${s.ym}`))}>
-                <div className={"rv-bar"+(s.spike?" hot":"")+(s.partial?" part":"")} style={{height:Math.max(4,Math.round(s.n/trendMax*100))+"%"}}/>
-                <div className="rv-blab">{s.ym.slice(2).replace("-",".")}</div>
-              </div>)}
-            </div>
-            {(()=>{const sp=tr.series.filter(s=>s.spike);return sp.length?<div className="rv-spike">⚠ пик {sp.map(s=>s.ym).join(", ")} — выше базовой линии (медиана+MAD по завершённым месяцам). Клик по столбцу — разобрать, что произошло.</div>:null;})()}
+              {tr.series.map((s,i)=>{
+                const mv=(trEv?"ev:":"")+s.ym, ml=trEv?`Жалобы о событиях: ${rvYm(s.ym)}`:`Жалобы за ${rvYm(s.ym)}`;
+                const tip=trEv?`${rvYm(s.ym)}, события: ${fmtNum(s.n)}${s.expected?` · опубликовано ≈${s.complete_pct}%, по опыту дорастёт до ≈${fmtNum(s.expected)}`:s.partial?` · опубликовано ≈${s.complete_pct}%`:""}`
+                  :`${rvYm(s.ym)}: ${fmtNum(s.n)}${s.spike?" · пик":""}${s.partial?" (неполный месяц)":""}`;
+                const hgt=v=>Math.max(2,Math.round(v/yMax*1000)/10)+"%";
+                // пик старше трёх полных месяцев — факт истории, не тревога:
+                // подписан, но не красный (красный — «хуже, значимо, срочно»)
+                const hot=s.spike&&lastFull>=0&&i>=lastFull-2;
+                const val=<span className="rv-bval">{s.spike?"пик · ":""}{fmtNum(s.n)}</span>;
+                const ev=!trEv&&mev&&mev.months?mev.months[s.ym]:null;
+                const evTip=ev?`\n\nИзменения условий · ${bank}, ${product}: ${ev.length}\n`+ev.slice(0,5).map(e=>
+                  `${rvDate(e.date)} · ${e.title}: `+Object.entries(e.diff||{}).map(([k,v])=>
+                    `${MK_FLD[k]||k} ${mkFldVal(k,v.from)} → ${mkFldVal(k,v.to)}`).join("; ")).join("\n")
+                  +(ev.length>5?`\n…ещё ${ev.length-5}`:""):"";
+                const kb=e=>{ const sib={ArrowLeft:e.currentTarget.previousElementSibling,ArrowRight:e.currentTarget.nextElementSibling,
+                    Home:e.currentTarget.parentElement.firstElementChild,End:e.currentTarget.parentElement.lastElementChild}[e.key];
+                  if(sib){e.preventDefault();sib.focus();return;} onKey(()=>openDrill("month",mv,ml))(e); };
+                return <div key={i} className={"rv-bcol"+(s.partial?" partial":"")+(i===lastFull?" last":"")} data-tip={tip+evTip}
+                   role="button" aria-label={tip} tabIndex={i===(trFocus!=null&&trFocus<tr.series.length?trFocus:(lastFull>=0?lastFull:tr.series.length-1))?0:-1}
+                   onFocus={()=>setTrFocus(i)}
+                   onClick={()=>openDrill("month",mv,ml+(s.partial&&!trEv?" (неполный месяц)":""))}
+                   onKeyDown={kb}>
+                <div className="rv-bwrap">{s.expected
+                  ?<div className="rv-bar rv-bar-exp" style={{height:hgt(s.expected)}}>{val}<div className="rv-bar-in" style={{height:Math.round(s.n/s.expected*100)+"%"}}/></div>
+                  :<div className={"rv-bar"+(hot?" hot":s.spike?" pk":"")+(s.partial?" part":"")} style={{height:hgt(s.n)}}>{val}</div>}</div>
+                {(()=>{const[y,m]=s.ym.split("-").map(Number);return <div className={"rv-blab"+((i===0||m===1)?" yr":"")}>
+                  {!trEv&&mev&&mev.category&&ev&&<span className="rv-mev on" aria-hidden="true"/>}
+                  <span className="rv-bmon">{RV_MON[m-1]}</span>
+                  {(i===0||m===1)&&<span className="rv-byr">{y}</span>}</div>;})()}
+              </div>;})}
+            </div></div></div>;})()}
+            {!trEv&&mev&&mev.category&&<div className="rv-mev-note">
+              <span className="rv-mev on"/> изменения условий по продукту ({bank}) из журнала «Рынка»{mev.since?` (ведётся с ${rvDate(mev.since)})`:""} · наведите на месяц — что поменялось
+              {!Object.keys(mev.months||{}).length&&<> · за период изменений не было</>}</div>}
+            {(()=>{let lf=-1;tr.series.forEach((x,j)=>{if(!x.partial)lf=j;});
+              const sp=tr.series.filter((s,j)=>s.spike&&lf>=0&&j>=lf-2);
+              return sp.length?<div className="rv-spike">Пик: {sp.map(s=>rvYm(s.ym)).join(", ")} — заметно выше обычного уровня. Клик по столбцу — разобрать, что произошло.</div>:null;})()}
           </>}
-        </div>
-        {/* THEMES */}
-        <div className="rv-card">
-          <div className="rv-ttl">Темы жалоб — риск-карта</div>
-          <div className="rv-cap">доля от жалоб за {(th&&th.days)||days} дн · мультилейбл (сумма ≠ 100%) · клик → лента темы</div>
-          {busy?<Skel h={220}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:(()=>{
+        </div>);
+  const themesCard=(<div className="rv-card">
+          <div className="rv-th"><h2 className="rv-ttl">Темы жалоб</h2>
+            <RvInfo>По главной проблеме жалобы из разметки ИИ, доли дают 100%. Справа — изменение к прошлым {(th&&th.days)||days} дн: цветом — значимо отличается от общего потока жалоб{th&&th.overall_delta_pct!=null?` (${rvSgn(th.overall_delta_pct)}%)`:""}, серым — в пределах колебаний. Клик по теме — её жалобы.
+              {th&&th.delta_partial?" Динамика появится после разметки прошлого периода.":""}</RvInfo></div>
+          <div className="rv-cap">доля от жалоб за {(th&&th.days)||days} дн · изменение к прошлому периоду</div>
+          {busy&&!th?<RvSkelRows n={12} h={38} gap={10}/>:!th||!th.themes||!th.themes.length?<RvNote err={th&&th.__err}/>:(()=>{
             const real=th.themes.filter(t=>t.key!=="other"), other=th.themes.find(t=>t.key==="other");
             const shown=thAll?real:real.slice(0,12);
             const row=t=>{
-              const clk=t.key!=="other", risky=t.risk==="compliance"||t.risk==="conduct";
+              const clk=true, risky=t.risk==="compliance"||t.risk==="conduct";
               return <div key={t.key} className={"rv-trow"+(theme===t.key?" sel":"")+(clk?"":" rv-trow-static")}
                    role={clk?"button":undefined} tabIndex={clk?0:undefined} aria-pressed={clk?(theme===t.key):undefined}
                    onClick={clk?()=>pickTheme(t.key):undefined}
                    onKeyDown={clk?onKey(()=>pickTheme(t.key)):undefined}>
-                <div className="rv-tname">{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
+                <div className="rv-tname" data-tip={t.n_also?`ещё в ${t.n_also} жалобах упоминается как дополнительная проблема`:undefined}>{t.label}{RV_RISK[t.risk]&&<span className={"rv-tag "+t.risk}>{RV_RISK[t.risk]}</span>}</div>
                 <div className="rv-tbarw"><div className={"rv-tbar"+(risky?"":" n")} style={{width:Math.round(t.n/thMax*100)+"%"}}/></div>
                 <div className="rv-tn mono">{fmtNum(t.n)}</div>
-                <div className="rv-ttr">{rvDelta(t.delta_pct)}</div>
+                <div className="rv-ttr">{rvDeltaSig(t,th)}</div>
               </div>;
             };
             return <>
-              {shown.map(row)}
+              <div className="rv-trows">{shown.map(row)}</div>
               {real.length>12&&<div className="rv-th-toggle" role="button" tabIndex={0} onClick={()=>setThAll(!thAll)} onKeyDown={onKey(()=>setThAll(!thAll))}>
-                {thAll?"свернуть ▴":`ещё ${real.length-12} тем ▾`}</div>}
-              {other&&row(other)}
+                {thAll?<>свернуть<span className="rv-ico-in" style={{transform:"rotate(180deg)"}}><RvIChevD s={13}/></span></>
+                  :<>ещё {real.length-12} тем<span className="rv-ico-in"><RvIChevD s={13}/></span></>}</div>}
+              {other&&<div className="rv-trows">{row(other)}</div>}
             </>;
           })()}
-        </div>
-      </div>
-      <div className="rv-col">
-        {/* GEO */}
-        <div className="rv-card">
-          <div className="rv-ttl">География</div>
-          <div className="rv-cap">города · per-capita аномалии за {(ge&&ge.days)||days} дн · клик → жалобы города</div>
-          {busy?<Skel h={220}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:ge.cities.map((c,i)=>(
-            <div key={i} className="rv-grow rv-grow-click" role="button" tabIndex={0}
-                 onClick={()=>openDrill("city",c.city,`Жалобы · ${c.city}`)}
-                 onKeyDown={onKey(()=>openDrill("city",c.city,`Жалобы · ${c.city}`))}>
-              <div style={{minWidth:0}}>
-                <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag conduct">аномалия</span>}</div>
-                <div className={"rv-gbar"+(c.anomaly?" anom":"")} style={{width:Math.round(c.n/geMax*100)+"%",background:c.anomaly?"var(--accent)":"var(--ink-4)"}}/>
+        </div>);
+  const ixCard=full=>(<div className="rv-card">
+          <div className="rv-th"><h2 className="rv-ttl">Где {bank} отличается от рынка</h2>
+            <RvInfo>Индекс — доля проблемы в жалобах банка, делённая на её долю у остальных банков. Сравнивается структура, а не объём, поэтому размер банка и активность его клиентов на площадках на индекс не влияют. Показаны только значимые отличия: 95% доверительный интервал, поправка на число проверенных проблем, от 10 жалоб у банка. Справа — индекс по четырём кварталам, пунктир — уровень рынка. Клик — жалобы этой проблемы.</RvInfo></div>
+          <div className="rv-cap">доля проблемы в жалобах: {bank} против остальных банков · {(ix&&ix.days)||Math.max(days,90)} дн{product?` · ${product}`:""}</div>
+          {busy&&!ix?<RvSkelRows n={full?10:5} h={42} gap={10}/>:!ix||ix.__err||ix.bank_total==null?<RvNote err={ix&&ix.__err}/>:(()=>{
+            const row=(r,worse)=><div key={r.key} className={"rv-ix"+(theme===r.key?" sel":"")}
+                role="button" tabIndex={0} onClick={()=>pickTheme(r.key)} onKeyDown={onKey(()=>pickTheme(r.key))}
+                data-tip={`${r.label}: ${fmtNum(r.n)} жалоб — ${pct1(r.pct)} жалоб банка против ${pct1(r.market_pct)} у остальных банков · индекс ${rvX(r.index)}, 95% ДИ ${String(r.lo).replace(".",",")}–${String(r.hi).replace(".",",")}`}>
+              <div className="rv-ix-l">
+                <div className="rv-ix-name">{r.label}</div>
+                <div className="rv-ix-sub">{worse&&r.excess>0?<><b>+{fmtNum(r.excess)} {plural(r.excess,"жалоба","жалобы","жалоб")}</b> к норме рынка · </>:""}{pct1(r.pct)} против {pct1(r.market_pct)} у рынка</div>
               </div>
-              <div className="mono rv-gn">{fmtNum(c.n)}{c.per_100k?<span className="rv-gp"> · {c.per_100k}/100k</span>:""}</div>
-            </div>
-          ))}
-        </div>
-        {/* VS MARKET */}
-        <div className="rv-card">
-          <div className="rv-ttl">{bank} против рынка</div>
-          <div className="rv-cap">доля в общем потоке жалоб banki.ru · {days} дн{product?` · ${product}`:""}</div>
-          {busy?<Skel h={120}/>:!vm||!vm.rows||!vm.rows.length?<RvNote err={vm&&vm.__err}/>:vm.rows.map((r,i)=>(
-            <div key={i} className="rv-vrow">
-              <div className={"rv-vname"+(r.is_target?" t":"")}>{r.bank}</div>
-              <div className={"rv-vbar"+(r.is_target?" t":"")} style={{width:Math.round(r.pct/vmMax*100)+"%"}}/>
-              <div className="rv-vp mono">{String(r.pct).replace(".",",")}%</div>
-            </div>
-          ))}
-        </div>
-        {/* RADAR: срочные аномалии за 7 дней (грузится отдельно, LLM-анализ) */}
-        <div className="rv-card rv-radar">
+              <RvSpark vals={r.quarters} quarters={ix.quarters}/>
+              <div className={"rv-ix-v mono "+(worse?"rv-up":"rv-down")}>{rvX(r.index)}</div>
+            </div>;
+            const w=ix.worse||[], b=ix.better||[];
+            return <>
+              <div className="rv-ix-h"><span>Хуже рынка <i className="rv-ix-ord" data-tip="сначала — где у банка больше всего жалоб сверх того, что было бы при структуре жалоб рынка; индекс справа — во сколько раз доля выше">· по числу лишних жалоб</i></span><span className="rv-ix-hq" data-tip="индекс по четырём кварталам, от старого к свежему; пунктир — уровень рынка">4 квартала</span></div>
+              {w.length?w.slice(0,full?8:5).map(r=>row(r,true)):<div className="rv-ix-none">значимых отличий в худшую сторону нет</div>}
+              {full&&b.length>0&&<><div className="rv-ix-h"><span>Лучше рынка</span></div>{b.slice(0,4).map(r=>row(r,false))}</>}
+              {!full&&(w.length>5||b.length>0)&&<button className="rv-more-l" onClick={()=>goTab("problems")}>
+                Все отличия{b.length?", в том числе где лучше рынка":""}<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+            </>;
+          })()}
+        </div>);
+  // «География»: полоса — индекс вокруг ×1 (вправо — чаще, чем в остальных
+  // городах, влево — реже), а не число жалоб: длиннее всех была Москва, то
+  // есть полоса показывала размер города, а вывод строился по индексу
+  const geoRows=(geFull&&geFull.cities)||(ge&&ge.cities)||[];
+  // ровно столько, сколько обещает кнопка: города от 10 жалоб идут первыми
+  const loadGeoAll=()=>apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}&days=${days}&top=${Math.min(80,8+((ge&&ge.more)||0))}`)
+    .then(d=>{if(d&&d.cities)setGeFull(d);}).catch(()=>{});
+  const geoCard=(<div className="rv-card">
+          <div className="rv-th"><h2 className="rv-ttl">География</h2>
+            <RvInfo>Индекс — доля жалоб на {bank} среди жалоб города против такой же доли в остальных городах{ge&&ge.national_share!=null?` (по стране ${pct1(ge.national_share)})`:""}. Полоса — индекс: вправо от ×1 — в городе жалуются на банк чаще, чем в остальных, влево — реже; цветом — значимо (95%, поправка на число городов, от ×1,3 и 30 жалоб). Население не используется: на площадки пишет не население. «Чаще, чем по стране» — проблема, которой в городе у банка заметно больше, чем у него же по стране. Клик — жалобы города.</RvInfo></div>
+          <div className="rv-cap">доля жалоб на {bank} в городе против остальных городов · {(ge&&ge.days)||days} дн</div>
+          {busy&&!ge?<RvSkelRows n={8} h={44} gap={8}/>:!ge||!ge.cities||!ge.cities.length?<RvNote err={ge&&ge.__err}/>:<>
+          <div className="rv-geo">
+            <div className="rv-geo-r rv-geo-hd" aria-hidden="true"><span>город</span>
+              <span className="rv-geo-sc"><i>×0,5</i><i>×1</i><i>×2</i></span><span>жалоб · доля</span><span>индекс</span></div>
+            {geoRows.map((c,i)=>{
+              const lg=Math.max(-1,Math.min(1,Math.log2(c.index||1))), w=Math.abs(lg)*50;
+              const col=c.anomaly?"var(--neg)":c.below?"var(--pos)":"var(--ink-4)";
+              const open=()=>openDrill("city",c.city,`Жалобы · ${c.city}`);
+              return <React.Fragment key={c.city}>
+              {c.extra&&!(geoRows[i-1]||{}).extra&&<div className="rv-ix-h rv-geo-sep"><span>Выделяются вне топа</span></div>}
+              <div className={"rv-geo-r"+(c.low?" low":"")} role="button" tabIndex={0} onClick={open} onKeyDown={onKey(open)}
+                   data-tip={`Доля жалоб на ${bank} в городе ${pct1(c.share)} против ${pct1(c.base_share)} в остальных городах · ${rvX(c.index)}, 95% ДИ ${String(c.lo).replace(".",",")}–${String(c.hi).replace(".",",")}${c.low?" · мало данных для вывода":""}`}>
+                <div className="rv-geo-c">
+                  <div className="rv-gcity">{c.city}{c.anomaly&&<span className="rv-tag compliance">выше нормы</span>}{c.below&&<span className="rv-tag good">ниже нормы</span>}</div>
+                  {c.focus&&<div className="rv-gfocus" data-tip={`${c.focus.label}: ${c.focus.n} жалоб в городе — в ${String(c.focus.index).replace(".",",")} раза чаще, чем в жалобах банка по стране`}>
+                    чаще, чем по стране: {c.focus.short||c.focus.label} {rvX(c.focus.index)}</div>}
+                </div>
+                <div className="rv-geo-bar" aria-hidden="true"><i/><b style={{left:(lg<0?50-w:50)+"%",width:Math.max(w,0.8)+"%",background:col}}/></div>
+                <div className="rv-gn">{fmtNum(c.n)}<span className="rv-gp"> · {pct1(c.share)}</span></div>
+                <div className={"rv-gi "+(c.anomaly?"rv-up":c.below?"rv-down":"rv-flat")}>{rvX(c.index)}</div>
+              </div></React.Fragment>;})}
+          </div>
+          {!geFull&&ge.more>0&&<button className="rv-more-l" onClick={loadGeoAll}>ещё {ge.more} {plural(ge.more,"город","города","городов")} от 10 жалоб<span className="rv-ico-in"><RvIChevD s={12}/></span></button>}
+          {geFull&&<button className="rv-more-l" onClick={()=>setGeFull(null)}>свернуть<span className="rv-ico-in" style={{transform:"rotate(180deg)"}}><RvIChevD s={12}/></span></button>}
+          </>}
+        </div>);
+  const radarCard=(<div className="rv-card rv-radar">
           <div className="rv-radar-head">
             <span className="rv-radar-ico" aria-hidden="true"><IcoRadar/></span>
             <div style={{flex:1,minWidth:0}}>
-              <div className="rv-ttl">Срочные аномалии</div>
-              <div className="rv-cap">резкие изменения за 7 дней{ov&&ov.as_of?` · ${ov.as_of}`:""}</div>
+              <div className="rv-th"><h2 className="rv-ttl">Срочно</h2>
+                <RvInfo>Всплеск — значимый рост жалоб по проблеме к её норме за 7 прошлых недель (с учётом разброса, поправка на число проблем) и практический порог: от 8 жалоб, от ×1,5. Неделя — последние 7 полных дней с данными. Если порог не пробит, показаны проблемы, растущие быстрее рынка. Разбор пишет модель по жалобам самого сигнала; числа посчитаны кодом.</RvInfo></div>
+              <div className="rv-cap">всплески жалоб за 7 полных дней{anom&&anom.week_end?` · по ${rvDate(anom.week_end)}`:""}</div>
             </div>
-            <span className={"rv-radar-live"+(anomBusy?" scan":"")} title="радар активен"/>
+            <span className={"rv-radar-live"+(anomBusy?" scan":"")} data-tip="радар активен"/>
           </div>
+          <button className="rv-jr-open" onClick={()=>setJrOpen(true)}
+            data-tip="все всплески за полгода со снимком жалоб и отметкой «подтвердился / ложный»">журнал сигналов<span className="rv-ico-in"><RvIChevR s={12}/></span></button>
           {anomBusy?
             <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
            :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?
@@ -3599,53 +4748,152 @@ function ReviewsPage({params}){
               <div className="rv-radar-chips">
                 {(anom.watch||[]).map((d,i)=>
                   <span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
-                    title={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
+                    data-tip={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
                     onClick={()=>pickTheme(d.key)} onKeyDown={onKey(()=>pickTheme(d.key))}>
-                    {d.short||d.label}<b>×{d.gap}</b></span>)}
+                    {d.short||d.label}<b>×{String(d.gap).replace(".",",")}</b></span>)}
               </div>
-              <div className="rv-cap" style={{marginTop:8}}>
-                Всплеском считаем рост от ×1.8 к своей норме. Здесь — темы ниже этого порога,
-                но обгоняющие рынок: их стоит держать в поле зрения.</div>
             </>
            :<>
-              <div className="rv-radar-chips">
+              {!(anom.signals.length===1&&anom.summary)&&<div className="rv-radar-chips">
                 {anom.signals.map((s,i)=>{
                   const tip=`${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)`
-                    +(s.bank_specific?" · всплеск только у банка":"")
+                    +(s.bank_specific?" · "+(ovMarketNote(s.ratio,s.market_ratio)||"сильнее рынка"):"")
                     +(s.accel?` · ускоряется (${s.prev_week}→${s.week})`:"")
                     +(s.geo?` · ${s.geo.share}% из ${s.geo.city}`:"");
                   return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}
-                        role="button" tabIndex={0} title={tip}
-                        onClick={()=>setTheme(s.key)} onKeyDown={onKey(()=>setTheme(s.key))}>
-                    {s.short||s.label}<b>{s.new?"новое":"×"+s.ratio}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
+                        role="button" tabIndex={0} data-tip={tip}
+                        onClick={()=>pickTheme(s.key)} onKeyDown={onKey(()=>pickTheme(s.key))}>
+                    {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
                   </span>;
                 })}
-              </div>
-              {anom.summary?<div className="rv-radar-brief">{renderMD(anom.summary)}</div>
+              </div>}
+              {anom.summary?<><div className={"rv-radar-brief"+(radarAll?"":" clip")}><BfBrief markdown={anom.summary}/></div>
+                <div className="rv-radar-links">
+                  <button className="rv-more-l" onClick={()=>setRadarAll(v=>!v)}>{radarAll?"Свернуть разбор":"Весь разбор"}
+                    <span className="rv-ico-in" style={radarAll?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>
+                  {anom.signals.length===1&&<button className="rv-more-l" onClick={()=>pickTheme(anom.signals[0].key)}
+                    data-tip={`${anom.signals[0].label}: жалобы периода`}>Жалобы сигнала<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+                </div></>
                 :<div className="rv-cap" style={{marginTop:6}}>LLM-разбор недоступен — см. всплески выше (числа за 7 дн точны).</div>}
             </>}
-        </div>
+        </div>);
+  const flagsCard=(rf&&!rf.__err&&rf.groups&&rf.groups.length>0?<div className="rv-card rv-flags">
+      <div className="rv-ct"><div>
+        <div className="rv-th"><h2 className="rv-ttl">Признаки риска</h2>
+          <RvInfo>Из разметки каждой жалобы: куда клиент грозит или уже обратился, уязвимые клиенты, практики и суммы. Цифры — доля у банка / у остальных банков, цветом — значимое отличие (поправка на число признаков). «Ввели в заблуждение» и суммы пока широкие: сумма бывает и ущербом, и суммой продукта. Клик — жалобы с признаком.</RvInfo></div>
+        <div className="rv-cap">доля в {fmtNum(rf.total)} жалобах на {bank} за {rf.days} дн · у остальных банков</div>
       </div>
-    </div>
+        <div className="rv-flags-sum mono">обратились <b>{fmtNum(rf.filed)}</b> · грозят <b>{fmtNum(rf.threat)}</b></div>
+      </div>
+      <div className="rv-flags-g">
+        {rf.groups.map(g=><div key={g.key} className="rv-fg">
+          <div className="rv-fg-h">{g.label}</div>
+          {g.items.map(it=>{
+            const hi=it.sig&&it.index>1, lo=it.sig&&it.index<1;
+            return <div key={it.flag} className={"rv-fi"+(flag===it.flag?" sel":"")+(it.flag==="vuln:any"?" tot":"")}
+              role="button" tabIndex={0} aria-pressed={flag===it.flag}
+              onClick={()=>pickFlag(it.flag)} onKeyDown={onKey(()=>pickFlag(it.flag))}
+              data-tip={`${it.label}: ${fmtNum(it.n)} жалоб (${pct1(it.pct)})${it.filed!=null?`, из них уже обратились ${fmtNum(it.filed)}`:""} · у остальных банков ${pct1(it.market_pct)}${it.index!=null?` · ${rvX(it.index)}`:""}${it.caveat?` · ⚠ ${it.caveat}`:""}`}>
+              <span className="rv-fi-l">{it.label}{it.caveat&&<span className="rv-fi-cav" aria-label="есть оговорка">*</span>}</span>
+              <span className="rv-fi-n mono">{fmtNum(it.n)}</span>
+              <span className={"rv-fi-m mono"+(hi?" rv-up":lo?" rv-down":"")}>{pct1(it.pct)}<i> / {pct1(it.market_pct)}</i></span>
+            </div>;})}
+        </div>)}
+      </div>
+      <div className="rv-flags-note">* признак пока широкий — читайте жалобы выборочно</div>
+    </div>:null);
 
-    {/* FEED */}
-    <div className="rv-card">
+  // «Главное за период»: связная фраза, собранная кодом из чисел вкладки —
+  // объём, главное отличие от рынка, всплеск недели. Без модели.
+  const leadText=(()=>{ if(!ov||ov.__err||ov.total==null)return null;
+    const out=[], vol=chg&&chg.items&&chg.items.find(x=>x.kind==="volume");
+    if(vol)out.push(`Жалоб ${vol.dir==="up"?"больше":"меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за прошлые ${days} дн: ${fmtNum(ov.total)} против ${fmtNum(ov.prev)}.`);
+    // «без значимых изменений» рядом с чипами изменившихся тем читалось как
+    // «ничего не изменилось» — говорим именно про общее число
+    else if(ov.delta_partial||!chg)out.push(`${fmtNum(ov.total)} ${plural(ov.total,"жалоба","жалобы","жалоб")} за ${days} дн.`);
+    else out.push(`Общее число жалоб — на уровне прошлого периода: ${fmtNum(ov.total)} за ${days} дн.`);
+    const w=ix&&ix.worse&&ix.worse[0];
+    if(w)out.push(`Сильнее всего ${bank} отличается от рынка в теме «${w.label}»: ${pct1(w.pct)} жалоб против ${pct1(w.market_pct)} у остальных банков (${rvX(w.index)}).`);
+    const sg=anom&&anom.signals&&anom.signals[0];
+    if(sg)out.push(`На этой неделе всплеск: «${sg.short||sg.label}» ${sg.new?"— новое":rvX(sg.ratio)+" к норме"}.`);
+    return out.join(" "); })();
+  // Значимость объёма и «остаток» чипов: объём и всплеск недели уже в фразе
+  // «Главного» — чипами дублировать их незачем (первый экран повторял
+  // «×4,2» четыре раза)
+  const volSig=!!(chg&&chg.items&&chg.items.find(x=>x.kind==="volume"));
+  const leadSig=!!(anom&&anom.signals&&anom.signals[0]);
+  const chgRest=chg&&!chg.partial&&chg.items?chg.items.filter(it=>it.kind!=="volume"&&!(it.kind==="signal"&&leadSig)):[];
+  const vuln=rf&&rf.groups?((rf.groups.find(g=>g.key==="vuln")||{items:[]}).items.find(x=>x.flag==="vuln:any")||null):null;
+  const srcShares=ov&&ov.by_source&&ov.by_source.length?rvSrcShares(ov.by_source):[];
+  const pageInfo=<>
+    <b>Жалобы</b> — отзывы со всех площадок, которые ИИ отнёс к претензиям; похвала, вопросы, мусор и копии исключены.
+    Метрики — динамика и структура внутри жалоб, а не доля недовольных клиентов.
+    {srcShares.length>0&&<><br/><br/><b>Площадки за {days} дн:</b> {srcShares.map(x=>`${x.k} ${x.p>=1?Math.round(x.p)+"%":fmtNum(x.n)}`).join(" · ")}.</>}
+    {corp&&corp.corpus_total?<> Корпус — {fmtNum(corp.corpus_total)} {plural(corp.corpus_total,"отзыв","отзыва","отзывов")} по {corp.banks} {plural(corp.banks,"банку","банкам","банкам")}.</>:null}
+    {ov&&ov.market_share_pct!=null&&<><br/><br/><b>Доля в жалобах на все банки</b> — {pct1(ov.market_share_pct)}. Она не нормирована на число клиентов: у крупного банка ниже, чем у небольшого, чьи клиенты активнее пишут на площадках. С рынком корректнее сравнивать структуру — «Где {bank} отличается от рынка».</>}
+  </>;
+  const actives=[theme&&{k:"theme",l:`Тема: ${themeLabel||theme}`,x:()=>setTheme("")},
+    flag&&{k:"flag",l:`Признак: ${flagLabel}`,x:()=>setFlag("")},
+    escOnly&&{k:"esc",l:"Грозят или обратились",x:()=>setEscOnly(false)},
+    fCity&&{k:"city",l:`Город: ${fCity}`,x:()=>setFCity("")},
+    fSrc&&{k:"src",l:`Площадка: ${(RV_SOURCES.find(x=>x[0]===fSrc)||[0,fSrc])[1]}`,x:()=>setFSrc("")},
+    q&&{k:"q",l:`Поиск: «${q}»`,x:()=>{setQ("");setQInput("");}}].filter(Boolean);
+  const resetFilters=()=>{setTheme("");setFlag("");setEscOnly(false);setFCity("");setFSrc("");setQ("");setQInput("");};
+  const citySel=<select className="rv-fsel" value={fCity} onChange={e=>setFCity(e.target.value)} aria-label="Город">
+          <option value="">Все города</option>
+          {fCity&&!((ge&&ge.cities)||[]).some(c=>c.city===fCity)&&<option value={fCity}>{fCity}</option>}
+          {((ge&&ge.cities)||[]).map(c=><option key={c.city} value={c.city}>{c.city} · {fmtNum(c.n)}</option>)}
+        </select>;
+  const srcSel=<select className="rv-fsel" value={fSrc} onChange={e=>setFSrc(e.target.value)} aria-label="Площадка">
+          <option value="">Все площадки</option>
+          {RV_SOURCES.map(([k,l])=><option key={k} value={k}>{l}</option>)}
+        </select>;
+  const flagSel=<select className={"rv-fsel"+(flag?" on":"")} value={flag} onChange={e=>setFlag(e.target.value)} aria-label="Признак">
+          <option value="">Все жалобы</option>
+          {RV_FLAG_OPTS.map(([g,opts])=><optgroup key={g} label={g}>
+            {opts.map(([k,l])=><option key={k} value={k}>{l}</option>)}</optgroup>)}
+        </select>;
+  const orderChips=!q&&<div className="rv-chips rv-chips-sm" role="group" aria-label="порядок">
+          {[["date","свежие"],["severity","сначала серьёзные"]].map(([k,l])=>
+            <button key={k} className={"rv-chip"+(fOrder===k?" on":"")} onClick={()=>setFOrder(k)}
+              data-tip={k==="severity"?"выше — кто уже обратился в ЦБ или суд, уязвимые клиенты, «без согласия», крупные суммы, проблемы класса «комплаенс»":"сначала свежие"}>{l}</button>)}
+        </div>;
+  const densBtn=<button className={"rv-ib rv-dens"+(dense?" on":"")} onClick={toggleDense} aria-pressed={dense}
+          aria-label={dense?"Плотность: компактно":"Плотность: удобно"}
+          data-tip={dense?"Компактно: заголовок в одну строку, без цитаты. Нажмите — удобно":"Удобно: заголовок и цитата. Нажмите — компактно"}>
+          <RvIco s={16} d={dense?<><path d="M4 6h16"/><path d="M4 10h16"/><path d="M4 14h16"/><path d="M4 18h16"/></>
+            :<><path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h16"/></>}/></button>;
+  const viewChips=!q&&<div className="rv-chips rv-chips-sm" role="group" aria-label="вид">
+          {[["cards","карточки"],["groups","группы похожих"]].map(([k,l])=>
+            <button key={k} className={"rv-chip"+(fView===k?" on":"")} onClick={()=>setFView(k)}>{l}</button>)}
+        </div>;
+  // сколько настроек в листе отличаются от обычных — число на кнопке «Фильтры»
+  const fMore=(fSrc?1:0)+(flag?1:0)+(!q&&fOrder==="severity"?1:0)+(!q&&fView==="groups"?1:0);
+  const feedCard=(<div className="rv-card">
       <div className="rv-ct">
-        <div><div className="rv-ttl">Лента — доказательная база
-          {/* Плашка сверху считает ОБРАЩЕНИЯ, лента показывает КАРТОЧКИ, а
-              одинаковые тексты в ней объединены в одну со счётчиком «похожих».
-              Числа сходятся, но это нигде не было сказано — аудитор считал
-              карточки и видел расхождение с плашкой. */}
-          {(()=>{const n=(feed||[]).length,
+        <div><h2 className="rv-ttl">Жалобы
+          {/* Счётчик — всего по фильтру ленты (сервер считает тем же условием),
+              а не загруженная страница: «21 жалоба» рядом с «2 426» на вкладке
+              читалось как расхождение. Карточки и склейка дублей — в подсказке. */}
+          {!(fView==="groups"&&!q)&&(()=>{const n=(feed||[]).length,
                        dup=(feed||[]).reduce((a,r)=>a+(r.similar||0),0);
-            return dup>0?<span className="rv-count-note" title="одинаковые тексты объединены в одну карточку">
-              {" "}· {n + dup} обращений в {n} карточках</span>:null;})()}
-        </div>
-          <div className="rv-cap">{theme?<>тема: <b>{themeLabel}</b> · <span className="rv-clear" role="button" tabIndex={0} onClick={()=>setTheme("")} onKeyDown={onKey(()=>setTheme(""))}>сбросить ✕</span></>:"темы обращений определены автоматически (regex) · ✦ уточнить ИИ для точности"}</div></div>
-        <button className="rv-cls-btn" onClick={classifyFeed} disabled={clsBusy||feedBusy||!feed||!feed.length}
-                title="Переклассифицировать показанные отзывы с учётом смысла и отрицаний">
-          {clsBusy?"Уточняю…":clsOn?"✦ темы уточнены ИИ":"✦ Уточнить темы (ИИ)"}
-        </button>
+            if(!n)return null;
+            const tip=`загружено ${n} ${plural(n,"карточка","карточки","карточек")}`
+              +(dup?` · ещё ${dup} ${plural(dup,"одинаковый текст объединён","одинаковых текста объединены","одинаковых текстов объединены")} в карточки со счётчиком «ещё N таких же»`:"")
+              +(feedMore?" · остальные — «Показать ещё» внизу":"");
+            if(feedTot&&!q)return <span className="rv-count-note" data-tip={tip}>
+              {" "}· {fmtNum(feedTot.total)} {plural(feedTot.total,"жалоба","жалобы","жалоб")}
+              {feedTot.pending?` + ${fmtNum(feedTot.pending)} на разметке`:""}</span>;
+            return dup>0?<span className="rv-count-note" data-tip={tip}>
+              {" "}· показаны {n + dup} {plural(n+dup,"жалоба","жалобы","жалоб")}, одинаковые объединены</span>:null;})()}
+        </h2>
+          <div className="rv-cap">{<span className="rv-legend"><span className="rv-lg-i"><i className="neg"/>обратился в ЦБ, суд и т. п.</span><span className="rv-lg-i"><i className="warn"/>грозит или уязвимый клиент</span>
+            <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
+        {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
+        <a className="rv-export rv-export-a" download aria-label="Выгрузить жалобы в Excel"
+           href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`}
+           data-tip="Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака и периода — с разметкой ИИ и полным текстом, сводки (поиск в выгрузку не входит)"
+           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,days,esc:escOnly,flag}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">Excel</span></a>
       </div>
       {/* Порядок выдачи. Показываем только при запросе: лента без него и так
           идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
@@ -3654,109 +4902,285 @@ function ReviewsPage({params}){
         <span className="rv-sort-l">порядок:</span>
         {[["auto","по релевантности"],["date","по дате"]].map(([k,l])=>
           <button key={k} className={"rv-chip"+(sortBy===k?" on":"")}
-            title={k==="date"
+            data-tip={k==="date"
               ?"сначала свежие. Отбирает всё равно релевантность — порядок меняется внутри отобранного"
               :"сначала самые близкие к запросу"}
             onClick={()=>setSortBy(k)}>{l}</button>)}
       </div>}
       <div className="rv-search">
-        <span>⌕</span>
-        <input value={qInput} onChange={e=>setQInput(e.target.value)}
+        <span aria-hidden="true"><RvIco s={15} d={<><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></>}/></span>
+        <input ref={searchRef} value={qInput} onChange={e=>setQInput(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter")setQ(qInput.trim());}}
           placeholder="Найти жалобы по смыслу: «не зачисляют выручку по эквайрингу», «навязали страховку»… (Enter)"/>
-        {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}>✕</span>}
+        {q&&<span className="rv-clear" role="button" tabIndex={0} aria-label="Сбросить поиск" onClick={()=>{setQ("");setQInput("");}} onKeyDown={onKey(()=>{setQ("");setQInput("");})}><RvIX s={14}/></span>}
       </div>
+      {/* Фильтры ленты (Д5): город, площадка, признак; порядок «сначала
+          серьёзные» и группы похожих — без поиска, у него своя выдача */}
+      {/* На телефоне четыре из шести элементов стояли за правым краем без
+          намёка на прокрутку. Там в строке — город и «Фильтры», остальное в листе */}
+      <div className="rv-ftools">
+        {citySel}
+        {narrow?<button className={"rv-ftbtn"+(fMore?" on":"")} onClick={()=>setFtOpen(true)} aria-haspopup="dialog"
+            aria-label={`Фильтры ленты${fMore?`, включено: ${fMore}`:""}`}>
+            <RvIco s={15} d={<><path d="M4 6h16"/><path d="M7 12h10"/><path d="M10 18h4"/></>}/>Фильтры{fMore?<b>{fMore}</b>:null}</button>
+          :<>{srcSel}{flagSel}{orderChips}{densBtn}{viewChips}</>}
+      </div>
+      {ftOpen&&<RvModal sheet fit title="Фильтры ленты" onClose={()=>setFtOpen(false)}>
+        {close=><div className="rv-fts">
+          <label className="rv-fts-r"><span>Площадка</span>{srcSel}</label>
+          <label className="rv-fts-r"><span>Признак</span>{flagSel}</label>
+          {!q&&<div className="rv-fts-r"><span>Порядок</span>{orderChips}</div>}
+          {!q&&<div className="rv-fts-r"><span>Вид</span>{viewChips}</div>}
+          <div className="rv-fts-r"><span>Плотность</span>
+            <div className="rv-chips rv-chips-sm" role="group" aria-label="плотность">
+              {[[false,"удобно"],[true,"компактно"]].map(([k,l])=>
+                <button key={l} className={"rv-chip"+(dense===k?" on":"")} onClick={()=>{if(dense!==k)toggleDense();}}>{l}</button>)}</div></div>
+          <button className="rv-bt pri rv-fts-go" onClick={close}>Показать</button>
+        </div>}
+      </RvModal>}
+      {actives.length>0&&<div className="rv-active" aria-label="Активные фильтры">
+        {actives.map(a=><button key={a.k} className="rv-achip" onClick={a.x} aria-label={`Снять фильтр: ${a.l}`}>
+          {a.l}<RvIX s={12}/></button>)}
+        {actives.length>1&&<button className="rv-areset" onClick={resetFilters}>Сбросить всё</button>}
+      </div>}
       {/* По каким словам искали на самом деле. Аудитор должен видеть, что запрос
           расширили и что часть его слов архив счёл общеупотребительными — иначе
           выдача выглядит необъяснимой, и поиску перестают доверять. */}
       {!feedBusy&&!feedErr&&q&&feedMeta&&<div className="rv-sum">
         <span>искали по: <b>{(feedMeta.terms||[]).join(" · ")||q}</b></span>
         {feedMeta.added&&feedMeta.added.length>0&&
-          <span className="rv-sum-x" title="раскрыто автоматически: сокращения и то, как об этом пишут клиенты">
+          <span className="rv-sum-x" data-tip="раскрыто автоматически: сокращения и то, как об этом пишут клиенты">
             добавлено: {feedMeta.added.join(" · ")}</span>}
         {feedMeta.common&&feedMeta.common.length>0&&
-          <span className="rv-sum-x" title="эти слова встречаются почти в каждой жалобе и только размывают выдачу">
+          <span className="rv-sum-x" data-tip="эти слова встречаются почти в каждой жалобе и только размывают выдачу">
             не учитывали: {feedMeta.common.join(" · ")}</span>}
         <span className="rv-sum-x">дословных {feedMeta.n_words||0}, по смыслу {feedMeta.n_sense||0}</span>
       </div>}
       {!feedBusy&&!feedErr&&q&&feedMeta&&feedMeta.n_words===0&&feed&&feed.length>0&&
         <div className="rv-warn">Слов запроса в текстах нет — все отзывы ниже подобраны по смыслу.
           Это не значит, что жалоб по теме не было: возможно, клиенты называют её иначе.</div>}
-      {feedBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
+      <div className="rv-sr" aria-live="polite">{feedBusy?"Загружаю жалобы":feedErr?"Жалобы не загрузились"
+        :feedTot&&!q?`${fmtNum(feedTot.total)} ${plural(feedTot.total,"жалоба","жалобы","жалоб")} по фильтру`
+        :feed?`Показано ${feed.length}`:""}</div>
+      <div className={"rv-fw"+(split?" split":"")}>
+      <div className={"rv-fw-list"+(dense?" dense":"")}>
+      {fView==="groups"&&!q?(
+        clBusy?<RvSkelRows n={5} h={92} gap={12}/>:
+        !cl||cl.__err?<RvNote err={cl&&cl.__err}/>:<>
+          <div className="rv-cl-sum">{cl.clustered
+            ?<><b>{fmtNum(cl.clustered)}</b> {plural(cl.clustered,"жалоба","жалобы","жалоб")} в {cl.clusters.length} {plural(cl.clusters.length,"группе","группах","группах")} похожих историй{cl.limited?` (из ${fmtNum(cl.total)} последних)`:""}, остальные не повторяются</>
+            :`${cl.limited?`Среди ${fmtNum(cl.total)} последних жалоб`:"Среди жалоб за период"} повторяющихся историй нет — группа начинается с трёх похожих`}
+            {cl.no_vec?<span className="rv-sum-x"> · ещё {cl.no_vec} без векторов — появятся в течение часа</span>:""}</div>
+          {cl.clusters.map((g,i)=><div key={i} className="rv-cl" role="button" tabIndex={0}
+              onClick={()=>openGroup(g)} onKeyDown={onKey(()=>openGroup(g))}>
+            <div className="rv-cl-n"><b>{g.n}</b><span>{plural(g.n,"жалоба","жалобы","жалоб")}</span></div>
+            <div className="rv-cl-b">
+              <div className="rv-cl-h">{g.short&&<span className={"rv-tag "+(g.risk||"ops")}>{g.short}</span>}
+                <span className="rv-cl-m">{g.first===g.last?rvDate(g.first):`${rvDate(g.first)} – ${rvDate(g.last)}`}
+                  {g.cities.length?` · ${g.cities.join(", ")}`:""}{g.esc?` · эскалация ${g.esc}`:""}{g.vuln?` · уязвимые ${g.vuln}`:""}</span></div>
+              <div className="rv-cl-s">{g.summary}</div>
+              {g.quote&&<div className="rv-cl-q">«{g.quote}»</div>}
+            </div>
+            <span className="rv-cl-go" aria-hidden="true"><RvIChevR s={16}/></span>
+          </div>)}
+        </>):
+       feedBusy&&!(feed&&feed.length)?<RvSkelRows n={6} h={104} gap={14}/>:
        feedErr?<EmptyState title={feedErr==="unknown_bank"?"Банка нет в корпусе":q?"Поиск не отработал":"Лента не загрузилась"}
-         text={feedErr==="unknown_bank"?"Отзывов banki.ru по этому банку у нас нет — выберите другой банк в списке выше.":
+         text={feedErr==="unknown_bank"?"Отзывов по этому банку у нас нет — выберите другой банк в списке выше.":
                feedErr==="network"?"Не удалось получить ответ сервера. Обновите страницу или повторите запрос.":
                "Запрос к корпусу отзывов не выполнился — это сбой, а не отсутствие жалоб по теме. Повторите; если повторяется, сообщите нам."}/>:
        !feed||!feed.length?<EmptyState text={q
          ?`По запросу «${q}» жалоб не нашлось — искали и по смыслу, и по словам, включая раскрытие сокращений. Возможно, по этой теме на банк действительно не жаловались; попробуйте снять фильтры или сузить формулировку.`
          :"Нет жалоб по выбранным фильтрам — попробуйте другой банк/продукт/тему."}/>:
-       feed.map((r,i)=>(
-        <div key={i} className="rv-rev">
-          <div className="rv-rh">
-            <span>{r.date}</span>
-            {/* Банк подписан явно. Сверка показала, что данные верны — жалоба
-                действительно принадлежит выбранному банку, — но в тексте часто
-                упомянут другой банк («перевёл в …»), и без подписи аудитор
-                читает обращение как чужое. Дважды приходило как дефект. */}
-            {r.bank&&<span className="rv-pill rv-pill-bank" title="банк, которому принадлежит обращение">{r.bank}</span>}
-            <RvThemes list={r.themes} src={r.theme_src} active={theme}/>
-            {r.product&&<span className="rv-pill rv-pill-dim" title="направление banki.ru">{r.product}</span>}
-            {r.city&&<span className="rv-pill">{r.city}</span>}
-            {/* Источник виден на каждой карточке: площадок теперь несколько, и
-                аудитор должен понимать, откуда жалоба, не открывая ссылку */}
-            {r.source&&<span className="rv-pill rv-pill-dim" title="площадка-источник отзыва">{r.source}</span>}
-            {r.rating!=null&&<span className="rv-pill rv-pill-dim" title="оценка автора">{"★".repeat(Math.max(1,Math.round(r.rating)))}</span>}
-            {r.similar>0&&<span className="rv-sim">+{r.similar} похожих</span>}
-            {r.via&&<span className={"rv-via"+(r.via==="смысл"?" rv-via-soft":"")}
-              title={r.via==="смысл"
-                ?"слов запроса в тексте нет — отзыв подобран по смыслу, проверьте глазами"
-                :"слова запроса встречаются в тексте дословно (подсвечены)"}>
-              {r.via==="смысл"?"по смыслу":r.via==="слова"?"дословно":"дословно и по смыслу"}</span>}
-          </div>
-          <div className="rv-rq rv-rq-click" role="button" tabIndex={0} onClick={()=>setModalRev(r)} onKeyDown={onKey(()=>setModalRev(r))}>
-            {kbMark(cutMark(r.marked||r.text,420))}{(r.text||"").length>420?<>…<span className="rv-more"> читать полностью →</span></>:""}
-          </div>
-          <div className="rv-rf">
-            {r.url&&<a href={r.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
-            <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(r)} onKeyDown={onKey(()=>addCase(r))}>＋ в аудит-дело</span>
-          </div>
-        </div>
-       ))}
-       {feedMore&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
+       feed.map((r,i)=><RvCard key={r.url||i} r={r} showBank q={q}
+          sel={split?rd.idx===i:(!rd&&cur===i)} read={readSet.has(r.url)} inCase={caseUrls[r.url]}
+          cardRef={el=>{cardRefs.current[i]=el;}}
+          onOpen={e=>vtOpen(e&&e.currentTarget,()=>openReader(null,i,null,"feed"))} onCase={()=>addCase(r)} onTheme={pickTheme}/>)}
+       {feedMore&&!(fView==="groups"&&!q)&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
          disabled={feedMoreBusy}>
-         {feedMoreBusy?"Загружаю…":`Показать ещё (сейчас ${(feed||[]).length})`}</button>}
+         {feedMoreBusy?"Загружаю…":`Показать ещё · показано ${(feed||[]).length}${feedTot&&!q?` из ${fmtNum(feedTot.total+feedTot.pending)}`:""}`}</button>}
+      </div>
+      {/* Читалка рядом со списком (от 1280 px): просмотр подряд без окон */}
+      {split&&<aside className="rv-fw-rd" aria-label="Выбранная жалоба">
+        <RvReader r={rdItem} {...rdNav} embedded showBank onClose={()=>setRd(null)}
+          onCase={()=>addCase(rdItem)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}/></aside>}
+      </div>
+    </div>);
+
+  return <div className="fade-in rv">
+    {/* ШАПКА — одна строка: срез слева, действия страницы справа */}
+    <div className="rv-head">
+      <h1 className="rv-h1">Отзывы</h1>
+      <div className="rv-hfil">
+        {fine&&bankItems.length?<RvBankPicker bank={bank} items={bankItems} onChange={setBank}/>
+          :<select className="rv-hsel" value={bank} onChange={e=>setBank(e.target.value)} aria-label="Банк">
+          {bankItems.length?(()=>{
+            const stale=x=>x.last&&(Date.now()-new Date(x.last+"T00:00:00"))>60*864e5;
+            const opt=x=><option key={x.bank} value={x.bank}>{x.bank}{stale(x)?` · нет отзывов с ${rvDate(x.last).slice(3)}`:""}</option>;
+            const top=bankItems.slice(0,15), rest=bankItems.slice(15).sort((a,b)=>a.bank.localeCompare(b.bank,"ru"));
+            return <>
+              {!bankItems.some(x=>x.bank===bank)&&<option value={bank}>{bank}</option>}
+              <optgroup label="Крупнейшие по жалобам за год">{top.map(opt)}</optgroup>
+              <optgroup label="Остальные — по алфавиту">{rest.map(opt)}</optgroup></>;})()
+           :bankList.map(b=><option key={b} value={b}>{b}</option>)}
+        </select>}
+        <select className="rv-hsel" value={product} onChange={e=>setProduct(e.target.value)} aria-label="Продукт"
+          data-tip={product?"Продукт определён по тексту жалобы, а не взят из метки площадки: на продуктах, которые клиент называет прямо, разметка точна; широкие позиции («подписки», «дистанционное обслуживание») собирают и неопределённое":undefined}>
+          <option value="">Все продукты</option>
+          {prods.map(p=><option key={p.product} value={p.product}>{p.product} ({fmtNum(p.n)})</option>)}
+        </select>
+        <div className="rv-chips rv-hper" role="group" aria-label="Период">
+          {RV_PERIODS.map(([d,l])=><button key={d} className={"rv-chip"+(days===d?" on":"")} onClick={()=>setDays(d)}>{l}</button>)}
+        </div>
+      </div>
+      <div className="rv-hact">
+        {sub!==null&&<button className={"rv-bell"+(sub?" on":"")} onClick={toggleSub} aria-label={sub?"Слежу за сигналами":"Следить за сигналами"}
+          data-tip={sub?"Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться"
+                    :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — всплески будут в «Для вас»`}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span className="rv-hact-l">{sub?"Слежу":"Следить"}</span></button>}
+        <button className="rv-bell" onClick={()=>setCasesOpen(true)} aria-label="Аудит-дела"
+          data-tip="подборки жалоб и документов под проверку — общие для команды">
+          <RvICase s={14}/><span className="rv-hact-l">Аудит-дела</span>{casesN?<span className="rv-hact-n">{casesN}</span>:null}</button>
+      </div>
     </div>
 
-    {/* МОДАЛ: полный текст обращения */}
-    {modalRev&&<RvModal onClose={()=>setModalRev(null)} title="Обращение клиента"
-        sub={[modalRev.bank,modalRev.date,modalRev.product,modalRev.city].filter(Boolean).join(" · ")}>
-      <div className="rv-rh" style={{marginBottom:10}}>
-        <RvThemes list={modalRev.themes} src={modalRev.theme_src} active={theme}/>
-        {modalRev.similar>0&&<span className="rv-sim">+{modalRev.similar} похожих (массовая жалоба)</span>}
+    {/* ПОДВКЛАДКИ — липкие, на полупрозрачном материале */}
+    <div className="rv-tabs" ref={tabsRef}>
+      <div className="rv-tabs-l" role="tablist" aria-label="Разделы отзывов">
+        {RV_TABS.map(([k,l])=><button key={k} id={"rv-tab-"+k} role="tab" aria-selected={tab===k} aria-controls="rv-panel"
+          tabIndex={tab===k?0:-1} className={"rv-tab"+(tab===k?" on":"")}
+          onClick={()=>goTab(k)}
+          onKeyDown={e=>{ const i=RV_TABS.findIndex(x=>x[0]===k);
+            const n={ArrowRight:i+1,ArrowLeft:i-1,Home:0,End:RV_TABS.length-1}[e.key];
+            if(n==null)return; e.preventDefault(); const t=RV_TABS[(n+RV_TABS.length)%RV_TABS.length][0];
+            goTab(t); setTimeout(()=>{const b=document.getElementById("rv-tab-"+t); b&&b.focus();},0); }}>{l}
+          {k==="complaints"&&ov&&ov.total!=null&&<span className="rv-tab-n">{fmtNum(ov.total)}</span>}
+          {k==="complaints"&&actives.length>0&&tab!=="complaints"&&<span className="rv-tab-dot" aria-label="есть фильтры"/>}</button>)}
       </div>
-      {/* полный текст — с той же подсветкой, что и в карточке: аудитор открывает
-          отзыв именно чтобы проверить совпадение, терять его тут нельзя */}
-      <div className="rv-modal-text">{kbMark(modalRev.marked||modalRev.text)}</div>
-      <div className="rv-rf" style={{marginTop:16}}>
-        {modalRev.url&&<a href={modalRev.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">banki.ru ↗</a>}
-        <span className="rv-lnk2" role="button" tabIndex={0} onClick={()=>addCase(modalRev)} onKeyDown={onKey(()=>addCase(modalRev))}>＋ в аудит-дело</span>
+      <span className="rv-tabs-r">{ov&&ov.as_of?<span className="rv-asof">данные по {rvDate(ov.as_of)}</span>:null}
+        <RvInfo label="Как считаем" text="Как считаем" align="right">{pageInfo}</RvInfo></span>
+    </div>
+
+    <div id="rv-panel" role="tabpanel" aria-labelledby={"rv-tab-"+tab} key={tab}
+      className={"rv-panel"+((tab==="complaints"?feedBusy&&feed&&feed.length:busy&&ov)?" dim":"")}
+      aria-busy={tab==="complaints"?!!feedBusy:!!busy}>
+    {tab==="overview"&&<>
+      <div className="rv-hero">
+        <div className="rv-card rv-lead">
+          <h2 className="rv-kl">Главное за {days} дн</h2>
+          <div className="rv-lead-t">{busy&&!leadText?<RvSkelRows n={4} h={26} gap={10}/>:leadText||"Нет данных за выбранный период"}</div>
+          {!chg&&<div className="rv-chg"><Skel w="55%" h={28}/></div>}
+          {chgRest.length>0&&<div className="rv-chg-l">Заметно изменилось к прошлым {days} дн</div>}
+          {chgRest.length>0&&<div className="rv-chg">
+            {chgRest.map((it,i)=>
+              <span key={i} className={"rv-chg-it "+it.dir+(it.kind==="signal"?" sig":"")+(it.key?" click":"")}
+                data-tip={it.detail} role={it.key?"button":undefined} tabIndex={it.key?0:undefined}
+                onClick={it.key?()=>pickTheme(it.key):undefined}
+                onKeyDown={it.key?onKey(()=>pickTheme(it.key)):undefined}>
+                <b className="rv-chg-ar">{it.dir==="up"?"↑":"↓"}</b>{it.text}</span>)}
+          </div>}
+          {chg&&!chg.partial&&chg.items&&!chgRest.length&&!(chg.items||[]).some(x=>x.kind==="volume")&&<div className="rv-chg-calm">Структура жалоб — в пределах обычных колебаний.</div>}
+        </div>
+        {radarCard}
       </div>
+      <div className="rv-kpis rv-kpis3">
+        <div className="rv-card rv-kpi rv-kpi-click" role="button" tabIndex={0} data-tip="открыть все жалобы периода"
+             onClick={()=>goTab("complaints")} onKeyDown={onKey(()=>goTab("complaints"))}>
+          <div className="rv-kl">Жалоб за {days} дн</div>
+          <div className="rv-kv">{busy&&!ov?<Skel w="55%" h={30}/>:(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
+          <div className="rv-ks">{ov&&ov.delta_partial?<span data-tip="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{volSig
+            ?(ov.delta_pct<0?<span className="rv-down">↓ {Math.round(Math.abs(ov.delta_pct))}%</span>:<span className="rv-up">↑ {Math.round(ov.delta_pct)}%</span>)
+            :<span className="rv-flat" data-tip="в пределах обычных колебаний — не значимо">{ov.delta_pct<0?"−":"+"}{Math.round(Math.abs(ov.delta_pct))}%</span>} к прошлому периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
+        </div>
+        <div className={"rv-card rv-kpi rv-kpi-click"+(escOnly?" rv-kpi-on":"")} role="button" tabIndex={0}
+             data-tip="жалобы, где клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор, к финомбудсмену или в полицию"
+             onClick={toggleEsc} onKeyDown={onKey(toggleEsc)}>
+          <div className="rv-kl">Эскалация {ov&&ov.escalation_sig&&<span className="rv-tag compliance">выше рынка</span>}</div>
+          <div className={"rv-kv"+(ov&&ov.escalation_sig?" rv-up":"")}>{busy&&!ov?<Skel w="45%" h={30}/>:pct1(ov&&ov.escalation_pct)}</div>
+          <div className="rv-ks">{ov&&ov.market_escalation_pct!=null&&<>у остальных банков {pct1(ov.market_escalation_pct)}<br/></>}
+            {ov&&ov.escalation_filed_pct!=null?`обратились ${pct1(ov.escalation_filed_pct)} · грозят ${pct1(Math.round((ov.escalation_pct-ov.escalation_filed_pct)*10)/10)}`:""}</div>
+        </div>
+        <div className={"rv-card rv-kpi rv-kpi-click"+(flag==="vuln:any"?" rv-kpi-on":"")} role="button" tabIndex={0}
+             data-tip="жалобы уязвимых клиентов: пенсионеры, низкий доход, участники СВО, несовершеннолетние, инвалиды, тяжелобольные"
+             onClick={()=>pickFlag("vuln:any")} onKeyDown={onKey(()=>pickFlag("vuln:any"))}>
+          <div className="rv-kl">Уязвимые клиенты {vuln&&vuln.sig&&vuln.index>1&&<span className="rv-tag compliance">выше рынка</span>}</div>
+          <div className={"rv-kv"+(vuln&&vuln.sig&&vuln.index>1?" rv-up":"")}>{busy&&!rf?<Skel w="45%" h={30}/>:vuln?pct1(vuln.pct):"—"}</div>
+          <div className="rv-ks">{vuln?<>у остальных банков {pct1(vuln.market_pct)}<br/>{fmtNum(vuln.n)} {plural(vuln.n,"жалоба","жалобы","жалоб")}</>:""}</div>
+        </div>
+      </div>
+      {trendCard}
+      {ixCard(false)}
+    </>}
+
+    {tab==="problems"&&<>
+      {/* Раньше темы (длинные) стояли рядом с отличиями (короче) — под правой
+          колонкой висело 320 px пустоты. Теперь рядом два блока сопоставимой
+          высоты, а темы — на всю ширину строками в две колонки */}
+      <div className="rv-grid2 rv-prob">{ixCard(true)}{flagsCard}</div>
+      {themesCard}
+    </>}
+
+    {tab==="geo"&&geoCard}
+
+    {tab==="complaints"&&feedCard}
+    </div>
+
+    {jrOpen&&<RvModal side="right" onClose={()=>setJrOpen(false)} title="Журнал сигналов"
+        sub={`${bank} · ${product||"все продукты"} · за полгода`}>
+      <RvJournal bank={bank} product={product} onOpen={(list,i)=>openReader(list,i,"снимок сигнала","journal")}/></RvModal>}
+    {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={`${grp.n} похожих жалоб`}
+        sub={[grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
+      <div className="rv-grp-acts"><button className="btn btn-sm btn-primary" disabled={!grpItems||!grpItems.length}
+        onClick={()=>setPick(grpItems)}>＋ всю группу в аудит-дело</button></div>
+      {!grpItems?<Skel h={120}/>:<div className="rv-clist">{grpItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
+        read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="group"&&rd.idx===i}
+        onOpen={()=>openReader(grpItems,i,`группа · ${grp.n}`,"group")} onCase={()=>addCase(r)}/>)}</div>}
     </RvModal>}
+    {casesOpen&&<KbCases onClose={()=>setCasesOpen(false)}/>}
 
     {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
     {drill&&<RvModal side="right" onClose={()=>setDrill(null)} title={drill.label}
         sub={`${bank}${product?` · ${product}`:""}${drillItems?` · показано ${drillItems.length}`:""}`}>
+      {/* сначала цифры: чем срез отличается от нормы — модель потом объясняет,
+          а не решает сама, аномалия ли это */}
+      {drillProf&&drillProf.rows&&drillProf.rows.length>0&&<div className="rv-prof">
+        <div className="rv-prof-h">
+          <span>Чем отличается от нормы · {fmtNum(drillProf.n)} {plural(drillProf.n,"жалоба","жалобы","жалоб")} · норма — {drillProf.base_label}</span>
+          {drillProf.flagged&&<span className="rv-tag compliance">аномалия</span>}
+        </div>
+        {/* только настоящие отклонения: «+1 ×1» — шум, а не объяснение пика */}
+        {(()=>{const rows=drillProf.rows.filter(r=>(r.excess||0)>=3&&(r.index||0)>=1.2).slice(0,6);
+          return rows.length?<>
+          <div className="rv-prof-r rv-prof-hd" aria-hidden="true"><span>проблема</span><span>сверх нормы</span><span className="rv-prof-p">доля · норма</span><span/></div>
+          {rows.map(r=><div key={r.key} className="rv-prof-r"
+            data-tip={`${r.label}: ${fmtNum(r.n)} ${plural(r.n,"жалоба","жалобы","жалоб")} — ${pct1(r.pct)} против ${pct1(r.base_pct)} в норме; при обычной структуре было бы на ${fmtNum(Math.round(r.excess))} меньше`}>
+            <span className="rv-prof-l">{r.label}</span>
+            <span className="rv-prof-x">+{fmtNum(Math.round(r.excess))}</span>
+            <span className="rv-prof-p">{pct1(r.pct)} <i>· {pct1(r.base_pct)}</i></span>
+            <span className={r.index>=1.5?"rv-up":r.index<=0.67?"rv-down":"rv-flat"}>×{String(r.index).replace(".",",")}</span>
+          </div>)}</>
+          :<div className="rv-prof-none">Структура жалоб в срезе — как в норме.</div>;})()}
+      </div>}
       <button className="rv-explain-btn" onClick={runExplain} disabled={explainBusy}>
-        {explainBusy?"Анализирую жалобы…":"✦ Объяснить причину (LLM)"}
+        {explainBusy?"Читаю жалобы…":"✦ Разобрать с ИИ"}
       </button>
       {explain&&explain!=="__none__"&&<div className="rv-explain">{renderMD(explain)}</div>}
       {explain==="__none__"&&<div className="rv-explain rv-explain-err">Не удалось получить объяснение (LLM недоступен). Жалобы ниже — для ручного разбора.</div>}
       <div style={{marginTop:6}}>
         {drillBusy?<><Skel h={70}/><div style={{height:8}}/><Skel h={70}/></>:
          !drillItems||!drillItems.length?<RvNote/>:
-         drillItems.map((r,i)=><RvReview key={i} r={r} onOpen={()=>setModalRev(r)}/>)}
+         <div className="rv-clist">{drillItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
+           read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="drill"&&rd.idx===i}
+           onOpen={()=>openReader(drillItems,i,drill.label,"drill")} onCase={()=>addCase(r)}/>)}</div>}
       </div>
     </RvModal>}
+    {/* Читалка поверх — из групп, срезов, журнала, похожих и на узком экране */}
+    {rd&&!split&&rdItem&&<RvModal side="right" wide sheet bare title="Жалоба" onClose={()=>setRd(null)}>
+      {close=><RvReader r={rdItem} {...rdNav} showBank onClose={close}
+        onCase={()=>addCase(rdItem)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}
+        onBack={rd.back?()=>setRd(rd.back):null}/>}</RvModal>}
+    {pick&&<RvCasePick items={pick} onClose={()=>setPick(null)} onDone={onPicked}/>}
   </div>;
 }
 
@@ -3769,7 +5193,7 @@ function TrustMarks({score}){
   const tier = v>=0.85 ? "h" : v>=0.55 ? "m" : "l";
   const marks = v>=0.85 ? "●●●" : v>=0.55 ? "●●○" : v>0 ? "●○○" : "○○○";
   return <span className={`dr-trust-marks dr-trust-marks-${tier}`}
-               title={`trust ${v.toFixed(2)}`}>{marks}</span>;
+               title={`доверие ${v.toFixed(2).replace(".",",")}`}>{marks}</span>;
 }
 
 // Словарь должен совпадать с тем, что реально присылает разбор источников
@@ -3777,6 +5201,7 @@ function TrustMarks({score}){
 // а здесь их не было: регуляторный источник подписывался сырым «regulatory»,
 // и счётчик официальных источников в шапке всегда показывал ноль.
 const SOURCE_KIND_LABELS = {
+  auditlens:     "Данные AuditLens",
   bank_official: "Официальный сайт",
   regulator:     "Регулятор",
   regulatory:    "Регулятор",
@@ -3801,7 +5226,7 @@ function TrustDots({score}){
   if(!isFinite(w))return null;
   const lvl=w>=0.9?3:w>=0.7?2:w>=0.5?1:0;
   const label=w>=0.9?"первоисточник":w>=0.7?"проверенный":w>=0.5?"с оговоркой":"ниже порога";
-  return <span className="trust-dots" title={`доверие ${w.toFixed(2)} — ${label}`}>
+  return <span className="trust-dots" title={`доверие ${w.toFixed(2).replace(".",",")} — ${label}`}>
     {[1,2,3].map(i=><i key={i} className={i<=lvl?"on":""}/>)}
   </span>;
 }
@@ -3828,7 +5253,9 @@ const formatRelDate=(iso)=>{
     return d.toLocaleDateString("ru-RU",{year:"numeric",month:"short",day:"numeric"});
   }catch{return "";}
 };
-const domainOf=(url)=>{try{return new URL(url).hostname.replace(/^www\./,"");}catch{return "";}};
+// Источник отчёта из данных самого AuditLens — адрес вида «#reviews?…» (срез вкладки)
+const domainOf=(url)=>{if(String(url||"").startsWith("#"))return "AuditLens";
+  try{return new URL(url).hostname.replace(/^www\./,"");}catch{return "";}};
 
 // ─── Citation tooltip — appears on hover with 200ms delay.
 //     Premium: показываем не только метаданные, но и реальный excerpt
@@ -3953,8 +5380,12 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
             source_kind: s.source_kind, trust_score: s.trust_score,
             fetched_at: s.fetched_at, headings_path: s.headings_path,
             // Передаём дословную выдержку — чтобы в PDF под источником была
-            // та же цитата-доказательство, что в тултипе UI (item 62).
-            excerpts: s.excerpts,
+            // та же цитата-доказательство, что в тултипе UI (item 62). У отчёта
+            // (deep) выдержек нет — есть факты с дословными цитатами: берём их,
+            // иначе под источником в PDF было пусто.
+            excerpts: s.excerpts || (s.facts || []).map(f => f && f.verbatim)
+              .filter(Boolean).slice(0, 6),
+            domain: s.domain,
           })),
           meta: {
             audit_id: auditId,
@@ -3969,9 +5400,9 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           // (то же что VerificationBanner в UI), а не как сырой markdown.
           verification: verification ? {
             unverified: (Array.isArray(verification.unverified)
-              ? verification.unverified : []).map(u => ({
-                claim: u.claim, issue: u.issue
-              })),
+              ? verification.unverified : []).map(u => (u && typeof u === "object")
+                ? ({claim: u.claim, issue: u.issue})
+                : ({claim: `число ${u}`, issue: "не найдено в источнике рядом с цитатой — сверить вручную"})),
             unanswered: verification.unanswered || [],
             critic_failed: verification.critic_failed === true,
           } : null,
@@ -4204,7 +5635,7 @@ function DeepConsole({m, loading, elapsed}){
     : s==="running"
       ? {background:"var(--accent)",borderColor:"var(--accent)",boxShadow:"0 0 0 4px var(--accent-soft)"}
       : {background:"transparent",borderColor:"var(--hair-2)"};
-  const titleStyle=(s)=> s==="pending" ? {color:"var(--ink-4)",fontWeight:450}
+  const titleStyle=(s)=> s==="pending" ? {color:"var(--ink-3)",fontWeight:450}
                        : s==="running" ? {color:"var(--ink)",fontWeight:600}
                        : {color:"var(--ink)",fontWeight:500};
   return <div className="dr-con-wrap">
@@ -4339,7 +5770,7 @@ function ClaimCheckRow({claimCheck, verification, sourcesCount}){
     </span>}
     {dropped>0 && <span className="dr-meta-pill warn">
       <span className="dot"/><b>{dropped}</b> отфильтровано
-        <span style={{color:"var(--ink-4)",marginLeft:6}}>(защита от галлюцинаций)</span>
+        <span style={{color:"var(--ink-3)",marginLeft:6}}>(защита от галлюцинаций)</span>
     </span>}
     {unver>0 && <span className="dr-meta-pill warn">
       <span className="dot"/><b>{unver}</b> требуют ручной проверки
@@ -4428,7 +5859,9 @@ function VerificationBanner({verification}){
     <div className="dr-verify dr-verify-warn">
       <div className="dr-verify-head">{u.length} {word} ручной проверки</div>
       <ul className="dr-verify-list">
-        {u.map((it,i)=><li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>)}
+        {u.map((it,i)=>(it && typeof it === "object")
+          ? <li key={i}><strong>«{it.claim}»</strong> — {it.issue}</li>
+          : <li key={i}><strong>число {String(it)}</strong> — не найдено в источнике рядом с цитатой, сверить вручную</li>)}
       </ul>
     </div>
   </React.Fragment>;
@@ -4545,7 +5978,7 @@ function ChartCanvas({spec, sources}){
             const v = ds.data[i];
             if(v==null) return;
             ctx.save();
-            ctx.font = "500 10.5px 'JetBrains Mono', monospace";
+            ctx.font = "500 11px Geist, Inter, system-ui, sans-serif";
             ctx.fillStyle = INK;
             ctx.textAlign = horizontal ? "left" : "center";
             ctx.textBaseline = horizontal ? "middle" : "bottom";
@@ -4577,7 +6010,7 @@ function ChartCanvas({spec, sources}){
         else{c2.moveTo(area.left,px);c2.lineTo(area.right,px);}
         c2.stroke();
         c2.setLineDash([]);
-        c2.font="500 9.5px 'JetBrains Mono', monospace"; c2.fillStyle=INK3;
+        c2.font="500 11px Geist, Inter, system-ui, sans-serif"; c2.fillStyle=INK3;
         const t=((rl.label||"")+" "+fmtVal(+rl.value)).trim();
         if(horizontal) c2.fillText(t, Math.min(px+5,area.right-60), area.top+10);
         else c2.fillText(t, area.left+5, Math.max(px-5,area.top+10));
@@ -4600,7 +6033,7 @@ function ChartCanvas({spec, sources}){
           c2.save();
           c2.beginPath(); c2.arc(cx,y,9,0,Math.PI*2);
           c2.fillStyle=posColor(lb,i); c2.fill();
-          c2.font="600 8px 'JetBrains Mono', monospace"; c2.fillStyle=PAPER;
+          c2.font="600 11px Geist, Inter, system-ui, sans-serif"; c2.fillStyle=PAPER;
           c2.textAlign="center"; c2.textBaseline="middle";
           c2.fillText(inits(lb),cx,y+0.5);
           c2.font="500 10.5px Geist, sans-serif";
@@ -4709,14 +6142,23 @@ const TOOL_LABELS = {
   get_bank_features:    "Условия банка",
 };
 
+// Одинаковые шаги агента подряд — одним «Поиск жалоб ×4»: список из повторов
+// («Навык, Навык, Навык, Навык») ничего не говорит пользователю.
+function collapseTools(tools){
+  const steps=[];
+  for(const t of tools||[]){const l=TOOL_LABELS[t]||t, p=steps[steps.length-1];
+    if(p&&p.lbl===l)p.n++; else steps.push({lbl:l,n:1});}
+  return steps;
+}
+
 function ToolsTimeline({tools, active}){
   if(!tools||!tools.length) return null;
+  const steps=collapseTools(tools);
   return <div className="tools-tl">
-    {tools.map((t,i)=>{
-      const lbl = TOOL_LABELS[t] || t;
-      const isLast = i===tools.length-1;
+    {steps.map(({lbl,n},i)=>{
+      const isLast = i===steps.length-1;
       return <span key={i} className={`tools-tl-step${active&&isLast?" tools-tl-active":""}`}>
-        <span className="tools-tl-label">{lbl}</span>
+        <span className="tools-tl-label">{lbl}{n>1?` ×${n}`:""}</span>
         {!isLast && <span className="tools-tl-arrow">·</span>}
       </span>;
     })}
@@ -4948,22 +6390,22 @@ const CP_CSS=`
   transition:transform .22s cubic-bezier(.2,0,0,1),opacity .2s ease;}
 .cp-ov.in .cp{transform:none;opacity:1;}
 .cp-search{display:flex;align-items:center;gap:11px;padding:16px 18px;border-bottom:1px solid var(--hair);}
-.cp-search>svg{color:var(--ink-4);flex:none;}
+.cp-search>svg{color:var(--ink-3);flex:none;}
 .cp-search input{flex:1;border:0;background:none;font-size:16px;line-height:1.3;color:var(--ink);
   font-family:'Geist','Inter',sans-serif;letter-spacing:-.01em;}
 .cp-search input::placeholder{color:var(--ink-4);}
 .cp-search input:focus{outline:none;}
-.cp-esc{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);
-  border:1px solid var(--hair);border-radius:5px;padding:3px 7px;flex:none;}
+.cp-esc{font-family:inherit;font-size:11px;color:var(--ink-3);
+  border:1px solid var(--hair);border-radius:5px;padding:3px 7px;flex:none;font-variant-numeric:tabular-nums}
 .cp-seg{display:flex;gap:3px;padding:9px 14px 5px;}
 .cp-seg button{font-size:12px;color:var(--ink-3);padding:5px 11px;border-radius:7px;display:flex;
   align-items:center;gap:7px;transition:background .14s,color .14s;}
 .cp-seg button:hover{color:var(--ink-2);}
-.cp-seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:500;}
-.cp-seg .n{font-family:'JetBrains Mono',monospace;font-size:10px;font-variant-numeric:tabular-nums;opacity:.75;}
+.cp-seg button.on{background:var(--accent-soft);color:var(--accent-ink);font-weight:500;}
+.cp-seg .n{font-family:inherit;font-size:11px;font-variant-numeric:tabular-nums;opacity:.75;}
 .cp-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:3px 8px 10px;}
-.cp-group{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--ink-4);padding:13px 10px 5px;}
+.cp-group{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);padding:13px 10px 5px;font-variant-numeric:tabular-nums}
 .cp-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:9px;cursor:pointer;
   scroll-margin:10px;transition:background .12s;}
 .cp-row:active{transform:scale(.97);}
@@ -4975,23 +6417,23 @@ const CP_CSS=`
 .cp-t{font-size:13.5px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cp-p{font-size:12px;line-height:1.35;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
 .cp-meta{display:flex;align-items:center;gap:9px;flex:none;}
-.cp-time{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.cp-time{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .cp-acts{display:none;gap:2px;}
 .cp-row:hover .cp-acts,.cp-row.sel .cp-acts{display:flex;}
-.cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-4);display:grid;place-items:center;
+.cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-3);display:grid;place-items:center;
   transition:background .12s,color .12s;}
 .cp-acts button:hover{background:var(--paper-2);color:var(--ink);}
 .cp-acts button.on{color:var(--accent);}
 .cp-banks{display:flex;gap:4px;}
-.cp-bank{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.03em;
-  color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;}
+.cp-bank{font-family:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .cp-owner{font-size:11px;color:var(--accent);white-space:nowrap;}
-.cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-4);text-align:center;}
+.cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-3);text-align:center;}
 .cp-empty>svg{opacity:.45;}
 .cp-empty .t{font-size:14px;color:var(--ink-3);text-wrap:balance;max-width:320px;line-height:1.5;}
-.cp-empty .h{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);}
+.cp-empty .h{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .cp-foot{display:flex;align-items:center;gap:18px;padding:10px 16px;border-top:1px solid var(--hair);
-  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);}
+  font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .cp-foot span{display:inline-flex;align-items:center;gap:5px;}
 .cp-foot kbd{border:1px solid var(--hair);border-radius:4px;padding:1px 5px;color:var(--ink-3);
   min-width:16px;text-align:center;line-height:1.5;}
@@ -5001,20 +6443,22 @@ const CP_CSS=`
   box-shadow:var(--shadow-1);transition:border-color .14s,color .14s,transform .1s;}
 .hist-btn:hover{border-color:var(--ink-4);color:var(--ink);}
 .hist-btn:active{transform:scale(.97);}
-.hist-btn kbd{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);
+.hist-btn kbd{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-3);
   border:1px solid var(--hair);border-radius:4px;padding:0 4px;}
 /* welcome: «Продолжить» — недавние диалоги */
-.aw-recent{margin-top:30px;width:100%;max-width:640px;}
+.aw-recent{width:100%;}
 .aw-recent-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
-.aw-recent-h .l{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);}
-.aw-recent-h button{font-size:11.5px;color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;transition:color .12s;}
-.aw-recent-h button:hover{color:var(--accent);}
+.aw-recent-h h2{margin:0;}
+.aw-recent-h .l{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.aw-recent-h button{min-height:24px;font-size:12px;font-weight:500;color:var(--select);display:inline-flex;align-items:center;gap:5px;transition:color .12s;}
+.aw-recent-h button:hover{text-decoration:underline;text-underline-offset:3px;}
 .aw-recent-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 .aw-rec{text-align:left;padding:11px 13px;border:1px solid var(--hair);background:var(--surface);border-radius:10px;
   display:flex;flex-direction:column;gap:3px;transition:border-color .14s,transform .12s,box-shadow .14s;min-width:0;}
 .aw-rec:hover{border-color:var(--ink-4);transform:translateY(-2px);box-shadow:var(--shadow-1);}
 .aw-rec .t{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.aw-rec .m{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);font-variant-numeric:tabular-nums;}
+.aw-rec .m{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
+@media(pointer:coarse){.aw-recent-h button{min-height:44px}}
 `;
 
 // SVG-иконки (единый штрих, оптически выверенные)
@@ -5184,7 +6628,9 @@ function AIPage(){
   useEffect(()=>{ try{window.dispatchEvent(new CustomEvent("al-ai-state",
     {detail:{running:loading}}));}catch{} },[loading]);
   const[histOpen,setHistOpen]=useState(false);           // command palette истории
-  const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome
+  const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome (без повторов)
+  const[sessAll,setSessAll]=useState([]);                // вся история — для «вы уже спрашивали»
+  const[dayIns,setDayIns]=useState(null);                // поводы дня из выпуска «Обзора»
   const[elapsed,setElapsed]=useState(0);                 // таймер прогона deep
   const runStartRef=useRef(0);
   const feedRef=useRef();
@@ -5194,8 +6640,33 @@ function AIPage(){
   // Недавние диалоги для welcome-экрана (обновляются при возврате к пустой ленте).
   useEffect(()=>{
     if(!msgs.some(m=>m.role==="user"))
-      apiFetch("/api/chat/sessions").then(d=>setRecent((d.sessions||[]).slice(0,4))).catch(()=>{});
+      apiFetch("/api/chat/sessions").then(d=>{
+        const all=d.sessions||[]; setSessAll(all);
+        // один и тот же вопрос, заданный несколько раз, — одна строка с последней сессией
+        const groups=new Map();
+        const ok=x=>!!(x.report_id||x.n_answers>0);
+        for(const x of all){const k=awNorm(x.first_q||x.title).slice(0,90)||("#"+x.session_id);
+          const g=groups.get(k);
+          // открываем попытку с ответом, даже если последняя оборвалась
+          if(g){const n=g.n_same+1; if(!ok(g)&&ok(x))groups.set(k,{...x,n_same:n}); else g.n_same=n; continue;}
+          groups.set(k,{...x,n_same:1});}
+        setRecent([...groups.values()].slice(0,4));
+      }).catch(()=>{});
   },[msgs]);
+  // поводы дня: тот же выпуск, что на «Обзоре», и тот же готовый вопрос, что у «Спросить ИИ»
+  useEffect(()=>{
+    apiFetch("/api/overview/digest").then(d=>{
+      const ins=(((d.sections||{}).headline||{}).payload||{}).insights||[];
+      setDayIns(ins.filter(i=>i&&i.ai_prompt&&i.title).slice(0,2));
+    }).catch(()=>setDayIns([]));
+  },[]);
+  // шаблон или повод дня → в поле вопроса (не отправляем); slot выделяем, чтобы сразу вписать своё
+  const fillQ=(text,slot)=>{
+    setQ(text);
+    setTimeout(()=>{const el=inputRef.current; if(!el)return; el.focus();
+      const i=slot?text.indexOf(slot):-1;
+      if(i>=0)el.setSelectionRange(i,i+slot.length); else el.setSelectionRange(text.length,text.length);},30);
+  };
   // prefill из «Обзора» (✦ Спросить ИИ): композер заполняется, но НЕ отправляется —
   // пользователь видит и правит промпт (контроль + экономия токенов)
   useEffect(()=>{
@@ -5644,7 +7115,7 @@ function AIPage(){
               История <kbd>⌘K</kbd>
             </button>
           </div>}
-        {isEmpty && <AiWelcome onPick={send} recent={recent} onOpenHistory={()=>setHistOpen(true)} onLoadSession={openSession}/>}
+        {isEmpty && <AiWelcome onFill={fillQ} recent={recent} dayIns={dayIns} onOpenHistory={()=>setHistOpen(true)} onLoadSession={openSession}/>}
         {!isEmpty && msgs.map((m,i)=>{
           if(m.role==="clarify"){
             return <div key={i} className="chat-msg ai">
@@ -5751,10 +7222,10 @@ function AIPage(){
             <div className="who">AuditLens AI{m.engine==="hermes"?" · Hermes ✦":""}</div>
             {m.tools&&m.tools.length>0 &&
               <div className="quick-tools">
-                {m.tools.map((t,ti)=>(
+                {collapseTools(m.tools).map(({lbl,n},ti,arr)=>(
                   <span key={ti} className="quick-tool">
-                    <span className="quick-tool-dot" style={ti===m.tools.length-1&&thinking?{background:"var(--accent)",animation:"pulse 1.4s ease-in-out infinite"}:null}/>
-                    {TOOL_LABELS[t]||t}
+                    <span className="quick-tool-dot" style={ti===arr.length-1&&thinking?{background:"var(--accent)",animation:"pulse 1.4s ease-in-out infinite"}:null}/>
+                    {lbl}{n>1?<span className="quick-tool-n"> ×{n}</span>:null}
                   </span>))}
               </div>}
             {thinking
@@ -5789,17 +7260,21 @@ function AIPage(){
       {isRunning &&
         <div className="al-runbar">
           <span className="al-runbar-dot"/>
-          <span className="al-runbar-text">Идёт исследование — обычно 60–120с на реальных данных</span>
+          <span className="al-runbar-text">Идёт исследование — обычно 5–10 минут</span>
           <span className="al-runbar-el mono">{fmtEl(elapsed)}</span>
           <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current;if(el){stickRef.current=true;el.scrollTo({top:el.scrollHeight,behavior:"smooth"});}}}>Показать отчёт →</button>
         </div>}
       {showComposer &&
       <div className="composer-dock">
         <div className="composer-inner">
+          {isEmpty&&(()=>{const n=awNorm(q); if(n.length<18)return null;
+            const hit=sessAll.find(x=>{const f=awNorm(x.first_q||x.title); return f&&(x.n_answers>0||x.report_id)&&(f===n||(n.length>=30&&f.startsWith(n.slice(0,60))));});
+            return hit?<div className="aw-dup" role="status">Вы уже спрашивали это {fmtHistTime(hit.updated_at)} —
+              <button type="button" onClick={()=>openSession(hit.session_id)}>открыть {hit.report_id?"отчёт":"ответ"}</button></div>:null;})()}
           <div className="chat-input-wrap">
             {deepMode && <div className="composer-accent"/>}
             <textarea ref={inputRef} className="chat-textarea" rows={1}
-              placeholder={deepMode?"Опишите задачу для глубокого исследования…":"Спросите об условиях, ставках, рисках или позиции Сбера…"}
+              placeholder={deepMode?"Опишите задачу для глубокого исследования…":"Спросите о продукте, жалобах, регулировании или новости…"}
               value={q} onChange={e=>setQ(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
             <div className="composer-bar">
@@ -5807,7 +7282,7 @@ function AIPage(){
                 <button className={"seg-btn"+(!deepMode?" on":"")} onClick={()=>setDeepMode(false)} disabled={loading}>Быстрый</button>
                 <button className={"seg-btn"+(deepMode?" on":"")} onClick={()=>setDeepMode(true)} disabled={loading} title="Deep Research: планировщик → мульти-агент → проверка фактов"><span className="seg-dot"/>Deep Research</button>
               </div>
-              <span className="composer-hint">{deepMode?"планировщик · мульти-агент · проверка фактов":"агент Hermes · БД, новости, веб"}</span>
+              <span className="composer-hint">{deepMode?"отчёт с источниками · обычно 5–10 мин":"быстрый ответ · обычно меньше минуты"}</span>
               <span className="composer-kbd">Enter ↵</span>
               {loading
                 ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
@@ -5821,7 +7296,6 @@ function AIPage(){
                   </button>}
             </div>
           </div>
-          <div className="composer-note">Внутренний контур · данные не покидают периметр · Llama 3.3 70B</div>
         </div>
       </div>}
     </div>
@@ -5837,7 +7311,7 @@ function MethodNote({title, children}){
   return <div className="method-note">
     <button type="button" className="method-note-btn" onClick={()=>setOpen(o=>!o)}
             aria-expanded={open}>
-      <span className="method-note-mark">?</span>{title}
+      <span className="method-note-mark" aria-hidden="true"><RvIco s={15} d={<><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.6v.4"/></>}/></span>{title}
       <span className="method-note-chev">{open?"свернуть":"как это считается"}</span>
     </button>
     {open&&<div className="method-note-body">{children}</div>}
@@ -5888,9 +7362,7 @@ function BanksPage(){
   if(err)return <ErrState msg={err}/>;
 
   return <div className="fade-in">
-    <header style={{marginBottom:24}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Банки · рейтинг у {rated.length} из {banks.length} в справочнике</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Рейтинги и репутация</h1>
+    <PageHead eyebrow={`Банки · рейтинг у ${fmtNum(rated.length)} из ${fmtNum(banks.length)} в справочнике`} title="Рейтинги и репутация">
       <MethodNote title="Как считаются балл, место и доля решённых">
         <p><b>Балл и место</b> считает banki.ru, мы их только показываем. Балл — средневзвешенная оценка
           пользователей за последние 12 месяцев: учитываются отзывы, прошедшие проверку площадкой, свежие
@@ -5906,17 +7378,17 @@ function BanksPage(){
         <p className="t-cap">Расхождение с сайтом banki.ru объясняется срезом: мы показываем состояние
           на дату сбора, а площадка — на сейчас.</p>
       </MethodNote>
-      <p className="t-cap" style={{maxWidth:"72ch"}}>Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
+      <p className="ph-meta">Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
         по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать во вкладке «Отзывы».
         {freshest>0&&<> Данные рейтинга на {fmtDateMsk(new Date(freshest).toISOString())}.</>}</p>
-    </header>
+    </PageHead>
     <div className="filter-row">
       <div className="search-wrap">
         <Ic.search/>
         <input className="input" placeholder="Поиск банка…" value={q} onChange={e=>setQ(e.target.value)}/>
       </div>
     </div>
-    <div className="surface" style={{overflow:"hidden"}}>
+    <div className="surface" style={{overflowX:"auto"}}>
       {!sorted.length?<EmptyState text="Нет данных о банках. Запустите сбор данных."/>:
       <table className="m-cards">
         <thead><tr>
@@ -5948,31 +7420,31 @@ function BanksPage(){
                     {/* технический слаг-заглушку (unknown_…) не показываем */}
                     {b.slug&&!/^unknown_/.test(b.slug)&&
                       <div className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{b.slug}</div>}
-                    {stale&&<div className="mono" style={{fontSize:10,color:"var(--warn)"}}
+                    {stale&&<div className="mono" style={{fontSize:11,color:"var(--warn-ink)"}}
                       title="Банк выпал из выдачи рейтинга — показано последнее известное значение">
                       рейтинг на {fmtDateMsk(b.rating_at)}</div>}
                   </div>
                 </div>
               </td>
               <td data-label="БАЛЛ · МЕСТО" className="right mono tnum">
-                {score>0?<>{score.toFixed(1)}
+                {score>0?<>{score.toFixed(1).replace(".",",")}
                   {b.place?<span style={{color:"var(--ink-3)"}}> · №{b.place}</span>:null}</>
-                  :<span style={{color:"var(--ink-4)"}}>—</span>}
+                  :<span style={{color:"var(--ink-3)"}}>—</span>}
               </td>
               <td data-label="СР. ОЦЕНКА" className="right">
                 <span className="serif" style={{fontSize:22,fontWeight:400,color:grade>=4?"var(--pos)":grade>=3.5?"var(--warn)":"var(--neg)"}}>
-                  {grade>0?grade.toFixed(2):"—"}
+                  {grade>0?grade.toFixed(2).replace(".",","):"—"}
                 </span>
               </td>
               <td data-label="ОТЗЫВОВ" className="right mono tnum">
                 {b.total_reviews?<>{fmtNum(b.total_reviews)}
-                  {b.reviews_year?<div style={{fontSize:10,color:"var(--ink-4)"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
-                  :<span style={{color:"var(--ink-4)"}}>—</span>}
+                  {b.reviews_year?<div style={{fontSize:11,color:"var(--ink-3)",whiteSpace:"nowrap"}}>{fmtNum(b.reviews_year)} за год</div>:null}</>
+                  :<span style={{color:"var(--ink-3)"}}>—</span>}
               </td>
-              <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${solved}%`:"—"}</td>
+              <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${String(solved).replace(".",",")}%`:"—"}</td>
               <td data-label="У НАС" className="right mono tnum">
                 {b.own_reviews?<span style={{color:"var(--accent)"}} title={b.own_last_dt?`свежий отзыв ${fmtDateMsk(b.own_last_dt)}`:""}>
-                  {fmtNum(b.own_reviews)}</span>:<span style={{color:"var(--ink-4)"}}>—</span>}
+                  {fmtNum(b.own_reviews)}</span>:<span style={{color:"var(--ink-3)"}}>—</span>}
               </td>
             </tr>;
           })}
@@ -6371,15 +7843,8 @@ function SourcesPage(){
   const isAdmin=!!(props_&&props_.is_admin);
 
   return <div className="fade-in">
-    <header style={{marginBottom:22}}>
-      <div className="eyebrow" style={{marginBottom:6}}>§ Источники · доверие и покрытие</div>
-      <h1 className="t-h" style={{marginBottom:6}}>Откуда инструмент берёт данные</h1>
-      <p className="t-cap" style={{maxWidth:"74ch"}}>
-        Для каждого раздела — свой набор источников и своя планка доверия. Здесь видно,
-        кто участвует в выводах, и можно предложить источник, которого не хватает:
-        требования к нему у каждого раздела отдельные.
-      </p>
-    </header>
+    <PageHead eyebrow="Источники · доверие и покрытие" title="Откуда инструмент берёт данные"
+      meta="Для каждого раздела — свой набор источников и своя планка доверия. Здесь видно, кто участвует в выводах, и можно предложить источник, которого не хватает: требования к нему у каждого раздела отдельные."/>
 
     <div className="src-grid">
       {(cat.purposes||[]).map(p=>
@@ -6406,7 +7871,7 @@ function SourcesPage(){
             <td data-label="Статус">
               <span className={"badge "+(p.status==="approved"?"pos":p.status==="rejected"?"neg":"warn")}>
                 {SRC_STATUS_RU[p.status]||p.status}</span>
-              <div className="t-cap" style={{fontSize:10}}>{fmtDateMsk(p.created_at)}</div>
+              <div className="t-cap" style={{fontSize:11}}>{fmtDateMsk(p.created_at)}</div>
             </td>
             {isAdmin&&<td data-label="Автор" className="t-cap">{p.proposer_name||p.proposed_by}</td>}
             <td className="right">
@@ -6674,12 +8139,12 @@ function KbDocCard({documentId,onClose}){
     <a className="btn btn-sm kb-card-open" href={doc.url} target="_blank"
        rel="noopener noreferrer">Открыть первоисточник ↗</a>
 
-    <div className="kb-tabs">
+    <div className="ptabs kb-ptabs" role="tablist" aria-label="Документ">
       {[["about","Текст"],["rev","История"],["case","В дело"]].map(([k,l])=>
-        <button key={k} className={"kb-tab"+(tab===k?" on":"")}
+        <button key={k} role="tab" aria-selected={tab===k} className={"ptab"+(tab===k?" on":"")}
                 onClick={()=>setTab(k)}>{l}
           {k==="rev"&&(d.revisions||[]).length>1&&
-            <i>{d.revisions.length}</i>}</button>)}
+            <span className="ptab-n">{d.revisions.length}</span>}</button>)}
     </div>
 
     {tab==="about"&&<div className="kb-preview">
@@ -6771,57 +8236,176 @@ function KbCoverage({onPick}){
 }
 
 // ─── Дела ────────────────────────────────────────────────────────────────────
-function KbCases({onClose,onOpenDoc}){
-  const[list,setList]=useState(null);
-  const[open,setOpen]=useState(null);
-  const[cur,setCur]=useState(null);
-  const load=()=>apiFetch("/api/cases").then(d=>setList(d.cases||[])).catch(()=>setList([]));
-  // именно ()=>{load()}, а не useEffect(load,[]): load возвращает промис,
-  // и React принял бы его за функцию очистки — падение при уходе со страницы
-  useEffect(()=>{load();},[]);
-  useEffect(()=>{ if(open)apiFetch(`/api/cases/${open}`).then(setCur).catch(()=>{}); },[open]);
+// Одно окно на «Базу знаний» и «Отзывы»: в деле документы и жалобы вперемешку.
+// Дело можно открыть команде и вести вместе, к каждому материалу — комментарий,
+// разбор моделью, выгрузка в Excel и Word.
+// Жалоба дела — в виде карточки ленты: та же разметка, те же признаки
+const rvCaseCard=it=>{const r=it.review||{};
+  return {url:it.url,date:r.date,bank:r.bank,city:r.city,product:r.product,source:r.source,text:it.title||"",
+    ann:(r.summary||r.issue)?{summary:r.summary,quote:r.quote,esc:r.esc,esc_to:r.esc_to||[],
+      vulnerable:r.vulnerable||[],no_consent:r.no_consent,amount:r.amount}:null,
+    themes:r.issue_label?[{key:r.issue,label:r.issue_label,short:r.issue_label,risk:r.risk}]:[]};};
 
-  const drop=async(itemId)=>{
-    await apiDel(`/api/cases/${open}/items/${itemId}`);
-    apiFetch(`/api/cases/${open}`).then(setCur);
-  };
-
-  if(open&&cur)return <RvModal side="right" title={cur.title}
-      sub={`${(cur.items||[]).length} материалов`} onClose={()=>{setOpen(null);setCur(null);}}>
-    {cur.note&&<p className="t-cap">{cur.note}</p>}
-    <div className="kb-case-acts">
-      <a className="btn btn-sm" href={`/api/cases/${open}/export.csv`}>Выгрузить CSV</a>
-    </div>
-    {(cur.items||[]).map(it=><div key={it.item_id} className="kb-case-item">
+function RvCaseItem({it,onDrop,onNote,onOpenDoc,onOpen}){
+  const[note,setNote]=useState(it.note||"");
+  const doc=it.kind!=="review";
+  return <div className="rv-ci">
+    {doc?<div className="kb-case-item">
       <div className="kb-case-it-h">
-        <button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc(it.ref_id)}>
-          {it.title||it.url}</button>
-        {cur.mine&&<button className="kb-case-x" onClick={()=>drop(it.item_id)}
-                           title="Убрать из дела">✕</button>}
+        <button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc&&onOpenDoc(it.ref_id)}>{it.title||it.url}</button>
       </div>
       <div className="kb-doc-meta">
         {it.bank_name&&<span className="kb-bank">{it.bank_name}</span>}
         {it.trust_score!=null&&<TrustDots score={it.trust_score}/>}
         {it.fetched_at&&<span>обход {fmtDateMsk(it.fetched_at)}</span>}
+        {it.url&&<a href={it.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(it.url)}<span className="rv-ico-in"><RvIExt s={12}/></span></a>}
+      </div></div>
+     :<RvCard r={rvCaseCard(it)} showBank onOpen={onOpen}/>}
+    <div className="rv-ci-foot">
+      <textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="комментарий аудитора…"
+        onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
+      {it.can_remove&&<button className="rv-ib" onClick={onDrop} aria-label="Убрать из дела" data-tip="убрать из дела"><RvIX s={14}/></button>}
+    </div>
+    {it.added_by&&<div className="rv-ci-by">приобщил: {it.added_by}</div>}
+  </div>;
+}
+
+function KbCases({onClose,onOpenDoc}){
+  const[list,setList]=useState(null);
+  const[open,setOpen]=useState(null);
+  const[cur,setCur]=useState(null);
+  const[newT,setNewT]=useState("");
+  const[an,setAn]=useState(null),[anBusy,setAnBusy]=useState(false),[anErr,setAnErr]=useState(null);
+  const[ren,setRen]=useState(null);
+  const[crd,setCrd]=useState(null);           // читалка жалоб дела: {list, idx}
+  // старое «дело» из браузера (до серверных дел во вкладке «Отзывы»)
+  const[legacy,setLegacy]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]");}catch{return [];}});
+  const load=()=>apiFetch("/api/cases").then(d=>setList(d.cases||[])).catch(()=>setList([]));
+  // именно ()=>{load()}, а не useEffect(load,[]): load возвращает промис,
+  // и React принял бы его за функцию очистки — падение при уходе со страницы
+  useEffect(()=>{load();},[]);
+  const reload=()=>apiFetch(`/api/cases/${open}`).then(c=>{setCur(c);setAn(c.analysis||null);}).catch(()=>{});
+  useEffect(()=>{ if(open){setCur(null);setAn(null);setAnErr(null);setRen(null);reload();} },[open]);
+
+  const drop=async(itemId)=>{ await apiDel(`/api/cases/${open}/items/${itemId}`); reload(); };
+  const saveNote=(it,v)=>{ if((it.note||"")===(v||""))return;
+    apiPatch(`/api/cases/${open}/items/${it.item_id}`,{note:v}).catch(()=>{}); };
+  const create=async()=>{ if(!newT.trim())return;
+    const r=await apiPost("/api/cases",{title:newT.trim()}).catch(()=>null);
+    setNewT(""); await load(); if(r)setOpen(r.case_id); };
+  const migrate=async()=>{
+    const r=await apiPost("/api/cases",{title:"Жалобы из браузера"}).catch(()=>null); if(!r)return;
+    await apiPost(`/api/cases/${r.case_id}/items/bulk`,{items:legacy.map(x=>({kind:"review",url:x.url,
+      title:(x.text||"").slice(0,1500)}))}).catch(()=>{});
+    try{localStorage.removeItem("al-case");}catch{}
+    setLegacy([]); await load(); setOpen(r.case_id); };
+  const runAn=async(force)=>{ setAnBusy(true);setAnErr(null);
+    try{const d=await apiPost(`/api/cases/${open}/analyze${force?"?force=1":""}`,{});setAn(d.analysis);}
+    catch{setAnErr("Модель не ответила — попробуйте ещё раз");}
+    setAnBusy(false); };
+  const team=async()=>{ await apiPost(`/api/cases/${open}/team`,{shared:!cur.shared}).catch(()=>{}); reload(); load(); };
+  const rename=async()=>{ if(ren&&ren.trim()&&ren.trim()!==cur.title)
+      await apiPatch(`/api/cases/${open}`,{title:ren.trim()}).catch(()=>{});
+    setRen(null); reload(); load(); };
+  const remove=async()=>{ if(!window.confirm(`Удалить дело «${cur.title}» со всеми материалами?`))return;
+    await apiDel(`/api/cases/${open}`); setOpen(null); setCur(null); load(); };
+  // «Продолжить в ИИ-аналитике»: в вопрос уходит состав дела — продукты и
+  // проблемы жалоб, — а аналитик ищет нормы, практику и что запросить
+  const goAI=()=>{
+    const rv=(cur.items||[]).map(i=>i.review).filter(Boolean);
+    const cnt=k=>{const m={};rv.forEach(x=>{if(x[k])m[x[k]]=(m[x[k]]||0)+1;});
+      return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k2,v])=>`${k2} (${v})`).join(", ");};
+    const banks=cnt("bank"), iss=cnt("issue_label"), prods=cnt("product");
+    bfGoAI(`По материалам аудит-дела «${cur.title}»: ${rv.length} жалоб клиентов`
+      +(banks?`, банки: ${banks}`:"")+(prods?`; продукты: ${prods}`:"")+(iss?`; главные проблемы: ${iss}`:"")
+      +". Какие требования Банка России и законодательства относятся к этим ситуациям, какова практика"
+      +" регулятора и судов по похожим случаям и что запросить у подразделения для проверки?");
+  };
+
+  // жалобы дела открываются в читалке со всем составом дела — J/K по порядку
+  const openRev=async(it)=>{
+    const urls=(cur.items||[]).filter(x=>x.kind==="review"&&x.url).map(x=>x.url);
+    const d=await apiPost("/api/reviews/by-urls",{urls}).catch(()=>null);
+    const list=(d&&d.items)||[]; const i=list.findIndex(x=>x.url===it.url);
+    if(list.length)setCrd({list,idx:Math.max(0,i)}); };
+  useEffect(()=>{ if(!crd)return;
+    const h=e=>{ if(e.target&&e.target.closest&&e.target.closest("input,textarea"))return;
+      const k=e.key.toLowerCase();
+      if(k==="j"||k==="о")setCrd(x=>x&&x.idx<x.list.length-1?{...x,idx:x.idx+1}:x);
+      if(k==="k"||k==="л")setCrd(x=>x&&x.idx>0?{...x,idx:x.idx-1}:x); };
+    document.addEventListener("keydown",h); return ()=>document.removeEventListener("keydown",h); },[!!crd]);
+  const reader=crd&&<RvModal side="right" wide sheet bare title="Жалоба" onClose={()=>setCrd(null)}>
+    {close=><RvReader r={crd.list[crd.idx]} pos={crd.idx} total={crd.list.length} ctx={cur&&cur.title} showBank
+      inCase={cur&&cur.title} onClose={close}
+      onPrev={crd.idx>0?()=>setCrd(x=>({...x,idx:x.idx-1})):null}
+      onNext={crd.idx<crd.list.length-1?()=>setCrd(x=>({...x,idx:x.idx+1})):null}
+      onOpenSim={(list,i)=>setCrd({list,idx:i})}/>}</RvModal>;
+
+  if(open&&!cur)return <RvModal side="right" title="Аудит-дело" onClose={()=>setOpen(null)}><Skel h={200}/></RvModal>;
+  if(open&&cur){
+    const items=cur.items||[], nRev=items.filter(i=>i.kind==="review").length;
+    const stale=an&&cur.analysis_items&&cur.analysis_items!==items.length;
+    return <><RvModal side="right" title={cur.title}
+      sub={`${items.length} матер.${nRev?` · жалоб ${nRev}`:""}${cur.shared?" · открыто команде":""}${!cur.mine?` · ведёт ${cur.owner}`:""}`}
+      onClose={()=>{setOpen(null);setCur(null);load();}}>
+      <button className="rv-cs-back" onClick={()=>{setOpen(null);setCur(null);load();}}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
+      {cur.note&&<p className="t-cap">{cur.note}</p>}
+      {ren!==null&&<div className="rv-cp-new"><input className="input" value={ren} autoFocus onChange={e=>setRen(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape")setRen(null);}}/>
+        <button className="btn btn-primary btn-sm" onClick={rename}>Сохранить</button></div>}
+      <div className="rv-cs-acts">
+        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.xlsx`}
+           data-tip="Excel в стиле AuditLens: дело в цифрах, графики, материалы с разметкой и комментариями">Excel</a>
+        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}
+           data-tip="Word в стиле AuditLens: обложка, разбор, графики и карточки материалов; шрифты встроены">Word</a>
+        {cur.mine&&<button className="btn btn-sm btn-ghost" onClick={team}
+          data-tip={cur.shared?"закрыть доступ коллегам":"коллеги увидят дело и смогут приобщать материалы и комментировать"}>
+          {cur.shared?"Закрыть для команды":"Открыть команде"}</button>}
+        {cur.mine&&ren===null&&<button className="btn btn-sm btn-ghost" onClick={()=>setRen(cur.title)}>Переименовать</button>}
+        {cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={remove}>Удалить</button>}
       </div>
-      {it.note&&<p className="kb-case-note-t">{it.note}</p>}
-    </div>)}
-    {!(cur.items||[]).length&&<div className="kb-empty">
-      Дело пустое. Найдите документ и нажмите «В дело» в его карточке.</div>}
-  </RvModal>;
+      {items.length>0&&<div className="rv-cs-an">
+        <div className="rv-cs-an-h">
+          <span>Разбор дела <i>ИИ по материалам, со ссылками [N]</i></span>
+          <span className="rv-cs-an-b">
+            {!an&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
+            {an&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
+            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-аналитику: нормы, практика, что запросить">продолжить в ИИ-аналитике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+          </span>
+        </div>
+        {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}
+        {an&&<div className="rv-explain">{renderMD(an)}</div>}
+      </div>}
+      {items.map((it,i)=><React.Fragment key={it.item_id}>
+        <div className="rv-ci-n mono">[{i+1}]</div>
+        <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onNote={v=>saveNote(it,v)} onOpenDoc={onOpenDoc}
+          onOpen={()=>openRev(it)}/>
+      </React.Fragment>)}
+      {!items.length&&<div className="kb-empty">
+        Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте «Отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
+    </RvModal>{reader}</>;
+  }
 
   return <RvModal side="right" title="Аудит-дела"
-      sub="подборки доказательств" onClose={onClose}>
+      sub="подборки жалоб и документов под проверку" onClose={onClose}>
+    {legacy.length>0&&<div className="rv-cs-legacy">
+      В этом браузере осталось старое аудит-дело: {legacy.length} {plural(legacy.length,"жалоба","жалобы","жалоб")}.
+      Перенесите его на сервер — там его увидят коллеги и не потеряет браузер.
+      <button className="btn btn-sm btn-primary" onClick={migrate}>Перенести в новое дело</button></div>}
+    <div className="rv-cp-new">
+      <input className="input" value={newT} onChange={e=>setNewT(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")create();}} placeholder="Новое дело: название проверки"/>
+      <button className="btn btn-sm" disabled={!newT.trim()} onClick={create}>Создать</button>
+    </div>
     {list===null?<Skel h={120}/>:!list.length?<div className="kb-empty">
       <b>Дел пока нет.</b>
-      <p>Дело — это подборка документов под одну проверку: нашли подтверждение,
-        приобщили, выгрузили в рабочий файл. Приобщать можно из карточки любого
-        документа в поиске.</p></div>:
+      <p>Дело — подборка доказательств под одну проверку: жалобы из «Отзывов» и
+        документы из «Базы знаний». Приобщили, прокомментировали, выгрузили в рабочий файл.</p></div>:
       list.map(c=><button key={c.case_id} className="kb-case-row"
           onClick={()=>setOpen(c.case_id)}>
         <span className="kb-case-row-t">{c.title}</span>
-        <span className="t-cap">{c.items} матер. · {fmtDateMsk(c.updated_at)}
-          {!c.mine&&" · от коллеги"}</span>
+        <span className="t-cap">{c.items} матер.{c.reviews?` · жалоб ${c.reviews}`:""} · {fmtDateMsk(c.updated_at)}
+          {c.shared?" · команда":""}{!c.mine?` · ${c.owner}`:""}</span>
       </button>)}
   </RvModal>;
 }
@@ -6888,19 +8472,9 @@ function KnowledgePage({params}){
   return <div className="fade-in">
     {docId&&<KbDocCard documentId={docId} onClose={closeDoc}/>}
     {cases&&<KbCases onClose={()=>setCases(false)} onOpenDoc={id=>{setCases(false);openDoc(id);}}/>}
-    <header style={{marginBottom:20,display:"flex",justifyContent:"space-between",
-                    alignItems:"flex-start",gap:16,flexWrap:"wrap"}}>
-      <div>
-        <div className="eyebrow" style={{marginBottom:6}}>§ База знаний · доказательная база</div>
-        <h1 className="t-h" style={{marginBottom:6}}>Поиск по собранным документам</h1>
-        <p className="t-cap" style={{maxWidth:"76ch"}}>
-          Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы.
-          Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит
-          вести счёт», а можно вставить «ПСК» или номер пункта договора.
-        </p>
-      </div>
-      <button className="btn btn-sm" onClick={()=>setCases(true)}>Аудит-дела</button>
-    </header>
+    <PageHead eyebrow="База знаний · доказательная база" title="Поиск по собранным документам"
+      meta="Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы. Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит вести счёт», а можно вставить «ПСК» или номер пункта договора."
+      actions={<button className="btn btn-sm" onClick={()=>setCases(true)}>Аудит-дела</button>}/>
 
     <div className="kb-bar">
       <div className="kb-input-wrap">
@@ -6955,10 +8529,10 @@ function KnowledgePage({params}){
 
     {!res&&!err&&<>
       <div className="kb-what">
-        <div className="kb-what-k"><b>{st.documents||"—"}</b><span>документов доступно поиску</span></div>
-        <div className="kb-what-k"><b>{st.fragments||"—"}</b><span>проиндексированных фрагментов</span></div>
-        <div className="kb-what-k"><b>{st.banks||"—"}</b><span>банков в архиве</span></div>
-        <div className="kb-what-k"><b>{st.fresh_30d||"—"}</b><span>обновлено за месяц</span></div>
+        <div className="kb-what-k"><b>{st.documents?fmtNum(st.documents):"—"}</b><span>документов доступно поиску</span></div>
+        <div className="kb-what-k"><b>{st.fragments?fmtNum(st.fragments):"—"}</b><span>проиндексированных фрагментов</span></div>
+        <div className="kb-what-k"><b>{st.banks?fmtNum(st.banks):"—"}</b><span>банков в архиве</span></div>
+        <div className="kb-what-k"><b>{st.fresh_30d?fmtNum(st.fresh_30d):"—"}</b><span>обновлено за месяц</span></div>
       </div>
 
       {ov&&<div className="kb-grid2">
@@ -7012,7 +8586,7 @@ function KnowledgePage({params}){
       <div className="kb-tech-kv">
         <span>Последнее пополнение</span><b>{formatRelDate(st.last_fetch)}</b>
         <span>Порог доверия для поиска</span><b>0.50</b>
-        <span>Фрагментов в индексе</span><b>{st.fragments||"—"}</b>
+        <span>Фрагментов в индексе</span><b>{st.fragments?fmtNum(st.fragments):"—"}</b>
       </div>
     </details>
   </div>;
@@ -7033,60 +8607,60 @@ function LoopholePage(){
 const AD_CSS=`
 .pu-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 22px;}
 .pu-tile{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px 12px;}
-.pu-tile .l{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-4);margin-bottom:7px;display:flex;align-items:center;gap:6px;}
+.pu-tile .l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:7px;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
 .pu-tile .v{font-family:'Source Serif 4',Georgia,serif;font-size:27px;line-height:1;}
-.pu-tile .s{font-size:10.5px;color:var(--ink-4);margin-top:5px;font-family:'JetBrains Mono',monospace;}
+.pu-tile .s{font-size:12px;color:var(--ink-3);margin-top:5px;font-family:inherit;font-variant-numeric:tabular-nums}
 .pu-tile.neg .v{color:var(--neg);}
 .pu-live{width:6px;height:6px;border-radius:50%;background:var(--pos);animation:pulse 1.8s ease infinite;}
 .pu-sec{margin-top:24px;}
 .pu-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
 @media(max-width:1000px){.pu-grid2{grid-template-columns:1fr;}}
 .pu-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;}
-.pu-card .h{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;}
+.pu-card .h{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}
 .pu-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px;}
 .pu-bar-row .lb{width:110px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .pu-bar-row .tr{flex:1;height:16px;background:var(--paper-2);border-radius:4px;overflow:hidden;}
 .pu-bar-row .fl{height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
   transition:width .5s ease;}
-.pu-bar-row .vv{width:100px;flex:none;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);}
+.pu-bar-row .vv{width:100px;flex:none;text-align:right;font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-kv{display:flex;justify-content:space-between;align-items:baseline;padding:7px 2px;border-top:1px solid var(--hair);font-size:12.5px;}
 .pu-kv:first-of-type{border-top:0;}
-.pu-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;}
+.pu-kv b{font-family:inherit;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
 .pu-heat{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:12px;}
-.pu-heat .hl{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--ink-4);align-self:center;}
+.pu-heat .hl{font-family:inherit;font-size:11px;color:var(--ink-3);align-self:center;font-variant-numeric:tabular-nums}
 .pu-heat .c{aspect-ratio:1;border-radius:2.5px;background:var(--paper-2);min-width:0;}
 .pu-tbl{width:100%;font-size:11.5px;border-collapse:collapse;}
-.pu-tbl th{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-4);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;}
+.pu-tbl th{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;font-variant-numeric:tabular-nums}
 .pu-tbl th:first-child{text-align:left;}
-.pu-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:'JetBrains Mono',monospace;
-  font-size:10.5px;text-align:right;color:var(--ink-2);}
+.pu-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:inherit;
+  font-size:12px;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .pu-tbl td:first-child{text-align:left;color:var(--ink);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .pu-tbl tr:last-child td{border-bottom:0;}
 .pu-err{display:flex;gap:9px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
 .pu-err:first-of-type{border-top:0;}
-.pu-err .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;}
-.pu-err .k{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--neg);flex:none;text-transform:uppercase;}
+.pu-err .t{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
+.pu-err .k{font-family:inherit;font-size:11px;color:var(--neg);flex:none;text-transform:uppercase;font-variant-numeric:tabular-nums}
 .pu-err .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
 .pu-feed-row{display:flex;gap:9px;align-items:center;padding:5px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
 .pu-feed-row:first-of-type{border-top:0;}
-.pu-feed-row .t{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4);flex:none;width:34px;}
-.pu-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+.pu-feed-row .t{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;width:34px;font-variant-numeric:tabular-nums}
+.pu-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);
   display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
 .pu-feed-row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
-.pu-chip{font-family:'JetBrains Mono',monospace;font-size:9.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);}
+.pu-chip{font-family:inherit;font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-chip.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
 .pu-chip.bad{color:var(--neg);border-color:color-mix(in oklab,var(--neg),transparent 70%);}
-.pu-note{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);margin-top:10px;line-height:1.6;}
+.pu-note{font-family:inherit;font-size:11px;color:var(--ink-3);margin-top:10px;line-height:1.6;font-variant-numeric:tabular-nums}
 .pu-note .acc{color:var(--accent);}
 .pu-u{display:inline-flex;align-items:center;gap:8px;font-family:'Geist','Inter',sans-serif;font-size:12.5px;color:var(--ink);}
-.pu-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+.pu-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);
   display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
-.pu-crown{font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--accent);white-space:nowrap;
+.pu-crown{font-family:inherit;font-size:11px;color:var(--accent-ink);white-space:nowrap;
   border:1px solid color-mix(in oklab,var(--accent),transparent 70%);background:var(--accent-soft);
-  border-radius:999px;padding:2px 7px;}
+  border-radius:999px;padding:2px 7px;font-variant-numeric:tabular-nums}
 .pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
 .pu-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
 .pu-team td:first-child{max-width:260px;}
@@ -7094,25 +8668,25 @@ const AD_CSS=`
 .pu-people-ctl{display:flex;align-items:center;gap:8px}
 .pu-search{font:inherit;font-size:11.5px;padding:3px 9px;border-radius:6px;
   border:1px solid var(--hair);background:var(--paper);color:var(--ink);width:210px}
-.pu-search:focus{outline:none;border-color:var(--accent)}
+.pu-search:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
 .pu-sel{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:6px;
   border:1px solid var(--hair);background:var(--paper);color:var(--ink-2)}
 .pu-tblwrap{overflow-x:auto;max-height:560px;overflow-y:auto}
 .pu-rowclick{cursor:pointer}
 .pu-rowclick:hover{background:var(--surface)}
 .pu-nm{display:block;font-weight:500}
-.pu-login{display:block;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-4)}
-.pu-badge{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;
+.pu-login{display:block;font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pu-badge{display:inline-block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
   padding:1px 5px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-3);margin-left:6px}
 .pu-badge.on{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
 .pu-badge.tod{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
-.pu-badge.off{color:var(--ink-4);border:0}
+.pu-badge.off{color:var(--ink-3);border:0}
 .pu-badge.adm{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
-.pu-pages{color:var(--ink-3);font-size:10.5px;max-width:210px}
-.pu-deep{font-style:normal;color:var(--ink-4);font-size:9.5px;margin-left:2px}
+.pu-pages{color:var(--ink-3);font-size:12px;max-width:210px}
+.pu-deep{font-style:normal;color:var(--ink-3);font-size:11px;margin-left:2px}
 .pu-badrow{background:color-mix(in oklab,var(--neg),transparent 94%)}
 .pu-qcell{max-width:420px}
-.pu-empty{color:var(--ink-4);font-size:12px;padding:10px 0}
+.pu-empty{color:var(--ink-3);font-size:12px;padding:10px 0}
 .pu-link{background:none;border:0;padding:0;font:inherit;font-size:11px;color:var(--accent);
   cursor:pointer;white-space:nowrap}
 .pu-link:hover{text-decoration:underline}
@@ -7136,43 +8710,43 @@ const AD_CSS=`
   background:var(--hair);border-bottom:1px solid var(--hair)}
 .pu-drtiles>div{background:var(--paper);padding:11px 13px;display:flex;flex-direction:column;gap:1px}
 .pu-drtiles b{font-size:17px;font-weight:500}
-.pu-drtiles span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
+.pu-drtiles span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
 .pu-drtiles .neg b{color:var(--neg)}
 .pu-drsec{padding:16px 22px;border-bottom:1px solid var(--hair)}
-.pu-drh{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);margin-bottom:8px}
+.pu-drh{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);margin-bottom:8px}
 .pu-drp{font-size:12.5px;line-height:1.55;color:var(--ink-2);margin:0 0 6px}
 .pu-drtabs{display:flex;gap:4px;padding:12px 22px 0;flex-wrap:wrap}
 .pu-days{display:flex;align-items:flex-end;gap:3px;height:56px}
 .pu-dbar{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:9px}
 .pu-dbar i{display:block;width:100%;background:var(--accent);border-radius:2px 2px 0 0;opacity:.75}
-.pu-dbar span{font-size:8.5px;color:var(--ink-4);font-family:'JetBrains Mono',monospace}
+.pu-dbar span{font-size:11px;color:var(--ink-3);font-family:inherit;font-variant-numeric:tabular-nums}
 .pu-qrow{display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:1px solid var(--hair);
   font-size:12px}
 .pu-qrow:last-child{border-bottom:0}
-.pu-qrow .at{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);flex-shrink:0}
+.pu-qrow .at{font-family:inherit;font-size:11px;color:var(--ink-3);flex-shrink:0;font-variant-numeric:tabular-nums}
 .pu-qrow .qq{flex:1;color:var(--ink-2)}
-.pu-qrow .md{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-4);flex-shrink:0}
+.pu-qrow .md{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);flex-shrink:0}
 .pu-qrow.bad{background:color-mix(in oklab,var(--neg),transparent 95%)}
 .pu-vd{flex-shrink:0}
-.pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:'JetBrains Mono',monospace}
-.pu-trail .at{color:var(--ink-4)}
+.pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:inherit;font-variant-numeric:tabular-nums}
+.pu-trail .at{color:var(--ink-3)}
 .pu-trail .k{color:var(--ink-3);width:96px}
 .pu-trail .p{color:var(--ink-2);flex:1}
-.pu-trail .d{color:var(--ink-4)}
+.pu-trail .d{color:var(--ink-3)}
 .pu-report{font-size:13px;line-height:1.6}
 .pu-cmp{padding:10px 0;border-bottom:1px solid var(--hair)}
 .pu-cmp:last-child{border-bottom:0}
 .pu-cmphead{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
-.pu-cmphead .md{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-4)}
-.pu-cmphead .at{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4)}
+.pu-cmphead .md{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
+.pu-cmphead .at{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-cmpbody{font-size:12.5px;color:var(--ink-2);margin-top:3px}
 .pu-cmpwhy{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
-.pu-cmpwhy span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--neg);
+.pu-cmpwhy span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--neg);
   border:1px solid color-mix(in oklab,var(--neg),transparent 72%);border-radius:3px;padding:1px 5px}
 .pu-cmpnote{font-size:12px;color:var(--ink-3);font-style:italic;margin-top:4px}
 .pu-msg{padding:10px 0;border-bottom:1px solid var(--hair)}
 .pu-msg:last-child{border-bottom:0}
-.pu-msghead{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-4);
+.pu-msghead{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);
   margin-bottom:4px}
 .pu-msg.user .pu-msgbody{font-size:13px;font-weight:500;color:var(--ink)}
 .pu-msg.assistant .pu-msgbody{font-size:12.5px;line-height:1.6;color:var(--ink-2)}
@@ -7201,11 +8775,11 @@ const AD_CSS=`
 .pu-reason{font-size:11.5px;color:var(--ink-2);background:var(--paper-2);
   border:1px solid var(--hair);border-radius:20px;padding:3px 10px;
   display:inline-flex;align-items:baseline;gap:6px;}
-.pu-reason.sm{font-size:10.5px;padding:2px 8px;}
+.pu-reason.sm{font-size:12px;padding:2px 8px;}
 .pu-reason.bad{border-color:color-mix(in oklab,var(--neg),transparent 60%);color:var(--neg);}
 .pu-reason.ok{border-color:color-mix(in oklab,var(--pos),transparent 60%);}
-.pu-reason i{font-style:normal;font-family:'JetBrains Mono',monospace;
-  font-size:10px;color:var(--ink-4);}
+.pu-reason i{font-style:normal;font-family:inherit;
+  font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 
 .pu-fb-seg{display:flex;gap:4px;margin-bottom:12px;}
 .pu-fb{padding:11px 13px;border-radius:9px;margin-bottom:8px;background:var(--paper-2);
@@ -7215,7 +8789,7 @@ const AD_CSS=`
 .pu-fb-h b{font-size:13px;font-weight:500;color:var(--ink);line-height:1.45;}
 .pu-fb-v{flex:none;}
 .pu-fb-m{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;
-  font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);}
+  font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-fb-m a{color:var(--accent);}
 .pu-fb-r{margin-top:7px;display:flex;gap:5px;flex-wrap:wrap;}
 .pu-fb-c{margin:7px 0 0;font-size:12.5px;color:var(--ink-2);font-style:italic;line-height:1.55;}
@@ -7226,8 +8800,8 @@ const AD_CSS=`
   background:color-mix(in oklab,var(--accent),transparent 40%);}
 .pu-chk{text-align:center;}
 .pu-chk .yes{color:var(--pos);}
-.pu-chk .no{color:var(--ink-4);}
-.pu-off{font-size:9.5px;color:var(--ink-4);border:1px solid var(--hair);
+.pu-chk .no{color:var(--ink-3);}
+.pu-off{font-size:11px;color:var(--ink-3);border:1px solid var(--hair);
   border-radius:4px;padding:0 4px;margin-left:6px;}
 
 .pu-todo{border-color:color-mix(in oklab,var(--accent),transparent 70%);}
@@ -7237,24 +8811,24 @@ const AD_CSS=`
 
 .pu-kv{display:grid;grid-template-columns:repeat(4,auto);gap:5px 20px;
   justify-content:start;font-size:12.5px;margin-bottom:4px;}
-.pu-kv span{color:var(--ink-4);}
-.pu-kv b{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-2);}
+.pu-kv span{color:var(--ink-3);}
+.pu-kv b{font-family:inherit;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .pu-kv b.neg{color:var(--neg);}
 .pu-kv-row{display:flex;justify-content:space-between;padding:5px 2px;
   border-top:1px solid var(--hair);font-size:12.5px;}
-.pu-kv-row b{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-3);}
+.pu-kv-row b{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 
 `;
 const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
   ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",sources:"Источники",
   quality:"Качество",profile:"Профиль",pulse:"Пульс"};
 const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
-  if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1)+"ч"; };
+  if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1).replace(".",",")+"ч"; };
 
 // area-график: users (заливка) + views (тонкая линия), даты по оси
 function AdArea({data,h=130}){
   const w=640, vals=(data||[]);
-  if(vals.length<2) return <div style={{color:"var(--ink-4)",fontSize:12,padding:"20px 0"}}>Данные накапливаются — график появится после пары дней жизни телеметрии.</div>;
+  if(vals.length<2) return <div style={{color:"var(--ink-3)",fontSize:12,padding:"20px 0"}}>Данные накапливаются — график появится после пары дней жизни телеметрии.</div>;
   const maxU=Math.max(...vals.map(v=>v.users||0),1);
   const maxV=Math.max(...vals.map(v=>v.views||0),1);
   const px=(i)=>i/(vals.length-1)*(w-8)+4;
@@ -7269,9 +8843,9 @@ function AdArea({data,h=130}){
     <path d={dV} fill="none" stroke="var(--ink-4)" strokeWidth="1" opacity=".55" strokeDasharray="3 3"/>
     <path d={dU} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round"/>
     <circle cx={px(vals.length-1)} cy={pyU(last.users)} r="2.6" fill="var(--accent)"/>
-    <text x="4" y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono">{dd(vals[0].d)}</text>
-    <text x={w-4} y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">{dd(last.d)}</text>
-    <text x={w-4} y="10" fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">макс {maxU} польз. · {maxV} просм.</text>
+    <text x="4" y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif">{dd(vals[0].d)}</text>
+    <text x={w-4} y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">{dd(last.d)}</text>
+    <text x={w-4} y="10" fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">макс {maxU} польз. · {maxV} просм.</text>
   </svg>;
 }
 
@@ -7306,14 +8880,14 @@ function AdDonut({parts,center,sub}){
         cum+=frac; return el;})}
       <text x="58" y="57" textAnchor="middle" fontSize="21" fontWeight="600" fill="var(--ink)"
         fontFamily="'Source Serif 4',Georgia,serif">{center}</text>
-      <text x="58" y="73" textAnchor="middle" fontSize="7.5" fill="var(--ink-4)"
-        fontFamily="'JetBrains Mono',monospace">{sub}</text>
+      <text x="58" y="73" textAnchor="middle" fontSize="10" fill="var(--ink-3)"
+        fontFamily="Geist, Inter, sans-serif">{sub}</text>
     </svg>
     <div style={{display:"flex",flexDirection:"column",gap:7}}>
       {(parts||[]).map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:9,fontSize:12}}>
         <span style={{width:9,height:9,borderRadius:3,background:p.color,flex:"none"}}/>
         <span style={{color:"var(--ink-2)"}}>{p.label}</span>
-        <b className="tnum" style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{p.value||0}</b>
+        <b className="tnum" style={{fontSize:11}}>{p.value||0}</b>
       </div>)}
     </div>
   </div>;
@@ -7325,7 +8899,7 @@ function AdCols({axis,a,b,h=118}){
   const am={};(a||[]).forEach(x=>am[x.d]=+x.n||0);
   const bm={};(b||[]).forEach(x=>bm[x.d]=+x.n||0);
   const days=(axis||[]).map(x=>x.d);
-  if(!days.length) return <div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>;
+  if(!days.length) return <div style={{color:"var(--ink-3)",fontSize:12}}>Накапливается.</div>;
   const max=Math.max(...days.map(d=>Math.max(am[d]||0,bm[d]||0)),1);
   const slot=(w-32)/days.length, bw=Math.max(3,Math.min(13,slot/2-2));
   const dd=(s)=>(s||"").slice(8,10)+"."+(s||"").slice(5,7);
@@ -7337,9 +8911,9 @@ function AdCols({axis,a,b,h=118}){
         {am[d]>0&&<rect x={x} y={h-16-Math.max(ha,2)} width={bw} height={Math.max(ha,2)} rx="2" fill="var(--accent)" opacity=".88"/>}
         {bm[d]>0&&<rect x={x+bw+2} y={h-16-Math.max(hb,2)} width={bw} height={Math.max(hb,2)} rx="2" fill="var(--ink-3)" opacity=".65"/>}
       </g>;})}
-    <text x="16" y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono">{dd(days[0])}</text>
-    <text x={w-16} y={h-3} fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">{dd(days[days.length-1])}</text>
-    <text x={w-16} y="10" fontSize="8.5" fill="var(--ink-4)" fontFamily="JetBrains Mono" textAnchor="end">макс {max}/день</text>
+    <text x="16" y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif">{dd(days[0])}</text>
+    <text x={w-16} y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">{dd(days[days.length-1])}</text>
+    <text x={w-16} y="10" fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">макс {max}/день</text>
   </svg>;
 }
 
@@ -7480,7 +9054,7 @@ function PuPersonalization({pz}){
   return <div className="pu-card pu-sec">
     <div className="h"><span>Персонализация «Для вас» · по людям</span>
       {pz.ctr!=null&&<span className="pu-chip">CTR плиток {pz.ctr}%</span>}</div>
-    {us.length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Данные копятся.</div>
+    {us.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Данные копятся.</div>
       :<table className="pu-tbl">
         <thead><tr><th>кто</th><th>сила профиля</th><th>просмотры</th><th>клики</th><th>оценок</th></tr></thead>
         <tbody>{us.map((u,i)=><tr key={i}>
@@ -7499,30 +9073,160 @@ function PuNewsQuality({q}){
   const junkPct=(r)=>r&&r.n_items?Math.round(100*r.junk/r.n_items):null;
   return <div className="pu-grid2 pu-sec">
     <div className="pu-card">
-      <div className="h"><span>Новости: LLM-судья выпуска</span>
-        {today&&<span className={"pu-chip "+(junkPct(today)>15?"bad":"ok")}>
-          сегодня мусор {junkPct(today)}%</span>}</div>
-      {s.length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
+      <div className="h"><span>Выпуск: независимый судья</span>
+        {today&&today.head!=null&&<span className={"pu-chip "+(today.head<4?"bad":"ok")}>
+          заголовок {today.head}/5</span>}</div>
+      <p className="t-cap" style={{margin:"0 0 10px"}}>
+        Рубрика — «повод для проверки аудитора розницы»: фон — ставки, тарифы, макро;
+        пропущено — сильные поводы из потока, не попавшие в выпуск.
+        {q.cards&&(q.cards.useful||q.cards.noise)?<> Аудиторы: полезно {q.cards.useful}, не по делу {q.cards.noise}.</>:null}</p>
+      {s.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>
           Судья ещё не оценил ни одного выпуска (первый прогон — в {""}
           {String(8).padStart(2,"0")}:00 МСК).</div>
         :<table className="pu-tbl">
-          <thead><tr><th>дата</th><th>позиций</th><th>мусор</th><th>погранично</th><th>ср. балл</th></tr></thead>
+          <thead><tr><th>дата</th><th>заголовок</th><th>новостей</th><th>сильных</th><th>фон</th><th>мусор</th><th>пропущено</th></tr></thead>
           <tbody>{s.slice(-10).map((r,i)=><tr key={i}>
-            <td>{(r.d||"").slice(5)}</td><td>{r.n_items}</td>
+            <td>{(r.d||"").slice(5)}</td><td>{r.head!=null?`${r.head}/5`:"—"}</td><td>{r.n_items}</td>
+            <td>{r.strong??"—"}</td><td>{r.borderline}</td>
             <td style={r.junk>0?{color:"var(--warn)"}:null}>{r.junk}{r.n_items?` (${junkPct(r)}%)`:""}</td>
-            <td>{r.borderline}</td><td>{r.avg}</td>
+            <td style={r.missed>0?{color:"var(--warn)"}:null}>{r.missed??"—"}</td>
           </tr>)}</tbody></table>}
     </div>
     <div className="pu-card">
-      <div className="h"><span>Клики по новостям · {""}14 дн</span>
-        <span className="pu-chip">{nClicks}</span></div>
-      {(q.top_clicked||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>
+      <div className="h"><span>Поток новостей · 24 ч</span>
+        <span className="pu-chip">{nClicks} кликов / 14 дн</span></div>
+      {q.stream&&<div style={{marginBottom:10}}>
+        <div className="pu-kv"><span>материалов собрано</span><b className="tnum">{q.stream.items_24h}</b></div>
+        <div className="pu-kv"><span>про розницу</span><b className="tnum">{q.stream.relevant_24h}</b></div>
+        <div className="pu-kv"><span>сильных поводов (от 7)</span><b className="tnum">{q.stream.strong_24h}</b></div>
+        {(q.stream.sources||[]).filter(x=>x.last_error).map((x,i)=><div key={i} className="pu-err">
+          <span className="k">{x.source}</span><span className="m">{x.last_error}</span></div>)}
+      </div>}
+      {q.stream&&(q.stream.yield_14d||[]).length>0&&<table className="pu-tbl" style={{marginBottom:12}}
+          title="Отдача источника: сильные — материалы событий с ценностью от 7; слабые источники исключаются по этим цифрам">
+        <thead><tr><th>источник · 14 дн</th><th>собрано</th><th>про розницу</th><th>сильных</th><th>в выпуске</th></tr></thead>
+        <tbody>{q.stream.yield_14d.map((r,i)=><tr key={i}>
+          <td>{r.source}</td><td>{r.items}</td><td>{r.relevant}</td>
+          <td style={r.items>=20&&!r.strong?{color:"var(--warn)"}:null}>{r.strong}</td><td>{r.published}</td>
+        </tr>)}</tbody></table>}
+      {(q.top_clicked||[]).length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>
           Кликов ещё нет — трекинг включён с 05.08.</div>
         :(q.top_clicked||[]).map((r,i)=><div key={i} className="pu-err">
           <span className="k">{r.n}×</span>
           <span className="m" title={r.url||""}>{(r.url||"").replace(/^https?:\/\/(www\.)?/,"").slice(0,70)}</span>
         </div>)}
     </div>
+  </div>;
+}
+
+// Качество ИИ-аналитика: регрессионный набор (вопросы по всем вкладкам с
+// эталоном из живых данных). Нужен, потому что агент учится сам — пишет себе
+// навыки, — и без замера деградацию заметил бы только аудитор.
+const PU_VERDICT={pass:["зачёт","ok"],partial:["частично",""],fail:["провал","bad"],skip:["пропуск",""]};
+// маршруты моделей Hermes (model_routes) → названия моделей
+const PU_MODEL={default:"по умолчанию",oss:"gpt-oss-120b",gpt54mini:"gpt-5.4-mini",gpt54:"gpt-5.4",
+  sonnet:"claude-sonnet-4.6",haiku:"claude-haiku-4.5",dsflash:"DeepSeek-V4-Flash",dspro:"DeepSeek-V4-Pro"};
+const PU_TRIGGER={gate:"еженедельная проверка","gate-rollback":"после отката",compare:"сравнение моделей",
+  compare2:"сравнение моделей",admin:"вручную",cli:"консоль","baseline-rescored":"до переработки"};
+function PuAgentEval(){
+  const[d,setD]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const[open,setOpen]=useState(null);
+  // режим: быстрый ответ (Hermes) или отчёт (deep research) — у каждого свой набор
+  const[eng,setEng]=useState("hermes");
+  const load=useCallback(()=>{apiFetch("/api/admin/agent-eval?engine="+eng).then(setD)
+    .catch(()=>setD({error:true}));},[eng]);
+  useEffect(()=>{setOpen(null);load();},[load]);
+  useEffect(()=>{ if(!(d&&d.running))return; const t=setInterval(load,20000); return ()=>clearInterval(t); },[d,load]);
+  const start=()=>{setBusy(true);apiPost("/api/admin/agent-eval",{engine:eng==="deep"?"deep":"quick"})
+    .then(()=>setTimeout(load,1500)).catch(()=>{}).finally(()=>setBusy(false));};
+  if(!d) return null;
+  const runs=d.runs||[], last=runs[0], cases=d.last_cases||[];
+  const prev=last&&runs.slice(1).find(r=>r.model===last.model);
+  const delta=last&&prev&&last.score!=null&&prev.score!=null?Math.round((last.score-prev.score)*10)/10:null;
+  const num=x=>x==null?"—":String(x).replace(".",",");
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>ИИ-аналитик: регрессионный набор</span>
+      <div className="seg" style={{marginLeft:12}}>
+        {[["hermes","Быстрый ответ"],["deep","Отчёт"]].map(([k,l])=>
+          <button key={k} className={"seg-btn"+(eng===k?" on":"")} onClick={()=>setEng(k)}>{l}</button>)}
+      </div>
+      {last&&<span className={"pu-chip "+(last.score>=75?"ok":last.score<50?"bad":"")}>
+        {num(last.score)} из 100{delta!=null&&delta!==0?` · ${delta>0?"+":"−"}${num(Math.abs(delta))}`:""}</span>}
+      <button className="btn" style={{marginLeft:"auto"}} disabled={busy||d.running} onClick={start}>
+        {d.running?"Идёт прогон…":"Запустить прогон"}</button></div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      Вопросы по всем вкладкам; эталон считается в момент прогона теми же функциями, что
+      рисуют вкладки. Проверки: числа, темы, запреты (внутренние адреса, служебные ключи,
+      заглушки) и судья-модель. Раз в неделю прогон проверяет самообучение агента:
+      если качество упало, навыки откатываются.</p>
+    {runs.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Прогонов ещё не было.</div>:<>
+      <table className="pu-tbl" style={{marginBottom:12}}>
+        <thead><tr><th>когда</th><th>модель</th><th>запуск</th><th>итог</th><th>зачёт</th><th>частично</th><th>провал</th><th>медиана, с</th></tr></thead>
+        <tbody>{runs.slice(0,10).map(r=><tr key={r.run_id}>
+          <td>{fyDay(r.finished_at||r.started_at)}</td><td>{PU_MODEL[r.model]||r.model}</td>
+          <td>{PU_TRIGGER[r.trigger]||r.trigger}</td>
+          <td><b className="tnum">{num(r.score)}</b></td><td>{r.n_pass}</td><td>{r.n_partial}</td>
+          <td style={r.n_fail>0?{color:"var(--neg)"}:null}>{r.n_fail}</td><td>{num(r.median_s)}</td>
+        </tr>)}</tbody></table>
+      <table className="pu-tbl">
+        <thead><tr><th>кейс</th><th>вкладка</th><th>итог</th><th>с</th><th>судья</th><th>что не так</th></tr></thead>
+        <tbody>{cases.map(c=>{const v=PU_VERDICT[c.verdict]||[c.verdict,""];
+          const bad=(c.checks||[]).filter(x=>!x.ok).map(x=>x.check+(x.detail!=null&&x.detail!==""?` (${x.detail})`:""));
+          const iss=((c.judge||{}).issues||[]).slice(0,2);
+          return <React.Fragment key={c.id}>
+            <tr onClick={()=>setOpen(open===c.id?null:c.id)} style={{cursor:"pointer"}}>
+              <td>{c.id} · {c.title}</td><td>{c.tab}</td>
+              <td><span className={"pu-chip "+v[1]}>{v[0]}</span></td>
+              <td>{num(c.seconds)}</td><td>{(c.judge||{}).score??"—"}</td>
+              <td style={{fontSize:12,color:"var(--ink-3)"}}>{c.error||[...bad,...iss].join("; ")||"—"}</td>
+            </tr>
+            {open===c.id&&c.answer&&<tr><td colSpan={6}>
+              <div style={{fontSize:12,color:"var(--ink-3)",margin:"4px 0 6px"}}>{c.question}</div>
+              <div className="chat-bubble" style={{maxWidth:"none"}}>{renderMD(c.answer)}</div></td></tr>}
+          </React.Fragment>;})}</tbody></table></>}
+  </div>;
+}
+
+// Полнота площадок отзывов: без неё падение сборщика видно только в ручном
+// аудите (к сентябрю 2026 наши сборщики принесли <1% потока, и никто не знал)
+function PuReviewSources({r}){
+  const src=r.sources||[];
+  if(r.error)return <div className="pu-card"><div className="h"><span>Площадки отзывов</span></div>
+    <div style={{color:"var(--warn)",fontSize:12}}>{r.error}</div></div>;
+  const tone=st=>st==="встал"||st==="просел"?"bad":st==="норма"?"ok":"";
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>Площадки отзывов · неделя по {rvDate(r.week_end)}</span>
+      {src.some(x=>x.status==="встал"||x.status==="просел")&&<span className="pu-chip bad">есть просадка</span>}</div>
+    <table className="pu-tbl">
+      <thead><tr><th>площадка</th><th>за 7 дн</th><th>норма</th><th>статус</th><th>последний сбор</th></tr></thead>
+      <tbody>{src.map(x=><tr key={x.source}>
+        <td>{x.label}</td><td>{x.week}</td><td>{String(x.norm).replace(".",",")}</td>
+        <td><span className={"pu-chip "+tone(x.status)}>{x.status}</span></td>
+        <td title={x.last_error||""} style={x.last_run_status==="failed"?{color:"var(--warn)"}:null}>
+          {x.last_run?`${rvDate(x.last_run)} ${x.last_run.slice(11,16)}`:"—"}{x.last_run_status==="failed"?" · ошибка":""}</td>
+      </tr>)}</tbody></table>
+    {(r.gone_banks||[]).length>0&&<p className="t-cap" style={{margin:"10px 0 0"}}>
+      Пропали из корпуса (≥20 жалоб в месяц раньше, ни одной за 45 дней):{" "}
+      {r.gone_banks.map(g=>`${g.bank} (~${g.per_month}/мес, последняя ${rvDate(g.last)})`).join(", ")}</p>}
+  </div>;
+}
+
+// Точность радара «Отзывов»: эпизоды всплесков из журнала сигналов и
+// отметки аудиторов «подтвердился / ложный»
+function PuSignalJournal({j}){
+  if(!j||j.error)return null;
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>Точность сигналов «Отзывов» · {j.days} дн</span>
+      {j.precision!=null&&<span className={"pu-chip "+(j.precision>=70?"ok":j.precision<50?"bad":"")}>{j.precision}% подтвердились</span>}</div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      Эпизод — всплеск жалоб, записанный радаром вместе со снимком жалоб. Аудиторы отмечают
+      в журнале сигналов, подтвердился ли он при проверке. Эпизодов {j.episodes}, отмечено {j.rated}
+      {j.rated?` (подтвердились ${j.confirmed}, ложных ${j["false"]})`:""}.</p>
+    {(j.by_bank||[]).length>0&&<table className="pu-tbl">
+      <thead><tr><th>банк</th><th>эпизодов</th><th>отмечено</th><th>подтвердились</th></tr></thead>
+      <tbody>{j.by_bank.map(b=><tr key={b.bank}><td>{b.bank}</td><td>{b.episodes}</td><td>{b.rated}</td>
+        <td>{b.precision!=null?b.precision+"%":"—"}</td></tr>)}</tbody></table>}
   </div>;
 }
 
@@ -7576,6 +9280,39 @@ function PuCollect({c}){
       {c.domains.map(d=><div key={d.domain} className="pu-kv-row">
         <span>{d.domain}</span><b>{d.n}</b></div>)}
     </>}
+  </div>;
+}
+
+// ── Веб-поиск и копии страниц ───────────────────────────────────────────────
+function PuSearch({s}){
+  const rows=(s||{}).backends||[], gw=(s||{}).gateway||{};
+  if(!rows.length&&!gw.enabled) return null;
+  const RU={ok:"нашёл",empty:"пусто",limited:"лимит",down:"недоступен",error:"ошибка"};
+  const NAME={"web_search:yandex":"Яндекс (шлюз) — каждый вызов",
+    "web_search_chain:yandex_gw":"Итог поиска — ответил Яндекс",
+    "web_search_chain:fleet":"Итог поиска — выручил запасной fleet",
+    "web_search_chain:none":"Итог поиска — не нашёл никто",
+    "web_read:yandex_copy":"Копии страниц · Яндекс"};
+  return <div className="pu-card">
+    <div className="h"><span>Веб-поиск</span>
+      <span className="mono">{gw.enabled?("основной: "+(gw.primary==="fleet"?"fleet":"Яндекс")):"шлюз не настроен"}
+        {gw.breaker_open?" · шлюз отключён":""}</span></div>
+    <p className="t-cap" style={{margin:"0 0 10px"}}>
+      «Лимит» и «недоступен» — запрос ушёл на запасной поиск; «пусто» — честно
+      ничего не нашлось. Копии — страницы, закрытые антиботом, прочитанные из
+      сохранённой копии Яндекса. Повторы из кэша не считаются.
+      {gw.breaker_open&&gw.breaker_reason?<><br/>Причина отключения: {gw.breaker_reason}</>:null}
+    </p>
+    {rows.map(r=>{const k=r.kind+":"+r.backend, bs=r.by_status||{};
+      return <div key={k} style={{marginBottom:10}}>
+        <div className="pu-kv"><span>{NAME[k]||k}</span>
+          <b className="tnum">{r.total}{r.p50_ok!=null?` · p50 ${r.p50_ok} мс`:""}</b></div>
+        <div className="pu-reasons">
+          {Object.keys(bs).map(st=><span key={st}
+            className={"pu-reason"+(st==="ok"?" ok":(st==="down"||st==="error"||st==="limited")?" bad":"")}>
+            {RU[st]||st}<i>{bs[st]}</i></span>)}
+        </div>
+      </div>;})}
   </div>;
 }
 
@@ -8009,7 +9746,7 @@ function PulsePage(){
               parts={[
                 {label:"исследователи · ИИ и отчёты",value:sg.researchers||0,color:"var(--accent)"},
                 {label:"читатели новостей",value:sg.readers||0,color:"var(--warn)"},
-                {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-4)"},
+                {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-3)"},
                 {label:"спящие за период",value:sg.sleepers||0,color:"var(--hair-2)"},
               ]}/>
             <div className="pu-note">
@@ -8042,6 +9779,7 @@ function PulsePage(){
     {tab==="reports"&&<PuReports days={days} onOpenReport={setRep} onOpenUser={setCard}/>}
 
     {tab==="ai"&&<>
+      <PuAgentEval/>
       <PuAiFeedback fb={m.ai_feedback||{}} onOpenReport={setRep} onOpenUser={setCard}/>
       <PuPersona p={m.persona||{}}/>
       <PuTopics t={m.topics}/>
@@ -8049,7 +9787,7 @@ function PulsePage(){
         <div className="pu-grid2">
           <div className="pu-card">
             <div className="h"><span>Страницы · {m.days} дн</span><span>просмотры · время</span></div>
-            {(m.pages||[]).length===0&&<div style={{color:"var(--ink-4)",fontSize:12}}>Пока пусто.</div>}
+            {(m.pages||[]).length===0&&<div style={{color:"var(--ink-3)",fontSize:12}}>Пока пусто.</div>}
             {(m.pages||[]).map(pg=><div key={pg.page} className="pu-bar-row">
               <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
               <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxPage)*100)+"%"}}/></span>
@@ -8073,7 +9811,10 @@ function PulsePage(){
 
     {tab==="data"&&<>
       <PuIngest ing={m.ingest||{}}/>
+      <PuReviewSources r={m.review_sources||{}}/>
+      <PuSignalJournal j={m.signal_journal}/>
       <PuCollect c={m.collect||{}}/>
+      <PuSearch s={m.search||{}}/>
       <PuNewsQuality q={m.news_quality||{}}/>
     </>}
 
@@ -8082,7 +9823,7 @@ function PulsePage(){
         <div className="pu-grid2 pu-sec">
           <div className="pu-card">
             <div className="h"><span>Латентность API · 7 дн</span><span>мс</span></div>
-            {(m.latency||[]).length===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Накапливается.</div>
+            {(m.latency||[]).length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Накапливается.</div>
               :<table className="pu-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
                 <tbody>{(m.latency||[]).map((r,i)=><tr key={i}>
                   <td title={r.path}>{(r.path||"").replace("/api/","")}</td>
@@ -8094,7 +9835,7 @@ function PulsePage(){
           <div className="pu-card">
             <div className="h"><span>Ошибки · последние</span>
               <span className={"pu-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
-            {nErr===0?<div style={{color:"var(--ink-4)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
+            {nErr===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
               :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="pu-err">
                 <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"js":"api"}</span>
                 <span className="m" title={e.msg||""}>{e.page||"—"}{e.status?" · "+e.status:""}{e.msg?" · "+e.msg:""}</span>
@@ -8134,7 +9875,7 @@ function PulsePage(){
     {sess&&<PuSessionView sid={sess} onClose={()=>setSess(null)}/>}
 
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
-                 fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"var(--ink-4)"}}>
+                 fontSize:11,color:"var(--ink-3)"}}>
       телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS ·
       открытие чужого отчёта пишется в журнал (admin_report_open)
     </div>
@@ -8153,38 +9894,39 @@ const NAV=[
 ];
 const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,profile:ProfilePage,pulse:PulsePage};
 // Номера синхронизированы с порядком в меню; итог берётся из NAV, а не хардкодом
-const PAGE_LABELS={overview:["01","Обзор"],foryou:["01","Для вас"],
-  market:["02","Рынок · позиция"],sber:["02","Рынок · позиция"],
-  reviews:["03","Отзывы"],ai:["04","ИИ-аналитик"],knowledge:["05","База знаний"],
-  loophole:["06","Уязвимости"],banks:["07","Банки"],sources:["08","Источники"],
-  profile:["·","Профиль"],pulse:["09","Пульс"]};
+// Названия разделов для крошки в шапке. Номер берётся из порядка меню (navOrder),
+// а не пишется здесь: захардкоженные номера разошлись с меню после перестановки
+// вкладок («Уязвимости» в меню 05, в шапке было 06).
+const PAGE_LABELS={overview:"Обзор",foryou:"Для вас",market:"Рынок · позиция",sber:"Рынок · позиция",
+  reviews:"Отзывы",ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",
+  sources:"Источники",profile:"Профиль",pulse:"Пульс"};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
 .pf-wrap{max-width:720px;}
 .pf-hero{display:flex;align-items:center;gap:18px;margin-bottom:24px;}
 .pf-avatar{width:60px;height:60px;flex:none;border-radius:16px;display:grid;place-items:center;
-  font-size:22px;font-weight:600;color:var(--accent);background:var(--accent-soft);
+  font-size:22px;font-weight:600;color:var(--accent-ink);background:var(--accent-soft);
   border:1px solid color-mix(in oklab,var(--accent),transparent 80%);letter-spacing:-.01em;}
-.pf-hero h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:32px;line-height:1.05;letter-spacing:-.01em;color:var(--ink);margin:3px 0 4px;}
+.pf-hero h1{margin:0 0 4px;}
 .pf-sub{font-size:12px;color:var(--ink-3);}
 .pf-card{padding:22px 24px;margin-bottom:16px;position:relative;}
 .pf-card-h{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;}
-.pf-ai-badge{display:inline-flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;
-  letter-spacing:.05em;text-transform:uppercase;color:var(--accent);}
+.pf-ai-badge{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:11px;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--accent);font-variant-numeric:tabular-nums}
 .pf-ai-badge .sp{animation:pf-sparkle 3s ease-in-out infinite;}
 @keyframes pf-sparkle{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.86)}}
 .pf-ai{border:1px solid color-mix(in oklab,var(--accent),transparent 84%);
   background:linear-gradient(180deg,color-mix(in oklab,var(--accent-soft),transparent 62%),transparent 60%);}
-.pf-mini{font-size:11.5px;color:var(--ink-3);border:1px solid var(--hair);border-radius:7px;padding:5px 11px;
+.pf-mini{font-size:12px;font-weight:500;color:var(--ink-2);background:var(--surface);border:1px solid var(--hair-2);border-radius:7px;height:28px;padding:0 10px;
   transition:border-color .14s,color .14s,transform .1s;white-space:nowrap;}
-.pf-mini:hover:not(:disabled){border-color:var(--accent);color:var(--accent);}
+.pf-mini:hover:not(:disabled){border-color:var(--ink-4);color:var(--ink);}
 .pf-mini:active:not(:disabled){transform:scale(.96);}
 .pf-mini:disabled{opacity:.55;cursor:default;}
 .pf-hint{font-size:12.5px;line-height:1.5;color:var(--ink-3);margin-bottom:12px;max-width:64ch;text-wrap:pretty;}
 .pf-ta{width:100%;min-height:80px;resize:vertical;border:1px solid var(--hair);border-radius:10px;background:var(--surface);
   color:var(--ink);font-size:13.5px;line-height:1.55;padding:12px 14px;font-family:'Geist','Inter',sans-serif;transition:border-color .14s;}
-.pf-ta:focus{outline:none;border-color:var(--accent);}
+.pf-ta:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
 .pf-ta::placeholder{color:var(--ink-4);}
 .pf-note{font-family:'Source Serif 4',serif;font-size:16.5px;line-height:1.56;color:var(--ink);text-wrap:pretty;}
 .pf-note-empty{font-size:13.5px;line-height:1.55;color:var(--ink-3);text-wrap:pretty;max-width:62ch;}
@@ -8193,35 +9935,35 @@ const PROFILE_CSS=`
 .pf-note-gen .dots i{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:pf-bounce 1.1s infinite;}
 .pf-note-gen .dots i:nth-child(2){animation-delay:.15s;} .pf-note-gen .dots i:nth-child(3){animation-delay:.3s;}
 @keyframes pf-bounce{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
-.pf-src{font-size:10.5px;color:var(--ink-4);margin-top:12px;font-family:'JetBrains Mono',monospace;display:flex;align-items:center;gap:6px;}
+.pf-src{font-size:12px;color:var(--ink-3);margin-top:12px;font-family:inherit;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
 .pf-src .live{width:5px;height:5px;border-radius:50%;background:var(--pos);}
-.pf-sub-h{font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);margin:16px 0 9px;}
+.pf-sub-h{font-size:11px;font-weight:600;font-family:inherit;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin:16px 0 9px;font-variant-numeric:tabular-nums}
 .pf-sub-h:first-child{margin-top:2px;}
 .pf-topics{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
-.pf-topic{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;padding:5px 7px 5px 12px;border-radius:9px;
-  background:var(--paper-2);border:1px solid var(--hair);color:var(--ink-2);transition:border-color .14s,background .14s,color .14s;}
-.pf-topic.anchor{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 80%);color:var(--accent);font-weight:500;}
-.pf-topic .lock{font-size:9px;opacity:.7;}
+.pf-topic{display:inline-flex;align-items:center;gap:5px;min-height:28px;font-size:12px;font-weight:500;padding:0 6px 0 12px;border-radius:999px;
+  background:var(--paper-2);border:1px solid transparent;color:var(--ink-2);transition:border-color .14s,background .14s,color .14s;}
+.pf-topic.anchor{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 80%);color:var(--accent-ink);font-weight:500;}
+.pf-topic .lock{font-size:11px;}
 .pf-tacts{display:inline-flex;gap:0;max-width:0;overflow:hidden;transition:max-width .18s ease;}
-.pf-topic:hover .pf-tacts{max-width:28px;}
-.pf-tacts button{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;color:currentColor;opacity:.6;transition:opacity .12s,background .12s;}
+.pf-topic:hover .pf-tacts,.pf-topic:focus-within .pf-tacts{max-width:28px;}
+.pf-tacts button{width:24px;height:24px;border-radius:5px;display:grid;place-items:center;color:currentColor;opacity:.6;transition:opacity .12s,background .12s;}
 .pf-tacts button:hover{opacity:1;background:color-mix(in oklab,currentColor,transparent 88%);}
 .pf-rec{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
-.pf-rec-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:5px 12px;border-radius:9px;
-  border:1px dashed color-mix(in oklab,var(--accent),transparent 62%);background:none;color:var(--accent);
+.pf-rec-chip{display:inline-flex;align-items:center;gap:6px;height:28px;font-size:12px;font-weight:500;padding:0 12px;border-radius:999px;
+  border:1px dashed var(--hair-2);background:none;color:var(--ink-2);
   transition:background .14s,border-style .14s,transform .1s;animation:pf-pop .3s ease-out;}
-.pf-rec-chip:hover{background:var(--accent-soft);border-style:solid;}
+.pf-rec-chip:hover{background:var(--select-soft);border-style:solid;border-color:color-mix(in oklab,var(--select),transparent 55%);color:var(--ink);}
 .pf-rec-chip:active{transform:scale(.96);}
 @keyframes pf-pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
-.pf-add input{border:1px dashed var(--hair-2);border-radius:9px;background:none;color:var(--ink);font-size:12.5px;
-  padding:5px 12px;width:130px;transition:border-color .16s,border-style .16s,width .2s;font-family:inherit;}
-.pf-add input:focus{outline:none;border-color:var(--accent);border-style:solid;width:210px;}
+.pf-add input{border:1px dashed var(--hair-2);border-radius:999px;background:none;color:var(--ink);font-size:12px;
+  height:28px;padding:0 12px;width:130px;transition:border-color .16s,border-style .16s,width .2s;font-family:inherit;}
+.pf-add input:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);border-style:solid;width:210px;}
 .pf-add input::placeholder{color:var(--ink-4);}
-.pf-muted-h{font-size:11px;color:var(--ink-4);margin-top:16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
-  font-family:'JetBrains Mono',monospace;transition:color .12s;}
+.pf-muted-h{font-size:11px;color:var(--ink-3);margin-top:16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  font-family:inherit;transition:color .12s;font-variant-numeric:tabular-nums}
 .pf-muted-h:hover{color:var(--ink-3);}
 .pf-muted-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}
-.pf-muted-chip{font-size:11.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--hair);color:var(--ink-4);
+.pf-muted-chip{font-size:11.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--hair);color:var(--ink-3);
   text-decoration:line-through;cursor:pointer;transition:color .12s,border-color .12s,text-decoration .12s;}
 .pf-muted-chip:hover{color:var(--ink-2);border-color:var(--ink-4);text-decoration:none;}
 .pf-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 0;border-bottom:1px solid var(--hair);}
@@ -8229,27 +9971,30 @@ const PROFILE_CSS=`
 .pf-row-t{font-size:13.5px;color:var(--ink);}
 .pf-row-d{font-size:12px;color:var(--ink-3);margin-top:2px;max-width:44ch;}
 .pf-row-r{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none;}
-.pf-detected{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4);display:inline-flex;align-items:center;gap:5px;}
+.pf-detected{font-family:inherit;font-size:11px;color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
 .pf-detected .d{width:5px;height:5px;border-radius:50%;background:var(--pos);}
 .pf-select{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
   font-size:13px;padding:8px 30px 8px 11px;min-width:210px;cursor:pointer;transition:border-color .14s;
   appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:right 10px center;}
-.pf-select:focus{outline:none;border-color:var(--accent);}
+.pf-select:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
 .pf-input-sm{border:1px solid var(--hair);border-radius:8px;background:var(--surface);color:var(--ink);
-  font-size:13px;padding:8px;font-family:'JetBrains Mono',monospace;min-width:60px;width:60px;text-align:center;transition:border-color .14s;}
-.pf-input-sm:focus{outline:none;border-color:var(--accent);}
+  font-size:13px;padding:8px;font-family:inherit;min-width:60px;width:60px;text-align:center;transition:border-color .14s;font-variant-numeric:tabular-nums}
+.pf-input-sm:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
 .pf-toggle{width:42px;height:24px;border-radius:999px;background:var(--hair-2);position:relative;flex:none;transition:background .18s;}
 .pf-toggle.on{background:var(--accent);}
 .pf-toggle span{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--surface);
   box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.2,0,0,1);}
 .pf-toggle.on span{transform:translateX(18px);}
 .pf-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;}
-.pf-saved{font-size:12px;color:var(--pos);font-family:'JetBrains Mono',monospace;}
-.pf-save{font-size:13px;color:#fff;background:var(--accent);border-radius:9px;padding:9px 20px;font-weight:500;
+.pf-about{margin:28px 2px 8px;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pf-saved{font-size:12px;color:var(--pos);font-family:inherit;font-variant-numeric:tabular-nums}
+.pf-save{font-size:13px;color:var(--paper);background:var(--ink);border-radius:9px;height:34px;padding:0 16px;font-weight:500;
   transition:transform .1s,filter .14s;}
-.pf-save:hover{filter:brightness(1.05);}
+.pf-save:hover{opacity:.88;}
 .pf-save:active{transform:scale(.97);}
+@media(pointer:coarse){.pf-add input,.pf-select,.pf-input-sm{min-height:44px;height:44px}
+  .pf-toggle{position:relative}.pf-toggle::after{content:"";position:absolute;inset:-10px -2px}}
 `;
 const BANK_RU={sberbank:"Сбербанк",vtb:"ВТБ",alfabank:"Альфа-Банк",tinkoff:"Т-Банк",gazprombank:"Газпромбанк",rshb:"Россельхозбанк",domrf:"Банк ДОМ.РФ",psb:"ПСБ",sovcombank:"Совкомбанк",mtsbank:"МТС-Банк",raiffeisen:"Райффайзен",otkritie:"Открытие"};
 const PROD_RU={ipoteka:"Ипотека",deposit:"Вклады",credit_card:"Кредитные карты",debit_card:"Дебетовые карты",consumer_loan:"Потребкредиты",auto:"Автокредиты",rko:"РКО",savings:"Накопит. счета",acquiring:"Эквайринг",premium:"Премиальные пакеты",transfers:"Переводы и комиссии"};
@@ -8267,6 +10012,7 @@ const IcSpark=()=><svg width="12" height="12" viewBox="0 0 24 24" fill="currentC
 
 function ProfilePage(){
   const me=useMe();
+  const appInfo=useAppInfo();
   const[data,setData]=useState(null);
   const[selfDesc,setSelfDesc]=useState("");
   const[interests,setInterests]=useState({banks:[],products:[],pinned:[],muted:[],custom:[]});
@@ -8338,9 +10084,9 @@ function ProfilePage(){
     <div className="pf-hero">
       <div className="pf-avatar">{initials(me&&me.name||data.name)}</div>
       <div>
-        <div className="eyebrow">§ Профиль · персонализация</div>
-        <h1>{data.name||(me&&me.name)||"Аудитор"}</h1>
-        <div className="pf-sub mono">{data.username} · внутренний аудит Сбербанка</div>
+        <div className="eyebrow ph-eb">Профиль · персонализация</div>
+        <h1 className="ph-t">{data.name||(me&&me.name)||"Аудитор"}</h1>
+        <div className="pf-sub">{data.username} · внутренний аудит Сбербанка</div>
       </div>
     </div>
 
@@ -8378,15 +10124,15 @@ function ProfilePage(){
         .pf-power-row{display:flex;align-items:baseline;gap:10px;padding:7px 4px;border-top:1px solid var(--hair);
           font-size:13px;color:var(--ink-2);}
         .pf-power-row:first-child{border-top:0;}
-        .pf-power-row .tick{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);flex:none;width:14px;}
+        .pf-power-row .tick{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;width:14px;font-variant-numeric:tabular-nums}
         .pf-power-row.done .tick{color:var(--pos);}
         .pf-power-row.done{color:var(--ink-3);}
         .pf-power-row:not(.done){cursor:pointer;transition:color .12s;}
-        .pf-power-row:not(.done):hover{color:var(--accent);}
+        .pf-power-row:not(.done):hover{color:var(--select);}
         .pf-power-row .lbl{flex:1;min-width:0;}
-        .pf-power-row .pts{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-4);flex:none;}
-        .pf-power-row:not(.done) .pts{color:var(--accent);font-weight:600;}
-        .pf-power-cap{font-size:11.5px;color:var(--ink-4);margin-top:10px;line-height:1.5;}
+        .pf-power-row .pts{font-family:inherit;font-size:12px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
+        .pf-power-row:not(.done) .pts{color:var(--ink);font-weight:600;}
+        .pf-power-cap{font-size:11.5px;color:var(--ink-3);margin-top:10px;line-height:1.5;}
       `}</style>
       <div className="eyebrow" style={{marginBottom:12}}>Сила персонализации · <span style={{color:"var(--accent)"}}>✦ растёт от ваших действий</span></div>
       <div className="pf-power">
@@ -8426,7 +10172,7 @@ function ProfilePage(){
               </span>))}
           </div>
         : <div className="pf-topics"><span className="pf-topic anchor">Сбербанк <span className="lock">якорь</span></span>
-            <span className="t-cap" style={{color:"var(--ink-4)"}}>ваши продукты появятся после нескольких запросов</span></div>}
+            <span className="t-cap" style={{color:"var(--ink-3)"}}>ваши продукты появятся после нескольких запросов</span></div>}
 
       {recs.length>0 && <>
         <div className="pf-sub-h">Рекомендуем добавить</div>
@@ -8477,6 +10223,7 @@ function ProfilePage(){
         <button className="pf-save" onClick={saveSettings}>Сохранить</button>
       </div>
     </div>
+    <div className="pf-about">{appAbout(appInfo)}{appInfo?.env_label?" · стенд «"+appInfo.env_label+"»":""}</div>
   </div>;
 }
 
@@ -8510,6 +10257,30 @@ class PageBoundary extends React.Component{
 // hash → {p: id страницы, prm: параметры}. Диплинки несут срез в адресе:
 // #market?cat=deposit&view=changes&change=123. #sber — алиас (вкладки
 // объединены в «Позицию», 07.2026).
+// О продукте: версия, дата последнего обновления и среда. Один запрос на всю
+// страницу — его делят логотип (подсказка, метка стенда) и профиль.
+let appInfoReq=null;
+function useAppInfo(){
+  const[info,setInfo]=useState(null);
+  useEffect(()=>{
+    appInfoReq=appInfoReq||apiFetch("/api/meta/app").catch(()=>{appInfoReq=null;return null;});
+    let live=true; appInfoReq.then(d=>{if(live)setInfo(d);});
+    return()=>{live=false;};
+  },[]);
+  return info;
+}
+function appAbout(info){
+  if(!info)return "AuditLens";
+  const v=(info.version||"").split(".").slice(0,2).join(".");
+  let s="AuditLens"+(v&&v!=="0.0"?" "+v:"");
+  if(info.updated_at){
+    const d=new Date(info.updated_at);
+    const other=d.getFullYear()!==new Date().getFullYear();
+    s+=" · обновлён "+d.toLocaleDateString("ru",other?{day:"numeric",month:"long",year:"numeric"}:{day:"numeric",month:"long"});
+  }
+  return s;
+}
+
 function parseHash(){
   const h=(location.hash||"").slice(1);
   const qi=h.indexOf("?");
@@ -8527,9 +10298,6 @@ function Shell(){
     return "overview"; });
   const[pageParams,setPageParams]=useState(()=>parseHash().prm);
   const[loopholeMounted,setLoopholeMounted]=useState(()=>(parseHash().p||"overview")==="loophole");
-  // Тик явного обновления «Лазеек»: кнопка ⟳ инкрементирует его только на этой
-  // странице, ремаунт по key перезагружает iframe модуля.
-  const[refreshTick,setRefreshTick]=useState(0);
   // ИИ-аналитик живёт в фоне: страница не размонтируется при уходе на другие
   // вкладки — прогон продолжается, по завершении сигналим точкой в rail и тостом.
   const[aiMounted,setAiMounted]=useState(()=>(parseHash().p||"overview")==="ai");
@@ -8542,12 +10310,14 @@ function Shell(){
   const[hasCaptcha,setHasCaptcha]=useState(false);
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
+  const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
-  // Load banks for context + sidebar badges
+  // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
+  // BanksCtx, у которого нет ни одного потребителя, — убран; страницы берут
+  // банки сами. Флажок капчи в меню остаётся.
   useEffect(()=>{
-    apiFetch("/api/banks").then(d=>{setBanks(d||[]);}).catch(()=>{});
     apiFetch("/api/sources").then(d=>{setHasCaptcha((d?.captcha_pending||[]).length>0);}).catch(()=>{});
   },[]);
 
@@ -8680,7 +10450,9 @@ function Shell(){
   },[page]);
 
   const Page=PAGES_FN[page]||OverviewPage;
-  const[idx,label]=PAGE_LABELS[page]||["01","Обзор"];
+  const label=PAGE_LABELS[page]||"Обзор";
+  const navIdx=navOrder.indexOf(page==="foryou"?"overview":page);
+  const idx=navIdx>=0?String(navIdx+1).padStart(2,"0"):null;
 
   return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
     <div id="app">
@@ -8695,7 +10467,7 @@ function Shell(){
           animation:fade-in .3s ease-out;transition:transform .15s,border-color .15s;}
         .ai-ready:hover{transform:translateY(-2px);border-color:var(--accent);}
         .ai-ready .sp{color:var(--accent);}
-        .ai-ready .x{color:var(--ink-4);font-size:12px;padding:2px 4px;border-radius:5px;}
+        .ai-ready .x{color:var(--ink-3);font-size:12px;padding:2px 4px;border-radius:5px;}
         .ai-ready .x:hover{color:var(--ink);background:var(--paper-2);}
         @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
         .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
@@ -8712,16 +10484,19 @@ function Shell(){
         .onb-callout::after{content:"";position:absolute;left:26px;bottom:-6px;width:11px;height:11px;background:var(--surface);
           border-right:1px solid var(--hair);border-bottom:1px solid var(--hair);transform:rotate(45deg);}`}</style>
       <aside className={"rail"+(navOpen?" open":"")}>
-        <div className="rail-brand">
-          <svg className="rail-mark" viewBox="0 0 100 100" role="img" aria-label="AuditLens">
+        {/* Логотип ведёт на «Обзор»; версия и дата обновления — в подсказке,
+            метка среды — только вне прода */}
+        <a className="rail-brand" href="#overview" data-tip={appAbout(appInfo)}
+           onClick={e=>{e.preventDefault();setNavOpen(false);
+             if(page==="overview")contentRef.current?.scrollTo({top:0,behavior:"smooth"});
+             else setPage("overview");}}>
+          <svg className="rail-mark" viewBox="0 0 100 100" aria-hidden="true">
             <path fill="#1F4DFF" d="M47.5 13 L59.5 13 L89.5 89 L75.5 89 Z"/>
             <path fill="currentColor" fillRule="evenodd" d="M47.5 13 L57.5 13 L83.5 89 L66.5 89 L58.5 67 L36.5 67 L27.5 89 L10.5 89 Z M47.5 36 L56.5 58 L38.5 58 Z"/>
           </svg>
-          <div>
-            <h1>AuditLens</h1>
-            <small>v1.0 · Internal</small>
-          </div>
-        </div>
+          <span className="rail-name">AuditLens</span>
+          {appInfo?.env_label&&<span className="rail-env">{appInfo.env_label}</span>}
+        </a>
         {Object.entries(groups).map(([gr,items])=>(
           <div key={gr}>
             <div className="rail-section">{gr}</div>
@@ -8776,32 +10551,28 @@ function Shell(){
             <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
           </div>
           <div className="crumb">
-            {page!=="profile" && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
+            {idx && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
             <span style={{color:"var(--hair-2)"}}>—</span></>}
             <b>{label}</b>
           </div>
           {(page==="overview"||page==="foryou")&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
-          {/* на overview/foryou центр занят сегмент-пилюлей — мета убрана, чтобы не перекрывались на ~1024px */}
-          {page!=="overview"&&page!=="foryou"&&<div className="tb-meta desk-only">
-            <span className="live">данные актуальны</span>
-            <span>{new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})} МСК</span>
-            <span className="kbd">API</span>
-          </div>}
-          {/* на «Лазейках» ⟳ ремаунтит iframe модуля; на остальных страницах поведение прежнее */}
-          <button className="icon-btn" aria-label="обновить" title="Обновить страницу" onClick={()=>page==="loophole"&&setRefreshTick(t=>t+1)}>
-            <Ic.refresh/>
-          </button>
-          <button className="icon-btn" aria-label="тема" onClick={()=>setTheme(theme==="dark"?"light":"dark")} title="Сменить тему">
-            {theme==="dark"?<Ic.sun/>:<Ic.moon/>}
+          <button className={"icon-btn th-tg"+(theme==="dark"?" dk":"")}
+                  aria-label={theme==="dark"?"Включить светлую тему":"Включить тёмную тему"}
+                  data-tip={theme==="dark"?"Светлая тема":"Тёмная тема"}
+                  onClick={e=>setTheme(theme==="dark"?"light":"dark",e.currentTarget)}>
+            <ThemeIcon/>
           </button>
         </div>
         <div className="content" ref={contentRef}>
           {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
-            <LoopholePage key={refreshTick}/>
+            <LoopholePage/>
           </div>}
-          {aiMounted&&<div style={{display:page==="ai"?"block":"none",height:"100%"}}>
+          {/* ai-host--active: правило «без отступов» — только пока аналитик на экране.
+              Раньше .content:has(.chat-shell) срабатывало и на скрытой, но смонтированной
+              странице — после визита в аналитик у всех вкладок пропадали поля */}
+          {aiMounted&&<div className={page==="ai"?"ai-host ai-host--active":"ai-host"} style={{display:page==="ai"?"block":"none",height:"100%"}}>
             <PageBoundary pageKey="ai"><AIPage/></PageBoundary>
           </div>}
           {keptPages.map(id=>{

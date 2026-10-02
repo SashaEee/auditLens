@@ -340,9 +340,30 @@ def metrics(days: int = 14) -> dict:
             "proposals": _proposals(),
             "ingest": _ingest_health(days),
             "collect": _collect_health(days),
+            "search": _search_health(days),
             "news_quality": _news_quality(days),
+            "review_sources": _review_sources(),
+            "signal_journal": _signal_journal(),
             "personalization": _personalization(days),
             "topics": _team_topics(days)}
+
+
+def _review_sources() -> dict:
+    """Полнота площадок отзывов (rag.reviews_dash.source_health)."""
+    try:
+        from ..rag import reviews_dash as rd
+        return rd.source_health()
+    except Exception as e:  # noqa: BLE001 — блок «Пульса» не валит страницу
+        return {"error": str(e)[:200]}
+
+
+def _signal_journal() -> dict:
+    """Точность сигналов «Отзывов» по отметкам аудиторов (reviews_work)."""
+    try:
+        from ..rag import reviews_work
+        return reviews_work.journal_stats(180)
+    except Exception as e:  # noqa: BLE001 — блок «Пульса» не валит страницу
+        return {"error": str(e)[:200]}
 
 
 def _personalization(days: int) -> dict:
@@ -391,7 +412,11 @@ def _news_quality(days: int) -> dict:
     p = {"days": days}
     series = _rows("""
         SELECT digest_date::text AS d, n_items, junk, borderline, relevant,
-               avg_score::float AS avg
+               avg_score::float AS avg,
+               (detail->>'headline_value')::int AS head,
+               (detail->>'strong')::int AS strong,
+               jsonb_array_length(coalesce(detail->'missed', '[]'::jsonb)) AS missed,
+               detail->>'rubric' AS rubric
           FROM digest_news_judge
          WHERE digest_date > current_date - make_interval(days => :days)
          ORDER BY digest_date""", p)
@@ -408,9 +433,22 @@ def _news_quality(days: int) -> dict:
          WHERE kind = 'news_click'
            AND created_at > now() - make_interval(days => :days)
          GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", p)
+    # оценки карточек передовицы аудиторами: «полезно» / «не по делу»
+    cards = _rows("""
+        SELECT count(*) FILTER (WHERE verdict = 1) AS useful,
+               count(*) FILTER (WHERE verdict = -1) AS noise,
+               count(DISTINCT username) AS users
+          FROM item_feedback
+         WHERE kind = 'digest_card' AND created_at > now() - make_interval(days => :days)""", p)
+    try:
+        from ..digest import newsflow
+        stream = newsflow.health()
+    except Exception:  # noqa: BLE001 — поток ещё не запускался
+        stream = None
     today = series[-1] if series else None
     return {"series": series, "today": today, "clicks": clicks,
-            "top_clicked": top_clicked}
+            "top_clicked": top_clicked, "cards": (cards[0] if cards else None),
+            "stream": stream}
 
 
 # ── оценки ответов ИИ: «что разбирать» ───────────────────────────────────────
@@ -572,6 +610,39 @@ def _ingest_health(days: int) -> dict:
            AND created_at > now() - (:days || ' days')::interval
          GROUP BY 1 ORDER BY 1""", {"days": days})
     return {"queue": q, "per_day": [{**r, "d": str(r["d"])} for r in hist]}
+
+
+def _search_health(days: int) -> dict:
+    """Веб-поиск и чтение копий страниц: кто отвечал и как часто сбоило.
+
+    Сбой шлюза и честная пустая выдача выглядят для отчёта одинаково — «ничего
+    не нашлось». Здесь их видно раздельно: ok / empty (поиск честно пуст) /
+    limited (упёрлись в лимит, ушли на запасной) / down (шлюз недоступен,
+    ключ, квота) / error. Текст запросов не пишется.
+    """
+    rows = _rows("""
+        SELECT kind, COALESCE(page, '?') AS backend,
+               COALESCE(payload->>'status', '?') AS status, count(*) AS n,
+               round(percentile_cont(0.5) WITHIN GROUP (ORDER BY dur_ms)) AS p50
+          FROM usage_event
+         WHERE kind IN ('web_search', 'web_read', 'web_search_chain')
+           AND created_at > now() - (:days || ' days')::interval
+         GROUP BY 1, 2, 3 ORDER BY 1, 2, 4 DESC""", {"days": days})
+    out: dict[str, dict] = {}
+    for r in rows:
+        key = f"{r['kind']}:{r['backend']}"
+        b = out.setdefault(key, {"kind": r["kind"], "backend": r["backend"],
+                                 "total": 0, "by_status": {}, "p50_ok": None})
+        b["total"] += int(r["n"])
+        b["by_status"][r["status"]] = int(r["n"])
+        if r["status"] == "ok":
+            b["p50_ok"] = r["p50"]
+    try:
+        from ..rag import search_gateway
+        gw = search_gateway.status()
+    except Exception:  # noqa: BLE001 — сбой импорта не роняет «Пульс»
+        gw = {}
+    return {"backends": list(out.values()), "gateway": gw}
 
 
 def _collect_health(days: int) -> dict:

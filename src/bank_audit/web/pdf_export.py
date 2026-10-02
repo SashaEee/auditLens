@@ -16,6 +16,7 @@ import io
 import json
 import logging
 import re
+from urllib.parse import urlparse
 from pathlib import Path
 from datetime import datetime
 
@@ -73,6 +74,7 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict],
     table_rows: list[list[str]] = []
     list_buf: list[str] = []
     list_ordered = False
+    list_start = 1
     hnum = 0  # счётчик заголовков для якорей оглавления
 
     def _inline(s: str) -> str:
@@ -123,8 +125,11 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict],
         if not list_buf:
             return
         tag = "ol" if list_ordered else "ul"
-        out.append(f"<{tag}>" + "".join(f"<li>{_inline(x)}</li>"
-                                         for x in list_buf) + f"</{tag}>")
+        # Пункты «1. … (пустая строка) 2. …» приходят отдельными списками: без
+        # start каждый начинался с 1 — в PDF было «1. 1. 1. 1.» (26.09).
+        start = f' start="{list_start}"' if list_ordered and list_start > 1 else ""
+        out.append(f"<{tag}{start}>" + "".join(f"<li>{_inline(x)}</li>"
+                                                for x in list_buf) + f"</{tag}>")
         list_buf = []
 
     def _flush_table():
@@ -181,6 +186,8 @@ def _md_to_html(md: str, sources_by_n: dict[int, dict],
         bullet_m  = re.match(r"^\s*[\-\*\+•]\s+(.+)$", ln)
         if ordered_m:
             if not list_ordered: _flush_list()
+            if not list_buf:
+                list_start = int(ordered_m.group(1))
             list_ordered = True
             list_buf.append(ordered_m.group(2))
             continue
@@ -205,15 +212,18 @@ def _render_sources_section(sources: list[dict]) -> str:
     if not sources:
         return ""
     KIND_LABELS = {
-        "regulator": "Регулятор", "bank_official": "Офиц. сайт банка",
-        "press": "Пресса", "analyst": "Аналитика",
-        "aggregator": "Агрегатор", "social": "Соцсети", "blog": "Блог",
+        "regulator": "Регулятор", "regulatory": "Регулятор",
+        "bank_official": "Офиц. сайт банка", "press": "Пресса", "news": "СМИ",
+        "analyst": "Аналитика", "aggregator": "Агрегатор", "social": "Соцсети",
+        "blog": "Блог", "web": "Веб-источник", "auditlens": "Данные AuditLens",
     }
     rows = []
     for s in sources:
         n     = s.get("n", "?")
         url   = s.get("url", "")
-        bank  = s.get("bank_name") or "—"
+        # Банк известен не всегда (отчёт deep его не ставит) — тогда сайт, а не «—».
+        bank  = s.get("bank_name") or s.get("domain") or (
+            urlparse(s.get("url") or "").netloc.removeprefix("www.") or "—")
         kind  = KIND_LABELS.get(s.get("source_kind"), s.get("source_kind") or "—")
         trust = float(s.get("trust_score") or 0)
         # «Премиум» trust marks: ●●● / ●●○ / ●○○
@@ -225,7 +235,9 @@ def _render_sources_section(sources: list[dict]) -> str:
         if date and "T" in str(date): date = str(date).split("T")[0]
         # Дословная выдержка-доказательство (item 62): чтобы статичный PDF нёс ту
         # же цитату, на которую опирался синтез, а не только URL.
-        excerpts = s.get("excerpts") or []
+        excerpts = s.get("excerpts") or [
+            f.get("verbatim") for f in (s.get("facts") or []) if isinstance(f, dict)
+        ] or ([s["excerpt"]] if s.get("excerpt") else [])
         best = ""
         if isinstance(excerpts, list) and excerpts:
             best = max((str(e) for e in excerpts if e), key=len, default="")
@@ -240,7 +252,9 @@ def _render_sources_section(sources: list[dict]) -> str:
             f'<div class="src-meta">'
               f'<div class="src-bank">{_esc(bank)}</div>'
               f'{title_html}'
-              f'<div class="src-url"><a href="{_esc(url)}">{_esc(url)}</a></div>'
+              + (f'<div class="src-url">AuditLens, срез вкладки: {_esc(url)}</div>'
+                 if url.startswith("#") else
+                 f'<div class="src-url"><a href="{_esc(url)}">{_esc(url)}</a></div>') +
               f'{f"<div class=\"src-head\">{_esc(head)}</div>" if head else ""}'
               f'{excerpt_html}'
               f'<div class="src-foot">'
@@ -662,9 +676,16 @@ def build_pdf_html(*, question: str, report_md: str,
     # вырезаем из тела, чтобы h1 не задваивался (обложка + тело).
     doc_title = "Аудит-отчёт"
     _mt = re.search(r'^#[ \t]+(.+?)[ \t]*$', report_md, re.MULTILINE)
-    if _mt:
+    _first_h2 = re.search(r'^##[ \t]', report_md, re.MULTILINE)
+    # Титул — только «# » ДО первого раздела. Отчёт (deep) начинается сразу с
+    # «## Резюме…», и титулом становился «# Что проверить…» из середины
+    # раздела — обложка обещала не тот документ (аудит 26.09).
+    if _mt and (not _first_h2 or _mt.start() < _first_h2.start()):
         doc_title = _mt.group(1).strip()
         report_md = (report_md[:_mt.start()] + report_md[_mt.end():]).lstrip("\n")
+    elif (question or "").strip():
+        q = re.sub(r"\s+", " ", question).strip()
+        doc_title = q if len(q) <= 160 else (re.split(r"(?<=[.?!])\s", q)[0][:160] + "…")
     # [[CHART:i]] → алфанум-токен: markdown-конвертер не должен его исказить
     report_md = re.sub(r"\[\[CHART:(\d+)\]\]", r"CHARTSLOT7f3a\1end", report_md)
     # Литерал VIZSLOT в тексте модели не должен стать блоком; маркер — только

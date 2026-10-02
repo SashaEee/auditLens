@@ -13,14 +13,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from typing import AsyncIterator
 from urllib.parse import urlparse
 
+from ...ai.hermes_quick import PlainKeysStream, plain_keys
 from ..v2.tools.web_tools import _kind_for, _trust_for
 from . import citations as al_cit, critic as al_critic, facts as al_facts
-from . import reviews as al_reviews, runstate
+from . import followup as al_followup
+from . import own_data as al_own, reviews as al_reviews, runstate
 from . import dossier as al_dossier
 from . import viz as al_viz
 from . import gaps as al_gaps, planner as al_planner
@@ -57,14 +60,27 @@ def _evt(d: dict) -> str:
 
 def _sources_ui(urls: list[str], pages: dict[str, str],
                 cited: dict[str, dict] | None = None,
-                dates: dict[str, str] | None = None) -> list[dict]:
-    """Карточки источников. Если передан cited — только процитированные."""
+                dates: dict[str, str] | None = None,
+                own: dict[str, dict] | None = None) -> list[dict]:
+    """Карточки источников. Если передан cited — только процитированные.
+    own — страницы собственных данных AuditLens: адрес ведёт на срез вкладки."""
     cited = cited or {}
     dates = dates or {}
+    own = own or {}
     out: list[dict] = []
     for i, url in enumerate(urls, 1):
-        domain = urlparse(url).netloc.removeprefix("www.")
         text = pages.get(url, "")
+        mine = own.get(url)
+        if mine and mine.get("kind") != "review":
+            out.append({
+                "n": i, "url": url, "title": mine.get("title", "")[:120],
+                "domain": "AuditLens", "bank_slug": None, "trust_score": 0.95,
+                "source_kind": "auditlens",
+                "excerpt": (cited.get(url, {}).get("excerpt") or text[:600]),
+                "facts": cited.get(url, {}).get("facts") or [],
+                "published": dates.get(url, ""), "dead": False})
+            continue
+        domain = urlparse(url).netloc.removeprefix("www.")
         out.append({
             "n": i, "url": url,
             "title": (text.splitlines()[0][:80] if text else url[:80]).lstrip("# "),
@@ -79,6 +95,31 @@ def _sources_ui(urls: list[str], pages: dict[str, str],
             "dead": bool(cited.get(url, {}).get("dead")),
         })
     return out
+
+
+# Сколько ждём дослежку сверх основного сбора: обычно она успевает раньше.
+_FOLLOWUP_WAIT = float(os.getenv("GPTR_FOLLOWUP_WAIT", "40"))
+_FOREIGN = re.compile(
+    r"(^|\.)(sber|vtb|alfa|gazprombank|tbank|tinkoff|raiffeisen|psbank|sovcombank|rshb|"
+    r"mtsbank|domrf|otpbank|rosbank)[\w-]*\.(by|kz|uz|kg|am|az|ge|md|ua|tj)$", re.I)
+
+
+def _unverified_item(x) -> dict:
+    if isinstance(x, dict):
+        return x
+    try:
+        v = float(x)
+        num = (f"{v:,.0f}".replace(",", " ") if v == int(v)
+               else f"{v:.2f}".rstrip("0").rstrip(".").replace(".", ","))
+    except (TypeError, ValueError):
+        num = str(x)
+    return {"claim": f"число {num}",
+            "issue": "не найдено в источнике рядом с цитатой — вероятно, посчитано "
+                     "в отчёте; сверить вручную"}
+
+
+def _foreign_affiliate(url: str) -> bool:
+    return bool(_FOREIGN.search(urlparse(url).netloc.split(":")[0]))
 
 
 async def stream_deep_research_gptr(question: str,
@@ -162,12 +203,22 @@ async def stream_deep_research_gptr(question: str,
                                agent="AuditLens",
                                role=_role_prompt(plan, question))
     # Три вещи, которые раньше шли по очереди, теперь идут вместе: сбор,
-    # разбор уже прочитанных страниц объектов и выгрузка жалоб из корпуса.
-    # Отзывы зависят только от плана и контракта — ждать сбора им незачем.
+    # разбор уже прочитанных страниц объектов и собственные данные AuditLens
+    # (аналитика жалоб, жалобы из разметки, лазейки). Им ждать сбора незачем.
     registry = al_facts.FactRegistry()
     collecting = {"on": True}
-    reviews_task = asyncio.ensure_future(asyncio.to_thread(
-        al_reviews.collect, plan, attributes))
+    own_task = asyncio.ensure_future(al_own.collect(client, fast, question, plan,
+                                                      state=state))
+
+    async def _followup() -> dict[str, str]:
+        # Дослежка сюжета из жалоб — как только готовы собственные данные,
+        # параллельно основному сбору (см. followup.py).
+        od = await own_task
+        runstate.bind(state)
+        if not od.complaints:
+            return {}
+        return await al_followup.collect(client, fast, question, od, state=state)
+    followup_task = asyncio.ensure_future(_followup())
     eager_task = asyncio.ensure_future(al_facts.extract_while_collecting(
         registry, client, fast, state=state, attributes=attributes, plan=plan,
         running=lambda: collecting["on"],
@@ -200,17 +251,56 @@ async def stream_deep_research_gptr(question: str,
     pages = dict(state.pages)
     unreadable = dict(state.unreadable)
 
-    # Наблюдаемая сторона в первую очередь из собственного корпуса отзывов:
-    # там живые жалобы с датами и ссылками, тогда как веб отдаёт обзоры.
+    # Наблюдаемая сторона — прежде всего собственные данные: аналитика жалоб
+    # и жалобы из разметки тем же слоем, что вкладка «Отзывы»; веб даёт обзоры.
     runstate.bind(state)
-    review_records = await reviews_task
-    review_pages = al_reviews.as_pages(review_records)
-    if review_pages:
-        pages.update(review_pages)
+    own = await own_task
+    review_pages: dict[str, str] = {}
+    if own.complaints or own.loopholes or own.pages:
+        sc = own.scope or {}
+        got = [f"жалоб {own.complaints}" if sc.get("complaints", True) else "",
+               f"лазеек {own.loopholes}" if sc.get("loopholes", True) else "",
+               f"предложений рынка {own.market}" if own.market else ""]
+        themes = [al_own.T.theme_label(k) for k in sc.get("themes") or []]
         yield _evt({"type": "stage_status", "stage": "reviews",
-                    "label": f"Жалоб из корпуса: {len(review_pages)}",
-                    "detail": "отзывы клиентов с датами и ссылками",
+                    "label": "Данные AuditLens: " + ", ".join(x for x in got if x),
+                    "detail": ("срез: " + ", ".join(x for x in (
+                        sc.get("product") or "все продукты",
+                        f"{sc.get('days')} дн" if sc.get("days") else "",
+                        ("темы: " + ", ".join(themes)) if themes else "")
+                        if x)),
                     "estimate_s": 0})
+    if (not own.complaints and getattr(plan, "subjects", None)
+            and (own.scope or {}).get("complaints", True)):
+        # Запасной путь — старый корпус banki.ru: объект вне разметки или сбой слоя.
+        review_records = await asyncio.to_thread(al_reviews.collect, plan, attributes)
+        runstate.bind(state)
+        review_pages = al_reviews.as_pages(review_records)
+        if review_pages:
+            pages.update(review_pages)
+            yield _evt({"type": "stage_status", "stage": "reviews",
+                        "label": f"Жалоб из старого корпуса: {len(review_pages)}",
+                        "detail": "разметки по объектам нет — запасной источник",
+                        "estimate_s": 0})
+
+    try:
+        fu_pages = await asyncio.wait_for(asyncio.shield(followup_task), timeout=_FOLLOWUP_WAIT)
+    except Exception as e:  # noqa: BLE001 — дослежка необязательна
+        log.info("дослежка: %s", type(e).__name__)
+        followup_task.cancel()
+        fu_pages = {}
+    runstate.bind(state)
+    if fu_pages:
+        pages.update(fu_pages)
+        yield _evt({"type": "stage_status", "stage": "reviews",
+                    "label": f"Дослежка сюжета из жалоб: прочитано {len(fu_pages)}",
+                    "detail": "событие, продавец, правила — по тому, что называют клиенты",
+                    "estimate_s": 0})
+    for u in [u for u in pages if _foreign_affiliate(u)]:
+        # Сбер Банк Беларусь — другое юрлицо: его адреса и сроки попадали в
+        # отчёт как «сведения о Сбере» и порождали мнимые расхождения.
+        log.info("исключено: зарубежная дочка/одноимённый банк — %s", u[:90])
+        pages.pop(u, None)
 
     # ── Факты ────────────────────────────────────────────────────────────
     # Между чтением и письмом появляется типизированный слой: каждый факт
@@ -222,17 +312,32 @@ async def stream_deep_research_gptr(question: str,
                 "estimate_s": 40})
     runstate.bind(state)
     async def _extract():
-        await al_facts.build_registry(
-            client, fast, pages=pages, attributes=attributes, plan=plan,
-            keep_pages=set(review_pages),
-            subject_hints=al_reviews.subject_hints(),
-            reg=registry, already=eager_pages)
+        # Страницы дослежки — мимо общего отбора и со своей характеристикой:
+        # отбор меряет близость к характеристикам продукта («сроки», «основания
+        # отказа»), и новость о событии за жалобами ему заведомо проигрывала —
+        # прочитанные 8 страниц не дали отчёту ни одного факта (26.09).
+        await asyncio.gather(
+            al_facts.build_registry(
+                client, fast, pages={u: t for u, t in pages.items() if u not in fu_pages},
+                attributes=attributes, plan=plan,
+                keep_pages=set(review_pages),
+                subject_hints=al_reviews.subject_hints(),
+                reg=registry, already=eager_pages),
+            al_facts.extract_into(
+                registry, client, fast, pages=fu_pages,
+                attributes=[*attributes, al_followup.EVENT_ATTRIBUTE], plan=plan))
 
     async for ev in _tick(_extract(), lambda: {
             "type": "progress", "stage": "facts",
             "pages_total": len(pages), "facts": len(registry.facts),
             "ahead": len(eager_pages)}):
         yield ev
+    # Собственные данные — после извлечения: их факты собрал код (числа среза,
+    # пересказ и сверенная цитата разметки), пересказывать их моделью незачем.
+    runstate.bind(state)
+    for kw in own.facts:
+        registry.add(**kw)
+    pages.update(own.pages)
     if review_pages:
         al_reviews.stamp_dates(registry)
     # ── Критик ───────────────────────────────────────────────────────────
@@ -248,7 +353,7 @@ async def stream_deep_research_gptr(question: str,
                                f"{verdict.exact}, пересказов {verdict.close}"),
                     "estimate_s": 0})
 
-    by_stance = {"declared": 0, "observed": 0, "regulatory": 0}
+    by_stance = {"declared": 0, "observed": 0, "regulatory": 0, "loophole": 0}
     for f in registry.facts:
         by_stance[f.stance] = by_stance.get(f.stance, 0) + 1
     yield _evt({"type": "facts_summary", "total": len(registry.facts),
@@ -258,7 +363,8 @@ async def stream_deep_research_gptr(question: str,
     yield _evt({"type": "stage_status", "stage": "facts_ready",
                 "label": f"Фактов: {len(registry.facts)}",
                 "detail": (f"заявлено {by_stance['declared']}, со стороны "
-                           f"{by_stance['observed']}, норм {by_stance['regulatory']}"),
+                           f"{by_stance['observed']}, норм {by_stance['regulatory']}"
+                           + (f", лазеек {by_stance['loophole']}" if by_stance["loophole"] else "")),
                 "estimate_s": 0})
 
     # ── Отчёт ────────────────────────────────────────────────────────────
@@ -276,12 +382,14 @@ async def stream_deep_research_gptr(question: str,
     # нумерация по первому упоминанию, в порядке потока.
     renum = al_cit.StreamRenumberer(registry)
     guard = al_viz.MarkerGuard()      # маркер не должен родиться из обрывков и якоря
-    _ttl = al_dossier.titles(plan)
-    yield _evt({"type": "outline",
-                "sections": al_dossier.outline(plan, registry)})
+    # Служебные ключи тем (chargeback, card_block…) — на подписи, как в быстром
+    # режиме; адреса ссылок не трогаем.
+    keys = PlainKeysStream()
+    _ttl = al_dossier.titles(plan)     # заголовки уточнит бриф (событие titles)
     gaps_preview = al_gaps.render(al_gaps.collect(
         plan, registry=registry, attributes=attributes,
-        pages=pages, unreadable=unreadable)) if registry.facts else ""
+        pages=pages, unreadable=unreadable,
+        cached_copies=dict(state.cached_copies))) if registry.facts else ""
     # Текст собираем в ПОРЯДКЕ ЧТЕНИЯ: тело стримится по мере написания, а
     # резюме с планом проверки приходят последними и встают наверх. У
     # перенумеровщика порядок подачи, и полагаться на его text нельзя —
@@ -291,20 +399,26 @@ async def stream_deep_research_gptr(question: str,
     try:
         async for kind, payload in al_dossier.write_dossier(
                 client, writer_model, question=question, plan=plan,
-                registry=registry, gaps_text=gaps_preview):
-            if kind == "section":
+                registry=registry, gaps_text=gaps_preview, state=state):
+            if kind == "titles":
+                _ttl.update(payload)
+            elif kind == "outline":
+                # Оглавление — после брифа: состав разделов теперь зависит от
+                # вопроса, а не от шаблона.
+                yield _evt({"type": "outline", "sections": payload})
+            elif kind == "section":
                 yield _evt({"type": "stage_status", "stage": "analyst",
-                            "label": f"Пишу раздел: {_ttl[payload]}",
-                            "detail": "каждый раздел получает свои факты целиком"})
+                            "label": f"Пишу раздел: {_ttl.get(payload, payload)}",
+                            "detail": "разделы пишутся вокруг главного ответа"})
             elif kind == "chunk":
-                ready = guard.feed(renum.feed(payload))
+                ready = keys.feed(guard.feed(renum.feed(payload)))
                 if ready:
                     body_parts.append(ready)
                     yield _evt({"type": "text", "chunk": ready})
             elif kind == "marker":
                 # Место блока визуализации. Сначала сбрасываем придержанный
                 # хвост перенумеровщика, иначе якорь вылез бы после маркера.
-                tail = guard.feed(renum.finish()) + guard.finish()
+                tail = keys.feed(guard.feed(renum.finish()) + guard.finish()) + keys.finish()
                 if tail:
                     body_parts.append(tail)
                     yield _evt({"type": "text", "chunk": tail})
@@ -333,13 +447,13 @@ async def stream_deep_research_gptr(question: str,
                 # тот же: якоря получат следующие номера, но каждый ведёт на
                 # свой источник. finish() сбрасывает придержанный хвост тела
                 # ДО подачи резюме, чтобы обрывок якоря не приклеился к нему.
-                tail = guard.feed(renum.finish()) + guard.finish()
+                tail = keys.feed(guard.feed(renum.finish()) + guard.finish()) + keys.finish()
                 if tail:
                     body_parts.append(tail)
                     yield _evt({"type": "text", "chunk": tail})
                 lead_guard = al_viz.MarkerGuard()
-                lead_text = al_viz.restore_lead_markers(
-                    lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish())
+                lead_text = plain_keys(al_viz.restore_lead_markers(
+                    lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish()))
                 yield _evt({"type": "lead", "chunk": lead_text})
     except Exception as e:
         log.exception("gptr: написание")
@@ -358,7 +472,7 @@ async def stream_deep_research_gptr(question: str,
             return
         body_parts.append(note)
         yield _evt({"type": "text", "chunk": note})
-    rest = guard.feed(renum.finish()) + guard.finish()
+    rest = keys.feed(guard.feed(renum.finish()) + guard.finish()) + keys.finish()
     if rest:
         body_parts.append(rest)
         yield _evt({"type": "text", "chunk": rest})
@@ -377,7 +491,8 @@ async def stream_deep_research_gptr(question: str,
     # отзыв, удалённый или перенесённый на banki.ru после сбора, давал в отчёте
     # живую с виду ссылку на 404 (аудиторы сообщали о ссылках на несуществующую
     # страницу. Проверяем ТОЛЬКО процитированные — их единицы.
-    corpus_urls = [c["url"] for c in cited_src if c["url"] in review_pages]
+    corpus_urls = [c["url"] for c in cited_src if c["url"] in review_pages
+                   or state.own_meta.get(c["url"], {}).get("kind") == "review"]
     if corpus_urls:
         dead = await asyncio.to_thread(al_reviews.check_alive, corpus_urls)
     else:
@@ -395,7 +510,7 @@ async def stream_deep_research_gptr(question: str,
         if meta.get("date"):
             pub_dates.setdefault(u, str(meta["date"])[:10])
     sources = _sources_ui([c["url"] for c in cited_src], pages, cited_map,
-                          pub_dates)
+                          pub_dates, dict(state.own_meta))
     dropped = len(pages) - len(sources)
     if sources:
         high = sum(1 for s in sources if s["trust_score"] >= 0.85)
@@ -421,7 +536,8 @@ async def stream_deep_research_gptr(question: str,
         **cit_stats,
     })
     gap_lines = al_gaps.collect(plan, registry=registry, attributes=attributes,
-                                pages=pages, unreadable=unreadable)
+                                pages=pages, unreadable=unreadable,
+                                cached_copies=dict(state.cached_copies))
     # Снятое критиком — не «ничего не нашлось», а «нашлось, но не подтвердилось».
     # Аудитор обязан видеть разницу.
     gap_lines.extend(verdict.notes)
@@ -437,7 +553,9 @@ async def stream_deep_research_gptr(question: str,
                 "method": "numbers_vs_read_pages",
                 "numeric_checked": verification["numeric_checked"],
                 "verified": verification["verified"],
-                "unverified": verification["unverified"],
+                # Интерфейс и PDF ждут записи {claim, issue}; голые числа давали
+                # «4 утверждения требуют проверки» с пустыми «» (26.09).
+                "unverified": [_unverified_item(x) for x in verification["unverified"]],
                 "unverified_count": len(verification["unverified"]),
                 "facts_total": len(registry.facts),
                 "citations": cit_stats.get("цитирований", 0),

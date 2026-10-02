@@ -1,19 +1,20 @@
-"""Ретривер gpt-researcher поверх шлюза fleet-searxng.
+"""Ретривер gpt-researcher поверх нашей цепочки веб-поиска.
 
-Штатный searx-ретривер gpt-researcher делает GET к открытому инстансу. Наш
-поиск — версионированный контракт POST /v1/search с Bearer-токеном, серверной
-фильтрацией доменов и набором движков (google cse / yandex / duckduckgo);
-локальный инстанс на дешёвых движках отдаёт по банковским запросам мусор.
+Штатный searx-ретривер gpt-researcher делает GET к открытому инстансу. Мы
+идём через rag/web_search.search(): Яндекс через корпоративный шлюз, затем
+шлюз fleet-searxng на резидентских прокси, затем остальные запасные.
+
+Раньше здесь был прямой вызов одного fleet-шлюза без запасного пути: любой
+его сбой (401, квота, таймаут) или пустой ответ давал отчёт без веб-источников,
+а 22.09.2026 шлюз трижды отклонил токен. Теперь у отчёта два живых поисковика,
+кэш выдачи и широкий повтор, если по заданным сайтам ничего не нашлось.
 
 Контракт возврата тот же, что у их ретриверов: [{"href": ..., "body": ...}].
 """
 from __future__ import annotations
 
 import logging
-import os
 import re
-
-import httpx
 
 from ..v2.tools.web_tools import _trust_for
 
@@ -63,67 +64,43 @@ def _prefer_primary(results: list[dict]) -> list[dict]:
     return [r for _t, r in kept]
 
 
-class FleetSearch:
-    """Совместимый с gpt-researcher поиск через наш шлюз."""
+class WebSearch:
+    """Совместимый с gpt-researcher поиск через нашу цепочку бэкендов."""
 
     def __init__(self, query: str, query_domains=None):
-        # `site:` вырезаем из текста и переводим в серверный фильтр доменов:
-        # гейтвей фильтрует у себя, а движки поиска этот оператор понимают
-        # по-разному. Фильтр действует только на ТОТ запрос, где site: стоял —
+        # `site:` вырезаем из текста и передаём списком: цепочка сама решает,
+        # как объяснить домены каждому поисковику (Яндексу и fleet — оператором
+        # в тексте). Фильтр действует только на ТОТ запрос, где site: стоял —
         # иначе общий сравнительный запрос тоже запирается на сайты банков и
         # отчёт остаётся без обзоров и жалоб (замер 31.08.2026: контекст упал
         # с 24 800 до 4 600 символов).
         sites = re.findall(r"site:(\S+)", query, flags=re.IGNORECASE)
         clean = re.sub(r"site:\S+", " ", query, flags=re.IGNORECASE)
         self.query = re.sub(r"\s+", " ", clean).strip() or query
-        self.query_domains = [d.split("/")[0].lower().removeprefix("www.")
-                              for d in (list(sites) + list(query_domains or []))]
-        self.base = (os.getenv("FLEET_SEARXNG_URL") or "").rstrip("/")
-        self.token = os.getenv("FLEET_SEARXNG_TOKEN")
-        self.engines = [e.strip() for e in os.getenv(
-            "FLEET_SEARXNG_ENGINES", "google cse,yandex,duckduckgo").split(",")
-            if e.strip()]
+        doms: list[str] = []
+        for d in list(sites) + list(query_domains or []):
+            h = d.split("/")[0].lower().removeprefix("www.")
+            if h and h not in doms:
+                doms.append(h)
+        self.query_domains = doms
 
     def search(self, max_results: int = 10) -> list[dict]:
-        if not self.base:
-            log.error("FLEET_SEARXNG_URL не задан — поиск недоступен")
-            return []
-        body: dict = {"query": self.query[:512], "language": "ru",
-                      "max_results": max(1, min(int(max_results or 8), 20))}
-        if self.engines:
-            body["engines"] = self.engines
-        if self.query_domains:
-            body["include_domains"] = self.query_domains[:10]
-        headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        try:
-            with httpx.Client(timeout=httpx.Timeout(connect=5, read=60,
-                                                    write=5, pool=5)) as c:
-                r = c.post(f"{self.base}/v1/search", json=body, headers=headers)
-        except Exception as e:
-            log.info("fleet %s: %s", self.query[:50], type(e).__name__)
-            return []
-        if r.status_code == 403:
-            log.error("fleet-searxng: КВОТА ТРАФИКА ИСЧЕРПАНА (403)")
-            return []
-        if r.status_code == 401:
-            log.error("fleet-searxng: токен не принят (401)")
-            return []
-        if r.status_code != 200:
-            log.warning("fleet-searxng %s: HTTP %s", self.query[:50], r.status_code)
-            return []
-        try:
-            data = r.json()
-        except Exception:
-            return []
-        out: list[dict] = []
-        for it in (data.get("results") or []):
-            href = it.get("url") or it.get("href") or ""
-            if not href:
-                continue
-            out.append({"href": href,
-                        "body": it.get("content") or it.get("snippet") or ""})
-            if len(out) >= max_results * 2:
-                break                    # берём с запасом — часть отсеется
+        from ...rag import web_search
+        want = max(1, int(max_results or 8)) * 2          # с запасом — часть отсеется
+        res = web_search.search(self.query, max_results=want,
+                                site_filter=self.query_domains or None,
+                                caller="deep_research")
+        if not res and self.query_domains:
+            # По сайтам пусто у всех поисковиков — лучше взгляд со стороны, чем
+            # ничего. Чужие домены потом всё равно проходят оценку доверия.
+            log.info("поиск: по %s пусто, широкий повтор без доменов",
+                     ", ".join(self.query_domains[:3]))
+            res = web_search.search(self.query, max_results=want,
+                                    caller="deep_research_broad")
+        out = [{"href": r["url"], "body": r.get("snippet") or ""}
+               for r in res if r.get("url")]
         return _prefer_primary(out)[:max_results]
+
+
+# Старое имя: так класс знают движок и тесты.
+FleetSearch = WebSearch

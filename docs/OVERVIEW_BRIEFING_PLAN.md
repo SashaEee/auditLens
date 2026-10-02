@@ -270,9 +270,18 @@ CREATE TABLE IF NOT EXISTS digest_run (
 GET  /api/overview/digest              → сегодня (или последний доступный) + meta.refreshing
 GET  /api/overview/digest?date=...     → архив (404 если нет)
 GET  /api/overview/digest/dates        → список дат для архивного пикера
-POST /api/overview/digest/refresh      → 202 {started} | 409 (уже идёт)
-       body: {"force": true, "sections": ["news"]}    # точечная перегенерация
+POST /api/overview/digest/refresh      → 202 {started} | 403 (не владелец) | 409 (уже идёт
+                                           или после 12:00 МСК без late=true)
+       body: {"force": true, "sections": ["news"], "late": false}   # точечная перегенерация
+GET  /api/overview/live                → те же цифры, что у «Отзывов», сейчас (без моделей):
+                                          строка «Сейчас» в расшифровках утреннего выпуска
 ```
+Перегенерация — только владельцу (`ADMIN_USERS`): выпуск один на всех, а после
+полудня пересборка забирает в сегодняшний выпуск новости, которые утром ушли бы
+в завтрашний (`day_events` исключает уже опубликованное).
+
+«Ко вчера» (`meta.delta`) сравнивает жалобы только внутри одной методики
+(`reviews_pulse.method`): при смене разметки вместо дельт — `method_changed`.
 Фронт рендерит секции по ключам; неизвестный ключ → generic-карточка по
 `payload.markdown`/`payload.items` — страница расширяема без релиза фронта.
 

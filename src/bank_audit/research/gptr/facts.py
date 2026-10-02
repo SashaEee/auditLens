@@ -32,10 +32,33 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from ...ai.llm_utils import drop_known_rejected, remember_rejected
 from ..entity_extractor import _BANK_DOMAINS
 from ..v2.tools.web_tools import REGULATOR_DOMAINS
 
 log = logging.getLogger(__name__)
+
+
+async def call_model(client, model: str, kw: dict):
+    """Вызов модели с памятью об отвергнутых параметрах.
+
+    gpt-5.4-mini не знает `thinking`, а мы шлём его каждой странице, чтобы
+    выключить рассуждение у моделей, которые его умеют. Без памяти каждая
+    страница стоила два запроса — 400 и повтор: замер 21.09.2026 дал 112
+    лишних вызовов на один отчёт. Отказ, который модель назвала, снимается и
+    запоминается за моделью (общая память в ai/llm_utils). Отказ без имени
+    параметра, как и раньше, лечится вслепую — без extra_body, — но не
+    запоминается: причина могла быть не в нём.
+    """
+    drop_known_rejected(model, kw)
+    try:
+        return await client.chat.completions.create(**kw)
+    except Exception as e:
+        if remember_rejected(model, e, kw):
+            return await client.chat.completions.create(**kw)
+        if kw.pop("extra_body", None) is None:
+            raise
+        return await client.chat.completions.create(**kw)
 
 # Сколько текста страницы отдаём извлекателю. Больше — дороже и хуже фокус.
 _PAGE_BUDGET = 14000
@@ -330,11 +353,7 @@ async def plan_attributes(client, model: str, question: str, plan) -> Contract:
     if os.getenv("GPTR_EXTRACT_THINKING", "0") != "1":
         kw["extra_body"] = {"thinking": {"type": "disabled"}}
     try:
-        try:
-            resp = await client.chat.completions.create(**kw)
-        except Exception:
-            kw.pop("extra_body", None)
-            resp = await client.chat.completions.create(**kw)
+        resp = await call_model(client, model, kw)
         raw = (resp.choices[0].message.content or "").strip()
         data = json.loads(raw)
     except Exception as e:
@@ -411,13 +430,7 @@ async def extract_page(client, model: str, *, url: str, text: str,
     if os.getenv("GPTR_EXTRACT_THINKING", "0") != "1":
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     try:
-        try:
-            resp = await client.chat.completions.create(**kwargs)
-        except Exception:
-            # Модель может не знать про отключение рассуждения — тогда зовём
-            # как обычно, а не роняем извлечение целиком.
-            kwargs.pop("extra_body", None)
-            resp = await client.chat.completions.create(**kwargs)
+        resp = await call_model(client, model, kwargs)
         raw = (resp.choices[0].message.content or "").strip()
     except Exception as e:
         log.info("извлечение %s: %s", url[:70], type(e).__name__)

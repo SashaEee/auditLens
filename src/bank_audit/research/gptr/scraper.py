@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from datetime import date
 
 from ...rag import fetcher
 from ...rag.parsers.html_parser import parse_html
@@ -26,6 +28,8 @@ log = logging.getLogger(__name__)
 # Ниже этого объёма страница считается подозрительно пустой: у настоящей
 # продуктовой страницы после очистки остаются сотни символов условий.
 _TOO_SHORT = 400
+# Копию Яндекса старше этого не берём: условия продуктов меняются.
+_COPY_MAX_AGE_DAYS = int(os.getenv("SEARCH_COPY_MAX_AGE_DAYS", "90"))
 # Строка такой длины — это уже проза, а не заголовок и не пункт меню.
 _PROSE_LINE = 120
 
@@ -65,25 +69,30 @@ class AuditLensScraper:
 
     def _read(self, *, browser: bool) -> tuple[str, str]:
         try:
+            # Дешёвый проход — строго без браузера: браузер решает scrape(),
+            # после копии Яндекса. Иначе fetch звал его сам, а потом scrape()
+            # ещё раз — два ожидания по 20 с на одну закрытую страницу.
             res = fetcher.fetch(self.link, prefer_browser=browser,
-                                force_refresh=browser)
+                                force_refresh=browser, browser_fallback=browser)
         except Exception as e:
             log.info("fetch %s: %s", self.link[:80], type(e).__name__)
             return "", ""
         if not res or not res.content:
             return "", ""
+        return self._parse(res.content, res.content_type, res.final_url or self.link)
+
+    def _parse(self, content: bytes, content_type: str | None,
+               url: str) -> tuple[str, str]:
         # PDF разбираем СВОИМ парсером (таблицы + провенанс), иначе документ
         # уходил штатному классу gpt-researcher и в факты не попадал вовсе:
         # реестр страниц заполняет только этот скрапер. Для регуляторных
         # документов, которые почти всегда PDF, это была дыра в покрытии.
-        ctype = (res.content_type or "").lower()
+        ctype = (content_type or "").lower()
         self.is_pdf = ("pdf" in ctype
                        or self.link.split("?", 1)[0].lower().endswith(".pdf")
-                       or res.content[:5] == b"%PDF-")
+                       or content[:5] == b"%PDF-")
         try:
-            doc = (parse_pdf(res.content, res.final_url or self.link)
-                   if self.is_pdf
-                   else parse_html(res.content, res.final_url or self.link))
+            doc = (parse_pdf(content, url) if self.is_pdf else parse_html(content, url))
         except Exception as e:
             log.info("parse %s: %s", self.link[:80], type(e).__name__)
             return "", ""
@@ -96,22 +105,65 @@ class AuditLensScraper:
                 from ...digest.news import date_from_html
                 # Кодировка нас не волнует: даты в метатегах — латиница и
                 # цифры, а «ignore» просто выбросит непрочитанные байты.
-                ts = date_from_html(res.content.decode("utf-8", "ignore"))
+                ts = date_from_html(content.decode("utf-8", "ignore"))
                 if ts:
                     self.state.page_dates[self.link] = ts.date().isoformat()
             except Exception:      # noqa: BLE001 — дата необязательна
                 pass
         return (doc.text or ""), (getattr(doc, "title", "") or "")
 
+    def _read_copy(self) -> tuple[str, str, str | None]:
+        """Сохранённая копия страницы из индекса Яндекса.
+
+        Сайты банков закрыты антиботом: sberbank.ru отдаёт заглушку в 91
+        символ, браузер ждёт до 20 с и тоже часто проигрывает. Копия той же
+        страницы приходит за 1–3 с целиком (замер 24.09.2026: 9 из 10 страниц
+        Сбера). Слишком старую копию не берём: условия продуктов меняются.
+        """
+        from ...rag import search_gateway
+        try:
+            copy = search_gateway.read_cached_copy(self.link)
+        except Exception as e:      # noqa: BLE001 — копия необязательна
+            log.info("копия %s: %s", self.link[:80], type(e).__name__)
+            return "", "", None
+        if copy is None:
+            return "", "", None
+        if copy.copy_date:
+            try:
+                age = (date.today() - date.fromisoformat(copy.copy_date)).days
+            except ValueError:
+                age = 0
+            if age > _COPY_MAX_AGE_DAYS:
+                log.info("копия %s: от %s — старше %d дн, не берём",
+                         self.link[:70], copy.copy_date, _COPY_MAX_AGE_DAYS)
+                return "", "", None
+        text, title = self._parse(copy.content, "text/html", self.link)
+        return text, title, copy.copy_date
+
+    def _usable(self, text: str, title: str) -> bool:
+        return (len(text) >= _TOO_SHORT and not _looks_like_stub(title, text)
+                and not _is_skeleton(text))
+
     def scrape(self) -> tuple[str, list, str]:
         text, title = self._read(browser=False)
-        if not self.is_pdf and (len(text) < _TOO_SHORT
-                                or _looks_like_stub(title, text)):
-            log.info("scrape %s: дёшево не вышло (%d символов) — идём браузером",
-                     self.link[:70], len(text))
-            btext, btitle = self._read(browser=True)
-            if len(btext) > len(text):
-                text, title = btext, btitle
+        cheap_bad = len(text) < _TOO_SHORT or _looks_like_stub(title, text)
+        if not self.is_pdf and (cheap_bad or _is_skeleton(text)):
+            # Сначала копия Яндекса (секунды), и только потом браузер (десятки
+            # секунд, и на сайтах банков часто тот же отказ). Каркасу SPA браузер
+            # по-прежнему не положен — только копия: так было и до неё.
+            ctext, ctitle, cdate = self._read_copy()
+            if self._usable(ctext, ctitle):
+                log.info("scrape %s: дёшево не вышло (%d символов) — прочитано "
+                         "из сохранённой копии Яндекса от %s", self.link[:70],
+                         len(text), cdate or "?")
+                text, title = ctext, ctitle
+                self.state.cached_copies[self.link] = cdate or ""
+            elif cheap_bad:
+                log.info("scrape %s: дёшево не вышло (%d символов) — идём браузером",
+                         self.link[:70], len(text))
+                btext, btitle = self._read(browser=True)
+                if len(btext) > len(text):
+                    text, title = btext, btitle
         # Причину фиксируем ВСЕГДА, даже если текст всё же вернули: отчёт
         # обязан отличать «нет данных» от «не смогли прочитать».
         if not text:

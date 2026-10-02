@@ -170,8 +170,9 @@ def _add_reasoning_content(kwargs: dict) -> bool:
 
 
 _PARAMS = ("temperature", "top_p", "reasoning_effort",
-           "presence_penalty", "frequency_penalty")
-# «`temperature` is deprecated for this model», «Unsupported parameter: 'top_p'»
+           "presence_penalty", "frequency_penalty", "thinking")
+# «`temperature` is deprecated for this model», «Unsupported parameter: 'top_p'»,
+# «Unknown parameter: 'thinking'»
 _REJECTED_RE = re.compile(
     r"(deprecated|not supported|unsupported|unknown|invalid)[^.]{0,40}?"
     r"[`'\"]?(?P<a>" + "|".join(_PARAMS) + r")[`'\"]?"
@@ -203,12 +204,32 @@ def _strip_param(kwargs: dict, param: str) -> bool:
     return hit
 
 
+def drop_known_rejected(model: str, kwargs: dict) -> None:
+    """Снимает параметры, которые эта модель уже отвергала в этом процессе.
+
+    Память общая для всех прямых вызовов модели (кондуктор, слой фактов,
+    критик, писатель): без неё каждая точка вызова платила за отказ заново —
+    замер 21.09.2026 дал 120 ответов 400 на 243 вызова одного отчёта.
+    """
+    for p in tuple(_DROP_PARAMS.get(model, ())):
+        _strip_param(kwargs, p)
+
+
+def remember_rejected(model: str, err: Exception, kwargs: dict) -> str | None:
+    """Если модель назвала отвергнутый параметр — снимает его из kwargs,
+    запоминает за моделью и возвращает имя. Иначе None: ошибка не про параметр."""
+    bad = _rejected_param(err)
+    if bad and _strip_param(kwargs, bad):
+        _DROP_PARAMS.setdefault(model, set()).add(bad)
+        return bad
+    return None
+
+
 async def _resilient_create(orig, model: str, args, kwargs):
     stream = bool(kwargs.get("stream"))
     if model in _NEEDS_RC:
         _add_reasoning_content(kwargs)      # знаем требование — выполняем сразу
-    for p in tuple(_DROP_PARAMS.get(model, ())):
-        _strip_param(kwargs, p)             # то же для отвергнутых параметров
+    drop_known_rejected(model, kwargs)      # то же для отвергнутых параметров
     try:
         resp = await orig(*args, **kwargs)
     except Exception as e:
@@ -216,9 +237,8 @@ async def _resilient_create(orig, model: str, args, kwargs):
         # здесь — терять качество на ровном месте: из-за «`temperature` is
         # deprecated» весь кондуктор молча уезжал с основной модели на
         # резервную. Снимаем параметр и повторяем ТОЙ ЖЕ моделью.
-        bad = _rejected_param(e)
-        if bad and _strip_param(kwargs, bad):
-            _DROP_PARAMS.setdefault(model, set()).add(bad)
+        bad = remember_rejected(model, e, kwargs)
+        if bad:
             log.warning("[llm] %s не принимает %s — сняли, повтор той же моделью",
                         model, bad)
             return await _resilient_create(orig, model, args, kwargs)

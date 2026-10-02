@@ -536,15 +536,6 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", "", s)
 
 
-def test_admin_route_and_title():
-    """Маршрут admin — отдельный рабочий экран с русским заголовком."""
-    jsx = _jsx = JSX
-    assert 'view === "admin"' in jsx
-    assert "Управление доступом" in jsx
-    # Админ-экран — собственная ветка разметки, не смешанная с каталогом.
-    assert _norm('{view==="admin"&&(') in _norm(jsx)
-
-
 def test_admin_fail_closed_screen_clears_visible_data():
     """401/403 видимых админ-endpoint'ов: ранее загруженные данные очищаются,
     показывается fail-closed экран без деталей отказа."""
@@ -560,35 +551,10 @@ def test_admin_fail_closed_screen_clears_visible_data():
     assert "setAdminAudit(null)" in branch
 
 
-def test_admin_revoke_uses_modal_confirmation():
-    """Отзыв роли — через доступную модалку с последствием, не window.confirm."""
-    jsx = _norm(JSX)
-    assert _norm("const[revokeConfirm,setRevokeConfirm]=useState(null);") in jsx
-    assert _norm("useFocusLayer(!!revokeConfirm,") in jsx
-    assert 'aria-labelledby="lp-revoke-title"' in JSX
-    assert 'id="lp-revoke-title"' in JSX
-    # Прямого вызова отзыва без подтверждения нет: кнопка в таблице открывает
-    # модалку, revokeRole вызывается только из неё.
-    assert "setRevokeConfirm(a.username)" in jsx
-    assert "Отозвать" in JSX
-
-
 def test_admin_expert_limit_displayed():
     """Лимит активных экспертов виден администратору (N из max_experts)."""
     assert "max_experts" in JSX
     assert "active_experts" in JSX
-
-
-def test_admin_sections_and_states():
-    """Два нужных раздела админ-поверхности; ошибка загрузки — поверхность
-    с «Повторить», а не toast и не пустое состояние."""
-    assert "Роль ЦК КС" in JSX
-    assert "Статус Telegram-целей" not in JSX
-    assert "Telegram-цели не зарегистрированы" not in JSX
-    assert "Сводный аудит" in JSX
-    m = re.search(r"adminError\s*\?\s*\((.{0,600})", JSX, re.DOTALL)
-    assert m, "нет ветки поверхности ошибки админ-экрана"
-    assert "Повторить" in m.group(1)
 
 
 def test_admin_audit_shows_only_aggregates():

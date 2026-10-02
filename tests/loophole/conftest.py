@@ -67,7 +67,13 @@ CREATE TABLE loophole_record (
     classified_at TEXT,
     parser_id     INTEGER,
     text_sha256   TEXT,
-    status        TEXT DEFAULT 'preliminary'
+    status        TEXT DEFAULT 'preliminary',
+    summary       TEXT,
+    summary_model TEXT,
+    summarized_at TEXT,
+    headline      TEXT,
+    summary_doubt TEXT,
+    bank_inferred BOOLEAN NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_lr_sha ON loophole_record(sha256);
 CREATE INDEX idx_lr_bank ON loophole_record(bank_slug);
@@ -323,6 +329,18 @@ CREATE TABLE loophole_verification_decision (
     run_id TEXT NOT NULL
 );
 CREATE INDEX idx_lvd_snapshot ON loophole_verification_decision(snapshot_id);
+
+-- 079: журнал решений экспертов по записям.
+CREATE TABLE loophole_record_decision (
+    decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    record_id   INTEGER NOT NULL,
+    decided_by  TEXT NOT NULL,
+    decided_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    previous    TEXT,
+    decision    TEXT NOT NULL,
+    comment     TEXT,
+    source      TEXT
+);
 """
 
 

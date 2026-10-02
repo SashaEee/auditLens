@@ -46,11 +46,19 @@ async def reviews_pulse(day: date) -> dict:
         bank = "Сбербанк"
         ov = rd.overview(bank) or {}
         wk = rd.weekly_signals(bank) or {}
+        try:
+            # журнал сигналов: всплески, попавшие в «Обзор», — эпизодом со снимком
+            from ..rag import reviews_work
+            reviews_work.record_signals(wk, bank, None, min_interval_s=0)
+        except Exception as e:  # noqa: BLE001 — выпуск не зависит от журнала
+            log.warning("журнал сигналов: %s", e)
         th = rd.themes(bank) or {}
         tr = rd.trend(bank) or {}
-        # топ растущих тем: только осмысленные (порог по n гасит взрывные % у редких)
+        # топ растущих тем: только значимо обгоняющие общий поток жалоб (Б4) —
+        # «+77%» на 99 жалобах при общем росте +23% в пределах колебаний
         themes_up = [t for t in (th.get("themes") or [])
-                     if t.get("key") != "other"
+                     if t.get("key") != "other" and t.get("delta_sig")
+                     and (t.get("excess") or 0) > 0
                      and (t.get("delta_pct") or 0) >= 50 and (t.get("n") or 0) >= 30][:5]
         series = (tr.get("series") or [])[-8:]
         # «пульс дня» на главной: расхождение с рынком (есть всегда, в отличие
@@ -58,9 +66,14 @@ async def reviews_pulse(day: date) -> dict:
         wp = rd.week_pulse(bank) or {}
         unc = rd.unclassified_week(bank) or {}
         return {
+            # версия методики: «ко вчера» сравнивает только снимки одной версии —
+            # 25.09 вчерашний снимок был по старым меткам, и «+5,5 пп эскалации»,
+            # «−30 вне кодификатора» были сменой счёта, а не событием
+            "method": f"annotation:{rd._ann_schema()}",
             "kpi": {k: ov.get(k) for k in
                     ("total", "prev", "delta_pct", "delta_low_n", "market_share_pct",
-                     "market_rank", "market_banks", "escalation_pct", "as_of")},
+                     "market_rank", "market_banks", "escalation_pct", "as_of",
+                     "escalation_filed_pct", "market_escalation_pct", "escalation_sig")},
             "signals": wk.get("signals") or [],
             "overall": wk.get("overall") or {},
             "themes_up": themes_up,
@@ -80,6 +93,63 @@ async def reviews_pulse(day: date) -> dict:
 _RATE_FIELDS = ("rate_pct", "fee_service", "fee_open")
 
 
+# Артефакты сбора тарифов. Замер 24.09.2026: ставка ВТБ «Наличными» каждое
+# утро «менялась» 19,9 → 20,5 → 19,9 за минуту (на странице две цены для разных
+# сумм, парсер берёт то одну, то другую), и это уходило в заголовки выпуска:
+# «ВТБ дважды за сутки качнул ставку», «ВТБ утроил ставку по кредитам».
+_FLAP_H = 72.0          # вернулось к прежнему значению за это время — не изменение
+_JUMP_PP = 3.0          # скачок крупнее — только после подтверждения следующим сбором
+_JUMP_CONFIRM_H = 20.0  # подтверждение: прошёл сбор, и значение не откатилось
+
+
+def rate_artifacts(rows: list[dict]) -> tuple[set, set, list[dict]]:
+    """По изменениям ставок за ~10 дней: (флапающие change_id, неподтверждённые
+    скачки change_id, сводка по офферам-«мигалкам» для «Пульса»).
+
+    rows — {change_id, offer_id, changed_at, from, to, bank, title} в любом порядке."""
+    from collections import defaultdict
+    by_offer: dict = defaultdict(list)
+    for r in rows:
+        if r.get("from") is None or r.get("to") is None:
+            continue
+        by_offer[r["offer_id"]].append(r)
+    flap, pending, offers = set(), set(), []
+    now = datetime.now(timezone.utc)
+    for oid, seq in by_offer.items():
+        seq.sort(key=lambda x: x["changed_at"])
+        n_flap = 0
+        for i, c in enumerate(seq):
+            for d in seq[i + 1:]:
+                gap_h = (d["changed_at"] - c["changed_at"]).total_seconds() / 3600.0
+                if gap_h > _FLAP_H:
+                    break
+                if abs(d["to"] - c["from"]) < 0.005:        # A→B … →A
+                    flap.update((c["change_id"], d["change_id"]))
+                    n_flap += 1
+                    break
+        # мигание между двумя значениями без чистого возврата «в пару»
+        vals = {round(v, 2) for c in seq for v in (c["from"], c["to"])}
+        if len(seq) >= 3 and len(vals) <= 2:
+            flap.update(c["change_id"] for c in seq)
+            n_flap = max(n_flap, len(seq) // 2)
+        if n_flap:
+            offers.append({"bank": seq[0].get("bank"), "title": seq[0].get("title"),
+                           "offer_id": oid, "flaps": n_flap,
+                           "values": sorted(vals)[:4]})
+        last = seq[-1]
+        for c in seq:
+            if c["change_id"] in flap or abs(c["to"] - c["from"]) < _JUMP_PP:
+                continue
+            ts = c["changed_at"] if c["changed_at"].tzinfo else c["changed_at"].replace(tzinfo=timezone.utc)
+            age_h = (now - ts).total_seconds() / 3600.0
+            # подтверждён: это последнее изменение оффера (не откатилось) и
+            # после него прошёл хотя бы один утренний сбор
+            if not (c is last and age_h >= _JUMP_CONFIRM_H):
+                pending.add(c["change_id"])
+    offers.sort(key=lambda o: -o["flaps"])
+    return flap, pending, offers
+
+
 async def tariff_moves(day: date) -> dict:
     def _compute():
         rows = _q("""
@@ -89,12 +159,45 @@ async def tariff_moves(day: date) -> dict:
               FROM change_history ch
               JOIN product_offer o USING (offer_id)
               JOIN bank b USING (bank_id)
-             WHERE ch.changed_at > now() - interval '7 days'
+              LEFT JOIN product_terms p ON p.terms_id = ch.prev_terms_id
+              LEFT JOIN product_terms n ON n.terms_id = ch.new_terms_id
+             WHERE ch.changed_at > now() - interval '10 days'
+               -- смена выдачи агрегатора — не изменение условий
+               AND NOT (p.raw->'filter_context' IS NOT NULL
+                        AND n.raw->'filter_context' IS NOT NULL
+                        AND p.raw->'filter_context' <> n.raw->'filter_context')
              ORDER BY ch.changed_at DESC
-             LIMIT 400
+             LIMIT 3000
         """)
+        import json as _json
+
+        def _diff(r):
+            d = r.get("diff") or {}
+            if isinstance(d, str):
+                try:
+                    d = _json.loads(d)
+                except Exception:
+                    d = {}
+            return d
+
+        seq = []
+        for r in rows:
+            rate = _diff(r).get("rate_pct") or {}
+            f, t = _fnum(rate.get("from")), _fnum(rate.get("to"))
+            if f is not None and t is not None:
+                ts = r["changed_at"] if r["changed_at"].tzinfo else r["changed_at"].replace(tzinfo=timezone.utc)
+                seq.append({"change_id": r["change_id"], "offer_id": r["offer_id"],
+                            "changed_at": ts, "from": f, "to": t,
+                            "bank": r["bank"], "title": r["title"]})
+        flap, pending, flap_offers = rate_artifacts(seq)
+        week_ago = datetime.now(timezone.utc).timestamp() - 7 * 86400
         top, by_bank, cat_48h = [], {}, {}
         for r in rows:
+            ts0 = r["changed_at"] if r["changed_at"].tzinfo else r["changed_at"].replace(tzinfo=timezone.utc)
+            if ts0.timestamp() < week_ago:
+                continue                  # 10 дней — только для детекта мигания
+            if r["change_id"] in flap:
+                continue                  # сбой сбора, а не изменение условий
             diff = r.get("diff") or {}
             if isinstance(diff, str):
                 import json as _json
@@ -110,7 +213,8 @@ async def tariff_moves(day: date) -> dict:
             bb["n"] += 1
             if any(fld in diff for fld in _RATE_FIELDS):
                 bb["n_rate"] += 1
-            if f is not None and t is not None and abs(t - f) >= 0.05:
+            if (f is not None and t is not None and abs(t - f) >= 0.05
+                    and r["change_id"] not in pending):
                 top.append({"bank": r["bank"], "is_sber": bool(r["is_sber"]),
                             "category": r["category"], "title": (r["title"] or "")[:90],
                             "from": f, "to": t, "delta": round(t - f, 2),
@@ -160,6 +264,9 @@ async def tariff_moves(day: date) -> dict:
 
         return {
             "top_changes": top,
+            # сбои сбора тарифов: в выпуск не идут, показываются в «Пульсе»
+            "artifacts": {"flapping_changes": len(flap), "pending_jumps": len(pending),
+                          "offers": flap_offers[:10]},
             "by_bank": sorted(by_bank.values(), key=lambda x: -x["n"])[:10],
             "mass_updates": mass,
             "after_pause": after_pause,
@@ -214,6 +321,15 @@ async def tariff_moves(day: date) -> dict:
     try:
         from .news import fetch_key_rate
         out["key_rate"] = await asyncio.to_thread(fetch_key_rate)
+        # с какой даты действует текущее значение: «ключевая 14% с 24.09» писало
+        # дату выгрузки ряда, а не решения ЦБ
+        kr_ = out["key_rate"] or {}
+        pts = kr_.get("points") or []
+        if pts:
+            i = len(pts) - 1
+            while i > 0 and pts[i - 1].get("rate") == pts[-1].get("rate"):
+                i -= 1
+            kr_["since"] = pts[i].get("date") if i > 0 else None
     except Exception as e:  # noqa: BLE001
         log.info("key_rate fetch failed: %s", e)
         out["key_rate"] = None

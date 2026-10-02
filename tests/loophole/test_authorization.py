@@ -170,7 +170,7 @@ def test_dev_grant_all_gives_any_principal_all_module_contexts(client, monkeypat
         "catalog", "ai_research", "queue", "admin",
     }
     assert queue.status_code == 200
-    assert queue.json() == {"records": [], "count": 0}
+    assert queue.json() == {"records": [], "count": 0, "total": 0}
     assert admin.status_code == 200
     assert admin.json() == {"roles": [], "active_experts": 0, "max_experts": 5}
 

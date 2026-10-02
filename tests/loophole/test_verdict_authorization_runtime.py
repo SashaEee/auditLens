@@ -30,9 +30,12 @@ def _open(browser: Browser, *, capability=None, protected_context=None, verdict_
         authorization["capabilities"] = {"can_mark_verdict": capability}
     stub = """
       window.__verdictRequests = [];
+      // Запись уже проверена экспертом: вердикт меняется из карточки «Базы»
+      // (находки модели без решения решаются в очереди).
       window.__record = {
         record_id: 1, title: "Проверяемая лазейка", bank_slug: "sber",
-        is_loophole: true, status: "published", verdict_confidence: 0.9,
+        is_loophole: true, classification: "vulnerability", verdict_model: "manual",
+        status: "published", verdict_confidence: 1,
       };
       window.fetch = async (input, init = {}) => {
         const url = String(input);
@@ -42,7 +45,7 @@ def _open(browser: Browser, *, capability=None, protected_context=None, verdict_
         if (url.endsWith("/contexts")) return json(AUTHORIZATION);
         if (url.endsWith("/workspace")) return json({workspace_id: 1});
         if (url.endsWith("/banks")) return json({banks: ["sber"]});
-        if (url.includes("/catalog") || url.endsWith("/queue")) {
+        if (url.includes("/catalog") || url.includes("/queue")) {
           return json({records: [window.__record]});
         }
         if (url.endsWith("/records/verdict")) {
@@ -76,9 +79,18 @@ def _open(browser: Browser, *, capability=None, protected_context=None, verdict_
         f'<script>{stub}</script><script type="text/babel">{jsx}</script></body></html>',
         wait_until="load",
     )
-    page.get_by_role("button", name="Проверяемая лазейка").wait_for(state="visible")
+    page.locator(".lp-rd .lp-rd-title", has_text="Проверяемая лазейка").wait_for(state="visible")
     assert not errors
     return page
+
+
+def _change_verdict(page, kind="Не подтверждено", comment="Проверено экспертом"):
+    page.locator(".lp-rd").get_by_role("button", name="Изменить вердикт").click()
+    dialog = page.get_by_role("dialog", name="Изменить вердикт")
+    dialog.get_by_role("radio", name=kind).click()
+    dialog.get_by_label("Комментарий эксперта").fill(comment)
+    dialog.get_by_role("button", name="Сохранить").click()
+    return dialog
 
 
 @pytest.mark.parametrize("capability", [None, False, "true"])
@@ -86,10 +98,9 @@ def test_catalog_verdict_is_read_only_without_explicit_permission(browser, capab
     """Отсутствующее, ложное и некорректное разрешение запрещают UI-маркировку."""
     page = _open(browser, capability=capability)
     try:
-        assert page.locator(".lp-verdict-chip").inner_text() == "уязвимость"
-        assert page.get_by_title("Изменить вердикт").count() == 0
-        assert page.locator("button.lp-verdict-chip").count() == 0
-        page.locator(".lp-verdict-chip").click()
+        assert page.locator(".lp-rd .lp-kind").inner_text() == "Уязвимость"
+        assert page.get_by_role("button", name="Изменить вердикт").count() == 0
+        page.locator(".lp-rd .lp-kind").click()
         assert page.get_by_role("dialog").count() == 0
         assert page.evaluate("window.__verdictRequests") == []
     finally:
@@ -108,14 +119,12 @@ def test_authorized_catalog_verdict_can_be_changed(browser, protected_context):
     """Эксперт и администратор сохраняют вердикт через выданное сервером разрешение."""
     page = _open(browser, capability=True, protected_context=protected_context)
     try:
-        page.get_by_title("Изменить вердикт").click()
-        dialog = page.get_by_role("dialog", name="Вердикт записи")
-        dialog.get_by_label("Комментарий аудитора").fill("Проверено экспертом")
-        dialog.get_by_role("button", name="Ни то ни другое").click()
+        dialog = _change_verdict(page)
         page.get_by_role("status").filter(has_text="Вердикт сохранён.").wait_for()
         dialog.wait_for(state="detached")
         assert page.evaluate("window.__verdictRequests") == [{
             "record_ids": [1], "classification": "not_confirmed", "comment": "Проверено экспертом",
+            "source": "base",
         }]
     finally:
         page.close()
@@ -123,32 +132,32 @@ def test_authorized_catalog_verdict_can_be_changed(browser, protected_context):
 
 @pytest.mark.parametrize("verdict_status", [401, 403])
 def test_revoked_permission_closes_dialog_and_removes_actions(browser, verdict_status):
-    """Отказ сервера после загрузки страницы закрывает модаль и убирает действия."""
+    """Отказ сервера после загрузки страницы закрывает диалог и убирает действия."""
     page = _open(browser, capability=True, verdict_status=verdict_status)
     try:
-        page.get_by_title("Изменить вердикт").click()
-        dialog = page.get_by_role("dialog", name="Вердикт записи")
-        dialog.get_by_role("button", name="Ни то ни другое").click()
+        dialog = _change_verdict(page)
         page.get_by_role("alert").filter(has_text="Нет права изменять вердикт.").wait_for()
         assert dialog.count() == 0
-        assert page.locator("button.lp-verdict-chip").count() == 0
-        assert page.locator(".lp-verdict-chip").inner_text() == "уязвимость"
+        assert page.get_by_role("button", name="Изменить вердикт").count() == 0
+        assert page.locator(".lp-rd .lp-kind").inner_text() == "Уязвимость"
         assert len(page.evaluate("window.__verdictRequests")) == 1
     finally:
         page.close()
 
 
 def test_queue_does_not_grant_verdict_permission_by_itself(browser):
-    """Наличие контекста очереди без разрешения не открывает модаль маркировки."""
+    """Наличие контекста очереди без разрешения не открывает решение эксперта."""
     page = _open(
         browser,
         capability=False,
         protected_context={"id": "queue", "title": "Очередь верификации"},
     )
     try:
-        page.get_by_role("tab", name="Очередь верификации").click()
+        page.get_by_role("tab", name="Очередь").click()
         page.get_by_role("heading", name="Проверяемая лазейка").wait_for()
-        assert page.get_by_role("button", name="Проверить вердикт").count() == 0
+        assert page.get_by_role("button", name="Сохранить решение").count() == 0
+        assert page.get_by_role("radiogroup", name="Решение").count() == 0
+        assert page.get_by_text("Решение выносит эксперт ЦК КС.").count() == 1
         assert page.evaluate("window.__verdictRequests") == []
     finally:
         page.close()

@@ -30,6 +30,10 @@ AUDITLENS_TOKENS = (
     "--ink", "--ink-2", "--ink-3", "--ink-4",
     "--hair", "--hair-2",
     "--accent", "--accent-soft", "--pos", "--warn", "--neg",
+    # Волны S2–S4 основного сайта: выделение/фокус, текст на мягких подложках,
+    # цвет Сбера и мошеннических схем, подсветка поиска, тени.
+    "--sber", "--sber-soft", "--select", "--select-soft", "--qhl", "--info",
+    "--legal", "--warn-ink", "--accent-ink", "--shadow-1", "--shadow-2",
 )
 
 
@@ -53,7 +57,9 @@ def test_loophole_page_fills_the_main_workspace():
     assert 'className="surface loophole-page"' in _main_jsx()
     assert 'height:"100%"' in jsx
     assert 'height:"calc(100vh-120px)"' not in jsx
-    assert ".content:has(.loophole-host--active)" in shell_css
+    # Только прямой активный хост: скрытые смонтированные страницы тоже лежат в
+    # .content, и правило без «>» срабатывало после визита на всех вкладках.
+    assert ".content:has(> .loophole-host--active)" in shell_css
 
 
 _CSS_NAMED_COLORS = frozenset(
@@ -97,7 +103,13 @@ def _blocks(text: str, selector: str) -> list[str]:
 
 
 def _tokens(block: str) -> dict[str, str]:
-    """`--name: value;` → dict; первая встреча побеждает (light-значение)."""
+    """`--name: value;` → dict; первая встреча побеждает (light-значение).
+
+    Комментарии вырезаются: в палитре index.html есть пояснения вида
+    «отдельный токен, а не --pos: …», и без этого разбор принимал текст
+    комментария за значение токена.
+    """
+    block = re.sub(r"/\*.*?\*/", "", block, flags=re.DOTALL)
     out: dict[str, str] = {}
     for name, value in re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", block):
         out.setdefault(name, value.strip())
@@ -162,11 +174,13 @@ def _contrast(pal: dict[str, str], fg: str, bg: str) -> float:
 # ── AC1: только саморазмещённые vendor-ресурсы ────────────────────────────────
 
 def test_vendor_scripts_selfhosted():
-    """React, ReactDOM и Babel — из /static/vendor/, как у основного сайта."""
+    """React и ReactDOM — из /static/vendor/, как у основного сайта. Babel в
+    браузер больше не грузится: JSX предсобран в loophole.js (28.09)."""
     html = _html()
     assert 'src="/static/vendor/react.min.js"' in html
     assert 'src="/static/vendor/react-dom.min.js"' in html
-    assert 'src="/static/vendor/babel.min.js"' in html
+    assert 'src="/static/loophole/loophole.js"' in html
+    assert "babel.min.js" not in html
 
 
 def test_vendor_fonts_selfhosted():
@@ -284,11 +298,11 @@ def test_text_contrast_floor_4_5():
             assert ratio >= 4.5, (
                 f"{theme}: {fg} на {bg} = {ratio:.2f}:1 — ниже порога 4.5:1"
             )
-        # Семантический текст на подложке --paper-2 (раскрытый контент записи):
-        # quality-ревью story 1.2 нашло там нарушение AC3 в light-теме
-        # (--warn = 3.13:1, --accent = 4.27:1). Токены verbatim, поэтому guard
-        # проверяет цвет, который фактически назначен правилом.
-        for selector in (".lp-content-note", ".lp-content-head a"):
+        # Текст на подложке --paper-2 (счётчики сегментов, шапки блоков
+        # находок и ранних отчётов): quality-ревью story 1.2 нашло там нарушение
+        # AC3 в light-теме (--warn = 3.13:1, --accent = 4.27:1). Токены verbatim,
+        # поэтому guard проверяет цвет, который фактически назначен правилом.
+        for selector in (".lp-seg-n", ".lp-cands-h span", ".lp-reports-h span"):
             fg = _rule_text_color(css, selector)
             ratio = _contrast(pal, fg, "--paper-2")
             assert ratio >= 4.5, (

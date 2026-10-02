@@ -156,6 +156,15 @@ _NEWS_RU = {
     "tg_kommersant": "Коммерсантъ",
     "tg_rbc": "РБК",
     "ria_novosti": "РИА Новости",
+    "fas_news": "ФАС России",
+    "pravo_laws": "Официальное опубликование — законы",
+    "pravo_acts": "Официальное опубликование — акты ведомств и ЦБ",
+    "tg_fincult": "Финансовая культура (Банк России)",
+    "tg_vsrf": "Верховный суд",
+    "tg_duma": "Госдума",
+    "tg_minfin": "Минфин России",
+    "tg_mintsifry": "Минцифры России",
+    "tg_rospotreb": "Роспотребнадзор",
 }
 
 
@@ -270,6 +279,7 @@ def _review_sources() -> list[dict]:
                        min(dt)::date since, max(dt)::date until
                 FROM review_index
                 WHERE bank IS NOT NULL AND (dt IS NULL OR dt <= now())
+                  AND coalesce(kind, '') NOT IN ('junk', 'dup')
                 GROUP BY 1 ORDER BY 2 DESC
             """)).mappings().all()
     except Exception as e:  # noqa: BLE001

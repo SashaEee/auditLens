@@ -15,6 +15,7 @@ import json
 import logging
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import text
 
@@ -38,6 +39,16 @@ def _eng():
 
 # ── запись ────────────────────────────────────────────────────────────────────
 
+def _json_default(o):
+    """numeric из базы (Decimal) и даты — в JSON. 28.09 одна уверенность находки
+    в Decimal уронила весь заголовок: выпуск показал вчерашнюю сводку."""
+    if isinstance(o, Decimal):
+        return float(o)
+    if isinstance(o, (date, datetime)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
 def upsert(day: date, section: str, payload: dict, *, status: str = "ok",
            llm_model: str | None = None, tokens_in: int | None = None,
            tokens_out: int | None = None, gen_ms: int | None = None,
@@ -53,7 +64,7 @@ def upsert(day: date, section: str, payload: dict, *, status: str = "ok",
                 llm_model = EXCLUDED.llm_model, tokens_in = EXCLUDED.tokens_in,
                 tokens_out = EXCLUDED.tokens_out, gen_ms = EXCLUDED.gen_ms,
                 error = EXCLUDED.error
-        """), {"d": day, "sec": section, "p": json.dumps(payload, ensure_ascii=False),
+        """), {"d": day, "sec": section, "p": json.dumps(payload, ensure_ascii=False, default=_json_default),
                "st": status, "sf": stale_from, "m": llm_model, "ti": tokens_in,
                "to": tokens_out, "ms": gen_ms, "err": error})
 
@@ -98,6 +109,37 @@ def _read_day_rows(day: date) -> dict[str, dict]:
     return out
 
 
+def archive_day(day: date) -> int:
+    """Копия текущих секций дня в daily_digest_archive — перед ручной
+    перегенерацией."""
+    with db.session() as s:
+        return s.execute(text("""
+            INSERT INTO daily_digest_archive (digest_date, section, payload, status, generated_at)
+            SELECT digest_date, section, payload, status, generated_at
+              FROM daily_digest WHERE digest_date = :d
+            ON CONFLICT DO NOTHING
+        """), {"d": day}).rowcount or 0
+
+
+def _first_archive(day: date) -> tuple[dict[str, dict], str | None]:
+    """Первая архивная версия дня — утренний выпуск до ручных обновлений."""
+    try:
+        with db.session() as s:
+            rows = s.execute(text("""
+                SELECT section, payload::text, status, generated_at
+                  FROM daily_digest_archive
+                 WHERE digest_date = :d AND archived_at = (
+                       SELECT min(archived_at) FROM daily_digest_archive WHERE digest_date = :d)
+            """), {"d": day}).all()
+    except Exception:  # noqa: BLE001 — архив необязателен
+        return {}, None
+    out = {sec: {"status": st, "payload": json.loads(p),
+                 "generated_at": g.isoformat() if g else None}
+           for sec, p, st, g in rows}
+    gen = max((v["generated_at"] for v in out.values() if v["generated_at"]), default=None)
+    return out, gen
+
+
 def recent_headlines(day: date, limit: int = 5) -> list[dict]:
     """Заголовки прошлых выпусков + их ведущие сигналы — чтобы передовица не
     повторялась. 07-10.08.2026 один и тот же ведущий сигнал (скачок ставки
@@ -117,6 +159,7 @@ def recent_headlines(day: date, limit: int = 5) -> list[dict]:
         ins = doc.get("insights") or []
         out.append({"date": d, "headline": doc.get("headline") or "",
                     "lead_ref": (ins[0] or {}).get("ref") if ins else None,
+                    "lead_title": (ins[0] or {}).get("title") if ins else None,
                     "refs": [i.get("ref") for i in ins if i.get("ref")]})
     return out
 
@@ -138,11 +181,15 @@ def list_dates(limit: int = 90) -> list[str]:
     return [r[0].isoformat() for r in rows]
 
 
-def read_latest(today: date, want: date | None = None) -> dict:
+def read_latest(today: date, want: date | None = None, morning: bool = False) -> dict:
     """Собранный документ дайджеста: указанный день, или последний ≤ today.
+    morning=True — утренняя версия дня, если его потом обновляли вручную.
     Никогда не кидает — на девственной БД вернёт {sections:{}, meta:{empty}}."""
     day = want or latest_day(today)
     sections = _read_day_rows(day) if day else {}
+    archived, archived_at = _first_archive(day) if day else ({}, None)
+    if morning and archived:
+        sections = archived
     tokens_in = sum((v.get("tokens") or {}).get("in", 0) for v in sections.values())
     tokens_out = sum((v.get("tokens") or {}).get("out", 0) for v in sections.values())
     gen_ts = [v["generated_at"] for v in sections.values() if v.get("generated_at")]
@@ -154,6 +201,9 @@ def read_latest(today: date, want: date | None = None) -> dict:
             "refreshing": run_in_progress(today),
             "generated_at": max(gen_ts) if gen_ts else None,
             "tokens": {"in": tokens_in, "out": tokens_out},
+            # выпуск обновляли вручную — утренняя версия доступна отдельно
+            "morning_at": archived_at,
+            "is_morning": bool(morning and archived),
         },
         "sections": sections,
     }

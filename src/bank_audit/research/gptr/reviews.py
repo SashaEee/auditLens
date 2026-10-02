@@ -119,8 +119,38 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
                 break
         if added:
             log.info("корпус отзывов: «%s» не банк в корпусе, по названию нашлось %d", label, added)
+    out = _only_complaints(out)
     log.info("корпус отзывов: %d жалоб по %d объектам", len(out), len(subjects))
     return out
+
+
+def _only_complaints(records: list[dict]) -> list[dict]:
+    """Отсев по LLM-разметке: похвала, вопросы, служебный мусор вместо текста и
+    копии одного отзыва в «жалобы» отчёта не идут, а продукт берётся из
+    разметки, а не меткой площадки. Отзыв, которого ещё нет в разметке,
+    остаётся — свежие размечаются в течение часа."""
+    urls = [r["url"] for r in records if r.get("url")]
+    if not urls:
+        return records
+    try:
+        from sqlalchemy import text
+        from ... import db
+        with db.session() as s:
+            rows = s.execute(text("SELECT url, kind, product FROM review_index WHERE url = ANY(:u)"),
+                             {"u": urls}).all()
+    except Exception as e:  # noqa: BLE001 — без разметки отчёт всё равно строится
+        log.info("корпус отзывов: разметка недоступна (%s)", type(e).__name__)
+        return records
+    meta = {u: (k, p) for u, k, p in rows}
+    keep = []
+    for r in records:
+        kind, product = meta.get(r.get("url") or "", (None, None))
+        if kind in ("junk", "dup", "praise", "question"):
+            continue
+        if product:
+            r["product"] = product
+        keep.append(r)
+    return keep
 
 
 # Метаданные отзыва держим ОТДЕЛЬНО от его текста: когда я подставлял их в

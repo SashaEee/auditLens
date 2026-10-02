@@ -128,23 +128,25 @@ def _open_history(
     )
     page.route("**/*", lambda route: route.fulfill(body=html, content_type="text/html"))
     page.goto("http://loophole.test/static/loophole/loophole.html" + query)
-    page.get_by_role("tab", name="Общая база").wait_for()
+    page.get_by_role("tab", name="База").wait_for()
     if not query:
-        page.get_by_role("tab", name="AI-исследования").click()
+        page.get_by_role("tab", name="Исследовать").click()
     return page
 
 
 def test_latest_research_restores_messages_and_legacy_reports_without_creating(browser):
     page = _open_history(browser)
     try:
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 2")
-        expect(page.get_by_role("heading", name="История загружена")).to_be_visible()
-        expect(page.get_by_label("Сохранённый результат")).to_have_value("200")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 2")
+        expect(page.get_by_role("heading", name="Тарифы ВТБ")).to_be_visible()
         assert page.evaluate("window.__createCount") == 0
-        page.get_by_label("Сохранённый результат").select_option("201")
-        expect(page.locator(".lp-research-evidence")).to_contain_text("Сохранённый прежний вывод 2")
+        # Отчёт 200 — у ответа в переписке; ранний 201 без сообщения открывается блоком.
+        early = page.get_by_role("region", name="Ранние отчёты")
+        expect(early.locator(".lp-report")).to_have_count(1)
+        early.get_by_text("Старый отчёт 2").click()
+        expect(early).to_contain_text("Сохранённый прежний вывод 2")
         page.get_by_role("button", name="Открыть исследование Кредитные карты").click()
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 1")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 1")
         expect(page.get_by_label("Сообщение аналитику")).to_be_enabled()
         page.get_by_label("Сообщение аналитику").fill("Продолжить исследование")
         page.get_by_role("button", name="Отправить сообщение").click()
@@ -163,10 +165,10 @@ def test_history_is_left_rail_with_date_limited_title_and_delete_cross(browser):
     assert len(displayed_name) == 64
     page = _open_history(browser, first_name=full_name)
     try:
-        history = page.locator(".lp-research-history")
-        content = page.locator(".lp-research-content")
-        item = page.locator(".lp-research-history-item").first
-        title = item.locator(".lp-research-history-open strong")
+        history = page.locator(".lp-hist")
+        content = page.locator(".lp-rs-main")
+        item = page.locator(".lp-hi").first
+        title = item.locator(".lp-hi-open b")
         delete = page.get_by_role("button", name=f"Удалить исследование {full_name} из истории")
 
         expect(title).to_have_text(displayed_name)
@@ -187,7 +189,7 @@ def test_history_is_left_rail_with_date_limited_title_and_delete_cross(browser):
         dialog.get_by_role("button", name="Удалить", exact=True).click()
         expect(dialog).to_have_count(0)
         assert page.evaluate("window.__workspaces.map(workspace => workspace.workspace_id)") == [1]
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 1")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 1")
     finally:
         page.close()
 
@@ -203,9 +205,9 @@ def test_new_research_clears_clarification_draft_and_report(browser):
         composer.fill("Черновик уточнения")
         page.get_by_role("button", name="Новое исследование", exact=True).click()
         expect(composer).to_have_value("")
-        expect(composer).to_have_attribute("placeholder", "Сообщение аналитику…")
-        assert page.locator(".lp-bubble").count() == 0
-        assert page.get_by_label("Сохранённый результат").count() == 0
+        expect(composer).to_have_attribute("placeholder", "Опишите, что искать: продукт, банк, признаки схемы")
+        assert page.locator(".lp-msg-u, .lp-msg-a").count() == 0
+        assert page.get_by_role("region", name="Ранние отчёты").count() == 0
         assert page.evaluate("window.__createCount") == 1
     finally:
         page.close()
@@ -215,11 +217,11 @@ def test_new_research_clears_clarification_draft_and_report(browser):
 def test_shared_link_restores_history_and_respects_author_rights(browser, read_only):
     page = _open_history(browser, query="?share=shared-token", read_only=read_only)
     try:
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 2")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 2")
         assert page.evaluate("window.__createCount") == 0
         assert page.get_by_label("Сообщение аналитику").count() == (0 if read_only else 1)
         assert page.get_by_role("button", name="Поделиться", exact=True).count() == (0 if read_only else 1)
-        assert page.locator(".lp-research-history-delete").count() == 2
+        assert page.locator(".lp-hi-del").count() == 2
         if read_only:
             expect(page.get_by_text("Исследование доступно только для чтения.", exact=True)).to_be_visible()
             assert page.get_by_role("button", name="Добавить в общую базу").count() == 0
@@ -255,9 +257,9 @@ def test_delete_keeps_item_on_failure_and_restores_remaining_on_success(browser)
         page.evaluate("window.__deleteFailure = false")
         dialog.get_by_role("button", name="Удалить", exact=True).click()
         expect(dialog).to_have_count(0)
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 1")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 1")
         assert page.get_by_role("button", name="Открыть исследование Тарифы ВТБ").count() == 0
-        expect(page.get_by_role("tab", name="AI-исследования")).to_be_focused()
+        expect(page.get_by_role("tab", name="Исследовать")).to_be_focused()
     finally:
         page.close()
 
@@ -265,13 +267,13 @@ def test_delete_keeps_item_on_failure_and_restores_remaining_on_success(browser)
 def test_late_history_response_cannot_replace_newer_selection(browser):
     page = _open_history(browser)
     try:
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 2")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 2")
         page.evaluate("window.__historyDelay[1] = 600")
         page.get_by_role("button", name="Открыть исследование Кредитные карты").click()
         page.get_by_role("button", name="Открыть исследование Тарифы ВТБ").click()
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 2")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 2")
         page.wait_for_timeout(750)
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 2")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 2")
     finally:
         page.close()
 
@@ -290,7 +292,7 @@ def test_delayed_list_response_cannot_restore_deleted_research(browser):
         page.get_by_role("button", name="Удалить исследование Тарифы ВТБ из истории").click()
         dialog = page.get_by_role("dialog", name="Удалить исследование из истории?")
         dialog.get_by_role("button", name="Удалить", exact=True).click()
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 1")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 1")
         deleted_item = page.get_by_role("button", name="Открыть исследование Тарифы ВТБ")
         expect(deleted_item).to_have_count(0)
         loading_after_delete = page.get_by_text("Загрузка списка…", exact=True).is_visible()
@@ -300,7 +302,7 @@ def test_delayed_list_response_cannot_restore_deleted_research(browser):
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         }""")
         expect(deleted_item).to_have_count(0)
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 1")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 1")
         assert loading_after_delete is False
         expect(page.get_by_text("Загрузка списка…", exact=True)).to_have_count(0)
     finally:
@@ -324,14 +326,14 @@ def test_busy_chat_prevents_switch_and_creation(browser):
 def test_history_error_has_retry_and_no_editable_stale_messages(browser):
     page = _open_history(browser)
     try:
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 2")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 2")
         page.evaluate("window.__historyFailure[1] = 503")
         page.get_by_role("button", name="Открыть исследование Кредитные карты").click()
         expect(page.get_by_role("button", name="Повторить загрузку исследования")).to_be_visible()
-        assert page.locator(".lp-bubble").count() == 0
+        assert page.locator(".lp-msg-u, .lp-msg-a").count() == 0
         page.evaluate("window.__historyFailure[1] = 0")
         page.get_by_role("button", name="Повторить загрузку исследования").click()
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 1")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 1")
     finally:
         page.close()
 
@@ -340,7 +342,7 @@ def test_deleted_shared_link_has_explicit_error_and_new_research_action(browser)
     page = _open_history(browser, query="?share=missing")
     try:
         expect(page.get_by_role("button", name="Повторить загрузку исследования")).to_be_visible()
-        expect(page.locator(".lp-research-history-error")).to_contain_text("недоступно")
+        expect(page.locator(".lp-inline-err")).to_contain_text("недоступно")
         assert page.get_by_label("Сообщение аналитику").count() == 0
         page.get_by_role("button", name="Новое исследование", exact=True).click()
         expect(page.get_by_label("Сообщение аналитику")).to_be_enabled()
@@ -357,7 +359,7 @@ def test_initial_list_failure_retries_without_creating_empty_research(browser):
         assert page.get_by_label("Сообщение аналитику").count() == 0
         page.evaluate("window.__listFailure = false")
         retry.click()
-        expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ исследования 2")
+        expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ исследования 2")
         assert page.evaluate("window.__createCount") == 0
     finally:
         page.close()
@@ -368,8 +370,8 @@ def test_empty_history_creates_once_and_delete_last_creates_fresh_workspace(brow
     try:
         expect(page.get_by_label("Сообщение аналитику")).to_be_enabled()
         assert page.evaluate("window.__createCount") == 1
-        page.get_by_role("tab", name="Общая база").click()
-        page.get_by_role("tab", name="AI-исследования").click()
+        page.get_by_role("tab", name="База").click()
+        page.get_by_role("tab", name="Исследовать").click()
         assert page.evaluate("window.__createCount") == 1
         page.get_by_role("button", name="Удалить исследование Новое исследование из истории").click()
         dialog = page.get_by_role("dialog", name="Удалить исследование из истории?")
@@ -393,14 +395,15 @@ def test_failed_creation_retry_repeats_creation_instead_of_opening_old_history(b
         assert page.evaluate("window.__createCount") == 1
         page.evaluate("window.__createFailure = false")
         retry.click()
-        expect(page.locator(".lp-bubble")).to_have_count(0)
+        expect(page.locator(".lp-msg-u, .lp-msg-a")).to_have_count(0)
         expect(page.get_by_label("Сообщение аналитику")).to_be_enabled()
         assert page.evaluate("window.__createCount") == 2
     finally:
         page.close()
 
 
-def test_selecting_earlier_live_report_restores_its_original_query(browser):
+def test_each_live_answer_keeps_its_own_report(browser):
+    """Отчёт каждого ответа скачивается у самого ответа — прежний не подменяется новым."""
     page = _open_history(browser)
     try:
         composer = page.get_by_label("Сообщение аналитику")
@@ -409,31 +412,32 @@ def test_selecting_earlier_live_report_restores_its_original_query(browser):
         for query in ["Первый новый запрос", "Второй новый запрос"]:
             composer.fill(query)
             page.get_by_role("button", name="Отправить сообщение").click()
-            expect(page.locator(".lp-bubble-content").last).to_have_text("Ответ на " + query)
+            expect(page.locator(".lp-msg-a .lp-safe-markdown").last).to_have_text("Ответ на " + query)
             expect(composer).to_be_enabled()
-        page.get_by_label("Сохранённый результат").select_option("301")
-        expect(page.locator(".lp-research-evidence")).to_contain_text("Ответ на Первый новый запрос")
-        expect(page.get_by_role("region", name="Текущий запрос")).to_contain_text("Первый новый запрос")
-        expect(page.get_by_role("region", name="Текущий запрос")).not_to_contain_text("Второй новый запрос")
+        first = page.locator(".lp-msg-a", has_text="Ответ на Первый новый запрос")
+        first.get_by_role("button", name="PDF").click()
+        page.wait_for_function("""() => window.__historyRequests.some(
+          request => request.url.includes('/research/reports/301/export/pdf'))""")
+        assert not page.evaluate("""() => window.__historyRequests.some(
+          request => request.url.includes('/research/reports/302/'))""")
     finally:
         page.close()
 
 
 @pytest.mark.parametrize("width", [1440, 992, 390])
 @pytest.mark.parametrize("dark", [False, True])
-def test_shared_history_layout_and_report_selector_remain_accessible(browser, width, dark):
+def test_shared_history_layout_and_early_reports_remain_accessible(browser, width, dark):
     page = _open_history(browser, query="?share=shared-token", width=width)
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
-        expect(page.get_by_label("Сохранённый результат")).to_have_value("200")
+        early = page.get_by_role("region", name="Ранние отчёты")
+        expect(early).to_be_visible()
         page.evaluate("dark => document.documentElement.classList.toggle('dark', dark)", dark)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        page.get_by_label("Сохранённый результат").select_option("201")
-        expect(page.locator(".lp-research-evidence")).to_contain_text("Сохранённый прежний вывод 2")
-        if width < 1100:
-            page.get_by_role("button", name="Открыть чат").click()
-        expect(page.locator(".lp-bubble-role").first).to_have_text("Автор")
+        early.get_by_text("Старый отчёт 2").click()
+        expect(early).to_contain_text("Сохранённый прежний вывод 2")
+        expect(page.locator(".lp-msg-u small").first).to_have_text("Автор исследования")
         assert page.get_by_label("Сообщение аналитику").count() == 0
         assert not errors
     finally:

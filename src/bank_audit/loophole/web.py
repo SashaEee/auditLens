@@ -95,16 +95,22 @@ def list_contexts(
 
 @router.get("/queue")
 def verification_queue(
+    sort: str = "old",
     user_id: str = Depends(get_user_id),
     session=Depends(get_session),
 ):
     """Очередь верификации ЦК КС. Роль перечитывается из БД на каждый запрос:
-    при отказе данные очереди не возвращаются."""
+    при отказе данные очереди не возвращаются. ``sort``: old — кто дольше ждёт,
+    conf — по вероятности модели; ``total`` — все ждущие решения без лимита."""
     authorization.require_role(
         user_id, authorization.ROLE_CCKS_EXPERT, action="queue_access", session=session,
     )
-    records = repo.list_verification_queue(session=session)
-    return {"records": records, "count": len(records)}
+    try:
+        records = repo.list_verification_queue(sort=sort, session=session)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    total = repo.count_verification_queue(session=session)
+    return {"records": records, "count": len(records), "total": total}
 
 
 class SubmitResearchCandidateRequest(BaseModel):
@@ -431,6 +437,7 @@ def list_catalog(
     classification: str = "all",
     limit: Annotated[int, Query(ge=1, le=50)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    sort: str = "new",
     session=Depends(get_session),
 ):
     """Общая база: подтверждённые кейсы и предварительные подозрения.
@@ -449,6 +456,7 @@ def list_catalog(
         classification=classification,
         limit=limit,
         offset=offset,
+        sort=sort,
         session=session,
         )
         total = repo.count_catalog_cases(
@@ -465,6 +473,91 @@ def list_catalog(
     return {"records": records, "total": total, "limit": limit, "offset": offset, "count": len(records)}
 
 
+def _bank_list(bank_slugs: str | None) -> list[str] | None:
+    return [item.strip() for item in bank_slugs.split(",") if item.strip()] if bank_slugs else None
+
+
+@router.get("/catalog/summary")
+def catalog_summary(
+    bank_slugs: str | None = None,
+    period_from: date | None = None,
+    period_to: date | None = None,
+    q: str | None = None,
+    verification_status: str = "all",
+    classification: str = "confirmed",
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Сводка над общей базой и счётчики фильтров по текущему срезу."""
+    try:
+        return repo.catalog_summary(
+            bank_slugs=_bank_list(bank_slugs), period_from=period_from, period_to=period_to,
+            query_text=q, verification_status=verification_status,
+            classification=classification, session=session,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class CatalogExportRequest(BaseModel):
+    """Выгрузка общей базы: отмеченные записи или всё по фильтрам каталога."""
+
+    record_ids: list[int] = Field(default_factory=list)
+    bank_slugs: list[str] = Field(default_factory=list)
+    period_from: date | None = None
+    period_to: date | None = None
+    q: str | None = None
+    verification_status: str = "all"
+    classification: str = "confirmed"
+    sort: str = "new"
+
+
+@router.post("/export/catalog.xlsx")
+def export_catalog_xlsx(
+    body: CatalogExportRequest,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Excel в стиле AuditLens: то, что пользователь видит в базе, или отмеченное."""
+    from .catalog_export import to_xlsx
+
+    if len(body.record_ids) > EXPORT_LIMIT:
+        raise HTTPException(status_code=400, detail=f"Не более {EXPORT_LIMIT} записей за раз.")
+    try:
+        if body.record_ids:
+            records = [r for r in (repo.get_record_detail(rid, session=session)
+                                   for rid in body.record_ids) if r]
+        else:
+            filters = dict(
+                bank_slugs=body.bank_slugs or None, period_from=body.period_from,
+                period_to=body.period_to, query_text=body.q,
+                verification_status=body.verification_status,
+                classification=body.classification, session=session,
+            )
+            total = repo.count_catalog_cases(**filters)
+            if total > EXPORT_LIMIT:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"По фильтрам {total} записей. Сузьте выборку до {EXPORT_LIMIT}.",
+                )
+            records = repo.list_catalog_cases(**filters, limit=EXPORT_LIMIT, offset=0,
+                                              sort=body.sort)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    body_bytes = to_xlsx(records, body.model_dump(mode="json"))
+    logging_audit.log_action(
+        user_id, "export_catalog_xlsx",
+        detail={"count": len(records), "selected": bool(body.record_ids)}, session=session,
+    )
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    filename = f"AuditLens_uyazvimosti_{stamp}.xlsx"
+    return Response(
+        content=body_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/records/{record_id}/content")
 def record_content(
     record_id: int,
@@ -475,12 +568,19 @@ def record_content(
 
     raw_text в списках не отдаётся (payload); только здесь, по явному запросу.
     """
-    record = repo.get_record(record_id, session=session)
+    record = repo.get_record_detail(record_id, session=session)
     if record is None:
         raise HTTPException(status_code=404, detail="record not found")
     logging_audit.log_action(
         user_id, "view_content",
         detail={"record_id": record_id}, session=session,
+    )
+    detail_keys = (
+        "title", "url", "domain", "bank_slug", "snippet", "is_loophole", "classification",
+        "verdict_confidence", "verdict_reason", "classifier_verdict_reason", "verdict_model",
+        "classified_at", "status", "published_at", "collected_at", "summary",
+        "awaiting", "reviewed", "provenance", "decisions", "expert_decisions",
+        "headline", "summary_doubt", "bank_inferred", "copy_ids",
     )
     return {
         "record_id": record_id,
@@ -489,7 +589,40 @@ def record_content(
         "raw_text_len": record.get("raw_text_len"),
         "raw_text_truncated": bool(record.get("raw_text_truncated")),
         "fetched_at": record.get("fetched_at"),
+        # Карточка записи во вкладке: история, суть, признаки проверки.
+        **{key: record.get(key) for key in detail_keys},
     }
+
+
+@router.post("/records/{record_id}/summary")
+async def record_summary(
+    record_id: int,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Суть записи: только для уязвимостей и схем, составляется один раз."""
+    from .summary import summarize_record
+
+    result = await summarize_record(record_id, session=session)
+    if result.get("reason") == "not_found":
+        raise HTTPException(status_code=404, detail="record not found")
+    if result.get("generated"):
+        session.commit()
+        logging_audit.log_action(
+            user_id, "record_summary", detail={"record_id": record_id}, session=session,
+        )
+    return result
+
+
+@router.get("/research/workspace/{workspace_id}/findings")
+def workspace_findings(
+    workspace_id: int,
+    user_id: str = Depends(get_user_id),
+    session=Depends(get_session),
+):
+    """Находки исследования — для обновления после завершения запуска."""
+    _require_workspace_owner(workspace_id, user_id, session=session)
+    return {"findings": repo.list_workspace_findings(workspace_id, session=session)}
 
 
 class BackfillRequest(BaseModel):
@@ -550,6 +683,8 @@ class VerdictRequest(BaseModel):
         default=None, pattern="^(vulnerability|fraud_scheme|not_confirmed)$",
     )
     comment: str | None = None
+    # Откуда решение: очередь ЦК КС, смена вердикта в базе или копии записи.
+    source: str | None = Field(default=None, pattern="^(queue|base|copies)$")
 
     @model_validator(mode="after")
     def resolve_classification(self):
@@ -588,6 +723,10 @@ def mark_verdict(
         if record is None:
             skipped.append(rid)
             continue
+        previous = record.get("classification") or (
+            "vulnerability" if record.get("is_loophole") is True
+            else "not_confirmed" if record.get("is_loophole") is False else None
+        )
         repo.update_verdict(
             rid,
             is_loophole=body.is_loophole,
@@ -596,6 +735,10 @@ def mark_verdict(
             model="manual",
             classification=body.classification,
             session=session,
+        )
+        repo.add_record_decision(
+            rid, decided_by=user_id, previous=previous, decision=body.classification,
+            comment=body.comment, source=body.source, session=session,
         )
         if body.is_loophole:
             if repo.get_kb_example_by_record(rid, session=session) is None:

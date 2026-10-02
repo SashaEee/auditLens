@@ -1,27 +1,55 @@
-/* loophole.jsx — модуль loophole: левый sidebar-чат (AI-agent стиль) +
-   основная область с таблицей найденных лазеек из БД, фильтрами и CSV-экспортом. */
+/* loophole.jsx — вкладка «Уязвимости» в системе AuditLens: база (сводка, фильтры,
+   список и карточка записи, Excel, аудит-дела), исследование агента одной
+   колонкой, очередь решений ЦК КС и панель «Доступ». Права решает сервер. */
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 const API = "/api/loophole";
 
-// Максимум записей в одной CSV-выгрузке (дублирует EXPORT_LIMIT на бэкенде).
-const EXPORT_LIMIT = 10000;
-
 // Размер страницы общей базы (дублирует верхнюю границу limit на бэкенде).
 const PAGE_SIZE = 50;
+
+// Названия банков вместо кодов bank_slug — только отображение: фильтры и API
+// по-прежнему работают с кодом. Неизвестный код показывается как есть.
+const BANK_NAMES = {
+  sberbank: "Сбербанк", sber: "Сбербанк", vtb: "ВТБ", alfabank: "Альфа-Банк",
+  alfa: "Альфа-Банк", tbank: "Т-Банк", tinkoff: "Т-Банк", gazprombank: "Газпромбанк",
+  gpb: "Газпромбанк", raiffeisen: "Райффайзенбанк", rosbank: "Росбанк",
+  sovcombank: "Совкомбанк", mtsbank: "МТС Банк", mts: "МТС Банк",
+  pochtabank: "Почта Банк", otkritie: "Открытие", psb: "ПСБ", rshb: "Россельхозбанк",
+  domrf: "Банк ДОМ.РФ", ozon: "Озон Банк", ozonbank: "Озон Банк", yandex: "Яндекс Банк",
+  uralsib: "Уралсиб", akbars: "Ак Барс", mkb: "МКБ", homecredit: "Хоум Банк",
+  renaissance: "Ренессанс Банк", all: "Все банки", generic: "Банк не указан",
+  other: "Другие банки",
+};
+function bankName(slug) {
+  const value = String(slug || "").trim();
+  return value ? (BANK_NAMES[value.toLowerCase()] || value) : "—";
+}
+// Коды, которыми сборщик помечает «банк не определён»: в интерфейсе — пусто.
+const UNKNOWN_BANKS = new Set(["", "all", "generic", "other"]);
+function knownBank(slug) {
+  const value = String(slug || "").trim();
+  return UNKNOWN_BANKS.has(value.toLowerCase()) ? null : bankName(value);
+}
+// Сбер — объект аудита: выделяется зелёным, как во всей системе AuditLens.
+function bankClass(slug) {
+  return /^sber/i.test(String(slug || "")) ? "lp-bank lp-bank-sber" : "lp-bank";
+}
+
+// Сводный аудит: события и решения по-русски; неизвестный код — как есть.
+const AUDIT_ACTION_LABELS = {
+  role_grant: "Назначение эксперта ЦК КС", role_assign: "Назначение эксперта ЦК КС",
+  role_revoke: "Отзыв роли ЦК КС", queue_access: "Открытие очереди верификации",
+  verification_decide: "Решение ЦК КС", mark_verdict: "Ручной вердикт",
+  membership_check: "Проверка доступа к модулю", admin_roles_read: "Просмотр ролей",
+  admin_audit_read: "Просмотр сводного аудита",
+  parser_development_request_create: "Заявка на парсер",
+};
+const AUDIT_DECISION_LABELS = {allow: "разрешено", deny: "отказано"};
 
 // Фазы, которые реально сообщает nanobot-пайплайн, включая финальное done.
 // Пользователь видит только русские подписи, протокольные ключи не меняются.
 const PHASES = ["clarify", "execute", "answer", "done"];
-
-const PHASE_LABELS = {
-  clarify: "Уточнение",
-  await_clarify: "Ожидает уточнения",
-  execute: "Выполнение",
-  answer: "Ответ",
-  done: "Готово",
-  error: "Ошибка",
-};
 
 const SUBAGENT_STAGES = {
   queued: "Ожидает свободного исследователя",
@@ -71,32 +99,6 @@ function acceptSubagentEvent(value) {
         url: subagentSourceHref(item.url),
       })),
   };
-}
-
-function ToolActivity({events = [], active = false}) {
-  if (!events.length) return null;
-  const calls = [];
-  for (const event of events) {
-    if (event.kind === "call") calls.push({...event, status: "running"});
-    else {
-      const pending = calls.find(call => call.name === event.name && call.status === "running");
-      if (pending) pending.status = event.status;
-      else calls.push(event);
-    }
-  }
-  const labels = {
-    audit_web_search: "Веб-поиск", audit_research_subagents: "Младшие исследователи",
-    audit_web_fetch: "Чтение источника", audit_extract_loopholes: "Извлечение признаков",
-    audit_db_query: "Запрос к базе", audit_table_load: "Загрузка таблицы",
-    audit_export: "Подготовка выгрузки",
-  };
-  return <div className="lp-tool-events" aria-label="Работа инструментов" role="status">
-    {calls.slice(-8).map((call, i) => <div key={i} className="lp-tool-activity">
-      <span>{labels[call.name] || "Инструмент"}</span>
-      <span>{call.status === "running" ? (active ? "Выполняется" : "Прервано")
-        : call.status === "failed" ? "Ошибка" : "Завершено"}</span>
-    </div>)}
-  </div>;
 }
 
 function SubagentCards({agents}) {
@@ -368,6 +370,94 @@ function useFocusLayer(active, containerRef, onClose, initialFocusRef, restoreFa
   }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
+// ── Вкладка «Уязвимости» в системе AuditLens: общие элементы интерфейса ─────
+// Иконки — inline SVG (правило системы: никаких эмодзи), 16×16, штрих 1.5.
+const LP_ICONS = {
+  search: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>',
+  dl: '<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
+  plus: '<path d="M8 3v10M3 8h10"/>',
+  users: '<circle cx="6" cy="5.5" r="2.5"/><path d="M1.8 13.5c.5-2.3 2.2-3.5 4.2-3.5s3.7 1.2 4.2 3.5"/><path d="M10.8 3.3a2.3 2.3 0 0 1 0 4.4M12.2 10.2c1 .5 1.7 1.6 2 3.3"/>',
+  ext: '<path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3"/>',
+  left: '<path d="m10 3.5-4.5 4.5 4.5 4.5"/>',
+  right: '<path d="m6 3.5 4.5 4.5L6 12.5"/>',
+  up: '<path d="M3.5 10 8 5.5l4.5 4.5"/>',
+  down: '<path d="M3.5 6 8 10.5 12.5 6"/>',
+  check: '<path d="m3.2 8.4 3 3 6.6-6.6"/>',
+  x: '<path d="M4 4l8 8M12 4l-8 8"/>',
+  case: '<rect x="2" y="5" width="12" height="8.5" rx="1.5"/><path d="M5.5 5V3.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V5M2 9h12"/>',
+  info: '<circle cx="8" cy="8" r="6"/><path d="M8 7.2v4M8 4.9v.1"/>',
+  clock: '<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4"/>',
+  alert: '<path d="M8 2.2 14.3 13H1.7Z"/><path d="M8 6.5v3M8 11.2v.1"/>',
+  spark: '<path d="M8 1.8c.4 2.9 1.6 4.2 4.4 4.6-2.8.4-4 1.7-4.4 4.6-.4-2.9-1.6-4.2-4.4-4.6C6.4 6 7.6 4.7 8 1.8Z"/><path d="M12.5 10.5c.2 1.2.7 1.8 1.8 2-1.1.2-1.6.8-1.8 2-.2-1.2-.7-1.8-1.8-2 1.1-.2 1.6-.8 1.8-2Z"/>',
+  shield: '<path d="M8 1.8 13 3.6v4.1c0 3-2.1 5.4-5 6.5-2.9-1.1-5-3.5-5-6.5V3.6Z"/>',
+  send: '<path d="M8 13V3.5M3.8 7.7 8 3.5l4.2 4.2"/>',
+  doc: '<path d="M4.2 1.8h5.3l3 3v8.4a1 1 0 0 1-1 1H4.2a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1Z"/><path d="M9.5 1.8v3h3M5.6 8.5h4.8M5.6 11h3.2"/>',
+  filter: '<path d="M2.5 3.5h11l-4.2 5v4l-2.6 1v-5Z"/>',
+  hist: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v3h3M8 5v3l2 1.3"/>',
+  share: '<path d="M6.2 9.8 9.8 6.2"/><path d="M8.6 4.4 9.9 3a2.6 2.6 0 0 1 3.7 3.7l-1.4 1.3M7.4 11.6 6.1 13a2.6 2.6 0 0 1-3.7-3.7l1.4-1.3"/>',
+  inbox: '<path d="M2 9.5 3.8 3.5h8.4L14 9.5v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z"/><path d="M2 9.5h3.5l1 1.5h3l1-1.5H14"/>',
+};
+
+function Icon({name, size = 16, className = ""}) {
+  return <svg className={"lp-ic " + className} width={size} height={size} viewBox="0 0 16 16"
+              aria-hidden="true" dangerouslySetInnerHTML={{__html: LP_ICONS[name] || ""}} />;
+}
+
+// Классы записи: уязвимость — красный (риск), схема — фиолетовый (--legal),
+// не подтверждено — нейтральный, без вердикта — пунктир.
+const KIND_LABELS = {
+  vulnerability: ["Уязвимость", "neg"],
+  fraud_scheme: ["Мошенническая схема", "legal"],
+  not_confirmed: ["Не подтверждено", "neu"],
+  none: ["Без вердикта", "dash"],
+};
+const POSITIVE_KINDS = new Set(["vulnerability", "fraud_scheme"]);
+
+function recordKind(r) {
+  if (!r) return "none";
+  return r.classification
+    || (r.is_loophole === true ? "vulnerability" : r.is_loophole === false ? "not_confirmed" : "none");
+}
+
+function KindBadge({kind}) {
+  const [label, tone] = KIND_LABELS[kind] || KIND_LABELS.none;
+  return <span className={"lp-kind lp-kind-" + tone}><span className="lp-kind-dot"></span>{label}</span>;
+}
+
+function lpPlural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
+const fmtInt = (n) => (Number(n) || 0).toLocaleString("ru-RU");
+const pctOf = (v) => (v == null || !Number.isFinite(Number(v))) ? null
+  : Math.max(0, Math.min(100, Math.round(Number(v) * 100)));
+const confWord = (v) => v == null ? "нет оценки" : v >= 0.8 ? "высокая" : v >= 0.6 ? "средняя" : "низкая";
+
+function fmtDay(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("ru-RU", {day: "2-digit", month: "2-digit", year: "numeric"});
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
+}
+
+// Подсветка слов поиска в тексте (React-узлы, без innerHTML).
+function Hl({text, q}) {
+  const value = String(text || "");
+  const words = String(q || "").trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  if (!words.length) return value;
+  const re = new RegExp("(" + words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  return value.split(re).map((part, i) => (
+    words.includes(part.toLowerCase()) ? <mark key={i} className="lp-hl">{part}</mark> : part
+  ));
+}
+
 function LoopholeApp() {
   // ── Таблица / фильтры ──────────────────────────────────────────────────────
   const [records, setRecords] = useState([]);
@@ -385,17 +475,16 @@ function LoopholeApp() {
   const [fFrom, setFFrom] = useState("");
   const [fTo, setFTo] = useState("");
   const [fVerification, setFVerification] = useState("all");
-  const [fClassification, setFClassification] = useState("all");
-  // Сортировка
-  const [sortKey, setSortKey] = useState("verdict_confidence");
-  const [sortDir, setSortDir] = useState("desc");
+  // По умолчанию — только находки: на проде 99% базы — «не подтверждено»,
+  // и уязвимости со схемами тонули среди них.
+  const [fClassification, setFClassification] = useState("confirmed");
+  // Порядок базы — сортирует сервер: сначала новые или по вероятности модели.
+  const [fSort, setFSort] = useState("new");
   // Выделение строк
   const [selected, setSelected] = useState(new Set());
 
   // ── Полный контент записей (ленивая подгрузка) ──────────────────────────
-  const [expanded, setExpanded] = useState(new Set());      // record_id с развёрнутым контентом
   const [contentCache, setContentCache] = useState({});     // {id: {loading, data, error}}
-  const [fullView, setFullView] = useState(new Set());      // record_id в режиме «развернуть полностью»
 
   // ── Ручная маркировка вердиктов ───────────────────────────────────────────
   const [verdictModal, setVerdictModal] = useState(null); // {record} | null
@@ -403,6 +492,7 @@ function LoopholeApp() {
   const [markBusy, setMarkBusy] = useState(false);
   // Единственный toast (story 1.4): {text, kind} — info | success | error.
   const [toast, setToast] = useState(null);
+  const toastSeqRef = useRef(0);
   const toastTimerRef = useRef(null);
   const [lastCsvDownload, setLastCsvDownload] = useState(null); // {url, filename}
   const csvUrlRef = useRef(null);
@@ -421,8 +511,7 @@ function LoopholeApp() {
   const [historyListError, setHistoryListError] = useState("");
   const [historyListLoading, setHistoryListLoading] = useState(false);
   const [researchActionBusy, setResearchActionBusy] = useState(false);
-  const [savedReports, setSavedReports] = useState([]);
-  const [selectedReportId, setSelectedReportId] = useState("");
+  const [savedReports, setSavedReports] = useState([]);   // ранние отчёты без сообщения
   const [researchShareUrl, setResearchShareUrl] = useState("");
   const [researchDeleteConfirm, setResearchDeleteConfirm] = useState(false);
   const [researchDeleteError, setResearchDeleteError] = useState("");
@@ -444,22 +533,15 @@ function LoopholeApp() {
   const [authz, setAuthz] = useState(null);
   const canMarkVerdict = !!(authz && authz.capabilities
     && authz.capabilities.can_mark_verdict === true);
-  const VerdictControl = canMarkVerdict ? "button" : "span";
   const [contextsRetry, setContextsRetry] = useState(0);  // +1 = повторить /contexts
   const [view, setView] = useState("catalog"); // catalog | sources | ai_research | queue | admin
-  // Панель агента живёт только в контексте AI-исследования (story 1.3): на
-  // широком iframe закреплена справа, ниже 1100px — off-canvas поверх контента,
-  // по умолчанию скрыта (открывается кнопкой «Открыть чат» в заголовке).
-  const [chatOpen, setChatOpen] = useState(() => window.innerWidth >= 1100);
-  const [isCompactViewport, setIsCompactViewport] = useState(
-    () => window.innerWidth < 1100
-  );
-  const previousCompactViewportRef = useRef(isCompactViewport);
   const [queueRecords, setQueueRecords] = useState([]);
   const [queueSelectedId, setQueueSelectedId] = useState(null);
   const [queueDenied, setQueueDenied] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState(false);
+  const [queueTotal, setQueueTotal] = useState(0);        // все ждущие решения, без лимита
+  const queueSortRef = useRef("old");                   // порядок очереди для loadQueue
   const queueRequestRef = useRef(0);
   // ── Администрирование (story 1.5): роль ЦК КС и сводный аудит ──
   const [adminDenied, setAdminDenied] = useState(false);
@@ -470,13 +552,8 @@ function LoopholeApp() {
   const [grantName, setGrantName] = useState("");
   const [adminBusy, setAdminBusy] = useState(false);
   // Отзыв роли — модальное подтверждение вместо системного диалога (story 1.4).
-  const [revokeConfirm, setRevokeConfirm] = useState(null); // username | null
-  const revokeDialogRef = useRef(null);
-  const revokeCancelRef = useRef(null);
   const chatInputRef = useRef(null);
-  // Слои с focus-trap (story 1.4): панель чата, модалки, подтверждение удаления.
-  const chatPanelRef = useRef(null);
-  const chatTitleRef = useRef(null);
+  // Слои с focus-trap (story 1.4): модалки, панель «Доступ», подтверждение удаления.
   const sourcesTabRef = useRef(null);
   const verdictDialogRef = useRef(null);
   const confirmDialogRef = useRef(null);
@@ -497,6 +574,7 @@ function LoopholeApp() {
   const [clarifyError, setClarifyError] = useState("");    // inline-ошибка с восстановлением ответа
   const [toolEvents, setToolEvents] = useState([]);        // badges tool_call/tool_result
   const [subagents, setSubagents] = useState([]);
+  const [findings, setFindings] = useState([]);   // находки исследования в общей базе
 
   // ── Парсеры ───────────────────────────────────────────────────────────────
   const [parsers, setParsers] = useState([]);
@@ -551,6 +629,7 @@ function LoopholeApp() {
   }, [authz]);
 
   // Загружаем записи.
+  const typedTextRef = useRef("");
   const loadRecords = useCallback(async () => {
     const requestGeneration = ++recordsRequestRef.current;
     setLoading(true);
@@ -562,6 +641,7 @@ function LoopholeApp() {
       if (fTo) params.set("period_to", fTo);
       params.set("verification_status", fVerification);
       params.set("classification", fClassification);
+      params.set("sort", fSort);
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String(page * PAGE_SIZE));
       const url = `${API}/catalog${params.toString() ? "?" + params.toString() : ""}`;
@@ -570,13 +650,28 @@ function LoopholeApp() {
       if (!r.ok) throw new Error("HTTP " + r.status);
       const d = await r.json();
       if (requestGeneration !== recordsRequestRef.current) return;
-      setRecords(d.records || []);
+      // «Показать ещё» дописывает страницу к уже показанным; повторы
+      // (запись сдвинулась между запросами) заменяются свежими данными.
+      const incoming = d.records || [];
+      setRecords(prev => {
+        if (page === 0) return incoming;
+        const fresh = new Map(incoming.map(r => [r.record_id, r]));
+        const known = new Set(prev.map(r => r.record_id));
+        return [...prev.map(r => fresh.get(r.record_id) || r),
+                ...incoming.filter(r => !known.has(r.record_id))];
+      });
       setRecordsTotal(Number.isInteger(d.total) ? d.total : (d.records || []).length);
       setRecordsError(null);
     } catch (e) {
       if (requestGeneration !== recordsRequestRef.current) return;
       // Ошибка не маскируется под пустой результат: отдельная поверхность
       // с «Повторить», старые данные не подменяют актуальное состояние.
+      if (page > 0) {
+        // Уже показанные записи не теряем: откатываем страницу и сообщаем.
+        showToast("Не удалось загрузить ещё записи. Повторите.", "error");
+        setPage(p => Math.max(0, p - 1));
+        return;
+      }
       setRecords([]);
       setRecordsTotal(0);
       setRecordsError(String(e));
@@ -585,51 +680,24 @@ function LoopholeApp() {
         setLoading(false);
       }
     }
-  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, page]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, page]);
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
-    const timer = setTimeout(() => loadRecords(), 350);
+    // Антидребезг нужен только при наборе текста; клики по фильтрам и первое
+    // открытие вкладки загружают сразу.
+    const typing = typedTextRef.current !== fText;
+    typedTextRef.current = fText;
+    const timer = setTimeout(() => loadRecords(), typing ? 350 : 0);
     return () => clearTimeout(timer);
   }, [loadRecords, authz, fText]);
 
   // Сброс страницы при смене фильтров (выборка начинается с первой страницы).
-  useEffect(() => { setPage(0); }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
+  useEffect(() => { setPage(0); }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort]);
 
-  // Сброс выделения и развёрнутых строк при смене фильтров и страницы.
-  useEffect(() => { setSelected(new Set()); setExpanded(new Set()); },
-           [fText, fBanks, fFrom, fTo, fVerification, fClassification, page]);
-
-  // ── Сортировка на клиенте ──────────────────────────────────────────────────
-  const sortedRecords = useMemo(() => {
-    const arr = [...records];
-    const dir = sortDir === "asc" ? 1 : -1;
-    arr.sort((a, b) => {
-      let va = a[sortKey], vb = b[sortKey];
-      if (va == null && vb == null) return 0;
-      if (va == null) return 1;
-      if (vb == null) return -1;
-      if (typeof va === "string") return va.localeCompare(vb) * dir;
-      return (Number(va) - Number(vb)) * dir;
-    });
-    return arr;
-  }, [records, sortKey, sortDir]);
-
-  const toggleSort = (key) => {
-    if (sortKey === key) {
-      setSortDir(d => d === "asc" ? "desc" : "asc");
-    } else {
-      setSortKey(key);
-      setSortDir("desc");
-    }
-  };
-
-  // Нативные кнопки заголовков поддерживают Enter/Space; aria-sort остаётся на th.
-  const sortableThProps = (key) => ({
-    "aria-sort": sortKey === key
-      ? (sortDir === "asc" ? "ascending" : "descending")
-      : "none",
-  });
+  // Выделение сбрасывается при смене выборки; «Показать ещё» его сохраняет.
+  useEffect(() => { setSelected(new Set()); },
+           [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort]);
 
   const toggleRow = (id) => {
     setSelected(prev => {
@@ -639,21 +707,13 @@ function LoopholeApp() {
     });
   };
 
-  const toggleAll = () => {
-    if (selected.size === sortedRecords.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(sortedRecords.map(r => r.record_id)));
-    }
-  };
-
   // Сброс фильтров каталога — действие «Сбросить» (фильтры + пустая выборка).
   const resetFilters = () => {
     setFText(""); setFBanks([]); setFFrom(""); setFTo(""); setFVerification("all");
-    setFClassification("all"); setPage(0);
+    setFClassification("confirmed"); setPage(0);
   };
 
-  // ── CSV-экспорт выделенных записей ─────────────────────────────────────────
+  // ── Выгрузка: подписи и повторное скачивание ──────────────────────────────
   const recordWord = (count) => {
     const mod100 = count % 100;
     const mod10 = count % 10;
@@ -671,43 +731,14 @@ function LoopholeApp() {
     a.click();
   };
 
-  const exportCSV = useCallback(async () => {
-    if (selected.size === 0) {
-      showToast("Сначала выделите записи для выгрузки в CSV.", "info");
-      return;
-    }
-    if (selected.size > EXPORT_LIMIT) {
-      showToast(`Выделено ${selected.size} записей. За один раз можно выгрузить не более ${EXPORT_LIMIT}.`, "info");
-      return;
-    }
-    try {
-      const r = await fetch(`${API}/export`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({records: [...selected], format: "csv"}),
-      });
-      if (!r.ok) {
-        const d = await r.json().catch(() => null);
-        showToast((d && d.detail) || "Ошибка выгрузки CSV.", "error");
-        return;
-      }
-      const blob = new Blob([await r.text()], {type: "text/csv;charset=utf-8"});
-      const url = URL.createObjectURL(blob);
-      if (csvUrlRef.current) URL.revokeObjectURL(csvUrlRef.current);
-      csvUrlRef.current = url;
-      const download = {url, filename: "loopholes.csv"};
-      setLastCsvDownload(download);
-      triggerCsvDownload(download);
-      showToast(`CSV сформирован · ${selected.size} ${recordWord(selected.size)}`, "success");
-    } catch (e) {
-      showToast("Не удалось выгрузить CSV: " + String(e), "error");
-    }
-  }, [selected]);
-
   // ── Единственный toast (story 1.4): типы info | success | error ──────────
-  const showToast = (text, kind = "info") => {
+  // opts.undo — кнопка «Отменить» (отложенное решение, отзыв роли),
+  // opts.ttl — сколько держать уведомление на экране.
+  const showToast = (text, kind = "info", opts = {}) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToast({text, kind});
-    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+    const ttl = opts.ttl || 4000;
+    setToast({text, kind, undo: opts.undo || null, ttl, id: ++toastSeqRef.current});
+    toastTimerRef.current = setTimeout(() => setToast(null), ttl);
   };
 
   // История загружается после проверки доступа. Поколение запроса исключает
@@ -721,8 +752,8 @@ function LoopholeApp() {
     setResearchActivity(null);
     setPendingQuestions(null); setPendingQuery(""); setClarificationToken(null);
     setAnswersByQ({}); setClarifyError(""); setToolEvents([]);
-    setSubagents([]);
-    setSavedReports([]); setSelectedReportId(""); setResearchShareUrl("");
+    setSubagents([]); setFindings([]);
+    setSavedReports([]); setResearchShareUrl("");
   };
 
   const applyResearch = (data) => {
@@ -733,10 +764,10 @@ function LoopholeApp() {
     setResearchReadOnly(readOnly);
     researchAccessRef.current = {readOnly, loading: false};
     setChat(data.messages || []);
+    setFindings(Array.isArray(data.findings) ? data.findings : []);
     // Сервер возвращает отчёты по возрастанию; показываем последние первыми.
     const reports = [...(data.reports || [])].reverse();
     setSavedReports(reports);
-    setSelectedReportId(reports.length ? String(reports[0].report_id) : "");
   };
 
   const clearSharedLocation = () => {
@@ -803,6 +834,21 @@ function LoopholeApp() {
 
   const createResearch = async (showResearch = true) => {
     if (chatBusyRef.current || clarifyBusyRef.current || researchActionRef.current) return;
+    // Кнопка «Новое исследование»: пустое исследование уже есть — открываем его,
+    // а не создаём ещё одно (раньше 3 из 4 оставались без единого вопроса).
+    // Вызовы после удаления и при первом входе (showResearch = false) создают как прежде.
+    const reuse = showResearch && !researchError;
+    if (reuse && workspaceId && !researchReadOnly && !chat.length) {
+      if (showResearch) setView("ai_research");
+      setTimeout(() => chatInputRef.current && chatInputRef.current.focus(), 0);
+      return;
+    }
+    const empty = researches.find(item => item.has_messages === false && item.workspace_id !== workspaceId);
+    if (reuse && empty) {
+      if (showResearch) setView("ai_research");
+      await openResearch({id: empty.workspace_id});
+      return;
+    }
     researchActionRef.current = true;
     setResearchActionBusy(true);
     const generation = ++researchRequestRef.current;
@@ -948,14 +994,14 @@ function LoopholeApp() {
   }, []);
 
   // ── Ручная маркировка: POST /records/verdict + toast результата ──────────
-  const markVerdict = async (ids, classification, comment) => {
+  const markVerdict = async (ids, classification, comment, {quiet = false, source = null} = {}) => {
     if (!canMarkVerdict || !ids.length || markBusy) return false;
     setMarkBusy(true);
     try {
       const r = await fetch(`${API}/records/verdict`, {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          record_ids: ids, classification, comment: comment || null,
+          record_ids: ids, classification, comment: comment || null, source,
         }),
       });
       const d = await r.json().catch(() => null);
@@ -972,10 +1018,22 @@ function LoopholeApp() {
       }
       if (d && d.skipped && d.skipped.length) {
         showToast(`Пропущено записей: ${d.skipped.length} (не найдены).`, "info");
-      } else {
+      } else if (!quiet) {
         showToast("Вердикт сохранён.", "success");
       }
-      await loadRecords();
+      // Строки базы обновляем на месте — запись не пропадает из-под курсора;
+      // карточку перечитываем, чтобы в истории появилось решение.
+      const decided = new Set(ids);
+      setRecords(prev => prev.map(r => decided.has(r.record_id) ? {
+        ...r, classification, is_loophole: classification !== "not_confirmed",
+        verdict_model: "manual", verdict_confidence: 1, reviewed: true, awaiting: false,
+      } : r));
+      setContentCache(prev => {
+        const next = {...prev};
+        ids.forEach(id => { delete next[id]; });
+        return next;
+      });
+      loadSummary();
       return true;
     } catch (e) {
       showToast("Ошибка маркировки: " + String(e), "error");
@@ -990,7 +1048,7 @@ function LoopholeApp() {
     const requestGeneration = ++queueRequestRef.current;
     setQueueLoading(true);
     try {
-      const r = await fetch(`${API}/queue`);
+      const r = await fetch(`${API}/queue?sort=${queueSortRef.current}`);
       if (requestGeneration !== queueRequestRef.current) return;
       if (r.status === 401 || r.status === 403) {
         // Нет роли или роль отозвана: очищаем ранее загруженные защищённые
@@ -1008,6 +1066,7 @@ function LoopholeApp() {
       setQueueError(false);
       const nextRecords = d.records || [];
       setQueueRecords(nextRecords);
+      setQueueTotal(Number.isInteger(d.total) ? d.total : nextRecords.length);
       setQueueSelectedId(prev => nextRecords.some(r => r.record_id === prev)
         ? prev
         : (nextRecords[0] ? nextRecords[0].record_id : null));
@@ -1038,9 +1097,8 @@ function LoopholeApp() {
       return;
     }
     if (id === "admin") {
-      // Административная поверхность — отдельный маршрут (story 1.5):
-      // рабочие данные каталога/очереди здесь не загружаются.
-      setView("admin");
+      // Администрирование — панель «Доступ» поверх текущего раздела.
+      setAccessOpen(true);
       loadAdmin();
       return;
     }
@@ -1143,7 +1201,6 @@ function LoopholeApp() {
         return;
       }
       showToast(`Роль эксперта ЦК КС отозвана: ${username}.`, "success");
-      setRevokeConfirm(null);
       await loadAdmin();
     } catch (e) {
       showToast("Не удалось отозвать роль: " + String(e), "error");
@@ -1152,36 +1209,12 @@ function LoopholeApp() {
     }
   };
 
-  // Панель чата рендерится только на маршруте AI-исследования (story 1.3):
-  // каталог и очередь верификации не совмещаются с чатом на одной поверхности.
-  const chatVisible = view === "ai_research" && chatOpen;
-  const chatModalOpen = chatVisible && isCompactViewport;
-
-  useEffect(() => {
-    const syncChatViewport = () => {
-      const compact = window.innerWidth < 1100;
-      const wasCompact = previousCompactViewportRef.current;
-      previousCompactViewportRef.current = compact;
-      setIsCompactViewport(compact);
-      if (!wasCompact && compact) setChatOpen(false);
-    };
-    window.addEventListener("resize", syncChatViewport);
-    return () => window.removeEventListener("resize", syncChatViewport);
-  }, []);
-
   // ── Активные слои: focus-trap, Escape, возврат фокуса (story 1.4) ─────────
-  // Панель чата: при открытии фокус — на заголовок панели (дизайн-контракт
-  // ADAPTIVE-CHAT-SPEC §4), после закрытия — возврат на кнопку-инициатор.
-  // Состояние разговора и черновик при закрытии не сбрасываются (закрытие не
-  // отменяет запущенное исследование).
-  useFocusLayer(chatModalOpen, chatPanelRef, () => setChatOpen(false), chatTitleRef);
   useFocusLayer(!!verdictModal, verdictDialogRef, () => setVerdictModal(null));
   // Деструктивное действие: начальный фокус — «Отмена», а не «Удалить».
   useFocusLayer(
     !!deleteConfirm, confirmDialogRef, () => setDeleteConfirm(null), confirmCancelRef, sourcesTabRef
   );
-  // Отзыв роли ЦК КС (story 1.5): начальный фокус — «Отмена».
-  useFocusLayer(!!revokeConfirm, revokeDialogRef, () => setRevokeConfirm(null), revokeCancelRef);
   useFocusLayer(researchDeleteConfirm, researchDeleteDialogRef,
     () => {
       if (!researchActionRef.current) {
@@ -1441,7 +1474,6 @@ function LoopholeApp() {
     chatBusyRef.current = true;
     const researchGeneration = researchRequestRef.current;
     setResearchActivity(null);
-    setSelectedReportId("");
     // Token одноразовый: новый challenge принимаем только из server-side SSE.
     setClarificationToken(null);
     // запоминаем ИСХОДНЫЙ запрос (не enriched) — из него build_enriched_question
@@ -1643,8 +1675,8 @@ function LoopholeApp() {
                 break;
               }
               case "records": {
-                const recs = (payload && payload.records) || [];
-                setRecords(recs);
+                // Записи, которые агент просмотрел, не подменяют список «Базы»:
+                // находки исследования приходят отдельным блоком после итога.
                 break;
               }
               case "tool_call":
@@ -1902,7 +1934,8 @@ function LoopholeApp() {
     if (!v) return "—";
     const date = new Date(v);
     if (Number.isNaN(date.getTime())) return "—";
-    const hasTime = /[T ]\d{2}:\d{2}/.test(String(v));
+    // Дата без времени (или ровно полночь) — только число: «00:00» — вымышленная точность.
+    const hasTime = /[T ]\d{2}:\d{2}/.test(String(v)) && (date.getHours() || date.getMinutes());
     return hasTime
       ? date.toLocaleString("ru-RU", {
           day: "2-digit", month: "2-digit", year: "numeric",
@@ -1914,57 +1947,13 @@ function LoopholeApp() {
     const value = String(name || "Без названия").trim() || "Без названия";
     return value.length <= 64 ? value : `${value.slice(0, 63)}…`;
   };
-  const fmtNum = (v) => v != null ? Number(v).toFixed(2) : "—";
-
-  const RECORD_STATUS_LABELS = {
-    published: "подтверждено",
-    preliminary: "предварительно",
-  };
-  const recordStatusLabel = (status) => status ? (RECORD_STATUS_LABELS[status] || "—") : "—";
-
   const queueSelected = queueRecords.find(r => r.record_id === queueSelectedId)
     || queueRecords[0]
     || null;
-  const reportChoices = [...savedReports];
-  let reportQuery = "";
-  chat.forEach(message => {
-    if (message.role === "user" && !message._clarificationAnswer) reportQuery = message.content;
-    if (message.role !== "assistant" || !message.report_id) return;
-    const index = reportChoices.findIndex(report => report.report_id === message.report_id);
-    if (index < 0) reportChoices.unshift({
-      report_id: message.report_id, result: message.content, query: reportQuery,
-    });
-  });
-  const selectedReport = reportChoices.find(report => String(report.report_id) === selectedReportId);
-  const lastResearchQuery = (selectedReport && selectedReport.query
-    ? {content: selectedReport.query} : null) || [...chat].reverse().find(
-    message => message.role === "user" && !message._clarificationAnswer
-  );
-  const lastResearchAnswer = (selectedReport
-    ? {content: selectedReport.result, report_id: selectedReport.report_id} : null) || [...chat].reverse().find(
-    message => message.role === "assistant" && !message._clarificationQuestion
-  );
   const phasePosition = phase ? PHASES.indexOf(phase) : -1;
   const researchProgress = phase === "done"
     ? 100
     : (phasePosition >= 0 ? Math.round(((phasePosition + 1) / PHASES.length) * 100) : 0);
-  const researchTasks = [...subtasks, ...subagents
-    .filter(agent => !subagents.some(next => next.retry_of === agent.id)).map(agent => ({
-    title: agent.title,
-    status: agent.status === "completed" ? "done"
-      : ["failed", "cancelled"].includes(agent.status) ? "error" : "running",
-  }))];
-  const completedSubtasks = researchTasks.filter(task => task.status === "done").length;
-  const restoredResearch = !phase && (chat.length > 0 || savedReports.length > 0);
-
-  const recordClassification = (r) => r.classification
-    || (r.is_loophole === true ? "vulnerability"
-      : r.is_loophole === false ? "not_confirmed" : null);
-  const verdictLabel = (r) => ({
-    vulnerability: "уязвимость",
-    fraud_scheme: "мошенническая схема",
-    not_confirmed: "ни уязвимость, ни мошенническая схема",
-  }[recordClassification(r)] || "не размечено");
   // Метки решений ЦК КС (loophole_verification_decision.decision) для карточки
   // очереди и модалки вердикта.
   const decisionLabel = (value) => ({
@@ -2007,16 +1996,6 @@ function LoopholeApp() {
       .catch(e => setContentCache(prev => ({...prev, [id]: {loading: false, data: null, error: String(e)}})));
   };
 
-  // Раскрытие/сворачивание деталей записи в таблице каталога.
-  const toggleContent = (id) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-    loadContent(id);
-  };
-
   // Карточка очереди: при смене выбранной записи сбрасываем комментарий
   // участника ЦК (поле карточки и поле модалки вердикта — одно состояние
   // markComment) и лениво догружаем полный текст записи; contentCache
@@ -2029,77 +2008,6 @@ function LoopholeApp() {
     if (queueSelectedRecordId) loadContent(queueSelectedRecordId);
   }, [queueSelectedRecordId]);
 
-  const toggleFullView = (id) => {
-    setFullView(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  // Бейдж статуса контента в строке таблицы.
-  const contentBadge = (r) => {
-    if (r.content_status === "full")
-      return <span className="lp-content-badge" title="Полный контент сохранён">📄</span>;
-    if (r.content_status === "truncated")
-      return <span className="lp-content-badge" title="Контент обрезан по лимиту">✂</span>;
-    if (r.content_status === "fetch_failed" || r.content_status === "empty")
-      return <span className="lp-content-badge" title="Контент не загружен">⚠</span>;
-    return null; // legacy/нет данных
-  };
-
-  // Развёрнутый блок контента под строкой. opts.alwaysFull — режим карточки
-  // очереди: текст всегда развёрнут (lp-content-body-full), кнопка
-  // «Развернуть полностью» не показывается.
-  const renderRecordContent = (r, opts = {}) => {
-    const alwaysFull = !!opts.alwaysFull;
-    const entry = contentCache[r.record_id];
-    const sourceLink = r.url ? (
-      <a href={r.url} target="_blank" rel="noopener noreferrer">открыть источник ↗</a>
-    ) : null;
-    if (!entry || entry.loading) {
-      return <div className="lp-content-block lp-content-loading">Загрузка контента… {sourceLink}</div>;
-    }
-    if (entry.error) {
-      return <div className="lp-content-block lp-content-error">Ошибка загрузки: {entry.error} {sourceLink}</div>;
-    }
-    const d = entry.data || {};
-    const sizeKb = d.raw_text_len ? Math.ceil(d.raw_text_len / 1024) : null;
-    const failed = d.content_status === "fetch_failed" || d.content_status === "empty";
-    const showFull = alwaysFull || fullView.has(r.record_id);
-    return (
-      <div className="lp-content-block" onClick={e => e.stopPropagation()}>
-        <div className="lp-content-head">
-          {d.content_status === "full" && <span className="lp-content-badge">📄 полный</span>}
-          {d.content_status === "truncated" && <span className="lp-content-badge">✂ обрезан{sizeKb ? ` до ${sizeKb} КБ` : ""}</span>}
-          {failed && <span className="lp-content-badge">⚠ контент не загружен</span>}
-          {sizeKb != null && <span className="lp-content-meta">{sizeKb} КБ</span>}
-          {sourceLink}
-          {d.fetched_at && <span className="lp-content-meta">загружено {fmtDate(d.fetched_at)}</span>}
-        </div>
-        <div className={"lp-content-body" + (showFull ? " lp-content-body-full" : "")}>
-          {d.raw_text || "—"}
-        </div>
-        {failed && (
-          <div className="lp-content-note">
-            Полный контент не удалось загрузить; показан сохранённый фрагмент.
-            Контент станет доступен после backfill.
-          </div>
-        )}
-        {!alwaysFull && !failed && (d.raw_text_len || 0) > 2000 && (
-          <button type="button" className="lp-btn lp-btn-sm lp-content-more"
-                  onClick={() => toggleFullView(r.record_id)}>
-            {showFull ? "Свернуть" : "Развернуть полностью"}
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  const sortArrow = (key) => sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
-
-  // Фаза: индекс в PHASES для подсветки. await_clarify показываем на шаге clarify.
-  const phaseIdx = phase === "await_clarify" ? 0 : (phase ? PHASES.indexOf(phase) : -1);
   const currentQuestions = pendingQuestions || [];
   const pendingTextQuestion = currentQuestions.find(q => q && q.type === "text") || null;
   const selectionQuestions = currentQuestions.filter(q => q && q.type !== "text");
@@ -2110,333 +2018,1751 @@ function LoopholeApp() {
   });
   const agentBusy = clarifySubmitting || chatLoading;
 
+  // ══ Вкладка «Уязвимости» в системе AuditLens (макет, согласованный 27.09) ══
+  // База — сводка, фильтры, список и карточка записи; «Исследовать» — одна
+  // колонка с ходом работы и находками; «Очередь» — решение на карточке;
+  // «Доступ» — панель администратора. Права по-прежнему решает сервер.
+
+  // ── Сводка над базой и счётчики фильтров ──────────────────────────────────
+  const [summaryData, setSummaryData] = useState(null);
+  const summaryRequestRef = useRef(0);
+  const summaryTextRef = useRef("");
+  const loadSummary = useCallback(async () => {
+    const generation = ++summaryRequestRef.current;
+    const params = new URLSearchParams();
+    if (fText.trim()) params.set("q", fText.trim());
+    if (fBanks.length) params.set("bank_slugs", fBanks.join(","));
+    if (fFrom) params.set("period_from", fFrom);
+    if (fTo) params.set("period_to", fTo);
+    params.set("verification_status", fVerification);
+    params.set("classification", fClassification);
+    try {
+      const r = await fetch(`${API}/catalog/summary?${params.toString()}`);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const d = await r.json();
+      if (generation === summaryRequestRef.current) setSummaryData(d);
+    } catch {
+      if (generation === summaryRequestRef.current) setSummaryData(null);
+    }
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
+
+  useEffect(() => {
+    if (!authz || !authz.contexts) return undefined;
+    const typing = summaryTextRef.current !== fText;
+    summaryTextRef.current = fText;
+    const timer = setTimeout(() => loadSummary(), typing ? 350 : 0);
+    return () => clearTimeout(timer);
+  }, [loadSummary, authz]);
+
+  // ── Состояние интерфейса ───────────────────────────────────────────────────
+  const [fPeriod, setFPeriod] = useState("all");   // all | 7 | 30 | 90 | custom
+  const [selId, setSelId] = useState(null);
+  // Запись, открытая из исследования: её карточка видна, даже если её нет в
+  // текущей выборке; смена фильтров это снимает.
+  const [pinnedId, setPinnedId] = useState(null);
+  const qCardRef = useRef(null);
+  const [readerOpen, setReaderOpen] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [pop, setPop] = useState(null);            // {kind, rect, record?}
+  const [summaries, setSummaries] = useState({});  // record_id → {loading, text, reason}
+  const [fullOpen, setFullOpen] = useState(new Set());
+  const [cases, setCases] = useState(null);
+  const [newCaseTitle, setNewCaseTitle] = useState("");
+  const [qSort, setQSort] = useState("old");
+  const [qOpen, setQOpen] = useState(false);
+  const [drafts, setDrafts] = useState({});        // record_id → {cls, comment}
+  const [reviewedCount, setReviewedCount] = useState(0);
+  const [hiddenQueueIds, setHiddenQueueIds] = useState(new Set());
+  const pendingRef = useRef(null);                 // отложенное решение ЦК КС
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [hiddenExperts, setHiddenExperts] = useState(new Set());
+  const revokeTimersRef = useRef({});
+  const [histOpen, setHistOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(true);   // подробности по исследователям
+  const accessSheetRef = useRef(null);
+  const searchRef = useRef(null);
+  const commentRef = useRef(null);
+  const readerRef = useRef(null);
+
+  const hasContext = (id) => !!(authz && authz.contexts && authz.contexts.some(c => c.id === id));
+  const canQueue = hasContext("queue");
+  const canAdmin = hasContext("admin");
+  const totals = summaryData && summaryData.totals;
+  const facets = summaryData && summaryData.facets;
+
+  // Период — пресеты по дате публикации (как фильтр «Дата публикации» раньше).
+  const applyPeriod = (value) => {
+    setFPeriod(value);
+    if (value === "all") { setFFrom(""); setFTo(""); return; }
+    if (value === "custom") return;
+    const from = new Date(Date.now() - Number(value) * 86400000);
+    setFFrom(from.toISOString().slice(0, 10));
+    setFTo("");
+  };
+
+  const resetAll = () => { resetFilters(); setFPeriod("all"); setFSort("new"); };
+  const activeFilterCount = (fClassification !== "confirmed" ? 1 : 0) + fBanks.length
+    + (fFrom || fTo ? 1 : 0) + (fVerification !== "all" ? 1 : 0);
+
+  // ── Выбранная запись и карточка ────────────────────────────────────────────
+  const detailOf = (id) => {
+    const entry = id != null ? contentCache[id] : null;
+    return entry && entry.data ? entry.data : null;
+  };
+  const selRecord = (selId != null && (records.find(r => r.record_id === selId)
+      || (pinnedId === selId && detailOf(selId) ? {record_id: selId, ...detailOf(selId)} : null)))
+    || records[0] || null;
+  const selRecordId = selRecord ? selRecord.record_id : null;
+
+  // Карточка перечитывается и после смены вердикта: markVerdict убирает её из кэша.
+  const selCached = selRecordId != null && !!contentCache[selRecordId];
+  useEffect(() => { if (view === "catalog" && selRecordId != null && !selCached) loadContent(selRecordId); },
+    [view, selRecordId, selCached]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Находки исследования: после итога перечитываем, что попало в общую базу.
+  useEffect(() => {
+    if (chatLoading || !workspaceId || phase !== "done" || researchReadOnly) return;
+    fetch(`${API}/research/workspace/${workspaceId}/findings`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && Array.isArray(d.findings)) setFindings(d.findings); })
+      .catch(() => {});
+  }, [phase, chatLoading, workspaceId, researchReadOnly]);
+
+  // Суть — только уязвимостям и схемам, один вызов модели на запись (сервер
+  // сохраняет результат). «Не подтверждено» модель не трогает.
+  const ensureSummary = (record) => {
+    if (!record) return;
+    const id = record.record_id;
+    const detail = detailOf(id);
+    const kind = recordKind({...record, ...(detail || {})});
+    if (!POSITIVE_KINDS.has(kind)) return;
+    if ((detail && detail.summary) || record.summary || summaries[id]) return;
+    setSummaries(prev => ({...prev, [id]: {loading: true}}));
+    fetch(`${API}/records/${id}/summary`, {method: "POST"})
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+      .then(d => setSummaries(prev => ({...prev, [id]: {loading: false, text: d.summary,
+        headline: d.headline, doubt: d.doubt, reason: d.reason}})))
+      .catch(() => setSummaries(prev => ({...prev, [id]: {loading: false, text: null, reason: "llm_error"}})));
+  };
+
+  const currentReaderRecord = view === "queue"
+    ? (queueRecords.find(r => r.record_id === queueSelectedId) || null) : selRecord;
+  const currentReaderDetail = currentReaderRecord ? detailOf(currentReaderRecord.record_id) : null;
+  useEffect(() => {
+    if (currentReaderRecord && currentReaderDetail) ensureSummary(currentReaderRecord);
+  }, [currentReaderRecord && currentReaderRecord.record_id, !!currentReaderDetail]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Новая выборка на узком экране показывает список, а не карточку прежней записи.
+  // Новая выборка открывает свою первую запись, а не карточку прежней.
+  useEffect(() => { setReaderOpen(false); setSelId(null); setPinnedId(null); },
+    [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort]);
+
+  // Узкий экран: открытая запись — к началу карточки (под липкими вкладками),
+  // фокус на её заголовок, чтобы экранное чтение продолжилось с него.
+  const showReader = (node) => {
+    if (window.innerWidth >= 900) return;
+    setTimeout(() => {
+      const target = node && node.current;
+      if (!target) return;
+      const top = target.getBoundingClientRect().top + window.scrollY - 64;
+      window.scrollTo({top: Math.max(0, top)});
+      const title = target.querySelector(".lp-rd-title");
+      if (title) title.focus({preventScroll: true});
+    }, 0);
+  };
+
+  const pickRecord = (id) => {
+    setSelId(id);
+    setReaderOpen(true);
+    if (readerRef.current) readerRef.current.scrollTop = 0;
+    showReader(readerRef);
+  };
+  const moveRecord = (delta) => {
+    if (!records.length) return;
+    const i = Math.max(0, records.findIndex(r => r.record_id === selRecordId));
+    const next = records[Math.max(0, Math.min(records.length - 1, i + delta))];
+    if (next && next.record_id !== selRecordId) {
+      setSelId(next.record_id);
+      if (readerRef.current) readerRef.current.scrollTop = 0;
+      const node = document.getElementById(`lp-item-${next.record_id}`);
+      if (node) node.scrollIntoView({block: "nearest"});
+    }
+  };
+
+  const openRecordInBase = (record) => {
+    setView("catalog");
+    setSelId(record.record_id);
+    setPinnedId(record.record_id);
+    setReaderOpen(true);
+    loadContent(record.record_id);
+    window.scrollTo({top: 0});
+  };
+
+  const deeperResearch = (record) => {
+    if (agentBusy) { showToast("Дождитесь итога текущего исследования.", "info"); return; }
+    setChatInput(`Разбери подробнее: «${record.title || record.snippet || "запись"}». `
+      + "Как устроен механизм, у каких ещё банков встречается и как проверить в данных.");
+    setView("ai_research");
+    setTimeout(() => chatInputRef.current && chatInputRef.current.focus(), 50);
+  };
+
+  // ── Выгрузка в Excel в стиле AuditLens ────────────────────────────────────
+  const exportExcel = async () => {
+    const ids = selectMode ? [...selected] : [];
+    const body = ids.length ? {record_ids: ids} : {
+      bank_slugs: fBanks, period_from: fFrom || null, period_to: fTo || null,
+      q: fText.trim() || null, verification_status: fVerification,
+      classification: fClassification, sort: fSort,
+    };
+    try {
+      const r = await fetch(`${API}/export/catalog.xlsx`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => null);
+        showToast((d && typeof d.detail === "string" && d.detail) || "Не удалось сформировать Excel.", "error");
+        return;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      if (csvUrlRef.current) URL.revokeObjectURL(csvUrlRef.current);
+      csvUrlRef.current = url;
+      const disposition = r.headers.get("Content-Disposition") || "";
+      const match = /filename="?([^";]+)"?/.exec(disposition);
+      const download = {url, filename: match ? match[1] : "AuditLens_uyazvimosti.xlsx"};
+      setLastCsvDownload(download);
+      triggerCsvDownload(download);
+      const n = ids.length || recordsTotal;
+      showToast(`Excel сформирован · ${fmtInt(n)} ${recordWord(n)}`, "success");
+    } catch (e) {
+      showToast("Не удалось сформировать Excel: " + String(e), "error");
+    }
+  };
+
+  // ── Аудит-дела основного приложения ───────────────────────────────────────
+  const openCasePop = async (event, record) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setNewCaseTitle("");
+    setPop(prev => prev && prev.kind === "case" && prev.record === record ? null
+      : {kind: "case", rect, record});
+    if (cases === null) {
+      try {
+        const r = await fetch("/api/cases");
+        const d = await r.json();
+        setCases(Array.isArray(d.cases) ? d.cases : []);
+      } catch { setCases([]); }
+    }
+  };
+  const caseItemFor = (record) => {
+    const detail = detailOf(record.record_id) || {};
+    const kind = recordKind({...record, ...detail});
+    const bits = [KIND_LABELS[kind][0], bankName(record.bank_slug) !== "—" ? bankName(record.bank_slug) : null,
+      detail.summary || record.summary || record.verdict_reason].filter(Boolean);
+    return {kind: "document", url: record.url || null,
+      title: (record.headline || record.title || record.snippet || "Запись «Уязвимостей»").slice(0, 300),
+      note: bits.join(" · ").slice(0, 900)};
+  };
+  const addToCase = async (caseRow, record) => {
+    setPop(null);
+    try {
+      const r = await fetch(`/api/cases/${caseRow.case_id}/items`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(caseItemFor(record)),
+      });
+      if (!r.ok) throw new Error();
+      setCases(prev => (prev || []).map(c => c.case_id === caseRow.case_id
+        ? {...c, items: (c.items || 0) + 1} : c));
+      showToast(`Добавлено в дело «${caseRow.title}»`, "success");
+    } catch {
+      showToast("Не удалось добавить в дело. Проверьте доступ к делу.", "error");
+    }
+  };
+  const createCaseWith = async (record) => {
+    const title = newCaseTitle.trim();
+    if (!title) return;
+    try {
+      const r = await fetch("/api/cases", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({title}),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.case_id) throw new Error();
+      const row = {case_id: d.case_id, title, items: 0};
+      setCases(prev => [row, ...(prev || [])]);
+      await addToCase(row, record);
+    } catch {
+      showToast("Не удалось создать дело.", "error");
+    }
+  };
+
+  // ── Очередь: решение на карточке с отменой в течение 10 секунд ────────────
+  // Порядок задаёт сервер (qSort уходит параметром); здесь только прячем
+  // записи с решением, которое ещё можно отменить.
+  const queueList = useMemo(() => queueRecords.filter(r => !hiddenQueueIds.has(r.record_id)),
+    [queueRecords, hiddenQueueIds]);
+  const hiddenInQueue = queueRecords.length - queueList.length;
+  const queueCount = Math.max(queueList.length, queueTotal - hiddenInQueue);
+  const pickQueueSort = (value) => {
+    if (value === qSort) return;
+    setQSort(value);
+    queueSortRef.current = value;
+    setQueueSelectedId(null);
+    loadQueue();
+  };
+  const qSel = queueList.find(r => r.record_id === queueSelectedId) || queueList[0] || null;
+  useEffect(() => {
+    if (qSel && qSel.record_id !== queueSelectedId) setQueueSelectedId(qSel.record_id);
+  }, [qSel && qSel.record_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const draftOf = (id) => drafts[id] || {cls: null, comment: ""};
+  const setDraft = (id, patch) => setDrafts(prev => ({...prev, [id]: {...draftOf(id), ...patch}}));
+
+  const commitPending = () => {
+    const pending = pendingRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingRef.current = null;
+    pending.commit();
+  };
+  // Закрытие вкладки не теряет решение: отправляем его немедленно.
+  useEffect(() => {
+    const flush = () => {
+      const pending = pendingRef.current;
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      pendingRef.current = null;
+      try {
+        navigator.sendBeacon(`${API}/records/verdict`, new Blob([JSON.stringify({
+          record_ids: pending.ids, classification: pending.cls, comment: pending.comment, source: "queue",
+        })], {type: "application/json"}));
+      } catch { /* браузер без sendBeacon — решение останется в очереди */ }
+    };
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("pagehide", flush); flush(); };
+  }, []);
+
+  // Копии записи, которые ещё ждут решения в очереди.
+  const queueCopies = (rec) => (rec.copy_ids || []).filter(id =>
+    queueRecords.some(q => q.record_id === id) && !hiddenQueueIds.has(id));
+
+  const saveDecision = () => {
+    const rec = qSel;
+    if (!rec || !canMarkVerdict) return;
+    const d = draftOf(rec.record_id);
+    const comment = (d.comment || "").trim();
+    if (!d.cls || !comment) {
+      if (commentRef.current) commentRef.current.focus();
+      return;
+    }
+    commitPending();
+    // Точные копии в очереди решаются вместе с записью, если эксперт не снял галочку.
+    const copies = d.applyCopies === false ? [] : queueCopies(rec);
+    const payload = {id: rec.record_id, ids: [rec.record_id, ...copies], cls: d.cls, comment};
+    const i = queueList.findIndex(r => r.record_id === rec.record_id);
+    const rest = queueList.filter(r => !payload.ids.includes(r.record_id));
+    const next = rest.find((r, k) => queueList.indexOf(r) > i) || rest[rest.length - 1] || null;
+    setHiddenQueueIds(prev => new Set([...prev, ...payload.ids]));
+    setQueueSelectedId(next ? next.record_id : null);
+    setDrafts(prev => { const copy = {...prev}; delete copy[payload.id]; return copy; });
+    const restore = () => setHiddenQueueIds(prev => {
+      const copy = new Set(prev); payload.ids.forEach(id => copy.delete(id)); return copy;
+    });
+    const commit = async () => {
+      const ok = await markVerdict(payload.ids, payload.cls, payload.comment, {quiet: true, source: "queue"});
+      if (ok) {
+        setReviewedCount(n => n + 1);
+        loadQueue();
+        loadSummary();
+        // Решение из очереди меняет выборку «Базы» — перечитываем её с первой страницы.
+        if (page === 0) loadRecords(); else setPage(0);
+      } else restore();
+    };
+    const timer = setTimeout(() => {
+      if (pendingRef.current && pendingRef.current.id === payload.id) {
+        pendingRef.current = null;
+        commit();
+      }
+    }, 10000);
+    pendingRef.current = {...payload, timer, commit};
+    const many = payload.ids.length > 1
+      ? ` для ${fmtInt(payload.ids.length)} ${lpPlural(payload.ids.length, "записи", "записей", "записей")}` : "";
+    showToast(`Решение «${KIND_LABELS[payload.cls][0]}»${many} запишется через 10 секунд`, "info", {
+      ttl: 10000,
+      undo: () => {
+        if (!pendingRef.current || pendingRef.current.id !== payload.id) return;
+        clearTimeout(pendingRef.current.timer);
+        pendingRef.current = null;
+        restore();
+        setQueueSelectedId(payload.id);
+        setDrafts(prev => ({...prev, [payload.id]: {cls: payload.cls, comment: payload.comment,
+          applyCopies: payload.ids.length > 1 || undefined}}));
+      },
+    });
+  };
+
+  const moveQueue = (delta) => {
+    if (!queueList.length || !qSel) return;
+    const i = queueList.findIndex(r => r.record_id === qSel.record_id);
+    const next = queueList[Math.max(0, Math.min(queueList.length - 1, i + delta))];
+    if (next) {
+      setQueueSelectedId(next.record_id);
+      const node = document.getElementById(`lp-qi-${next.record_id}`);
+      if (node) node.scrollIntoView({block: "nearest"});
+    }
+  };
+
+  // ── Доступ: отзыв роли с отменой вместо окна подтверждения ────────────────
+  const openAccess = () => { setAccessOpen(true); loadAdmin(); };
+  const revokeLater = (username) => {
+    setHiddenExperts(prev => new Set(prev).add(username));
+    const timer = setTimeout(() => {
+      delete revokeTimersRef.current[username];
+      revokeRole(username).finally(() => setHiddenExperts(prev => {
+        const copy = new Set(prev); copy.delete(username); return copy;
+      }));
+    }, 10000);
+    revokeTimersRef.current[username] = timer;
+    showToast(`Роль эксперта ЦК КС отзывается у ${username}`, "info", {
+      ttl: 10000,
+      undo: () => {
+        clearTimeout(revokeTimersRef.current[username]);
+        delete revokeTimersRef.current[username];
+        setHiddenExperts(prev => { const copy = new Set(prev); copy.delete(username); return copy; });
+      },
+    });
+  };
+  useFocusLayer(accessOpen, accessSheetRef, () => setAccessOpen(false));
+
+  // ── Клавиши: J/K — по списку, / — поиск, 1/2/3 и ⌘Enter — решение ────────
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        if (pop) { setPop(null); return; }
+        if (view === "catalog" && readerOpen && window.innerWidth < 900) { setReaderOpen(false); return; }
+        if (view === "queue" && qOpen && window.innerWidth < 900) { setQOpen(false); return; }
+      }
+      if (_lpLayerStack.length) return;
+      const typing = e.target && e.target.matches && e.target.matches("input, textarea, select");
+      if (view === "queue" && (e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault(); saveDecision(); return;
+      }
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (view === "catalog") {
+        if (key === "j" || key === "о") { e.preventDefault(); moveRecord(1); }
+        else if (key === "k" || key === "л") { e.preventDefault(); moveRecord(-1); }
+        else if (e.key === "/") { e.preventDefault(); if (searchRef.current) searchRef.current.focus(); }
+      }
+      if (view === "queue") {
+        if (key === "j" || key === "о") { e.preventDefault(); moveQueue(1); }
+        else if (key === "k" || key === "л") { e.preventDefault(); moveQueue(-1); }
+        else if (["1", "2", "3"].includes(e.key) && qSel && canMarkVerdict) {
+          setDraft(qSel.record_id, {cls: ["vulnerability", "fraud_scheme", "not_confirmed"][Number(e.key) - 1]});
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
+  // Всплывающие панели закрываются кликом мимо и прокруткой.
+  useEffect(() => {
+    if (!pop) return undefined;
+    const onDown = (e) => { if (!e.target.closest(".lp-pop, [data-pop-anchor]")) setPop(null); };
+    const onScroll = (e) => { if (!(e.target.closest && e.target.closest(".lp-pop"))) setPop(null); };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [pop]);
+
   // ── Авторизация: fail-closed поверхности без защищённых данных ────────────
   if (authz === null) {
-    return <div className="lp-empty-state" style={{padding: 48}}>Проверяем доступ…</div>;
+    return <div className="lp-state"><p className="lp-state-x">Проверяем доступ…</p></div>;
   }
   if (authz === false) {
     return (
-      <div className="lp-empty-state" style={{padding: 48}}>
-        <h1>Нет доступа к модулю «Уязвимости»</h1>
-        <p>Учётная запись не авторизована. Обратитесь к администратору модуля.</p>
+      <div className="lp-state">
+        <div className="lp-state-ic"><Icon name="shield" size={20} /></div>
+        <h1 className="lp-state-t">Нет доступа к модулю «Уязвимости»</h1>
+        <p className="lp-state-x">Учётная запись не авторизована. Обратитесь к администратору модуля.</p>
       </div>
     );
   }
   if (authz === "error") {
     return (
-      <div className="lp-empty-state" style={{padding: 48}}>
-        <h1>Сервис недоступен</h1>
-        <p>Не удалось загрузить рабочие контексты. Проверьте соединение и повторите.</p>
-        <button className="lp-btn"
-                onClick={() => { setAuthz(null); setContextsRetry(n => n + 1); }}>
-          Повторить
-        </button>
+      <div className="lp-state" role="alert">
+        <div className="lp-state-ic lp-state-ic-err"><Icon name="alert" size={20} /></div>
+        <h1 className="lp-state-t">Сервис недоступен</h1>
+        <p className="lp-state-x">Не удалось загрузить рабочие контексты. Проверьте соединение и повторите.</p>
+        <div className="lp-state-a">
+          <button className="lp-btn lp-btn-primary"
+                  onClick={() => { setAuthz(null); setContextsRetry(n => n + 1); }}>Повторить</button>
+        </div>
       </div>
     );
   }
 
-  return (
-    <div className={"lp-layout" + (chatVisible ? " lp-layout-chat" : "")}>
-      {/* ── Основная область: поверхность выбранного рабочего контекста ──────── */}
-      <main className="lp-main">
-        <header className="lp-main-header">
-          <h1>
-            {view === "ai_research" ? "AI-исследования"
-              : view === "sources" ? "Заявка на разработку парсера"
-              : view === "queue" ? "Очередь верификации"
-              : view === "admin" ? "Управление доступом"
-              : "Лазейки и мошеннические схемы в продуктах банка"}
-          </h1>
-          <div className="lp-header-actions">
-            {view === "ai_research" && (
-              <button className="lp-btn" onClick={() => setChatOpen(o => !o)}>
-                {chatOpen ? "Скрыть чат" : "Открыть чат"}
-              </button>
-            )}
-            {view === "catalog" && (<>
-            <button className={"lp-btn" + (selected.size > 0 ? " lp-btn-primary" : "")}
-                    onClick={exportCSV}
-                    disabled={loading || sortedRecords.length === 0}
-                    title="Выгрузить выделенные записи текущей страницы в CSV (не более 10000)">
-              CSV{selected.size > 0 ? ` · ${selected.size} ${recordWord(selected.size)}` : ""}
+  // ── Части страницы ──────────────────────────────────────────────────────────
+  const TAB_LABELS = {catalog: "База", ai_research: "Исследовать", queue: "Очередь",
+    sources: "Добавить источник"};
+  const tabContexts = authz.contexts.filter(c => c.id !== "admin");
+  const awaitingTotal = totals ? totals.awaiting : null;
+
+  const pageHead = (
+    <header className="lp-ph">
+      <div className="lp-ph-main">
+        <div className="lp-eyebrow">Анализ · схемы и лазейки</div>
+        <h1 className="lp-ph-t">Уязвимости</h1>
+        <p className="lp-ph-meta">
+          Лазейки и мошеннические схемы в продуктах банков. Записи собираются из обсуждений
+          на форумах и в соцсетях, новостей и сайтов банков; модель отмечает возможные находки,
+          окончательный вердикт выносит эксперт ЦК КС.
+        </p>
+      </div>
+      {canAdmin && <div className="lp-ph-act">
+        <button type="button" className="lp-btn" onClick={openAccess}>
+          <Icon name="users" />Доступ
+        </button>
+      </div>}
+    </header>
+  );
+
+  const tabsBar = (
+    <nav className="lp-tabs">
+      <div className="lp-tabs-l" role="tablist" aria-label="Разделы вкладки" aria-orientation="horizontal">
+        {tabContexts.map(c => {
+          const active = c.id === view;
+          const count = c.id === "catalog" && totals ? totals.total
+            : c.id === "queue" && awaitingTotal ? awaitingTotal : null;
+          return (
+            <button key={c.id} type="button" role="tab" id={`lp-tab-${c.id}`}
+                    aria-selected={active} aria-controls={`lp-panel-${c.id}`}
+                    tabIndex={active ? 0 : -1} data-context-id={c.id}
+                    ref={c.id === "sources" ? sourcesTabRef : c.id === "ai_research" ? researchTabRef : null}
+                    className={"lp-tab" + (active ? " lp-tab-on" : "")}
+                    onKeyDown={onContextTabKeyDown}
+                    onClick={() => { setPop(null); openContext(c.id); }}>
+              {TAB_LABELS[c.id] || c.title}
+              {count != null && <span className={"lp-tab-n" + (c.id === "queue" ? " lp-tab-hot" : "")}>
+                {fmtInt(count)}</span>}
             </button>
-            </>)}
-            {view !== "ai_research" && (
-            <button className="lp-btn"
-                    onClick={view === "queue" ? loadQueue
-                      : view === "admin" ? loadAdmin
-                      : view === "sources" ? loadParsers : loadRecords}
-                    disabled={loading || queueLoading || adminLoading || parsersLoading}>
-              {(loading || queueLoading || adminLoading || parsersLoading) ? "…" : "Обновить"}
-            </button>
-            )}
-          </div>
-        </header>
-
-        {/* Рабочие контексты, доступные principal (список пришёл с сервера) */}
-        <nav className="lp-context-nav" role="tablist" aria-label="Рабочие контексты"
-             aria-orientation="horizontal">
-          {authz.contexts.map(c => {
-            const active = c.id === view;
-            return (
-              <button key={c.id} type="button" role="tab"
-                      id={`lp-tab-${c.id}`} aria-selected={active}
-                      aria-controls={`lp-panel-${c.id}`} tabIndex={active ? 0 : -1}
-                      data-context-id={c.id}
-                      ref={c.id === "sources" ? sourcesTabRef : c.id === "ai_research" ? researchTabRef : null}
-                      className={"lp-context-tab" + (active ? " lp-context-tab-active" : "")}
-                      onKeyDown={onContextTabKeyDown}
-                      onClick={() => openContext(c.id)}>
-                {c.id === "ai_research" ? "AI-исследования" : c.title}
-              </button>
-            );
-          })}
-        </nav>
-
-        {authz.contexts.filter(c => c.id !== view).map(c => (
-          <section key={`lp-panel-placeholder-${c.id}`} id={`lp-panel-${c.id}`}
-                   role="tabpanel" aria-labelledby={`lp-tab-${c.id}`} hidden />
-        ))}
-
+          );
+        })}
+      </div>
+      <div className="lp-tabs-r">
         {view === "catalog" && (
-        <section className="lp-context-panel lp-catalog-panel" id="lp-panel-catalog"
-                 role="tabpanel" aria-labelledby="lp-tab-catalog">
-        {/* Фильтры */}
-        <div className="lp-filters">
-          <div className="lp-filter">
-            <label htmlFor="lp-filter-text">Поиск по тексту</label>
-            <input id="lp-filter-text" type="text" value={fText} onChange={e => setFText(e.target.value)}
-                   placeholder="название, фрагмент, ключевое слово…"/>
-          </div>
-          <div className="lp-filter">
-            <label>Банки</label>
-            <div className="lp-bank-chips">
-              {bankOptions.length === 0 && <span className="lp-muted">—</span>}
-              {bankOptions.map(b => (
-                <label key={b} htmlFor={`lp-bank-${b}`}
-                       className={"lp-chip " + (fBanks.includes(b) ? "lp-chip-on" : "")}>
-                  <input id={`lp-bank-${b}`} type="checkbox" checked={fBanks.includes(b)}
-                         onChange={() => {
-                           setFBanks(prev => prev.includes(b)
-                             ? prev.filter(x => x !== b)
-                             : [...prev, b]);
-                         }}/>
-                  {b}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="lp-filter">
-            <label htmlFor="lp-filter-from">Дата публикации — с</label>
-            <div className="lp-period">
-              <input id="lp-filter-from" type="date" value={fFrom}
-                     onChange={e => setFFrom(e.target.value)}/>
-              <span>—</span>
-              <label className="lp-sr-only" htmlFor="lp-filter-to">Дата публикации — по</label>
-              <input id="lp-filter-to" type="date" value={fTo}
-                     onChange={e => setFTo(e.target.value)}/>
-            </div>
-          </div>
-          <div className="lp-filter">
-            <label htmlFor="lp-filter-verification">Проверка ЦК КС</label>
-            <select id="lp-filter-verification" value={fVerification}
-                    onChange={e => setFVerification(e.target.value)}>
-              <option value="all">Все</option>
-              <option value="verified">Верифицировано ЦК</option>
-              <option value="pending">Ожидает верификации</option>
-            </select>
-          </div>
-          <div className="lp-filter">
-            <label htmlFor="lp-filter-classification">Тип записи</label>
-            <select id="lp-filter-classification" value={fClassification}
-                    onChange={e => setFClassification(e.target.value)}>
-              <option value="all">Все</option>
-              <option value="confirmed">Уязвимости и мошеннические схемы</option>
-              <option value="vulnerability">Уязвимости</option>
-              <option value="fraud_scheme">Мошеннические схемы</option>
-              <option value="not_confirmed">Ни уязвимость, ни мошенническая схема</option>
-            </select>
-          </div>
-          <div className="lp-filter lp-filter-reset">
-            <button className="lp-btn" onClick={resetFilters}>Сбросить</button>
-          </div>
-        </div>
+          <button type="button" className="lp-btn-text" data-pop-anchor="method"
+                  aria-label="Как читать вердикт"
+                  onClick={e => { const rect = e.currentTarget.getBoundingClientRect();
+                    setPop(p => p && p.kind === "method" ? null : {kind: "method", rect}); }}>
+            <Icon name="info" size={14} /><span className="lp-wide">Как читать вердикт</span>
+          </button>
+        )}
+        {view === "queue" && reviewedCount > 0 && (
+          <span className="lp-tnum">Разобрано: {reviewedCount}</span>
+        )}
+        {view === "ai_research" && (
+          <button type="button" className="lp-btn lp-btn-sm lp-rs-hb" onClick={() => setHistOpen(o => !o)}>
+            <Icon name="hist" size={14} />История
+          </button>
+        )}
+      </div>
+    </nav>
+  );
 
-        {/* Таблица: три разные поверхности — загрузка, пусто, ошибка (1.4) */}
-        <div className="lp-table-wrap">
-          {loading ? (
-            <div className="lp-empty-state">Загрузка записей…</div>
-          ) : recordsError ? (
-            <div className="lp-empty-state">
-              <p>Не удалось загрузить записи. Проверьте соединение и повторите.</p>
-              <button className="lp-btn" onClick={loadRecords}>Повторить</button>
-            </div>
-          ) : sortedRecords.length === 0 ? (
-            <div className="lp-empty-state">
-              <p>Нет записей по выбранным фильтрам.</p>
-              <button className="lp-btn" onClick={resetFilters}>Сбросить</button>
-            </div>
-          ) : (
-            <table className="lp-table">
-              <thead>
-                <tr>
-                  <th className="lp-col-check">
-                    <label className="lp-checkbox-hit" htmlFor="lp-select-all">
-                      <span className="lp-sr-only">Выбрать все записи</span>
-                      <input id="lp-select-all" type="checkbox"
-                             checked={selected.size === sortedRecords.length && sortedRecords.length > 0}
-                             onChange={toggleAll}/>
-                    </label>
-                  </th>
-                  <th className="lp-col-sort" {...sortableThProps("title")}>
-                    <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("title")}>
-                      Запись{sortArrow("title")}
-                    </button>
-                  </th>
-                  <th className="lp-col-narrow2" {...sortableThProps("bank_slug")}>
-                    <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("bank_slug")}>
-                      Банк{sortArrow("bank_slug")}
-                    </button>
-                  </th>
-                  <th className="lp-col-narrow2" {...sortableThProps("verdict_confidence")}>
-                    <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("verdict_confidence")}>
-                      Предварительная вероятность{sortArrow("verdict_confidence")}
-                    </button>
-                  </th>
-                  <th {...sortableThProps("classification")}>
-                    <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("classification")}>
-                      Вердикт{sortArrow("classification")}
-                    </button>
-                  </th>
-                  <th className="lp-col-narrow2" {...sortableThProps("status")}>
-                    <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("status")}>
-                      Статус{sortArrow("status")}
-                    </button>
-                  </th>
-                  <th {...sortableThProps("published_at")}>
-                    <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("published_at")}>
-                      Дата публикации{sortArrow("published_at")}
-                    </button>
-                  </th>
-                  <th {...sortableThProps("collected_at")}>
-                    <button type="button" className="lp-sort-button"
-                            onClick={() => toggleSort("collected_at")}>
-                      Собрано{sortArrow("collected_at")}
-                    </button>
-                  </th>
-                  <th className="lp-col-narrow1">URL</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRecords.map(r => (
-                  <React.Fragment key={r.record_id}>
-                    <tr className={selected.has(r.record_id) ? "lp-row-sel" : ""}>
-                      <td className="lp-col-check" onClick={e => e.stopPropagation()}>
-                        <label className="lp-checkbox-hit"
-                               htmlFor={`lp-select-record-${r.record_id}`}>
-                          <span className="lp-sr-only">Выбрать запись</span>
-                          <input id={`lp-select-record-${r.record_id}`} type="checkbox"
-                                 checked={selected.has(r.record_id)}
-                                 onChange={() => toggleRow(r.record_id)}/>
-                        </label>
-                      </td>
-                      <td className="lp-cell-title">
-                        <div className="lp-title-text">
-                          <button type="button" className="lp-row-details"
-                                  aria-expanded={expanded.has(r.record_id)}
-                                  aria-controls={expanded.has(r.record_id) ? `lp-record-details-${r.record_id}` : undefined}
-                                  onClick={() => toggleContent(r.record_id)}>
-                            <span className="lp-row-details-icon" aria-hidden="true">
-                              {expanded.has(r.record_id) ? "▾" : "▸"}
-                            </span>
-                            <span>{r.title || r.snippet || "—"}</span>
-                            {contentBadge(r)}
-                          </button>
-                        </div>
-                        {r.verdict_reason && (
-                          <div className="lp-reason" title={r.verdict_reason}>
-                            {r.verdict_reason}
-                          </div>
-                        )}
-                        {r.provenance && (
-                          <div className="lp-reason">
-                            Источник исследования #{r.provenance.research_id}
-                          </div>
-                        )}
-                      </td>
-                      <td className="lp-col-narrow2">{r.bank_slug || "—"}</td>
-                      <td className="lp-col-narrow2">{fmtNum(r.verdict_confidence)}</td>
-                      <td onClick={e => e.stopPropagation()}>
-                        <VerdictControl type={canMarkVerdict ? "button" : undefined}
-                                className={"lp-verdict-chip " +
-                                  (r.is_loophole === true ? "lp-verdict-chip-bad"
-                                 : r.is_loophole === false ? "lp-verdict-chip-ok"
-                                 : "lp-verdict-chip-na")}
-                                style={canMarkVerdict ? undefined : {cursor: "default"}}
-                                title={canMarkVerdict ? "Изменить вердикт" : undefined}
-                                onClick={canMarkVerdict
-                                  ? () => { setMarkComment(""); setVerdictModal({record: r}); }
-                                  : undefined}>
-                          <span className="lp-verdict-dot"></span>
-                          {verdictLabel(r)}
-                        </VerdictControl>
-                        {r.verdict_model === "manual" && (
-                          <span className="lp-manual-mark"
-                                title="Вердикт проставлен вручную">ручная</span>
-                        )}
-                      </td>
-                      <td className="lp-col-narrow2">
-                        <span className={"lp-status" + (r.status === "preliminary" ? " lp-status-preliminary" : "")}>
-                          {recordStatusLabel(r.status)}
-                        </span>
-                      </td>
-                      <td className="lp-cell-date lp-cell-published">{fmtDate(r.published_at)}</td>
-                      <td className="lp-cell-date lp-cell-collected">{fmtDate(r.collected_at)}</td>
-                      <td className="lp-cell-url lp-col-narrow1">
-                        {r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer"
-                                     onClick={e => e.stopPropagation()}>открыть ↗</a>
-                               : "—"}
-                      </td>
-                    </tr>
-                    {expanded.has(r.record_id) && (
-                      <tr className="lp-content-row">
-                        <td id={`lp-record-details-${r.record_id}`} colSpan={9}>
-                          {renderRecordContent(r)}
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
+  const tabPlaceholders = authz.contexts.filter(c => c.id !== view && c.id !== "admin").map(c => (
+    <section key={`lp-panel-placeholder-${c.id}`} id={`lp-panel-${c.id}`}
+             role="tabpanel" aria-labelledby={`lp-tab-${c.id}`} hidden />
+  ));
+
+  // ── База: сводка ───────────────────────────────────────────────────────────
+  const kpi = ({on, onClick, label, value, sub, tone}) => (
+    <button type="button" className={"lp-kpi" + (on ? " lp-kpi-on" : "")} aria-pressed={on}
+            onClick={onClick}>
+      <span className="lp-kl">{tone && <span className={"lp-sw lp-sw-" + tone}></span>}{label}</span>
+      <span className="lp-kv">{value == null ? "—" : fmtInt(value)}</span>
+      <span className="lp-ks">{sub}</span>
+    </button>
+  );
+  const reviewedLine = (all, awaitingN) => !all ? "пока нет"
+    : `проверено экспертом: ${fmtInt(all - awaitingN)} из ${fmtInt(all)}`;
+  const kpis = (
+    <div className="lp-kpis">
+      {kpi({on: fVerification === "awaiting", label: "Ждут проверки",
+        value: totals && totals.awaiting,
+        sub: totals ? `из ${fmtInt(totals.total)} ${lpPlural(totals.total, "записи", "записей", "записей")} в базе` : "…",
+        onClick: () => setFVerification(v => v === "awaiting" ? "all" : "awaiting")})}
+      {kpi({on: fPeriod === "7", label: "Новые находки за 7 дней",
+        value: totals && totals.new_7d,
+        sub: totals ? `на прошлой неделе: ${fmtInt(totals.new_prev_7d)}` : "…",
+        onClick: () => applyPeriod(fPeriod === "7" ? "all" : "7")})}
+      {kpi({on: fClassification === "vulnerability", label: "Уязвимости", tone: "neg",
+        value: totals && totals.vulnerability,
+        sub: totals ? reviewedLine(totals.vulnerability, totals.awaiting_vulnerability) : "…",
+        onClick: () => setFClassification(c => c === "vulnerability" ? "confirmed" : "vulnerability")})}
+      {kpi({on: fClassification === "fraud_scheme", label: "Мошеннические схемы", tone: "legal",
+        value: totals && totals.fraud_scheme,
+        sub: totals ? reviewedLine(totals.fraud_scheme, totals.awaiting_fraud_scheme) : "…",
+        onClick: () => setFClassification(c => c === "fraud_scheme" ? "confirmed" : "fraud_scheme")})}
+    </div>
+  );
+
+  // ── База: фильтры ──────────────────────────────────────────────────────────
+  const seg = (label, value, options, onPick) => (
+    <div className="lp-seg" role="group" aria-label={label}>
+      {options.map(([v, text, n]) => (
+        <button key={v} type="button" className={"lp-seg-btn" + (value === v ? " lp-seg-on" : "")}
+                aria-pressed={value === v} onClick={() => onPick(v)}>
+          {text}{n != null && <span className="lp-seg-n">{fmtInt(n)}</span>}
+        </button>
+      ))}
+    </div>
+  );
+  const types = facets ? facets.types : null;
+  const bankFacet = facets ? facets.banks : [];
+  const bankCount = (slug) => {
+    const hit = bankFacet.find(b => b.slug === slug);
+    return hit ? hit.count : 0;
+  };
+  const bankLabel = fBanks.length === 0 ? "Все банки"
+    : fBanks.length === 1 ? bankName(fBanks[0]) : `Банки · ${fBanks.length}`;
+  const chips = [];
+  if (fClassification !== "confirmed") chips.push(["type", fClassification === "all" ? "Все записи"
+    : (KIND_LABELS[fClassification] || [fClassification])[0]]);
+  fBanks.forEach(b => chips.push(["bank:" + b, bankName(b)]));
+  if (fFrom || fTo) chips.push(["period", fPeriod !== "custom" && fPeriod !== "all"
+    ? `за ${fPeriod} ${lpPlural(Number(fPeriod), "день", "дня", "дней")}`
+    : `${fFrom ? fmtDay(fFrom) : "…"} — ${fTo ? fmtDay(fTo) : "…"}`]);
+  if (fVerification !== "all") chips.push(["check", fVerification === "awaiting" ? "Ждут проверки"
+    : fVerification === "reviewed" ? "Проверено" : fVerification]);
+  if (fText.trim()) chips.push(["q", `«${fText.trim()}»`]);
+  const dropChip = (key) => {
+    if (key === "type") setFClassification("confirmed");
+    else if (key.startsWith("bank:")) setFBanks(prev => prev.filter(b => b !== key.slice(5)));
+    else if (key === "period") applyPeriod("all");
+    else if (key === "check") setFVerification("all");
+    else if (key === "q") setFText("");
+  };
+
+  const filters = (
+    <div className="lp-fhead">
+      <div className="lp-srow">
+        <label className="lp-search">
+          <Icon name="search" />
+          <span className="lp-sr-only">Поиск по тексту</span>
+          <input id="lp-filter-text" ref={searchRef} type="search" value={fText}
+                 onChange={e => setFText(e.target.value)} autoComplete="off"
+                 placeholder="Поиск: «кэшбэк СБП», «обналичивание», «самозапрет»" />
+          <span className="lp-kbd" aria-hidden="true">/</span>
+        </label>
+        <button type="button" className="lp-btn lp-fbtn" aria-expanded={showFilters}
+                onClick={() => setShowFilters(s => !s)}>
+          <Icon name="filter" />Фильтры{activeFilterCount ? ` · ${activeFilterCount}` : ""}
+        </button>
+      </div>
+      <div className={"lp-frow" + (showFilters ? " lp-frow-show" : "")}>
+        {seg("Тип записи", fClassification, [
+          ["confirmed", "Уязвимости и схемы", types && types.confirmed],
+          ["vulnerability", "Уязвимости", types && types.vulnerability],
+          ["fraud_scheme", "Схемы", types && types.fraud_scheme],
+          ["not_confirmed", "Не подтверждено", types && types.not_confirmed],
+          ["all", "Все", types && types.all],
+        ], setFClassification)}
+        <button type="button" className={"lp-dd" + (fBanks.length ? " lp-dd-on" : "")}
+                data-pop-anchor="banks" aria-haspopup="true"
+                aria-expanded={!!(pop && pop.kind === "banks")}
+                onClick={e => { const rect = e.currentTarget.getBoundingClientRect();
+                  setPop(p => p && p.kind === "banks" ? null : {kind: "banks", rect}); }}>
+          {bankLabel}<Icon name="down" size={14} />
+        </button>
+        {seg("Период публикации", fPeriod, [
+          ["7", "7 дней"], ["30", "30 дней"], ["90", "90 дней"], ["all", "Всё время"],
+          ["custom", "Свой период"],
+        ], applyPeriod)}
+        {seg("Проверка ЦК КС", fVerification === "verified" || fVerification === "pending"
+          ? "all" : fVerification, [
+          ["all", "Все"], ["awaiting", "Ждут проверки", facets && facets.awaiting],
+          ["reviewed", "Проверено"],
+        ], setFVerification)}
+      </div>
+      {fPeriod === "custom" && (
+        <div className="lp-period">
+          <label htmlFor="lp-filter-from">Дата публикации — с</label>
+          <input id="lp-filter-from" type="date" value={fFrom} onChange={e => setFFrom(e.target.value)} />
+          <label htmlFor="lp-filter-to">Дата публикации — по</label>
+          <input id="lp-filter-to" type="date" value={fTo} onChange={e => setFTo(e.target.value)} />
+        </div>
+      )}
+      {chips.length > 0 && (
+        <div className="lp-fchips">
+          {chips.map(([key, text]) => (
+            <span key={key} className="lp-fchip">{text}
+              <button type="button" aria-label={`Убрать фильтр ${text}`} onClick={() => dropChip(key)}>
+                <Icon name="x" size={12} />
+              </button>
+            </span>
+          ))}
+          <button type="button" className="lp-btn-text" onClick={resetAll}>Сбросить все</button>
+        </div>
+      )}
+    </div>
+  );
+
+  // ── Карточка записи (база и очередь) ───────────────────────────────────────
+  const confBar = (value, large) => {
+    const p = pctOf(value);
+    return <span className={"lp-cbar" + (large ? " lp-cbar-lg" : "")} aria-hidden="true">
+      <i style={{width: `${p || 0}%`}}></i></span>;
+  };
+
+  const kindWord = (kind) => (KIND_LABELS[kind] || KIND_LABELS.none)[0].toLowerCase();
+  const historyEvents = (r) => {
+    const events = [];
+    const expert = r.expert_decisions || [];
+    const domain = r.domain || hostOf(r.url);
+    if (r.published_at) events.push({at: r.published_at, t: `Опубликовано${domain ? ` на ${domain}` : ""}`});
+    events.push({at: r.collected_at, t: r.provenance ? "Найдено AI-исследованием и добавлено в базу"
+      : "Собрано в общую базу"});
+    const classifierText = r.classifier_verdict_reason
+      || (r.verdict_model !== "manual" ? r.verdict_reason : null);
+    if (r.verdict_model && r.verdict_model !== "manual") {
+      events.push({at: r.classified_at || r.collected_at,
+        t: `Модель: ${KIND_LABELS[recordKind(r)][0].toLowerCase()}`
+          + (pctOf(r.verdict_confidence) != null ? `, вероятность ${pctOf(r.verdict_confidence)}%` : ""),
+        c: classifierText && !/^Предварительн/.test(classifierText) ? classifierText : null});
+    } else if (r.verdict_model === "manual") {
+      if (classifierText) events.push({at: r.collected_at, t: "Модель отметила запись", c: classifierText});
+      if (!expert.length) {
+        const manual = r.verdict_reason && !/^manual:/.test(r.verdict_reason) ? r.verdict_reason : null;
+        events.push({at: r.classified_at, t: `Эксперт ЦК КС: ${kindWord(recordKind(r))}`, c: manual, key: true});
+      }
+    }
+    // Журнал решений: кто решил, что было и что стало.
+    expert.forEach(d => events.push({at: d.decided_at,
+      t: `Решение ЦК КС (${d.decided_by === "anonymous" ? "без авторизации" : d.decided_by}): `
+        + (d.previous && d.previous !== d.decision ? `${kindWord(d.previous)} → ` : "") + kindWord(d.decision),
+      c: d.comment, key: true}));
+    (r.decisions || []).forEach(d => events.push({at: d.decided_at,
+      t: `Решение ЦК КС (${d.decided_by}): ${decisionLabel(d.decision).toLowerCase()}`, c: d.comment, key: true}));
+    return events.filter(e => e.at || e.key);
+  };
+
+  const recordBody = (base, ctx) => {
+    if (!base) return null;
+    const entry = contentCache[base.record_id];
+    const detail = entry && entry.data ? entry.data : null;
+    const r = {...base, ...(detail || {})};
+    const kind = recordKind(r);
+    const positive = POSITIVE_KINDS.has(kind);
+    const manual = r.verdict_model === "manual";
+    const reviewed = r.reviewed === true || manual;
+    const awaiting = !reviewed && (r.awaiting === true || (r.is_loophole === true && !manual));
+    const sum = summaries[r.record_id];
+    const summaryText = r.summary || (sum && sum.text);
+    const headline = r.headline || (sum && sum.headline);
+    const doubt = String(r.summary_doubt || (sum && sum.doubt) || "").replace(/\.$/, "");
+    const bank = knownBank(r.bank_slug);
+    // Заголовок находки от модели; название ветки форума — строкой ниже.
+    const topic = headline && r.title && r.title.trim() !== headline ? r.title.trim() : null;
+    const copyIds = r.copy_ids || [];
+    const classifierText = r.classifier_verdict_reason || r.verdict_reason;
+    const domain = r.domain || hostOf(r.url);
+    const fragment = (r.snippet || "").trim();
+    const fullText = detail && detail.raw_text;
+    const lenKb = detail && detail.raw_text_len ? Math.max(1, Math.round(detail.raw_text_len / 1000)) : null;
+    const failed = detail && (detail.content_status === "fetch_failed" || detail.content_status === "empty");
+    const truncated = detail && detail.content_status === "truncated";
+    const isFull = fullOpen.has(r.record_id);
+    const conf = manual ? null : pctOf(r.verdict_confidence);
+    return (
+      <div className="lp-rd-body">
+        <div className="lp-rd-meta">
+          {[bank && <span key="b" className={bankClass(r.bank_slug)}
+                          title={r.bank_inferred ? "Банк определён моделью по тексту записи" : undefined}>
+              {bank}{r.bank_inferred && <span className="lp-sr-only"> (определён по тексту)</span>}</span>,
+            domain && <span key="d">{domain}</span>,
+            r.url && <a key="u" className="lp-link" href={r.url} target="_blank" rel="noopener noreferrer">
+              открыть источник<Icon name="ext" size={12} /></a>]
+            .filter(Boolean).flatMap((node, i) => i ? [<span key={"s" + i} aria-hidden="true">·</span>, node] : [node])}
+        </div>
+        <h2 className="lp-rd-title" tabIndex={-1}>{headline || r.title || r.snippet || "Без заголовка"}</h2>
+        {topic && <p className="lp-rd-topic">Тема: {topic}</p>}
+        <div className="lp-rd-badges">
+          <KindBadge kind={kind} />
+          {reviewed ? <span className="lp-st lp-st-done"><Icon name="check" size={14} />Проверено экспертом
+              {r.classified_at && manual ? ` · ${fmtDay(r.classified_at)}` : ""}</span>
+            : awaiting ? <span className="lp-st lp-st-pend"><Icon name="clock" size={14} />Ждёт проверки экспертом ЦК КС</span>
+            : null}
+        </div>
+        {positive && doubt && (
+          <div className="lp-callout lp-callout-doubt">
+            <Icon name="info" />
+            <span><b>Модель сомневается:</b> {doubt}. Это подсказка эксперту, вердикт не меняется.</span>
+          </div>
+        )}
+        {ctx === "base" && awaiting && (
+          <div className="lp-callout">
+            <Icon name="clock" />
+            <span>{canQueue ? "Запись ждёт решения эксперта. Вердикт модели пока предварительный."
+              : "Запись ещё не проверил эксперт ЦК КС. Вердикт модели предварительный."}</span>
+            {canQueue && <button type="button" className="lp-btn lp-btn-primary lp-btn-sm"
+                                 onClick={() => { setView("queue"); setQueueSelectedId(r.record_id); setQOpen(true); loadQueue(); }}>
+              Решить в очереди<Icon name="right" size={14} /></button>}
+          </div>
+        )}
+        <dl className="lp-facts">
+          <div><dt>Опубликовано</dt><dd>{r.published_at ? fmtDate(r.published_at) : "дата не найдена"}</dd></div>
+          <div><dt>Собрано</dt><dd>{fmtDate(r.collected_at)}</dd></div>
+          <div><dt>{manual ? "Вердикт" : positive ? "Вероятность" : "Вердикт модели"}</dt>
+            <dd>{manual ? "решение эксперта" : !positive ? (kind === "none" ? "без вердикта" : "находки нет")
+              : conf != null ? `${conf}% · ${confWord(r.verdict_confidence)}` : "нет оценки"}</dd></div>
+        </dl>
+        {positive ? (
+          <section className="lp-rsec">
+            <h3>Суть</h3>
+            {summaryText ? <p>{summaryText}</p>
+              : sum && sum.loading ? <div className="lp-sk-lines" aria-label="Составляем суть">
+                  <span className="lp-sk"></span><span className="lp-sk"></span><span className="lp-sk lp-sk-short"></span></div>
+              : <p className="lp-muted-p">{classifierText || "Суть пока не составлена."}</p>}
+          </section>
+        ) : classifierText && !/^manual:/.test(classifierText) ? (
+          <section className="lp-rsec">
+            <h3>Комментарий классификатора</h3>
+            <p className="lp-cmt">{classifierText}</p>
+          </section>
+        ) : null}
+        <section className="lp-rsec">
+          <h3>Фрагмент источника</h3>
+          {fragment ? <blockquote className="lp-quote">{fragment}</blockquote>
+            : <p className="lp-muted-p">Фрагмента нет.</p>}
+          <div className="lp-q-foot">
+            {!detail && entry && entry.loading && <span>Загружаем текст…</span>}
+            {entry && entry.error && <span className="lp-warn-t">Текст не загрузился: {entry.error}</span>}
+            {failed && <span className="lp-warn-t"><Icon name="alert" size={13} />
+              Полный контент не удалось загрузить; показан сохранённый фрагмент.</span>}
+            {truncated && <span>Текст сохранён не полностью{lenKb ? `: до ${lenKb} тыс. знаков` : ""}.</span>}
+            {fullText && !failed && (
+              <button type="button" className="lp-btn-text" aria-expanded={isFull}
+                      onClick={() => setFullOpen(prev => { const s = new Set(prev);
+                        if (s.has(r.record_id)) s.delete(r.record_id); else s.add(r.record_id); return s; })}>
+                {isFull ? "Свернуть полный текст" : `Полный текст${lenKb ? ` · ${lenKb} тыс. знаков` : ""}`}
+              </button>
+            )}
+          </div>
+          {isFull && fullText && <div className="lp-fulltext">{fullText}</div>}
+        </section>
+        {!manual && positive && conf != null && (
+          <section className="lp-rsec">
+            <h3>Уверенность модели</h3>
+            <div className="lp-confbig">{confBar(r.verdict_confidence, true)}
+              <b>{confWord(r.verdict_confidence)}</b><span>{conf}%</span></div>
+            <p className="lp-note">{positive
+              ? `Насколько запись похожа на ${KIND_LABELS[kind][0].toLowerCase()} по оценке модели.`
+              : "Оценка модели для этой записи."} Это не вероятность ущерба и не решение эксперта.</p>
+          </section>
+        )}
+        {copyIds.length > 0 && (
+          <section className="lp-rsec">
+            <h3>Копии</h3>
+            <p className="lp-muted-p">Тот же фрагмент есть ещё в {fmtInt(copyIds.length)} {lpPlural(copyIds.length, "записи", "записях", "записях")}:{" "}
+              {copyIds.map((id, i) => <React.Fragment key={id}>{i ? ", " : ""}
+                <button type="button" className="lp-btn-text lp-inline" onClick={() => openRecordInBase({record_id: id})}>№{id}</button>
+              </React.Fragment>)}</p>
+          </section>
+        )}
+        <section className="lp-rsec">
+          <h3>История</h3>
+          <ol className="lp-tl">
+            {historyEvents(r).map((e, i) => (
+              <li key={i} className={e.key ? "lp-tl-key" : ""}>
+                <span className="lp-tl-d">{e.at ? fmtDate(e.at) : "—"}</span>
+                <span className="lp-tl-t">{e.t}</span>
+                {e.c && <div className="lp-tl-c">«{e.c}»</div>}
+              </li>
+            ))}
+          </ol>
+        </section>
+        {ctx === "base" && canMarkVerdict && !awaiting && (
+          <div className="lp-rsec">
+            <button type="button" className="lp-btn-text"
+                    onClick={() => { setMarkComment(""); setVerdictModal({record: r}); }}>
+              Изменить вердикт
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const readerHead = (record, list, ctx) => {
+    const i = list.findIndex(x => x.record_id === record.record_id);
+    const total = ctx === "base" ? recordsTotal : queueCount;
+    return (
+      <div className="lp-rd-head">
+        <button type="button" className="lp-btn lp-btn-sm lp-rd-back"
+                onClick={() => ctx === "base" ? setReaderOpen(false) : setQOpen(false)}>
+          <Icon name="left" size={14} />{ctx === "base" ? "База" : "Очередь"}
+        </button>
+        <div className="lp-rd-nav">
+          <button type="button" className="lp-icb" aria-label="Предыдущая запись" disabled={i <= 0}
+                  onClick={() => ctx === "base" ? moveRecord(-1) : moveQueue(-1)}><Icon name="up" /></button>
+          <button type="button" className="lp-icb" aria-label="Следующая запись" disabled={i < 0 || i >= list.length - 1}
+                  onClick={() => ctx === "base" ? moveRecord(1) : moveQueue(1)}><Icon name="down" /></button>
+          {i >= 0 && <span className="lp-rd-pos">{fmtInt(i + 1)} из {fmtInt(total)}</span>}
+        </div>
+        <div className="lp-rd-acts">
+          <button type="button" className="lp-btn lp-btn-sm" data-pop-anchor="case"
+                  aria-label="Добавить в аудит-дело" onClick={e => openCasePop(e, record)}>
+            <Icon name="case" size={14} /><span className="lp-lbl">В дело</span>
+          </button>
+          {ctx === "base" && (
+            <button type="button" className="lp-btn lp-btn-sm" aria-label="Исследовать глубже"
+                    onClick={() => deeperResearch(record)}>
+              <Icon name="spark" size={14} /><span className="lp-lbl">Исследовать глубже</span>
+            </button>
           )}
         </div>
-        {recordsTotal > PAGE_SIZE && (
-          <nav className="lp-pagination" aria-label="Страницы общей базы">
-            <button type="button" className="lp-btn" disabled={page === 0}
-                    onClick={() => setPage(p => Math.max(0, p - 1))}>
-              Назад
-            </button>
-            <span className="lp-pagination-info" role="status">
-              Страница {page + 1} из {Math.ceil(recordsTotal / PAGE_SIZE)}
-            </span>
-            <button type="button" className="lp-btn"
-                    disabled={(page + 1) * PAGE_SIZE >= recordsTotal}
-                    onClick={() => setPage(p => p + 1)}>
-              Вперёд
-            </button>
-          </nav>
-        )}
-        </section>)}
+      </div>
+    );
+  };
 
-        {/* ── Заявка на разработку веб-парсера и read-only каталог источников. ── */}
-        {view === "sources" && (
+  // ── База: элемент списка ───────────────────────────────────────────────────
+  const listItem = (r) => {
+    const kind = recordKind(r);
+    const positive = POSITIVE_KINDS.has(kind);
+    const on = r.record_id === selRecordId;
+    const manual = r.verdict_model === "manual";
+    const awaiting = !manual && !r.reviewed && (r.awaiting === true || r.is_loophole === true);
+    const line = positive ? (r.summary || r.verdict_reason) : null;
+    // Вероятность — только у находок: у «не подтверждено» она читалась бы
+    // как «вероятно уязвимость».
+    const conf = manual || !positive ? null : pctOf(r.verdict_confidence);
+    const bank = knownBank(r.bank_slug);
+    return (
+      <div key={r.record_id} id={`lp-item-${r.record_id}`} role="listitem"
+           className={"lp-c" + (on ? " lp-c-on" : "") + (selectMode ? " lp-c-chk" : "")}
+           onClick={() => pickRecord(r.record_id)}>
+        {selectMode && (
+          <label className="lp-c-box" htmlFor={`lp-select-record-${r.record_id}`}
+                 onClick={e => e.stopPropagation()}>
+            <span className="lp-sr-only">Выбрать запись</span>
+            <input id={`lp-select-record-${r.record_id}`} type="checkbox"
+                   checked={selected.has(r.record_id)} onChange={() => toggleRow(r.record_id)} />
+          </label>
+        )}
+        <div className="lp-c-meta">
+          {bank && <><span className={bankClass(r.bank_slug)}>{bank}</span><span aria-hidden="true">·</span></>}
+          <span className="lp-c-mt">{[r.domain || hostOf(r.url), fmtDay(r.published_at || r.collected_at)]
+            .filter(Boolean).join(" · ")}</span>
+          <KindBadge kind={kind} />
+        </div>
+        <button type="button" className="lp-c-title" aria-current={on ? "true" : undefined}
+                onClick={e => { e.stopPropagation(); pickRecord(r.record_id); }}>
+          <Hl text={r.headline || r.title || r.snippet || "Без заголовка"} q={fText} />
+        </button>
+        {line ? <div className="lp-c-snip"><Hl text={line} q={fText} /></div>
+          : r.snippet ? <div className="lp-c-quote">«<Hl text={r.snippet} q={fText} />»</div> : null}
+        <div className="lp-c-sig">
+          {conf != null && <span className="lp-conf" title={`Предварительная вероятность ${conf}%`}>
+            {confBar(r.verdict_confidence)}вероятность {confWord(r.verdict_confidence)}</span>}
+          {awaiting && <span className="lp-pend">ждёт проверки</span>}
+          {(manual || r.reviewed) && <span className="lp-done">проверено</span>}
+          {r.provenance && <span>из исследования</span>}
+          {positive && r.summary_doubt && <span className="lp-doubt" title={r.summary_doubt}>модель сомневается</span>}
+          {(r.copy_ids || []).length > 0 && <span>копий: {fmtInt(r.copy_ids.length)}</span>}
+          {r.content_status === "truncated" && <span className="lp-tag">текст обрезан</span>}
+          {(r.content_status === "fetch_failed" || r.content_status === "empty") &&
+            <span className="lp-tag lp-tag-warn">текст не загружен</span>}
+        </div>
+      </div>
+    );
+  };
+
+  // Стрелки вверх/вниз переводят фокус и выбор по заголовкам списка.
+  const onListKeys = (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const titles = [...e.currentTarget.querySelectorAll(".lp-c-title")];
+    const i = titles.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    const next = titles[Math.max(0, Math.min(titles.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
+    next.focus();
+    next.click();
+  };
+
+  const notConfirmedHidden = fClassification === "confirmed" && types ? types.not_confirmed : 0;
+  const pickedVisible = records.filter(r => selected.has(r.record_id)).length;
+
+  const catalogList = (
+    <div className="lp-list">
+      <div className="lp-lhead">
+        <span className="lp-lcount">{fmtInt(recordsTotal)} {recordWord(recordsTotal)}</span>
+        {seg("Сортировка", fSort, [["new", "сначала новые"], ["conf", "по вероятности"]], setFSort)}
+        <button type="button" className="lp-btn lp-btn-sm" aria-pressed={selectMode}
+                onClick={() => { setSelectMode(m => !m); if (selectMode) setSelected(new Set()); }}>
+          {selectMode ? "Готово" : "Выбрать"}
+        </button>
+        <button type="button" className="lp-btn lp-btn-sm" onClick={exportExcel}
+                disabled={loading || recordsTotal === 0}>
+          <Icon name="dl" size={14} />Excel{selectMode && selected.size ? ` · ${selected.size}` : ""}
+        </button>
+      </div>
+      {selectMode && (
+        <div className="lp-selbar">
+          <span>{selected.size ? `Выбрано ${fmtInt(selected.size)}` : "Отметьте записи для выгрузки"}</span>
+          <button type="button" className="lp-btn-text"
+                  onClick={() => setSelected(pickedVisible === records.length && records.length
+                    ? new Set() : new Set(records.map(r => r.record_id)))}>
+            {pickedVisible === records.length && records.length ? "Снять все" : "Выбрать все показанные"}
+          </button>
+        </div>
+      )}
+      {notConfirmedHidden > 0 && (
+        <div className="lp-hid">
+          <span>Ещё {fmtInt(notConfirmedHidden)} {lpPlural(notConfirmedHidden, "запись", "записи", "записей")} без
+            находки скрыты: модель не подтвердила уязвимость или схему.</span>
+          <button type="button" className="lp-btn-text" onClick={() => setFClassification("all")}>Показать все</button>
+        </div>
+      )}
+      <div role="list" aria-label="Записи базы" onKeyDown={onListKeys}>{records.map(listItem)}</div>
+      {records.length < recordsTotal && (
+        <div className="lp-more">
+          <button type="button" className="lp-btn" disabled={loading} onClick={() => setPage(p => p + 1)}>
+            {loading ? "Загружаем…" : `Показать ещё ${fmtInt(Math.min(PAGE_SIZE, recordsTotal - records.length))}`}
+          </button>
+          <span className="lp-muted">Показано {fmtInt(records.length)} из {fmtInt(recordsTotal)}</span>
+        </div>
+      )}
+    </div>
+  );
+
+  const catalogPanel = (
+    <section className="lp-panel" id="lp-panel-catalog" role="tabpanel" aria-labelledby="lp-tab-catalog">
+      {kpis}
+      <section className="lp-card lp-base">
+        {filters}
+        {loading && !records.length ? (
+          <div className="lp-skeleton-list">{[0, 1, 2, 3, 4].map(i => (
+            <div key={i} className="lp-sk-row"><span className="lp-sk lp-sk-30"></span>
+              <span className="lp-sk lp-sk-80"></span><span className="lp-sk lp-sk-60"></span></div>))}</div>
+        ) : recordsError ? (
+          <div className="lp-state" role="alert">
+            <div className="lp-state-ic lp-state-ic-err"><Icon name="alert" size={20} /></div>
+            <p className="lp-state-t">Не удалось загрузить записи</p>
+            <p className="lp-state-x">Проверьте соединение и повторите. Данные на месте.</p>
+            <div className="lp-state-a"><button type="button" className="lp-btn lp-btn-primary" onClick={loadRecords}>Повторить</button></div>
+          </div>
+        ) : !records.length ? (
+          <div className="lp-state">
+            <div className="lp-state-ic"><Icon name="search" size={20} /></div>
+            <p className="lp-state-t">Ничего не нашлось</p>
+            <p className="lp-state-x">{fClassification === "confirmed" && notConfirmedHidden
+              ? "Среди уязвимостей и схем совпадений нет, но есть записи без находки. Покажите все или начните исследование по этой теме."
+              : "Под выбранные фильтры не подходит ни одна запись. Уберите часть фильтров или начните исследование по этой теме."}</p>
+            <div className="lp-state-a">
+              <button type="button" className="lp-btn" onClick={resetAll}>Сбросить фильтры</button>
+              {fClassification === "confirmed" && notConfirmedHidden > 0 &&
+                <button type="button" className="lp-btn" onClick={() => setFClassification("all")}>Показать все</button>}
+              <button type="button" className="lp-btn lp-btn-primary" onClick={() => openContext("ai_research")}>
+                <Icon name="spark" />Исследовать</button>
+            </div>
+          </div>
+        ) : (
+          <div className={"lp-split" + (readerOpen ? " lp-split-open" : "")}>
+            {catalogList}
+            <div className="lp-rd-wrap" ref={readerRef}>
+              {selRecord && <article className="lp-rd" aria-label="Запись">
+                {readerHead(selRecord, records, "base")}
+                {recordBody(selRecord, "base")}
+              </article>}
+            </div>
+          </div>
+        )}
+      </section>
+    </section>
+  );
+
+  // ── Очередь ────────────────────────────────────────────────────────────────
+  const decisionPanel = (r) => {
+    const d = draftOf(r.record_id);
+    const ok = !!(d.cls && (d.comment || "").trim());
+    const modelKind = recordKind(r);
+    const options = [["vulnerability", "Уязвимость", "1"], ["fraud_scheme", "Мошенническая схема", "2"],
+      ["not_confirmed", "Не подтверждено", "3"]];
+    return (
+      <div className="lp-dec">
+        <div className="lp-dec-t">Решение эксперта<span>одно на запись, попадёт в историю</span></div>
+        <div className="lp-dopts" role="radiogroup" aria-label="Решение">
+          {options.map(([v, label, key]) => (
+            <button key={v} type="button" role="radio" aria-checked={d.cls === v}
+                    className={"lp-dopt" + (d.cls === v ? " lp-dopt-on" : "")}
+                    onClick={() => { setDraft(r.record_id, {cls: v}); if (commentRef.current) commentRef.current.focus(); }}>
+              <span className={"lp-sw lp-sw-" + KIND_LABELS[v][1]}></span>
+              <span>{label}{modelKind === v && <small>так считает модель</small>}</span>
+              <span className="lp-kbd">{key}</span>
+            </button>
+          ))}
+        </div>
+        {queueCopies(r).length > 0 && (
+          <label className="lp-dcopies" htmlFor="lp-apply-copies">
+            <input id="lp-apply-copies" type="checkbox" checked={d.applyCopies !== false}
+                   onChange={e => setDraft(r.record_id, {applyCopies: e.target.checked})} />
+            Применить и к {fmtInt(queueCopies(r).length)} {lpPlural(queueCopies(r).length, "копии", "копиям", "копиям")} в очереди
+            <span className="lp-muted"> — тот же фрагмент: №{queueCopies(r).join(", №")}</span>
+          </label>
+        )}
+        <label className="lp-sr-only" htmlFor="lp-queue-comment-input">Комментарий участника ЦК</label>
+        <textarea id="lp-queue-comment-input" ref={commentRef} className="lp-dcom" rows={3}
+                  value={d.comment} onChange={e => setDraft(r.record_id, {comment: e.target.value})}
+                  placeholder="Почему такое решение? Комментарий обязателен: его увидят аудиторы в истории записи." />
+        <div className="lp-dec-f">
+          <span className="lp-dhint">{!d.cls ? "Выберите решение"
+            : !ok ? "Добавьте комментарий: без него решение не сохранить" : "Готово к сохранению"}</span>
+          <button type="button" className="lp-btn lp-btn-primary" disabled={!ok || markBusy} onClick={saveDecision}>
+            Сохранить решение
+          </button>
+        </div>
+        <div className="lp-kh">
+          <span><span className="lp-kbd">J</span><span className="lp-kbd">K</span>по очереди</span>
+          <span><span className="lp-kbd">1</span><span className="lp-kbd">2</span><span className="lp-kbd">3</span>решение</span>
+          <span><span className="lp-kbd">⌘</span><span className="lp-kbd">Enter</span>сохранить</span>
+        </div>
+      </div>
+    );
+  };
+
+  const queuePanel = (
+    <section className="lp-panel" id="lp-panel-queue" role="tabpanel" aria-labelledby="lp-tab-queue">
+      {queueDenied ? (
+        <section className="lp-card"><div className="lp-state">
+          <div className="lp-state-ic"><Icon name="shield" size={20} /></div>
+          <h2 className="lp-state-t">Нет доступа к очереди верификации</h2>
+          <p className="lp-state-x">Роль эксперта ЦК КС не назначена или отозвана.</p>
+          <div className="lp-state-a"><button type="button" className="lp-btn" onClick={() => setView("catalog")}>Вернуться к базе</button></div>
+        </div></section>
+      ) : queueLoading && !queueRecords.length ? (
+        <section className="lp-card"><div className="lp-skeleton-list">{[0, 1, 2].map(i => (
+          <div key={i} className="lp-sk-row"><span className="lp-sk lp-sk-80"></span><span className="lp-sk lp-sk-60"></span></div>))}</div></section>
+      ) : queueError ? (
+        <section className="lp-card"><div className="lp-state" role="alert">
+          <div className="lp-state-ic lp-state-ic-err"><Icon name="alert" size={20} /></div>
+          <p className="lp-state-t">Не удалось загрузить очередь верификации</p>
+          <div className="lp-state-a"><button type="button" className="lp-btn lp-btn-primary" onClick={loadQueue}>Повторить</button></div>
+        </div></section>
+      ) : !queueList.length ? (
+        <section className="lp-card"><div className="lp-state">
+          <div className="lp-state-ic lp-state-ic-ok"><Icon name="check" size={20} /></div>
+          <p className="lp-state-t">Очередь разобрана</p>
+          <p className="lp-state-x">Новые записи появятся после сбора источников и исследований агента.</p>
+          <div className="lp-state-a"><button type="button" className="lp-btn" onClick={() => setView("catalog")}>Открыть базу</button></div>
+        </div></section>
+      ) : (
+        <div className={"lp-qsplit" + (qOpen ? " lp-qsplit-open" : "")}>
+          <section className="lp-card lp-qlist" aria-label="Записи на проверку">
+            <div className="lp-qhead">
+              <div className="lp-qh1"><b>Ждут решения</b><span className="lp-tnum">{fmtInt(queueCount)}</span></div>
+              {seg("Порядок", qSort, [["old", "сначала старые"], ["conf", "по вероятности"]], pickQueueSort)}
+            </div>
+            {queueList.map(r => {
+              const active = qSel && qSel.record_id === r.record_id;
+              const meta = [knownBank(r.bank_slug),
+                r.collected_at ? `собрано ${fmtDay(r.collected_at)}` : null].filter(Boolean).join(" · ");
+              const copiesHere = queueCopies(r).length;
+              return (
+                <button key={r.record_id} id={`lp-qi-${r.record_id}`} type="button"
+                        className={"lp-qi" + (active ? " lp-qi-on" : "")} aria-current={active ? "true" : undefined}
+                        onClick={() => { setQueueSelectedId(r.record_id); setQOpen(true); showReader(qCardRef); }}>
+                  <span className="lp-qi-t">{r.headline || r.title || r.snippet || "Без заголовка"}</span>
+                  <span className="lp-qi-m">{meta || "банк и дата не указаны"}
+                    <KindBadge kind={recordKind(r)} />
+                    {pctOf(r.verdict_confidence) != null && <span className="lp-tnum">{pctOf(r.verdict_confidence)}%</span>}
+                    {r.summary_doubt && <span className="lp-doubt">сомнение</span>}
+                    {copiesHere > 0 && <span>+{fmtInt(copiesHere)} {lpPlural(copiesHere, "копия", "копии", "копий")}</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </section>
+          {qSel && <section className="lp-card lp-qcard" ref={qCardRef} aria-label="Карточка проверки" aria-live="polite">
+            {readerHead(qSel, queueList, "queue")}
+            {recordBody(qSel, "queue")}
+            {canMarkVerdict ? decisionPanel(qSel) : (
+              <div className="lp-dec"><p className="lp-dhint">Решение выносит эксперт ЦК КС.</p></div>
+            )}
+          </section>}
+        </div>
+      )}
+    </section>
+  );
+
+  // ── Исследование ───────────────────────────────────────────────────────────
+  const SUGGESTIONS = ["Схемы с оплатой по QR-коду в СБП", "Как обходят лимиты на снятие наличных",
+    "Лазейки в бонусах за приглашение друзей", "Уязвимости в кэшбэке за оплату ЖКУ"];
+  const toolCount = (name, failed = false) => toolEvents.filter(e => e.name === name
+    && (failed ? e.kind === "result" && e.status === "failed" : e.kind === "call")).length;
+  const searchCalls = toolCount("audit_web_search");
+  const fetchCalls = toolCount("audit_web_fetch");
+  const fetchFailed = toolCount("audit_web_fetch", true);
+  const agentsBusy = subagents.some(a => ["queued", "searching", "classifying"].includes(a.status));
+  const materialsTotal = subagents.reduce((s, a) => s + (a.total || 0), 0);
+  const materialsDone = subagents.reduce((s, a) => s + (a.completed || 0), 0);
+  // Поток оборвался или вернул ошибку после начала работы: карточка остаётся и
+  // показывает, докуда дошло исследование, — иначе обрыв выглядит как пустота.
+  const stopped = !chatLoading && ["execute", "answer", "error"].includes(phase)
+    && (toolEvents.length > 0 || subagents.length > 0);
+  const phaseRank = {clarify: 0, await_clarify: 0, execute: 1, answer: 2, done: 3}[phase] ?? -1;
+  const baseStepState = (i) => {
+    if (phase === "done") return "done";
+    if (i === 0) return phaseRank >= 1 || stopped ? "done" : phaseRank === 0 ? "run" : "wait";
+    if (phaseRank < 1 && !stopped) return "wait";
+    if (i === 4) return phase === "answer" ? "run" : "wait";
+    if (phaseRank >= 2) return "done";
+    if (i === 1) return fetchCalls > 0 || subagents.length ? "done" : "run";
+    if (i === 2) return fetchCalls > 0 ? (subagents.length ? "done" : "run") : "wait";
+    if (i === 3) return subagents.length ? (agentsBusy || subagents.some(a => a.status === "cancelled") ? "run" : "done") : "wait";
+    return "wait";
+  };
+  const stepState = (i) => {
+    const st = baseStepState(i);
+    return stopped && st === "run" ? "stop" : st;
+  };
+  const plural = (n, one, few, many) => `${fmtInt(n)} ${lpPlural(n, one, few, many)}`;
+  const steps = [
+    ["Уточнение запроса", ""],
+    ["Поиск источников", searchCalls ? plural(searchCalls, "запрос", "запроса", "запросов") : ""],
+    ["Чтение страниц", fetchCalls ? plural(fetchCalls, "страница", "страницы", "страниц")
+      + (fetchFailed ? ` · не открылось: ${fmtInt(fetchFailed)}` : "") : ""],
+    ["Разметка материалов", subagents.length ? plural(subagents.length, "исследователь", "исследователя", "исследователей")
+      + (materialsTotal ? ` · ${fmtInt(materialsDone)} из ${fmtInt(materialsTotal)}` : "") : ""],
+    ["Итог", phase === "done" ? "готово" : ""],
+  ];
+  const elapsed = researchActivity && Number.isInteger(researchActivity.elapsed) ? researchActivity.elapsed : 0;
+  const fmtElapsed = (sec) => sec < 60 ? `${sec} с` : `${Math.floor(sec / 60)} мин ${sec % 60} с`;
+  const stepsCard = (chatLoading || stopped) ? (
+    <div className={"lp-steps" + (stopped ? " lp-steps-stopped" : "")} aria-live="polite">
+      <div className="lp-steps-h">
+        {stopped ? <><Icon name="alert" /><b>Исследование прервано</b>
+          <span className="lp-steps-m">шаги ниже — докуда дошло; запрос можно отправить ещё раз</span></>
+          : <><b>Исследование идёт</b>
+            {researchActivity && researchActivity.message && (
+              <span className="lp-steps-m" role="status" aria-label="Текущий этап исследования">
+                {researchActivity.message} · <span className="lp-tnum">{fmtElapsed(elapsed)}</span>
+              </span>
+            )}</>}
+      </div>
+      {!stopped && <div className="lp-pbar"><i style={{width: `${researchProgress}%`}}></i></div>}
+      {steps.map(([title, count], i) => {
+        const st = stepState(i);
+        return <div key={title} className={"lp-step lp-step-" + st}>
+          <span className="lp-si">{st === "done" && <Icon name="check" size={11} />}</span>
+          {title}<span className="lp-sc">{st === "stop" ? [count, "прервано"].filter(Boolean).join(" · ") : count}</span></div>;
+      })}
+      {subagents.length > 0 && (
+        <details className="lp-agents" open={agentsOpen}
+                 onToggle={e => setAgentsOpen(e.currentTarget.open)}>
+          <summary>Подробности по исследователям</summary>
+          <SubagentCards agents={subagents} />
+        </details>
+      )}
+    </div>
+  ) : phase === "done" && (searchCalls || fetchCalls || subagents.length) ? (
+    <div className="lp-steps lp-steps-small">
+      <div className="lp-steps-h"><Icon name="check" /><b>Готово</b>
+        <span className="lp-steps-m">{[searchCalls && plural(searchCalls, "поисковый запрос", "поисковых запроса", "поисковых запросов"),
+          fetchCalls && `прочитано ${plural(fetchCalls, "страница", "страницы", "страниц")}`,
+          subagents.length && plural(subagents.length, "исследователь", "исследователя", "исследователей")]
+          .filter(Boolean).join(" · ")}</span></div>
+    </div>
+  ) : null;
+
+  const clarifyCard = !researchReadOnly && selectionQuestions.length > 0 && (
+    <div className="lp-msg-a">
+      <span className="lp-ag"><Icon name="spark" size={14} /></span>
+      <div className="lp-msg-body">
+        <p>Уточню, чтобы не читать лишнего.</p>
+        <div className="lp-clar">
+          {selectionQuestions.map(q => {
+            const answer = answersByQ[q.id] || {selected: [], other: ""};
+            const multi = q.type === "multi";
+            return (
+              <div className="lp-question" key={q.id || q.question}>
+                <p className="lp-clar-q">{q.question}</p>
+                <div className="lp-opts" role={multi ? "group" : "radiogroup"} aria-label={q.question}>
+                  {(q.options || []).map((opt, i) => {
+                    const checked = answer.selected.includes(opt.value);
+                    const optionInputId = `lp-question-${q.id}-${i}`;
+                    return (
+                      <label key={opt.value || i} htmlFor={optionInputId}
+                             className={"lp-opt" + (checked ? " lp-opt-on" : "")}>
+                        <input id={optionInputId} type={multi ? "checkbox" : "radio"}
+                               name={"q-" + q.id} checked={checked}
+                               onChange={() => toggleAnswer(q.id, opt.value, multi)} />
+                        {checked && <Icon name="check" size={13} />}
+                        {opt.label || opt.value}
+                        {opt.recommended ? <span className="lp-opt-rec">рекомендуем</span> : null}
+                      </label>
+                    );
+                  })}
+                </div>
+                {q.allow_other && (
+                  <div className="lp-question-other">
+                    <label htmlFor={`lp-question-other-${q.id}`}>Свой вариант</label>
+                    <textarea id={`lp-question-other-${q.id}`} rows={2} value={answer.other || ""}
+                              onChange={e => setOtherText(q.id, e.target.value)} placeholder="Опишите иначе…" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {!selectionAnswersComplete && <p className="lp-note">Ответьте на все вопросы перед запуском.</p>}
+          <div className="lp-acts">
+            <button type="button" className="lp-btn lp-btn-primary"
+                    disabled={clarifySubmitting || !selectionAnswersComplete} onClick={submitAnswers}>
+              {clarifySubmitting ? "Запускаем…" : "Начать исследование"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const reportActions = (message) => !researchReadOnly && message.report_id ? (
+    <div className="lp-acts lp-msg-acts">
+      <button type="button" className="lp-btn lp-btn-sm" disabled={agentBusy || researchActionBusy}
+              onClick={() => downloadResearchReport(message.report_id, "pdf")}><Icon name="doc" size={14} />PDF</button>
+      <button type="button" className="lp-btn lp-btn-sm" disabled={agentBusy || researchActionBusy || researchLoading}
+              onClick={shareResearch}><Icon name="share" size={14} />Поделиться</button>
+    </div>
+  ) : null;
+
+  const conversation = chat.map((m, i) => {
+    if (m.role === "user") {
+      return <div key={i} className="lp-msg-u">{m.content}
+        {researchReadOnly && <small>Автор исследования</small>}</div>;
+    }
+    const text = String(m.content || "");
+    // Пока ответа нет, ход работы показывает карточка шагов — пустой пузырь не нужен.
+    if (!text.trim()) return null;
+    return (
+      <div key={i} className={"lp-msg-a" + (m._live ? " lp-msg-live" : "")}>
+        <span className="lp-ag"><Icon name="spark" size={14} /></span>
+        <div className="lp-msg-body">
+          <SafeMarkdown content={text} />
+          {reportActions(m)}
+        </div>
+      </div>
+    );
+  });
+
+  const findingsBlock = findings.length > 0 && (
+    <div className="lp-cands">
+      <div className="lp-cands-h"><b>Находки исследования · {fmtInt(findings.length)}</b>
+        <span>добавлены в общую базу{canQueue ? " и ждут решения в очереди" : ", ждут проверки экспертом"}</span></div>
+      {findings.map(f => {
+        const kind = recordKind(f);
+        const manual = f.verdict_model === "manual";
+        return (
+          <button key={f.record_id} type="button" className="lp-cand" onClick={() => openRecordInBase(f)}>
+            <span className="lp-cand-top"><KindBadge kind={kind} />
+              {manual || f.reviewed ? <span className="lp-done">проверено</span>
+                : f.awaiting ? <span className="lp-pend">ждёт проверки</span> : null}
+              {!manual && pctOf(f.verdict_confidence) != null && <span className="lp-muted">вероятность {pctOf(f.verdict_confidence)}%</span>}
+            </span>
+            <span className="lp-cand-t">{f.headline || f.title || f.snippet || "Без заголовка"}</span>
+            {(f.summary || f.verdict_reason) && <span className="lp-cand-d">{f.summary || f.verdict_reason}</span>}
+            <span className="lp-cand-m"><span className={bankClass(f.bank_slug)}>{bankName(f.bank_slug)}</span>
+              <span>{[f.domain || hostOf(f.url), fmtDay(f.published_at || f.collected_at)].filter(Boolean).join(" · ")}</span>
+              <span className="lp-link">открыть в базе<Icon name="right" size={12} /></span></span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const earlyReports = savedReports.filter(rep => !chat.some(m => m.report_id === rep.report_id));
+  const earlyReportsBlock = earlyReports.length > 0 && (
+    <section className="lp-reports" aria-label="Ранние отчёты">
+      <div className="lp-reports-h"><b>Ранние отчёты · {fmtInt(earlyReports.length)}</b>
+        <span>сохранены раньше, чем ответы стали храниться в переписке</span></div>
+      {earlyReports.map(rep => (
+        <details key={rep.report_id} className="lp-report">
+          <summary><Icon name="right" size={14} />
+            <span className="lp-report-q">{rep.query || "Отчёт исследования"}</span>
+            {rep.created_at && <time dateTime={rep.created_at}>{fmtDate(rep.created_at)}</time>}
+          </summary>
+          <div className="lp-report-b">
+            <SafeMarkdown content={String(rep.result || "")} />
+            <div className="lp-acts">
+              <button type="button" className="lp-btn lp-btn-sm" disabled={agentBusy || researchActionBusy}
+                      onClick={() => downloadResearchReport(rep.report_id, "pdf")}>
+                <Icon name="doc" size={14} />PDF</button>
+            </div>
+          </div>
+        </details>
+      ))}
+    </section>
+  );
+
+  const welcome = (
+    <div className="lp-welcome">
+      <div className="lp-eyebrow">Новое исследование</div>
+      <h2>Что проверить?</h2>
+      <p>Агент ищет обсуждения на форумах и сайтах банков, читает найденные страницы и размечает
+        находки: уязвимость, мошенническая схема или ни то ни другое. Находки попадают в общую базу
+        и ждут решения эксперта ЦК КС.</p>
+      <div className="lp-sugg">
+        {SUGGESTIONS.map(s => (
+          <button key={s} type="button" className="lp-sg"
+                  disabled={agentBusy || researchLoading || researchReadOnly || !workspaceId}
+                  onClick={() => sendChat(s)}>{s}</button>
+        ))}
+      </div>
+      <div className="lp-wfacts">
+        <div className="lp-wf"><b>Уточнит запрос</b><span>Банки и период спросит кнопками, чтобы не читать лишнего.</span></div>
+        <div className="lp-wf"><b>Покажет ход работы</b><span>Сколько запросов, страниц и материалов уже обработано.</span></div>
+        <div className="lp-wf"><b>Сложит находки в базу</b><span>Эксперт ЦК КС увидит их в очереди и вынесет решение.</span></div>
+      </div>
+    </div>
+  );
+
+  const composer = !researchReadOnly && (
+    <div className="lp-composer">
+      <div className="lp-cmp">
+        <label className="lp-sr-only" htmlFor="lp-chat-input">Сообщение аналитику</label>
+        <textarea id="lp-chat-input" ref={chatInputRef} rows={1} value={chatInput}
+                  onChange={e => { setChatInput(e.target.value); if (clarifyError) setClarifyError("");
+                    e.target.style.height = "auto"; e.target.style.height = Math.min(160, e.target.scrollHeight) + "px"; }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (textClarification && chatInput.trim()) submitAnswers();
+                      else if (!currentQuestions.length && chatInput.trim()) sendChat();
+                    }
+                  }}
+                  placeholder={agentBusy ? "Идёт исследование. Дождитесь итога."
+                    : textClarification ? "Ответ на уточняющий вопрос…"
+                    : selectionQuestions.length ? "Сначала ответьте на уточняющие вопросы…"
+                    : chat.length ? "Уточните или спросите дальше" : "Опишите, что искать: продукт, банк, признаки схемы"}
+                  disabled={agentBusy || researchLoading || researchActionBusy || !workspaceId || selectionQuestions.length > 0} />
+        <button type="button" className="lp-send" aria-label="Отправить сообщение"
+                onClick={() => textClarification ? submitAnswers() : sendChat()}
+                disabled={agentBusy || researchLoading || researchActionBusy || !workspaceId || !chatInput.trim() || selectionQuestions.length > 0}>
+          <Icon name="send" />
+        </button>
+      </div>
+      <p className="lp-cmp-note">Enter — отправить · Shift+Enter — новая строка</p>
+    </div>
+  );
+
+  const historyAside = (
+    <aside className="lp-card lp-hist" aria-labelledby="lp-research-history-title">
+      <button type="button" className="lp-btn lp-hist-new"
+              disabled={agentBusy || researchActionBusy || researchLoading}
+              onClick={() => { setHistOpen(false); createResearch(); }}>
+        <Icon name="plus" />Новое исследование
+      </button>
+      <h2 id="lp-research-history-title" className="lp-eyebrow">Мои исследования</h2>
+      {historyListLoading && <p className="lp-muted" role="status">Загрузка списка…</p>}
+      {historyListError && <div className="lp-inline-err" role="alert"><p>{historyListError}</p>
+        <button type="button" className="lp-btn lp-btn-sm" disabled={historyListLoading || agentBusy || researchActionBusy}
+                onClick={() => workspaceId ? loadResearchList() : initializeResearch()}>Повторить загрузку истории</button></div>}
+      {!historyListLoading && !historyListError && !researches.length && <p className="lp-muted">Исследований пока нет.</p>}
+      <div className="lp-hist-list">
+        {researches.filter(item => item.has_messages !== false || item.workspace_id === workspaceId).map(item => {
+          const fullName = String(item.name || "Без названия").trim() || "Без названия";
+          const active = workspaceId === item.workspace_id && !researchReadOnly;
+          return (
+            <div key={item.workspace_id} className={"lp-hi" + (active ? " lp-hi-on" : "")}>
+              <button type="button" className="lp-hi-open" aria-label={`Открыть исследование ${fullName}`}
+                      aria-current={active ? "true" : undefined} disabled={agentBusy || researchActionBusy}
+                      onClick={() => { setHistOpen(false); openResearch({id: item.workspace_id}); }}>
+                <b title={fullName}>{researchListName(fullName)}</b>
+                <time dateTime={item.last_active_at || item.created_at || undefined}>
+                  {fmtDate(item.last_active_at || item.created_at)}</time>
+              </button>
+              <button type="button" className="lp-hi-del" aria-label={`Удалить исследование ${fullName} из истории`}
+                      title="Удалить из истории" disabled={agentBusy || researchActionBusy || researchLoading}
+                      onClick={() => requestResearchDelete(item)}><Icon name="x" size={14} /></button>
+            </div>
+          );
+        })}
+      </div>
+    </aside>
+  );
+
+  const researchPanel = (
+    <section className="lp-panel" id="lp-panel-ai_research" role="tabpanel" aria-labelledby="lp-tab-ai_research">
+      <div className={"lp-rs" + (histOpen ? " lp-rs-hist" : "")}>
+        {historyAside}
+        <section className="lp-card lp-rs-main" aria-label="Ход AI-исследования">
+          <div className="lp-stream" ref={chatScrollRef}>
+            {researchReadOnly && !researchLoading && researchWorkspace && (
+              <div className="lp-callout"><Icon name="info" /><span>Исследование доступно только для чтения.</span></div>
+            )}
+            {researchError && <div className="lp-inline-err" role="alert"><p>{researchError}</p>
+              <button type="button" className="lp-btn lp-btn-sm" disabled={agentBusy || researchActionBusy || researchLoading}
+                      onClick={() => researchTargetRef.current.create
+                        ? createResearch(researchTargetRef.current.showResearch)
+                        : researchTargetRef.current.id || researchTargetRef.current.token
+                          ? openResearch(researchTargetRef.current) : initializeResearch()}>Повторить загрузку исследования</button></div>}
+            {researchLoading ? <p className="lp-muted" role="status">Загрузка исследования…</p> : (
+              <>
+                {researchWorkspace && chat.length > 0 && (
+                  <div className="lp-rs-head">
+                    <div className="lp-eyebrow">Исследование · {fmtDate(researchWorkspace.last_active_at || researchWorkspace.created_at)}</div>
+                    <h2>{researchWorkspace.name || "Исследование"}</h2>
+                  </div>
+                )}
+                {chat.length === 0 && !researchReadOnly && !earlyReports.length ? welcome : conversation}
+                {earlyReportsBlock}
+                {clarifyCard}
+                {clarifySubmitting && !chatLoading && (
+                  <div className="lp-steps lp-steps-small" role="status" aria-label="Подготовка исследования">
+                    <div className="lp-steps-h"><span className="lp-si lp-si-run"></span>
+                      <b>Готовим исследование</b><span className="lp-steps-m">уточнение принято</span></div>
+                  </div>
+                )}
+                {stepsCard}
+                {findingsBlock}
+                {clarifyError && <div className="lp-inline-err" role="alert"><p>{clarifyError}</p></div>}
+                {researchShareUrl && (
+                  <div className="lp-share">
+                    <label htmlFor="lp-research-share-url">Ссылка на исследование</label>
+                    <input id="lp-research-share-url" value={researchShareUrl} readOnly onFocus={e => e.target.select()} />
+                    <p className="lp-note">Получателю потребуется вход в модуль. Просмотр доступен без права редактирования.</p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          {composer}
+        </section>
+      </div>
+    </section>
+  );
+
+  // ── Всплывающие панели ─────────────────────────────────────────────────────
+  const popLayer = pop && (() => {
+    const width = pop.kind === "method" ? 340 : 300;
+    const left = Math.max(8, Math.min((pop.kind === "case" ? pop.rect.right - width : pop.rect.left),
+      window.innerWidth - width - 8));
+    const style = {left, top: pop.rect.bottom + 6, width};
+    if (pop.kind === "banks") {
+      // Банки текущего среза (со счётчиками); пока сводки нет — справочник.
+      // Коды-синонимы одного банка (sber / sberbank) показываются одной строкой.
+      const byName = new Map();
+      for (const slug of (bankFacet.length ? bankFacet.map(b => b.slug) : bankOptions)
+        .filter(slug => knownBank(slug))) {
+        const name = bankName(slug);
+        if (!byName.has(name) || bankCount(slug) > bankCount(byName.get(name))) byName.set(name, slug);
+      }
+      const slugs = [...new Set([...byName.values(), ...fBanks])];
+      slugs.sort((a, b) => bankCount(b) - bankCount(a) || bankName(a).localeCompare(bankName(b)));
+      return (
+        <div className="lp-pop lp-pop-banks" style={style} role="dialog" aria-label="Банки">
+          <div className="lp-pop-list">
+            {slugs.length === 0 && <p className="lp-pop-p">Банки в записях не указаны.</p>}
+            {slugs.map(b => (
+              <label key={b} className="lp-pi" htmlFor={`lp-bank-${b}`}>
+                <input id={`lp-bank-${b}`} type="checkbox" checked={fBanks.includes(b)}
+                       onChange={() => setFBanks(prev => prev.includes(b) ? prev.filter(x => x !== b) : [...prev, b])} />
+                <span className={bankClass(b)}>{bankName(b)}</span>
+                <span className="lp-pi-n">{fmtInt(bankCount(b))}</span>
+              </label>
+            ))}
+          </div>
+          <div className="lp-pop-f">
+            <button type="button" className="lp-btn-text" onClick={() => setFBanks([])}>Все банки</button>
+            <button type="button" className="lp-btn lp-btn-primary lp-btn-sm" onClick={() => setPop(null)}>Готово</button>
+          </div>
+        </div>
+      );
+    }
+    if (pop.kind === "case") {
+      return (
+        <div className="lp-pop" style={style} role="dialog" aria-label="Аудит-дела">
+          <div className="lp-pop-h lp-eyebrow">Добавить в аудит-дело</div>
+          {cases === null ? <p className="lp-pop-p">Загружаем дела…</p>
+            : cases.length === 0 ? <p className="lp-pop-p">Дел пока нет — создайте первое.</p>
+            : <div className="lp-pop-list">{cases.map(c => (
+                <button key={c.case_id} type="button" className="lp-pi" onClick={() => addToCase(c, pop.record)}>
+                  <Icon name="case" size={14} /><span>{c.title}</span><span className="lp-pi-n">{fmtInt(c.items || 0)}</span>
+                </button>))}</div>}
+          <form className="lp-pop-f lp-pop-new" onSubmit={e => { e.preventDefault(); createCaseWith(pop.record); }}>
+            <label className="lp-sr-only" htmlFor="lp-new-case">Название нового дела</label>
+            <input id="lp-new-case" value={newCaseTitle} onChange={e => setNewCaseTitle(e.target.value)}
+                   placeholder="Новое дело" />
+            <button type="submit" className="lp-btn lp-btn-sm" disabled={!newCaseTitle.trim()}>Создать</button>
+          </form>
+        </div>
+      );
+    }
+    return (
+      <div className="lp-pop" style={style} role="dialog" aria-label="Как читать вердикт">
+        <p className="lp-pop-p"><b>Вердикт</b> сначала ставит модель при сборе записи. Окончательный выносит
+          эксперт ЦК КС; пока он не решил, запись помечена «ждёт проверки».</p>
+        <p className="lp-pop-p"><b>Вероятность</b> — насколько запись похожа на уязвимость или схему по
+          оценке модели. Это не вероятность ущерба.</p>
+        <p className="lp-pop-p"><b>Суть</b> модель составляет только для уязвимостей и схем. У записей без
+          находки остаётся короткий комментарий классификатора из того же вызова, что и вердикт.</p>
+      </div>
+    );
+  })();
+
+  // ── Доступ (администратор) ─────────────────────────────────────────────────
+  const experts = adminRoles ? adminRoles.roles.filter(a => a.status === "active" && !hiddenExperts.has(a.username)) : [];
+  const AUDIT_LABELS_RU = AUDIT_ACTION_LABELS;
+  const accessSheet = accessOpen && (
+    <div className="lp-layer">
+      <button type="button" className="lp-scrim" aria-label="Закрыть панель доступа" tabIndex={-1}
+              onClick={() => setAccessOpen(false)} />
+      <div className="lp-sheet" ref={accessSheetRef} role="dialog" aria-modal="true" aria-labelledby="lp-access-title">
+        <div className="lp-sh-h">
+          <div><div className="lp-eyebrow">Администрирование</div><h2 id="lp-access-title">Доступ к модулю</h2></div>
+          <button type="button" className="lp-icb" aria-label="Закрыть" onClick={() => setAccessOpen(false)}><Icon name="x" /></button>
+        </div>
+        <div className="lp-sh-b">
+          {adminDenied ? (
+            <div className="lp-state"><h2 className="lp-state-t">Нет доступа к администрированию</h2>
+              <p className="lp-state-x">Роль администратора модуля не назначена или отозвана.</p></div>
+          ) : adminError ? (
+            <div className="lp-state" role="alert"><p className="lp-state-t">Не удалось загрузить данные администрирования</p>
+              <div className="lp-state-a"><button type="button" className="lp-btn lp-btn-primary" onClick={loadAdmin}>Повторить</button></div></div>
+          ) : adminLoading && !adminRoles ? <p className="lp-muted">Загружаем…</p> : (
+            <>
+              <section>
+                <h3 className="lp-eyebrow">Эксперты ЦК КС · {adminRoles ? adminRoles.active_experts - hiddenExperts.size : "…"} из {adminRoles ? adminRoles.max_experts : 5}</h3>
+                {experts.length === 0 && <p className="lp-muted">Назначений роли ЦК КС нет.</p>}
+                {experts.map(a => (
+                  <div key={a.username} className="lp-row-l">
+                    <span className="lp-ava">{String(a.username || "?")[0].toUpperCase()}</span>
+                    <span className="lp-grow"><b>{a.username}</b><span className="lp-sub">назначен {fmtDate(a.created_at)}</span></span>
+                    <button type="button" className="lp-btn lp-btn-sm" disabled={adminBusy} onClick={() => revokeLater(a.username)}>Отозвать</button>
+                  </div>
+                ))}
+                <form className="lp-grant" onSubmit={e => { e.preventDefault(); grantRole(); }}>
+                  <label htmlFor="lp-grant-name">Логин сотрудника</label>
+                  <input id="lp-grant-name" value={grantName} onChange={e => setGrantName(e.target.value)}
+                         placeholder="ivanova.a" autoComplete="off"
+                         disabled={adminRoles && adminRoles.active_experts >= adminRoles.max_experts} />
+                  <span className="lp-note">{adminRoles && adminRoles.active_experts >= adminRoles.max_experts
+                    ? "Достигнут предел экспертов. Чтобы назначить нового, отзовите одного."
+                    : "Эксперт увидит очередь проверки и сможет выносить решения."}</span>
+                  <button type="submit" className="lp-btn lp-btn-primary" disabled={adminBusy || !grantName.trim()}>Назначить экспертом</button>
+                </form>
+              </section>
+              <section>
+                <h3 className="lp-eyebrow">Журнал доступа</h3>
+                <p className="lp-note">Обезличенная сводка событий авторизации и изменений ролей.</p>
+                {!adminAudit || adminAudit.length === 0 ? <p className="lp-muted">Событий пока нет.</p>
+                  : adminAudit.map(e => (
+                    <div key={e.action + ":" + e.decision} className="lp-jr">
+                      <span>{AUDIT_LABELS_RU[e.action] || e.action}</span>
+                      <span className="lp-tnum">{fmtInt(e.count)}</span>
+                      <span className="lp-sub"><span className={e.decision === "deny" ? "lp-warn-t" : ""}>
+                        {AUDIT_DECISION_LABELS[e.decision] || e.decision}</span> · последнее {fmtDate(e.last_at)}</span>
+                    </div>
+                  ))}
+              </section>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Диалог «Изменить вердикт» (база, у проверенных записей) ───────────────
+  const verdictDialog = canMarkVerdict && verdictModal && (() => {
+    const rec = {...verdictModal.record, ...(detailOf(verdictModal.record.record_id) || {})};
+    const current = recordKind(rec);
+    const cls = verdictModal.cls || null;
+    const comment = markComment.trim();
+    const unchanged = cls === current && rec.verdict_model === "manual";
+    const ready = !!cls && !!comment && !unchanged;
+    const save = async () => {
+      if (!ready) return;
+      const ok = await markVerdict([rec.record_id], cls, comment, {source: "base"});
+      if (ok) { setVerdictModal(null); setMarkComment(""); }
+    };
+    return (
+      <div className="lp-layer">
+        <button type="button" className="lp-scrim" aria-label="Закрыть диалог" tabIndex={-1}
+                onClick={() => setVerdictModal(null)} />
+        <div className="lp-dialog" ref={verdictDialogRef} role="dialog" aria-modal="true"
+             aria-labelledby="lp-verdict-title">
+          <div className="lp-sh-h">
+            <div><div className="lp-eyebrow">Решение эксперта</div>
+              <h2 id="lp-verdict-title">Изменить вердикт</h2></div>
+            <button type="button" className="lp-icb" aria-label="Закрыть"
+                    onClick={() => setVerdictModal(null)}><Icon name="x" /></button>
+          </div>
+          <div className="lp-dlg-b">
+            <p className="lp-dlg-rec">{rec.title || rec.snippet || "Без заголовка"}</p>
+            <div className="lp-dopts" role="radiogroup" aria-label="Вердикт">
+              {["vulnerability", "fraud_scheme", "not_confirmed"].map(v => (
+                <button key={v} type="button" role="radio" aria-checked={cls === v}
+                        className={"lp-dopt" + (cls === v ? " lp-dopt-on" : "")}
+                        onClick={() => setVerdictModal(m => ({...m, cls: v}))}>
+                  <span className={"lp-sw lp-sw-" + KIND_LABELS[v][1]}></span>
+                  <span>{KIND_LABELS[v][0]}{current === v && <small>сейчас</small>}</span>
+                </button>
+              ))}
+            </div>
+            <label className="lp-sr-only" htmlFor="lp-mark-comment">Комментарий эксперта</label>
+            <textarea id="lp-mark-comment" className="lp-dcom" rows={3} value={markComment}
+                      onChange={e => setMarkComment(e.target.value)}
+                      placeholder="Почему вердикт меняется? Комментарий попадёт в историю записи." />
+            <div className="lp-dec-f">
+              <span className="lp-dhint">{!cls ? "Выберите вердикт" : unchanged ? "Вердикт уже такой"
+                : !comment ? "Добавьте комментарий" : "Готово к сохранению"}</span>
+              <button type="button" className="lp-btn" onClick={() => setVerdictModal(null)}>Отмена</button>
+              <button type="button" className="lp-btn lp-btn-primary" disabled={!ready || markBusy} onClick={save}>
+                {markBusy ? "Сохраняем…" : "Сохранить"}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
+  // ── Удаление исследования из личной истории ───────────────────────────────
+  const researchDeleteDialog = researchDeleteConfirm && (
+    <div className="lp-layer">
+      <button type="button" className="lp-scrim" aria-label="Закрыть подтверждение удаления"
+              tabIndex={-1} disabled={researchActionBusy}
+              onClick={() => { setResearchDeleteConfirm(false); setResearchDeleteTarget(null); }} />
+      <div className="lp-dialog lp-dialog-sm" ref={researchDeleteDialogRef} role="dialog" aria-modal="true"
+           aria-labelledby="lp-research-delete-title">
+        <div className="lp-sh-h"><h2 id="lp-research-delete-title">Удалить исследование из истории?</h2></div>
+        <div className="lp-dlg-b">
+          <p className="lp-dlg-p">Исследование исчезнет из личной истории, а общая ссылка перестанет работать.
+            Данные сохранятся в системе, находки останутся в общей базе.</p>
+          {researchDeleteError && <p role="alert" className="lp-warn-t">{researchDeleteError}</p>}
+          <div className="lp-dec-f">
+            <button ref={researchDeleteCancelRef} type="button" className="lp-btn" disabled={researchActionBusy}
+                    onClick={() => { setResearchDeleteConfirm(false); setResearchDeleteTarget(null); }}>Отмена</button>
+            <button type="button" className="lp-btn lp-btn-danger" disabled={researchActionBusy} onClick={deleteResearch}>
+              {researchActionBusy ? "Удаляем…" : "Удалить"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <main className="lp-app">
+      {pageHead}
+      {tabsBar}
+      {view === "catalog" && catalogPanel}
+      {view === "ai_research" && researchPanel}
+      {view === "queue" && queuePanel}
+      {view === "sources" && (
+        <div className="lp-legacy">
           <section className="lp-sources-surface" id="lp-panel-sources"
                    role="tabpanel" aria-labelledby="lp-tab-sources">
             <div className="lp-source-grid">
@@ -2550,793 +3876,13 @@ function LoopholeApp() {
               })}
             </section>
           </section>
-        )}
-
-        {/* ── AI-исследование: работа идёт в панели чата, общая база и очередь
-               на этой поверхности не показываются ─────────────────────────── */}
-        {view === "ai_research" && (
-          <section className="lp-research-surface" id="lp-panel-ai_research"
-                   role="tabpanel" aria-labelledby="lp-tab-ai_research"
-                   aria-label="Ход AI-исследования">
-            <div className="lp-research-shell">
-            <aside className="lp-research-history" aria-labelledby="lp-research-history-title">
-              <div className="lp-research-history-head">
-                <div>
-                  <div className="lp-eyebrow">Личная история</div>
-                  <h2 id="lp-research-history-title">Ваши исследования</h2>
-                </div>
-                <button type="button" className="lp-btn lp-btn-primary"
-                        disabled={agentBusy || researchActionBusy || researchLoading}
-                        onClick={() => createResearch()}>Новое исследование</button>
-              </div>
-              {historyListLoading && <p className="lp-muted" role="status">Загрузка списка…</p>}
-              {historyListError && <div className="lp-research-history-error" role="alert">
-                <p>{historyListError}</p>
-                <button className="lp-btn" disabled={historyListLoading || agentBusy || researchActionBusy}
-                        onClick={() => workspaceId ? loadResearchList() : initializeResearch()}>
-                  Повторить загрузку истории
-                </button>
-              </div>}
-              {!historyListLoading && !historyListError && !researches.length && (
-                <p className="lp-muted">В личной истории пока нет исследований.</p>
-              )}
-              <div className="lp-research-history-list">
-                {researches.map(item => {
-                  const fullName = String(item.name || "Без названия").trim() || "Без названия";
-                  const name = researchListName(fullName);
-                  const active = workspaceId === item.workspace_id && !researchReadOnly;
-                  return (
-                    <article key={item.workspace_id}
-                             className={"lp-research-history-item" + (active ? " lp-research-history-active" : "")}>
-                      <button type="button" className="lp-research-history-open"
-                              aria-label={`Открыть исследование ${fullName}`}
-                              aria-current={active ? "true" : undefined}
-                              disabled={agentBusy || researchActionBusy}
-                              onClick={() => openResearch({id: item.workspace_id})}>
-                        <strong title={fullName}>{name}</strong>
-                        <time dateTime={item.last_active_at || item.created_at || undefined}>
-                          {fmtDate(item.last_active_at || item.created_at)}
-                        </time>
-                      </button>
-                      <button type="button" className="lp-research-history-delete"
-                              aria-label={`Удалить исследование ${fullName} из истории`}
-                              title="Удалить из истории"
-                              disabled={agentBusy || researchActionBusy || researchLoading}
-                              onClick={() => requestResearchDelete(item)}>×</button>
-                    </article>
-                  );
-                })}
-              </div>
-              {agentBusy && <p className="lp-muted" role="status">Переключение истории будет доступно после ответа аналитика.</p>}
-              {researchLoading && <p role="status">Загрузка исследования…</p>}
-              {researchError && <div className="lp-research-history-error" role="alert">
-                <p>{researchError}</p>
-                <button className="lp-btn" disabled={agentBusy || researchActionBusy || researchLoading}
-                        onClick={() => researchTargetRef.current.create
-                          ? createResearch(researchTargetRef.current.showResearch)
-                          : researchTargetRef.current.id || researchTargetRef.current.token
-                            ? openResearch(researchTargetRef.current) : initializeResearch()}>
-                  Повторить загрузку исследования
-                </button>
-              </div>}
-            </aside>
-            <div className="lp-research-content">
-              {researchWorkspace && <section className="lp-research-current">
-                <h3>{researchWorkspace.name || "Исследование"}</h3>
-                {researchReadOnly ? (
-                  <p className="lp-research-readonly">Исследование доступно только для чтения.</p>
-                ) : <div className="lp-research-result-actions">
-                  <button className="lp-btn" disabled={agentBusy || researchActionBusy || researchLoading}
-                          onClick={shareResearch}>Поделиться</button>
-                  {!researchLoading && lastResearchAnswer && lastResearchAnswer.report_id && (
-                    <button type="button" className="lp-btn"
-                            disabled={agentBusy || researchActionBusy || researchLoading}
-                            onClick={() => downloadResearchReport(lastResearchAnswer.report_id, "pdf")}>PDF</button>
-                  )}
-                </div>}
-              </section>}
-              {researchShareUrl && <div className="lp-research-share">
-                <label htmlFor="lp-research-share-url">Ссылка на исследование</label>
-                <input id="lp-research-share-url" value={researchShareUrl} readOnly
-                       onFocus={event => event.target.select()} />
-                <p className="lp-muted">Получателю потребуется вход в модуль. Просмотр доступен без права редактирования.</p>
-              </div>}
-            <div className="lp-research-board">
-              <section className="lp-research-card" aria-labelledby="lp-research-params-title">
-                <div className="lp-eyebrow">Параметры исследования</div>
-                <h2 id="lp-research-params-title">Текущий запрос</h2>
-                <dl className="lp-research-kv">
-                  <div>
-                    <dt>Тема</dt>
-                    <dd>{lastResearchQuery ? lastResearchQuery.content : "Запрос ещё не задан"}</dd>
-                  </div>
-                  <div>
-                    <dt>Режим</dt>
-                    <dd>Поиск уязвимостей с проверкой первоисточников</dd>
-                  </div>
-                  <div>
-                    <dt>Данные</dt>
-                    <dd>{recordsTotal} {recordWord(recordsTotal)} в общей базе</dd>
-                  </div>
-                </dl>
-              </section>
-
-              <section className="lp-research-card" aria-labelledby="lp-research-progress-title">
-                <div className="lp-research-card-head">
-                  <div>
-                    <div className="lp-eyebrow">Прогресс исследования</div>
-                    <h2 id="lp-research-progress-title">
-                      {phase ? (PHASE_LABELS[phase] || phase) : restoredResearch ? "История загружена" : "Ожидает запуска"}
-                    </h2>
-                  </div>
-                  {!restoredResearch && <strong>{researchProgress}%</strong>}
-                </div>
-                {!restoredResearch && <div className="lp-research-progress" aria-label={`Выполнено ${researchProgress}%`}>
-                  <span style={{width: `${researchProgress}%`}}></span>
-                </div>}
-                {phase === "execute" && researchActivity && (
-                  <p className="lp-research-task-summary" role="status"
-                     aria-label="Текущий этап исследования" aria-live="polite" aria-atomic="true">
-                    {researchActivity.message} · {researchActivity.elapsed} с
-                  </p>
-                )}
-                {!restoredResearch && <div className="lp-research-task-summary">
-                  Выполнено подзадач: {completedSubtasks} из {researchTasks.length}
-                </div>}
-                {researchTasks.length > 0 ? (
-                  <ul className="lp-research-task-list">
-                    {researchTasks.map((task, index) => (
-                      <li key={index} className={`lp-research-task-${task.status}`}>
-                        <span aria-hidden="true"></span>{task.title}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="lp-muted">{restoredResearch
-                    ? "Доступны сохранённые переписка и результаты. Прогресс прошлого запуска не сохранялся."
-                    : "Подзадачи появятся после запуска исследования."}</p>
-                )}
-              </section>
-
-              <section className="lp-research-card lp-research-evidence"
-                       aria-labelledby="lp-research-evidence-title">
-                <div className="lp-eyebrow">Доказательства и источники</div>
-                <h2 id="lp-research-evidence-title">{selectedReport ? "Результат исследования" : "Промежуточный результат"}</h2>
-                {reportChoices.length > 0 && <div className="lp-research-report-select">
-                  <label htmlFor="lp-research-report">Сохранённый результат</label>
-                  <select id="lp-research-report" value={selectedReportId}
-                          disabled={agentBusy || researchLoading}
-                          onChange={event => setSelectedReportId(event.target.value)}>
-                    <option value="">Последний ответ в переписке</option>
-                    {reportChoices.map(report => <option key={report.report_id} value={String(report.report_id)}>
-                      {report.query || `Отчёт №${report.report_id}`} · {fmtDate(report.created_at)}
-                    </option>)}
-                  </select>
-                </div>}
-                <div className="lp-research-card-head">
-                  <div><SafeMarkdown content={lastResearchAnswer
-                    ? lastResearchAnswer.content
-                    : "После запуска здесь появится проверенный промежуточный вывод аналитика."} /></div>
-                </div>
-                {!restoredResearch && <div className="lp-research-meta">
-                  <span>Событий инструментов: {toolEvents.length}</span>
-                  <span>Фаза: {phase ? (PHASE_LABELS[phase] || phase) : "не запущено"}</span>
-                </div>}
-              </section>
-            </div>
-            </div>
-            </div>
-            {!chatOpen && (
-              <p className="lp-research-chat-note">
-                Панель аналитика скрыта. Откройте её кнопкой в заголовке, чтобы продолжить.
-              </p>
-            )}
-          </section>
-        )}
-
-        {/* ── Очередь верификации ЦК КС (fail-closed при 403/отзыве роли) ── */}
-        {view === "queue" && (
-          <section className="lp-context-panel lp-queue-panel" id="lp-panel-queue"
-                   role="tabpanel" aria-labelledby="lp-tab-queue">
-          {
-          queueDenied ? (
-            <div className="lp-empty-state" style={{padding: 48}}>
-              <h2>Нет доступа к очереди верификации</h2>
-              <p>Роль эксперта ЦК КС не назначена или отозвана.</p>
-              <button className="lp-btn" onClick={() => setView("catalog")}>
-                Вернуться к общей базе
-              </button>
-            </div>
-          ) : (
-            <div className="lp-table-wrap">
-              {queueLoading ? (
-                <div className="lp-empty-state">Загрузка очереди…</div>
-              ) : queueError ? (
-                <div className="lp-empty-state">
-                  <p>Не удалось загрузить очередь верификации.</p>
-                  <button className="lp-btn" onClick={loadQueue}>Повторить</button>
-                </div>
-              ) : queueRecords.length === 0 ? (
-                <div className="lp-empty-state">
-                  <p>Очередь верификации пуста.</p>
-                  <button className="lp-btn" onClick={loadQueue}>
-                    Сбросить
-                  </button>
-                </div>
-              ) : (
-                <div className="lp-queue-review">
-                  <section className="lp-queue-list" aria-label="Записи на проверку">
-                    <div className="lp-queue-list-head">
-                      <span>Очередь ({queueRecords.length})</span>
-                      <span>по предварительной вероятности</span>
-                    </div>
-                    {queueRecords.map((record, index) => {
-                      const active = queueSelected && queueSelected.record_id === record.record_id;
-                      return (
-                        <button key={record.record_id} type="button"
-                                className={`lp-queue-card${active ? " lp-queue-card-active" : ""}`}
-                                aria-current={active ? "true" : undefined}
-                                onClick={() => setQueueSelectedId(record.record_id)}>
-                          <span className="lp-queue-index">{index + 1}.</span>
-                          <span className="lp-queue-card-copy">
-                            <strong>{record.title || record.snippet || "—"}</strong>
-                            <small>{record.bank_slug || "—"} · {fmtDate(record.published_at)}</small>
-                          </span>
-                          <span className="lp-queue-confidence">
-                            <small>Предварительная вероятность</small>{fmtNum(record.verdict_confidence)}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </section>
-
-                  {queueSelected && (
-                    <article className="lp-queue-detail" aria-live="polite">
-                      <div className="lp-eyebrow">Карточка проверки</div>
-                      <h2>{queueSelected.title || queueSelected.snippet || "—"}</h2>
-                      <div className="lp-queue-detail-grid">
-                        <div><span>Банк</span><strong>{queueSelected.bank_slug || "—"}</strong></div>
-                        <div><span>Предварительная вероятность</span><strong>{fmtNum(queueSelected.verdict_confidence)}</strong></div>
-                        <div><span>Статус</span><strong>{recordStatusLabel(queueSelected.status)}</strong></div>
-                        <div><span>Дата публикации</span><strong>{fmtDate(queueSelected.published_at)}</strong></div>
-                        <div><span>Собрано</span><strong>{fmtDate(queueSelected.collected_at)}</strong></div>
-                      </div>
-                      <section className="lp-queue-reason" aria-labelledby="lp-queue-reason-title">
-                        <h3 id="lp-queue-reason-title">Комментарий классификатора</h3>
-                        <p>{(queueSelected.classifier_verdict_reason ?? queueSelected.verdict_reason) || "Комментарий не указан."}</p>
-                      </section>
-                      {/* Решения ЦК КС записи (все импорты): append-only
-                          loophole_verification_decision с автором и датой;
-                          queueSelected.decisions всегда массив (пустой, если
-                          решений нет), данные приходят с GET /queue. */}
-                      <section className="lp-queue-decisions" aria-labelledby="lp-queue-decisions-title">
-                        <h3 id="lp-queue-decisions-title">Решения ЦК КС</h3>
-                        {Array.isArray(queueSelected.decisions) && queueSelected.decisions.length > 0 ? (
-                          <ul className="lp-queue-decisions-list">
-                            {queueSelected.decisions.map(d => (
-                              <li key={d.decision_id} className="lp-queue-decision">
-                                <span className={`lp-queue-decision-type lp-decision-${d.decision}`}>
-                                  {decisionLabel(d.decision)}
-                                </span>
-                                <span className="lp-queue-decision-comment">{d.comment}</span>
-                                <span className="lp-queue-decision-meta">
-                                  {d.decided_by} · {fmtDate(d.decided_at)}
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p>Решений ЦК пока нет.</p>
-                        )}
-                      </section>
-                      <div className="lp-queue-detail-actions">
-                        {queueSelected.url && (
-                          <a className="lp-btn" href={queueSelected.url} target="_blank"
-                             rel="noopener noreferrer">Открыть источник</a>
-                        )}
-                        {canMarkVerdict && <button type="button" className="lp-btn lp-btn-primary"
-                                onClick={() => setVerdictModal({record: queueSelected})}>
-                          Проверить вердикт
-                        </button>}
-                      </div>
-                      {/* Комментарий участника ЦК — одно состояние markComment
-                          с полем модалки вердикта; сохраняется только через
-                          существующий вердикт-флоу (POST /records/verdict). */}
-                      {canMarkVerdict && (
-                        <section className="lp-verdict-field lp-queue-comment"
-                                 aria-labelledby="lp-queue-comment-label">
-                          <label id="lp-queue-comment-label" htmlFor="lp-queue-comment-input">
-                            Комментарий участника ЦК
-                          </label>
-                          <textarea id="lp-queue-comment-input" rows={3} value={markComment}
-                                    onChange={e => setMarkComment(e.target.value)}
-                                    placeholder="Комментарий сохранится вместе с вердиктом…"/>
-                        </section>
-                      )}
-                      {/* Полный текст записи: ленивая догрузка content-эндпоинтом,
-                          в карточке всегда развёрнут (прокрутка внутри блока). */}
-                      <section className="lp-queue-fulltext" aria-labelledby="lp-queue-fulltext-title">
-                        <h3 id="lp-queue-fulltext-title">Полный текст записи</h3>
-                        {renderRecordContent(queueSelected, {alwaysFull: true})}
-                      </section>
-                    </article>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          </section>
-        )}
-        {/* ── Администрирование (story 1.5): роль ЦК КС и сводный обезличенный
-               аудит. Черновики исследований, очередь,
-               каталог и технические payload на этой поверхности не показываются ── */}
-        {view === "admin" && (
-          <section className="lp-context-panel lp-admin-panel" id="lp-panel-admin"
-                   role="tabpanel" aria-labelledby="lp-tab-admin">
-          {
-          adminDenied ? (
-            <div className="lp-empty-state" style={{padding: 48}}>
-              <h2>Нет доступа к администрированию</h2>
-              <p>Роль администратора модуля не назначена или отозвана.</p>
-              <button className="lp-btn" onClick={() => setView("catalog")}>
-                Вернуться к общей базе
-              </button>
-            </div>
-          ) : adminLoading && !adminRoles ? (
-            <div className="lp-empty-state">Загрузка администрирования…</div>
-          ) : adminError ? (
-            <div className="lp-empty-state">
-              <p>Не удалось загрузить данные администрирования.</p>
-              <button className="lp-btn" onClick={loadAdmin}>Повторить</button>
-            </div>
-          ) : (
-            <div className="lp-admin">
-              {/* Управление ролью ЦК КС: лимит — не более пяти активных */}
-              <section className="lp-admin-section" aria-labelledby="lp-admin-roles-title">
-                <h2 id="lp-admin-roles-title">Роль ЦК КС</h2>
-                <p className="lp-muted">
-                  Активных экспертов: {adminRoles ? adminRoles.active_experts : "…"}
-                  {" "}из {adminRoles ? adminRoles.max_experts : 5}
-                </p>
-                <div className="lp-admin-form">
-                  <input type="text" value={grantName}
-                         onChange={e => setGrantName(e.target.value)}
-                         placeholder="username сотрудника"
-                         aria-label="Имя пользователя для назначения роли ЦК КС"/>
-                  <button className="lp-btn lp-btn-primary" onClick={grantRole}
-                          disabled={adminBusy || !grantName.trim()}>
-                    Назначить эксперта ЦК КС
-                  </button>
-                </div>
-                {!adminRoles || adminRoles.roles.length === 0 ? (
-                  <div className="lp-empty-state">Назначений роли ЦК КС нет.</div>
-                ) : (
-                  <div className="lp-table-wrap">
-                    <table className="lp-table">
-                      <thead>
-                        <tr>
-                          <th>Пользователь</th>
-                          <th>Статус</th>
-                          <th className="lp-col-narrow1">Назначено</th>
-                          <th className="lp-col-narrow1"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {adminRoles.roles.map(a => (
-                          <tr key={a.username}>
-                            <td>{a.username}</td>
-                            <td>
-                              <span className="lp-status">
-                                {a.status === "active" ? "активна" : "отозвана"}
-                              </span>
-                            </td>
-                            <td className="lp-cell-date lp-col-narrow1">{fmtDate(a.created_at)}</td>
-                            <td className="lp-col-narrow1">
-                              {a.status === "active" && (
-                                <button className="lp-btn lp-btn-sm"
-                                        onClick={() => setRevokeConfirm(a.username)}
-                                        disabled={adminBusy}>
-                                  Отозвать
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-
-              {/* Сводный обезличенный аудит: только агрегаты, без username */}
-              <section className="lp-admin-section" aria-labelledby="lp-admin-audit-title">
-                <h2 id="lp-admin-audit-title">Сводный аудит</h2>
-                <p className="lp-muted">
-                  Обезличенная сводка событий авторизации и изменений ролей.
-                </p>
-                {!adminAudit || adminAudit.length === 0 ? (
-                  <div className="lp-empty-state">Событий аудита пока нет.</div>
-                ) : (
-                  <div className="lp-table-wrap">
-                    <table className="lp-table">
-                      <thead>
-                        <tr>
-                          <th>Действие</th>
-                          <th>Решение</th>
-                          <th className="lp-col-narrow2">Событий</th>
-                          <th className="lp-col-narrow1">Последнее событие</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {adminAudit.map(e => (
-                          <tr key={e.action + ":" + e.decision}>
-                            <td>{e.action}</td>
-                            <td><span className="lp-status">{e.decision}</span></td>
-                            <td className="lp-col-narrow2">{e.count}</td>
-                            <td className="lp-cell-date lp-col-narrow1">{fmtDate(e.last_at)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-            </div>
-          )}
-          </section>
-        )}
-      </main>
-
-      {/* ── Панель агента: существует только на маршруте AI-исследования ────── */}
-      {chatModalOpen && (
-        <button type="button" className="lp-chat-backdrop"
-                aria-label="Закрыть чат" tabIndex={-1}
-                onClick={() => setChatOpen(false)} />
+        </div>
       )}
-      {chatVisible && (<aside ref={chatPanelRef} className="lp-sidebar"
-                              role={chatModalOpen ? "dialog" : "complementary"}
-                              aria-modal={chatModalOpen ? "true" : undefined}
-                              aria-labelledby="lp-chat-title">
-        <div className="lp-sidebar-header">
-          <div className="lp-agent-avatar">AI</div>
-          <div style={{flex: 1, minWidth: 0}}>
-            <div ref={chatTitleRef} className="lp-agent-name" id="lp-chat-title" tabIndex={-1}>Аналитик уязвимостей</div>
-            <div className="lp-agent-status">
-              <span className={"lp-dot " + (agentBusy ? "lp-dot-busy" : "lp-dot-online")}></span>
-              {researchLoading ? "Загрузка истории" : researchReadOnly ? "Только чтение" : agentBusy ? "Обдумывает ответ" : "Готов"}
-            </div>
-          </div>
-          <button type="button" className="lp-chat-close"
-                  onClick={() => setChatOpen(false)}
-                  title="Скрыть чат" aria-label="Скрыть чат">✕</button>
-        </div>
-
-        {/* Индикатор фаз пайплайна */}
-        {phase && phase !== "done" && (
-          <div className="lp-phase-bar" aria-label="Фазы пайплайна">
-            {PHASES.map((p, i) => {
-              const cls = "lp-phase-step "
-                + (i === phaseIdx ? "lp-phase-active "
-                : (i < phaseIdx ? "lp-phase-done " : ""));
-              return (
-                <div key={p} className={cls.trim()}>
-                  <span className="lp-phase-dot">{i < phaseIdx ? "✓" : (i + 1)}</span>
-                  <span className="lp-phase-label">{PHASE_LABELS[p]}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {phase === "done" && (
-          <div className="lp-phase-bar lp-phase-bar-done">
-            {PHASES.map((p, i) => (
-              <div key={p} className="lp-phase-step lp-phase-done">
-                <span className="lp-phase-dot">✓</span>
-                <span className="lp-phase-label">{PHASE_LABELS[p]}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="lp-chat-messages" ref={chatScrollRef}>
-          {chat.length === 0 && !researchLoading && !researchReadOnly && (
-            <div className="lp-chat-empty">
-              Задайте вопрос по найденным уязвимостям — аналитик уточнит контекст
-              и подготовит исследование по доступным источникам.
-            </div>
-          )}
-
-          <SubagentCards agents={subagents} />
-
-          {/* Подзадачи */}
-          {subtasks.length > 0 && (
-            <div className="lp-subtasks">
-              <div className="lp-subtasks-title">Подзадачи</div>
-              {subtasks.map((s, i) => (
-                <div key={i} className="lp-subtask">
-                  <span className={"lp-subtask-icon lp-subtask-" + s.status}>
-                    {s.status === "done" ? "✅" : s.status === "error" ? "❌" : "⏳"}
-                  </span>
-                  <span className="lp-subtask-title">{s.title}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {chat.map((m, i) => (
-            <div key={i} className={"lp-bubble lp-bubble-" + m.role}>
-              <div className="lp-bubble-role">
-                {m.role === "user" ? (researchReadOnly ? "Автор" : "Вы") : "Аналитик"}
-              </div>
-              <div className="lp-bubble-content">{m.content}</div>
-              {m.role === "assistant" && <ToolActivity events={m.tools} active={agentBusy && m._live} />}
-              {agentBusy && m._live && <div className="lp-agent-activity" role="status">
-                {researchActivity ? researchActivity.message : "Аналитик работает"}
-              </div>}
-            </div>
-          ))}
-          {agentBusy && !chat.some(m => m._live) && (
-            <div className="lp-bubble lp-bubble-assistant lp-typing">
-              <div className="lp-bubble-role">Аналитик</div>
-              <div className="lp-agent-activity" role="status">
-                {researchActivity ? researchActivity.message : "Аналитик обрабатывает запрос"}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Карточка уточняющих вопросов — между сообщениями и input-area */}
-        {!researchReadOnly && selectionQuestions.length > 0 && (
-          <div className="lp-questions-card">
-            <div className="lp-questions-header">Уточняющие вопросы</div>
-            {selectionQuestions.map(q => {
-              const answer = answersByQ[q.id] || {selected: [], other: ""};
-              const multi = q.type === "multi";
-              return (
-                <div className="lp-question" key={q.id || q.question}>
-                  <div className="lp-question-text">{q.question}</div>
-                  <div className="lp-question-options">
-                    {(q.options || []).map((opt, i) => {
-                      const checked = answer.selected.includes(opt.value);
-                      const optionInputId = `lp-question-${q.id}-${i}`;
-                      return (
-                        <label key={opt.value || i} htmlFor={optionInputId}
-                               className={"lp-option " + (checked ? "lp-option-on" : "")}>
-                          <input
-                            id={optionInputId}
-                            type={multi ? "checkbox" : "radio"}
-                            name={"q-" + q.id}
-                            checked={checked}
-                            onChange={() => toggleAnswer(q.id, opt.value, multi)}
-                          />
-                          <span className="lp-option-label">
-                            {opt.label || opt.value}
-                            {opt.recommended
-                              ? <span className="lp-option-rec"> рекомендуем</span>
-                              : null}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {q.allow_other && (
-                    <div className="lp-question-other">
-                      <label htmlFor={`lp-question-other-${q.id}`}>Свой вариант</label>
-                      <textarea id={`lp-question-other-${q.id}`}
-                        rows={2}
-                        value={answer.other || ""}
-                        onChange={e => setOtherText(q.id, e.target.value)}
-                        placeholder="Опишите иначе…"
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {!selectionAnswersComplete && (
-              <div className="lp-clarify-hint">Ответьте на все вопросы перед запуском.</div>
-            )}
-            <div className="lp-question-actions">
-              <button className="lp-btn lp-btn-primary lp-btn-sm"
-                      disabled={clarifySubmitting || !selectionAnswersComplete}
-                      onClick={submitAnswers}>
-                {clarifySubmitting ? "Отправляю…" : "Ответить"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {clarifyError && (
-          <div className="lp-clarify-error" role="alert">{clarifyError}</div>
-        )}
-
-        {!researchReadOnly && <div className="lp-chat-input-area">
-          <label className="lp-sr-only" htmlFor="lp-chat-input">Сообщение аналитику</label>
-          <textarea id="lp-chat-input"
-            ref={chatInputRef}
-            className="lp-chat-input"
-            rows={2}
-            value={chatInput}
-            onChange={e => {
-              setChatInput(e.target.value);
-              if (clarifyError) setClarifyError("");
-            }}
-            onKeyDown={e => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (textClarification && chatInput.trim()) submitAnswers();
-                else if (!currentQuestions.length && chatInput.trim()) sendChat();
-              }
-            }}
-            placeholder={textClarification
-              ? "Ответ на уточняющий вопрос…"
-              : (selectionQuestions.length
-                ? "Сначала ответьте на уточняющие вопросы…"
-                : "Сообщение аналитику…")}
-            disabled={agentBusy || researchLoading || researchActionBusy || !workspaceId || selectionQuestions.length > 0}
-          />
-          <button
-            className="lp-chat-send"
-            type="button"
-            aria-label="Отправить сообщение"
-            onClick={() => textClarification ? submitAnswers() : sendChat()}
-            disabled={agentBusy || researchLoading || researchActionBusy || !workspaceId || !chatInput.trim() || selectionQuestions.length > 0}
-          >
-            {agentBusy ? "…" : "➤"}
-          </button>
-        </div>}
-      </aside>)}
-
-      {researchDeleteConfirm && <div className="lp-parsers-modal">
-        <button type="button" className="lp-modal-backdrop" aria-label="Закрыть подтверждение удаления"
-                tabIndex={-1} disabled={researchActionBusy} onClick={() => {
-                  setResearchDeleteConfirm(false); setResearchDeleteTarget(null);
-                }} />
-        <div className="lp-parsers-dialog lp-verdict-dialog" ref={researchDeleteDialogRef}
-             role="dialog" aria-modal="true" aria-labelledby="lp-research-delete-title">
-          <div className="lp-parsers-header"><h2 id="lp-research-delete-title">Удалить исследование из истории?</h2></div>
-          <div className="lp-verdict-body">
-            <p>Исследование исчезнет из личной истории, а общая ссылка перестанет работать.
-              Данные сохранятся в системе.</p>
-            {researchDeleteError && <p role="alert" className="lp-research-history-error">{researchDeleteError}</p>}
-            <div className="lp-research-result-actions">
-              <button ref={researchDeleteCancelRef} className="lp-btn" disabled={researchActionBusy}
-                      onClick={() => { setResearchDeleteConfirm(false); setResearchDeleteTarget(null); }}>Отмена</button>
-              <button className="lp-btn" disabled={researchActionBusy} onClick={deleteResearch}>
-                {researchActionBusy ? "Удаляем…" : "Удалить"}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>}
-
-      {/* ── Модал ручной маркировки вердикта ────────────────────────────────── */}
-      {canMarkVerdict && verdictModal && (() => {
-        const rec = verdictModal.record;
-        const current = recordClassification(rec);
-        const choose = async (val) => {
-          const ok = await markVerdict([rec.record_id], val, markComment.trim());
-          if (ok) setVerdictModal(null);
-        };
-        return (
-          <div className="lp-parsers-modal">
-            <button type="button" className="lp-modal-backdrop"
-                    aria-label="Закрыть диалог" tabIndex={-1}
-                    onClick={() => setVerdictModal(null)} />
-            <div className="lp-parsers-dialog lp-verdict-dialog" ref={verdictDialogRef}
-                 role="dialog" aria-modal="true" aria-labelledby="lp-verdict-title">
-              <div className="lp-parsers-header lp-verdict-header">
-                <div>
-                  <div className="lp-eyebrow">Ручная маркировка</div>
-                  <h2 id="lp-verdict-title">Вердикт записи</h2>
-                </div>
-                <button className="lp-dialog-x" aria-label="Закрыть"
-                        onClick={() => setVerdictModal(null)}>✕</button>
-              </div>
-              <div className="lp-verdict-body">
-                <div className="lp-verdict-record">
-                  <div className="lp-verdict-title">
-                    {rec.title || rec.snippet || "—"}
-                  </div>
-                  <div className="lp-verdict-meta">
-                    <span>{rec.bank_slug || "банк не указан"}</span>
-                    <span>доверие {fmtNum(rec.verdict_confidence)}</span>
-                    <span>опубликовано {fmtDate(rec.published_at)}</span>
-                    <span>собрано {fmtDate(rec.collected_at)}</span>
-                  </div>
-                </div>
-                {/* Read-only контекст записи: решения ЦК КС и исходный
-                    комментарий классификатора. Блок только для записей
-                    очереди (поле decisions есть всегда, возможно пустой
-                    массив); у каталожных записей поля нет → блок скрыт,
-                    поведение модалки прежнее. */}
-                {Array.isArray(rec.decisions) && (
-                  <div className="lp-verdict-decisions">
-                    <div className="lp-verdict-decisions-title">Решения ЦК КС</div>
-                    {rec.decisions.length > 0 ? (
-                      <ul className="lp-verdict-decisions-list">
-                        {rec.decisions.map(d => (
-                          <li key={d.decision_id} className="lp-queue-decision">
-                            <span className={`lp-queue-decision-type lp-decision-${d.decision}`}>
-                              {decisionLabel(d.decision)}
-                            </span>
-                            <span className="lp-queue-decision-comment">{d.comment}</span>
-                            <span className="lp-queue-decision-meta">
-                              {d.decided_by} · {fmtDate(d.decided_at)}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="lp-verdict-decisions-empty">Решений ЦК пока нет.</p>
-                    )}
-                    {rec.verdict_model !== "manual" && (rec.classifier_verdict_reason ?? rec.verdict_reason) && (
-                      <p className="lp-verdict-classifier-comment">
-                        Комментарий классификатора: {rec.classifier_verdict_reason ?? rec.verdict_reason}
-                      </p>
-                    )}
-                  </div>
-                )}
-                <div className="lp-verdict-field">
-                  <label htmlFor="lp-mark-comment">Комментарий аудитора</label>
-                  <textarea id="lp-mark-comment" rows={2} value={markComment}
-                            onChange={e => setMarkComment(e.target.value)}
-                            placeholder="Обоснование выбранного типа записи…"/>
-                </div>
-                <div className="lp-verdict-options">
-                  {current !== "vulnerability" && (
-                    <button className="lp-verdict-option lp-verdict-option-bad"
-                            disabled={markBusy} onClick={() => choose("vulnerability")}>
-                      <span className="lp-verdict-dot"></span>
-                      <span className="lp-verdict-option-text">
-                        <span className="lp-verdict-option-name">Уязвимость</span>
-                        <span className="lp-verdict-option-desc">
-                          возможность обхода условий или контроля
-                        </span>
-                      </span>
-                    </button>
-                  )}
-                  {current !== "fraud_scheme" && (
-                    <button className="lp-verdict-option lp-verdict-option-bad"
-                            disabled={markBusy} onClick={() => choose("fraud_scheme")}>
-                      <span className="lp-verdict-dot"></span>
-                      <span className="lp-verdict-option-text">
-                        <span className="lp-verdict-option-name">Мошенническая схема</span>
-                        <span className="lp-verdict-option-desc">схема обмана или злоупотребления</span>
-                      </span>
-                    </button>
-                  )}
-                  {current !== "not_confirmed" && (
-                    <button className="lp-verdict-option lp-verdict-option-ok"
-                            disabled={markBusy} onClick={() => choose("not_confirmed")}>
-                      <span className="lp-verdict-dot"></span>
-                      <span className="lp-verdict-option-text">
-                        <span className="lp-verdict-option-name">Ни то ни другое</span>
-                        <span className="lp-verdict-option-desc">
-                          ни уязвимость, ни мошенническая схема
-                        </span>
-                      </span>
-                    </button>
-                  )}
-                </div>
-                <div className="lp-verdict-foot">
-                  {current != null && (
-                    <span className="lp-verdict-current">
-                      Текущий вердикт: {verdictLabel(rec)}
-                      {rec.verdict_model === "manual" ? " · ручная" : ""}
-                    </span>
-                  )}
-                  <button className="lp-btn lp-btn-sm"
-                          onClick={() => setVerdictModal(null)}>
-                    Отмена
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
+      {tabPlaceholders}
+      {popLayer}
+      {accessSheet}
+      {verdictDialog}
+      {researchDeleteDialog}
       {/* ── Модал подтверждения удаления парсера (деструктивное действие) ──── */}
       {deleteConfirm && (
         <div className="lp-parsers-modal">
@@ -3348,7 +3894,7 @@ function LoopholeApp() {
             <div className="lp-parsers-header">
               <h2 id="lp-confirm-title">Удаление парсера</h2>
               <button className="lp-dialog-x" aria-label="Закрыть"
-                      onClick={() => setDeleteConfirm(null)}>✕</button>
+                      onClick={() => setDeleteConfirm(null)}><Icon name="x" /></button>
             </div>
             <div className="lp-confirm-body">
               <p>
@@ -3370,48 +3916,21 @@ function LoopholeApp() {
           </div>
         </div>
       )}
-
-      {/* ── Модал подтверждения отзыва роли ЦК КС (story 1.5) ─────────────── */}
-      {revokeConfirm && (
-        <div className="lp-parsers-modal">
-          <button type="button" className="lp-modal-backdrop"
-                  aria-label="Закрыть диалог" tabIndex={-1}
-                  onClick={() => setRevokeConfirm(null)} />
-          <div className="lp-parsers-dialog lp-confirm-dialog" ref={revokeDialogRef}
-               role="dialog" aria-modal="true" aria-labelledby="lp-revoke-title">
-            <div className="lp-parsers-header">
-              <h2 id="lp-revoke-title">Отзыв роли ЦК КС</h2>
-              <button className="lp-dialog-x" aria-label="Закрыть"
-                      onClick={() => setRevokeConfirm(null)}>✕</button>
-            </div>
-            <div className="lp-confirm-body">
-              <p>
-                У пользователя «{revokeConfirm}» будет отозвана роль эксперта
-                ЦК КС: доступ к очереди верификации закроется со следующего
-                запроса.
-              </p>
-              <div className="lp-confirm-actions">
-                <button className="lp-btn lp-btn-danger"
-                        onClick={() => revokeRole(revokeConfirm)}
-                        disabled={adminBusy}>
-                  Отозвать
-                </button>
-                <button className="lp-btn" ref={revokeCancelRef}
-                        onClick={() => setRevokeConfirm(null)}>
-                  Отмена
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Единственный toast (info | success | error) ────────────────────── */}
       {toast && (
-        <div className={"lp-toast lp-toast-" + toast.kind}
+        <div key={toast.id} className={"lp-toast lp-toast-" + toast.kind}
              role={toast.kind === "error" ? "alert" : "status"}>
+          {toast.kind === "success" && <Icon name="check" />}
+          {toast.kind === "error" && <Icon name="alert" />}
           <span>{toast.text}</span>
-          {toast.kind === "success" && toast.text.startsWith("CSV сформирован")
+          {toast.undo && (
+            <button type="button" className="lp-toast-action"
+                    onClick={() => { const undo = toast.undo; setToast(null); undo(); }}>
+              Отменить
+            </button>
+          )}
+          {toast.undo && <i className="lp-toast-ttl" aria-hidden="true"
+                            style={{animationDuration: `${toast.ttl}ms`}}></i>}
+          {!toast.undo && toast.kind === "success" && toast.text.startsWith("Excel сформирован")
             && lastCsvDownload && (
             <button type="button" className="lp-toast-action"
                     onClick={() => triggerCsvDownload(lastCsvDownload)}>
@@ -3420,7 +3939,7 @@ function LoopholeApp() {
           )}
         </div>
       )}
-    </div>
+    </main>
   );
 }
 

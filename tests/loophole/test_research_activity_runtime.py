@@ -38,7 +38,7 @@ def test_live_activity_is_safe_updates_and_clears(browser: Browser, ending: str)
             return originalFetch(input, init);
           };
         }""")
-        page.get_by_role("tab", name="AI-исследования").click()
+        page.get_by_role("tab", name="Исследовать").click()
         composer = page.get_by_label("Сообщение аналитику")
         composer.fill("Найди 1 лазейку по кредитным картам за 2026 год")
         page.get_by_role("button", name="Отправить сообщение").click()

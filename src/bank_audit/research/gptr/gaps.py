@@ -27,11 +27,14 @@ EXTRACTION_FAILED = "extraction_failed"   # текст есть, факт не �
 
 
 def collect(plan, *, registry, attributes: list[str],
-            pages: dict[str, str], unreadable: dict[str, str]) -> list[str]:
+            pages: dict[str, str], unreadable: dict[str, str],
+            cached_copies: dict[str, str] | None = None) -> list[str]:
     """Незакрытые клетки матрицы + честная причина по каждой.
 
     unreadable: url → причина, по которой страница не дала пригодного текста
     (заполняется скрапером: заглушка антибота, пустой каркас SPA).
+    cached_copies: url → дата сохранённой копии Яндекса, из которой страница
+    прочитана вместо закрытого антиботом оригинала.
     """
     labels = dict(getattr(plan, "subject_labels", None) or {})
     subjects = list(getattr(plan, "subjects", None) or [])
@@ -71,7 +74,18 @@ def collect(plan, *, registry, attributes: list[str],
             gaps.append("Только заявленная сторона, без взгляда со стороны: "
                         + ", ".join(no_obs) + ".")
 
-    # 3. Страницы, не давшие пригодного текста, — с указанием причины.
+    # 3. Прочитанное из копии Яндекса — это страница в момент обхода роботом,
+    # а не сейчас. Аудитор должен видеть дату копии, а не принимать её за
+    # сегодняшний сайт.
+    if cached_copies:
+        dates = sorted(d for d in cached_copies.values() if d)
+        when = (f"копии от {dates[0]}" if dates and dates[0] == dates[-1]
+                else f"копии от {dates[0]} до {dates[-1]}" if dates else "дата копии неизвестна")
+        gaps.append(f"Прочитано из сохранённой копии Яндекса (оригинал закрыт "
+                    f"защитой от ботов): {len(cached_copies)} стр., {when} — "
+                    f"например, {next(iter(cached_copies))}.")
+
+    # 4. Страницы, не давшие пригодного текста, — с указанием причины.
     if unreadable:
         by_reason: dict[str, list[str]] = {}
         for url, reason in unreadable.items():
