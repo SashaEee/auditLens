@@ -350,13 +350,15 @@ def test_followup_reads_pages_for_entities_from_complaints(fake_tools, monkeypat
 
 def test_pdf_sources_show_auditlens_slice_as_text():
     from bank_audit.web.pdf_export import _render_sources_section
-    html = _render_sources_section([
+    html, counts = _render_sources_section([
         {"n": 1, "url": "#reviews?theme=chargeback&days=7", "title": "AuditLens · Отзывы",
          "source_kind": "auditlens", "trust_score": 0.95},
         {"n": 2, "url": "https://cbr.ru/x", "title": "ЦБ", "source_kind": "regulator",
          "trust_score": 0.98}])
-    assert "AuditLens, срез вкладки: #reviews?theme=chargeback&amp;days=7" in html
+    # Срез вкладки — названием без ссылки: адрес «#reviews?…» на бумаге бесполезен.
+    assert 'id="src-1"' in html and "срез вкладки AuditLens" in html and "#reviews" not in html
     assert '<a href="https://cbr.ru/x">' in html and "Данные AuditLens" in html
+    assert counts == {"official": 1, "auditlens": 1, "reviews": 0, "other": 0}
 
 
 def test_scope_drops_product_not_named_in_question():

@@ -1,4 +1,4 @@
-/* Собрано из loophole.jsx (sha256 7a4e023a9e632c04d44eaf911c459b6e75a67cbca4f6dfc174a977d78f13a9bc). Не править вручную: node scripts/build_loophole_js.mjs */
+/* Собрано из loophole.jsx (sha256 02c3746b1ef361cc2dd79e7dafc2eb289299f321e169df573cbab87bf21bbb81). Не править вручную: node scripts/build_loophole_js.mjs */
 /* loophole.jsx — вкладка «Уязвимости» в системе AuditLens: база (сводка, фильтры,
    список и карточка записи, Excel, аудит-дела), исследование агента одной
    колонкой, очередь решений ЦК КС и панель «Доступ». Права решает сервер. */
@@ -2576,7 +2576,7 @@ function LoopholeApp() {
     return {
       kind: "document",
       url: record.url || null,
-      title: (record.headline || record.title || record.snippet || "Запись «Уязвимостей»").slice(0, 300),
+      title: (record.headline || record.title || record.snippet || "Запись раздела «Аудит уязвимостей»").slice(0, 300),
       note: bits.join(" · ").slice(0, 900)
     };
   };
@@ -2904,7 +2904,7 @@ function LoopholeApp() {
       size: 20
     })), /*#__PURE__*/React.createElement("h1", {
       className: "lp-state-t"
-    }, "\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u0430 \u043A \u043C\u043E\u0434\u0443\u043B\u044E \xAB\u0423\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0438\xBB"), /*#__PURE__*/React.createElement("p", {
+    }, "\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u0430 \u043A \u0440\u0430\u0437\u0434\u0435\u043B\u0443 \xAB\u0410\u0443\u0434\u0438\u0442 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0435\u0439\xBB"), /*#__PURE__*/React.createElement("p", {
       className: "lp-state-x"
     }, "\u0423\u0447\u0451\u0442\u043D\u0430\u044F \u0437\u0430\u043F\u0438\u0441\u044C \u043D\u0435 \u0430\u0432\u0442\u043E\u0440\u0438\u0437\u043E\u0432\u0430\u043D\u0430. \u041E\u0431\u0440\u0430\u0442\u0438\u0442\u0435\u0441\u044C \u043A \u0430\u0434\u043C\u0438\u043D\u0438\u0441\u0442\u0440\u0430\u0442\u043E\u0440\u0443 \u043C\u043E\u0434\u0443\u043B\u044F."));
   }
@@ -2949,7 +2949,7 @@ function LoopholeApp() {
     className: "lp-eyebrow"
   }, "\u0410\u043D\u0430\u043B\u0438\u0437 \xB7 \u0441\u0445\u0435\u043C\u044B \u0438 \u043B\u0430\u0437\u0435\u0439\u043A\u0438"), /*#__PURE__*/React.createElement("h1", {
     className: "lp-ph-t"
-  }, "\u0423\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0438"), /*#__PURE__*/React.createElement("p", {
+  }, "\u0410\u0443\u0434\u0438\u0442 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0435\u0439"), /*#__PURE__*/React.createElement("p", {
     className: "lp-ph-meta"
   }, "\u041B\u0430\u0437\u0435\u0439\u043A\u0438 \u0438 \u043C\u043E\u0448\u0435\u043D\u043D\u0438\u0447\u0435\u0441\u043A\u0438\u0435 \u0441\u0445\u0435\u043C\u044B \u0432 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u0445 \u0431\u0430\u043D\u043A\u043E\u0432. \u0417\u0430\u043F\u0438\u0441\u0438 \u0441\u043E\u0431\u0438\u0440\u0430\u044E\u0442\u0441\u044F \u0438\u0437 \u043E\u0431\u0441\u0443\u0436\u0434\u0435\u043D\u0438\u0439 \u043D\u0430 \u0444\u043E\u0440\u0443\u043C\u0430\u0445 \u0438 \u0432 \u0441\u043E\u0446\u0441\u0435\u0442\u044F\u0445, \u043D\u043E\u0432\u043E\u0441\u0442\u0435\u0439 \u0438 \u0441\u0430\u0439\u0442\u043E\u0432 \u0431\u0430\u043D\u043A\u043E\u0432; \u043C\u043E\u0434\u0435\u043B\u044C \u043E\u0442\u043C\u0435\u0447\u0430\u0435\u0442 \u0432\u043E\u0437\u043C\u043E\u0436\u043D\u044B\u0435 \u043D\u0430\u0445\u043E\u0434\u043A\u0438, \u043E\u043A\u043E\u043D\u0447\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u0439 \u0432\u0435\u0440\u0434\u0438\u043A\u0442 \u0432\u044B\u043D\u043E\u0441\u0438\u0442 \u044D\u043A\u0441\u043F\u0435\u0440\u0442 \u0426\u041A \u041A\u0421.")), canAdmin && /*#__PURE__*/React.createElement("div", {
     className: "lp-ph-act"

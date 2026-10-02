@@ -1069,11 +1069,14 @@ def changes(bank: str, product: str | None = None, days: int = 90) -> dict | Non
     wk = weekly_signals(bc, product) or {}
     for sgl in (wk.get("signals") or [])[:1]:
         items.append({"kind": "signal", "dir": "up", "key": sgl["key"],
-                      "text": (f"Всплеск недели: {sgl.get('short') or sgl['label']} "
+                      "text": ((f"Держится с {_dm_iso(sgl.get('since'))}: "
+                                if sgl.get("status") == "continuing" else "Всплеск недели: ")
+                               + f"{sgl.get('short') or sgl['label']} "
                                + ("— новое" if sgl.get("new") else
                                   f"×{str(sgl.get('ratio')).replace('.', ',')}")),
                       "detail": (f"{sgl['label']}: {sgl['week']} жалоб за 7 дней при норме "
-                                 f"~{str(sgl['baseline_week']).replace('.', ',')} в неделю")})
+                                 f"~{str(sgl['baseline_week']).replace('.', ',')} в неделю"
+                                 + (f"; {signal_note(sgl)}" if signal_note(sgl) else ""))})
     return {"days": days, "items": items, "partial": False,
             "overall_delta_pct": ov.get("delta_pct")}
 
@@ -1784,6 +1787,29 @@ def market_phrase(ratio, market_ratio, who: str = "банка") -> str | None:
     return f"рынок растёт так же (×{_ru_num(market_ratio)})"
 
 
+def _dm_iso(iso: str | None) -> str:
+    """'2026-09-25' → '25.09'."""
+    s = str(iso or "")[:10]
+    return f"{s[8:10]}.{s[5:7]}" if len(s) == 10 else s
+
+
+def signal_note(s: dict) -> str | None:
+    """Сколько сигнал держится и чем — для текстов модели и заголовка:
+    «держится с 25.09 (6-й день); две недели подряд выше нормы: 10 и 12».
+    Без этого продолжение выглядело новым всплеском, а сигнал, поднятый
+    неделю назад, — сегодняшней новостью."""
+    bits = []
+    if s.get("status") == "continuing" and s.get("since"):
+        t = f"держится с {_dm_iso(s['since'])} ({s.get('days_on')}-й день)"
+        bb = s.get("baseline_before")
+        if bb is not None and abs(float(bb) - float(s.get("baseline_week") or 0)) >= 0.3:
+            t += f", до всплеска норма была ~{_ru_num(bb)}/нед"
+        bits.append(t)
+    if s.get("sustained"):
+        bits.append(f"две недели подряд выше нормы: {s.get('prev_week')} и {s.get('week')}")
+    return "; ".join(bits) or None
+
+
 _ONLY_RX = re.compile(r"только\s+у\s+(Сбера|Сбербанка|банка|нас)(?![а-яё])", re.I)
 
 
@@ -1863,6 +1889,173 @@ def unclassified_week(bank: str, product: str | None = None) -> dict | None:
             "src": "annotation"}
 
 
+# ── Сигналы недели: вход, удержание, две недели ──────────────────────────────
+# 29–30.09 всплеск жалоб на чарджбэк (14 при норме 3,4, вторую неделю подряд)
+# пропал из «Обзора»: поправку на множественность делили на все 39 проблем, и
+# q = 0,071 не прошло порог. Сигнал мигал при том, что жалоб не стало меньше.
+# Теперь:
+#   • поправка — отдельно для частых проблем (норма от _SIG_MIN_BASE в неделю)
+#     и для редких. Группа выбирается по норме, не по текущей неделе: отбор по
+#     самому всплеску сделал бы поправку нечестной. У редкой проблемы вход и
+#     так решает практический порог (8 жалоб при норме меньше двух — рост в
+#     четыре с лишним раза), а в общей группе она размывала поправку для частых.
+#     Бюджет ошибок прежний — 5% на банк: 4% частым, 1% редким;
+#   • проблема проверяется за неделю и за две недели подряд — затяжной рост
+#     виден, даже когда ни одна неделя по отдельности порог не пробивает. Две
+#     проверки одной проблемы сводятся в одну (взвешенный Симс, неделе — 3/4),
+#     лишних гипотез нет, и недельный порог не строже прежнего;
+#   • поднятый сигнал держится, пока неделя заметно выше нормы ДО всплеска:
+#     иначе через неделю-две всплеск входит в норму и растворяется в ней.
+# Состояние не хранится — история проигрывается по дням из тех же жалоб,
+# поэтому сигнал любого дня воспроизводится. Проверка на истории 45 дней:
+# у Сбера новых эпизодов нет, чарджбэк держится 24–30.09 без провала.
+_SIG_Q = 0.05
+_SIG_ALPHA = {"main": 0.04, "rare": 0.01}
+_SIG_MIN_BASE = 2.0        # норма в неделю, с которой проблема — «частая»
+_SIG_LOOKBACK = 21         # сколько дней истории проигрывается ради удержания
+
+
+def _topic_day_counts(bank_canon: str, product: str | None,
+                      days: int) -> dict[str, list[int]] | None:
+    """Жалобы по главной проблеме по дням: [0] — последний полный день перед
+    концом недели сигнала, [1] — день до него и т.д. Отбор тот же, что у
+    _topic_week_counts, поэтому недели, сложенные из дней, совпадают с ней."""
+    try:
+        with db.session() as s:
+            rows = s.execute(text(f"""
+                SELECT i.issue, floor(extract(epoch FROM {_WEEK_END} - i.dt) / 86400)::int AS d,
+                       count(*)
+                FROM review_index i
+                WHERE i.bank = :bank
+                  AND (CAST(:product AS text) IS NULL OR i.product = :product)
+                  AND {_CMP}
+                  AND i.dt >= {_WEEK_END} - make_interval(days => :days) AND i.dt < {_WEEK_END}
+                  AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)
+                GROUP BY 1, 2
+            """), {"bank": bank_canon, "product": product, "days": days}).all()
+    except Exception as e:  # noqa: BLE001
+        log.warning("topic_day_counts: %s", e)
+        return None
+    out: dict[str, list[int]] = {}
+    for code, d, n in rows:
+        if 0 <= int(d) < days:
+            out.setdefault(code, [0] * days)[int(d)] += int(n)
+    return out
+
+
+def _weeks_at(daily: list[int] | None, a: int, n: int = 9) -> list[int]:
+    """Недели 0..n-1 для якоря на a дней раньше: неделя k — дни [a+7k, a+7k+7)."""
+    if not daily:
+        return [0] * n
+    return [sum(daily[a + 7 * k:a + 7 * k + 7]) for k in range(n)]
+
+
+# Вес недельной проверки в общем p проблемы: неделя — главный вопрос радара,
+# и с весом 3/4 при бюджете частых 4% порог недели не строже прежнего
+# (0,04 × 0,75 / 23 ≈ 0,05 / 39); двухнедельной — оставшаяся четверть.
+_SIG_W_WEEK = 0.75
+
+
+def _simes2(p1: float, p2: float, w1: float = _SIG_W_WEEK) -> float:
+    """Одно p на две проверки одной проблемы (p1 — неделя, p2 — две недели):
+    взвешенный Симс (Беньямини — Хохберг, 1997). Проверки положительно
+    зависимы (неделя входит в обе), для них он корректен и мягче Бонферрони."""
+    w2 = 1.0 - w1
+    a, b = sorted(((p1, w1), (p2, w2)), key=lambda t: t[0] / t[1])
+    return min(1.0, a[0] / a[1], b[0])
+
+
+def _practical(w0: int, w1: int, bw: float, floor_: int = 8) -> tuple[bool, bool]:
+    """Практические пороги: (всплеск недели, рост двух недель подряд)."""
+    week_ok = w0 >= floor_ and w0 - bw >= 5 and (bw < 0.5 or w0 >= 1.5 * bw)
+    s2 = w0 + w1
+    # обе недели заметно выше нормы, и вместе — не горстка жалоб
+    two_ok = s2 >= 12 and s2 - 2 * bw >= 8 and min(w0, w1) >= max(1.5 * bw, bw + 3)
+    return week_ok, two_ok
+
+
+def _signal_entries(weeks: dict[str, list[int]]) -> dict[str, dict]:
+    """Проблемы, по которым на этом якоре сигнал входит. weeks — недели 0..8.
+
+    Вход: значимый рост (q проблемы в своей группе ниже её доли бюджета) и
+    практический порог — всплеск недели, рост двух недель подряд или новая
+    проблема (почти не было — и сразу ≥ 6)."""
+    st: dict[str, dict] = {}
+    for k, arr in weeks.items():
+        base = list(arr[2:9])
+        b = sum(base)
+        w0, w1 = int(arr[0]), int(arr[1])
+        p1, p2 = _nb_tail(w0, base), _nb_tail_sum(w0 + w1, base, 2)
+        st[k] = {"w0": w0, "w1": w1, "b": b, "bw": b / 7.0, "p1": p1, "p2": p2,
+                 "p": _simes2(p1, p2),
+                 "fam": "main" if b / 7.0 >= _SIG_MIN_BASE else "rare"}
+    qv: dict[str, float] = {}
+    size: dict[str, int] = {}
+    for fam in ("main", "rare"):
+        ks = [k for k in st if st[k]["fam"] == fam]
+        size[fam] = len(ks)
+        qv.update(_bh({k: st[k]["p"] for k in ks}))
+    out: dict[str, dict] = {}
+    for k, r in st.items():
+        if qv[k] >= _SIG_ALPHA[r["fam"]]:
+            continue
+        week_ok, two_ok = _practical(r["w0"], r["w1"], r["bw"])
+        new = r["b"] <= 2 and r["w0"] >= 6
+        if not (week_ok or two_ok or new):
+            continue
+        test = "week" if week_ok else ("new_topic" if new else "two_weeks")
+        out[k] = {"test": test, "sustained": bool(two_ok), "new": bool(new),
+                  "p": r["p"], "q": qv[k], "p1": r["p1"], "p2": r["p2"],
+                  "alpha": _SIG_ALPHA[r["fam"]], "fam": r["fam"], "fam_size": size[r["fam"]]}
+    return out
+
+
+def _signal_hold(w0: int, w1: int, base: list[int], entry: str) -> float | None:
+    """p удержания: неделя (или две) против нормы ДО всплеска. None — уже не
+    выше той нормы по практическому порогу (сигнал снимается)."""
+    bw = sum(base) / 7.0
+    week_ok, two_ok = _practical(w0, w1, bw, 6 if entry == "new_topic" else 8)
+    p1 = _nb_tail(w0, base) if week_ok else None
+    p2 = _nb_tail_sum(w0 + w1, base, 2) if two_ok else None
+    if p1 is not None and p2 is not None:
+        return _simes2(p1, p2)
+    return p1 if p1 is not None else p2
+
+
+def _signal_chain(daily: dict[str, list[int]], keys: list[str],
+                  lookback: int = _SIG_LOOKBACK, a0: int = 0) -> dict[str, dict]:
+    """Проигрывает якоря от a0+lookback до a0 и возвращает сигналы на a0.
+
+    Сигнал поднимается любым входом (_signal_entries) и держится, пока каждый
+    день либо снова проходит вход, либо неделя значимо выше нормы, какой она
+    была в день подъёма (q < 0,05 среди удерживаемых). since — сколько дней
+    назад от a0 он поднялся."""
+    state: dict[str, dict] = {}
+    for a in range(a0 + lookback, a0 - 1, -1):
+        weeks = {k: _weeks_at(daily.get(k), a) for k in keys}
+        ent = _signal_entries(weeks)
+        hp: dict[str, float] = {}
+        for k, ch in state.items():
+            if k not in ent:
+                p = _signal_hold(weeks[k][0], weeks[k][1], ch["base"], ch["entry"])
+                if p is not None:
+                    hp[k] = p
+        hq = _bh(hp)
+        nxt: dict[str, dict] = {}
+        for k, ch in state.items():
+            if k in ent:
+                nxt[k] = {**ch, **ent[k]}
+            elif k in hq and hq[k] < _SIG_Q:
+                sus = _practical(weeks[k][0], weeks[k][1], sum(ch["base"]) / 7.0)[1]
+                nxt[k] = {**ch, "test": "hold", "sustained": sus, "p": hp[k], "q": hq[k]}
+        for k, e in ent.items():
+            if k not in nxt:
+                nxt[k] = {**e, "start": a, "entry": e["test"], "base": list(weeks[k][2:9])}
+        state = nxt
+    return {k: {**ch, "since": ch["start"] - a0, "weeks": _weeks_at(daily.get(k), a0)}
+            for k, ch in state.items()}
+
+
 @_safe(None)
 def weekly_signals(bank: str, product: str | None = None) -> dict | None:
     """Всплески жалоб за 7 дней по главной проблеме из LLM-разметки.
@@ -1870,8 +2063,12 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
     Сигнал — не «выросло в ×1,8», а статистически значимый рост:
       • норма — 7 прошлых недель (окно 14–63 дня), с их собственным разбросом
         (отрицательно-биномиальное распределение);
-      • поправка на множественность по всем проблемам банка (q < 0,05);
-      • и практический порог: ≥ 8 жалоб, избыток ≥ 5 над нормой, рост ≥ ×1,5.
+      • поправка на множественность — отдельно по частым и редким проблемам
+        банка (q < 0,05), и практический порог: ≥ 8 жалоб, избыток ≥ 5 над
+        нормой, рост ≥ ×1,5;
+      • вторая проверка — две недели подряд выше нормы (затяжной рост);
+      • поднятый сигнал держится, пока неделя значимо выше нормы до всплеска
+        (status «continuing», since — дата подъёма).
     Плюс: ускорение неделя к неделе, сравнение с рынком БЕЗ самого банка,
     географическая концентрация. Числа детерминированы; модель их только
     объясняет, и объясняет по жалобам самого сигнала (signal_evidence)."""
@@ -1885,27 +2082,23 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
         if not lab:
             return None
         theme_defs, brow = lab
+        daily = _topic_day_counts(bc, product, 63 + _SIG_LOOKBACK)
+        if daily is None:
+            return None
         mlab = _topic_week_counts(None, product, exclude_bank=bc)
         mrow = mlab[1] if mlab else None
-        cand, pv = [], {}
-        for t in theme_defs:
-            k = t["key"]
-            w0, w1, b = int(brow[f"{k}_w0"]), int(brow[f"{k}_w1"]), int(brow[f"{k}_b"])
-            weeks = list(brow[f"{k}_wk"][2:9])
-            p = _nb_tail(w0, weeks)
-            pv[k] = p
-            cand.append((t, w0, w1, b, weeks, p))
-        qv = _bh(pv)
+        tdef = {t["key"]: t for t in theme_defs}
+        chain = _signal_chain(daily, list(tdef))
+        we = week_end()
+        issue_day = (_dt.date.fromisoformat(we) + _dt.timedelta(days=1)) if we else None
         out = []
-        for t, w0, w1, b, weeks, p in cand:
-            k = t["key"]
+        for k, ch in chain.items():
+            t = tdef[k]
+            wk = ch["weeks"]
+            w0, w1, b = int(wk[0]), int(wk[1]), int(sum(wk[2:9]))
             bw = b / BASE_W
             ratio = (w0 / bw) if bw >= 0.5 else None
             excess = w0 - bw
-            new = b <= 2 and w0 >= 6
-            practical = w0 >= 8 and excess >= 5 and (ratio is None or ratio >= 1.5)
-            if not ((qv[k] < 0.05 and practical) or (new and qv[k] < 0.05)):
-                continue
             accel = w0 > w1 and w0 >= max(8, 1.4 * w1)
             mratio, bank_specific = None, False
             if mrow is not None:
@@ -1914,24 +2107,41 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
                 mratio = round(mw0 / mbw, 2) if mbw >= 0.5 else None
                 if ratio is not None and (mratio is None or mratio < 1.4 or ratio >= 1.8 * mratio):
                     bank_specific = True
-            out.append({"key": k, "label": t["label"], "short": t["short"],
-                        "risk": t["risk"], "group": t["group"],
-                        "week": w0, "prev_week": w1,
-                        "base_count": b, "base_weeks": int(BASE_W),
-                        "week_total": int(brow["_tw0"]),
-                        "baseline_week": round(bw, 1),
-                        "ratio": (round(ratio, 1) if ratio else None),
-                        "excess": round(excess, 1),
-                        "p_value": round(p, 5), "q_value": round(qv[k], 5),
-                        "new": bool(new), "accel": bool(accel),
-                        "market_ratio": mratio, "bank_specific": bool(bank_specific),
-                        "market_flat": market_flat(mratio),
-                        "market_note": market_phrase(ratio, mratio)})
+            since = int(ch["since"])
+            fbw = sum(ch["base"]) / BASE_W
+            s_ = {"key": k, "label": t["label"], "short": t["short"],
+                  "risk": t["risk"], "group": t["group"],
+                  "week": w0, "prev_week": w1,
+                  "base_count": b, "base_weeks": int(BASE_W),
+                  "week_total": int(brow["_tw0"]),
+                  "baseline_week": round(bw, 1),
+                  "ratio": (round(ratio, 1) if ratio else None),
+                  "excess": round(excess, 1),
+                  "p_value": round(ch["p"], 5), "q_value": round(ch["q"], 5),
+                  "new": bool(ch.get("new")), "accel": bool(accel),
+                  "market_ratio": mratio, "bank_specific": bool(bank_specific),
+                  "market_flat": market_flat(mratio),
+                  "market_note": market_phrase(ratio, mratio),
+                  # какой проверкой сигнал держится сегодня и с какого дня
+                  "test": ch["test"], "entry_test": ch["entry"],
+                  "status": "continuing" if since > 0 else "new",
+                  "since": (issue_day - _dt.timedelta(days=since)).isoformat() if issue_day else None,
+                  "days_on": since + 1,
+                  "sustained": bool(ch.get("sustained")),
+                  "two_weeks": w0 + w1, "two_weeks_norm": round(2 * bw, 1),
+                  "p_two_weeks": round(_nb_tail_sum(w0 + w1, list(wk[2:9]), 2), 5),
+                  "family": ch.get("fam"), "family_size": ch.get("fam_size")}
+            if since > 0:
+                s_["baseline_before"] = round(fbw, 1)
+                s_["ratio_before"] = round(w0 / fbw, 1) if fbw >= 0.5 else None
+            out.append(s_)
         for s_ in out:
             strong = s_["q_value"] < 0.001 and s_["week"] >= 12
             s_["level"] = "high" if (strong or (s_["risk"] == "compliance" and s_["q_value"] < 0.01)
                                      or (s_["bank_specific"] and (s_["ratio"] or 0) >= 2.5)) else "medium"
-        out.sort(key=lambda s_: (s_["level"] == "high", s_["excess"]), reverse=True)
+        # новые — впереди продолжающихся того же уровня
+        out.sort(key=lambda s_: (s_["level"] == "high", s_["status"] == "new", s_["excess"]),
+                 reverse=True)
         if out:
             top = out[0]
             try:
@@ -1957,7 +2167,7 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
             mtbw = int(mrow["_tb"]) / BASE_W
             overall["market_ratio"] = round(int(mrow["_tw0"]) / mtbw, 2) if mtbw >= 0.5 else None
         return {"bank": bc, "product": product, "signals": out[:6], "overall": overall,
-                "week_end": week_end(), "src": "annotation"}
+                "week_end": we, "src": "annotation"}
     return _cached(f"wk:{bc}:{product}", _compute, ttl=1800)
 
 
@@ -2030,10 +2240,38 @@ def _nb_tail(x: int, weeks: list[int]) -> float:
     распределение с разбросом, оценённым по самим неделям (жалобы идут
     волнами, и пуассоновский порог на них даёт ложные всплески). Если разброс
     не больше среднего — обычный Пуассон."""
+    m, v = _base_mv(weeks)
+    return _tail_mv(x, m, v)
+
+
+def _base_mv(weeks: list[int]) -> tuple[float, float]:
+    """Среднее и разброс недельной нормы (нулевая база — не бесконечный рост)."""
     n = len(weeks)
     m = sum(weeks) / n if n else 0.0
-    m = max(m, 0.5)                               # нулевая база — не бесконечный рост
+    m = max(m, 0.5)
     v = (sum((w - m) ** 2 for w in weeks) / (n - 1)) if n > 1 else m
+    return m, v
+
+
+def _nb_tail_sum(x: int, weeks: list[int], k: int = 2) -> float:
+    """P(сумма k недель подряд ≥ x) при норме из истории.
+
+    Среднее — k·m. Разброс — не меньше k·v и не меньше разброса сумм соседних
+    недель самой истории: жалобы идут волнами длиннее недели, и у независимых
+    недель разброс суммы вышел бы заниженным — «затяжной рост» ловился бы
+    на обычной волне."""
+    m, v = _base_mv(weeks)
+    sums = [sum(weeks[i:i + k]) for i in range(len(weeks) - k + 1)]
+    vs = 0.0
+    if len(sums) > 1:
+        ms = sum(sums) / len(sums)
+        vs = sum((s_ - ms) ** 2 for s_ in sums) / (len(sums) - 1)
+    return _tail_mv(x, k * m, max(k * v, vs))
+
+
+def _tail_mv(x: int, m: float, v: float) -> float:
+    """P(X ≥ x): отрицательно-биномиальное с заданными средним и разбросом,
+    при разбросе не больше среднего — Пуассон."""
     if x <= 0:
         return 1.0
     if v > m * 1.05:

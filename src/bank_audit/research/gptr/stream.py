@@ -402,6 +402,8 @@ async def stream_deep_research_gptr(question: str,
                 registry=registry, gaps_text=gaps_preview, state=state):
             if kind == "titles":
                 _ttl.update(payload)
+            elif kind == "report_title":
+                yield _evt({"type": "report_title", "title": payload})
             elif kind == "outline":
                 # Оглавление — после брифа: состав разделов теперь зависит от
                 # вопроса, а не от шаблона.

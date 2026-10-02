@@ -589,6 +589,17 @@ def get_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
         raise HTTPException(404, "report not found")
     if admin_view:
         r = {**r, "admin_view": True}
+    # Визуализации, сохранённые раньше, — та же полировка, что у новых: таблица,
+    # склеенная в одну строку, делится по строкам, строка покрытия по-русски.
+    try:
+        from ..research.gptr import viz as _viz
+        pl = r.get("payload") if isinstance(r.get("payload"), dict) else None
+        if pl and isinstance(pl.get("viz"), list):
+            r = {**r, "payload": {**pl, "viz": [
+                {**v, "html": _viz.polish(v.get("html") or "")} if isinstance(v, dict) else v
+                for v in pl["viz"]]}}
+    except Exception:  # noqa: BLE001
+        log.warning("полировка визуализаций отчёта %s не удалась", rid, exc_info=True)
     try:    # телеметрия чтений отчётов (свой/расшаренный) — для «Пульса»
         userdata.log_event(user.username,
                            "admin_report_open" if admin_view else "report_open",
@@ -1197,10 +1208,13 @@ def meta_schedule():
     """Реальное расписание автообновления + свежесть данных.
     UI берёт часы отсюда, а не хардкодом: смена INGEST_HOUR_MSK в env
     сразу отражается в интерфейсе."""
-    from ..digest.scheduler import ingest_schedule
+    from ..digest.scheduler import ingest_schedule, nightly_sources
     sch = ingest_schedule()
+    # только ночной сбор: отзывы площадок пишут журнал дважды в сутки, и «обновлено
+    # час назад» показывалось, пока тарифы стояли с 25.09
     sch["last_run"] = scalar(
-        "SELECT max(finished_at) FROM extraction_run WHERE status='ok'")
+        "SELECT max(finished_at) FROM extraction_run WHERE status='ok' AND source = ANY(:src)",
+        {"src": nightly_sources()})
     return sch
 
 
@@ -3499,6 +3513,23 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = None     # продолжение существующей сессии истории
 
 
+async def _title_later(report_id: int, session_id: int | None, question: str,
+                       body: str) -> None:
+    """Название отчёта без брифа (быстрый ответ, уточнение): быстрая модель по
+    цепочке вопросов беседы. Сбой — остаётся эвристика, сохранённая сразу."""
+    from ..ai import report_title as _rt
+    try:
+        qs = await asyncio.to_thread(userdata.session_questions, session_id)
+        prior = qs[:-1] if qs and qs[-1] == question else qs
+        t = await _rt.llm_title(question, body, prior)
+        if not t:
+            return
+        await asyncio.to_thread(userdata.set_report_title, report_id, t)
+        await asyncio.to_thread(userdata.title_session_from_report, session_id, t)
+    except Exception:  # noqa: BLE001
+        log.warning("название отчёта %s не составлено", report_id, exc_info=True)
+
+
 async def _persisting_stream(inner, username: str, session_id: int, question: str):
     """Оборачивает stream_analysis: прозрачно проксирует SSE-события, попутно
     копит финальный ответ+источники и по завершении сохраняет сообщение ассистента
@@ -3533,9 +3564,12 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     engine: Optional[str] = None
     tools_used: list[str] = []
     run_meta: Optional[dict] = None
+    report_title: Optional[str] = None   # из брифа отчёта; у быстрых — составим после
+    saved_title: Optional[str] = None
 
     def _persist() -> int | None:
         """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
+        nonlocal saved_title
         body = replaced if replaced is not None else "".join(lead_parts) + "".join(parts)
         if not (body and body.strip()):
             return None
@@ -3544,6 +3578,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             is_report = (mode == "deep") or (len(body) > 800)
             report_id = None
             if is_report:
+                from ..ai import report_title as _rt
+                saved_title = report_title or _rt.heuristic_title(question)
                 report_id = userdata.save_report(
                     username, session_id, question, body,
                     payload={"sources": sources, "mode": mode, "charts": charts,
@@ -3551,7 +3587,13 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                              "verification": verification, "gaps": gaps,
                              "ranking": ranking, "insights": insights,
                              "payload_v": 2},
-                    banks=banks)
+                    banks=banks, title=saved_title)
+                if report_title:
+                    userdata.title_session_from_report(session_id, report_title)
+                else:
+                    # Быстрый ответ и уточнение: название составит быстрая
+                    # модель по цепочке вопросов — в фоне, ответ не ждёт.
+                    asyncio.create_task(_title_later(report_id, session_id, question, body))
                 # Само-дополняющийся профиль: каждый 3-й отчёт обновляем
                 # LLM-нарратив интересов (в фоне, не блокируя ответ).
                 try:
@@ -3615,6 +3657,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     insights = data["items"]
                 elif t == "mode":
                     mode = data.get("value")
+                elif t == "report_title" and data.get("title"):
+                    report_title = str(data["title"])[:200]
                 elif t == "engine":
                     engine = data.get("value")
                 elif t == "tool_call" and data.get("name"):
@@ -3627,7 +3671,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     persisted = True
                     rid = _persist()
                     if rid:
-                        yield json.dumps({"type": "report_saved", "report_id": rid},
+                        yield json.dumps({"type": "report_saved", "report_id": rid,
+                                          "title": saved_title},
                                          ensure_ascii=False)
             except Exception:
                 pass
@@ -3768,6 +3813,12 @@ class PdfExportRequest(BaseModel):
     insights: list[dict] = []
     gaps: Optional[dict] = None
     claim_check: Optional[dict] = None
+    # Название и дата — из сохранённого отчёта по report_id (сервер проверяет
+    # доступ); поля с клиента — только запасной вариант для несохранённого.
+    report_id: Optional[int] = None
+    title: Optional[str] = None
+    report_date: Optional[str] = None
+    author: Optional[str] = None
 
 def _viz_clean(items: list) -> list[dict]:
     """Разметка визуализаций приходит от клиента — доверять ей нельзя, даже
@@ -3789,13 +3840,24 @@ def _viz_clean(items: list) -> list[dict]:
 
 
 @app.post("/api/ai/export-pdf")
-async def ai_export_pdf(req: PdfExportRequest):
-    """Premium PDF export. Принимает report-markdown + sources + verification,
-    возвращает PDF: обложка → тело → требуют проверки → источники.
-    Рендеринг через Chromium (Playwright). ~3-5s на отчёт."""
+async def ai_export_pdf(req: PdfExportRequest, user: CurrentUser = Depends(get_current_user)):
+    """PDF отчёта: обложка-резюме с оглавлением → разделы → ограничения →
+    источники. Chromium (Playwright), два прохода — ~4–6 с на отчёт."""
     if not req.report_md or len(req.report_md) < 100:
-        raise HTTPException(400, "Empty report content")
-    from .pdf_export import export_report_to_pdf
+        raise HTTPException(400, "Пустой отчёт")
+    from urllib.parse import quote as _quote
+    from .pdf_export import _doc_title, _report_day, export_report_to_pdf, pdf_filename
+    title, rdate, author, rid = req.title, req.report_date, req.author, None
+    if req.report_id:
+        try:
+            r = await asyncio.to_thread(userdata.get_report, int(req.report_id), user.username)
+        except Exception:  # noqa: BLE001
+            r = None
+        if r:
+            rid = int(req.report_id)
+            title = r.get("title") or title
+            rdate = r.get("created_at") or rdate
+            author = r.get("owner_name") or r.get("owner") or author
     try:
         pdf_bytes = await asyncio.wait_for(asyncio.get_event_loop().run_in_executor(
             None,
@@ -3805,15 +3867,18 @@ async def ai_export_pdf(req: PdfExportRequest):
                 verification=req.verification,
                 charts=req.charts or [], viz=_viz_clean(req.viz or []),
                 ranking=req.ranking, insights=req.insights or [],
-                gaps=req.gaps, claim_check=req.claim_check),
-        ), timeout=90)
+                gaps=req.gaps, claim_check=req.claim_check,
+                title=title, report_id=rid, report_date=rdate, author=author),
+        ), timeout=120)
     except Exception as e:
         logging.getLogger(__name__).warning("PDF export failed: %s", e)
-        raise HTTPException(500, f"PDF generation failed: {str(e)[:200]}")
-    audit_id = (req.meta or {}).get("audit_id", "report")
-    fname = f"auditlens_{audit_id}.pdf"
+        raise HTTPException(500, f"Не удалось собрать PDF: {str(e)[:200]}")
+    fname = pdf_filename(_doc_title(title, req.question, req.report_md)[0], _report_day(rdate))
+    ascii_name = f"auditlens_{rid or 'report'}.pdf"
     return Response(content=pdf_bytes, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+                    headers={"Content-Disposition":
+                             f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{_quote(fname)}",
+                             "Access-Control-Expose-Headers": "Content-Disposition"})
 
 
 # ── health / readiness (для реверс-прокси и оркестратора контейнера) ─────────
@@ -3904,9 +3969,12 @@ def _index_html_with_bust() -> str:
                       f'<script src="/static/app.js?v={v}"></script>', html)
         return html
     if jsx_path.exists():
+        # и поверх прописанного руками ?v=: с 26.09 в index.html стояла
+        # фиксированная версия, замена её не находила, и правки app.jsx
+        # 28–30.09 браузеры могли не увидеть
         v = int(jsx_path.stat().st_mtime)
-        html = html.replace('src="/static/app.jsx"',
-                              f'src="/static/app.jsx?v={v}"')
+        html = re.sub(r'src="/static/app\.jsx(?:\?v=[^"]*)?"',
+                      f'src="/static/app.jsx?v={v}"', html)
     return html
 
 

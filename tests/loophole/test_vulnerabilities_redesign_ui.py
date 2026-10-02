@@ -211,7 +211,7 @@ def _last_catalog(page):
 
 def test_head_tabs_and_access_follow_server_contexts(browser):
     page = _open(browser)
-    expect(page.get_by_role("heading", name="Уязвимости", level=1)).to_be_visible()
+    expect(page.get_by_role("heading", name="Аудит уязвимостей", level=1)).to_be_visible()
     tabs = page.get_by_role("tab")
     expect(tabs).to_have_count(3)
     assert [t.inner_text().split("\n")[0].strip() for t in tabs.all()] == ["База", "Исследовать", "Очередь"]
@@ -228,7 +228,7 @@ def test_head_tabs_and_access_follow_server_contexts(browser):
 
 def test_fail_closed_surfaces_show_no_data(browser):
     denied = _open(browser, authz="deny", wait_list=False)
-    expect(denied.get_by_role("heading", name="Нет доступа к модулю «Уязвимости»")).to_be_visible()
+    expect(denied.get_by_role("heading", name="Нет доступа к разделу «Аудит уязвимостей»")).to_be_visible()
     assert not _calls(denied, r"/catalog")
     denied.close()
     broken = _open(browser, authz="error", wait_list=False)
@@ -577,7 +577,7 @@ def test_legacy_source_panel_is_kept_unchanged_and_isolated():
 
 def test_prebuilt_page_runs_without_babel(browser):
     page = _open(browser, compiled=True)
-    expect(page.get_by_role("heading", name="Уязвимости", level=1)).to_be_visible()
+    expect(page.get_by_role("heading", name="Аудит уязвимостей", level=1)).to_be_visible()
     assert page.evaluate("typeof window.Babel") == "undefined"
     assert not page._lp_errors
     page.close()

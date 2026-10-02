@@ -56,9 +56,9 @@ function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns}){
   const me=useMe();
   const tpl=awTemplates(me);
   return <div className="ai-welcome fade-in">
-    <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-аналитик`:"ИИ-аналитик · AuditLens"}</div>
+    <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-помощник`:"ИИ-помощник · AuditLens"}</div>
     <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
-    <p className="aw-lede">Аналитик отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
+    <p className="aw-lede">Помощник отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
     <div className="aw-modes">
       <div><b>Быстрый ответ</b><span>обычно меньше минуты · по данным AuditLens и открытым источникам</span></div>
       <div><b>Отчёт · Deep Research</b><span>обычно 5–10 минут · план, сбор, сверка чисел</span></div>
@@ -239,6 +239,7 @@ const greeting = (me) => {
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Ic = {
   grid:    p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...p}><rect x="3" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1"/></svg>,
+  news:    p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 4h12a1 1 0 011 1v13a2 2 0 01-2 2H6a2 2 0 01-2-2V9h3"/><path d="M7 4v14a2 2 0 01-2 2"/><path d="M11 8h5v3.5h-5z"/><path d="M11 15h5"/></svg>,
   market:  p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3 17l6-6 4 4 8-9"/><path d="M21 6h-5"/><path d="M21 6v5"/></svg>,
   scale:   p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 4v16"/><path d="M5 8h14"/><path d="M5 8l-2 6a4 4 0 008 0z"/><path d="M19 8l-2 6a4 4 0 008 0z"/></svg>,
   msg:     p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8z"/></svg>,
@@ -875,6 +876,10 @@ const ovN=(v,dg=1)=>{ if(v==null||v==="")return "—"; const n=parseFloat(v); if
 const ovRaz=k=>{ const r=Math.round(k*10)/10; if(r!==Math.round(r))return "раза"; const n=Math.round(r);
   return n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?"раза":"раз"; };
 const ovJ=n=>`${fmtNum(n)} ${plural(Math.round(n||0),"жалоба","жалобы","жалоб")}`;
+// «2026-09-25» → «25.09» — дата подъёма сигнала жалоб
+const sigDm=v=>{const m=String(v||"").match(/^\d{4}-(\d{2})-(\d{2})/);return m?`${m[2]}.${m[1]}`:"";};
+// Сигнал держится с прошлых дней — продолжение, а не новый всплеск (с 30.09)
+const sigCont=d=>!!(d&&d.status==="continuing"&&d.since);
 // Как честно сказать о рынке — та же логика, что reviews_dash.market_phrase:
 // «только у …» лишь при ровном рынке (×<1,15). 25.09 заголовок написал «только
 // у Сбера» при росте рынка ×1,93 — флаг bank_specific значит «сильно обгоняет».
@@ -905,6 +910,14 @@ function xpRows(kind,d,now){
         ? `${ovJ(d.base_count)} за ${d.base_weeks} недель до этого (окно 14–63 дня назад) ÷ ${d.base_weeks} = ${ovN(d.baseline_week)} в неделю`
         : `среднее за неделю по окну 14–63 дня назад — ${ovN(d.baseline_week)}`]);
     if(d.prev_week!=null) R.push(["Прошлая неделя",ovJ(d.prev_week)]);
+    // продолжение и затяжной рост: без этих строк сигнал, поднятый неделю
+    // назад, читался как сегодняшний всплеск
+    if(sigCont(d))
+      R.push(["Держится",`с ${sigDm(d.since)} — ${d.days_on}-й день`
+        +(d.baseline_before!=null&&Math.abs(d.baseline_before-(d.baseline_week||0))>=0.3
+          ?`; до всплеска норма была ${ovN(d.baseline_before)} в неделю — с ней и сравниваем, пока сигнал держится`:"")]);
+    if(d.sustained&&d.prev_week!=null)
+      R.push(["Две недели",`${ovJ(d.prev_week)} и ${ovJ(d.week)} подряд при норме ${ovN(d.baseline_week)} — рост держится, а не разовый`]);
     // масштаб: 6.7/нед — это ОДНА тема; без общего числа цифра кажется мелкой
     if(d.week_total)
       R.push(["Масштаб",`тема — ${Math.round(100*d.week/d.week_total)}% всех жалоб на Сбер за неделю (${d.week} из ${d.week_total})`]);
@@ -915,8 +928,8 @@ function xpRows(kind,d,now){
     // Выпуск — снимок на утро; к вечеру данные дополняются. Та же цифра сейчас
     // — как в «Отзывах», чтобы расхождение не выглядело ошибкой
     if(now&&(now.week!==d.week||Math.abs((now.baseline_week||0)-(d.baseline_week||0))>=0.05))
-      R.push(["Сейчас",`${ovJ(now.week)} за 7 дней при норме ${ovN(now.baseline_week)} — ×${ovN(now.ratio)}: после выпуска данные дополнились (так же в «Отзывах»)`]);
-    R.push(["Выборка","только Сбербанк · жалобы со всех площадок, без похвалы, мусора и копий · главная проблема по разметке ИИ (кодификатор) · порог — статистически значимый рост к 7 прошлым неделям"]);
+      R.push(["Сейчас",`${ovJ(now.week)} за 7 дней при норме ${ovN(now.baseline_week)} — ×${ovN(now.ratio)}: после выпуска данные дополнились (так же в разделе «Аудит отзывов»)`]);
+    R.push(["Выборка","только Сбербанк · жалобы со всех площадок, без похвалы, мусора и копий · главная проблема по разметке ИИ (кодификатор) · порог — статистически значимый рост за неделю или две недели подряд к 7 прошлым неделям; поднятый сигнал держится, пока жалоб заметно больше нормы до всплеска"]);
   } else if(kind==="tariff_move"){
     if(d.from!=null&&d.to!=null)
       R.push(["Расчёт",`${ovN(d.from,2)}% → ${ovN(d.to,2)}% = ${d.delta>0?"+":"−"}${ovN(Math.abs(d.delta),2)} п.п.`]);
@@ -963,7 +976,7 @@ const xpEscalation=(k,now)=>[
   ["Как ищем","модель читает жалобу целиком и отмечает угрозу или уже поданное обращение; выборочная проверка — 99% верно"],
   ["Выборка",`${ovJ(k.total||0)} за 90 дней · только Сбербанк · все площадки`],
   ...(now&&now.escalation_pct!=null&&now.escalation_pct!==k.escalation_pct
-    ?[["Сейчас",`${pct1(now.escalation_pct)} — после выпуска данные дополнились (так же в «Отзывах»)`]]:[]),
+    ?[["Сейчас",`${pct1(now.escalation_pct)} — после выпуска данные дополнились (так же в разделе «Аудит отзывов»)`]]:[]),
 ];
 const xpWeek=(ov,k,now)=>[
   ["Расчёт",`${ovJ(ov.week)} за последние 7 дней`],
@@ -990,7 +1003,7 @@ const xpUnclassified=u=>u?[
 const xpThemeUp=t=>[
   ["Расчёт",`${ovJ(t.n)} за 90 дней против ${fmtNum(Math.round(t.n/(1+(t.delta_pct||0)/100)))} за предыдущие 90 → +${Math.round(t.delta_pct)}%`],
   ["Горизонт","квартал — медленные тренды, которых не видно в недельном окне"],
-  ["Порог","рост от 50% и не менее 30 жалоб — и значимо быстрее общего потока жалоб (как на вкладке «Отзывы»)"],
+  ["Порог","рост от 50% и не менее 30 жалоб — и значимо быстрее общего потока жалоб (как в разделе «Аудит отзывов»)"],
   ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
 
@@ -1230,6 +1243,7 @@ function BfCard({ins,idx,lead,now,sigs,compact}){
       return <>
         <Spark data={[d.baseline_week||0,d.prev_week||0,d.week||0]} w={64} h={20} color="var(--ink-3)"/>
         {d.ratio&&<span className="mono tnum" style={{fontSize:12,fontWeight:600}}>×{ovN(d.ratio)}</span>}
+        {sigCont(d)&&<span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>с {sigDm(d.since)}</span>}
         {d.geo&&<span className="mono" style={{fontSize:11,color:"var(--ink-3)"}}>{d.geo.share}% · {d.geo.city}</span>}
       </>;
     if(ins.kind==="tariff_move")return <DeltaStrip from={d.from} to={d.to}/>;
@@ -1577,29 +1591,41 @@ function PfRing({score}){
 // ─── «Общий / Для вас»: сегмент-переключатель + персональный разворот ─────────
 const OVSEG_CSS=`
 .ovseg{position:relative;display:inline-flex;padding:3px;background:var(--paper-2);border:1px solid var(--hair);border-radius:10px;user-select:none;}
-.ovseg-thumb{position:absolute;top:3px;left:3px;height:calc(100% - 6px);width:104px;background:var(--surface);border-radius:7px;
+.ovseg-thumb{position:absolute;top:3px;left:3px;height:calc(100% - 6px);width:108px;background:var(--surface);border-radius:7px;
   box-shadow:var(--shadow-1);transition:transform .18s cubic-bezier(.3,.7,.4,1);}
-.ovseg.fy .ovseg-thumb{transform:translateX(104px);}
-.ovseg button{position:relative;z-index:1;width:104px;height:26px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+.ovseg.m1 .ovseg-thumb{transform:translateX(108px);}
+.ovseg.m2 .ovseg-thumb{transform:translateX(216px);}
+.ovseg button{position:relative;z-index:1;width:108px;height:26px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   font-size:12px;font-weight:500;color:var(--ink-3);border-radius:7px;transition:color .15s;}
 .ovseg button.on{color:var(--ink);font-weight:600;}
 .ovseg .sp{color:var(--accent);font-size:11px;line-height:1;}
 .ovseg-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);}
+/* три режима шире двух: на узком экране переключатель встаёт за крошкой, а не по центру поверх неё */
+@media(max-width:1180px){.ovseg-wrap{position:static;transform:none;margin-left:16px}}
 .fy-seg-mob{display:none;margin-bottom:18px;}
 /* 960px — тот же брейкпоинт, что у .desk-only: без «мёртвой зоны» 901-960 */
 @media(max-width:960px){.fy-seg-mob{display:flex;justify-content:center;}}
 `;
+// Режимы раздела «Новостные обзоры». «Рынок · позиция» с 01.10 — не отдельный
+// пункт меню, а третий режим здесь: из выпуска в «Рынок» и обратно переходили
+// чаще всего (145 и 101 раз за месяц).
+const OV_MODES=["overview","foryou","market"];
 function OvSeg({page}){
-  const go=(p)=>{ if(p===page)return; try{localStorage.setItem("al-ov-mode",p);}catch{} location.hash=p; };
+  const cur=page==="sber"?"market":page;
+  const i=Math.max(0,OV_MODES.indexOf(cur));
+  // запоминаем только «Выпуск дня»/«Для вас»: вход в приложение — всегда выпуск
+  const go=(p)=>{ if(p===cur)return; if(p!=="market"){try{localStorage.setItem("al-ov-mode",p);}catch{}} location.hash=p; };
   // стрелки ←/→ переключают режим, как у вкладок
-  const key=e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();go(page==="overview"?"foryou":"overview");}};
-  const T=(p,label)=><button role="tab" aria-selected={page===p} tabIndex={page===p?0:-1}
-    className={page===p?"on":""} onClick={()=>go(p)} onKeyDown={key}>{label}</button>;
-  return <div className={"ovseg"+(page==="foryou"?" fy":"")} role="tablist" aria-label="Режим обзора">
+  const key=e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();
+    go(OV_MODES[(i+(e.key==="ArrowRight"?1:OV_MODES.length-1))%OV_MODES.length]);}};
+  const T=(p,label)=><button role="tab" aria-selected={cur===p} tabIndex={cur===p?0:-1}
+    className={cur===p?"on":""} onClick={()=>go(p)} onKeyDown={key}>{label}</button>;
+  return <div className={"ovseg"+(i?" m"+i:"")} role="tablist" aria-label="Режим раздела «Новостные обзоры»">
     <style>{OVSEG_CSS}</style>
     <span className="ovseg-thumb" aria-hidden="true"/>
-    {T("overview","Общий")}
+    {T("overview","Выпуск дня")}
     {T("foryou",<><span className="sp" aria-hidden="true">✦</span>Для вас</>)}
+    {T("market","Рынок · позиция")}
   </div>;
 }
 
@@ -2838,7 +2864,7 @@ function OverviewPage(){
         <h2 className="eyebrow" style={{margin:0}}>Анализ жалоб недели</h2>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
           {ST("reviews_brief")==="stale"&&<span className="ov-pill warn" data-tip="разбор сегодня не пересчитался — показан последний удачный">устарело · за {dmy(sec.reviews_brief.stale_from)||sec.reviews_brief.stale_from}</span>}
-          <a className="ovt-all" href="#reviews">Радар в «Отзывах»<Ic.ext/></a>
+          <a className="ovt-all" href="#reviews">Радар в разделе «Аудит отзывов»<Ic.ext/></a>
         </div>
       </div>
       <BfBrief markdown={ovFixOnly(brief.markdown,sigs)} skip={briefSkip}/>
@@ -3302,6 +3328,7 @@ function MarketPage({params}){
   const showBarCol=mcat.show_bar!==false&&showRateCol;
 
   return <div className="fade-in">
+    <div className="fy-seg-mob"><OvSeg page="market"/></div>
     <PageHead eyebrow="Рынок · позиция объекта аудита" title="Позиция Сбера на рынке"
       meta={<>{sum?`${fmtNum(sum.offers)} офферов · ${fmtNum(sum.banks)} банков`:"…"}
         {sch&&sch.enabled?` · автосбор ежедневно ${String(sch.ingest_hour_msk).padStart(2,"0")}:00 МСК`:sch?" · автосбор выключен":""}
@@ -4759,11 +4786,13 @@ function ReviewsPage({params}){
                   const tip=`${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)`
                     +(s.bank_specific?" · "+(ovMarketNote(s.ratio,s.market_ratio)||"сильнее рынка"):"")
                     +(s.accel?` · ускоряется (${s.prev_week}→${s.week})`:"")
+                    +(sigCont(s)?` · держится с ${sigDm(s.since)}`+(s.baseline_before!=null?` (до всплеска норма ~${s.baseline_before}/нед)`:""):"")
+                    +(s.sustained?` · две недели подряд (${s.prev_week} и ${s.week})`:"")
                     +(s.geo?` · ${s.geo.share}% из ${s.geo.city}`:"");
                   return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}
                         role="button" tabIndex={0} data-tip={tip}
                         onClick={()=>pickTheme(s.key)} onKeyDown={onKey(()=>pickTheme(s.key))}>
-                    {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}
+                    {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}{sigCont(s)&&<span className="rv-radar-since">с {sigDm(s.since)}</span>}
                   </span>;
                 })}
               </div>}
@@ -5010,7 +5039,7 @@ function ReviewsPage({params}){
   return <div className="fade-in rv">
     {/* ШАПКА — одна строка: срез слева, действия страницы справа */}
     <div className="rv-head">
-      <h1 className="rv-h1">Отзывы</h1>
+      <h1 className="rv-h1">Аудит отзывов</h1>
       <div className="rv-hfil">
         {fine&&bankItems.length?<RvBankPicker bank={bank} items={bankItems} onChange={setBank}/>
           :<select className="rv-hsel" value={bank} onChange={e=>setBank(e.target.value)} aria-label="Банк">
@@ -5362,7 +5391,7 @@ function MatrixExportButton({matrix, question, streaming}){
   </span>;
 }
 
-function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps}){
+function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps, reportId, title}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
     if(busy || streaming) return;
@@ -5375,6 +5404,10 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
         body: JSON.stringify({
           question: question,
           report_md: report,   // [[CHART:i]]-маркеры остаются: PDF ставит графики по местам
+          // Название и дата — из сохранённого отчёта (сервер берёт по номеру
+          // и проверяет доступ); название из потока — запас, пока отчёт не сохранён.
+          report_id: reportId || null,
+          title: title || null,
           sources: (sources || []).map(s => ({
             n: s.n, url: s.url, bank_name: s.bank_name, title: s.title,
             source_kind: s.source_kind, trust_score: s.trust_score,
@@ -5422,19 +5455,23 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
         }),
       });
       if(!resp.ok) {
-        const err = await resp.text();
-        alert(`PDF generation failed: ${err.slice(0,200)}`);
+        fbToast("Не удалось собрать PDF — попробуйте ещё раз");
         return;
       }
       const blob = await resp.blob();
       const url  = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `auditlens_${auditId}.pdf`;
+      // Имя файла — с сервера: «AuditLens — <название> — <дата>.pdf»
+      const cd = resp.headers.get("Content-Disposition")||"";
+      const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+      let fname = `auditlens_${auditId}.pdf`;
+      try{ if(star) fname = decodeURIComponent(star[1]); }catch{}
+      a.download = fname;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(url), 4000);
     } catch(e) {
-      alert(`Ошибка экспорта: ${e.message}`);
+      fbToast("Не удалось собрать PDF — проверьте соединение");
     } finally { setBusy(false); }
   };
   return <button className="btn-export" onClick={handle}
@@ -6592,7 +6629,7 @@ function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
         {empty
           ? <div className="cp-empty">
               {tab==="chats"?<IcChat/>:<IcDoc/>}
-              <div className="t">{loading?"Загрузка…":(query?"Ничего не найдено":(tab==="chats"?"Здесь появятся ваши диалоги с ИИ-аналитиком":"Здесь появятся ваши аудит-отчёты"))}</div>
+              <div className="t">{loading?"Загрузка…":(query?"Ничего не найдено":(tab==="chats"?"Здесь появятся ваши диалоги с ИИ-помощником":"Здесь появятся ваши аудит-отчёты"))}</div>
               {!query&&!loading&&<div className="h">задайте вопрос, чтобы начать</div>}
             </div>
           : (tab==="chats"?chatRows:reportRows)}
@@ -6926,8 +6963,11 @@ function AIPage(){
                 updateLast(()=>({ranking:data}));
               }else if(data.type==="insights"&&Array.isArray(data.items)){
                 updateLast(()=>({insights:data.items}));
+              }else if(data.type==="report_title"&&data.title){
+                updateLast(()=>({title:data.title}));
               }else if(data.type==="report_saved"){
-                updateLast(()=>({report_id:data.report_id}));   // «Поделиться» сразу после прогона
+                // «Поделиться» сразу после прогона; название — из брифа или черновое
+                updateLast(m=>({report_id:data.report_id,title:m.title||data.title||undefined}));
               }else if(data.type==="done"){
                 break outer;
               }
@@ -7053,7 +7093,8 @@ function AIPage(){
         try{
           const r=await apiFetch(`/api/reports/${m.report_id}`); const p=r.payload||{};
           Object.assign(m,{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
-                           gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null});
+                           gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null,
+                           title:r.title||undefined});
         }catch{}
       }));
       setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
@@ -7074,7 +7115,8 @@ function AIPage(){
                 // сохранённый отчёт больше не «чище» живого прогона.
                 verification:p.verification||null,gaps:p.gaps||null,
                 ranking:p.ranking||null,insights:p.insights||null,
-                report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name}]);
+                report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name,
+                title:r.title||undefined}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
@@ -7142,7 +7184,7 @@ function AIPage(){
                 </div>
               ) : (<>
                 <div className="dr-doc-toolbar">
-                  <span className="who">AuditLens · аналитический отчёт</span>
+                  <span className="who" title={m.title?"AuditLens · аналитический отчёт":undefined}>{m.title||"AuditLens · аналитический отчёт"}</span>
                   {m.report_owner&&me&&m.report_owner!==me.username&&
                     <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
                   {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!streaming&&
@@ -7152,7 +7194,8 @@ function AIPage(){
                                      sources={m.sources||[]} verification={m.verification}
                                      claimCheck={m.claimCheck} streaming={streaming}
                                      charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
-                                     insights={m.insights} gaps={m.gaps}/>}
+                                     insights={m.insights} gaps={m.gaps}
+                                     reportId={m.report_id} title={m.title}/>}
                   {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
                 </div>
                 <div className="chat-bubble chat-bubble-deep">
@@ -7190,7 +7233,8 @@ function AIPage(){
                                            sources={m.sources||[]} verification={m.verification}
                                            claimCheck={m.claimCheck} streaming={false}
                                            charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
-                                           insights={m.insights} gaps={m.gaps}/>
+                                           insights={m.insights} gaps={m.gaps}
+                                           reportId={m.report_id} title={m.title}/>
                           {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={false}/>}
                           <span className="dr-doc-footer-hint">
                             Готовый отчёт для аудита · нумерация страниц, источники, A4
@@ -7374,12 +7418,12 @@ function BanksPage(){
           «Отзывов» — читать долю в отрыве от неё нельзя.</p>
         <p><b>«У нас»</b> — сколько обращений по этому банку лежит в нашем корпусе. Это другая величина:
           мы собираем отзывы с нескольких площадок и не фильтруем их по проверке, поэтому число обычно
-          больше. По нему можно открыть и прочитать сами обращения во вкладке «Отзывы».</p>
+          больше. По нему можно открыть и прочитать сами обращения в разделе «Аудит отзывов».</p>
         <p className="t-cap">Расхождение с сайтом banki.ru объясняется срезом: мы показываем состояние
           на дату сбора, а площадка — на сейчас.</p>
       </MethodNote>
       <p className="ph-meta">Народный рейтинг banki.ru (балл, место, проверенные отзывы, доля решённых
-        по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать во вкладке «Отзывы».
+        по методике площадки) рядом с нашим корпусом отзывов — тем, что можно открыть и прочитать в разделе «Аудит отзывов».
         {freshest>0&&<> Данные рейтинга на {fmtDateMsk(new Date(freshest).toISOString())}.</>}</p>
     </PageHead>
     <div className="filter-row">
@@ -7727,7 +7771,7 @@ function SrcProposeForm({purpose,onDone}){
   if(done)return <div className="src-done">
     <div className="src-done-t">Заявка принята — {done.domain}</div>
     <p>Команда рассмотрит источник. При одобрении вы увидите его
-      {purpose.id==="ai"?" в новых отчётах ИИ-аналитика"
+      {purpose.id==="ai"?" в новых отчётах ИИ-помощника"
         :purpose.id==="digest"?" в новых утренних выпусках"
         :purpose.id==="reviews"?" в анализе отзывов после следующего сбора"
         :" в витрине тарифов после следующего сбора"}.
@@ -7982,7 +8026,7 @@ function KbDoc({g,onOpen}){
 // совпадение», а происхождение и история: кто и когда это принёс, что в тексте
 // поменялось с прошлого обхода, можно ли приобщить к делу.
 
-const KB_ORIGIN_RU={report:"из отчёта ИИ-аналитика",quick:"из быстрого ответа",
+const KB_ORIGIN_RU={report:"из отчёта ИИ-помощника",quick:"из быстрого ответа",
   crawl:"из планового сбора",manual:"добавлен вручную",refresh:"при перепроверке"};
 
 function KbRevisions({doc,revisions}){
@@ -8000,7 +8044,7 @@ function KbRevisions({doc,revisions}){
 
   if(!revisions||revisions.length<2)return <div className="kb-norev">
     Версия от {fmtDateMsk(doc.fetched_at)}. Других версий страницы в архиве нет —
-    она переобходится, когда ИИ-аналитик снова к ней обращается.
+    она переобходится, когда ИИ-помощник снова к ней обращается.
   </div>;
 
   return <div className="kb-rev">
@@ -8370,7 +8414,7 @@ function KbCases({onClose,onOpenDoc}){
           <span className="rv-cs-an-b">
             {!an&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
             {an&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
-            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-аналитику: нормы, практика, что запросить">продолжить в ИИ-аналитике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-помощнику: нормы, практика, что запросить">продолжить в ИИ-помощнике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
           </span>
         </div>
         {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}
@@ -8382,7 +8426,7 @@ function KbCases({onClose,onOpenDoc}){
           onOpen={()=>openRev(it)}/>
       </React.Fragment>)}
       {!items.length&&<div className="kb-empty">
-        Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте «Отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
+        Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте раздела «Аудит отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
     </RvModal>{reader}</>;
   }
 
@@ -8399,7 +8443,7 @@ function KbCases({onClose,onOpenDoc}){
     </div>
     {list===null?<Skel h={120}/>:!list.length?<div className="kb-empty">
       <b>Дел пока нет.</b>
-      <p>Дело — подборка доказательств под одну проверку: жалобы из «Отзывов» и
+      <p>Дело — подборка доказательств под одну проверку: жалобы из раздела «Аудит отзывов» и
         документы из «Базы знаний». Приобщили, прокомментировали, выгрузили в рабочий файл.</p></div>:
       list.map(c=><button key={c.case_id} className="kb-case-row"
           onClick={()=>setOpen(c.case_id)}>
@@ -8597,7 +8641,7 @@ function KnowledgePage({params}){
 function LoopholePage(){
   return <section className="surface loophole-page" style={{padding:0,overflow:"hidden"}}>
     <iframe src="/static/loophole/loophole.html"
-            title="Уязвимости и мошеннические схемы"
+            title="Аудит уязвимостей"
             style={{width:"100%",height:"100%",border:"none",display:"block"}}/>
   </section>;
 }
@@ -8819,8 +8863,8 @@ const AD_CSS=`
 .pu-kv-row b{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 
 `;
-const AD_PAGE_RU={overview:"Обзор",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Отзывы",
-  ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",sources:"Источники",
+const AD_PAGE_RU={overview:"Новостные обзоры",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Аудит отзывов",
+  ai:"ИИ-помощник",knowledge:"База знаний",loophole:"Аудит уязвимостей",banks:"Банки",sources:"Источники",
   quality:"Качество",profile:"Профиль",pulse:"Пульс"};
 const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
   if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1).replace(".",",")+"ч"; };
@@ -8964,7 +9008,7 @@ function PuAiFeedback({fb,onOpenReport,onOpenUser}){
       ? <div className="pu-empty">
           <b>Ответы ИИ пока никто не оценивал.</b>
           <p>За период выдано {fb.answers||0} ответов. Кнопки 👍/👎 стоят под каждым
-             ответом ИИ-аналитика; при 👎 открывается выбор причины и поле комментария —
+             ответом ИИ-помощника; при 👎 открывается выбор причины и поле комментария —
              это и попадёт сюда.</p>
         </div>
       : <>
@@ -9146,7 +9190,7 @@ function PuAgentEval(){
   const delta=last&&prev&&last.score!=null&&prev.score!=null?Math.round((last.score-prev.score)*10)/10:null;
   const num=x=>x==null?"—":String(x).replace(".",",");
   return <div className="pu-card pu-sec">
-    <div className="h"><span>ИИ-аналитик: регрессионный набор</span>
+    <div className="h"><span>ИИ-помощник: регрессионный набор</span>
       <div className="seg" style={{marginLeft:12}}>
         {[["hermes","Быстрый ответ"],["deep","Отчёт"]].map(([k,l])=>
           <button key={k} className={"seg-btn"+(eng===k?" on":"")} onClick={()=>setEng(k)}>{l}</button>)}
@@ -9217,7 +9261,7 @@ function PuReviewSources({r}){
 function PuSignalJournal({j}){
   if(!j||j.error)return null;
   return <div className="pu-card pu-sec">
-    <div className="h"><span>Точность сигналов «Отзывов» · {j.days} дн</span>
+    <div className="h"><span>Точность сигналов · Аудит отзывов · {j.days} дн</span>
       {j.precision!=null&&<span className={"pu-chip "+(j.precision>=70?"ok":j.precision<50?"bad":"")}>{j.precision}% подтвердились</span>}</div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
       Эпизод — всплеск жалоб, записанный радаром вместе со снимком жалоб. Аудиторы отмечают
@@ -9237,7 +9281,7 @@ function PuIngest({ing}){
     <div className="h"><span>Фоновая индексация</span>
       <span className="mono">воркеров {q.workers??"—"}</span></div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
-      Страницы, которые ИИ-аналитик читает по дороге, попадают в базу знаний
+      Страницы, которые ИИ-помощник читает по дороге, попадают в базу знаний
       фоном. Счётчики очереди обнуляются при перезапуске — пустая очередь не
       означает, что фон не работает.
     </p>
@@ -9751,8 +9795,8 @@ function PulsePage(){
               ]}/>
             <div className="pu-note">
               {sg.readers>0
-                ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Обзор»/«Для вас») — точка роста для ИИ-аналитика</>
-                : "читатели ≥60% просмотров в «Обзоре»/«Для вас» без единого ИИ-запроса"}
+                ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Новостные обзоры» и «Для вас») — точка роста для ИИ-помощника</>
+                : "читатели ≥60% просмотров в разделе «Новостные обзоры» без единого ИИ-запроса"}
             </div>
           </div>
           <div className="pu-card">
@@ -9882,24 +9926,35 @@ function PulsePage(){
   </div>;
 }
 
+// Названия разделов (переименованы 01.10.2026 по просьбе коллег). В тексте их
+// не склоняем: «в разделе «Аудит отзывов»», а не «в «Аудите отзывов»».
+// was — прежнее имя: его называет разовая заметка о переименовании (до RENAMED_UNTIL).
+// Порядок — как попросило руководство (аудит первым). Вход в приложение и логотип
+// всё равно ведут на «Новостные обзоры»: с выпуска начинается 85% рабочих дней.
+// «Рынок · позиция» — режим «Новостных обзоров» (OvSeg), группа «Данные» свёрнута.
 const NAV=[
-  {id:"overview",label:"Обзор",       icon:Ic.grid,   group:"Анализ"},
-  {id:"market",  label:"Рынок · позиция",icon:Ic.market, group:"Анализ"},
-  {id:"reviews", label:"Отзывы",      icon:Ic.msg,    group:"Анализ"},
-  {id:"ai",      label:"ИИ-аналитик", icon:Ic.spark,  group:"Анализ"},
-  {id:"loophole",label:"Уязвимости",     icon:Ic.shield, group:"Анализ"},
+  {id:"reviews", label:"Аудит отзывов",    icon:Ic.msg,    group:"Анализ", was:"Отзывы"},
+  {id:"loophole",label:"Аудит уязвимостей",icon:Ic.shield, group:"Анализ", was:"Уязвимости"},
+  {id:"overview",label:"Новостные обзоры", icon:Ic.news,   group:"Анализ", was:"Обзор"},
+  {id:"ai",      label:"ИИ-помощник",      icon:Ic.spark,  group:"Анализ", was:"ИИ-аналитик"},
   {id:"knowledge",label:"База знаний",icon:Ic.src,    group:"Данные"},
   {id:"banks",   label:"Банки",       icon:Ic.bank,   group:"Данные"},
   {id:"sources", label:"Источники",   icon:Ic.src,    group:"Данные"},
 ];
+// режимы внутри разделов: в меню подсвечивается раздел, в крошке — его номер и имя
+const SECTION_OF={foryou:"overview",market:"overview",sber:"overview"};
+const DATA_IDS=new Set(["knowledge","banks","sources","pulse"]);
 const PAGES_FN={overview:OverviewPage,foryou:ForYouPage,market:MarketPage,sber:SberPage,reviews:ReviewsPage,ai:AIPage,knowledge:KnowledgePage,loophole:LoopholePage,banks:BanksPage,sources:SourcesPage,profile:ProfilePage,pulse:PulsePage};
 // Номера синхронизированы с порядком в меню; итог берётся из NAV, а не хардкодом
 // Названия разделов для крошки в шапке. Номер берётся из порядка меню (navOrder),
 // а не пишется здесь: захардкоженные номера разошлись с меню после перестановки
 // вкладок («Уязвимости» в меню 05, в шапке было 06).
-const PAGE_LABELS={overview:"Обзор",foryou:"Для вас",market:"Рынок · позиция",sber:"Рынок · позиция",
-  reviews:"Отзывы",ai:"ИИ-аналитик",knowledge:"База знаний",loophole:"Уязвимости",banks:"Банки",
+const PAGE_LABELS={overview:"Новостные обзоры",foryou:"Для вас",market:"Рынок · позиция",sber:"Рынок · позиция",
+  reviews:"Аудит отзывов",ai:"ИИ-помощник",knowledge:"База знаний",loophole:"Аудит уязвимостей",banks:"Банки",
   sources:"Источники",profile:"Профиль",pulse:"Пульс"};
+// до этой даты в меню показывается заметка о переименовании (пока её не закрыли)
+const RENAMED_UNTIL="2026-10-15";
+const renamedFresh=()=>new Date().toISOString().slice(0,10)<=RENAMED_UNTIL;
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
@@ -10113,7 +10168,7 @@ function ProfilePage(){
         : data.profile_note
           ? <><p className="pf-note">{data.profile_note}</p>
               <div className="pf-src"><span className="live"/>обновляется автоматически по вашим запросам и описанию</div></>
-          : <p className="pf-note-empty">Здесь ИИ соберёт краткий портрет ваших интересов — автоматически, по мере ваших запросов и из описания выше. Задайте пару вопросов ИИ-аналитику или нажмите «Пересобрать».</p>}
+          : <p className="pf-note-empty">Здесь ИИ соберёт краткий портрет ваших интересов — автоматически, по мере ваших запросов и из описания выше. Задайте пару вопросов ИИ-помощнику или нажмите «Пересобрать».</p>}
     </div>
 
     {/* Сила персонализации: сколько система уже знает + что даст больше всего */}
@@ -10152,7 +10207,7 @@ function ProfilePage(){
         </div>
       </div>
       <div className="pf-power-cap">Оценки 👍/👎 на «Для вас» и полосе учат ВАШИ рекомендации; оценки ответов
-        ИИ-аналитика уходят команде — по ним мы чиним инструмент. Каждый пункт выше показывает свой вклад.</div>
+        ИИ-помощника уходят команде — по ним мы чиним инструмент. Каждый пункт выше показывает свой вклад.</div>
     </div>}
 
     {/* Темы в фокусе — определяет система, ручное вторично */}
@@ -10207,7 +10262,7 @@ function ProfilePage(){
         </div>
       </div>
       <div className="pf-row">
-        <div><div className="pf-row-t">Страница «Для вас»</div><div className="pf-row-d">Личный разворот в «Обзоре»: направления, новости и зацепки под ваш профиль, каждое утро</div></div>
+        <div><div className="pf-row-t">Страница «Для вас»</div><div className="pf-row-d">Личный разворот в разделе «Новостные обзоры»: направления, новости и зацепки под ваш профиль, каждое утро</div></div>
         <button className={"pf-toggle"+(personalDigest?" on":"")} onClick={()=>setPersonalDigest(v=>!v)} aria-label="переключить"><span/></button>
       </div>
       <div className="pf-row">
@@ -10312,6 +10367,7 @@ function Shell(){
   const[me,setMe]=useState(null);
   const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
+  const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001b")==="1";}catch{return false;}});
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
@@ -10399,11 +10455,13 @@ function Shell(){
   // запоминаем последний режим «Обзора» (Общий/Для вас) — возвращаем туда же
   useEffect(()=>{ if(page==="overview"||page==="foryou"){try{localStorage.setItem("al-ov-mode",page);}catch{}} },[page]);
 
-  const navOrder=useMemo(()=>{
-    const items=(me&&me.is_admin)?[...NAV,{id:"pulse"}]:NAV;
-    const g={};items.forEach(n=>{(g[n.group||"Данные"]=g[n.group||"Данные"]||[]).push(n.id);});
-    return Object.values(g).flat();
-  },[me]);
+  // номера — только у основных разделов: справочные свёрнуты и без номеров
+  const navOrder=useMemo(()=>NAV.filter(n=>n.group==="Анализ").map(n=>n.id),[]);
+  // «Данные» свёрнуты; раскрываются по щелчку (запоминаем) и сами — когда открыт их раздел
+  const[dataOpen,setDataOpen]=useState(()=>{try{return localStorage.getItem("al-rail-data")==="1";}catch{return false;}});
+  useEffect(()=>{ if(DATA_IDS.has(page)) setDataOpen(true); },[page]);
+  const toggleData=()=>setDataOpen(v=>{ const nv=!v;
+    try{localStorage.setItem("al-rail-data",nv?"1":"0");}catch{} return nv; });
   const groups=useMemo(()=>{
     const items=(me&&me.is_admin)?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
     const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
@@ -10450,8 +10508,11 @@ function Shell(){
   },[page]);
 
   const Page=PAGES_FN[page]||OverviewPage;
-  const label=PAGE_LABELS[page]||"Обзор";
-  const navIdx=navOrder.indexOf(page==="foryou"?"overview":page);
+  const section=SECTION_OF[page]||page;
+  const label=PAGE_LABELS[page]||"Новостные обзоры";
+  // заголовок вкладки браузера — по разделу: в истории и закладках видно, где был
+  useEffect(()=>{ document.title=`${label} · AuditLens`; },[label]);
+  const navIdx=navOrder.indexOf(section);
   const idx=navIdx>=0?String(navIdx+1).padStart(2,"0"):null;
 
   return <MeCtx.Provider value={me}><BanksCtx.Provider value={banks}>
@@ -10471,6 +10532,22 @@ function Shell(){
         .ai-ready .x:hover{color:var(--ink);background:var(--paper-2);}
         @keyframes onb-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 5px var(--accent-soft)}}
         .user-chip.onb{animation:onb-pulse 2.2s ease-in-out infinite;background:var(--accent-soft);}
+        .nav-lbl{min-width:0;white-space:nowrap}
+        .rail-fold{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border-radius:4px;transition:color .12s}
+        .rail-fold:hover{color:var(--ink)}
+        .rail-fold:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+        .rail-chev{flex:none;transition:transform .15s}
+        .rail-fold[aria-expanded="true"] .rail-chev{transform:rotate(90deg)}
+        .rail-fold-n{letter-spacing:.04em}
+        .ren-toast{position:fixed;left:calc(var(--rail) + 20px);bottom:20px;z-index:300;max-width:380px;
+          background:var(--surface);border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);
+          padding:13px 16px;animation:fade-in .3s ease-out}
+        .ren-toast .t{font-size:12.5px;line-height:1.5;color:var(--ink-2);margin-bottom:11px;text-wrap:pretty}
+        .ren-toast .t b{color:var(--ink);font-weight:600}
+        .ren-toast .go{font-size:11.5px;padding:6px 12px;border-radius:8px;background:var(--ink);color:var(--paper);
+          font-weight:500;transition:transform .1s}
+        .ren-toast .go:active{transform:scale(.96)}
+        @media(max-width:960px){.ren-toast{left:16px;right:16px;bottom:16px;max-width:none}}
         .rail-foot{position:relative;}
         .onb-callout{position:absolute;left:6px;right:6px;bottom:64px;z-index:60;background:var(--surface);
           border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:fade-in .3s ease-out;}
@@ -10497,32 +10574,44 @@ function Shell(){
           <span className="rail-name">AuditLens</span>
           {appInfo?.env_label&&<span className="rail-env">{appInfo.env_label}</span>}
         </a>
-        {Object.entries(groups).map(([gr,items])=>(
-          <div key={gr}>
-            <div className="rail-section">{gr}</div>
+        {Object.entries(groups).map(([gr,items])=>{
+          const fold=gr==="Данные", open=!fold||dataOpen;
+          const foldDot=fold&&!open&&hasCaptcha;
+          return <div key={gr}>
+            {fold
+              ? <button type="button" className="rail-section rail-fold" aria-expanded={open}
+                        aria-controls="rail-data" onClick={toggleData}>
+                  <svg className="rail-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                  {gr}{!open&&<span className="rail-fold-n">· {items.length}</span>}
+                  {foldDot&&<span className="nav-dot"/>}
+                </button>
+              : <div className="rail-section">{gr}</div>}
+            {open&&<div id={fold?"rail-data":undefined}>
             {items.map(n=>{
-              const active=page===n.id||(n.id==="overview"&&page==="foryou");
+              const active=page===n.id||SECTION_OF[page]===n.id;
               // сквозная нумерация по всем группам: раньше был сдвиг «+5» под
               // фиксированный размер группы «Анализ», из-за чего после
               // удаления/добавления вкладок номера дублировались (два «06»)
-              const num=navOrder.indexOf(n.id)+1;
+              const num=navOrder.indexOf(n.id)+1;   // 0 — справочный, без номера
               const dot=n.id==="sources"&&hasCaptcha;
               const count=null;
               // ИИ-аналитик: пульсирующая точка = прогон идёт; зелёная = отчёт готов
               const aiDot=n.id==="ai"&&(aiBusy||aiReady);
               return <button key={n.id} className={`nav-item ${active?"active":""}`}
                              onClick={()=>{setPage(n.id);setNavOpen(false);}}>
-                <span className="rail-num">{String(num).padStart(2,"0")}</span>
+                <span className="rail-num">{num?String(num).padStart(2,"0"):""}</span>
                 <span style={{display:"inline-flex",marginRight:10,color:"var(--ink-3)"}}><n.icon/></span>
-                {n.label}
+                <span className="nav-lbl">{n.label}</span>
                 {dot&&<span className="nav-dot"/>}
                 {aiDot&&<span className={"nav-dot"+(aiBusy?" ai-run":" ai-done")}/>}
                 {n.badge&&<span className="nav-badge">{n.badge}</span>}
                 {count&&<span className="nav-count">{count}</span>}
               </button>;
             })}
-          </div>
-        ))}
+            </div>}
+          </div>;
+        })}
         <div className="rail-foot">
           {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile";
             return showOnb ? <div className="onb-callout">
@@ -10544,6 +10633,15 @@ function Shell(){
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
+      {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
+      {!renameSeen&&renamedFresh()&&<div className="ren-toast" role="status">
+        <div className="t"><b>Меню обновлено.</b>{" "}
+          {NAV.filter(n=>n.was).map(n=>`«${n.was}» → «${n.label}»`).join(", ")}.
+          «Рынок · позиция» — переключатель в разделе «Новостные обзоры», справочные
+          разделы — в свёрнутой группе «Данные».</div>
+        <button type="button" className="go" onClick={()=>{setRenameSeen(true);
+          try{localStorage.setItem("al-rename-1001b","1");}catch{}}}>Понятно</button>
+      </div>}
 
       <div className="main">
         <div className="topbar">
@@ -10553,9 +10651,9 @@ function Shell(){
           <div className="crumb">
             {idx && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
             <span style={{color:"var(--hair-2)"}}>—</span></>}
-            <b>{label}</b>
+            <b>{PAGE_LABELS[section]||label}</b>
           </div>
-          {(page==="overview"||page==="foryou")&&
+          {section==="overview"&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
           <button className={"icon-btn th-tg"+(theme==="dark"?" dk":"")}

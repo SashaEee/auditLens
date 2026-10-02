@@ -56,7 +56,7 @@ CONCURRENCY = int(os.getenv("GPTR_VIZ_CONCURRENCY", "4"))
 LOGO_DIR = os.getenv("AL_LOGO_DIR", "/app/assets/logos")
 PALETTE = ("--ink", "--ink-2", "--ink-3", "--ink-4", "--paper", "--paper-2",
            "--surface", "--hair", "--hair-2", "--accent", "--accent-soft",
-           "--pos", "--warn", "--neg")
+           "--pos", "--warn", "--neg", "--sber", "--sber-soft")
 
 _S_VAL, _S_CITE, _S_LOGO = "", "", ""     # сентинели
 _SENTINELS = re.compile("[-]")
@@ -364,9 +364,9 @@ def prepare(template: str, *, facts: list, labels: dict[str, str], section: str,
         if slots[i][0] != "meta":
             continue
         seg = sent[max(0, p - 260):p]
-        k = seg.rfind("Показано")
+        k = max(seg.rfind("Показано"), seg.rfind("Основано на"))
         if k < 0 or _BLOCK_CLOSE.search(seg[k:]):
-            raise VizRejected("счётчик meta допустим только в строке покрытия «Показано фактов…»")
+            raise VizRejected("счётчик meta допустим только в строке покрытия «Основано на … фактов раздела»")
     if re.search(r"<li>\s*</li>", sent):
         raise VizRejected("пустой пункт списка")
     used_ids = list(dict.fromkeys(s[1] for s in slots if s[0] == "f"))
@@ -403,7 +403,8 @@ def prepare(template: str, *, facts: list, labels: dict[str, str], section: str,
             if fld == "subject":
                 return _esc(labels.get(f.subject, f.subject) or "общее")
             if fld == "attr":
-                return _esc(getattr(f, "attribute", "") or "")
+                from .facts import ru_attribute
+                return _esc(ru_attribute(getattr(f, "attribute", "") or ""))
             if fld == "side":
                 return _esc(_side(getattr(f, "stance", "")))
             if fld == "quote":
@@ -516,8 +517,8 @@ _CSS_PROPS = {
 }
 _DISPLAY_OK = {"flex", "inline-flex", "grid", "block", "inline-block", "inline",
                "table", "table-row", "table-cell", "list-item"}
-_TEXT_COLORS = {"--ink", "--ink-2", "--ink-3", "--accent", "--pos", "--warn", "--neg"}
-_BG_COLORS = {"--surface", "--paper", "--paper-2", "--hair", "--hair-2", "--accent-soft"}
+_TEXT_COLORS = {"--ink", "--ink-2", "--ink-3", "--accent", "--pos", "--warn", "--neg", "--sber"}
+_BG_COLORS = {"--surface", "--paper", "--paper-2", "--hair", "--hair-2", "--accent-soft", "--sber-soft"}
 _NUM_TOKEN = re.compile(r"(\d+(?:\.\d+)?)(px|%|em|rem|fr)?$")
 _PX_LIMIT = {"width": 1200, "min-width": 1200, "max-width": 1200, "flex-basis": 1200,
              "height": 600, "min-height": 600, "max-height": 600, "border-radius": 40,
@@ -843,7 +844,7 @@ def finalize(html_with_sentinels: str, logos: dict[str, str], cite, known=None) 
         out = re.sub(rf"{_S_LOGO}([a-z0-9_\-]+){_S_LOGO}", lambda m: logos.get(m.group(1), ""), out)
         if _SENTINELS.search(out):
             raise VizRejected("остался служебный символ")
-        out = _nh3(out, final=True).strip()
+        out = polish(_nh3(out, final=True).strip())
         # «заявлено ·» с пустой датой после точки — убираем висячий разделитель.
         out = re.sub(r"\s*[·•]\s*(?=</)", "", out)
         out = re.sub(r"(?<=>)\s*[·•]\s+", "", out)
@@ -857,6 +858,53 @@ def finalize(html_with_sentinels: str, logos: dict[str, str], cite, known=None) 
     return _render(cite)
 
 
+_TABLE_RE = re.compile(r"<table\b[^>]*>.*?</table>", re.S | re.I)
+_TR_RE = re.compile(r"(<tr\b[^>]*>)(.*?)</tr>", re.S | re.I)
+_CELL_RE = re.compile(r"<t([dh])\b[^>]*>.*?</t\1>", re.S | re.I)
+_OLD_COVERAGE = re.compile(r"Показано фактов:\s*(\d+)\s*из\s*(\d+)(?:\s*в разделе)?\s*;?\s*"
+                           r"(?:объектов\s*\d+)?")
+
+
+def _repair_table(table: str) -> str:
+    """Строка, в которой ячеек кратно больше, чем столбцов шапки, — это
+    несколько строк, склеенных парсером: модель нумеровала их списком <ol>
+    внутри таблицы, и все ячейки ушли в одну строку. 29.09 такая таблица
+    вышла шириной 3 727 px и ужала весь PDF до 7 pt."""
+    rows = list(_TR_RE.finditer(table))
+    if not rows:
+        return table
+    width = len(_CELL_RE.findall(rows[0].group(2)))
+    if width < 2:
+        return table
+
+    def fix(m: re.Match) -> str:
+        cells = [c.group(0) for c in _CELL_RE.finditer(m.group(2))]
+        if len(cells) <= width or len(cells) % width:
+            return m.group(0)
+        return "".join(m.group(1) + "".join(cells[i:i + width]) + "</tr>"
+                       for i in range(0, len(cells), width))
+    return _TR_RE.sub(fix, table)
+
+
+def polish(markup: str) -> str:
+    """Последний штрих готовой разметки (новой и сохранённой раньше): таблицы
+    по строкам, без пустых пунктов списков, строка покрытия по-человечески."""
+    out = _TABLE_RE.sub(lambda m: _repair_table(m.group(0)), markup or "")
+    out = re.sub(r"<li\b[^>]*>\s*</li>", "", out)
+    out = re.sub(r"<(ol|ul)\b[^>]*>\s*</\1>", "", out)
+    out = _OLD_COVERAGE.sub(r"Основано на \1 из \2 фактов раздела", out)
+    # Термин промпта «точка отсчёта» в старых блоках (до 26.09) — читателю непонятен.
+    out = re.sub(r"рамкой выделена точка отсч[её]та", "рамкой выделен свой банк", out)
+    out = re.sub(r"\s*—\s*точка отсч[её]та", "", out)
+    # Английские ключи характеристик, уже вшитые в сохранённые блоки
+    # («СБП/QR, tariffs and commissions»), — по-русски, только в тексте.
+    from .facts import _ATTR_PHRASES
+    pat = re.compile(r"\b(" + "|".join(re.escape(k) for k in sorted(_ATTR_PHRASES, key=len, reverse=True))
+                     + r")\b", re.I)
+    return re.sub(r">([^<]+)<", lambda m: ">" + pat.sub(lambda w: _ATTR_PHRASES[w.group(1).lower()],
+                                                         m.group(1)) + "<", out)
+
+
 def resanitize(markup: str) -> str:
     """Для разметки, пришедшей извне (клиент → PDF): та же финальная очистка."""
     try:
@@ -866,7 +914,7 @@ def resanitize(markup: str) -> str:
         out = _nh3(raw, final=True).strip()
         if out.count("<svg") > MAX_SVG or len(re.findall(r"<[a-zA-Z]", out)) > MAX_TAGS:
             return ""
-        return out
+        return polish(out)
     except Exception:                          # noqa: BLE001
         return ""
 
@@ -1019,7 +1067,7 @@ def designer_prompt(*, section: str, title: str, question: str, anchor: str,
     # («Сбербанк точка отсчёта», «рамкой выделена точка отсчёта», 26.09).
     name = labels.get(anchor, anchor) if anchor else ""
     anchor_line = (f"Свой банк: {name} (slug {anchor}); выдели его рамкой "
-                   f"var(--accent), подпись — только название банка, без слов "
+                   f"var(--sber), подпись — только название банка, без слов "
                    f"«точка отсчёта»." if anchor else "Своего банка нет — объекты равноправны.")
     max_blocks = MAX_BLOCKS.get(section, 1)
     return "\n".join([
@@ -1051,8 +1099,8 @@ def designer_prompt(*, section: str, title: str, question: str, anchor: str,
         "словами («целевой оборот сегмента», «рекламная ставка»). Правильная ячейка "
         "выглядит так: <td>{{f:12}} {{f:12.cite}}<br><small>{{f:12.side}} · "
         "{{f:12.date}}</small></td>. Строка покрытия — последней строкой блока, "
-        "дословно: <small>Показано фактов: {{meta:facts_used}} из "
-        "{{meta:facts_total}}; объектов {{meta:subjects}}</small>. Счётчики "
+        "дословно: <small>Основано на {{meta:facts_used}} из "
+        "{{meta:facts_total}} фактов раздела</small>. Счётчики "
         "meta нигде больше не используй.",
         "2. Рядом с каждым числом, в том же элементе (той же ячейке или строке), — "
         "якорь источника {{f:12.cite}}. Не списком под блоком, а у числа. У "
@@ -1065,12 +1113,14 @@ def designer_prompt(*, section: str, title: str, question: str, anchor: str,
         "не включай. В сравнениях у каждого значения — метка стороны "
         "{{f:12.side}}, легенда сторон и статусов, если они есть.",
         "5. Название объекта — {{name:slug}}. Строка покрытия в конце "
-        "каждого блока обязательна: «Показано фактов: {{meta:facts_used}} из "
-        "{{meta:facts_total}} в разделе; объектов {{meta:subjects}}».",
+        "каждого блока обязательна: «Основано на {{meta:facts_used}} из "
+        "{{meta:facts_total}} фактов раздела». Строки таблицы — только "
+        "<tr> с ячейками по числу столбцов шапки; нумерацию строк списком "
+        "<ol> внутри таблицы не делай.",
         "6. Цвета — только переменные палитры: var(--ink) основной текст, "
         "var(--ink-2) второстепенный, var(--ink-3) подписи, var(--surface) фон "
         "карточки, var(--paper-2) фон подложки, var(--hair) линии и штриховка, "
-        "var(--accent) рамка своего банка, var(--pos) лучше, var(--warn) "
+        "var(--sber) рамка своего банка, var(--pos) лучше, var(--warn) "
         "внимание, var(--neg) хуже — последние три только для статусов, "
         "названных в тексте раздела. Литеральные цвета (#hex, rgb) запрещены; "
         "интерфейс бывает тёмным. В тексте блока имена переменных не "

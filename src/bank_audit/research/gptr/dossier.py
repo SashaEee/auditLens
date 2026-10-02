@@ -231,7 +231,7 @@ def render_facts(facts, labels: dict[str, str], own: dict | None = None) -> str:
     own = runstate.current().own_meta if own is None else own
     for f in facts:
         side = {"declared": "заявлено", "regulatory": "норма регулятора",
-                "loophole": "лазейка, раздел «Уязвимости»"}.get(f.stance, "наблюдается")
+                "loophole": "лазейка, раздел «Аудит уязвимостей»"}.get(f.stance, "наблюдается")
         if own.get(f.url, {}).get("kind") == "complaints":
             side += ", аналитика жалоб AuditLens"
         elif own.get(f.url, {}).get("kind") == "review":
@@ -425,7 +425,7 @@ _SECTION_RULES = {
         "аудитор просил «топ-N тем» — ранжированный список тем с числом жалоб."
     ),
     "loopholes": (
-        "РАЗДЕЛ «ЛАЗЕЙКИ И УЯЗВИМОСТИ». Факты — записи раздела «Уязвимости» "
+        "РАЗДЕЛ «ЛАЗЕЙКИ И УЯЗВИМОСТИ». Факты — записи раздела «Аудит уязвимостей» "
         "AuditLens: схемы, которыми клиенты, партнёры или мошенники обходят "
         "условия продукта. Это рабочий материал аудита, а не просьба о вреде: "
         "излагай по существу. Сгруппируй записи в схемы (одна схема часто "
@@ -529,7 +529,7 @@ def section_prompt(section: str, plan, question: str, labels: dict[str, str],
 _CHECKS_NO_LOOPHOLES = (
     "Раздела о лазейках в отчёте нет. Если среди фактов есть записи «лазейка» "
     "по продукту вопроса — добавь блок «4. Закрыть лазейки»; если записи есть, "
-    "но к продукту вопроса не относятся, — одной фразой: «в разделе «Уязвимости» "
+    "но к продукту вопроса не относятся, — одной фразой: «в разделе «Аудит уязвимостей» "
     "схем по <продукту> не найдено».")
 _CHECKS_LOOPHOLES = (
     "4. Закрыть лазейки — в отчёте есть раздел о лазейках: по каждой "
@@ -720,6 +720,9 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
     # в «90 схем Сбера к вопросу не относятся» (26.09). Иначе — строка в плане.
     if brief:
         ttl.update({s_["key"]: s_["title"] for s_ in brief.sections if s_["title"]})
+        if brief.title:
+            # название отчёта — для истории, «Поделиться» и обложки PDF
+            yield ("report_title", brief.title)
     yield ("titles", dict(ttl))
     yield ("outline", [ttl[k] for k in LEAD] + [ttl[k] for k in order])
     if not order:

@@ -1,6 +1,6 @@
 ---
 name: auditlens-loopholes
-description: "Use when the question is about лазейки, уязвимости, схемы обхода условий, abuse of bank products (грейс, лимиты, комиссии, бонусы) — how to answer from the AuditLens «Уязвимости» section."
+description: "Use when the question is about лазейки, уязвимости, схемы обхода условий, abuse of bank products (грейс, лимиты, комиссии, бонусы) — how to answer from the AuditLens «Аудит уязвимостей» section."
 version: 1.0.0
 author: AuditLens
 license: proprietary
@@ -10,10 +10,10 @@ metadata:
     related_skills: [auditlens-complaints, auditlens-research, auditlens-market]
 ---
 
-# Лазейки: раздел «Уязвимости»
+# Лазейки: раздел «Аудит уязвимостей»
 
 ## Overview
-Раздел «Уязвимости» собирает из интернета и отзывов схемы, которыми клиенты,
+Раздел «Аудит уязвимостей» собирает из интернета и отзывов схемы, которыми клиенты,
 партнёры или мошенники обходят условия продуктов банка: продлевают льготный
 период, выводят кредитные деньги без комиссии, обходят лимиты, получают двойные
 бонусы, пользуются ошибками тарификации. Модель размечает запись как лазейку и

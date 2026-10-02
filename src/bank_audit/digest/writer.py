@@ -395,15 +395,21 @@ def _mnote(d: dict) -> str:
 def _ai_prompt(kind: str, d: dict) -> str:
     if kind == "review_spike":
         geo = d.get("geo") or {}
-        parts = [f'Разбери всплеск жалоб «{d["label"]}» у Сбербанка: '
-                 f'{d["week"]} за 7 дней против ~{d.get("baseline_week")}/нед'
+        from ..rag.reviews_dash import signal_note
+        cont = d.get("status") == "continuing"
+        parts = [(f'Разбери затяжной рост жалоб «{d["label"]}» у Сбербанка: ' if cont else
+                  f'Разбери всплеск жалоб «{d["label"]}» у Сбербанка: ')
+                 + f'{d["week"]} за 7 дней против ~{d.get("baseline_week")}/нед'
                  + (f' (×{d["ratio"]})' if d.get("ratio") else "")]
+        if signal_note(d):
+            parts.append(signal_note(d))
         if geo:
             parts.append(f'{geo["share"]}% жалоб из г. {geo["city"]}')
         if d.get("bank_specific"):
             parts.append("у рынка без Сбера роста нет" if _flat(d) else
                          f'у Сбера {_mnote(d)}')
-        parts.append("Найди вероятную причину, оцени регуляторный риск и предложи шаги аудита.")
+        parts.append(("Почему проблема не уходит? " if cont else "")
+                     + "Найди вероятную причину, оцени регуляторный риск и предложи шаги аудита.")
         return ". ".join(parts)
     if kind == "tariff_move":
         return (f'Банк {d["bank"]} изменил условия «{d["title"]}» ({_cat_ru(d["category"])}) '
@@ -442,8 +448,12 @@ def _drill(kind: str, d: dict) -> dict:
 
 def _provenance(kind: str, d: dict) -> str:
     if kind == "review_spike":
+        how = ("рост двух недель подряд статистически значим" if d.get("test") == "two_weeks"
+               else "рост статистически значим")
+        held = (f' · держится с {_dm(d.get("since"))}' if d.get("status") == "continuing"
+                and d.get("since") else "")
         return (f'жалобы всех площадок, разметка ИИ · {d.get("week")} за 7 дн · норма — '
-                f'7 прошлых недель, рост статистически значим')
+                f'7 прошлых недель, {how}{held}')
     if kind == "tariff_move":
         return "журнал изменений тарифов · проверено на сбои сбора"
     if kind == "news_alert":
@@ -453,7 +463,7 @@ def _provenance(kind: str, d: dict) -> str:
         return (f'{src}' + (f' · ещё {n - 1} ист.' if n > 1 else "")
                 + (f' · продолжение сюжета от {_dm(cont.get("date"))}' if cont else ""))
     if kind == "loophole":
-        return "вкладка «Уязвимости» · предварительная классификация"
+        return "раздел «Аудит уязвимостей» · предварительная классификация"
     if kind == "bank_rating":
         return f'народный рейтинг banki.ru · {d.get("base_date")} → {d.get("as_of")}, держится 2 дня'
     return ""
@@ -465,7 +475,9 @@ def _fallback_headline(leads: list[dict]) -> dict:
     for ld in leads[:5]:
         d = ld["data"]
         if ld["kind"] == "review_spike":
-            title = (f'Всплеск жалоб «{d["label"]}»: {d["week"]} за неделю'
+            title = ((f'Жалобы «{d["label"]}» держатся выше нормы: {d["week"]} за неделю'
+                      if d.get("status") == "continuing" else
+                      f'Всплеск жалоб «{d["label"]}»: {d["week"]} за неделю')
                      + (f' (×{d["ratio"]})' if d.get("ratio") else ""))
         elif ld["kind"] == "tariff_move":
             title = f'Сбер: «{d["title"]}» {d["from"]}% → {d["to"]}%'
@@ -785,14 +797,24 @@ def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str
                                     + (f'. Срок: {it["deadline"]}' if it.get("deadline") else "")
                                     + (f'. Наши данные: {_evidence_line(ev)}' if ev else ""))})
     rp = (secs.get("reviews_pulse") or {}).get("payload") or {}
+    from ..rag.reviews_dash import signal_note
     for s_ in (rp.get("signals") or [])[:4]:
         score = 8.5 if s_.get("level") == "high" else 7.5
         if s_.get("bank_specific"):
             score += 0.5
+        # сигнал, поднятый в прошлые дни, — продолжение: выпуск им не
+        # открывается (как продолжение новостного сюжета), и модель не пишет
+        # о нём «резкий всплеск»
+        cont = s_.get("status") == "continuing"
+        note = signal_note(s_)
         leads.append({"ref": f"rev:{s_['key']}", "kind": "review_spike", "score": score, "data": s_,
-                      "facts": (f'всплеск жалоб клиентов Сбера «{s_["label"]}»: {s_["week"]} за 7 дн '
-                                f'при норме ~{s_.get("baseline_week")}/нед'
+                      "repeat": cont,
+                      "facts": ((f'[продолжение: сигнал держится с {_dm(s_.get("since"))}, не новый всплеск] '
+                                 f'жалобы клиентов Сбера «{s_["label"]}» держатся выше нормы: '
+                                 if cont else f'всплеск жалоб клиентов Сбера «{s_["label"]}»: ')
+                                + f'{s_["week"]} за 7 дн при норме ~{s_.get("baseline_week")}/нед'
                                 + (f', ×{s_["ratio"]}' if s_.get("ratio") else "")
+                                + (f'; {note}' if note else "")
                                 + ((", только у Сбера — по рынку тема ровная" if _flat(s_)
                                     else f", у Сбера {_mnote(s_)}") if s_.get("bank_specific") else "")
                                 + (f', {s_["geo"]["share"]}% из г. {s_["geo"]["city"]}' if s_.get("geo") else "")

@@ -267,7 +267,7 @@ def needs_legal_note(text: str) -> bool:
 
 def instructions(retry: bool = False) -> str:
     now = _dt.datetime.now(MSK)
-    s = (f"Сегодня {now:%d.%m.%Y}, {now:%H:%M} МСК. Вопрос задан в чате ИИ-аналитика "
+    s = (f"Сегодня {now:%d.%m.%Y}, {now:%H:%M} МСК. Вопрос задан в чате ИИ-помощника "
          "AuditLens; ответ увидит аудитор в этом же чате (markdown).")
     if retry:
         s += (" Предыдущая попытка закончилась без ответа. Ответь по данным, которые "

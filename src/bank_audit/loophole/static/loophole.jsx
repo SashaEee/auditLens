@@ -2260,7 +2260,7 @@ function LoopholeApp() {
     const bits = [KIND_LABELS[kind][0], bankName(record.bank_slug) !== "—" ? bankName(record.bank_slug) : null,
       detail.summary || record.summary || record.verdict_reason].filter(Boolean);
     return {kind: "document", url: record.url || null,
-      title: (record.headline || record.title || record.snippet || "Запись «Уязвимостей»").slice(0, 300),
+      title: (record.headline || record.title || record.snippet || "Запись раздела «Аудит уязвимостей»").slice(0, 300),
       note: bits.join(" · ").slice(0, 900)};
   };
   const addToCase = async (caseRow, record) => {
@@ -2487,7 +2487,7 @@ function LoopholeApp() {
     return (
       <div className="lp-state">
         <div className="lp-state-ic"><Icon name="shield" size={20} /></div>
-        <h1 className="lp-state-t">Нет доступа к модулю «Уязвимости»</h1>
+        <h1 className="lp-state-t">Нет доступа к разделу «Аудит уязвимостей»</h1>
         <p className="lp-state-x">Учётная запись не авторизована. Обратитесь к администратору модуля.</p>
       </div>
     );
@@ -2516,7 +2516,7 @@ function LoopholeApp() {
     <header className="lp-ph">
       <div className="lp-ph-main">
         <div className="lp-eyebrow">Анализ · схемы и лазейки</div>
-        <h1 className="lp-ph-t">Уязвимости</h1>
+        <h1 className="lp-ph-t">Аудит уязвимостей</h1>
         <p className="lp-ph-meta">
           Лазейки и мошеннические схемы в продуктах банков. Записи собираются из обсуждений
           на форумах и в соцсетях, новостей и сайтов банков; модель отмечает возможные находки,

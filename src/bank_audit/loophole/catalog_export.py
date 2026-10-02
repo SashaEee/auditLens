@@ -123,7 +123,7 @@ def to_xlsx(records: list[dict], filters: dict) -> bytes:
     wb.properties.creator = "AuditLens"
     wb.properties.lastModifiedBy = "AuditLens"
     wb.properties.title = title
-    wb.properties.subject = "Общая база — вкладка «Уязвимости»"
+    wb.properties.subject = "Общая база — раздел «Аудит уязвимостей»"
     wb.properties.description = stamp_line()
     wb.properties.keywords = "AuditLens"
 
@@ -147,7 +147,7 @@ def to_xlsx(records: list[dict], filters: dict) -> bytes:
     XL.sheet_base(ov, widths=[11.5] * 12, title=title)
     row = XL.banner(ov, banner_png(eyebrow="Уязвимости · общая база", title=title,
                                    subtitle=sub, width=1180), rows=8, width_px=1060)
-    XL.stamp(ov, row, text_=stamp_line() + " · вкладка «Уязвимости»", span=12)
+    XL.stamp(ov, row, text_=stamp_line() + " · раздел «Аудит уязвимостей»", span=12)
     row += 1
     fc = ov.cell(row=row, column=1,
                  value="Фильтры: " + " · ".join(f"{k.lower()}: {v}" for k, v in fl))

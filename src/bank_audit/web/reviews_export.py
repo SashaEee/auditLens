@@ -136,7 +136,7 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
     wb.properties.creator = "AuditLens"
     wb.properties.lastModifiedBy = "AuditLens"
     wb.properties.title = title
-    wb.properties.subject = "Жалобы клиентов — вкладка «Отзывы»"
+    wb.properties.subject = "Жалобы клиентов — раздел «Аудит отзывов»"
     wb.properties.description = stamp_line()
     wb.properties.keywords = "AuditLens"
 
@@ -185,7 +185,7 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
     XL.sheet_base(ov, widths=[11.5] * 12, title=title)
     row = XL.banner(ov, banner_png(eyebrow="Отзывы · жалобы клиентов", title=title,
                                    subtitle=sub, width=1180), rows=8, width_px=1060)
-    XL.stamp(ov, row, text_=stamp_line() + " · вкладка «Отзывы»", span=12)
+    XL.stamp(ov, row, text_=stamp_line() + " · раздел «Аудит отзывов»", span=12)
     row += 1
     ftxt = " · ".join(f"{k.lower()}: {v}" for k, v in fl)
     fc = ov.cell(row=row, column=1, value=f"Фильтры: {ftxt}")
@@ -321,10 +321,10 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
     for line in (
         ("Жалоба — отзыв с оценкой 1–2★ или смешанный; разметку (тема, эскалация, признаки, "
          "пересказ, цитата) делает модель по кодификатору AuditLens, цитата сверяется с текстом."),
-        ("Площадки: banki.ru, sravni.ru, bankiros.ru, finuslugi.ru — тот же корпус, что во "
-         "вкладке «Отзывы»."),
+        ("Площадки: banki.ru, sravni.ru, bankiros.ru, finuslugi.ru — тот же корпус, что в "
+         "разделе «Аудит отзывов»."),
         "Поиск по смыслу в выгрузку не входит: выгружается полный срез по фильтрам.",
-        f"{STAMP}. Источник — вкладка «Отзывы».",
+        f"{STAMP}. Источник — раздел «Аудит отзывов».",
     ):
         cell = ab.cell(row=r, column=1, value=line)
         cell.font = XL.font(10, color="ink2")

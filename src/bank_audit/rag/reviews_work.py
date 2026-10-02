@@ -291,7 +291,8 @@ def record_signals(sig: dict | None, bank: str, product: str | None = None,
     for s_ in signals:
         stats = {k: s_.get(k) for k in ("week", "baseline_week", "ratio", "excess", "q_value",
                                         "market_ratio", "bank_specific", "new", "accel",
-                                        "prev_week", "week_total")}
+                                        "prev_week", "week_total", "test", "status", "since",
+                                        "sustained", "baseline_before")}
         with db.session() as s:
             cur = s.execute(text("""
                 SELECT signal_id, stats FROM signal_journal
@@ -424,7 +425,8 @@ def subs_status(username: str) -> list[dict]:
     for bank, product, created in subs:
         sig = rd.weekly_signals(bank, product or None) or {}
         signals = [{k: x.get(k) for k in ("key", "label", "short", "risk", "week",
-                                          "baseline_week", "ratio", "level", "new", "accel")}
+                                          "baseline_week", "ratio", "level", "new", "accel",
+                                          "status", "since", "sustained")}
                    for x in (sig.get("signals") or [])[:3]]
         watch = []
         if not signals:
