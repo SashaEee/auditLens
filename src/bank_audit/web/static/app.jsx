@@ -3274,6 +3274,28 @@ function MkStep({series}){
   </div>;
 }
 
+// строка журнала изменений (и закреплённое изменение из ссылки)
+function MkChRow({ch,cat,hl,onPick,hlRef}){
+  const others=mkDiffOthers(ch.diff);
+  const big=ch.rate_delta!=null&&Math.abs(ch.rate_delta)>=0.05;
+  const showRateMove=ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!others.length);
+  return <button ref={hl?hlRef:null}
+    className={"mk-chrow"+(hl?" hl":"")+(big?" big":"")} onClick={()=>onPick(ch.offer_id)}>
+    <span className="mono mk-chdate">{fmtDateMsk(ch.changed_at)}</span>
+    <span className="mk-chbank">
+      <BankAvatar slug={ch.bank_slug} name={ch.bank_name} isSber={!!ch.is_sber}/>
+      <span>{ch.bank_name}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>{ch.title}{!cat?` · ${(CAT_LABELS[ch.category]||ch.category).toLowerCase()}`:""}</i></span>
+    </span>
+    <span className="mk-chmove mono tnum">
+      {showRateMove&&<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
+         {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2).replace(".",",")}</em>}</>}
+      {others.slice(0,3).map(o=><span key={o.k} className="mk-dv">
+        {o.label}: {mkFldVal(o.k,o.from)} → <b>{mkFldVal(o.k,o.to)}</b></span>)}
+      {others.length>3&&<span className="mk-dv mk-an">ещё {others.length-3}</span>}
+    </span>
+  </button>;
+}
+
 function MarketPage({params}){
   const P=params||{};
   // одноразовый легаси-пресет от bfGoDrill — только как фолбэк при пустом URL
@@ -3378,15 +3400,37 @@ function MarketPage({params}){
     apiFetch("/api/market?"+sp).then(setOffers).catch(e=>setErr(e.message));
   },[cat,term,q,view,seg,sub]);
 
-  useEffect(()=>{ // журнал
-    if(view!=="changes")return;
-    setChanges(null);
-    const sp=new URLSearchParams({days:"7",limit:"120"});
-    if(cat)sp.set("category",cat);
+  // Журнал: страницы по 100 строк, общий журнал сворачивает РКО в строку
+  // (отдельный рынок бизнеса не вытесняет вклады и кредиты), откаты в течение
+  // суток скрыты тем же правилом, что в итогах выпуска (аудит 03.10, РЫН-05)
+  const chParams=off=>{const sp=new URLSearchParams({days:"7",limit:"100",v:"2",offset:String(off)});
+    if(cat)sp.set("category",cat); else if(!bank)sp.set("fold","rko");
     if(bank)sp.set("bank_slug",bank);
     if(noise)sp.set("significant","false");
-    apiFetch("/api/recent-changes?"+sp).then(setChanges).catch(e=>setErr(e.message));
-  },[cat,bank,noise,view]);
+    if(hlChange.current)sp.set("focus",String(hlChange.current));
+    return sp;};
+  const[chBusy,setChBusy]=useState(false);
+  const chGen=useRef(0);   // поколение журнала: ответ «ещё» от прежнего фильтра отбрасываем
+  useEffect(()=>{ // журнал
+    if(view!=="changes")return;
+    const g=++chGen.current;
+    setChanges(null); setChBusy(false);
+    apiFetch("/api/recent-changes?"+chParams(0))
+      .then(d=>{if(g===chGen.current)setChanges(d);}).catch(e=>setErr(e.message));
+  },[cat,bank,noise,view]); // eslint-disable-line
+  const moreChanges=()=>{ if(!changes||chBusy)return; setChBusy(true);
+    const g=chGen.current;
+    apiFetch("/api/recent-changes?"+chParams(changes.items.length))
+      .then(d=>{ if(g!==chGen.current)return;
+        setChanges(c=>{ if(!c)return c;
+          const have=new Set(c.items.map(x=>x.change_id));
+          const items=[...c.items,...(d.items||[]).filter(x=>!have.has(x.change_id))];
+          // total — из свежего ответа (между страницами сбор мог скрыть или
+          // добавить строки); страница без новых строк — дальше нечего
+          // показывать. _more: дозагрузка не прокручивает к подсвеченной строке
+          return {...c,_more:true,items,
+                  total:items.length>c.items.length?(d.total??c.total):items.length};}); })
+      .catch(()=>{}).finally(()=>{ if(g===chGen.current)setChBusy(false); }); };
 
   useEffect(()=>{ // досье оффера
     if(!drawer){setDossier(null);return;}
@@ -3396,7 +3440,7 @@ function MarketPage({params}){
   },[drawer]);
 
   const hlRef=useRef(null);
-  useEffect(()=>{if(changes&&hlRef.current)
+  useEffect(()=>{if(changes&&!changes._more&&hlRef.current)
     hlRef.current.scrollIntoView({block:"center",
       behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});},[changes]);
 
@@ -3570,9 +3614,14 @@ function MarketPage({params}){
           <span>ранг Сбера{ac.main_group&&ac.main_group.label!=="массовые"?` · ${ac.main_group.label}`:""}{termOn?` · ${(MK_TERMS.find(x=>x[0]===term)||[,""])[1]}`:""}{ac.sber.tied>1?` · ${ac.sber.tied} наравне`:""}{ac.small_n?" · малая база":""}</span></div>}
         {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.sber.title||""}>
           <b>{mkMetric(ac.sber.rate,ac.metric,ac.metric_unit)}</b><span>{ac.sber.title?String(ac.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
-        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`лидер: ${ac.leader.name} · ${mkMetric(ac.leader.rate,ac.metric,ac.metric_unit)} · «${ac.leader.title}»`}>
+        {/* при нескольких банках на лучшем значении «лидер» — случайный из них
+            (так лидером дебетовых карт стал сервис оплаты подписок); называем
+            имя только у единственного лидера */}
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.at_best>1
+            ?`лучшее значение ${mkMetric(ac.leader.rate,ac.metric,ac.metric_unit)} — у ${ac.at_best} банков`
+            :`лидер: ${ac.leader.name} · ${mkMetric(ac.leader.rate,ac.metric,ac.metric_unit)} · «${ac.leader.title}»`}>
           <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{mkGap(ac.sber.gap_leader,ac.metric,ac.metric_unit)}</b>
-          <span>до лидера ({ac.leader.name})</span></div>}
+          <span>{ac.at_best>1?`до лучшего значения (${ac.at_best} банков)`:`до лидера (${ac.leader.name})`}</span></div>}
         <div className="surface mk-kpi bf-tip" data-tip={`медиана лучших офферов ${ac.n_banks} банков · разброс ${mkMetric(ac.min,ac.metric,ac.metric_unit)}–${mkMetric(ac.max,ac.metric,ac.metric_unit)}`}>
           <b>{mkMetric(ac.median,ac.metric,ac.metric_unit)}</b><span>медиана рынка</span></div>
       </div>}
@@ -3608,7 +3657,7 @@ function MarketPage({params}){
               {SEG_RU[x.seg]||x.seg}<i>{x.n}</i></button>)}
           </div>}
         {view==="changes"&&<label className="mk-noise">
-          <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум
+          <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум и откаты
         </label>}
         {view==="changes"&&bank&&<button className="rv-achip" onClick={()=>setBank(null)} aria-label={`Снять фильтр по банку ${bank}`}>банк: {bank}<RvIX s={12}/></button>}
       </div>
@@ -3730,31 +3779,36 @@ function MarketPage({params}){
       {/* ЖУРНАЛ ИЗМЕНЕНИЙ */}
       {view==="changes"&&<div className="surface" style={{overflow:"hidden"}}>
         <div style={{padding:"14px 20px",borderBottom:"1px solid var(--hair)"}}>
-          <div className="eyebrow" style={{marginBottom:2}}>Журнал изменений · 7 дней{noise?" · включая микрошум":" · только значимые"}</div>
-          <div className="t-cap">Значимое = изменение нестаточного условия или сдвиг ставки от 0.01 пп. Клик по строке — досье оффера.</div>
+          <div className="eyebrow" style={{marginBottom:2}}>Журнал изменений · 7 дней{noise?" · включая микрошум и откаты":" · только значимые"}
+            {changes&&changes.total!=null?` · ${fmtNum(changes.total)} ${plural(changes.total,"изменение","изменения","изменений")}`:""}</div>
+          <div className="t-cap">Значимое = изменение нестаточного условия или сдвиг ставки от 0,01 п.п.
+            {changes&&changes.hidden_reverts>0?` Скрыто откатов (условия вернулись к прежним в течение 3 суток): ${fmtNum(changes.hidden_reverts)}.`:""} Клик по строке — досье оффера.</div>
         </div>
+        {changes&&changes.focus&&changes.focus_status!=="outside_window"&&
+          !(changes.items||[]).some(x=>x.change_id===changes.focus.change_id)&&
+          <div className="mk-chfocus">
+            <div className="t-cap" style={{padding:"10px 20px 0"}}>Изменение из ссылки
+              {changes.focus_status==="reverted"?" — в течение 3 суток условия вернулись к прежним, поэтому в журнале оно скрыто как откат"
+               :changes.focus_status==="insignificant"?" — микрошум ставки, в журнале значимых его нет"
+               :changes.focus_status==="folded"?" — РКО в общем журнале свёрнуты в строку ниже":""}</div>
+            <MkChRow ch={changes.focus} cat={cat} hl onPick={setDrawer} hlRef={hlRef}/>
+          </div>}
+        {changes&&changes.focus_status==="outside_window"&&hlChange.current&&
+          <div className="t-cap" style={{padding:"10px 20px"}}>Изменение из ссылки старше 7 дней — откройте досье оффера.</div>}
+        {changes&&changes.focus_status==="filtered"&&hlChange.current&&
+          <div className="t-cap" style={{padding:"10px 20px"}}>Изменение из ссылки — в другой категории или банке: снимите фильтр, чтобы увидеть его.</div>}
         {!changes?<div style={{padding:28}}><Skel h={30}/><div style={{height:8}}/><Skel h={30}/><div style={{height:8}}/><Skel h={30}/></div>:
-         changes.length===0?<EmptyState text="За неделю изменений не зафиксировано."/>:
-         changes.map(ch=>{
-           const hl=hlChange.current&&ch.change_id===hlChange.current;
-           const others=mkDiffOthers(ch.diff);
-           const big=ch.rate_delta!=null&&Math.abs(ch.rate_delta)>=0.05;
-           const showRateMove=ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!others.length);
-           return <button key={ch.change_id} ref={hl?hlRef:null}
-             className={"mk-chrow"+(hl?" hl":"")+(big?" big":"")} onClick={()=>setDrawer(ch.offer_id)}>
-             <span className="mono mk-chdate">{fmtDateMsk(ch.changed_at)}</span>
-             <span className="mk-chbank">
-               <BankAvatar slug={ch.bank_slug} name={ch.bank_name} isSber={!!ch.is_sber}/>
-               <span>{ch.bank_name}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>{ch.title}{!cat?` · ${(CAT_LABELS[ch.category]||ch.category).toLowerCase()}`:""}</i></span>
-             </span>
-             <span className="mk-chmove mono tnum">
-               {showRateMove&&<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
-                  {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2).replace(".",",")}</em>}</>}
-               {others.slice(0,3).map(o=><span key={o.k} className="mk-dv">
-                 {o.label}: {mkFldVal(o.k,o.from)} → <b>{mkFldVal(o.k,o.to)}</b></span>)}
-               {others.length>3&&<span className="mk-dv mk-an">ещё {others.length-3}</span>}
-             </span>
-           </button>;})}
+         !(changes.items||[]).length&&!(changes.folded||[]).length?<EmptyState text="За неделю изменений не зафиксировано."/>:<>
+         {(changes.items||[]).map(ch=><MkChRow key={ch.change_id} ch={ch} cat={cat}
+           hl={!!(hlChange.current&&ch.change_id===hlChange.current)} onPick={setDrawer} hlRef={hlRef}/>)}
+         {(changes.folded||[]).map(f=><button key={f.category} className="mk-chrow mk-fold" onClick={()=>setCat(f.category)}>
+           <span className="mono mk-chdate">{fmtDateMsk(f.last_at)}</span>
+           <span className="mk-chbank"><span>{CAT_LABELS[f.category]||f.category}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>свёрнуто: отдельный рынок бизнеса</i></span></span>
+           <span className="mk-chmove tnum">{fmtNum(f.n)} {plural(f.n,"изменение","изменения","изменений")} у {fmtNum(f.n_banks)} {plural(f.n_banks,"банка","банков","банков")} ›</span>
+         </button>)}
+         {changes.total>(changes.items||[]).length&&<button className="btn btn-ghost mk-more" onClick={moreChanges} disabled={chBusy}>
+           {chBusy?"Загружаю…":`Показать ещё (${(changes.items||[]).length} из ${changes.total})`}</button>}
+        </>}
       </div>}
     </>}
 
@@ -7626,8 +7680,9 @@ function BanksPage(){
   const dayMs=864e5, now=Date.now();
   const ratedAt=sorted.map(b=>b.rating_at?new Date(b.rating_at).getTime():0).filter(Boolean);
   const freshest=ratedAt.length?Math.max(...ratedAt):0;
+  // в «Аудит отзывов» — тот банк корпуса, чьи числа показаны в «У нас»
   const openReviews=(b)=>{ try{sessionStorage.setItem("al-rv-prefilter",
-      JSON.stringify({bank:b.name||""}));}catch{} location.hash="reviews"; };
+      JSON.stringify({bank:b.own_canon||b.name||""}));}catch{} location.hash="reviews"; };
 
   if(loading)return <LoadingPage/>;
   if(err)return <ErrState msg={err}/>;
@@ -7677,7 +7732,9 @@ function BanksPage(){
             const solved=parseFloat(b.solved_pct)||0;
             const score=parseFloat(b.rating_score)||0;
             const at=b.rating_at?new Date(b.rating_at).getTime():0;
-            const stale=at>0&&(now-at)>3*dayMs;
+            // устаревание считает сервер — от последней выдачи рейтинга, а не по
+            // часам браузера (ДАН-14); старая эвристика — для старого API
+            const stale=b.rating_stale!=null?!!b.rating_stale:(at>0&&(now-at)>3*dayMs);
             return <tr key={b.bank_id||b.slug} className={b.is_sber?"is-sber":""}
                        onClick={()=>b.own_reviews?openReviews(b):null}
                        style={b.own_reviews?{cursor:"pointer"}:null}
@@ -7699,7 +7756,8 @@ function BanksPage(){
               </td>
               <td data-label="БАЛЛ · МЕСТО" className="right mono tnum">
                 {score>0?<>{score.toFixed(1).replace(".",",")}
-                  {b.place?<span style={{color:"var(--ink-3)"}}> · №{b.place}</span>:null}</>
+                  {b.place?<span style={{color:"var(--ink-3)"}}> · №{b.place}</span>
+                    :b.place_last?<span style={{color:"var(--ink-3)"}} title="место на дату последнего появления в выдаче — сейчас его занимает другой банк"> · был №{b.place_last}</span>:null}</>
                   :<span style={{color:"var(--ink-3)"}}>—</span>}
               </td>
               <td data-label="СР. ОЦЕНКА" className="right">
@@ -7714,8 +7772,9 @@ function BanksPage(){
               </td>
               <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${String(solved).replace(".",",")}%`:"—"}</td>
               <td data-label="У НАС" className="right mono tnum">
-                {b.own_reviews?<span style={{color:"var(--accent)"}} title={b.own_last_dt?`свежий отзыв ${fmtDateMsk(b.own_last_dt)}`:""}>
-                  {fmtNum(b.own_reviews)}</span>:<span style={{color:"var(--ink-3)"}}>—</span>}
+                {b.own_reviews?<span style={{color:"var(--accent)"}} title={[b.own_last_dt?`свежий отзыв ${fmtDateMsk(b.own_last_dt)}`:"",b.own_note||""].filter(Boolean).join(" · ")}>
+                  {fmtNum(b.own_reviews)}{b.own_note?" *":""}</span>
+                  :<span style={{color:"var(--ink-3)"}} title={b.own_shared_with?`отзывы этой организации учтены в строке «${b.own_shared_with}»`:""}>—</span>}
               </td>
             </tr>;
           })}
@@ -7938,11 +7997,12 @@ function SourcesTech({data:extData}){
               <td className="mono" style={{fontWeight:500,fontSize:12}}>{r.source}</td>
               <td className="mono" style={{color:"var(--ink-2)",fontSize:12}}>{r.target_name}</td>
               <td>
-                <span className={`badge ${r.status==="ok"?"pos":r.status==="error"||r.status==="failed"?"neg":r.status==="captcha"?"warn":""}`}>
+                <span className={`badge ${r.status==="ok"?"pos":r.status==="error"||r.status==="failed"?"neg":r.status==="captcha"||r.status==="partial"?"warn":""}`}
+                      title={r.status==="partial"?"часть страниц источника не прочитана: данные записаны, но протухание по этому прогону не считается":undefined}>
                   <span className="dot"/>
                   {r.status==="ok"?(empty?"снимок без изменений":idempotent?"без изменений":"новые данные")
                     :r.status==="error"||r.status==="failed"?"ошибка"
-                    :r.status==="captcha"?"капча":r.status||"в процессе"}
+                    :r.status==="captcha"?"капча":r.status==="partial"?"неполный обход":r.status||"в процессе"}
                 </span>
               </td>
               <td className="right mono tnum" style={{color:seen?undefined:"var(--ink-4)"}}>{seen||"—"}</td>
@@ -8239,7 +8299,11 @@ function KbDoc({g,onOpen}){
       <span className="kb-dom">{dom}</span>
       {kind&&<span>{kind}</span>}
       <span>обновлён {formatRelDate(g.fetched_at)}</span>
-      {g.duplicates>0&&<span title="тот же текст найден и по другим адресам">
+      {g.versions>0&&<span title="более ранние обходы этой же страницы">
+        ещё {g.versions} {plural(g.versions,"версия","версии","версий")}</span>}
+      {g.mirrors>0&&<span title="тот же текст по другим адресам">
+        ещё {g.mirrors} {plural(g.mirrors,"копия","копии","копий")}</span>}
+      {g.versions==null&&g.duplicates>0&&<span title="тот же текст найден и по другим адресам">
         ещё {g.duplicates} {plural(g.duplicates,"копия","копии","копий")}</span>}
     </div>
     <div className="kb-hits">
@@ -8367,7 +8431,10 @@ function KbDocCard({documentId,onClose}){
         {o.mine&&o.question&&<div className="kb-origin-q">«{o.question}»</div>}
         {!o.mine&&<div className="kb-origin-q">запрос коллеги</div>}
         {o.report_id&&o.mine&&<a href={`#ai?report=${o.report_id}`}>открыть отчёт</a>}
-        {o.skipped_reason&&<span className="kb-origin-skip">не проиндексирован: {o.skipped_reason}</span>}
+        {o.skipped_reason&&<span className="kb-origin-skip">{o.skipped_reason==="duplicate"
+          ?"перечитан, текст не изменился"
+          :KB_SKIP_RU[o.skipped_reason]?"не в поиске: "+KB_SKIP_RU[o.skipped_reason]
+          :"не прочитан: "+(KB_FAIL_RU[o.skipped_reason]||o.skipped_reason)}</span>}
       </div>)}
     </div>}
 
@@ -8428,48 +8495,58 @@ const KB_TOPIC_RU={deposits:"Вклады",credits:"Кредиты",mortgage:"И
   documents:"Документы и оферты",document:"Файлы (PDF, XLS)",support:"Поддержка",
   mobile_app:"Приложение",about:"О банке"};
 
+const KB_FAIL_RU={captcha:"капча",fetch_failed:"сайт не ответил",empty_after_parse:"пустая страница",antibot_stub:"заглушка антибота"};
+const KB_SKIP_RU={sponsored_or_low_trust:"реклама или низкое доверие",no_chunks:"нечего индексировать",error:"внутренняя ошибка"};
 function KbCoverage({onPick}){
   const[c,setC]=useState(null);
   useEffect(()=>{apiFetch("/api/knowledge/coverage").then(setC).catch(()=>{});},[]);
   if(!c)return <Skel h={180}/>;
 
-  const banks=(c.banks||[]).slice(0,10);
-  // показываем только темы, где хоть что-то есть — пустые столбцы это шум
-  const live=(c.topics||[]).filter(t=>(c.cells||[]).some(x=>x.topic===t.id));
-  const at=(slug,topic)=>{
-    const x=(c.cells||[]).find(y=>y.slug===slug&&y.topic===topic);
-    return x?x.n:0;
-  };
+  // первые 12 по числу страниц + банки, у которых есть только сбои (сайт
+  // целиком закрыт): бэкенд дописывает их в конец, и срез их отрезал
+  const banks=[...(c.banks||[]).slice(0,12),...(c.banks||[]).slice(12).filter(b=>!b.n)];
+  // показываем темы, где есть документы или хотя бы попытки — пустые столбцы шум
+  const live=(c.topics||[]).filter(t=>(c.cells||[]).some(x=>x.topic===t.id)
+    ||(c.failed_cells||[]).some(x=>x.topic===t.id));
+  const cell=(slug,topic)=>(c.cells||[]).find(y=>y.slug===slug&&y.topic===topic);
+  const fail=(slug,topic)=>(c.failed_cells||[]).find(y=>y.slug===slug&&y.topic===topic);
+  const bankFail=slug=>(c.failed_banks||[]).find(y=>y.slug===slug);
   const max=Math.max(1,...(c.cells||[]).map(x=>x.n));
+  const u=c.untagged_parts;
 
   return <section className="surface kb-panel">
     <div className="eyebrow">Карта покрытия — банк × тема</div>
     <p className="t-cap" style={{margin:"4px 0 12px"}}>
-      Насыщенность клетки — сколько документов собрано. Пустая клетка значит,
-      что по этой теме у банка доказательной базы нет: вывод инструмента там
-      опирается только на агрегаторы. Нажмите на клетку, чтобы искать в ней.
+      Число в клетке — сколько страниц собрано по теме (версии одной страницы
+      считаются один раз). Светлая клетка — только агрегаторы, без страниц самого
+      банка. «×» — пробовали собрать, но сайт не отдал страницу. Нажмите на клетку,
+      чтобы искать в ней.
     </p>
     <div className="kb-heat-wrap">
       <table className="kb-heat">
         <thead><tr><th></th>{live.map(t=>
           <th key={t.id}><span>{t.label}</span></th>)}</tr></thead>
-        <tbody>{banks.map(b=><tr key={b.slug}>
-          <th>{b.name}</th>
-          {live.map(t=>{const n=at(b.slug,t.id);
+        <tbody>{banks.map(b=>{const bf=bankFail(b.slug);
+          return <tr key={b.slug}>
+          <th>{b.name}{bf&&bf.blocked&&<span className="kb-bfail" title={Object.entries(bf.reasons||{}).map(([k,v])=>`${KB_FAIL_RU[k]||k}: ${v}`).join(", ")}> · сайт не отдаёт</span>}</th>
+          {live.map(t=>{const x=cell(b.slug,t.id),n=x?x.n:0,own=x?x.n_official:0,f=!n&&fail(b.slug,t.id);
             return <td key={t.id}>
-              <button className={"kb-cell"+(n?"":" nil")}
+              <button className={"kb-cell"+(n?(own?"":" agg"):f?" fail":" nil")}
                       style={n?{"--f":Math.min(1,0.18+n/max)}:null}
-                      title={n?`${b.name} · ${t.label}: ${n} док.`
+                      title={n?`${b.name} · ${t.label}: ${n} стр., с сайта банка ${own||0}`
+                              :f?`${b.name} · ${t.label}: пробовали ${f.n} раз — ${KB_FAIL_RU[f.reason]||f.reason}${f.last_at?`, последняя попытка ${fmtDate(f.last_at)}`:""}`
                               :`${b.name} · ${t.label}: документов нет`}
                       onClick={()=>onPick&&onPick(b,t,n)}>
-                {n||""}</button></td>;})}
-        </tr>)}</tbody>
+                {n||(f?"×":"")}</button></td>;})}
+        </tr>;})}</tbody>
       </table>
     </div>
-    {c.untagged>0&&<p className="t-cap" style={{marginTop:10}}>
-      Ещё {c.untagged} документов вне карты: это акты ЦБ, судебная практика и
-      новости — у них тема не определяется по адресу страницы. Поиск их находит.
-    </p>}
+    {u&&u.total>0?<p className="t-cap" style={{marginTop:10}}>
+      Ещё {fmtNum(u.total)} {plural(u.total,"страница","страницы","страниц")} без темы: {fmtNum(u.legal)} — акты регулятора,
+      правовые базы и госорганы, {fmtNum(u.press)} — СМИ, {fmtNum(u.rest)} — страницы банков и агрегаторов, где тему не
+      удалось определить ни по адресу, ни по заголовку. Поиск находит их все.</p>
+    :c.untagged>0&&<p className="t-cap" style={{marginTop:10}}>
+      Ещё {c.untagged} документов вне карты: тема по адресу и заголовку не определилась. Поиск их находит.</p>}
   </section>;
 }
 
@@ -9665,12 +9742,23 @@ function KnowledgePage({params}){
 
     <details className="surface kb-tech" open={tech} onToggle={e=>setTech(e.target.open)}>
       <summary>Техническое состояние индекса</summary>
+      {/* Раньше: «пополняется автоматически при ночном сборе» — ночной сбор
+          тарифов архив не трогал (аудит 03.10, ДАН-02). Теперь текст из данных. */}
       <p className="t-cap" style={{margin:"6px 0 10px"}}>
         Поиск двухконтурный: векторный индекс (HNSW, косинус) и полнотекстовый
-        (русская морфология). Результаты сливаются ранговой суммой. Архив
-        пополняется автоматически при ночном сборе — ручной запуск не нужен.</p>
+        (русская морфология). Результаты сливаются ранговой суммой; сайт банка и
+        регулятор весят больше агрегатора, одна страница занимает одно место.
+        Архив пополняется сам: страница, которую ИИ-помощник прочитал для ответа
+        или отчёта, сохраняется здесь{ov&&ov.crawl&&ov.crawl.enabled?<>, а ключевые
+        страницы {ov.crawl.banks.length} крупных банков перечитываются раз в {ov.crawl.every_days} дн.
+        (Сбербанк — раз в {ov.crawl.sber_every_days} дн.)</>:null}. Ночной сбор тарифов архив не пополняет.</p>
       <div className="kb-tech-kv">
         <span>Последнее пополнение</span><b>{formatRelDate(st.last_fetch)}</b>
+        {(ov&&ov.growth||[]).map(g=><React.Fragment key={g.kind}>
+          <span>За 7 дней · {({report:"ИИ-помощник и отчёты",quick:"быстрые ответы",crawl:"обход сайтов банков",manual:"вручную",refresh:"перепроверка"})[g.kind]||g.kind}</span>
+          <b>новых {fmtNum(g.added||0)} · без изменений {fmtNum(g.confirmed||0)} · не удалось {fmtNum(g.failed||0)}</b></React.Fragment>)}
+        {ov&&ov.crawl&&ov.crawl.enabled&&<><span>Последний обход сайтов банков</span>
+          <b>{ov.crawl.last_run?formatRelDate(ov.crawl.last_run):"ещё не было"}</b></>}
         <span>Порог доверия для поиска</span><b>0.50</b>
         <span>Фрагментов в индексе</span><b>{st.fragments?fmtNum(st.fragments):"—"}</b>
       </div>
@@ -10445,9 +10533,16 @@ function PuReviewSources({r}){
           {x.external?"внешний корпус":x.last_run?`${rvDate(x.last_run)} ${x.last_run.slice(11,16)}`:"—"}{x.last_run_status==="failed"?" · ошибка":""}</td>
         <td>{x.last_item?rvDate(x.last_item):"—"}</td>
       </tr>)}</tbody></table></div>
-    {(r.gone_banks||[]).length>0&&<p className="t-cap" style={{margin:"10px 0 0"}}>
-      Пропали из корпуса (≥20 жалоб в месяц раньше, ни одной за 45 дней):{" "}
-      {r.gone_banks.map(g=>`${g.bank} (~${g.per_month}/мес, последняя ${rvDate(g.last)})`).join(", ")}</p>}
+    {/* правило — от собственного потока банка: за дни тишины при его норме
+        ждали бы ≥10 жалоб (ПЛТ-14); известные слияния — пояснением, не тревогой */}
+    {(r.gone_banks||[]).filter(g=>!g.known).length>0&&<p className="t-cap" style={{margin:"10px 0 0"}}>
+      Пропали из корпуса (при их потоке за дни тишины ждали бы 10+ жалоб):{" "}
+      {r.gone_banks.filter(g=>!g.known).map(g=>`${g.bank} (~${g.per_month}/мес, последняя ${rvDate(g.last)}`
+        +(g.silent_days!=null?`, тишина ${g.silent_days} дн.`:"")
+        +((g.rename_candidates||[]).length?`; возможно, переименован в ${g.rename_candidates.join(" или ")}`:"")+")").join(", ")}</p>}
+    {(r.gone_banks||[]).filter(g=>g.known).length>0&&<p className="t-cap" style={{margin:"6px 0 0",color:"var(--ink-3)"}}>
+      Ушли с площадки по известной причине:{" "}
+      {r.gone_banks.filter(g=>g.known).map(g=>`${g.bank} — ${g.known}`).join("; ")}</p>}
   </div>;
 }
 

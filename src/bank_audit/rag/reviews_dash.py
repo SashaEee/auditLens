@@ -1736,17 +1736,31 @@ def source_health() -> dict:
              WHERE source IN ('banki_reviews', 'sravni_reviews', 'finuslugi_reviews', 'bankiros_reviews')
                AND posted_at <= now()
              GROUP BY 1""")).all()}
+        # Пропавший банк: поток жалоб за полгода до последнего отзыва против дней
+        # тишины. Раньше ждали 45 дней тишины при ≥20 жалобах в месяц — Почта
+        # Банк выплыл бы через полтора месяца (ПЛТ-14). «Сегодня» — свежесть
+        # всего корпуса: встал краулер — молчат все, и это не пропажа банка.
         gone = s.execute(text(f"""
-            SELECT i.bank, count(*) FILTER (WHERE i.dt BETWEEN now() - interval '225 days'
-                                                          AND now() - interval '45 days') / 6.0 AS per_month,
-                   max(i.dt)::date AS last
-            FROM review_index i
-            WHERE i.source = 'bankiru' AND {_CMP} AND i.dt > now() - interval '225 days' AND i.dt <= now()
-            GROUP BY 1
-            HAVING count(*) FILTER (WHERE i.dt > now() - interval '45 days') = 0
-               AND count(*) FILTER (WHERE i.dt BETWEEN now() - interval '225 days'
-                                                  AND now() - interval '45 days') >= 120
-            ORDER BY 2 DESC""")).all()
+            WITH l AS (SELECT i.bank, max(i.dt) AS last FROM review_index i
+                        WHERE i.source = 'bankiru' AND {_CMP}
+                          AND i.dt > now() - interval '225 days' AND i.dt <= now()
+                        GROUP BY 1)
+            SELECT l.bank, count(*) / 180.0 AS per_day, l.last::date AS last
+              FROM l JOIN review_index i ON i.bank = l.bank AND i.source = 'bankiru'
+                    AND {_CMP} AND i.dt BETWEEN l.last - interval '180 days' AND l.last
+             GROUP BY 1, 3""")).all()
+        # новичок — от пяти жалоб: банк с одной жалобой иначе получал «1 в день»
+        firsts = s.execute(text(f"""
+            SELECT i.bank, min(i.dt)::date AS first, count(*) AS n
+              FROM review_index i
+             WHERE i.source = 'bankiru' AND {_CMP} AND i.dt <= now()
+             GROUP BY 1 HAVING min(i.dt) > now() - interval '260 days'
+                          AND count(*) >= 5""")).all()
+        # «сегодня» — по размеченным жалобам, как и тишина банка: встала
+        # разметка — молчат все банки, и это не пропажа
+        cmp_last = s.execute(text(f"""
+            SELECT max(i.dt)::date FROM review_index i
+             WHERE i.source = 'bankiru' AND {_CMP} AND i.dt <= now()""")).scalar()
     import statistics
     by: dict[str, list[int]] = {}
     for src, w, n in rows:
@@ -1777,8 +1791,48 @@ def source_health() -> dict:
                                "last_run": run[1].isoformat() if run else None,
                                "last_run_status": run[2] if run else None,
                                "last_error": (run[3] or None) if run else None})
-    out["gone_banks"] = [{"bank": b, "per_month": round(float(pm)), "last": str(last)}
-                         for b, pm, last in gone]
+    corpus_last = min(x for x in (last_item.get("bankiru"), cmp_last) if x) \
+        if (last_item.get("bankiru") or cmp_last) else None
+    out["gone_banks"] = classify_gone(
+        [(b, float(pd), last) for b, pd, last in gone],
+        # поток новичка — от первой жалобы до свежести корпуса
+        {b: (f, float(n) / max((corpus_last - f).days, 1)) for b, f, n in firsts},
+        corpus_last) if corpus_last else []
+    return out
+
+
+# Банки, ушедшие с площадки по известной причине: не тревога, а пояснение.
+# Почта Банк — слияние: площадка ведёт его отзывы под ВТБ (bankiru_fts, коммент
+# к BANK_RENAMES), склеивать его с ВТБ как переименование нельзя.
+KNOWN_BANK_EXITS = {
+    "Почта Банк": {"into": "ВТБ",
+                   "note": "площадка ведёт отзывы Почта Банка под ВТБ (слияние, май 2026)"},
+}
+
+
+def classify_gone(stats, firsts, today, *, min_silent: int = 7, min_expected: float = 10.0):
+    """Пропавшие из корпуса банки и кандидаты в переименование.
+
+    stats: [(bank, жалоб в день за полгода до последнего отзыва, последний отзыв)];
+    firsts: {bank: (первый отзыв, жалоб в день)} — банки, появившиеся недавно;
+    today: свежесть корпуса. Пропал, если тишина дольше min_silent дней и при его
+    потоке за это время ждали бы ≥ min_expected жалоб (вероятность нуля при живом
+    потоке < 5·10⁻⁵). Кандидат в новое имя — банк, впервые появившийся в пределах
+    30 дней от последнего отзыва пропавшего, с потоком не меньше 30 % от его."""
+    out = []
+    for bank, per_day, last in stats:
+        silent = (today - last).days
+        lam = per_day * silent
+        if silent <= min_silent or lam < min_expected:
+            continue
+        cands = [b for b, (f, pd) in firsts.items()
+                 if b != bank and abs((f - last).days) <= 30 and pd >= 0.3 * per_day]
+        known = KNOWN_BANK_EXITS.get(bank)
+        out.append({"bank": bank, "per_month": round(per_day * 30), "last": str(last),
+                    "silent_days": silent, "expected": round(lam, 1),
+                    "rename_candidates": sorted(cands),
+                    "known": (known or {}).get("note")})
+    out.sort(key=lambda g: (g["known"] is not None, -g["expected"]))
     return out
 
 

@@ -102,16 +102,69 @@ def discover_sitemap_url(homepage_url: str) -> str | None:
     return None
 
 
+# Темы по адресу — с границами слова по нормализованному пути (нижний регистр,
+# «_» и «.» → «-»). Прежние регулярки без границ ставили «Приложение» на
+# /application/, «Автокредиты» на /autopayment, «Кредиты» на кредитные карты и
+# ипотеку Сбера, а ипотеку и дебетовые карты banki.ru не размечали вовсе: на
+# карте покрытия появлялись ложные слепые зоны (аудит 03.10, ДАН-03).
+_B, _E = r"(?<![a-z0-9])", r"(?![a-z0-9])"
+_CARD, _CRED = r"(?:cards?|kart[a-z]*|bank-cards)", r"(?:credit|kredit)[a-z]*"
+
+
+def _w(*alts: str) -> str:
+    return _B + "(?:" + "|".join(alts) + ")" + _E
+
+
+TOPIC_RULES = [
+    ("mortgage", _w(r"ipotek[a-z]*", r"ipotech[a-z]*", r"mortgage[a-z]*", r"hypothec[a-z]*")
+     + r"|/credits/home[a-z]*" + _E),
+    ("cards_credit", _w(r"credit-?cards?", r"creditcards", r"kreditn[a-z]*-kart[a-z]*",
+                        r"kreditk[a-z]*") + r"|" + _B + _CARD + r"/" + _CRED + _E
+     + r"|/(?:credits?|kredit[a-z]*)/(?:cards?|kart[a-z]*)" + _E),
+    ("cards_debit", _w(r"debit-?cards?", r"debitcards", r"debetov[a-z]*")
+     + r"|" + _B + _CARD + r"/debit" + _E),
+    # голые auto/avto — это и автоплатёж, и КАСКО: только кредитные формы и
+    # раздел «авто» внутри кредитов
+    ("auto", _w(r"avtokredit[a-z]*", r"autocredit[a-z]*", r"auto-credit[a-z]*", r"auto-loans?",
+                r"car-loans?", r"avto-?kredit[a-z]*", r"kredit-na-avto[a-z]*")
+     + r"|/(?:credits?|kredit[a-z]*|loans?)/(?:auto|avto|cars?)(?:-?(?:loans?|credit[a-z]*|kredit[a-z]*))?"
+     + _E),
+    ("transfers_intl", _w(r"swift", r"foreign-?transfers?", r"za-?rubezh[a-z]*",
+                          r"za-?granic[a-z]*", r"abroad", r"international-transfers?")),
+    ("deposits", _w(r"deposits?", r"vklad[a-z]*", r"savings?", r"contributions",
+                    r"nakopitel[a-z]*")),
+    ("credits", _w(r"credits?", r"kredit[a-z]*", r"loans?", r"cash-loans?", r"zaim[a-z]*",
+                   r"zaem", r"refinans[a-z]*", r"refinancing", r"take-credit", r"potrebkredit[a-z]*")),
+    ("cards", _w(r"cards?", r"karty", r"karta", r"kart", r"bank-cards")),
+    ("tariffs", _w(r"tarif[a-z]*", r"tariffs?")),
+    ("fees", _w(r"commissions?", r"komissi[a-z]*", r"fees?")),
+    ("transfers", _w(r"transfers?", r"perevod[a-z]*", r"payments?", r"sbp")),
+    ("support", _w(r"support", r"help", r"contacts?", r"podderzhk[a-z]*", r"faq")),
+    ("mobile_app", _w(r"app", r"apps", r"mobile-app[a-z]*", r"mobile-bank[a-z]*",
+                      r"prilozheni[a-z]*", r"internet-bank[a-z]*", r"inner-apps",
+                      r"(?:sberbank|sber|vtb|alfa|tinkoff|t-bank|bank)-online")),
+    ("business", _w(r"business", r"biznes[a-z]*", r"sme", r"msb", r"corporate")),
+    ("rko", _w(r"rko", r"raschetn[a-z]*", r"current-accounts?")),
+    ("investments", _w(r"invest[a-z]*", r"broker[a-z]*", r"iis")),
+    ("premium", _w(r"premium", r"prive", r"private", r"private-banking")),
+    ("documents", _w(r"documents?", r"legal", r"oferta", r"tarify-i-dokumenty")),
+    ("about", _w(r"about", r"o-banke", r"o-nas", r"raskrytie[a-z]*", r"disclosure")),
+]
+# «potreb…» без «kredit» — чаще «защита прав потребителей», а не потребкредит;
+# «potrebitelskij-kredit» и так ловится по «kredit»
+_RULES = [(t, re.compile(p)) for t, p in TOPIC_RULES]
+# специфичная тема гасит общую: ипотека, авто и кредитная карта — не «Кредиты»
+_SUPPRESS = {"credits": {"mortgage", "auto", "cards_credit"},
+             "cards": {"cards_credit", "cards_debit"}, "transfers": {"transfers_intl"}}
+
+
 def classify_url(url: str) -> list[str]:
     """Возвращает список topic-меток, к которым подходит URL."""
-    path = urlparse(url).path.lower()
-    tags = []
-    for topic, patterns in TOPIC_PATTERNS.items():
-        for pat in patterns:
-            if re.search(pat, path):
-                tags.append(topic)
-                break
-    if path.endswith(DOC_EXTENSIONS):
+    raw = (urlparse(url).path or "").lower()
+    path = "/" + re.sub(r"[_.]", "-", raw).strip("/") + "/"
+    tags = [t for t, rx in _RULES if rx.search(path)]
+    tags = [t for t in tags if not (_SUPPRESS.get(t, set()) & set(tags))]
+    if raw.endswith(DOC_EXTENSIONS):
         tags.append("document")
     return tags
 
@@ -161,7 +214,9 @@ TOP_BANK_SITES: dict[str, str] = {
     "uralsib":     "https://www.uralsib.ru/",
     "rosbank":     "https://www.rosbank.ru/",
     "bspb":        "https://www.bspb.ru/",
-    "domrf":       "https://дом.рф/",
+    # сайт банка, а не института развития (дом.рф): у института капча и
+    # нет тарифов банка (аудит 03.10, ДАН-03)
+    "domrf":       "https://domrfbank.ru/",
     "sinara":      "https://sinarabank.ru/",
     "rencredit":   "https://rencredit.ru/",
     "rsb":         "https://www.rsb.ru/",

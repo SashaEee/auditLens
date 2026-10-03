@@ -60,6 +60,13 @@ _started = False
 _stats = {"enqueued": 0, "done": 0, "failed": 0, "dropped": 0, "duplicate": 0}
 
 
+def is_running() -> bool:
+    """Воркеры подняты (приложением). Фоновые писатели архива — отчёты и обход
+    сайтов — без поднятой очереди ничего не ставят: в тестах ленивый старт
+    подвесил бы интерпретатор не-daemon воркерами."""
+    return _started
+
+
 def stats() -> dict:
     with _lock:
         return {**_stats, "depth": _q.qsize(), "inflight": len(_inflight),
@@ -96,9 +103,17 @@ def submit(url: str, **kw) -> bool:
 
 
 def _record_origin(job: Job, document_id: int | None, skipped: str | None) -> None:
-    """Журнал происхождения. Пишем и при неудаче: без записи «пробовали, но
-    была капча» карта пробелов не отличит недоступный документ от несуществующего."""
     o = job.origin or {}
+    record_origin(job.final_url or job.url, document_id, skipped, o,
+                  o.get("fetch_mode") or ("browser" if job.prefer_browser else "http"))
+
+
+def record_origin(url: str, document_id: int | None, skipped: str | None,
+                  origin: dict, fetch_mode: str | None) -> None:
+    """Журнал происхождения. Пишем и при неудаче: без записи «пробовали, но
+    была капча» карта пробелов не отличит недоступный документ от несуществующего.
+    Одна точка записи для очереди, отчётов и обхода сайтов банков."""
+    o = origin or {}
     if not o.get("kind"):
         return
     try:
@@ -110,14 +125,14 @@ def _record_origin(job: Job, document_id: int | None, skipped: str | None) -> No
                                             username, session_id, question,
                                             fetch_mode, skipped_reason)
                 VALUES (:d,:u,:k,:r,:un,:sid,:q,:fm,:sr)
-            """), {"d": document_id, "u": job.final_url or job.url,
+            """), {"d": document_id, "u": url,
                    "k": o.get("kind"), "r": o.get("run_id"),
                    "un": o.get("username"), "sid": o.get("session_id"),
                    "q": (o.get("question") or "")[:500] or None,
-                   "fm": "browser" if job.prefer_browser else "http",
+                   "fm": fetch_mode or "http",
                    "sr": skipped})
     except Exception as e:
-        log.info("не записал происхождение %s: %s", job.url[:70], e)
+        log.info("не записал происхождение %s: %s", (url or "")[:70], e)
 
 
 def _handle(job: Job) -> None:

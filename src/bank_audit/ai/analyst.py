@@ -547,6 +547,7 @@ def _run_tool(name: str, args: dict) -> str:
                   FROM product_offer o JOIN bank b USING(bank_id)
                   JOIN product_terms t ON t.offer_id=o.offer_id AND t.valid_to IS NULL
                  WHERE o.category='other' AND t.rate_kind='avg_grade'
+                   AND o.is_active      -- выпавшие и переименованные не в рейтинге (ДАН-14)
                    AND (t.raw->>'total_reviews')::int > 0
                  ORDER BY (t.raw->>'total_reviews')::int DESC
                  LIMIT :n
@@ -556,16 +557,33 @@ def _run_tool(name: str, args: dict) -> str:
         if name == "get_change_history":
             slug = args.get("bank_slug", "all")
             bank_filter = "AND b.slug = :s" if slug and slug != "all" else ""
+            # те же правила, что у журнала «Рынка»: без смены выдачи агрегатора,
+            # микрошума и откатов (72 ч) — иначе ИИ на вопрос «что меняли»
+            # отдавал 20 последних откатов РКО (аудит 03.10)
+            from ..normalizer.offers import (CTX_JOIN_SQL, SAME_CTX_SQL,
+                                             SIGNIFICANT_CHANGE_SQL, revert_ids_sql)
+            # по банку — вся его история (откаты считаем по его офферам, это
+            # дёшево); по всему рынку — последние две недели: 20 последних
+            # изменений рынка всегда в них, а откаты всего рынка за 90 дней — 0,7 с
+            if bank_filter:
+                rev, rev_days, window = (revert_ids_sql(
+                    "c.offer_id IN (SELECT o2.offer_id FROM product_offer o2 "
+                    "JOIN bank b2 ON b2.bank_id = o2.bank_id WHERE b2.slug = :s)"), 3650, "")
+            else:
+                rev, rev_days = revert_ids_sql(), 14
+                window = "AND ch.changed_at > now() - interval '14 days'"
             rows = s.execute(text(f"""
                 SELECT b.name bank_name, o.category, o.title,
                        ch.changed_at, ch.diff
                   FROM change_history ch
                   JOIN product_offer o USING(offer_id)
                   JOIN bank b USING(bank_id)
-                 WHERE 1=1 {bank_filter}
-                 ORDER BY ch.changed_at DESC LIMIT :l
+                  {CTX_JOIN_SQL}
+                 WHERE 1=1 {bank_filter} {window} AND {SAME_CTX_SQL} AND {SIGNIFICANT_CHANGE_SQL}
+                   AND ch.change_id NOT IN ({rev})
+                 ORDER BY ch.changed_at DESC, ch.change_id DESC LIMIT :l
             """), {**({"s": slug} if slug and slug != "all" else {}),
-                   "l": args.get("limit", 20)}).mappings().all()
+                   "l": args.get("limit", 20), "rev_days": rev_days}).mappings().all()
             return json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str)
 
     if name == "run_sql":

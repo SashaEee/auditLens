@@ -15,9 +15,11 @@ def cli(): ...
 @click.option("--target", default=None, help="имя конкретного target (опционально)")
 @click.option("--openclaw-job", default=None, envvar="OPENCLAW_JOB",
               help="ID job-а из openclaw/jobs/*.yaml")
-def ingest(source: str, target: str | None, openclaw_job: str | None):
+@click.option("--force", is_flag=True,
+              help="разобрать снимок, даже если он не изменился (после правки парсера)")
+def ingest(source: str, target: str | None, openclaw_job: str | None, force: bool):
     """Запустить ingest источника."""
-    res = runner.ingest(source, target, openclaw_job)
+    res = runner.ingest(source, target, openclaw_job, force=force)
     click.echo(json.dumps(res, ensure_ascii=False))
 
 @cli.command()

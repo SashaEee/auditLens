@@ -1309,6 +1309,10 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 .kb-cell:hover{outline-color:var(--ink-3);}
 .kb-cell.nil{background:var(--paper-2);cursor:default;}
 .kb-cell.nil:hover{outline-color:transparent;}
+/* клетки карты: только агрегаторы — светлее; «пробовали, не вышло» — пунктир (ДАН-03) */
+.kb-cell.agg{background:color-mix(in oklab,var(--ink-3),transparent 82%)}
+.kb-cell.fail{background:var(--paper-2);color:var(--neg);cursor:help;outline:1px dashed color-mix(in oklab,var(--neg),transparent 40%)}
+.kb-bfail{font-weight:400;font-size:11px;color:var(--neg)}
 
 /* ─── Knowledge page (устаревшее, осталось от инженерной консоли) ────── */
 .k-kpi-row{
@@ -2791,6 +2795,10 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .mk-click{cursor:pointer}
 .mk-chrow{display:grid;grid-template-columns:130px 1fr 200px;gap:14px;align-items:center;width:100%;padding:10px 24px;border:0;border-bottom:1px solid var(--hair);background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
 .mk-chrow:hover{background:var(--surface)}
+/* свёрнутая категория журнала (РКО) и закреплённое изменение из ссылки */
+.mk-chrow.mk-fold{color:var(--ink-2)}
+.mk-chrow.mk-fold .mk-chmove{font-family:inherit;color:var(--select)}
+.mk-chfocus{border-bottom:1px solid var(--hair);background:var(--paper-2)}
 .mk-chrow:last-child{border-bottom:0}
 .mk-chrow.big .mk-chmove{font-weight:600}
 .mk-chrow.hl{box-shadow:inset 3px 0 0 var(--accent);background:var(--accent-soft,rgba(200,50,30,.05))}

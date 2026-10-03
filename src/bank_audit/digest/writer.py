@@ -734,7 +734,7 @@ def _sber_rating_move() -> dict | None:
                 WITH o AS (
                     SELECT o.offer_id FROM product_offer o JOIN product_terms t ON t.offer_id = o.offer_id
                     WHERE o.external_id LIKE 'banki_rating_%' AND o.title ILIKE '%— Сбербанк'
-                      AND t.valid_to IS NULL
+                      AND t.valid_to IS NULL AND o.is_active
                     ORDER BY (t.raw->>'total_reviews')::int DESC NULLS LAST LIMIT 1)
                 SELECT DISTINCT ON (t.valid_from::date) t.valid_from::date AS d,
                        (t.raw->>'place')::int AS place, (t.raw->>'solved_pct')::numeric AS solved

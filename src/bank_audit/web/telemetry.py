@@ -886,10 +886,11 @@ def _collect_health(days: int) -> dict:
           FROM document_origin
          WHERE created_at > now() - (:days || ' days')::interval
          GROUP BY 1 ORDER BY 2 DESC""", {"days": days})
-    HARD = {"captcha", "fetch_failed", "empty_after_parse"}
+    HARD = {"captcha", "fetch_failed", "empty_after_parse", "antibot_stub"}
     RU = {"ok": "проиндексировано", "duplicate": "уже было",
           "captcha": "капча", "fetch_failed": "не загрузилось",
           "empty_after_parse": "пустая страница", "no_chunks": "нечего индексировать",
+          "antibot_stub": "заглушка антибота",
           "sponsored_or_low_trust": "реклама / низкое доверие"}
     ok = sum(r["n"] for r in rows if r["reason"] == "ok")
     hard = sum(r["n"] for r in rows if r["reason"] in HARD)

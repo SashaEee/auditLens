@@ -14,6 +14,7 @@ from collections import Counter
 from datetime import date, datetime
 
 from ..web.export_brand import MONO, SERIF, XL, C, banner_png, stamp_line
+from .repository import search_terms
 
 BANK_NAMES = {
     "sberbank": "Сбербанк", "sber": "Сбербанк", "vtb": "ВТБ", "alfabank": "Альфа-Банк",
@@ -91,16 +92,30 @@ def describe_filters(filters: dict) -> list[tuple[str, str]]:
     period = "всё время"
     if filters.get("period_from") or filters.get("period_to"):
         period = f"{filters.get('period_from') or '…'} — {filters.get('period_to') or '…'}"
-    return [
+    q = (filters.get("q") or "").strip()
+    terms = search_terms(q) if q else []
+    if not q:
+        search = "без поиска"
+    elif terms:   # ровно те слова, по которым искал сервер (без стоп-слов и коротких)
+        search = (f"все слова: {', '.join(w for w, _t in terms)} — в заголовке, фрагменте, "
+                  "заголовке модели и сути, с любыми окончаниями")
+    else:   # одни короткие слова — сервер ищет фразу целиком
+        search = f"фраза «{q}» в заголовке, фрагменте, заголовке модели и сути"
+    rows = [
         ("Тип записи", CLASSIFICATION_FILTERS.get(filters.get("classification") or "all",
                                                    "Все записи")),
         ("Банки", ", ".join(bank_name(b) for b in banks) if banks else "все банки"),
         ("Дата публикации", period),
         ("Проверка", VERIFICATION_LABELS.get(filters.get("verification_status"), "все")),
-        ("Поиск", f"«{filters['q']}»" if filters.get("q") else "без поиска"),
-        ("Отбор", f"отмечено вручную: {len(filters['record_ids'])}"
-         if filters.get("record_ids") else "все записи по фильтру"),
+        ("Поиск", search),
     ]
+    if not filters.get("record_ids"):   # отмеченные вручную выгружаются как есть
+        rows.append(("Записи не о банках",
+                     {"bank": "скрыты", "all": "показаны", "offtopic": "только они"}
+                     .get(filters.get("topic") or "bank", "скрыты")))
+    rows.append(("Отбор", f"отмечено вручную: {len(filters['record_ids'])}"
+                 if filters.get("record_ids") else "все записи по фильтру"))
+    return rows
 
 
 def to_xlsx(records: list[dict], filters: dict) -> bytes:

@@ -1444,6 +1444,14 @@ def _offer_meta(offer_id) -> dict | None:
             o = rows[0]
             break
     if not o:
+        # снят с витрины (протух, старый ключ тарифа РКО): снимок всё равно нужен
+        try:
+            from .app import _OFFER_ANY_SQL
+            rows = _rows(_OFFER_ANY_SQL, {"o": oid})
+        except Exception:  # noqa: BLE001
+            rows = []
+        o = rows[0] if rows else None
+    if not o:
         return None
     from .. import categories as cat_meta
     from ..clock import today_msk

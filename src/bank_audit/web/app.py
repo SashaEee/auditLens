@@ -55,7 +55,8 @@ async def lifespan(app: FastAPI):
     # (cookie-warming убран: требовал Playwright, на сервере циклически падал)
     from ..digest.scheduler import (bankiru_fts_background_loop, digest_background_loop,
                                     foryou_pregen_loop, ingest_background_loop,
-                                    judge_background_loop, keyrate_background_loop,
+                                    judge_background_loop, kb_crawl_background_loop,
+                                    keyrate_background_loop,
                                     newsflow_background_loop, update_background_loop)
     from ..rag import ingest_queue
     from .mail_delivery import mail_background_loop
@@ -86,6 +87,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(foryou_pregen_loop()),
         # письма-уведомления: сразу о личном и утренняя сводка (web/mail_delivery.py)
         asyncio.create_task(mail_background_loop()),
+        # ночной обход ключевых страниц сайтов банков → архив базы знаний (ДАН-02)
+        asyncio.create_task(kb_crawl_background_loop()),
     ]
     # Планировщик парсеров «Лазеек»: по cron запускает сгенерированный код.
     # В самом модуле флаг PARSER_SCHEDULER_ENABLED по умолчанию ВКЛЮЧЁН —
@@ -95,6 +98,11 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(parser_scheduler_loop()))
     if SCHEDULED_ANALYTICS_ENABLED:
         tasks.append(asyncio.create_task(scheduled_analytics_loop()))
+    # «Аудит уязвимостей»: отметка «не о банках» для новых записей внешнего
+    # сборщика. Пока ручная дозаливка не сделана (таблица пуста), не пишет.
+    from ..loophole.relevance import TAGGER_ENABLED, topic_tagger_loop
+    if TAGGER_ENABLED:
+        tasks.append(asyncio.create_task(topic_tagger_loop()))
     # Воркеры индексации базы знаний. Раньше на каждую прочитанную агентом
     # страницу поднимался свой daemon-поток: при остановке контейнера их
     # убивало на полуслове, документ оставался без фрагментов — и навсегда,
@@ -1046,8 +1054,11 @@ def _digest_delta(doc: dict) -> dict:
                 return None
 
         out = {"prev_date": prev_day}
-        out["sber_changes"] = _d2((now_tm.get("totals") or {}).get("sber_changes_7d"),
-                                  (was_tm.get("totals") or {}).get("sber_changes_7d"))
+        # «Меняли сами» — только внутри одной методики счёта: с 03.10 откаты за
+        # сутки не считаются изменениями, и первая дельта была бы ложной
+        if (now_tm.get("method") or "") == (was_tm.get("method") or ""):
+            out["sber_changes"] = _d2((now_tm.get("totals") or {}).get("sber_changes_7d"),
+                                      (was_tm.get("totals") or {}).get("sber_changes_7d"))
 
         def _method(pl: dict) -> str:
             # старые снимки без поля: метод виден по источнику «вне кодификатора»
@@ -1160,7 +1171,10 @@ def _parse_rate_move(diff) -> tuple[Optional[float], Optional[float]]:
 
 # Смена выдачи агрегатора — не изменение условий (normalizer/offers.py);
 # те же условия берёт связка «Отзывов» с «Рынком»
+from ..normalizer.rules import bank_key as _bank_key, bank_key_alts as _bank_key_alts  # noqa: E402
 from ..normalizer.offers import (CTX_JOIN_SQL as _CTX_JOIN_SQL,  # noqa: E402
+                                 REVERT_IDS_SQL as _REVERT_IDS_SQL,
+                                 revert_ids_sql as _revert_ids_sql,
                                  SAME_CTX_SQL as _SAME_CTX_SQL,
                                  SIGNIFICANT_CHANGE_SQL as _SIGNIFICANT_CHANGE_SQL)
 
@@ -1168,40 +1182,113 @@ from ..normalizer.offers import (CTX_JOIN_SQL as _CTX_JOIN_SQL,  # noqa: E402
 @app.get("/api/recent-changes")
 def recent_changes(category: Optional[str] = None, bank_slug: Optional[str] = None,
                    offer_id: Optional[int] = None, days: int = 7,
-                   significant: bool = True, limit: int = 50, offset: int = 0):
+                   significant: bool = True, limit: int = 50, offset: int = 0,
+                   fold: Optional[str] = None, focus: Optional[int] = None, v: int = 1):
     """Журнал изменений условий — посадочная для диплинков с Обзора.
-    significant=True — тот же критерий, что в totals дайджеста: нестаточное поле
-    в диффе ИЛИ |Δ ставки| ≥ 0.01 пп (микрошум расчётных ставок скрыт)."""
+
+    significant=True — тот же критерий, что в итогах выпуска: нестаточное поле
+    в диффе ИЛИ |Δ ставки| ≥ 0,01 п.п.; откаты (условия вернулись к прежним в
+    течение 72 ч) скрыты тем же правилом, что и в итогах выпуска.
+    significant=False — всё как есть, вместе с микрошумом и откатами.
+
+    v=2 — объект: items, total, hidden_reverts, folded (категории из fold
+    свёрнуты в строку «N изменений у M банков» — РКО не вытесняет вклады и
+    кредиты из общего журнала), focus/focus_status (изменение из ссылки:
+    shown | reverted | folded | insignificant | filtered | outside_window). Раньше журнал
+    отдавал 120 строк без страниц, и 50 из 50 последних были «пилой» одного
+    сборщика РКО (аудит 03.10, РЫН-05)."""
     days = max(1, min(days, 90))
     limit = max(1, min(limit, 200))
-    cond, params = [_SAME_CTX_SQL], {"days": days, "lim": limit, "off": max(0, offset)}
+    offset = max(0, offset)
+    base, params = [_SAME_CTX_SQL], {"days": days, "lim": limit, "off": offset,
+                                     "rev_days": days}
     if category:
-        cond.append("o.category = :cat"); params["cat"] = category
+        base.append("o.category = :cat"); params["cat"] = category
     if bank_slug:
-        cond.append("b.slug = :bs"); params["bs"] = bank_slug
+        base.append("b.slug = :bs"); params["bs"] = bank_slug
     if offer_id:
-        cond.append("ch.offer_id = :oid"); params["oid"] = offer_id
+        base.append("ch.offer_id = :oid"); params["oid"] = offer_id
+    cond = list(base)
     if significant:
         cond.append(_SIGNIFICANT_CHANGE_SQL)
-    where = " AND ".join(cond) if cond else "true"
-    rows = q(f"""
-        SELECT ch.change_id, ch.offer_id, ch.changed_at, ch.diff,
-               b.slug AS bank_slug, b.name AS bank_name, b.is_sber,
-               o.category, o.title, o.url
-          FROM change_history ch
+        cond.append(f"ch.change_id NOT IN ({_REVERT_IDS_SQL})")
+    # свёртка — только для общего журнала: при фильтре по банку или категории
+    # пользователь пришёл именно за этими строками
+    fold_set = sorted({c for c in (fold or "").split(",") if c}) if not (category or bank_slug or offer_id) else []
+    if fold_set:
+        params["fold"] = fold_set
+    frm = f"""FROM change_history ch
           JOIN product_offer o USING(offer_id)
           JOIN bank b USING(bank_id)
           {_CTX_JOIN_SQL}
-         WHERE ch.changed_at > now() - make_interval(days => :days)
-           AND {where}
-         ORDER BY ch.changed_at DESC
+         WHERE ch.changed_at > now() - make_interval(days => :days)"""
+    where = " AND ".join(cond)
+    nofold = " AND o.category::text <> ALL(:fold)" if fold_set else ""
+    rows = q(f"""
+        SELECT ch.change_id, ch.offer_id, ch.changed_at, ch.diff,
+               b.slug AS bank_slug, b.name AS bank_name, b.is_sber,
+               o.category, o.title, o.url, count(*) OVER () AS total_rows
+          {frm} AND {where}{nofold}
+         ORDER BY ch.changed_at DESC, ch.change_id DESC
          LIMIT :lim OFFSET :off
     """, params)
     for r in rows:
         f, t = _parse_rate_move(r.get("diff"))
         r["rate_from"], r["rate_to"] = f, t
         r["rate_delta"] = round(t - f, 4) if f is not None and t is not None else None
-    return rows
+    total = int(rows[0].pop("total_rows")) if rows else 0
+    for r in rows:
+        r.pop("total_rows", None)
+    if v < 2:
+        return rows
+    if not rows and offset:
+        total = int(scalar(f"SELECT count(*) {frm} AND {where}{nofold}", params) or 0)
+    out = {"items": rows, "total": total, "offset": offset, "limit": limit,
+           "folded": [], "hidden_reverts": 0, "focus": None, "focus_status": None}
+    if fold_set:
+        out["folded"] = q(f"""
+            SELECT o.category::text AS category, count(*) AS n,
+                   count(DISTINCT o.bank_id) AS n_banks, max(ch.changed_at) AS last_at
+              {frm} AND {where} AND o.category::text = ANY(:fold)
+             GROUP BY 1 ORDER BY 2 DESC""", params)
+    if significant and offset == 0:
+        # те же условия, что у строк журнала, кроме самого «не откат»: число
+        # относится к показанному списку (без свёрнутых категорий и микрошума)
+        out["hidden_reverts"] = int(scalar(f"""
+            SELECT count(*) {frm} AND {" AND ".join(base)} AND {_SIGNIFICANT_CHANGE_SQL}
+               AND ch.change_id IN ({_REVERT_IDS_SQL}){nofold}""", params) or 0)
+    if focus:
+        fp = {**params, "fid": focus}
+        # фильтры журнала (категория, банк, смена выдачи) — и для изменения из
+        # ссылки: иначе в журнале вкладов закреплялась строка РКО
+        hit = q(f"""
+            SELECT ch.change_id, ch.offer_id, ch.changed_at, ch.diff,
+                   b.slug AS bank_slug, b.name AS bank_name, b.is_sber,
+                   o.category, o.title, o.url,
+                   ({_SIGNIFICANT_CHANGE_SQL}) AS sig,
+                   (ch.change_id IN ({_REVERT_IDS_SQL})) AS rev
+              {frm} AND {" AND ".join(base)} AND ch.change_id = :fid""", fp)
+        if not hit:
+            # есть в окне, но не проходит фильтры журнала — «filtered»
+            out["focus_status"] = ("filtered" if scalar(
+                f"SELECT 1 {frm} AND ch.change_id = :fid", fp) else "outside_window")
+        else:
+            h = hit[0]
+            if significant and h.pop("rev"):
+                out["focus_status"] = "reverted"
+            elif significant and not h.pop("sig", True):
+                out["focus_status"] = "insignificant"
+            elif fold_set and h["category"] in fold_set:
+                out["focus_status"] = "folded"
+            else:
+                out["focus_status"] = "shown"
+            h.pop("rev", None)
+            h.pop("sig", None)
+            f, t = _parse_rate_move(h.get("diff"))
+            h["rate_from"], h["rate_to"] = f, t
+            h["rate_delta"] = round(t - f, 4) if f is not None and t is not None else None
+            out["focus"] = h
+    return out
 
 
 # ── market ────────────────────────────────────────────────────────────────────
@@ -1738,7 +1825,13 @@ def market_atlas(term: Optional[str] = None):
         раздувал знаменатель «#N из M» и мог занять место лидера, против
         которого меряется отставание.
         """
-        return re.sub(r"[^0-9a-zа-яё]", "", (row["bank_name"] or "").lower()) or row["bank_slug"]
+        # общий ключ организации (normalizer.rules.bank_key): прежняя чистка
+        # только пунктуации оставляла «ТОЧКА» и «Точка Банк» двумя точками
+        # рынка — 23–35 пар по категориям (аудит 03.10, РЫН-09)
+        return _bank_key(row["bank_name"]) or row["bank_slug"]
+
+    def _pkey(b) -> str:
+        return _bank_key(b.get("name")) or b["slug"]
 
     for r in rows:
         meta = cat_meta.CAT_META.get(r["category"])
@@ -1938,7 +2031,7 @@ def market_atlas(term: Optional[str] = None):
         merged: dict = {}
         for _s, _u, bl in gs:
             for b in bl:
-                cur_ = merged.get(b["slug"])
+                cur_ = merged.get(_pkey(b))
                 # то же правило, что и внутри группы: при равной метрике банк
                 # представляет оффер с лучшими условиями, иначе доля
                 # «бесплатных без условий» зависела бы от порядка групп
@@ -1947,7 +2040,7 @@ def market_atlas(term: Optional[str] = None):
                         > _FREE_RANK.get(cur_.get("free_kind"), -1))
                 if cur_ is None or tie_ or (b["rate"] < cur_["rate"] if lower_
                                             else b["rate"] > cur_["rate"]):
-                    merged[b["slug"]] = b
+                    merged[_pkey(b)] = b
         # Головной ранг категории — по ГЛАВНОЙ группе (самой крупной, где есть
         # Сбер), а слияние всех видов — только справкой. Раньше голову давало
         # слияние: «кредиты #20 из 93, 79-й перцентиль» получались по кредиту
@@ -1958,7 +2051,7 @@ def market_atlas(term: Optional[str] = None):
         overall[cid_] = merged
         main = next((g for g in gs if len(g[2]) >= 5 and any(b["is_sber"] for b in g[2])), None)
         if main:
-            by_cat[cid_] = {b["slug"]: b for b in main[2]}
+            by_cat[cid_] = {_pkey(b): b for b in main[2]}
             main_key[cid_] = (main[0], main[1])
         else:
             by_cat[cid_] = merged
@@ -1982,7 +2075,9 @@ def market_atlas(term: Optional[str] = None):
                         "status": "no_data", "n_banks": 0})
             continue
         lower = c["metric_lower_is_better"]
-        banks.sort(key=lambda b: b["rate"], reverse=not lower)  # [0] = лидер
+        # [0] = лидер; при равных значениях — по имени, а не по порядку скана
+        # (иначе «лидер» менялся бы между вызовами)
+        banks.sort(key=lambda b: (b["rate"] if lower else -b["rate"], b.get("name") or ""))
         vals = sorted(b["rate"] for b in banks)
         sber = next((b for b in banks if b["is_sber"]), None)
         entry = {
@@ -2385,12 +2480,30 @@ def market_verdict(term: Optional[str] = None):
             "as_of": scalar("SELECT max(valid_from) FROM product_terms WHERE valid_to IS NULL")}
 
 
+# Оффер с текущими условиями без фильтра is_active (досье и снимок для дела)
+_OFFER_ANY_SQL = """
+    SELECT b.slug AS bank_slug, b.name AS bank_name, b.is_sber, o.offer_id, o.category,
+           o.title, o.url, o.primary_source, o.segment, o.sub_segment, o.is_active,
+           t.rate_pct, t.rate_kind, t.currency, t.amount_min, t.amount_max,
+           t.term_months_min, t.term_months_max, t.fee_open, t.fee_service, t.grace_days,
+           t.cashback_pct, t.early_withdraw, t.capitalization, t.replenishable,
+           t.conditions, t.valid_from, t.raw, t.rate_min, t.rate_max, t.psk_min, t.psk_max
+      FROM product_offer o JOIN bank b USING (bank_id)
+      JOIN product_terms t ON t.offer_id = o.offer_id AND t.valid_to IS NULL
+     WHERE o.offer_id = :o
+     ORDER BY t.valid_from DESC LIMIT 1"""
+
+
 @app.get("/api/market/offer/{offer_id}/history")
 def market_offer_history(offer_id: int):
     """Досье оффера: паспорт текущих условий + SCD2-ряд ставки + диффы."""
     cur = q("SELECT * FROM v_market_rub_offer WHERE offer_id = :o", {"o": offer_id})
-    if not cur:                       # оффер деактивирован/вне витрины — показываем как есть
+    if not cur:                       # оффер вне витрины — показываем как есть
         cur = q("SELECT * FROM v_offer_current WHERE offer_id = :o", {"o": offer_id})
+    if not cur:
+        # Снят с витрины (протух, старый ключ тарифа РКО): обе вью фильтруют
+        # is_active, и досье — в том числе из «Аудит-дел» — отвечало 404.
+        cur = q(_OFFER_ANY_SQL, {"o": offer_id})
     # ряд ставки — только в выдаче текущей версии: иначе смена выдачи рисует пилу
     versions = q("""
         WITH c AS (SELECT raw->'filter_context' AS fc FROM product_terms
@@ -2403,12 +2516,15 @@ def market_offer_history(offer_id: int):
                 OR t.raw->'filter_context' = c.fc)
          ORDER BY t.valid_from
     """, {"o": offer_id})
+    # откаты — по всей истории оффера (дёшево: один оффер), иначе старая «пила»
+    # за окном снова видна
     changes = q(f"""
         SELECT ch.change_id, ch.changed_at, ch.diff FROM change_history ch
           {_CTX_JOIN_SQL}
          WHERE ch.offer_id = :o AND {_SAME_CTX_SQL}
-         ORDER BY ch.changed_at DESC LIMIT 60
-    """, {"o": offer_id})
+           AND ch.change_id NOT IN ({_revert_ids_sql("c.offer_id = :o")})
+         ORDER BY ch.changed_at DESC, ch.change_id DESC LIMIT 60
+    """, {"o": offer_id, "rev_days": 3650})
     for ch in changes:
         f, t = _parse_rate_move(ch.get("diff"))
         ch["rate_from"], ch["rate_to"] = f, t
@@ -2845,6 +2961,114 @@ async def reviews_explain(bank: str = "Сбербанк", product: Optional[str]
 
 # ── banks & ratings ───────────────────────────────────────────────────────────
 
+# Свежесть рейтинга судим от последней ВЫДАЧИ, а не от часов и не от
+# valid_from (дата смены чисел): строка, которой нет в последней выдаче, —
+# выпавший или переименованный банк, его место уже занял другой (ДАН-14).
+_BANKS_SQL = """
+    -- «выпал из рейтинга» — строки не было в последнем ПОЛНОМ прогоне сборщика
+    -- (как в offers.expire_rating_rows): оборванный или неизменный прогон не
+    -- снимает места живым банкам
+    WITH feed AS (SELECT max(started_at) AS at FROM extraction_run
+                   WHERE source = 'banki_ratings' AND status = 'ok' AND items_seen >= 200)
+    SELECT b.bank_id, b.slug, b.name, b.is_sber,
+           t.rate_pct avg_grade,
+           (t.raw->>'total_reviews')::int total_reviews,
+           (t.raw->>'total_reviews_year')::int reviews_year,
+           (t.raw->>'responses_all')::int responses_all,
+           round((t.raw->>'solved_pct')::numeric,1) solved_pct,
+           (t.raw->>'place')::int place,
+           round((t.raw->>'rating_score')::numeric,1) rating_score,
+           (t.raw->>'problem_count')::int problem_count,
+           CASE WHEN t.terms_id IS NOT NULL THEN o.last_seen END AS rating_at,
+           t.valid_from AS rating_changed_at,
+           coalesce(t.terms_id IS NOT NULL
+                    AND o.last_seen < feed.at, false) AS rating_stale,
+           o.external_id AS rating_ext
+      FROM bank b
+      CROSS JOIN feed
+      LEFT JOIN product_offer o ON o.bank_id = b.bank_id AND o.category = 'other'
+                               AND o.is_active
+      LEFT JOIN product_terms t ON t.offer_id = o.offer_id AND t.valid_to IS NULL
+                               AND t.rate_kind = 'avg_grade'
+"""
+
+
+def _collapse_banks(rows: list[dict]) -> list[dict]:
+    """Одна организация — одна строка. Ключ — общий bank_key (normalizer.rules):
+    «ТОЧКА» и «Точка Банк», «Банк ТКБ» и «ТКБ Банк» — одна строка; выживает
+    строка из свежей выдачи рейтинга, потом с местом, потом опознанный slug.
+    Строки с РАЗНЫМИ bankId из свежей выдачи не схлопываются: это разные
+    организации с похожим именем. У устаревшей строки место уходит в
+    place_last — номер уже занял другой банк (52 повтора мест 03.10)."""
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(_bank_key(r.get("name")) or str(r.get("slug")), []).append(r)
+
+    def rank(r):
+        fresh = r.get("avg_grade") is not None and not r.get("rating_stale")
+        return (fresh, r.get("place") is not None, not str(r.get("slug")).startswith("unknown_"),
+                r.get("total_reviews") or 0, -int(r.get("bank_id") or 0))
+    out = []
+    for rs in groups.values():
+        fresh_ext = {r.get("rating_ext") for r in rs
+                     if r.get("rating_ext") and r.get("avg_grade") is not None
+                     and not r.get("rating_stale")}
+        if len(fresh_ext) > 1:
+            # разные bankId площадки — разные организации, но одна строка
+            # справочника (bank_id) — одна строка «Банков»: у «Почта Банка» два
+            # рейтинговых оффера, и он выводился дважды
+            best: dict = {}
+            for e in fresh_ext:
+                r = max((r for r in rs if r.get("rating_ext") == e), key=rank)
+                k = r.get("bank_id") or r.get("slug")
+                if k not in best or rank(r) > rank(best[k]):
+                    best[k] = r
+            out.extend(best.values())
+        else:
+            out.append(max(rs, key=rank))
+    for r in out:
+        if r.get("rating_stale") and r.get("place") is not None:
+            r["place_last"], r["place"] = r["place"], None
+        r.pop("rating_ext", None)
+    return sorted(out, key=lambda r: -(r.get("total_reviews") or 0))
+
+
+def _assign_own(rows: list[dict], own: dict, resolve) -> None:
+    """Свой корпус — один к одному: один банк корпуса — одна строка «Банков».
+    Раньше нечёткое сопоставление раздавало одни и те же отзывы нескольким
+    строкам: «ИНГ Банк» получал 269 отзывов «Инго», «ЭКСИ-БАНК» — 5 880 отзывов
+    МТС Денег (ДАН-01). Выигрывает строка, чьё имя совпадает с банком корпуса
+    по ключу, затем строка с рейтингом; остальные видят, у кого числа."""
+    try:
+        from ..rag.reviews_dash import KNOWN_BANK_EXITS
+    except Exception:  # noqa: BLE001
+        KNOWN_BANK_EXITS = {}
+    claim: dict[str, list[dict]] = {}
+    for r in rows:
+        r.update(own_reviews=0, own_last_dt=None, own_avg_rating=None)
+        try:
+            c = resolve(r.get("name") or r.get("slug") or "") or ""
+        except Exception:  # noqa: BLE001
+            c = ""
+        if c and c in own:
+            claim.setdefault(c, []).append(r)
+    for c, rs in claim.items():
+        ck = _bank_key(c)
+        win = max(rs, key=lambda r: (ck in _bank_key_alts(r.get("name")),
+                                     r.get("avg_grade") is not None,
+                                     not str(r.get("slug")).startswith("unknown_"),
+                                     r.get("total_reviews") or 0))
+        h = own[c]
+        win.update(own_reviews=int(h["n"]), own_canon=c,
+                   own_last_dt=h["last_dt"].isoformat() if h["last_dt"] else None,
+                   own_avg_rating=float(h["avg_rating"]) if h["avg_rating"] is not None else None)
+        if c in KNOWN_BANK_EXITS:
+            win["own_note"] = KNOWN_BANK_EXITS[c]["note"]
+        for r in rs:
+            if r is not win:
+                r["own_shared_with"] = win.get("name")
+
+
 @app.get("/api/banks")
 def banks():
     """Витрина «Банки»: народный рейтинг banki.ru + НАШ корпус отзывов.
@@ -2852,39 +3076,9 @@ def banks():
     Собственный корпус (review_index) добавлен 07.08.2026: витрина показывала
     только чужие агрегаты, хотя своих отзывов у нас 174 тыс. по 220 банкам —
     и именно их аудитор может открыть и прочитать. Соответствие имён идёт
-    через resolve_bank (алиасы/слаги/фаззи), а не по точному совпадению:
-    точное давало 62 пары из 692.
+    через resolve_bank (алиасы, слаги, строгий нечёткий поиск).
     """
-    # Один банк, заведённый под двумя написаниями («СОЛИД БАНК» и «Солид
-    # Банк»), выводился двумя строками — аудиторы писали, что «один и тот же
-    # банк указан несколько раз». Справочник вычистить до конца мешают внешние
-    # ключи истории изменений, поэтому схлопываем на выдаче: ключ — имя,
-    # очищенное до букв и цифр, выживает опознанная запись с большим числом
-    # отзывов.
-    rows = q("""
-        WITH one_per_bank AS (
-            SELECT DISTINCT ON (lower(regexp_replace(b.name,'[^[:alnum:]]','','g')))
-                   b.bank_id, b.slug, b.name, b.is_sber,
-                   t.rate_pct avg_grade,
-                   (t.raw->>'total_reviews')::int total_reviews,
-                   (t.raw->>'total_reviews_year')::int reviews_year,
-                   (t.raw->>'responses_all')::int responses_all,
-                   round((t.raw->>'solved_pct')::numeric,1) solved_pct,
-                   (t.raw->>'place')::int place,
-                   round((t.raw->>'rating_score')::numeric,1) rating_score,
-                   (t.raw->>'problem_count')::int problem_count,
-                   t.valid_from AS rating_at
-              FROM bank b
-              LEFT JOIN product_offer o ON o.bank_id=b.bank_id AND o.category='other'
-              LEFT JOIN product_terms t  ON t.offer_id=o.offer_id AND t.valid_to IS NULL
-                                        AND t.rate_kind='avg_grade'
-             ORDER BY lower(regexp_replace(b.name,'[^[:alnum:]]','','g')),
-                      (b.slug NOT LIKE 'unknown_%') DESC,
-                      COALESCE((t.raw->>'total_reviews')::int, 0) DESC
-        )
-        SELECT * FROM one_per_bank
-         ORDER BY COALESCE(total_reviews, 0) DESC
-    """)
+    rows = _collapse_banks(q(_BANKS_SQL))
     # свой корпус: имя канона → (число отзывов, свежесть, средняя оценка)
     own: dict = {}
     try:
@@ -2902,20 +3096,7 @@ def banks():
         log.info("banks: свой корпус недоступен (%s)", e)
     if own:
         from ..rag.bankiru_reviews import resolve_bank
-        cache: dict = {}
-        for row in rows:
-            key = row.get("name") or row.get("slug") or ""
-            canon = cache.get(key)
-            if canon is None:
-                try:
-                    canon = resolve_bank(key) or ""
-                except Exception:  # noqa: BLE001
-                    canon = ""
-                cache[key] = canon
-            hit = own.get(canon) if canon else None
-            row["own_reviews"] = int(hit["n"]) if hit else 0
-            row["own_last_dt"] = hit["last_dt"].isoformat() if hit and hit["last_dt"] else None
-            row["own_avg_rating"] = float(hit["avg_rating"]) if hit and hit["avg_rating"] is not None else None
+        _assign_own(rows, own, resolve_bank)
     return rows
 
 
@@ -3496,7 +3677,14 @@ def knowledge_overview():
                count(DISTINCT d.bank_id)                         AS banks,
                max(d.fetched_at)                                 AS last_fetch,
                count(DISTINCT d.document_id) FILTER (
-                   WHERE d.fetched_at > now() - interval '30 days') AS fresh_30d
+                   WHERE d.fetched_at > now() - interval '30 days'
+                      -- или перечитан обходом за месяц с тем же текстом
+                      OR d.document_id IN (SELECT o.document_id FROM document_origin o
+                                            WHERE o.document_id IS NOT NULL
+                                              AND o.created_at > now() - interval '30 days'
+                                              AND (o.skipped_reason IS NULL
+                                                   OR o.skipped_reason = 'duplicate'))
+               ) AS fresh_30d
           FROM document d JOIN document_chunk dc USING (document_id)
          WHERE d.trust_score >= 0.5 AND d.is_sponsored = FALSE
     """)
@@ -3518,7 +3706,26 @@ def knowledge_overview():
          WHERE d.trust_score >= 0.5 AND d.is_sponsored = FALSE
          GROUP BY 1 ORDER BY documents DESC
     """)
-    return {"stats": (stats or [{}])[0], "banks": banks, "kinds": kinds}
+    # Как растёт архив за 7 дней и откуда (ИИ-помощник, отчёты, обход сайтов):
+    # на странице было «пополняется при ночном сборе», хотя ночной сбор архив
+    # не трогал (аудит 03.10, ДАН-02).
+    growth = q("""
+        SELECT o.kind,
+               count(DISTINCT o.url) FILTER (WHERE o.skipped_reason IS NULL) AS added,
+               count(DISTINCT o.url) FILTER (WHERE o.skipped_reason = 'duplicate') AS confirmed,
+               count(DISTINCT o.url) FILTER (WHERE o.skipped_reason = ANY(:fail)) AS failed,
+               max(o.created_at) AS last_at
+          FROM document_origin o
+         WHERE o.created_at > now() - interval '7 days'
+         GROUP BY 1 ORDER BY 2 DESC
+    """, {"fail": list(KB_FAIL_REASONS)})
+    try:
+        from ..digest.scheduler import kb_crawl_status
+        crawl = kb_crawl_status()
+    except Exception:  # noqa: BLE001
+        crawl = None
+    return {"stats": (stats or [{}])[0], "banks": banks, "kinds": kinds,
+            "growth": growth, "crawl": crawl}
 
 
 @app.get("/api/knowledge/doc/{document_id}")
@@ -3531,7 +3738,9 @@ def knowledge_doc(document_id: int, user: CurrentUser = Depends(get_current_user
                b.slug bank_slug, b.name bank_name,
                st.kind source_kind, st.domain source_domain, st.notes source_note,
                (SELECT count(*) FROM document_chunk c
-                 WHERE c.document_id = d.document_id) chunks
+                 WHERE c.document_id = d.document_id
+                   AND NOT EXISTS (SELECT 1 FROM document_chunk_excluded x
+                                    WHERE x.chunk_id = c.chunk_id)) chunks
           FROM document d
           LEFT JOIN bank b ON b.bank_id = d.bank_id
           LEFT JOIN source_trust st ON st.source_id = d.source_id
@@ -3549,13 +3758,21 @@ def knowledge_doc(document_id: int, user: CurrentUser = Depends(get_current_user
           FROM document WHERE url = :u ORDER BY fetched_at DESC LIMIT 30
     """, {"u": doc["url"]})
 
+    # ночной обход пишет строку на каждое прочтение — из него только последняя,
+    # и ниже всех: «откуда документ в базе» отвечают отчёт и добавление вручную
     origins = q("""
-        SELECT o.kind, o.username, o.question, o.report_id, o.created_at,
-               o.fetch_mode, o.skipped_reason, r.title report_title
-          FROM document_origin o
-          LEFT JOIN report r ON r.report_id = o.report_id
-         WHERE o.document_id = :i OR o.url = :u
-         ORDER BY o.created_at DESC LIMIT 10
+        SELECT kind, username, question, report_id, created_at, fetch_mode,
+               skipped_reason, report_title FROM (
+            SELECT o.kind, o.username, o.question, o.report_id, o.created_at,
+                   o.fetch_mode, o.skipped_reason, r.title report_title,
+                   row_number() OVER (PARTITION BY o.kind = 'crawl'
+                                      ORDER BY o.created_at DESC) AS rn
+              FROM document_origin o
+              LEFT JOIN report r ON r.report_id = o.report_id
+             -- по адресу — только сбои: «перечитан» другой версии к этой не относится
+             WHERE o.document_id = :i OR (o.url = :u AND o.document_id IS NULL)) z
+         WHERE kind IS DISTINCT FROM 'crawl' OR rn = 1
+         ORDER BY (kind = 'crawl'), created_at DESC LIMIT 10
     """, {"i": document_id, "u": doc["url"]})
     # Чужие вопросы не показываем дословно: отчёт коллеги — его работа.
     me = user.username
@@ -3566,9 +3783,13 @@ def knowledge_doc(document_id: int, user: CurrentUser = Depends(get_current_user
         else:
             o["mine"] = True
 
+    # превью — не с меню агрегатора и не с хвоста интерфейса (ДАН-04)
     preview = q("""
-        SELECT idx, headings_path, left(text, 700) text
-          FROM document_chunk WHERE document_id = :i ORDER BY idx LIMIT 4
+        SELECT c.idx, c.headings_path, left(c.text, 700) text
+          FROM document_chunk c
+         WHERE c.document_id = :i
+           AND NOT EXISTS (SELECT 1 FROM document_chunk_excluded x WHERE x.chunk_id = c.chunk_id)
+         ORDER BY c.idx LIMIT 4
     """, {"i": document_id})
 
     return {"doc": doc, "revisions": revisions, "origins": origins,
@@ -3651,51 +3872,138 @@ def knowledge_doc_diff(document_id: int, prev: int):
     }
 
 
+# Настоящие сбои загрузки (не «уже было»): только они дают клетке «×»
+KB_FAIL_REASONS = ("captcha", "fetch_failed", "empty_after_parse", "antibot_stub")
+
+
+def _kb_failed_cells(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Сбои загрузки сайта банка → клетки «банк × тема» и строки банков.
+    Банк — по домену (официальный сайт), а не по вхождению слага в адрес:
+    слаг «psb» совпадал с любым адресом, где есть «psb», а сбои агрегаторов
+    приписывались банкам (аудит 03.10, ДАН-03)."""
+    from ..rag.trust import is_own_bank_site
+    from ..rag.url_discovery import classify_url
+    cells: dict[tuple, dict] = {}
+    banks: dict[str, dict] = {}
+    for r in rows:
+        if r["skipped_reason"] not in KB_FAIL_REASONS:
+            continue
+        # маркетплейс экосистемы (ozon.ru, domclick.ru) — не сайт банка
+        ok, slug = is_own_bank_site(r["url"])
+        if not ok or not slug:
+            continue
+        b = banks.setdefault(slug, {"slug": slug, "n": 0, "reasons": {}})
+        b["n"] += int(r["n"])
+        b["reasons"][r["skipped_reason"]] = b["reasons"].get(r["skipped_reason"], 0) + int(r["n"])
+        for t in [x for x in classify_url(r["url"]) if x != "document"]:
+            c = cells.setdefault((slug, t), {"slug": slug, "topic": t, "n": 0,
+                                             "reason": r["skipped_reason"], "last_at": None})
+            c["n"] += int(r["n"])
+            if r.get("last_at") and (c["last_at"] is None or r["last_at"] > c["last_at"]):
+                c["last_at"] = r["last_at"]
+    return list(cells.values()), list(banks.values())
+
+
+_KB_LEGAL = {"regulator", "government", "legal_db"}
+_KB_PRESS = {"press", "media"}
+
+
+def _kb_untagged_parts(by_kind: list[dict]) -> dict:
+    tot = sum(int(x["n"]) for x in by_kind)
+    legal = sum(int(x["n"]) for x in by_kind if x["kind"] in _KB_LEGAL)
+    press = sum(int(x["n"]) for x in by_kind if x["kind"] in _KB_PRESS)
+    return {"total": tot, "legal": legal, "press": press, "rest": tot - legal - press}
+
+
 @app.get("/api/knowledge/coverage")
 def knowledge_coverage():
     """Карта покрытия «банк × тема» — где выводы инструмента обоснованы, а где нет.
 
-    Ось «тема» берётся из адреса страницы (вклады, комиссии, ипотека), а не из
-    doc_type: тот означает формат файла, и матрица «банк × html» бесполезна.
-    Часть документов темы не имеет вовсе — акты ЦБ и новости, где предмет из
-    адреса не читается; их считаем отдельно, а не размазываем по клеткам.
+    Тема — из адреса страницы, а если адрес её не даёт, — из заголовка
+    (rag/topics.py). Клетка считает СТРАНИЦЫ (адреса), а не версии одной
+    страницы, и отдельно — страницы с сайта самого банка. «Пробовали, не
+    вышло» (капча, сайт не ответил) — отдельное состояние клетки: без него
+    капча выглядела бы как отсутствие документов.
     """
     cells = q("""
-        SELECT b.slug, b.name, t topic, count(DISTINCT d.document_id) n,
+        SELECT b.slug, b.name, t topic, count(DISTINCT d.url) n,
+               count(DISTINCT d.url) FILTER (WHERE st.kind = 'bank_official') n_official,
                max(d.fetched_at) last_fetch
           FROM document d
           JOIN bank b ON b.bank_id = d.bank_id
-          JOIN document_chunk c ON c.document_id = d.document_id
+          LEFT JOIN source_trust st ON st.source_id = d.source_id
           CROSS JOIN LATERAL unnest(d.topics) t
          WHERE d.trust_score >= 0.5 AND d.is_sponsored = FALSE
+           AND EXISTS (SELECT 1 FROM document_chunk c WHERE c.document_id = d.document_id
+                         AND NOT EXISTS (SELECT 1 FROM document_chunk_excluded x
+                                          WHERE x.chunk_id = c.chunk_id))
          GROUP BY 1,2,3
     """)
-    # «Пробовали, но не получилось» — отдельное состояние клетки. Без него
-    # карта врёт: капча на сайте банка выглядела бы как отсутствие документа.
-    failed = q("""
-        SELECT b.slug, o.skipped_reason, count(*) n
+    fail_rows = q("""
+        SELECT o.url, o.skipped_reason, count(*) n, max(o.created_at) last_at
           FROM document_origin o
-          JOIN bank b ON position(b.slug in o.url) > 0
-         WHERE o.skipped_reason IS NOT NULL
-         GROUP BY 1,2
-    """)
+         WHERE o.skipped_reason = ANY(:r) AND o.created_at > now() - interval '90 days'
+           AND NOT EXISTS (SELECT 1 FROM document d WHERE d.url = o.url
+                            AND d.trust_score >= 0.5 AND d.fetched_at > o.created_at)
+           -- позже страница отдалась: новый документ или тот же текст
+           -- («duplicate»), в том числе по редиректу на другой адрес
+           AND NOT EXISTS (SELECT 1 FROM document_origin o2 WHERE o2.url = o.url
+                            AND o2.created_at > o.created_at
+                            AND (o2.skipped_reason IS NULL OR o2.skipped_reason = 'duplicate'))
+         GROUP BY 1, 2
+    """, {"r": list(KB_FAIL_REASONS)})
+    failed_cells, failed_banks = _kb_failed_cells(fail_rows)
+    # «сайт не отдаёт» — только если за 30 дней с сайта банка не прочитано
+    # ничего: единичный 404 у банка с сотнями страниц метку не ставит
+    if failed_banks:
+        from ..rag.trust import is_own_bank_site
+        ok_slugs = {r["slug"] for r in q("""
+            SELECT DISTINCT b.slug FROM document d
+              JOIN bank b ON b.bank_id = d.bank_id
+              JOIN source_trust st ON st.source_id = d.source_id
+             WHERE st.kind = 'bank_official' AND d.fetched_at > now() - interval '30 days'""")}
+        for r in q("""SELECT DISTINCT url FROM document_origin
+                       WHERE created_at > now() - interval '30 days'
+                         AND (skipped_reason IS NULL OR skipped_reason = 'duplicate')"""):
+            ok, slug = is_own_bank_site(r["url"])
+            if ok and slug:
+                ok_slugs.add(slug)
+        for fb in failed_banks:
+            fb["blocked"] = fb["slug"] not in ok_slugs
     banks = q("""
-        SELECT b.slug, b.name, count(DISTINCT d.document_id) n
+        SELECT b.slug, b.name, count(DISTINCT d.url) n
           FROM bank b
-          LEFT JOIN document d ON d.bank_id = b.bank_id AND d.trust_score >= 0.5
-          LEFT JOIN document_chunk c ON c.document_id = d.document_id
-         GROUP BY 1,2 HAVING count(DISTINCT d.document_id) > 0
-         ORDER BY n DESC LIMIT 20
+          JOIN document d ON d.bank_id = b.bank_id AND d.trust_score >= 0.5
+                         AND d.is_sponsored = FALSE
+         WHERE EXISTS (SELECT 1 FROM document_chunk c WHERE c.document_id = d.document_id
+                        AND NOT EXISTS (SELECT 1 FROM document_chunk_excluded x
+                                         WHERE x.chunk_id = c.chunk_id))
+         GROUP BY 1,2 ORDER BY n DESC LIMIT 20
     """)
-    untagged = q("""
-        SELECT count(DISTINCT d.document_id) n FROM document d
-          JOIN document_chunk c ON c.document_id = d.document_id
-         WHERE d.trust_score >= 0.5 AND (d.topics IS NULL OR d.topics = '{}')
+    have = {b["slug"] for b in banks}
+    if failed_banks:
+        names = {r["slug"]: r["name"] for r in q(
+            "SELECT slug, name FROM bank WHERE slug = ANY(:s)",
+            {"s": [b["slug"] for b in failed_banks]})}
+        for fb in failed_banks:          # банк, у которого есть только сбои, тоже в карте
+            if fb["slug"] not in have and fb["slug"] in names:
+                banks.append({"slug": fb["slug"], "name": names[fb["slug"]], "n": 0})
+    by_kind = q("""
+        SELECT COALESCE(st.kind, 'прочее') kind, count(DISTINCT d.url) n
+          FROM document d LEFT JOIN source_trust st ON st.source_id = d.source_id
+         WHERE d.trust_score >= 0.5 AND d.is_sponsored = FALSE
+           AND (d.topics IS NULL OR d.topics = '{}')
+           AND EXISTS (SELECT 1 FROM document_chunk c WHERE c.document_id = d.document_id
+                         AND NOT EXISTS (SELECT 1 FROM document_chunk_excluded x
+                                          WHERE x.chunk_id = c.chunk_id))
+         GROUP BY 1
     """)
-    return {"cells": cells, "banks": banks, "failed": failed,
+    parts = _kb_untagged_parts(by_kind)
+    return {"cells": cells, "banks": banks,
+            "failed_cells": failed_cells, "failed_banks": failed_banks,
             "topics": [{"id": k, "label": KNOWLEDGE_TOPIC_RU.get(k, k)}
                        for k in KNOWLEDGE_TOPIC_ORDER],
-            "untagged": (untagged or [{"n": 0}])[0]["n"]}
+            "untagged": parts["total"], "untagged_parts": parts}
 
 
 # Человеческие названия тем. Ключи — из classify_url (rag/url_discovery.py);

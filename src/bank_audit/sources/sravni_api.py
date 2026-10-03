@@ -279,6 +279,7 @@ class SravniApiAdapter(SourceAdapter):
 
         pages: list[Any] = []
         first_status = 0
+        complete = True
 
         if strategy == "deposits_api":
             # seed для cookie
@@ -322,6 +323,7 @@ class SravniApiAdapter(SourceAdapter):
             # код продолжит идти пока не получит повторяющийся набор.
             prev_ids: list = []
             for page_idx in range(1, max_pages + 1):
+                complete = False      # пока страница не прочитана с организациями
                 page_url = base_url if page_idx == 1 else _add_query(base_url, "page", page_idx)
                 time.sleep(self.http.delay_s)
                 resp = client.get(page_url, headers={"Accept": "text/html,*/*", **_BROWSER_HEADERS})
@@ -331,6 +333,9 @@ class SravniApiAdapter(SourceAdapter):
                     log.warning("sravni_api SSR page %s → HTTP %s", page_idx, resp.status_code)
                     break
                 items, total = self._extract_ssr_page_meta(resp.content, category)
+                # блок или антибот-страница с кодом 200 — обход неполный: прогон
+                # 'partial', а не «ok 0/0» (зелёный «снимок без изменений»)
+                complete = bool(items) or page_idx > 1
                 cur_ids = [it.get("id") or it.get("_id") or it.get("alias") for it in items]
                 pages.append(resp.text)
                 log.info("sravni_api SSR %s page %s/%s: %s items (total=%s)",
@@ -370,7 +375,7 @@ class SravniApiAdapter(SourceAdapter):
             filter_context=FilterContext(**fc),
             category=category,
         )
-        return FetchResult(snapshot=snap, html=envelope)
+        return FetchResult(snapshot=snap, html=envelope, complete=complete)
 
     # ── Парсинг ────────────────────────────────────────────────────────────────
 

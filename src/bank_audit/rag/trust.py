@@ -55,13 +55,55 @@ def domain_of(url: str) -> str:
         return ""
 
 
+# Обязательная маркировка рекламы на собственной странице банка — это его
+# предложение, а не заказная статья; маркетплейсы экосистем сюда не входят.
+_OWN_AD_MARKERS = ("реклама. erid", "erid:")
+# Не «свои»: маркетплейсы и витрины, где реклама — чужая (Ozon целиком — не
+# банк, кроме finance.ozon.ru; витрина вкладов других банков), и коммерческие
+# правовые базы и биржа из списка «госорганов».
+_NOT_OWN_SITE = ("domclick.ru", "ozon.ru", "finuslugi.ru", "consultant.ru", "garant.ru",
+                 "kodeks.ru", "moex.com")
+_OWN_SITE_KEEP = ("finance.ozon.ru",)
+
+
+def _not_own_site(url: str) -> bool:
+    d = domain_of(url)
+    if any(d == x or d.endswith("." + x) for x in _OWN_SITE_KEEP):
+        return False
+    return any(d == x or d.endswith("." + x) for x in _NOT_OWN_SITE)
+
+
+def is_own_bank_site(url: str) -> tuple[bool, str | None]:
+    """Сайт самого банка: официальный домен, но не маркетплейс экосистемы
+    (ozon.ru, domclick.ru — не сайт Озон Банка и не сайт Сбера)."""
+    try:
+        if _not_own_site(url):
+            return False, None
+        return is_bank_official(url)
+    except Exception:  # noqa: BLE001
+        return False, None
+
+
 def detect_sponsored(url: str, text: str | None = None) -> tuple[bool, str | None]:
-    """(is_sponsored, reason). True → исключить из RAG."""
-    if _SPONSORED_PATH_RE.search(url or ""):
+    """(is_sponsored, reason). True → исключить из RAG.
+
+    На сайте банка или регулятора раздел /promo/ и пометка «Реклама. erid» —
+    его собственные условия: страницы акций Сбера и раздел /partners/ ВТБ не
+    попадали в поиск (аудит 03.10). «На правах рекламы» и «партнёрский
+    материал» отсекаются везде."""
+    own = False
+    try:
+        own = not _not_own_site(url) and (is_bank_official(url)[0]
+                                          or is_govt_official(url)[0])
+    except Exception:  # noqa: BLE001
+        own = False
+    if not own and _SPONSORED_PATH_RE.search(url or ""):
         return True, "url_pattern"
     if text:
         low = text[:4000].lower()
         for marker in _SPONSORED_LEXICAL:
+            if own and marker in _OWN_AD_MARKERS:
+                continue
             if marker in low:
                 return True, f"lexical:{marker[:30]}"
     return False, None
@@ -134,6 +176,7 @@ KNOWN_BANK_DOMAINS = {
     "rosbank.ru":        "rosbank",
     "bspb.ru":           "bspb",
     "domrf.ru":          "domrf",
+    "domrfbank.ru":      "domrf",       # сайт самого банка (в source_trust он был)
     "dombank.ru":        "domrf",
     "sinarabank.ru":     "sinara",
     "rencredit.ru":      "rencredit",

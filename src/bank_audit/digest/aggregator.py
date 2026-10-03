@@ -15,6 +15,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import text
 
 from .. import db
+from ..normalizer.offers import CTX_JOIN_SQL, REVERT_IDS_SQL, SAME_CTX_SQL
 
 log = logging.getLogger(__name__)
 
@@ -190,14 +191,33 @@ async def tariff_moves(day: date) -> dict:
                             "changed_at": ts, "from": f, "to": t,
                             "bank": r["bank"], "title": r["title"]})
         flap, pending, flap_offers = rate_artifacts(seq)
+        # «Пила» по комиссиям (РКО меняет плату, а не ставку): тот же детектор по
+        # fee_service/fee_open. Берём только мигание — порог скачка рассчитан на
+        # п.п., к рублям он не применим (аудит 03.10, ПЛТ-02)
+        seq_fee = []
+        for r in rows:
+            d = _diff(r)
+            for fld in ("fee_service", "fee_open"):
+                v = d.get(fld) or {}
+                f, t = _fnum(v.get("from")), _fnum(v.get("to"))
+                if f is not None and t is not None:
+                    ts = r["changed_at"] if r["changed_at"].tzinfo else r["changed_at"].replace(tzinfo=timezone.utc)
+                    seq_fee.append({"change_id": r["change_id"], "offer_id": (r["offer_id"], fld),
+                                    "changed_at": ts, "from": f, "to": t,
+                                    "bank": r["bank"], "title": r["title"]})
+        flap_fee, _p, _o = rate_artifacts(seq_fee)
+        flap = flap | flap_fee
+        # откаты (возврат к прежним условиям за 72 ч) — по тому же правилу, что журнал «Рынка»
+        day_reverts = {int(x["change_id"]) for x in _q(
+            f"SELECT * FROM ({REVERT_IDS_SQL}) z", {"rev_days": 10})}
         week_ago = datetime.now(timezone.utc).timestamp() - 7 * 86400
         top, by_bank, cat_48h = [], {}, {}
         for r in rows:
             ts0 = r["changed_at"] if r["changed_at"].tzinfo else r["changed_at"].replace(tzinfo=timezone.utc)
             if ts0.timestamp() < week_ago:
                 continue                  # 10 дней — только для детекта мигания
-            if r["change_id"] in flap:
-                continue                  # сбой сбора, а не изменение условий
+            if r["change_id"] in flap or r["change_id"] in day_reverts:
+                continue                  # сбой сбора или откат, а не изменение условий
             diff = r.get("diff") or {}
             if isinstance(diff, str):
                 import json as _json
@@ -263,6 +283,8 @@ async def tariff_moves(day: date) -> dict:
             "by_bank": sorted(by_bank.values(), key=lambda x: -x["n"])[:10],
             "mass_updates": mass,
             "after_pause": after_pause,
+            # методика счёта изменений: «w3» — без откатов (72 ч), смены выдачи и «пилы» комиссий
+            "method": "w3",
             "sber_gap": sber_gap,
             "totals": {
                 # СОБЫТИЯ, не строки: считаем офферы со значимым изменением
@@ -270,31 +292,43 @@ async def tariff_moves(day: date) -> dict:
                 # 3-4-го знака давал «14 тыс. изменений» — фидбек аналитиков)
                 "changes_7d": int(_scalar("""
                     SELECT count(DISTINCT ch.offer_id) FROM change_history ch
+                    """ + CTX_JOIN_SQL + """
                      WHERE ch.changed_at > now()-interval '7 days'
                        AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
                               WHERE k <> 'rate_pct') > 0
                             OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
                                  - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
-                    """) or 0),
+                       -- откаты (72 ч) и смена выдачи — не изменения (то же правило, что журнал)
+                       AND ch.change_id NOT IN (""" + REVERT_IDS_SQL + """)
+                       AND """ + SAME_CTX_SQL + """
+                    """, {"rev_days": 7}) or 0),
                 "banks_changed_7d": int(_scalar("""
                     SELECT count(DISTINCT b.bank_id) FROM change_history ch
                       JOIN product_offer o USING (offer_id) JOIN bank b USING (bank_id)
+                    """ + CTX_JOIN_SQL + """
                      WHERE ch.changed_at > now()-interval '7 days'
                        AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
                               WHERE k <> 'rate_pct') > 0
                             OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
                                  - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
-                    """) or 0),
+                       -- откаты (72 ч) и смена выдачи — не изменения (то же правило, что журнал)
+                       AND ch.change_id NOT IN (""" + REVERT_IDS_SQL + """)
+                       AND """ + SAME_CTX_SQL + """
+                    """, {"rev_days": 7}) or 0),
                 # изменения самого Сбера — для плитки пульса вместо «флагов качества»
                 "sber_changes_7d": int(_scalar("""
                     SELECT count(DISTINCT ch.offer_id) FROM change_history ch
                       JOIN product_offer o USING (offer_id) JOIN bank b USING (bank_id)
+                    """ + CTX_JOIN_SQL + """
                      WHERE b.is_sber AND ch.changed_at > now()-interval '7 days'
                        AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
                               WHERE k <> 'rate_pct') > 0
                             OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
                                  - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
-                    """) or 0),
+                       -- откаты (72 ч) и смена выдачи — не изменения (то же правило, что журнал)
+                       AND ch.change_id NOT IN (""" + REVERT_IDS_SQL + """)
+                       AND """ + SAME_CTX_SQL + """
+                    """, {"rev_days": 7}) or 0),
                 "banks_tracked": int(_scalar(
                     "SELECT count(DISTINCT bank_id) FROM product_offer WHERE is_active") or 0),
                 "last_change_at": (_scalar("SELECT max(changed_at) FROM change_history") or None),

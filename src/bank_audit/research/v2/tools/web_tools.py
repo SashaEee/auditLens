@@ -746,6 +746,9 @@ def tool_market_position(args: dict, bundle) -> str:
             item["warning"] = ("метрика не различает банки: на лучшем значении "
                                f"{c.get('at_best')} из {c.get('n_banks')} — "
                                "ранг цитировать нельзя")
+        elif (c.get("at_best") or 0) > 1:
+            item["warning"] = (f"лучшее значение у {c.get('at_best')} банков — единственного "
+                               "лидера нет: называйте значение, а не банк")
         # разрезы: ответ «где мы среди новостроек» честнее общего по категории
         groups = c.get("groups") or []
         if segment or sub:

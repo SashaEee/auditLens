@@ -445,7 +445,10 @@ def tool_knowledge_search(query: str, bank: str | None = None, doc_type: str | N
 def _chunks(want: dict[int, list[int]]) -> dict[int, list[str]]:
     if not want:
         return {}
-    rows = _q("SELECT document_id, idx, text FROM document_chunk WHERE document_id = ANY(:d)",
+    # фрагменты вне поиска (меню, хвост интерфейса) в контекст модели не идут
+    rows = _q("SELECT dc.document_id, dc.idx, dc.text FROM document_chunk dc "
+              "WHERE dc.document_id = ANY(:d) AND NOT EXISTS (SELECT 1 FROM "
+              "document_chunk_excluded x WHERE x.chunk_id = dc.chunk_id)",
               {"d": list(want)})
     by: dict[int, dict[int, str]] = {}
     for r in rows:
@@ -480,8 +483,10 @@ def tool_knowledge_read(document_id: int, query: str | None = None) -> str:
         return out({"error": f"документ {document_id} не найден"})
     h = head[0] | {"link": link_doc(document_id)}
     if query:
-        chunks = _q("SELECT idx, headings_path, text FROM document_chunk "
-                    "WHERE document_id = :i ORDER BY idx", {"i": int(document_id)})
+        chunks = _q("SELECT dc.idx, dc.headings_path, dc.text FROM document_chunk dc "
+                    "WHERE dc.document_id = :i AND NOT EXISTS (SELECT 1 FROM "
+                    "document_chunk_excluded x WHERE x.chunk_id = dc.chunk_id) "
+                    "ORDER BY dc.idx", {"i": int(document_id)})
         words, nums = _words(query), set(re.findall(r"\d+", query))
         scored = []
         for c in chunks:

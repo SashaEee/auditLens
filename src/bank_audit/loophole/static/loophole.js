@@ -1,4 +1,4 @@
-/* Собрано из loophole.jsx (sha256 16fc7fbfd56c1f550696ab927887586fc6b65c5421bca7f8bf88d343db21ca71). Не править вручную: node scripts/build_loophole_js.mjs */
+/* Собрано из loophole.jsx (sha256 666ab20ccd21285bec45b1794133ea6da37726d968981e49c163e0488c15a105). Не править вручную: node scripts/build_loophole_js.mjs */
 /* loophole.jsx — вкладка «Уязвимости» в системе AuditLens: база (сводка, фильтры,
    список и карточка записи, Excel, аудит-дела), исследование агента одной
    колонкой, очередь решений ЦК КС и панель «Доступ». Права решает сервер. */
@@ -547,12 +547,24 @@ function hostOf(url) {
   }
 }
 
-// Подсветка слов поиска в тексте (React-узлы, без innerHTML).
+// Подсветка слов поиска в тексте (React-узлы, без innerHTML). terms — пары
+// [слово, основа] с сервера: подсвечиваем ровно то, что искал сервер, с любым
+// окончанием и с е/ё/э (аудит 03.10, УЯЗ-03).
 function Hl({
   text,
-  q
+  q,
+  terms
 }) {
   const value = String(text || "");
+  const stems = (terms || []).map(t => t && t[1]).filter(t => t && t.length > 1);
+  if (stems.length) {
+    const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/е/g, "[еёэ]").replace(/-/g, "[-\u2010-\u2015]");
+    const re = new RegExp("(" + stems.map(t => esc(t) + "[а-яёa-z0-9]*").join("|") + ")", "gi");
+    return value.split(re).map((part, i) => i % 2 ? /*#__PURE__*/React.createElement("mark", {
+      key: i,
+      className: "lp-hl"
+    }, part) : part);
+  }
   const words = String(q || "").trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
   if (!words.length) return value;
   const re = new RegExp("(" + words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
@@ -583,6 +595,9 @@ function LoopholeApp() {
   const [fClassification, setFClassification] = useState("confirmed");
   // Порядок базы — сортирует сервер: сначала новые или по вероятности модели.
   const [fSort, setFSort] = useState("new");
+  // записи «не о банках» (нет ни одного банковского слова) по умолчанию скрыты
+  const [fTopic, setFTopic] = useState("bank");
+  const [qTerms, setQTerms] = useState([]);
   // Выделение строк
   const [selected, setSelected] = useState(new Set());
 
@@ -751,6 +766,7 @@ function LoopholeApp() {
       params.set("verification_status", fVerification);
       params.set("classification", fClassification);
       params.set("sort", fSort);
+      params.set("topic", fTopic);
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String(page * PAGE_SIZE));
       const url = `${API}/catalog${params.toString() ? "?" + params.toString() : ""}`;
@@ -762,6 +778,7 @@ function LoopholeApp() {
       // «Показать ещё» дописывает страницу к уже показанным; повторы
       // (запись сдвинулась между запросами) заменяются свежими данными.
       const incoming = d.records || [];
+      if (page === 0) setQTerms(Array.isArray(d.terms) ? d.terms : []);
       setRecords(prev => {
         if (page === 0) return incoming;
         const fresh = new Map(incoming.map(r => [r.record_id, r]));
@@ -788,7 +805,7 @@ function LoopholeApp() {
         setLoading(false);
       }
     }
-  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, page]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, fTopic, page]);
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
     // Антидребезг нужен только при наборе текста; клики по фильтрам и первое
@@ -802,12 +819,12 @@ function LoopholeApp() {
   // Сброс страницы при смене фильтров (выборка начинается с первой страницы).
   useEffect(() => {
     setPage(0);
-  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, fTopic]);
 
   // Выделение сбрасывается при смене выборки; «Показать ещё» его сохраняет.
   useEffect(() => {
     setSelected(new Set());
-  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, fTopic]);
   const toggleRow = id => {
     setSelected(prev => {
       const next = new Set(prev);
@@ -824,6 +841,7 @@ function LoopholeApp() {
     setFTo("");
     setFVerification("all");
     setFClassification("confirmed");
+    setFTopic("bank");
     setPage(0);
   };
 
@@ -2295,6 +2313,7 @@ function LoopholeApp() {
     if (fTo) params.set("period_to", fTo);
     params.set("verification_status", fVerification);
     params.set("classification", fClassification);
+    params.set("topic", fTopic);
     try {
       const r = await fetch(`${API}/catalog/summary?${params.toString()}`);
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -2303,7 +2322,7 @@ function LoopholeApp() {
     } catch {
       if (generation === summaryRequestRef.current) setSummaryData(null);
     }
-  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fTopic]);
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
     const typing = summaryTextRef.current !== fText;
@@ -2531,7 +2550,8 @@ function LoopholeApp() {
       q: fText.trim() || null,
       verification_status: fVerification,
       classification: fClassification,
-      sort: fSort
+      sort: fSort,
+      topic: fTopic
     };
     try {
       const r = await fetch(`${API}/export/catalog.xlsx`, {
@@ -3148,7 +3168,9 @@ function LoopholeApp() {
   }), /*#__PURE__*/React.createElement("span", {
     className: "lp-kbd",
     "aria-hidden": "true"
-  }, "/")), /*#__PURE__*/React.createElement("button", {
+  }, "/")), fText.trim() && qTerms.length > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "lp-muted lp-q-how"
+  }, "\u0418\u0449\u0435\u043C \u0432\u0441\u0435 \u0441\u043B\u043E\u0432\u0430: ", qTerms.map(t => t[0]).join(", "), " \u2014 \u0432 \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043A\u0435, \u0444\u0440\u0430\u0433\u043C\u0435\u043D\u0442\u0435 \u0438 \u0441\u0443\u0442\u0438, \u0441 \u043B\u044E\u0431\u044B\u043C\u0438 \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u044F\u043C\u0438"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "lp-btn lp-fbtn",
     "aria-expanded": showFilters,
@@ -3559,17 +3581,20 @@ function LoopholeApp() {
       }
     }, /*#__PURE__*/React.createElement(Hl, {
       text: r.headline || r.title || r.snippet || "Без заголовка",
-      q: fText
+      q: fText,
+      terms: qTerms
     })), line ? /*#__PURE__*/React.createElement("div", {
       className: "lp-c-snip"
     }, /*#__PURE__*/React.createElement(Hl, {
       text: line,
-      q: fText
+      q: fText,
+      terms: qTerms
     })) : r.snippet ? /*#__PURE__*/React.createElement("div", {
       className: "lp-c-quote"
     }, "\xAB", /*#__PURE__*/React.createElement(Hl, {
       text: r.snippet,
-      q: fText
+      q: fText,
+      terms: qTerms
     }), "\xBB") : null, /*#__PURE__*/React.createElement("div", {
       className: "lp-c-sig"
     }, conf != null && /*#__PURE__*/React.createElement("span", {
@@ -3584,7 +3609,10 @@ function LoopholeApp() {
       title: r.summary_doubt
     }, "\u043C\u043E\u0434\u0435\u043B\u044C \u0441\u043E\u043C\u043D\u0435\u0432\u0430\u0435\u0442\u0441\u044F"), (r.copy_ids || []).length > 0 && /*#__PURE__*/React.createElement("span", null, "\u043A\u043E\u043F\u0438\u0439: ", fmtInt(r.copy_ids.length)), r.content_status === "truncated" && /*#__PURE__*/React.createElement("span", {
       className: "lp-tag"
-    }, "\u0442\u0435\u043A\u0441\u0442 \u043E\u0431\u0440\u0435\u0437\u0430\u043D"), (r.content_status === "fetch_failed" || r.content_status === "empty") && /*#__PURE__*/React.createElement("span", {
+    }, "\u0442\u0435\u043A\u0441\u0442 \u043E\u0431\u0440\u0435\u0437\u0430\u043D"), r.offtopic ? /*#__PURE__*/React.createElement("span", {
+      className: "lp-tag",
+      title: "\u0432 \u0442\u0435\u043A\u0441\u0442\u0435 \u043D\u0435\u0442 \u043D\u0438 \u043E\u0434\u043D\u043E\u0433\u043E \u0431\u0430\u043D\u043A\u043E\u0432\u0441\u043A\u043E\u0433\u043E \u0441\u043B\u043E\u0432\u0430"
+    }, "\u043D\u0435 \u043E \u0431\u0430\u043D\u043A\u0430\u0445") : null, (r.content_status === "fetch_failed" || r.content_status === "empty") && /*#__PURE__*/React.createElement("span", {
       className: "lp-tag lp-tag-warn"
     }, "\u0442\u0435\u043A\u0441\u0442 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D")));
   };
@@ -3601,6 +3629,10 @@ function LoopholeApp() {
     next.click();
   };
   const notConfirmedHidden = fClassification === "confirmed" && types ? types.not_confirmed : 0;
+  const offtopicHidden = facets && facets.offtopic ? facets.offtopic : 0;
+  // скрытые «не о банках» при любом типе: при «уязвимости и схемы» пустая
+  // выдача может прятать совпадения именно среди них
+  const offtopicAll = facets && facets.offtopic_all ? facets.offtopic_all : 0;
   const pickedVisible = records.filter(r => selected.has(r.record_id)).length;
   const catalogList = /*#__PURE__*/React.createElement("div", {
     className: "lp-list"
@@ -3630,7 +3662,19 @@ function LoopholeApp() {
     type: "button",
     className: "lp-btn-text",
     onClick: () => setSelected(pickedVisible === records.length && records.length ? new Set() : new Set(records.map(r => r.record_id)))
-  }, pickedVisible === records.length && records.length ? "Снять все" : "Выбрать все показанные")), notConfirmedHidden > 0 && /*#__PURE__*/React.createElement("div", {
+  }, pickedVisible === records.length && records.length ? "Снять все" : "Выбрать все показанные")), fTopic === "bank" && offtopicHidden > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "lp-hid"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0421\u043A\u0440\u044B\u0442\u043E ", fmtInt(offtopicHidden), " ", lpPlural(offtopicHidden, "запись", "записи", "записей"), " \u043D\u0435 \u043E \u0431\u0430\u043D\u043A\u0430\u0445: \u0432 \u0442\u0435\u043A\u0441\u0442\u0435 \u043D\u0435\u0442 \u043D\u0438 \u043E\u0434\u043D\u043E\u0433\u043E \u0431\u0430\u043D\u043A\u043E\u0432\u0441\u043A\u043E\u0433\u043E \u0441\u043B\u043E\u0432\u0430."), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "lp-btn-text",
+    onClick: () => setFTopic("all")
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C")), fTopic === "all" && /*#__PURE__*/React.createElement("div", {
+    className: "lp-hid"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u043A\u0430\u0437\u0430\u043D\u044B \u0438 \u0437\u0430\u043F\u0438\u0441\u0438 \u043D\u0435 \u043E \u0431\u0430\u043D\u043A\u0430\u0445."), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "lp-btn-text",
+    onClick: () => setFTopic("bank")
+  }, "\u0421\u043A\u0440\u044B\u0442\u044C")), notConfirmedHidden > 0 && /*#__PURE__*/React.createElement("div", {
     className: "lp-hid"
   }, /*#__PURE__*/React.createElement("span", null, "\u0415\u0449\u0451 ", fmtInt(notConfirmedHidden), " ", lpPlural(notConfirmedHidden, "запись", "записи", "записей"), " \u0431\u0435\u0437 \u043D\u0430\u0445\u043E\u0434\u043A\u0438 \u0441\u043A\u0440\u044B\u0442\u044B: \u043C\u043E\u0434\u0435\u043B\u044C \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u043B\u0430 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u044C \u0438\u043B\u0438 \u0441\u0445\u0435\u043C\u0443."), /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -3707,7 +3751,14 @@ function LoopholeApp() {
     type: "button",
     className: "lp-btn",
     onClick: () => setFClassification("all")
-  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0432\u0441\u0435"), /*#__PURE__*/React.createElement("button", {
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0432\u0441\u0435"), fTopic === "bank" && offtopicAll > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "lp-btn",
+    onClick: () => {
+      setFClassification("all");
+      setFTopic("all");
+    }
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C ", fmtInt(offtopicAll), " \u043D\u0435 \u043E \u0431\u0430\u043D\u043A\u0430\u0445"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "lp-btn lp-btn-primary",
     onClick: () => openContext("ai_research")

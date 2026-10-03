@@ -447,9 +447,18 @@ function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
 }
 
-// Подсветка слов поиска в тексте (React-узлы, без innerHTML).
-function Hl({text, q}) {
+// Подсветка слов поиска в тексте (React-узлы, без innerHTML). terms — пары
+// [слово, основа] с сервера: подсвечиваем ровно то, что искал сервер, с любым
+// окончанием и с е/ё/э (аудит 03.10, УЯЗ-03).
+function Hl({text, q, terms}) {
   const value = String(text || "");
+  const stems = (terms || []).map(t => t && t[1]).filter(t => t && t.length > 1);
+  if (stems.length) {
+    const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/е/g, "[еёэ]")
+      .replace(/-/g, "[-\u2010-\u2015]");
+    const re = new RegExp("(" + stems.map(t => esc(t) + "[а-яёa-z0-9]*").join("|") + ")", "gi");
+    return value.split(re).map((part, i) => (i % 2 ? <mark key={i} className="lp-hl">{part}</mark> : part));
+  }
   const words = String(q || "").trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
   if (!words.length) return value;
   const re = new RegExp("(" + words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
@@ -480,6 +489,9 @@ function LoopholeApp() {
   const [fClassification, setFClassification] = useState("confirmed");
   // Порядок базы — сортирует сервер: сначала новые или по вероятности модели.
   const [fSort, setFSort] = useState("new");
+  // записи «не о банках» (нет ни одного банковского слова) по умолчанию скрыты
+  const [fTopic, setFTopic] = useState("bank");
+  const [qTerms, setQTerms] = useState([]);
   // Выделение строк
   const [selected, setSelected] = useState(new Set());
 
@@ -642,6 +654,7 @@ function LoopholeApp() {
       params.set("verification_status", fVerification);
       params.set("classification", fClassification);
       params.set("sort", fSort);
+      params.set("topic", fTopic);
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String(page * PAGE_SIZE));
       const url = `${API}/catalog${params.toString() ? "?" + params.toString() : ""}`;
@@ -653,6 +666,7 @@ function LoopholeApp() {
       // «Показать ещё» дописывает страницу к уже показанным; повторы
       // (запись сдвинулась между запросами) заменяются свежими данными.
       const incoming = d.records || [];
+      if (page === 0) setQTerms(Array.isArray(d.terms) ? d.terms : []);
       setRecords(prev => {
         if (page === 0) return incoming;
         const fresh = new Map(incoming.map(r => [r.record_id, r]));
@@ -680,7 +694,7 @@ function LoopholeApp() {
         setLoading(false);
       }
     }
-  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, page]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, fTopic, page]);
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
@@ -693,11 +707,11 @@ function LoopholeApp() {
   }, [loadRecords, authz, fText]);
 
   // Сброс страницы при смене фильтров (выборка начинается с первой страницы).
-  useEffect(() => { setPage(0); }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort]);
+  useEffect(() => { setPage(0); }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, fTopic]);
 
   // Выделение сбрасывается при смене выборки; «Показать ещё» его сохраняет.
   useEffect(() => { setSelected(new Set()); },
-           [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort]);
+           [fText, fBanks, fFrom, fTo, fVerification, fClassification, fSort, fTopic]);
 
   const toggleRow = (id) => {
     setSelected(prev => {
@@ -710,7 +724,7 @@ function LoopholeApp() {
   // Сброс фильтров каталога — действие «Сбросить» (фильтры + пустая выборка).
   const resetFilters = () => {
     setFText(""); setFBanks([]); setFFrom(""); setFTo(""); setFVerification("all");
-    setFClassification("confirmed"); setPage(0);
+    setFClassification("confirmed"); setFTopic("bank"); setPage(0);
   };
 
   // ── Выгрузка: подписи и повторное скачивание ──────────────────────────────
@@ -2036,6 +2050,7 @@ function LoopholeApp() {
     if (fTo) params.set("period_to", fTo);
     params.set("verification_status", fVerification);
     params.set("classification", fClassification);
+    params.set("topic", fTopic);
     try {
       const r = await fetch(`${API}/catalog/summary?${params.toString()}`);
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -2044,7 +2059,7 @@ function LoopholeApp() {
     } catch {
       if (generation === summaryRequestRef.current) setSummaryData(null);
     }
-  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification]);
+  }, [fText, fBanks, fFrom, fTo, fVerification, fClassification, fTopic]);
 
   useEffect(() => {
     if (!authz || !authz.contexts) return undefined;
@@ -2229,7 +2244,7 @@ function LoopholeApp() {
     const body = ids.length ? {record_ids: ids} : {
       bank_slugs: fBanks, period_from: fFrom || null, period_to: fTo || null,
       q: fText.trim() || null, verification_status: fVerification,
-      classification: fClassification, sort: fSort,
+      classification: fClassification, sort: fSort, topic: fTopic,
     };
     try {
       const r = await fetch(`${API}/export/catalog.xlsx`, {
@@ -2675,6 +2690,9 @@ function LoopholeApp() {
                  placeholder="Поиск: «кэшбэк СБП», «обналичивание», «самозапрет»" />
           <span className="lp-kbd" aria-hidden="true">/</span>
         </label>
+        {fText.trim() && qTerms.length > 0 && (
+          <span className="lp-muted lp-q-how">Ищем все слова: {qTerms.map(t => t[0]).join(", ")} — в заголовке,
+            фрагменте и сути, с любыми окончаниями</span>)}
         <button type="button" className="lp-btn lp-fbtn" aria-expanded={showFilters}
                 onClick={() => setShowFilters(s => !s)}>
           <Icon name="filter" />Фильтры{activeFilterCount ? ` · ${activeFilterCount}` : ""}
@@ -2978,10 +2996,10 @@ function LoopholeApp() {
         </div>
         <button type="button" className="lp-c-title" aria-current={on ? "true" : undefined}
                 onClick={e => { e.stopPropagation(); pickRecord(r.record_id); }}>
-          <Hl text={r.headline || r.title || r.snippet || "Без заголовка"} q={fText} />
+          <Hl text={r.headline || r.title || r.snippet || "Без заголовка"} q={fText} terms={qTerms} />
         </button>
-        {line ? <div className="lp-c-snip"><Hl text={line} q={fText} /></div>
-          : r.snippet ? <div className="lp-c-quote">«<Hl text={r.snippet} q={fText} />»</div> : null}
+        {line ? <div className="lp-c-snip"><Hl text={line} q={fText} terms={qTerms} /></div>
+          : r.snippet ? <div className="lp-c-quote">«<Hl text={r.snippet} q={fText} terms={qTerms} />»</div> : null}
         <div className="lp-c-sig">
           {conf != null && <span className="lp-conf" title={`Предварительная вероятность ${conf}%`}>
             {confBar(r.verdict_confidence)}вероятность {confWord(r.verdict_confidence)}</span>}
@@ -2991,6 +3009,7 @@ function LoopholeApp() {
           {positive && r.summary_doubt && <span className="lp-doubt" title={r.summary_doubt}>модель сомневается</span>}
           {(r.copy_ids || []).length > 0 && <span>копий: {fmtInt(r.copy_ids.length)}</span>}
           {r.content_status === "truncated" && <span className="lp-tag">текст обрезан</span>}
+          {r.offtopic ? <span className="lp-tag" title="в тексте нет ни одного банковского слова">не о банках</span> : null}
           {(r.content_status === "fetch_failed" || r.content_status === "empty") &&
             <span className="lp-tag lp-tag-warn">текст не загружен</span>}
         </div>
@@ -3011,6 +3030,10 @@ function LoopholeApp() {
   };
 
   const notConfirmedHidden = fClassification === "confirmed" && types ? types.not_confirmed : 0;
+  const offtopicHidden = facets && facets.offtopic ? facets.offtopic : 0;
+  // скрытые «не о банках» при любом типе: при «уязвимости и схемы» пустая
+  // выдача может прятать совпадения именно среди них
+  const offtopicAll = facets && facets.offtopic_all ? facets.offtopic_all : 0;
   const pickedVisible = records.filter(r => selected.has(r.record_id)).length;
 
   const catalogList = (
@@ -3035,6 +3058,19 @@ function LoopholeApp() {
                     ? new Set() : new Set(records.map(r => r.record_id)))}>
             {pickedVisible === records.length && records.length ? "Снять все" : "Выбрать все показанные"}
           </button>
+        </div>
+      )}
+      {fTopic === "bank" && offtopicHidden > 0 && (
+        <div className="lp-hid">
+          <span>Скрыто {fmtInt(offtopicHidden)} {lpPlural(offtopicHidden, "запись", "записи", "записей")} не
+            о банках: в тексте нет ни одного банковского слова.</span>
+          <button type="button" className="lp-btn-text" onClick={() => setFTopic("all")}>Показать</button>
+        </div>
+      )}
+      {fTopic === "all" && (
+        <div className="lp-hid">
+          <span>Показаны и записи не о банках.</span>
+          <button type="button" className="lp-btn-text" onClick={() => setFTopic("bank")}>Скрыть</button>
         </div>
       )}
       {notConfirmedHidden > 0 && (
@@ -3083,6 +3119,10 @@ function LoopholeApp() {
               <button type="button" className="lp-btn" onClick={resetAll}>Сбросить фильтры</button>
               {fClassification === "confirmed" && notConfirmedHidden > 0 &&
                 <button type="button" className="lp-btn" onClick={() => setFClassification("all")}>Показать все</button>}
+              {fTopic === "bank" && offtopicAll > 0 &&
+                <button type="button" className="lp-btn"
+                        onClick={() => { setFClassification("all"); setFTopic("all"); }}>
+                  Показать {fmtInt(offtopicAll)} не о банках</button>}
               <button type="button" className="lp-btn lp-btn-primary" onClick={() => openContext("ai_research")}>
                 <Icon name="spark" />Исследовать</button>
             </div>

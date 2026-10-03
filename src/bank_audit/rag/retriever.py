@@ -9,12 +9,24 @@ API:
 """
 from __future__ import annotations
 import logging
+import re
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse
 from sqlalchemy import text
 from .. import db
 from . import embedder
 
 log = logging.getLogger(__name__)
+
+
+# «Свежий» документ — прочитан за окно ИЛИ подтверждён за окно повторным
+# чтением с тем же текстом (ночной обход пишет его в document_origin как
+# duplicate): тариф, не менявшийся с августа, но перечитанный вчера, — свежий
+_FRESH_SQL = ("(d.fetched_at > now() - make_interval(days => :max_age) "
+              "OR d.document_id IN (SELECT o.document_id FROM document_origin o "
+              "WHERE o.document_id IS NOT NULL "
+              "AND o.created_at > now() - make_interval(days => :max_age) "
+              "AND (o.skipped_reason IS NULL OR o.skipped_reason = 'duplicate')))")
 
 
 def semantic_search(
@@ -44,7 +56,7 @@ def semantic_search(
     qvec = embedder.embed_one(query)
 
     # Собираем WHERE clauses динамически
-    wh = ["d.trust_score >= :trust_min"]
+    wh = ["d.trust_score >= :trust_min", _NOT_EXCLUDED]
     params: dict[str, Any] = {
         "qvec": str(qvec),    # pgvector принимает '[0.1,0.2,...]' формат
         "trust_min": trust_min,
@@ -59,7 +71,7 @@ def semantic_search(
         wh.append("d.doc_type::text = ANY(:doc_types)")
         params["doc_types"] = doc_types
     if max_age_days:
-        wh.append("d.fetched_at > now() - make_interval(days => :max_age)")
+        wh.append(_FRESH_SQL)
         params["max_age"] = max_age_days
 
     where_sql = " AND ".join(wh)
@@ -109,9 +121,16 @@ RRF_K = 60
 HL_START, HL_STOP = "⟦", "⟧"      # ⟦ ⟧
 
 
+# Фрагменты вне поиска: хвост «Элементы интерфейса» и меню агрегаторов
+# (migrations/091, аудит 03.10 ДАН-04)
+_NOT_EXCLUDED = ("NOT EXISTS (SELECT 1 FROM document_chunk_excluded x "
+                 "WHERE x.chunk_id = dc.chunk_id)")
+
+
 def _facet_sql(where_sql: str) -> str:
+    # страницы, а не версии одной страницы
     return f"""
-        SELECT b.slug, b.name, count(DISTINCT d.document_id) n
+        SELECT b.slug, b.name, count(DISTINCT d.url) n
           FROM document d
           JOIN document_chunk dc ON dc.document_id = d.document_id
           LEFT JOIN bank b ON b.bank_id = d.bank_id
@@ -142,13 +161,13 @@ def hybrid_search(
         return {"groups": [], "total": 0, "modes": {"vector": 0, "text": 0}}
     query = query.strip()
 
-    wh = ["d.trust_score >= :trust_min", "d.is_sponsored = FALSE"]
+    wh = ["d.trust_score >= :trust_min", "d.is_sponsored = FALSE", _NOT_EXCLUDED]
     params: dict[str, Any] = {"trust_min": trust_min, "pool": pool, "q": query}
     if doc_types:
         wh.append("d.doc_type::text = ANY(:doc_types)")
         params["doc_types"] = doc_types
     if max_age_days:
-        wh.append("d.fetched_at > now() - make_interval(days => :max_age)")
+        wh.append(_FRESH_SQL)
         params["max_age"] = max_age_days
     # счётчики банков считаем ДО фильтра по банку — иначе в списке остался бы
     # ровно один пункт, тот же, что уже выбран, и переключиться было бы некуда
@@ -230,65 +249,112 @@ def hybrid_search(
                             if k not in ("qvec", "q", "pool", "bank_slugs")}
                            ).mappings().all()
 
-    # Группируем: документ — единица выдачи, фрагменты внутри — доказательства
-    groups: dict[int, dict] = {}
-    n_vec = n_txt = 0
-    for r in rows:
-        n_vec += bool(r["via_vec"])
-        n_txt += bool(r["via_txt"])
-        g = groups.get(r["document_id"])
-        if g is None:
-            g = groups[r["document_id"]] = {
-                "document_id": r["document_id"], "url": r["url"],
-                "title": r["title"], "text_head": r["text_head"],
-                "doc_type": r["doc_type"],
-                "trust_score": float(r["trust_score"] or 0),
-                "fetched_at": r["fetched_at"],
-                "bank_slug": r["bank_slug"], "bank_name": r["bank_name"],
-                "source_kind": r["source_kind"], "source_domain": r["source_domain"],
-                "score": 0.0, "hits": [],
-            }
-        g["score"] += float(r["score"])
-        if len(g["hits"]) < per_doc:
-            g["hits"].append({
-                "idx": r["idx"],
-                "headings_path": r["headings_path"],
-                "snippet": (r["snippet"] or r["text"][:280]).strip(),
-                "relevance": round(float(r["vec_rel"]), 3) if r["vec_rel"] is not None else None,
-                # «почему нашлось» — аудитору важно отличать точное совпадение
-                # слов от смыслового: у первого другой вес в доказательстве
-                "via": "точное совпадение" if r["via_txt"] and not r["via_vec"]
-                       else "по смыслу" if r["via_vec"] and not r["via_txt"]
-                       else "по смыслу и словам",
-            })
-
-    # Один и тот же текст встречается под разными URL (зеркала consultant.ru,
-    # печатная версия страницы, ?utm-хвосты). По sha они разные документы, для
-    # аудитора — один. Схлопываем по «банк + заголовок», оставляя лучший.
-    seen: dict[tuple, dict] = {}
-    for g in sorted(groups.values(), key=lambda x: -x["score"]):
-        k = (g["bank_slug"], (g["title"] or "").strip().lower())
-        if k in seen:
-            seen[k]["duplicates"] = seen[k].get("duplicates", 0) + 1
-            # Волна 8: зеркала — это ПОКОЛЕНИЯ одной страницы. Побеждать должен
-            # свежескачанный документ, а не тот, что чуть лучше сматчился:
-            # прошлогодняя копия тарифной страницы выигрывала по score и уезжала
-            # в отчёт как текущая ставка.
-            _old_ts, _new_ts = seen[k].get("fetched_at"), g.get("fetched_at")
-            if _old_ts and _new_ts and _new_ts > _old_ts:
-                g["duplicates"] = seen[k]["duplicates"]
-                seen[k] = g
-            continue
-        seen[k] = g
-    out = list(seen.values())[:limit]
-    for g in out:
-        g["n_hits"] = len(g["hits"])
+    n_vec = sum(bool(r["via_vec"]) for r in rows)
+    n_txt = sum(bool(r["via_txt"]) for r in rows)
+    out, total = _group_rows(rows, per_doc=per_doc)
+    out = out[:limit]
     return {
         "groups": out,
-        "total": len(groups),
+        "total": total,
         "modes": {"vector": n_vec, "text": n_txt},
         "facets": {
             "banks": [{"slug": f["slug"], "name": f["name"], "n": f["n"]}
                       for f in facets if f["slug"]],
         },
     }
+
+
+# ── Ранг документа (аудит 03.10, ДАН-04) ──────────────────────────────────────
+# Очки документа были суммой RRF его фрагментов: страница, где меню с
+# «ипотекой» повторялось в трёх фрагментах, обгоняла тариф банка. Три
+# адреса banki.ru занимали 7 мест выдачи, официальный документ Сбера в топ-20
+# был один. Теперь: лучший фрагмент + четверть второго, вес вида источника,
+# одна страница — одно место (свежая версия), зеркала по заголовку и началу
+# текста. Ранг по-прежнему считает код, а не модель.
+SOURCE_WEIGHT = {"regulator": 1.25, "bank_official": 1.25, "government": 1.15,
+                 "legal_db": 1.15, "press": 0.95, "analyst": 0.95,
+                 "aggregator": 0.8, "forum": 0.7, "blog": 0.7}
+SECOND_HIT_W = 0.25
+_TRACK_RE = re.compile(r"^(utm_|yclid$|gclid$|fbclid$|_openstat$|from$|ref$|erid$)", re.I)
+
+
+def norm_url(url: str | None) -> str:
+    """Адрес без www, меток рекламы, хвостового «/» и якоря."""
+    p = urlparse((url or "").strip())
+    host = (p.hostname or "").lower().removeprefix("www.")
+    path = re.sub(r"/{2,}", "/", p.path or "/").rstrip("/") or "/"
+    qs = [(k, v) for k, v in parse_qsl(p.query) if not _TRACK_RE.match(k)]
+    return host + path + ("?" + urlencode(sorted(qs)) if qs else "")
+
+
+def _group_rows(rows, *, per_doc: int = 3) -> tuple[list[dict], int]:
+    """Строки фрагментов → группы-страницы. Возвращает (группы, число страниц)."""
+    docs: dict[int, dict] = {}
+    for r in rows:
+        g = docs.get(r["document_id"])
+        if g is None:
+            g = docs[r["document_id"]] = {
+                "document_id": r["document_id"], "url": r["url"],
+                "title": r["title"], "text_head": r.get("text_head"),
+                "doc_type": r.get("doc_type"),
+                "trust_score": float(r.get("trust_score") or 0),
+                "fetched_at": r.get("fetched_at"),
+                "bank_slug": r.get("bank_slug"), "bank_name": r.get("bank_name"),
+                "source_kind": r.get("source_kind"), "source_domain": r.get("source_domain"),
+                "_sc": [], "_sn": set(), "hits": []}
+        g["_sc"].append(float(r["score"]))
+        snip = (r.get("snippet") or (r.get("text") or "")[:280]).strip()
+        # перекрытие соседних фрагментов давало два одинаковых сниппета
+        if len(g["hits"]) < per_doc and snip not in g["_sn"]:
+            g["_sn"].add(snip)
+            g["hits"].append({
+                "idx": r.get("idx"), "headings_path": r.get("headings_path"),
+                "snippet": snip,
+                "relevance": round(float(r["vec_rel"]), 3) if r.get("vec_rel") is not None else None,
+                # «почему нашлось» — точное совпадение слов весит в доказательстве иначе
+                "via": "точное совпадение" if r.get("via_txt") and not r.get("via_vec")
+                       else "по смыслу" if r.get("via_vec") and not r.get("via_txt")
+                       else "по смыслу и словам"})
+    for g in docs.values():
+        sc = sorted(g.pop("_sc"), reverse=True)
+        g.pop("_sn")
+        w = SOURCE_WEIGHT.get(g["source_kind"] or "", 1.0)
+        g["score"] = (sc[0] + SECOND_HIT_W * (sc[1] if len(sc) > 1 else 0.0)) * w
+    # одна страница — одно место: побеждает свежая версия, очки — лучшие
+    pages: dict[str, dict] = {}
+    for g in sorted(docs.values(), key=lambda x: -x["score"]):
+        k = norm_url(g["url"])
+        cur = pages.get(k)
+        if cur is None:
+            pages[k] = {**g, "versions": 0}
+            continue
+        cur["versions"] += 1
+        if g.get("fetched_at") and cur.get("fetched_at") and g["fetched_at"] > cur["fetched_at"]:
+            pages[k] = {**g, "score": cur["score"], "versions": cur["versions"]}
+    # зеркала: тот же домен, тот же длинный заголовок и то же начало текста
+    seen: dict[tuple, dict] = {}
+    for g in sorted(pages.values(), key=lambda x: -x["score"]):
+        t = (g["title"] or "").strip().lower()
+        head = (g.get("text_head") or "").strip().lower()[:60]
+        k = ((g["source_domain"], t, head) if len(t) >= 20 and not t.startswith("http")
+             else ("u", norm_url(g["url"])))
+        if k in seen:
+            cur = seen[k]
+            mirrors = cur.get("mirrors", 0) + 1
+            # как у версий: в ответ идёт свежая копия, очки — лучшие (иначе
+            # прошлогодний тариф уезжал в отчёт как текущий)
+            if g.get("fetched_at") and cur.get("fetched_at") and g["fetched_at"] > cur["fetched_at"]:
+                seen[k] = {**g, "score": cur["score"], "versions": cur["versions"] + g["versions"],
+                           "mirrors": mirrors}
+            else:
+                cur["mirrors"] = mirrors
+            continue
+        seen[k] = g
+    out = list(seen.values())
+    for g in out:
+        g["n_hits"] = len(g["hits"])
+        g.setdefault("mirrors", 0)
+        # прежнее поле карточки: «ещё N копий»
+        g["duplicates"] = g["versions"] + g["mirrors"]
+    return out, len(pages)
+

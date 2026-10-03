@@ -61,7 +61,7 @@ class BankiRatingsAdapter(SourceAdapter):
         if "{page}" not in base:                    # старый таргет с page=1 в URL
             base = API_TMPL
         ratings: list[dict] = []
-        pages, status = 0, 200
+        pages, status, complete = 0, 200, False
         for page in range(1, _MAX_PAGES + 1):
             url = base.format(page=page)
             try:
@@ -77,10 +77,12 @@ class BankiRatingsAdapter(SourceAdapter):
                 log.warning("banki_ratings: страница %d не прочитана: %s", page, e)
                 break
             if not chunk:
+                complete = page > 1                 # пустая страница после данных — конец списка
                 break
             ratings.extend(chunk)
             pages = page
             if len(chunk) < 10:                     # последняя страница — короткая
+                complete = True
                 break
         content = json.dumps({"ratings": ratings, "pages": pages},
                              ensure_ascii=False).encode("utf-8")
@@ -93,7 +95,7 @@ class BankiRatingsAdapter(SourceAdapter):
             fetched_at=datetime.now(timezone.utc), http_status=status,
             content_sha256=digest, storage_path=path, bytes=n,
         )
-        return FetchResult(snapshot=snap, html=content)
+        return FetchResult(snapshot=snap, html=content, complete=complete)
 
     def parse_offers(self, html: bytes, target: dict[str, Any]) -> Iterable[OfferDraft]:
         """Рейтинг каждого банка — условный 'offer' типа bank_rating: так

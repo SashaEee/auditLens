@@ -465,7 +465,8 @@ def market_events(bank: str, product: str | None, months: int = 14) -> dict:
     """Изменения условий банка по продукту — помесячно, для меток на графике
     жалоб. Те же правила, что в журнале «Рынка»: смена выдачи агрегатора и
     микрошум ставки изменением не считаются."""
-    from ..normalizer.offers import CTX_JOIN_SQL, SAME_CTX_SQL, SIGNIFICANT_CHANGE_SQL
+    from ..normalizer.offers import (CTX_JOIN_SQL, SAME_CTX_SQL, SIGNIFICANT_CHANGE_SQL,
+                                     revert_ids_sql)
     bc = rd.resolve_bank(bank) or bank
     cat = _PRODUCT_CATEGORY.get(product or "")
     out: dict = {"category": cat, "months": {}, "since": None}
@@ -489,7 +490,12 @@ def market_events(bank: str, product: str | None, months: int = 14) -> dict:
                 WHERE {bcond} AND o.category = :cat
                   AND ch.changed_at > date_trunc('month', now()) - make_interval(months => :m)
                   AND {SAME_CTX_SQL} AND {SIGNIFICANT_CHANGE_SQL}
-                ORDER BY ch.changed_at"""), {**p, "cat": cat, "m": months - 1}).all()
+                  -- откат (72 ч) — не «изменились условия» (то же правило, что журнал)
+                  AND ch.change_id NOT IN ({revert_ids_sql(
+                      "c.offer_id IN (SELECT o2.offer_id FROM product_offer o2 JOIN bank b "
+                      f"ON b.bank_id = o2.bank_id WHERE {bcond} AND o2.category = :cat)")})
+                ORDER BY ch.changed_at"""), {**p, "cat": cat, "m": months - 1,
+                                             "rev_days": months * 31}).all()
             since = s.execute(text("SELECT min(changed_at)::date FROM change_history")).scalar()
         res: dict = {"category": cat, "months": {},
                      "since": since.isoformat() if since else None}

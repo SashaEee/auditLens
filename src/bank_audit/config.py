@@ -102,7 +102,9 @@ def _expand_review_targets(cfg: dict, top_n: int = 30) -> dict:
                 SELECT b.slug, b.name,
                        COALESCE((t.raw->>'total_reviews')::int, 0) AS tr
                   FROM bank b
+                  -- только строки текущей выдачи рейтинга (ДАН-14)
                   LEFT JOIN product_offer o ON o.bank_id=b.bank_id AND o.category='other'
+                                           AND o.is_active
                   LEFT JOIN product_terms t ON t.offer_id=o.offer_id
                                             AND t.valid_to IS NULL AND t.rate_kind='avg_grade'
                  WHERE b.slug IS NOT NULL AND b.slug NOT LIKE 'unknown_%'
