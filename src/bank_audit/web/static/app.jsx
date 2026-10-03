@@ -746,6 +746,10 @@ const BF_KIND={
 // Этап 6 (05.08.2026): до этого платформа не знала, какие новости аудиторы
 // реально открывают — сигнала для оценки отбора не существовало.
 let _trkPush=null;
+// «Аудит-дела» — общая панель поверх любого раздела: открывается кнопкой в
+// верхней панели и из разделов (openCases), «в деле» обновляется событием al-cases
+let _openCases=null, _casesHubOpen=false;
+function openCases(caseId){ try{ if(_openCases)_openCases(caseId||null); }catch{} }
 function trkEvent(ev){ try{ if(_trkPush)_trkPush(ev); }catch{} }
 // «человек здесь»: ввод внутри встроенного модуля (фрейм «Аудита уязвимостей»)
 // до родительского окна не доходит — фрейм сообщает о нём сам через этот мост
@@ -4161,16 +4165,17 @@ function RvCasePick({items,onClose,onDone}){
   const create=async()=>{ if(!title.trim()||busy)return; setBusy(true);
     try{const r=await apiPost("/api/cases",{title:title.trim()});await attach({case_id:r.case_id,title:title.trim()});}
     catch{setErr("Не удалось создать дело");setBusy(false);} };
-  const list=(cases||[]).slice().sort((a,b)=>(b.case_id===last)-(a.case_id===last));
+  // только дела, куда можно добавлять: свои и те, где вы «можете добавлять»
+  const list=(cases||[]).filter(c=>c.can_add).sort((a,b)=>(b.case_id===last)-(a.case_id===last));
   return <RvModal onClose={onClose} title={items.length>1?`В аудит-дело: ${items.length} жалоб`:"В аудит-дело"}
-      sub="дело видно вам и тем, кому вы его откроете">
+      sub="дело видно вам и коллегам, которых владелец добавил в «Доступ»">
     <label className="rv-cp-note"><span>Комментарий <i>необязательно</i></span>
       <input className="input" value={note} onChange={e=>setNote(e.target.value)}
         placeholder="зачем приобщаете: «повышение ставки после отказа от подписки»"/></label>
     {cases===null?<Skel h={60}/>:list.length>0&&<div className="rv-cp-list">
       {list.map(c=><button key={c.case_id} className="rv-cp-case" disabled={busy} onClick={()=>attach(c)}>
         <span className="rv-cp-t">{c.title}</span>
-        <span className="rv-cp-m">{c.items} матер.{c.shared?" · команда":""}{!c.mine?` · ${c.owner}`:""}{c.case_id===last?" · последнее":""}</span>
+        <span className="rv-cp-m">{c.items} матер.{c.mine?(c.members?` · участников ${c.members}`:""):` · ведёт ${c.owner_name}`}{c.case_id===last?" · последнее":""}</span>
       </button>)}</div>}
     <div className="rv-cp-new">
       <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
@@ -4354,7 +4359,6 @@ function ReviewsPage({params}){
   const[feedMoreBusy,setFeedMoreBusy]=useState(false);
   // рабочее место аудитора: дела, фильтры ленты, группы, журнал, подписка
   const[pick,setPick]=useState(null);                   // жалобы для приобщения к делу
-  const[casesOpen,setCasesOpen]=useState(false);
   const[jrOpen,setJrOpen]=useState(false);
   // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
   const[fCity,setFCity]=useState(()=>P.city||(preset&&preset.city)||""),[fSrc,setFSrc]=useState("");
@@ -4394,7 +4398,7 @@ function ReviewsPage({params}){
   const[fine,setFine]=useState(()=>window.matchMedia("(hover: hover) and (min-width: 761px)").matches);
   useEffect(()=>{ const m=window.matchMedia("(hover: hover) and (min-width: 761px)");
     const h=()=>setFine(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
-  const loadCasesN=()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).length)).catch(()=>{});
+  const loadCasesN=()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).filter(c=>!c.deleted).length)).catch(()=>{});
   useEffect(()=>{loadCasesN();},[]);
   // состояние → адрес
   useEffect(()=>{ const sp=new URLSearchParams();
@@ -4541,6 +4545,9 @@ function ReviewsPage({params}){
     const h=()=>setNarrow(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
   const loadCaseUrls=()=>apiFetch("/api/cases/review-urls").then(d=>setCaseUrls(d.urls||{})).catch(()=>{});
   useEffect(()=>{loadCaseUrls();},[]);
+  // панель «Аудит-дела» общая для всего приложения: после неё обновляем «в деле» и счётчик
+  useEffect(()=>{ const h=()=>{loadCaseUrls();loadCasesN();};
+    window.addEventListener("al-cases",h); return ()=>window.removeEventListener("al-cases",h); },[]); // eslint-disable-line
   const openReader=(list,idx,ctx,src)=>{ setRd({list,idx,ctx,src}); if(src==="feed")setCur(idx); };
   const rdList=rd?(rd.src==="feed"?(feed||[]):rd.list):[];
   const rdItem=rd?rdList[rd.idx]:null;
@@ -4577,7 +4584,8 @@ function ReviewsPage({params}){
       const t=e.target; if(t&&t.closest&&t.closest("input,textarea,select,[contenteditable='true']"))return;
       if(pick)return;
       const k=e.key.toLowerCase(), down=k==="j"||k==="о", up=k==="k"||k==="л", add=k==="a"||k==="ф";
-      const overlay=casesOpen||jrOpen||grp||drill;
+      if(_casesHubOpen)return;                 // поверх раздела открыта панель «Аудит-дела»
+      const overlay=jrOpen||grp||drill;
       if(k==="/"&&!overlay&&!(rd&&!split)){e.preventDefault();
         if(tab!=="complaints")goTab("complaints");
         setTimeout(()=>searchRef.current&&searchRef.current.focus(),30);return;}
@@ -5095,8 +5103,8 @@ function ReviewsPage({params}){
                     :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — всплески будут в «Для вас»`}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
           <span className="rv-hact-l">{sub?"Слежу":"Следить"}</span></button>}
-        <button className="rv-bell" onClick={()=>setCasesOpen(true)} aria-label="Аудит-дела"
-          data-tip="подборки жалоб и документов под проверку — общие для команды">
+        <button className="rv-bell" onClick={()=>openCases()} aria-label="Аудит-дела"
+          data-tip="подборки доказательств под проверку — ваши и те, куда вас пригласили">
           <RvICase s={14}/><span className="rv-hact-l">Аудит-дела</span>{casesN?<span className="rv-hact-n">{casesN}</span>:null}</button>
       </div>
     </div>
@@ -5193,7 +5201,6 @@ function ReviewsPage({params}){
         read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="group"&&rd.idx===i}
         onOpen={()=>openReader(grpItems,i,`группа · ${grp.n}`,"group")} onCase={()=>addCase(r)}/>)}</div>}
     </RvModal>}
-    {casesOpen&&<KbCases onClose={()=>setCasesOpen(false)}/>}
 
     {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
     {drill&&<RvModal side="right" onClose={()=>setDrill(null)} title={drill.label}
@@ -8138,9 +8145,10 @@ function KbCasePicker({doc,onDone}){
   };
 
   if(done)return <div className="kb-attached">Документ приобщён к делу.
-    {" "}<a href="#knowledge?cases=1">Открыть дела</a></div>;
+    {" "}<button className="rv-cs-lnk" onClick={()=>openCases(done)}>Открыть дело</button></div>;
 
-  const mine=(cases||[]).filter(c=>c.mine);
+  // приобщать можно в свои дела и в те, где вы «можете добавлять»
+  const mine=(cases||[]).filter(c=>c.can_add);
   return <div className="kb-case-pick">
     <label className="kb-case-note">
       <span>Зачем приобщаете <i>необязательно</i></span>
@@ -8148,8 +8156,8 @@ function KbCasePicker({doc,onDone}){
              placeholder="напр.: подтверждает ставку на дату проверки"/>
     </label>
     {cases===null?<Skel h={40}/>:mine.length>0&&<div className="kb-case-list">
-      {mine.map(c=><button key={c.case_id} className="kb-case-btn"
-        onClick={()=>attach(c.case_id)}>{c.title}<i>{c.items}</i></button>)}
+      {mine.map(c=><button key={c.case_id} className="kb-case-btn" data-tip={c.mine?undefined:`ведёт ${c.owner_name}`}
+        onClick={()=>attach(c.case_id)}>{c.title}{!c.mine&&<span className="t-cap"> · {puShort(c.owner_name)}</span>}<i>{c.items}</i></button>)}
     </div>}
     <div className="kb-case-new">
       <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
@@ -8336,17 +8344,105 @@ function RvCaseItem({it,onDrop,onNote,onOpenDoc,onOpen}){
       </div></div>
      :<RvCard r={rvCaseCard(it)} showBank onOpen={onOpen}/>}
     <div className="rv-ci-foot">
-      <textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="комментарий аудитора…"
-        onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
+      {/* «зачем приобщено» пишут владелец дела и тот, кто приобщил; остальные читают */}
+      {it.can_note!==false
+        ?<textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="зачем приобщено, что здесь важно…"
+          aria-label="Комментарий к материалу" onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
+        :note?<div className="rv-ci-note ro">{note}</div>:<div className="rv-ci-note ro empty">без комментария</div>}
       {it.can_remove&&<button className="rv-ib" onClick={onDrop} aria-label="Убрать из дела" data-tip="убрать из дела"><RvIX s={14}/></button>}
     </div>
-    {it.added_by&&<div className="rv-ci-by">приобщил: {it.added_by}</div>}
+    {(it.added_by_name||it.added_by)&&<div className="rv-ci-by">добавлено: {puShort(it.added_by_name||it.added_by)}
+      {it.added_at?` · ${fmtDateMsk(it.added_at).replace(/ \d\d:\d\d МСК$/,"")}`:""}</div>}
   </div>;
 }
 
-function KbCases({onClose,onOpenDoc}){
+// ── «Доступ к делу»: коллеги поимённо и с ролью ───────────────────────────────
+// Раньше было «Открыть команде» — на деле всем 111 пользователям AuditLens, и
+// получивший доступ мог всё. Теперь владелец добавляет коллег по имени:
+// «может добавлять» (приобщает, убирает своё, запускает разбор) или «только
+// смотрит» (видит, выгружает). Доступа «всем» нет — решение владельца инструмента.
+const CASE_ROLES=[["editor","может добавлять","приобщает материалы, убирает своё, запускает разбор"],
+  ["viewer","только смотрит","видит дело и выгружает его, состав не меняет"]];
+const CASE_ROLE_RU={owner:"владелец",editor:"может добавлять",viewer:"только смотрит"};
+// о себе — во втором лице: «вы можете добавлять», а не «вы может добавлять»
+const CASE_ROLE_YOU={owner:"вы владелец",editor:"вы можете добавлять",viewer:"вы только смотрите"};
+function CaseAccess({cur,onBack,onChanged,onTransferred}){
+  const me=useMe();
+  const[mem,setMem]=useState(cur.members||[]);
+  const[users,setUsers]=useState(null);
+  const[q,setQ]=useState("");
+  const[role,setRole]=useState("editor");
+  const[busy,setBusy]=useState("");
+  const[err,setErr]=useState("");
+  const manage=!!cur.can_manage;
+  useEffect(()=>{ if(manage) apiFetch("/api/users").then(d=>setUsers(d.users||[])).catch(()=>setUsers([])); },[manage]);
+  const inCase=new Set(mem.map(m=>m.username));
+  const ql=q.trim().toLowerCase();
+  const cand=(users||[]).filter(u=>!inCase.has(u.username)&&(!ql||
+    (u.display_name||"").toLowerCase().includes(ql)||u.username.toLowerCase().includes(ql))).slice(0,ql?12:6);
+  const call=async(key,fn)=>{ setBusy(key); setErr("");
+    try{ const r=await fn(); if(r&&r.members) setMem(r.members); onChanged&&onChanged(); return true; }
+    catch(e){ setErr(e.message||"Не получилось. Попробуйте ещё раз"); return false; }
+    finally{ setBusy(""); } };
+  const add=(u)=>call("add:"+u.username,()=>sayPost(`/api/cases/${cur.case_id}/members`,{username:u.username,role}))
+    .then(ok=>{ if(ok) setQ(""); });
+  const setR=(m,r)=>call("role:"+m.username,()=>sayPost(`/api/cases/${cur.case_id}/members`,{username:m.username,role:r}));
+  const drop=(m)=>call("drop:"+m.username,async()=>{
+    const r=await fetch(`/api/cases/${cur.case_id}/members/${encodeURIComponent(m.username)}`,{method:"DELETE"});
+    if(!r.ok) throw new Error("Не получилось убрать участника");
+    setMem(x=>x.filter(y=>y.username!==m.username)); });
+  const give=async(m)=>{ if(!window.confirm(`Передать дело «${cur.title}» — ${m.name}?\n\nВы останетесь в деле с правом добавлять; доступом и удалением будет управлять ${m.name}.`))return;
+    const ok=await call("own:"+m.username,()=>sayPost(`/api/cases/${cur.case_id}/owner`,{username:m.username}));
+    if(ok) onTransferred&&onTransferred(); };
+  return <div className="cs-acc">
+    <button className="rv-cs-back" onClick={onBack}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>к делу</button>
+    {manage&&<>
+      <div className="cs-acc-add">
+        <input className="input" value={q} onChange={e=>setQ(e.target.value)} aria-label="Найти коллегу"
+          placeholder="Найти коллегу по имени…" autoFocus/>
+        <select className="input cs-acc-role" value={role} onChange={e=>setRole(e.target.value)} aria-label="С какими правами добавить"
+          title={(CASE_ROLES.find(r=>r[0]===role)||[])[2]}>
+          {CASE_ROLES.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+      </div>
+      <div className="cs-acc-hint">{(CASE_ROLES.find(r=>r[0]===role)||[])[2]}</div>
+      {users===null?<Skel h={60}/>:<div className="cs-acc-list">
+        {!ql&&cand.length>0&&<div className="t-cap" style={{margin:"2px 0 4px"}}>Недавно в AuditLens</div>}
+        {cand.map(u=>{ const nm=u.display_name||u.username; return <button key={u.username} type="button"
+          className="cs-acc-row add" disabled={!!busy} onClick={()=>add(u)}>
+          <span className="cs-av">{initials(nm)}</span><span className="nm">{nm}</span>
+          <span className="st">{busy==="add:"+u.username?"добавляю…":"+ добавить"}</span></button>; })}
+        {ql&&!cand.length&&<div className="t-cap">Никого не нашли. Коллега появится здесь после первого входа в AuditLens.</div>}
+      </div>}
+    </>}
+    <div className="t-cap" style={{margin:"16px 0 6px"}}>В деле</div>
+    <div className="cs-acc-list">
+      {mem.map(m=><div key={m.username} className="cs-acc-row">
+        <span className={"cs-av"+(m.role==="owner"?" own":"")}>{initials(m.name)}</span>
+        <span className="nm">{m.name}{me&&m.username===me.username?" (вы)":""}</span>
+        {m.role==="owner"||!manage
+          ?<span className="st">{CASE_ROLE_RU[m.role]||m.role}</span>
+          :<span className="cs-acc-ctl">
+            <select className="input cs-acc-role" value={m.role} disabled={!!busy} aria-label={`Права: ${m.name}`}
+              onChange={e=>setR(m,e.target.value)}>{CASE_ROLES.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+            <button className="rv-cs-lnk" disabled={!!busy} onClick={()=>give(m)} data-tip="сделать владельцем дела">передать</button>
+            <button className="rv-ib" disabled={!!busy} onClick={()=>drop(m)} aria-label={`Убрать: ${m.name}`} data-tip="убрать из дела"><RvIX s={13}/></button>
+          </span>}
+      </div>)}
+    </div>
+    {err&&<div className="rv-cp-err" role="alert">{err}</div>}
+    <p className="cs-acc-foot">{manage
+      ?"Коллега увидит дело у себя: кнопка «Аудит-дела» в верхней панели любого раздела."
+      :`Добавлять коллег и менять права может владелец — ${cur.owner_name}.`}</p>
+  </div>;
+}
+
+function KbCases({onClose,onOpenDoc,initialCase}){
+  const me=useMe();
   const[list,setList]=useState(null);
-  const[open,setOpen]=useState(null);
+  const[open,setOpen]=useState(initialCase||null);
+  const[flt,setFlt]=useState("all");           // all | mine | shared
+  const[access,setAccess]=useState(false);     // окно «Доступ» внутри панели
+  const[gone,setGone]=useState(null);          // только что удалённое дело — «Вернуть»
   const[cur,setCur]=useState(null);
   const[newT,setNewT]=useState("");
   const[an,setAn]=useState(null),[anBusy,setAnBusy]=useState(false),[anErr,setAnErr]=useState(null);
@@ -8359,7 +8455,7 @@ function KbCases({onClose,onOpenDoc}){
   // и React принял бы его за функцию очистки — падение при уходе со страницы
   useEffect(()=>{load();},[]);
   const reload=()=>apiFetch(`/api/cases/${open}`).then(c=>{setCur(c);setAn(c.analysis||null);}).catch(()=>{});
-  useEffect(()=>{ if(open){setCur(null);setAn(null);setAnErr(null);setRen(null);reload();} },[open]);
+  useEffect(()=>{ if(open){setCur(null);setAn(null);setAnErr(null);setRen(null);setAccess(false);reload();} },[open]);
 
   const drop=async(itemId)=>{ await apiDel(`/api/cases/${open}/items/${itemId}`); reload(); };
   const saveNote=(it,v)=>{ if((it.note||"")===(v||""))return;
@@ -8377,12 +8473,18 @@ function KbCases({onClose,onOpenDoc}){
     try{const d=await apiPost(`/api/cases/${open}/analyze${force?"?force=1":""}`,{});setAn(d.analysis);}
     catch{setAnErr("Модель не ответила — попробуйте ещё раз");}
     setAnBusy(false); };
-  const team=async()=>{ await apiPost(`/api/cases/${open}/team`,{shared:!cur.shared}).catch(()=>{}); reload(); load(); };
+  // выйти из чужого дела: доступ пропадает, материалы, которые вы приобщили, остаются
+  const leave=async()=>{ if(!window.confirm(`Выйти из дела «${cur.title}»? Вернуть доступ сможет владелец — ${cur.owner_name}.`))return;
+    await apiDel(`/api/cases/${open}/members/me`).catch(()=>{}); setOpen(null); setCur(null); load(); };
   const rename=async()=>{ if(ren&&ren.trim()&&ren.trim()!==cur.title)
       await apiPatch(`/api/cases/${open}`,{title:ren.trim()}).catch(()=>{});
     setRen(null); reload(); load(); };
-  const remove=async()=>{ if(!window.confirm(`Удалить дело «${cur.title}» со всеми материалами?`))return;
-    await apiDel(`/api/cases/${open}`); setOpen(null); setCur(null); load(); };
+  // удаление мягкое: 30 дней дело можно вернуть — его ведут несколько человек
+  const remove=async()=>{ const others=(cur.members||[]).filter(m=>m.role!=="owner").length;
+    if(!window.confirm(`Удалить дело «${cur.title}»?`+(others?`\n\nОно пропадёт и у участников (${others}).`:"")
+      +"\n\n30 дней его можно вернуть из списка дел."))return;
+    await apiDel(`/api/cases/${open}`).catch(()=>{}); setGone({case_id:open,title:cur.title}); setOpen(null); setCur(null); load(); };
+  const restore=async(id)=>{ await apiPost(`/api/cases/${id}/restore`,{}).catch(()=>{}); setGone(null); load(); };
   // «Продолжить в ИИ-аналитике»: в вопрос уходит состав дела — продукты и
   // проблемы жалоб, — а аналитик ищет нормы, практику и что запросить
   const goAI=()=>{
@@ -8419,10 +8521,23 @@ function KbCases({onClose,onOpenDoc}){
   if(open&&cur){
     const items=cur.items||[], nRev=items.filter(i=>i.kind==="review").length;
     const stale=an&&cur.analysis_items&&cur.analysis_items!==items.length;
+    if(access) return <RvModal side="right" title="Доступ к делу" sub={cur.title} onClose={()=>setAccess(false)}>
+      <CaseAccess cur={cur} onBack={()=>setAccess(false)} onChanged={()=>{reload();load();}}
+        onTransferred={()=>{setAccess(false);reload();load();}}/></RvModal>;
+    const mem=cur.members||[], others=mem.filter(m=>m.role!=="owner");
     return <><RvModal side="right" title={cur.title}
-      sub={`${items.length} матер.${nRev?` · жалоб ${nRev}`:""}${cur.shared?" · открыто команде":""}${!cur.mine?` · ведёт ${cur.owner}`:""}`}
+      sub={`${items.length} матер.${nRev?` · жалоб ${nRev}`:""} · ${cur.mine?"вы владелец":`ведёт ${cur.owner_name} · ${CASE_ROLE_YOU[cur.role]||""}`}`}
       onClose={()=>{setOpen(null);setCur(null);load();}}>
       <button className="rv-cs-back" onClick={()=>{setOpen(null);setCur(null);load();}}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
+      {/* кто в деле: видно сразу, без открытия окна доступа */}
+      <button type="button" className="cs-people" onClick={()=>setAccess(true)}
+        data-tip={cur.can_manage?"Добавить коллег, сменить роли":"Кто в деле и с какими правами"}>
+        <span className="cs-avs">{mem.slice(0,5).map(m=><span key={m.username} className="cs-av"
+          title={`${m.name} — ${m.role_label}`}>{initials(m.name)}</span>)}
+          {mem.length>5&&<span className="cs-av more">+{mem.length-5}</span>}</span>
+        <span className="cs-people-t">{others.length?`${others.length} ${plural(others.length,"участник","участника","участников")}`:"только вы"}
+          {cur.can_manage?<b> · Доступ</b>:<b> · кто в деле</b>}</span>
+      </button>
       {cur.note&&<p className="t-cap">{cur.note}</p>}
       {ren!==null&&<div className="rv-cp-new"><input className="input" value={ren} autoFocus onChange={e=>setRen(e.target.value)}
         onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape")setRen(null);}}/>
@@ -8432,18 +8547,18 @@ function KbCases({onClose,onOpenDoc}){
            data-tip="Excel в стиле AuditLens: дело в цифрах, графики, материалы с разметкой и комментариями">Excel</a>
         <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}
            data-tip="Word в стиле AuditLens: обложка, разбор, графики и карточки материалов; шрифты встроены">Word</a>
-        {cur.mine&&<button className="btn btn-sm btn-ghost" onClick={team}
-          data-tip={cur.shared?"закрыть доступ коллегам":"коллеги увидят дело и смогут приобщать материалы и комментировать"}>
-          {cur.shared?"Закрыть для команды":"Открыть команде"}</button>}
         {cur.mine&&ren===null&&<button className="btn btn-sm btn-ghost" onClick={()=>setRen(cur.title)}>Переименовать</button>}
         {cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={remove}>Удалить</button>}
+        {!cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={leave}
+          data-tip="дело пропадёт из вашего списка; приобщённое вами останется в деле">Выйти из дела</button>}
       </div>
       {items.length>0&&<div className="rv-cs-an">
         <div className="rv-cs-an-h">
           <span>Разбор дела <i>ИИ по материалам, со ссылками [N]</i></span>
           <span className="rv-cs-an-b">
-            {!an&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
-            {an&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
+            {!an&&cur.can_add&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
+            {!an&&!cur.can_add&&<span className="t-cap">разбор запускают участники с правом добавлять</span>}
+            {an&&cur.can_add&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
             {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-помощнику: нормы, практика, что запросить">продолжить в ИИ-помощнике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
           </span>
         </div>
@@ -8456,12 +8571,13 @@ function KbCases({onClose,onOpenDoc}){
           onOpen={()=>openRev(it)}/>
       </React.Fragment>)}
       {!items.length&&<div className="kb-empty">
-        Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте раздела «Аудит отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
+        {cur.can_add?"Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте раздела «Аудит отзывов» и документы — кнопкой «В дело» в «Базе знаний»."
+          :"В деле пока нет материалов."}</div>}
     </RvModal>{reader}</>;
   }
 
   return <RvModal side="right" title="Аудит-дела"
-      sub="подборки жалоб и документов под проверку" onClose={onClose}>
+      sub="подборки доказательств под проверку — ваши и те, куда вас пригласили" onClose={onClose}>
     {legacy.length>0&&<div className="rv-cs-legacy">
       В этом браузере осталось старое аудит-дело: {legacy.length} {plural(legacy.length,"жалоба","жалобы","жалоб")}.
       Перенесите его на сервер — там его увидят коллеги и не потеряет браузер.
@@ -8471,16 +8587,33 @@ function KbCases({onClose,onOpenDoc}){
         onKeyDown={e=>{if(e.key==="Enter")create();}} placeholder="Новое дело: название проверки"/>
       <button className="btn btn-sm" disabled={!newT.trim()} onClick={create}>Создать</button>
     </div>
-    {list===null?<Skel h={120}/>:!list.length?<div className="kb-empty">
-      <b>Дел пока нет.</b>
-      <p>Дело — подборка доказательств под одну проверку: жалобы из раздела «Аудит отзывов» и
-        документы из «Базы знаний». Приобщили, прокомментировали, выгрузили в рабочий файл.</p></div>:
-      list.map(c=><button key={c.case_id} className="kb-case-row"
-          onClick={()=>setOpen(c.case_id)}>
-        <span className="kb-case-row-t">{c.title}</span>
-        <span className="t-cap">{c.items} матер.{c.reviews?` · жалоб ${c.reviews}`:""} · {fmtDateMsk(c.updated_at)}
-          {c.shared?" · команда":""}{!c.mine?` · ${c.owner}`:""}</span>
-      </button>)}
+    {gone&&<div className="cs-gone" role="status">Дело «{gone.title}» удалено.
+      <button className="rv-cs-lnk" onClick={()=>restore(gone.case_id)}>Вернуть</button></div>}
+    {(()=>{ if(list===null) return <Skel h={120}/>;
+      const live=list.filter(c=>!c.deleted), del=list.filter(c=>c.deleted);
+      const nMine=live.filter(c=>c.mine).length, nSh=live.length-nMine;
+      const rows=live.filter(c=>flt==="all"||(flt==="mine")===!!c.mine);
+      return <>
+        {live.length>0&&nSh>0&&<div className="seg cs-flt" role="group" aria-label="Какие дела показать">
+          {[["all","Все",live.length],["mine","Мои",nMine],["shared","Со мной поделились",nSh]].map(([k,l,n])=>
+            <button key={k} className={"seg-btn"+(flt===k?" on":"")} aria-pressed={flt===k} onClick={()=>setFlt(k)}>
+              {l} <span className="cs-n">{n}</span></button>)}</div>}
+        {!live.length?<div className="kb-empty">
+          <b>Дел пока нет.</b>
+          <p>Дело — подборка доказательств под одну проверку: жалобы из раздела «Аудит отзывов» и
+            документы из «Базы знаний». Приобщили, прокомментировали, выгрузили в рабочий файл.
+            Коллег в дело добавляет владелец — кнопкой «Доступ».</p></div>
+        :!rows.length?<div className="kb-empty">{flt==="shared"?"С вами пока не делились делами.":"Своих дел пока нет."}</div>
+        :rows.map(c=><button key={c.case_id} className="kb-case-row" onClick={()=>setOpen(c.case_id)}>
+          <span className="kb-case-row-t">{c.title}</span>
+          <span className="t-cap">{c.items} матер.{c.reviews?` · жалоб ${c.reviews}`:""} · {fmtDateMsk(c.updated_at)}
+            {c.mine?(c.members?` · участников ${c.members}`:""):` · ведёт ${c.owner_name} · ${CASE_ROLE_YOU[c.role]||""}`}</span>
+        </button>)}
+        {del.length>0&&<div className="cs-del">
+          <div className="t-cap" style={{margin:"14px 0 6px"}}>Недавно удалённые — можно вернуть 30 дней</div>
+          {del.map(c=><div key={c.case_id} className="cs-del-row"><span>{c.title}</span>
+            <button className="rv-cs-lnk" onClick={()=>restore(c.case_id)}>Вернуть</button></div>)}</div>}
+      </>; })()}
   </RvModal>;
 }
 
@@ -8505,6 +8638,9 @@ function KnowledgePage({params}){
     setDocId(Number(p.doc)||null);
     setCases(!!p.cases);
   },[(params||{}).doc,(params||{}).cases]);
+  // старые ссылки #knowledge?cases=1 открывают общую панель «Аудит-дела»
+  useEffect(()=>{ if(cases){ openCases(); setCases(false);
+    try{ history.replaceState(null,"","#knowledge"); }catch{} } },[cases]);
 
   // Формат именно #knowledge?doc=123, а не #knowledge/doc/123: разбор хэша
   // режет его только по «?», и путь с косыми не нашёлся бы среди страниц —
@@ -8545,10 +8681,9 @@ function KnowledgePage({params}){
 
   return <div className="fade-in">
     {docId&&<KbDocCard documentId={docId} onClose={closeDoc}/>}
-    {cases&&<KbCases onClose={()=>setCases(false)} onOpenDoc={id=>{setCases(false);openDoc(id);}}/>}
     <PageHead eyebrow="База знаний · доказательная база" title="Поиск по собранным документам"
       meta="Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы. Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит вести счёт», а можно вставить «ПСК» или номер пункта договора."
-      actions={<button className="btn btn-sm" onClick={()=>setCases(true)}>Аудит-дела</button>}/>
+      actions={<button className="btn btn-sm" onClick={()=>openCases()}>Аудит-дела</button>}/>
 
     <div className="kb-bar">
       <div className="kb-input-wrap">
@@ -11090,6 +11225,14 @@ function Shell(){
   const{theme,setTheme}=useTheme();
   const[banks,setBanks]=useState([]);
   const[hasCaptcha,setHasCaptcha]=useState(false);
+  // «Аудит-дела»: одна панель на всё приложение
+  const[casesHub,setCasesHub]=useState(null);         // null | {caseId}
+  const[casesN,setCasesN]=useState(0);
+  const loadCasesN=useCallback(()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).filter(c=>!c.deleted).length)).catch(()=>{}),[]);
+  useEffect(()=>{ loadCasesN(); },[loadCasesN]);
+  _openCases=(id)=>{ setNavOpen(false); setCasesHub({caseId:id||null}); };
+  _casesHubOpen=!!casesHub;
+  const closeCases=()=>{ setCasesHub(null); loadCasesN(); try{ window.dispatchEvent(new Event("al-cases")); }catch{} };
   // «Обратная связь»: окно, непрочитанные ответы команды, разовая заметка о новом ответе
   const[sayOpen,setSayOpen]=useState(null);           // null | "new" | "mine"
   const[sayInfo,setSayInfo]=useState({unread:0,last_at:null});
@@ -11406,6 +11549,8 @@ function Shell(){
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
+      {casesHub&&<KbCases key={casesHub.caseId||"list"} initialCase={casesHub.caseId} onClose={closeCases}
+        onOpenDoc={id=>{ closeCases(); location.hash=`#knowledge?doc=${id}`; }}/>}
       {sayOpen&&ReactDOM.createPortal(<SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef}
         onClose={()=>{ setSayOpen(null); loadSay(); setTimeout(()=>{ try{ sayRowRef.current&&sayRowRef.current.focus(); }catch{} },0); }}
         onUnread={loadSay}/>,document.body)}
@@ -11436,6 +11581,10 @@ function Shell(){
           {section==="overview"&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
+          <button type="button" className={"tb-cases"+(casesHub?" on":"")} aria-label="Аудит-дела" aria-haspopup="dialog"
+            aria-expanded={!!casesHub} onClick={()=>casesHub?closeCases():setCasesHub({caseId:null})}
+            data-tip="Подборки доказательств под проверку — ваши и те, куда вас пригласили. Под рукой в любом разделе">
+            <RvICase s={15}/><span className="tb-cases-l">Аудит-дела</span>{casesN?<span className="tb-cases-n">{casesN}</span>:null}</button>
           <button className={"icon-btn th-tg"+(theme==="dark"?" dk":"")}
                   aria-label={theme==="dark"?"Включить светлую тему":"Включить тёмную тему"}
                   data-tip={theme==="dark"?"Светлая тема":"Тёмная тема"}

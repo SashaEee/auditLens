@@ -121,3 +121,12 @@ def test_case_docx_branded_with_embedded_fonts():
     assert any(n.startswith("word/media/") for n in names)      # знак и графики
     core = z.read("docProps/core.xml").decode()
     assert "AuditLens" in core
+
+
+def test_case_access_line_names_members_without_logins():
+    from bank_audit.web.case_export import _access
+    assert _access({"members": [{"username": "o", "name": "Владелец", "role": "owner"}]}) == "личное дело"
+    line = _access({"members": [{"username": "o", "name": "Владелец", "role": "owner"},
+                                {"username": "e-1", "name": "Елена В.", "role": "editor"},
+                                {"username": "v-2", "name": "Ольга Х.", "role": "viewer"}]})
+    assert line == "участники: Елена В., Ольга Х." and "e-1" not in line

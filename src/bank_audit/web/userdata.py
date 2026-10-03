@@ -82,12 +82,19 @@ def set_timezone(username: str, tz: str) -> None:
 
 
 def list_users(exclude: str | None = None) -> list[dict]:
-    """Директория пользователей инструмента (для шеринга) — все, кто заходил."""
-    rows = _rows("""SELECT username, display_name, last_seen_at
+    """Директория пользователей инструмента (для шеринга) — все, кто заходил.
+    Служебные учётки (помечены в «Пульсе») сюда не попадают; владелец
+    инструмента помечен там же, но он живой человек — его оставляем."""
+    owners = {u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}
+    rows = _rows("""SELECT username, display_name, last_seen_at,
+                           COALESCE(prefs->>'pulse_hidden', '') = 'true' AS hidden
                     FROM app_user ORDER BY last_seen_at DESC""")
-    if exclude:
-        rows = [r for r in rows if r["username"] != exclude]
-    return rows
+    out = []
+    for r in rows:
+        if r["username"] == exclude or (r.pop("hidden") and r["username"] not in owners):
+            continue
+        out.append(r)
+    return out
 
 
 # ── Сессии и сообщения чата ──────────────────────────────────────────────────
@@ -905,30 +912,64 @@ def ai_feedback_stats(limit: int = 10) -> dict:
 # пропала, показать коллеге нечего, к проверке не приложить. Теперь на сервере,
 # с приобщением документов из базы знаний и выгрузкой.
 
-# Дело открытое команде (запись шеринга без адресата) ведут вместе: приобщать
-# и комментировать могут все, у кого есть доступ, убрать материал — владелец
-# или тот, кто его приобщил; переименовать, открыть и удалить — владелец.
-_TEAM_SHARED = """EXISTS (SELECT 1 FROM audit_case_share sh
-                           WHERE sh.case_id = c.case_id AND sh.revoked_at IS NULL
-                             AND sh.shared_with IS NULL)"""
+# Участники и роли (миграция 082). Владелец — audit_case.username: доступ,
+# роли, передача владения, переименование, удаление. «Может добавлять»
+# (editor) — приобщает материалы, убирает своё, пишет комментарий к своему,
+# запускает разбор. «Только смотрит» (viewer) — видит и выгружает. Доступа
+# «всем пользователям AuditLens» больше нет: дело было видно 111 людям.
+CASE_ROLE_RU = {"owner": "владелец", "editor": "может добавлять", "viewer": "только смотрит"}
+_CASE_TTL_DAYS = 30            # удалённое дело можно вернуть столько дней
+
+
+def case_role(case_id: int, username: str, *, deleted: bool = False) -> str | None:
+    """owner | editor | viewer | None. Удалённое дело видно только владельцу
+    (deleted=True — для «вернуть»)."""
+    r = _scalar(f"""
+        SELECT CASE WHEN c.username = :u THEN 'owner' ELSE m.role END
+          FROM audit_case c
+          LEFT JOIN audit_case_member m ON m.case_id = c.case_id AND m.username = :u
+         WHERE c.case_id = :c
+           AND {"c.deleted_at IS NOT NULL" if deleted else "c.deleted_at IS NULL"}""",
+                {"c": case_id, "u": username})
+    return r or None
+
+
+def _purge_deleted_cases() -> None:
+    """Удалённые больше 30 дней назад — насовсем (лениво, при открытии списка)."""
+    try:
+        with db.session() as s:
+            s.execute(text(f"""DELETE FROM audit_case
+                               WHERE deleted_at < now() - interval '{_CASE_TTL_DAYS} days'"""))
+    except Exception:  # noqa: BLE001 — список дел открывается и без чистки
+        log.debug("case purge failed", exc_info=True)
 
 
 def list_cases(username: str) -> list[dict]:
-    return _rows(f"""
-        SELECT c.case_id, c.title, c.note, c.created_at, c.updated_at,
+    _purge_deleted_cases()
+    rows = _rows(f"""
+        SELECT c.case_id, c.title, c.note, c.created_at, c.updated_at, c.deleted_at,
                (SELECT count(*) FROM audit_case_item i
                  WHERE i.case_id = c.case_id) items,
                (SELECT count(*) FROM audit_case_item i
                  WHERE i.case_id = c.case_id AND i.kind = 'review') reviews,
+               (SELECT count(*) FROM audit_case_member m2 WHERE m2.case_id = c.case_id) members,
                (c.username = :u) AS mine, c.username AS owner,
-               {_TEAM_SHARED} AS shared
+               COALESCE(au.display_name, c.username) AS owner_name,
+               CASE WHEN c.username = :u THEN 'owner' ELSE m.role END AS role
           FROM audit_case c
-         WHERE c.username = :u
-            OR EXISTS (SELECT 1 FROM audit_case_share sh
-                        WHERE sh.case_id = c.case_id AND sh.revoked_at IS NULL
-                          AND (sh.shared_with = :u OR sh.shared_with IS NULL))
-         ORDER BY c.updated_at DESC LIMIT 100
+          LEFT JOIN audit_case_member m ON m.case_id = c.case_id AND m.username = :u
+          LEFT JOIN app_user au ON au.username = c.username
+         WHERE (c.username = :u OR m.username IS NOT NULL)
+           AND (c.deleted_at IS NULL
+                OR (c.username = :u AND c.deleted_at > now() - interval '{_CASE_TTL_DAYS} days'))
+         ORDER BY (c.deleted_at IS NOT NULL), c.updated_at DESC LIMIT 200
     """, {"u": username})
+    for r in rows:
+        r["deleted"] = r.get("deleted_at") is not None
+        r["shared"] = bool(r.get("members"))
+        r["role_label"] = CASE_ROLE_RU.get(r.get("role"), "")
+        r["can_add"] = r.get("role") in ("owner", "editor") and not r["deleted"]
+    return rows
 
 
 def create_case(username: str, title: str, note: str | None = None) -> int:
@@ -939,32 +980,36 @@ def create_case(username: str, title: str, note: str | None = None) -> int:
 
 
 def _may_read_case(case_id: int, username: str) -> bool:
-    return bool(_scalar("""
-        SELECT 1 FROM audit_case c
-         WHERE c.case_id = :c
-           AND (c.username = :u
-             OR EXISTS (SELECT 1 FROM audit_case_share sh
-                         WHERE sh.case_id = c.case_id AND sh.revoked_at IS NULL
-                           AND (sh.shared_with = :u OR sh.shared_with IS NULL)))
-    """, {"c": case_id, "u": username}))
+    return case_role(case_id, username) is not None
+
+
+def _may_add_case(case_id: int, username: str) -> bool:
+    return case_role(case_id, username) in ("owner", "editor")
 
 
 def _owns_case(case_id: int, username: str) -> bool:
-    return _scalar("SELECT username FROM audit_case WHERE case_id = :c",
-                   {"c": case_id}) == username
+    return case_role(case_id, username) == "owner"
 
 
 def get_case(case_id: int, username: str) -> dict | None:
-    if not _may_read_case(case_id, username):
+    role = case_role(case_id, username)
+    if not role:
         return None
-    case = _one(f"""SELECT case_id, username AS owner, title, note,
-                           created_at, updated_at, analysis, analysis_at, analysis_items,
-                           {_TEAM_SHARED} AS shared
-                      FROM audit_case c WHERE case_id = :c""", {"c": case_id})
+    case = _one("""SELECT c.case_id, c.username AS owner, c.title, c.note,
+                          c.created_at, c.updated_at, c.analysis, c.analysis_at, c.analysis_items,
+                          COALESCE(au.display_name, c.username) AS owner_name
+                     FROM audit_case c LEFT JOIN app_user au ON au.username = c.username
+                    WHERE c.case_id = :c""", {"c": case_id})
     if not case:
         return None
-    case["mine"] = case["owner"] == username
-    case["can_edit"] = True             # читать дело может только тот, кто вправе его вести
+    case["role"] = role
+    case["role_label"] = CASE_ROLE_RU.get(role, "")
+    case["mine"] = role == "owner"
+    case["can_add"] = role in ("owner", "editor")
+    case["can_edit"] = case["can_add"]           # прежнее имя поля — для старых вкладок
+    case["can_manage"] = role == "owner"
+    case["members"] = case_members(case_id, username) or []
+    case["shared"] = len(case["members"]) > 1
     # Документы подтягиваем свежими: доверие и дата обхода могли измениться
     # с момента приобщения, и в деле должно стоять актуальное состояние.
     case["items"] = _rows("""
@@ -977,9 +1022,97 @@ def get_case(case_id: int, username: str) -> dict | None:
          WHERE i.case_id = :c ORDER BY i.added_at
     """, {"c": case_id})
     _attach_review_items(case["items"])
+    names = {m["username"]: m["name"] for m in case["members"]}
     for it in case["items"]:
-        it["can_remove"] = case["mine"] or it.get("added_by") == username
+        mine_item = it.get("added_by") == username
+        it["added_by_name"] = names.get(it.get("added_by")) or _display_name(it.get("added_by"))
+        # убрать — владелец или тот, кто приобщил (если у него ещё есть право добавлять);
+        # комментарий «зачем приобщено» — тех же двоих: раньше любой участник молча
+        # переписывал чужой
+        it["can_remove"] = role == "owner" or (role == "editor" and mine_item)
+        it["can_note"] = it["can_remove"]
     return case
+
+
+def _display_name(username: str | None) -> str | None:
+    if not username:
+        return None
+    return _scalar("SELECT COALESCE(display_name, username) FROM app_user WHERE username = :u",
+                   {"u": username}) or username
+
+
+def case_members(case_id: int, username: str) -> list[dict] | None:
+    """Владелец и участники с ролями. None — нет доступа к делу."""
+    if not _may_read_case(case_id, username):
+        return None
+    rows = _rows("""
+        SELECT * FROM (
+            SELECT c.username, COALESCE(au.display_name, c.username) AS name, 'owner' AS role,
+                   NULL::text AS added_by, c.created_at AS added_at
+              FROM audit_case c LEFT JOIN app_user au ON au.username = c.username
+             WHERE c.case_id = :c
+            UNION ALL
+            SELECT m.username, COALESCE(au.display_name, m.username), m.role, m.added_by, m.added_at
+              FROM audit_case_member m LEFT JOIN app_user au ON au.username = m.username
+             WHERE m.case_id = :c) x
+         ORDER BY (role = 'owner') DESC, added_at""", {"c": case_id})
+    for r in rows:
+        r["role_label"] = CASE_ROLE_RU.get(r["role"], "")
+    return rows
+
+
+def set_case_member(case_id: int, owner: str, member: str, role: str) -> str | None:
+    """Добавить коллегу или сменить ему роль. Возвращает текст ошибки или None."""
+    if role not in ("editor", "viewer"):
+        return "неизвестная роль"
+    if not _owns_case(case_id, owner):
+        return "управлять доступом может только владелец дела"
+    if not member or member == owner:
+        return "владелец уже в деле"
+    if not _scalar("SELECT 1 FROM app_user WHERE username = :u", {"u": member}):
+        return "такого пользователя нет в AuditLens"
+    with db.session() as s:
+        s.execute(text("""
+            INSERT INTO audit_case_member (case_id, username, role, added_by)
+            VALUES (:c, :m, :r, :o)
+            ON CONFLICT (case_id, username) DO UPDATE SET role = EXCLUDED.role"""),
+                  {"c": case_id, "m": member, "r": role, "o": owner})
+        s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
+                  {"c": case_id})
+    return None
+
+
+def remove_case_member(case_id: int, actor: str, member: str) -> bool:
+    """Владелец убирает участника; участник может выйти сам."""
+    role = case_role(case_id, actor)
+    if not role:
+        return False
+    if role == "owner" and member == actor:          # владелец не выходит — передаёт
+        return False
+    if role != "owner" and member != actor:          # участник убирает только себя
+        return False
+    with db.session() as s:
+        r = s.execute(text("DELETE FROM audit_case_member WHERE case_id = :c AND username = :m"),
+                      {"c": case_id, "m": member})
+    return bool(r.rowcount)
+
+
+def transfer_case(case_id: int, owner: str, new_owner: str) -> str | None:
+    """Передать владение участнику дела; прежний владелец остаётся «может добавлять»."""
+    if not _owns_case(case_id, owner):
+        return "передать дело может только владелец"
+    if case_role(case_id, new_owner) not in ("editor", "viewer"):
+        return "передать можно только участнику дела"
+    with db.session() as s:
+        s.execute(text("DELETE FROM audit_case_member WHERE case_id = :c AND username = :n"),
+                  {"c": case_id, "n": new_owner})
+        s.execute(text("UPDATE audit_case SET username = :n, updated_at = now() WHERE case_id = :c"),
+                  {"c": case_id, "n": new_owner})
+        s.execute(text("""INSERT INTO audit_case_member (case_id, username, role, added_by)
+                          VALUES (:c, :o, 'editor', :n)
+                          ON CONFLICT (case_id, username) DO UPDATE SET role = 'editor'"""),
+                  {"c": case_id, "o": owner, "n": new_owner})
+    return None
 
 
 def _attach_review_items(items: list[dict]) -> None:
@@ -1027,8 +1160,9 @@ def add_case_item(case_id: int, username: str, *, kind: str,
 
 def add_case_items(case_id: int, username: str, items: list[dict]) -> int | None:
     """Приобщить материалы пачкой (перенос старого дела из браузера). Повтор
-    одного и того же отзыва или документа молча пропускается. None — нет прав."""
-    if not _may_read_case(case_id, username):
+    одного и того же отзыва или документа молча пропускается. None — нет прав
+    (нет доступа или «только смотрит»)."""
+    if not _may_add_case(case_id, username):
         return None
     rows = [{"c": case_id, "k": it.get("kind") or "review", "r": it.get("ref_id"),
              "u": it.get("url"), "t": (it.get("title") or "")[:1500] or None,
@@ -1048,14 +1182,15 @@ def add_case_items(case_id: int, username: str, items: list[dict]) -> int | None
 
 
 def remove_case_item(case_id: int, item_id: int, username: str) -> bool:
-    if not _may_read_case(case_id, username):
+    role = case_role(case_id, username)
+    if role not in ("owner", "editor"):
         return False
     with db.session() as s:
         r = s.execute(text("""
-            DELETE FROM audit_case_item i USING audit_case c
-             WHERE i.item_id = :i AND i.case_id = :c AND c.case_id = i.case_id
-               AND (c.username = :u OR i.added_by = :u)"""),
-            {"i": item_id, "c": case_id, "u": username})
+            DELETE FROM audit_case_item i
+             WHERE i.item_id = :i AND i.case_id = :c
+               AND (:owner OR i.added_by = :u)"""),
+            {"i": item_id, "c": case_id, "u": username, "owner": role == "owner"})
         if not r.rowcount:
             return False
         s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
@@ -1066,26 +1201,29 @@ def remove_case_item(case_id: int, item_id: int, username: str) -> bool:
 def case_review_urls(username: str) -> dict[str, str]:
     """Какие жалобы уже приобщены к делам, доступным пользователю: ссылка →
     название дела (последнего). Нужно ленте, чтобы показать «в деле»."""
-    rows = _rows(f"""
+    rows = _rows("""
         SELECT DISTINCT ON (i.url) i.url, c.title
           FROM audit_case_item i JOIN audit_case c ON c.case_id = i.case_id
-         WHERE i.kind = 'review' AND i.url IS NOT NULL
-           AND (c.username = :u OR {_TEAM_SHARED}
-                OR EXISTS (SELECT 1 FROM audit_case_share sh
-                            WHERE sh.case_id = c.case_id AND sh.revoked_at IS NULL
-                              AND sh.shared_with = :u))
+         WHERE i.kind = 'review' AND i.url IS NOT NULL AND c.deleted_at IS NULL
+           AND (c.username = :u
+                OR EXISTS (SELECT 1 FROM audit_case_member m
+                            WHERE m.case_id = c.case_id AND m.username = :u))
          ORDER BY i.url, i.added_at DESC""", {"u": username})
     return {r["url"]: r["title"] for r in rows}
 
 
 def update_case_item_note(case_id: int, item_id: int, username: str, note: str | None) -> bool:
-    """Комментарий аудитора к материалу — зачем приобщён, что в нём важно."""
-    if not _may_read_case(case_id, username):
+    """Комментарий аудитора к материалу — зачем приобщён, что в нём важно.
+    Меняют владелец дела и тот, кто приобщил (раньше — любой участник, молча)."""
+    role = case_role(case_id, username)
+    if role not in ("owner", "editor"):
         return False
     with db.session() as s:
         r = s.execute(text("""UPDATE audit_case_item SET note = :n
-                              WHERE item_id = :i AND case_id = :c"""),
-                      {"n": (note or "").strip()[:2000] or None, "i": item_id, "c": case_id})
+                              WHERE item_id = :i AND case_id = :c
+                                AND (:owner OR added_by = :u)"""),
+                      {"n": (note or "").strip()[:2000] or None, "i": item_id, "c": case_id,
+                       "owner": role == "owner", "u": username})
         s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
                   {"c": case_id})
         return bool(r.rowcount)
@@ -1107,20 +1245,17 @@ def update_case(case_id: int, username: str, *, title: str | None = None,
 
 
 def set_case_shared(case_id: int, owner: str, shared: bool) -> bool:
-    """Открыть дело команде или закрыть доступ (адресные доступы не трогаем)."""
-    if not _owns_case(case_id, owner):
+    """Прежняя кнопка «Открыть команде» (доступ всем пользователям) — убрана:
+    открыть дело можно только поимённо. Закрыть — значит убрать всех участников."""
+    if not _owns_case(case_id, owner) or shared:
         return False
-    if shared:
-        return share_case(case_id, owner, None)
     with db.session() as s:
-        s.execute(text("""UPDATE audit_case_share SET revoked_at = now()
-                           WHERE case_id = :c AND shared_with IS NULL AND revoked_at IS NULL"""),
-                  {"c": case_id})
+        s.execute(text("DELETE FROM audit_case_member WHERE case_id = :c"), {"c": case_id})
     return True
 
 
 def save_case_analysis(case_id: int, username: str, analysis: str, n_items: int) -> bool:
-    if not _may_read_case(case_id, username):
+    if not _may_add_case(case_id, username):
         return False
     with db.session() as s:
         s.execute(text("""UPDATE audit_case SET analysis = :a, analysis_at = now(),
@@ -1130,25 +1265,28 @@ def save_case_analysis(case_id: int, username: str, analysis: str, n_items: int)
 
 
 def delete_case(case_id: int, username: str) -> bool:
+    """Мягко: дело ведут вместе, и удаление одним кликом уносило материалы
+    коллег навсегда. 30 дней владелец может его вернуть."""
     if not _owns_case(case_id, username):
         return False
     with db.session() as s:
-        s.execute(text("DELETE FROM audit_case WHERE case_id = :c"), {"c": case_id})
+        s.execute(text("""UPDATE audit_case SET deleted_at = now(), deleted_by = :u
+                           WHERE case_id = :c"""), {"c": case_id, "u": username})
+    return True
+
+
+def restore_case(case_id: int, username: str) -> bool:
+    if case_role(case_id, username, deleted=True) != "owner":
+        return False
+    with db.session() as s:
+        s.execute(text("""UPDATE audit_case SET deleted_at = NULL, deleted_by = NULL,
+                                  updated_at = now() WHERE case_id = :c"""), {"c": case_id})
     return True
 
 
 def share_case(case_id: int, owner: str, shared_with: str | None) -> bool:
-    """Своя таблица шеринга, а не общая с отчётами: у report_share нет пометки,
-    какая это сущность, и права считаются по голому номеру — доступ к отчёту №42
-    молча открыл бы дело №42."""
-    if not _owns_case(case_id, owner):
+    """Прежний адресный шеринг — теперь участник «может добавлять». Без адресата
+    (всем пользователям) — нельзя."""
+    if not shared_with:
         return False
-    with db.session() as s:
-        s.execute(text("""
-            INSERT INTO audit_case_share (case_id, owner, shared_with)
-            SELECT :c, :o, :w
-             WHERE NOT EXISTS (SELECT 1 FROM audit_case_share
-                                WHERE case_id=:c AND revoked_at IS NULL
-                                  AND shared_with IS NOT DISTINCT FROM :w)
-        """), {"c": case_id, "o": owner, "w": shared_with})
-    return True
+    return set_case_member(case_id, owner, shared_with, "editor") is None

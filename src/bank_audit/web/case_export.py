@@ -62,7 +62,7 @@ def _row(n: int, it: dict) -> dict:
         "Суть": r.get("summary") or it.get("title") or "",
         "Цитата": r.get("quote") or "",
         "Комментарий аудитора": it.get("note") or "",
-        "Приобщил": it.get("added_by") or "",
+        "Приобщил": it.get("added_by_name") or it.get("added_by") or "",
         "Ссылка": it.get("url") or "",
     }
 
@@ -99,11 +99,20 @@ def _money(v: float) -> str:
     return f"{v:,.0f} ₽".replace(",", " ")
 
 
+def _access(case: dict) -> str:
+    """«личное дело» или «участники: Имя Ф., Имя Ф.» — без логинов."""
+    others = [m for m in (case.get("members") or []) if m.get("role") != "owner"]
+    if not others:
+        return "личное дело"
+    names = ", ".join(m.get("name") or m.get("username") or "" for m in others[:6])
+    return f"участники: {names}" + (f" и ещё {len(others) - 6}" if len(others) > 6 else "")
+
+
 def _subtitle(case: dict, a: dict) -> str:
     return " · ".join(x for x in (
-        f"владелец: {case.get('owner') or '—'}",
+        f"владелец: {case.get('owner_name') or case.get('owner') or '—'}",
         f"материалов: {a['items']}",
-        "открыто команде" if case.get("shared") else "личное дело",
+        _access(case),
         f"изменено {_ru_date(str(case.get('updated_at') or '')[:10])}"
         if case.get("updated_at") else "") if x)
 
@@ -350,9 +359,9 @@ def to_docx(case: dict) -> bytes:
     title = case.get("title") or "Аудит-дело"
     doc = WD.new(f"Аудит-дело: {title}")
     WD.cover(doc, eyebrow="Аудит-дело", title=title, ident=f"ДЕЛО № {case.get('case_id') or ''}",
-             meta=[("Владелец", case.get("owner") or "—"),
+             meta=[("Владелец", case.get("owner_name") or case.get("owner") or "—"),
                    ("Материалов", f"{a['items']} (жалоб {a['reviews']}, прочих {a['other']})"),
-                   ("Доступ", "открыто команде" if case.get("shared") else "личное дело"),
+                   ("Доступ", _access(case)),
                    ("Изменено", _ru_date(str(case.get("updated_at") or "")[:10]) or "—"),
                    ("Выгружено", _now())])
     WD.header_footer(doc, f"Аудит-дело «{title}»")

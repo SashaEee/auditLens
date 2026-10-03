@@ -3416,7 +3416,7 @@ def cases_add_item(case_id: int, req: CaseItem,
     if not userdata.add_case_item(case_id, user.username, kind=req.kind,
                                   ref_id=req.ref_id, url=req.url,
                                   title=req.title, note=req.note):
-        raise HTTPException(403, "нет доступа к делу")
+        raise HTTPException(403, "добавлять в дело могут владелец и участники с правом добавлять")
     return {"ok": True}
 
 
@@ -3463,9 +3463,62 @@ def cases_update(case_id: int, req: CaseUpdate,
 
 @app.post("/api/cases/{case_id}/team")
 def cases_team(case_id: int, req: dict, user: CurrentUser = Depends(get_current_user)):
-    """Открыть дело команде (вести вместе) или закрыть доступ."""
-    if not userdata.set_case_shared(case_id, user.username, bool(req.get("shared"))):
-        raise HTTPException(403, "открывать дело может только владелец")
+    """Прежнее «Открыть команде» (всем пользователям) убрано 03.10: дело
+    открывают поимённо. shared=false — убрать всех участников."""
+    if req.get("shared"):
+        raise HTTPException(400, "Открыть дело всем больше нельзя — добавьте коллег через «Доступ»")
+    if not userdata.set_case_shared(case_id, user.username, False):
+        raise HTTPException(403, "управлять доступом может только владелец дела")
+    return {"ok": True}
+
+
+class CaseMemberIn(BaseModel):
+    username: str
+    role: str = "editor"
+
+
+@app.get("/api/cases/{case_id}/members")
+def cases_members(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Владелец и участники дела с ролями."""
+    m = userdata.case_members(case_id, user.username)
+    if m is None:
+        raise HTTPException(404, "дело не найдено")
+    return {"members": m}
+
+
+@app.post("/api/cases/{case_id}/members")
+def cases_member_set(case_id: int, req: CaseMemberIn, user: CurrentUser = Depends(get_current_user)):
+    """Добавить коллегу в дело или сменить ему роль (только владелец)."""
+    err = userdata.set_case_member(case_id, user.username, req.username, req.role)
+    if err:
+        raise HTTPException(403 if "владел" in err else 400, err)
+    return {"ok": True, "members": userdata.case_members(case_id, user.username)}
+
+
+@app.delete("/api/cases/{case_id}/members/{member}")
+def cases_member_remove(case_id: int, member: str, user: CurrentUser = Depends(get_current_user)):
+    """Владелец убирает участника; участник выходит из дела сам (member = свой логин)."""
+    if member == "me":
+        member = user.username
+    if not userdata.remove_case_member(case_id, user.username, member):
+        raise HTTPException(403, "убрать участника может владелец дела; выйти — сам участник")
+    return {"ok": True}
+
+
+@app.post("/api/cases/{case_id}/owner")
+def cases_transfer(case_id: int, req: CaseMemberIn, user: CurrentUser = Depends(get_current_user)):
+    """Передать владение участнику дела."""
+    err = userdata.transfer_case(case_id, user.username, req.username)
+    if err:
+        raise HTTPException(403, err)
+    return {"ok": True}
+
+
+@app.post("/api/cases/{case_id}/restore")
+def cases_restore(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Вернуть удалённое дело (30 дней после удаления, только владелец)."""
+    if not userdata.restore_case(case_id, user.username):
+        raise HTTPException(404, "дело не найдено или удалено больше 30 дней назад")
     return {"ok": True}
 
 
@@ -3485,6 +3538,8 @@ async def cases_analyze(case_id: int, force: int = 0,
         raise HTTPException(400, "в деле нет материалов")
     if case.get("analysis") and case.get("analysis_items") == n and not force:
         return {"analysis": case["analysis"], "analysis_at": case.get("analysis_at"), "cached": True}
+    if not case.get("can_add"):
+        raise HTTPException(403, "разбор запускают владелец и участники с правом добавлять")
     md = await reviews_llm.case_memo(case)
     if not md:
         raise HTTPException(503, "модель не ответила — повторите позже")
