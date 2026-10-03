@@ -11896,6 +11896,7 @@ const BX_CSS=`
 .bx-empty b{display:block;color:var(--ink);font-size:13.5px;font-weight:600;margin-bottom:4px}
 .bx-set{padding:6px 18px 16px}
 .bx-set p{margin:0 0 12px;font-size:12px;color:var(--ink-3);line-height:1.5}
+.bx-set p.bx-mail-h{margin:16px 0 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .bx-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--hair);cursor:pointer}
 .bx-row:first-of-type{border-top:0}
 .bx-row .l{flex:1;min-width:0}
@@ -11938,10 +11939,10 @@ const bxAgo=(iso)=>{ try{ const d=new Date(iso), s=(Date.now()-d.getTime())/1000
   return d.toLocaleDateString("ru",{day:"numeric",month:"short"}).replace(".",""); }catch{ return ""; } };
 const bxWho=(it)=>it.actor_name?(it.kind==="ticket"?it.actor_name:puShort(it.actor_name)):"";
 
-function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs}){
+function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,initialView}){
   const[d,setD]=useState(null);
   const[err,setErr]=useState(false);
-  const[view,setView]=useState("list");     // list | settings
+  const[view,setView]=useState(initialView==="settings"?"settings":"list");     // list | settings
   const ref=useRef(null);
   const load=useCallback(()=>apiFetch("/api/bell").then(x=>{ setD(x); setErr(false); }).catch(()=>setErr(true)),[]);
   useEffect(()=>{ load(); },[load]);
@@ -11987,7 +11988,20 @@ function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs}){
           <span className="l"><b>{g.label}</b><span>{BX_HINT[g.key]||""}</span></span>
           <button type="button" role="switch" aria-checked={g.on} className="bx-sw" aria-label={g.label}
             onClick={e=>{ e.preventDefault(); toggle(g.key); }}/>
-        </label>)}</div>
+        </label>)}
+        {/* письма — когда известен адрес (Authentik передаёт почту); до тех пор блока нет */}
+        {me&&me.has_email&&<>
+          <p className="bx-mail-h">На почту</p>
+          {[["instant","Сразу — о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
+            ["digest","Утренняя сводка","Непрочитанное по вашим делам — только если есть новое"]].map(([k,l,h])=>{
+            const on=((me.prefs||{}).mail||{})[k]!==false;
+            return <label key={k} className="bx-row">
+              <span className="l"><b>{l}</b><span>{h}</span></span>
+              <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={l}
+                onClick={e=>{ e.preventDefault(); const mail={...((me.prefs||{}).mail||{}),[k]:!on};
+                  apiPut("/api/me",{prefs:{mail}}).then(()=>onPrefs&&onPrefs(null,mail)).catch(()=>{}); }}/>
+            </label>; })}
+        </>}</div>
       :<div className="bx-body">
         {err&&!d?<div className="bx-empty">Список не загрузился. <button className="bx-all" onClick={load}>Повторить</button></div>
         :!d?<div style={{padding:"10px"}}><Skel h={46}/><div style={{height:8}}/><Skel h={46}/></div>
@@ -12011,7 +12025,7 @@ function parseHash(){
 
 function Shell(){
   const[page,setPage]=useState(()=>{ const h=parseHash().p;
-    if(h) return h;
+    if(h&&h!=="open") return h;
     try{ if(localStorage.getItem("al-ov-mode")==="foryou") return "foryou"; }catch{}
     return "overview"; });
   const[pageParams,setPageParams]=useState(()=>parseHash().prm);
@@ -12068,6 +12082,19 @@ function Shell(){
     else if(k==="report"){ _pendingReport=+id; setPage("ai"); try{ window.dispatchEvent(new Event("al-open-report")); }catch{} }
     else if(k==="inbox"){ setSayFocus(+id); setSayOpen("mine"); } };
   const openSay=(tab)=>{ setNavOpen(false); setBellOpen(false); setSayFocus(null); setSayOpen(o=>o?null:(tab||(sayInfo.unread?"mine":"new"))); };
+  // Ссылки из писем: #open?case=12&tab=talk&msg=55 · #open?inbox=7 · #open?bell=1|settings ·
+  // #open?report=45. Действие поверх текущего раздела; адрес возвращается к разделу.
+  const[bellView,setBellView]=useState(null);
+  const openLinkRef=useRef(null); openLinkRef.current=(prm)=>{
+    try{ history.replaceState(null,"","#"+(pageCurRef.current||"overview")); }catch{}
+    if(prm.case) openCases(+prm.case,prm.tab?{tab:prm.tab,msg:prm.msg?+prm.msg:null}:null);
+    else if(prm.report){ _pendingReport=+prm.report; setPage("ai"); try{ window.dispatchEvent(new Event("al-open-report")); }catch{} }
+    else if(prm.inbox){ setBellOpen(false); setSayFocus(+prm.inbox); setSayOpen("mine"); }
+    else if(prm.bell){ setSayOpen(null); setBellView(prm.bell==="settings"?"settings":null); setBellOpen(true); }
+  };
+  useEffect(()=>{ const first=parseHash(); if(first.p==="open") setTimeout(()=>openLinkRef.current(first.prm),0);
+    const h=()=>{ const x=parseHash(); if(x.p==="open") openLinkRef.current(x.prm); };
+    window.addEventListener("hashchange",h); return ()=>window.removeEventListener("hashchange",h); },[]);
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
   // «В дело» отовсюду: активное дело (одним нажатием), меню выбора, заметка «Добавлено»
@@ -12196,7 +12223,8 @@ function Shell(){
   },[]); // eslint-disable-line
 
   useEffect(()=>{
-    const onHash=()=>{const{p,prm}=parseHash();setPage(p||"overview");setPageParams(prm);};
+    const onHash=()=>{const{p,prm}=parseHash(); if(p==="open") return;   // ссылки из писем — ниже
+      setPage(p||"overview");setPageParams(prm);};
     window.addEventListener("hashchange",onHash);
     return ()=>window.removeEventListener("hashchange",onHash);
   },[]);
@@ -12432,8 +12460,9 @@ function Shell(){
       {sayOpen&&ReactDOM.createPortal(<SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef} focus={sayFocus}
         onClose={()=>{ setSayOpen(null); setSayFocus(null); loadSay(); setTimeout(()=>{ try{ sayRowRef.current&&sayRowRef.current.focus(); }catch{} },0); }}
         onUnread={loadSay}/>,document.body)}
-      {bellOpen&&ReactDOM.createPortal(<BellPanel anchor={bellRef} me={me} onClose={closeBell} onGo={goBell} onCount={loadBell}
-        onPrefs={off=>setMe(m=>m?{...m,prefs:{...(m.prefs||{}),notify_off:off}}:m)}/>,document.body)}
+      {bellOpen&&ReactDOM.createPortal(<BellPanel anchor={bellRef} me={me} onClose={()=>{ setBellView(null); closeBell(); }} onGo={goBell} onCount={loadBell}
+        initialView={bellView}
+        onPrefs={(off,mail)=>setMe(m=>m?{...m,prefs:{...(m.prefs||{}),...(off?{notify_off:off}:{}),...(mail?{mail}:{})}}:m)}/>,document.body)}
       {/* разовая заметка о новом уведомлении — у колокольчика, один раз на событие */}
       {bellToast&&!bellOpen&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast bx-toast" role="status">
         <div className="t"><span className="bx-ic">{React.createElement(bxIcon(bellToast.kind))}</span>

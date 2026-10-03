@@ -288,3 +288,32 @@ def mark_read(username: str, ids: list[int] | None = None, *, everything: bool =
 def settings(prefs: dict | None) -> list[dict]:
     off = set((prefs or {}).get("notify_off") or [])
     return [{"key": k, "label": v, "on": k not in off} for k, v in GROUPS.items()]
+
+
+# ── письма (миграция 087): что ещё не отправлено и не прочитано ────────────────
+
+def pending_mail(username: str, kinds: set[str] | None = None, limit: int = 40) -> list[dict]:
+    """Непрочитанные уведомления, о которых ещё не писали письмом (новые сверху).
+    kinds — только личные для мгновенных писем; None — всё для утренней сводки."""
+    try:
+        rows = _rows("""
+            SELECT n.notice_id AS id, n.kind, n.title, n.actor,
+                   COALESCE(au.display_name, n.actor) AS actor_name,
+                   n.link, n.ref, n.count, n.created_at, n.updated_at
+              FROM app_notice n LEFT JOIN app_user au ON au.username = n.actor
+             WHERE n.username = :u AND n.read_at IS NULL AND n.emailed_at IS NULL
+             ORDER BY n.updated_at DESC LIMIT :lim""", {"u": username, "lim": limit})
+    except Exception:  # noqa: BLE001 — до миграции 087
+        return []
+    for r in rows:
+        if r["kind"] == "ticket":
+            r["actor_name"] = "Команда AuditLens"
+    return [r for r in rows if kinds is None or r["kind"] in kinds]
+
+
+def mark_emailed(ids: list[int]) -> int:
+    if not ids:
+        return 0
+    with db.session() as s:
+        return s.execute(text("UPDATE app_notice SET emailed_at = now() WHERE notice_id = ANY(:i)"),
+                         {"i": [int(i) for i in ids]}).rowcount

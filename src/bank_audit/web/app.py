@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Query, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -208,15 +208,16 @@ class PersonalFeedback(BaseModel):
 def whoami(user: CurrentUser = Depends(get_current_user)):
     """Текущий пользователь из заголовков Authentik (за nginx forward-auth)."""
     return {"username": user.username, "name": user.name,
-            "authenticated": user.authenticated}
+            "authenticated": user.authenticated, "email": user.email}
 
 
 @app.get("/api/me")
 def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
     """Профиль пользователя (+ upsert app_user, обновление last_seen/TZ)."""
-    row = userdata.touch_user(user.username, user.name, timezone=tz) or {}
+    row = userdata.touch_user(user.username, user.name, timezone=tz, email=user.email) or {}
     return {
         "username": user.username,
+        "has_email": bool(row.get("email") or user.email),
         "name": row.get("display_name") or user.name,
         "timezone": row.get("timezone") or "Europe/Moscow",
         "prefs": row.get("prefs") or {},
@@ -240,6 +241,9 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
         if "active_case" in body.prefs:         # активное дело: «В дело» — одним нажатием
             v = body.prefs["active_case"]
             body.prefs["active_case"] = v if isinstance(v, int) and v > 0 else None
+        if "mail" in body.prefs:                # письма: сразу о личном / утренняя сводка
+            m = body.prefs["mail"] if isinstance(body.prefs["mail"], dict) else {}
+            body.prefs["mail"] = {k: bool(m[k]) for k in ("instant", "digest") if k in m}
         if "notify_off" in body.prefs:          # выключенные группы колокольчика
             from . import notices
             off = body.prefs["notify_off"] if isinstance(body.prefs["notify_off"], list) else []
@@ -716,6 +720,7 @@ def admin_inbox_update(tid: int, req: TicketAdminIn, user: CurrentUser = Depends
         ref = {"no": tid, "status": t.get("status"), "status_label": t.get("status_label")}
         if replied:
             ref["reply"] = True
+            ref["snippet"] = _snippet(req.reply)
         notices.notify([t.get("username")], "ticket", actor=user.username,
                        link=f"inbox:{tid}", ref=ref)
     try:
@@ -3665,6 +3670,80 @@ async def cases_analyze(case_id: int, force: int = 0,
     await asyncio.to_thread(_bell_case, case_id, "case_analysis", user.username,
                             link=f"case:{case_id}:analysis")
     return {"analysis": md, "analysis_at": datetime.now(timezone.utc).isoformat(), "cached": False}
+
+
+# ── Письма-уведомления: галерея шаблонов и тестовая отправка (владелец) ──────
+# Пока адресов сотрудников нет (nginx не передаёт X-Authentik-Email), письма
+# уходят только на MAIL_TEST_TO — смотреть, как шаблоны выглядят в почте Сбера.
+
+_MAIL_SENT: list[float] = []
+_MAIL_PER_HOUR = 30
+
+
+def _mail_data(tpl: str, source: str, username: str):
+    """Данные письма: примеры или ваши настоящие уведомления (если они есть)."""
+    from . import mail_templates as T
+    from . import notices
+    if source != "mine" or tpl == "welcome":
+        return None
+    items = notices.items(username)
+    if tpl == "digest":
+        return [i for i in items if not i.get("read_at")][:30] or items[:12] or None
+    personal = [i for i in items if i["kind"] in T.PERSONAL]
+    if tpl == "batch":
+        return personal[:5] if len(personal) > 1 else None
+    want = {"event_mention": "case_mention", "event_reply": "case_reply", "event_item_comment": "case_reply",
+            "event_added": "case_added", "event_report": "report_shared", "event_ticket": "ticket"}.get(tpl)
+    hit = [i for i in personal if i["kind"] == want]
+    return hit[:1] or None
+
+
+@app.get("/api/admin/mail")
+def admin_mail_gallery(source: str = "sample", user: CurrentUser = Depends(get_current_user)):
+    """Галерея писем: превью каждого шаблона, текстовая версия, «Отправить себе»."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from . import mail_templates as T
+    from . import mailer
+    cards = []
+    for key, label in T.TEMPLATES.items():
+        data = _mail_data(key, source, user.username)
+        m = T.render(key, data, name=user.name)
+        cards.append({"key": key, "label": label, "mine": data is not None, **m})
+    return HTMLResponse(T.gallery_page(cards, mailer.test_recipients(), mailer.configured(), source))
+
+
+class MailTestIn(BaseModel):
+    template: str
+    source: str = "sample"
+
+
+@app.post("/api/admin/mail/test")
+def admin_mail_test(req: MailTestIn, user: CurrentUser = Depends(get_current_user)):
+    """Отправить шаблон на тестовый адрес (MAIL_TEST_TO) — только владельцу."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    import time as _t
+    from . import mail_templates as T
+    from . import mailer
+    if req.template not in T.TEMPLATES:
+        raise HTTPException(400, "неизвестный шаблон")
+    to = mailer.test_recipients()
+    if not to:
+        raise HTTPException(400, "не задан тестовый адрес MAIL_TEST_TO")
+    now = _t.time()
+    _MAIL_SENT[:] = [x for x in _MAIL_SENT if now - x < 3600]
+    if len(_MAIL_SENT) >= _MAIL_PER_HOUR:
+        raise HTTPException(429, "больше 30 тестовых писем за час — подождите")
+    m = T.render(req.template, _mail_data(req.template, req.source, user.username), name=user.name)
+    m = {**m, "subject": "[тест] " + m["subject"]}
+    try:
+        mid = mailer.send(to[0], m, bulk=req.template == "digest")
+    except mailer.MailError as e:
+        raise HTTPException(502, str(e))
+    _MAIL_SENT.append(now)
+    userdata.log_event(user.username, "mail_test", {"template": req.template, "source": req.source})
+    return {"ok": True, "to": to[0], "message_id": mid}
 
 
 # ── Команды: сохранённые группы коллег, подключаются к делу «живьём» ──────────

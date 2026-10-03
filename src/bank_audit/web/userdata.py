@@ -38,7 +38,7 @@ def _scalar(sql: str, params: dict | None = None) -> Any:
 # ── Пользователь ──────────────────────────────────────────────────────────────
 
 def touch_user(username: str, display_name: str | None = None,
-               timezone: str | None = None) -> dict | None:
+               timezone: str | None = None, email: str | None = None) -> dict | None:
     """Upsert пользователя на каждом запросе: обновляет last_seen, имя, TZ.
 
     display_name/timezone обновляются только если переданы непустыми.
@@ -57,6 +57,16 @@ def touch_user(username: str, display_name: str | None = None,
             s.execute(text(
                 "UPDATE app_user SET timezone = :tz WHERE username = :u"
             ), {"tz": timezone, "u": username})
+    if email:
+        # почта из системы входа (X-Authentik-Email) — для писем-уведомлений; отдельной
+        # транзакцией: до миграции 087 колонки нет, а вход не должен падать
+        try:
+            with db.session() as s:
+                s.execute(text("""UPDATE app_user SET email = :e, email_at = now()
+                                   WHERE username = :u AND email IS DISTINCT FROM :e"""),
+                          {"e": email, "u": username})
+        except Exception:  # noqa: BLE001
+            log.debug("touch_user: почта не сохранилась", exc_info=True)
     return get_user(username)
 
 
