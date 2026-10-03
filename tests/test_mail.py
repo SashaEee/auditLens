@@ -69,6 +69,19 @@ def test_digest_groups_by_case_and_counts():
     assert "Отчёты и обращения" in m["text"]
 
 
+def test_greeting_uses_first_name_never_the_login():
+    assert T.first_name("Анна Смирнова") == "Анна"
+    assert T.first_name("Смирнова Анна Павловна") == "Анна"           # как в адресной книге
+    assert T.first_name("Орлов Павел Ильич") == "Павел"
+    assert T.first_name("Анна-Мария Смирнова") == "Анна-Мария"
+    for login in ("ivanov-2127124", "ivanov", "user_1", "", None, "a.ivanov@corp.example.ru"):
+        assert T.first_name(login) == ""
+    assert "Доброе утро." in T.render("digest", name="ivanov-2127124", now=NOW)["text"]
+    w = T.render("welcome", name="Смирнова Анна Павловна")
+    assert "Анна, здравствуйте!" in w["html"] and "Смирнова," not in w["html"]
+    assert "ivanov" not in T.render("welcome", name="ivanov-2127124")["html"]
+
+
 def test_batch_of_one_is_a_plain_event():
     one = T.samples(NOW)["event_report"]
     assert T.render_batch(one, NOW)["subject"] == T.render_event(one[0], NOW)["subject"]

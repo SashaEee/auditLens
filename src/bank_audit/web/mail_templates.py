@@ -124,6 +124,22 @@ def _weekday_title(v) -> str:
     return f"{_WEEKDAY[d.weekday()].capitalize()}, {d.day} {_MON_FULL[d.month - 1]}"
 
 
+_NAME_WORD = re.compile(r"^[A-ZА-ЯЁ][a-zа-яё']+(?:-[A-ZА-ЯЁa-zа-яё][a-zа-яё']+)*$")
+_PATRONYMIC = re.compile(r"(?:ович|евич|ьич|ична|инична|овна|евна)$", re.I)
+
+
+def first_name(name: str | None) -> str:
+    """Имя для обращения в письме: «Анна Смирнова» → «Анна»;
+    «Смирнова Анна Павловна» (как в адресной книге) → «Анна».
+    Логин вместо имени («ivanov-123») → "" — письмо поздоровается без имени."""
+    words = (name or "").split()
+    if not words or not all(_NAME_WORD.match(w) for w in words):
+        return ""
+    if len(words) == 3 and _PATRONYMIC.search(words[2]):
+        return words[1]
+    return words[0]
+
+
 def _plural(n: int, one: str, few: str, many: str) -> str:
     n = abs(int(n))
     if n % 10 == 1 and n % 100 != 11:
@@ -631,7 +647,8 @@ def render_digest(ns: list[dict], now=None, name: str = "") -> dict:
     url = f"{app_base()}/#open?bell=1"
     subject = (f"Сводка AuditLens за {day}: {total} {_plural(total, 'событие', 'события', 'событий')}"
                + (f" в {n_cases} {_plural(n_cases, 'деле', 'делах', 'делах')}" if n_cases else ""))
-    hello = f"{name.split()[0]}, доброе утро." if name else "Доброе утро."
+    fn = first_name(name)
+    hello = f"{fn}, доброе утро." if fn else "Доброе утро."
     title = f"{total} {_plural(total, 'событие ждёт', 'события ждут', 'событий ждут')} вас"
     kpi = [(total, _plural(total, "событие", "события", "событий"))]
     if n_cases:
@@ -677,7 +694,8 @@ def render_digest(ns: list[dict], now=None, name: str = "") -> dict:
 
 def render_welcome(name: str = "") -> dict:
     """Один раз: уведомления теперь приходят на почту — что и когда, как настроить."""
-    hello = f"{name.split()[0]}, здравствуйте!" if name else "Здравствуйте!"
+    fn = first_name(name)
+    hello = f"{fn}, здравствуйте!" if fn else "Здравствуйте!"
     rows = [("Сразу", TALK, "вас упомянули, ответили на ваше сообщение или комментарий, добавили в дело, "
                             "поделились отчётом, команда ответила на обращение — одним письмом раз в 15\u00a0минут"),
             ("Утром", CASE_C, "сводка непрочитанного по вашим делам — только если есть новое"),

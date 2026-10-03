@@ -214,7 +214,9 @@ def whoami(user: CurrentUser = Depends(get_current_user)):
 @app.get("/api/me")
 def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
     """Профиль пользователя (+ upsert app_user, обновление last_seen/TZ)."""
-    row = userdata.touch_user(user.username, user.name, timezone=tz, email=user.email) or {}
+    # без заголовка с именем user.name — это логин; им нельзя затирать сохранённое имя
+    real_name = user.name if user.name != user.username else None
+    row = userdata.touch_user(user.username, real_name, timezone=tz, email=user.email) or {}
     return {
         "username": user.username,
         "has_email": bool(row.get("email") or user.email),
@@ -3698,6 +3700,13 @@ def _mail_data(tpl: str, source: str, username: str):
     return hit[:1] or None
 
 
+def _mail_name(user: CurrentUser) -> str:
+    """Имя для писем — из профиля, а не из текущего запроса: у рассылки по расписанию
+    запроса нет, а без заголовка с именем в запросе вместо имени стоит логин."""
+    row = userdata.get_user(user.username) or {}
+    return row.get("display_name") or ("" if user.name == user.username else user.name)
+
+
 @app.get("/api/admin/mail")
 def admin_mail_gallery(source: str = "sample", user: CurrentUser = Depends(get_current_user)):
     """Галерея писем: превью каждого шаблона, текстовая версия, «Отправить себе»."""
@@ -3708,7 +3717,7 @@ def admin_mail_gallery(source: str = "sample", user: CurrentUser = Depends(get_c
     cards = []
     for key, label in T.TEMPLATES.items():
         data = _mail_data(key, source, user.username)
-        m = T.render(key, data, name=user.name)
+        m = T.render(key, data, name=_mail_name(user))
         cards.append({"key": key, "label": label, "mine": data is not None, **m})
     return HTMLResponse(T.gallery_page(cards, mailer.test_recipients(), mailer.configured(), source))
 
@@ -3735,7 +3744,7 @@ def admin_mail_test(req: MailTestIn, user: CurrentUser = Depends(get_current_use
     _MAIL_SENT[:] = [x for x in _MAIL_SENT if now - x < 3600]
     if len(_MAIL_SENT) >= _MAIL_PER_HOUR:
         raise HTTPException(429, "больше 30 тестовых писем за час — подождите")
-    m = T.render(req.template, _mail_data(req.template, req.source, user.username), name=user.name)
+    m = T.render(req.template, _mail_data(req.template, req.source, user.username), name=_mail_name(user))
     m = {**m, "subject": "[тест] " + m["subject"]}
     try:
         mid = mailer.send(to[0], m, bulk=req.template == "digest")
