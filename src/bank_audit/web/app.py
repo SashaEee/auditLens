@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
                                     judge_background_loop, keyrate_background_loop,
                                     newsflow_background_loop, update_background_loop)
     from ..rag import ingest_queue
+    from .mail_delivery import mail_background_loop
     from ..loophole.parsers.scheduler import (
         ENABLED as PARSER_SCHED_ENABLED,
         parser_scheduler_loop,
@@ -83,6 +84,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(update_background_loop()),
         # предгенерация «Для вас» для активных: первый заход дня без 21с LLM
         asyncio.create_task(foryou_pregen_loop()),
+        # письма-уведомления: сразу о личном и утренняя сводка (web/mail_delivery.py)
+        asyncio.create_task(mail_background_loop()),
     ]
     # Планировщик парсеров «Лазеек»: по cron запускает сгенерированный код.
     # В самом модуле флаг PARSER_SCHEDULER_ENABLED по умолчанию ВКЛЮЧЁН —
@@ -217,9 +220,14 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
     # без заголовка с именем user.name — это логин; им нельзя затирать сохранённое имя
     real_name = user.name if user.name != user.username else None
     row = userdata.touch_user(user.username, real_name, timezone=tz, email=user.email) or {}
+    try:
+        from . import mail_delivery
+        mail_addr = mail_delivery.address(user.username)
+    except Exception:  # noqa: BLE001 — до миграции 088 / без БД
+        mail_addr = None
     return {
         "username": user.username,
-        "has_email": bool(row.get("email") or user.email),
+        "has_email": bool(mail_addr),
         "name": row.get("display_name") or user.name,
         "timezone": row.get("timezone") or "Europe/Moscow",
         "prefs": row.get("prefs") or {},
@@ -236,7 +244,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
 
 @app.put("/api/me")
 def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
-    userdata.touch_user(user.username, user.name)
+    userdata.touch_user(user.username, user.name if user.name != user.username else None)
     if body.timezone:
         userdata.set_timezone(user.username, body.timezone)
     if body.prefs is not None:
@@ -257,6 +265,55 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
             except Exception:
                 pass
     return {"ok": True}
+
+
+# ── своя почта для писем: указать, подтвердить кодом, отключить ──────────────
+# Пока система входа не передаёт почту, адрес вводят в колокольчике. Логика,
+# лимиты и рассылка — web/mail_delivery.py.
+
+class MailAddrIn(BaseModel):
+    email: str
+
+
+class MailCodeIn(BaseModel):
+    code: str
+
+
+def _mail_user(fn, *args):
+    from . import mail_delivery
+    try:
+        return fn(*args)
+    except mail_delivery.MailUserError as e:
+        raise HTTPException(e.status, str(e))
+
+
+@app.get("/api/me/email")
+def get_my_email(user: CurrentUser = Depends(get_current_user)):
+    from . import mail_delivery
+    return mail_delivery.state(user.username)
+
+
+@app.post("/api/me/email")
+def set_my_email(req: MailAddrIn, user: CurrentUser = Depends(get_current_user)):
+    """Указали адрес — уходит письмо с кодом."""
+    from . import mail_delivery
+    return _mail_user(mail_delivery.start, user.username, req.email, _mail_name(user))
+
+
+@app.post("/api/me/email/confirm")
+def confirm_my_email(req: MailCodeIn, user: CurrentUser = Depends(get_current_user)):
+    from . import mail_delivery
+    return _mail_user(mail_delivery.confirm, user.username, req.code, _mail_name(user))
+
+
+@app.delete("/api/me/email")
+def drop_my_email(pending: bool = False, user: CurrentUser = Depends(get_current_user)):
+    """pending=1 — забыть неподтверждённый адрес; иначе — отключить почту совсем."""
+    from . import mail_delivery
+    if pending:
+        mail_delivery.cancel(user.username)
+        return mail_delivery.state(user.username)
+    return mail_delivery.remove(user.username)
 
 
 @app.put("/api/me/interests")
@@ -3686,7 +3743,8 @@ def _mail_data(tpl: str, source: str, username: str):
     """Данные письма: примеры или ваши настоящие уведомления (если они есть)."""
     from . import mail_templates as T
     from . import notices
-    if source != "mine" or tpl == "welcome":
+    tpl = tpl.removesuffix("_private")
+    if source != "mine" or tpl in ("welcome", "verify"):
         return None
     items = notices.items(username)
     if tpl == "digest":
@@ -3719,7 +3777,9 @@ def admin_mail_gallery(source: str = "sample", user: CurrentUser = Depends(get_c
         data = _mail_data(key, source, user.username)
         m = T.render(key, data, name=_mail_name(user))
         cards.append({"key": key, "label": label, "mine": data is not None, **m})
-    return HTMLResponse(T.gallery_page(cards, mailer.test_recipients(), mailer.configured(), source))
+    from . import mail_delivery
+    return HTMLResponse(T.gallery_page(cards, mailer.test_recipients(), mailer.configured(), source,
+                                       stats=mail_delivery.stats()))
 
 
 class MailTestIn(BaseModel):
@@ -3746,8 +3806,9 @@ def admin_mail_test(req: MailTestIn, user: CurrentUser = Depends(get_current_use
         raise HTTPException(429, "больше 30 тестовых писем за час — подождите")
     m = T.render(req.template, _mail_data(req.template, req.source, user.username), name=_mail_name(user))
     m = {**m, "subject": "[тест] " + m["subject"]}
+    from . import mail_delivery
     try:
-        mid = mailer.send(to[0], m, bulk=req.template == "digest")
+        mid = mail_delivery.deliver(user.username, "test", to[0], m, bulk=req.template.startswith("digest"))
     except mailer.MailError as e:
         raise HTTPException(502, str(e))
     _MAIL_SENT.append(now)

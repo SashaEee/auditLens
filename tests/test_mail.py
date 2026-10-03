@@ -147,7 +147,17 @@ def test_nobody_but_test_address_gets_mail_until_enabled(monkeypatch):
     assert M.allowed("colleague@example.org")
 
 
+def test_sink_dir_keeps_mail_as_files_for_development(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAIL_SINK_DIR", str(tmp_path))
+    monkeypatch.delenv("MAIL_PAUSED", raising=False)
+    assert M.configured()
+    M.send("me@example.org", T.render("verify", now=NOW), consented=True)
+    files = list(tmp_path.glob("*.eml"))
+    assert len(files) == 1 and b"multipart/related" in files[0].read_bytes()
+
+
 def test_send_without_settings_is_a_clear_error(monkeypatch):
+    monkeypatch.delenv("MAIL_SINK_DIR", raising=False)
     for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
         monkeypatch.delenv(k, raising=False)
     with pytest.raises(M.MailError, match="не настроена"):
@@ -165,5 +175,76 @@ def test_gallery_lists_every_template():
     page = T.gallery_page(cards, ["me@example.org"], True, "sample")
     for k in T.TEMPLATES:
         assert f'id="{k}"' in page
-    assert "рассылка сотрудникам выключена" in page and "Отправить все себе" in page
+    assert "рассылка выключена" in page and "Отправить все себе" in page
     assert "cid:" not in page                                # превью видит логотип
+
+
+# ── своя почта: личный адрес без подробностей, код, кому можно слать ───────────
+
+SECRETS = ("Кредитные карты", "Ипотека: страхование", "Анна Смирнова", "Ирина Котова", "Павел Орлов",
+           "посмотрите [3]", "Тариф на дату", "Ставки по вкладам", "Казани", "Розница",
+           "считает жалобы")
+
+
+@pytest.mark.parametrize("tpl", ["event_mention_private", "batch_private", "digest_private"])
+def test_private_mail_has_no_case_names_people_or_quotes(tpl):
+    m = T.render(tpl, now=NOW)
+    for part in ("subject", "preheader", "html", "text"):
+        for s in SECRETS:
+            assert s not in m[part], (part, s)
+    assert T.PRIVATE_NOTE in m["html"] and "№ 12" in m["html"]
+    assert "#open?case=12" in m["html"]                       # ссылка ведёт прямо к делу
+
+
+def test_every_kind_has_a_private_title():
+    for kind in T.KIND:
+        r = T.redact({"kind": kind, "link": "case:7", "ref": {"case": "Тайное дело", "snippet": "секрет",
+                                                              "report": "Тайный отчёт", "team": "Розница"},
+                      "actor_name": "Анна Смирнова", "title": "Вас упомянули в деле «Тайное дело»"})
+        dump = repr(r)
+        assert "Тайн" not in dump and "секрет" not in dump and "Анна" not in dump and "Розница" not in dump
+        assert r["title"] and "Новое событие" not in r["title"], kind
+
+
+def test_verify_mail_carries_code_and_self_confirming_link():
+    m = T.render_verify("123456", "a.ivanov@example.org", "Иван Петров")
+    assert m["subject"] == "Код подтверждения AuditLens: 123 456"
+    assert "123 456" in m["html"] and "a.ivanov@example.org" in m["html"]
+    assert "#open?bell=settings&amp;mailcode=123456" in m["html"] and "Иван, здравствуйте!" in m["html"]
+    assert "Код подтверждения: 123456" in m["text"]
+
+
+def test_welcome_warns_private_address():
+    assert "без подробностей" in T.render_welcome("Анна Смирнова", private=True)["html"]
+    assert "без подробностей" not in T.render_welcome("Анна Смирнова")["html"]
+
+
+def test_who_may_receive_mail(monkeypatch):
+    for k in ("MAIL_ENABLED", "MAIL_PAUSED"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MAIL_TEST_TO", "owner@example.org")
+    assert M.allowed("owner@example.org") and not M.allowed("x@example.org")
+    assert M.allowed("x@example.org", consented=True)          # указал и подтверждает сам
+    monkeypatch.setenv("MAIL_PAUSED", "1")
+    assert not M.allowed("x@example.org", consented=True) and M.allowed("owner@example.org")
+
+
+def test_corporate_domains_come_from_env(monkeypatch):
+    from bank_audit.web import mail_delivery as MD
+    monkeypatch.setenv("MAIL_CORP_DOMAINS", " corp.example.ru , @Bank.Example ")
+    assert MD.is_corporate("a@corp.example.ru") and MD.is_corporate("a@mail.bank.example")
+    assert not MD.is_corporate("a@example.org") and not MD.is_corporate("a@notcorp.example.ru.evil.org")
+    assert not MD.is_corporate("a@xcorp.example.ru") and not MD.is_corporate(None)
+    monkeypatch.delenv("MAIL_CORP_DOMAINS")
+    assert not MD.is_corporate("a@corp.example.ru")             # без настройки — всё «личное»
+
+
+def test_closed_contour_address_is_refused_before_any_mail(monkeypatch):
+    """Omega внешних писем не принимает: код туда не дойдёт — отказ сразу, без отправки."""
+    from bank_audit.web import mail_delivery as MD
+    monkeypatch.setenv("MAIL_BLOCKED_DOMAINS", "closed.example.ru")
+    monkeypatch.setattr(MD, "address", lambda u: None)
+    monkeypatch.setattr(M, "send", lambda *a, **k: pytest.fail("письмо ушло на закрытый адрес"))
+    assert MD.is_blocked("a.ivanov@closed.example.ru") and not MD.is_blocked("a@example.org")
+    with pytest.raises(MD.MailUserError, match="Omega"):
+        MD.start("u1", "A.Ivanov@Closed.Example.RU")

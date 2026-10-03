@@ -11894,7 +11894,7 @@ const BX_CSS=`
 .bx-empty{text-align:center;padding:34px 18px 30px;color:var(--ink-3);font-size:12.5px;line-height:1.55}
 .bx-empty .ic{width:40px;height:40px;border-radius:50%;background:var(--paper-2);display:grid;place-items:center;margin:0 auto 12px;color:var(--ink-3)}
 .bx-empty b{display:block;color:var(--ink);font-size:13.5px;font-weight:600;margin-bottom:4px}
-.bx-set{padding:6px 18px 16px}
+.bx-set{padding:6px 18px 16px;overflow-y:auto;min-height:0;overscroll-behavior:contain}
 .bx-set p{margin:0 0 12px;font-size:12px;color:var(--ink-3);line-height:1.5}
 .bx-set p.bx-mail-h{margin:16px 0 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .bx-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--hair);cursor:pointer}
@@ -11912,6 +11912,40 @@ const BX_CSS=`
 .bx-toast .t{display:flex;gap:10px;align-items:flex-start}
 .bx-toast .t .bx-ic{background:var(--accent-soft);color:var(--accent-ink)}
 .bx-toast .t .m{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.bx-mail{padding-top:2px}
+.bx-note{font-size:12px;line-height:1.5;color:var(--ink-3);margin-top:8px;text-wrap:pretty}
+.bx-note b{color:var(--ink);font-weight:550;overflow-wrap:anywhere}
+.bx-form{display:flex;gap:6px;margin-top:10px}
+.bx-in{flex:1;min-width:0;height:34px;padding:0 11px;border:1px solid var(--hair-2);border-radius:8px;background:var(--surface);
+  color:var(--ink);font:inherit;font-size:13px;transition:border-color .12s,box-shadow .12s}
+.bx-in::placeholder{color:var(--ink-4)}
+.bx-in:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px var(--select-soft)}
+.bx-in.code{flex:none;width:132px;text-align:center;font-size:16px;letter-spacing:.18em;font-variant-numeric:tabular-nums}
+.bx-go{flex:none;height:34px;padding:0 14px;border:0;border-radius:8px;background:var(--ink);color:var(--paper);font:inherit;
+  font-size:12.5px;font-weight:550;cursor:pointer;transition:transform .1s,opacity .12s}
+.bx-go:active:not(:disabled){transform:scale(.96)}
+.bx-go:disabled{opacity:.45;cursor:default}
+.bx-go:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.bx-addr{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:8px 0 2px}
+.bx-addr .a{font-size:13.5px;font-weight:550;color:var(--ink);overflow-wrap:anywhere}
+.bx-tag{font-size:11px;line-height:18px;padding:0 8px;border-radius:999px;background:var(--paper-2);color:var(--ink-3);white-space:nowrap}
+.bx-tag.corp{background:var(--select-soft);color:var(--select)}
+.bx-acts{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;margin-top:10px;font-size:12px;color:var(--ink-3)}
+.bx-lnk{position:relative;border:0;background:none;padding:2px 0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;
+  text-decoration:underline;text-decoration-color:var(--hair-2);text-underline-offset:3px}
+.bx-lnk:hover:not(:disabled){color:var(--ink);text-decoration-color:currentColor}
+.bx-lnk:disabled{color:var(--ink-4);cursor:default;text-decoration:none;font-variant-numeric:tabular-nums}
+.bx-lnk:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:3px}
+.bx-lnk.danger{color:var(--accent-ink)}
+.bx-err{font-size:12px;line-height:1.45;color:var(--accent-ink);margin-top:8px}
+.bx-mail .bx-row:first-of-type{border-top:1px solid var(--hair);margin-top:10px}
+.bx-foot{display:flex;align-items:center;gap:10px;width:100%;padding:11px 18px;border:0;border-top:1px solid var(--hair);
+  background:none;font:inherit;font-size:12.5px;color:var(--ink-2);text-align:left;cursor:pointer;transition:background .12s}
+.bx-foot:hover{background:var(--paper-2);color:var(--ink)}
+.bx-foot:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.bx-foot svg{flex:none;color:var(--ink-3)}
+.bx-foot .go{margin-left:auto;color:var(--ink-3)}
+@media(pointer:coarse){.bx-lnk::after{content:"";position:absolute;inset:-10px -6px}}
 @media(max-width:960px){.bx-pop{width:auto}.bx-btn{width:44px;height:44px}.bx-item{min-height:44px}}
 @media(prefers-reduced-motion:reduce){.bx-sw::after,.bx-sw{transition:none}}
 `;
@@ -11920,6 +11954,7 @@ const IcBx={
   case:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3.5 7.5A1.5 1.5 0 015 6h4.2l1.8 2H19a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5z"/></svg>,
   people:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0111 0"/><path d="M16 6.2a3 3 0 010 5.6M17.5 14.2A5.5 5.5 0 0120.5 19"/></svg>,
   report:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 3.5h7l4.5 4.5v11A1.5 1.5 0 0117 20.5H7A1.5 1.5 0 015.5 19V5A1.5 1.5 0 017 3.5z"/><path d="M13.5 3.5V8.5h5M9 13h6M9 16.5h4"/></svg>,
+  mail:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></svg>,
   gear:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="2.6"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
 };
 const BX_HINT={mention:"Вас упомянули через @, ответили на ваше сообщение или прокомментировали ваш материал",
@@ -11939,10 +11974,122 @@ const bxAgo=(iso)=>{ try{ const d=new Date(iso), s=(Date.now()-d.getTime())/1000
   return d.toLocaleDateString("ru",{day:"numeric",month:"short"}).replace(".",""); }catch{ return ""; } };
 const bxWho=(it)=>it.actor_name?(it.kind==="ticket"?it.actor_name:puShort(it.actor_name)):"";
 
-function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,initialView}){
+// Своя почта для писем (web/mail_delivery.py): пока система входа не передаёт адрес,
+// его указывают здесь и подтверждают кодом из письма. Корпоративная почта — только Sigma
+// (MAIL_CORP_DOMAINS), она получает письма целиком; любая другая — без подробностей.
+// Почта Omega (MAIL_BLOCKED_DOMAINS) внешних писем не принимает — её не берём.
+const BX_MAIL_RE=/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const bxCorp=(email,domains)=>{ const d=String(email||"").toLowerCase().split("@")[1]||"";
+  return !!d&&(domains||[]).some(x=>d===x||d.endsWith("."+x)); };
+const bxAt=(domains)=>domains&&domains[0]?` (@${domains[0]})`:"";
+const bxDel=(path)=>fetch(path,{method:"DELETE"}).then(r=>{ if(r.ok) return r.json();
+  throw new Error("Не получилось. Попробуйте ещё раз"); });
+const BX_MAIL_PREFS=[["instant","Сразу — о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
+  ["digest","Утренняя сводка","В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"]];
+
+function BxMail({me,onPrefs,onEmail,code0}){
+  const[st,setSt]=useState(null);
+  const[loadErr,setLoadErr]=useState(false);
+  const[err,setErr]=useState("");
+  const[addr,setAddr]=useState("");
+  const[code,setCode]=useState("");
+  const[editing,setEditing]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[sure,setSure]=useState(false);
+  const[,setTick]=useState(0);
+  const gotAt=useRef(Date.now());
+  const autoDone=useRef(null);
+  const apply=(x)=>{ setSt(x); gotAt.current=Date.now(); setErr(""); onEmail&&onEmail(!!(x&&x.email&&x.active)); };
+  const load=useCallback(()=>apiFetch("/api/me/email").then(x=>{ setLoadErr(false); apply(x); })
+    .catch(()=>setLoadErr(true)),[]); // eslint-disable-line
+  useEffect(()=>{ load(); },[load]);
+  const p=st&&st.pending;
+  const left=p?Math.max(0,Math.ceil(p.resend_in-(Date.now()-gotAt.current)/1000)):0;
+  useEffect(()=>{ if(!left) return; const t=setTimeout(()=>setTick(x=>x+1),1000); return ()=>clearTimeout(t); });
+  const send=(email)=>{ setBusy(true); setErr("");
+    sayPost("/api/me/email",{email}).then(x=>{ apply(x); setEditing(false); setCode(""); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  const confirm=(c)=>{ setBusy(true); setErr("");
+    sayPost("/api/me/email/confirm",{code:String(c||"")}).then(x=>{ apply(x); setCode(""); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  const drop=(pendingOnly)=>{ setBusy(true); setErr("");
+    bxDel("/api/me/email"+(pendingOnly?"?pending=1":"")).then(x=>{ apply(x); setSure(false); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  // кнопка из письма с кодом: #open?bell=settings&mailcode=… — подтверждаем сами
+  useEffect(()=>{ if(!st||!code0||autoDone.current===code0) return; autoDone.current=code0;
+    if(st.pending){ setEditing(false); setCode(code0); confirm(code0); }
+    else if(!st.email) setErr("Код из письма уже не действует — запросите новый"); },[st,code0]); // eslint-disable-line
+  if(loadErr) return <div className="bx-mail"><div className="bx-err">Не загрузилось. <button className="bx-lnk" onClick={load}>Повторить</button></div></div>;
+  if(!st) return <div className="bx-mail" style={{paddingTop:8}}><Skel h={34}/></div>;
+  const prefs=(me&&me.prefs&&me.prefs.mail)||{};
+  if(p&&!editing){
+    const digits=code.replace(/\D/g,"");
+    return <div className="bx-mail">
+      <div className="bx-note">Код отправлен на <b>{p.email}</b>. Письмо идёт 2–5 минут — если его нет, загляните в «Спам».</div>
+      <form className="bx-form" onSubmit={e=>{ e.preventDefault(); if(digits.length===6) confirm(digits); }}>
+        <input className="bx-in code" inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="000000"
+          aria-label="Код из письма" value={code} autoFocus
+          onChange={e=>{ setCode(e.target.value.replace(/[^\d ]/g,"")); setErr(""); }}/>
+        <button className="bx-go" disabled={busy||digits.length!==6}>{busy?"Проверяю…":"Подтвердить"}</button>
+      </form>
+      {err&&<div className="bx-err" role="alert">{err}</div>}
+      <div className="bx-acts">
+        <button className="bx-lnk" disabled={left>0||busy} onClick={()=>send(p.email)}>{left>0?`Отправить ещё раз через ${left} с`:"Отправить ещё раз"}</button>
+        <button className="bx-lnk" onClick={()=>{ setEditing(true); setAddr(p.email); setErr(""); }}>Другой адрес</button>
+        {st.email&&<button className="bx-lnk" onClick={()=>drop(true)}>Оставить {st.email}</button>}
+      </div>
+    </div>;
+  }
+  if(st.email&&!editing) return <div className="bx-mail">
+    <div className="bx-addr"><span className="a">{st.email}</span>
+      <span className={"bx-tag"+(st.corporate?" corp":"")}>{st.corporate?"Sigma":"личная"}</span></div>
+    {!st.active
+      ?<div className="bx-note">Адрес из учётной записи: письма начнут приходить, когда рассылку включат.</div>
+      :!st.corporate&&<div className="bx-note">На личную почту письма приходят без подробностей: что произошло и ссылка — без названий дел, имён и цитат.</div>}
+    {BX_MAIL_PREFS.map(([k,l,h])=>{ const on=prefs[k]!==false;
+      return <label key={k} className="bx-row">
+        <span className="l"><b>{l}</b><span>{h}</span></span>
+        <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={l}
+          onClick={e=>{ e.preventDefault(); const mail={...prefs,[k]:!on};
+            onPrefs&&onPrefs(null,mail); apiPut("/api/me",{prefs:{mail}}).catch(()=>onPrefs&&onPrefs(null,prefs)); }}/>
+      </label>; })}
+    <div className="bx-acts">{sure
+      ?<><span>Письма перестанут приходить.</span>
+        <button className="bx-lnk danger" disabled={busy} onClick={()=>drop(false)}>Отключить</button>
+        <button className="bx-lnk" onClick={()=>setSure(false)}>Отмена</button></>
+      :<><button className="bx-lnk" onClick={()=>{ setEditing(true); setAddr(""); setErr(""); }}>Другой адрес</button>
+        <button className="bx-lnk" onClick={()=>setSure(true)}>Отключить почту</button></>}</div>
+    {err&&<div className="bx-err" role="alert">{err}</div>}
+  </div>;
+  const a=addr.trim(), okA=BX_MAIL_RE.test(a), omega=okA&&bxCorp(a,st.blocked_domains);
+  return <div className="bx-mail">
+    <div className="bx-note">Личное — сразу, остальное — утренней сводкой. Укажите корпоративную почту
+      Sigma{bxAt(st.corp_domains)} или личную — пришлём код, чтобы подтвердить адрес. Почта
+      Omega{bxAt(st.blocked_domains)} не подойдёт: письма извне туда не доходят.</div>
+    <form className="bx-form" onSubmit={e=>{ e.preventDefault(); if(okA&&!omega&&!busy) send(a); }}>
+      <input className="bx-in" type="email" inputMode="email" autoComplete="email" placeholder="Почта Sigma или личная"
+        aria-label="Адрес почты" value={addr} autoFocus={editing} onChange={e=>{ setAddr(e.target.value); setErr(""); }}/>
+      <button className="bx-go" disabled={busy||!okA||omega}>{busy?"Отправляю…":"Получить код"}</button>
+    </form>
+    {omega&&!err?<div className="bx-err" role="alert">Это почта Omega — письма извне туда не доходят. Укажите адрес Sigma или личную почту.</div>
+    :okA&&!err&&<div className="bx-note">{bxCorp(a,st.corp_domains)
+      ?"Почта Sigma — письма придут целиком."
+      :"Не корпоративная почта — письма придут без подробностей: без названий дел, имён и цитат."}</div>}
+    {err&&<div className="bx-err" role="alert">{err}</div>}
+    {editing&&<div className="bx-acts"><button className="bx-lnk" onClick={()=>{ setEditing(false); setErr(""); }}>Отмена</button></div>}
+  </div>;
+}
+
+function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,onEmail,initialView,mailCode}){
   const[d,setD]=useState(null);
   const[err,setErr]=useState(false);
   const[view,setView]=useState(initialView==="settings"?"settings":"list");     // list | settings
+  // «Присылать на почту» внизу списка — пока почта не подключена и настройки ещё не открывали
+  const[mailHint,setMailHint]=useState(()=>{ try{ return !localStorage.getItem("al-bx-mail-seen"); }catch{ return true; } });
+  // ссылка из письма при уже открытой панели: #open?bell=settings&mailcode=…
+  useEffect(()=>{ if(initialView==="settings") setView("settings"); },[initialView,mailCode]);
+  useEffect(()=>{ if(view!=="settings") return; setMailHint(false);
+    try{ localStorage.setItem("al-bx-mail-seen","1"); }catch{} },[view]);
   const ref=useRef(null);
   const load=useCallback(()=>apiFetch("/api/bell").then(x=>{ setD(x); setErr(false); }).catch(()=>setErr(true)),[]);
   useEffect(()=>{ load(); },[load]);
@@ -11989,19 +12136,8 @@ function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,initialView}){
           <button type="button" role="switch" aria-checked={g.on} className="bx-sw" aria-label={g.label}
             onClick={e=>{ e.preventDefault(); toggle(g.key); }}/>
         </label>)}
-        {/* письма — когда известен адрес (Authentik передаёт почту); до тех пор блока нет */}
-        {me&&me.has_email&&<>
-          <p className="bx-mail-h">На почту</p>
-          {[["instant","Сразу — о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
-            ["digest","Утренняя сводка","Непрочитанное по вашим делам — только если есть новое"]].map(([k,l,h])=>{
-            const on=((me.prefs||{}).mail||{})[k]!==false;
-            return <label key={k} className="bx-row">
-              <span className="l"><b>{l}</b><span>{h}</span></span>
-              <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={l}
-                onClick={e=>{ e.preventDefault(); const mail={...((me.prefs||{}).mail||{}),[k]:!on};
-                  apiPut("/api/me",{prefs:{mail}}).then(()=>onPrefs&&onPrefs(null,mail)).catch(()=>{}); }}/>
-            </label>; })}
-        </>}</div>
+        <p className="bx-mail-h">На почту</p>
+        <BxMail me={me} onPrefs={onPrefs} onEmail={onEmail} code0={mailCode}/></div>
       :<div className="bx-body">
         {err&&!d?<div className="bx-empty">Список не загрузился. <button className="bx-all" onClick={load}>Повторить</button></div>
         :!d?<div style={{padding:"10px"}}><Skel h={46}/><div style={{height:8}}/><Skel h={46}/></div>
@@ -12010,6 +12146,8 @@ function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,initialView}){
         :<>{fresh.length>0&&<><div className="bx-grp">Новые</div>{fresh.map(row)}</>}
           {old.length>0&&<><div className="bx-grp">Ранее</div>{old.map(row)}</>}</>}
       </div>}
+    {view==="list"&&mailHint&&me&&!me.has_email&&<button type="button" className="bx-foot" onClick={()=>setView("settings")}>
+      <IcBx.mail/>Присылать уведомления на почту<span className="go" aria-hidden="true">→</span></button>}
   </div>;
 }
 
@@ -12085,12 +12223,14 @@ function Shell(){
   // Ссылки из писем: #open?case=12&tab=talk&msg=55 · #open?inbox=7 · #open?bell=1|settings ·
   // #open?report=45. Действие поверх текущего раздела; адрес возвращается к разделу.
   const[bellView,setBellView]=useState(null);
+  const[bellCode,setBellCode]=useState(null);          // код подтверждения почты из письма
   const openLinkRef=useRef(null); openLinkRef.current=(prm)=>{
     try{ history.replaceState(null,"","#"+(pageCurRef.current||"overview")); }catch{}
     if(prm.case) openCases(+prm.case,prm.tab?{tab:prm.tab,msg:prm.msg?+prm.msg:null}:null);
     else if(prm.report){ _pendingReport=+prm.report; setPage("ai"); try{ window.dispatchEvent(new Event("al-open-report")); }catch{} }
     else if(prm.inbox){ setBellOpen(false); setSayFocus(+prm.inbox); setSayOpen("mine"); }
-    else if(prm.bell){ setSayOpen(null); setBellView(prm.bell==="settings"?"settings":null); setBellOpen(true); }
+    else if(prm.bell){ setSayOpen(null); setBellView(prm.bell==="settings"?"settings":null);
+      setBellCode(/^\d{6}$/.test(prm.mailcode||"")?prm.mailcode:null); setBellOpen(true); }
   };
   useEffect(()=>{ const first=parseHash(); if(first.p==="open") setTimeout(()=>openLinkRef.current(first.prm),0);
     const h=()=>{ const x=parseHash(); if(x.p==="open") openLinkRef.current(x.prm); };
@@ -12460,8 +12600,8 @@ function Shell(){
       {sayOpen&&ReactDOM.createPortal(<SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef} focus={sayFocus}
         onClose={()=>{ setSayOpen(null); setSayFocus(null); loadSay(); setTimeout(()=>{ try{ sayRowRef.current&&sayRowRef.current.focus(); }catch{} },0); }}
         onUnread={loadSay}/>,document.body)}
-      {bellOpen&&ReactDOM.createPortal(<BellPanel anchor={bellRef} me={me} onClose={()=>{ setBellView(null); closeBell(); }} onGo={goBell} onCount={loadBell}
-        initialView={bellView}
+      {bellOpen&&ReactDOM.createPortal(<BellPanel anchor={bellRef} me={me} onClose={()=>{ setBellView(null); setBellCode(null); closeBell(); }} onGo={goBell} onCount={loadBell}
+        initialView={bellView} mailCode={bellCode} onEmail={(has)=>setMe(m=>m&&m.has_email!==has?{...m,has_email:has}:m)}
         onPrefs={(off,mail)=>setMe(m=>m?{...m,prefs:{...(m.prefs||{}),...(off?{notify_off:off}:{}),...(mail?{mail}:{})}}:m)}/>,document.body)}
       {/* разовая заметка о новом уведомлении — у колокольчика, один раз на событие */}
       {bellToast&&!bellOpen&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast bx-toast" role="status">

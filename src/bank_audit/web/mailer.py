@@ -3,10 +3,15 @@
 Настройки — в .env: SMTP_HOST, SMTP_PORT (465 — SSL, 587 — STARTTLS),
 SMTP_USER, SMTP_PASSWORD, SMTP_FROM, SMTP_FROM_NAME (по умолчанию «AuditLens»).
 
-Защита от случайной рассылки: пока MAIL_ENABLED не равен 1, письма уходят
-только на адреса из MAIL_TEST_TO (через запятую) — сейчас это почта владельца
-для проверки шаблонов. Адреса сотрудников появятся, когда система входа
-начнёт передавать почту приложению; включать рассылку — отдельным решением.
+Кому можно слать:
+• адрес, который человек указал и подтверждает сам (consented=True) — это его
+  согласие, такие письма идут всегда;
+• адреса из системы входа — только когда включат MAIL_ENABLED=1;
+• MAIL_TEST_TO (через запятую) — тестовые адреса владельца, всегда.
+MAIL_PAUSED=1 останавливает всё, кроме тестовых адресов.
+
+Для разработки: MAIL_SINK_DIR — письма не уходят по SMTP, а ложатся файлами .eml
+в эту папку (их открывает любая почтовая программа).
 
 Заголовки: Auto-Submitted и X-Auto-Response-Suppress — чтобы Outlook не
 отвечал на уведомления автоответами («я в отпуске») и не устраивал петли;
@@ -37,18 +42,25 @@ def _env(k: str, d: str = "") -> str:
 
 
 def configured() -> bool:
-    return bool(_env("SMTP_HOST") and _env("SMTP_USER") and _env("SMTP_PASSWORD"))
+    return bool(_env("MAIL_SINK_DIR") or (_env("SMTP_HOST") and _env("SMTP_USER") and _env("SMTP_PASSWORD")))
 
 
 def test_recipients() -> list[str]:
     return [x.strip().lower() for x in _env("MAIL_TEST_TO").split(",") if x.strip()]
 
 
-def allowed(to: str) -> bool:
-    """Пока рассылка не включена — только тестовые адреса."""
-    if _env("MAIL_ENABLED") == "1":
+def paused() -> bool:
+    return _env("MAIL_PAUSED") == "1"
+
+
+def allowed(to: str, *, consented: bool = False) -> bool:
+    """Тестовые — всегда; указанные самим человеком — если не на паузе; остальные —
+    только при MAIL_ENABLED=1."""
+    if (to or "").strip().lower() in test_recipients():
         return True
-    return (to or "").strip().lower() in test_recipients()
+    if paused():
+        return False
+    return consented or _env("MAIL_ENABLED") == "1"
 
 
 def build(to: str, mail: dict, *, bulk: bool = False) -> EmailMessage:
@@ -78,13 +90,24 @@ def build(to: str, mail: dict, *, bulk: bool = False) -> EmailMessage:
     return m
 
 
-def send(to: str, mail: dict, *, bulk: bool = False) -> str:
-    """Отправить письмо. Возвращает Message-ID; при отказе — MailError."""
+def send(to: str, mail: dict, *, bulk: bool = False, consented: bool = False) -> str:
+    """Отправить письмо. Возвращает Message-ID; при отказе — MailError.
+    consented — адрес человек указал сам (подтверждён или подтверждается)."""
     if not configured():
         raise MailError("почта не настроена: нет SMTP_* в .env")
-    if not allowed(to):
+    if not allowed(to, consented=consented):
+        if paused():
+            raise MailError("рассылка на паузе (MAIL_PAUSED=1)")
         raise MailError("рассылка ещё не включена: письма уходят только на тестовые адреса (MAIL_TEST_TO)")
     msg = build(to, mail, bulk=bulk)
+    if _env("MAIL_SINK_DIR"):
+        from pathlib import Path
+        sink = Path(_env("MAIL_SINK_DIR"))
+        sink.mkdir(parents=True, exist_ok=True)
+        stamp = formatdate(localtime=True).replace(",", "").replace(":", "-").replace(" ", "_")
+        (sink / f"{stamp}_{to.replace('@', '_at_')}_{make_msgid()[1:9]}.eml").write_bytes(bytes(msg))
+        log.info("[mail] (в папку) → %s: %s", to, mail["subject"][:80])
+        return msg["Message-ID"]
     host, port = _env("SMTP_HOST"), int(_env("SMTP_PORT", "465") or 465)
     ctx = ssl.create_default_context()
     try:

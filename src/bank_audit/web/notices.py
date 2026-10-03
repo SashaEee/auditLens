@@ -4,7 +4,7 @@
 трогаем — там и так тема, «Аудит-дела» и поиск. Сюда сходятся события, о
 которых человек иначе не узнает: его добавили в дело или сменили роль,
 коллега приобщил материалы, с ним поделились отчётом, команда ответила на
-обращение. Почты на проде нет — всё внутри.
+обращение. Письма о тех же событиях — web/mail_delivery.py (если человек подключил почту).
 
 Правила:
 • автору события уведомление не шлём — он и так знает;
@@ -189,7 +189,7 @@ def notify(usernames: Iterable[str | None], kind: str, *, actor: str | None = No
                         merged["reply"] = True       # ответ важнее смены статуса
                     s.execute(text("""
                         UPDATE app_notice SET count = :c, ref = CAST(:r AS jsonb), title = :t,
-                                              actor = :a, updated_at = now()
+                                              actor = :a, updated_at = now(), emailed_at = NULL
                          WHERE notice_id = :id"""),
                         {"c": cnt, "r": json.dumps(merged, ensure_ascii=False),
                          "t": title_of(kind, merged, cnt), "a": actor, "id": prev["notice_id"]})

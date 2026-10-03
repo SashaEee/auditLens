@@ -66,6 +66,9 @@ ROLE_HINT = {
 NOTE_CASE = "Ответ на это письмо коллеги не увидят — отвечайте в AuditLens."
 NOTE_TICKET = "Ответ на это письмо команда не увидит — пишите в AuditLens."
 NOTE_AUTO = "Письмо отправлено автоматически, отвечать на него не нужно."
+# Внешняя (не корпоративная) почта получает письма без подробностей — см. redact()
+PRIVATE_NOTE = ("Письмо пришло на личную почту, поэтому в нём нет подробностей — названий дел, "
+                "имён и цитат. Всё остальное — в AuditLens.")
 
 
 def app_base() -> str:
@@ -185,6 +188,68 @@ def _case_of(n: dict) -> tuple[str | None, str | None]:
     if ref.get("case"):
         return f"t:{ref['case']}", ref.get("case")
     return None, None
+
+
+def _case_no(n: dict) -> str | None:
+    parts = str(n.get("link") or "").split(":")
+    return parts[1] if parts[0] == "case" and len(parts) > 1 and parts[1] else None
+
+
+def redact(n: dict) -> dict:
+    """Событие для личной почты: только что произошло. Без названий дел и отчётов,
+    имён коллег и цитат — номер дела остаётся (по нему ничего не узнать, а ссылка
+    ведёт прямо к делу), номер и статус вашего обращения — тоже."""
+    kind, ref, cnt = n.get("kind"), n.get("ref") or {}, int(n.get("count") or 1)
+    no = _case_no(n)
+    d = f" №\u00a0{no}" if no else ""
+    many = lambda one, few, lots: f"{cnt} {_plural(cnt, one, few, lots)}"  # noqa: E731
+    if kind == "case_mention":
+        t = f"Вас упомянули в деле{d}" if no else "Вас упомянули в обсуждении"
+    elif kind == "case_reply":
+        t = (f"Комментарий к вашему материалу в деле{d}" if ref.get("on_item")
+             else f"Ответ на ваше сообщение в деле{d}")
+    elif kind == "case_msg":
+        t = f"Новое сообщение в деле{d}" if cnt <= 1 else \
+            f"В деле{d} {many('новое сообщение', 'новых сообщения', 'новых сообщений')}"
+    elif kind == "case_items":
+        t = f"В деле{d} новый материал" if cnt <= 1 else \
+            f"В деле{d} {many('новый материал', 'новых материала', 'новых материалов')}"
+    elif kind == "case_added":
+        t = f"Вас добавили в дело{d}"
+    elif kind == "case_role":
+        t = f"Ваши права в деле{d}: {ref.get('role_label')}" if ref.get("role_label") \
+            else f"Ваши права в деле{d} изменились"
+    elif kind == "case_removed":
+        t = f"Вас убрали из дела{d}"
+    elif kind == "case_owner":
+        t = f"Вам передали дело{d} — теперь вы владелец"
+    elif kind == "case_left":
+        t = f"Участник вышел из дела{d}"
+    elif kind == "case_status":
+        t = (f"Дело{d} перенесено в архив" if ref.get("archived") is True
+             else f"Дело{d} возвращено из архива" if ref.get("archived") is False
+             else f"Статус дела{d}: {ref['status_label']}" if ref.get("status_label")
+             else f"Статус дела{d} изменился")
+    elif kind == "case_analysis":
+        t = f"В деле{d} новый разбор ИИ"
+    elif kind == "case_deleted":
+        t = f"Дело{d} удалено"
+    elif kind == "case_restored":
+        t = f"Дело{d} снова доступно"
+    elif kind == "report_shared":
+        t = "С вами поделились отчётом"
+    elif kind == "ticket":
+        tn = f" №\u00a0{ref['no']}" if ref.get("no") else ""
+        t = (f"Команда AuditLens ответила на обращение{tn}" if ref.get("reply")
+             else f"Новый статус обращения{tn}")
+    else:
+        t = "Новое событие в AuditLens"
+    keep = {"on_item": ref.get("on_item"), "no": ref.get("no"), "reply": ref.get("reply"),
+            "status_label": ref.get("status_label") if kind in ("ticket", "case_status") else None,
+            "case": f"Дело{d}" if no else None}
+    return {"id": n.get("id"), "kind": kind, "title": t, "actor_name": "", "link": n.get("link"),
+            "updated_at": n.get("updated_at"), "count": cnt,
+            "ref": {k: v for k, v in keep.items() if v}}
 
 
 def _kind(n: dict) -> tuple[str, str]:
@@ -320,6 +385,13 @@ _AV = [("#E6ECFF", "#2440B8"), ("#EFE8FA", "#5A35A0"), ("#E2F0E7", "#1F5E37"),
        ("#FAEEDB", "#7A4C08"), ("#E6EBF1", "#33465E"), ("#F9E5E6", "#9E2B2F")]
 
 
+def _marker(color: str, size: int = 28) -> str:
+    """Вместо аватара, когда имени нет (письмо на личную почту): точка цвета события."""
+    return _tbl(f'<tr><td width="{size}" height="{size}" align="center" valign="middle" bgcolor="{SOFT}" '
+                f'style="width:{size}px;height:{size}px;border-radius:{size // 2}px;background:{SOFT};'
+                f'{_font(10, size, color)}">&#9679;</td></tr>', width=False)
+
+
 def _avatar(name: str, size: int = 32) -> str:
     """Кружок с инициалами (Outlook на Windows рисует квадрат со скруглением 0 — это нормально)."""
     if name == TEAM:
@@ -438,8 +510,9 @@ def _item_row(n: dict, now=None, show_case: bool = True) -> str:
     actor = n.get("actor_name") or ""
     snip = _clip(ref.get("snippet"), 170)
     meta = " · ".join(x for x in (label, actor, _nb(when(n.get("updated_at"), now))) if x)
+    face = _avatar(actor, 28) if actor else _marker(color)
     return (f'<tr><td style="padding:14px 0;border-top:1px solid {HAIR}">'
-            + _tbl(f'<tr><td width="28" valign="top" style="width:28px;padding-top:2px">{_avatar(actor, 28)}</td>'
+            + _tbl(f'<tr><td width="28" valign="top" style="width:28px;padding-top:2px">{face}</td>'
                    f'<td valign="top" style="padding-left:12px">'
                    f'<a href="{_e(link_for(n))}" target="_blank" '
                    f'style="{_font(15, 21, INK, 600, "text-decoration:none")}">'
@@ -529,8 +602,34 @@ def _text(head: str, title: str, lines: list[str], cta: str, url: str, reason: s
 
 # ── письма ───────────────────────────────────────────────────────────────────
 
-def render_event(n: dict, now=None) -> dict:
-    """Одно событие из колокольчика → письмо. Тема — текст уведомления."""
+def _render_event_private(n: dict, now=None) -> dict:
+    """Событие на личную почту: что произошло и куда нажать — без подробностей."""
+    r = redact(n)
+    kind, ref = r["kind"], r["ref"]
+    label, color = _kind(n)
+    url = link_for(n)
+    wh = when(n.get("updated_at"), now)
+    cta = ("Открыть обсуждение" if kind in ("case_mention", "case_reply", "case_msg")
+           else "Открыть отчёт" if kind == "report_shared" else "Открыть обращение" if kind == "ticket"
+           else "Открыть дело")
+    body = (_eyebrow(label, color) + _h1(r["title"], wh)
+            + (_pill("Статус обращения", ref["status_label"]) if kind == "ticket" and ref.get("status_label")
+               else "")
+            + _p(_e(PRIVATE_NOTE), color=INK2, size=14, top=18) + _btn(cta, url))
+    reason = "Вы получили это письмо, потому что подключили эту почту к уведомлениям AuditLens."
+    note = NOTE_TICKET if kind == "ticket" else NOTE_CASE if kind != "report_shared" else NOTE_AUTO
+    return {"subject": r["title"].replace("\u00a0", " "), "preheader": "Подробности — в AuditLens", "url": url,
+            "html": layout(preheader="Подробности — в AuditLens", title=r["title"], body=body, reason=reason,
+                           note=note, section=_section(kind)),
+            "text": _text(label, r["title"].replace("\u00a0", " "), [wh, "", PRIVATE_NOTE], cta, url, reason, note),
+            "thread": f"case-{_case_of(n)[0]}" if _case_of(n)[0] else None}
+
+
+def render_event(n: dict, now=None, private: bool = False) -> dict:
+    """Одно событие из колокольчика → письмо. Тема — текст уведомления.
+    private — на личную почту: без названий, имён и цитат (redact)."""
+    if private:
+        return _render_event_private(n, now)
     kind, ref = n.get("kind"), n.get("ref") or {}
     case = ref.get("case")
     actor = n.get("actor_name") or ""
@@ -611,18 +710,22 @@ def render_event(n: dict, now=None) -> dict:
             "thread": f"case-{_case_of(n)[0]}" if _case_of(n)[0] else None}
 
 
-def render_batch(ns: list[dict], now=None) -> dict:
+def render_batch(ns: list[dict], now=None, private: bool = False) -> dict:
     """Несколько личных событий за 15 минут — одним письмом."""
     if len(ns) == 1:
-        return render_event(ns[0], now)
+        return render_event(ns[0], now, private)
+    if private:
+        ns = [redact(n) for n in ns]
     first, k = ns[0], len(ns) - 1
     url = f"{app_base()}/#open?bell=1"
-    subject = f"{first.get('title')} и ещё {k} {_plural(k, 'событие', 'события', 'событий')}"
+    subject = (f"{first.get('title')} и ещё {k} {_plural(k, 'событие', 'события', 'событий')}"
+               .replace("\u00a0", " "))
     title = f"{len(ns)} {_plural(len(ns), 'новое событие', 'новых события', 'новых событий')} для вас"
     more = len(ns) - 12
     body = (_eyebrow("Новое для вас", BRAND) + _h1(title)
             + _feed([_item_row(n, now) for n in ns[:12]])
             + (_p(f"И ещё {more} — в колокольчике AuditLens.", color=INK3, size=13) if more > 0 else "")
+            + (_p(_e(PRIVATE_NOTE), color=INK2, size=14, top=18) if private else "")
             + _btn("Открыть уведомления", url))
     reason = "Вы получили это письмо, потому что вас упомянули, вам ответили или открыли доступ в AuditLens."
     preheader = _clip("; ".join(n.get("title") or "" for n in ns[:3]), 140)
@@ -635,8 +738,9 @@ def render_batch(ns: list[dict], now=None) -> dict:
             "thread": None}
 
 
-def render_digest(ns: list[dict], now=None, name: str = "") -> dict:
-    """Утренняя сводка непрочитанного: крупные числа, затем по делам, затем отчёты и обращения."""
+def render_digest(ns: list[dict], now=None, name: str = "", private: bool = False) -> dict:
+    """Утренняя сводка непрочитанного: крупные числа, затем по делам, затем отчёты и обращения.
+    private — на личную почту: одной лентой, без названий дел, имён и цитат."""
     now = now or datetime.now(timezone.utc)
     groups: dict[str, dict] = {}
     other: list[dict] = []
@@ -647,6 +751,8 @@ def render_digest(ns: list[dict], now=None, name: str = "") -> dict:
         else:
             other.append(n)
     n_cases, total = len(groups), len(ns)
+    if private:                       # группы считаем по исходным событиям, показываем — обезличенные
+        groups, other = {}, [redact(n) for n in ns]
     mine = sum(1 for n in ns if n.get("kind") in PERSONAL)
     day = day_title(now)
     url = f"{app_base()}/#open?bell=1"
@@ -683,13 +789,20 @@ def render_digest(ns: list[dict], now=None, name: str = "") -> dict:
         text_lines += [f"Дело «{g['title']}»" + (f" — {summary}" if summary else ""),
                        *[f"  — {short_title(i)}" for i in its[:6]], ""]
     if other:
+        head, cap = ("События", 20) if private else ("Отчёты и обращения", 8)
         body += (f'<div style="margin:32px 0 0;{_font(11, 16, INK3, 600, "letter-spacing:.08em;text-transform:uppercase")}">'
-                 f'Отчёты и обращения</div>'
-                 + _feed([_item_row(i, now) for i in other[:8]], top=10))
-        text_lines += ["Отчёты и обращения", *[f"  — {i.get('title')}" for i in other[:8]], ""]
+                 f'{head}</div>'
+                 + _feed([_item_row(i, now) for i in other[:cap]], top=10)
+                 + (_p(f"И ещё {len(other) - cap} — в колокольчике AuditLens.", color=INK3, size=13, top=8)
+                    if len(other) > cap else ""))
+        text_lines += [head, *[f"  — {i.get('title')}".replace("\u00a0", " ") for i in other[:cap]], ""]
+    if private:
+        body += _p(_e(PRIVATE_NOTE), color=INK2, size=14, top=22)
+        text_lines += [PRIVATE_NOTE, ""]
     body += _btn("Открыть AuditLens", url, top=32)
     reason = "Это утренняя сводка непрочитанного в AuditLens — приходит, только когда есть новое."
-    preheader = _clip("; ".join(g["title"] for g in groups.values()) or (other[0].get("title") if other else ""), 140)
+    preheader = ("Подробности — в AuditLens" if private else
+                 _clip("; ".join(g["title"] for g in groups.values()) or (other[0].get("title") if other else ""), 140))
     return {"subject": subject, "preheader": preheader, "url": url,
             "html": layout(preheader=preheader, title=subject, body=body, reason=reason,
                            section=_weekday_title(now)),
@@ -697,13 +810,15 @@ def render_digest(ns: list[dict], now=None, name: str = "") -> dict:
             "thread": None}
 
 
-def render_welcome(name: str = "") -> dict:
-    """Один раз: уведомления теперь приходят на почту — что и когда, как настроить."""
+def render_welcome(name: str = "", private: bool = False) -> dict:
+    """Первое письмо на подключённый адрес: что и когда приходит, как настроить.
+    private — адрес не корпоративный: предупреждаем, что письма будут без подробностей."""
     fn = first_name(name)
     hello = f"{fn}, здравствуйте!" if fn else "Здравствуйте!"
     rows = [("Сразу", TALK, "вас упомянули, ответили на ваше сообщение или комментарий, добавили в дело, "
                             "поделились отчётом, команда ответила на обращение — одним письмом раз в 15\u00a0минут"),
-            ("Утром", CASE_C, "сводка непрочитанного по вашим делам — только если есть новое"),
+            ("Утром", CASE_C, "в рабочие дни около 8:00 — сводка непрочитанного по вашим делам, "
+                              "только если есть новое"),
             ("Никогда", INK4, "то, что вы уже прочитали в AuditLens")]
     table = "".join(
         f'<tr><td width="112" valign="top" style="width:112px;padding:14px 0;border-top:1px solid {HAIR};'
@@ -715,6 +830,9 @@ def render_welcome(name: str = "") -> dict:
             + _p(f"{_e(hello)} Теперь уведомления AuditLens приходят и на почту — чтобы не пропускать "
                  f"важное, даже когда инструмент не открыт.", top=14)
             + _tbl(table, "margin:22px 0 0")
+            + (_p("Адрес не корпоративный, поэтому письма придут без подробностей: что произошло и "
+                  "ссылка — без названий дел, имён коллег и цитат.", color=INK2, size=14, top=18)
+               if private else "")
             + _p("Что присылать, выбирается в колокольчике рядом с вашим именем внизу меню. "
                  "Там же письма отключаются совсем.", color=INK3, size=14, top=18)
             + _btn("Настроить уведомления", settings_url()))
@@ -725,6 +843,36 @@ def render_welcome(name: str = "") -> dict:
                            reason=reason, section="Уведомления"),
             "text": _text("Уведомления", "Теперь и на почте", [hello, ""] + [f"{k}: {v}" for k, _, v in rows],
                           "Настроить уведомления", settings_url(), reason),
+            "thread": None}
+
+
+def render_verify(code: str, email: str, name: str = "", ttl_min: int = 30) -> dict:
+    """Код подтверждения адреса. Кнопка открывает AuditLens и подтверждает сама:
+    код уходит в адрес после #, на сервер в ссылке он не попадает."""
+    fn = first_name(name)
+    hello = f"{fn}, здравствуйте!" if fn else "Здравствуйте!"
+    pretty = f"{code[:3]}\u00a0{code[3:]}"
+    url = f"{app_base()}/#open?bell=settings&mailcode={code}"
+    box = _tbl(f'<tr><td align="center" bgcolor="{SOFT}" style="background:{SOFT};border-radius:12px;'
+               f'padding:18px 12px;{_font(32, 40, INK, 600, "letter-spacing:.14em")}">{pretty}</td></tr>',
+               "margin:22px 0 0;border-collapse:separate")
+    body = (_eyebrow("Подтверждение почты", BRAND) + _h1("Код подтверждения")
+            + _p(f"{_e(hello)} Адрес <b style=\"font-weight:600;color:{INK}\">{_e(email)}</b> указали в "
+                 f"AuditLens для уведомлений. Введите код в колокольчике: «Что присылать» → «На почту».", top=14)
+            + box
+            + _p(f"Код действует {ttl_min} минут. Можно и не вводить: кнопка откроет AuditLens и подтвердит "
+                 f"адрес сама.", color=INK3, size=14, top=16)
+            + _btn("Подтвердить почту", url))
+    reason = ("Письмо пришло, потому что этот адрес указали в AuditLens. Если это были не вы — просто "
+              "удалите его: без кода адрес не подключится.")
+    subject = f"Код подтверждения AuditLens: {code[:3]} {code[3:]}"
+    return {"subject": subject, "preheader": f"Код {code[:3]} {code[3:]} — действует {ttl_min} минут",
+            "url": url,
+            "html": layout(preheader=f"Код {code[:3]} {code[3:]} — действует {ttl_min} минут", title=subject,
+                           body=body, reason=reason, section="Уведомления"),
+            "text": _text("Подтверждение почты", f"Код подтверждения: {code}",
+                          [hello, f"Адрес {email} указали в AuditLens для уведомлений.",
+                           f"Код действует {ttl_min} минут."], "Подтвердить почту", url, reason),
             "thread": None}
 
 
@@ -792,27 +940,42 @@ TEMPLATES = {
     "batch": "Несколько личных событий одним письмом",
     "digest": "Утренняя сводка по делам",
     "welcome": "Приветственное: уведомления теперь на почте",
+    "verify": "Код подтверждения почты",
+    "event_mention_private": "Упоминание — на личную почту (без подробностей)",
+    "batch_private": "Несколько событий — на личную почту",
+    "digest_private": "Утренняя сводка — на личную почту",
 }
 
 
-def render(tpl: str, data: list[dict] | None = None, name: str = "", now=None) -> dict:
-    """Шаблон по имени: на примерах или на переданных событиях."""
+def render(tpl: str, data: list[dict] | None = None, name: str = "", now=None,
+           private: bool = False) -> dict:
+    """Шаблон по имени: на примерах или на переданных событиях.
+    «…_private» — вариант для личной почты (без подробностей)."""
+    if tpl.endswith("_private"):
+        tpl, private = tpl[:-len("_private")], True
     if tpl == "welcome":
-        return render_welcome(name)
+        return render_welcome(name, private)
+    if tpl == "verify":
+        return render_verify("482913", "anna.smirnova@example.org", name)
     data = data if data is not None else samples(now).get(tpl, [])
     if not data:
         raise KeyError(tpl)
     if tpl == "digest":
-        return render_digest(data, now, name)
+        return render_digest(data, now, name, private)
     if tpl == "batch":
-        return render_batch(data, now)
-    return render_event(data[0], now)
+        return render_batch(data, now, private)
+    return render_event(data[0], now, private)
 
 
 # ── галерея для владельца: как выглядят письма и «Отправить себе» ──────────────
 
-def gallery_page(cards: list[dict], test_to: list[str], configured: bool, source: str) -> str:
+def gallery_page(cards: list[dict], test_to: list[str], configured: bool, source: str,
+                 stats: dict | None = None) -> str:
     to = ", ".join(test_to) or "не задан (MAIL_TEST_TO)"
+    st = stats or {}
+    usage = (f"почту подключили: {st.get('users', 0)} (корпоративных {st.get('corporate', 0)}, "
+             f"личных {st.get('private', 0)}) · писем за сутки: {st.get('sent_day', 0)}"
+             + (f", не ушло: {st['failed_day']}" if st.get("failed_day") else "")) if st else ""
     ok = configured and bool(test_to)
     state = "готово к отправке" if ok else "почта не настроена" if not configured else "нет тестового адреса"
     blocks = []
@@ -863,7 +1026,7 @@ a{{color:{LINK}}}
 @media(max-width:640px){{main{{grid-template-columns:1fr;padding:12px}}}}
 </style></head><body>
 <div class="top"><img src="data:image/png;base64,{data}" width="{lw}" height="{lh}" alt="AuditLens"><h1>Письма</h1>
-  <span class="m">Тестовый адрес: <b>{_e(to)}</b> · {_e(state)} · рассылка сотрудникам выключена</span>
+  <span class="m">Тестовый адрес: <b>{_e(to)}</b> · {_e(state)} · по адресам из системы входа рассылка выключена{(" · " + _e(usage)) if usage else ""}</span>
   <span class="sp"></span>
   <span class="seg"><button class="on" onclick="view(this,false)">Компьютер</button><button onclick="view(this,true)">Телефон</button></span>
   <a class="m" href="?source={other}">{'Показать на примерах' if source == 'mine' else 'Показать на моих уведомлениях'}</a>

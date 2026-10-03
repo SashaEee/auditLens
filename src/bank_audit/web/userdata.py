@@ -58,12 +58,14 @@ def touch_user(username: str, display_name: str | None = None,
                 "UPDATE app_user SET timezone = :tz WHERE username = :u"
             ), {"tz": timezone, "u": username})
     if email:
-        # почта из системы входа (X-Authentik-Email) — для писем-уведомлений; отдельной
-        # транзакцией: до миграции 087 колонки нет, а вход не должен падать
+        # почта из системы входа (X-Authentik-Email) — для писем-уведомлений. Адрес,
+        # который человек указал сам ('user') или отключил ('off'), не перезаписываем.
+        # Отдельной транзакцией: до миграций 087–088 колонок нет, а вход не должен падать
         try:
             with db.session() as s:
-                s.execute(text("""UPDATE app_user SET email = :e, email_at = now()
-                                   WHERE username = :u AND email IS DISTINCT FROM :e"""),
+                s.execute(text("""UPDATE app_user SET email = :e, email_at = now(), email_source = 'sso'
+                                   WHERE username = :u AND email IS DISTINCT FROM :e
+                                     AND COALESCE(email_source, 'sso') = 'sso'"""),
                           {"e": email, "u": username})
         except Exception:  # noqa: BLE001
             log.debug("touch_user: почта не сохранилась", exc_info=True)
