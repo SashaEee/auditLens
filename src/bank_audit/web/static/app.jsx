@@ -747,6 +747,9 @@ const BF_KIND={
 // реально открывают — сигнала для оценки отбора не существовало.
 let _trkPush=null;
 function trkEvent(ev){ try{ if(_trkPush)_trkPush(ev); }catch{} }
+// «человек здесь»: ввод внутри встроенного модуля (фрейм «Аудита уязвимостей»)
+// до родительского окна не доходит — фрейм сообщает о нём сам через этот мост
+let _trkInput=null;
 
 function bfGoAI(prompt){
   try{sessionStorage.setItem("al-ai-prefill",prompt);}catch{}
@@ -8644,6 +8647,10 @@ function LoopholePage(){
   return <section className="surface loophole-page" style={{padding:0,overflow:"hidden"}}>
     <iframe src="/static/loophole/loophole.html"
             title="Аудит уязвимостей"
+            onLoad={e=>{ try{ const w=e.currentTarget.contentWindow;
+              ["pointerdown","pointermove","keydown","wheel","scroll","touchstart"].forEach(n=>
+                w.addEventListener(n,()=>{ if(_trkInput)_trkInput(); },{passive:true,capture:true}));
+            }catch{} }}
             style={{width:"100%",height:"100%",border:"none",display:"block"}}/>
   </section>;
 }
@@ -8787,7 +8794,7 @@ const AD_CSS=`
 .pu-vd{flex-shrink:0}
 .pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:inherit;font-variant-numeric:tabular-nums}
 .pu-trail .at{color:var(--ink-3)}
-.pu-trail .k{color:var(--ink-3);width:96px}
+.pu-trail .k{color:var(--ink-3);width:118px;flex:none}
 .pu-trail .p{color:var(--ink-2);flex:1}
 .pu-trail .d{color:var(--ink-3)}
 .pu-report{font-size:13px;line-height:1.6}
@@ -9541,9 +9548,11 @@ function PuPeople({days,withMe,rev,onOpenUser}){
       <div className="pu-tblwrap">
         <table className="pu-tbl pu-team">
           <thead><tr>
-            <th>пользователь</th><th>статус</th><th>время</th><th>визитов</th><th>дней</th>
+            <th>пользователь</th><th>статус</th>
+            <th title="активное время на страницах: с 03.10 без простоя дольше 5 мин, раньше — пока вкладка открыта">время</th>
+            <th>визитов</th><th>дней</th>
             <th>просм.</th><th>ИИ</th><th title="отчёты; в скобках — сохранённые быстрые ответы">отчёты</th>
-            <th>оценки</th><th>разделы</th><th>был(а)</th>
+            <th>оценки</th><th>разделы</th><th title="последнее действие в инструменте">был(а)</th>
           </tr></thead>
           <tbody>
             {rows.map(u=><tr key={u.username} className={"pu-rowclick"+(u.excluded?" pu-exrow":"")}
@@ -9574,6 +9583,9 @@ function PuPeople({days,withMe,rev,onOpenUser}){
     </div>;
 }
 
+// хронология по-русски; «уход» пишется и при сворачивании вкладки
+const PU_TRAIL_RU={page_view:"открыт раздел",page_leave:"уход",news_click:"клик по новости",
+  client_error:"ошибка в браузере",api_error:"ошибка сервера",ui:"действие"};
 function PuUserCard({username,days,onClose,onOpenReport,onOpenSession,onHidden}){
   const[c,setC]=useState(null);
   const[tab,setTab]=useState("act");
@@ -9688,11 +9700,12 @@ function PuUserCard({username,days,onClose,onOpenReport,onOpenSession,onHidden})
           {(c.errors||[]).length===0&&<div className="pu-empty">Ошибок не было.</div>}
         </div>}
         {tab==="trail"&&<div className="pu-drsec">
-          <div className="pu-drh">Последние действия · {(c.trail||[]).length}</div>
+          <div className="pu-drh">Последние действия · {(c.trail||[]).length} · без фоновых запросов к серверу</div>
           {(c.trail||[]).map((x,i)=><div key={i} className="pu-trail">
-            <span className="at">{x.at}</span><span className="k">{x.kind}</span>
+            <span className="at">{x.at}</span><span className="k">{PU_TRAIL_RU[x.kind]||x.kind}</span>
             <span className="p">{AD_PAGE_RU[x.page]||x.page||""}</span>
-            <span className="d">{x.dur_ms?adFmtS(x.dur_ms/1000):""}{x.status?` · ${x.status}`:""}</span>
+            <span className="d" title={x.kind==="page_leave"?"активное время на странице":""}>
+              {x.kind==="page_leave"&&x.dur_ms!=null?"активно "+adFmtS(x.dur_ms/1000):""}{x.status?` · ${x.status}`:""}</span>
           </div>)}
         </div>}
       </>}
@@ -10581,40 +10594,62 @@ function Shell(){
   useEffect(()=>{ if(page!=="profile") return; return loadMe; },[page]);
 
   // ── телеметрия: page_view / page_leave(время) / клиентские ошибки ──────────
-  const trkQ=useRef([]); const trkPage=useRef({page:null,t:Date.now()});
+  const trkQ=useRef([]); const trkPage=useRef({page:null,t:Date.now(),acc:0});
+  // Время на странице — АКТИВНОЕ: без ввода (мышь, клавиатура, прокрутка, касание)
+  // дольше 5 мин вкладка считается брошенной. Раньше открытая, но забытая
+  // вкладка набирала до 30 мин за заход, и «время в системе» раздувалось.
+  const IDLE_MS=5*60*1000;
+  const lastInput=useRef(Date.now());
+  const trkDur=(p,now)=>{ const end=Math.min(now,lastInput.current+IDLE_MS);
+    return Math.min(Math.max(0,(p.acc||0)+Math.max(0,end-p.t)),1800000); };
   const trkFlush=(beacon)=>{ const evs=trkQ.current.splice(0);
     if(!evs.length)return;
-    const body=JSON.stringify({events:evs});
+    // каждому событию — его возраст: сервер ставит время «сейчас минус возраст».
+    // Часам браузера не верим, а без возраста пачка из восьми событий получала
+    // одну метку на всех, и хронология в карточке человека путала порядок
+    const now=Date.now();
+    const body=JSON.stringify({events:evs.map(({at,...e})=>({...e,age_ms:Math.max(0,now-(at||now))}))});
     if(beacon&&navigator.sendBeacon){
       try{navigator.sendBeacon("/api/journal",new Blob([body],{type:"application/json"}));return;}catch{}
     }
     fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},body}).catch(()=>{});
   };
-  const trk=(ev)=>{ trkQ.current.push(ev); if(trkQ.current.length>=8)trkFlush(); };
+  const trk=(ev)=>{ trkQ.current.push({...ev,at:Date.now()}); if(trkQ.current.length>=8)trkFlush(); };
   // мост для страниц (клики по новостям): шлём сразу — клик редок и ценен
   _trkPush=(ev)=>{trk(ev);trkFlush();};
   useEffect(()=>{
-    const prev=trkPage.current;
+    const prev=trkPage.current, now=Date.now();
     if(prev.page&&prev.page!==page)
-      trk({kind:"page_leave",page:prev.page,dur_ms:Math.min(Date.now()-prev.t,1800000)});
-    trkPage.current={page,t:Date.now()};
+      trk({kind:"page_leave",page:prev.page,dur_ms:trkDur(prev,now)});
+    trkPage.current={page,t:now,acc:0};
+    lastInput.current=now;                    // переход по разделу — тоже ввод
     trk({kind:"page_view",page});
     const t=setTimeout(trkFlush,1500);
     return ()=>clearTimeout(t);
   },[page]); // eslint-disable-line
   useEffect(()=>{
-    const onVis=()=>{ if(document.visibilityState==="hidden"){
+    const onVis=()=>{ const now=Date.now(); if(document.visibilityState==="hidden"){
         const p=trkPage.current;
-        if(p.page) trkQ.current.push({kind:"page_leave",page:p.page,dur_ms:Math.min(Date.now()-p.t,1800000)});
-        trkPage.current={...p,t:Date.now()};
+        if(p.page) trkQ.current.push({kind:"page_leave",page:p.page,dur_ms:trkDur(p,now),at:now});
+        trkPage.current={...p,t:now,acc:0};
         trkFlush(true);
-      } else { trkPage.current={...trkPage.current,t:Date.now()}; } };
+      } else { trkPage.current={...trkPage.current,t:now,acc:0}; lastInput.current=now; } };
+    // вернулся после простоя: отрезок до простоя копим, отсчёт — заново
+    const onInput=()=>{ const now=Date.now(), p=trkPage.current;
+      if(now-lastInput.current>IDLE_MS){
+        p.acc=(p.acc||0)+Math.max(0,lastInput.current+IDLE_MS-p.t); p.t=now; }
+      lastInput.current=now; };
+    _trkInput=onInput;
+    const IN=["pointerdown","pointermove","keydown","wheel","scroll","touchstart"];
+    IN.forEach(e=>window.addEventListener(e,onInput,{passive:true,capture:true}));
     const onErr=(e)=>trk({kind:"client_error",page:(location.hash||"#").slice(1),
       payload:{msg:String((e&&(e.message||e.reason))||"").slice(0,300)}});
     document.addEventListener("visibilitychange",onVis);
     window.addEventListener("error",onErr);
     window.addEventListener("unhandledrejection",onErr);
     return ()=>{document.removeEventListener("visibilitychange",onVis);
+      IN.forEach(e=>window.removeEventListener(e,onInput,{capture:true}));
+      _trkInput=null;
       window.removeEventListener("error",onErr);
       window.removeEventListener("unhandledrejection",onErr);};
   },[]); // eslint-disable-line

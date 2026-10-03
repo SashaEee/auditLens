@@ -27,6 +27,9 @@ log = logging.getLogger(__name__)
 _CLIENT_KINDS = {"page_view", "page_leave", "client_error", "ui", "news_click"}
 _MAX_BATCH = 25
 _MAX_DUR_MS = 30 * 60 * 1000          # страница «висела» дольше 30 мин → кап
+_MAX_AGE_MS = 6 * 3600 * 1000         # возраст события из очереди фронта — не старше 6 ч
+# события «человек что-то делает» — по ним двигается «был(а)»
+_PRESENCE_KINDS = {"page_view", "page_leave", "news_click", "ui"}
 
 _ID_RE = re.compile(r"/\d+")
 
@@ -57,6 +60,16 @@ def log_event(username: str | None, kind: str, page: str | None = None,
         log.debug("[telemetry] log_event failed", exc_info=True)
 
 
+def _age_ms(ev: dict) -> int:
+    """Возраст события из очереди фронта, мс. Время события = «сейчас минус
+    возраст»: фронт шлёт пачками, и без возраста восемь событий получали одну
+    метку — хронология в карточке человека путала порядок. Часам браузера не верим."""
+    try:
+        return min(max(int(ev.get("age_ms") or 0), 0), _MAX_AGE_MS)
+    except (TypeError, ValueError):
+        return 0
+
+
 def track_batch(username: str, events: list[dict]) -> int:
     """Батч событий фронта. Возвращает число принятых."""
     accepted = 0
@@ -70,8 +83,9 @@ def track_batch(username: str, events: list[dict]) -> int:
             dur = min(int(dur), _MAX_DUR_MS) if dur is not None else None
         except (TypeError, ValueError):
             dur = None
+        age = _age_ms(ev)
         rows.append({"u": username, "k": kind, "p": str(ev.get("page") or "")[:60] or None,
-                     "d": dur,
+                     "d": dur, "age": age,
                      "pl": json.dumps(ev.get("payload") or {}, ensure_ascii=False,
                                       default=str)[:1000]})
         accepted += 1
@@ -80,9 +94,16 @@ def track_batch(username: str, events: list[dict]) -> int:
     try:
         with db.session() as s:
             s.execute(text("""
-                INSERT INTO usage_event (username, kind, page, dur_ms, payload)
-                VALUES (:u, :k, :p, :d, CAST(:pl AS jsonb))
+                INSERT INTO usage_event (username, kind, page, dur_ms, payload, created_at)
+                VALUES (:u, :k, :p, :d, CAST(:pl AS jsonb),
+                        now() - CAST(:age AS integer) * interval '1 millisecond')
             """), rows)
+            # «был(а)» двигали только загрузка приложения, «Для вас» и вопросы ИИ:
+            # переходы по разделам его не трогали, и в «Пульсе» человек «был» на
+            # часы раньше, чем показывала его же хронология
+            if any(r["k"] in _PRESENCE_KINDS for r in rows):
+                s.execute(text("""UPDATE app_user SET last_seen_at = greatest(last_seen_at, now())
+                                  WHERE username = :u"""), {"u": username})
     except Exception:
         log.warning("[telemetry] track_batch failed", exc_info=True)
         return 0
@@ -809,8 +830,10 @@ _DIRECTORY = f"""
            au.display_name IS NOT NULL            AS named,
            COALESCE(au.prefs->>'pulse_hidden', '') = 'true' AS hidden,
            to_char(au.created_at   AT TIME ZONE 'Europe/Moscow', 'DD.MM.YYYY') AS first_seen,
-           to_char(au.last_seen_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS last_seen,
-           EXTRACT(epoch FROM now() - au.last_seen_at)::bigint AS last_seen_ago_s,
+           -- «был(а)» — последнее действие: last_seen_at до 03.10 двигался только
+           -- загрузкой приложения, у 80 из 110 человек отставал от хронологии
+           to_char(greatest(au.last_seen_at, la.at) AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS last_seen,
+           EXTRACT(epoch FROM now() - greatest(au.last_seen_at, la.at))::bigint AS last_seen_ago_s,
            au.profile_note IS NOT NULL AS has_note,
            COALESCE(e.days_active, 0) AS days_active,
            COALESCE(e.views, 0)       AS views,
@@ -827,6 +850,9 @@ _DIRECTORY = f"""
            COALESCE(t.today_views, 0) AS today_views,
            top.pages                  AS top_pages
       FROM app_user au
+      LEFT JOIN LATERAL (SELECT created_at AS at FROM usage_event
+                          WHERE username = au.username AND {_HUMAN}
+                          ORDER BY created_at DESC LIMIT 1) la ON TRUE
       -- «дней активности» — дни, когда человек открывал страницы: фоновые
       -- запросы забытой вкладки активностью не считаются (как и в «Аудитории»)
       LEFT JOIN (SELECT username,
@@ -897,7 +923,7 @@ def users_directory(days: int = 30, exclude: list[str] | None = None) -> dict:
         ORDER BY (COALESCE(e.time_s, 0) / 60.0 + COALESCE(e.views, 0) * 2
                   + COALESCE(q.ai, 0) * 15 + COALESCE(r.deep, 0) * 30
                   + COALESCE(fb.likes, 0) * 5 + COALESCE(fb.dislikes, 0) * 5) DESC,
-                 au.last_seen_at DESC""", {"days": days})
+                 greatest(au.last_seen_at, la.at) DESC""", {"days": days})
     for r in rows:
         r["top_pages"] = [x for x in (r.get("top_pages") or "").split(",") if x]
         r["online"] = (r.get("last_seen_ago_s") or 10 ** 9) < 900
@@ -1005,9 +1031,9 @@ def user_card(username: str, days: int = 30) -> dict:
             SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI:SS') AS at,
                    kind, page, dur_ms, status
               FROM usage_event
-             WHERE username = :u
+             WHERE username = :u AND kind <> 'api_request'
                AND created_at > now() - (:days || ' days')::interval
-             ORDER BY created_at DESC LIMIT 200""", p),
+             ORDER BY created_at DESC, id DESC LIMIT 200""", p),
     }
 
 

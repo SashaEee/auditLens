@@ -50,3 +50,35 @@ def test_news_source_label():
     assert news_source_label("vedomosti_fin") == "Ведомости — финансы"
     assert news_source_label("unknown_feed") == "unknown_feed"
     assert news_source_label(None) == ""
+
+
+def test_event_age_is_clamped():
+    assert T._age_ms({"age_ms": 1500}) == 1500
+    assert T._age_ms({"age_ms": -5}) == 0
+    assert T._age_ms({"age_ms": "x"}) == 0
+    assert T._age_ms({}) == 0
+    assert T._age_ms({"age_ms": 10 ** 12}) == T._MAX_AGE_MS
+
+
+def test_track_batch_stamps_age_and_moves_last_seen(monkeypatch):
+    calls = []
+
+    class S:
+        def execute(self, sql, params=None):
+            calls.append((str(sql), params))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(T.db, "session", lambda: S())
+    n = T.track_batch("u1", [{"kind": "page_view", "page": "reviews", "age_ms": 2000},
+                             {"kind": "page_leave", "page": "ai", "dur_ms": 5000, "age_ms": 100},
+                             {"kind": "api_request"}])
+    assert n == 2                                    # api_request с фронта не принимаем
+    ins = calls[0]
+    assert "created_at" in ins[0] and "millisecond" in ins[0]
+    assert [r["age"] for r in ins[1]] == [2000, 100]
+    assert any("last_seen_at" in c[0] for c in calls[1:])
