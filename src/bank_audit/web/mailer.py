@@ -1,16 +1,20 @@
-"""Отправка писем AuditLens через SMTP ящика Mailcow (@agents.uva-advanced.ru).
+"""Отправка писем AuditLens через SMTP служебного почтового ящика.
 
 Настройки — в .env: SMTP_HOST, SMTP_PORT (465 — SSL, 587 — STARTTLS),
 SMTP_USER, SMTP_PASSWORD, SMTP_FROM, SMTP_FROM_NAME (по умолчанию «AuditLens»).
 
 Защита от случайной рассылки: пока MAIL_ENABLED не равен 1, письма уходят
 только на адреса из MAIL_TEST_TO (через запятую) — сейчас это почта владельца
-для проверки шаблонов. Адреса сотрудников появятся, когда nginx начнёт
-передавать X-Authentik-Email; включать рассылку — отдельным решением.
+для проверки шаблонов. Адреса сотрудников появятся, когда система входа
+начнёт передавать почту приложению; включать рассылку — отдельным решением.
 
 Заголовки: Auto-Submitted и X-Auto-Response-Suppress — чтобы Outlook не
 отвечал на уведомления автоответами («я в отпуске») и не устраивал петли;
 References по делу — почтовые программы складывают письма одного дела в цепочку.
+
+Картинки (логотип) лежат внутри письма: HTML ссылается на них через cid:,
+части собираются в multipart/related — внешние ссылки на картинки
+корпоративная почта режет, а вложенные показывает сразу.
 """
 from __future__ import annotations
 
@@ -65,6 +69,12 @@ def build(to: str, mail: dict, *, bulk: bool = False) -> EmailMessage:
         m["References"] = f"<auditlens-{mail['thread']}@{domain}>"
     m.set_content(mail["text"])
     m.add_alternative(mail["html"], subtype="html")
+    from .mail_templates import inline_images
+    images = inline_images(mail["html"])
+    if images:
+        html_part = m.get_payload()[1]
+        for cid, data in images:
+            html_part.add_related(data, maintype="image", subtype="png", cid=f"<{cid}>", disposition="inline")
     return m
 
 

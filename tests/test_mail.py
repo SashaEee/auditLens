@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import re
+
 import pytest
 
 from bank_audit.web import mail_templates as T
@@ -12,11 +14,18 @@ from bank_audit.web.auth import clean_email
 NOW = datetime(2026, 10, 3, 9, 0, tzinfo=timezone.utc)      # 12:00 по Москве
 
 
+@pytest.fixture(autouse=True)
+def _base(monkeypatch):
+    monkeypatch.setenv("APP_BASE_URL", "https://al.example")
+
+
 @pytest.mark.parametrize("tpl", list(T.TEMPLATES))
 def test_every_template_renders_both_parts_without_external_images(tpl):
     m = T.render(tpl, name="Анна Смирнова", now=NOW)
     assert m["subject"] and m["preheader"] and m["text"].strip()
-    assert "<img" not in m["html"] and " src=" not in m["html"] and 'href="http://' not in m["html"]
+    # картинка одна — логотип, и он внутри письма (cid:), а не по ссылке
+    assert re.findall(r' src="([^"]*)"', m["html"]) == [f"cid:{T.LOGO_CID}"]
+    assert 'href="http://' not in m["html"] and "url(" not in m["html"]
     assert m["html"].count("<table") >= 3 and 'lang="ru"' in m["html"]
     assert T.app_base() in m["html"] and T.app_base() in m["text"]
     assert "Настроить уведомления" in m["html"] and "#open?bell=settings" in m["html"]
@@ -38,6 +47,7 @@ def test_user_text_is_escaped_and_mentions_highlighted():
     m = T.render_event(n, NOW)
     assert "<script>" not in m["html"] and "<img src=x" not in m["html"]
     assert "&lt;img src=x" in m["html"] and "font-weight:600\">@Павел Орлов</span>" in m["html"]
+    assert "Анна &lt;script&gt;" in m["html"]
 
 
 def test_when_and_short_titles():
@@ -72,7 +82,30 @@ def test_headers_suppress_autoreplies_and_thread_by_case(monkeypatch):
     assert msg["From"] == "AuditLens <bot@agents.example.org>"
     assert msg["Auto-Submitted"] == "auto-generated" and msg["X-Auto-Response-Suppress"] == "All"
     assert msg["Precedence"] == "bulk" and msg["References"] == "<auditlens-case-12@agents.example.org>"
-    assert [p.get_content_type() for p in msg.iter_parts()] == ["text/plain", "text/html"]
+    plain, rel = msg.iter_parts()
+    assert plain.get_content_type() == "text/plain" and rel.get_content_type() == "multipart/related"
+    html_part, logo = rel.iter_parts()
+    assert html_part.get_content_type() == "text/html" and logo.get_content_type() == "image/png"
+    assert logo["Content-ID"] == f"<{T.LOGO_CID}>" and logo.get_content_disposition() == "inline"
+    assert logo.get_content().startswith(b"\x89PNG")
+
+
+def test_logo_is_retina_png_with_transparent_background():
+    import io
+
+    from PIL import Image
+    png, w, h = T.logo()
+    im = Image.open(io.BytesIO(png))
+    assert im.mode == "RGBA" and im.size == (w * 3, h * 3) and h == 28 and 100 < w < 140
+    assert im.getpixel((0, 0))[3] == 0                      # углы прозрачные
+    assert len(png) < 40_000
+
+
+def test_browser_preview_inlines_the_logo():
+    html_ = T.render("event_mention", now=NOW)["html"]
+    out = T.for_browser(html_)
+    assert "cid:" not in out and 'src="data:image/png;base64,' in out
+    assert T.inline_images("<p>без картинок</p>") == []
 
 
 def test_nobody_but_test_address_gets_mail_until_enabled(monkeypatch):
@@ -96,10 +129,10 @@ def test_send_without_settings_is_a_clear_error(monkeypatch):
         M.send("me@example.org", T.render("welcome"))
 
 
-def test_clean_email_from_authentik_header():
-    assert clean_email(" Ivanov.I@Sberbank.RU ") == "ivanov.i@sberbank.ru"
+def test_clean_email_from_login_header():
+    assert clean_email(" Ivanov.I@Corp.Example.RU ") == "ivanov.i@corp.example.ru"
     assert clean_email("not-an-email") is None and clean_email(None) is None
-    assert clean_email("a@b") is None and clean_email("x y@sberbank.ru") is None
+    assert clean_email("a@b") is None and clean_email("x y@corp.example.ru") is None
 
 
 def test_gallery_lists_every_template():
@@ -108,3 +141,4 @@ def test_gallery_lists_every_template():
     for k in T.TEMPLATES:
         assert f'id="{k}"' in page
     assert "рассылка сотрудникам выключена" in page and "Отправить все себе" in page
+    assert "cid:" not in page                                # превью видит логотип
