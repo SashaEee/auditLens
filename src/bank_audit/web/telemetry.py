@@ -4,8 +4,10 @@
   • фронт: page_view / page_leave(dur_ms) / client_error — батчами через /api/track;
   • бекенд: api_request / api_error — HTTP-middleware (латентность, статусы, исключения).
 
-Доступ к метрикам — только владельцу: env ADMIN_USERS (список username через запятую).
-Имя в коде не хардкодим — репозиторий публичный.
+Доступ к метрикам: владелец (env ADMIN_USERS) и те, кому открыт «Пульс» (env
+PULSE_USERS) — списки username через запятую. Права владельца (пересборка выпуска,
+заявки на источники, служебные учётки, прогон набора) — только ADMIN_USERS.
+Имена в коде не хардкодим — репозиторий публичный.
 
 Всё best-effort: телеметрия НИКОГДА не ломает основной запрос.
 """
@@ -39,9 +41,20 @@ def norm_path(path: str) -> str:
     return _ID_RE.sub("/:id", path or "")[:120]
 
 
+def _env_users(name: str) -> set[str]:
+    return {u.strip() for u in os.getenv(name, "").split(",") if u.strip()}
+
+
 def is_admin(username: str | None) -> bool:
-    admins = {u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}
-    return bool(username) and username in admins
+    """Владелец инструмента: всё, включая пересборку выпуска для всех."""
+    return bool(username) and username in _env_users("ADMIN_USERS")
+
+
+def can_pulse(username: str | None) -> bool:
+    """Видит «Пульс» (и служебный просмотр отчётов и диалогов из него), отвечает
+    на обращения. Владелец — всегда; остальные — по env PULSE_USERS."""
+    return bool(username) and (username in _env_users("ADMIN_USERS")
+                               or username in _env_users("PULSE_USERS"))
 
 
 def log_event(username: str | None, kind: str, page: str | None = None,
@@ -159,11 +172,24 @@ def hidden_users() -> list[str]:
         "SELECT username FROM app_user WHERE prefs->>'pulse_hidden' = 'true' ORDER BY 1")]
 
 
-def excluded(viewer: str | None, with_me: bool = False) -> list[str]:
-    """Кого не считать в метриках про людей: служебные + сам владелец."""
+def with_me_default(viewer: str | None) -> bool:
+    """Считать ли смотрящего по умолчанию. Владелец помечен служебным (он
+    проверяет инструмент) — себя не считает; коллеги с доступом к «Пульсу» —
+    обычные пользователи, их действия по умолчанию в счёт."""
+    return bool(viewer) and viewer not in set(hidden_users())
+
+
+def excluded(viewer: str | None, with_me: bool | None = None) -> list[str]:
+    """Кого не считать в метриках про людей: служебные учётки; смотрящий —
+    по переключателю «со мной» (None — по умолчанию, см. with_me_default)."""
     ex = set(hidden_users())
-    if viewer and not with_me:
-        ex.add(viewer)
+    if viewer:
+        if with_me is None:
+            with_me = viewer not in ex
+        if with_me:
+            ex.discard(viewer)
+        else:
+            ex.add(viewer)
     return sorted(ex)
 
 

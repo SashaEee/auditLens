@@ -226,6 +226,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "profile_note_at": row.get("profile_note_at"),
         "personalization": userdata.personalization_score(user.username),
         "is_admin": telemetry.is_admin(user.username),
+        "can_pulse": telemetry.can_pulse(user.username),
         "authenticated": user.authenticated,
     }
 
@@ -395,13 +396,19 @@ def track_events(body: TrackIn, user: CurrentUser = Depends(get_current_user)):
 
 @app.get("/api/admin/pulse")
 @app.get("/api/admin/metrics")
-def admin_metrics(days: int = 14, me: bool = False,
+def admin_metrics(days: int = 14, me: Optional[bool] = None,
                   user: CurrentUser = Depends(get_current_user)):
     """Метрики «Пульса»: аудитория + продукт + техника одним ответом.
-    me — считать ли самого владельца (по умолчанию нет: он тестирует инструмент)."""
-    if not telemetry.is_admin(user.username):
+    me — считать ли смотрящего; по умолчанию владелец себя не считает (он
+    проверяет инструмент), коллеги с доступом к «Пульсу» — считают."""
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
-    return telemetry.metrics(days, telemetry.excluded(user.username, with_me=me))
+    wm = me if me is not None else telemetry.with_me_default(user.username)
+    res = telemetry.metrics(days, telemetry.excluded(user.username, with_me=wm))
+    hidden = telemetry.hidden_users()
+    res.update({"with_me": wm, "hidden_n": sum(1 for u in hidden if u != user.username),
+                "is_owner": telemetry.is_admin(user.username)})
+    return res
 
 
 _EVAL_TASK: Optional[asyncio.Task] = None
@@ -412,7 +419,7 @@ def admin_agent_eval(limit: int = 12, engine: str = "hermes",
                      user: CurrentUser = Depends(get_current_user)):
     """Регрессионный набор ИИ-аналитика: прогоны и кейсы последнего — карточка «Пульса».
     engine: hermes — быстрый режим, deep — отчёт."""
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     from ..ai import agent_eval
     res = agent_eval.history(max(1, min(limit, 50)), "deep" if engine == "deep" else "hermes")
@@ -443,10 +450,10 @@ async def admin_agent_eval_run(req: AgentEvalReq, user: CurrentUser = Depends(ge
 
 
 @app.get("/api/admin/users")
-def admin_users(days: int = 30, me: bool = False,
+def admin_users(days: int = 30, me: Optional[bool] = None,
                 user: CurrentUser = Depends(get_current_user)):
     """Все пользователи со сводкой по каждому — вкладка «Люди»."""
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     return telemetry.users_directory(days, telemetry.excluded(user.username, with_me=me))
 
@@ -475,7 +482,7 @@ def admin_user_hidden(username: str, req: HiddenReq,
 def admin_user_card(username: str, days: int = 30,
                     user: CurrentUser = Depends(get_current_user)):
     """Полный разрез одного человека: страницы, вопросы, отчёты, оценки, след."""
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     card = telemetry.user_card(username, days)
     if not card:
@@ -486,10 +493,10 @@ def admin_user_card(username: str, days: int = 30,
 @app.get("/api/admin/reports")
 def admin_reports(days: int = 30, limit: int = 200, q: Optional[str] = None,
                   username: Optional[str] = None, only_bad: bool = False,
-                  mode: Optional[str] = None, me: bool = False,
+                  mode: Optional[str] = None, me: Optional[bool] = None,
                   user: CurrentUser = Depends(get_current_user)):
     """Отчёты и сохранённые быстрые ответы ВСЕХ пользователей: недовольные — первыми."""
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     return telemetry.reports_all(days=days, limit=limit, q=q,
                                  username=username, only_bad=only_bad, mode=mode,
@@ -499,7 +506,7 @@ def admin_reports(days: int = 30, limit: int = 200, q: Optional[str] = None,
 @app.get("/api/admin/session/{sid}")
 def admin_session(sid: int, user: CurrentUser = Depends(get_current_user)):
     """Чужая переписка целиком — чтобы разобрать жалобу на быстрый ответ."""
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     data = telemetry.session_view(sid)
     if not data:
@@ -514,10 +521,10 @@ def admin_session(sid: int, user: CurrentUser = Depends(get_current_user)):
 
 
 @app.get("/api/admin/complaints")
-def admin_complaints(days: int = 30, limit: int = 60, me: bool = False,
+def admin_complaints(days: int = 30, limit: int = 60, me: Optional[bool] = None,
                      user: CurrentUser = Depends(get_current_user)):
     """Все дизлайки с ФИО и ссылкой на предмет жалобы."""
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     res = telemetry.complaints(days, limit, telemetry.excluded(user.username, with_me=me))
     return {"days": days, **res}
@@ -617,7 +624,7 @@ def inbox_confirm(tid: int, req: TicketConfirmIn, user: CurrentUser = Depends(ge
 def inbox_file(fid: int, user: CurrentUser = Depends(get_current_user)):
     """Снимок экрана: автору обращения и владельцу инструмента."""
     from . import inbox
-    got = inbox.get_file(fid, user.username, telemetry.is_admin(user.username))
+    got = inbox.get_file(fid, user.username, telemetry.can_pulse(user.username))
     if not got:
         raise HTTPException(404, "file not found")
     data, mime = got
@@ -630,7 +637,7 @@ def inbox_file(fid: int, user: CurrentUser = Depends(get_current_user)):
 def admin_inbox(status: str = "open", kind: Optional[str] = None, section: Optional[str] = None,
                 user: CurrentUser = Depends(get_current_user)):
     """«Пульс» → «Обращения»: список с фильтрами, непрочитанные сверху."""
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     from . import inbox
     return inbox.admin_list(status, kind, section)
@@ -638,7 +645,7 @@ def admin_inbox(status: str = "open", kind: Optional[str] = None, section: Optio
 
 @app.get("/api/admin/inbox/{tid}")
 def admin_inbox_get(tid: int, user: CurrentUser = Depends(get_current_user)):
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     from . import inbox
     t = inbox.admin_get(tid)
@@ -650,7 +657,7 @@ def admin_inbox_get(tid: int, user: CurrentUser = Depends(get_current_user)):
 @app.post("/api/admin/inbox/{tid}")
 def admin_inbox_update(tid: int, req: TicketAdminIn, user: CurrentUser = Depends(get_current_user)):
     """Статус и ответ автору; смена статуса видна автору строкой в переписке."""
-    if not telemetry.is_admin(user.username):
+    if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     from . import inbox
     t = inbox.admin_update(tid, user.username, req.status, req.reply)
@@ -747,7 +754,7 @@ def get_reports(user: CurrentUser = Depends(get_current_user)):
 def get_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
     r = userdata.get_report(rid, user.username)
     admin_view = False
-    if r is None and telemetry.is_admin(user.username):
+    if r is None and telemetry.can_pulse(user.username):
         # Владелец инструмента разбирает жалобы на отчёты — без доступа к самому
         # отчёту это невозможно. Доступ НЕ тихий: помечаем ответ и пишем след.
         r = userdata.get_report(rid, user.username, as_admin=True)

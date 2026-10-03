@@ -9275,6 +9275,7 @@ const PU_TRIGGER={gate:"еженедельная проверка","gate-rollbac
 const PU_EVAL_TAB={"Обзор":"Новостные обзоры","Отзывы":"Аудит отзывов","Рынок":"Рынок · позиция",
   "Уязвимости":"Аудит уязвимостей"};
 function PuAgentEval(){
+  const me=useMe();
   const[d,setD]=useState(null);
   const[busy,setBusy]=useState(false);
   const[open,setOpen]=useState(null);
@@ -9299,8 +9300,8 @@ function PuAgentEval(){
       </div>
       {last&&<span className={"pu-chip "+(last.score>=75?"ok":last.score<50?"bad":"")}>
         {num(last.score)} из 100{delta!=null&&delta!==0?` · ${delta>0?"+":"−"}${num(Math.abs(delta))}`:""}</span>}
-      <button className="btn btn-sm" style={{marginLeft:"auto"}} disabled={busy||d.running} onClick={start}>
-        {d.running?"Идёт прогон…":"Запустить прогон"}</button></div>
+      {(me&&me.is_admin)?<button className="btn btn-sm" style={{marginLeft:"auto"}} disabled={busy||d.running} onClick={start}>
+        {d.running?"Идёт прогон…":"Запустить прогон"}</button>:d.running?<span className="pu-chip" style={{marginLeft:"auto"}}>идёт прогон</span>:null}</div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
       Вопросы по всем вкладкам; эталон считается в момент прогона теми же функциями, что
       рисуют вкладки. Проверки: числа, темы, запреты (внутренние адреса, служебные ключи,
@@ -9614,7 +9615,7 @@ const puNum=(n)=>(+n||0).toLocaleString("ru");
 const PU_KIND_RU={ai_answer:"ответ ИИ",news:"новость",for_you:"«Для вас»",check:"проверка",
   check_taken:"проверка взята",digest_card:"карточка выпуска"};
 // параметр «считать меня» для служебных запросов «Пульса»
-const puMe=(withMe)=>withMe?"&me=true":"";
+const puMe=(withMe)=>withMe===true?"&me=true":withMe===false?"&me=false":"";
 // профиль, оборванный лимитом модели на полуслове, — до конца предложения
 const puClip=(t)=>{t=String(t||"").trim(); if(!t||/[.!?…»)]$/.test(t))return t;
   const c=Math.max(t.lastIndexOf(". "),t.lastIndexOf("! "),t.lastIndexOf("? "));
@@ -9701,6 +9702,7 @@ function PuPeople({days,withMe,rev,onOpenUser}){
 const PU_TRAIL_RU={page_view:"открыт раздел",page_leave:"уход",news_click:"клик по новости",
   client_error:"ошибка в браузере",api_error:"ошибка сервера",ui:"действие"};
 function PuUserCard({username,days,onClose,onOpenReport,onOpenSession,onHidden}){
+  const me=useMe();
   const[c,setC]=useState(null);
   const[tab,setTab]=useState("act");
   const[hBusy,setHBusy]=useState(false);
@@ -9730,7 +9732,7 @@ function PuUserCard({username,days,onClose,onOpenReport,onOpenSession,onHidden})
               {u.first_seen&&<> · первый визит {u.first_seen}</>}
               {u.last_seen&&<> · последний {u.last_seen}</>}</div></div></div>
         <div style={{display:"flex",alignItems:"center",gap:8,flex:"none"}}>
-          {c&&c.user&&<button className="btn btn-sm" disabled={hBusy} onClick={toggleHidden}
+          {c&&c.user&&me&&me.is_admin&&<button className="btn btn-sm" disabled={hBusy} onClick={toggleHidden}
             title={u.hidden?"снова считать в метриках «Пульса»":"учётка разработки или администратора входа: в метриках про людей не считается"}>
             {u.hidden?"Снять пометку «служебная»":"Пометить служебной"}</button>}
           <button className="pu-x" onClick={onClose} aria-label="Закрыть">✕</button></div>
@@ -9886,7 +9888,7 @@ function PuReports({days,withMe,rev,onOpenReport,onOpenUser}){
   useEffect(()=>{setD(null);
     const sp=new URLSearchParams({days:String(days),limit:"300"});
     if(bad)sp.set("only_bad","true");
-    if(withMe)sp.set("me","true");
+    if(withMe!=null)sp.set("me",withMe?"true":"false");
     apiFetch("/api/admin/reports?"+sp).then(setD).catch(()=>setD({reports:[]}));
   },[days,bad,withMe,rev]);
   if(!d)return <div className="pu-card pu-sec"><Skel h={160}/></div>;
@@ -9969,7 +9971,8 @@ function PulsePage(){
   const[tab,setTab]=useState(()=>{try{const t=localStorage.getItem("al-pulse-tab");
     return PU_TABS.some(x=>x[0]===t)?t:"people";}catch{return "people";}});
   // себя владелец по умолчанию не считает: 70% просмотров были его проверками
-  const[withMe,setWithMe]=useState(()=>{try{return localStorage.getItem("al-pulse-me")==="1";}catch{return false;}});
+  const[withMe,setWithMe]=useState(()=>{try{const v=localStorage.getItem("al-pulse-me");
+    return v==="1"?true:v==="0"?false:null;}catch{return null;}});
   const[rev,setRev]=useState(0);             // служебная учётка помечена → пересчитать всё
   const[m,setM]=useState(null);
   const[err,setErr]=useState(false);
@@ -10001,7 +10004,7 @@ function PulsePage(){
     el.scrollIntoView({block:"start",behavior:"smooth"}); el.classList.remove("pu-flash");
     void el.offsetWidth; el.classList.add("pu-flash");},80);};
 
-  if(me&&!me.is_admin) return <div className="fade-in"><ErrState msg="Раздел доступен только владельцу инструмента."/></div>;
+  if(me&&!me.is_admin&&!me.can_pulse) return <div className="fade-in"><ErrState msg="Раздел открыт владельцу инструмента и тем, кому он дал доступ."/></div>;
   if(err&&!m) return <div className="fade-in"><ErrState msg="Не удалось загрузить метрики."/></div>;
   if(!m) return <LoadingPage/>;
 
@@ -10011,7 +10014,8 @@ function PulsePage(){
   const nErr=m.errors_total!=null?m.errors_total:errs.length;
   const tokSum=(m.tokens||[]).reduce((a,x)=>a+(+x.tin||0)+(+x.tout||0),0);
   const dg=Array.isArray(m.digest)?m.digest:[];
-  const hiddenN=Math.max(0,(m.excluded||0)-(withMe?0:1));
+  const meOn=withMe!=null?withMe:m.with_me!==false;
+  const hiddenN=m.hidden_n!=null?m.hidden_n:Math.max(0,(m.excluded||0)-(meOn?0:1));
   const viewsSum=(m.dau||[]).reduce((a,x)=>a+(+x.views||0),0);
   const actDays=(m.dau||[]).reduce((a,x)=>a+(+x.users||0),0);
   const newN=(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0);
@@ -10039,7 +10043,7 @@ function PulsePage(){
       <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:6}}>Как <em style={{fontStyle:"italic",color:"var(--accent)"}}>живёт</em> AuditLens</h1>
       <p className="lede">Люди, отчёты, качество ИИ, обращения, данные и техника — по вкладкам ниже.</p>
       <p className="t-cap" style={{margin:"4px 0 0"}}>
-        {withMe?"Считаются все, включая вас":"Считаются коллеги: без вас"}{hiddenN>0?` и ${hiddenN} ${plural(hiddenN,"служебной учётки","служебных учёток","служебных учёток")}`:""}.
+        {meOn?"Считаются все, включая вас":"Считаются коллеги: без вас"}{hiddenN>0?`${meOn?", кроме":" и"} ${hiddenN} ${plural(hiddenN,"служебной учётки","служебных учёток","служебных учёток")}`:""}.
         {" "}Ошибки, скорость и сбор данных — по всем.</p>
     </header>
 
@@ -10068,8 +10072,8 @@ function PulsePage(){
           {k==="inbox"&&(m.inbox||{}).unread>0&&<span className="rv-tab-n">{m.inbox.unread}</span>}</button>)}
       </div>
       <span className="rv-tabs-r">
-        <label className="pu-me" title="по умолчанию ваши действия не считаются: вы проверяете инструмент">
-          <input type="checkbox" checked={withMe} onChange={e=>setMeOn(e.target.checked)}/>со мной</label>
+        <label className="pu-me" title="считать ли ваши собственные действия в метриках про людей">
+          <input type="checkbox" checked={meOn} onChange={e=>setMeOn(e.target.checked)}/>со мной</label>
         <div className="seg" role="group" aria-label="Период">{[7,14,30].map(d=><button key={d} className={"seg-btn"+(days===d?" on":"")}
           aria-pressed={days===d} onClick={()=>setDays(d)}>{d} дн</button>)}</div>
       </span>
@@ -10240,7 +10244,7 @@ function PulsePage(){
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
                  fontSize:11,color:"var(--ink-3)"}}>
       телеметрия: открытия разделов и время на них — с фронта · запросы и ошибки API — с сервера ·
-      доступ по env ADMIN_USERS · служебные учётки помечаются в карточке человека ·
+      доступ — env ADMIN_USERS (владелец) и PULSE_USERS · служебные учётки помечаются в карточке человека ·
       открытие чужого отчёта пишется в журнал (admin_report_open)
     </div>
   </div>;
@@ -11200,7 +11204,7 @@ function Shell(){
   const toggleData=()=>setDataOpen(v=>{ const nv=!v;
     try{localStorage.setItem("al-rail-data",nv?"1":"0");}catch{} return nv; });
   const groups=useMemo(()=>{
-    const items=(me&&me.is_admin)?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
+    const items=(me&&(me.is_admin||me.can_pulse))?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
     const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
   // Страница есть на сервере, но неизвестна ЭТОМУ бандлу (вкладка держит старую
   // версию SPA — hash-переход её не перезагружает) → одно само-обновление.

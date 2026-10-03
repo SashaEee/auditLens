@@ -9,11 +9,24 @@ from bank_audit.web.profile_ai import clip_sentence
 from bank_audit.web.sources_catalog import news_source_label
 
 
-def test_excluded_owner_by_default(monkeypatch):
-    monkeypatch.setattr(T, "hidden_users", lambda: ["svc-a", "svc-b"])
-    assert T.excluded("owner") == ["owner", "svc-a", "svc-b"]
-    # «со мной» — владелец считается, служебные — нет
-    assert T.excluded("owner", with_me=True) == ["svc-a", "svc-b"]
+def test_excluded_viewer_by_default(monkeypatch):
+    # владелец помечен служебным: себя по умолчанию не считает, «со мной» — считает
+    monkeypatch.setattr(T, "hidden_users", lambda: ["owner", "svc-a"])
+    assert T.excluded("owner") == ["owner", "svc-a"]
+    assert T.excluded("owner", with_me=True) == ["svc-a"]
+    assert T.with_me_default("owner") is False
+    # коллега с доступом к «Пульсу» — обычный пользователь: по умолчанию в счёт
+    assert T.excluded("colleague") == ["owner", "svc-a"]
+    assert T.excluded("colleague", with_me=False) == ["colleague", "owner", "svc-a"]
+    assert T.with_me_default("colleague") is True
+
+
+def test_pulse_access_is_separate_from_owner_rights(monkeypatch):
+    monkeypatch.setenv("ADMIN_USERS", "owner")
+    monkeypatch.setenv("PULSE_USERS", " a , b ")
+    assert T.is_admin("owner") and T.can_pulse("owner")
+    assert T.can_pulse("a") and T.can_pulse("b") and not T.is_admin("a")
+    assert not T.can_pulse("c") and not T.can_pulse(None)
 
 
 def test_excluded_empty_list_gets_sentinel():
