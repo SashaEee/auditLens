@@ -3731,6 +3731,18 @@ function RvSpark({vals,quarters}){
 // Сбой загрузки панели ≠ «данных нет» — для аудитора это важное различие.
 function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удалось загрузить — обновите страницу":"Нет данных за выбранный период"}</div>;}
 
+// Блокировка прокрутки страницы под окнами — общий счётчик на все открытые окна.
+let _rvLocks=0, _rvLockPrev=null;
+function rvScrollLock(d){
+  const b=document.body;
+  if(d>0){ if(_rvLocks++===0){
+      const gap=window.innerWidth-document.documentElement.clientWidth;
+      _rvLockPrev={o:b.style.overflow,p:b.style.paddingRight};
+      b.style.overflow="hidden"; if(gap>0)b.style.paddingRight=`${gap}px`; } }
+  else if(_rvLocks>0&&--_rvLocks===0&&_rvLockPrev){
+    b.style.overflow=_rvLockPrev.o; b.style.paddingRight=_rvLockPrev.p; _rvLockPrev=null; }
+}
+
 // Переиспользуемый оверлей: центральный модал (полный текст) или правый драуэр
 // (drill-in по городу/месяцу). Закрытие по клику-вне, ✕ и Esc.
 function RvModal({onClose,title,sub,side,children,bare,wide,sheet,fit}){
@@ -3741,15 +3753,26 @@ function RvModal({onClose,title,sub,side,children,bare,wide,sheet,fit}){
   // Окно уходит тем же путём, каким пришло: центральное — сжимаясь на месте,
   // правая панель — вправо. Раньше оно появлялось с движением, а исчезало
   // мгновенно, и это читалось как сбой, а не как закрытие.
+  //
+  // Зависание 03.10: «Аудит-дела» — один и тот же RvModal для списка и для дела.
+  // Закрыли дело крестиком → onClose вернул список, а React оставил этот же
+  // экземпляр с closing=true: невидимый слой во весь экран ловил все клики,
+  // повторное закрытие игнорировалось, прокрутка оставалась заблокированной.
+  // Поэтому после ухода closing сбрасывается (если родитель окно не убрал — оно
+  // показывается снова), а onClose берётся из ref: свежий обработчик не
+  // пересоздаёт close и не перезапускает эффект ниже (раньше на каждую
+  // перерисовку родителя фокус прыгал на крестик — печатать в поле окна было нельзя).
   const [closing,setClosing]=useState(false);
+  const onCloseRef=useRef(onClose); onCloseRef.current=onClose;
+  const closingRef=useRef(false), alive=useRef(true);
+  useEffect(()=>()=>{ alive.current=false; },[]);
   const close=useCallback(()=>{
-    setClosing(c=>{
-      if(c)return c;
-      const ms=matchMedia("(prefers-reduced-motion: reduce)").matches?0:190;
-      setTimeout(onClose,ms);
-      return true;
-    });
-  },[onClose]);
+    if(closingRef.current)return;
+    closingRef.current=true; setClosing(true);
+    const ms=matchMedia("(prefers-reduced-motion: reduce)").matches?0:190;
+    setTimeout(()=>{ try{ onCloseRef.current&&onCloseRef.current(); }
+      finally{ closingRef.current=false; if(alive.current) setClosing(false); } },ms);
+  },[]);
   useEffect(()=>{
     // Куда вернуть фокус, когда окно закроется: человек должен оказаться там,
     // откуда ушёл, а не в начале страницы.
@@ -3772,16 +3795,17 @@ function RvModal({onClose,title,sub,side,children,bare,wide,sheet,fit}){
     };
     document.addEventListener("keydown",h);
     // Фон не скроллим, но и не даём странице дёрнуться на ширину полосы прокрутки.
-    const gap=window.innerWidth-document.documentElement.clientWidth;
-    const prev=document.body.style.overflow, prevPad=document.body.style.paddingRight;
-    document.body.style.overflow="hidden";
-    if(gap>0)document.body.style.paddingRight=`${gap}px`;
-    const t=setTimeout(()=>{const f=focusable(); (f[0]||cardRef.current)?.focus?.();},0);
+    // Счётчик, а не «запомнить и вернуть»: окна бывают стопкой и закрываются не
+    // по порядку — старая схема могла вернуть body overflow:hidden навсегда.
+    rvScrollLock(+1);
+    // фокус — внутрь окна, если он ещё не там (поле с autoFocus уже в фокусе)
+    const t=setTimeout(()=>{ if(cardRef.current&&cardRef.current.contains(document.activeElement))return;
+      const f=focusable(); (f[0]||cardRef.current)?.focus?.();},0);
     return ()=>{
       clearTimeout(t);
       document.removeEventListener("keydown",h);
-      document.body.style.overflow=prev; document.body.style.paddingRight=prevPad;
-      if(returnTo&&returnTo.focus)returnTo.focus();
+      rvScrollLock(-1);
+      if(returnTo&&returnTo.focus&&document.contains(returnTo))returnTo.focus();
     };
   },[close]);
   // ПОРТАЛ в body: у предка .fade-in есть transform (animation fill-mode both),
@@ -6423,6 +6447,7 @@ const CP_CSS=`
   background:oklch(20% 0.02 260 / .34);backdrop-filter:blur(4px) saturate(1.05);
   opacity:0;transition:opacity .17s ease;}
 .cp-ov.in{opacity:1;}
+.cp-ov:not(.in){pointer-events:none;}
 .cp{width:600px;max-width:100%;max-height:74vh;display:flex;flex-direction:column;
   background:var(--surface);border:1px solid var(--hair);border-radius:16px;overflow:hidden;
   box-shadow:0 24px 70px oklch(0% 0 0 / .22), 0 3px 10px oklch(0% 0 0 / .08);

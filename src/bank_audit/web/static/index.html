@@ -2749,6 +2749,8 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 /* Закрытие — зеркало открытия: те же путь и кривая, только в обратную
    сторону. Окно, которое исчезает мгновенно, читается как сбой. */
 .rv-ovl.is-closing { animation: scrim-out var(--dur-quick) var(--ease-out) both; }
+/* уходящее окно кликов не ловит: страница под ним живая сразу, а не через 190 мс */
+.rv-ovl.is-closing { pointer-events: none; }
 @keyframes scrim-out { to { opacity: 0 } }
 .rv-ovl.is-closing .rv-ovl-card { animation: sheet-out var(--dur-quick) var(--ease-out) both; }
 @keyframes sheet-out {
