@@ -1523,8 +1523,23 @@ def source_health() -> dict:
     «малый поток» (finuslugi: около отзыва в день на всю площадку, это не
     поломка). Отдельно — банки, пропавшие из корпуса (≥20 жалоб в месяц в
     среднем за полгода до этого и ни одной за 45 дней): так в мае 2026 исчез
-    «Почта Банк», и вкладка молча показывала «1 жалоба за квартал»."""
+    «Почта Банк», и вкладка молча показывала «1 жалоба за квартал».
+
+    Выключенная в config/sources.yaml площадка — «выключен», а не «встал»
+    (bankiros выключили намеренно 30.09, а «Пульс» горел просадкой). Неделя
+    больше трёх норм — «всплеск»: так выглядит и наплыв жалоб, и догрузка
+    после починки сборщика (sravni 30.09: ×9 к норме под видом «нормы»)."""
     out: dict = {"sources": [], "gone_banks": [], "week_end": week_end()}
+    try:
+        from ..config import load_sources
+        cfg = load_sources()
+    except Exception:  # noqa: BLE001 — без конфига просто не знаем, кто выключен
+        cfg = {}
+    # banki_reviews и sravni_reviews в конфиге тоже enabled: false — их собирает
+    # review_streams дважды в сутки, это не выключение
+    streams = {"banki_reviews", "sravni_reviews"}
+    disabled = {k for k, v in cfg.items()
+                if not (v or {}).get("enabled", True) and k not in streams}
     with db.session() as s:
         # корпус — по индексу; наши сборщики — по собранному: в индекс они
         # намеренно пишут не всё (похвалу и дубли корпуса не берём), и объём
@@ -1545,6 +1560,15 @@ def source_health() -> dict:
             SELECT DISTINCT ON (source) source, started_at, status, left(coalesce(error, ''), 160)
             FROM extraction_run WHERE source LIKE '%review%'
             ORDER BY source, started_at DESC""")).all()}
+        # самый свежий отзыв площадки: у корпуса banki.ru своих прогонов нет
+        last_item = {r[0]: r[1] for r in s.execute(text("""
+            SELECT 'bankiru', max(dt)::date FROM review_index
+             WHERE source = 'bankiru' AND dt <= now()
+            UNION ALL
+            SELECT source, max(posted_at)::date FROM review
+             WHERE source IN ('banki_reviews', 'sravni_reviews', 'finuslugi_reviews', 'bankiros_reviews')
+               AND posted_at <= now()
+             GROUP BY 1""")).all()}
         gone = s.execute(text(f"""
             SELECT i.bank, count(*) FILTER (WHERE i.dt BETWEEN now() - interval '225 days'
                                                           AND now() - interval '45 days') / 6.0 AS per_month,
@@ -1565,17 +1589,24 @@ def source_health() -> dict:
         arr = by.get(src, [0] * 9)
         norm = statistics.median(arr[1:9])
         wk = arr[0]
-        if norm < 5:
+        if src in disabled:
+            status = "выключен"
+        elif norm < 5:
             status = "малый поток"
         elif wk == 0:
             status = "встал"
         elif wk < 0.6 * norm:
             status = "просел"
+        elif wk > 3 * norm:
+            status = "всплеск"
         else:
             status = "норма"
         run = runs.get(src)
+        li = last_item.get(src)
         out["sources"].append({"source": src, "label": _SOURCE_RU.get(src, src), "week": wk,
-                               "norm": round(norm, 1), "status": status,
+                               "norm": round(norm), "status": status,
+                               "external": src == "bankiru",
+                               "last_item": str(li) if li else None,
                                "last_run": run[1].isoformat() if run else None,
                                "last_run_status": run[2] if run else None,
                                "last_error": (run[3] or None) if run else None})

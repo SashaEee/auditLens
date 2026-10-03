@@ -165,7 +165,15 @@ _NEWS_RU = {
     "tg_minfin": "Минфин России",
     "tg_mintsifry": "Минцифры России",
     "tg_rospotreb": "Роспотребнадзор",
+    "vedomosti_fin": "Ведомости — финансы",
+    "vedomosti_econ": "Ведомости — экономика",
+    "kommersant_econ": "Коммерсантъ — экономика",
 }
+
+
+def news_source_label(key: str | None) -> str:
+    """Название ленты для людей («Пульс», витрина источников)."""
+    return _NEWS_RU.get(key or "", key or "")
 
 
 def _news_sources() -> list[dict]:

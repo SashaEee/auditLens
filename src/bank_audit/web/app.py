@@ -395,11 +395,13 @@ def track_events(body: TrackIn, user: CurrentUser = Depends(get_current_user)):
 
 @app.get("/api/admin/pulse")
 @app.get("/api/admin/metrics")
-def admin_metrics(days: int = 14, user: CurrentUser = Depends(get_current_user)):
-    """Метрики «Пульса»: аудитория + продукт + техника одним ответом."""
+def admin_metrics(days: int = 14, me: bool = False,
+                  user: CurrentUser = Depends(get_current_user)):
+    """Метрики «Пульса»: аудитория + продукт + техника одним ответом.
+    me — считать ли самого владельца (по умолчанию нет: он тестирует инструмент)."""
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "admin only")
-    return telemetry.metrics(days)
+    return telemetry.metrics(days, telemetry.excluded(user.username, with_me=me))
 
 
 _EVAL_TASK: Optional[asyncio.Task] = None
@@ -441,11 +443,32 @@ async def admin_agent_eval_run(req: AgentEvalReq, user: CurrentUser = Depends(ge
 
 
 @app.get("/api/admin/users")
-def admin_users(days: int = 30, user: CurrentUser = Depends(get_current_user)):
+def admin_users(days: int = 30, me: bool = False,
+                user: CurrentUser = Depends(get_current_user)):
     """Все пользователи со сводкой по каждому — вкладка «Люди»."""
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "admin only")
-    return telemetry.users_directory(days)
+    return telemetry.users_directory(days, telemetry.excluded(user.username, with_me=me))
+
+
+class HiddenReq(BaseModel):
+    hidden: bool
+
+
+@app.post("/api/admin/users/{username}/hidden")
+def admin_user_hidden(username: str, req: HiddenReq,
+                      user: CurrentUser = Depends(get_current_user)):
+    """Служебная учётка (разработка, админ входа) — не считать в «Пульсе»."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    if not telemetry.set_hidden(username, req.hidden):
+        raise HTTPException(404, "user not found")
+    try:
+        userdata.log_event(user.username, "admin_user_hidden",
+                           {"username": username, "hidden": req.hidden})
+    except Exception:
+        pass
+    return {"ok": True, "hidden": req.hidden}
 
 
 @app.get("/api/admin/users/{username}")
@@ -463,12 +486,14 @@ def admin_user_card(username: str, days: int = 30,
 @app.get("/api/admin/reports")
 def admin_reports(days: int = 30, limit: int = 200, q: Optional[str] = None,
                   username: Optional[str] = None, only_bad: bool = False,
+                  mode: Optional[str] = None, me: bool = False,
                   user: CurrentUser = Depends(get_current_user)):
-    """Отчёты ВСЕХ пользователей: недовольные — первыми."""
+    """Отчёты и сохранённые быстрые ответы ВСЕХ пользователей: недовольные — первыми."""
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "admin only")
     return telemetry.reports_all(days=days, limit=limit, q=q,
-                                 username=username, only_bad=only_bad)
+                                 username=username, only_bad=only_bad, mode=mode,
+                                 exclude=telemetry.excluded(user.username, with_me=me))
 
 
 @app.get("/api/admin/session/{sid}")
@@ -489,12 +514,13 @@ def admin_session(sid: int, user: CurrentUser = Depends(get_current_user)):
 
 
 @app.get("/api/admin/complaints")
-def admin_complaints(days: int = 30, limit: int = 60,
+def admin_complaints(days: int = 30, limit: int = 60, me: bool = False,
                      user: CurrentUser = Depends(get_current_user)):
     """Все дизлайки с ФИО и ссылкой на предмет жалобы."""
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "admin only")
-    return {"days": days, "items": telemetry.complaints(days, limit)}
+    res = telemetry.complaints(days, limit, telemetry.excluded(user.username, with_me=me))
+    return {"days": days, **res}
 
 
 @app.get("/api/overview/foryou")
