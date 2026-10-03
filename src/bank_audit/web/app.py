@@ -1618,6 +1618,9 @@ _PROMO_PERIOD_RE = re.compile(
     re.I)
 # окна срока: ранг вклада на 3 месяца и на 3 года — разные вопросы
 _TERM_RU = {"0-3": "до 3 мес", "4-6": "4–6 мес", "7-12": "7–12 мес", "13+": "от года"}
+# Окна — только у вкладов: их срок точный (seedPeriodDays). У кредитов окно
+# считается по МИНИМАЛЬНОМУ сроку, и «кредит до 3 мес» — это кредит на 3–60 мес
+_TERM_CATS = ("deposit",)
 _SUBSEG_RU = {"ip": "для ИП", "ooo": "для ООО", "any": "ИП и ООО", "new": "новостройка",
               "secondary": "вторичка", "refin": "рефинансирование", "pledge": "под залог",
               "house": "ИЖС", "commercial": "коммерческая", "subsidized": "господдержка",
@@ -1865,7 +1868,7 @@ def market_atlas(term: Optional[str] = None):
                     > _FREE_RANK.get(cur_.get("free_kind"), -1))
             return (cur_ is None or tie_
                     or (val < cur_["rate"] if lower else val > cur_["rate"]))
-        if not (_better(cur) or (meta.get("show_terms") and r.get("term_bucket") in _TERM_RU)):
+        if not (_better(cur) or (r["category"] in _TERM_CATS and r.get("term_bucket") in _TERM_RU)):
             continue
         point = {
                 "slug": r["bank_slug"], "name": r["bank_name"],
@@ -1899,7 +1902,7 @@ def market_atlas(term: Optional[str] = None):
         if _better(cur):
             best[bkey(r)] = point
         tb = r.get("term_bucket")
-        if meta.get("show_terms") and tb in _TERM_RU:
+        if r["category"] in _TERM_CATS and tb in _TERM_RU:
             tslot = by_term.setdefault((r["category"], seg, sub, tb), {})
             if _better(tslot.get(bkey(r))):
                 tslot[bkey(r)] = point
@@ -2091,7 +2094,7 @@ def market_atlas(term: Optional[str] = None):
         # Позиция по окнам срока внутри главной группы. «Сбер #1 из 133 по
         # вкладам» держался на одном 3-месячном промо 19%, а на сроке от года
         # картина другая; ранг вклада без срока — смесь разных вопросов.
-        if c.get("show_terms") and mk:
+        if cid in _TERM_CATS and mk:
             terms_ = []
             for tb in _TERM_RU:
                 bl = list((by_term.get((cid, mk[0], mk[1], tb)) or {}).values())
@@ -2328,8 +2331,8 @@ def market_verdict(term: Optional[str] = None):
                       f'всегда промо на первые месяцы или «новые деньги», условия источник не раскрывает')
     pm = max(cells, key=lambda c: c.get("psk_mismatch", 0)) if cells else None
     if pm and pm.get("psk_mismatch", 0) >= 5:
-        doubts.append(f'у {pm["psk_mismatch"]} банков в «{pm["label"].lower()}» ПСК ниже их же '
-                      f'ставки — числа источника не согласованы, такие банки сравниваем по ставке')
+        doubts.append(f'у {pm["psk_mismatch"]} предложений в «{pm["label"].lower()}» ПСК ниже их '
+                      f'же ставки — числа источника не согласованы, такие сравниваем по ставке')
     deg = [c for c in cells if c.get("degenerate")]
     if deg:
         d0 = deg[0]

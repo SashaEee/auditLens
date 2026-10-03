@@ -130,6 +130,15 @@ def test_deposit_rank_by_term_and_guard_border(market):
     assert c13["sber"]["rank"] == 7 and c13["sber"]["title"] == "СберВклад"
 
 
+def test_credit_has_no_term_windows(market):
+    """У кредита окно срока — по минимальному сроку: «до 3 мес» = кредит на 3–60 мес."""
+    rows = [row("credit", f"Б{i}", rate=18 + i, psk=18 + i, sub="cash",
+                term="0-3" if i % 2 else "13+") for i in range(8)]
+    rows.append(row("credit", "Сбербанк", rate=20, psk=20, sber=True, sub="cash", term="0-3"))
+    market(rows)
+    assert "by_term" not in cat_of(A.market_atlas(), "credit")
+
+
 def test_upper_bound_rate_is_not_ranked(market):
     rows = [row("deposit", "ПСБ", 30.0, kind="max", title="Народный")]
     rows += [row("deposit", f"Б{i}", 12 + i * 0.1) for i in range(5)]
