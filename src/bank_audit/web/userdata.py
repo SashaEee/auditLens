@@ -1585,12 +1585,23 @@ def remove_case_item(case_id: int, item_id: int, username: str) -> bool:
     if not f or f["role"] not in ("owner", "editor") or f["archived"]:
         return False
     with db.session() as s:
-        gone = s.execute(text("""
-            DELETE FROM audit_case_item i
-             WHERE i.item_id = :i AND i.case_id = :c
-               AND (:owner OR i.added_by = :u)
-            RETURNING i.title, i.url"""),
+        it = s.execute(text("""
+            SELECT i.title, i.url FROM audit_case_item i
+             WHERE i.item_id = :i AND i.case_id = :c AND (:owner OR i.added_by = :u)"""),
             {"i": item_id, "c": case_id, "u": username, "owner": f["role"] == "owner"}).first()
+        if not it:
+            return False
+        # Комментарии коллег к материалу не стираем каскадом (аудит 03.10, ДЕЛ-01):
+        # они уходят в общее обсуждение с пометкой, к какому материалу были
+        s.execute(text("""
+            UPDATE audit_case_msg
+               SET item_id = NULL,
+                   refs = COALESCE(refs, '{}'::jsonb) || jsonb_build_object('_from_item', CAST(:t AS text))
+             WHERE case_id = :c AND item_id = :i"""),
+            {"c": case_id, "i": item_id, "t": (it[0] or it[1] or "материал")[:200]})
+        gone = s.execute(text("""
+            DELETE FROM audit_case_item i WHERE i.item_id = :i AND i.case_id = :c
+            RETURNING i.title, i.url"""), {"i": item_id, "c": case_id}).first()
         if not gone:
             return False
         s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),

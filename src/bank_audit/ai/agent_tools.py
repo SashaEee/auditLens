@@ -649,8 +649,12 @@ def tool_loopholes(query: str, bank: str = SBER, days: int | None = None,
                                 limit=limit * 3):
         found.setdefault(r["record_id"], r)
     ids = list(found)
+    # суть, тип, сомнение модели и решение эксперта — без них модель подавала оценку
+    # модели как «зафиксированные схемы» (аудит 03.10, УЯЗ-05)
     extra = {x["record_id"]: x for x in _q(
-        """SELECT record_id, left(raw_text, 900) AS text, status, published_at, collected_at
+        """SELECT record_id, left(raw_text, 900) AS text, status, published_at, collected_at,
+                  headline, left(summary, 600) AS summary, summary_doubt, classification,
+                  COALESCE(verdict_model, '') = 'manual' AS expert_checked
              FROM loophole_record WHERE record_id = ANY(:i)""", {"i": ids})} if ids else {}
 
     def about(r) -> bool:
@@ -665,7 +669,11 @@ def tool_loopholes(query: str, bank: str = SBER, days: int | None = None,
         c = (extra.get(r["record_id"]) or {}).get("collected_at")
         return since is None or (c is not None and c >= since)
 
-    rows = sorted(found.values(), key=lambda r: (not in_period(r), not about(r),
+    def doubt(r) -> bool:
+        return bool(((extra.get(r["record_id"]) or {}).get("summary_doubt") or "").strip())
+
+    # сомнительные (модель сама засомневалась) — в конце выдачи
+    rows = sorted(found.values(), key=lambda r: (not in_period(r), doubt(r), not about(r),
                                                  -(r.get("relevance") or 0)))
     older = [r for r in rows if not in_period(r)]
     rows = [r for r in rows if in_period(r)][:limit] or rows[:limit]
@@ -693,10 +701,22 @@ def tool_loopholes(query: str, bank: str = SBER, days: int | None = None,
                          "из поля bank (у многих банк виден только в тексте, их больше); "
                          "*_total — за всё время сбора (с collected_since); *_last_30d — "
                          "найдено системой за 30 дней",
-        "status_meaning": "preliminary — оценка модели, человеком ещё не проверена",
+        "status_meaning": "expert_checked=false — оценка модели, экспертом ЦК КС не проверена; "
+                          "type — тип по оценке модели; model_doubt — модель сама сомневается",
+        "how_to_cite": "Непроверенную запись называй «возможная уязвимость (оценка модели, экспертом "
+                       "не проверена)», а не «зафиксированная схема». Запись с model_doubt — только "
+                       "с этой оговоркой или не используй. «Схема мошенничества» — только при "
+                       "type = мошенническая схема.",
         "older_than_period": len(older) if days else None,
         "records": [{"record_id": r["record_id"], "about_bank": about(r),
                      "title": clip(r.get("title"), 200),
+                     "headline": (extra.get(r["record_id"]) or {}).get("headline"),
+                     "summary": (extra.get(r["record_id"]) or {}).get("summary"),
+                     "type": _LH_TYPE.get((extra.get(r["record_id"]) or {}).get("classification") or "",
+                                          "без типа"),
+                     "model_doubt": (extra.get(r["record_id"]) or {}).get("summary_doubt") or None,
+                     "expert_checked": bool((extra.get(r["record_id"]) or {}).get("expert_checked")),
+                     "link": f"#loophole?record={r['record_id']}",
                      "why_loophole": r.get("verdict_reason"),
                      "confidence": r.get("verdict_confidence"),
                      "found_by": r.get("via"),
@@ -708,6 +728,10 @@ def tool_loopholes(query: str, bank: str = SBER, days: int | None = None,
                      "status": (extra.get(r["record_id"]) or {}).get("status"),
                      "bank_tag": r.get("bank_slug")} for r in rows],
         "link": "#loophole"})
+
+
+_LH_TYPE = {"vulnerability": "уязвимость", "fraud_scheme": "мошенническая схема",
+            "not_confirmed": "не подтверждено"}
 
 
 def tool_sql(query: str) -> str:

@@ -417,6 +417,11 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
     if not pool:                        # payload до v-pool — падаем на элементы групп
         pool = [dict(it) for g in (news.get("groups") or [])
                 for it in (g.get("items") or [])]
+    # повторы выпуск сознательно не публикует («выходило 01.10») — и «Для вас» их
+    # не показывает: первая плитка 03.10 была повтором (аудит 03.10, ОБЗ-05)
+    rep_urls = {r.get("url") for r in (news.get("repeats") or []) if isinstance(r, dict) and r.get("url")}
+    if rep_urls:
+        pool = [it for it in pool if it.get("url") not in rep_urls]
     # проход 1: кандидаты и их тексты (векторизуем одним батчем)
     seen, cands = set(), []
     for it in pool:

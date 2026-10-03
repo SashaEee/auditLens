@@ -2199,6 +2199,22 @@ function LoopholeApp() {
     window.scrollTo({top: 0});
   };
 
+  // Ссылка #loophole?record=ID из AuditLens (отчёты ИИ-помощника, дела): оболочка
+  // присылает номер записи сообщением — фрейм после первого открытия не
+  // перезагружается. Раньше такая ссылка открывала начало базы (аудит 03.10).
+  const openRecordRef = useRef(openRecordInBase);
+  openRecordRef.current = openRecordInBase;
+  useEffect(() => {
+    const onMsg = (e) => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data || {};
+      const id = Number(d.record_id);
+      if (d.type === "al-open-record" && id > 0) openRecordRef.current({record_id: id});
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, []);
+
   const deeperResearch = (record) => {
     if (agentBusy) { showToast("Дождитесь итога текущего исследования.", "info"); return; }
     setChatInput(`Разбери подробнее: «${record.title || record.snippet || "запись"}». `

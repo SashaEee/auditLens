@@ -200,7 +200,8 @@ def _reach_of(url: str | None, bodies: dict[str, str] | None) -> str:
     return "ok" if bodies[u] else "unreachable"
 
 
-def _news_bodies(urls: list[str]) -> dict[str, str]:
+def _news_bodies(urls: list[str], max_chars: int | None = None,
+                 max_n: int | None = None) -> dict[str, str]:
     """Полные тексты статей финалистов: HTTP-only (без Playwright — дайджест не
     место для браузера), параллельно, каждая ошибка = просто нет текста.
     Рубричные страницы ЦБ («Решения Банка России…») без этого — пустые калории:
@@ -221,11 +222,14 @@ def _news_bodies(urls: list[str]) -> dict[str, str]:
                 return url, ""
             doc = parse_html(r.content, url)
             txt = " ".join((doc.text or "").split())
-            return url, txt[:_BODY_CHARS]
+            return url, txt[:cap]
         except Exception:  # noqa: BLE001
             return url, ""
 
-    urls = [u for u in urls if u and not u.startswith("https://t.me/")][:_FETCH_N]
+    # длину и число — параметрами: поток новостей ставил переменную окружения уже
+    # после импорта модуля, и читал 2000 знаков вместо 6000 (аудит 03.10, ОБЗ-03)
+    cap = max_chars or _BODY_CHARS
+    urls = [u for u in urls if u and not u.startswith("https://t.me/")][:max_n or _FETCH_N]
     if not urls:
         return {}
     with cf.ThreadPoolExecutor(max_workers=6) as ex:

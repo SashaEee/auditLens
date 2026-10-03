@@ -809,6 +809,7 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 .al-runbar-text{font-size:13px;color:var(--ink-2)}
 .al-runbar-el{margin-left:auto;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .al-runbar-btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 14px;border-radius:6px;border:1px solid var(--hair-2);color:var(--ink-2);font-size:12px;font-weight:500;background:none;cursor:pointer;transition:border-color .12s,color .12s}
+.al-runbar-stop.arm{border-color:var(--accent-ink);color:var(--accent-ink)}
 .al-runbar-btn:hover{border-color:var(--ink-4);color:var(--ink)}
 @media (prefers-reduced-motion:reduce){.al-runbar-dot{animation:none}}
 
@@ -2090,6 +2091,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .cs-m-on:hover{text-decoration:underline;text-underline-offset:3px}
 .cs-mb{font-size:13px;line-height:1.55;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:2px}
 .cs-mb.in{display:inline;margin:0}
+.cs-from{display:block;font-size:11.5px;color:var(--ink-3);font-style:italic;margin-bottom:2px;white-space:normal}
 .cs-mb.del{color:var(--ink-4);font-style:italic}
 .cs-mn{color:var(--select);font-weight:500;background:color-mix(in oklab,var(--select),transparent 90%);border-radius:4px;padding:0 2px}
 .cs-ref{display:inline;border:0;background:var(--paper-2);border-radius:4px;padding:0 4px;margin:0 1px;font:inherit;font-size:12px;
@@ -2467,6 +2469,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 @keyframes rv-sweep{0%{background-position:-50% 0}100%{background-position:150% 0}}
 /* спокойно */
 .rv-radar-calm{font-size:13px;color:var(--ink-2);padding:6px 0;display:flex;align-items:center;gap:8px}
+.rv-radar-err{flex-wrap:wrap;color:var(--warn-ink)}
 .rv-radar-check{display:inline-flex;color:var(--pos)}
 /* чипы всплесков — цвет по приоритету (high/medium), не по risk */
 .rv-radar-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}

@@ -587,11 +587,16 @@ def _personalization(days: int, ex: list[str] | None = None) -> dict:
              WHERE kind = 'page_view' AND page = 'foryou' AND {P}
                AND created_at >= {_SINCE}
              GROUP BY 1""", p)}
-        clicks = {r["username"]: int(r["n"]) for r in _rows(f"""
-            SELECT username, count(*) AS n FROM usage_event
+        # клики «Для вас» — только со страницы «Для вас»: раньше в CTR шли и клики
+        # из «Выпуска дня» (24 клика на 42 открытия = 57%; аудит 03.10, ПУЛ-07)
+        ck = {r["username"]: (int(r["fy"]), int(r["ov"])) for r in _rows(f"""
+            SELECT username, count(*) FILTER (WHERE page = 'foryou') AS fy,
+                   count(*) FILTER (WHERE COALESCE(page, '') <> 'foryou') AS ov
+              FROM usage_event
              WHERE kind = 'news_click' AND {P}
                AND created_at >= {_SINCE}
              GROUP BY 1""", p)}
+        clicks = {u: v[0] for u, v in ck.items()}
         fb = {r["username"]: int(r["n"]) for r in _rows(f"""
             SELECT username, count(*) AS n FROM item_feedback
              WHERE kind IN ('news', 'for_you', 'check', 'digest_card') AND {P}
@@ -607,7 +612,8 @@ def _personalization(days: int, ex: list[str] | None = None) -> dict:
                 score = None
             out["users"].append({"username": u, "name": r["name"], "score": score,
                                  "views": views.get(u, 0),
-                                 "clicks": clicks.get(u, 0), "fb": fb.get(u, 0)})
+                                 "clicks": clicks.get(u, 0),
+                                 "clicks_issue": (ck.get(u) or (0, 0))[1], "fb": fb.get(u, 0)})
         tv, tc = sum(views.values()), sum(clicks.values())
         out["ctr"] = round(100.0 * tc / tv, 1) if tv else None
     except Exception:  # noqa: BLE001

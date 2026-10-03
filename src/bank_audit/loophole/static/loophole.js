@@ -1,4 +1,4 @@
-/* Собрано из loophole.jsx (sha256 02c3746b1ef361cc2dd79e7dafc2eb289299f321e169df573cbab87bf21bbb81). Не править вручную: node scripts/build_loophole_js.mjs */
+/* Собрано из loophole.jsx (sha256 16fc7fbfd56c1f550696ab927887586fc6b65c5421bca7f8bf88d343db21ca71). Не править вручную: node scripts/build_loophole_js.mjs */
 /* loophole.jsx — вкладка «Уязвимости» в системе AuditLens: база (сводка, фильтры,
    список и карточка записи, Excel, аудит-дела), исследование агента одной
    колонкой, очередь решений ЦК КС и панель «Доступ». Права решает сервер. */
@@ -2491,6 +2491,24 @@ function LoopholeApp() {
       top: 0
     });
   };
+
+  // Ссылка #loophole?record=ID из AuditLens (отчёты ИИ-помощника, дела): оболочка
+  // присылает номер записи сообщением — фрейм после первого открытия не
+  // перезагружается. Раньше такая ссылка открывала начало базы (аудит 03.10).
+  const openRecordRef = useRef(openRecordInBase);
+  openRecordRef.current = openRecordInBase;
+  useEffect(() => {
+    const onMsg = e => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data || {};
+      const id = Number(d.record_id);
+      if (d.type === "al-open-record" && id > 0) openRecordRef.current({
+        record_id: id
+      });
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, []);
   const deeperResearch = record => {
     if (agentBusy) {
       showToast("Дождитесь итога текущего исследования.", "info");

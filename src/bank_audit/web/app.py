@@ -238,6 +238,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "personalization": userdata.personalization_score(user.username),
         "is_admin": telemetry.is_admin(user.username),
         "can_pulse": telemetry.can_pulse(user.username),
+        "can_ingest": _can_run_ingest(user),
         "authenticated": user.authenticated,
     }
 
@@ -914,6 +915,14 @@ def get_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
 
 @app.delete("/api/reports/{rid}")
 def delete_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
+    # отчёт в деле не удаляем: у элемента дела ссылка на номер отчёта, без него — битая
+    with db.session() as s:
+        cases = [r[0] for r in s.execute(text(
+            "SELECT DISTINCT c.title FROM audit_case_item i JOIN audit_case c ON c.case_id = i.case_id"
+            " WHERE i.kind = 'report' AND i.ref_id = :r AND c.deleted_at IS NULL"), {"r": rid}).all()]
+    if cases:
+        raise HTTPException(409, "Отчёт лежит в деле «" + "», «".join(cases[:3])
+                            + "» — сначала уберите его оттуда")
     return {"ok": userdata.delete_report(rid, user.username)}
 
 
@@ -1431,7 +1440,8 @@ def market_export(category: str = "deposit",
             ("psk_max", "ПСК до, %"), ("term_months_min", "Срок от, мес"),
             ("term_months_max", "Срок до, мес"),
             ("amount_min", "Сумма от"), ("amount_max", "Сумма до"),
-            ("fee_open", "Открытие"), ("fee_service", "Обслуживание"),
+            ("fee_open", "Открытие, ₽"),
+            ("fee_service", "Обслуживание, ₽/мес" if category == "rko" else "Обслуживание, ₽/год"),
             ("grace_days", "Льготный период, дн"),
             ("cashback_pct", "Кэшбэк, %"), ("segment", "Сегмент"),
             ("sub_segment", "Вид продукта"),
@@ -2459,7 +2469,8 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  city: Optional[str] = None, month: Optional[str] = None,
                  days: Optional[int] = None, esc: int = 0,
                  sort: str = "auto", limit: int = 20, offset: int = 0,
-                 flag: Optional[str] = None, source: Optional[str] = None):
+                 flag: Optional[str] = None, source: Optional[str] = None,
+                 cursor: Optional[int] = None):
     # days раньше здесь ОТСУТСТВОВАЛ: переключатель периода стоял на вкладке,
     # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
     # 3 месяца, а в списке отзывы за прошлый год».
@@ -2468,13 +2479,14 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                                 city=city or None, month=month or None,
                                 limit=limit, offset=max(0, offset),
                                 esc=bool(esc), sort=sort, flag=flag or None,
-                                source=source or None)
+                                source=source or None, cursor=cursor)
     # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
     # search — по каким словам искали на самом деле и сколько попаданий дословных
     return {"items": res["items"], "count": len(res["items"]),
             "mode": res["mode"], "error": res["error"],
             "has_more": bool(res.get("has_more")),
             "total": res.get("total"), "pending": res.get("pending"),
+            "next": res.get("next"),      # курсор ленты: с какой строки продолжать
             "search": res.get("search") or None}
 
 @app.get("/api/reviews/export.csv")
@@ -2573,6 +2585,10 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
     import time as _time
     from ..rag import reviews_llm
     sig = await asyncio.to_thread(_rd().weekly_signals, bank, product or None)
+    if sig is None:
+        # расчёт упал (weekly_signals под @_safe отдаёт None): это не «спокойно» —
+        # раньше вкладка рисовала зелёную галочку «аномалий не выявлено» (аудит 03.10)
+        return {"summary": None, "signals": [], "watch": [], "calm": False, "error": "signals_failed"}
     signals = (sig or {}).get("signals") or []
     if signals:
         # журнал сигналов: эпизод со снимком жалоб — для отметки аудитора
@@ -2897,6 +2913,7 @@ def sources_status():
             "name": k,
             "collector": v.get("collector", "http"),
             "targets": [t.get("name") for t in (v.get("targets") or [])],
+            "enabled": bool((v or {}).get("enabled", True)),
         }
         for k, v in cfg.items()
     ]
@@ -2917,8 +2934,25 @@ class IngestRequest(BaseModel):
     source: str
     target: Optional[str] = None
 
+def _can_run_ingest(user: CurrentUser) -> bool:
+    """Ручной сбор — владельцу (на проде) и локальной разработке. Раньше кнопки
+    видел и нажимал любой аудитор (аудит 03.10, ДАН-06)."""
+    from .auth import _DEV_USER
+    return telemetry.is_admin(user.username) or user.username == _DEV_USER
+
+
 @app.post("/api/ingest/run")
-def ingest_run(req: IngestRequest, background_tasks: BackgroundTasks):
+def ingest_run(req: IngestRequest, background_tasks: BackgroundTasks,
+               user: CurrentUser = Depends(get_current_user)):
+    if not _can_run_ingest(user):
+        raise HTTPException(403, "Запускать сбор вручную может владелец инструмента")
+    from ..config import load_sources
+    cfg = (load_sources() or {}).get(req.source)
+    if cfg is None:
+        raise HTTPException(404, "Такого источника нет")
+    if not (cfg or {}).get("enabled", True):
+        # выключенные сборщики писали чужие отзывы (неверные адреса площадок)
+        raise HTTPException(409, "Источник выключен — его сбор портит данные, запуск недоступен")
     if _CAPTCHA_LOCK:
         raise HTTPException(409, "Сейчас решается капча — дождитесь её завершения")
     background_tasks.add_task(_do_ingest, req.source, req.target)
@@ -2939,10 +2973,12 @@ def _do_ingest(source: str, target: Optional[str]):
 
 
 @app.post("/api/ingest/run-all")
-def ingest_run_all(background_tasks: BackgroundTasks):
+def ingest_run_all(background_tasks: BackgroundTasks, user: CurrentUser = Depends(get_current_user)):
     """Запускает все настроенные источники последовательно в фоне.
     Используется кнопкой «Запустить весь сбор» на пустой БД.
     """
+    if not _can_run_ingest(user):
+        raise HTTPException(403, "Запускать сбор вручную может владелец инструмента")
     if _CAPTCHA_LOCK:
         raise HTTPException(409, "Сейчас решается капча — дождитесь её завершения")
     from ..config import load_sources
@@ -4319,7 +4355,10 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             return None
         try:
             banks = userdata.parse_query_signals(question).get("banks", [])
-            is_report = (mode == "deep") or (len(body) > 800)
+            # сорванный прогон — сообщение в беседе, а не отчёт в истории
+            from ..research.gptr.stream import FAIL_PREFIXES
+            failed = body.strip().startswith(FAIL_PREFIXES) or (mode == "deep" and len(body.strip()) < 300)
+            is_report = not failed and ((mode == "deep") or (len(body) > 800))
             report_id = None
             if is_report:
                 from ..ai import report_title as _rt

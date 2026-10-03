@@ -496,18 +496,23 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
                 f"SELECT max(i.dt) FROM review_index i WHERE {idx} AND {_CMP}"), ip).scalar()
             # эскалация у остальных банков — с чем сравнивать долю банка: порог
             # 12% у крупного банка пробит всегда, и плитка была красной постоянно
-            m_n, m_esc = s.execute(text(
-                f"SELECT count(*), count(*) FILTER (WHERE i.esc) FROM review_index i"
-                f" WHERE i.bank <> :bank AND {_CMP}"
-                f" AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
+            # прошлое окно рынка — чтобы рост жалоб банка сравнивать с ростом площадок:
+            # «+20%» при росте рынка на 12% — это не «стало хуже на 20%» (аудит 03.10)
+            m_n, m_esc, m_prev = s.execute(text(
+                f"SELECT count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d)),"
+                f" count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d) AND i.esc),"
+                f" count(*) FILTER (WHERE i.dt < now() - make_interval(days => :d))"
+                f" FROM review_index i WHERE i.bank <> :bank AND {_CMP}"
+                f" AND i.dt >= now() - make_interval(days => :d2) AND i.dt <= now()"
                 + (" AND i.product = :product" if product else "")),
-                {"bank": bc, "d": days, **({"product": product} if product else {})}).one()
+                {"bank": bc, "d": days, "d2": days * 2,
+                 **({"product": product} if product else {})}).one()
             by_src = [{"source": r[0], "n": int(r[1])} for r in s.execute(text(
                 f"SELECT i.source, count(*) FROM review_index i WHERE {idx} AND {_CMP}"
                 f" AND i.dt >= now() - make_interval(days => :d)"
                 f" GROUP BY 1 ORDER BY 2 DESC"), {**ip, "d": days}).all()]
         total_market = sum(int(r[1]) for r in mk) or 1
-        m_n, m_esc = int(m_n or 0), int(m_esc or 0)
+        m_n, m_esc, m_prev = int(m_n or 0), int(m_esc or 0), int(m_prev or 0)
         esc_sig = False
         if total_cur >= 30 and m_n >= 100:
             p1, p0 = esc_cur / total_cur, m_esc / m_n
@@ -517,9 +522,12 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
         ready = _prev_ready(bc, days)
         delta = (round(100.0 * (total_cur - total_prev) / total_prev, 1)
                  if total_prev and ready else None)
+        vm = _vs_market(total_cur, total_prev, m_n, m_prev) if ready else {}
         return {
             "bank": bc, "product": product, "days": days,
             "total": total_cur, "prev": total_prev, "delta_pct": delta,
+            "market_delta_pct": vm.get("market_delta_pct"), "vs_market": vm.get("vs_market"),
+            "delta_vs_market_pct": vm.get("rel_pct"),
             "delta_low_n": bool(total_prev and min(total_cur, total_prev) < 30),
             "delta_partial": not ready,
             "market_share_pct": round(100.0 * total_cur / total_market, 1),
@@ -1025,6 +1033,24 @@ def _pct_int(x) -> int:
 
 
 @_safe(None)
+def _vs_market(n: int, prev: int, m_n: int, m_prev: int) -> dict:
+    """Рост жалоб банка против роста остальных банков за те же окна.
+
+    Сравниваем долю банка в общем потоке (двухвыборочный z-тест долей): растёт
+    она — банк обгоняет рынок. rel_pct — на сколько процентов рост банка больше
+    роста рынка: (n/prev) / (m_n/m_prev) − 1. vs_market: above / below / same."""
+    if not (n and prev and m_n and m_prev):
+        return {}
+    rel = (n / prev) / (m_n / m_prev) - 1
+    p1, p0 = n / (n + m_n), prev / (prev + m_prev)
+    pp = (n + prev) / (n + m_n + prev + m_prev)
+    se = math.sqrt(pp * (1 - pp) * (1 / (n + m_n) + 1 / (prev + m_prev))) if 0 < pp < 1 else 0
+    sig = bool(se) and _p2((p1 - p0) / se) < 0.05 and abs(rel) >= 0.05
+    return {"market_delta_pct": round(100.0 * (m_n - m_prev) / m_prev, 1),
+            "rel_pct": round(100.0 * rel, 1),
+            "vs_market": ("above" if rel > 0 else "below") if sig else "same"}
+
+
 def changes(bank: str, product: str | None = None, days: int = 90) -> dict | None:
     """Шапка «что изменилось» для руководителя: только значимые изменения к
     прошлому равному окну — объём, темы, опережающие общий поток, доля
@@ -1041,9 +1067,18 @@ def changes(bank: str, product: str | None = None, days: int = 90) -> dict | Non
     ch = _rate_change(n, prev)
     if ch and ch["p"] < 0.05 and abs(ov.get("delta_pct") or 0) >= 10:
         up = n > prev
-        items.append({"kind": "volume", "dir": "up" if up else "down",
-                      "text": f"Жалоб {'больше' if up else 'меньше'} на {abs(_pct_int(ov['delta_pct']))}%",
-                      "detail": f"{_int_sp(n)} против {_int_sp(prev)} за прошлые {days} дн, 95% ДИ {ch['lo']:+d}…{ch['hi']:+d}%"})
+        mk, vs = ov.get("market_delta_pct"), ov.get("vs_market")
+        # Цвет — по сравнению с рынком, а не с собой: рост вместе с площадками
+        # (новые сборщики, рост banki.ru) — не «стало хуже». dir: up — обгоняет
+        # рынок (плохо), down — отстаёт, flat — вместе с рынком.
+        dir_ = {"above": "up", "below": "down", "same": "flat"}.get(vs or "", "up" if up else "down")
+        mtxt = f" (рынок {'+' if mk >= 0 else '−'}{abs(_pct_int(mk))}%)" if mk is not None else ""
+        items.append({"kind": "volume", "dir": dir_, "rise": up, "vs_market": vs,
+                      "market_delta_pct": mk, "rel_pct": ov.get("delta_vs_market_pct"),
+                      "text": f"Жалоб {'больше' if up else 'меньше'} на {abs(_pct_int(ov['delta_pct']))}%{mtxt}",
+                      "detail": f"{_int_sp(n)} против {_int_sp(prev)} за прошлые {days} дн, 95% ДИ {ch['lo']:+d}…{ch['hi']:+d}%"
+                                + (f"; у остальных банков {'+' if mk >= 0 else '−'}{abs(_pct_int(mk))}%"
+                                   if mk is not None else "")})
     th = themes(bc, product, days) or {}
     rows = [t for t in th.get("themes") or [] if t.get("delta_sig") and t["key"] != "other"]
     ups = sorted([t for t in rows if (t.get("excess") or 0) > 0], key=lambda t: -t["excess"])[:2]
@@ -1193,14 +1228,20 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
                      days: int | None, city: str | None, month: str | None,
                      limit: int, offset: int = 0,
                      esc: bool = False, flag: str | None = None,
-                     source: str | None = None, sort: str = "date") -> dict:
+                     source: str | None = None, sort: str = "date",
+                     cursor: int | None = None) -> dict:
     """Лента по ЕДИНОМУ индексу — все источники в одном списке.
 
     Показываются жалобы из разметки и ещё не размеченные свежие отзывы (они
     размечаются в течение часа — прятать самые свежие нельзя). Похвала,
     вопросы, мусор и копии в ленту жалоб не идут. Фильтр по теме — по главной
     проблеме, как и счётчик риск-карты: клик по строке показывает ровно те
-    жалобы, что в ней посчитаны."""
+    жалобы, что в ней посчитаны.
+
+    cursor — номер строки выборки, с которой продолжать (его отдаёт прошлая
+    страница в «next»). Раньше страница считалась от склеенного списка, который
+    каждый раз выбирался заново с потолком 600 строк: на ~600-й карточке «Показать
+    ещё» пропадала при 2 451 жалобе на счётчике (аудит 03.10, ОТЗ-01)."""
     fetch = min(max((limit + offset) * 5, 40), 600)
     p: dict = {"bank": bc, "product": product, "lim": fetch}
     extra = _source_clause("i", source, p)
@@ -1243,6 +1284,8 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     where = f"""i.bank = :bank
                   AND (i.dt IS NULL OR i.dt <= now())
                   AND (CAST(:product AS text) IS NULL OR i.product = :product){extra}"""
+    if cursor is not None:
+        return _feed_page(where, join, sev_col, order, p, limit, max(0, int(cursor)), sev)
     try:
         with db.session() as s:
             # Сколько всего по этому фильтру — шапка ленты раньше считала только
@@ -1293,6 +1336,75 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     _attach_themes(page)
     return {"items": page, "mode": "feed", "error": None,
             "has_more": len(out) > offset + limit, **(tot or {})}
+
+
+def _feed_card(r: dict, b: dict, body: str, sev: bool) -> dict:
+    dt = r["dt"]
+    return {"bank": r["bank"], "product": r["product"],
+            "date": dt.date().isoformat() if dt else None,
+            "city": r["city"] or b.get("city"),
+            "url": r["url"], "text": body, "similar": 0,
+            "rating": float(r["rating"]) if r["rating"] is not None else None,
+            "source": r["source"],
+            **({"sev": int(r["sev"] or 0)} if sev else {}),
+            "themes": []}
+
+
+def _feed_page(where: str, join: str, sev_col: str, order: str, p: dict,
+               limit: int, cursor: int, sev: bool) -> dict:
+    """Страница ленты по курсору: выбираем порциями с места, где остановилась прошлая
+    страница, пока не наберём limit карточек. Короткие тексты и копии пропускаем,
+    копии внутри страницы считаем в «similar». next — откуда продолжать."""
+    chunk = max(limit * 3, 60)
+    out: list[dict] = []
+    seen: dict[str, int] = {}
+    pos, more, tot = cursor, True, None
+    from . import bankiru_fts
+    try:
+        with db.session() as s:
+            if cursor == 0:
+                n_all, n_pend = s.execute(text(
+                    f"SELECT count(*), count(*) FILTER (WHERE i.kind IS NULL)"
+                    f" FROM review_index i WHERE {where}"), p).one()
+                tot = {"total": int(n_all or 0) - int(n_pend or 0), "pending": int(n_pend or 0)}
+            for _ in range(8):                       # не больше 8 порций на страницу
+                rows = [dict(r) for r in s.execute(text(f"""
+                    SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt,
+                           i.city, i.rating{sev_col}
+                    FROM review_index i {join}
+                    WHERE {where}
+                    ORDER BY {order}, i.url
+                    LIMIT :chunk OFFSET :pos
+                """), {**p, "chunk": chunk, "pos": pos}).mappings().all()]
+                bodies = bankiru_fts.bodies_for(rows) if rows else {}
+                stop = None
+                for k, r in enumerate(rows):
+                    b = bodies.get(r["url"]) or {}
+                    body = (b.get("text") or "").strip()
+                    if len(body) < 40:
+                        continue
+                    key = body[:100].lower()
+                    if key in seen:
+                        out[seen[key]]["similar"] += 1
+                        continue
+                    if len(out) == limit:            # страница полна: продолжим с этой строки
+                        stop = k
+                        break
+                    seen[key] = len(out)
+                    out.append(_feed_card(r, b, body, sev))
+                if stop is not None:
+                    pos += stop
+                    break
+                pos += len(rows)
+                if len(rows) < chunk:                # выборка кончилась
+                    more = False
+                    break
+    except Exception as e:
+        log.warning("reviews_dash: лента по индексу не собралась (%s)", e)
+        return {"items": [], "mode": "feed", "error": "feed_failed"}
+    _attach_themes(out)
+    return {"items": out, "mode": "feed", "error": None, "has_more": more,
+            "next": pos, **(tot or {})}
 
 
 def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None,
@@ -1432,7 +1544,7 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
                     city: str | None = None, month: str | None = None,
                     limit: int = 20, offset: int = 0,
                     esc: bool = False, sort: str = "auto", flag: str | None = None,
-                    source: str | None = None) -> dict:
+                    source: str | None = None, cursor: int | None = None) -> dict:
     """Лента доказательной базы. q → поиск; иначе свежие с фильтрами
     тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
     массовость это аудит-сигнал → поле `similar`.
@@ -1482,7 +1594,8 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
     if not bc:
         return {"items": [], "mode": "feed", "error": "unknown_bank"}
     return _feed_from_index(bc, product, theme, days, city, month, limit, offset, esc, flag,
-                            source=source, sort="severity" if sort == "severity" else "date")
+                            source=source, sort="severity" if sort == "severity" else "date",
+                            cursor=cursor)
 
 
 @_safe(None)
