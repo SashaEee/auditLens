@@ -902,6 +902,19 @@ function TipLayer(){
 // Аудитор не должен гадать, откуда взялось «×2.1»: показываем формулу словами,
 // как считалась норма, на какой выборке и из какого источника.
 // Числа «Обзора» по-русски: десятичная запятая, без хвостового «,0» — «3,4», «×4,4»
+// P(X ≥ k) для пуассоновского X со средним lam — тот же тест, что
+// reviews_dash.poisson_sf: вероятность увидеть столько жалоб в своей норме
+const poisSf=(k,lam)=>{
+  k=Math.round(+k);lam=+lam;
+  if(!(k>0))return 1;
+  if(!(lam>0))return 0;
+  let cdf=0;
+  for(let i=0;i<k;i++)cdf+=Math.exp(i*Math.log(lam)-lam-lgam(i+1));
+  return Math.max(0,Math.min(1,1-cdf));
+};
+// ln Γ(x) — Стирлинг с поправками, точности хватает для теста порога
+const lgam=x=>{if(x<7){let p=1;while(x<7){p*=x;x++;}return lgam(x)-Math.log(p);}
+  return (x-0.5)*Math.log(x)-x+0.9189385332+1/(12*x)-1/(360*x*x*x);};
 const ovN=(v,dg=1)=>{ if(v==null||v==="")return "—"; const n=parseFloat(v); if(isNaN(n))return String(v);
   return (Math.round(n*10**dg)/10**dg).toFixed(dg).replace(".",",").replace(/(,\d*?)0+$/,"$1").replace(/,$/,""); };
 const ovRaz=k=>{ const r=Math.round(k*10)/10; if(r!==Math.round(r))return "раза"; const n=Math.round(r);
@@ -993,7 +1006,10 @@ const xpDiverge=d=>[
   ["Рынок",d.market_ratio!=null
     ?`та же тема по всем банкам ×${ovN(d.market_ratio)} — мы растём в ${ovN(d.gap)} ${ovRaz(d.gap||0)} быстрее рынка`
     :"рыночный срез недоступен"],
-  ["Почему здесь","из 41 проблемы кодификатора показана та, где наш рост сильнее всего обгоняет рыночный"],
+  ["Почему здесь","сначала значимый сигнал недели, обгоняющий рынок; если его нет — проблема, где наш рост сильнее всего обгоняет рыночный"],
+  ...(d.confirmed!=null?[["Проверка",d.confirmed
+    ?"рост подтверждён статистикой: сигнал недели или вероятность случайности ниже порога с поправкой на число проблем"
+    :`вероятность увидеть ${ovJ(d.week)} при норме ${ovN(d.baseline_week)} случайно — ${ovN(100*poisSf(d.week,d.baseline_week),1)}%; на десятках проверенных проблем такое бывает каждую неделю — рост не подтверждён`]]:[]),
   ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
 const xpEscalation=(k,now)=>[
@@ -1221,15 +1237,22 @@ function bfParseBrief(md){
   return out;
 }
 
-function BfBrief({markdown,skip}){
+function BfBrief({markdown,skip,novel,onNovel}){
   const items=useMemo(()=>bfParseBrief(markdown).filter(it=>!(skip&&skip(it))),[markdown,skip]);
   // не распарсилось — показываем как было, хуже не станет
   if(!items.length)return <div className="bf-brief">{renderMD(markdown)}</div>;
   const cls=it=>it.isNew?"new":/высок/i.test(it.level||"")?"high"
     :/средн/i.test(it.level||"")?"mid":/низк/i.test(it.level||"")?"low":"mid";
   const lbl=it=>it.isNew?"новая тема":(it.level||"наблюдение").toLowerCase();
+  // «Новое» — наблюдения, а не всплески: отделяем их подписью и даём жалобы
+  // сюжета (k-й пункт «Новое» — k-й сюжет, в том порядке их видела модель)
+  const firstNew=items.findIndex(it=>it.isNew), hasSig=items.some(it=>!it.isNew);
+  let nk=-1;
   return <div className="bfb-list">
-    {items.map((it,i)=><article key={i} className={"bfb-item lvl-"+cls(it)}>
+    {items.map((it,i)=>{ const nc=it.isNew?(novel||[])[++nk]:null;
+      return <React.Fragment key={i}>
+      {i===firstNew&&hasSig&&<div className="bfb-sep">Наблюдения — новые сюжеты вне кодификатора, не всплески</div>}
+      <article className={"bfb-item lvl-"+cls(it)}>
       <div className="bfb-head">
         <span className="bfb-badge">{lbl(it)}</span>
         {it.title&&<h4 className="bfb-title">{it.title}</h4>}
@@ -1239,7 +1262,9 @@ function BfBrief({markdown,skip}){
         <span className="bfb-act-l">Аудитору</span>
         <span dangerouslySetInnerHTML={{__html:inlineHTML(it.action)}}/>
       </div>}
-    </article>)}
+      {nc&&onNovel&&(nc.urls||[]).length>0&&<button type="button" className="rv-more-l bfb-novel"
+        onClick={()=>onNovel(nc)}>Жалобы сюжета · {nc.n}<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+    </article></React.Fragment>;})}
   </div>;
 }
 
@@ -1724,6 +1749,7 @@ const FY_CSS=`
 .fy-sg-dot{align-self:start;margin-top:7px;width:7px;height:7px;border-radius:50%;background:var(--warn)}
 .fy-sg-dot.high{background:var(--neg)}
 .fy-sg-dot.calm{background:var(--pos);opacity:.6}
+.fy-sg-dot.muted{background:var(--ink-3);opacity:.6}
 .fy-sg-b{min-width:0}
 .fy-sg-l{display:block;font-size:14px;font-weight:500;color:var(--ink)}
 .fy-sg-n{display:block;margin-top:1px;font-size:12px;line-height:1.45;color:var(--ink-3);font-variant-numeric:tabular-nums}
@@ -1883,28 +1909,34 @@ function FyCheck({c,i,taken,fb,onTake,onFb}){
   </article>;
 }
 
-// Ставки Сбера на шкале рынка: диапазон Сбера (мин–макс) поверх рыночного
-// минимум–максимум с медианой. Раньше — «макс. Сбера против медианы рынка
-// +6,3 п.п.»: максимум сравнивался с медианой, разница выглядела как вывод.
+// Позиция Сбера на шкале рынка — по методике вкладки «Рынок»: лучшее значение
+// Сбера среди лучших офферов банков, шкала по 10–90-му перцентилю (выбросы
+// вроде «кредитка 138,7%» и «вклад 30%» шкалу больше не растягивают), метрика
+// категории — ПСК у кредитов, грейс у кредиток, плата у дебетовых карт.
 const FY_LOAN=new Set(["credit","mortgage","auto_loan","card_credit","microloan"]);
 function FyRange({r}){
   const lo=+r.market_min, hi=+r.market_max, span=hi-lo;
   const smax=+r.sber_max, smin=r.sber_min!=null?+r.sber_min:smax;
+  const u=r.metric_unit||"%", m=r.metric||"rate_pct";
+  const f=v=>String(u).trim()==="%"?`${ovN(v,2)}%`:mkMetric(v,m,u);
   const ok=isFinite(lo)&&isFinite(hi)&&span>0&&isFinite(smax);
   const pos=v=>Math.min(100,Math.max(0,(v-lo)/span*100));
-  const sb=smin!==smax?`${ovN(smin,2)}–${ovN(smax,2)}%`:`${ovN(smax,2)}%`;
+  const sb=smin!==smax?`${f(smin)}–${f(smax)}`:f(smax);
   const cat=CAT_LABELS[r.category]||r.category;
+  const lower=r.lower_is_better!=null?r.lower_is_better:FY_LOAN.has(r.category);
+  const place=r.rank!=null&&!r.degenerate?` · #${r.rank} из ${r.n_banks}`:"";
   return <div className="fy-rg-r">
     <div className="fy-rg-h"><b>{cat}</b>
-      <span>Сбер {sb}{r.market_median!=null&&<> · медиана рынка {ovN(r.market_median,2)}%</>}</span></div>
+      <span title={r.sber_title||""}>Сбер {sb}{place}{r.market_median!=null&&<> · медиана рынка {f(r.market_median)}</>}</span></div>
     {ok&&<div className="fy-rg-bar" role="img"
-        aria-label={`${cat}: ставки Сбера ${sb}, рынок от ${ovN(lo,2)} до ${ovN(hi,2)}%`
-          +(r.market_median!=null?`, медиана ${ovN(r.market_median,2)}%`:"")}>
-      <span className="s" style={{left:pos(smin)+"%",width:Math.max(0,pos(smax)-pos(smin))+"%"}}/>
+        aria-label={`${cat}: Сбер ${sb}, середина рынка от ${f(lo)} до ${f(hi)}`
+          +(r.market_median!=null?`, медиана ${f(r.market_median)}`:"")}>
+      <span className="s" style={smin===smax?{left:`calc(${pos(smax)}% - 2px)`}
+        :{left:pos(smin)+"%",width:Math.max(0,pos(smax)-pos(smin))+"%"}}/>
       {r.market_median!=null&&<span className="m" style={{left:`calc(${pos(+r.market_median)}% - 1px)`}}/>}
     </div>}
-    {ok&&<div className="fy-rg-sc"><span>{ovN(lo,2)}%</span>
-      <span>{FY_LOAN.has(r.category)?"выше — дороже клиенту":"выше — выгоднее вкладчику"}</span><span>{ovN(hi,2)}%</span></div>}
+    {ok&&<div className="fy-rg-sc"><span>{f(lo)}</span>
+      <span>{lower?"правее — дороже клиенту":"правее — выгоднее клиенту"} · 10–90% банков</span><span>{f(hi)}</span></div>}
   </div>;
 }
 
@@ -2104,11 +2136,12 @@ function ForYouPage(){
       <div className="fy-sgs">
         {signals.map(s=>{const mn=sgNote(s);
           return <a key={s.key} className="fy-sg" href={fyRv({theme:s.key})}>
-            <span className={"fy-sg-dot"+(s.level==="high"?" high":"")} aria-hidden="true"/>
+            <span className={"fy-sg-dot"+(s.confirmed===false?" muted":s.level==="high"?" high":"")} aria-hidden="true"/>
             <span className="fy-sg-b"><span className="fy-sg-l">{s.label}</span>
               <span className="fy-sg-n">{s.week!=null?ovJ(s.week)+" за 7 дней":""}
                 {s.baseline_week!=null?` · норма ${ovN(s.baseline_week)}`:""}
-                {s.ratio!=null?` · ×${ovN(s.ratio)}`:""}{mn?` · ${mn}`:""}</span></span>
+                {s.ratio!=null?` · ×${ovN(s.ratio)}`:""}{mn?` · ${mn}`:""}
+                {s.confirmed===false?" · быстрее рынка, но не сигнал: рост не подтверждён статистикой":""}</span></span>
             {s.why_you&&<span className="fy-sg-z">{s.why_you}</span>}
           </a>;})}
       </div>
@@ -2561,8 +2594,22 @@ function OverviewPage(){
     :kpi0;
   const esc=kpi.escalation_pct;
   const dlt=(dg&&dg.meta&&dg.meta.delta)||{};
-  const dv=(pulse.diverge||[]).find(d=>d.gap!=null&&d.gap>=1.15)||null;  // ведущее расхождение
-  const unc=pulse.unclassified||null;
+  // «Проверить сегодня»: сначала ЗНАЧИМЫЙ сигнал, обгоняющий рынок; иначе
+  // лидер расхождения — но красным он горит, только если рост подтверждён
+  // тестом Пуассона с поправкой на число проблем. Раньше плитка краснела по
+  // «Исполнительным документам» (9 при норме 4,0, P≈0,02 на 40 проблем), а
+  // лид рядом писал «остальное в пределах нормы» (аудит 03.10, согласовано).
+  const nTh=(pulse.checked&&pulse.checked.themes)||(head.stats&&head.stats.checked_themes)||40;
+  const dvAll=(pulse.diverge||[]).filter(d=>d.gap!=null&&d.gap>=1.15);
+  const gapOf=x=>x.gap!=null?x.gap:(x.ratio&&x.market_ratio?x.ratio/x.market_ratio:null);
+  const sigTop=(pulse.signals||[]).map(x=>({...x,...((pulse.diverge||[]).find(d=>d.key===x.key)||{}),
+      gap:gapOf((pulse.diverge||[]).find(d=>d.key===x.key)||x),confirmed:true}))
+    .find(x=>x.gap!=null&&x.gap>=1.15)||null;
+  const dv0=sigTop||dvAll[0]||null;
+  const dv=dv0&&{...dv0,confirmed:dv0.confirmed||(dv0.sig!=null?!!dv0.sig
+    :poisSf(dv0.week,dv0.baseline_week)<0.05/nTh)};
+  const unc0=pulse.unclassified||null;
+  const unc=unc0&&{...unc0,sig:unc0.sig!=null?!!unc0.sig:poisSf(unc0.week,unc0.baseline_week)<0.05};
   // «Растёт за квартал» — только значимо быстрее общего потока (как в «Отзывах»);
   // в снимках до 25.09 признака нет, и «каникулы +70%» при росте потока +17% шли сюда
   const up=(pulse.themes_up||[]).find(t=>t.delta_sig)||null;
@@ -2721,11 +2768,13 @@ function OverviewPage(){
       <div className="bf-pulse">
         {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
             Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
-        <BfTile cls={" bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+        <BfTile cls={" bf-t-hero"+(dv&&dv.confirmed&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
              href={dv?`#reviews?tab=complaints&theme=${dv.key}`:undefined}
              xp={dv?xpDiverge(dv):null} note="жалобы всех площадок · разметка ИИ" label="Проверить сегодня">
           <div className="bf-t-cap">Проверить сегодня
-            {dv&&dv.gap>=1.25&&<span className="bf-t-chip">сильнее рынка</span>}</div>
+            {dv&&dv.gap>=1.25&&(dv.confirmed
+              ?<span className="bf-t-chip">сильнее рынка</span>
+              :<span className="bf-t-chip" data-tip={`${dv.week} при норме ${ovN(dv.baseline_week)}: такое отклонение на ${nTh} проверенных проблемах случается и без причины`}>рост не подтверждён</span>)}</div>
           {dv?<>
             <Xp passive rows={xpDiverge(dv)} note="жалобы всех площадок · разметка ИИ">
               <span className="bf-t-val">{dv.short||dv.label}</span>
@@ -2778,7 +2827,7 @@ function OverviewPage(){
         </BfTile>
 
         {/* Слепая зона: чего классификатор не видит */}
-        <BfTile cls={unc&&unc.ratio>=1.3?" attn":""} href="#reviews?tab=complaints&theme=other"
+        <BfTile cls={unc&&unc.ratio>=1.3&&unc.sig?" attn":""} href="#reviews?tab=complaints&theme=other"
              xp={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ" label="Вне кодификатора">
           <div className="bf-t-cap">Вне кодификатора</div>
           <Xp passive rows={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ">
@@ -2786,7 +2835,8 @@ function OverviewPage(){
               {unc&&unc.pct!=null&&<small> · {unc.pct}%</small>}</span>
           </Xp>
           <div className="bf-t-sub">{unc&&unc.ratio!=null
-            ?(unc.ratio>=1.3?"выше обычного — возможен новый инцидент":"как обычно")
+            ?(unc.ratio>=1.3?(unc.sig?"выше обычного — возможен новый инцидент"
+              :"чуть выше обычного — в пределах колебаний"):"как обычно")
             :"жалобы без подходящего кода"}<BfDelta v={dlt.unclassified} invert/></div>
         </BfTile>
 
@@ -2938,6 +2988,16 @@ const mkGap=(v,m,u)=>{
   if(m==="grace_days")return n===0?"наравне":sign+Math.round(a)+" дн";
   return n===0?"наравне":sign+a.toFixed(2).replace(".",",")+" п.п.";
 };
+// значение метрики строки витрины по тем же правилам, что и ранг атласа:
+// ПСК ниже своей же ставки (больше чем на 0,3 п.п.) — числа источника не
+// согласованы, и в сравнении стоит ставка (аудит 03.10)
+const mkPskBad=r=>r&&r.psk_min!=null&&(r.rate_min??r.rate_pct)!=null
+  &&parseFloat(r.psk_min)<parseFloat(r.rate_min??r.rate_pct)-0.3;
+const mkVal=(r,m)=>{
+  if(!r)return null;
+  if(m==="psk_min"){const v=(r.psk_min==null||mkPskBad(r))?(r.rate_min??r.rate_pct):r.psk_min;return v==null?null:parseFloat(v);}
+  const v=r[m||"rate_pct"];return v==null?null:parseFloat(v);
+};
 const mkMetric=(v,m,u)=>{
   if(v==null)return "—";
   const n=parseFloat(v);
@@ -3042,7 +3102,7 @@ function MkTraffic({cells,onPick}){
       onClick={()=>onPick&&onPick(c.category)}
       title={c.degenerate
         ? `${c.label} · ранг не показываем: на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`
-        : `${c.label} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
+        : `${c.label}${c.group_label&&c.group_label!=="массовые"?` (${c.group_label})`:""} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
         +(c.gap_median!=null?` · ${c.gap_median>0?"+":c.gap_median<0?"−":""}${ovN(Math.abs(c.gap_median),2)}${c.gap_unit||c.metric_unit||""} к медиане`:"")
         +(c.tied>1?` · наравне с ${c.tied} банками`:"")}>
       <span className="v serif">{c.degenerate?"–":(c.percentile!=null?c.percentile:"—")}</span>
@@ -3057,6 +3117,9 @@ function MkTrust({c}){
   if(c.degenerate) b.push([`ранг скрыт`,`на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`]);
   else if(c.at_best>2) b.push([`наравне ${c.at_best}`,"метрика не различает банки на лучшем значении"]);
   if(c.teaser>0) b.push([`тизер ${c.teaser}`,"у стольких предложений полная стоимость выше заявленной ставки более чем на 5 п.п."]);
+  if(c.psk_mismatch>0) b.push([`ПСК ≠ ставке ${c.psk_mismatch}`,"у стольких банков ПСК ниже их же ставки — числа источника не согласованы, в ранге берём ставку"]);
+  if(c.promo_period_excluded>0) b.push([`акции ${c.promo_period_excluded}`,"тарифы, бесплатные только первые месяцы, исключены из ранга: это акция, а не цена"]);
+  if(c.upper_bound_excluded>0) b.push([`«до» ${c.upper_bound_excluded}`,"ставки «до N%» — верхняя граница витрины агрегатора, а не ставка по договору; в ранг не идут"]);
   if(c.banks_dropped>0) b.push([`выбыло ${c.banks_dropped}`,"банков не попало в сравнение: нет метрики, не банк или льготная программа"]);
   if(c.no_metric>0) b.push([`нет метрики ${c.no_metric}`,"столько предложений вне сравнения — поле не заполнено источником"]);
   if(c.subsidized_excluded>0) b.push([`исключено ${c.subsidized_excluded}`,"льготные программы: ставка установлена государством и одинакова у всех"]);
@@ -3234,6 +3297,9 @@ function MarketPage({params}){
   const hlChange=useRef(P.change?parseInt(P.change):null);
   const[meta,setMeta]=useState(null);
   const[atlas,setAtlas]=useState(null);
+  // атлас по выбранному сроку: без него фильтр срока менял только список,
+  // а ранг и KPI оставались по смеси сроков («#1» на 3-месячном промо)
+  const[atlasT,setAtlasT]=useState(null);
   const[cov,setCov]=useState(null);        // карта покрытия: чего нет и почему
   const[verdict,setVerdict]=useState(null);
   const[sum,setSum]=useState(null);
@@ -3293,6 +3359,14 @@ function MarketPage({params}){
       .catch(e=>setErr(e.message));
   },[]);
 
+  useEffect(()=>{ // ранг по сроку
+    if(!term||!cat){setAtlasT(null);return;}
+    let live=true;
+    apiFetch("/api/market/atlas?term="+encodeURIComponent(term))
+      .then(a=>{if(live)setAtlasT({term,a});}).catch(()=>{if(live)setAtlasT(null);});
+    return()=>{live=false;};
+  },[term,cat]);
+
   useEffect(()=>{ // витрина
     if(!cat||view!=="vitrina")return;
     setOffers(null);
@@ -3333,7 +3407,10 @@ function MarketPage({params}){
   const segChips=((_mc&&_mc.segments)||[]).filter(x=>x.seg&&x.seg!=="mass"&&x.n>=3);
   const subChips=((_mc&&_mc.sub_segments)||[]).filter(x=>x.sub&&x.n>=3);
   const M=meta?Object.fromEntries(meta.map(m=>[m.id,m])):{};
-  const ac=cat?A[cat]:null;
+  const AT=atlasT&&atlasT.term===term&&atlasT.a
+    ?Object.fromEntries((atlasT.a.categories||[]).map(c=>[c.category,c])):null;
+  const ac=cat?((AT&&AT[cat])||A[cat]):null;
+  const termOn=!!(AT&&AT[cat]);
   // Ранг ВНУТРИ выбранного подвида. Иначе аудитор смотрит на 27 премиальных
   // карт, а место видит по всем 145 — «#1 из 145» рядом с премиальной полкой.
   const gsel=(()=>{
@@ -3359,8 +3436,20 @@ function MarketPage({params}){
 
   const lower=ac&&ac.lower_is_better;
   const sberIn=offers&&offers.some(o=>o.is_sber);
-  const bestRate=offers&&offers.length?parseFloat(offers[0].rate_pct):null;
   const mcat=cat?(M[cat]||{}):{};                 // семантика витрины категории
+  // «К лидеру» — от лидера СОПОСТАВИМОЙ выборки атласа (подвид или главная
+  // группа), по метрике категории. Раньше разрыв считался по ставке от первой
+  // строки списка, отсортированного по ПСК, со знаком «+» для всех, а при
+  // поиске «лидером» становилась первая найденная строка (аудит 03.10).
+  const refG=gsel||ac;
+  const leadV=refG&&refG.status!=="no_data"?(gsel?gsel.leader:(ac.leader&&ac.leader.rate)):null;
+  const leadSpan=refG&&leadV!=null?(lower?refG.max-leadV:leadV-refG.min):null;
+  // закреплённая строка Сбера — из выбранного подвида, а не из всей категории
+  const sbPin=gsel?(gsel.sber?{offer_id:gsel.sber.offer_id,title:gsel.sber.title,rate:gsel.sber.value,
+      rank:gsel.sber.rank,n:gsel.n_banks,where:"в подвиде"}:null)
+    :ac&&ac.sber?{offer_id:ac.sber.offer_id,title:ac.sber.title,rate:ac.sber.rate,rank:ac.sber.rank,
+      n:ac.n_banks,where:ac.main_group?`· ${ac.main_group.label}`:""}:null;
+  const degOf=g=>g&&g.n_banks>0&&g.at_best/g.n_banks>0.3;
   const showRateCol=mcat.show_rate!==false;
   const showBarCol=mcat.show_bar!==false&&showRateCol;
 
@@ -3378,10 +3467,12 @@ function MarketPage({params}){
         <button role="tab" aria-selected={!cat&&view!=="changes"} className={"ptab"+(!cat&&view!=="changes"?" on":"")}
           onClick={()=>{setCat(null);setView("vitrina");setDrawer(null);}}>Атлас</button>
         {(meta||[]).filter(m=>m.n>0).map(m=>{
-          const sb=A[m.id]&&A[m.id].sber;
+          const ca=A[m.id], sb=ca&&ca.sber;
+          // вырожденная метрика: «#1» при 119 банках на том же значении —
+          // не лидерство, ранг в бейдже не показываем
           return <button key={m.id} role="tab" aria-selected={cat===m.id} className={"ptab"+(cat===m.id?" on":"")} onClick={()=>{setCat(m.id);setBank(null);}}>
-            {m.label}{sb&&<span className={"ptab-n"+(sb.beats_share<0.5?" bad":"")}
-              data-tip={`Сбер — #${sb.rank} из ${A[m.id].n_banks} банков по лучшему офферу`}>#{sb.rank}</span>}
+            {m.label}{sb&&!ca.degenerate&&<span className={"ptab-n"+(sb.beats_share<0.5?" bad":"")}
+              data-tip={`Сбер — #${sb.rank} из ${ca.n_banks} банков по лучшему офферу${ca.main_group?` · ${ca.main_group.label}`:""}`}>#{sb.rank}</span>}
           </button>;})}
       </div>
       <div className="search-wrap">
@@ -3432,13 +3523,18 @@ function MarketPage({params}){
                 <b className={"serif"+(sb.percentile!=null&&sb.percentile<40?" bad":"")}
                    title={`перцентиль: доля рынка, которую мы опережаем. Место ${sb.rank} из ${c.n_banks}${sb.tied>1?`, наравне с ${sb.tied}`:""}`}>
                   {sb.percentile!=null?sb.percentile:"—"}<span className="pctl">‰</span></b>
-                <span className="mk-an" title={sb.title||""}>
-                  #{sb.rank} из {c.n_banks} · {mkMetric(sb.rate,c.metric,c.metric_unit)} · {mkGap(sb.gap_median,c.metric,c.metric_unit)} к медиане</span>
+                <span className="mk-an" title={(sb.title||"")+(c.overall?` · по всем видам: #${c.overall.rank} из ${c.overall.n_banks}`:"")}>
+                  {c.main_group&&c.main_group.label!=="массовые"?`${c.main_group.label} · `:""}#{sb.rank} из {c.n_banks} · {mkMetric(sb.rate,c.metric,c.metric_unit)} · {mkGap(sb.gap_median,c.metric,c.metric_unit)} к медиане</span>
                 <MkTrust c={c}/>
-                {(c.comparable||[]).length>0&&
-                  <span className="mk-comp" title="Позиция среди сопоставимых продуктов — честнее общей по категории">
-                    {c.comparable.slice(0,2).map((g,i)=>
-                      <i key={i}>{SUBSEG_RU[g.sub_segment]||g.segment&&SEG_RU[g.segment]||"свой вид"}: #{g.rank}/{g.n_banks}</i>)}
+                {(c.by_term||[]).some(t=>t.rank!=null)&&
+                  <span className="mk-comp" title="Место лучшего вклада Сбера в каждом окне срока: ставка на 3 месяца и на год — разные продукты">
+                    {c.by_term.filter(t=>t.rank!=null).map(t=>
+                      <i key={t.term}>{t.label}: #{t.rank}/{t.n_banks}</i>)}
+                  </span>}
+                {(c.comparable||[]).filter(g=>!g.main).length>0&&
+                  <span className="mk-comp" title="Позиция среди других видов продукта">
+                    {c.comparable.filter(g=>!g.main).slice(0,2).map((g,i)=>
+                      <i key={i}>{g.label||SUBSEG_RU[g.sub_segment]||"прочие"}: #{g.rank}/{g.n_banks}</i>)}
                   </span>}
               </>:c.status==="ok"?<span className="mk-an">Сбера нет в выборке</span>:null}
             </div>
@@ -3449,7 +3545,10 @@ function MarketPage({params}){
     {/* ── СЛОЙ 2 · КАТЕГОРИЯ (журнал доступен и без категории) ───────── */}
     {(cat||view==="changes")&&!err&&<>
       {ac&&ac.status==="ok"&&gsel&&<div className="mk-kpis">
-        {gsel.sber?<div className="surface mk-kpi bf-tip" data-tip={`место среди ${gsel.n_banks} банков этого подвида${gsel.sber.tied>1?`; наравне ${gsel.sber.tied}`:""}`}>
+        {gsel.sber&&degOf(gsel)?<div className="surface mk-kpi bf-tip" data-tip={`на лучшем значении ${gsel.at_best} банков из ${gsel.n_banks} — метрика их не различает, ранг не показываем`}>
+          <b>наравне<small> с {gsel.sber.tied}</small></b>
+          <span>ранг в подвиде скрыт</span></div>
+        :gsel.sber?<div className="surface mk-kpi bf-tip" data-tip={`место среди ${gsel.n_banks} банков этого подвида${gsel.sber.tied>1?`; наравне ${gsel.sber.tied}`:""}`}>
           <b className={gsel.sber.percentile<40?"bad":""}>#{gsel.sber.rank}<small> из {gsel.n_banks}</small></b>
           <span>ранг в подвиде{gsel.small_n?" · малая база":""}</span></div>
         :<div className="surface mk-kpi"><b>—</b><span>Сбера в этом подвиде нет</span></div>}
@@ -3463,9 +3562,12 @@ function MarketPage({params}){
           <span>до лидера подвида</span></div>}
       </div>}
       {ac&&ac.status==="ok"&&!gsel&&<div className="mk-kpis">
-        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков${ac.sber.tied>1?`; ${ac.sber.tied} банков с тем же значением делят это место`:""}${ac.small_n?" · малая база!":""}`}>
+        {ac.sber&&ac.degenerate&&<div className="surface mk-kpi bf-tip" data-tip={`на лучшем значении ${ac.at_best} банков из ${ac.n_banks} — метрика их не различает, ранг не показываем`}>
+          <b>наравне<small> с {ac.sber.tied}</small></b>
+          <span>ранг скрыт · {ac.at_best} из {ac.n_banks} на одном значении</span></div>}
+        {ac.sber&&!ac.degenerate&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков${ac.main_group?` (${ac.main_group.label})`:""}${ac.sber.tied>1?`; ${ac.sber.tied} банков с тем же значением делят это место`:""}${ac.overall?`; по всем видам — #${ac.overall.rank} из ${ac.overall.n_banks}`:""}${ac.small_n?" · малая база!":""}`}>
           <b className={ac.sber.beats_share<0.5?"bad":""}>#{ac.sber.rank}<small> из {ac.n_banks}</small></b>
-          <span>ранг Сбера{ac.sber.tied>1?` · ${ac.sber.tied} наравне`:""}{ac.small_n?" · малая база":""}</span></div>}
+          <span>ранг Сбера{ac.main_group&&ac.main_group.label!=="массовые"?` · ${ac.main_group.label}`:""}{termOn?` · ${(MK_TERMS.find(x=>x[0]===term)||[,""])[1]}`:""}{ac.sber.tied>1?` · ${ac.sber.tied} наравне`:""}{ac.small_n?" · малая база":""}</span></div>}
         {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.sber.title||""}>
           <b>{mkMetric(ac.sber.rate,ac.metric,ac.metric_unit)}</b><span>{ac.sber.title?String(ac.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
         {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`лидер: ${ac.leader.name} · ${mkMetric(ac.leader.rate,ac.metric,ac.metric_unit)} · «${ac.leader.title}»`}>
@@ -3519,13 +3621,13 @@ function MarketPage({params}){
       {ac&&ac.subsidized_excluded>0&&<p className="mk-disc" style={{margin:"0 0 12px"}}>
         Из рыночного сравнения исключено программ с господдержкой: {ac.subsidized_excluded} — их ставку задаёт государство, она одинакова у всех банков. В витрине ниже они присутствуют.</p>}
       {view==="vitrina"&&<div className="surface" style={{overflow:"hidden"}}>
-        {ac&&ac.sber&&!sberIn&&offers&&<button className="mk-sber-pin" onClick={()=>setDrawer(ac.sber.offer_id)}>
+        {sbPin&&!sberIn&&offers&&<button className="mk-sber-pin" onClick={()=>setDrawer(sbPin.offer_id)}>
           <BankAvatar slug="sberbank" name="Сбербанк" isSber={true}/>
           <div style={{textAlign:"left"}}>
-            <div style={{fontWeight:500}}>Сбербанк · {ac.sber.title}</div>
-            <div className="mk-an">лучший оффер Сбера · #{ac.sber.rank} из {ac.n_banks} банков{term?" · фильтр срока может его скрывать":""}</div>
+            <div style={{fontWeight:500}}>Сбербанк · {sbPin.title}</div>
+            <div className="mk-an">лучший оффер Сбера {sbPin.where} · {degOf(gsel||ac)?"наравне с лучшими":`#${sbPin.rank} из ${sbPin.n} банков`}{q?" · поиск может его скрывать":""}</div>
           </div>
-          <div className="serif" style={{fontSize:18,marginLeft:"auto"}}>{mkMetric(ac.sber.rate,ac.metric,ac.metric_unit)}</div>
+          <div className="serif" style={{fontSize:18,marginLeft:"auto"}}>{mkMetric(sbPin.rate,ac.metric,ac.metric_unit)}</div>
         </button>}
         {!offers?<div style={{padding:28}}><Skel h={40}/><div style={{height:10}}/><Skel h={40}/><div style={{height:10}}/><Skel h={40}/></div>:
          offers.length===0?<EmptyState text="Нет предложений под фильтры. Сбросьте срок или поиск."/>:
@@ -3536,14 +3638,16 @@ function MarketPage({params}){
             <th className="right">{mcat.metric_label||"Ставка"}</th>
             {showRateCol&&mcat.metric!=="rate_pct"&&<th className="right">{mcat.rate_label}</th>}
             {mcat.secondary&&<th className="right">Кешбэк</th>}
-            {showBarCol&&<th>К лидеру</th>}
+            {showBarCol&&<th title="разрыв с лучшим значением сопоставимой выборки атласа (без господдержки и сомнительных чисел)">К лидеру</th>}
             <th>Сумма</th><th>Срок</th>
           </tr></thead>
           <tbody>
             {offers.map((r,i)=>{
               const isSber=!!r.is_sber;
-              const rate=parseFloat(r.rate_pct);
-              const rel=bestRate&&rate?(lower?bestRate/rate:rate/bestRate):null;
+              const mv=mkVal(r,mcat.metric);
+              const gapL=mv!=null&&leadV!=null?mv-leadV:null;
+              const worse=gapL==null?null:(lower?gapL:-gapL);
+              const rel=worse==null?null:worse<=0?1:(leadSpan>0?Math.max(0,1-worse/leadSpan):0);
               return <tr key={r.offer_id||i} className={(isSber?"is-sber ":"")+"mk-click"} onClick={()=>setDrawer(r.offer_id)}>
                 <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(i+1).padStart(2,"0")}</td>
                 <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -3559,6 +3663,8 @@ function MarketPage({params}){
                       стоял первой строкой рынка при реальных 10,5%. */}
                   {r.rate_kind==="max"&&(mcat.metric||"rate_pct")==="rate_pct"&&
                     <span className="mk-upto" title="верхняя граница по витрине агрегатора, а не ставка по договору">до </span>}
+                  {mcat.metric==="psk_min"&&mkPskBad(r)&&
+                    <span className="mk-upto" title={`ПСК ${pct(r.psk_min)} ниже ставки ${pct(r.rate_min??r.rate_pct)} — числа источника не согласованы; в ранге стоит ставка`}>≠ </span>}
                   {mkMetric(r[mcat.metric||"rate_pct"],mcat.metric,mcat.metric_unit)}</td>
                 {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
                 {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
@@ -3568,7 +3674,7 @@ function MarketPage({params}){
                       <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--sber)":"var(--ink-3)"}}/>
                     </div>
                     <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
-                      {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2).replace(".",",")} п.п.`}</span>
+                      {Math.abs(gapL)<1e-9?"лидер":mkGap(gapL,mcat.metric,mcat.metric_unit)}</span>
                   </div>:<span className="mono" style={{color:"var(--ink-3)"}}>—</span>}
                 </td>}
                 <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
@@ -4836,7 +4942,8 @@ function ReviewsPage({params}){
                   </span>;
                 })}
               </div>}
-              {anom.summary?<><div className={"rv-radar-brief"+(radarAll?"":" clip")}><BfBrief markdown={anom.summary}/></div>
+              {anom.summary?<><div className={"rv-radar-brief"+(radarAll?"":" clip")}><BfBrief markdown={anom.summary}
+                  novel={anom.novel} onNovel={c=>openGroup({urls:c.urls,n:c.n,label:c.topic,first:c.first,last:c.last})}/></div>
                 <div className="rv-radar-links">
                   <button className="rv-more-l" onClick={()=>setRadarAll(v=>!v)}>{radarAll?"Свернуть разбор":"Весь разбор"}
                     <span className="rv-ico-in" style={radarAll?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>
@@ -4849,7 +4956,7 @@ function ReviewsPage({params}){
   const flagsCard=(rf&&!rf.__err&&rf.groups&&rf.groups.length>0?<div className="rv-card rv-flags">
       <div className="rv-ct"><div>
         <div className="rv-th"><h2 className="rv-ttl">Признаки риска</h2>
-          <RvInfo>Из разметки каждой жалобы: куда клиент грозит или уже обратился, уязвимые клиенты, практики и суммы. Цифры — доля у банка / у остальных банков, цветом — значимое отличие (поправка на число признаков). «Ввели в заблуждение» и суммы пока широкие: сумма бывает и ущербом, и суммой продукта. Клик — жалобы с признаком.</RvInfo></div>
+          <RvInfo>Из разметки каждой жалобы: куда клиент грозит или уже обратился, уязвимые клиенты, практики и суммы. Цифры — доля у банка / у остальных банков, цветом — значимое отличие (поправка на число признаков). Уязвимых сравниваем с тем, что ожидалось бы при продуктах банка: детские и пенсионные карты дают их сами по себе. «Ввели в заблуждение» и суммы пока широкие: сумма бывает и ущербом, и суммой продукта. Клик — жалобы с признаком.</RvInfo></div>
         <div className="rv-cap">доля в {fmtNum(rf.total)} жалобах на {bank} за {rf.days} дн · у остальных банков</div>
       </div>
         <div className="rv-flags-sum mono">обратились <b>{fmtNum(rf.filed)}</b> · грозят <b>{fmtNum(rf.threat)}</b></div>
@@ -4858,11 +4965,13 @@ function ReviewsPage({params}){
         {rf.groups.map(g=><div key={g.key} className="rv-fg">
           <div className="rv-fg-h">{g.label}</div>
           {g.items.map(it=>{
-            const hi=it.sig&&it.index>1, lo=it.sig&&it.index<1;
+            // уязвимые — против ожидания по продуктам (index_adj), остальное — против рынка
+            const ix=it.index_adj!=null?it.index_adj:it.index;
+            const hi=it.sig&&ix>1, lo=it.sig&&ix<1;
             return <div key={it.flag} className={"rv-fi"+(flag===it.flag?" sel":"")+(it.flag==="vuln:any"?" tot":"")}
               role="button" tabIndex={0} aria-pressed={flag===it.flag}
               onClick={()=>pickFlag(it.flag)} onKeyDown={onKey(()=>pickFlag(it.flag))}
-              data-tip={`${it.label}: ${fmtNum(it.n)} жалоб (${pct1(it.pct)})${it.filed!=null?`, из них уже обратились ${fmtNum(it.filed)}`:""} · у остальных банков ${pct1(it.market_pct)}${it.index!=null?` · ${rvX(it.index)}`:""}${it.caveat?` · ⚠ ${it.caveat}`:""}`}>
+              data-tip={`${it.label}: ${fmtNum(it.n)} жалоб (${pct1(it.pct)})${it.filed!=null?`, из них уже обратились ${fmtNum(it.filed)}`:""} · у остальных банков ${pct1(it.market_pct)}${it.index!=null?` · ${rvX(it.index)}`:""}${it.expected_pct!=null?` · с учётом продуктов ожидалось ${pct1(it.expected_pct)}`:""}${it.caveat?` · ⚠ ${it.caveat}`:""}`}>
               <span className="rv-fi-l">{it.label}{it.caveat&&<span className="rv-fi-cav" aria-label="есть оговорка">*</span>}</span>
               <span className="rv-fi-n mono">{fmtNum(it.n)}</span>
               <span className={"rv-fi-m mono"+(hi?" rv-up":lo?" rv-down":"")}>{pct1(it.pct)}<i> / {pct1(it.market_pct)}</i></span>
@@ -4900,6 +5009,7 @@ function ReviewsPage({params}){
   const leadSig=!!(anom&&anom.signals&&anom.signals[0]);
   const chgRest=chg&&!chg.partial&&chg.items?chg.items.filter(it=>it.kind!=="volume"&&!(it.kind==="signal"&&leadSig)):[];
   const vuln=rf&&rf.groups?((rf.groups.find(g=>g.key==="vuln")||{items:[]}).items.find(x=>x.flag==="vuln:any")||null):null;
+  const vulnUp=!!(vuln&&vuln.sig&&(vuln.index_adj!=null?vuln.index_adj>1:vuln.index>1));
   const srcShares=ov&&ov.by_source&&ov.by_source.length?rvSrcShares(ov.by_source):[];
   const pageInfo=<>
     <b>Жалобы</b> — отзывы со всех площадок, которые ИИ отнёс к претензиям; похвала, вопросы, мусор и копии исключены.
@@ -5180,9 +5290,13 @@ function ReviewsPage({params}){
         <div className={"rv-card rv-kpi rv-kpi-click"+(flag==="vuln:any"?" rv-kpi-on":"")} role="button" tabIndex={0}
              data-tip="жалобы уязвимых клиентов: пенсионеры, низкий доход, участники СВО, несовершеннолетние, инвалиды, тяжелобольные"
              onClick={()=>pickFlag("vuln:any")} onKeyDown={onKey(()=>pickFlag("vuln:any"))}>
-          <div className="rv-kl">Уязвимые клиенты {vuln&&vuln.sig&&vuln.index>1&&<span className="rv-tag compliance">выше рынка</span>}</div>
-          <div className={"rv-kv"+(vuln&&vuln.sig&&vuln.index>1?" rv-up":"")}>{busy&&!rf?<Skel w="45%" h={30}/>:vuln?pct1(vuln.pct):"—"}</div>
-          <div className="rv-ks">{vuln?<>у остальных банков {pct1(vuln.market_pct)}<br/>{fmtNum(vuln.n)} {plural(vuln.n,"жалоба","жалобы","жалоб")}</>:""}</div>
+          {/* «выше рынка» — против ожидания по продуктам: детские и пенсионные
+              карты дают уязвимых сами по себе, и сырое сравнение со всем потоком
+              красило KPI составом продуктов (аудит 03.10, ОТЗ-10) */}
+          <div className="rv-kl">Уязвимые клиенты {vulnUp&&<span className="rv-tag compliance"
+            data-tip={`с учётом продуктов ожидалось ${pct1(vuln.expected_pct)} — у Сбера в ${ovN(vuln.index_adj,1)} раза больше`}>выше рынка</span>}</div>
+          <div className={"rv-kv"+(vulnUp?" rv-up":"")}>{busy&&!rf?<Skel w="45%" h={30}/>:vuln?pct1(vuln.pct):"—"}</div>
+          <div className="rv-ks">{vuln?<>{vuln.expected_pct!=null?`при продуктах Сбера ожидалось ${pct1(vuln.expected_pct)}`:`у остальных банков ${pct1(vuln.market_pct)}`}<br/>{fmtNum(vuln.n)} {plural(vuln.n,"жалоба","жалобы","жалоб")}</>:""}</div>
         </div>
       </div>
       {trendCard}
@@ -5930,7 +6044,12 @@ function VerificationBanner({verification}){
       <div className="dr-verify dr-verify-ok">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flex:"none"}}><path d="M20 6L9 17l-5-5"/></svg>
-        Автопроверка достоверности пройдена — утверждений, требующих ручной сверки, не выявлено.
+        {/* Без слова «достоверность»: автоматически сверяются числа с фактами и
+            то, что источник [N] вообще говорит о том же, — но не смысл каждой
+            фразы. Прежняя плашка обещала больше, чем проверялось (аудит 03.10) */}
+        {verification.numeric_checked>0
+          ?`Числа сверены с источниками: ${verification.verified} из ${verification.numeric_checked}; ссылки [N] указывают на источники по теме фразы. Смысл выводов автоматически не проверяется.`
+          :"Ссылки [N] указывают на источники по теме фразы. Чисел для сверки в отчёте нет; смысл выводов автоматически не проверяется."}
       </div>
     </React.Fragment>;
   }
@@ -8805,7 +8924,7 @@ function CaseHistory({cid}){
 }
 
 // Разбор ИИ: подпись «кто и когда», прошлые версии не пропадают.
-function CaseAnalysisTab({cid,cur,an,anBusy,anErr,runAn,goAI,stale,nRev,nItems,onCite}){
+function CaseAnalysisTab({cid,cur,an,anBusy,anErr,runAn,goAI,stale,nRev,nItems,onCite,anView}){
   const[ver,setVer]=useState(null);           // открытая прошлая версия
   const vers=cur.analysis_versions||[];
   useEffect(()=>{ csReq("POST","/api/bell/read",{link:`case:${cid}:analysis`}).catch(()=>{}); },[cid]);
@@ -8829,7 +8948,9 @@ function CaseAnalysisTab({cid,cur,an,anBusy,anErr,runAn,goAI,stale,nRev,nItems,o
     {/* [N] — материал дела: раньше ссылка вела на #src-N, приложение перезагружалось
         и закрывало дело (аудит 03.10, ДЕЛ-02) */}
     {(ver?ver.body:an)&&<div className="rv-explain" onClick={e=>{ const a=e.target.closest&&e.target.closest("a.cite-anchor");
-      if(!a) return; e.preventDefault(); onCite&&onCite(+a.dataset.cite); }}>{renderMD(ver?ver.body:an)}</div>}
+      if(!a) return; e.preventDefault(); onCite&&onCite(+a.dataset.cite); }}>{renderMD(ver?ver.body:(anView||an))}</div>}
+    {an&&!ver&&stale&&cur.analysis_item_ids&&<div className="t-cap" style={{marginTop:6}}>
+      Состав дела менялся после разбора: номера [N] приведены к текущему списку материалов.</div>}
     {an&&!ver&&top&&<div className="cs-an-sig">Разбор: {top.name?puShort(top.name):"автор не записан"} · {fmtDateMsk(top.created_at)}
       {top.n_items?` · по ${top.n_items} ${plural(top.n_items,"материалу","материалам","материалам")}`:""}</div>}
     {vers.length>1&&<div className="cs-an-vers"><div className="t-cap" style={{marginBottom:4}}>Прошлые версии</div>
@@ -9216,7 +9337,18 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,o
   if(open&&cur){
     const items=(cur.items||[]).filter(i=>!(undo&&undo.cid===open&&undo.item.item_id===i.item_id)),
       nRev=items.filter(i=>i.kind==="review").length;
-    const stale=an&&cur.analysis_items&&cur.analysis_items!==items.length;
+    // Свежесть разбора — по СОСТАВУ (сервер сравнивает список материалов), а не
+    // по числу: «убрали один, добавили другой» тоже новый состав (ДЕЛ-04).
+    // Материал, ждущий «Отменить», уже считается убранным.
+    const stale=an&&(cur.analysis_stale!=null
+      ?(cur.analysis_stale||items.length!==(cur.items||[]).length)
+      :(cur.analysis_items&&cur.analysis_items!==items.length));
+    // [N] разбора — номер на момент разбора; переводим в текущие номера списка
+    const anIds=cur.analysis_item_ids||null;
+    const anView=an&&anIds?an.replace(/\[(\d{1,3})\]/g,(m,k)=>{
+      const iid=anIds[+k-1]; if(iid==null)return m;
+      const p=items.findIndex(i=>i.item_id===iid);
+      return p>=0?`[${p+1}]`:"[материал удалён]";}):an;
     if(access) return <RvModal side="right" title="Доступ к делу" sub={cur.title} onClose={()=>setAccess(false)}>
       <CaseAccess cur={cur} onBack={()=>setAccess(false)} onChanged={()=>{reload();load();}}
         onTransferred={()=>{setAccess(false);reload();load();}}/></RvModal>;
@@ -9299,7 +9431,7 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,o
         onSeen={()=>{ setCur(c=>c&&({...c,talk_unread:0})); setList(l=>l&&l.map(c=>c.case_id===open?{...c,talk_unread:0}:c)); }}/>}
       {tab==="analysis"&&<CaseAnalysisTab cid={open} cur={cur} an={an} anBusy={anBusy} anErr={anErr} runAn={runAn}
         onCite={n=>{ const it=items[n-1]; if(it) goItem(it.item_id); }}
-        goAI={goAI} stale={stale} nRev={nRev} nItems={items.length}/>}
+        goAI={goAI} stale={stale} nRev={nRev} nItems={items.length} anView={anView}/>}
       {tab==="history"&&<CaseHistory key={open+":"+(cur.updated_at||"")} cid={open}/>}
     </RvModal>{reader}</>;
   }

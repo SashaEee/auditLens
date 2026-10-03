@@ -164,6 +164,21 @@ def _parse_rate_display(display: str) -> Decimal | None:
     return _dec(m.group(1).replace(",", "."))
 
 
+def _rate_kind_display(display: str | None) -> str:
+    """Вид ставки по тексту карточки: «до 19%» — верхняя граница, не ставка.
+
+    Тот же разбор, что в sravni_aggregator._extract_rate: здесь его не было, и
+    всё приходило как 'effective' — верхняя граница вставала в ранг вкладов
+    наравне с настоящими ставками (аудит 03.10).
+    """
+    if not display:
+        return "effective"
+    m = re.search(r"(\d{1,2}[.,]\d{1,2}|\d{1,2})\s*%", display)
+    if not m:
+        return "effective"
+    return "max" if re.search(r"\bдо\s*$", display[:m.start()], re.I) else "effective"
+
+
 # Рекламные метки в партнёрской ссылке: они меняются от выдачи к выдаче,
 # поэтому один и тот же продукт выглядел бы каждый раз новым источником, а
 # аудитору в отчёте показывалась бы простыня из utm вместо адреса.
@@ -529,7 +544,7 @@ class SravniApiAdapter(SourceAdapter):
                 url=(_clean_link(prod.get("linkToProduct"))
                      or f"https://www.sravni.ru/bank/{bank_slug}/vklady/"),
                 rate_pct=rate,
-                rate_kind="effective",
+                rate_kind=_rate_kind_display(rate_str),
                 currency="RUB",
                 amount_min=amount_min_v,
                 amount_max=amount_max_v,

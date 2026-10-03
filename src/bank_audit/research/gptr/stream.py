@@ -548,6 +548,8 @@ async def stream_deep_research_gptr(question: str,
     verification.update({
         "фактов": len(registry.facts),
         "абзацев_без_якоря": al_cit.unanchored_claims(report_plain),
+        # якорь, чей источник не содержит ни слова фразы, — к ручной проверке
+        "якорь_не_тот": al_cit.anchor_mismatches(report_plain, cited_src),
         **cit_stats,
     })
     gap_lines = al_gaps.collect(plan, registry=registry, attributes=attributes,
@@ -570,8 +572,11 @@ async def stream_deep_research_gptr(question: str,
                 "verified": verification["verified"],
                 # Интерфейс и PDF ждут записи {claim, issue}; голые числа давали
                 # «4 утверждения требуют проверки» с пустыми «» (26.09).
-                "unverified": [_unverified_item(x) for x in verification["unverified"]],
-                "unverified_count": len(verification["unverified"]),
+                "unverified": ([_unverified_item(x) for x in verification["unverified"]]
+                               + verification["якорь_не_тот"]),
+                "unverified_count": (len(verification["unverified"])
+                                     + len(verification["якорь_не_тот"])),
+                "anchor_mismatch": len(verification["якорь_не_тот"]),
                 "facts_total": len(registry.facts),
                 "citations": cit_stats.get("цитирований", 0),
                 "critic": verdict.to_ui(),

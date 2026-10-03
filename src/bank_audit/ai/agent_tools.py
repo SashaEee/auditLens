@@ -313,7 +313,9 @@ def tool_complaint_search(query: str, bank: str = SBER, product: Product | None 
 _CELL_KEYS = ("category", "label", "rank", "n_banks", "percentile", "tied", "metric_label",
               "metric_unit", "lower_is_better", "title", "value", "gap_median", "gap_leader",
               "gap_unit", "degenerate", "small_n", "teaser", "no_metric", "implausible_excluded",
-              "subsidized_excluded", "comparable", "attainability")
+              "subsidized_excluded", "comparable", "attainability",
+              # голова — главная группа; слияние видов и окна срока справкой
+              "group_label", "overall", "by_term", "near_guard", "psk_mismatch")
 
 
 def tool_market_position(category: Category | None = None) -> str:

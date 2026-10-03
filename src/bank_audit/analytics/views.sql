@@ -22,7 +22,10 @@ SELECT category, bank_slug, bank_name, is_sber, offer_id, title, rate_pct,
   FROM v_offer_current
  WHERE rate_pct IS NOT NULL;
 
--- Сбер vs рынок: для каждой категории - ставка Сбера и медианa/макс рынка
+-- Сбер vs рынок: для каждой категории - ставка Сбера и медианa/макс рынка.
+-- УСТАРЕЛА (аудит 03.10): максимум Сбера против медианы ВСЕХ офферов, без
+-- методики вкладки «Рынок». Приложение её больше не читает — позиция берётся
+-- из market_atlas/market_verdict; вью оставлена для внешних SQL-клиентов.
 CREATE OR REPLACE VIEW v_sber_vs_market AS
 WITH market AS (
   SELECT category,

@@ -253,14 +253,7 @@ async def tariff_moves(day: date) -> dict:
         """)
         after_pause = bool(gap_days is not None and float(gap_days) > 3.0)
 
-        sber_gap = _q("SELECT * FROM v_sber_vs_market ORDER BY category")
-        for r in sber_gap:
-            for k, v in list(r.items()):
-                if v is not None and k != "category":
-                    try:
-                        r[k] = float(v)
-                    except (TypeError, ValueError):
-                        pass
+        sber_gap = market_position_rows()
 
         return {
             "top_changes": top,
@@ -334,15 +327,87 @@ async def tariff_moves(day: date) -> dict:
         log.info("key_rate fetch failed: %s", e)
         out["key_rate"] = None
 
-    # спред «макс. вклад Сбера − ключевая» (для пульса)
+    # Спред вклада Сбера к ключевой — на сопоставимом сроке, а не по максимуму.
+    # Максимумом был «Выгодный старт +» 19% на 3 месяца, и выпуск писал
+    # «спред максимального вклада Сбера к ключевой +5,0 пп» (аудит 03.10).
     try:
         kr = (out.get("key_rate") or {}).get("current")
-        dep = next((r for r in out["sber_gap"] if r.get("category") == "deposit"), None)
-        if kr is not None and dep and dep.get("sber_max") is not None:
-            out["dep_spread_pp"] = round(float(dep["sber_max"]) - float(kr), 2)
+        out.update(deposit_spread(out["sber_gap"], kr))
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+# окна срока вклада для спреда к ключевой: сначала «до года» — так принято
+# сравнивать вклад с ключевой, затем соседние окна
+_SPREAD_TERMS = ("7-12", "13+", "4-6")
+
+
+def deposit_spread(rows: list[dict], key_rate) -> dict:
+    """Спред вклада Сбера и медианы рынка к ключевой в одном окне срока."""
+    if key_rate is None:
+        return {}
+    dep = next((r for r in rows if r.get("category") == "deposit"), None)
+    terms = {t.get("term"): t for t in ((dep or {}).get("by_term") or [])}
+    t = next((terms[k] for k in _SPREAD_TERMS
+              if k in terms and terms[k].get("value") is not None), None)
+    if not t:
+        return {}
+    kr = float(key_rate)
+    return {"dep_spread_pp": round(float(t["value"]) - kr, 2),
+            "dep_spread_term": t.get("label"),
+            "dep_spread_market_pp": (round(float(t["median"]) - kr, 2)
+                                     if t.get("median") is not None else None)}
+
+
+def _quant(vals: list[float], p: float):
+    if not vals:
+        return None
+    i = (len(vals) - 1) * p
+    lo, hi = int(i), min(int(i) + 1, len(vals) - 1)
+    return round(vals[lo] + (vals[hi] - vals[lo]) * (i - lo), 2)
+
+
+def market_position_rows() -> list[dict]:
+    """«Сбер против рынка» по методике вкладки «Рынок».
+
+    Раньше выпуск, «Для вас» и ИИ читали v_sber_vs_market: максимум Сбера
+    минус медиана ВСЕХ офферов, без «лучший оффер банка», без сторожа и
+    господдержки, без направления «ниже = лучше». По кредитам выходило
+    «+8,1 п.п.» при том, что вкладка ставила Сбера в лучшую половину, а шкала
+    кредиток тянулась до 138,7% (аудит 03.10). Здесь — атлас вкладки: главная
+    группа категории, сопоставимая метрика, шкала по 10–90-му перцентилю.
+    Старые ключи (sber_max, market_min…) сохранены для совместимости.
+    """
+    try:
+        from ..web.app import market_atlas
+        atlas = market_atlas()
+    except Exception as e:  # noqa: BLE001 — выпуск не должен падать из-за витрины
+        log.info("market atlas for digest failed: %s", e)
+        return []
+    rows = []
+    for c in atlas.get("categories") or []:
+        sb = c.get("sber")
+        if c.get("status") != "ok" or not sb:
+            continue
+        vals = sorted(float(p["rate"]) for p in c.get("points") or [])
+        p10, p90 = _quant(vals, 0.1), _quant(vals, 0.9)
+        rows.append({
+            "category": c["category"], "label": c.get("label"),
+            "metric": c.get("metric"), "metric_label": c.get("metric_label"),
+            "metric_unit": c.get("metric_unit"), "lower_is_better": c.get("lower_is_better"),
+            "group_label": (c.get("main_group") or {}).get("label"),
+            "sber_value": sb.get("rate"), "sber_title": sb.get("title"),
+            "rank": sb.get("rank"), "n_banks": c.get("n_banks"),
+            "percentile": sb.get("percentile"), "degenerate": bool(c.get("degenerate")),
+            "market_median": c.get("median"), "market_p10": p10, "market_p90": p90,
+            "gap_median": sb.get("gap_median"), "by_term": c.get("by_term") or [],
+            # совместимость: прежние потребители читают эти имена
+            "sber_max": sb.get("rate"), "sber_min": sb.get("rate"),
+            "market_min": p10, "market_max": p90,
+            "sber_vs_median_pp": sb.get("gap_median"),
+        })
+    return rows
 
 
 # ── quality_ops ───────────────────────────────────────────────────────────────

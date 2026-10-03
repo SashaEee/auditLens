@@ -994,8 +994,12 @@ def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | 
         B, C = int(own[1]), int(mkt[1])
         vals = {f: (int(own[4 + j]), int(mkt[4 + j])) for j, f in enumerate(codes)}
         filed = {k: int(own[4 + len(codes) + j]) for j, k in enumerate(_ESC_TO)}
+        adj = _vuln_by_product(bc, product, days)
         pv = {}
         for f, (a, c) in vals.items():
+            if f in adj and a >= 5:
+                pv[f] = adj[f]["p"]        # уязвимые — против ожидания по продуктам
+                continue
             r = _ratio_ci(a, B, c, C)
             if r and a >= 5:
                 pv[f] = r["p"]
@@ -1010,6 +1014,15 @@ def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | 
                       "market_pct": round(100 * c / C, 1),
                       "index": round(idx, 1) if idx else None,
                       "sig": qv.get(f, 1.0) < 0.05 and a >= 10}
+                if f in adj:
+                    # Доля уязвимых зависит от продуктов: детские и пенсионные
+                    # карты дают их сами по себе. Сравниваем с тем, сколько
+                    # было бы при рыночной доле ВНУТРИ каждого продукта
+                    # (косвенная стандартизация), а не со всем потоком
+                    e = adj[f]["expected"]
+                    it["expected_pct"] = round(100 * e / B, 1) if B else None
+                    it["index_adj"] = round(a / e, 2) if e else None
+                    it["sig"] = it["sig"] and bool(it["index_adj"]) and a >= 10
                 if f.startswith("to:"):
                     it["filed"] = filed[f[3:]]
                 if caveat:
@@ -1019,6 +1032,47 @@ def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | 
         return {"bank": bc, "product": product, "days": days, "total": B,
                 "filed": int(own[2]), "threat": int(own[3]), "groups": groups}
     return _cached(f"rf:{bc}:{product}:{days}", _compute)
+
+
+def _vuln_by_product(bc: str, product: str | None, days: int) -> dict:
+    """Уязвимые клиенты против ожидания по продуктовому составу.
+
+    expected = Σ по продуктам (жалоб банка на продукт × доля признака у
+    остальных банков в этом продукте). «Все уязвимые 9,4% против 5,9%» у Сбера
+    могло быть составом (детские карты, пенсионные продукты), а не обращением с
+    уязвимыми (аудит 03.10, ОТЗ-10). p — двусторонний тест Пуассона."""
+    vcodes = [f for _g, _l, items in _FLAG_GROUPS if _g == "vuln" for f, _n, _c in items]
+    cols = ",\n".join(f"count(*) FILTER (WHERE {_flag_sql(f)})" for f in vcodes)
+    with db.session() as s:
+        rows = s.execute(text(f"""
+            SELECT (i.bank = :bank) AS own, coalesce(i.product, '_') AS p, count(*), {cols}
+            FROM review_index i
+            JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+            WHERE {_CMP} AND i.bank IS NOT NULL
+              AND (CAST(:product AS text) IS NULL OR i.product = :product)
+              AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+            GROUP BY 1, 2"""), {"bank": bc, "product": product, "d": days,
+                                "sv": _ann_schema()}).all()
+    own = {r[1]: r for r in rows if r[0]}
+    mkt = {r[1]: r for r in rows if not r[0]}
+    m_tot = sum(int(r[2]) for r in mkt.values())
+    out = {}
+    for j, f in enumerate(vcodes):
+        m_all = sum(int(r[3 + j]) for r in mkt.values())
+        exp, obs = 0.0, 0
+        for p_, r in own.items():
+            n_p = int(r[2])
+            obs += int(r[3 + j])
+            mr = mkt.get(p_)
+            rate = (int(mr[3 + j]) / int(mr[2])) if mr is not None and int(mr[2]) >= 30 \
+                else (m_all / m_tot if m_tot else 0.0)
+            exp += n_p * rate
+        if exp <= 0:
+            continue
+        pv = (poisson_sf(obs, exp) if obs >= exp
+              else 1.0 - poisson_sf(obs + 1, exp))
+        out[f] = {"expected": exp, "observed": obs, "p": min(1.0, 2 * pv)}
+    return out
 
 
 def _int_sp(n: int) -> str:
@@ -1912,6 +1966,25 @@ def _raz(k: float) -> str:
 _FLAT = 1.15   # рынок по теме «ровный»: рост к своей норме меньше ×1,15
 
 
+def poisson_sf(k: int, lam: float) -> float:
+    """P(X ≥ k) для пуассоновского X со средним lam — вероятность увидеть
+    столько жалоб или больше, если тема живёт в своей норме."""
+    if k <= 0:
+        return 1.0
+    if not lam or lam <= 0:
+        return 0.0
+    cdf = sum(math.exp(i * math.log(lam) - lam - math.lgamma(i + 1)) for i in range(int(k)))
+    return max(0.0, min(1.0, 1.0 - cdf))
+
+
+# Порог «рост подтверждён» для расхождений «пульса»: поправка Бонферрони на
+# число проверенных проблем. Без неё на 40 проблемах одна-две «вне нормы»
+# выпадают случайно каждую неделю — и плитка «Проверить сегодня» горела
+# красным по теме, которую тест сигналов отбросил (аудит 03.10: 9 жалоб при
+# норме 4,0, P ≈ 0,02 на 39 проблем).
+PULSE_ALPHA = 0.05
+
+
 def market_flat(market_ratio) -> bool:
     return market_ratio is None or float(market_ratio) < _FLAT
 
@@ -1957,12 +2030,97 @@ def signal_note(s: dict) -> str | None:
 _ONLY_RX = re.compile(r"только\s+у\s+(Сбера|Сбербанка|банка|нас)(?![а-яё])", re.I)
 
 
+# «рынок не повторяет», «в отличие от рынка», «рынок не растёт» — утверждение,
+# что тема растёт только у банка
+_NOT_MARKET_RX = re.compile(
+    r"(,\s*)?(котор\w+|что)\s+рынок\s+не\s+(повтор\w+|видит|показыва\w+|разделя\w+)"
+    r"|(,\s*)?в\s+отличие\s+от\s+рынка"
+    r"|(,\s*)?(а\s+|при\s+этом\s+)?рынок\s+(же\s+)?(не\s+раст[её]т|стоит\s+на\s+месте|ровный)",
+    re.I)
+# ускорение: модель пишет «нарастают» и «*Ускоряется.*» сама, без признака в данных
+_ACCEL_WORDS = {"ускоряется": "сохраняется", "ускоряются": "сохраняются",
+                "нарастает": "сохраняется", "нарастают": "сохраняются",
+                "усиливается": "сохраняется", "усиливаются": "сохраняются"}
+_ACCEL_RX = re.compile(r"(?<![а-яё])(" + "|".join(_ACCEL_WORDS) + r")(?![а-яё])", re.I)
+_ACCEL_MARK_RX = re.compile(r"\s*\*?\s*(ускоряется|нарастает|усиливается)\s*\.?\s*\*?\s*(?=$|[А-ЯЁA-Z])",
+                            re.I)
+_SENT_RX = re.compile(r"(?<=[.!?…])\s+(?=[*«\"(]?[А-ЯЁA-Z])")
+
+
+def _sig_stems(s: dict) -> set[str]:
+    """Как тема сигнала упоминается в тексте: основы слов короткого названия и
+    первого слова полного («Чарджбэк» → «чардж», «Аресты и списания…» → «арест»)."""
+    words = re.findall(r"[а-яёa-z]{4,}", f"{s.get('short') or ''} "
+                       f"{(s.get('label') or '').split(' ')[0]}".lower())
+    return {w[:5] for w in words}
+
+
+def _mentioned(chunk: str, signals: list[dict]) -> list[dict]:
+    low = chunk.lower()
+    out = []
+    for s in signals:
+        stems = _sig_stems(s)
+        if stems and any(re.search(r"(?<![а-яёa-z])" + re.escape(st), low) for st in stems):
+            out.append(s)
+    return out
+
+
+def _accelerates(s: dict):
+    """True/False — растёт ли тема быстрее прошлой недели; None — данных нет."""
+    if s.get("accel"):
+        return True
+    if s.get("prev_week") is not None and s.get("week") is not None:
+        return float(s["week"]) > float(s["prev_week"])
+    return False if "accel" in s else None
+
+
+def _fix_chunk(chunk: str, topics: list[dict]) -> str:
+    if not topics:
+        return chunk
+    acc = [_accelerates(t) for t in topics]
+    if _ACCEL_RX.search(chunk) and acc and all(a is False for a in acc):
+        chunk = _ACCEL_MARK_RX.sub(" ", chunk)
+        chunk = _ACCEL_RX.sub(lambda m: _match_case(m.group(1),
+                                                    _ACCEL_WORDS[m.group(1).lower()]), chunk)
+    loud = [t for t in topics
+            if t.get("market_ratio") is not None and not market_flat(t.get("market_ratio"))]
+    if loud and _NOT_MARKET_RX.search(chunk):
+        chunk = _NOT_MARKET_RX.sub("", chunk, count=1)
+        notes = "; ".join(f"«{(t.get('short') or t.get('label') or '').strip()}» растёт и у "
+                          f"рынка (×{_ru_num(t['market_ratio'])})" for t in loud[:2])
+        chunk = re.sub(r"\s*([.!?…]*)\s*$", lambda m: f" ({notes}){m.group(1)}", chunk, count=1)
+    if loud:
+        chunk = _ONLY_RX.sub(lambda m: f"у {m.group(1)} сильнее, чем по рынку", chunk)
+    return re.sub(r"[ \t]{2,}", " ", chunk).replace(" .", ".").replace(" ,", ",")
+
+
+def _match_case(src: str, repl: str) -> str:
+    return repl[:1].upper() + repl[1:] if src[:1].isupper() else repl
+
+
 def fix_market_claims(text: str | None, signals: list[dict] | None) -> str | None:
-    """Страховка на выходе модели: «только у Сбера/банка», когда ни один сигнал
-    не ровный по рынку, заменяем на «у … сильнее, чем по рынку». Если хоть
-    один сигнал ровный, фраза может быть правдой — не трогаем."""
+    """Страховка на выходе модели — сверка слов с числами того же сигнала.
+
+    Раньше правилась только фраза «только у …», и только если ни один сигнал
+    не был ровным по рынку: в «Для вас» ровные есть всегда, и страховка там не
+    работала, а «рынок не повторяет» под неё не попадало вовсе (аудит 03.10).
+    Теперь по каждой теме, упомянутой в пункте или предложении:
+    • «ускоряется/нарастают» — только при признаке ускорения или росте к
+      прошлой неделе (было «*Ускоряется.*» при 14 → 9);
+    • «рынок не повторяет/в отличие от рынка/только у банка» — только если
+      по этой теме рынок ровный; иначе оговорка снимается и дописывается
+      рыночный коэффициент.
+    Текст без упоминания тем — прежнее глобальное правило для «только у …»."""
     if not text or not signals:
         return text
+    out_lines = []
+    for ln in text.split("\n"):
+        if ln.strip().startswith(("- ", "* ")):
+            out_lines.append(_fix_chunk(ln, _mentioned(ln, signals)))
+            continue
+        parts = _SENT_RX.split(ln)
+        out_lines.append(" ".join(_fix_chunk(p, _mentioned(p, signals)) for p in parts))
+    text = "\n".join(out_lines)
     if any(s.get("ratio") and market_flat(s.get("market_ratio")) for s in signals):
         return text
     return _ONLY_RX.sub(lambda m: f"у {m.group(1)} сильнее, чем по рынку", text)
@@ -1997,10 +2155,14 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
             mbw = mb / BASE_W
             mratio = (mw0 / mbw) if mbw >= 0.5 else None
         gap = (ratio / mratio) if mratio and mratio > 0 else None
+        p = poisson_sf(w0, bw)
         diverge.append({
             "key": k, "label": t["label"], "short": t["short"],
             "risk": t["risk"], "week": w0, "baseline_week": round(bw, 1),
             "base_count": b, "base_weeks": int(BASE_W),
+            # рост против своей нормы подтверждён только с поправкой на число
+            # проверенных проблем — иначе это ожидаемое случайное отклонение
+            "p": round(p, 5), "sig": p < PULSE_ALPHA / max(len(theme_defs), 1),
             "ratio": round(ratio, 2),
             "market_ratio": round(mratio, 2) if mratio else None,
             "gap": round(gap, 2) if gap else None,
@@ -2026,10 +2188,15 @@ def unclassified_week(bank: str, product: str | None = None) -> dict | None:
     _t, c_ = lab
     w_unc, w_tot, b_unc = c_["_unc_w0"], c_["_lab_w0"], c_["_unc_b"]
     base_week = round(b_unc / 7.0, 1)
+    p = poisson_sf(int(w_unc), b_unc / 7.0) if b_unc else None
     return {"week": w_unc, "week_total": w_tot,
             "pct": round(100 * w_unc / w_tot) if w_tot else 0,
             "baseline_week": base_week,
             "ratio": round(w_unc / base_week, 2) if base_week >= 1 else None,
+            # «возможен новый инцидент» — только если рост не случаен:
+            # 13 при норме 9,9 (P ≈ 0,2) раньше подсвечивалось как тревога
+            "p": round(p, 5) if p is not None else None,
+            "sig": bool(p is not None and p < PULSE_ALPHA),
             "src": "annotation"}
 
 
@@ -2512,14 +2679,25 @@ def signal_evidence(bank: str, key: str, product: str | None = None, days: int =
 
 @_safe([])
 def novel_clusters(bank: str, product: str | None = None, days: int = 7,
-                   min_n: int = 3, sim: float = 0.78) -> list[dict]:
+                   min_n: int = 5, sim: float = 0.78, history_weeks: int = 8) -> list[dict]:
     """Новые сюжеты недели, сгруппированные кодом: формулировки проблем вне
     кодификатора, похожие по смыслу (векторы bge-m3), от min_n жалоб.
 
     Раньше «новую тему» решала модель по списку из 20 жалоб и склеивала
     разнородное: три разных случая («скрыли альтернативу», «не дали бонус»,
     «пенсионер») назвала одной темой. Теперь группы считает код, модель их
-    только называет."""
+    только называет.
+
+    «Новое» — только то, чего не было: сюжет сверяется с изложениями жалоб за
+    history_weeks недель до окна. 03.10 «Новое: банк занижает суммы по
+    исполнительным листам — 5 жалоб» шло пунктом, хотя та же история жила в
+    группе из 8 жалоб с июля; порог был 3 жалобы (аудит 03.10, ОТЗ-03)."""
+    return _cached(f"novel:{bank}:{product}:{days}:{min_n}:{history_weeks}",
+                   lambda: _novel_clusters(bank, product, days, min_n, sim, history_weeks),
+                   ttl=900)
+
+
+def _novel_clusters(bank, product, days, min_n, sim, history_weeks) -> list[dict]:
     rows = novel_week(bank, product=product, days=days, limit=120)
     if len(rows) < min_n:
         return []
@@ -2541,8 +2719,66 @@ def novel_clusters(bank: str, product: str | None = None, days: int = 7,
         if len(members) < min_n:
             continue
         taken.update(members)
-        out.append({"n": len(members), "topic": rows[i]["new_topic"],
-                    "items": [rows[j] for j in members]})
+        its = [rows[j] for j in members]
+        dates = sorted(x["date"] for x in its if x.get("date"))
+        out.append({"n": len(members), "topic": rows[i]["new_topic"], "items": its,
+                    "urls": [x["url"] for x in its],
+                    "first": dates[0] if dates else None, "last": dates[-1] if dates else None})
+    if not out:
+        return out
+    seen = _seen_before(resolve_bank(bank), out, days, history_weeks)
+    if seen is None:
+        # проверить историю нечем — «новым» сюжет не объявляем
+        return []
+    return [c for c, old in zip(out, seen) if not old]
+
+
+def _seen_before(bc: str | None, clusters: list[dict], days: int,
+                 weeks: int, sim: float = 0.84, min_hits: int = 2) -> list[bool] | None:
+    """Был ли сюжет раньше: изложения жалоб банка за weeks недель до окна,
+    похожие на центр группы (порог 0,84 — «та же история», см. reviews_work)."""
+    if not bc:
+        return None
+    try:
+        import numpy as np
+        from . import embedder
+        from .reviews_work import _store_vecs, _vecs_for
+        urls = [u for c in clusters for u in c["urls"]]
+        have = _vecs_for(urls)
+        miss = [(x["url"], x.get("summary") or x.get("new_topic") or "")
+                for c in clusters for x in c["items"] if x["url"] not in have]
+        if miss:
+            vv = embedder.embed_batch([t[:400] for _u, t in miss])
+            fresh = {u: v for (u, _t), v in zip(miss, vv)}
+            _store_vecs(fresh)
+            have.update(fresh)
+        with db.session() as s:
+            hist = s.execute(text(f"""
+                SELECT v.vec FROM review_summary_vec v
+                JOIN review_index i ON i.url = v.url
+                WHERE i.bank = :b AND {_CMP}
+                  AND i.dt >= {_WEEK_END} - make_interval(days => :d + :hd)
+                  AND i.dt < {_WEEK_END} - make_interval(days => :d)
+                ORDER BY i.dt DESC LIMIT 5000"""),
+                {"b": bc, "d": days, "hd": weeks * 7}).all()
+    except Exception as e:  # noqa: BLE001
+        log.info("novel_clusters: история не проверена (%s)", e)
+        return None
+    if not hist:
+        return [False] * len(clusters)
+    H = np.asarray([h[0] for h in hist], dtype=np.float32)
+    H /= np.linalg.norm(H, axis=1, keepdims=True) + 1e-9
+    out = []
+    for c in clusters:
+        mv = [have[u] for u in c["urls"] if u in have]
+        if not mv:
+            out.append(True)               # не с чем сравнить — не «новое»
+            continue
+        M = np.asarray(mv, dtype=np.float32)
+        M /= np.linalg.norm(M, axis=1, keepdims=True) + 1e-9
+        cen = M.mean(axis=0)
+        cen /= np.linalg.norm(cen) + 1e-9
+        out.append(int(((H @ cen) >= sim).sum()) >= min_hits)
     return out
 
 

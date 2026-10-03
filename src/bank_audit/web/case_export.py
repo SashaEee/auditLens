@@ -219,6 +219,25 @@ def _dt_msk(v) -> str:
         return str(v)[:16]
 
 
+def _analysis_text(case: dict) -> str:
+    """Разбор с номерами [N] ТЕКУЩЕГО списка материалов: в разборе номер — порядок
+    приобщения на момент разбора, после удаления материала он указывал на чужой."""
+    from .userdata import remap_analysis
+    return remap_analysis(case) or ""
+
+
+def _analysis_note(case: dict) -> str:
+    """Дата и состав разбора; если материалы менялись — прямо об этом."""
+    when = _dt_msk(case.get("analysis_at"))[:10]
+    n = case.get("analysis_items")
+    base = (f"Разбор от {when}" if when else "Разбор") + (
+        f" по {n} {_pl(n, 'материалу', 'материалам', 'материалам')}" if n else "")
+    if case.get("analysis_stale"):
+        return (base + ". После этого состав дела менялся: номера [N] приведены к "
+                "текущему списку, выводы могут не учитывать новые материалы.\n\n")
+    return base + ".\n\n"
+
+
 def _short(name: str | None) -> str:
     p = (name or "").split()
     return f"{p[0]} {p[1][0]}." if len(p) >= 2 else (name or "")
@@ -359,7 +378,8 @@ def to_xlsx(case: dict, talk: list[dict] | None = None, history: list[dict] | No
     row += 19
     if case.get("analysis"):
         ov.row_breaks.append(Break(id=row - 1))
-        row = text_block(row, "Разбор ИИ", "Разбор материалов", case["analysis"])
+        row = text_block(row, "Разбор ИИ", "Разбор материалов",
+                         _analysis_note(case) + _analysis_text(case))
 
     # ── «Материалы» ──────────────────────────────────────────────────────
     ws = wb.create_sheet("Материалы", 1)
@@ -599,7 +619,10 @@ def to_docx(case: dict, talk: list[dict] | None = None, history: list[dict] | No
         WD.eyebrow(doc, "Разбор ИИ")
         h = doc.add_paragraph(style="Heading 1")
         WD.run(h, "Разбор материалов", font=SERIF)
-        for line in case["analysis"].splitlines():
+        note = _analysis_note(case).strip()
+        if note:
+            _md_runs(doc.add_paragraph(), note, size=10, color="ink")
+        for line in _analysis_text(case).splitlines():
             s_ = line.strip()
             if not s_:
                 continue

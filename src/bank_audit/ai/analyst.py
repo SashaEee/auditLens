@@ -116,7 +116,10 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_sber_vs_market",
-            "description": "Сравнение предложений Сбербанка с рынком по всем категориям. Показывает разницу в ставках (в п.п.).",
+            "description": ("Позиция Сбербанка на рынке по всем категориям — те же числа, что во "
+                            "вкладке «Рынок»: место среди лучших офферов банков в сопоставимой "
+                            "группе, перцентиль, разрыв с медианой по метрике категории (ПСК у "
+                            "кредитов, грейс у кредиток, плата у карт), оговорки о выборке."),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -320,8 +323,6 @@ TOOLS = [
                 "rate_pct, rate_kind, currency, amount_min, amount_max, term_months_min, "
                 "term_months_max, fee_open, fee_service, early_withdraw, capitalization, "
                 "replenishable, conditions, valid_from, url), "
-                "v_sber_vs_market(category, sber_max, sber_min, market_median, market_max, "
-                "market_min, sber_vs_median_pp), "
                 "v_offer_top_by_rate(bank_name, bank_slug, is_sber, category, title, rate_pct, "
                 "term_months_min, amount_min, rk), "
                 "v_review_topics(bank_slug, bank_name, topic, n, avg_rating), "
@@ -354,7 +355,9 @@ _ALLOWED_RELATIONS = {
     # застройщики. Из-за этого ИИ и вкладка «Рынок» отвечали РАЗНЫМИ числами на
     # один вопрос: по ипотеке витрина «Сбер 17,7 проц.», ИИ «Сбер 2,0-20,0».
     "v_market_rub_offer", "offer_enrichment",
-    "v_offer_current", "v_sber_vs_market", "v_offer_top_by_rate",
+    # v_sber_vs_market из белого списка убрана (аудит 03.10): максимум Сбера
+    # против медианы ВСЕХ офферов давал «+8 п.п. по кредитам» вопреки вкладке
+    "v_offer_current", "v_offer_top_by_rate",
     "v_review_topics", "v_review_sentiment_share", "v_bank_coverage",
     "bank", "review", "review_topic", "review_sentiment",
     "product_offer", "product_terms", "quality_flag", "extraction_run",
@@ -440,12 +443,19 @@ def _run_tool(name: str, args: dict) -> str:
             return json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str)
 
         if name == "get_sber_vs_market":
-            rows = s.execute(text("""
-                SELECT category, sber_max, sber_min, market_median,
-                       market_max, market_min, sber_vs_median_pp
-                  FROM v_sber_vs_market ORDER BY category
-            """)).mappings().all()
-            return json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str)
+            # тот же вердикт, что видит аудитор на вкладке «Рынок»: одна
+            # методика на экране и в ответе ИИ
+            from ..web.app import market_verdict
+            mv = market_verdict(None) or {}
+            keep = ("category", "label", "group_label", "rank", "n_banks", "percentile",
+                    "tied", "value", "title", "metric_label", "metric_unit", "gap_unit",
+                    "gap_median", "gap_leader", "lower_is_better", "degenerate",
+                    "small_n", "overall", "by_term", "comparable")
+            return json.dumps({"as_of": mv.get("as_of"), "lead": mv.get("lead"),
+                               "cells": [{k: c.get(k) for k in keep}
+                                         for c in mv.get("cells") or []],
+                               "caveats": mv.get("doubts")},
+                              ensure_ascii=False, default=str)
 
         if name == "get_reviews_analysis":
             slug = args["bank_slug"]

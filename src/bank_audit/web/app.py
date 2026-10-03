@@ -1605,6 +1605,39 @@ def _prem_key(p: dict):
     return (2, p.get("fee") if p.get("fee") is not None else float("inf"))
 
 
+# ПСК не может быть ниже номинальной ставки того же сценария: она включает все
+# платежи. Разрыв в несколько десятых — это разные сценарии в «от» (сумма,
+# срок), а ПСК 11 при ставке 24 — несогласованные числа источника. У 34 из 85
+# банков в кредитах ПСК оказывалась ниже их же ставки, и лидером рынка
+# становился банк с ошибкой в ярлыке (аудит 03.10).
+_PSK_TOL = 0.3
+# Тариф РКО или карты, бесплатный только первые месяцы, — акция, а не цена:
+# «Взлетай! (первые 3 мес.)» стоял в ранге наравне с постоянными нулями.
+_PROMO_PERIOD_RE = re.compile(
+    r"перв\w*\s+(\d+\s*)?(мес|месяц|год)|на\s+\d+\s*(мес|месяц)|\d+\s*мес\w*\s+бесплатн",
+    re.I)
+# окна срока: ранг вклада на 3 месяца и на 3 года — разные вопросы
+_TERM_RU = {"0-3": "до 3 мес", "4-6": "4–6 мес", "7-12": "7–12 мес", "13+": "от года"}
+_SUBSEG_RU = {"ip": "для ИП", "ooo": "для ООО", "any": "ИП и ООО", "new": "новостройка",
+              "secondary": "вторичка", "refin": "рефинансирование", "pledge": "под залог",
+              "house": "ИЖС", "commercial": "коммерческая", "subsidized": "господдержка",
+              "cash": "наличными", "auto": "авто", "installment": "рассрочка",
+              "classic": "классические"}
+_SEG_RU = {"premium": "премиум", "private": "private", "kids": "детские",
+           "youth": "молодёжные", "pension": "пенсионные", "mass": "массовые"}
+
+
+def _group_label(seg: Optional[str], sub: Optional[str], has_kinds: bool) -> str:
+    """Подпись сопоставимой группы. Вид без распознанного подвида — «прочие»:
+    прежнее «массовые: #39/42» читалось как массовый продукт, а это просто
+    офферы, вид которых не распознан."""
+    if sub and sub != "_":
+        return _SUBSEG_RU.get(sub, sub)
+    if seg and seg != "mass":
+        return _SEG_RU.get(seg, seg)
+    return "прочие" if has_kinds else "массовые"
+
+
 def _jsonb(v):
     """jsonb из драйвера приходит то dict/list, то строкой — приводим к python."""
     if v is None or isinstance(v, (list, dict)):
@@ -1686,7 +1719,12 @@ def market_atlas(term: Optional[str] = None):
     psk_fallback: dict[str, int] = {}    # ПСК не раскрыта — сравниваем по ставке
     non_bank: dict[str, int] = {}        # застройщики и сервисы подбора
     implausible: dict[str, int] = {}     # число не прошло сторожа правдоподобия
+    psk_mismatch: dict[str, int] = {}    # ПСК ниже своей же ставки — берём ставку
+    promo_period: dict[str, int] = {}    # цена только на первые месяцы — акция
+    upper_bound: dict[str, int] = {}     # «до N%» — верхняя граница, не ставка
     seen_banks: dict[str, set] = {}      # все банки категории до отсева
+    # лучшие офферы банков по окнам срока внутри группы: (кат, сег, подсег, срок)
+    by_term: dict[tuple, dict] = {}
 
     def bkey(row) -> str:
         """Ключ банка — очищенное ИМЯ, а не слаг.
@@ -1746,12 +1784,32 @@ def market_atlas(term: Optional[str] = None):
         except (TypeError, ValueError):
             pass
         val = r.get(meta["metric"])
+        psk_bad = False
         if val is None and meta["metric"] == "psk_min":
             # ПСК раскрыта не у всех — берём ставку, но помечаем, что сравнение
             # для этого банка идёт по рекламной границе
             val = r.get("rate_pct")
             if val is not None:
                 psk_fallback[r["category"]] = psk_fallback.get(r["category"], 0) + 1
+        elif val is not None and meta["metric"] == "psk_min":
+            ref = r.get("rate_min") if r.get("rate_min") is not None else r.get("rate_pct")
+            try:
+                if ref is not None and float(val) < float(ref) - _PSK_TOL:
+                    # ПСК ниже ставки — числа источника не согласованы; честнее
+                    # сравнивать такой банк по его ставке, чем ставить лидером
+                    val, psk_bad = ref, True
+                    psk_mismatch[r["category"]] = psk_mismatch.get(r["category"], 0) + 1
+            except (TypeError, ValueError):
+                pass
+        if val is not None and meta["metric"] == "rate_pct" and r.get("rate_kind") == "max":
+            # «до 30%» — верхняя граница витрины агрегатора, а не ставка по
+            # договору; в одном ранжире с обычными ставками она даёт фору
+            upper_bound[r["category"]] = upper_bound.get(r["category"], 0) + 1
+            continue
+        if (val is not None and meta["metric"] == "fee_service"
+                and _PROMO_PERIOD_RE.search(r.get("title") or "")):
+            promo_period[r["category"]] = promo_period.get(r["category"], 0) + 1
+            continue
         if val is None:
             # 113 дебетовых карт (треть рынка) не имели fee_service и просто
             # исчезали из сравнения — теперь это видимое число в паспорте выборки
@@ -1801,11 +1859,15 @@ def market_atlas(term: Optional[str] = None):
         # то без этого правила банк представляла та, что попалась первой, —
         # и доля «бесплатных без условий» на витрине зависела бы от порядка
         # обхода строк, а не от рынка.
-        tie_better = (cur is not None and val == cur["rate"]
-                      and _FREE_RANK.get(r.get("free_kind"), -1)
-                      > _FREE_RANK.get(cur.get("free_kind"), -1))
-        if cur is None or tie_better or (val < cur["rate"] if lower else val > cur["rate"]):
-            best[bkey(r)] = {
+        def _better(cur_):
+            tie_ = (cur_ is not None and val == cur_["rate"]
+                    and _FREE_RANK.get(r.get("free_kind"), -1)
+                    > _FREE_RANK.get(cur_.get("free_kind"), -1))
+            return (cur_ is None or tie_
+                    or (val < cur_["rate"] if lower else val > cur_["rate"]))
+        if not (_better(cur) or (meta.get("show_terms") and r.get("term_bucket") in _TERM_RU)):
+            continue
+        point = {
                 "slug": r["bank_slug"], "name": r["bank_name"],
                 "is_sber": bool(r["is_sber"]), "rate": val,
                 "offer_id": r["offer_id"], "title": r["title"],
@@ -1826,7 +1888,21 @@ def market_atlas(term: Optional[str] = None):
                 "free_conditions": _jsonb(r.get("free_conditions")),
                 "attain": r.get("attain"),
                 "rate_requires": _jsonb(r.get("rate_requires")) or [],
+                "psk_mismatch": psk_bad,
+                # Ставка вклада у самой границы сторожа (ключевая + 5 п.п.):
+                # такое число прошло проверку, но это почти всегда промо на
+                # первые месяцы или «новые деньги» — помечаем, а не верим молча
+                "near_guard": bool(
+                    key_rate is not None and r["category"] in ("deposit", "savings_account")
+                    and val >= key_rate + 4),
             }
+        if _better(cur):
+            best[bkey(r)] = point
+        tb = r.get("term_bucket")
+        if meta.get("show_terms") and tb in _TERM_RU:
+            tslot = by_term.setdefault((r["category"], seg, sub, tb), {})
+            if _better(tslot.get(bkey(r))):
+                tslot[bkey(r)] = point
 
     def _pct(sorted_vals: list[float], p: float) -> Optional[float]:
         if not sorted_vals:
@@ -1843,8 +1919,13 @@ def market_atlas(term: Optional[str] = None):
     for (cid_, seg_, sub_), banks_ in by_group.items():
         groups_by_cat.setdefault(cid_, []).append((seg_, sub_, list(banks_.values())))
     for cid_ in groups_by_cat:
+        # при равном размере распознанный вид продукта впереди «прочих»: иначе
+        # главная группа ипотеки зависела бы от порядка обхода словаря
         groups_by_cat[cid_].sort(
-            key=lambda g: (any(b["is_sber"] for b in g[2]), len(g[2])), reverse=True)
+            key=lambda g: (any(b["is_sber"] for b in g[2]), len(g[2]), g[1] != "_"),
+            reverse=True)
+    overall: dict[str, dict] = {}
+    main_key: dict[str, tuple] = {}
     for cid_, gs in groups_by_cat.items():
         # Банк может быть в нескольких группах (у Сбера вклады есть в массовом,
         # пенсионном и молодёжном сегментах). В общий ранг категории берём его
@@ -1864,7 +1945,27 @@ def market_atlas(term: Optional[str] = None):
                 if cur_ is None or tie_ or (b["rate"] < cur_["rate"] if lower_
                                             else b["rate"] > cur_["rate"]):
                     merged[b["slug"]] = b
-        by_cat[cid_] = merged
+        # Головной ранг категории — по ГЛАВНОЙ группе (самой крупной, где есть
+        # Сбер), а слияние всех видов — только справкой. Раньше голову давало
+        # слияние: «кредиты #20 из 93, 79-й перцентиль» получались по кредиту
+        # под залог недвижимости, хотя среди кредитов наличными Сбер #15 из 44,
+        # а среди прочих — #39 из 42 (аудит 03.10).
+        # Если Сбер есть только в нишах меньше пяти банков, голова остаётся
+        # слиянием: ранг по нише из трёх банков хуже, чем по всему рынку.
+        overall[cid_] = merged
+        main = next((g for g in gs if len(g[2]) >= 5 and any(b["is_sber"] for b in g[2])), None)
+        if main:
+            by_cat[cid_] = {b["slug"]: b for b in main[2]}
+            main_key[cid_] = (main[0], main[1])
+        else:
+            by_cat[cid_] = merged
+
+    def _pos(bl: list, sb_: dict, lower_: bool) -> dict:
+        """Место банка в выборке: competition rank (равные делят место)."""
+        rank_ = sum(1 for b in bl
+                    if (b["rate"] < sb_["rate"] if lower_ else b["rate"] > sb_["rate"])) + 1
+        return {"rank": rank_, "tied": sum(1 for b in bl if b["rate"] == sb_["rate"]),
+                "percentile": round(100 * (len(bl) - rank_) / max(len(bl) - 1, 1))}
 
     out = []
     for c in cat_meta.CATEGORIES:
@@ -1898,7 +1999,13 @@ def market_atlas(term: Optional[str] = None):
             # методики, а не деталь реализации.
             "implausible_excluded": implausible.get(cid, 0),
             "banks_total": len(seen_banks.get(cid, ())),
-            "banks_dropped": max(len(seen_banks.get(cid, ())) - len(banks), 0),
+            # выбывшие считаются от слияния всех видов: банки других видов
+            # продукта не «выбыли», они просто вне главной группы
+            "banks_dropped": max(len(seen_banks.get(cid, ()))
+                                 - len(overall.get(cid) or by_cat.get(cid) or {}), 0),
+            "psk_mismatch": psk_mismatch.get(cid, 0),
+            "promo_period_excluded": promo_period.get(cid, 0),
+            "upper_bound_excluded": upper_bound.get(cid, 0),
             # сколько банков стоит ровно на лучшем значении: «#1» при 70 таких
             # банках означает не лидерство, а что метрика не различает игроков
             "at_best": sum(1 for b in banks if b["rate"] == banks[0]["rate"]),
@@ -1910,6 +2017,8 @@ def market_atlas(term: Optional[str] = None):
         }
         # позиция в СОПОСТАВИМЫХ группах: главный ответ для аудитора —
         # «где мы среди новостроек», а не «где мы среди всей ипотеки»
+        kinds = any(sub_ != "_" for _s, sub_, _b in groups_by_cat.get(cid, []))
+        mk = main_key.get(cid)
         comp = []
         for seg_, sub_, bl in groups_by_cat.get(cid, []):
             if len(bl) < 5:
@@ -1922,6 +2031,7 @@ def market_atlas(term: Optional[str] = None):
                         if (b["rate"] < sb_["rate"] if lower else b["rate"] > sb_["rate"])) + 1
             comp.append({
                 "segment": seg_, "sub_segment": None if sub_ == "_" else sub_,
+                "label": _group_label(seg_, sub_, kinds), "main": (seg_, sub_) == mk,
                 "n_banks": len(bl), "rank": rank_,
                 "percentile": round(100 * (len(bl) - rank_) / max(len(bl) - 1, 1)),
                 "value": sb_["rate"], "title": sb_["title"],
@@ -1940,6 +2050,7 @@ def market_atlas(term: Optional[str] = None):
             vals_ = sorted(b["rate"] for b in bl)
             sb_ = next((b for b in bl if b["is_sber"]), None)
             g = {"segment": seg_, "sub_segment": None if sub_ == "_" else sub_,
+                 "label": _group_label(seg_, sub_, kinds), "main": (seg_, sub_) == mk,
                  "n_banks": len(bl),
                  "median": _pct(vals_, 0.5),
                  "leader": (vals_[0] if lower else vals_[-1]),
@@ -1966,6 +2077,38 @@ def market_atlas(term: Optional[str] = None):
         # «#1 из 140» при 115 банках на нуле — не лидерство, а отсутствие
         # сигнала, и показывать такой ранг как факт нельзя (аудит 11.08.2026).
         entry["degenerate"] = bool(entry["at_best"] / max(len(banks), 1) > 0.3)
+        if mk:
+            entry["main_group"] = {"segment": mk[0],
+                                   "sub_segment": None if mk[1] == "_" else mk[1],
+                                   "label": _group_label(mk[0], mk[1], kinds),
+                                   "n_groups": len(groups_by_cat.get(cid, []))}
+        # Слияние всех видов — справкой: «по всем видам кредитов #20 из 93».
+        ov_ = list((overall.get(cid) or {}).values())
+        sb_ov = next((b for b in ov_ if b["is_sber"]), None)
+        if sb_ov and mk and len(ov_) > len(banks):
+            entry["overall"] = {"n_banks": len(ov_), "value": sb_ov["rate"],
+                                "title": sb_ov["title"], **_pos(ov_, sb_ov, lower)}
+        # Позиция по окнам срока внутри главной группы. «Сбер #1 из 133 по
+        # вкладам» держался на одном 3-месячном промо 19%, а на сроке от года
+        # картина другая; ранг вклада без срока — смесь разных вопросов.
+        if c.get("show_terms") and mk:
+            terms_ = []
+            for tb in _TERM_RU:
+                bl = list((by_term.get((cid, mk[0], mk[1], tb)) or {}).values())
+                sb_t = next((b for b in bl if b["is_sber"]), None)
+                if len(bl) < 5:
+                    continue
+                vals_t = sorted(b["rate"] for b in bl)
+                t = {"term": tb, "label": _TERM_RU[tb], "n_banks": len(bl),
+                     "median": _pct(vals_t, 0.5),
+                     "leader": vals_t[0] if lower else vals_t[-1]}
+                if sb_t:
+                    t.update({"value": sb_t["rate"], "title": sb_t["title"],
+                              "near_guard": sb_t.get("near_guard"),
+                              **_pos(bl, sb_t, lower)})
+                terms_.append(t)
+            if terms_:
+                entry["by_term"] = terms_
         # ── чем куплено лучшее значение ──────────────────────────────────
         # Цена обслуживания карты вырождена: 124 банка из 163 стоят на нуле.
         # Но у одних ноль безусловный, у других — «при остатке 2,5 млн руб.»
@@ -2103,6 +2246,15 @@ def market_verdict(term: Optional[str] = None):
             "psk_fallback": c.get("psk_fallback", 0),
             # позиция внутри сопоставимого продукта — честнее общей по категории
             "comparable": c.get("comparable") or [],
+            # голова — главная группа; слияние всех видов и окна срока справкой
+            "group_label": (c.get("main_group") or {}).get("label"),
+            "overall": c.get("overall"),
+            "by_term": c.get("by_term") or [],
+            "term": sb.get("term_bucket"),
+            "near_guard": bool(sb.get("near_guard")),
+            "psk_mismatch": c.get("psk_mismatch", 0),
+            "promo_period_excluded": c.get("promo_period_excluded", 0),
+            "upper_bound_excluded": c.get("upper_bound_excluded", 0),
         }
         cells.append(cell)
         # из выводов исключаем категории, где метрика не различает банки:
@@ -2135,7 +2287,10 @@ def market_verdict(term: Optional[str] = None):
         val = c["value"]
         gap = c["gap_median"]
         worse = "хуже" if (gap or 0) * (1 if c["lower_is_better"] else -1) > 0 else "лучше"
-        return (f'{c["label"].lower()}: {_ru(val)}{unit} против медианы рынка '
+        # вид продукта в скобках: ранг посчитан внутри него, а не по смеси видов
+        grp = c.get("group_label")
+        what = c["label"].lower() + (f' ({grp})' if grp and grp != "массовые" else "")
+        return (f'{what}: {_ru(val)}{unit} против медианы рынка '
                 f'{_ru((val or 0) - (gap or 0))}{unit} — '
                 f'{worse} на {_ru(abs(gap or 0))}{gap_unit}, место {c["rank"]} из {c["n_banks"]}')
 
@@ -2154,6 +2309,27 @@ def market_verdict(term: Optional[str] = None):
         lead = "Сравнивать нечем: ни в одной категории нет сопоставимой метрики."
     # честная оговорка о качестве выборки — сразу в вердикте, а не мелким шрифтом
     doubts = []
+    # Лучшее значение Сбера может держаться на одном сроке: вклад на 3 месяца
+    # под 19% и вклад на год — разные продукты. Если место в окнах срока
+    # расходится с головным больше чем на треть рынка, говорим об этом прямо.
+    for c in cells:
+        bt = [t for t in c.get("by_term") or [] if t.get("rank") is not None]
+        if len(bt) < 2 or c.get("degenerate"):
+            continue
+        spread = max(t["percentile"] for t in bt) - min(t["percentile"] for t in bt)
+        if spread >= 30:
+            doubts.append(f'в «{c["label"].lower()}» место зависит от срока: '
+                          + ", ".join(f'{t["label"]} — {t["rank"]} из {t["n_banks"]}' for t in bt))
+            break
+    ng = next((c for c in cells if c.get("near_guard")), None)
+    if ng:
+        doubts.append(f'лучшая ставка Сбера в «{ng["label"].lower()}» ({_ru(ng["value"])}%, '
+                      f'«{ng["title"]}») у самой границы проверки правдоподобия — это почти '
+                      f'всегда промо на первые месяцы или «новые деньги», условия источник не раскрывает')
+    pm = max(cells, key=lambda c: c.get("psk_mismatch", 0)) if cells else None
+    if pm and pm.get("psk_mismatch", 0) >= 5:
+        doubts.append(f'у {pm["psk_mismatch"]} банков в «{pm["label"].lower()}» ПСК ниже их же '
+                      f'ставки — числа источника не согласованы, такие банки сравниваем по ставке')
     deg = [c for c in cells if c.get("degenerate")]
     if deg:
         d0 = deg[0]
@@ -2609,8 +2785,13 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
         return hit[1]
     context = await asyncio.to_thread(reviews_llm.signal_context, sig, bank, product or None)
     brief = _rd().fix_market_claims(await reviews_llm.anomaly_brief(sig, context), signals)
+    # сюжеты «Новое» в том порядке, в каком их видела модель: к пункту разбора —
+    # кнопка «Жалобы сюжета» (раньше ссылок на жалобы у них не было, ОТЗ-03)
+    novel = await asyncio.to_thread(_rd().novel_clusters, bank, product or None)
     out = {"summary": brief, "signals": signals, "overall": sig.get("overall"),
-           "week_end": sig.get("week_end"), "calm": False}
+           "week_end": sig.get("week_end"), "calm": False,
+           "novel": [{k: c.get(k) for k in ("n", "topic", "urls", "first", "last")}
+                     for c in (novel or [])[:3]]}
     if brief:
         _ANOM_CACHE[key] = (_time.time(), out)
     return out
@@ -3760,14 +3941,16 @@ async def cases_analyze(case_id: int, force: int = 0,
     n = len(case.get("items") or [])
     if not n:
         raise HTTPException(400, "в деле нет материалов")
-    if case.get("analysis") and case.get("analysis_items") == n and not force:
+    # свежесть — по составу (какие материалы и в каком порядке), а не по числу
+    if case.get("analysis") and not case.get("analysis_stale") and not force:
         return {"analysis": case["analysis"], "analysis_at": case.get("analysis_at"), "cached": True}
     if not case.get("can_add"):
         raise HTTPException(403, "разбор запускают владелец и участники с правом добавлять")
     md = await reviews_llm.case_memo(case)
     if not md:
         raise HTTPException(503, "модель не ответила — повторите позже")
-    await asyncio.to_thread(userdata.save_case_analysis, case_id, user.username, md, n)
+    await asyncio.to_thread(userdata.save_case_analysis, case_id, user.username, md, n,
+                            [it["item_id"] for it in case.get("items") or []])
     await asyncio.to_thread(_bell_case, case_id, "case_analysis", user.username,
                             link=f"case:{case_id}:analysis")
     return {"analysis": md, "analysis_at": datetime.now(timezone.utc).isoformat(), "cached": False}

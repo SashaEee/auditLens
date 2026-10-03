@@ -47,7 +47,8 @@ CATEGORIES: list[dict] = [
     {"id": "card_credit", "label": "Кредитные карты", "ru": "кредитные карты",
      "metric": "grace_days", "metric_label": "Грейс-период", "metric_unit": " дн",
      "metric_lower_is_better": False,
-     "rate_label": "ПСК от",     "show_rate": True,  "show_bar": False, "show_terms": False,
+     # колонка выводит rate_pct — номинальную ставку «от», а не ПСК (аудит 03.10)
+     "rate_label": "Ставка от",  "show_rate": True,  "show_bar": False, "show_terms": False,
      "secondary": "cashback_pct",
      "caveat": "Сравнение по грейс-периоду: ставка у карт — промо-минимум ПСК («от 0%» у рассрочек), ранжировать по ней некорректно"},
     {"id": "card_debit",  "label": "Дебетовые карты", "ru": "дебетовые карты",

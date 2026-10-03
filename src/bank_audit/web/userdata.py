@@ -1071,6 +1071,7 @@ def get_case(case_id: int, username: str) -> dict | None:
         return None
     case = _one("""SELECT c.case_id, c.username AS owner, c.title, c.note,
                           c.created_at, c.updated_at, c.analysis, c.analysis_at, c.analysis_items,
+                          c.analysis_item_ids,
                           c.status, c.status_at, c.archived_at,
                           COALESCE(au.display_name, c.username) AS owner_name,
                           COALESCE(p.muted, false) AS muted, p.talk_seen_at
@@ -1116,6 +1117,7 @@ def get_case(case_id: int, username: str) -> dict | None:
         if not it.get("report_gone"):
             it.pop("report_gone", None)
     _attach_review_items(case["items"])
+    analysis_state(case)
     names = {m["username"]: m["name"] for m in case["members"]}
     talk = _talk_rows(case_id, username, role)
     by_item: dict[int, list[dict]] = {}
@@ -1676,17 +1678,57 @@ def set_case_shared(case_id: int, owner: str, shared: bool) -> bool:
     return True
 
 
-def save_case_analysis(case_id: int, username: str, analysis: str, n_items: int) -> bool:
+def analysis_state(case: dict) -> None:
+    """Свежесть разбора и перевод его [N] в текущие номера материалов.
+
+    [N] в разборе — порядковый номер материала на момент разбора. Состав
+    сравниваем целиком (какие материалы и в каком порядке), а не по числу:
+    «убрали один, добавили другой» — тоже новый состав. analysis_refs: номер в
+    разборе → текущий номер материала (None — материал удалён из дела)."""
+    if not case.get("analysis"):
+        return
+    now_ids = [it["item_id"] for it in case.get("items") or []]
+    ids = case.get("analysis_item_ids")
+    if ids is None:                    # разбор до 03.10 — состав не записан
+        case["analysis_stale"] = case.get("analysis_items") != len(now_ids)
+        return
+    ids = [int(x) for x in ids]
+    case["analysis_item_ids"] = ids
+    case["analysis_stale"] = ids != now_ids
+    pos = {iid: k for k, iid in enumerate(now_ids, 1)}
+    case["analysis_refs"] = {str(k): pos.get(iid) for k, iid in enumerate(ids, 1)}
+
+
+def remap_analysis(case: dict) -> str | None:
+    """Текст разбора с номерами [N] текущего списка материалов (для выгрузки)."""
+    body = case.get("analysis")
+    refs = case.get("analysis_refs")
+    if not body or not refs:
+        return body
+
+    def _sub(m):
+        cur = refs.get(m.group(1), "keep")
+        if cur == "keep":
+            return m.group(0)
+        return f"[{cur}]" if cur else "[материал удалён]"
+    return re.sub(r"\[(\d{1,3})\]", _sub, body)
+
+
+def save_case_analysis(case_id: int, username: str, analysis: str, n_items: int,
+                       item_ids: list[int] | None = None) -> bool:
+    """item_ids — состав дела в порядке, по которому модель нумеровала [N]."""
     if not _may_add_case(case_id, username):
         return False
+    ids = [int(x) for x in item_ids] if item_ids is not None else None
     with db.session() as s:
         s.execute(text("""UPDATE audit_case SET analysis = :a, analysis_at = now(),
-                                  analysis_items = :n WHERE case_id = :c"""),
-                  {"a": analysis, "n": n_items, "c": case_id})
+                                  analysis_items = :n, analysis_item_ids = :ids
+                            WHERE case_id = :c"""),
+                  {"a": analysis, "n": n_items, "c": case_id, "ids": ids})
         # прошлые версии не затираются: разбор — подпись «кто и когда»
-        s.execute(text("""INSERT INTO audit_case_analysis (case_id, body, n_items, username)
-                          VALUES (:c, :a, :n, :u)"""),
-                  {"c": case_id, "a": analysis, "n": n_items, "u": username})
+        s.execute(text("""INSERT INTO audit_case_analysis (case_id, body, n_items, username, item_ids)
+                          VALUES (:c, :a, :n, :u, :ids)"""),
+                  {"c": case_id, "a": analysis, "n": n_items, "u": username, "ids": ids})
     case_log(case_id, username, "analysis", {"n": n_items})
     return True
 

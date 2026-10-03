@@ -54,7 +54,12 @@ def test_my_signals_use_digest_snapshot_numbers(monkeypatch):
     out = p._my_signals(None, {}, None, sections=sections)
     by = {s["key"]: s for s in out}
     assert by["chargeback"]["ratio"] == 4.4          # из снимка, а не живое ×4,2
-    assert "close" in by
+    # расхождение без подтверждения тестом и без связи с профилем — не сигнал
+    # (аудит 03.10); с подтверждением — идёт в блок
+    assert "close" not in by
+    sections["reviews_pulse"]["payload"]["diverge"][1]["sig"] = True
+    by = {s["key"]: s for s in p._my_signals(None, {}, None, sections=sections)}
+    assert by["close"]["confirmed"] is True
 
 
 def test_tariff_block_keeps_journal_link_fields():

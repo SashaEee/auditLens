@@ -179,3 +179,52 @@ def unanchored_claims(report: str) -> int:
         if not _ANCHOR_RE.search(p) and not re.search(r"\[\d+\]", p):
             n += 1
     return n
+
+
+# Слова, которые есть почти в любой фразе и почти в любой цитате: совпадение
+# по ним не говорит, что источник подтверждает фразу.
+_ANCHOR_STOP = {"котор", "также", "более", "менее", "этого", "может", "между",
+                "через", "после", "когда", "всего", "своих", "своей", "банка",
+                "банко", "банку", "банке", "банки", "клиен", "сбера", "сберб",
+                "рынка", "рынке", "рынок", "данны", "этому", "таким"}
+_W5 = re.compile(r"[а-яёa-z]{5,}")
+_NUM = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def anchor_mismatches(report: str, cited: list[dict], limit: int = 8) -> list[dict]:
+    """Фразы, у которых источник [N] не содержит НИ ОДНОГО слова и числа фразы.
+
+    Дешёвая проверка связки «фраза → якорь»: сверка чисел и критик смотрят на
+    факт и его страницу, но не на то, к той ли фразе приставлен номер. В
+    оценке отчётов это и были главные ошибки: «перепутан источник [28]»,
+    «неверно использован источник [23]» (аудит 03.10). Совпадение хотя бы по
+    одной основе слова или числу — ссылку не трогаем: проверка нарочно мягкая,
+    чтобы не засыпать аудитора ложными тревогами.
+    """
+    by_n = {c.get("n"): c for c in cited or []}
+    out: list[dict] = []
+    for para in (report or "").split("\n"):
+        if para.lstrip().startswith(("#", "|")):
+            continue
+        for sent in re.split(r"(?<=[.!?])\s+", para):
+            ns = [int(x) for x in re.findall(r"\[(\d{1,3})\]", sent)]
+            if not ns:
+                continue
+            body = re.sub(r"\[\d{1,3}\]", "", sent).strip(" -*")
+            stems = {w[:5] for w in _W5.findall(body.lower())} - _ANCHOR_STOP
+            if len(stems) < 3:
+                continue
+            facts = [f for n in ns for f in ((by_n.get(n) or {}).get("facts") or [])]
+            src = " ".join(f"{f.get('verbatim', '')} {f.get('value', '')} "
+                           f"{f.get('attribute', '')}" for f in facts)
+            if not src.strip():
+                continue
+            src_stems = {w[:5] for w in _W5.findall(src.lower())}
+            if stems & src_stems or set(_NUM.findall(body)) & set(_NUM.findall(src)):
+                continue
+            out.append({"claim": body[:160],
+                        "issue": f"в источнике [{', '.join(map(str, dict.fromkeys(ns)))}] "
+                                 f"нет ни одного слова этой фразы — проверьте, тот ли источник"})
+            if len(out) >= limit:
+                return out
+    return out
