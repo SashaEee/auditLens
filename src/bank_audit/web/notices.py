@@ -87,7 +87,7 @@ def title_of(kind: str, ref: dict, count: int = 1) -> str:
             return f"В деле «{case}» новый материал"
         return f"В деле «{case}» {count} {_plural(count, 'новый материал', 'новых материала', 'новых материалов')}"
     if kind == "case_added":
-        return f"Вас добавили в дело «{case}»"
+        return f"Вас добавили в дело «{case}»" + (f" — команда «{_q(ref['team'])}»" if ref.get("team") else "")
     if kind == "case_role":
         return f"Ваша роль в деле «{case}»: {ref.get('role_label') or 'изменена'}"
     if kind == "case_removed":

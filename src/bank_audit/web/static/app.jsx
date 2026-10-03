@@ -8773,6 +8773,131 @@ const CASE_ROLES=[["editor","может добавлять","приобщает 
 const CASE_ROLE_RU={owner:"владелец",editor:"может добавлять",viewer:"только смотрит"};
 // о себе — во втором лице: «вы можете добавлять», а не «вы может добавлять»
 const CASE_ROLE_YOU={owner:"вы владелец",editor:"вы можете добавлять",viewer:"вы только смотрите"};
+// ── Команды: сохранённые группы коллег (этап 5) ───────────────────────────────
+// Команду ведёт её создатель и подключает к своим делам с ролью. Доступ
+// «живой»: новый участник команды сразу видит все её дела, а при удалении из
+// команды доступ пропадает (если в дело не добавили отдельно).
+const IcTeam=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0111 0"/><path d="M16 6.2a3 3 0 010 5.6M17.5 14.2A5.5 5.5 0 0120.5 19"/></svg>;
+function TeamEditor({team,users,prefill,backLabel,attach,onBack,onSaved,onDeleted}){
+  const me=useMe(), meU=me&&me.username;
+  const[name,setName]=useState(team?team.name:"");
+  const[mem,setMem]=useState(()=>team?team.members.map(m=>({username:m.username,name:m.name})):(prefill||[]));
+  const[q,setQ]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const has=new Set(mem.map(m=>m.username));
+  const ql=q.trim().toLowerCase();
+  const cand=(users||[]).filter(u=>u.username!==meU&&!has.has(u.username)&&(!ql||
+    (u.display_name||"").toLowerCase().includes(ql)||u.username.toLowerCase().includes(ql))).slice(0,ql?10:5);
+  const save=async()=>{ if(!name.trim()){ setErr("Назовите команду"); return; }
+    setBusy(true); setErr("");
+    try{
+      if(team){ const was=new Set(team.members.map(m=>m.username)), now=new Set(mem.map(m=>m.username));
+        await csReq("PATCH",`/api/teams/${team.team_id}`,{name:name.trim(),
+          add:[...now].filter(u=>!was.has(u)),remove:[...was].filter(u=>!now.has(u))});
+        onSaved&&onSaved(team.team_id,false); }
+      else{ const r=await csReq("POST","/api/teams",{name:name.trim(),members:mem.map(m=>m.username)});
+        onSaved&&onSaved(r.team_id,true); }
+    }catch(e){ setErr(e.message); setBusy(false); } };
+  const del=async()=>{ if(!window.confirm(`Удалить команду «${team.name}»?`+(team.cases?`\n\nОна подключена к ${team.cases} ${plural(team.cases,"делу","делам","делам")}: участники команды потеряют к ним доступ, если их не добавили отдельно.`:"")))return;
+    setBusy(true); setErr("");
+    try{ await csReq("DELETE",`/api/teams/${team.team_id}`); onDeleted&&onDeleted(); }
+    catch(e){ setErr(e.message); setBusy(false); } };
+  return <div className="cs-acc tm-ed">
+    <button className="rv-cs-back" onClick={onBack}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>{backLabel||"назад"}</button>
+    <label className="tm-lbl" htmlFor="tm-name">Название команды</label>
+    <input id="tm-name" className="input tm-name" value={name} maxLength={120} autoFocus={!team}
+      onChange={e=>setName(e.target.value)} placeholder="Например: проверка кредитных карт"/>
+    <div className="t-cap" style={{margin:"16px 0 6px"}}>Состав · {mem.length}</div>
+    <div className="cs-acc-list">
+      {mem.map(m=><div key={m.username} className="cs-acc-row">
+        <span className="cs-av">{initials(m.name)}</span><span className="nm">{m.name}</span>
+        <button type="button" className="rv-ib" disabled={busy} onClick={()=>setMem(x=>x.filter(y=>y.username!==m.username))}
+          aria-label={`Убрать из команды: ${m.name}`} data-tip="убрать из команды"><RvIX s={13}/></button></div>)}
+      {!mem.length&&<div className="t-cap">Пока никого — добавьте коллег ниже.</div>}
+    </div>
+    <input className="input tm-q" value={q} onChange={e=>setQ(e.target.value)} placeholder="Добавить коллегу по имени…"
+      aria-label="Добавить коллегу в команду"/>
+    {users===null?<Skel h={40}/>:<div className="cs-acc-list">
+      {cand.map(u=>{ const nm=u.display_name||u.username; return <button key={u.username} type="button" className="cs-acc-row add"
+        disabled={busy} onClick={()=>{ setMem(x=>[...x,{username:u.username,name:nm}]); setQ(""); }}>
+        <span className="cs-av">{initials(nm)}</span><span className="nm">{nm}</span><span className="st">+ в команду</span></button>; })}
+      {ql&&!cand.length&&<div className="t-cap">Никого не нашли. Коллега появится здесь после первого входа в AuditLens.</div>}
+    </div>}
+    {err&&<div className="rv-cp-err" role="alert">{err}</div>}
+    <div className="tm-acts">
+      <button type="button" className="btn btn-primary btn-sm" disabled={busy||!name.trim()} onClick={save}>
+        {team?"Сохранить":attach?"Создать и подключить":"Создать команду"}</button>
+      {team&&<button type="button" className="btn btn-sm btn-ghost rv-cs-del" disabled={busy} onClick={del}>Удалить команду</button>}
+    </div>
+    <p className="cs-acc-foot">{team&&team.cases
+      ?`Изменения состава сразу меняют доступ к делам команды (${team.cases}), коллеги получат уведомление.`
+      :"Команду подключают к своему делу одним выбором. Доступ «живой»: новый участник команды сразу видит все её дела, а при удалении из команды доступ пропадает."}</p>
+  </div>;
+}
+
+// «Мои команды» — из списка дел
+function TeamsHome({onBack}){
+  const[teams,setTeams]=useState(null);
+  const[users,setUsers]=useState(null);
+  const[ed,setEd]=useState(null);              // {team} | {create:true}
+  const load=()=>csReq("GET","/api/teams").then(d=>setTeams(d.teams||[])).catch(()=>setTeams([]));
+  useEffect(()=>{ load(); apiFetch("/api/users").then(d=>setUsers(d.users||[])).catch(()=>setUsers([])); },[]);
+  if(ed) return <TeamEditor team={ed.team||null} users={users} backLabel="мои команды" onBack={()=>setEd(null)}
+    onSaved={()=>{ setEd(null); load(); }} onDeleted={()=>{ setEd(null); load(); }}/>;
+  return <div className="cs-acc">
+    <button className="rv-cs-back" onClick={onBack}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
+    <p className="t-cap" style={{margin:"0 0 12px"}}>Сохранённые группы коллег: подключаются к делу одним выбором в «Доступе».
+      Новый участник команды сразу видит все её дела.</p>
+    {teams===null?<Skel h={80}/>:<div className="cs-acc-list">
+      {teams.map(t=><button key={t.team_id} type="button" className="cs-acc-row add" onClick={()=>setEd({team:t})}>
+        <span className="cs-av tm"><IcTeam/></span>
+        <span className="nm">{t.name}<span className="tm-n"> · {t.members.length} {plural(t.members.length,"человек","человека","человек")}
+          {t.cases?` · ${t.cases} ${plural(t.cases,"дело","дела","дел")}`:""}</span></span>
+        <span className="st">изменить</span></button>)}
+      {!teams.length&&<div className="t-cap" style={{padding:"4px 0 8px"}}>Команд пока нет.</div>}
+      <button type="button" className="cs-acc-row add tm-new" onClick={()=>setEd({create:true})}>
+        <span className="cs-av tm">＋</span><span className="nm">Новая команда</span></button>
+    </div>}
+  </div>;
+}
+
+// Выгрузка дела: Word или Excel, обсуждение и история — по выбору (запоминается)
+function CaseExportBtn({cur}){
+  const[open,setOpen]=useState(false);
+  const[o,setO]=useState(()=>{ try{ return {talk:true,hist:true,...(JSON.parse(localStorage.getItem("al-case-exp")||"{}")||{})}; }
+    catch{ return {talk:true,hist:true}; } });
+  const ref=useRef(null);
+  useEffect(()=>{ try{ localStorage.setItem("al-case-exp",JSON.stringify(o)); }catch{} },[o]);
+  useEffect(()=>{ if(!open) return;
+    const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    const k=e=>{ if(e.key==="Escape"){ e.stopPropagation(); setOpen(false); } };
+    document.addEventListener("mousedown",h); document.addEventListener("keydown",k,true);
+    return ()=>{ document.removeEventListener("mousedown",h); document.removeEventListener("keydown",k,true); }; },[open]);
+  const q=`?talk=${o.talk?1:0}&hist=${o.hist?1:0}`;
+  const nT=cur.talk_n||0, nR=(cur.items||[]).filter(i=>i.kind==="report").length;
+  const sw=(k,label,hint)=><div className="cs-exp-row">
+    <span className="l"><b>{label}</b>{hint&&<span>{hint}</span>}</span>
+    <button type="button" role="switch" aria-checked={!!o[k]} aria-label={label} className="bx-sw" onClick={()=>setO(x=>({...x,[k]:!x[k]}))}/></div>;
+  return <span className="cs-exp" ref={ref}>
+    <button type="button" className={"btn btn-sm btn-ghost cs-exp-btn"+(open?" on":"")} aria-expanded={open} aria-haspopup="dialog"
+      onClick={()=>setOpen(v=>!v)}>Выгрузить<span className="rv-ico-in" style={open?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>
+    {open&&<div className="cs-exp-pop" role="dialog" aria-label="Выгрузить дело">
+      <div className="cs-exp-h">Выгрузить дело</div>
+      {sw("talk","Обсуждение",nT?`${nT} ${plural(nT,"сообщение","сообщения","сообщений")} и комментарии к материалам`:"пока пусто")}
+      {sw("hist","История дела","кто что добавил, статусы, доступ")}
+      <p className="cs-exp-note">Всегда в выгрузке: материалы, разбор ИИ, участники и роли.
+        {nR>0&&` Отчёты ИИ (${nR}) — кратко: название, вывод и ссылка, без полного текста.`}</p>
+      <div className="cs-exp-b">
+        <a className="btn btn-sm btn-primary" href={`/api/cases/${cur.case_id}/export.docx${q}`} onClick={()=>setOpen(false)}
+          data-tip="Word в стиле AuditLens: обложка, разбор, карточки материалов; приложения — обсуждение и история">Word</a>
+        <a className="btn btn-sm" href={`/api/cases/${cur.case_id}/export.xlsx${q}`} onClick={()=>setOpen(false)}
+          data-tip="Excel: дело в цифрах, материалы с разметкой, участники; обсуждение и история — отдельными листами">Excel</a>
+      </div>
+    </div>}
+  </span>;
+}
+
 function CaseAccess({cur,onBack,onChanged,onTransferred}){
   const me=useMe();
   const[mem,setMem]=useState(cur.members||[]);
@@ -8781,14 +8906,18 @@ function CaseAccess({cur,onBack,onChanged,onTransferred}){
   const[role,setRole]=useState("editor");
   const[busy,setBusy]=useState("");
   const[err,setErr]=useState("");
+  const[teams,setTeams]=useState(cur.teams||[]);       // команды, подключённые к делу
+  const[myTeams,setMyTeams]=useState(null);
+  const[ed,setEd]=useState(null);                      // {team} | {create:true}
   const manage=!!cur.can_manage;
-  useEffect(()=>{ if(manage) apiFetch("/api/users").then(d=>setUsers(d.users||[])).catch(()=>setUsers([])); },[manage]);
+  const loadMyTeams=()=>csReq("GET","/api/teams").then(d=>setMyTeams(d.teams||[])).catch(()=>setMyTeams([]));
+  useEffect(()=>{ if(manage){ apiFetch("/api/users").then(d=>setUsers(d.users||[])).catch(()=>setUsers([])); loadMyTeams(); } },[manage]); // eslint-disable-line
   const inCase=new Set(mem.map(m=>m.username));
   const ql=q.trim().toLowerCase();
   const cand=(users||[]).filter(u=>!inCase.has(u.username)&&(!ql||
     (u.display_name||"").toLowerCase().includes(ql)||u.username.toLowerCase().includes(ql))).slice(0,ql?12:6);
   const call=async(key,fn)=>{ setBusy(key); setErr("");
-    try{ const r=await fn(); if(r&&r.members) setMem(r.members); onChanged&&onChanged(); return true; }
+    try{ const r=await fn(); if(r&&r.members) setMem(r.members); if(r&&r.teams) setTeams(r.teams); onChanged&&onChanged(); return true; }
     catch(e){ setErr(e.message||"Не получилось. Попробуйте ещё раз"); return false; }
     finally{ setBusy(""); } };
   const add=(u)=>call("add:"+u.username,()=>sayPost(`/api/cases/${cur.case_id}/members`,{username:u.username,role}))
@@ -8798,9 +8927,21 @@ function CaseAccess({cur,onBack,onChanged,onTransferred}){
     const r=await fetch(`/api/cases/${cur.case_id}/members/${encodeURIComponent(m.username)}`,{method:"DELETE"});
     if(!r.ok) throw new Error("Не получилось убрать участника");
     setMem(x=>x.filter(y=>y.username!==m.username)); });
+  const attach=(tid,r)=>call("team:"+tid,()=>csReq("POST",`/api/cases/${cur.case_id}/teams`,{team_id:tid,role:r}));
+  const detach=(t)=>{ if(!window.confirm(`Отключить команду «${t.name}» от дела?\n\nЕё участники потеряют доступ, если их не добавили отдельно.`))return;
+    call("team:"+t.team_id,()=>csReq("DELETE",`/api/cases/${cur.case_id}/teams/${t.team_id}`)); };
   const give=async(m)=>{ if(!window.confirm(`Передать дело «${cur.title}» — ${m.name}?\n\nВы останетесь в деле с правом добавлять; доступом и удалением будет управлять ${m.name}.`))return;
     const ok=await call("own:"+m.username,()=>sayPost(`/api/cases/${cur.case_id}/owner`,{username:m.username}));
     if(ok) onTransferred&&onTransferred(); };
+  if(ed) return <TeamEditor team={ed.team||null} users={users} backLabel="к доступу" attach={!ed.team}
+    prefill={ed.create?mem.filter(m=>m.role!=="owner"&&!m.team_id).map(m=>({username:m.username,name:m.name})):null}
+    onBack={()=>setEd(null)}
+    onSaved={async(tid,created)=>{ setEd(null); await loadMyTeams(); if(created){ await attach(tid,role); return; }
+      const c=await apiFetch(`/api/cases/${cur.case_id}`).catch(()=>null);
+      if(c){ setMem(c.members||[]); setTeams(c.teams||[]); } onChanged&&onChanged(); }}
+    onDeleted={async()=>{ setEd(null); await loadMyTeams(); const c=await apiFetch(`/api/cases/${cur.case_id}`).catch(()=>null);
+      if(c){ setMem(c.members||[]); setTeams(c.teams||[]); } onChanged&&onChanged(); }}/>;
+  const freeTeams=(myTeams||[]).filter(t=>!teams.some(x=>x.team_id===t.team_id));
   return <div className="cs-acc">
     <button className="rv-cs-back" onClick={onBack}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>к делу</button>
     {manage&&<>
@@ -8826,8 +8967,9 @@ function CaseAccess({cur,onBack,onChanged,onTransferred}){
       {mem.map(m=><div key={m.username} className="cs-acc-row">
         <span className={"cs-av"+(m.role==="owner"?" own":"")}>{initials(m.name)}</span>
         <span className="nm">{m.name}{me&&m.username===me.username?" (вы)":""}</span>
-        {m.role==="owner"||!manage
-          ?<span className="st">{CASE_ROLE_RU[m.role]||m.role}</span>
+        {m.role==="owner"||!manage||m.team_id
+          ?<span className="st" data-tip={m.team_id&&manage?"в деле через команду: права задаются у команды ниже":undefined}>
+            {CASE_ROLE_RU[m.role]||m.role}{m.team_name?<span className="tm-via"> · команда «{m.team_name}»</span>:null}</span>
           :<span className="cs-acc-ctl">
             <select className="input cs-acc-role" value={m.role} disabled={!!busy} aria-label={`Права: ${m.name}`}
               onChange={e=>setR(m,e.target.value)}>{CASE_ROLES.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
@@ -8836,6 +8978,31 @@ function CaseAccess({cur,onBack,onChanged,onTransferred}){
           </span>}
       </div>)}
     </div>
+    {(manage||teams.length>0)&&<>
+      <div className="t-cap" style={{margin:"18px 0 6px"}}>Команды</div>
+      <div className="cs-acc-list">
+        {teams.map(t=>{ const mine=(myTeams||[]).find(x=>x.team_id===t.team_id);
+          return <div key={t.team_id} className="cs-acc-row">
+            <span className="cs-av tm"><IcTeam/></span>
+            <span className="nm">{t.name}<span className="tm-n"> · {t.n} {plural(t.n,"человек","человека","человек")}</span></span>
+            {manage?<span className="cs-acc-ctl">
+              <select className="input cs-acc-role" value={t.role} disabled={!!busy} aria-label={`Права команды «${t.name}»`}
+                onChange={e=>attach(t.team_id,e.target.value)}>{CASE_ROLES.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+              {mine&&<button className="rv-cs-lnk" disabled={!!busy} onClick={()=>setEd({team:mine})} data-tip="изменить состав команды">состав</button>}
+              <button className="rv-ib" disabled={!!busy} onClick={()=>detach(t)} aria-label={`Отключить команду «${t.name}»`} data-tip="отключить от дела"><RvIX s={13}/></button>
+            </span>:<span className="st">{CASE_ROLE_RU[t.role]||t.role}</span>}
+          </div>; })}
+        {manage&&freeTeams.map(t=><button key={t.team_id} type="button" className="cs-acc-row add" disabled={!!busy}
+          onClick={()=>attach(t.team_id,role)} data-tip={`подключить с правами «${CASE_ROLE_RU[role]}» — права выбираются вверху`}>
+          <span className="cs-av tm"><IcTeam/></span>
+          <span className="nm">{t.name}<span className="tm-n"> · {t.members.length} {plural(t.members.length,"человек","человека","человек")}</span></span>
+          <span className="st">{busy==="team:"+t.team_id?"подключаю…":"+ подключить"}</span></button>)}
+        {manage&&<button type="button" className="cs-acc-row add tm-new" disabled={!!busy} onClick={()=>setEd({create:true})}
+          data-tip="сохранённая группа коллег: дальше подключается к любому вашему делу одним выбором">
+          <span className="cs-av tm">＋</span><span className="nm">Новая команда{mem.some(m=>m.role!=="owner"&&!m.team_id)?" — из участников дела":""}</span></button>}
+        {!teams.length&&!manage&&<div className="t-cap">Команд в деле нет.</div>}
+      </div>
+    </>}
     {err&&<div className="rv-cp-err" role="alert">{err}</div>}
     <p className="cs-acc-foot">{manage
       ?"Коллега получит уведомление и увидит дело у себя: кнопка «Аудит-дела» в верхней панели любого раздела."
@@ -8850,6 +9017,7 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,o
   const[flt,setFlt]=useState("all");           // all | mine | shared
   const[q,setQ]=useState("");                  // поиск по названию
   const[showArch,setShowArch]=useState(false);
+  const[teamsOpen,setTeamsOpen]=useState(false);        // «Мои команды»
   const[access,setAccess]=useState(false);     // окно «Доступ» внутри панели
   const[gone,setGone]=useState(null);          // только что удалённое дело — «Вернуть»
   const[cur,setCur]=useState(null);
@@ -8986,10 +9154,7 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,o
         onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape"){e.stopPropagation();setRen(null);}}}/>
         <button className="btn btn-primary btn-sm" onClick={rename}>Сохранить</button></div>}
       <div className="rv-cs-acts">
-        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.xlsx`}
-           data-tip="Excel в стиле AuditLens: дело в цифрах, графики, материалы с разметкой и комментариями">Excel</a>
-        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}
-           data-tip="Word в стиле AuditLens: обложка, разбор, графики и карточки материалов; шрифты встроены">Word</a>
+        <CaseExportBtn cur={cur}/>
         <button className={"btn btn-sm btn-ghost cs-mute"+(cur.muted?" on":"")} onClick={toggleMute} aria-pressed={!!cur.muted}
           data-tip={cur.muted?"Уведомления о материалах, сообщениях и статусе этого дела выключены — нажмите, чтобы снова получать. Упоминания и ответы вам приходят всё равно"
             :"Не присылать уведомления о материалах, сообщениях и статусе этого дела. Упоминания и ответы вам придут всё равно"}>
@@ -9003,8 +9168,10 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,o
         {cur.mine&&!cur.archived&&<button className="btn btn-sm btn-ghost" disabled={stBusy} onClick={()=>setStatus({archived:true})}
           data-tip="дело уйдёт в «Архив» списка и станет только для чтения; вернуть можно в любой момент">В архив</button>}
         {cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={remove}>Удалить</button>}
-        {!cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={leave}
+        {!cur.mine&&!cur.my_team&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={leave}
           data-tip="дело пропадёт из вашего списка; приобщённое вами останется в деле">Выйти из дела</button>}
+        {!cur.mine&&cur.my_team&&<span className="t-cap cs-via" data-tip="выйти можно, если владелец команды уберёт вас из неё">
+          вы в деле через команду «{cur.my_team}»</span>}
       </div>
       <div className="cs-tabs" role="tablist" aria-label="Разделы дела">{TABS.map(([k,l,n])=>
         <button key={k} type="button" role="tab" aria-selected={tab===k} className={"cs-tab"+(tab===k?" on":"")}
@@ -9034,6 +9201,8 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,o
     </RvModal>{reader}</>;
   }
 
+  if(teamsOpen) return <RvModal side="right" title="Мои команды" sub="группы коллег для доступа к делам одним выбором"
+      onClose={()=>setTeamsOpen(false)}><TeamsHome onBack={()=>{ setTeamsOpen(false); load(); }}/></RvModal>;
   return <RvModal side="right" title="Аудит-дела"
       sub="подборки доказательств под проверку — ваши и те, куда вас пригласили" onClose={onClose}>
     {legacy.length>0&&<div className="rv-cs-legacy">
@@ -9080,6 +9249,8 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,o
             <svg className="rail-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
             Архив · {arch.length}</button>
           {(showArch||!!ql)&&(archRows.length?archRows.map(row):<div className="t-cap">В архиве ничего не нашлось.</div>)}</div>}
+        <button type="button" className="cs-teams-lnk" onClick={()=>setTeamsOpen(true)}>
+          <IcTeam s={13}/>Мои команды<span className="t-cap">— коллеги для доступа к делам одним выбором</span></button>
         {del.length>0&&<div className="cs-del">
           <div className="t-cap" style={{margin:"14px 0 6px"}}>Недавно удалённые — можно вернуть 30 дней</div>
           {del.map(c=><div key={c.case_id} className="cs-del-row"><span>{c.title}</span>

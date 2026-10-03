@@ -84,7 +84,7 @@ def _case() -> dict:
 
 def test_case_xlsx_branded():
     wb = load_workbook(io.BytesIO(case_export.to_xlsx(_case())))
-    assert wb.sheetnames == ["Дело", "Материалы", "Сводки"]
+    assert wb.sheetnames == ["Дело", "Материалы", "Сводки", "Участники"]   # этап 5: участники всегда
     ov = wb["Дело"]
     assert len(ov._images) == 1 and len(ov._charts) >= 1
     cells = [str(c.value) for row in ov.iter_rows() for c in row if c.value]

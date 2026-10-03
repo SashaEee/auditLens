@@ -174,6 +174,11 @@ def _agg(case: dict, rows: list[dict]) -> dict:
     }
 
 
+def _pl(n: int, one: str, few: str, many: str) -> str:
+    n = abs(int(n))
+    return one if n % 10 == 1 and n % 100 != 11 else few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many
+
+
 def _money(v: float) -> str:
     return f"{v:,.0f} ₽".replace(",", " ")
 
@@ -198,7 +203,61 @@ def _subtitle(case: dict, a: dict) -> str:
         if case.get("updated_at") else "") if x)
 
 
-def to_xlsx(case: dict) -> bytes:
+# ── Полная выгрузка (этап 5): участники всегда, обсуждение и история — по выбору ──
+
+def _dt_msk(v) -> str:
+    """«03.10.2026 12:30» по Москве — как во всём инструменте."""
+    if not v:
+        return ""
+    try:
+        from zoneinfo import ZoneInfo
+        d = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M")
+    except (ValueError, TypeError):
+        return str(v)[:16]
+
+
+def _short(name: str | None) -> str:
+    p = (name or "").split()
+    return f"{p[0]} {p[1][0]}." if len(p) >= 2 else (name or "")
+
+
+def people_rows(case: dict) -> list[list[str]]:
+    """Участник · роль · как добавлен — без логинов."""
+    out = []
+    for m in case.get("members") or []:
+        how = ("создал дело" if m.get("role") == "owner"
+               else f"команда «{m['team_name']}»" if m.get("team_name") else "лично")
+        out.append([m.get("name") or "", m.get("role_label") or "", how,
+                    _dt_msk(m.get("added_at"))[:10] if m.get("role") != "owner" else ""])
+    return out
+
+
+def talk_rows(case: dict, talk: list[dict] | None) -> list[list[str]]:
+    """Обсуждение и комментарии к материалам по порядку: удалённые не выгружаются,
+    материал — номером в деле, ответ — кому."""
+    pos = {it["item_id"]: n for n, it in enumerate(case.get("items") or [], 1) if it.get("item_id")}
+    by = {m["msg_id"]: m for m in talk or []}
+    out = []
+    for m in talk or []:
+        if m.get("deleted") or not (m.get("body") or "").strip():
+            continue
+        par = by.get(m.get("reply_to"))
+        out.append([_dt_msk(m.get("created_at")), _short(m.get("name")),
+                    f"[{pos[m['item_id']]}]" if m.get("item_id") in pos else "",
+                    _short(par.get("name")) if par and not par.get("deleted") else "",
+                    (m.get("body") or "").strip() + (" (изменено)" if m.get("edited_at") else "")])
+    return out
+
+
+def history_rows(history: list[dict] | None) -> list[list[str]]:
+    return [[_dt_msk(e.get("created_at")), e.get("text") or "", e.get("who") or ""]
+            for e in reversed(history or [])]          # по порядку, от создания дела
+
+
+def to_xlsx(case: dict, talk: list[dict] | None = None, history: list[dict] | None = None) -> bytes:
     from openpyxl import Workbook
     from openpyxl.chart import BarChart, Reference
     from openpyxl.chart.label import DataLabelList
@@ -348,6 +407,31 @@ def to_xlsx(case: dict) -> bytes:
         ws.conditional_formatting.add(f"{cm}{hdr + 1}:{cm}{last}", FormulaRule(
             formula=[f"LEN({cm}{hdr + 1})>0"], fill=XL.fill("info_soft")))
 
+    # ── «Участники», «Обсуждение», «История» ─────────────────────────────
+    def plain_sheet(name: str, head: list[str], widths: list[float], data: list[list], note: str,
+                    wrap: set[str]) -> None:
+        sh = wb.create_sheet(name)
+        XL.sheet_base(sh, widths=widths, title=title, landscape=False)
+        sh.cell(row=1, column=1, value=f"{name} · {case.get('title') or ''}").font = XL.font(16, name=SERIF)
+        sh.row_dimensions[1].height = 26
+        XL.stamp(sh, 2, text_=f"{stamp_line()} · {note}", span=len(head))
+        XL.table(sh, 4, head, data, wrap=wrap)
+        sh.freeze_panes = sh.cell(row=5, column=1)
+        sh.print_title_rows = "4:4"
+        sh.sheet_properties.tabColor = C["ink3"]
+
+    pr = people_rows(case)
+    plain_sheet("Участники", ["Участник", "Роль", "Как добавлен", "С"], [34, 18, 34, 12], pr,
+                f"{len(pr)} {_pl(len(pr), 'человек', 'человека', 'человек')}", set())
+    if talk is not None:
+        tr = talk_rows(case, talk)
+        plain_sheet("Обсуждение", ["Когда", "Кто", "К материалу", "Ответ кому", "Сообщение"],
+                    [17, 16, 12, 14, 90], tr, f"сообщений: {len(tr)}", {"Сообщение"})
+    if history is not None:
+        hr = history_rows(history)
+        plain_sheet("История", ["Когда", "Событие", "Кто"], [17, 90, 18], hr,
+                    f"событий: {len(hr)}", {"Событие"})
+
     wb.active = 0
     for sh in wb.worksheets:
         sh.sheet_view.tabSelected = sh is ov
@@ -445,7 +529,43 @@ def _material_card(doc, n: int, it: dict, r: dict) -> None:
     doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
 
-def to_docx(case: dict) -> bytes:
+def _wd_table(doc, head: list[str], rows: list[list[str]], widths_cm: list[float]) -> None:
+    """Таблица в стиле выгрузки: шапка моноширинным на бумаге, волосяные линии."""
+    from docx.shared import Cm, Pt
+    t = doc.add_table(rows=1, cols=len(head))
+    for cell, h, w in zip(t.rows[0].cells, head, widths_cm):
+        cell.width = Cm(w)
+        WD.shade(cell, "paper")
+        WD.cell_borders(cell, bottom=("ink", 8), top=None, left=None, right=None)
+        WD.run(cell.paragraphs[0], h.upper(), font=MONO, size=7, color="ink3", spacing=0.4)
+    for r in rows:
+        cells = t.add_row().cells
+        for cell, v, w in zip(cells, r, widths_cm):
+            cell.width = Cm(w)
+            WD.cell_borders(cell, bottom=("hair", 4), top=None, left=None, right=None)
+            WD.run(cell.paragraphs[0], str(v or ""), font=SANS, size=9, color="ink")
+            cell.paragraphs[0].paragraph_format.space_after = Pt(2)
+    doc.add_paragraph()
+
+
+def _wd_talk(doc, case: dict, talk: list[dict]) -> None:
+    """Обсуждение — лентой: кто и когда, к какому материалу, ответ кому, текст."""
+    from docx.shared import Cm, Pt
+    for when, who, item, to, body in talk_rows(case, talk):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(6)
+        p.paragraph_format.space_after = Pt(1)
+        WD.run(p, who, font=SANS, size=9.5, bold=True, color="ink")
+        meta = " · ".join(x for x in (when, f"к материалу {item}" if item else "",
+                                      f"ответ {to}" if to else "") if x)
+        WD.run(p, "  " + meta, font=MONO, size=7.5, color="ink3")
+        b = doc.add_paragraph()
+        b.paragraph_format.left_indent = Cm(0.3)
+        b.paragraph_format.space_after = Pt(2)
+        WD.run(b, body, font=SANS, size=10, color="ink2")
+
+
+def to_docx(case: dict, talk: list[dict] | None = None, history: list[dict] | None = None) -> bytes:
     items = case.get("items") or []
     rows = [_row(n, it, case.get("app_base")) for n, it in enumerate(items, 1)]
     a = _agg(case, rows)
@@ -469,6 +589,8 @@ def to_docx(case: dict) -> bytes:
         ("Сумма претензий", _money(a["amount"]) if a["amount_n"] else "—",
          f"в {a['amount_n']} жалобах"),
     ])
+    WD.eyebrow(doc, "Кто ведёт дело")
+    _wd_table(doc, ["Участник", "Роль", "Как добавлен", "С"], people_rows(case), [6, 3.6, 5.4, 2])
     if case.get("note"):
         WD.eyebrow(doc, "Цель")
         p = doc.add_paragraph()
@@ -503,6 +625,18 @@ def to_docx(case: dict) -> bytes:
     WD.run(h, "Материалы дела", font=SERIF)
     for n, (it, r) in enumerate(zip(items, rows), 1):
         _material_card(doc, n, it, r)
+    if talk is not None and talk_rows(case, talk):
+        doc.add_page_break()
+        WD.eyebrow(doc, "Приложение")
+        h = doc.add_paragraph(style="Heading 1")
+        WD.run(h, "Обсуждение дела", font=SERIF)
+        _wd_talk(doc, case, talk)
+    if history is not None and history:
+        doc.add_page_break()
+        WD.eyebrow(doc, "Приложение")
+        h = doc.add_paragraph(style="Heading 1")
+        WD.run(h, "История дела", font=SERIF)
+        _wd_table(doc, ["Когда", "Событие", "Кто"], history_rows(history), [3.2, 10.8, 3])
     end = doc.add_paragraph()
     WD.run(end, stamp_line(), font=MONO, size=8, color="accent")
     return docx_bytes(doc)

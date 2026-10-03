@@ -3605,6 +3605,11 @@ def cases_member_remove(case_id: int, member: str, user: CurrentUser = Depends(g
     """Владелец убирает участника; участник выходит из дела сам (member = свой логин)."""
     if member == "me":
         member = user.username
+    team = userdata.member_team(case_id, member)
+    if team:
+        raise HTTPException(409, (f"Вы в деле через команду «{team}» — выйти можно, если её владелец уберёт вас из команды"
+                                  if member == user.username else
+                                  f"Участник в деле через команду «{team}» — уберите его из команды или отключите команду"))
     if not userdata.remove_case_member(case_id, user.username, member):
         raise HTTPException(403, "убрать участника может владелец дела; выйти — сам участник")
     if member == user.username:
@@ -3660,6 +3665,89 @@ async def cases_analyze(case_id: int, force: int = 0,
     await asyncio.to_thread(_bell_case, case_id, "case_analysis", user.username,
                             link=f"case:{case_id}:analysis")
     return {"analysis": md, "analysis_at": datetime.now(timezone.utc).isoformat(), "cached": False}
+
+
+# ── Команды: сохранённые группы коллег, подключаются к делу «живьём» ──────────
+
+def _bell_team_changes(changes: list[dict], actor: str) -> None:
+    """Кто получил или потерял доступ к делам из-за команды — каждому уведомление."""
+    for ch in changes or []:
+        for u, team, role in ch.get("added") or []:
+            _bell_case(ch["case_id"], "case_added", actor, users=[u], role=role,
+                       role_label=userdata.CASE_ROLE_RU.get(role), team=team)
+        if ch.get("removed"):
+            _bell_case(ch["case_id"], "case_removed", actor, users=list(ch["removed"]))
+
+
+class TeamIn(BaseModel):
+    name: Optional[str] = None
+    members: list[str] = []
+    add: list[str] = []
+    remove: list[str] = []
+
+
+@app.get("/api/teams")
+def teams_list(user: CurrentUser = Depends(get_current_user)):
+    """Мои команды — состав и в скольких делах подключены."""
+    return {"teams": userdata.list_teams(user.username)}
+
+
+@app.post("/api/teams")
+def teams_create(req: TeamIn, user: CurrentUser = Depends(get_current_user)):
+    try:
+        tid = userdata.create_team(user.username, req.name or "", req.members)
+    except userdata.CaseError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "team_id": tid}
+
+
+@app.patch("/api/teams/{team_id}")
+def teams_update(team_id: int, req: TeamIn, user: CurrentUser = Depends(get_current_user)):
+    """Переименовать, добавить или убрать людей: доступ к делам команды меняется сразу."""
+    try:
+        ch = userdata.update_team(user.username, team_id, name=req.name, add=req.add, remove=req.remove)
+    except userdata.CaseError as e:
+        raise HTTPException(403, str(e))
+    _bell_team_changes(ch, user.username)
+    return {"ok": True, "cases": len(ch)}
+
+
+@app.delete("/api/teams/{team_id}")
+def teams_delete(team_id: int, user: CurrentUser = Depends(get_current_user)):
+    try:
+        ch = userdata.delete_team(user.username, team_id)
+    except userdata.CaseError as e:
+        raise HTTPException(403, str(e))
+    _bell_team_changes(ch, user.username)
+    return {"ok": True}
+
+
+class CaseTeamIn(BaseModel):
+    team_id: int
+    role: str = "editor"
+
+
+@app.post("/api/cases/{case_id}/teams")
+def cases_team_attach(case_id: int, req: CaseTeamIn, user: CurrentUser = Depends(get_current_user)):
+    """Подключить свою команду к делу или сменить ей роль."""
+    r = userdata.attach_team(case_id, user.username, req.team_id, req.role)
+    if isinstance(r, str):
+        raise HTTPException(403 if "владел" in r or "свою" in r else 400, r)
+    added, removed = r
+    _bell_team_changes([{"case_id": case_id, "added": added, "removed": removed}], user.username)
+    return {"ok": True, "members": userdata.case_members(case_id, user.username),
+            "teams": userdata.case_teams(case_id)}
+
+
+@app.delete("/api/cases/{case_id}/teams/{team_id}")
+def cases_team_detach(case_id: int, team_id: int, user: CurrentUser = Depends(get_current_user)):
+    r = userdata.detach_team(case_id, user.username, team_id)
+    if r is None:
+        raise HTTPException(403, "отключить команду может только владелец дела")
+    added, removed = r
+    _bell_team_changes([{"case_id": case_id, "added": added, "removed": removed}], user.username)
+    return {"ok": True, "members": userdata.case_members(case_id, user.username),
+            "teams": userdata.case_teams(case_id)}
 
 
 class CaseStatusIn(BaseModel):
@@ -3809,23 +3897,34 @@ def _app_base(request: Request) -> str | None:
     return f"{proto}://{host}"
 
 
+def _export_extras(case_id: int, username: str, talk: int, hist: int):
+    """Обсуждение и история для полной выгрузки — по выбору в меню «Выгрузить»."""
+    t = (userdata.case_talk(case_id, username) or {}).get("messages") if talk else None
+    h = userdata.case_history(case_id, username) if hist else None
+    return t, h
+
+
 @app.get("/api/cases/{case_id}/export.xlsx")
-def cases_export_xlsx(case_id: int, request: Request, user: CurrentUser = Depends(get_current_user)):
+def cases_export_xlsx(case_id: int, request: Request, talk: int = 1, hist: int = 1,
+                      user: CurrentUser = Depends(get_current_user)):
     from urllib.parse import quote as _q
     from . import case_export
     case = {**_case_or_404(case_id, user.username), "app_base": _app_base(request)}
-    return Response(content=case_export.to_xlsx(case),
+    t, h = _export_extras(case_id, user.username, talk, hist)
+    return Response(content=case_export.to_xlsx(case, talk=t, history=h),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition":
                              f"attachment; filename*=UTF-8''{_q('AuditLens_дело_' + case['title'][:60] + '.xlsx')}"})
 
 
 @app.get("/api/cases/{case_id}/export.docx")
-def cases_export_docx(case_id: int, request: Request, user: CurrentUser = Depends(get_current_user)):
+def cases_export_docx(case_id: int, request: Request, talk: int = 1, hist: int = 1,
+                      user: CurrentUser = Depends(get_current_user)):
     from urllib.parse import quote as _q
     from . import case_export
     case = {**_case_or_404(case_id, user.username), "app_base": _app_base(request)}
-    return Response(content=case_export.to_docx(case),
+    t, h = _export_extras(case_id, user.username, talk, hist)
+    return Response(content=case_export.to_docx(case, talk=t, history=h),
                     media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     headers={"Content-Disposition":
                              f"attachment; filename*=UTF-8''{_q('AuditLens_дело_' + case['title'][:60] + '.docx')}"})

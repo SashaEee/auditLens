@@ -1079,6 +1079,9 @@ def get_case(case_id: int, username: str) -> dict | None:
     case["can_manage"] = role == "owner"
     case["can_talk"] = not archived              # пишут все участники, включая «только смотрит»
     case["members"] = case_members(case_id, username) or []
+    case["teams"] = case_teams(case_id)
+    case["my_team"] = next((m.get("team_name") for m in case["members"]
+                            if m["username"] == username and m.get("team_id")), None)
     case["shared"] = len(case["members"]) > 1
     # Документы подтягиваем свежими: доверие и дата обхода могли измениться
     # с момента приобщения, и в деле должно стоять актуальное состояние.
@@ -1197,12 +1200,15 @@ def case_members(case_id: int, username: str) -> list[dict] | None:
     rows = _rows("""
         SELECT * FROM (
             SELECT c.username, COALESCE(au.display_name, c.username) AS name, 'owner' AS role,
-                   NULL::text AS added_by, c.created_at AS added_at
+                   NULL::text AS added_by, c.created_at AS added_at,
+                   NULL::bigint AS team_id, NULL::text AS team_name
               FROM audit_case c LEFT JOIN app_user au ON au.username = c.username
              WHERE c.case_id = :c
             UNION ALL
-            SELECT m.username, COALESCE(au.display_name, m.username), m.role, m.added_by, m.added_at
+            SELECT m.username, COALESCE(au.display_name, m.username), m.role, m.added_by, m.added_at,
+                   m.team_id, t.name
               FROM audit_case_member m LEFT JOIN app_user au ON au.username = m.username
+              LEFT JOIN audit_team t ON t.team_id = m.team_id
              WHERE m.case_id = :c) x
          ORDER BY (role = 'owner') DESC, added_at""", {"c": case_id})
     for r in rows:
@@ -1225,7 +1231,7 @@ def set_case_member(case_id: int, owner: str, member: str, role: str) -> str | N
         s.execute(text("""
             INSERT INTO audit_case_member (case_id, username, role, added_by)
             VALUES (:c, :m, :r, :o)
-            ON CONFLICT (case_id, username) DO UPDATE SET role = EXCLUDED.role"""),
+            ON CONFLICT (case_id, username) DO UPDATE SET role = EXCLUDED.role, team_id = NULL"""),
                   {"c": case_id, "m": member, "r": role, "o": owner})
         s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
                   {"c": case_id})
@@ -1251,6 +1257,7 @@ def remove_case_member(case_id: int, actor: str, member: str) -> bool:
     if r.rowcount:
         case_log(case_id, actor, "member_left" if member == actor else "member_removed",
                  {"member": member})
+        _sync_case_teams(case_id)
     return bool(r.rowcount)
 
 
@@ -1887,11 +1894,20 @@ def _ev_text(kind: str, p: dict, name) -> str:
     if kind == "item_removed":
         return "Убран материал" + (f": {q(p.get('title'))}" if p.get("title") else "")
     if kind == "member_added":
-        return f"Новый участник: {name(p.get('member'))} — {CASE_ROLE_RU.get(p.get('role'), '')}"
+        via = f" из команды «{p['team']}»" if p.get("team") else ""
+        return f"Новый участник{via}: {name(p.get('member'))} — {CASE_ROLE_RU.get(p.get('role'), '')}"
+    if kind == "team_added":
+        return f"Подключена команда «{p.get('team')}» — {CASE_ROLE_RU.get(p.get('role'), '')}"
+    if kind == "team_role":
+        return f"Права команды «{p.get('team')}»: {CASE_ROLE_RU.get(p.get('role'), '')}"
+    if kind == "team_removed":
+        return (f"Команда «{p.get('team')}» удалена её создателем" if p.get("deleted")
+                else f"Отключена команда «{p.get('team')}»")
     if kind == "member_role":
         return f"Права участника {name(p.get('member'))}: {CASE_ROLE_RU.get(p.get('role'), '')}"
     if kind == "member_removed":
-        return f"Исключение из дела: {name(p.get('member'))}"
+        return (f"Доступ через команду снят: {name(p.get('member'))}" if p.get("team")
+                else f"Исключение из дела: {name(p.get('member'))}")
     if kind == "member_left":
         return "Выход из дела"
     if kind == "owner":
@@ -1940,3 +1956,230 @@ def get_case_analysis(case_id: int, username: str, analysis_id: int) -> dict | N
                           COALESCE(au.display_name, a.username) AS name
                      FROM audit_case_analysis a LEFT JOIN app_user au ON au.username = a.username
                     WHERE a.case_id = :c AND a.analysis_id = :a""", {"c": case_id, "a": analysis_id})
+
+
+# ── Команды (миграция 086) ───────────────────────────────────────────────────
+# Сохранённая группа коллег: её ведёт создатель и подключает к своим делам с
+# ролью. Подключение «живое» — состав команды пересчитывается в участников
+# каждого её дела (строки audit_case_member с team_id). Чужую команду
+# подключить нельзя: её создатель мог бы провести в ваше дело кого угодно.
+
+TEAM_MAX = 80
+
+
+def _sync_case_teams(case_id: int, log_members: bool = True) -> tuple[list[tuple[str, str | None, str]], list[str]]:
+    """Пересчитать участников «через команду». Личная строка важнее командной;
+    из нескольких команд берётся лучшая роль. Возвращает (кого добавили —
+    (логин, команда, роль), кого убрали)."""
+    best = """
+        SELECT DISTINCT ON (tm.username) tm.username, ct.role, ct.team_id, ct.added_by, t.name
+          FROM audit_case_team ct
+          JOIN audit_team_member tm ON tm.team_id = ct.team_id
+          JOIN audit_team t ON t.team_id = ct.team_id
+          JOIN audit_case c ON c.case_id = ct.case_id
+         WHERE ct.case_id = :c AND tm.username <> c.username
+         ORDER BY tm.username, (ct.role = 'editor') DESC, ct.added_at"""
+    try:
+        with db.session() as s:
+            removed = s.execute(text("""
+                DELETE FROM audit_case_member cm
+                 WHERE cm.case_id = :c AND cm.team_id IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM audit_case_team ct
+                                     JOIN audit_team_member tm ON tm.team_id = ct.team_id
+                                    WHERE ct.case_id = :c AND tm.username = cm.username)
+                RETURNING cm.username"""), {"c": case_id}).scalars().all()
+            added = s.execute(text(f"""
+                INSERT INTO audit_case_member (case_id, username, role, added_by, team_id)
+                SELECT :c, b.username, b.role, b.added_by, b.team_id FROM ({best}) b
+                ON CONFLICT (case_id, username) DO NOTHING
+                RETURNING username, team_id, role"""), {"c": case_id}).all()
+            s.execute(text(f"""
+                UPDATE audit_case_member cm SET role = b.role, team_id = b.team_id
+                  FROM ({best}) b
+                 WHERE cm.case_id = :c AND cm.username = b.username AND cm.team_id IS NOT NULL
+                   AND (cm.role <> b.role OR cm.team_id <> b.team_id)"""), {"c": case_id})
+    except Exception:  # noqa: BLE001 — до миграции 086 команд нет
+        log.debug("case %s: пересчёт команд не удался", case_id, exc_info=True)
+        return [], []
+    names = {}
+    if added:
+        names = {r["team_id"]: r["name"] for r in _rows(
+            "SELECT team_id, name FROM audit_team WHERE team_id = ANY(:t)",
+            {"t": list({a[1] for a in added})})}
+    if log_members:            # подключение команды — одна строка истории, а не десять
+        for u in removed:
+            case_log(case_id, None, "member_removed", {"member": u, "team": True})
+        for u, t, role in added:
+            case_log(case_id, None, "member_added", {"member": u, "role": role, "team": names.get(t)})
+    return [(u, names.get(t), role) for u, t, role in added], list(removed)
+
+
+def _team_cases(team_id: int) -> list[int]:
+    return [r["case_id"] for r in _rows("""
+        SELECT ct.case_id FROM audit_case_team ct JOIN audit_case c ON c.case_id = ct.case_id
+         WHERE ct.team_id = :t AND c.deleted_at IS NULL""", {"t": team_id})]
+
+
+def _own_team(team_id: int, username: str) -> dict | None:
+    return _one("SELECT team_id, name, owner FROM audit_team WHERE team_id = :t AND owner = :u",
+                {"t": team_id, "u": username})
+
+
+def list_teams(username: str) -> list[dict]:
+    """Мои команды: состав и в скольких делах подключены."""
+    try:
+        teams = _rows("""
+            SELECT t.team_id, t.name, t.updated_at,
+                   (SELECT count(*) FROM audit_case_team ct JOIN audit_case c ON c.case_id = ct.case_id
+                     WHERE ct.team_id = t.team_id AND c.deleted_at IS NULL) AS cases
+              FROM audit_team t WHERE t.owner = :u ORDER BY lower(t.name)""", {"u": username})
+        mem = _rows("""
+            SELECT tm.team_id, tm.username, COALESCE(au.display_name, tm.username) AS name
+              FROM audit_team_member tm JOIN audit_team t ON t.team_id = tm.team_id
+              LEFT JOIN app_user au ON au.username = tm.username
+             WHERE t.owner = :u ORDER BY 3""", {"u": username})
+    except Exception:  # noqa: BLE001 — до миграции 086
+        return []
+    by = {}
+    for m in mem:
+        by.setdefault(m.pop("team_id"), []).append(m)
+    for t in teams:
+        t["members"] = by.get(t["team_id"], [])
+    return teams
+
+
+def _clean_members(owner: str, members) -> list[str]:
+    ms = [str(m) for m in dict.fromkeys(members or []) if m and m != owner][:TEAM_MAX]
+    if not ms:
+        return []
+    known = {r["username"] for r in _rows("SELECT username FROM app_user WHERE username = ANY(:u)",
+                                          {"u": ms})}
+    return [m for m in ms if m in known]
+
+
+def create_team(owner: str, name: str, members: list[str] | None = None) -> int:
+    name = " ".join((name or "").split())[:120]
+    if not name:
+        raise CaseError("нужно название команды")
+    ms = _clean_members(owner, members)
+    with db.session() as s:
+        tid = s.execute(text("INSERT INTO audit_team (owner, name) VALUES (:o, :n) RETURNING team_id"),
+                        {"o": owner, "n": name}).scalar_one()
+        for m in ms:
+            s.execute(text("""INSERT INTO audit_team_member (team_id, username) VALUES (:t, :u)
+                              ON CONFLICT DO NOTHING"""), {"t": tid, "u": m})
+    return int(tid)
+
+
+def update_team(owner: str, team_id: int, *, name: str | None = None,
+                add: list[str] | None = None, remove: list[str] | None = None) -> list[dict]:
+    """Переименовать, добавить и убрать участников. Возвращает перемены доступа
+    по делам команды: [{case_id, added: [(логин, команда, роль)], removed: [логин]}]."""
+    t = _own_team(team_id, owner)
+    if not t:
+        raise CaseError("команду меняет только тот, кто её создал")
+    nm = " ".join((name or "").split())[:120] if name is not None else None
+    ad = _clean_members(owner, add)
+    rm = [str(x) for x in (remove or [])][:TEAM_MAX]
+    with db.session() as s:
+        if nm:
+            s.execute(text("UPDATE audit_team SET name = :n, updated_at = now() WHERE team_id = :t"),
+                      {"n": nm, "t": team_id})
+        for m in ad:
+            s.execute(text("""INSERT INTO audit_team_member (team_id, username) VALUES (:t, :u)
+                              ON CONFLICT DO NOTHING"""), {"t": team_id, "u": m})
+        if rm:
+            s.execute(text("DELETE FROM audit_team_member WHERE team_id = :t AND username = ANY(:u)"),
+                      {"t": team_id, "u": rm})
+        if ad or rm:
+            s.execute(text("UPDATE audit_team SET updated_at = now() WHERE team_id = :t"), {"t": team_id})
+    out = []
+    if ad or rm:
+        for cid in _team_cases(team_id):
+            a, r = _sync_case_teams(cid)
+            if a or r:
+                out.append({"case_id": cid, "added": a, "removed": r})
+    return out
+
+
+def delete_team(owner: str, team_id: int) -> list[dict]:
+    """Удалить команду: её участники теряют доступ к делам, куда их не добавили отдельно."""
+    if not _own_team(team_id, owner):
+        raise CaseError("удалить команду может только тот, кто её создал")
+    cases = _team_cases(team_id)
+    name = (_own_team(team_id, owner) or {}).get("name")
+    # кто потеряет доступ: строки «через эту команду» уйдут каскадом (team_id → ON DELETE CASCADE)
+    lost = {cid: [r["username"] for r in _rows(
+        "SELECT username FROM audit_case_member WHERE case_id = :c AND team_id = :t",
+        {"c": cid, "t": team_id})] for cid in cases}
+    with db.session() as s:
+        s.execute(text("DELETE FROM audit_team WHERE team_id = :t"), {"t": team_id})
+    out = []
+    for cid in cases:
+        case_log(cid, owner, "team_removed", {"team": name, "deleted": True})
+        a, _r = _sync_case_teams(cid, log_members=False)   # участники других команд возвращаются
+        gone = set(lost.get(cid, []))
+        back = {u for u, _t, _role in a}
+        # вернувшиеся через другую команду доступа не теряли — им ничего не сообщаем
+        out.append({"case_id": cid, "added": [x for x in a if x[0] not in gone],
+                    "removed": [u for u in gone if u not in back]})
+    return out
+
+
+def case_teams(case_id: int) -> list[dict]:
+    try:
+        return _rows("""
+            SELECT ct.team_id, t.name, ct.role, t.owner, ct.added_at,
+                   (SELECT count(*) FROM audit_team_member tm WHERE tm.team_id = ct.team_id) AS n
+              FROM audit_case_team ct JOIN audit_team t ON t.team_id = ct.team_id
+             WHERE ct.case_id = :c ORDER BY ct.added_at""", {"c": case_id})
+    except Exception:  # noqa: BLE001 — до миграции 086
+        return []
+
+
+def attach_team(case_id: int, owner: str, team_id: int, role: str):
+    """Подключить свою команду к своему делу (или сменить ей роль).
+    Возвращает (added, removed) или текст ошибки."""
+    if role not in ("editor", "viewer"):
+        return "неизвестная роль"
+    if not _owns_case(case_id, owner):
+        return "управлять доступом может только владелец дела"
+    t = _own_team(team_id, owner)
+    if not t:
+        return "подключить можно только свою команду"
+    with db.session() as s:
+        prev = s.execute(text("SELECT role FROM audit_case_team WHERE case_id = :c AND team_id = :t"),
+                         {"c": case_id, "t": team_id}).scalar()
+        s.execute(text("""INSERT INTO audit_case_team (case_id, team_id, role, added_by)
+                          VALUES (:c, :t, :r, :o)
+                          ON CONFLICT (case_id, team_id) DO UPDATE SET role = EXCLUDED.role"""),
+                  {"c": case_id, "t": team_id, "r": role, "o": owner})
+        s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"), {"c": case_id})
+    if prev is None:
+        case_log(case_id, owner, "team_added", {"team": t["name"], "role": role})
+    elif prev != role:
+        case_log(case_id, owner, "team_role", {"team": t["name"], "role": role})
+    return _sync_case_teams(case_id, log_members=False)
+
+
+def detach_team(case_id: int, owner: str, team_id: int):
+    """Отключить команду от дела. Возвращает (added, removed) или None — нет прав."""
+    if not _owns_case(case_id, owner):
+        return None
+    with db.session() as s:
+        name = s.execute(text("""DELETE FROM audit_case_team ct USING audit_team t
+                                  WHERE ct.case_id = :c AND ct.team_id = :t AND t.team_id = ct.team_id
+                                  RETURNING t.name"""), {"c": case_id, "t": team_id}).scalar()
+    if name is None:
+        return None
+    case_log(case_id, owner, "team_removed", {"team": name})
+    return _sync_case_teams(case_id, log_members=False)
+
+
+def member_team(case_id: int, username: str) -> str | None:
+    """Через какую команду человек в деле (None — лично или не в деле)."""
+    try:
+        return _scalar("""SELECT t.name FROM audit_case_member m JOIN audit_team t ON t.team_id = m.team_id
+                           WHERE m.case_id = :c AND m.username = :u""", {"c": case_id, "u": username})
+    except Exception:  # noqa: BLE001
+        return None
