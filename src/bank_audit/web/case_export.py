@@ -24,7 +24,12 @@ _TO = {"cbr": "ЦБ", "court": "суд", "rpn": "Роспотребнадзор"
 _VULN = {"pensioner": "пенсионер", "low_income": "низкий доход", "svo": "участник СВО",
          "minor": "несовершеннолетний", "disabled": "инвалид", "ill": "тяжелобольной"}
 _RISK = {"compliance": "комплаенс", "conduct": "практики", "ops": "операции"}
-_KIND = {"document": "документ", "review": "жалоба", "offer": "продукт", "report": "отчёт"}
+_KIND = {"document": "документ", "review": "жалоба", "offer": "продукт «Рынка»",
+         "report": "отчёт ИИ", "answer": "ответ ИИ", "news": "новость"}
+# Отчёт ИИ в выгрузку дела не копируется целиком: десятки страниц в приложении
+# к проверке не нужны. В Excel и Word — название, вопрос, короткий вывод и где
+# открыть полный текст (решение владельца инструмента, этап 4).
+REPORT_NOTE = "Полный отчёт в выгрузку не входит — он в AuditLens: ИИ-помощник → История → Отчёты"
 
 
 def _now() -> str:
@@ -42,15 +47,85 @@ def _amount(v) -> str:
     return f"{v:,.0f} ₽".replace(",", " ") if v is not None else ""
 
 
-def _row(n: int, it: dict) -> dict:
+def _pct(v) -> str:
+    return f"{v:.2f}".rstrip("0").rstrip(".").replace(".", ",") + "%" if v is not None else ""
+
+
+def offer_terms(m: dict) -> str:
+    """«ставка от 18,5%; сумма до 3 000 000 ₽; срок 3–36 мес» — по снимку на дату."""
+    parts = []
+    if m.get("rate_pct") is not None:
+        kind = m.get("rate_kind") or ""          # служебные коды витрины (min, max) не показываем
+        parts.append(f"{(m.get('rate_label') or 'ставка').lower()} {_pct(m['rate_pct'])}"
+                     + (f" ({kind})" if re.search(r"[а-яё]", kind, re.I) else ""))
+    if m.get("psk_min") is not None:
+        parts.append(f"ПСК от {_pct(m['psk_min'])}")
+    lo, hi = m.get("amount_min"), m.get("amount_max")
+    if lo or hi:
+        parts.append("сумма " + (f"от {_amount(lo)} " if lo else "") + (f"до {_amount(hi)}" if hi else "")
+                     .strip())
+    a, b = m.get("term_min"), m.get("term_max")
+    if a or b:
+        t = f"{int(a)}–{int(b)}" if a and b and a != b else str(int(a or b))
+        parts.append(f"срок {t} мес")
+    if m.get("fee_service") is not None:
+        parts.append(f"обслуживание {_amount(m['fee_service'])}")
+    if m.get("cashback_pct") is not None:
+        parts.append(f"кешбэк до {_pct(m['cashback_pct'])}")
+    if m.get("grace_days") is not None:
+        parts.append(f"грейс {int(m['grace_days'])} дн")
+    return "; ".join(p.strip() for p in parts if p.strip())
+
+
+def _gist(it: dict) -> str:
+    """Суть материала одной-двумя фразами — без полного текста отчёта."""
+    m, k = it.get("meta") or {}, it["kind"]
+    if k == "report":
+        return m.get("lead") or ""
+    if k == "answer":
+        t = m.get("text") or ""
+        return t if len(t) <= 700 else t[:700].rsplit(" ", 1)[0] + "…"
+    if k == "news":
+        return m.get("summary") or ""
+    if k == "offer":
+        terms = offer_terms(m)
+        when = " · ".join(x for x in (f"условия на {_ru_date(m.get('as_of'))}" if m.get("as_of") else "",
+                                      f"версия с {_ru_date(m.get('valid_from'))}" if m.get("valid_from")
+                                      else "") if x)
+        return "; ".join(x for x in (terms, when) if x)
+    return ""
+
+
+def _link(it: dict, base: str | None) -> str:
+    k = it["kind"]
+    if k == "answer":                 # адрес ответа — служебный отпечаток, не ссылка
+        return ""
+    if k == "report":
+        return f"{base}/#ai?report={it.get('ref_id')}" if base and it.get("ref_id") else ""
+    return it.get("url") or ""
+
+
+def _row(n: int, it: dict, base: str | None = None) -> dict:
     r = it.get("review") or {}
-    doc = it["kind"] == "document"
+    m = it.get("meta") or {}
+    k = it["kind"]
+    doc = k == "document"
+    date = (r.get("date") or (str(it.get("fetched_at") or "")[:10] if doc else "")
+            or (str(m.get("ts") or "")[:10] if k == "news" else "")
+            or (str(m.get("created_at") or "")[:10] if k == "report" else "")
+            or (str(m.get("as_of") or "")[:10] if k == "offer" else "")
+            or (str(it.get("added_at") or "")[:10] if k == "answer" else ""))
+    src = (r.get("source") or (m.get("source") or m.get("domain") if k == "news" else "")
+           or ("ИИ-помощник" if k in ("report", "answer") else "")
+           or ("Рынок" if k == "offer" else ""))
     return {
-        "№": n, "Тип": _KIND.get(it["kind"], it["kind"]),
-        "Дата": _ru_date(r.get("date") or (str(it.get("fetched_at") or "")[:10] if doc else "")),
-        "Банк": r.get("bank") or it.get("bank_name") or "",
-        "Продукт": r.get("product") or "", "Город": r.get("city") or "",
-        "Площадка": r.get("source") or "",
+        "№": n, "Тип": _KIND.get(k, k),
+        "Дата": _ru_date(date),
+        "Банк": r.get("bank") or it.get("bank_name") or (m.get("bank") if k == "offer" else "") or "",
+        "Продукт": r.get("product") or (m.get("category_label") or m.get("product") if k == "offer" else "")
+        or "",
+        "Город": r.get("city") or "",
+        "Площадка": src or "",
         "Главная проблема": r.get("issue_label") or "",
         "Класс риска": _RISK.get(r.get("risk") or "", ""),
         "Эскалация": _ESC.get(r.get("esc") or "", ""),
@@ -59,11 +134,15 @@ def _row(n: int, it: dict) -> dict:
         "Без согласия": "да" if r.get("no_consent") else "",
         "Ввели в заблуждение": "да" if r.get("misled") else "",
         "Сумма": _amount(r.get("amount")),
-        "Суть": r.get("summary") or it.get("title") or "",
+        # отчёт, ответ, новость, продукт: в Excel название и вывод одной ячейкой
+        "Суть": (" — ".join(x for x in ((it.get("title") or "")[:300], _gist(it)) if x)
+                 if k in ("report", "answer", "news", "offer")
+                 else r.get("summary") or it.get("title") or ""),
         "Цитата": r.get("quote") or "",
         "Комментарий аудитора": it.get("note") or "",
         "Приобщил": it.get("added_by_name") or it.get("added_by") or "",
-        "Ссылка": it.get("url") or "",
+        "Ссылка": _link(it, base),
+        "_gist": _gist(it),                       # не колонка: суть для карточки Word
     }
 
 
@@ -128,7 +207,7 @@ def to_xlsx(case: dict) -> bytes:
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.pagebreak import Break
 
-    rows = [_row(n, it) for n, it in enumerate(case.get("items") or [], 1)]
+    rows = [_row(n, it, case.get("app_base")) for n, it in enumerate(case.get("items") or [], 1)]
     a = _agg(case, rows)
     title = f"Аудит-дело: {case.get('title') or ''}"
     wb = Workbook()
@@ -303,7 +382,10 @@ def _material_card(doc, n: int, it: dict, r: dict) -> None:
                                      r["Город"], r["Площадка"]) if x)
     p = cell.paragraphs[0]
     WD.run(p, eyebrow.upper(), font=MONO, size=7.5, color="ink3", spacing=0.4)
+    k = it["kind"]
     head = r["Главная проблема"] or (it.get("title") or "")[:160]
+    if k in ("report", "news", "offer", "answer"):
+        head = (it.get("title") or "")[:200]
     if head:
         hp = cell.add_paragraph()
         WD.run(hp, head, font=SANS, size=11, bold=True, color="ink")
@@ -321,9 +403,10 @@ def _material_card(doc, n: int, it: dict, r: dict) -> None:
             WD.run(fp, ("  ·  " if i else "") + f, font=SANS, size=9, bold=True,
                    color="accent_ink" if ("обратился" in f or "согласия" in f
                                           or "заблуждение" in f) else "warn_ink")
-    if r["Суть"] and r["Суть"] != head:
+    body = r["_gist"] if k in ("report", "news", "offer", "answer") else r["Суть"]
+    if body and body != head:
         sp = cell.add_paragraph()
-        WD.run(sp, r["Суть"], font=SANS, size=10, color="ink2")
+        WD.run(sp, body, font=SANS, size=10, color="ink2")
     if r["Цитата"]:
         qp = cell.add_paragraph()
         qp.paragraph_format.left_indent = Cm(0.4)
@@ -346,6 +429,14 @@ def _material_card(doc, n: int, it: dict, r: dict) -> None:
         if r["Приобщил"]:
             WD.run(cc.add_paragraph(), f"приобщил: {r['Приобщил']}", font=MONO, size=7,
                    color="ink3")
+    if k == "report":
+        np_ = cell.add_paragraph()
+        meta = it.get("meta") or {}
+        who = " · ".join(x for x in (meta.get("owner_name"),
+                                     "Deep Research" if meta.get("mode") == "deep" else "быстрый ответ")
+                         if x)
+        WD.run(np_, f"{REPORT_NOTE}" + (f" · {who}" if who else ""), font=SANS, size=8.5,
+               color="ink3", italic=True)
     if r["Ссылка"]:
         lp = cell.add_paragraph()
         WD.run(lp, r["Ссылка"], font=MONO, size=7.5, color="select")
@@ -356,7 +447,7 @@ def _material_card(doc, n: int, it: dict, r: dict) -> None:
 
 def to_docx(case: dict) -> bytes:
     items = case.get("items") or []
-    rows = [_row(n, it) for n, it in enumerate(items, 1)]
+    rows = [_row(n, it, case.get("app_base")) for n, it in enumerate(items, 1)]
     a = _agg(case, rows)
     title = case.get("title") or "Аудит-дело"
     doc = WD.new(f"Аудит-дело: {title}")

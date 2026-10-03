@@ -750,6 +750,26 @@ let _trkPush=null;
 // верхней панели и из разделов (openCases), «в деле» обновляется событием al-cases
 let _openCases=null, _casesHubOpen=false;
 let _pendingReport=null;          // отчёт, который открыть в ИИ-помощнике (из колокольчика)
+// «В дело» отовсюду (этап 4): одна кнопка и одно меню на весь инструмент.
+// Активное дело — то, куда «В дело» кладёт одним нажатием (храним в профиле:
+// prefs.active_case). Пометки «в деле» — общий снимок /api/cases/refs.
+let _caseAdd=null, _casePickOpen=false;
+const _cs={refs:{},active:null,loaded:false};          // active: {case_id,title} | null
+const _csSubs=new Set();
+const _csEmit=()=>_csSubs.forEach(f=>{ try{ f({..._cs}); }catch{} });
+function loadCaseRefs(){ return apiFetch("/api/cases/refs").then(d=>{ _cs.refs=d.refs||{}; _cs.loaded=true; _csEmit(); }).catch(()=>{}); }
+function csSetActive(a){ const prev=_cs.active;
+  if((prev&&prev.case_id)===(a&&a.case_id)&&(prev&&prev.title)===(a&&a.title)) return; _cs.active=a; _csEmit(); }
+function useCaseState(){ const[s,setS]=useState(()=>({..._cs}));
+  useEffect(()=>{ _csSubs.add(setS); if(!_cs.loaded) loadCaseRefs(); return ()=>{ _csSubs.delete(setS); }; },[]);
+  return s; }
+// ключ материала в снимке: отчёт и продукт — по номеру, остальное — по адресу
+const caseKey=(it)=>!it?null:(it.kind==="report"||it.kind==="offer")&&it.ref_id?`${it.kind}:${it.ref_id}`
+  :it.kind==="answer"?`a:${(it.meta&&it.meta.question||"")}\n${(it.meta&&it.meta.text||"").slice(0,240)}`
+  :it.url?`u:${it.url}`:null;
+// ответ ИИ получает адрес-отпечаток на сервере — его пометку держим сами, до перезагрузки
+const _csAnswers={};
+function caseAdd(items,opt){ try{ if(_caseAdd) _caseAdd(Array.isArray(items)?items:[items],opt||{}); }catch{} }
 function openCases(caseId,opt){ try{ if(_openCases)_openCases(caseId||null,opt); }catch{} }
 function trkEvent(ev){ try{ if(_trkPush)_trkPush(ev); }catch{} }
 // «человек здесь»: ввод внутри встроенного модуля (фрейм «Аудита уязвимостей»)
@@ -1827,6 +1847,7 @@ function FyNews({t,hero,wide,fb,onFb}){
       <span className="bf-fb" role="group" aria-label="Действия с новостью">
         <button className="bf-fb-b" aria-label="Разобрать с ИИ" data-tip="Разобрать с ИИ"
           onClick={()=>bfGoAI("Разбери подробно для внутреннего аудита Сбера: "+(t.title||""))}>✦</button>
+        {t.url&&<CaseAddBtn variant="fb" item={caNews({...t,summary:t.summary||t.reason},"foryou")} src="foryou"/>}
         <button className={"bf-fb-b"+(fb===1?" on":"")} aria-pressed={fb===1} aria-label="Интересно — больше такого"
           data-tip="Интересно — больше такого" onClick={()=>onFb(t,1)}><IcTUp s={13}/></button>
         <button className="bf-fb-b" aria-label="Не интересно — меньше такого"
@@ -2670,13 +2691,13 @@ function OverviewPage(){
             <span className="ov-upd-t">Всплеск «{x.label}»: {ovJ(x.week)} за 7 дней при норме {ovN(x.baseline_week)}</span>
             {mn(x)&&<span className="ov-upd-s">{mn(x)}</span>}
           </a></li>)}
-          {its.map((it,i)=><li key={"n"+i}><a className="ov-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
+          {its.map((it,i)=><li key={"n"+i} className="ca-hov"><a className="ov-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
               data-tip={it.idea&&it.idea.length>110?it.idea:undefined}
               onClick={()=>trkEvent({kind:"news_click",page:"overview",payload:{url:it.url,source:it.source,group:"update",title:it.title}})}>
             <span className="ov-upd-k">{fyTg(it.url)?"Telegram":it.domain}</span>
             <span className="ov-upd-t">{it.title}</span>
             {it.idea&&<span className="ov-upd-s">{it.idea}</span>}
-          </a></li>)}
+          </a><CaseAddBtn variant="icon" className="ca-float" item={caNews(it,"update")} src="news_update"/></li>)}
         </ul>}
       </section>;})()}
 
@@ -2825,8 +2846,8 @@ function OverviewPage(){
           const shown=newsGroups.map(g=>{const its=g.items.slice(0,Math.max(0,left)); left-=its.length; return {...g,items:its};}).filter(g=>g.items.length);
           return <>{shown.map(g=><div key={g.key}>
             <div className="bf-news-g">{g.title||g.key}</div>
-            {g.items.map((it,i)=>
-              <a key={i} className="bf-news-it" data-sev={it.severity} href={it.url}
+            {g.items.map((it,i)=><div key={i} className="ca-hov">
+              <a className="bf-news-it" data-sev={it.severity} href={it.url}
                  target="_blank" rel="noopener noreferrer"
                  onClick={()=>trkEvent({kind:"news_click",page:"overview",
                    payload:{url:it.url,source:it.source,group:g.key,severity:it.severity,
@@ -2848,7 +2869,9 @@ function OverviewPage(){
                   {it.continues&&<span className="bf-chip" data-tip={`Было ${dmy(it.continues.date)}: «${it.continues.title}»`+(it.new_fact?`\nНовое: ${it.new_fact}`:"")}>
                     продолжение · {dmy(it.continues.date)}</span>}
                   <Ic.ext/></div>
-              </a>)}
+              </a>
+              {/* «В дело» — значок в углу, только при наведении: лента не обрастает кнопками */}
+              <CaseAddBtn variant="icon" className="ca-float" item={caNews(it,g.key)} src="news"/></div>)}
           </div>)}
           {total>NEWS_N&&<button className="bf-news-more" onClick={()=>setNewsOpen(v=>!v)} aria-expanded={newsOpen}>
             {newsOpen?"Свернуть":`Ещё ${total-NEWS_N} ${plural(total-NEWS_N,"новость","новости","новостей")}`}</button>}</>;})():
@@ -3669,6 +3692,8 @@ function MarketPage({params}){
         <div className="mk-dbtns">
           {dossier.offer.url&&<a className="btn btn-ghost btn-sm" href={dossier.offer.url} target="_blank" rel="noopener noreferrer">↗ Первоисточник</a>}
           <button className="btn btn-accent btn-sm" onClick={()=>openAI(dossier.offer)}>✦ Спросить ИИ</button>
+          {/* в дело — снимок условий на сегодня: витрина изменится, доказательство — нет */}
+          <CaseAddBtn variant="ghost" item={{kind:"offer",ref_id:dossier.offer.offer_id||drawer}} src="market"/>
         </div>
       </>}
     </RvModal>}
@@ -4006,7 +4031,7 @@ function RvCard({r,sel,read,inCase,showBank,onOpen,onCase,onTheme,q,cardRef}){
       </span>
       {inCase&&<span className="rv-c-in" data-tip={`в деле «${inCase}»`}><RvICase s={12}/>в деле</span>}
       <span className="rv-c-acts">
-        {!inCase&&onCase&&<button className="rv-c-add" onClick={e=>{e.stopPropagation();onCase();}}>В дело</button>}
+        {!inCase&&onCase&&<button className="rv-c-add" onClick={e=>{e.stopPropagation();onCase(e.currentTarget);}}>В дело</button>}
         <RvMenu items={[onCase&&{t:inCase?"Добавить в другое дело":"В аудит-дело",ic:<RvICase s={13}/>,on:onCase},
           r.url&&{t:"Открыть на площадке",ic:<RvIExt s={13}/>,href:r.url},
           r.url&&{t:"Скопировать ссылку",ic:<RvILink s={13}/>,on:()=>rvCopy(r.url)}]}/>
@@ -4072,7 +4097,7 @@ function RvReader({r,pos,total,ctx,onPrev,onNext,onClose,onCase,inCase,onOpenSim
         {total>1&&<span className="rv-rd-pos">{pos+1} из {total}{ctx?` · ${ctx}`:""}</span>}
       </div>
       <div className="rv-rd-acts">
-        {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={onCase}
+        {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={e=>onCase(e.currentTarget)}
           data-tip={inCase?`уже в деле «${inCase}» — можно добавить в другое`:"приобщить к аудит-делу · A"}>
           <RvICase s={14}/>{inCase?"В деле":"В дело"}</button>}
         {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer" data-tip="открыть на площадке">
@@ -4101,7 +4126,7 @@ function RvReader({r,pos,total,ctx,onPrev,onNext,onClose,onCase,inCase,onOpenSim
       </div>}
     </div>
     {!embedded&&(onCase||r.url)&&<div className="rv-rd-foot">
-      {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={onCase}>
+      {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={e=>onCase(e.currentTarget)}>
         <RvICase s={15}/>{inCase?"В деле":"В дело"}</button>}
       {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer">{rvHost(r.url)}<RvIExt s={13}/></a>}
     </div>}
@@ -4149,45 +4174,6 @@ const rvCaseSnap=r=>(((r.ann&&r.ann.summary)?r.ann.summary+"\n\n":"")+(r.text||"
 // Приобщение жалоб к серверному аудит-делу (то же, что в «Базе знаний»):
 // дело видит команда, к материалам пишут комментарии, выгружают в Excel и
 // Word. Раньше «дело» жило в браузере и пропадало вместе с ним.
-function RvCasePick({items,onClose,onDone}){
-  const[cases,setCases]=useState(null),[title,setTitle]=useState(""),[note,setNote]=useState("");
-  const[busy,setBusy]=useState(false),[err,setErr]=useState(null);
-  useEffect(()=>{apiFetch("/api/cases").then(d=>setCases(d.cases||[])).catch(()=>setCases([]));},[]);
-  const last=(()=>{try{return +localStorage.getItem("al-case-last")||0;}catch{return 0;}})();
-  const attach=async(c)=>{ setBusy(true);setErr(null);
-    try{
-      const payload=items.map(r=>({kind:"review",url:r.url,title:rvCaseSnap(r),note:note.trim()||null}));
-      if(payload.length===1)await apiPost(`/api/cases/${c.case_id}/items`,payload[0]);
-      else await apiPost(`/api/cases/${c.case_id}/items/bulk`,{items:payload});
-      try{localStorage.setItem("al-case-last",String(c.case_id));}catch{}
-      onDone&&onDone(c,items.length);
-    }catch{setErr("Не удалось приобщить: нет доступа к делу или сбой сети");setBusy(false);}
-  };
-  const create=async()=>{ if(!title.trim()||busy)return; setBusy(true);
-    try{const r=await apiPost("/api/cases",{title:title.trim()});await attach({case_id:r.case_id,title:title.trim()});}
-    catch{setErr("Не удалось создать дело");setBusy(false);} };
-  // только дела, куда можно добавлять: свои и те, где вы «можете добавлять»
-  const list=(cases||[]).filter(c=>c.can_add).sort((a,b)=>(b.case_id===last)-(a.case_id===last));
-  return <RvModal onClose={onClose} title={items.length>1?`В аудит-дело: ${items.length} жалоб`:"В аудит-дело"}
-      sub="дело видно вам и коллегам, которых владелец добавил в «Доступ»">
-    <label className="rv-cp-note"><span>Комментарий <i>необязательно</i></span>
-      <input className="input" value={note} onChange={e=>setNote(e.target.value)}
-        placeholder="зачем приобщаете: «повышение ставки после отказа от подписки»"/></label>
-    {cases===null?<Skel h={60}/>:list.length>0&&<div className="rv-cp-list">
-      {list.map(c=><button key={c.case_id} className="rv-cp-case" disabled={busy} onClick={()=>attach(c)}>
-        <span className="rv-cp-t">{c.title}</span>
-        <span className="rv-cp-m">{c.items} матер.{c.mine?(c.members?` · участников ${c.members}`:""):` · ведёт ${c.owner_name}`}{c.case_id===last?" · последнее":""}</span>
-      </button>)}</div>}
-    <div className="rv-cp-new">
-      <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
-        onKeyDown={e=>{if(e.key==="Enter")create();}}
-        placeholder={list.length?"…или новое дело: название":"Название нового дела"}/>
-      <button className="btn btn-primary btn-sm" disabled={!title.trim()||busy} onClick={create}>Создать и приобщить</button>
-    </div>
-    {err&&<div className="rv-cp-err">{err}</div>}
-  </RvModal>;
-}
-
 // Журнал сигналов: всплеск — эпизод со снимком жалоб, из которых он
 // сложился. Отметка «подтвердился / ложный» копит точность радара (видна в
 // «Пульсе»): без неё непонятно, можно ли сигналам доверять.
@@ -4359,7 +4345,6 @@ function ReviewsPage({params}){
   const[feedTot,setFeedTot]=useState(null);             // {total, pending} по фильтру ленты
   const[feedMoreBusy,setFeedMoreBusy]=useState(false);
   // рабочее место аудитора: дела, фильтры ленты, группы, журнал, подписка
-  const[pick,setPick]=useState(null);                   // жалобы для приобщения к делу
   const[jrOpen,setJrOpen]=useState(false);
   // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
   const[fCity,setFCity]=useState(()=>P.city||(preset&&preset.city)||""),[fSrc,setFSrc]=useState("");
@@ -4548,7 +4533,8 @@ function ReviewsPage({params}){
   useEffect(()=>{loadCaseUrls();},[]);
   // панель «Аудит-дела» общая для всего приложения: после неё обновляем «в деле» и счётчик
   useEffect(()=>{ const h=()=>{loadCaseUrls();loadCasesN();};
-    window.addEventListener("al-cases",h); return ()=>window.removeEventListener("al-cases",h); },[]); // eslint-disable-line
+    window.addEventListener("al-cases",h); window.addEventListener("al-case-items",h);
+    return ()=>{ window.removeEventListener("al-cases",h); window.removeEventListener("al-case-items",h); }; },[]); // eslint-disable-line
   const openReader=(list,idx,ctx,src)=>{ setRd({list,idx,ctx,src}); if(src==="feed")setCur(idx); };
   const rdList=rd?(rd.src==="feed"?(feed||[]):rd.list):[];
   const rdItem=rd?rdList[rd.idx]:null;
@@ -4583,7 +4569,7 @@ function ReviewsPage({params}){
     const h=e=>{
       if(e.defaultPrevented||e.metaKey||e.ctrlKey||e.altKey)return;
       const t=e.target; if(t&&t.closest&&t.closest("input,textarea,select,[contenteditable='true']"))return;
-      if(pick)return;
+      if(_casePickOpen)return;                  // открыто меню «В дело»
       const k=e.key.toLowerCase(), down=k==="j"||k==="о", up=k==="k"||k==="л", add=k==="a"||k==="ф";
       if(_casesHubOpen)return;                 // поверх раздела открыта панель «Аудит-дела»
       const overlay=jrOpen||grp||drill;
@@ -4616,8 +4602,12 @@ function ReviewsPage({params}){
       .catch(()=>setClsBusy(false));
   };
 
-  const addCase=(r)=>setPick([r]);
-  const onPicked=(c,n)=>{setPick(null);loadCaseUrls();loadCasesN();fbToast(n>1?`${n} жалоб приобщено к делу «${c.title}»`:`Приобщено к делу «${c.title}»`,false);};
+  // «В дело» — общее меню и активное дело (этап 4): с активным делом жалоба
+  // уходит туда одним нажатием (и клавишей A в читалке), без окна посреди экрана
+  const rvItem=r=>({kind:"review",url:r.url,title:rvCaseSnap(r)});
+  const addCase=(r,anchor)=>{ const a=anchor&&(anchor.currentTarget||anchor), inC=caseUrls[r.url];
+    caseAdd([rvItem(r)],{anchor:a&&a.getBoundingClientRect?a:null,src:"reviews",
+      already:inC?(_cs.refs["u:"+r.url]||{title:inC}):null}); };
   const toggleSub=async()=>{
     const prev=sub; setSub(!prev);
     try{ if(prev)await apiDel(`/api/reviews/subscription?bank=${enc(bank)}${pq()}`);
@@ -5060,7 +5050,7 @@ function ReviewsPage({params}){
        feed.map((r,i)=><RvCard key={r.url||i} r={r} showBank q={q}
           sel={split?rd.idx===i:(!rd&&cur===i)} read={readSet.has(r.url)} inCase={caseUrls[r.url]}
           cardRef={el=>{cardRefs.current[i]=el;}}
-          onOpen={e=>vtOpen(e&&e.currentTarget,()=>openReader(null,i,null,"feed"))} onCase={()=>addCase(r)} onTheme={pickTheme}/>)}
+          onOpen={e=>vtOpen(e&&e.currentTarget,()=>openReader(null,i,null,"feed"))} onCase={a=>addCase(r,a)} onTheme={pickTheme}/>)}
        {feedMore&&!(fView==="groups"&&!q)&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
          disabled={feedMoreBusy}>
          {feedMoreBusy?"Загружаю…":`Показать ещё · показано ${(feed||[]).length}${feedTot&&!q?` из ${fmtNum(feedTot.total+feedTot.pending)}`:""}`}</button>}
@@ -5068,7 +5058,7 @@ function ReviewsPage({params}){
       {/* Читалка рядом со списком (от 1280 px): просмотр подряд без окон */}
       {split&&<aside className="rv-fw-rd" aria-label="Выбранная жалоба">
         <RvReader r={rdItem} {...rdNav} embedded showBank onClose={()=>setRd(null)}
-          onCase={()=>addCase(rdItem)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}/></aside>}
+          onCase={a=>addCase(rdItem,a)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}/></aside>}
       </div>
     </div>);
 
@@ -5197,10 +5187,10 @@ function ReviewsPage({params}){
     {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={`${grp.n} похожих жалоб`}
         sub={[grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
       <div className="rv-grp-acts"><button className="btn btn-sm btn-primary" disabled={!grpItems||!grpItems.length}
-        onClick={()=>setPick(grpItems)}>＋ всю группу в аудит-дело</button></div>
+        onClick={e=>caseAdd(grpItems.map(rvItem),{anchor:e.currentTarget,src:"reviews_group"})}>＋ всю группу в аудит-дело</button></div>
       {!grpItems?<Skel h={120}/>:<div className="rv-clist">{grpItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
         read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="group"&&rd.idx===i}
-        onOpen={()=>openReader(grpItems,i,`группа · ${grp.n}`,"group")} onCase={()=>addCase(r)}/>)}</div>}
+        onOpen={()=>openReader(grpItems,i,`группа · ${grp.n}`,"group")} onCase={a=>addCase(r,a)}/>)}</div>}
     </RvModal>}
 
     {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
@@ -5236,15 +5226,14 @@ function ReviewsPage({params}){
          !drillItems||!drillItems.length?<RvNote/>:
          <div className="rv-clist">{drillItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
            read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="drill"&&rd.idx===i}
-           onOpen={()=>openReader(drillItems,i,drill.label,"drill")} onCase={()=>addCase(r)}/>)}</div>}
+           onOpen={()=>openReader(drillItems,i,drill.label,"drill")} onCase={a=>addCase(r,a)}/>)}</div>}
       </div>
     </RvModal>}
     {/* Читалка поверх — из групп, срезов, журнала, похожих и на узком экране */}
     {rd&&!split&&rdItem&&<RvModal side="right" wide sheet bare title="Жалоба" onClose={()=>setRd(null)}>
       {close=><RvReader r={rdItem} {...rdNav} showBank onClose={close}
-        onCase={()=>addCase(rdItem)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}
+        onCase={a=>addCase(rdItem,a)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}
         onBack={rd.back?()=>setRd(rd.back):null}/>}</RvModal>}
-    {pick&&<RvCasePick items={pick} onClose={()=>setPick(null)} onDone={onPicked}/>}
   </div>;
 }
 
@@ -7237,6 +7226,7 @@ function AIPage(){
                     <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
                   {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!streaming&&
                     <ShareButton reportId={m.report_id}/>}
+                  {m.report_id&&!streaming&&<CaseAddBtn item={{kind:"report",ref_id:m.report_id}} src="ai_report"/>}
                   {showPdfBtn &&
                     <PdfExportButton question={userQ} report={m.text}
                                      sources={m.sources||[]} verification={m.verification}
@@ -7342,8 +7332,13 @@ function AIPage(){
               </div>}
             {m.report_owner&&me&&m.report_owner!==me.username&&
               <div style={{marginTop:10}}><span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span></div>}
-            {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!(loading&&i===msgs.length-1)&&
-              <div style={{marginTop:10}}><ShareButton reportId={m.report_id}/></div>}
+            {m.text&&!(loading&&i===msgs.length-1)&&<div className="quick-acts">
+              {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&<ShareButton reportId={m.report_id}/>}
+              {/* ответ длиннее 800 знаков сохранён отчётом — приобщается им; короткий — как есть */}
+              <CaseAddBtn src="ai_answer" item={m.report_id?{kind:"report",ref_id:m.report_id}
+                :{kind:"answer",title:prevQ,meta:{question:prevQ,text:m.text,
+                  sources:(m.sources||[]).slice(0,12).map(x=>({n:x.n,url:x.url,title:x.bank_name||domainOf(x.url)}))}}}/>
+            </div>}
             {m.text&&!(loading&&i===msgs.length-1)&&
               <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb} reportId={m.report_id}/>}
           </div>;
@@ -8137,50 +8132,6 @@ function KbRevisions({doc,revisions}){
   </div>;
 }
 
-function KbCasePicker({doc,onDone}){
-  const[cases,setCases]=useState(null);
-  const[title,setTitle]=useState("");
-  const[note,setNote]=useState("");
-  const[done,setDone]=useState(null);
-  const load=()=>apiFetch("/api/cases").then(d=>setCases(d.cases||[])).catch(()=>setCases([]));
-  // именно ()=>{load()}, а не useEffect(load,[]): load возвращает промис,
-  // и React принял бы его за функцию очистки — падение при уходе со страницы
-  useEffect(()=>{load();},[]);
-
-  const attach=async(caseId)=>{
-    await apiPost(`/api/cases/${caseId}/items`,{kind:"document",ref_id:doc.document_id,
-      url:doc.url,title:doc.title,note:note.trim()||null});
-    setDone(caseId);if(onDone)onDone();
-  };
-  const create=async()=>{
-    const r=await apiPost("/api/cases",{title:title.trim()});
-    await attach(r.case_id);
-  };
-
-  if(done)return <div className="kb-attached">Документ приобщён к делу.
-    {" "}<button className="rv-cs-lnk" onClick={()=>openCases(done)}>Открыть дело</button></div>;
-
-  // приобщать можно в свои дела и в те, где вы «можете добавлять»
-  const mine=(cases||[]).filter(c=>c.can_add);
-  return <div className="kb-case-pick">
-    <label className="kb-case-note">
-      <span>Зачем приобщаете <i>необязательно</i></span>
-      <input className="input" value={note} onChange={e=>setNote(e.target.value)}
-             placeholder="напр.: подтверждает ставку на дату проверки"/>
-    </label>
-    {cases===null?<Skel h={40}/>:mine.length>0&&<div className="kb-case-list">
-      {mine.map(c=><button key={c.case_id} className="kb-case-btn" data-tip={c.mine?undefined:`ведёт ${c.owner_name}`}
-        onClick={()=>attach(c.case_id)}>{c.title}{!c.mine&&<span className="t-cap"> · {puShort(c.owner_name)}</span>}<i>{c.items}</i></button>)}
-    </div>}
-    <div className="kb-case-new">
-      <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
-             placeholder="…или новое дело: название"/>
-      <button className="btn btn-primary btn-sm" disabled={!title.trim()}
-              onClick={create}>Создать и приобщить</button>
-    </div>
-  </div>;
-}
-
 function KbDocCard({documentId,onClose}){
   const[d,setD]=useState(null);
   const[err,setErr]=useState(null);
@@ -8231,11 +8182,15 @@ function KbDocCard({documentId,onClose}){
       </div>)}
     </div>}
 
-    <a className="btn btn-sm kb-card-open" href={doc.url} target="_blank"
-       rel="noopener noreferrer">Открыть первоисточник ↗</a>
+    <div className="kb-card-acts">
+      <a className="btn btn-sm kb-card-open" href={doc.url} target="_blank"
+         rel="noopener noreferrer">Открыть первоисточник ↗</a>
+      {/* «В дело» — та же кнопка, что во всём инструменте (была отдельная вкладка) */}
+      <CaseAddBtn item={{kind:"document",ref_id:doc.document_id,url:doc.url,title:doc.title}} src="knowledge"/>
+    </div>
 
     <div className="ptabs kb-ptabs" role="tablist" aria-label="Документ">
-      {[["about","Текст"],["rev","История"],["case","В дело"]].map(([k,l])=>
+      {[["about","Текст"],["rev","История"]].map(([k,l])=>
         <button key={k} role="tab" aria-selected={tab===k} className={"ptab"+(tab===k?" on":"")}
                 onClick={()=>setTab(k)}>{l}
           {k==="rev"&&(d.revisions||[]).length>1&&
@@ -8273,7 +8228,6 @@ function KbDocCard({documentId,onClose}){
       </div>
     </div>}
     {tab==="rev"&&<KbRevisions doc={doc} revisions={d.revisions}/>}
-    {tab==="case"&&<KbCasePicker doc={doc}/>}
   </RvModal>;
 }
 
@@ -8341,10 +8295,168 @@ const rvCaseCard=it=>{const r=it.review||{};
       vulnerable:r.vulnerable||[],no_consent:r.no_consent,amount:r.amount}:null,
     themes:r.issue_label?[{key:r.issue,label:r.issue_label,short:r.issue_label,risk:r.risk}]:[]};};
 
-function RvCaseItem({it,onDrop,onOpenDoc,onOpen,thread}){
+// ── «В дело»: кнопка, меню выбора дела, заметка «Добавлено» ─────────────────
+const IcCaseAdd=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M12 11v5M9.5 13.5h5"/></svg>;
+const IcCaseIn=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M9 13.5l2.2 2.2L15.5 11.5"/></svg>;
+
+// Кнопка «В дело». variant: bar — в панели отчёта и досье (как «Поделиться»),
+// icon — квадрат для новостей (виден при наведении на новость), ghost — в ряду кнопок.
+function CaseAddBtn({item,variant="bar",src,label="В дело",className,stop}){
+  const st=useCaseState();
+  const key=caseKey(item);
+  const inC=key?(st.refs[key]||_csAnswers[key]):null;
+  const tip=inC?`Уже в деле «${inC.title}» — нажмите, чтобы открыть или добавить в другое`
+    :st.active?`В дело «${st.active.title}» — одним нажатием`:"Приобщить к аудит-делу";
+  const click=(e)=>{ if(stop){ e.preventDefault(); e.stopPropagation(); }
+    caseAdd([item],{anchor:e.currentTarget,src,already:inC||null}); };
+  if(variant==="fb") return <button type="button" className={"bf-fb-b ca-fb"+(inC?" on":"")} aria-pressed={!!inC}
+    onClick={click} aria-label={inC?`В деле «${inC.title}»`:"В аудит-дело"} data-tip={tip}>{inC?<IcCaseIn s={13}/>:<IcCaseAdd s={13}/>}</button>;
+  if(variant==="icon") return <button type="button" className={"ca-ic"+(inC?" in":"")+(className?" "+className:"")}
+    onClick={click} aria-label={inC?`В деле «${inC.title}»`:"В аудит-дело"} data-tip={tip}>
+    {inC?<IcCaseIn s={15}/>:<IcCaseAdd s={15}/>}</button>;
+  return <button type="button" className={(variant==="ghost"?"btn btn-ghost btn-sm ca-gh":"ca-btn")+(inC?" in":"")+(className?" "+className:"")}
+    onClick={click} data-tip={tip}>{inC?<IcCaseIn s={14}/>:<IcCaseAdd s={14}/>}{inC?"В деле":label}</button>;
+}
+
+// Меню выбора дела — у кнопки, а не окном посреди экрана. Выбранное дело
+// становится активным: дальше «В дело» кладёт в него одним нажатием.
+function CasePickPop({pick,cases,activeId,onPick,onCreate,onClose,onOpenCase}){
+  const[q,setQ]=useState("");
+  const[idx,setIdx]=useState(0);
+  const[mk,setMk]=useState(false);             // «новое дело»: поле названия
+  const[title,setTitle]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const ref=useRef(null), qRef=useRef(null);
+  const mobile=typeof window!=="undefined"&&window.matchMedia("(max-width: 760px)").matches;
+  const list=(cases||[]).filter(c=>c.can_add&&!c.archived)
+    .sort((a,b)=>(b.case_id===activeId)-(a.case_id===activeId));
+  const ql=q.trim().toLowerCase();
+  const rows=list.filter(c=>!ql||(c.title||"").toLowerCase().includes(ql)||(c.owner_name||"").toLowerCase().includes(ql));
+  useEffect(()=>{ setIdx(0); },[q]);
+  useEffect(()=>{ const t=setTimeout(()=>{ try{ (qRef.current||ref.current)&&(qRef.current||ref.current).focus(); }catch{} },30);
+    const onDown=(e)=>{ if(ref.current&&!ref.current.contains(e.target)&&!(pick.anchor&&pick.anchor.contains&&pick.anchor.contains(e.target))) onClose(); };
+    const onKey=(e)=>{ if(e.key==="Escape"){ e.stopPropagation(); e.preventDefault(); onClose(); } };
+    document.addEventListener("mousedown",onDown); document.addEventListener("keydown",onKey,true);
+    return ()=>{ clearTimeout(t); document.removeEventListener("mousedown",onDown); document.removeEventListener("keydown",onKey,true); };
+  },[]); // eslint-disable-line
+  // место: под кнопкой, у правого края — влево; не влезает вниз — над кнопкой
+  const pos=useMemo(()=>{ if(mobile) return null;
+    const W=328, H=380, r=pick.rect;
+    if(!r) return {left:Math.max(12,(innerWidth-W)/2),top:Math.max(12,(innerHeight-H)/2)};
+    // кнопка в правой половине — меню выравнивается по её правому краю
+    let left=r.left>innerWidth/2?r.right-W:r.left;
+    left=Math.min(Math.max(12,left),innerWidth-W-12);
+    const below=innerHeight-r.bottom>H+16||r.top<H+16;
+    return below?{left,top:Math.min(r.bottom+6,innerHeight-H-12)}:{left,bottom:innerHeight-r.top+6}; },[]); // eslint-disable-line
+  const run=async(fn)=>{ setBusy(true); setErr(""); try{ await fn(); }catch(e){ setErr(e.message||"Не получилось"); setBusy(false); } };
+  const n=pick.items.length;
+  const what=n>1?`${n} ${plural(n,"материал","материала","материалов")}`:(CASE_KIND_RU[pick.items[0].kind]||"материал");
+  const onKey=(e)=>{ if(mk) return;
+    if(e.key==="ArrowDown"){ e.preventDefault(); setIdx(i=>Math.min(i+1,rows.length)); }
+    if(e.key==="ArrowUp"){ e.preventDefault(); setIdx(i=>Math.max(i-1,0)); }
+    if(e.key==="Enter"){ e.preventDefault(); if(idx<rows.length) run(()=>onPick(rows[idx])); else setMk(true); } };
+  return <div ref={ref} className={"ca-pop"+(mobile?" sheet":"")} style={pos||undefined} role="dialog"
+    aria-label="Выбрать аудит-дело" tabIndex={-1} onKeyDown={onKey}>
+    <div className="ca-pop-h"><span>В аудит-дело</span><span className="ca-pop-what">{what}</span></div>
+    {pick.already&&<div className="ca-pop-al"><IcCaseIn s={13}/><span>Уже в «{pick.already.title}»</span>
+      <button type="button" className="rv-cs-lnk" onClick={()=>onOpenCase(pick.already.case_id)}>Открыть</button></div>}
+    {list.length>5&&<input ref={qRef} className="ca-pop-q" value={q} onChange={e=>setQ(e.target.value)}
+      placeholder="Найти дело…" aria-label="Найти дело"/>}
+    <div className="ca-pop-list" role="listbox">
+      {rows.map((c,i)=><button key={c.case_id} type="button" role="option" aria-selected={i===idx}
+        className={"ca-pop-row"+(i===idx?" on":"")} disabled={busy}
+        onMouseEnter={()=>setIdx(i)} onClick={()=>run(()=>onPick(c))}>
+        <span className="t">{c.title}</span>
+        <span className="m">{c.case_id===activeId&&<b>активное · </b>}{c.items} матер.{c.mine?"":` · ведёт ${puShort(c.owner_name)}`}</span>
+      </button>)}
+      {!list.length&&<div className="ca-pop-empty">Дел пока нет — создайте первое: оно станет активным.</div>}
+      {list.length>0&&!rows.length&&<div className="ca-pop-empty">Не нашлось. Создайте новое.</div>}
+    </div>
+    {mk?<div className="ca-pop-new">
+      <input className="input" autoFocus value={title} onChange={e=>setTitle(e.target.value)} placeholder="Название проверки"
+        onKeyDown={e=>{ if(e.key==="Enter"&&title.trim()) run(()=>onCreate(title.trim())); if(e.key==="Escape"){ e.stopPropagation(); setMk(false); } }}/>
+      <button type="button" className="btn btn-primary btn-sm" disabled={busy||!title.trim()} onClick={()=>run(()=>onCreate(title.trim()))}>Создать</button>
+    </div>:<button type="button" className={"ca-pop-row new"+(idx===rows.length?" on":"")} onMouseEnter={()=>setIdx(rows.length)}
+      onClick={()=>{ setMk(true); setTitle(ql?q.trim():""); }}><span className="t">＋ Новое дело</span></button>}
+    {err&&<div className="ca-pop-err" role="alert">{err}</div>}
+    <div className="ca-pop-f">Выбранное дело станет активным — дальше «В дело» кладёт в него одним нажатием.</div>
+  </div>;
+}
+const caNews=(it,group)=>({kind:"news",url:it.url,title:it.title,
+  meta:{source:it.source,domain:it.domain||rvHost(it.url),ts:it.ts||null,summary:it.why||it.summary||it.idea||"",
+    tg:it.reach==="telegram"||fyTg(it.url),group:group||null}});
+const CASE_KIND_RU={review:"жалоба",document:"документ",report:"отчёт ИИ",answer:"ответ ИИ",news:"новость",offer:"продукт «Рынка»"};
+
+// Заметка после добавления: куда положили и «Отменить» — ошибочное нажатие
+// исправляется сразу, без похода в дело.
+function CaseAddToast({t,onUndo,onOther,onOpen,onClose}){
+  const[hover,setHover]=useState(false);
+  useEffect(()=>{ if(hover) return; const id=setTimeout(onClose,t.err?4200:6000); return ()=>clearTimeout(id); },[hover,t.id]); // eslint-disable-line
+  return <div className={"ca-toast"+(t.err?" err":"")} role="status" onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}>
+    <span className="ca-toast-ic">{t.err?"!":<IcCaseIn s={14}/>}</span>
+    <span className="ca-toast-t">{t.text}</span>
+    {!t.err&&t.ids&&t.ids.length>0&&<button type="button" onClick={onUndo}>Отменить</button>}
+    {!t.err&&t.items&&<button type="button" onClick={onOther}>Другое дело</button>}
+    {t.case_id&&<button type="button" onClick={onOpen}>Открыть</button>}
+  </div>;
+}
+
+// Карточки новых материалов дела. Отчёт — название, вопрос и короткий вывод;
+// полный текст открывается в ИИ-помощнике (в дело и выгрузку он не копируется).
+const caDay=iso=>iso?fmtDateMsk(iso).replace(/ \d\d:\d\d МСК$/,""):"";
+const caOfferTerms=m=>[
+  m.rate_pct!=null?`${(m.rate_label||"Ставка")} ${pct(m.rate_pct)}${/[а-яё]/i.test(m.rate_kind||"")?` · ${m.rate_kind}`:""}`:null,
+  m.psk_min!=null?`ПСК от ${pct(m.psk_min)}`:null,
+  (m.amount_min||m.amount_max)?fmtAmount(m.amount_min,m.amount_max):null,
+  (m.term_min||m.term_max)?fmtTerm(m.term_min,m.term_max):null,
+  m.fee_service!=null?`обслуживание ${Math.round(m.fee_service)} ₽`:null,
+  m.cashback_pct!=null?`кешбэк до ${pct(m.cashback_pct,1)}`:null,
+  m.grace_days!=null?`грейс ${Math.round(m.grace_days)} дн`:null].filter(Boolean);
+function CaseSrcCard({it,onOpenReport,onGo}){
+  const m=it.meta||{};
+  const[full,setFull]=useState(false);
+  if(it.kind==="report") return <div className="ca-card">
+    <div className="ca-card-k"><span className="ca-kind ai">Отчёт ИИ</span>
+      {[m.mode==="deep"?"Deep Research":"ответ ИИ",caDay(m.created_at),m.owner_name&&puShort(m.owner_name),
+        m.n_sources?`${m.n_sources} ${plural(m.n_sources,"источник","источника","источников")}`:null].filter(Boolean).join(" · ")}</div>
+    <button type="button" className="ca-card-t" disabled={!!it.report_gone} onClick={()=>onOpenReport(it.ref_id)}>{it.title}</button>
+    {m.question&&m.question!==it.title&&<div className="ca-card-q">{m.question}</div>}
+    {m.lead&&<div className="ca-card-s">{m.lead}</div>}
+    {it.report_gone?<div className="ca-card-f">Отчёт удалён автором — в деле осталась его карточка.</div>
+      :<button type="button" className="ca-card-lnk" onClick={()=>onOpenReport(it.ref_id)}>Открыть отчёт<RvIChevR s={12}/></button>}
+  </div>;
+  if(it.kind==="answer"){ const t=m.text||"", long=t.length>420;
+    return <div className="ca-card">
+      <div className="ca-card-k"><span className="ca-kind ai">Ответ ИИ</span>{caDay(it.added_at)}</div>
+      {m.question&&<div className="ca-card-t static">{m.question}</div>}
+      <div className={"ca-card-s ans"+(long&&!full?" clamp":"")}>{t}</div>
+      {long&&<button type="button" className="ca-card-lnk" onClick={()=>setFull(v=>!v)}>{full?"Свернуть":"Показать полностью"}</button>}
+      {(m.sources||[]).length>0&&<div className="ca-card-src">{m.sources.slice(0,4).map((x,i)=>
+        <a key={i} href={x.url} target="_blank" rel="noopener noreferrer">{x.title||rvHost(x.url)}</a>)}</div>}
+    </div>; }
+  if(it.kind==="news") return <div className="ca-card">
+    <div className="ca-card-k"><span className="ca-kind news">Новость</span>
+      {[m.tg?"Telegram":(m.domain||m.source),m.ts?caDay(m.ts):null].filter(Boolean).join(" · ")}</div>
+    <a className="ca-card-t" href={it.url} target="_blank" rel="noopener noreferrer">{it.title}<span className="rv-ico-in"><RvIExt s={11}/></span></a>
+    {m.summary&&<div className="ca-card-s">{m.summary}</div>}
+  </div>;
+  if(it.kind==="offer"){ const terms=caOfferTerms(m);
+    return <div className="ca-card">
+      <div className="ca-card-k"><span className="ca-kind mk">Рынок</span>
+        {[m.category_label,m.as_of?`условия на ${rvDate(m.as_of)}`:null].filter(Boolean).join(" · ")}</div>
+      <button type="button" className="ca-card-t" onClick={()=>onGo(`#market?offer=${it.ref_id}`)}>{it.title}</button>
+      {terms.length>0&&<div className="ca-terms">{terms.map((x,i)=><span key={i}>{x}</span>)}</div>}
+      <div className="ca-card-f">Снимок на дату приобщения{m.valid_from?` · версия условий с ${rvDate(m.valid_from)}`:""} — на «Рынке» условия могли измениться.</div>
+    </div>; }
+  return null;
+}
+
+function RvCaseItem({it,onDrop,onOpenDoc,onOpen,thread,onOpenReport,onGo}){
   const doc=it.kind!=="review";
+  const src=["report","answer","news","offer"].includes(it.kind);
   return <div className="rv-ci" id={"cs-it-"+it.item_id}>
-    {doc?<div className="kb-case-item">
+    {src?<CaseSrcCard it={it} onOpenReport={onOpenReport} onGo={onGo}/>:doc?<div className="kb-case-item">
       <div className="kb-case-it-h">
         <button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc&&onOpenDoc(it.ref_id)}>{it.title||it.url}</button>
       </div>
@@ -8731,7 +8843,7 @@ function CaseAccess({cur,onBack,onChanged,onTransferred}){
   </div>;
 }
 
-function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg}){
+function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,onSetActive}){
   const me=useMe(), meU=me&&me.username;
   const[list,setList]=useState(null);
   const[open,setOpen]=useState(initialCase||null);
@@ -8806,6 +8918,11 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg}){
       +". Какие требования Банка России и законодательства относятся к этим ситуациям, какова практика"
       +" регулятора и судов по похожим случаям и что запросить у подразделения для проверки?");
   };
+  // отчёт из дела — в ИИ-помощнике, продукт — в «Рынке»; панель дел закрывается
+  const openReportFromCase=(rid)=>{ _pendingReport=rid; onClose&&onClose();
+    if((location.hash||"").startsWith("#ai")) try{ window.dispatchEvent(new Event("al-open-report")); }catch{}
+    else location.hash="#ai"; };
+  const goFromCase=(hash)=>{ onClose&&onClose(); location.hash=hash; };
   // ссылка [N] из обсуждения → материал на вкладке «Материалы»
   const goItem=(iid)=>{ setTab("items");
     setTimeout(()=>{ const el=document.getElementById("cs-it-"+iid); if(el){ el.scrollIntoView({block:"center",behavior:"smooth"}); csFlash(el); } },60); };
@@ -8877,6 +8994,11 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg}){
           data-tip={cur.muted?"Уведомления о материалах, сообщениях и статусе этого дела выключены — нажмите, чтобы снова получать. Упоминания и ответы вам приходят всё равно"
             :"Не присылать уведомления о материалах, сообщениях и статусе этого дела. Упоминания и ответы вам придут всё равно"}>
           {cur.muted?"✓ Не слежу":"Не следить"}</button>
+        {cur.can_add&&onSetActive&&<button className={"btn btn-sm btn-ghost cs-act"+(activeId===cur.case_id?" on":"")}
+          aria-pressed={activeId===cur.case_id} onClick={()=>onSetActive(activeId===cur.case_id?null:cur.case_id)}
+          data-tip={activeId===cur.case_id?"Активное дело: «В дело» по всему инструменту кладёт сюда одним нажатием. Нажмите, чтобы снять"
+            :"Сделать активным: «В дело» в новостях, отчётах, «Рынке» и жалобах будет класть сюда одним нажатием"}>
+          {activeId===cur.case_id?"✓ Собираю сюда":"Собирать сюда"}</button>}
         {cur.mine&&ren===null&&<button className="btn btn-sm btn-ghost" onClick={()=>setRen(cur.title)}>Переименовать</button>}
         {cur.mine&&!cur.archived&&<button className="btn btn-sm btn-ghost" disabled={stBusy} onClick={()=>setStatus({archived:true})}
           data-tip="дело уйдёт в «Архив» списка и станет только для чтения; вернуть можно в любой момент">В архив</button>}
@@ -8893,11 +9015,14 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg}){
         {items.map((it,i)=><React.Fragment key={it.item_id}>
           <div className="rv-ci-n mono">[{i+1}]</div>
           <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onOpenDoc={onOpenDoc} onOpen={()=>openRev(it)}
+            onOpenReport={openReportFromCase} onGo={goFromCase}
             thread={<CaseItemThread it={it} cid={open} people={people} items={items} meU={meU} canTalk={cur.can_talk}
               onPosted={reload} onRef={goItem}/>}/>
         </React.Fragment>)}
         {!items.length&&<div className="kb-empty">
-          {cur.can_add?"Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте раздела «Аудит отзывов» и документы — кнопкой «В дело» в «Базе знаний»."
+          {cur.can_add?<>Дело пустое. «В дело» есть у жалоб, отчётов и ответов ИИ-помощника, новостей выпуска,
+            продуктов «Рынка» и документов «Базы знаний».{activeId!==cur.case_id&&<> Нажмите «Собирать сюда» — и они будут
+            попадать в это дело одним нажатием.</>}</>
             :"В деле пока нет материалов."}</div>}
       </>}
       {tab==="talk"&&<CaseTalk key={open} cid={open} cur={cur} items={items} meU={meU} focusMsg={focusMsg} onRef={goItem}
@@ -8929,7 +9054,8 @@ function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg}){
       const rows=live.filter(c=>(flt==="all"||(flt==="mine")===!!c.mine)&&hit(c));
       const archRows=arch.filter(hit);
       const row=c=><button key={c.case_id} className={"kb-case-row"+(c.archived?" arch":"")} onClick={()=>setOpen(c.case_id)}>
-        <span className="kb-case-row-t"><span className="cs-row-ttl">{c.title}</span>
+        <span className="kb-case-row-t">{c.case_id===activeId&&<span className="cs-row-act" data-tip="активное дело: «В дело» кладёт сюда" aria-label="активное дело"/>}
+          <span className="cs-row-ttl">{c.title}</span>
           {!c.archived&&c.status&&c.status!=="collect"&&<span className={"cs-st sm "+c.status}>{c.status_label}</span>}
           {c.talk_unread>0&&<span className="cs-row-new">{c.talk_unread} {plural(c.talk_unread,"новое","новых","новых")}</span>}</span>
         <span className="t-cap">{c.items} матер.{c.reviews?` · жалоб ${c.reviews}`:""} · {fmtDateMsk(c.updated_at)}
@@ -11732,11 +11858,13 @@ function Shell(){
   // «Аудит-дела»: одна панель на всё приложение
   const[casesHub,setCasesHub]=useState(null);         // null | {caseId}
   const[casesN,setCasesN]=useState(0);
-  const loadCasesN=useCallback(()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).filter(c=>!c.deleted).length)).catch(()=>{}),[]);
+  const[casesList,setCasesList]=useState(null);
+  const loadCasesN=useCallback(()=>apiFetch("/api/cases").then(d=>{ const l=d.cases||[];
+    setCasesList(l); setCasesN(l.filter(c=>!c.deleted).length); }).catch(()=>{}),[]);
   useEffect(()=>{ loadCasesN(); },[loadCasesN]);
   _openCases=(id,opt)=>{ setNavOpen(false); setCasesHub({caseId:id||null,tab:opt&&opt.tab,msg:opt&&opt.msg}); };
   _casesHubOpen=!!casesHub;
-  const closeCases=()=>{ setCasesHub(null); loadCasesN(); try{ window.dispatchEvent(new Event("al-cases")); }catch{} };
+  const closeCases=()=>{ setCasesHub(null); loadCasesN(); loadCaseRefs(); try{ window.dispatchEvent(new Event("al-cases")); }catch{} };
   // «Обратная связь»: окно и точка у строки меню, если команда ответила
   const[sayOpen,setSayOpen]=useState(null);           // null | "new" | "mine"
   const[sayInfo,setSayInfo]=useState({unread:0,last_at:null});
@@ -11771,6 +11899,44 @@ function Shell(){
   const openSay=(tab)=>{ setNavOpen(false); setBellOpen(false); setSayFocus(null); setSayOpen(o=>o?null:(tab||(sayInfo.unread?"mine":"new"))); };
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
+  // «В дело» отовсюду: активное дело (одним нажатием), меню выбора, заметка «Добавлено»
+  const activeId=me&&me.prefs&&me.prefs.active_case||null;
+  const activeCase=(casesList||[]).find(c=>c.case_id===activeId&&c.can_add&&!c.archived&&!c.deleted)||null;
+  useEffect(()=>{ csSetActive(activeCase?{case_id:activeCase.case_id,title:activeCase.title}:null); },[activeCase&&activeCase.case_id,activeCase&&activeCase.title]); // eslint-disable-line
+  const[casePick,setCasePick]=useState(null);         // {items,rect,anchor,opt,already}
+  const[caseToast,setCaseToast]=useState(null);
+  const[caseBump,setCaseBump]=useState(0);
+  const setActiveCase=(id)=>{ setMe(m=>m?{...m,prefs:{...(m.prefs||{}),active_case:id}}:m);
+    apiPut("/api/me",{prefs:{active_case:id}}).catch(()=>{}); };
+  const caseAttach=async(c,items,opt)=>{
+    const one=items.length===1;
+    const r=await csReq("POST",one?`/api/cases/${c.case_id}/items`:`/api/cases/${c.case_id}/items/bulk`,one?items[0]:{items});
+    if(c.case_id!==activeId) setActiveCase(c.case_id);
+    items.forEach(it=>{ if(it.kind==="answer"){ const k=caseKey(it); if(k) _csAnswers[k]={case_id:c.case_id,title:c.title}; } });
+    loadCaseRefs(); loadCasesN(); setCaseBump(Date.now());
+    try{ window.dispatchEvent(new CustomEvent("al-case-items",{detail:{case_id:c.case_id}})); }catch{}
+    trkEvent({kind:"ui",page:pageCurRef.current,payload:{action:"case_add",src:(opt&&opt.src)||null,kind:items[0].kind,n:items.length,added:r.added}});
+    const nm=`«${c.title}»`;
+    setCaseToast({id:Date.now(),case_id:c.case_id,ids:r.item_ids||[],items,opt,
+      text:r.added?(items.length>1?`${r.added} ${plural(r.added,"материал","материала","материалов")} — в ${nm}`:`Добавлено в ${nm}`)
+        :(items.length>1?`Всё это уже лежит в ${nm}`:`Уже лежит в ${nm}`)});
+    if(opt&&opt.onDone) opt.onDone(c,r.added);
+  };
+  _casePickOpen=!!casePick;
+  _caseAdd=(items,opt)=>{
+    const anchor=opt.anchor&&opt.anchor.getBoundingClientRect?opt.anchor:null;
+    const rect=anchor?anchor.getBoundingClientRect():null;
+    if(activeCase&&!opt.pick&&!opt.already){
+      caseAttach(activeCase,items,opt).catch(e=>{ setCaseToast({id:Date.now(),err:true,text:e.message||"Не удалось добавить"});
+        setCasePick({items,rect,anchor,opt}); });
+      return; }
+    setCaseToast(null); setCasePick({items,rect,anchor,opt,already:opt.already||null});
+  };
+  const caseUndo=async(t)=>{ setCaseToast(null);
+    await Promise.all((t.ids||[]).map(id=>apiDel(`/api/cases/${t.case_id}/items/${id}`)));
+    (t.items||[]).forEach(it=>{ const k=caseKey(it); if(k&&_csAnswers[k]) delete _csAnswers[k]; });
+    loadCaseRefs(); loadCasesN();
+    try{ window.dispatchEvent(new CustomEvent("al-case-items",{detail:{case_id:t.case_id}})); }catch{} };
   const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
   const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001b")==="1";}catch{return false;}});
@@ -12078,7 +12244,18 @@ function Shell(){
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
+      {casePick&&ReactDOM.createPortal(<CasePickPop pick={casePick} cases={casesList} activeId={activeCase&&activeCase.case_id}
+        onClose={()=>setCasePick(null)}
+        onPick={async c=>{ await caseAttach(c,casePick.items,casePick.opt); setCasePick(null); }}
+        onCreate={async title=>{ const r=await csReq("POST","/api/cases",{title});
+          await caseAttach({case_id:r.case_id,title,can_add:true,items:0,mine:true},casePick.items,casePick.opt); setCasePick(null); }}
+        onOpenCase={id=>{ setCasePick(null); openCases(id); }}/>,document.body)}
+      {caseToast&&ReactDOM.createPortal(<CaseAddToast key={caseToast.id} t={caseToast} onClose={()=>setCaseToast(null)}
+        onUndo={()=>caseUndo(caseToast)}
+        onOther={async()=>{ const t=caseToast; await caseUndo(t); setCasePick({items:t.items,rect:null,anchor:null,opt:{...(t.opt||{}),pick:true}}); }}
+        onOpen={()=>{ const id=caseToast.case_id; setCaseToast(null); openCases(id); }}/>,document.body)}
       {casesHub&&<KbCases key={[casesHub.caseId||"list",casesHub.tab||"",casesHub.msg||""].join(":")}
+        activeId={activeCase&&activeCase.case_id} onSetActive={setActiveCase}
         initialCase={casesHub.caseId} initialTab={casesHub.tab} initialMsg={casesHub.msg} onClose={closeCases}
         onOpenDoc={id=>{ closeCases(); location.hash=`#knowledge?doc=${id}`; }}/>}
       {sayOpen&&ReactDOM.createPortal(<SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef} focus={sayFocus}
@@ -12119,10 +12296,18 @@ function Shell(){
           {section==="overview"&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
-          <button type="button" className={"tb-cases"+(casesHub?" on":"")} aria-label="Аудит-дела" aria-haspopup="dialog"
-            aria-expanded={!!casesHub} onClick={()=>casesHub?closeCases():setCasesHub({caseId:null})}
-            data-tip="Подборки доказательств под проверку — ваши и те, куда вас пригласили. Под рукой в любом разделе">
-            <RvICase s={15}/><span className="tb-cases-l">Аудит-дела</span>{casesN?<span className="tb-cases-n">{casesN}</span>:null}</button>
+          <div className={"tb-cases-g"+(activeCase?" act":"")}>
+            <button type="button" className={"tb-cases"+(casesHub?" on":"")} aria-label="Аудит-дела" aria-haspopup="dialog"
+              aria-expanded={!!casesHub} onClick={()=>casesHub?closeCases():setCasesHub({caseId:null})}
+              data-tip="Подборки доказательств под проверку — ваши и те, куда вас пригласили. Под рукой в любом разделе">
+              <RvICase s={15}/><span className="tb-cases-l">Аудит-дела</span>{casesN?<span className="tb-cases-n">{casesN}</span>:null}
+              {activeCase&&<span className="tb-act-mdot" aria-hidden="true"/>}</button>
+            {/* активное дело: «В дело» по всему инструменту кладёт сюда одним нажатием */}
+            {activeCase&&<button type="button" key={caseBump} className={"tb-act"+(caseBump&&Date.now()-caseBump<1500?" bump":"")}
+              onClick={()=>openCases(activeCase.case_id)} aria-label={`Активное дело: ${activeCase.title}`}
+              data-tip={`Активное дело — «В дело» кладёт сюда одним нажатием. Сменить: выбрать другое в меню «В дело» или «Собирать сюда» в самом деле`}>
+              <span className="tb-act-dot" aria-hidden="true"/><span className="tb-act-t">{activeCase.title}</span></button>}
+          </div>
           <button className={"icon-btn th-tg"+(theme==="dark"?" dk":"")}
                   aria-label={theme==="dark"?"Включить светлую тему":"Включить тёмную тему"}
                   data-tip={theme==="dark"?"Светлая тема":"Тёмная тема"}

@@ -265,7 +265,9 @@ def list_reports(username: str, limit: int = 100) -> list[dict]:
 
 
 def report_access(report_id: int, username: str) -> bool:
-    """Доступ: владелец ИЛИ отчёт расшарен ему лично ИЛИ всем (shared_with IS NULL)."""
+    """Доступ: владелец ИЛИ отчёт расшарен ему лично ИЛИ всем (shared_with IS NULL)
+    ИЛИ отчёт приобщён к делу, где он участник: в общем деле отчёт открывают
+    «через дело», иначе коллега видел бы карточку, а открыть не мог."""
     owner = _scalar("SELECT username FROM report WHERE report_id = :r", {"r": report_id})
     if owner == username:
         return True
@@ -273,7 +275,17 @@ def report_access(report_id: int, username: str) -> bool:
                    WHERE report_id = :r AND revoked_at IS NULL
                      AND (shared_with = :u OR shared_with IS NULL)""",
                 {"r": report_id, "u": username})
-    return bool(n)
+    if n:
+        return True
+    try:
+        return bool(_scalar("""
+            SELECT 1 FROM audit_case_item i JOIN audit_case c ON c.case_id = i.case_id
+             WHERE i.kind = 'report' AND i.ref_id = :r AND c.deleted_at IS NULL
+               AND (c.username = :u OR EXISTS (SELECT 1 FROM audit_case_member m
+                                                WHERE m.case_id = c.case_id AND m.username = :u))
+             LIMIT 1""", {"r": report_id, "u": username}))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def get_report(report_id: int, username: str, as_admin: bool = False) -> dict | None:
@@ -1071,14 +1083,23 @@ def get_case(case_id: int, username: str) -> dict | None:
     # Документы подтягиваем свежими: доверие и дата обхода могли измениться
     # с момента приобщения, и в деле должно стоять актуальное состояние.
     case["items"] = _rows("""
-        SELECT i.item_id, i.kind, i.ref_id, i.url, i.title, i.note, i.added_at, i.added_by,
+        SELECT i.item_id, i.kind, i.ref_id, i.url, i.title, i.note, i.added_at, i.added_by, i.meta,
                d.trust_score, d.fetched_at, d.doc_type::text doc_type,
-               b.name bank_name
+               b.name bank_name,
+               r.title AS report_title, (i.kind = 'report' AND r.report_id IS NULL) AS report_gone
           FROM audit_case_item i
           LEFT JOIN document d ON d.document_id = i.ref_id AND i.kind = 'document'
           LEFT JOIN bank b ON b.bank_id = d.bank_id
+          LEFT JOIN report r ON r.report_id = i.ref_id AND i.kind = 'report'
          WHERE i.case_id = :c ORDER BY i.added_at
     """, {"c": case_id})
+    for it in case["items"]:
+        it["meta"] = it.get("meta") or {}
+        rt = it.pop("report_title", None)
+        if it["kind"] == "report" and rt:
+            it["title"] = rt                      # отчёт могли переименовать — название свежее
+        if not it.get("report_gone"):
+            it.pop("report_gone", None)
     _attach_review_items(case["items"])
     names = {m["username"]: m["name"] for m in case["members"]}
     talk = _talk_rows(case_id, username, role)
@@ -1295,57 +1316,249 @@ def add_case_item(case_id: int, username: str, *, kind: str,
                                                "title": title, "note": note}]) is not None
 
 
-def add_case_items(case_id: int, username: str, items: list[dict]) -> int | None:
-    """Приобщить материалы пачкой (перенос старого дела из браузера). Повтор
-    одного и того же отзыва или документа молча пропускается. None — нет прав
-    (нет доступа или «только смотрит»)."""
+# Что можно приобщить к делу (этап 4: отчёты и ответы ИИ-помощника, новости
+# выпуска, продукты «Рынка»). Данные карточки — в meta (миграция 085); отчёт
+# в дело не копируется — только название, вопрос и короткий вывод.
+CASE_KINDS = ("review", "document", "report", "answer", "news", "offer")
+
+
+def _clip(v, n: int, lines: bool = False) -> str:
+    s = str(v or "")
+    s = re.sub(r"[ \t]+", " ", s).strip() if lines else " ".join(s.split())
+    return s[:n]
+
+
+_LEAD_HEAD = re.compile(r"^#{1,4}\s*\**\s*(резюме|коротко|кратко|главное|главный вывод|ключевые выводы|"
+                        r"выводы?|итоги?|summary)\b", re.I)
+
+
+def report_lead(body: str | None, limit: int = 420) -> str:
+    """Короткий вывод отчёта для дела и выгрузки: раздел «Резюме»/«Коротко»/
+    «Выводы», если он есть, иначе первый абзац. Без ссылок на источники [N],
+    таблиц и маркеров графиков — в деле у отчёта своя нумерация материалов."""
+    lines = (body or "").splitlines()
+    start = next((i + 1 for i, ln in enumerate(lines) if _LEAD_HEAD.match(ln.strip())), None)
+    chunk = lines[start:] if start is not None else lines
+    paras: list[str] = []
+    cur: list[str] = []
+    for ln in chunk:
+        t = ln.strip()
+        if t.startswith("#"):
+            if cur or paras:
+                break
+            continue
+        if not t:
+            if cur:
+                paras.append(" ".join(cur))
+                cur = []
+                if sum(len(p) for p in paras) >= limit:
+                    break
+            continue
+        if t.startswith(("|", "[[", "```", ">")) or set(t) <= set("-*_ "):
+            continue
+        cur.append(re.sub(r"^([-*•]|\d+[.)])\s+", "", t))
+    if cur:
+        paras.append(" ".join(cur))
+    out = " ".join(paras)
+    out = re.sub(r"\[\[[A-Z]+:\d+\]\]", "", out)
+    out = re.sub(r"\s*\[\d+(?:\s*[,;–-]\s*\d+)*\]", "", out)
+    out = re.sub(r"\*\*|__|`", "", out)
+    out = re.sub(r"(?<!\.)\.\.(?!\.)", ".", " ".join(out.split()))     # «п.п. [1].» → «п.п.»
+    if len(out) <= limit:
+        return out
+    cut = out[:limit]
+    dot = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if dot > limit * 0.55:
+        return cut[:dot + 1]
+    return cut[:cut.rfind(" ")].rstrip(",;:—- ") + "…"
+
+
+def _report_meta(report_id, username: str) -> dict | None:
+    """Карточка отчёта для дела — с сервера, а не со слов браузера. Приобщить
+    можно только отчёт, который вы сами можете открыть."""
+    try:
+        rid = int(report_id)
+    except (TypeError, ValueError):
+        return None
+    if not report_access(rid, username):
+        return None
+    r = _one("""SELECT r.report_id, r.username, r.question, r.title, r.body, r.created_at,
+                       r.payload->>'mode' AS mode,
+                       CASE WHEN jsonb_typeof(r.payload->'sources') = 'array'
+                            THEN jsonb_array_length(r.payload->'sources') END AS n_sources,
+                       COALESCE(au.display_name, r.username) AS owner_name
+                  FROM report r LEFT JOIN app_user au ON au.username = r.username
+                 WHERE r.report_id = :r""", {"r": rid})
+    if not r:
+        return None
+    return {"report_id": rid, "title": _clip(r["title"] or r["question"], 300),
+            "question": _clip(r["question"], 500), "mode": r["mode"] or "quick",
+            "lead": report_lead(r["body"]), "n_sources": r["n_sources"],
+            "owner": r["username"], "owner_name": r["owner_name"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "chars": len(r["body"] or "")}
+
+
+def _num(v):
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _offer_meta(offer_id) -> dict | None:
+    """Снимок условий продукта НА ДАТУ приобщения: витрина «Рынка» меняется,
+    а доказательство в деле должно остаться тем, что видел аудитор."""
+    try:
+        oid = int(offer_id)
+    except (TypeError, ValueError):
+        return None
+    o = None
+    for view in ("v_market_rub_offer", "v_offer_current"):
+        try:
+            rows = _rows(f"SELECT * FROM {view} WHERE offer_id = :o LIMIT 1", {"o": oid})
+        except Exception:  # noqa: BLE001 — витрины может не быть в тестовой базе
+            rows = []
+        if rows:
+            o = rows[0]
+            break
+    if not o:
+        return None
+    from .. import categories as cat_meta
+    from ..clock import today_msk
+    vf = o.get("valid_from")
+    cat = next((c for c in cat_meta.CATEGORIES if c["id"] == o.get("category")), {})
+    return {"offer_id": oid, "bank": _clip(o.get("bank_name"), 120),
+            "product": _clip(o.get("title"), 200), "category": o.get("category"),
+            "category_label": cat.get("label"), "rate_label": cat.get("rate_label") or "Ставка",
+            "psk_min": _num(o.get("psk_min")),
+            "rate_pct": _num(o.get("rate_pct")), "rate_kind": _clip(o.get("rate_kind"), 60) or None,
+            "amount_min": _num(o.get("amount_min")), "amount_max": _num(o.get("amount_max")),
+            "term_min": _num(o.get("term_months_min")), "term_max": _num(o.get("term_months_max")),
+            "fee_service": _num(o.get("fee_service")), "cashback_pct": _num(o.get("cashback_pct")),
+            "grace_days": _num(o.get("grace_days")),
+            "valid_from": str(vf)[:10] if vf else None, "as_of": today_msk().strftime("%Y-%m-%d"),
+            "url": o.get("url")}
+
+
+def _prepare_item(it: dict, username: str) -> dict | None:
+    """Строка материала: вид, ссылка, название и данные карточки. None — не
+    приобщается (нет доступа к отчёту, продукт не найден, пусто)."""
+    import hashlib
+    import json
+    kind = it.get("kind") or "review"
+    if kind not in CASE_KINDS:
+        return None
+    ref, url, title, meta = it.get("ref_id"), it.get("url"), it.get("title"), None
+    m = it.get("meta") if isinstance(it.get("meta"), dict) else {}
+    if kind == "report":
+        meta = _report_meta(ref, username)
+        if not meta:
+            return None
+        ref, url, title = meta["report_id"], None, meta["title"]
+    elif kind == "offer":
+        meta = _offer_meta(ref)
+        if not meta:
+            return None
+        ref, url = meta["offer_id"], meta.get("url") or url
+        title = " · ".join(x for x in (meta["bank"], meta["product"]) if x)
+    elif kind == "news":
+        if not str(url or "").startswith(("http://", "https://")):
+            return None
+        meta = {"source": _clip(m.get("source"), 80), "domain": _clip(m.get("domain"), 80),
+                "ts": _clip(m.get("ts"), 40) or None, "summary": _clip(m.get("summary"), 500),
+                "tg": bool(m.get("tg")), "group": _clip(m.get("group"), 60) or None}
+        ref = None
+    elif kind == "answer":
+        q_, body = _clip(m.get("question"), 500), _clip(m.get("text"), 6000, lines=True)
+        if not body:
+            return None
+        srcs = []
+        for x in (m.get("sources") or [])[:12]:
+            if isinstance(x, dict) and str(x.get("url") or "").startswith(("http://", "https://")):
+                srcs.append({"n": x.get("n"), "url": x["url"][:500],
+                             "title": _clip(x.get("title") or x.get("bank_name"), 160)})
+        meta = {"question": q_, "text": body, "sources": srcs}
+        title = q_ or body[:160]
+        # у ответа нет ни ссылки, ни номера: адрес-отпечаток не даёт приобщить
+        # один и тот же ответ дважды (уникальность по case_id, kind, url)
+        url = "answer:" + hashlib.sha1((q_ + "\n" + body).encode()).hexdigest()[:20]
+        ref = None
+    elif not (url or ref):
+        return None
+    try:
+        ref = int(ref) if ref is not None else None
+    except (TypeError, ValueError):
+        return None
+    return {"k": kind, "r": ref, "u": (str(url)[:2000] if url else None),
+            "t": (str(title or "")[:1500] or None), "n": (it.get("note") or None),
+            "m": json.dumps(meta, ensure_ascii=False, default=str) if meta else None}
+
+
+def add_case_items(case_id: int, username: str, items: list[dict], *,
+                   with_ids: bool = False):
+    """Приобщить материалы. Повтор того же материала в то же дело молча
+    пропускается. Возвращает число добавленных (with_ids — их номера, для
+    «Отменить»); None — нет прав (нет доступа, «только смотрит», архив)."""
     if not _may_add_case(case_id, username):
         return None
-    rows = [{"c": case_id, "k": it.get("kind") or "review", "r": it.get("ref_id"),
-             "u": it.get("url"), "t": (it.get("title") or "")[:1500] or None,
-             "n": (it.get("note") or None), "by": username}
-            for it in items[:500] if it.get("url") or it.get("ref_id")]
-    if not rows:
-        return 0
-    # сколько добавилось на деле: повторы пропускаются, а уведомление коллегам
-    # «3 новых материала» должно считать только новые
-    cnt = "SELECT count(*) FROM audit_case_item WHERE case_id = :c"
-    with db.session() as s:
-        before = s.execute(text(cnt), {"c": case_id}).scalar_one()
-        s.execute(text("""
-            INSERT INTO audit_case_item (case_id, kind, ref_id, url, title, note, added_by)
-            VALUES (:c, :k, :r, :u, :t, NULL, :by)
-            ON CONFLICT DO NOTHING
-        """), rows)
-        added = s.execute(text(cnt), {"c": case_id}).scalar_one() - before
-        if added:
-            s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
-                      {"c": case_id})
+    rows = [r for r in (_prepare_item(it, username) for it in items[:500]) if r]
+    added: list[tuple[int, dict]] = []
+    if rows:
+        with db.session() as s:
+            for r in rows:
+                iid = s.execute(text("""
+                    INSERT INTO audit_case_item (case_id, kind, ref_id, url, title, note, added_by, meta)
+                    VALUES (:c, :k, :r, :u, :t, NULL, :by, CAST(:m AS jsonb))
+                    ON CONFLICT DO NOTHING RETURNING item_id"""),
+                    {**r, "c": case_id, "by": username}).scalar()
+                if iid:
+                    added.append((int(iid), r))
+            if added:
+                s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
+                          {"c": case_id})
     if added:
         case_log(case_id, username, "items_added",
-                 {"n": int(added), "titles": [(r["t"] or r["u"] or "")[:120] for r in rows[:3]]})
+                 {"n": len(added), "titles": [(r["t"] or r["u"] or "")[:120] for _, r in added[:3]]})
         # «зачем приобщено», переданное вместе с материалом, — первое сообщение его ленты
-        for r in rows:
+        for iid, r in added:
             if (r.get("n") or "").strip():
-                _first_comment(case_id, r, username)
-    return int(added)
+                _first_comment(case_id, iid, r["n"], username)
+    ids = [iid for iid, _ in added]
+    return ids if with_ids else len(ids)
 
 
-def _first_comment(case_id: int, row: dict, username: str) -> None:
+def _first_comment(case_id: int, item_id: int, body: str, username: str) -> None:
     try:
         with db.session() as s:
-            s.execute(text("""
-                INSERT INTO audit_case_msg (case_id, item_id, username, body)
-                SELECT :c, i.item_id, :u, :b FROM audit_case_item i
-                 WHERE i.case_id = :c AND i.added_by = :u
-                   AND i.url IS NOT DISTINCT FROM CAST(:url AS text)
-                   AND i.ref_id IS NOT DISTINCT FROM CAST(:r AS bigint)
-                   AND NOT EXISTS (SELECT 1 FROM audit_case_msg m WHERE m.item_id = i.item_id)
-                 LIMIT 1"""),
-                      {"c": case_id, "u": username, "b": row["n"].strip()[:CASE_MSG_MAX],
-                       "url": row.get("u"), "r": row.get("r")})
+            s.execute(text("""INSERT INTO audit_case_msg (case_id, item_id, username, body)
+                              VALUES (:c, :i, :u, :b)"""),
+                      {"c": case_id, "i": item_id, "u": username,
+                       "b": body.strip()[:CASE_MSG_MAX]})
     except Exception:  # noqa: BLE001
         log.warning("case %s: комментарий при приобщении не записался", case_id, exc_info=True)
+
+
+def case_refs(username: str) -> dict[str, dict]:
+    """Что уже лежит в доступных делах — для пометки «в деле» по всему
+    инструменту. Ключ: «u:<адрес>» для жалоб, документов и новостей,
+    «<вид>:<номер>» для отчётов и продуктов."""
+    rows = _rows("""
+        SELECT DISTINCT ON (i.kind, COALESCE(i.ref_id::text, i.url))
+               i.kind, i.ref_id, i.url, c.case_id, c.title
+          FROM audit_case_item i JOIN audit_case c ON c.case_id = i.case_id
+         WHERE c.deleted_at IS NULL
+           AND (c.username = :u
+                OR EXISTS (SELECT 1 FROM audit_case_member m
+                            WHERE m.case_id = c.case_id AND m.username = :u))
+         ORDER BY i.kind, COALESCE(i.ref_id::text, i.url), i.added_at DESC""", {"u": username})
+    out: dict[str, dict] = {}
+    for r in rows:
+        key = (f"{r['kind']}:{r['ref_id']}" if r["kind"] in ("report", "offer") and r["ref_id"]
+               else f"u:{r['url']}" if r["url"] else None)
+        if key:
+            out[key] = {"case_id": r["case_id"], "title": r["title"]}
+    return out
 
 
 def remove_case_item(case_id: int, item_id: int, username: str) -> bool:

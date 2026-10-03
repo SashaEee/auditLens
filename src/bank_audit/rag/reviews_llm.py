@@ -256,8 +256,12 @@ def case_digest(case: dict) -> tuple[str, str]:
     from collections import Counter
     items = case.get("items") or []
     revs = [it["review"] for it in items if it.get("review")]
+    other = Counter({"report": "отчётов ИИ", "answer": "ответов ИИ", "news": "новостей",
+                     "offer": "продуктов «Рынка»"}.get(it["kind"]) for it in items)
+    other.pop(None, None)
     lines = [f"Материалов: {len(items)}, из них жалоб: {len(revs)}, "
-             f"документов: {sum(1 for it in items if it['kind'] == 'document')}."]
+             f"документов: {sum(1 for it in items if it['kind'] == 'document')}"
+             + "".join(f", {k}: {v}" for k, v in other.items()) + "."]
     if revs:
         dates = sorted(r["date"] for r in revs if r.get("date"))
         if dates:
@@ -290,6 +294,15 @@ def case_digest(case: dict) -> tuple[str, str]:
                 s_ += f" Цитата: «{r['quote']}»"
         elif it["kind"] == "review":
             s_ = f"[{n}] жалоба (разметки нет): {(it.get('title') or '')[:400]}"
+        elif it["kind"] in ("report", "answer", "news", "offer"):
+            # отчёт — только вывод: полный текст в разбор не тащим
+            from ..web.case_export import _gist
+            label = {"report": "отчёт ИИ", "answer": "ответ ИИ", "news": "новость",
+                     "offer": "продукт «Рынка»"}[it["kind"]]
+            s_ = f"[{n}] {label}: {(it.get('title') or '')[:300]}"
+            g = _gist(it)
+            if g:
+                s_ += f" — {g[:700]}"
         else:
             s_ = (f"[{n}] документ: {it.get('title') or it.get('url') or ''}"
                   + (f" ({it['bank_name']})" if it.get("bank_name") else ""))

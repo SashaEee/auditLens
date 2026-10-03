@@ -237,6 +237,9 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
     if body.timezone:
         userdata.set_timezone(user.username, body.timezone)
     if body.prefs is not None:
+        if "active_case" in body.prefs:         # активное дело: «В дело» — одним нажатием
+            v = body.prefs["active_case"]
+            body.prefs["active_case"] = v if isinstance(v, int) and v > 0 else None
         if "notify_off" in body.prefs:          # выключенные группы колокольчика
             from . import notices
             off = body.prefs["notify_off"] if isinstance(body.prefs["notify_off"], list) else []
@@ -3439,6 +3442,7 @@ class CaseItem(BaseModel):
     url: Optional[str] = None
     title: Optional[str] = None
     note: Optional[str] = None
+    meta: Optional[dict] = None     # данные карточки новости и ответа ИИ (остальное — с сервера)
 
 
 def _bell_case(case_id: int, kind: str, actor: str, users: list[str] | None = None,
@@ -3474,6 +3478,12 @@ def cases_create(req: CaseCreate, user: CurrentUser = Depends(get_current_user))
     return {"case_id": userdata.create_case(user.username, req.title.strip(), req.note)}
 
 
+@app.get("/api/cases/refs")
+def cases_refs(user: CurrentUser = Depends(get_current_user)):
+    """Что уже лежит в доступных делах — пометка «в деле» по всему инструменту."""
+    return {"refs": userdata.case_refs(user.username)}
+
+
 @app.get("/api/cases/review-urls")
 def cases_review_urls(user: CurrentUser = Depends(get_current_user)):
     """Жалобы, уже приобщённые к доступным делам, — для пометки «в деле» в ленте."""
@@ -3493,14 +3503,14 @@ def cases_get(case_id: int, user: CurrentUser = Depends(get_current_user)):
 @app.post("/api/cases/{case_id}/items")
 def cases_add_item(case_id: int, req: CaseItem,
                    user: CurrentUser = Depends(get_current_user)):
-    if req.kind not in ("document", "review", "offer", "report"):
+    if req.kind not in userdata.CASE_KINDS:
         raise HTTPException(400, "неизвестный вид материала")
-    n = userdata.add_case_items(case_id, user.username, [req.model_dump()])
-    if n is None:
+    ids = userdata.add_case_items(case_id, user.username, [req.model_dump()], with_ids=True)
+    if ids is None:
         raise HTTPException(403, "добавлять в дело могут владелец и участники с правом добавлять")
-    if n:
-        _bell_case(case_id, "case_items", user.username, n=n)
-    return {"ok": True, "added": n}
+    if ids:
+        _bell_case(case_id, "case_items", user.username, n=len(ids))
+    return {"ok": True, "added": len(ids), "item_ids": ids}
 
 
 class CaseItemsBulk(BaseModel):
@@ -3510,15 +3520,15 @@ class CaseItemsBulk(BaseModel):
 @app.post("/api/cases/{case_id}/items/bulk")
 def cases_add_items(case_id: int, req: CaseItemsBulk,
                     user: CurrentUser = Depends(get_current_user)):
-    """Пачкой — перенос старого дела из браузера на сервер."""
-    n = userdata.add_case_items(case_id, user.username,
-                                [i.model_dump() for i in req.items
-                                 if i.kind in ("document", "review", "offer", "report")])
-    if n is None:
+    """Пачкой: группа похожих жалоб, перенос старого дела из браузера."""
+    ids = userdata.add_case_items(case_id, user.username,
+                                  [i.model_dump() for i in req.items if i.kind in userdata.CASE_KINDS],
+                                  with_ids=True)
+    if ids is None:
         raise HTTPException(403, "нет доступа к делу")
-    if n:
-        _bell_case(case_id, "case_items", user.username, n=n)
-    return {"ok": True, "added": n}
+    if ids:
+        _bell_case(case_id, "case_items", user.username, n=len(ids))
+    return {"ok": True, "added": len(ids), "item_ids": ids}
 
 
 class CaseNote(BaseModel):
@@ -3789,11 +3799,21 @@ def _case_or_404(case_id: int, username: str) -> dict:
     return case
 
 
+def _app_base(request: Request) -> str | None:
+    """Адрес инструмента для ссылок в выгрузке («открыть отчёт»). Внутренний
+    адрес контейнера в документ не пишем — по нему коллега ничего не откроет."""
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    if not host or host.split(":")[0] in ("127.0.0.1", "localhost", "0.0.0.0") or host.startswith("172."):
+        return None
+    proto = (request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
+    return f"{proto}://{host}"
+
+
 @app.get("/api/cases/{case_id}/export.xlsx")
-def cases_export_xlsx(case_id: int, user: CurrentUser = Depends(get_current_user)):
+def cases_export_xlsx(case_id: int, request: Request, user: CurrentUser = Depends(get_current_user)):
     from urllib.parse import quote as _q
     from . import case_export
-    case = _case_or_404(case_id, user.username)
+    case = {**_case_or_404(case_id, user.username), "app_base": _app_base(request)}
     return Response(content=case_export.to_xlsx(case),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition":
@@ -3801,10 +3821,10 @@ def cases_export_xlsx(case_id: int, user: CurrentUser = Depends(get_current_user
 
 
 @app.get("/api/cases/{case_id}/export.docx")
-def cases_export_docx(case_id: int, user: CurrentUser = Depends(get_current_user)):
+def cases_export_docx(case_id: int, request: Request, user: CurrentUser = Depends(get_current_user)):
     from urllib.parse import quote as _q
     from . import case_export
-    case = _case_or_404(case_id, user.username)
+    case = {**_case_or_404(case_id, user.username), "app_base": _app_base(request)}
     return Response(content=case_export.to_docx(case),
                     media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     headers={"Content-Disposition":
