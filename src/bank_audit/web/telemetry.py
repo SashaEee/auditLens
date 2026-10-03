@@ -434,7 +434,17 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
             "signal_journal": _signal_journal(),
             "personalization": _personalization(days, ex),
             "topics": _team_topics(days, ex),
-            "eval": _eval_brief()}
+            "eval": _eval_brief(),
+            "inbox": _inbox_brief()}
+
+
+def _inbox_brief() -> dict:
+    """Обращения из «Обратной связи»: новые и открытые — для сторожа и вкладки."""
+    try:
+        from . import inbox
+        return inbox.brief()
+    except Exception:  # noqa: BLE001 — «Пульс» не падает из-за одного блока
+        return {}
 
 
 def _eval_brief() -> dict:

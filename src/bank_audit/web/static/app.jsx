@@ -9052,6 +9052,8 @@ function puGuardItems(m){
     :`оценок 👍/👎 не ставили ${ageR} дн — «жалоб нет» ничего не значит`,"ai","pu-aifb");
   const nerr=((nq.stream||{}).sources||[]).filter(x=>x.last_error);
   if(nerr.length) add("warn",`ленты новостей с ошибкой: ${nerr.map(x=>x.label||x.source).join(", ")}`,"data","pu-news");
+  const ib=m.inbox||{};
+  if((ib.unread||0)>0) add("warn",`${ib.unread} ${plural(ib.unread,"обращение ждёт","обращения ждут","обращений ждут")} ответа${ib.oldest_new_days?` · старейшему ${ib.oldest_new_days} дн`:""}`,"inbox","pu-inbox");
   if((pr.pending||0)>0) add("warn",`${pr.pending} ${plural(pr.pending,"заявка","заявки","заявок")} на источники ${pr.pending===1?"ждёт":"ждут"} решения · старейшей ${pr.oldest_days} дн`,"data","pu-proposals");
   return out.sort((a,b)=>(a.lv==="bad"?0:1)-(b.lv==="bad"?0:1));
 }
@@ -9484,8 +9486,120 @@ function PuTopics({t,days}){
   </div>;
 }
 
+// ── Обращения из «Обратной связи» ───────────────────────────────────────────
+// Ответ и смена статуса приходят автору туда, где он писал: точкой у строки
+// меню и в «Моих обращениях». Непрочитанные (новые или с уточнением автора) — сверху.
+const PU_TK_FILTER=[["new","Новые"],["open","Открытые"],["all","Все"]];
+const PU_TK_TPL=[["Взяли в работу","Спасибо, взяли в работу. Напишем здесь, когда будет готово."],
+  ["Уточнить","Уточните, пожалуйста: в каком разделе и с какими фильтрами это видно?"],
+  ["Сделали","Сделали — обновите страницу и проверьте, пожалуйста."],
+  ["Уже есть","Это уже есть: "]];
+function PuInbox({rev,onOpenUser,onChanged}){
+  const[st,setSt]=useState("open");
+  const[kind,setKind]=useState("");
+  const[d,setD]=useState(null);
+  const[cur,setCur]=useState(null);
+  const[r2,setR2]=useState(0);
+  useEffect(()=>{ setD(null); const sp=new URLSearchParams({status:st}); if(kind) sp.set("kind",kind);
+    apiFetch("/api/admin/inbox?"+sp).then(setD).catch(()=>setD({tickets:[],error:true})); },[st,kind,rev,r2]);
+  const c=(d&&d.counts)||{};
+  return <div className="pu-card" id="pu-inbox">
+    <div className="h"><span>Обращения · ждут ответа {c.unread||0} · открытых {c.open||0} · всего {c.total||0}</span>
+      <span className="pu-people-ctl">
+        <div className="seg" role="group" aria-label="Статус">{PU_TK_FILTER.map(([k,l])=><button key={k}
+          className={"seg-btn"+(st===k?" on":"")} aria-pressed={st===k} onClick={()=>setSt(k)}>{l}</button>)}</div>
+        <select className="pu-sel" value={kind} onChange={e=>setKind(e.target.value)} aria-label="Тип обращения">
+          <option value="">все типы</option>
+          {Object.entries(SAY_KIND_RU).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+      </span></div>
+    <p className="t-cap" style={{margin:"-4px 0 10px"}}>Из строки «Обратная связь» внизу меню. Сверху — новые и те,
+      где автор что-то дописал. Ответ и статус автор увидит там же, где писал.</p>
+    {!d?<Skel h={120}/>:d.error?<div className="pu-empty">Не удалось загрузить обращения.</div>
+      :!d.tickets.length?<div className="pu-empty">{st==="new"?"Новых обращений нет.":"Обращений нет."}</div>
+      :<div className="pu-tblwrap"><table className="pu-tbl">
+        <thead><tr><th>обращение</th><th>автор</th><th>раздел</th><th>статус</th><th>обновлено</th></tr></thead>
+        <tbody>{d.tickets.map(t=><tr key={t.ticket_id} className="pu-rowclick" onClick={()=>setCur(t.ticket_id)}>
+          <td title={t.body} style={{maxWidth:300,fontWeight:t.unread?600:400}}>
+            {t.unread&&<span className="nav-dot" style={{display:"inline-block",marginRight:7,verticalAlign:1}} aria-label="ждёт ответа"/>}
+            <span style={{color:"var(--ink-3)",fontWeight:400}}>{t.kind_label} · </span>{t.body}</td>
+          <td><button className="pu-link" onClick={e=>{e.stopPropagation(); onOpenUser&&onOpenUser(t.username);}}>{t.name}</button></td>
+          <td style={{whiteSpace:"nowrap",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}} title={t.section_label||""}>{t.section_label||"—"}</td>
+          <td><span className={"tk-st "+t.status}>{t.status_label}</span></td>
+          <td style={{whiteSpace:"nowrap"}}>{sayDate(t.updated_at)}{+t.n_files>0?<span style={{color:"var(--ink-3)"}} title="есть снимки экрана"> · снимки</span>:null}</td>
+        </tr>)}</tbody></table></div>}
+    {cur&&ReactDOM.createPortal(<PuTicket tid={cur} onClose={()=>setCur(null)} onOpenUser={onOpenUser}
+      onChanged={()=>{ setR2(x=>x+1); onChanged&&onChanged(); }}/>,document.body)}
+  </div>;
+}
+
+function PuTicket({tid,onClose,onOpenUser,onChanged}){
+  const[t,setT]=useState(null);
+  const[st,setSt]=useState("");
+  const[reply,setReply]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  useEffect(()=>{ setT(null); apiFetch(`/api/admin/inbox/${tid}`).then(x=>{ setT(x); setSt(x.status); onChanged&&onChanged(); })
+    .catch(()=>setT({error:true})); },[tid]); // eslint-disable-line
+  useEffect(()=>{const k=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[onClose]);
+  const save=()=>{ if(busy) return; if(st===t.status&&!reply.trim()){ setErr("Выберите статус или напишите ответ"); return; }
+    setBusy(true); setErr("");
+    sayPost(`/api/admin/inbox/${tid}`,{status:st!==t.status?st:null,reply:reply.trim()||null})
+      .then(x=>{ setT(x); setSt(x.status); setReply(""); onChanged&&onChanged(); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  const c=(t&&t.context)||{};
+  const ctxRows=t&&!t.error?[["Страница",c.url],["Версия",c.version],["Браузер",c.browser],["Экран",c.screen],["Тема",c.theme],
+    ["Ошибки страницы",(c.errors||[]).join("\n")]].filter(x=>x[1]):[];
+  return <div className="pu-drawer" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div className="pu-dr" role="dialog" aria-label="Обращение">
+      <div className="pu-drhead">
+        <div><div className="pu-drname">Обращение № {tid}</div>
+          {t&&!t.error&&<div className="pu-drsub">{t.kind_label} · {t.section_label||"AuditLens"} · {fmtDateMsk(t.created_at)} ·{" "}
+            <button className="pu-link" onClick={()=>onOpenUser&&onOpenUser(t.username)}>{t.name}</button>
+            {t.confirmed===true&&<span className="pu-badge on">автор: работает</span>}
+            {t.confirmed===false&&<span className="pu-badge adm">автор: не работает</span>}</div>}</div>
+        <button className="pu-x" onClick={onClose} aria-label="Закрыть">✕</button>
+      </div>
+      {!t?<div style={{padding:24}}><Skel h={140}/></div>:t.error?<ErrState msg="Обращение не найдено."/>:<>
+        <div className="pu-drsec"><div className="tk-full" style={{fontSize:13.5,color:"var(--ink)"}}>{t.body}</div>
+          {(t.files||[]).length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8,marginTop:12}}>
+            {t.files.map(f=><a key={f.file_id} href={`/api/inbox/file/${f.file_id}`} target="_blank" rel="noopener noreferrer"
+              style={{display:"block",borderRadius:8,overflow:"hidden",border:"1px solid var(--hair)"}}>
+              <img src={`/api/inbox/file/${f.file_id}`} alt="Снимок экрана" style={{width:"100%",display:"block"}}/></a>)}</div>}
+        </div>
+        {ctxRows.length>0&&<div className="pu-drsec"><div className="pu-drh">Приложено автоматически</div>
+          <div className="tk-ctx" style={{marginTop:0}}><dl style={{marginTop:0}}>{ctxRows.map(([k,v])=><React.Fragment key={k}>
+            <dt>{k}</dt><dd style={{whiteSpace:"pre-line"}}>{k==="Страница"
+              ?<><a href={"/"+v} target="_blank" rel="noopener noreferrer">{v}</a> · открыть ту же страницу</>:v}</dd></React.Fragment>)}</dl></div></div>}
+        <div className="pu-drsec"><div className="pu-drh">Переписка</div>
+          {(t.messages||[]).length===0&&<div style={{fontSize:12,color:"var(--ink-3)"}}>Ответа ещё не было.</div>}
+          {(t.messages||[]).map((m,i)=>m.role==="system"
+            ? <div key={i} className="tk-sys">{m.body} · {sayDate(m.at)}</div>
+            : <div key={i} className={"tk-msg "+m.role}><div className="h">{m.role==="team"?"Команда":"Автор"} · {sayDate(m.at)}</div>{m.body}</div>)}
+        </div>
+        <div className="pu-drsec">
+          <div className="pu-drh">Ответ автору</div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+            <select className="pu-sel" value={st} onChange={e=>setSt(e.target.value)} aria-label="Статус">
+              {Object.entries(SAY_STATUS_RU).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+            {PU_TK_TPL.map(([l,x])=><button key={l} className="seg-btn" onClick={()=>setReply(r=>r?r+"\n"+x:x)}>{l}</button>)}
+          </div>
+          <textarea className="tk-ta" style={{minHeight:90}} value={reply} maxLength={2000}
+            placeholder="Ответ увидит только автор — у строки «Обратная связь» загорится точка"
+            onChange={e=>{setReply(e.target.value); if(err) setErr("");}}
+            onKeyDown={e=>{ if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); save(); } }}/>
+          {err&&<div className="tk-err" role="alert">{err}</div>}
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:10}}>
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={save}>
+              {busy?"Сохраняю…":reply.trim()?"Ответить":"Сохранить статус"}</button></div>
+        </div>
+      </>}
+    </div>
+  </div>;
+}
+
 const PU_TABS=[["people","Люди"],["reports","Отчёты"],["ai","Качество ИИ"],
-  ["data","Данные"],["tech","Техника"]];
+  ["inbox","Обращения"],["data","Данные"],["tech","Техника"]];
 // «Имя Фамилия» → «Имя Ф.»; логин остаётся логином
 const puShort=(n)=>{const p=String(n||"").trim().split(/\s+/);return p.length>=2?`${p[0]} ${p[1][0]}.`:(n||"");};
 const puNum=(n)=>(+n||0).toLocaleString("ru");
@@ -9923,7 +10037,7 @@ function PulsePage(){
           {err?"⚠ ":""}{ts.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>}
       </div>
       <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:6}}>Как <em style={{fontStyle:"italic",color:"var(--accent)"}}>живёт</em> AuditLens</h1>
-      <p className="lede">Люди, отчёты, качество ИИ, данные и техника — по вкладкам ниже.</p>
+      <p className="lede">Люди, отчёты, качество ИИ, обращения, данные и техника — по вкладкам ниже.</p>
       <p className="t-cap" style={{margin:"4px 0 0"}}>
         {withMe?"Считаются все, включая вас":"Считаются коллеги: без вас"}{hiddenN>0?` и ${hiddenN} ${plural(hiddenN,"служебной учётки","служебных учёток","служебных учёток")}`:""}.
         {" "}Ошибки, скорость и сбор данных — по всем.</p>
@@ -9950,7 +10064,8 @@ function PulsePage(){
       <div className="rv-tabs-l" role="tablist" aria-label="Разделы «Пульса»">
         {PU_TABS.map(([k,l])=><button key={k} id={"pu-tab-"+k} role="tab" aria-selected={tab===k}
           aria-controls="pu-panel" tabIndex={tab===k?0:-1} className={"rv-tab"+(tab===k?" on":"")}
-          onClick={()=>selTab(k)} onKeyDown={e=>tabKey(e,k)}>{l}</button>)}
+          onClick={()=>selTab(k)} onKeyDown={e=>tabKey(e,k)}>{l}
+          {k==="inbox"&&(m.inbox||{}).unread>0&&<span className="rv-tab-n">{m.inbox.unread}</span>}</button>)}
       </div>
       <span className="rv-tabs-r">
         <label className="pu-me" title="по умолчанию ваши действия не считаются: вы проверяете инструмент">
@@ -10037,6 +10152,8 @@ function PulsePage(){
 
       <PuPersonalization pz={m.personalization||{}} days={m.days} onOpenUser={setCard}/>
     </>}
+
+    {tab==="inbox"&&<PuInbox rev={rev} onOpenUser={setCard} onChanged={load}/>}
 
     {tab==="reports"&&<>
       <PuTopics t={m.topics} days={m.days}/>
@@ -10539,6 +10656,384 @@ function appAbout(info){
   return s;
 }
 
+// ─── «Обратная связь»: строка внизу меню → окно обращения → «Мои обращения» ──
+// Вход тихий, как пункт «Данных»: без рамки и подписи; точка загорается, только
+// когда команда ответила. Раздел подставляется сам, контекст (адрес с
+// фильтрами, версия, браузер, ошибки страницы) прикладывается сам и виден по
+// «показать». Ответ команды приходит сюда же. Классы tk-* и адреса /api/inbox:
+// слова feedback/ad/track режут блокировщики рекламы.
+const SAY_CSS=`
+.rail-foot{border-top:0;padding-top:6px}
+.tk-row{display:flex;align-items:center;gap:10px;width:100%;padding:6px 10px;border-radius:4px;border:0;background:none;
+  font:inherit;font-size:13px;font-weight:450;color:var(--ink-3);cursor:pointer;text-align:left;
+  transition:background .12s,color .12s}
+.tk-row:hover{background:var(--paper-2);color:var(--ink)}
+.tk-row.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+.tk-row svg{flex:none}
+.tk-row:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.tk-row .tk-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:-3px;flex:none}
+.tk-row.unread{color:var(--ink-2)}
+.tk-div{height:1px;background:var(--hair);margin:6px 2px}
+.tk-pop{position:fixed;left:calc(var(--rail) + 12px);bottom:14px;z-index:70;width:452px;max-height:calc(100dvh - 28px);
+  display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--hair);border-radius:14px;
+  box-shadow:0 1px 0 oklch(0% 0 0 / .04),0 18px 48px oklch(0% 0 0 / .14);transform-origin:0 100%;
+  animation:tkIn .2s cubic-bezier(.32,.72,0,1) both;font-size:13px;color:var(--ink)}
+@keyframes tkIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.tk-pop,.tk-toast{animation:none}}
+@media(pointer:coarse){.tk-kbd,.tk-hint{display:none}}
+.tk-head{display:flex;align-items:center;gap:10px;padding:14px 14px 10px 18px}
+.tk-ttl{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.tk-x{margin-left:auto;width:28px;height:28px;border-radius:7px;border:0;background:none;color:var(--ink-3);cursor:pointer;
+  display:grid;place-items:center}
+.tk-x:hover{background:var(--paper-2);color:var(--ink)}
+.tk-tabs{display:flex;gap:2px;padding:0 18px;border-bottom:1px solid var(--hair)}
+.tk-tab{border:0;background:none;font:inherit;font-size:12.5px;font-weight:500;color:var(--ink-3);padding:7px 2px 9px;
+  margin-right:14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;display:inline-flex;gap:6px;align-items:center}
+.tk-tab.on{color:var(--ink);border-bottom-color:var(--ink)}
+.tk-tab .n{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.tk-tab .tk-dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.tk-body{padding:14px 18px 6px;overflow-y:auto;min-height:0}
+.tk-lbl{font-size:12px;color:var(--ink-3);margin:0 0 7px}
+.tk-kinds{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px}
+.tk-kind{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--hair-2);
+  background:var(--surface);font:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+.tk-kind:hover{border-color:var(--ink-4);color:var(--ink)}
+.tk-kind.on{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 55%);color:var(--accent-ink)}
+.tk-kind:active{transform:scale(.97)}
+.tk-where{position:relative;margin-bottom:12px}
+.tk-where svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink-3);pointer-events:none}
+.tk-where select{width:100%;height:32px;padding:0 30px 0 30px;border-radius:8px;border:1px solid var(--hair-2);background:var(--surface);
+  font:inherit;font-size:12.5px;color:var(--ink);appearance:none;-webkit-appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center}
+.tk-where select:focus-visible,.tk-ta:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 82%)}
+.tk-ta{width:100%;min-height:112px;max-height:260px;resize:none;padding:10px 12px;border-radius:10px;border:1px solid var(--hair-2);
+  background:var(--surface);font:inherit;font-size:13.5px;line-height:1.55;color:var(--ink);display:block}
+.tk-ta::placeholder{color:var(--ink-4)}
+.tk-files{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.tk-thumb{position:relative;width:64px;height:44px;border-radius:7px;overflow:hidden;border:1px solid var(--hair);background:var(--paper-2)}
+.tk-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.tk-thumb button{position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;border:0;background:oklch(0% 0 0 / .6);
+  color:#fff;font-size:11px;line-height:18px;cursor:pointer;padding:0}
+.tk-add{height:44px;padding:0 12px;border-radius:7px;border:1px dashed var(--hair-2);background:none;font:inherit;font-size:12px;
+  color:var(--ink-3);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.tk-add:hover{border-color:var(--ink-4);color:var(--ink)}
+.tk-hint{font-size:11.5px;color:var(--ink-4)}
+.tk-note{margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--ink-3);text-wrap:pretty}
+.tk-ctx{margin-top:12px;font-size:11.5px;color:var(--ink-3);line-height:1.55}
+.tk-ctx button{border:0;background:none;padding:0;font:inherit;color:var(--ink-2);cursor:pointer;text-decoration:underline;
+  text-decoration-color:var(--hair-2);text-underline-offset:3px}
+.tk-ctx dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;margin:8px 0 0;padding:9px 11px;border-radius:8px;background:var(--paper-2)}
+.tk-ctx dt{color:var(--ink-3)}
+.tk-ctx dd{margin:0;color:var(--ink-2);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.tk-err{margin-top:10px;font-size:12px;color:var(--neg)}
+.tk-foot{display:flex;align-items:center;gap:10px;padding:12px 18px 14px;border-top:1px solid var(--hair);margin-top:8px}
+.tk-foot .who{font-size:11.5px;color:var(--ink-3);line-height:1.4}
+.tk-foot .btn{margin-left:auto}
+.tk-kbd{font-size:11px;opacity:.6;margin-left:2px}
+.tk-drop{position:absolute;inset:0;border-radius:14px;border:2px dashed var(--select);background:color-mix(in oklab,var(--surface),transparent 8%);
+  display:grid;place-items:center;font-size:13px;color:var(--ink);z-index:3;pointer-events:none}
+.tk-done{text-align:center;padding:26px 8px 18px}
+.tk-done .ic{width:44px;height:44px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);display:grid;place-items:center;margin:0 auto 12px}
+.tk-done h4{margin:0 0 6px;font-size:15px;font-weight:600}
+.tk-done p{margin:0 auto 16px;max-width:300px;font-size:12.5px;color:var(--ink-3);line-height:1.55}
+.tk-done .b{display:flex;gap:8px;justify-content:center}
+.tk-list{margin:-4px 0 6px}
+.tk-item{border-bottom:1px solid var(--hair)}
+.tk-item:last-child{border-bottom:0}
+.tk-ihead{display:flex;gap:10px;align-items:flex-start;width:100%;padding:11px 0;border:0;background:none;font:inherit;text-align:left;cursor:pointer;color:var(--ink)}
+.tk-ihead .k{color:var(--ink-3);margin-top:1px;flex:none}
+.tk-ihead .t{flex:1;min-width:0}
+.tk-ihead .q{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13px;line-height:1.45}
+.tk-ihead.unread .q{font-weight:600}
+.tk-ihead[aria-expanded="true"] .q{display:block;-webkit-line-clamp:unset;white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-ihead .m{font-size:11.5px;color:var(--ink-3);margin-top:3px;font-variant-numeric:tabular-nums}
+.tk-st{flex:none;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--hair-2);color:var(--ink-3);white-space:nowrap}
+.tk-st.accepted{color:var(--select);border-color:color-mix(in oklab,var(--select),transparent 60%)}
+.tk-st.in_progress{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 55%)}
+.tk-st.done{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 55%)}
+.tk-thread{padding:0 0 12px 26px}
+.tk-full{font-size:12.5px;line-height:1.55;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-msg{margin-top:10px;padding:9px 11px;border-radius:9px;background:var(--paper-2);font-size:12.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-msg.team{background:var(--accent-soft)}
+.tk-msg .h{font-size:11px;color:var(--ink-3);margin-bottom:3px;white-space:normal}
+.tk-msg.team .h{color:var(--accent-ink)}
+.tk-sys{margin-top:8px;font-size:11.5px;color:var(--ink-3);display:flex;gap:6px;align-items:center}
+.tk-sys::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ink-4)}
+.tk-ok{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:12.5px;color:var(--ink-2)}
+.tk-reply{display:flex;gap:8px;margin-top:10px;align-items:flex-end}
+.tk-reply textarea{flex:1;min-height:34px;max-height:140px;resize:none;padding:7px 10px;border-radius:8px;border:1px solid var(--hair-2);
+  background:var(--surface);font:inherit;font-size:12.5px;line-height:1.45;color:var(--ink)}
+.tk-empty{text-align:center;padding:30px 12px;color:var(--ink-3);font-size:12.5px;line-height:1.55}
+.tk-toast{position:fixed;left:calc(var(--rail) + 20px);bottom:20px;z-index:300;max-width:340px;background:var(--surface);
+  border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:tkIn .22s cubic-bezier(.32,.72,0,1) both}
+.tk-toast .t{font-size:12.5px;line-height:1.5;color:var(--ink-2);margin-bottom:10px}
+.tk-toast .t b{color:var(--ink);font-weight:600}
+.tk-toast .b{display:flex;gap:8px}
+@media(max-width:960px){
+  .tk-pop{left:0;right:0;bottom:0;width:auto;max-height:88dvh;border-radius:16px 16px 0 0;transform-origin:50% 100%;
+    padding-bottom:env(safe-area-inset-bottom)}
+  .tk-toast{left:16px;right:16px;bottom:16px;max-width:none}
+  .tk-kind,.tk-x{min-height:40px}
+}
+`;
+const IcSay={
+  row:p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M5 4.5h14A1.5 1.5 0 0120.5 6v9a1.5 1.5 0 01-1.5 1.5h-7l-4.5 3.5v-3.5H5A1.5 1.5 0 013.5 15V6A1.5 1.5 0 015 4.5z"/><path d="M8 9h8M8 12.2h5"/></svg>,
+  idea:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 00-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0012 3z"/></svg>,
+  bug:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="7.5" y="8" width="9" height="12" rx="4.5"/><path d="M9.5 8V7a2.5 2.5 0 015 0v1M12 12v8M4 13h3.5M16.5 13H20M5 7.5l3 2M19 7.5l-3 2M5 19l3-2M19 19l-3-2"/></svg>,
+  numbers:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3 20h18M6 16v-5M11 16V6M16 16v-7"/><path d="M19 4l2 2M21 4l-2 2"/></svg>,
+  howto:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 014.9.6c0 1.7-2.5 2.1-2.5 3.6M12 16.9v.1"/></svg>,
+  other:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" {...p}><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>,
+  pin:p=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 21s-6.5-5.7-6.5-11a6.5 6.5 0 0113 0c0 5.3-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.2"/></svg>,
+  image:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>,
+  x:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" {...p}><path d="M6 6l12 12M18 6L6 18"/></svg>,
+  check:p=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M20 6L9 17l-5-5"/></svg>,
+};
+const SAY_KINDS=[["idea","Идея"],["bug","Ошибка"],["numbers","Неверные цифры"],["howto","Вопрос"]];
+const SAY_KIND_RU={idea:"Идея",bug:"Ошибка",numbers:"Неверные цифры",howto:"Вопрос",other:"Другое"};
+const SAY_HINT={
+  "":"Расскажите, что улучшить или что пошло не так",
+  idea:"Чего не хватает и зачем. Например: «Фильтр по городу в жалобах — для проверки филиалов»",
+  bug:"Что делали и что пошло не так. Например: «После “Взять в работу” карточка осталась в очереди»",
+  numbers:"Где увидели число, каким оно должно быть и откуда это известно. Например: «В выпуске 120 жалоб на кредитки, в разделе “Аудит отзывов” — 96»",
+  howto:"Что хотите сделать — подскажем. Например: «Как сравнить вклады Сбера с рынком за прошлый месяц?»"};
+const SAY_STATUS_RU={new:"Новое",accepted:"Принято",in_progress:"В работе",done:"Сделано",wontfix:"Не будем делать",exists:"Уже есть"};
+const SAY_MODE={foryou:"Для вас",market:"Рынок · позиция"};
+const SAY_DRAFT="al-say-draft";
+const SAY_TOAST="al-say-toast";
+// последние ошибки страницы — прикладываются к обращению (видно по «показать»)
+let _sayErrs=[];
+function sayRecordErr(msg){ try{ _sayErrs=[..._sayErrs.slice(-4),
+  {at:new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"}),msg:String(msg||"").slice(0,160)}]; }catch{} }
+const sayPost=(path,body)=>fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+  .then(async r=>{ if(r.ok) return r.json(); let d=""; try{ d=(await r.json()).detail; }catch{}
+    throw new Error(typeof d==="string"&&d?d:r.status===413?"Снимок слишком большой — уменьшите его":"Не получилось отправить. Попробуйте ещё раз"); });
+const sayMac=()=>/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent||"");
+function sayWhere(page){
+  const sec=SECTION_OF[page]||page||"overview";
+  const nav=NAV.find(n=>n.id===sec);
+  const name=nav?nav.label:sec==="pulse"?"Пульс":sec==="profile"?"Профиль":"AuditLens";
+  let sub=SAY_MODE[page]||null;
+  if(!sub&&sec==="reviews"){ const t=(parseHash().prm||{}).tab; const r=RV_TABS.find(x=>x[0]===t); if(r) sub=r[1]; }
+  return {section:sec,label:sub?`${name} › ${sub}`:name};
+}
+function sayBrowser(){ const u=navigator.userAgent||"";
+  const m=u.match(/(Edg|YaBrowser|OPR|Firefox|Chrome|Version)\/(\d+)/);
+  const nm=m?(({Edg:"Edge",YaBrowser:"Яндекс Браузер",OPR:"Opera",Version:"Safari"})[m[1]]||m[1])+" "+m[2]:"браузер";
+  const os=/Windows/.test(u)?"Windows":/Mac OS X/.test(u)?"macOS":/Android/.test(u)?"Android":/iPhone|iPad/.test(u)?"iOS":/Linux/.test(u)?"Linux":"";
+  return nm+(os?" · "+os:""); }
+function sayContext(appInfo){
+  const dark=document.documentElement.getAttribute("data-theme")==="dark"||
+    (!document.documentElement.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme: dark)").matches);
+  const c={url:location.hash||"#overview",version:(appInfo&&appInfo.version)||"",browser:sayBrowser(),
+    screen:`${innerWidth}×${innerHeight}${devicePixelRatio>1?` · ×${Math.round(devicePixelRatio*10)/10}`:""}`,
+    theme:dark?"тёмная":"светлая"};
+  if(_sayErrs.length) c.errors=_sayErrs.map(e=>`${e.at} ${e.msg}`);
+  return c;
+}
+// снимок → JPEG до ~650 КБ: прокси режет тела запросов больше мегабайта
+async function sayShrink(file){
+  const url=URL.createObjectURL(file);
+  const toData=(blob)=>new Promise((ok,no)=>{const r=new FileReader(); r.onload=()=>ok(r.result); r.onerror=no; r.readAsDataURL(blob);});
+  try{
+    const img=await new Promise((ok,no)=>{const i=new Image(); i.onload=()=>ok(i); i.onerror=no; i.src=url;});
+    const W=img.naturalWidth, H=img.naturalHeight;
+    if(file.size<=600*1024&&Math.max(W,H)<=2400&&/^image\/(png|jpeg|webp)$/.test(file.type))
+      return {data:await toData(file),w:W,h:H,url:URL.createObjectURL(file)};
+    for(const [side,q] of [[1920,.86],[1600,.8],[1280,.74],[1024,.68]]){
+      const k=Math.min(1,side/Math.max(W,H)), w=Math.round(W*k), h=Math.round(H*k);
+      const c=document.createElement("canvas"); c.width=w; c.height=h;
+      const g=c.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,w,h); g.drawImage(img,0,0,w,h);
+      const blob=await new Promise(ok=>c.toBlob(ok,"image/jpeg",q));
+      if(blob&&(blob.size<=650*1024||side===1024)) return {data:await toData(blob),w,h,url:URL.createObjectURL(blob)};
+    }
+  } finally { URL.revokeObjectURL(url); }
+  throw new Error("Снимок не читается");
+}
+const sayDate=(iso)=>{ try{ const d=new Date(iso); const today=new Date().toDateString()===d.toDateString();
+  return today?d.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})
+    :d.toLocaleDateString("ru",{day:"numeric",month:"short"}).replace(".",""); }catch{ return ""; } };
+
+function SayPanel({page,appInfo,me,tab:tab0,onClose,anchor,onUnread}){
+  const where=useMemo(()=>sayWhere(page),[page]);
+  const draft=useMemo(()=>{try{return JSON.parse(localStorage.getItem(SAY_DRAFT)||"{}")||{};}catch{return {};}},[]);
+  const[tab,setTab]=useState(tab0||"new");
+  const[kind,setKind]=useState(draft.kind||"");
+  const[section,setSection]=useState(where.section);
+  const[text,setText]=useState(draft.text||"");
+  const[files,setFiles]=useState([]);
+  const[showCtx,setShowCtx]=useState(false);
+  const[err,setErr]=useState("");
+  const[busy,setBusy]=useState("");
+  const[done,setDone]=useState(null);
+  const[drag,setDrag]=useState(false);
+  const[mine,setMine]=useState(null);
+  const ref=useRef(null), taRef=useRef(null), fileRef=useRef(null);
+  const ctx=useMemo(()=>sayContext(appInfo),[appInfo,tab]); // eslint-disable-line
+  const opts=useMemo(()=>{ const o=NAV.map(n=>[n.id,n.label]);
+    if(!o.some(x=>x[0]===where.section)) o.push([where.section,where.label.split(" › ")[0]]);
+    o.push(["profile","Профиль"],["general","Инструмент в целом"]);
+    return o.filter((x,i,a)=>a.findIndex(y=>y[0]===x[0])===i); },[where]);
+  const label=section===where.section?where.label:((opts.find(x=>x[0]===section)||[])[1]||section);
+  // черновик переживает случайное закрытие окна
+  useEffect(()=>{ try{ localStorage.setItem(SAY_DRAFT,JSON.stringify({kind,text})); }catch{} },[kind,text]);
+  // фокус в поле, Esc закрывает, клик мимо окна закрывает; фокус возвращается на строку меню
+  useEffect(()=>{ const t=setTimeout(()=>{ if(tab==="new"&&taRef.current) taRef.current.focus(); },60);
+    const onDown=(e)=>{ if(ref.current&&!ref.current.contains(e.target)&&!(anchor&&anchor.current&&anchor.current.contains(e.target))) onClose(); };
+    document.addEventListener("mousedown",onDown);
+    return ()=>{ clearTimeout(t); document.removeEventListener("mousedown",onDown); };
+  },[]); // eslint-disable-line
+  // поле растёт с текстом
+  useEffect(()=>{ const t=taRef.current; if(!t) return; t.style.height="auto"; t.style.height=Math.min(260,Math.max(112,t.scrollHeight+2))+"px"; },[text,tab,done]);
+  const loadMine=useCallback(()=>apiFetch("/api/inbox/mine").then(d=>{setMine(d);}).catch(()=>setMine({tickets:[],error:true})),[]);
+  useEffect(()=>{ if(tab==="mine") loadMine(); },[tab,loadMine]);
+  const addFiles=async(list)=>{ const imgs=[...list].filter(f=>/^image\//.test(f.type));
+    if(!imgs.length) return;
+    const room=3-files.length; if(room<=0){ setErr("Можно приложить до трёх снимков"); return; }
+    setErr("");
+    for(const f of imgs.slice(0,room)){
+      try{ const x=await sayShrink(f); setFiles(a=>a.length<3?[...a,{...x,id:Math.random().toString(36).slice(2)}]:a); }
+      catch(e){ setErr(e.message||"Снимок не читается"); } } };
+  const onPaste=(e)=>{ const items=[...((e.clipboardData&&e.clipboardData.items)||[])].filter(i=>i.kind==="file"&&/^image\//.test(i.type));
+    if(!items.length) return; e.preventDefault(); addFiles(items.map(i=>i.getAsFile()).filter(Boolean)); };
+  const send=async()=>{
+    if(busy) return;
+    const t=text.trim();
+    if(t.length<3){ setErr("Опишите, что случилось, — хотя бы одной фразой"); taRef.current&&taRef.current.focus(); return; }
+    setErr(""); setBusy("Отправляю…");
+    try{
+      const r=await sayPost("/api/inbox",{kind:kind||"other",section,section_label:label,body:t,context:ctx});
+      let failed=0;
+      for(let i=0;i<files.length;i++){
+        setBusy(`Снимок ${i+1} из ${files.length}…`);
+        try{ await sayPost(`/api/inbox/${r.ticket_id}/file`,{data:files[i].data,w:files[i].w,h:files[i].h}); }catch{ failed++; }
+      }
+      files.forEach(f=>{ try{URL.revokeObjectURL(f.url);}catch{} });
+      setDone({id:r.ticket_id,failed}); setText(""); setKind(""); setFiles([]); setShowCtx(false);
+      try{ localStorage.removeItem(SAY_DRAFT); }catch{}
+    }catch(e){ setErr(e.message); }
+    finally{ setBusy(""); }
+  };
+  const onKey=(e)=>{ if(e.key==="Escape"){ e.stopPropagation(); onClose(); return; }
+    if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)&&tab==="new"&&!done){ e.preventDefault(); send(); } };
+  const unread=(mine&&mine.unread)||0;
+  const ctxRows=[["Страница",ctx.url],["Раздел",label],["Версия",ctx.version||"—"],["Браузер",ctx.browser],
+    ["Экран",ctx.screen],["Ошибки страницы",ctx.errors?ctx.errors.join("\n"):"нет"]];
+  return <div className="tk-pop" ref={ref} role="dialog" aria-modal="false" aria-labelledby="tk-ttl"
+    onKeyDown={onKey} onPaste={tab==="new"&&!done?onPaste:undefined}
+    onDragOver={tab==="new"&&!done?(e=>{ if([...(e.dataTransfer.types||[])].includes("Files")){ e.preventDefault(); setDrag(true);} }):undefined}
+    onDragLeave={e=>{ if(!ref.current.contains(e.relatedTarget)) setDrag(false); }}
+    onDrop={tab==="new"&&!done?(e=>{ e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files||[]); }):undefined}>
+    {drag&&<div className="tk-drop">Отпустите, чтобы приложить снимок</div>}
+    <div className="tk-head">
+      <div className="tk-ttl" id="tk-ttl">Обратная связь</div>
+      <button className="tk-x" onClick={onClose} aria-label="Закрыть"><IcSay.x/></button>
+    </div>
+    <div className="tk-tabs" role="tablist">
+      <button role="tab" aria-selected={tab==="new"} className={"tk-tab"+(tab==="new"?" on":"")}
+        onClick={()=>{setTab("new");setDone(null);}}>Написать</button>
+      <button role="tab" aria-selected={tab==="mine"} className={"tk-tab"+(tab==="mine"?" on":"")} onClick={()=>setTab("mine")}>
+        Мои обращения{mine&&mine.tickets&&mine.tickets.length?<span className="n">{mine.tickets.length}</span>:null}
+        {(mine?unread:0)>0&&<span className="tk-dot" aria-label="есть ответ"/>}</button>
+    </div>
+    {tab==="new"&&(done
+      ? <div className="tk-body"><div className="tk-done" role="status">
+          <div className="ic"><IcSay.check/></div>
+          <h4>Обращение № {done.id} отправлено</h4>
+          <p>Команда ответит здесь же — у строки «Обратная связь» загорится точка.
+            {done.failed?` ${done.failed===1?"Один снимок":"Часть снимков"} не дошли — можно описать словами в ответе.`:""}</p>
+          <div className="b">
+            <button className="btn btn-sm" onClick={()=>{setDone(null);setTab("mine");}}>Мои обращения</button>
+            <button className="btn btn-sm" onClick={()=>setDone(null)}>Написать ещё</button>
+          </div></div></div>
+      : <>
+        <div className="tk-body">
+          <div className="tk-lbl" id="tk-kind-l">Что случилось</div>
+          <div className="tk-kinds" role="radiogroup" aria-labelledby="tk-kind-l">
+            {SAY_KINDS.map(([k,l])=>{ const I=IcSay[k]; return <button key={k} type="button" role="radio" aria-checked={kind===k}
+              className={"tk-kind"+(kind===k?" on":"")} onClick={()=>setKind(kind===k?"":k)}><I/>{l}</button>; })}
+          </div>
+          <div className="tk-lbl"><label htmlFor="tk-where">Где</label></div>
+          <div className="tk-where"><IcSay.pin/>
+            <select id="tk-where" value={section} onChange={e=>setSection(e.target.value)}>
+              {opts.map(([k,l])=><option key={k} value={k}>{k===where.section?where.label:l}</option>)}
+            </select></div>
+          <textarea ref={taRef} className="tk-ta" value={text} maxLength={4000} aria-label="Текст обращения"
+            placeholder={SAY_HINT[kind]||SAY_HINT[""]} onChange={e=>{setText(e.target.value); if(err) setErr("");}}/>
+          <div className="tk-files">
+            {files.map(f=><div key={f.id} className="tk-thumb"><img src={f.url} alt="Снимок экрана"/>
+              <button type="button" aria-label="Убрать снимок" onClick={()=>{ try{URL.revokeObjectURL(f.url);}catch{} setFiles(a=>a.filter(x=>x.id!==f.id)); }}>×</button></div>)}
+            {files.length<3&&<button type="button" className="tk-add" onClick={()=>fileRef.current&&fileRef.current.click()}>
+              <IcSay.image/>Снимок</button>}
+            {files.length===0&&<span className="tk-hint">или вставьте {sayMac()?"⌘V":"Ctrl+V"}</span>}
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden
+              onChange={e=>{ addFiles(e.target.files||[]); e.target.value=""; }}/>
+          </div>
+          {/* на рабочих устройствах снимки экрана запрещены на уровне системы —
+              иначе человек ищет, почему не работает Ctrl+V */}
+          {files.length===0&&<div className="tk-note">Снимок экрана можно приложить только с личного устройства:
+            на рабочих в домене Sigma снимки запрещены системой. С рабочего — опишите словами, что видно на экране.</div>}
+          <div className="tk-ctx">Приложим: страницу с фильтрами, версию, браузер{ctx.errors?" и ошибки страницы":""} ·{" "}
+            <button type="button" aria-expanded={showCtx} onClick={()=>setShowCtx(!showCtx)}>{showCtx?"скрыть":"показать"}</button>
+            {showCtx&&<dl>{ctxRows.map(([k,v])=><React.Fragment key={k}><dt>{k}</dt><dd style={{whiteSpace:"pre-line"}}>{v}</dd></React.Fragment>)}</dl>}
+          </div>
+          {err&&<div className="tk-err" role="alert">{err}</div>}
+        </div>
+        <div className="tk-foot">
+          <span className="who">Увидит команда AuditLens.<br/>Ответ придёт сюда же</span>
+          <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={send}>
+            {busy||<>Отправить <span className="tk-kbd">{sayMac()?"⌘↵":"Ctrl ↵"}</span></>}</button>
+        </div>
+      </>)}
+    {tab==="mine"&&<div className="tk-body" style={{paddingBottom:12}}>
+      {!mine?<Skel h={90}/>
+        :mine.error?<div className="tk-empty">Не удалось загрузить обращения. Попробуйте ещё раз чуть позже.</div>
+        :!mine.tickets.length?<div className="tk-empty">Здесь будут ваши обращения и ответы команды.<br/><br/>
+            <button className="btn btn-sm" onClick={()=>setTab("new")}>Написать</button></div>
+        :<div className="tk-list">{mine.tickets.map(t=><SayItem key={t.ticket_id} t={t} onChanged={()=>{loadMine();onUnread&&onUnread();}}/>)}</div>}
+    </div>}
+  </div>;
+}
+
+function SayItem({t,onChanged}){
+  const[open,setOpen]=useState(false);
+  const[reply,setReply]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const I=IcSay[t.kind]||IcSay.other;
+  const toggle=()=>{ const o=!open; setOpen(o);
+    if(o&&t.unread) sayPost(`/api/inbox/${t.ticket_id}/seen`,{}).then(onChanged).catch(()=>{}); };
+  const act=(p)=>{ setBusy(true); setErr(""); p.then(()=>{ setReply(""); onChanged&&onChanged(); })
+    .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  const closed=["done","wontfix","exists"].includes(t.status);
+  return <div className="tk-item">
+    <button type="button" className={"tk-ihead"+(t.unread?" unread":"")} aria-expanded={open} onClick={toggle}>
+      <span className="k"><I/></span>
+      <span className="t"><span className="q">{t.body}</span>
+        <span className="m">№ {t.ticket_id} · {sayDate(t.created_at)} · {t.section_label||"AuditLens"}{t.unread?" · есть ответ":""}</span></span>
+      <span className={"tk-st "+t.status}>{t.status_label||SAY_STATUS_RU[t.status]||t.status}</span>
+    </button>
+    {open&&<div className="tk-thread">
+      {(t.files||[]).length>0&&<div className="tk-files" style={{marginTop:0}}>{t.files.map(f=><a key={f.file_id} className="tk-thumb"
+        href={`/api/inbox/file/${f.file_id}`} target="_blank" rel="noopener noreferrer" title="Открыть снимок">
+        <img src={`/api/inbox/file/${f.file_id}`} alt="Снимок экрана" loading="lazy"/></a>)}</div>}
+      {(t.messages||[]).map((m,i)=>m.role==="system"
+        ? <div key={i} className="tk-sys">{m.body} · {sayDate(m.at)}</div>
+        : <div key={i} className={"tk-msg "+m.role}><div className="h">{m.role==="team"?"Команда AuditLens":"Вы"} · {sayDate(m.at)}</div>{m.body}</div>)}
+      {t.status==="done"&&t.confirmed==null&&<div className="tk-ok">Работает?
+        <button className="btn btn-sm" disabled={busy} onClick={()=>act(sayPost(`/api/inbox/${t.ticket_id}/confirm`,{ok:true}))}>Да, работает</button>
+        <button className="btn btn-sm" disabled={busy} onClick={()=>act(sayPost(`/api/inbox/${t.ticket_id}/confirm`,{ok:false,comment:reply}))}>Нет</button></div>}
+      <div className="tk-reply">
+        <textarea rows={1} value={reply} maxLength={2000} placeholder={closed?"Дописать команде":"Уточнить или ответить команде"}
+          aria-label="Ответ команде" onChange={e=>{setReply(e.target.value); e.target.style.height="auto"; e.target.style.height=Math.min(140,e.target.scrollHeight+2)+"px";}}
+          onKeyDown={e=>{ if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)&&reply.trim()){ e.preventDefault(); act(sayPost(`/api/inbox/${t.ticket_id}/message`,{body:reply})); } }}/>
+        <button className="btn btn-sm" disabled={busy||!reply.trim()} onClick={()=>act(sayPost(`/api/inbox/${t.ticket_id}/message`,{body:reply}))}>Отправить</button>
+      </div>
+      {err&&<div className="tk-err" role="alert">{err}</div>}
+    </div>}
+  </div>;
+}
+
 function parseHash(){
   const h=(location.hash||"").slice(1);
   const qi=h.indexOf("?");
@@ -10566,6 +11061,22 @@ function Shell(){
   const{theme,setTheme}=useTheme();
   const[banks,setBanks]=useState([]);
   const[hasCaptcha,setHasCaptcha]=useState(false);
+  // «Обратная связь»: окно, непрочитанные ответы команды, разовая заметка о новом ответе
+  const[sayOpen,setSayOpen]=useState(null);           // null | "new" | "mine"
+  const[sayInfo,setSayInfo]=useState({unread:0,last_at:null});
+  const[sayToast,setSayToast]=useState(false);
+  const sayRowRef=useRef(null);
+  const loadSay=useCallback(()=>apiFetch("/api/inbox/unread").then(d=>{ setSayInfo(d||{unread:0});
+    let seen=""; try{ seen=localStorage.getItem(SAY_TOAST)||""; }catch{}
+    if(d&&d.unread>0&&d.last_at&&d.last_at>seen) setSayToast(d.last_at); }).catch(()=>{}),[]);
+  useEffect(()=>{ loadSay();
+    const t=setInterval(()=>{ if(!document.hidden) loadSay(); },5*60*1000);
+    const onVis=()=>{ if(!document.hidden) loadSay(); };
+    document.addEventListener("visibilitychange",onVis);
+    return ()=>{ clearInterval(t); document.removeEventListener("visibilitychange",onVis); };
+  },[loadSay]);
+  const sayToastDone=()=>{ try{ localStorage.setItem(SAY_TOAST,sayToast||new Date().toISOString()); }catch{} setSayToast(false); };
+  const openSay=(tab)=>{ setNavOpen(false); setSayOpen(o=>o?null:(tab||(sayInfo.unread?"mine":"new"))); if(sayToast) sayToastDone(); };
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
   const appInfo=useAppInfo();
@@ -10642,8 +11153,9 @@ function Shell(){
     _trkInput=onInput;
     const IN=["pointerdown","pointermove","keydown","wheel","scroll","touchstart"];
     IN.forEach(e=>window.addEventListener(e,onInput,{passive:true,capture:true}));
-    const onErr=(e)=>trk({kind:"client_error",page:(location.hash||"#").slice(1),
-      payload:{msg:String((e&&(e.message||e.reason))||"").slice(0,300)}});
+    const onErr=(e)=>{ const msg=String((e&&(e.message||e.reason))||"").slice(0,300);
+      sayRecordErr(msg);
+      trk({kind:"client_error",page:(location.hash||"#").slice(1),payload:{msg}}); };
     document.addEventListener("visibilitychange",onVis);
     window.addEventListener("error",onErr);
     window.addEventListener("unhandledrejection",onErr);
@@ -10846,6 +11358,13 @@ function Shell(){
                 <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
               </div>
             </div> : null; })()}
+          <style>{SAY_CSS}</style>
+          <button ref={sayRowRef} type="button" className={"tk-row"+(sayOpen?" on":"")+(sayInfo.unread?" unread":"")}
+            aria-haspopup="dialog" aria-expanded={!!sayOpen} onClick={()=>openSay()}
+            data-tip={sayInfo.unread?"Команда ответила на ваше обращение":"Идея, ошибка или неверные цифры — команда ответит здесь же"}>
+            <IcSay.row/><span>Обратная связь</span>{sayInfo.unread>0&&<span className="tk-dot" aria-label="есть ответ"/>}
+          </button>
+          <div className="tk-div"/>
           <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title="Профиль и персонализация"
                   onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}
                   style={{width:"100%",textAlign:"left",transition:"background .14s"}}>
@@ -10858,6 +11377,13 @@ function Shell(){
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
+      {sayOpen&&ReactDOM.createPortal(<SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef}
+        onClose={()=>{ setSayOpen(null); loadSay(); setTimeout(()=>{ try{ sayRowRef.current&&sayRowRef.current.focus(); }catch{} },0); }}
+        onUnread={loadSay}/>,document.body)}
+      {sayToast&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast" role="status">
+        <div className="t"><b>Команда AuditLens ответила</b> на ваше обращение.</div>
+        <div className="b"><button className="btn btn-primary btn-sm" onClick={()=>{ sayToastDone(); setSayOpen("mine"); }}>Открыть</button>
+          <button className="btn btn-sm" onClick={sayToastDone}>Позже</button></div></div>}
       {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
       {!renameSeen&&renamedFresh()&&<div className="ren-toast" role="status">
         <div className="t"><b>Меню обновлено.</b>{" "}

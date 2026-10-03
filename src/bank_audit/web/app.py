@@ -523,6 +523,147 @@ def admin_complaints(days: int = 30, limit: int = 60, me: bool = False,
     return {"days": days, **res}
 
 
+# ── «Обратная связь»: обращения к команде (строка внизу меню) ────────────────
+# Адреса /api/inbox, а не feedback/support: такие слова режут блокировщики.
+
+class TicketIn(BaseModel):
+    kind: str = "other"
+    section: Optional[str] = None
+    section_label: Optional[str] = None
+    body: str = ""
+    context: dict = {}
+    files: list[dict] = []
+
+
+class TicketFileIn(BaseModel):
+    data: str
+    w: Optional[int] = None
+    h: Optional[int] = None
+
+
+class TicketMsgIn(BaseModel):
+    body: str = ""
+
+
+class TicketConfirmIn(BaseModel):
+    ok: bool
+    comment: Optional[str] = None
+
+
+class TicketAdminIn(BaseModel):
+    status: Optional[str] = None
+    reply: Optional[str] = None
+
+
+def _ticket_call(fn, *a, **kw):
+    from . import inbox
+    try:
+        return fn(*a, **kw)
+    except inbox.TicketError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/inbox")
+def inbox_create(req: TicketIn, user: CurrentUser = Depends(get_current_user)):
+    """Новое обращение: тип, раздел, текст, контекст страницы, снимки экрана."""
+    from . import inbox
+    userdata.touch_user(user.username, user.name)
+    return _ticket_call(inbox.create, user.username, req.kind, req.section,
+                        req.section_label, req.body, req.context, req.files)
+
+
+@app.post("/api/inbox/{tid}/file")
+def inbox_add_file(tid: int, req: TicketFileIn, user: CurrentUser = Depends(get_current_user)):
+    from . import inbox
+    return _ticket_call(inbox.add_file, user.username, tid, req.data, req.w, req.h)
+
+
+@app.get("/api/inbox/mine")
+def inbox_mine(user: CurrentUser = Depends(get_current_user)):
+    """«Мои обращения»: статусы, ответы команды, снимки."""
+    from . import inbox
+    return inbox.mine(user.username)
+
+
+@app.get("/api/inbox/unread")
+def inbox_unread(user: CurrentUser = Depends(get_current_user)):
+    """Сколько обращений с непрочитанным ответом — точка у строки меню."""
+    from . import inbox
+    return inbox.unread_info(user.username)
+
+
+@app.post("/api/inbox/{tid}/seen")
+def inbox_seen(tid: int, user: CurrentUser = Depends(get_current_user)):
+    from . import inbox
+    inbox.mark_seen(user.username, tid)
+    return {"ok": True}
+
+
+@app.post("/api/inbox/{tid}/message")
+def inbox_message(tid: int, req: TicketMsgIn, user: CurrentUser = Depends(get_current_user)):
+    from . import inbox
+    _ticket_call(inbox.user_message, user.username, tid, req.body)
+    return {"ok": True}
+
+
+@app.post("/api/inbox/{tid}/confirm")
+def inbox_confirm(tid: int, req: TicketConfirmIn, user: CurrentUser = Depends(get_current_user)):
+    from . import inbox
+    _ticket_call(inbox.confirm, user.username, tid, req.ok, req.comment)
+    return {"ok": True}
+
+
+@app.get("/api/inbox/file/{fid}")
+def inbox_file(fid: int, user: CurrentUser = Depends(get_current_user)):
+    """Снимок экрана: автору обращения и владельцу инструмента."""
+    from . import inbox
+    got = inbox.get_file(fid, user.username, telemetry.is_admin(user.username))
+    if not got:
+        raise HTTPException(404, "file not found")
+    data, mime = got
+    return Response(content=data, media_type=mime,
+                    headers={"Cache-Control": "private, max-age=86400",
+                             "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/api/admin/inbox")
+def admin_inbox(status: str = "open", kind: Optional[str] = None, section: Optional[str] = None,
+                user: CurrentUser = Depends(get_current_user)):
+    """«Пульс» → «Обращения»: список с фильтрами, непрочитанные сверху."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from . import inbox
+    return inbox.admin_list(status, kind, section)
+
+
+@app.get("/api/admin/inbox/{tid}")
+def admin_inbox_get(tid: int, user: CurrentUser = Depends(get_current_user)):
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from . import inbox
+    t = inbox.admin_get(tid)
+    if not t:
+        raise HTTPException(404, "ticket not found")
+    return t
+
+
+@app.post("/api/admin/inbox/{tid}")
+def admin_inbox_update(tid: int, req: TicketAdminIn, user: CurrentUser = Depends(get_current_user)):
+    """Статус и ответ автору; смена статуса видна автору строкой в переписке."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from . import inbox
+    t = inbox.admin_update(tid, user.username, req.status, req.reply)
+    if not t:
+        raise HTTPException(404, "ticket not found")
+    try:
+        userdata.log_event(user.username, "admin_ticket_update",
+                           {"ticket_id": tid, "status": req.status, "replied": bool(req.reply)})
+    except Exception:
+        pass
+    return t
+
+
 @app.get("/api/overview/foryou")
 async def overview_foryou(user: CurrentUser = Depends(get_current_user)):
     """Персональный разворот «Для вас»: полноценная страница под профиль аудитора.
