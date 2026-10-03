@@ -251,6 +251,8 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
         if "active_case" in body.prefs:         # активное дело: «В дело» — одним нажатием
             v = body.prefs["active_case"]
             body.prefs["active_case"] = v if isinstance(v, int) and v > 0 else None
+        if "mail_promo" in body.prefs:          # заметка «можно подключить почту» — показана
+            body.prefs["mail_promo"] = "seen"
         if "mail" in body.prefs:                # письма: сразу о личном / утренняя сводка
             m = body.prefs["mail"] if isinstance(body.prefs["mail"], dict) else {}
             body.prefs["mail"] = {k: bool(m[k]) for k in ("instant", "digest") if k in m}
@@ -476,8 +478,12 @@ def admin_metrics(days: int = 14, me: Optional[bool] = None,
     wm = me if me is not None else telemetry.with_me_default(user.username)
     res = telemetry.metrics(days, telemetry.excluded(user.username, with_me=wm))
     hidden = telemetry.hidden_users()
+    owner = telemetry.is_admin(user.username)
     res.update({"with_me": wm, "hidden_n": sum(1 for u in hidden if u != user.username),
-                "is_owner": telemetry.is_admin(user.username)})
+                "is_owner": owner})
+    if not owner:                       # адреса почты видит только владелец, остальные — кто и какая
+        for r in (res.get("mail") or {}).get("people") or []:
+            r.pop("email", None)
     return res
 
 

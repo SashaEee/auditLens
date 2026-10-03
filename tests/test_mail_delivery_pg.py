@@ -33,13 +33,14 @@ def pg(monkeypatch):
     raw = eng.raw_connection()
     try:
         cur = raw.cursor()
-        for f in ("014_personalization", "083_app_notice", "087_user_email", "088_user_email_confirm"):
+        for f in ("014_personalization", "016_telemetry", "083_app_notice", "087_user_email",
+                  "088_user_email_confirm"):
             cur.execute((ROOT / "migrations" / f"{f}.sql").read_text(encoding="utf-8"))
         raw.commit()
     finally:
         raw.close()
     with eng.begin() as c:
-        for t in ("app_notice", "app_email_verify", "app_mail_log", "app_user"):
+        for t in ("app_notice", "app_email_verify", "app_mail_log", "usage_event", "app_user"):
             c.execute(text(f"DELETE FROM {t}"))
     monkeypatch.setattr(db, "_Session", sessionmaker(bind=eng, expire_on_commit=False, future=True))
     for k in ("MAIL_ENABLED", "MAIL_PAUSED", "MAIL_TEST_TO", "DIGEST_HOLIDAYS"):
@@ -208,3 +209,30 @@ def test_new_activity_on_an_emailed_notice_is_emailed_again(pg, sent):
     notices.notify(["u1"], "ticket", actor=None, link="inbox:7", ref={"no": 7, "status_label": "Сделано"})
     assert _sql("SELECT count(*) AS n, bool_and(emailed_at IS NULL) AS fresh FROM app_notice") == [
         {"n": 1, "fresh": True}]
+
+
+def test_pulse_shows_who_connected_mail_without_counting_service_accounts(pg, sent):
+    from bank_audit.web import telemetry
+    _users()                               # u1 — Sigma, u2 — личная, u3 — из системы входа
+    _sql("""INSERT INTO app_user (username, display_name, email, email_source, prefs) VALUES
+            ('svc', 'Служебная', 'svc@corp.example.ru', 'user', '{"pulse_hidden": true}')""")
+    _sql("""INSERT INTO usage_event (username, kind, page, payload) VALUES
+            ('u1', 'page_view', 'overview', '{}'), ('u2', 'page_view', 'overview', '{}'),
+            ('colleague', 'page_view', 'overview', '{}'),
+            ('colleague', 'ui', 'overview', '{"action": "mail_promo", "step": "shown"}'),
+            ('colleague', 'ui', 'overview', '{"action": "mail_promo", "step": "later"}'),
+            ('u1', 'ui', 'overview', '{"action": "mail_promo", "step": "shown"}'),
+            ('u1', 'ui', 'overview', '{"action": "mail_promo", "step": "connect"}')""")
+    _sql("""INSERT INTO app_mail_log (username, kind, to_addr, ok) VALUES
+            ('u1', 'instant', 'anna@corp.example.ru', true), ('u1', 'verify', 'anna@corp.example.ru', true),
+            ('u2', 'digest', 'pavel@example.org', false)""")
+    MD.start("colleague", "irina@example.org")                    # ждёт кода
+    b = telemetry._mail_brief(14, telemetry.excluded(None))
+    assert (b["connected"], b["sigma"], b["private"], b["sso"]) == (3, 1, 1, 1)
+    assert (b["active"], b["active_connected"], b["pending"]) == (3, 2, 1)
+    assert (b["sent"], b["codes"], b["failed"]) == (1, 2, 1)     # коды: u1 + colleague
+    assert b["promo"] == {"shown": 2, "connect": 1, "later": 1}
+    rows = {r["username"]: r for r in b["people"]}
+    assert rows["u1"]["kind"] == "sigma" and rows["u1"]["sent"] == 1 and rows["u1"]["active"]
+    assert rows["u2"]["kind"] == "private" and rows["u2"]["failed"] == 1
+    assert rows["svc"]["excluded"] and not rows["u1"]["excluded"]

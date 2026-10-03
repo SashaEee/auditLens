@@ -39,3 +39,18 @@ def test_mail_name_comes_from_profile_not_from_request(monkeypatch):
     assert A._mail_name(login) == "Анна Смирнова"
     _stub(monkeypatch, None)
     assert A._mail_name(login) == ""
+
+
+def test_pulse_mail_addresses_only_for_owner(monkeypatch):
+    """Кто подключил почту — видят все, у кого есть «Пульс»; сами адреса — только владелец."""
+    def fake_metrics(days, ex):
+        return {"mail": {"people": [{"username": "u1", "name": "Анна Смирнова", "email": "a@example.org"}]}}
+    monkeypatch.setattr(A.telemetry, "metrics", fake_metrics)
+    monkeypatch.setattr(A.telemetry, "can_pulse", lambda u: True)
+    monkeypatch.setattr(A.telemetry, "hidden_users", lambda: [])
+    monkeypatch.setattr(A.telemetry, "excluded", lambda u, with_me=None: [])
+    viewer = CurrentUser(username="viewer", name="Павел Орлов", authenticated=True)
+    monkeypatch.setattr(A.telemetry, "is_admin", lambda u: False)
+    assert "email" not in A.admin_metrics(user=viewer)["mail"]["people"][0]
+    monkeypatch.setattr(A.telemetry, "is_admin", lambda u: True)
+    assert A.admin_metrics(user=viewer)["mail"]["people"][0]["email"] == "a@example.org"

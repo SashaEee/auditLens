@@ -9546,6 +9546,14 @@ const AD_CSS=`
 .pu-badge.tod{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
 .pu-badge.off{color:var(--ink-3);border:0}
 .pu-badge.adm{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
+.pu-badge.sig{color:var(--select);border-color:color-mix(in oklab,var(--select),transparent 60%)}
+.pu-mail .pu-badge{margin-left:0}
+.pu-mail td .pu-badge.off{margin-left:6px}
+.pu-mail-k{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:2px 0 14px}
+@media(max-width:900px){.pu-mail-k{grid-template-columns:1fr 1fr}}
+.pu-mail-a{margin-left:8px;color:var(--ink-3);font-size:12px}
+.pu-mail tr.pu-exrow td{opacity:.55}
+.pu-mail tr.pu-exrow:hover td{opacity:.85}
 .pu-pages{color:var(--ink-3);font-size:12px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pu-team tr.pu-exrow td{opacity:.55}
 .pu-team tr.pu-exrow:hover td{opacity:.85}
@@ -9990,6 +9998,40 @@ function PuProposals({p}){
 // ── Фоновая индексация ──────────────────────────────────────────────────────
 // Персонализация по пользователям: сила профиля, просмотры/клики «Для вас»,
 // оценки (этап F, 05.08.2026). Владелец видит, у кого персонализация пустая.
+// Своя почта для уведомлений (03.10): сколько и кто подключил, сколько писем ушло,
+// как сработало приглашение. Адреса приходят только владельцу.
+const PU_MAIL_KIND={sigma:["Sigma","sig"],private:["личная",""],sso:["из учётной записи","off"]};
+function PuMail({ml,days,onOpenUser}){
+  if(!ml||ml.connected==null) return null;
+  const ppl=ml.people||[], pr=ml.promo||{};
+  const share=ml.active?Math.round(ml.active_connected/ml.active*100):null;
+  return <div className="pu-card pu-sec pu-mail">
+    <div className="h"><span>Почта для уведомлений</span>
+      {ml.active>0&&<span className="pu-chip" title={`среди тех, кто открывал разделы за ${days} дн`}>
+        подключили {ml.active_connected} из {ml.active} активных · {share}%</span>}</div>
+    <div className="pu-mail-k">
+      <div className="pu-tile"><div className="l">Подключили почту</div><div className="v tnum">{ml.connected}</div>
+        <div className="s">Sigma — {ml.sigma} · личная — {ml.private}{ml.sso?` · из учётной записи — ${ml.sso}`:""}</div></div>
+      <div className="pu-tile"><div className="l">Ждут кода</div><div className="v tnum">{ml.pending}</div>
+        <div className="s">указали адрес, ещё не подтвердили</div></div>
+      <div className={"pu-tile"+(ml.failed?" neg":"")}><div className="l">Писем · {days} дн</div><div className="v tnum">{ml.sent}</div>
+        <div className="s">{ml.failed?`не ушло — ${ml.failed}`:"без сбоев"} · кодов — {ml.codes}</div></div>
+      <div className="pu-tile"><div className="l">Приглашение</div><div className="v tnum">{pr.shown||0}</div>
+        <div className="s">увидели · «Подключить» — {pr.connect||0}, «Не сейчас» — {pr.later||0}</div></div>
+    </div>
+    {ppl.length===0?<div className="pu-note">Пока никто не подключил почту.</div>
+      :<div className="pu-x-scroll"><table className="pu-tbl">
+        <thead><tr><th>кто</th><th>почта</th><th>подключил(а)</th><th>писем · {days} дн</th><th>последнее письмо</th></tr></thead>
+        <tbody>{ppl.map(u=>{ const [kl,kc]=PU_MAIL_KIND[u.kind]||[u.kind,""];
+          return <tr key={u.username} className={"pu-rowclick"+(u.excluded?" pu-exrow":"")} onClick={()=>onOpenUser&&onOpenUser(u.username)}>
+            <td title={"@"+u.username}>{u.name}{u.excluded&&<span className="pu-badge off">не в счёт</span>}</td>
+            <td><span className={"pu-badge "+kc}>{kl}</span>{u.email&&<span className="pu-mail-a">{u.email}</span>}</td>
+            <td>{u.since||"—"}</td>
+            <td>{u.sent}{u.failed?<span style={{color:"var(--neg)"}}> · не ушло {u.failed}</span>:null}</td>
+            <td>{u.last_mail||"—"}</td></tr>; })}</tbody></table></div>}
+  </div>;
+}
+
 function PuPersonalization({pz,days,onOpenUser}){
   const us=pz.users||[];
   return <div className="pu-card pu-sec">
@@ -10947,6 +10989,7 @@ function PulsePage(){
         </div>
 
         {/* ②c все люди поимённо + карточка по клику */}
+        <PuMail ml={m.mail} days={m.days} onOpenUser={setCard}/>
         <PuPeople days={days} withMe={withMe} rev={rev} onOpenUser={setCard}/>
         <PuComplaints days={days} withMe={withMe} rev={rev} onOpenReport={setRep} onOpenUser={setCard} onOpenSession={setSess}/>
 
@@ -12277,7 +12320,18 @@ function Shell(){
     try{ window.dispatchEvent(new CustomEvent("al-case-items",{detail:{case_id:t.case_id}})); }catch{} };
   const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
+  // Разовое приглашение «уведомления — теперь и на почте» для тех, у кого почты нет.
+  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе;
+  // «Не сейчас» запоминается на сервере — на другом компьютере не всплывёт снова.
+  const[mailPromoOff,setMailPromoOff]=useState(()=>{ try{ return localStorage.getItem("al-mail-promo")==="1"
+    ||localStorage.getItem("al-bx-mail-seen")==="1"; }catch{ return false; } });     // уже открывал настройки почты
+  const[mailPromoReady,setMailPromoReady]=useState(false);
+  useEffect(()=>{ const t=setTimeout(()=>setMailPromoReady(true),6000); return ()=>clearTimeout(t); },[]);
+  const mailPromoShown=useRef(false);
   const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001b")==="1";}catch{return false;}});
+  // приглашение важнее онбординга: пока оно на экране, заметка «настройте под себя» ждёт
+  const mailPromoShow=mailPromoReady&&!!me&&!me.has_email&&!mailPromoOff&&!(me.prefs&&me.prefs.mail_promo)
+    &&(renameSeen||!renamedFresh())&&!bellToast&&!bellOpen&&!sayOpen&&!casesHub;
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
@@ -12482,6 +12536,16 @@ function Shell(){
           font-weight:500;transition:transform .1s}
         .ren-toast .go:active{transform:scale(.96)}
         @media(max-width:960px){.ren-toast{left:16px;right:16px;bottom:16px;max-width:none}}
+        .mp-toast .mp-h{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+        .mp-toast .mp-h b{font-size:13px;font-weight:600;color:var(--ink)}
+        .mp-toast .mp-ic{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+          background:var(--select-soft);color:var(--select)}
+        .mp-toast .mp-b{display:flex;gap:8px}
+        .mp-toast .later{font-size:11.5px;padding:6px 12px;border-radius:8px;color:var(--ink-3);border:1px solid var(--hair);
+          transition:transform .1s,color .12s}
+        .mp-toast .later:hover{color:var(--ink)}
+        .mp-toast .later:active{transform:scale(.96)}
+        .mp-toast button:focus-visible{outline:2px solid var(--select);outline-offset:2px}
         .rail-foot{position:relative;}
         .onb-callout{position:absolute;left:6px;right:6px;bottom:64px;z-index:60;background:var(--surface);
           border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:fade-in .3s ease-out;}
@@ -12547,7 +12611,7 @@ function Shell(){
           </div>;
         })}
         <div className="rail-foot">
-          {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile";
+          {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile" && !mailPromoShow;
             return showOnb ? <div className="onb-callout">
               <div className="t">✦ <b>Новое:</b> настройте инструмент под себя — опишите, что проверяете, и получайте персональную подачу и сводки.</div>
               <div className="b">
@@ -12612,6 +12676,23 @@ function Shell(){
           {bellToast.link&&<button className="btn btn-primary btn-sm" onClick={()=>{ const t=bellToast; bellSeen(t.id);
             sayPost("/api/bell/read",{ids:[t.id]}).then(loadBell).catch(()=>{}); goBell(t); }}>Открыть</button>}
           <button className="btn btn-sm" onClick={()=>bellSeen(bellToast.id)}>{bellToast.link?"Позже":"Понятно"}</button></div></div>}
+      {(()=>{ if(!mailPromoShow) return null;
+        const done=(step)=>{ setMailPromoOff(true); try{ localStorage.setItem("al-mail-promo","1"); }catch{}
+          trkEvent({kind:"ui",page,payload:{action:"mail_promo",step}});
+          setMe(m=>m?{...m,prefs:{...(m.prefs||{}),mail_promo:"seen"}}:m);
+          apiPut("/api/me",{prefs:{mail_promo:"seen"}}).catch(()=>{}); };
+        if(!mailPromoShown.current){ mailPromoShown.current=true;
+          setTimeout(()=>trkEvent({kind:"ui",page,payload:{action:"mail_promo",step:"shown"}}),0); }
+        return <div className="ren-toast mp-toast" role="status">
+          <div className="mp-h"><span className="mp-ic"><IcBx.mail/></span><b>Уведомления — теперь и на почте</b></div>
+          <div className="t">Упомянули, ответили, добавили в дело — письмом сразу, остальное — утренней сводкой.
+            Подойдёт почта Sigma или личная; на Omega письма не доходят.</div>
+          <div className="mp-b">
+            <button type="button" className="go" onClick={()=>{ done("connect"); setNavOpen(false); setSayOpen(null);
+              setBellView("settings"); setBellOpen(true); }}>Подключить почту</button>
+            <button type="button" className="later" onClick={()=>done("later")}>Не сейчас</button>
+          </div>
+        </div>; })()}
       {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
       {!renameSeen&&renamedFresh()&&<div className="ren-toast" role="status">
         <div className="t"><b>Меню обновлено.</b>{" "}

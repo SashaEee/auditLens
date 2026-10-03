@@ -461,7 +461,64 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
             "personalization": _personalization(days, ex),
             "topics": _team_topics(days, ex),
             "eval": _eval_brief(),
-            "inbox": _inbox_brief()}
+            "inbox": _inbox_brief(),
+            "mail": _mail_brief(days, ex)}
+
+
+def _mail_brief(days: int, ex: list[str] | None = None) -> dict:
+    """Своя почта для уведомлений (миграция 088): сколько и кто подключил, сколько
+    писем ушло, как сработала заметка-приглашение. Счёт — без служебных учёток;
+    в списке они остаются с пометкой, иначе владелец не увидит свой адрес."""
+    try:
+        from . import mail_delivery as MD
+        p = {"days": days, "ex": _ex(ex)}
+        people = _rows(f"""
+            SELECT au.username, COALESCE(au.display_name, au.username) AS name, au.email,
+                   au.email_source AS source,
+                   to_char(au.email_at AT TIME ZONE 'Europe/Moscow', 'DD.MM.YYYY') AS since,
+                   COALESCE(l.sent, 0) AS sent, COALESCE(l.failed, 0) AS failed,
+                   to_char(l.last_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS last_mail,
+                   NOT {_ppl('au.username')} AS excluded,
+                   EXISTS (SELECT 1 FROM usage_event e WHERE e.username = au.username
+                            AND e.kind = 'page_view' AND e.created_at >= {_SINCE}) AS active
+              FROM app_user au
+              LEFT JOIN (SELECT username,
+                                count(*) FILTER (WHERE ok AND kind IN ('instant', 'digest')) AS sent,
+                                count(*) FILTER (WHERE NOT ok) AS failed,
+                                max(sent_at) FILTER (WHERE ok AND kind IN ('instant', 'digest')) AS last_at
+                           FROM app_mail_log WHERE sent_at >= {_SINCE} GROUP BY 1) l USING (username)
+             WHERE au.email IS NOT NULL AND au.email_source IN ('user', 'sso')
+             ORDER BY au.email_at DESC NULLS LAST""", p)
+        for r in people:
+            r["kind"] = ("sso" if r["source"] == "sso" else
+                         "sigma" if MD.is_corporate(r["email"]) else "private")
+        ppl = [r for r in people if not r["excluded"]]
+        active = int(_scalar(f"""SELECT count(DISTINCT username) FROM usage_event
+                                 WHERE kind = 'page_view' AND {_ppl()} AND created_at >= {_SINCE}""", p) or 0)
+        pending = int(_scalar(f"""SELECT count(*) FROM app_email_verify v
+                                  WHERE v.expires_at > now() AND {_ppl('v.username')}""", p) or 0)
+        sent = _rows(f"""SELECT kind, count(*) FILTER (WHERE ok) AS ok, count(*) FILTER (WHERE NOT ok) AS bad
+                           FROM app_mail_log WHERE kind <> 'test' AND sent_at >= {_SINCE}
+                            AND {_ppl()} GROUP BY 1""", p)
+        promo = {r["step"]: int(r["n"]) for r in _rows(f"""
+            SELECT payload->>'step' AS step, count(DISTINCT username) AS n FROM usage_event
+             WHERE kind = 'ui' AND payload->>'action' = 'mail_promo' AND {_ppl()}
+               AND created_at >= {_SINCE} GROUP BY 1""", p) if r.get("step")}
+    except Exception:  # noqa: BLE001 — до миграции 088 «Пульс» не падает
+        log.debug("[telemetry] mail brief failed", exc_info=True)
+        return {}
+    by = {r["kind"]: r for r in sent}
+    return {"connected": len(ppl), "sigma": sum(1 for r in ppl if r["kind"] == "sigma"),
+            "private": sum(1 for r in ppl if r["kind"] == "private"),
+            "sso": sum(1 for r in ppl if r["kind"] == "sso"),
+            "active": active, "active_connected": sum(1 for r in ppl if r["active"]),
+            "pending": pending,
+            "sent": sum(int(by.get(k, {}).get("ok") or 0) for k in ("instant", "digest")),
+            "codes": int(by.get("verify", {}).get("ok") or 0),
+            "failed": sum(int(r.get("bad") or 0) for r in sent),
+            "promo": {"shown": promo.get("shown", 0), "connect": promo.get("connect", 0),
+                      "later": promo.get("later", 0)},
+            "people": people}
 
 
 def _inbox_brief() -> dict:
