@@ -111,6 +111,8 @@ def _access(case: dict) -> str:
 def _subtitle(case: dict, a: dict) -> str:
     return " · ".join(x for x in (
         f"владелец: {case.get('owner_name') or case.get('owner') or '—'}",
+        (f"статус: {case['status_label'].lower()}" + (", в архиве" if case.get("archived") else ""))
+        if case.get("status_label") else "",
         f"материалов: {a['items']}",
         _access(case),
         f"изменено {_ru_date(str(case.get('updated_at') or '')[:10])}"

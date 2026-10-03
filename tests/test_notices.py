@@ -100,5 +100,61 @@ def test_mark_read_needs_a_target():
 
 def test_settings_reflect_prefs():
     st = {g["key"]: g["on"] for g in N.settings({"notify_off": ["items"]})}
-    assert st == {"items": False, "access": True, "inbox": True}
+    assert st == {"mention": True, "talk": True, "items": False, "access": True, "inbox": True}
     assert all(g["on"] for g in N.settings(None))
+
+
+def test_discussion_titles():
+    assert N.title_of("case_msg", {"case": "К"}, 1) == "Новое сообщение в деле «К»"
+    assert N.title_of("case_msg", {"case": "К"}, 3) == "В деле «К» 3 новых сообщения"
+    assert N.title_of("case_msg", {"case": "К"}, 5) == "В деле «К» 5 новых сообщений"
+    assert N.title_of("case_mention", {"case": "К"}) == "Вас упомянули в деле «К»"
+    assert N.title_of("case_reply", {"case": "К"}) == "Ответ на ваше сообщение в деле «К»"
+    assert N.title_of("case_reply", {"case": "К", "on_item": True}) \
+        == "Комментарий к вашему материалу в деле «К»"
+    assert N.title_of("case_status", {"case": "К", "status_label": "В работе"}) \
+        == "Статус дела «К»: В работе"
+    assert N.title_of("case_status", {"case": "К", "archived": True}) == "Дело «К» перенесено в архив"
+    assert N.title_of("case_status", {"case": "К", "archived": False}) == "Дело «К» возвращено из архива"
+    assert N.title_of("case_analysis", {"case": "К"}) == "В деле «К» новый разбор ИИ"
+
+
+def test_mute_never_silences_mentions_or_access():
+    assert "case_mention" not in N.CASE_MUTABLE and "case_reply" not in N.CASE_MUTABLE
+    assert "case_added" not in N.CASE_MUTABLE and "case_removed" not in N.CASE_MUTABLE
+    assert {"case_items", "case_msg", "case_status", "case_analysis"} <= N.CASE_MUTABLE
+
+
+def test_messages_merge_across_authors(monkeypatch):
+    # «3 новых сообщения» копятся от разных коллег; материалы — только от одного
+    s = _S(prev={"notice_id": 4, "count": 2, "ref": {"case": "К"}})
+    monkeypatch.setattr(N.db, "session", lambda: s)
+    monkeypatch.setattr(N, "_muted", lambda users, g: set())
+    N.notify(["a"], "case_msg", actor="c", link="case:1:talk", ref={"case": "К", "snippet": "x"})
+    sel = [c for c in s.calls if "SELECT notice_id" in c[0]][0]
+    assert sel[1]["same"] is False
+    upd = [c for c in s.calls if "UPDATE app_notice" in c[0]][0]
+    assert upd[1]["c"] == 3 and upd[1]["t"] == "В деле «К» 3 новых сообщения"
+
+
+def test_mark_read_prefix_matches_nested_links(monkeypatch):
+    s = _S()
+
+    class R:
+        rowcount = 2
+    s.execute = lambda sql, params=None: (s.calls.append((str(sql), params)), R())[1]
+    monkeypatch.setattr(N.db, "session", lambda: s)
+    assert N.mark_read("a", link="case:12:talk", prefix=True) == 2
+    sql, p = s.calls[0]
+    assert "LIKE :lp" in sql and p["lp"] == "case:12:talk:%" and p["l"] == "case:12:talk"
+
+
+def test_talk_targets_one_notice_per_person_most_personal_wins():
+    t = N.talk_targets("me", ["me", "a", "b", "c", "d"], ["a", "me"], reply_author="a",
+                       item_author="b")
+    assert t == [("case_mention", ["a"], {}), ("case_reply", ["b"], {"on_item": True}),
+                 ("case_msg", ["c", "d"], {})]
+    # ответ себе и свой материал — без уведомлений себе
+    assert N.talk_targets("me", ["me", "a"], [], reply_author="me", item_author="me") \
+        == [("case_msg", ["a"], {})]
+    assert N.talk_targets("me", ["me"], []) == []

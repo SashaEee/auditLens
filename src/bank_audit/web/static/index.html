@@ -1894,6 +1894,147 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .cs-acc-foot{font-size:11.5px;color:var(--ink-3);margin:14px 0 0;line-height:1.5}
 .rv-ci-note.ro{white-space:pre-wrap;cursor:default}
 .rv-ci-note.ro.empty{color:var(--ink-4);background:none;padding-left:0}
+/* Аудит-дело, этап 3: статус, вкладки, обсуждение, комментарии лентой, история */
+.cs-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+.cs-head .cs-people{margin:0;flex:1 1 240px;width:auto;min-width:0}
+.cs-st-seg .seg-btn{height:26px;padding:0 10px;font-size:11.5px}
+.cs-st{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;border:1px solid var(--hair-2);
+  font-size:11.5px;font-weight:500;color:var(--ink-2);white-space:nowrap;flex:none}
+.cs-st::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ink-4)}
+.cs-st.work::before{background:var(--warn)}
+.cs-st.done::before{background:var(--pos)}
+.cs-st.arch{color:var(--ink-3)}
+.cs-st.sm{height:18px;padding:0 7px;font-size:10.5px;gap:5px}
+.cs-st.sm::before{width:5px;height:5px}
+.cs-arch{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:9px 12px;border-radius:8px;
+  background:var(--paper-2);font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.cs-mute.on{color:var(--ink);background:var(--paper-2)}
+.cs-tabs{position:sticky;top:-16px;z-index:6;display:flex;gap:2px;margin:4px -16px 14px;padding:6px 16px 0;background:var(--surface);
+  border-bottom:1px solid var(--hair);overflow-x:auto;scrollbar-width:none}
+.cs-tabs::-webkit-scrollbar{display:none}
+.cs-tab{display:inline-flex;align-items:center;gap:6px;flex:none;border:0;background:none;font:inherit;font-size:13px;font-weight:500;
+  color:var(--ink-3);padding:8px 10px 10px;margin-bottom:-1px;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;
+  transition:color .12s,border-color .12s}
+.cs-tab:hover{color:var(--ink)}
+.cs-tab.on{color:var(--ink);border-bottom-color:var(--ink)}
+.cs-tab:focus-visible{outline:2px solid var(--select);outline-offset:-2px;border-radius:6px}
+.cs-tab-n{font-size:11px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.cs-tab-dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.rv-ci-by{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 0 12px;min-height:24px}
+.rv-ci,.cs-m{transition:background .5s}
+.rv-ci.flash,.cs-m.flash{background:var(--accent-soft)}
+/* лента обсуждения */
+.cs-talk{display:flex;flex-direction:column;gap:2px;min-height:160px}
+.cs-talk-empty{padding:22px 8px 10px;font-size:12.5px;line-height:1.6;color:var(--ink-3);text-align:center;text-wrap:pretty}
+.cs-talk-empty b{display:block;font-size:13.5px;color:var(--ink);font-weight:600;margin-bottom:4px}
+.cs-m{display:flex;gap:10px;padding:8px 8px;margin:0 -8px;border-radius:10px}
+.cs-m:hover{background:var(--paper-2)}
+.cs-m>.cs-av{margin-top:1px;margin-left:0}
+.cs-m-c{flex:1;min-width:0}
+.cs-m-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.cs-m-h b{font-size:13px;font-weight:600;color:var(--ink)}
+.cs-m-on{border:0;background:none;padding:0;font:inherit;font-size:11.5px;color:var(--select);cursor:pointer}
+.cs-m-on:hover{text-decoration:underline;text-underline-offset:3px}
+.cs-mb{font-size:13px;line-height:1.55;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:2px}
+.cs-mb.in{display:inline;margin:0}
+.cs-mb.del{color:var(--ink-4);font-style:italic}
+.cs-mn{color:var(--select);font-weight:500;background:color-mix(in oklab,var(--select),transparent 90%);border-radius:4px;padding:0 2px}
+.cs-ref{display:inline;border:0;background:var(--paper-2);border-radius:4px;padding:0 4px;margin:0 1px;font:inherit;font-size:12px;
+  font-weight:600;color:var(--ink-2);cursor:pointer;font-variant-numeric:tabular-nums}
+.cs-m:hover .cs-ref{background:var(--surface)}
+.cs-ref:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--hair-2)}
+.cs-ref.gone{cursor:default;text-decoration:line-through;color:var(--ink-4)}
+.cs-ref.static{cursor:default}
+.cs-m-q{display:block;max-width:100%;margin:4px 0 2px;padding:2px 8px;border:0;border-left:2px solid var(--hair-2);background:none;
+  font:inherit;font-size:12px;color:var(--ink-3);text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cs-m-q b{font-weight:600;color:var(--ink-2)}
+/* действия — плавающей панелькой при наведении: скрытая строка не раздвигает ленту */
+.cs-m{position:relative}
+.cs-m-a{position:absolute;top:4px;right:6px;display:flex;gap:2px;padding:2px;border:1px solid var(--hair);border-radius:8px;
+  background:var(--surface);box-shadow:var(--shadow-1);opacity:0;pointer-events:none;transition:opacity .12s}
+.cs-m:hover .cs-m-a,.cs-m:focus-within .cs-m-a{opacity:1;pointer-events:auto}
+@media(hover:none){.cs-m-a{position:static;opacity:1;pointer-events:auto;border:0;box-shadow:none;background:none;padding:0;margin-top:2px;gap:14px}}
+.cs-m-a button{border:0;background:none;padding:3px 8px;border-radius:6px;font:inherit;font-size:11.5px;color:var(--ink-3);cursor:pointer}
+.cs-m-a button:hover{color:var(--ink);background:var(--paper-2)}
+.cs-m-a button:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:3px}
+.cs-new-div{display:flex;align-items:center;gap:10px;margin:8px 0 4px;font-size:10.5px;font-weight:600;color:var(--accent-ink);
+  text-transform:uppercase;letter-spacing:.06em}
+.cs-new-div::before,.cs-new-div::after{content:"";flex:1;height:1px;background:color-mix(in oklab,var(--accent),transparent 65%)}
+.cs-edit .input{width:100%;min-height:64px;resize:vertical;font-size:13px;line-height:1.5;padding:8px 10px;margin-top:4px}
+.cs-edit-b{display:flex;align-items:center;gap:8px;margin-top:6px}
+.cs-talk-cmp{position:sticky;bottom:-16px;z-index:5;margin:10px -16px -16px;padding:10px 16px 14px;background:var(--surface);
+  border-top:1px solid var(--hair)}
+/* строка ввода */
+.cs-cmp-box{position:relative;border:1px solid var(--hair-2);border-radius:10px;background:var(--surface);
+  transition:border-color .12s,box-shadow .12s}
+.cs-cmp-box:focus-within{border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 82%)}
+.cs-cmp-box textarea{display:block;width:100%;min-height:40px;max-height:220px;resize:none;border:0;background:none;
+  padding:10px 12px 4px;font:inherit;font-size:13px;line-height:1.5;color:var(--ink)}
+.cs-cmp-box textarea:focus{outline:none}
+.cs-cmp-box textarea::placeholder{color:var(--ink-4)}
+.cs-cmp-tools{display:flex;align-items:center;gap:4px;padding:2px 6px 6px 8px}
+.cs-cmp-tools .btn-primary{margin-left:auto}
+.cs-cmp-tools .btn-ghost{margin-left:auto}
+.cs-cmp-tools .btn-ghost+.btn-primary{margin-left:0}
+.cs-cmp-ib{height:26px;min-width:28px;padding:0 6px;border:0;border-radius:6px;background:none;font:inherit;font-size:12px;
+  font-weight:600;color:var(--ink-3);cursor:pointer;font-variant-numeric:tabular-nums}
+.cs-cmp-ib:hover,.cs-cmp-ib.on{background:var(--paper-2);color:var(--ink)}
+.cs-cmp-ib:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.cs-cmp-hint{font-size:11px;color:var(--ink-4);margin-top:5px}
+.cs-cmp-err{color:var(--neg);font-size:11.5px}
+.cs-cmp-re{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:12px;color:var(--ink-3)}
+.cs-cmp-re span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cs-ac{position:absolute;left:8px;bottom:calc(100% + 6px);z-index:20;min-width:260px;max-width:calc(100% - 16px);max-height:248px;
+  overflow-y:auto;background:var(--surface);border:1px solid var(--hair);border-radius:10px;box-shadow:var(--shadow-2);padding:4px}
+.cs-ac-o{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:7px;background:none;font:inherit;
+  font-size:12.5px;color:var(--ink);text-align:left;cursor:pointer}
+.cs-ac-o.on,.cs-ac-o:hover{background:var(--paper-2)}
+.cs-ac-o .cs-av{margin-left:0}
+.cs-ac-ref .cs-ac-o b{flex:none;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.cs-ac-ref .cs-ac-o span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+.cs-ac-empty{padding:8px 10px;font-size:12px;line-height:1.45;color:var(--ink-3)}
+/* комментарии к материалу */
+.cs-th{margin:6px 0 0 12px;padding-left:10px;border-left:2px solid var(--hair)}
+.cs-th-m{font-size:12.5px;line-height:1.5;color:var(--ink-2);padding:2px 0;overflow-wrap:anywhere}
+.cs-th-m>b{font-weight:600;color:var(--ink);margin-right:6px}
+.cs-th-m .cs-mb.in{font-size:12.5px;color:var(--ink-2)}
+.cs-th-m .t{font-size:11px;color:var(--ink-4);margin-left:6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cs-th-more,.cs-th-add{display:inline-flex;align-items:center;gap:5px;border:0;background:none;padding:3px 0;font:inherit;font-size:11.5px;
+  color:var(--ink-3);cursor:pointer}
+.cs-th-add:hover,.cs-th-more:hover{color:var(--ink)}
+.cs-cmp.compact{margin:6px 0 2px}
+.cs-cmp.compact .cs-cmp-box textarea{min-height:34px;font-size:12.5px;padding:8px 10px 2px}
+/* история */
+.cs-hist-day{font-size:10.5px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 4px}
+.cs-hist-day:first-child{margin-top:0}
+.cs-hist-row{display:grid;grid-template-columns:42px minmax(0,1fr);gap:10px;padding:7px 0;border-top:1px solid var(--hair);
+  font-size:12.5px;line-height:1.5}
+.cs-hist-day+.cs-hist-row{border-top:0}
+.cs-hist-row .tm{color:var(--ink-4);font-variant-numeric:tabular-nums}
+.cs-hist-row .tx{color:var(--ink);overflow-wrap:anywhere}
+.cs-hist-row .who{display:block;font-size:11.5px;color:var(--ink-3)}
+/* разбор: подпись и версии */
+.cs-an{margin-top:0}
+.cs-an-sig{font-size:11.5px;color:var(--ink-3);margin-top:10px}
+.cs-an-vers{margin-top:12px;border-top:1px solid var(--hair);padding-top:10px}
+.cs-an-ver{display:flex;align-items:baseline;gap:10px;width:100%;padding:5px 0;border:0;background:none;font:inherit;font-size:12px;
+  color:var(--ink-2);cursor:pointer;text-align:left;font-variant-numeric:tabular-nums}
+.cs-an-ver:hover,.cs-an-ver.on{color:var(--ink)}
+.cs-an-old{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 0;padding:8px 10px;border-radius:8px;
+  background:color-mix(in oklab,var(--warn),transparent 88%);font-size:12px;color:var(--ink-2)}
+/* список дел */
+.cs-search{width:100%;margin:0 0 10px}
+.kb-case-row-t{display:flex;align-items:center;gap:8px;min-width:0}
+.cs-row-ttl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-row-new{margin-left:auto;flex:none;font-size:11px;font-weight:600;color:var(--accent-ink);white-space:nowrap}
+.kb-case-row.arch .cs-row-ttl{color:var(--ink-2)}
+.cs-arch-list{margin-top:12px}
+.cs-arch-fold{margin:0 0 6px;padding:4px 0;border:0;background:none;cursor:pointer;font:inherit;font-size:11px;font-weight:600;
+  color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em}
+.cs-arch-fold:hover{color:var(--ink)}
+@media(max-width:760px){.cs-head .cs-people{flex-basis:100%}.cs-tab{padding:10px 10px 12px}}
+@media(hover:none){.cs-m-a button{padding:6px 0}}
+@media(prefers-reduced-motion:reduce){.rv-ci,.cs-m{transition:none}}
 /* кнопка «Аудит-дела» в верхней панели: дела — инструмент под рукой в любом разделе, а не отдельный раздел */
 .tb-cases{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 10px;border-radius:7px;border:1px solid var(--hair-2);
   background:var(--surface);font:inherit;font-size:12.5px;font-weight:500;color:var(--ink-2);cursor:pointer;

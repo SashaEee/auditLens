@@ -617,6 +617,7 @@ def inbox_seen(tid: int, user: CurrentUser = Depends(get_current_user)):
 class BellReadIn(BaseModel):
     ids: list[int] = []
     all: bool = False
+    link: Optional[str] = None      # «case:12:analysis» — открыли вкладку, к которой оно ведёт
 
 
 @app.get("/api/bell")
@@ -644,6 +645,8 @@ def bell_unread(user: CurrentUser = Depends(get_current_user)):
 @app.post("/api/bell/read")
 def bell_read(req: BellReadIn, user: CurrentUser = Depends(get_current_user)):
     from . import notices
+    if req.link:
+        return {"ok": True, "n": notices.mark_read(user.username, link=req.link[:80], prefix=True)}
     return {"ok": True, "n": notices.mark_read(user.username, req.ids, everything=req.all)}
 
 
@@ -3439,8 +3442,9 @@ class CaseItem(BaseModel):
 
 
 def _bell_case(case_id: int, kind: str, actor: str, users: list[str] | None = None,
-               n: int = 1, **ref) -> None:
+               n: int = 1, link: str | None = None, **ref) -> None:
     """Уведомление участникам дела о событии (по умолчанию — всем, кроме автора).
+    «Не следить за делом» глушит материалы, сообщения, статус и разбор.
     Ошибка уведомления не роняет действие — notices.notify сам её глотает."""
     from . import notices
     try:
@@ -3450,9 +3454,12 @@ def _bell_case(case_id: int, kind: str, actor: str, users: list[str] | None = No
         return
     if not c:
         return
-    link = None if kind in ("case_removed", "case_deleted") else f"case:{case_id}"
-    notices.notify(c["everyone"] if users is None else users, kind, actor=actor,
-                   link=link, ref={"case": c["title"], **ref}, n=n)
+    to = c["everyone"] if users is None else users
+    if kind in notices.CASE_MUTABLE:
+        to = [u for u in to if u not in c.get("muted", set())]
+    if link is None and kind not in ("case_removed", "case_deleted"):
+        link = f"case:{case_id}"
+    notices.notify(to, kind, actor=actor, link=link, ref={"case": c["title"], **ref}, n=n)
 
 
 @app.get("/api/cases")
@@ -3640,7 +3647,139 @@ async def cases_analyze(case_id: int, force: int = 0,
     if not md:
         raise HTTPException(503, "модель не ответила — повторите позже")
     await asyncio.to_thread(userdata.save_case_analysis, case_id, user.username, md, n)
+    await asyncio.to_thread(_bell_case, case_id, "case_analysis", user.username,
+                            link=f"case:{case_id}:analysis")
     return {"analysis": md, "analysis_at": datetime.now(timezone.utc).isoformat(), "cached": False}
+
+
+class CaseStatusIn(BaseModel):
+    status: Optional[str] = None
+    archived: Optional[bool] = None
+
+
+@app.post("/api/cases/{case_id}/status")
+def cases_status(case_id: int, req: CaseStatusIn, user: CurrentUser = Depends(get_current_user)):
+    """Статус «Сбор материалов → В работе → Завершено» и архив (владелец)."""
+    try:
+        changes = userdata.set_case_status(case_id, user.username, req.status, req.archived)
+    except userdata.CaseError as e:
+        raise HTTPException(403 if "владел" in str(e) else 400, str(e))
+    for ch in changes:
+        if ch["kind"] == "archived":
+            _bell_case(case_id, "case_status", user.username, archived=ch["on"])
+        else:
+            _bell_case(case_id, "case_status", user.username, status=ch["to"],
+                       status_label=ch["label"])
+    return {"ok": True, "changes": changes}
+
+
+class CaseMsgIn(BaseModel):
+    body: str
+    mentions: list[str] = []
+    refs: dict = {}
+    reply_to: Optional[int] = None
+    item_id: Optional[int] = None
+
+
+def _snippet(body: str, n: int = 140) -> str:
+    b = " ".join((body or "").split())
+    return b if len(b) <= n else b[:n - 1].rstrip() + "…"
+
+
+@app.get("/api/cases/{case_id}/talk")
+def cases_talk(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Лента дела: обсуждение и комментарии к материалам."""
+    t = userdata.case_talk(case_id, user.username)
+    if t is None:
+        raise HTTPException(404, "дело не найдено")
+    return t
+
+
+@app.post("/api/cases/{case_id}/talk")
+def cases_talk_post(case_id: int, req: CaseMsgIn, user: CurrentUser = Depends(get_current_user)):
+    """Сообщение в обсуждение или комментарий к материалу. Пишут все участники,
+    включая «только смотрит». Упомянутым — «вас упомянули», автору сообщения,
+    на которое ответили, и автору прокомментированного материала — «ответ»,
+    остальным участникам — «новые сообщения» (склеиваются)."""
+    try:
+        m = userdata.add_case_msg(case_id, user.username, req.body, mentions=req.mentions,
+                                  refs=req.refs, reply_to=req.reply_to, item_id=req.item_id)
+    except userdata.CaseError as e:
+        raise HTTPException(404 if "не найден" in str(e) else 400, str(e))
+    from . import notices
+    snip = _snippet(req.body)
+    for kind, users, extra in notices.talk_targets(
+            user.username, m["participants"], m["mentions"], m["reply_author"],
+            m["item_author"] if req.item_id else None):
+        # «новые сообщения» ведут в обсуждение, личное — к самому сообщению
+        link = f"case:{case_id}:talk" + ("" if kind == "case_msg" else f":{m['msg_id']}")
+        _bell_case(case_id, kind, user.username, users=users, link=link, snippet=snip, **extra)
+    return {"ok": True, "msg_id": m["msg_id"]}
+
+
+class CaseMsgEdit(BaseModel):
+    body: str
+
+
+@app.patch("/api/cases/{case_id}/talk/{msg_id}")
+def cases_talk_edit(case_id: int, msg_id: int, req: CaseMsgEdit,
+                    user: CurrentUser = Depends(get_current_user)):
+    try:
+        ok = userdata.edit_case_msg(case_id, msg_id, user.username, req.body)
+    except userdata.CaseError as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(403, "править можно только своё сообщение")
+    return {"ok": True}
+
+
+@app.delete("/api/cases/{case_id}/talk/{msg_id}")
+def cases_talk_delete(case_id: int, msg_id: int, user: CurrentUser = Depends(get_current_user)):
+    if not userdata.delete_case_msg(case_id, msg_id, user.username):
+        raise HTTPException(403, "удалить можно своё сообщение; владелец дела — любое")
+    return {"ok": True}
+
+
+@app.post("/api/cases/{case_id}/seen")
+def cases_seen(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Обсуждение прочитано: счётчик «новые» обнуляется, уведомления о нём гаснут."""
+    if not userdata.mark_talk_seen(case_id, user.username):
+        raise HTTPException(404, "дело не найдено")
+    from . import notices
+    notices.mark_read(user.username, link=f"case:{case_id}:talk", prefix=True)
+    return {"ok": True}
+
+
+class CaseMuteIn(BaseModel):
+    muted: bool
+
+
+@app.post("/api/cases/{case_id}/mute")
+def cases_mute(case_id: int, req: CaseMuteIn, user: CurrentUser = Depends(get_current_user)):
+    """«Не следить за делом»."""
+    if not userdata.set_case_mute(case_id, user.username, req.muted):
+        raise HTTPException(404, "дело не найдено")
+    return {"ok": True, "muted": req.muted}
+
+
+@app.get("/api/cases/{case_id}/history")
+def cases_history(case_id: int, user: CurrentUser = Depends(get_current_user)):
+    h = userdata.case_history(case_id, user.username)
+    if h is None:
+        raise HTTPException(404, "дело не найдено")
+    return {"events": h}
+
+
+@app.get("/api/cases/{case_id}/analysis/{analysis_id}")
+def cases_analysis_version(case_id: int, analysis_id: int,
+                           user: CurrentUser = Depends(get_current_user)):
+    """Прошлая версия разбора — новый разбор её не затирает."""
+    a = userdata.get_case_analysis(case_id, user.username, analysis_id)
+    if not a:
+        raise HTTPException(404, "версия не найдена")
+    from . import notices
+    notices.mark_read(user.username, link=f"case:{case_id}:analysis")
+    return a
 
 
 def _case_or_404(case_id: int, username: str) -> dict:

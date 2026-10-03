@@ -750,7 +750,7 @@ let _trkPush=null;
 // верхней панели и из разделов (openCases), «в деле» обновляется событием al-cases
 let _openCases=null, _casesHubOpen=false;
 let _pendingReport=null;          // отчёт, который открыть в ИИ-помощнике (из колокольчика)
-function openCases(caseId){ try{ if(_openCases)_openCases(caseId||null); }catch{} }
+function openCases(caseId,opt){ try{ if(_openCases)_openCases(caseId||null,opt); }catch{} }
 function trkEvent(ev){ try{ if(_trkPush)_trkPush(ev); }catch{} }
 // «человек здесь»: ввод внутри встроенного модуля (фрейм «Аудита уязвимостей»)
 // до родительского окна не доходит — фрейм сообщает о нём сам через этот мост
@@ -8341,10 +8341,9 @@ const rvCaseCard=it=>{const r=it.review||{};
       vulnerable:r.vulnerable||[],no_consent:r.no_consent,amount:r.amount}:null,
     themes:r.issue_label?[{key:r.issue,label:r.issue_label,short:r.issue_label,risk:r.risk}]:[]};};
 
-function RvCaseItem({it,onDrop,onNote,onOpenDoc,onOpen}){
-  const[note,setNote]=useState(it.note||"");
+function RvCaseItem({it,onDrop,onOpenDoc,onOpen,thread}){
   const doc=it.kind!=="review";
-  return <div className="rv-ci">
+  return <div className="rv-ci" id={"cs-it-"+it.item_id}>
     {doc?<div className="kb-case-item">
       <div className="kb-case-it-h">
         <button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc&&onOpenDoc(it.ref_id)}>{it.title||it.url}</button>
@@ -8356,16 +8355,299 @@ function RvCaseItem({it,onDrop,onNote,onOpenDoc,onOpen}){
         {it.url&&<a href={it.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(it.url)}<span className="rv-ico-in"><RvIExt s={12}/></span></a>}
       </div></div>
      :<RvCard r={rvCaseCard(it)} showBank onOpen={onOpen}/>}
-    <div className="rv-ci-foot">
-      {/* «зачем приобщено» пишут владелец дела и тот, кто приобщил; остальные читают */}
-      {it.can_note!==false
-        ?<textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="зачем приобщено, что здесь важно…"
-          aria-label="Комментарий к материалу" onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
-        :note?<div className="rv-ci-note ro">{note}</div>:<div className="rv-ci-note ro empty">без комментария</div>}
+    <div className="rv-ci-by">
+      <span>{(it.added_by_name||it.added_by)?<>добавлено: {puShort(it.added_by_name||it.added_by)}
+        {it.added_at?` · ${fmtDateMsk(it.added_at).replace(/ \d\d:\d\d МСК$/,"")}`:""}</>:null}</span>
       {it.can_remove&&<button className="rv-ib" onClick={onDrop} aria-label="Убрать из дела" data-tip="убрать из дела"><RvIX s={14}/></button>}
     </div>
-    {(it.added_by_name||it.added_by)&&<div className="rv-ci-by">добавлено: {puShort(it.added_by_name||it.added_by)}
-      {it.added_at?` · ${fmtDateMsk(it.added_at).replace(/ \d\d:\d\d МСК$/,"")}`:""}</div>}
+    {thread}
+  </div>;
+}
+
+// ── Совместная работа в деле (этап 3) ─────────────────────────────────────────
+// Вкладки дела: «Материалы · Обсуждение · Разбор · История». Обсуждение пишут
+// все участники, включая «только смотрит» (решение владельца инструмента):
+// @упоминания коллег по делу, ссылки на материалы [N], ответы. Комментарии к
+// материалу — та же лента, только привязанная к нему (раньше был один
+// комментарий без автора, и его молча переписывали). Статус и архив — владелец.
+const CASE_STATUS=[["collect","Сбор материалов"],["work","В работе"],["done","Завершено"]];
+const csReq=(method,path,body)=>fetch(path,{method,headers:{"Content-Type":"application/json"},
+  body:body===undefined?undefined:JSON.stringify(body)}).then(async r=>{ if(r.ok) return r.json();
+  let d=""; try{ d=(await r.json()).detail; }catch{}
+  throw new Error(typeof d==="string"&&d?d:"Не получилось. Попробуйте ещё раз"); });
+const csEsc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+// «12:30» сегодня, «вчера 12:30», иначе «3 окт 12:30» — по Москве, как всё в инструменте
+const csTime=(iso)=>{ try{ const d=new Date(iso); if(isNaN(d)) return "";
+  const o={timeZone:"Europe/Moscow"}, day=x=>x.toLocaleDateString("ru",o);
+  const t=d.toLocaleTimeString("ru",{...o,hour:"2-digit",minute:"2-digit"});
+  const now=new Date(), y=new Date(now.getTime()-864e5);
+  if(day(d)===day(now)) return t; if(day(d)===day(y)) return "вчера "+t;
+  return d.toLocaleDateString("ru",{...o,day:"numeric",month:"short"}).replace(".","")+" "+t; }catch{ return ""; } };
+const csDay=(iso)=>{ try{ const d=new Date(iso), o={timeZone:"Europe/Moscow"}, now=new Date();
+  const k=x=>x.toLocaleDateString("ru",o);
+  if(k(d)===k(now)) return "Сегодня"; if(k(d)===k(new Date(now.getTime()-864e5))) return "Вчера";
+  return d.toLocaleDateString("ru",{...o,day:"numeric",month:"long",year:d.getFullYear()===now.getFullYear()?undefined:"numeric"}); }catch{ return ""; } };
+const csFlash=(el)=>{ if(!el) return; el.classList.add("flash"); setTimeout(()=>{ try{ el.classList.remove("flash"); }catch{} },1600); };
+
+// Текст сообщения: @Имя — подсветка, [N] — ссылка на материал. Номер берётся
+// текущий: материал могли убрать, и номера сдвинулись, а ссылка хранит сам материал.
+function CaseMsgBody({m,items,onRef,inline}){
+  const nodes=useMemo(()=>{
+    const body=m.body||"";
+    const names=Object.values(m.mention_names||{}).filter(Boolean).sort((a,b)=>b.length-a.length);
+    const re=new RegExp([...names.map(n=>"@"+csEsc(n)),"\\[(\\d{1,4})\\]"].join("|"),"g");
+    const out=[]; let last=0, k=0;
+    for(const x of body.matchAll(re)){
+      if(x.index>last) out.push(body.slice(last,x.index));
+      if(x[0][0]==="@") out.push(<span key={k++} className="cs-mn">{x[0]}</span>);
+      else{ const iid=(m.refs||{})[x[1]], pos=iid?items.findIndex(i=>i.item_id===iid):-1;
+        if(pos>=0){ const it=items[pos];
+          out.push(<button key={k++} type="button" className="cs-ref" data-tip={(it.title||it.url||"").slice(0,140)}
+            onClick={()=>onRef&&onRef(iid)}>[{pos+1}]</button>); }
+        else if(iid) out.push(<span key={k++} className="cs-ref gone" data-tip="материал убран из дела">[{x[1]}]</span>);
+        else out.push(x[0]); }
+      last=x.index+x[0].length; }
+    if(last<body.length) out.push(body.slice(last));
+    return out; },[m.body,m.refs,m.mention_names,items]); // eslint-disable-line
+  return <div className={"cs-mb"+(inline?" in":"")}>{nodes}</div>;
+}
+
+// Строка ввода: @ — подсказка коллег по делу, [ ] — список материалов для ссылки.
+// Enter — отправить, Shift+Enter — новая строка.
+function CaseComposer({people,items,meU,onSend,reply,onCancelReply,onCancel,placeholder,autoFocus,compact}){
+  const[text,setText]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const[ac,setAc]=useState(null);              // {q,start,idx} — подсказка @
+  const[refOpen,setRefOpen]=useState(false);
+  const picked=useRef(new Map());              // «Имя Фамилия» → логин
+  const ta=useRef(null);
+  useEffect(()=>{ if(autoFocus&&ta.current) ta.current.focus(); },[]); // eslint-disable-line
+  useEffect(()=>{ if(reply&&ta.current) ta.current.focus(); },[reply&&reply.msg_id]); // eslint-disable-line
+  useEffect(()=>{ const t=ta.current; if(!t) return; t.style.height="auto"; t.style.height=Math.min(220,t.scrollHeight+2)+"px"; },[text]);
+  const others=(people||[]).filter(p=>p.username!==meU);
+  const cand=ac?others.filter(p=>{ const q=ac.q.toLowerCase(), n=(p.name||p.username).toLowerCase();
+    return !q||n.startsWith(q)||n.split(/\s+/).some(w=>w.startsWith(q)); }).slice(0,6):[];
+  const detect=(v,pos)=>{ const mm=v.slice(0,pos).match(/(^|\s)@([^\s@]{0,30})$/);
+    setAc(mm?{q:mm[2],start:pos-mm[2].length-1,idx:0}:null); if(mm) setRefOpen(false); };
+  const put=(v,caret)=>{ setText(v); setTimeout(()=>{ const t=ta.current; if(!t) return;
+    try{ t.focus(); t.setSelectionRange(caret,caret); }catch{} },0); };
+  const pick=(p)=>{ const t=ta.current, pos=t?t.selectionStart:text.length, nm=p.name||p.username;
+    picked.current.set(nm,p.username); setAc(null);
+    put(text.slice(0,ac.start)+"@"+nm+" "+text.slice(pos), ac.start+nm.length+2); };
+  const insert=(s)=>{ const t=ta.current, pos=t?t.selectionStart:text.length;
+    const ins=(pos>0&&!/\s$/.test(text.slice(0,pos))?" ":"")+s;
+    put(text.slice(0,pos)+ins+text.slice(pos), pos+ins.length);
+    if(s==="@") setTimeout(()=>detect(text.slice(0,pos)+ins,pos+ins.length),0); };
+  const send=async()=>{ const body=text.trim(); if(!body||busy) return;
+    const mentions=[...picked.current.entries()].filter(([n])=>body.includes("@"+n)).map(([,u])=>u);
+    const refs={}; for(const x of body.matchAll(/\[(\d{1,4})\]/g)){ const it=items[+x[1]-1]; if(it) refs[x[1]]=it.item_id; }
+    setBusy(true); setErr("");
+    try{ await onSend({body,mentions,refs}); setText(""); picked.current=new Map(); }
+    catch(e){ setErr(e.message||"Не отправилось. Попробуйте ещё раз"); }
+    finally{ setBusy(false); } };
+  const onKey=(e)=>{
+    if(ac&&cand.length){
+      if(e.key==="ArrowDown"){ e.preventDefault(); setAc(a=>({...a,idx:(a.idx+1)%cand.length})); return; }
+      if(e.key==="ArrowUp"){ e.preventDefault(); setAc(a=>({...a,idx:(a.idx-1+cand.length)%cand.length})); return; }
+      if(e.key==="Enter"||e.key==="Tab"){ e.preventDefault(); pick(cand[ac.idx]||cand[0]); return; }
+    }
+    if(e.key==="Escape"){
+      // Esc закрывает подсказку, ответ или строку комментария — не окно дела
+      if(ac||refOpen){ e.preventDefault(); e.stopPropagation(); setAc(null); setRefOpen(false); return; }
+      if(reply&&onCancelReply){ e.stopPropagation(); onCancelReply(); return; }
+      if(onCancel&&!text.trim()){ e.stopPropagation(); onCancel(); return; }
+    }
+    if(e.key==="Enter"&&!e.shiftKey&&!(e.nativeEvent&&e.nativeEvent.isComposing)){ e.preventDefault(); send(); }
+  };
+  return <div className={"cs-cmp"+(compact?" compact":"")}>
+    {reply&&<div className="cs-cmp-re"><RvIReply s={12}/><span>Ответ {puShort(reply.name)}: «{(reply.body||"").replace(/\s+/g," ").slice(0,90)}»</span>
+      <button type="button" className="rv-ib" onClick={onCancelReply} aria-label="Отменить ответ"><RvIX s={12}/></button></div>}
+    <div className="cs-cmp-box">
+      <textarea ref={ta} rows={1} value={text} placeholder={placeholder} maxLength={4000} disabled={busy}
+        aria-label={placeholder}
+        onChange={e=>{ setText(e.target.value); detect(e.target.value,e.target.selectionStart); }}
+        onKeyDown={onKey} onClick={e=>detect(text,e.target.selectionStart)}
+        onBlur={()=>setTimeout(()=>setAc(null),150)}/>
+      <div className="cs-cmp-tools">
+        <button type="button" className="cs-cmp-ib" onMouseDown={e=>e.preventDefault()} onClick={()=>insert("@")}
+          aria-label="Упомянуть коллегу" data-tip="упомянуть коллегу по делу — придёт уведомление">@</button>
+        {items.length>0&&<button type="button" className={"cs-cmp-ib"+(refOpen?" on":"")} onMouseDown={e=>e.preventDefault()}
+          onClick={()=>{ setAc(null); setRefOpen(o=>!o); }} aria-label="Сослаться на материал" aria-expanded={refOpen}
+          data-tip="сослаться на материал дела — [N]">[N]</button>}
+        {onCancel&&<button type="button" className="btn btn-sm btn-ghost" onClick={onCancel}>Отмена</button>}
+        <button type="button" className="btn btn-primary btn-sm" disabled={busy||!text.trim()} onClick={send}>
+          {busy?"Отправляю…":"Отправить"}</button>
+      </div>
+      {ac&&cand.length>0&&<div className="cs-ac" role="listbox" aria-label="Коллеги по делу">{cand.map((p,i)=>
+        <button key={p.username} type="button" role="option" aria-selected={i===ac.idx}
+          className={"cs-ac-o"+(i===ac.idx?" on":"")} onMouseDown={e=>{ e.preventDefault(); pick(p); }}>
+          <span className="cs-av">{initials(p.name||p.username)}</span><span>{p.name||p.username}</span></button>)}</div>}
+      {ac&&!cand.length&&<div className="cs-ac"><div className="cs-ac-empty">{others.length
+        ?"Нет такого участника дела"
+        :"В деле пока только вы. Коллег добавляет владелец через «Доступ»."}</div></div>}
+      {refOpen&&<div className="cs-ac cs-ac-ref" role="listbox" aria-label="Материалы дела">{items.slice(0,80).map((it,i)=>
+        <button key={it.item_id} type="button" className="cs-ac-o" onMouseDown={e=>{ e.preventDefault(); insert(`[${i+1}] `); setRefOpen(false); }}>
+          <b>[{i+1}]</b><span>{(it.review&&it.review.summary)||it.title||it.url}</span></button>)}</div>}
+    </div>
+    {(err||!compact)&&<div className="cs-cmp-hint">{err?<span className="cs-cmp-err" role="alert">{err}</span>
+      :"Enter — отправить, Shift+Enter — новая строка"}</div>}
+  </div>;
+}
+
+// Обсуждение дела. Комментарии к материалам — в той же ленте с пометкой
+// «к материалу [N]»: всё, что сказано по делу, видно в одном месте.
+function CaseTalk({cid,cur,items,meU,focusMsg,onRef,onSeen,onCount}){
+  const[d,setD]=useState(null);
+  const[err,setErr]=useState(false);
+  const[reply,setReply]=useState(null);
+  const[edit,setEdit]=useState(null);         // {msg_id,text,busy,err}
+  const endRef=useRef(null), first=useRef(true);
+  const load=useCallback(()=>csReq("GET",`/api/cases/${cid}/talk`).then(x=>{ setD(x); setErr(false);
+    onCount&&onCount((x.messages||[]).filter(m=>!m.deleted).length);
+    if((x.messages||[]).some(m=>m.new)) csReq("POST",`/api/cases/${cid}/seen`,{}).then(()=>onSeen&&onSeen()).catch(()=>{});
+    return x; }).catch(()=>{ setErr(true); }),[cid]); // eslint-disable-line
+  useEffect(()=>{ load(); csReq("POST",`/api/cases/${cid}/seen`,{}).then(()=>onSeen&&onSeen()).catch(()=>{}); },[load]); // eslint-disable-line
+  // пока вкладка открыта — подтягиваем новые раз в 30 с
+  useEffect(()=>{ const t=setInterval(()=>{ if(!document.hidden) load(); },30000); return ()=>clearInterval(t); },[load]);
+  useEffect(()=>{ if(!d||!first.current) return; first.current=false;
+    setTimeout(()=>{ const ms=d.messages||[];
+      let el=focusMsg?document.getElementById("cs-m-"+focusMsg):null;
+      if(!el){ const nw=ms.find(m=>m.new); el=nw?document.getElementById("cs-m-"+nw.msg_id):null; }
+      if(el){ el.scrollIntoView({block:"center"}); if(focusMsg) csFlash(el); }
+      else if(endRef.current) endRef.current.scrollIntoView({block:"end"}); },60);
+  },[d]); // eslint-disable-line
+  const people=(d&&d.people)||(cur.members||[]).map(m=>({username:m.username,name:m.name}));
+  const send=(p)=>csReq("POST",`/api/cases/${cid}/talk`,{...p,reply_to:reply?reply.msg_id:null})
+    .then(()=>{ setReply(null); return load(); })
+    .then(()=>setTimeout(()=>endRef.current&&endRef.current.scrollIntoView({block:"end",behavior:"smooth"}),40));
+  const del=async(m)=>{ if(!window.confirm(m.mine?"Удалить сообщение?":`Удалить сообщение ${puShort(m.name)}?`)) return;
+    await csReq("DELETE",`/api/cases/${cid}/talk/${m.msg_id}`).catch(e=>window.alert(e.message)); load(); };
+  const saveEdit=async()=>{ if(!edit||!edit.text.trim()) return; setEdit(x=>({...x,busy:true,err:""}));
+    try{ await csReq("PATCH",`/api/cases/${cid}/talk/${edit.msg_id}`,{body:edit.text}); setEdit(null); load(); }
+    catch(e){ setEdit(x=>x&&({...x,busy:false,err:e.message})); } };
+  if(err&&!d) return <div className="kb-empty">Обсуждение не загрузилось. <button className="rv-cs-lnk" onClick={load}>Повторить</button></div>;
+  if(!d) return <Skel h={140}/>;
+  const ms=d.messages||[], byId=Object.fromEntries(ms.map(m=>[m.msg_id,m]));
+  const replied=new Set(ms.map(m=>m.reply_to).filter(Boolean));
+  const vis=ms.filter(m=>!m.deleted||replied.has(m.msg_id));
+  const goMsg=(id)=>{ const el=document.getElementById("cs-m-"+id); if(el){ el.scrollIntoView({block:"center",behavior:"smooth"}); csFlash(el); } };
+  return <div className="cs-talk">
+    {!vis.length&&<div className="cs-talk-empty">
+      <b>Обсуждения пока нет</b>
+      Здесь договариваются по делу: что проверить, кому что запросить, какие жалобы главные.
+      Упомяните коллегу через <span className="cs-mn">@</span> — придёт уведомление; сошлитесь на материал как <span className="cs-ref static">[1]</span>.
+    </div>}
+    {vis.map((m,i)=>{ const prev=vis[i-1];
+      const newDiv=m.new&&!(prev&&prev.new);
+      const it=m.item_id?items.find(x=>x.item_id===m.item_id):null, pos=it?items.indexOf(it)+1:0;
+      const par=m.reply_to?byId[m.reply_to]:null;
+      return <React.Fragment key={m.msg_id}>
+        {newDiv&&<div className="cs-new-div" role="separator"><span>новые</span></div>}
+        <div id={"cs-m-"+m.msg_id} className={"cs-m"+(m.mine?" mine":"")}>
+          <span className="cs-av">{initials(m.name)}</span>
+          <div className="cs-m-c">
+            <div className="cs-m-h"><b>{puShort(m.name)}</b><span>{csTime(m.created_at)}{m.edited_at?" · изменено":""}</span>
+              {it&&<button type="button" className="cs-m-on" onClick={()=>onRef(it.item_id)}>к материалу [{pos}]</button>}</div>
+            {par&&<button type="button" className="cs-m-q" onClick={()=>goMsg(par.msg_id)}>
+              {par.deleted?"сообщение удалено":<><b>{puShort(par.name)}:</b> {(par.body||"").replace(/\s+/g," ").slice(0,120)}</>}</button>}
+            {m.deleted?<div className="cs-mb del">сообщение удалено</div>
+              :edit&&edit.msg_id===m.msg_id?<div className="cs-edit">
+                <textarea className="input" value={edit.text} autoFocus rows={3} maxLength={4000} aria-label="Изменить сообщение"
+                  onChange={e=>setEdit(x=>({...x,text:e.target.value}))}
+                  onKeyDown={e=>{ if(e.key==="Escape"){ e.stopPropagation(); setEdit(null); }
+                    if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); saveEdit(); } }}/>
+                <div className="cs-edit-b"><button className="btn btn-primary btn-sm" disabled={edit.busy||!edit.text.trim()} onClick={saveEdit}>Сохранить</button>
+                  <button className="btn btn-sm btn-ghost" onClick={()=>setEdit(null)}>Отмена</button>
+                  {edit.err&&<span className="cs-cmp-err">{edit.err}</span>}</div></div>
+              :<CaseMsgBody m={m} items={items} onRef={onRef}/>}
+            {!m.deleted&&cur.can_talk&&!(edit&&edit.msg_id===m.msg_id)&&<div className="cs-m-a">
+              <button type="button" onClick={()=>setReply(m)}>Ответить</button>
+              {m.can_edit&&<button type="button" onClick={()=>setEdit({msg_id:m.msg_id,text:m.body})}>Изменить</button>}
+              {m.can_delete&&<button type="button" onClick={()=>del(m)}>Удалить</button>}
+            </div>}
+          </div>
+        </div></React.Fragment>; })}
+    <div ref={endRef}/>
+    <div className="cs-talk-cmp">
+      {cur.can_talk
+        ?<CaseComposer people={people} items={items} meU={meU} onSend={send} reply={reply}
+          onCancelReply={()=>setReply(null)} autoFocus={!focusMsg}
+          placeholder={reply?"Ваш ответ…":"Написать в обсуждение дела…"}/>
+        :<div className="cs-cmp-hint">Дело в архиве — обсуждение только для чтения.</div>}
+    </div>
+  </div>;
+}
+
+// Комментарии к материалу — лентой с авторами, последние два видны сразу.
+function CaseItemThread({it,cid,people,items,meU,canTalk,onPosted,onRef}){
+  const[open,setOpen]=useState(false);
+  const[all,setAll]=useState(false);
+  const cs=it.comments||[];
+  const vis=all?cs:cs.slice(-2);
+  if(!cs.length&&!canTalk) return null;
+  return <div className="cs-th">
+    {cs.length>2&&!all&&<button type="button" className="cs-th-more" onClick={()=>setAll(true)}>
+      ещё {cs.length-2} {plural(cs.length-2,"комментарий","комментария","комментариев")}</button>}
+    {vis.map(m=><div key={m.msg_id} className="cs-th-m"><b>{puShort(m.name)}</b>
+      <CaseMsgBody m={m} items={items} onRef={onRef} inline/>
+      <span className="t">{csTime(m.created_at)}{m.edited_at?" · изменено":""}</span></div>)}
+    {canTalk&&(open
+      ?<CaseComposer compact autoFocus people={people} items={items} meU={meU}
+        placeholder="Комментарий к материалу…" onCancel={()=>setOpen(false)}
+        onSend={p=>csReq("POST",`/api/cases/${cid}/talk`,{...p,item_id:it.item_id}).then(()=>{ setOpen(false); onPosted&&onPosted(); })}/>
+      :<button type="button" className="cs-th-add" onClick={()=>setOpen(true)}>
+        <RvIReply s={11}/>{cs.length?"Ответить":"Комментировать"}</button>)}
+  </div>;
+}
+
+// История дела: кто что добавил, убрал, кого пригласил, когда сменился статус.
+function CaseHistory({cid}){
+  const[ev,setEv]=useState(null);
+  useEffect(()=>{ csReq("GET",`/api/cases/${cid}/history`).then(d=>setEv(d.events||[])).catch(()=>setEv(false)); },[cid]);
+  if(ev===null) return <Skel h={140}/>;
+  if(ev===false) return <div className="kb-empty">История не загрузилась — обновите панель.</div>;
+  if(!ev.length) return <div className="kb-empty">История пока пуста.</div>;
+  let day="";
+  return <div className="cs-hist">{ev.map(e=>{ const d=csDay(e.created_at), head=d!==day; day=d;
+    return <React.Fragment key={e.event_id}>
+      {head&&<div className="cs-hist-day">{d}</div>}
+      <div className="cs-hist-row">
+        <span className="tm">{new Date(e.created_at).toLocaleTimeString("ru",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit"})}</span>
+        <span className="tx">{e.text}{e.who&&<span className="who">{e.who}</span>}</span>
+      </div></React.Fragment>; })}
+    <p className="t-cap" style={{marginTop:12}}>История ведётся с 03.10.2026; более раннее восстановлено по датам приобщения.</p>
+  </div>;
+}
+
+// Разбор ИИ: подпись «кто и когда», прошлые версии не пропадают.
+function CaseAnalysisTab({cid,cur,an,anBusy,anErr,runAn,goAI,stale,nRev,nItems}){
+  const[ver,setVer]=useState(null);           // открытая прошлая версия
+  const vers=cur.analysis_versions||[];
+  useEffect(()=>{ csReq("POST","/api/bell/read",{link:`case:${cid}:analysis`}).catch(()=>{}); },[cid]);
+  const openVer=(v)=>csReq("GET",`/api/cases/${cid}/analysis/${v.analysis_id}`).then(setVer).catch(()=>{});
+  const top=vers[0];
+  if(!nItems) return <div className="kb-empty">Разбор появится, когда в деле будут материалы.</div>;
+  return <div className="rv-cs-an cs-an">
+    <div className="rv-cs-an-h">
+      <span>Разбор дела <i>ИИ по материалам, со ссылками [N]</i></span>
+      <span className="rv-cs-an-b">
+        {!an&&cur.can_add&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
+        {!an&&!cur.can_add&&<span className="t-cap">{cur.archived?"дело в архиве":"разбор запускают участники с правом добавлять"}</span>}
+        {an&&cur.can_add&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>{ setVer(null); runAn(true); }}>
+          {anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
+        {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-помощнику: нормы, практика, что запросить">продолжить в ИИ-помощнике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+      </span>
+    </div>
+    {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}
+    {ver&&<div className="cs-an-old" role="status">Прошлая версия: {fmtDateMsk(ver.created_at)}{ver.name?` · ${puShort(ver.name)}`:""}{ver.n_items?` · по ${ver.n_items} матер.`:""}
+      <button className="rv-cs-lnk" onClick={()=>setVer(null)}>к текущей</button></div>}
+    {(ver?ver.body:an)&&<div className="rv-explain">{renderMD(ver?ver.body:an)}</div>}
+    {an&&!ver&&top&&<div className="cs-an-sig">Разбор: {top.name?puShort(top.name):"автор не записан"} · {fmtDateMsk(top.created_at)}
+      {top.n_items?` · по ${top.n_items} ${plural(top.n_items,"материалу","материалам","материалам")}`:""}</div>}
+    {vers.length>1&&<div className="cs-an-vers"><div className="t-cap" style={{marginBottom:4}}>Прошлые версии</div>
+      {vers.slice(1).map(v=><button key={v.analysis_id} type="button" className={"cs-an-ver"+(ver&&ver.analysis_id===v.analysis_id?" on":"")} onClick={()=>openVer(v)}>
+        <span>{fmtDateMsk(v.created_at)}</span><span className="t-cap">{v.name?puShort(v.name):"автор не записан"}{v.n_items?` · ${v.n_items} матер.`:""}</span></button>)}</div>}
   </div>;
 }
 
@@ -8449,17 +8731,22 @@ function CaseAccess({cur,onBack,onChanged,onTransferred}){
   </div>;
 }
 
-function KbCases({onClose,onOpenDoc,initialCase}){
-  const me=useMe();
+function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg}){
+  const me=useMe(), meU=me&&me.username;
   const[list,setList]=useState(null);
   const[open,setOpen]=useState(initialCase||null);
   const[flt,setFlt]=useState("all");           // all | mine | shared
+  const[q,setQ]=useState("");                  // поиск по названию
+  const[showArch,setShowArch]=useState(false);
   const[access,setAccess]=useState(false);     // окно «Доступ» внутри панели
   const[gone,setGone]=useState(null);          // только что удалённое дело — «Вернуть»
   const[cur,setCur]=useState(null);
+  const[tab,setTab]=useState(initialTab||"items");
+  const[focusMsg,setFocusMsg]=useState(initialMsg||null);
   const[newT,setNewT]=useState("");
   const[an,setAn]=useState(null),[anBusy,setAnBusy]=useState(false),[anErr,setAnErr]=useState(null);
   const[ren,setRen]=useState(null);
+  const[stBusy,setStBusy]=useState(false),[stErr,setStErr]=useState("");
   const[crd,setCrd]=useState(null);           // читалка жалоб дела: {list, idx}
   // старое «дело» из браузера (до серверных дел во вкладке «Отзывы»)
   const[legacy,setLegacy]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]");}catch{return [];}});
@@ -8468,11 +8755,13 @@ function KbCases({onClose,onOpenDoc,initialCase}){
   // и React принял бы его за функцию очистки — падение при уходе со страницы
   useEffect(()=>{load();},[]);
   const reload=()=>apiFetch(`/api/cases/${open}`).then(c=>{setCur(c);setAn(c.analysis||null);}).catch(()=>{});
-  useEffect(()=>{ if(open){setCur(null);setAn(null);setAnErr(null);setRen(null);setAccess(false);reload();} },[open]);
+  const first=useRef(true);
+  useEffect(()=>{ if(open){setCur(null);setAn(null);setAnErr(null);setRen(null);setAccess(false);setStErr("");
+      if(!first.current){ setTab("items"); setFocusMsg(null); }
+      reload();}
+    first.current=false; },[open]); // eslint-disable-line
 
   const drop=async(itemId)=>{ await apiDel(`/api/cases/${open}/items/${itemId}`); reload(); };
-  const saveNote=(it,v)=>{ if((it.note||"")===(v||""))return;
-    apiPatch(`/api/cases/${open}/items/${it.item_id}`,{note:v}).catch(()=>{}); };
   const create=async()=>{ if(!newT.trim())return;
     const r=await apiPost("/api/cases",{title:newT.trim()}).catch(()=>null);
     setNewT(""); await load(); if(r)setOpen(r.case_id); };
@@ -8483,7 +8772,7 @@ function KbCases({onClose,onOpenDoc,initialCase}){
     try{localStorage.removeItem("al-case");}catch{}
     setLegacy([]); await load(); setOpen(r.case_id); };
   const runAn=async(force)=>{ setAnBusy(true);setAnErr(null);
-    try{const d=await apiPost(`/api/cases/${open}/analyze${force?"?force=1":""}`,{});setAn(d.analysis);}
+    try{const d=await apiPost(`/api/cases/${open}/analyze${force?"?force=1":""}`,{});setAn(d.analysis); if(!d.cached) reload();}
     catch{setAnErr("Модель не ответила — попробуйте ещё раз");}
     setAnBusy(false); };
   // выйти из чужого дела: доступ пропадает, материалы, которые вы приобщили, остаются
@@ -8498,6 +8787,13 @@ function KbCases({onClose,onOpenDoc,initialCase}){
       +"\n\n30 дней его можно вернуть из списка дел."))return;
     await apiDel(`/api/cases/${open}`).catch(()=>{}); setGone({case_id:open,title:cur.title}); setOpen(null); setCur(null); load(); };
   const restore=async(id)=>{ await apiPost(`/api/cases/${id}/restore`,{}).catch(()=>{}); setGone(null); load(); };
+  // статус и архив — владелец; участники получают уведомление
+  const setStatus=async(body)=>{ setStBusy(true); setStErr("");
+    try{ await csReq("POST",`/api/cases/${open}/status`,body); await reload(); load(); }
+    catch(e){ setStErr(e.message); }
+    finally{ setStBusy(false); } };
+  const toggleMute=async()=>{ const m=!cur.muted; setCur(c=>({...c,muted:m}));
+    await csReq("POST",`/api/cases/${open}/mute`,{muted:m}).catch(()=>setCur(c=>({...c,muted:!m}))); };
   // «Продолжить в ИИ-аналитике»: в вопрос уходит состав дела — продукты и
   // проблемы жалоб, — а аналитик ищет нормы, практику и что запросить
   const goAI=()=>{
@@ -8510,6 +8806,9 @@ function KbCases({onClose,onOpenDoc,initialCase}){
       +". Какие требования Банка России и законодательства относятся к этим ситуациям, какова практика"
       +" регулятора и судов по похожим случаям и что запросить у подразделения для проверки?");
   };
+  // ссылка [N] из обсуждения → материал на вкладке «Материалы»
+  const goItem=(iid)=>{ setTab("items");
+    setTimeout(()=>{ const el=document.getElementById("cs-it-"+iid); if(el){ el.scrollIntoView({block:"center",behavior:"smooth"}); csFlash(el); } },60); };
 
   // жалобы дела открываются в читалке со всем составом дела — J/K по порядку
   const openRev=async(it)=>{
@@ -8530,7 +8829,7 @@ function KbCases({onClose,onOpenDoc,initialCase}){
       onNext={crd.idx<crd.list.length-1?()=>setCrd(x=>({...x,idx:x.idx+1})):null}
       onOpenSim={(list,i)=>setCrd({list,idx:i})}/>}</RvModal>;
 
-  if(open&&!cur)return <RvModal side="right" title="Аудит-дело" onClose={()=>setOpen(null)}><Skel h={200}/></RvModal>;
+  if(open&&!cur)return <RvModal side="right" wide title="Аудит-дело" onClose={()=>setOpen(null)}><Skel h={200}/></RvModal>;
   if(open&&cur){
     const items=cur.items||[], nRev=items.filter(i=>i.kind==="review").length;
     const stale=an&&cur.analysis_items&&cur.analysis_items!==items.length;
@@ -8538,54 +8837,75 @@ function KbCases({onClose,onOpenDoc,initialCase}){
       <CaseAccess cur={cur} onBack={()=>setAccess(false)} onChanged={()=>{reload();load();}}
         onTransferred={()=>{setAccess(false);reload();load();}}/></RvModal>;
     const mem=cur.members||[], others=mem.filter(m=>m.role!=="owner");
-    return <><RvModal side="right" title={cur.title}
-      sub={`${items.length} матер.${nRev?` · жалоб ${nRev}`:""} · ${cur.mine?"вы владелец":`ведёт ${cur.owner_name} · ${CASE_ROLE_YOU[cur.role]||""}`}`}
-      onClose={()=>{setOpen(null);setCur(null);load();}}>
-      <button className="rv-cs-back" onClick={()=>{setOpen(null);setCur(null);load();}}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
-      {/* кто в деле: видно сразу, без открытия окна доступа */}
-      <button type="button" className="cs-people" onClick={()=>setAccess(true)}
-        data-tip={cur.can_manage?"Добавить коллег, сменить роли":"Кто в деле и с какими правами"}>
-        <span className="cs-avs">{mem.slice(0,5).map(m=><span key={m.username} className="cs-av"
-          title={`${m.name} — ${m.role_label}`}>{initials(m.name)}</span>)}
-          {mem.length>5&&<span className="cs-av more">+{mem.length-5}</span>}</span>
-        <span className="cs-people-t">{others.length?`${others.length} ${plural(others.length,"участник","участника","участников")}`:"только вы"}
-          {cur.can_manage?<b> · Доступ</b>:<b> · кто в деле</b>}</span>
-      </button>
+    const people=mem.map(m=>({username:m.username,name:m.name}));
+    const back=()=>{setOpen(null);setCur(null);load();};
+    const TABS=[["items","Материалы",items.length],["talk","Обсуждение",cur.talk_n],["analysis","Разбор",null],["history","История",null]];
+    return <><RvModal side="right" wide title={cur.title}
+      sub={`${cur.status_label||"Сбор материалов"}${cur.archived?" · в архиве":""} · ${items.length} матер.${nRev?` · жалоб ${nRev}`:""} · ${cur.mine?"вы владелец":`ведёт ${cur.owner_name} · ${CASE_ROLE_YOU[cur.role]||""}`}`}
+      onClose={back}>
+      <button className="rv-cs-back" onClick={back}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
+      <div className="cs-head">
+        {/* кто в деле: видно сразу, без открытия окна доступа */}
+        <button type="button" className="cs-people" onClick={()=>setAccess(true)}
+          data-tip={cur.can_manage?"Добавить коллег, сменить роли":"Кто в деле и с какими правами"}>
+          <span className="cs-avs">{mem.slice(0,5).map(m=><span key={m.username} className="cs-av"
+            title={`${m.name} — ${m.role_label}`}>{initials(m.name)}</span>)}
+            {mem.length>5&&<span className="cs-av more">+{mem.length-5}</span>}</span>
+          <span className="cs-people-t">{others.length?`${others.length} ${plural(others.length,"участник","участника","участников")}`:"только вы"}
+            {cur.can_manage?<b> · Доступ</b>:<b> · кто в деле</b>}</span>
+        </button>
+        {cur.can_manage&&!cur.archived
+          ?<div className="seg cs-st-seg" role="group" aria-label="Статус дела">{CASE_STATUS.map(([k,l])=>
+            <button key={k} type="button" className={"seg-btn"+(cur.status===k?" on":"")} aria-pressed={cur.status===k}
+              disabled={stBusy} onClick={()=>cur.status!==k&&setStatus({status:k})}>{l}</button>)}</div>
+          :<span className={"cs-st "+(cur.archived?"arch":cur.status)} data-tip="статус меняет владелец дела">
+            {cur.archived?"В архиве":cur.status_label}</span>}
+      </div>
+      {stErr&&<div className="rv-cp-err" role="alert">{stErr}</div>}
+      {cur.archived&&<div className="cs-arch" role="status"><span>Дело в архиве — только чтение: материалы, обсуждение и разбор не меняются.</span>
+        {cur.can_manage&&<button className="rv-cs-lnk" disabled={stBusy} onClick={()=>setStatus({archived:false})}>Вернуть из архива</button>}</div>}
       {cur.note&&<p className="t-cap">{cur.note}</p>}
       {ren!==null&&<div className="rv-cp-new"><input className="input" value={ren} autoFocus onChange={e=>setRen(e.target.value)}
-        onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape")setRen(null);}}/>
+        onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape"){e.stopPropagation();setRen(null);}}}/>
         <button className="btn btn-primary btn-sm" onClick={rename}>Сохранить</button></div>}
       <div className="rv-cs-acts">
         <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.xlsx`}
            data-tip="Excel в стиле AuditLens: дело в цифрах, графики, материалы с разметкой и комментариями">Excel</a>
         <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}
            data-tip="Word в стиле AuditLens: обложка, разбор, графики и карточки материалов; шрифты встроены">Word</a>
+        <button className={"btn btn-sm btn-ghost cs-mute"+(cur.muted?" on":"")} onClick={toggleMute} aria-pressed={!!cur.muted}
+          data-tip={cur.muted?"Уведомления о материалах, сообщениях и статусе этого дела выключены — нажмите, чтобы снова получать. Упоминания и ответы вам приходят всё равно"
+            :"Не присылать уведомления о материалах, сообщениях и статусе этого дела. Упоминания и ответы вам придут всё равно"}>
+          {cur.muted?"✓ Не слежу":"Не следить"}</button>
         {cur.mine&&ren===null&&<button className="btn btn-sm btn-ghost" onClick={()=>setRen(cur.title)}>Переименовать</button>}
+        {cur.mine&&!cur.archived&&<button className="btn btn-sm btn-ghost" disabled={stBusy} onClick={()=>setStatus({archived:true})}
+          data-tip="дело уйдёт в «Архив» списка и станет только для чтения; вернуть можно в любой момент">В архив</button>}
         {cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={remove}>Удалить</button>}
         {!cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={leave}
           data-tip="дело пропадёт из вашего списка; приобщённое вами останется в деле">Выйти из дела</button>}
       </div>
-      {items.length>0&&<div className="rv-cs-an">
-        <div className="rv-cs-an-h">
-          <span>Разбор дела <i>ИИ по материалам, со ссылками [N]</i></span>
-          <span className="rv-cs-an-b">
-            {!an&&cur.can_add&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
-            {!an&&!cur.can_add&&<span className="t-cap">разбор запускают участники с правом добавлять</span>}
-            {an&&cur.can_add&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
-            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-помощнику: нормы, практика, что запросить">продолжить в ИИ-помощнике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
-          </span>
-        </div>
-        {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}
-        {an&&<div className="rv-explain">{renderMD(an)}</div>}
-      </div>}
-      {items.map((it,i)=><React.Fragment key={it.item_id}>
-        <div className="rv-ci-n mono">[{i+1}]</div>
-        <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onNote={v=>saveNote(it,v)} onOpenDoc={onOpenDoc}
-          onOpen={()=>openRev(it)}/>
-      </React.Fragment>)}
-      {!items.length&&<div className="kb-empty">
-        {cur.can_add?"Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте раздела «Аудит отзывов» и документы — кнопкой «В дело» в «Базе знаний»."
-          :"В деле пока нет материалов."}</div>}
+      <div className="cs-tabs" role="tablist" aria-label="Разделы дела">{TABS.map(([k,l,n])=>
+        <button key={k} type="button" role="tab" aria-selected={tab===k} className={"cs-tab"+(tab===k?" on":"")}
+          onClick={()=>{ setTab(k); if(k!=="talk") setFocusMsg(null); }}>{l}
+          {n?<span className="cs-tab-n">{n}</span>:null}
+          {k==="talk"&&cur.talk_unread>0&&tab!=="talk"&&<span className="cs-tab-dot" aria-label={`новых: ${cur.talk_unread}`}/>}</button>)}</div>
+      {tab==="items"&&<>
+        {items.map((it,i)=><React.Fragment key={it.item_id}>
+          <div className="rv-ci-n mono">[{i+1}]</div>
+          <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onOpenDoc={onOpenDoc} onOpen={()=>openRev(it)}
+            thread={<CaseItemThread it={it} cid={open} people={people} items={items} meU={meU} canTalk={cur.can_talk}
+              onPosted={reload} onRef={goItem}/>}/>
+        </React.Fragment>)}
+        {!items.length&&<div className="kb-empty">
+          {cur.can_add?"Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте раздела «Аудит отзывов» и документы — кнопкой «В дело» в «Базе знаний»."
+            :"В деле пока нет материалов."}</div>}
+      </>}
+      {tab==="talk"&&<CaseTalk key={open} cid={open} cur={cur} items={items} meU={meU} focusMsg={focusMsg} onRef={goItem}
+        onCount={n=>setCur(c=>c&&c.talk_n!==n?{...c,talk_n:n}:c)}
+        onSeen={()=>{ setCur(c=>c&&({...c,talk_unread:0})); setList(l=>l&&l.map(c=>c.case_id===open?{...c,talk_unread:0}:c)); }}/>}
+      {tab==="analysis"&&<CaseAnalysisTab cid={open} cur={cur} an={an} anBusy={anBusy} anErr={anErr} runAn={runAn}
+        goAI={goAI} stale={stale} nRev={nRev} nItems={items.length}/>}
+      {tab==="history"&&<CaseHistory key={open+":"+(cur.updated_at||"")} cid={open}/>}
     </RvModal>{reader}</>;
   }
 
@@ -8603,25 +8923,37 @@ function KbCases({onClose,onOpenDoc,initialCase}){
     {gone&&<div className="cs-gone" role="status">Дело «{gone.title}» удалено.
       <button className="rv-cs-lnk" onClick={()=>restore(gone.case_id)}>Вернуть</button></div>}
     {(()=>{ if(list===null) return <Skel h={120}/>;
-      const live=list.filter(c=>!c.deleted), del=list.filter(c=>c.deleted);
+      const ql=q.trim().toLowerCase(), hit=c=>!ql||(c.title||"").toLowerCase().includes(ql)||(c.owner_name||"").toLowerCase().includes(ql);
+      const live=list.filter(c=>!c.deleted&&!c.archived), arch=list.filter(c=>!c.deleted&&c.archived), del=list.filter(c=>c.deleted);
       const nMine=live.filter(c=>c.mine).length, nSh=live.length-nMine;
-      const rows=live.filter(c=>flt==="all"||(flt==="mine")===!!c.mine);
+      const rows=live.filter(c=>(flt==="all"||(flt==="mine")===!!c.mine)&&hit(c));
+      const archRows=arch.filter(hit);
+      const row=c=><button key={c.case_id} className={"kb-case-row"+(c.archived?" arch":"")} onClick={()=>setOpen(c.case_id)}>
+        <span className="kb-case-row-t"><span className="cs-row-ttl">{c.title}</span>
+          {!c.archived&&c.status&&c.status!=="collect"&&<span className={"cs-st sm "+c.status}>{c.status_label}</span>}
+          {c.talk_unread>0&&<span className="cs-row-new">{c.talk_unread} {plural(c.talk_unread,"новое","новых","новых")}</span>}</span>
+        <span className="t-cap">{c.items} матер.{c.reviews?` · жалоб ${c.reviews}`:""} · {fmtDateMsk(c.updated_at)}
+          {c.mine?(c.members?` · участников ${c.members}`:""):` · ведёт ${c.owner_name} · ${CASE_ROLE_YOU[c.role]||""}`}</span>
+      </button>;
       return <>
+        {list.filter(c=>!c.deleted).length>5&&<input className="input cs-search" value={q} onChange={e=>setQ(e.target.value)}
+          placeholder="Найти дело по названию или владельцу…" aria-label="Найти дело"/>}
         {live.length>0&&nSh>0&&<div className="seg cs-flt" role="group" aria-label="Какие дела показать">
           {[["all","Все",live.length],["mine","Мои",nMine],["shared","Со мной поделились",nSh]].map(([k,l,n])=>
             <button key={k} className={"seg-btn"+(flt===k?" on":"")} aria-pressed={flt===k} onClick={()=>setFlt(k)}>
               {l} <span className="cs-n">{n}</span></button>)}</div>}
-        {!live.length?<div className="kb-empty">
+        {!live.length&&!arch.length?<div className="kb-empty">
           <b>Дел пока нет.</b>
           <p>Дело — подборка доказательств под одну проверку: жалобы из раздела «Аудит отзывов» и
-            документы из «Базы знаний». Приобщили, прокомментировали, выгрузили в рабочий файл.
+            документы из «Базы знаний». Приобщили, обсудили с коллегами, выгрузили в рабочий файл.
             Коллег в дело добавляет владелец — кнопкой «Доступ».</p></div>
-        :!rows.length?<div className="kb-empty">{flt==="shared"?"С вами пока не делились делами.":"Своих дел пока нет."}</div>
-        :rows.map(c=><button key={c.case_id} className="kb-case-row" onClick={()=>setOpen(c.case_id)}>
-          <span className="kb-case-row-t">{c.title}</span>
-          <span className="t-cap">{c.items} матер.{c.reviews?` · жалоб ${c.reviews}`:""} · {fmtDateMsk(c.updated_at)}
-            {c.mine?(c.members?` · участников ${c.members}`:""):` · ведёт ${c.owner_name} · ${CASE_ROLE_YOU[c.role]||""}`}</span>
-        </button>)}
+        :!rows.length?<div className="kb-empty">{ql?"Ничего не нашлось.":flt==="shared"?"С вами пока не делились делами.":flt==="mine"?"Своих дел пока нет.":"Все дела в архиве."}</div>
+        :rows.map(row)}
+        {arch.length>0&&<div className="cs-arch-list">
+          <button type="button" className="rail-fold cs-arch-fold" aria-expanded={showArch||!!ql} onClick={()=>setShowArch(v=>!v)}>
+            <svg className="rail-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+            Архив · {arch.length}</button>
+          {(showArch||!!ql)&&(archRows.length?archRows.map(row):<div className="t-cap">В архиве ничего не нашлось.</div>)}</div>}
         {del.length>0&&<div className="cs-del">
           <div className="t-cap" style={{margin:"14px 0 6px"}}>Недавно удалённые — можно вернуть 30 дней</div>
           {del.map(c=><div key={c.case_id} className="cs-del-row"><span>{c.title}</span>
@@ -11259,6 +11591,7 @@ const BX_CSS=`
 .bx-tx{flex:1;min-width:0}
 .bx-t{display:block;font-size:13px;line-height:1.42;color:var(--ink-2);text-wrap:pretty;overflow-wrap:anywhere}
 .bx-item.new .bx-t{color:var(--ink);font-weight:550}
+.bx-s{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12px;line-height:1.45;color:var(--ink-3);margin-top:2px;overflow-wrap:anywhere}
 .bx-m{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px;font-variant-numeric:tabular-nums}
 .bx-u{flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-top:8px}
 .bx-empty{text-align:center;padding:34px 18px 30px;color:var(--ink-3);font-size:12.5px;line-height:1.55}
@@ -11291,11 +11624,15 @@ const IcBx={
   report:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 3.5h7l4.5 4.5v11A1.5 1.5 0 0117 20.5H7A1.5 1.5 0 015.5 19V5A1.5 1.5 0 017 3.5z"/><path d="M13.5 3.5V8.5h5M9 13h6M9 16.5h4"/></svg>,
   gear:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="2.6"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
 };
-const BX_HINT={items:"Новые жалобы, документы и отчёты в общих делах",
-  access:"Добавление в дело, смена прав, передача дела, отчёт от коллеги",
+const BX_HINT={mention:"Вас упомянули через @, ответили на ваше сообщение или прокомментировали ваш материал",
+  talk:"Новые сообщения в обсуждениях ваших дел — одной строкой на дело",
+  items:"Новые жалобы, документы и отчёты в общих делах, новый разбор ИИ",
+  access:"Добавление в дело, смена прав, передача, статус и архив дела, отчёт от коллеги",
   inbox:"Ответ команды AuditLens или новый статус обращения"};
-const bxIcon=(k)=>k==="report_shared"?IcBx.report:k==="ticket"?IcSay.row
+const bxIcon=(k)=>k==="report_shared"?IcBx.report
+  :(k==="ticket"||k==="case_msg"||k==="case_mention"||k==="case_reply")?IcSay.row
   :(k==="case_added"||k==="case_role"||k==="case_removed"||k==="case_left"||k==="case_owner")?IcBx.people:IcBx.case;
+const bxSnip=(it)=>it&&it.ref&&it.ref.snippet?`«${it.ref.snippet}»`:"";
 // «только что · 5 мин · 2 ч · вчера · 3 окт» — свежесть важнее точного времени
 const bxAgo=(iso)=>{ try{ const d=new Date(iso), s=(Date.now()-d.getTime())/1000;
   if(s<60) return "только что"; if(s<3600) return Math.floor(s/60)+" мин назад";
@@ -11333,6 +11670,7 @@ function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs}){
       onClick={()=>open(it)} aria-label={(isNew?"Новое: ":"")+it.title}>
       <span className="bx-ic"><I/></span>
       <span className="bx-tx"><span className="bx-t">{it.title}</span>
+        {bxSnip(it)&&<span className="bx-s">{bxSnip(it)}</span>}
         <span className="bx-m">{[who,bxAgo(it.updated_at)].filter(Boolean).join(" · ")}</span></span>
       {isNew&&<span className="bx-u" aria-hidden="true"/>}
     </button>; };
@@ -11396,7 +11734,7 @@ function Shell(){
   const[casesN,setCasesN]=useState(0);
   const loadCasesN=useCallback(()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).filter(c=>!c.deleted).length)).catch(()=>{}),[]);
   useEffect(()=>{ loadCasesN(); },[loadCasesN]);
-  _openCases=(id)=>{ setNavOpen(false); setCasesHub({caseId:id||null}); };
+  _openCases=(id,opt)=>{ setNavOpen(false); setCasesHub({caseId:id||null,tab:opt&&opt.tab,msg:opt&&opt.msg}); };
   _casesHubOpen=!!casesHub;
   const closeCases=()=>{ setCasesHub(null); loadCasesN(); try{ window.dispatchEvent(new Event("al-cases")); }catch{} };
   // «Обратная связь»: окно и точка у строки меню, если команда ответила
@@ -11426,8 +11764,8 @@ function Shell(){
   const toggleBell=()=>{ setNavOpen(false); setSayOpen(null); setBellOpen(o=>!o); if(bell.last) bellSeen(bell.last.id); };
   const closeBell=()=>{ setBellOpen(false); loadBell(); setTimeout(()=>{ try{ bellRef.current&&bellRef.current.focus(); }catch{} },0); };
   const goBell=(it)=>{ setBellOpen(false); setBellToast(null); setNavOpen(false); loadBell();
-    const[k,id]=String(it.link||"").split(":");
-    if(k==="case") openCases(+id);
+    const[k,id,sub,msg]=String(it.link||"").split(":");
+    if(k==="case") openCases(+id,sub?{tab:sub,msg:msg?+msg:null}:null);
     else if(k==="report"){ _pendingReport=+id; setPage("ai"); try{ window.dispatchEvent(new Event("al-open-report")); }catch{} }
     else if(k==="inbox"){ setSayFocus(+id); setSayOpen("mine"); } };
   const openSay=(tab)=>{ setNavOpen(false); setBellOpen(false); setSayFocus(null); setSayOpen(o=>o?null:(tab||(sayInfo.unread?"mine":"new"))); };
@@ -11740,7 +12078,8 @@ function Shell(){
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
-      {casesHub&&<KbCases key={casesHub.caseId||"list"} initialCase={casesHub.caseId} onClose={closeCases}
+      {casesHub&&<KbCases key={[casesHub.caseId||"list",casesHub.tab||"",casesHub.msg||""].join(":")}
+        initialCase={casesHub.caseId} initialTab={casesHub.tab} initialMsg={casesHub.msg} onClose={closeCases}
         onOpenDoc={id=>{ closeCases(); location.hash=`#knowledge?doc=${id}`; }}/>}
       {sayOpen&&ReactDOM.createPortal(<SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef} focus={sayFocus}
         onClose={()=>{ setSayOpen(null); setSayFocus(null); loadSay(); setTimeout(()=>{ try{ sayRowRef.current&&sayRowRef.current.focus(); }catch{} },0); }}
@@ -11750,7 +12089,7 @@ function Shell(){
       {/* разовая заметка о новом уведомлении — у колокольчика, один раз на событие */}
       {bellToast&&!bellOpen&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast bx-toast" role="status">
         <div className="t"><span className="bx-ic">{React.createElement(bxIcon(bellToast.kind))}</span>
-          <span><b>{bellToast.title}</b><span className="m">{[bxWho(bellToast),
+          <span><b>{bellToast.title}</b>{bxSnip(bellToast)&&<span className="bx-s">{bxSnip(bellToast)}</span>}<span className="m">{[bxWho(bellToast),
             bell.unread>1?`ещё ${bell.unread-1} — в колокольчике у вашего имени`:""].filter(Boolean).join(" · ")}</span></span></div>
         <div className="b">
           {bellToast.link&&<button className="btn btn-primary btn-sm" onClick={()=>{ const t=bellToast; bellSeen(t.id);

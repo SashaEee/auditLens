@@ -924,6 +924,39 @@ def ai_feedback_stats(limit: int = 10) -> dict:
 # «всем пользователям AuditLens» больше нет: дело было видно 111 людям.
 CASE_ROLE_RU = {"owner": "владелец", "editor": "может добавлять", "viewer": "только смотрит"}
 _CASE_TTL_DAYS = 30            # удалённое дело можно вернуть столько дней
+# Статус меняет владелец (миграция 084). Архив — отдельно от статуса: дело
+# только читается, в него не добавляют и не пишут, из выбора «В дело» оно уходит.
+CASE_STATUS = {"collect": "Сбор материалов", "work": "В работе", "done": "Завершено"}
+CASE_MSG_MAX = 4000
+
+
+class CaseError(ValueError):
+    """Отказ, текст которого показывается человеку как есть."""
+
+
+def case_log(case_id: int, username: str | None, kind: str, payload: dict | None = None) -> None:
+    """Строка истории дела. Отдельной транзакцией и без исключений: история —
+    след действия, а не условие его успеха."""
+    import json
+    try:
+        with db.session() as s:
+            s.execute(text("""INSERT INTO audit_case_event (case_id, username, kind, payload)
+                              VALUES (:c, :u, :k, CAST(:p AS jsonb))"""),
+                      {"c": case_id, "u": username, "k": kind,
+                       "p": json.dumps(payload or {}, ensure_ascii=False, default=str)})
+    except Exception:  # noqa: BLE001
+        log.warning("case %s: история (%s) не записалась", case_id, kind, exc_info=True)
+
+
+def _case_flags(case_id: int, username: str) -> dict | None:
+    """Роль, архив, статус и название живого (не удалённого) дела — одним запросом."""
+    r = _one("""
+        SELECT CASE WHEN c.username = :u THEN 'owner' ELSE m.role END AS role,
+               c.archived_at IS NOT NULL AS archived, c.status, c.title, c.username AS owner
+          FROM audit_case c
+          LEFT JOIN audit_case_member m ON m.case_id = c.case_id AND m.username = :u
+         WHERE c.case_id = :c AND c.deleted_at IS NULL""", {"c": case_id, "u": username})
+    return r if r and r.get("role") else None
 
 
 def case_role(case_id: int, username: str, *, deleted: bool = False) -> str | None:
@@ -953,6 +986,10 @@ def list_cases(username: str) -> list[dict]:
     _purge_deleted_cases()
     rows = _rows(f"""
         SELECT c.case_id, c.title, c.note, c.created_at, c.updated_at, c.deleted_at,
+               c.status, c.archived_at,
+               (SELECT count(*) FROM audit_case_msg mm
+                 WHERE mm.case_id = c.case_id AND mm.deleted_at IS NULL AND mm.username <> :u
+                   AND mm.created_at > COALESCE(p.talk_seen_at, '-infinity')) talk_unread,
                (SELECT count(*) FROM audit_case_item i
                  WHERE i.case_id = c.case_id) items,
                (SELECT count(*) FROM audit_case_item i
@@ -963,25 +1000,30 @@ def list_cases(username: str) -> list[dict]:
                CASE WHEN c.username = :u THEN 'owner' ELSE m.role END AS role
           FROM audit_case c
           LEFT JOIN audit_case_member m ON m.case_id = c.case_id AND m.username = :u
+          LEFT JOIN audit_case_pref p ON p.case_id = c.case_id AND p.username = :u
           LEFT JOIN app_user au ON au.username = c.username
          WHERE (c.username = :u OR m.username IS NOT NULL)
            AND (c.deleted_at IS NULL
                 OR (c.username = :u AND c.deleted_at > now() - interval '{_CASE_TTL_DAYS} days'))
-         ORDER BY (c.deleted_at IS NOT NULL), c.updated_at DESC LIMIT 200
+         ORDER BY (c.deleted_at IS NOT NULL), (c.archived_at IS NOT NULL), c.updated_at DESC LIMIT 200
     """, {"u": username})
     for r in rows:
         r["deleted"] = r.get("deleted_at") is not None
+        r["archived"] = r.get("archived_at") is not None
+        r["status_label"] = CASE_STATUS.get(r.get("status") or "collect", "")
         r["shared"] = bool(r.get("members"))
         r["role_label"] = CASE_ROLE_RU.get(r.get("role"), "")
-        r["can_add"] = r.get("role") in ("owner", "editor") and not r["deleted"]
+        r["can_add"] = r.get("role") in ("owner", "editor") and not r["deleted"] and not r["archived"]
     return rows
 
 
 def create_case(username: str, title: str, note: str | None = None) -> int:
-    return int(_scalar("""
+    cid = int(_scalar("""
         INSERT INTO audit_case (username, title, note)
         VALUES (:u, :t, :n) RETURNING case_id
     """, {"u": username, "t": title[:200], "n": (note or None)}))
+    case_log(cid, username, "created", {"title": title[:200]})
+    return cid
 
 
 def _may_read_case(case_id: int, username: str) -> bool:
@@ -989,7 +1031,10 @@ def _may_read_case(case_id: int, username: str) -> bool:
 
 
 def _may_add_case(case_id: int, username: str) -> bool:
-    return case_role(case_id, username) in ("owner", "editor")
+    """Приобщать, убирать своё, запускать разбор — владелец и «может добавлять»,
+    и только пока дело не в архиве."""
+    f = _case_flags(case_id, username)
+    return bool(f) and f["role"] in ("owner", "editor") and not f["archived"]
 
 
 def _owns_case(case_id: int, username: str) -> bool:
@@ -1002,17 +1047,25 @@ def get_case(case_id: int, username: str) -> dict | None:
         return None
     case = _one("""SELECT c.case_id, c.username AS owner, c.title, c.note,
                           c.created_at, c.updated_at, c.analysis, c.analysis_at, c.analysis_items,
-                          COALESCE(au.display_name, c.username) AS owner_name
+                          c.status, c.status_at, c.archived_at,
+                          COALESCE(au.display_name, c.username) AS owner_name,
+                          COALESCE(p.muted, false) AS muted, p.talk_seen_at
                      FROM audit_case c LEFT JOIN app_user au ON au.username = c.username
-                    WHERE c.case_id = :c""", {"c": case_id})
+                     LEFT JOIN audit_case_pref p ON p.case_id = c.case_id AND p.username = :u
+                    WHERE c.case_id = :c""", {"c": case_id, "u": username})
     if not case:
         return None
+    archived = case["archived_at"] is not None
+    case["archived"] = archived
+    case["status"] = case.get("status") or "collect"
+    case["status_label"] = CASE_STATUS.get(case["status"], "")
     case["role"] = role
     case["role_label"] = CASE_ROLE_RU.get(role, "")
     case["mine"] = role == "owner"
-    case["can_add"] = role in ("owner", "editor")
+    case["can_add"] = role in ("owner", "editor") and not archived
     case["can_edit"] = case["can_add"]           # прежнее имя поля — для старых вкладок
     case["can_manage"] = role == "owner"
+    case["can_talk"] = not archived              # пишут все участники, включая «только смотрит»
     case["members"] = case_members(case_id, username) or []
     case["shared"] = len(case["members"]) > 1
     # Документы подтягиваем свежими: доверие и дата обхода могли измениться
@@ -1028,15 +1081,68 @@ def get_case(case_id: int, username: str) -> dict | None:
     """, {"c": case_id})
     _attach_review_items(case["items"])
     names = {m["username"]: m["name"] for m in case["members"]}
+    talk = _talk_rows(case_id, username, role)
+    by_item: dict[int, list[dict]] = {}
+    for m in talk:
+        if m.get("item_id"):
+            by_item.setdefault(m["item_id"], []).append(m)
     for it in case["items"]:
         mine_item = it.get("added_by") == username
         it["added_by_name"] = names.get(it.get("added_by")) or _display_name(it.get("added_by"))
-        # убрать — владелец или тот, кто приобщил (если у него ещё есть право добавлять);
-        # комментарий «зачем приобщено» — тех же двоих: раньше любой участник молча
-        # переписывал чужой
-        it["can_remove"] = role == "owner" or (role == "editor" and mine_item)
-        it["can_note"] = it["can_remove"]
+        # убрать — владелец или тот, кто приобщил (если у него ещё есть право добавлять)
+        it["can_remove"] = (role == "owner" or (role == "editor" and mine_item)) and not archived
+        it["can_note"] = False                    # одного «комментария» больше нет — лента
+        it["comments"] = [m for m in by_item.get(it["item_id"], []) if not m.get("deleted")]
+        # для выгрузок и разбора ИИ: комментарии лентой одной строкой
+        it["note"] = "\n".join(f"{puname(m['name'])}: {m['body']}" for m in it["comments"]) or None
+    seen = case.pop("talk_seen_at", None)
+    case["talk_unread"] = sum(1 for m in talk if not m.get("deleted") and m["username"] != username
+                              and (seen is None or m["created_at"] > seen))
+    case["talk_n"] = sum(1 for m in talk if not m.get("deleted"))
+    vers = _rows("""SELECT a.analysis_id, a.created_at, a.n_items, a.username,
+                           COALESCE(au.display_name, a.username) AS name
+                      FROM audit_case_analysis a LEFT JOIN app_user au ON au.username = a.username
+                     WHERE a.case_id = :c ORDER BY a.created_at DESC LIMIT 20""", {"c": case_id})
+    case["analysis_versions"] = vers
+    if vers:
+        case["analysis_by_name"] = vers[0]["name"]
     return case
+
+
+def puname(name: str | None) -> str:
+    """«Елена Волкова» → «Елена В.» — как в интерфейсе."""
+    p = (name or "").split()
+    return f"{p[0]} {p[1][0]}." if len(p) >= 2 else (name or "")
+
+
+def _participants(case_id: int) -> dict[str, str]:
+    """Логин → имя: владелец и участники дела."""
+    rows = _rows("""
+        SELECT x.username, COALESCE(au.display_name, x.username) AS name FROM (
+            SELECT username FROM audit_case WHERE case_id = :c
+            UNION SELECT username FROM audit_case_member WHERE case_id = :c) x
+          LEFT JOIN app_user au ON au.username = x.username""", {"c": case_id})
+    return {r["username"]: r["name"] for r in rows}
+
+
+def _talk_rows(case_id: int, username: str, role: str | None) -> list[dict]:
+    """Вся лента дела (обсуждение и комментарии к материалам) по возрастанию.
+    Удалённые остаются заглушками: на них могут ссылаться ответы."""
+    rows = _rows("""
+        SELECT m.msg_id, m.item_id, m.username, COALESCE(au.display_name, m.username) AS name,
+               m.body, m.mentions, m.refs, m.reply_to, m.created_at, m.edited_at,
+               m.deleted_at IS NOT NULL AS deleted
+          FROM audit_case_msg m LEFT JOIN app_user au ON au.username = m.username
+         WHERE m.case_id = :c ORDER BY m.created_at, m.msg_id LIMIT 1000""", {"c": case_id})
+    names = _participants(case_id)
+    for m in rows:
+        m["mine"] = m["username"] == username
+        m["can_edit"] = m["mine"] and not m["deleted"]
+        m["can_delete"] = (m["mine"] or role == "owner") and not m["deleted"]
+        m["mention_names"] = {u: names.get(u) or u for u in (m.get("mentions") or [])}
+        if m["deleted"]:
+            m["body"] = ""
+    return rows
 
 
 def _display_name(username: str | None) -> str | None:
@@ -1055,6 +1161,11 @@ def case_people(case_id: int) -> dict | None:
     c["members"] = [r["username"] for r in _rows(
         "SELECT username FROM audit_case_member WHERE case_id = :c", {"c": case_id})]
     c["everyone"] = [c["owner"], *c["members"]]
+    try:
+        c["muted"] = {r["username"] for r in _rows(
+            "SELECT username FROM audit_case_pref WHERE case_id = :c AND muted", {"c": case_id})}
+    except Exception:  # noqa: BLE001 — до миграции 084
+        c["muted"] = set()
     return c
 
 
@@ -1088,6 +1199,7 @@ def set_case_member(case_id: int, owner: str, member: str, role: str) -> str | N
         return "владелец уже в деле"
     if not _scalar("SELECT 1 FROM app_user WHERE username = :u", {"u": member}):
         return "такого пользователя нет в AuditLens"
+    prev = case_role(case_id, member)
     with db.session() as s:
         s.execute(text("""
             INSERT INTO audit_case_member (case_id, username, role, added_by)
@@ -1096,6 +1208,10 @@ def set_case_member(case_id: int, owner: str, member: str, role: str) -> str | N
                   {"c": case_id, "m": member, "r": role, "o": owner})
         s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
                   {"c": case_id})
+    if prev is None:
+        case_log(case_id, owner, "member_added", {"member": member, "role": role})
+    elif prev != role:
+        case_log(case_id, owner, "member_role", {"member": member, "role": role, "from": prev})
     return None
 
 
@@ -1111,6 +1227,9 @@ def remove_case_member(case_id: int, actor: str, member: str) -> bool:
     with db.session() as s:
         r = s.execute(text("DELETE FROM audit_case_member WHERE case_id = :c AND username = :m"),
                       {"c": case_id, "m": member})
+    if r.rowcount:
+        case_log(case_id, actor, "member_left" if member == actor else "member_removed",
+                 {"member": member})
     return bool(r.rowcount)
 
 
@@ -1129,6 +1248,7 @@ def transfer_case(case_id: int, owner: str, new_owner: str) -> str | None:
                           VALUES (:c, :o, 'editor', :n)
                           ON CONFLICT (case_id, username) DO UPDATE SET role = 'editor'"""),
                   {"c": case_id, "o": owner, "n": new_owner})
+    case_log(case_id, owner, "owner", {"member": new_owner})
     return None
 
 
@@ -1194,30 +1314,56 @@ def add_case_items(case_id: int, username: str, items: list[dict]) -> int | None
         before = s.execute(text(cnt), {"c": case_id}).scalar_one()
         s.execute(text("""
             INSERT INTO audit_case_item (case_id, kind, ref_id, url, title, note, added_by)
-            VALUES (:c, :k, :r, :u, :t, :n, :by)
+            VALUES (:c, :k, :r, :u, :t, NULL, :by)
             ON CONFLICT DO NOTHING
         """), rows)
         added = s.execute(text(cnt), {"c": case_id}).scalar_one() - before
         if added:
             s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
                       {"c": case_id})
+    if added:
+        case_log(case_id, username, "items_added",
+                 {"n": int(added), "titles": [(r["t"] or r["u"] or "")[:120] for r in rows[:3]]})
+        # «зачем приобщено», переданное вместе с материалом, — первое сообщение его ленты
+        for r in rows:
+            if (r.get("n") or "").strip():
+                _first_comment(case_id, r, username)
     return int(added)
 
 
+def _first_comment(case_id: int, row: dict, username: str) -> None:
+    try:
+        with db.session() as s:
+            s.execute(text("""
+                INSERT INTO audit_case_msg (case_id, item_id, username, body)
+                SELECT :c, i.item_id, :u, :b FROM audit_case_item i
+                 WHERE i.case_id = :c AND i.added_by = :u
+                   AND i.url IS NOT DISTINCT FROM CAST(:url AS text)
+                   AND i.ref_id IS NOT DISTINCT FROM CAST(:r AS bigint)
+                   AND NOT EXISTS (SELECT 1 FROM audit_case_msg m WHERE m.item_id = i.item_id)
+                 LIMIT 1"""),
+                      {"c": case_id, "u": username, "b": row["n"].strip()[:CASE_MSG_MAX],
+                       "url": row.get("u"), "r": row.get("r")})
+    except Exception:  # noqa: BLE001
+        log.warning("case %s: комментарий при приобщении не записался", case_id, exc_info=True)
+
+
 def remove_case_item(case_id: int, item_id: int, username: str) -> bool:
-    role = case_role(case_id, username)
-    if role not in ("owner", "editor"):
+    f = _case_flags(case_id, username)
+    if not f or f["role"] not in ("owner", "editor") or f["archived"]:
         return False
     with db.session() as s:
-        r = s.execute(text("""
+        gone = s.execute(text("""
             DELETE FROM audit_case_item i
              WHERE i.item_id = :i AND i.case_id = :c
-               AND (:owner OR i.added_by = :u)"""),
-            {"i": item_id, "c": case_id, "u": username, "owner": role == "owner"})
-        if not r.rowcount:
+               AND (:owner OR i.added_by = :u)
+            RETURNING i.title, i.url"""),
+            {"i": item_id, "c": case_id, "u": username, "owner": f["role"] == "owner"}).first()
+        if not gone:
             return False
         s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
                   {"c": case_id})
+    case_log(case_id, username, "item_removed", {"title": (gone[0] or gone[1] or "")[:120]})
     return True
 
 
@@ -1238,7 +1384,8 @@ def case_review_urls(username: str) -> dict[str, str]:
 def update_case_item_note(case_id: int, item_id: int, username: str, note: str | None) -> bool:
     """Комментарий аудитора к материалу — зачем приобщён, что в нём важно.
     Меняют владелец дела и тот, кто приобщил (раньше — любой участник, молча)."""
-    role = case_role(case_id, username)
+    f = _case_flags(case_id, username)
+    role = f["role"] if f and not f["archived"] else None
     if role not in ("owner", "editor"):
         return False
     with db.session() as s:
@@ -1256,6 +1403,7 @@ def update_case(case_id: int, username: str, *, title: str | None = None,
                 note: str | None = None) -> bool:
     if not _owns_case(case_id, username):
         return False
+    old = _one("SELECT title, note FROM audit_case WHERE case_id = :c", {"c": case_id}) or {}
     with db.session() as s:
         s.execute(text("""UPDATE audit_case
                              SET title = COALESCE(NULLIF(:t, ''), title),
@@ -1264,6 +1412,11 @@ def update_case(case_id: int, username: str, *, title: str | None = None,
                            WHERE case_id = :c"""),
                   {"t": (title or "").strip()[:200], "n": (note or "").strip()[:2000],
                    "setn": note is not None, "c": case_id})
+    t = (title or "").strip()[:200]
+    if t and t != old.get("title"):
+        case_log(case_id, username, "renamed", {"from": old.get("title"), "to": t})
+    if note is not None and (note or "").strip()[:2000] != (old.get("note") or ""):
+        case_log(case_id, username, "note", {"note": (note or "").strip()[:300]})
     return True
 
 
@@ -1273,7 +1426,10 @@ def set_case_shared(case_id: int, owner: str, shared: bool) -> bool:
     if not _owns_case(case_id, owner) or shared:
         return False
     with db.session() as s:
-        s.execute(text("DELETE FROM audit_case_member WHERE case_id = :c"), {"c": case_id})
+        gone = s.execute(text("DELETE FROM audit_case_member WHERE case_id = :c RETURNING username"),
+                         {"c": case_id}).scalars().all()
+    for m in gone:
+        case_log(case_id, owner, "member_removed", {"member": m})
     return True
 
 
@@ -1284,6 +1440,11 @@ def save_case_analysis(case_id: int, username: str, analysis: str, n_items: int)
         s.execute(text("""UPDATE audit_case SET analysis = :a, analysis_at = now(),
                                   analysis_items = :n WHERE case_id = :c"""),
                   {"a": analysis, "n": n_items, "c": case_id})
+        # прошлые версии не затираются: разбор — подпись «кто и когда»
+        s.execute(text("""INSERT INTO audit_case_analysis (case_id, body, n_items, username)
+                          VALUES (:c, :a, :n, :u)"""),
+                  {"c": case_id, "a": analysis, "n": n_items, "u": username})
+    case_log(case_id, username, "analysis", {"n": n_items})
     return True
 
 
@@ -1295,6 +1456,7 @@ def delete_case(case_id: int, username: str) -> bool:
     with db.session() as s:
         s.execute(text("""UPDATE audit_case SET deleted_at = now(), deleted_by = :u
                            WHERE case_id = :c"""), {"c": case_id, "u": username})
+    case_log(case_id, username, "deleted")
     return True
 
 
@@ -1304,6 +1466,7 @@ def restore_case(case_id: int, username: str) -> bool:
     with db.session() as s:
         s.execute(text("""UPDATE audit_case SET deleted_at = NULL, deleted_by = NULL,
                                   updated_at = now() WHERE case_id = :c"""), {"c": case_id})
+    case_log(case_id, username, "restored")
     return True
 
 
@@ -1313,3 +1476,254 @@ def share_case(case_id: int, owner: str, shared_with: str | None) -> bool:
     if not shared_with:
         return False
     return set_case_member(case_id, owner, shared_with, "editor") is None
+
+
+# ── Совместная работа в деле (миграция 084) ──────────────────────────────────
+# Статус и архив — владелец. Лента сообщений — все участники, включая «только
+# смотрит» (решение владельца инструмента 03.10): обсуждение дела и комментарии
+# к материалам с авторами, @упоминаниями, ссылками [N] и ответами. История —
+# кто что сделал; версии разбора — кто и когда его запускал.
+
+_MENTION_LIMIT = 20
+
+
+def set_case_status(case_id: int, owner: str, status: str | None = None,
+                    archived: bool | None = None) -> list[dict]:
+    """Сменить статус и/или архив. Возвращает список перемен (для уведомлений).
+    Отказ — CaseError с текстом для человека."""
+    f = _case_flags(case_id, owner)
+    if not f:
+        raise CaseError("дело не найдено")
+    if f["role"] != "owner":
+        raise CaseError("статус и архив меняет владелец дела")
+    if status is not None and status not in CASE_STATUS:
+        raise CaseError("неизвестный статус")
+    cur = f["status"] or "collect"
+    arch = f["archived"] if archived is None else bool(archived)
+    if status is not None and status != cur and arch:
+        raise CaseError("дело в архиве — сначала верните его")
+    changes: list[dict] = []
+    with db.session() as s:
+        if archived is not None and bool(archived) != f["archived"]:
+            s.execute(text("""UPDATE audit_case
+                                 SET archived_at = CASE WHEN :a THEN now() ELSE NULL END,
+                                     updated_at = now() WHERE case_id = :c"""),
+                      {"a": bool(archived), "c": case_id})
+            changes.append({"kind": "archived", "on": bool(archived)})
+        if status is not None and status != cur:
+            s.execute(text("""UPDATE audit_case SET status = :s, status_at = now(), updated_at = now()
+                               WHERE case_id = :c"""), {"s": status, "c": case_id})
+            changes.append({"kind": "status", "from": cur, "to": status,
+                            "label": CASE_STATUS[status]})
+    for ch in changes:
+        case_log(case_id, owner, ch["kind"], {k: v for k, v in ch.items() if k != "kind"})
+    return changes
+
+
+def _case_items_map(case_id: int) -> dict[int, dict]:
+    return {r["item_id"]: r for r in _rows(
+        "SELECT item_id, added_by, title, url FROM audit_case_item WHERE case_id = :c",
+        {"c": case_id})}
+
+
+def add_case_msg(case_id: int, username: str, body: str, *, mentions: list | None = None,
+                 refs: dict | None = None, reply_to: int | None = None,
+                 item_id: int | None = None) -> dict:
+    """Сообщение в обсуждение дела (item_id=None) или комментарий к материалу.
+    Возвращает сообщение и всё, что нужно уведомлениям: кого упомянули, кому
+    ответили, чей материал прокомментировали, кто ещё в деле."""
+    f = _case_flags(case_id, username)
+    if not f:
+        raise CaseError("дело не найдено")
+    if f["archived"]:
+        raise CaseError("дело в архиве — писать в него нельзя")
+    body = (body or "").strip()
+    if not body:
+        raise CaseError("пустое сообщение")
+    if len(body) > CASE_MSG_MAX:
+        raise CaseError(f"сообщение длиннее {CASE_MSG_MAX} знаков — сократите")
+    people = _participants(case_id)
+    ments = sorted({str(m) for m in (mentions or []) if m in people and m != username})
+    ments = ments[:_MENTION_LIMIT]
+    items = _case_items_map(case_id)
+    clean_refs: dict[str, int] = {}
+    for k, v in (refs or {}).items():
+        try:
+            n, iv = int(k), int(v)
+        except (TypeError, ValueError):
+            continue
+        if iv in items and 0 < n < 10000:
+            clean_refs[str(n)] = iv
+    if item_id is not None and int(item_id) not in items:
+        raise CaseError("материал не найден в деле")
+    parent = None
+    if reply_to is not None:
+        parent = _one("""SELECT msg_id, username, deleted_at, item_id FROM audit_case_msg
+                          WHERE msg_id = :m AND case_id = :c""", {"m": reply_to, "c": case_id})
+        if not parent:
+            raise CaseError("сообщение, на которое вы отвечаете, не найдено")
+    import json
+    with db.session() as s:
+        row = s.execute(text("""
+            INSERT INTO audit_case_msg (case_id, item_id, username, body, mentions, refs, reply_to)
+            VALUES (:c, :i, :u, :b, :m, CAST(:r AS jsonb), :p)
+            RETURNING msg_id, created_at"""),
+            {"c": case_id, "i": item_id, "u": username, "b": body, "m": ments,
+             "r": json.dumps(clean_refs), "p": reply_to}).mappings().first()
+        s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"), {"c": case_id})
+        # своё сообщение — значит, ленту видели: «новые» у себя не копим
+        s.execute(text("""INSERT INTO audit_case_pref (case_id, username, talk_seen_at)
+                          VALUES (:c, :u, now())
+                          ON CONFLICT (case_id, username) DO UPDATE SET talk_seen_at = now()"""),
+                  {"c": case_id, "u": username})
+    it = items.get(int(item_id)) if item_id is not None else None
+    return {"msg_id": row["msg_id"], "created_at": row["created_at"], "case_title": f["title"],
+            "participants": list(people), "mentions": ments, "refs": clean_refs,
+            "reply_author": parent["username"] if parent and not parent["deleted_at"] else None,
+            "item_author": (it or {}).get("added_by"),
+            "item_title": ((it or {}).get("title") or (it or {}).get("url") or "")[:120] or None}
+
+
+def edit_case_msg(case_id: int, msg_id: int, username: str, body: str) -> bool:
+    """Править своё сообщение (пометка «изменено»). Уведомления не повторяются."""
+    body = (body or "").strip()
+    if not body:
+        raise CaseError("пустое сообщение")
+    if len(body) > CASE_MSG_MAX:
+        raise CaseError(f"сообщение длиннее {CASE_MSG_MAX} знаков — сократите")
+    f = _case_flags(case_id, username)
+    if not f or f["archived"]:
+        return False
+    with db.session() as s:
+        r = s.execute(text("""UPDATE audit_case_msg SET body = :b, edited_at = now()
+                               WHERE msg_id = :m AND case_id = :c AND username = :u
+                                 AND deleted_at IS NULL"""),
+                      {"b": body, "m": msg_id, "c": case_id, "u": username})
+    return bool(r.rowcount)
+
+
+def delete_case_msg(case_id: int, msg_id: int, username: str) -> bool:
+    """Своё — автор, любое — владелец дела. Мягко: на сообщение могут ссылаться ответы."""
+    f = _case_flags(case_id, username)
+    if not f or f["archived"]:
+        return False
+    with db.session() as s:
+        r = s.execute(text("""UPDATE audit_case_msg SET deleted_at = now(), body = ''
+                               WHERE msg_id = :m AND case_id = :c AND deleted_at IS NULL
+                                 AND (username = :u OR :owner)"""),
+                      {"m": msg_id, "c": case_id, "u": username, "owner": f["role"] == "owner"})
+    return bool(r.rowcount)
+
+
+def case_talk(case_id: int, username: str) -> dict | None:
+    """Лента дела: обсуждение и комментарии к материалам, по возрастанию."""
+    role = case_role(case_id, username)
+    if not role:
+        return None
+    seen = _scalar("""SELECT talk_seen_at FROM audit_case_pref
+                       WHERE case_id = :c AND username = :u""", {"c": case_id, "u": username})
+    rows = _talk_rows(case_id, username, role)
+    for m in rows:
+        m["new"] = (not m["mine"] and not m["deleted"]
+                    and (seen is None or m["created_at"] > seen))
+    return {"messages": rows, "people": [{"username": u, "name": n}
+                                         for u, n in _participants(case_id).items()]}
+
+
+def mark_talk_seen(case_id: int, username: str) -> bool:
+    if not _may_read_case(case_id, username):
+        return False
+    with db.session() as s:
+        s.execute(text("""INSERT INTO audit_case_pref (case_id, username, talk_seen_at)
+                          VALUES (:c, :u, now())
+                          ON CONFLICT (case_id, username) DO UPDATE SET talk_seen_at = now()"""),
+                  {"c": case_id, "u": username})
+    return True
+
+
+def set_case_mute(case_id: int, username: str, muted: bool) -> bool:
+    """«Не следить за делом»: без уведомлений о материалах, сообщениях, статусе и
+    разборе. Упоминания, ответы и изменения доступа приходят всё равно."""
+    if not _may_read_case(case_id, username):
+        return False
+    with db.session() as s:
+        s.execute(text("""INSERT INTO audit_case_pref (case_id, username, muted)
+                          VALUES (:c, :u, :m)
+                          ON CONFLICT (case_id, username) DO UPDATE SET muted = :m"""),
+                  {"c": case_id, "u": username, "m": bool(muted)})
+    return True
+
+
+def _ev_text(kind: str, p: dict, name) -> str:
+    """Строка истории — событие без рода: кто сделал, видно рядом."""
+    def q(x):
+        x = " ".join(str(x or "").split())
+        return f"«{x[:80]}…»" if len(x) > 80 else f"«{x}»"
+    if kind == "created":
+        return "Дело создано"
+    if kind == "renamed":
+        return f"Новое название: {q(p.get('from'))} → {q(p.get('to'))}"
+    if kind == "note":
+        return "Изменена цель дела" + (f": {q(p.get('note'))}" if p.get("note") else "")
+    if kind == "items_added":
+        n, ts = int(p.get("n") or 1), [t for t in p.get("titles") or [] if t]
+        if n == 1:
+            return "Добавлен материал" + (f": {q(ts[0])}" if ts else "")
+        return f"Добавлено материалов: {n}" + (f" — {', '.join(q(t) for t in ts[:2])}"
+                                               + ("…" if n > 2 else "") if ts else "")
+    if kind == "item_removed":
+        return "Убран материал" + (f": {q(p.get('title'))}" if p.get("title") else "")
+    if kind == "member_added":
+        return f"Новый участник: {name(p.get('member'))} — {CASE_ROLE_RU.get(p.get('role'), '')}"
+    if kind == "member_role":
+        return f"Права участника {name(p.get('member'))}: {CASE_ROLE_RU.get(p.get('role'), '')}"
+    if kind == "member_removed":
+        return f"Исключение из дела: {name(p.get('member'))}"
+    if kind == "member_left":
+        return "Выход из дела"
+    if kind == "owner":
+        return f"Передача владения: теперь ведёт {name(p.get('member'))}"
+    if kind == "status":
+        return (f"Статус: {CASE_STATUS.get(p.get('from'), p.get('from') or '—')}"
+                f" → {CASE_STATUS.get(p.get('to'), p.get('to') or '—')}")
+    if kind == "archived":
+        return "Дело перенесено в архив" if p.get("on") else "Дело возвращено из архива"
+    if kind == "analysis":
+        n = p.get("n")
+        return "Новый разбор ИИ" + (f" — по {n} {'материалу' if n == 1 else 'материалам'}" if n else "")
+    if kind == "deleted":
+        return "Дело удалено"
+    if kind == "restored":
+        return "Дело восстановлено"
+    return kind
+
+
+def case_history(case_id: int, username: str, limit: int = 300) -> list[dict] | None:
+    if not _may_read_case(case_id, username):
+        return None
+    rows = _rows("""SELECT e.event_id, e.kind, e.payload, e.created_at, e.username,
+                           COALESCE(au.display_name, e.username) AS name
+                      FROM audit_case_event e LEFT JOIN app_user au ON au.username = e.username
+                     WHERE e.case_id = :c ORDER BY e.created_at DESC, e.event_id DESC LIMIT :n""",
+                 {"c": case_id, "n": limit})
+    logins = {str((r["payload"] or {}).get("member")) for r in rows if (r["payload"] or {}).get("member")}
+    names = {r["username"]: r["display_name"] or r["username"] for r in _rows(
+        "SELECT username, display_name FROM app_user WHERE username = ANY(:u)",
+        {"u": list(logins)})} if logins else {}
+
+    def name(u):
+        return puname(names.get(u) or u) if u else "—"
+    for r in rows:
+        r["text"] = _ev_text(r["kind"], r["payload"] or {}, name)
+        r["who"] = puname(r.pop("name")) if r.get("username") else None
+        r.pop("payload", None)
+    return rows
+
+
+def get_case_analysis(case_id: int, username: str, analysis_id: int) -> dict | None:
+    if not _may_read_case(case_id, username):
+        return None
+    return _one("""SELECT a.analysis_id, a.body, a.n_items, a.created_at,
+                          COALESCE(au.display_name, a.username) AS name
+                     FROM audit_case_analysis a LEFT JOIN app_user au ON au.username = a.username
+                    WHERE a.case_id = :c AND a.analysis_id = :a""", {"c": case_id, "a": analysis_id})

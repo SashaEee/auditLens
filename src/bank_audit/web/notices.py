@@ -33,19 +33,27 @@ log = logging.getLogger(__name__)
 
 # группа → подпись в настройках
 GROUPS = {
-    "items": "Новые материалы в делах",
-    "access": "Доступ к делам и отчётам",
+    "mention": "Упоминания и ответы вам",
+    "talk": "Сообщения в обсуждениях дел",
+    "items": "Новые материалы и разбор в делах",
+    "access": "Доступ, статус дел и отчёты",
     "inbox": "Ответы на обращения",
 }
 KIND_GROUP = {
-    "case_items": "items",
+    "case_mention": "mention", "case_reply": "mention",
+    "case_msg": "talk",
+    "case_items": "items", "case_analysis": "items",
     "case_added": "access", "case_role": "access", "case_removed": "access",
     "case_owner": "access", "case_left": "access", "case_deleted": "access",
-    "case_restored": "access", "report_shared": "access",
+    "case_restored": "access", "case_status": "access", "report_shared": "access",
     "ticket": "inbox",
 }
+# «Не следить за делом» глушит эти; упоминания, ответы и доступ — нет
+CASE_MUTABLE = {"case_items", "case_msg", "case_status", "case_analysis"}
 # эти склеиваются, пока не прочитаны (остальные — по одной строке на событие)
-_MERGE = {"case_items", "ticket", "report_shared"}
+_MERGE = {"case_items", "case_msg", "case_status", "case_analysis", "ticket", "report_shared"}
+_COUNTED = {"case_items", "case_msg"}          # склейка копит число
+_SAME_ACTOR = {"case_items"}                   # склеиваются только от одного автора
 KEEP_DAYS = 90
 LIST_LIMIT = 60
 
@@ -92,6 +100,24 @@ def title_of(kind: str, ref: dict, count: int = 1) -> str:
         return f"Дело «{case}» удалено"
     if kind == "case_restored":
         return f"Дело «{case}» снова доступно"
+    if kind == "case_msg":
+        if count <= 1:
+            return f"Новое сообщение в деле «{case}»"
+        return f"В деле «{case}» {count} {_plural(count, 'новое сообщение', 'новых сообщения', 'новых сообщений')}"
+    if kind == "case_mention":
+        return f"Вас упомянули в деле «{case}»"
+    if kind == "case_reply":
+        if ref.get("on_item"):
+            return f"Комментарий к вашему материалу в деле «{case}»"
+        return f"Ответ на ваше сообщение в деле «{case}»"
+    if kind == "case_status":
+        if ref.get("archived") is True:
+            return f"Дело «{case}» перенесено в архив"
+        if ref.get("archived") is False:
+            return f"Дело «{case}» возвращено из архива"
+        return f"Статус дела «{case}»: {ref.get('status_label') or 'изменён'}"
+    if kind == "case_analysis":
+        return f"В деле «{case}» новый разбор ИИ"
     if kind == "report_shared":
         return f"С вами поделились отчётом «{_q(ref.get('report'))}»"
     if kind == "ticket":
@@ -100,6 +126,29 @@ def title_of(kind: str, ref: dict, count: int = 1) -> str:
             return f"Команда AuditLens ответила на обращение № {no}"
         return f"Обращение № {no}: {ref.get('status_label') or 'новый статус'}"
     return _q(ref.get("title")) or "Новое событие"
+
+
+def talk_targets(author: str, participants: list[str], mentions: list[str],
+                 reply_author: str | None = None, item_author: str | None = None) -> list[tuple]:
+    """Кому что прислать о новом сообщении в деле — каждому одно уведомление,
+    самое личное: упомянули → «вас упомянули»; ответили на ваше сообщение →
+    «ответ»; прокомментировали ваш материал → «комментарий к вашему материалу»;
+    остальным участникам → «новые сообщения» (склеиваются). Автору — ничего."""
+    told, out = {author}, []
+    ments = [u for u in dict.fromkeys(mentions or []) if u not in told]
+    if ments:
+        out.append(("case_mention", ments, {}))
+        told.update(ments)
+    if reply_author and reply_author not in told:
+        out.append(("case_reply", [reply_author], {}))
+        told.add(reply_author)
+    if item_author and item_author not in told:
+        out.append(("case_reply", [item_author], {"on_item": True}))
+        told.add(item_author)
+    rest = [u for u in dict.fromkeys(participants or []) if u not in told]
+    if rest:
+        out.append(("case_msg", rest, {}))
+    return out
 
 
 def _muted(usernames: list[str], group: str) -> set[str]:
@@ -128,12 +177,13 @@ def notify(usernames: Iterable[str | None], kind: str, *, actor: str | None = No
                     prev = s.execute(text("""
                         SELECT notice_id, count, ref FROM app_notice
                          WHERE username = :u AND kind = :k AND read_at IS NULL
-                           AND link IS NOT DISTINCT FROM :l
-                           AND (:k <> 'case_items' OR actor IS NOT DISTINCT FROM :a)
+                           AND link IS NOT DISTINCT FROM CAST(:l AS text)
+                           AND (NOT :same OR actor IS NOT DISTINCT FROM CAST(:a AS text))
                          ORDER BY updated_at DESC LIMIT 1"""),
-                        {"u": u, "k": kind, "l": link, "a": actor}).mappings().first()
+                        {"u": u, "k": kind, "l": link, "a": actor,
+                         "same": kind in _SAME_ACTOR}).mappings().first()
                 if prev:
-                    cnt = int(prev["count"]) + (n if kind == "case_items" else 0)
+                    cnt = int(prev["count"]) + (n if kind in _COUNTED else 0)
                     merged = {**(prev["ref"] or {}), **ref}
                     if kind == "ticket" and (prev["ref"] or {}).get("reply"):
                         merged["reply"] = True       # ответ важнее смены статуса
@@ -198,7 +248,7 @@ def unread(username: str) -> dict:
     """Сколько непрочитанных и самое свежее — для точки на колокольчике и
     разовой заметки о новом."""
     rows = _rows("""
-        SELECT n.notice_id AS id, n.kind, n.title, n.link, n.updated_at,
+        SELECT n.notice_id AS id, n.kind, n.title, n.link, n.updated_at, n.ref,
                COALESCE(au.display_name, n.actor) AS actor_name,
                count(*) OVER () AS n
           FROM app_notice n LEFT JOIN app_user au ON au.username = n.actor
@@ -213,11 +263,15 @@ def unread(username: str) -> dict:
 
 
 def mark_read(username: str, ids: list[int] | None = None, *, everything: bool = False,
-              link: str | None = None) -> int:
+              link: str | None = None, prefix: bool = False) -> int:
+    """prefix=True — и все вложенные ссылки: «case:12:talk» гасит «case:12:talk:55»."""
     if not (ids or everything or link):
         return 0
     cond, p = "username = :u AND read_at IS NULL", {"u": username}
-    if link:
+    if link and prefix:
+        cond += " AND (link = :l OR link LIKE :lp)"
+        p["l"], p["lp"] = link, link.replace("%", "").replace("_", r"\_") + ":%"
+    elif link:
         cond += " AND link = :l"
         p["l"] = link
     elif not everything:
