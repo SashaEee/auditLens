@@ -237,6 +237,10 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
     if body.timezone:
         userdata.set_timezone(user.username, body.timezone)
     if body.prefs is not None:
+        if "notify_off" in body.prefs:          # выключенные группы колокольчика
+            from . import notices
+            off = body.prefs["notify_off"] if isinstance(body.prefs["notify_off"], list) else []
+            body.prefs["notify_off"] = [g for g in notices.GROUPS if g in off]
         userdata.update_prefs(user.username, body.prefs)
         if "self_description" in body.prefs:   # профиль изменился → «Для вас» устарел
             try:
@@ -601,9 +605,46 @@ def inbox_unread(user: CurrentUser = Depends(get_current_user)):
 
 @app.post("/api/inbox/{tid}/seen")
 def inbox_seen(tid: int, user: CurrentUser = Depends(get_current_user)):
-    from . import inbox
+    from . import inbox, notices
     inbox.mark_seen(user.username, tid)
+    notices.mark_read(user.username, link=f"inbox:{tid}")
     return {"ok": True}
+
+
+# ── Уведомления (колокольчик у карточки пользователя) ──────────────────────
+# Адрес /api/bell: слово notification режут блокировщики всплывающих окон.
+
+class BellReadIn(BaseModel):
+    ids: list[int] = []
+    all: bool = False
+
+
+@app.get("/api/bell")
+def bell_list(user: CurrentUser = Depends(get_current_user)):
+    """Последние уведомления (новые и прочитанные) и настройки групп."""
+    from . import notices
+    u = userdata.get_user(user.username) or {}
+    return {"items": notices.items(user.username),
+            "groups": notices.settings(u.get("prefs"))}
+
+
+@app.get("/api/bell/unread")
+def bell_unread(user: CurrentUser = Depends(get_current_user)):
+    """Точка на колокольчике + самое свежее (для разовой заметки) + ответы на
+    обращения (точка у строки «Обратная связь») — одним опросом."""
+    from . import inbox, notices
+    out = notices.unread(user.username)
+    try:
+        out["inbox"] = inbox.unread_info(user.username)
+    except Exception:  # noqa: BLE001
+        out["inbox"] = {"unread": 0, "last_at": None}
+    return out
+
+
+@app.post("/api/bell/read")
+def bell_read(req: BellReadIn, user: CurrentUser = Depends(get_current_user)):
+    from . import notices
+    return {"ok": True, "n": notices.mark_read(user.username, req.ids, everything=req.all)}
 
 
 @app.post("/api/inbox/{tid}/message")
@@ -663,6 +704,14 @@ def admin_inbox_update(tid: int, req: TicketAdminIn, user: CurrentUser = Depends
     t = inbox.admin_update(tid, user.username, req.status, req.reply)
     if not t:
         raise HTTPException(404, "ticket not found")
+    replied = bool((req.reply or "").strip())
+    if replied or t.get("status_changed"):
+        from . import notices
+        ref = {"no": tid, "status": t.get("status"), "status_label": t.get("status_label")}
+        if replied:
+            ref["reply"] = True
+        notices.notify([t.get("username")], "ticket", actor=user.username,
+                       link=f"inbox:{tid}", ref=ref)
     try:
         userdata.log_event(user.username, "admin_ticket_update",
                            {"ticket_id": tid, "status": req.status, "replied": bool(req.reply)})
@@ -763,6 +812,9 @@ def get_report_ep(rid: int, user: CurrentUser = Depends(get_current_user)):
         raise HTTPException(404, "report not found")
     if admin_view:
         r = {**r, "admin_view": True}
+    else:
+        from . import notices
+        notices.mark_read(user.username, link=f"report:{rid}")
     # Визуализации, сохранённые раньше, — та же полировка, что у новых: таблица,
     # склеенная в одну строку, делится по строкам, строка покрытия по-русски.
     try:
@@ -797,6 +849,10 @@ def share_report_ep(rid: int, body: ShareReq,
         raise HTTPException(403, "not owner")
     userdata.log_event(user.username, "share",
                        {"report_id": rid, "with": body.shared_with})
+    if body.shared_with:
+        from . import notices
+        notices.notify([body.shared_with], "report_shared", actor=user.username,
+                       link=f"report:{rid}", ref={"report": userdata.report_title(rid)})
     return {"ok": True, "share_id": sid}
 
 
@@ -3382,6 +3438,23 @@ class CaseItem(BaseModel):
     note: Optional[str] = None
 
 
+def _bell_case(case_id: int, kind: str, actor: str, users: list[str] | None = None,
+               n: int = 1, **ref) -> None:
+    """Уведомление участникам дела о событии (по умолчанию — всем, кроме автора).
+    Ошибка уведомления не роняет действие — notices.notify сам её глотает."""
+    from . import notices
+    try:
+        c = userdata.case_people(case_id)
+    except Exception:  # noqa: BLE001
+        log.warning("[bell] case %s: участники не прочитались", case_id, exc_info=True)
+        return
+    if not c:
+        return
+    link = None if kind in ("case_removed", "case_deleted") else f"case:{case_id}"
+    notices.notify(c["everyone"] if users is None else users, kind, actor=actor,
+                   link=link, ref={"case": c["title"], **ref}, n=n)
+
+
 @app.get("/api/cases")
 def cases_list(user: CurrentUser = Depends(get_current_user)):
     return {"cases": userdata.list_cases(user.username)}
@@ -3405,6 +3478,8 @@ def cases_get(case_id: int, user: CurrentUser = Depends(get_current_user)):
     case = userdata.get_case(case_id, user.username)
     if not case:
         raise HTTPException(404, "дело не найдено")
+    from . import notices
+    notices.mark_read(user.username, link=f"case:{case_id}")
     return case
 
 
@@ -3413,11 +3488,12 @@ def cases_add_item(case_id: int, req: CaseItem,
                    user: CurrentUser = Depends(get_current_user)):
     if req.kind not in ("document", "review", "offer", "report"):
         raise HTTPException(400, "неизвестный вид материала")
-    if not userdata.add_case_item(case_id, user.username, kind=req.kind,
-                                  ref_id=req.ref_id, url=req.url,
-                                  title=req.title, note=req.note):
+    n = userdata.add_case_items(case_id, user.username, [req.model_dump()])
+    if n is None:
         raise HTTPException(403, "добавлять в дело могут владелец и участники с правом добавлять")
-    return {"ok": True}
+    if n:
+        _bell_case(case_id, "case_items", user.username, n=n)
+    return {"ok": True, "added": n}
 
 
 class CaseItemsBulk(BaseModel):
@@ -3433,6 +3509,8 @@ def cases_add_items(case_id: int, req: CaseItemsBulk,
                                  if i.kind in ("document", "review", "offer", "report")])
     if n is None:
         raise HTTPException(403, "нет доступа к делу")
+    if n:
+        _bell_case(case_id, "case_items", user.username, n=n)
     return {"ok": True, "added": n}
 
 
@@ -3467,8 +3545,11 @@ def cases_team(case_id: int, req: dict, user: CurrentUser = Depends(get_current_
     открывают поимённо. shared=false — убрать всех участников."""
     if req.get("shared"):
         raise HTTPException(400, "Открыть дело всем больше нельзя — добавьте коллег через «Доступ»")
+    c = userdata.case_people(case_id)
     if not userdata.set_case_shared(case_id, user.username, False):
         raise HTTPException(403, "управлять доступом может только владелец дела")
+    if c and c["members"]:
+        _bell_case(case_id, "case_removed", user.username, users=c["members"])
     return {"ok": True}
 
 
@@ -3489,9 +3570,16 @@ def cases_members(case_id: int, user: CurrentUser = Depends(get_current_user)):
 @app.post("/api/cases/{case_id}/members")
 def cases_member_set(case_id: int, req: CaseMemberIn, user: CurrentUser = Depends(get_current_user)):
     """Добавить коллегу в дело или сменить ему роль (только владелец)."""
+    prev = userdata.case_role(case_id, req.username)
     err = userdata.set_case_member(case_id, user.username, req.username, req.role)
     if err:
         raise HTTPException(403 if "владел" in err else 400, err)
+    if prev is None:
+        _bell_case(case_id, "case_added", user.username, users=[req.username],
+                   role=req.role, role_label=userdata.CASE_ROLE_RU.get(req.role))
+    elif prev != req.role:
+        _bell_case(case_id, "case_role", user.username, users=[req.username],
+                   role=req.role, role_label=userdata.CASE_ROLE_RU.get(req.role))
     return {"ok": True, "members": userdata.case_members(case_id, user.username)}
 
 
@@ -3502,6 +3590,12 @@ def cases_member_remove(case_id: int, member: str, user: CurrentUser = Depends(g
         member = user.username
     if not userdata.remove_case_member(case_id, user.username, member):
         raise HTTPException(403, "убрать участника может владелец дела; выйти — сам участник")
+    if member == user.username:
+        c = userdata.case_people(case_id)
+        if c:
+            _bell_case(case_id, "case_left", user.username, users=[c["owner"]])
+    else:
+        _bell_case(case_id, "case_removed", user.username, users=[member])
     return {"ok": True}
 
 
@@ -3511,6 +3605,7 @@ def cases_transfer(case_id: int, req: CaseMemberIn, user: CurrentUser = Depends(
     err = userdata.transfer_case(case_id, user.username, req.username)
     if err:
         raise HTTPException(403, err)
+    _bell_case(case_id, "case_owner", user.username, users=[req.username])
     return {"ok": True}
 
 
@@ -3519,6 +3614,7 @@ def cases_restore(case_id: int, user: CurrentUser = Depends(get_current_user)):
     """Вернуть удалённое дело (30 дней после удаления, только владелец)."""
     if not userdata.restore_case(case_id, user.username):
         raise HTTPException(404, "дело не найдено или удалено больше 30 дней назад")
+    _bell_case(case_id, "case_restored", user.username)
     return {"ok": True}
 
 
@@ -3588,14 +3684,20 @@ def cases_del_item(case_id: int, item_id: int,
 def cases_delete(case_id: int, user: CurrentUser = Depends(get_current_user)):
     if not userdata.delete_case(case_id, user.username):
         raise HTTPException(403, "нет прав")
+    _bell_case(case_id, "case_deleted", user.username)
     return {"ok": True}
 
 
 @app.post("/api/cases/{case_id}/share")
 def cases_share(case_id: int, req: dict,
                 user: CurrentUser = Depends(get_current_user)):
-    if not userdata.share_case(case_id, user.username, req.get("shared_with")):
+    who = req.get("shared_with")
+    prev = userdata.case_role(case_id, who) if who else None
+    if not userdata.share_case(case_id, user.username, who):
         raise HTTPException(403, "делиться может только владелец")
+    if prev is None:
+        _bell_case(case_id, "case_added", user.username, users=[who],
+                   role="editor", role_label=userdata.CASE_ROLE_RU["editor"])
     return {"ok": True}
 
 

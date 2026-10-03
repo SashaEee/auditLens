@@ -749,6 +749,7 @@ let _trkPush=null;
 // «Аудит-дела» — общая панель поверх любого раздела: открывается кнопкой в
 // верхней панели и из разделов (openCases), «в деле» обновляется событием al-cases
 let _openCases=null, _casesHubOpen=false;
+let _pendingReport=null;          // отчёт, который открыть в ИИ-помощнике (из колокольчика)
 function openCases(caseId){ try{ if(_openCases)_openCases(caseId||null); }catch{} }
 function trkEvent(ev){ try{ if(_trkPush)_trkPush(ev); }catch{} }
 // «человек здесь»: ввод внутри встроенного модуля (фрейм «Аудита уязвимостей»)
@@ -1577,7 +1578,7 @@ function ShareButton({reportId}){
               <span className="st">{s?"✓ доступ":"дать доступ"}</span>
             </button>; })}
       </div>
-      <div className="shr-foot">Коллеги найдут отчёт в истории (⌘K) → Отчёты → «Поделились со мной»</div>
+      <div className="shr-foot">Коллега получит уведомление, а отчёт останется в истории (⌘K) → Отчёты → «Поделились со мной»</div>
     </div>}
   </span>;
 }
@@ -7156,6 +7157,18 @@ function AIPage(){
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
   };
+  // Отчёт по ссылке: из колокольчика («С вами поделились отчётом») или #ai?report=ID.
+  // Раньше параметр report никто не читал — ссылка открывала пустой экран.
+  const openReportRef=useRef(openReport); openReportRef.current=openReport;
+  useEffect(()=>{
+    const take=()=>{ let id=_pendingReport; _pendingReport=null;
+      if(!id){ const h=parseHash(); if(h.p==="ai"&&h.prm.report){ id=+h.prm.report;
+        try{ history.replaceState(null,"","#ai"); }catch{} } }
+      if(id) openReportRef.current(id); };
+    take();
+    window.addEventListener("al-open-report",take); window.addEventListener("hashchange",take);
+    return ()=>{ window.removeEventListener("al-open-report",take); window.removeEventListener("hashchange",take); };
+  },[]);
   // ⌘K / Ctrl+K — открыть/закрыть историю.
   useEffect(()=>{
     const onKey=(e)=>{ if((e.metaKey||e.ctrlKey)&&(e.key==="k"||e.key==="K")){e.preventDefault();setHistOpen(o=>!o);} };
@@ -8431,7 +8444,7 @@ function CaseAccess({cur,onBack,onChanged,onTransferred}){
     </div>
     {err&&<div className="rv-cp-err" role="alert">{err}</div>}
     <p className="cs-acc-foot">{manage
-      ?"Коллега увидит дело у себя: кнопка «Аудит-дела» в верхней панели любого раздела."
+      ?"Коллега получит уведомление и увидит дело у себя: кнопка «Аудит-дела» в верхней панели любого раздела."
       :`Добавлять коллег и менять права может владелец — ${cur.owner_name}.`}</p>
   </div>;
 }
@@ -10964,7 +10977,6 @@ const SAY_HINT={
 const SAY_STATUS_RU={new:"Новое",accepted:"Принято",in_progress:"В работе",done:"Сделано",wontfix:"Не будем делать",exists:"Уже есть"};
 const SAY_MODE={foryou:"Для вас",market:"Рынок · позиция"};
 const SAY_DRAFT="al-say-draft";
-const SAY_TOAST="al-say-toast";
 // последние ошибки страницы — прикладываются к обращению (видно по «показать»)
 let _sayErrs=[];
 function sayRecordErr(msg){ try{ _sayErrs=[..._sayErrs.slice(-4),
@@ -11018,7 +11030,7 @@ const sayDate=(iso)=>{ try{ const d=new Date(iso); const today=new Date().toDate
   return today?d.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})
     :d.toLocaleDateString("ru",{day:"numeric",month:"short"}).replace(".",""); }catch{ return ""; } };
 
-function SayPanel({page,appInfo,me,tab:tab0,onClose,anchor,onUnread}){
+function SayPanel({page,appInfo,me,tab:tab0,onClose,anchor,onUnread,focus}){
   const where=useMemo(()=>sayWhere(page),[page]);
   const draft=useMemo(()=>{try{return JSON.parse(localStorage.getItem(SAY_DRAFT)||"{}")||{};}catch{return {};}},[]);
   const[tab,setTab]=useState(tab0||"new");
@@ -11154,13 +11166,18 @@ function SayPanel({page,appInfo,me,tab:tab0,onClose,anchor,onUnread}){
         :mine.error?<div className="tk-empty">Не удалось загрузить обращения. Попробуйте ещё раз чуть позже.</div>
         :!mine.tickets.length?<div className="tk-empty">Здесь будут ваши обращения и ответы команды.<br/><br/>
             <button className="btn btn-sm" onClick={()=>setTab("new")}>Написать</button></div>
-        :<div className="tk-list">{mine.tickets.map(t=><SayItem key={t.ticket_id} t={t} onChanged={()=>{loadMine();onUnread&&onUnread();}}/>)}</div>}
+        :<div className="tk-list">{mine.tickets.map(t=><SayItem key={t.ticket_id} t={t} initOpen={t.ticket_id===focus} onChanged={()=>{loadMine();onUnread&&onUnread();}}/>)}</div>}
     </div>}
   </div>;
 }
 
-function SayItem({t,onChanged}){
-  const[open,setOpen]=useState(false);
+function SayItem({t,onChanged,initOpen}){
+  const[open,setOpen]=useState(!!initOpen);
+  const iref=useRef(null);
+  // открыто из колокольчика: прокрутить к нему и отметить ответ прочитанным
+  useEffect(()=>{ if(!initOpen) return;
+    try{ iref.current&&iref.current.scrollIntoView({block:"nearest"}); }catch{}
+    if(t.unread) sayPost(`/api/inbox/${t.ticket_id}/seen`,{}).then(onChanged).catch(()=>{}); },[]); // eslint-disable-line
   const[reply,setReply]=useState("");
   const[busy,setBusy]=useState(false);
   const[err,setErr]=useState("");
@@ -11170,7 +11187,7 @@ function SayItem({t,onChanged}){
   const act=(p)=>{ setBusy(true); setErr(""); p.then(()=>{ setReply(""); onChanged&&onChanged(); })
     .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
   const closed=["done","wontfix","exists"].includes(t.status);
-  return <div className="tk-item">
+  return <div className="tk-item" ref={iref}>
     <button type="button" className={"tk-ihead"+(t.unread?" unread":"")} aria-expanded={open} onClick={toggle}>
       <span className="k"><I/></span>
       <span className="t"><span className="q">{t.body}</span>
@@ -11195,6 +11212,155 @@ function SayItem({t,onChanged}){
       </div>
       {err&&<div className="tk-err" role="alert">{err}</div>}
     </div>}
+  </div>;
+}
+
+// ── Уведомления: колокольчик рядом с карточкой пользователя внизу меню ──────
+// В верхнюю панель не кладём — там тема, «Аудит-дела» и поиск. Сюда сходятся
+// события, о которых иначе не узнать: добавили в дело, коллега приобщил
+// материалы, поделились отчётом, команда ответила на обращение (/api/bell —
+// слово notification режут блокировщики всплывающих окон).
+const BELL_SEEN="al-bell-seen";             // последнее уведомление, о котором была заметка
+const BX_CSS=`
+.bx-me{display:flex;align-items:center}
+.bx-me .user-chip{flex:1;min-width:0;padding-right:4px}
+.bx-me .user-chip .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bx-btn{position:relative;flex:none;width:32px;height:32px;border-radius:8px;border:0;background:none;color:var(--ink-3);cursor:pointer;
+  display:grid;place-items:center;transition:background .12s,color .12s}
+.bx-btn:hover{background:var(--paper-2);color:var(--ink)}
+.bx-btn.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+.bx-btn:active{transform:scale(.96)}
+.bx-btn:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.bx-btn.has svg{color:var(--ink-2)}
+.bx-dot{position:absolute;top:6px;right:7px;width:7px;height:7px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 2px var(--paper)}
+.bx-btn.on .bx-dot{box-shadow:0 0 0 2px var(--surface)}
+.mobile-nav .icon-btn{position:relative}
+.mobile-nav .bx-dot{top:8px;right:8px}
+.bx-pop{width:400px}
+.bx-pop .tk-head{padding:14px 10px 10px 18px;gap:4px}
+.bx-pop .tk-ttl{margin-right:auto}
+.bx-n{font-size:11.5px;color:var(--ink-3);font-weight:450;margin-left:8px;font-variant-numeric:tabular-nums}
+.bx-ib{width:28px;height:28px;border-radius:7px;border:0;background:none;color:var(--ink-3);cursor:pointer;display:grid;place-items:center}
+.bx-ib:hover{background:var(--paper-2);color:var(--ink)}
+.bx-ib.on{color:var(--ink);background:var(--paper-2)}
+.bx-all{border:0;background:none;font:inherit;font-size:12px;color:var(--ink-3);cursor:pointer;padding:5px 8px;border-radius:7px;margin-right:2px}
+.bx-all:hover{color:var(--ink);background:var(--paper-2)}
+.bx-body{overflow-y:auto;min-height:0;padding:2px 8px 10px}
+.bx-grp{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-4);padding:10px 10px 4px}
+.bx-item{display:flex;gap:11px;align-items:flex-start;width:100%;padding:9px 10px;border:0;background:none;border-radius:9px;
+  font:inherit;text-align:left;color:var(--ink);cursor:pointer;transition:background .12s}
+.bx-item:hover{background:var(--paper-2)}
+.bx-item:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.bx-item.static{cursor:default}
+.bx-item.static:hover{background:none}
+.bx-ic{flex:none;width:28px;height:28px;border-radius:8px;background:var(--paper-2);color:var(--ink-3);display:grid;place-items:center;margin-top:1px}
+.bx-item.new .bx-ic{background:var(--accent-soft);color:var(--accent-ink)}
+.bx-tx{flex:1;min-width:0}
+.bx-t{display:block;font-size:13px;line-height:1.42;color:var(--ink-2);text-wrap:pretty;overflow-wrap:anywhere}
+.bx-item.new .bx-t{color:var(--ink);font-weight:550}
+.bx-m{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px;font-variant-numeric:tabular-nums}
+.bx-u{flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-top:8px}
+.bx-empty{text-align:center;padding:34px 18px 30px;color:var(--ink-3);font-size:12.5px;line-height:1.55}
+.bx-empty .ic{width:40px;height:40px;border-radius:50%;background:var(--paper-2);display:grid;place-items:center;margin:0 auto 12px;color:var(--ink-3)}
+.bx-empty b{display:block;color:var(--ink);font-size:13.5px;font-weight:600;margin-bottom:4px}
+.bx-set{padding:6px 18px 16px}
+.bx-set p{margin:0 0 12px;font-size:12px;color:var(--ink-3);line-height:1.5}
+.bx-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--hair);cursor:pointer}
+.bx-row:first-of-type{border-top:0}
+.bx-row .l{flex:1;min-width:0}
+.bx-row .l b{display:block;font-size:13px;font-weight:500;color:var(--ink)}
+.bx-row .l span{font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.bx-sw{position:relative;flex:none;width:34px;height:20px;border-radius:999px;border:0;background:var(--hair-2);cursor:pointer;
+  transition:background .16s;padding:0}
+.bx-sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 2px oklch(0% 0 0 / .25);transition:transform .18s cubic-bezier(.2,0,0,1)}
+.bx-sw[aria-checked="true"]{background:var(--ink)}
+.bx-sw[aria-checked="true"]::after{transform:translateX(14px);background:var(--paper)}
+.bx-sw:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.bx-toast .t{display:flex;gap:10px;align-items:flex-start}
+.bx-toast .t .bx-ic{background:var(--accent-soft);color:var(--accent-ink)}
+.bx-toast .t .m{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px}
+@media(max-width:960px){.bx-pop{width:auto}.bx-btn{width:44px;height:44px}.bx-item{min-height:44px}}
+@media(prefers-reduced-motion:reduce){.bx-sw::after,.bx-sw{transition:none}}
+`;
+const IcBx={
+  bell:p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M6.5 16.5V11a5.5 5.5 0 1111 0v5.5l1.5 2h-14z"/><path d="M10 20.5a2.1 2.1 0 004 0"/></svg>,
+  case:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3.5 7.5A1.5 1.5 0 015 6h4.2l1.8 2H19a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5z"/></svg>,
+  people:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0111 0"/><path d="M16 6.2a3 3 0 010 5.6M17.5 14.2A5.5 5.5 0 0120.5 19"/></svg>,
+  report:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 3.5h7l4.5 4.5v11A1.5 1.5 0 0117 20.5H7A1.5 1.5 0 015.5 19V5A1.5 1.5 0 017 3.5z"/><path d="M13.5 3.5V8.5h5M9 13h6M9 16.5h4"/></svg>,
+  gear:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="2.6"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
+};
+const BX_HINT={items:"Новые жалобы, документы и отчёты в общих делах",
+  access:"Добавление в дело, смена прав, передача дела, отчёт от коллеги",
+  inbox:"Ответ команды AuditLens или новый статус обращения"};
+const bxIcon=(k)=>k==="report_shared"?IcBx.report:k==="ticket"?IcSay.row
+  :(k==="case_added"||k==="case_role"||k==="case_removed"||k==="case_left"||k==="case_owner")?IcBx.people:IcBx.case;
+// «только что · 5 мин · 2 ч · вчера · 3 окт» — свежесть важнее точного времени
+const bxAgo=(iso)=>{ try{ const d=new Date(iso), s=(Date.now()-d.getTime())/1000;
+  if(s<60) return "только что"; if(s<3600) return Math.floor(s/60)+" мин назад";
+  const today=new Date(); if(d.toDateString()===today.toDateString()) return Math.floor(s/3600)+" ч назад";
+  const y=new Date(today); y.setDate(y.getDate()-1); if(d.toDateString()===y.toDateString()) return "вчера";
+  return d.toLocaleDateString("ru",{day:"numeric",month:"short"}).replace(".",""); }catch{ return ""; } };
+const bxWho=(it)=>it.actor_name?(it.kind==="ticket"?it.actor_name:puShort(it.actor_name)):"";
+
+function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs}){
+  const[d,setD]=useState(null);
+  const[err,setErr]=useState(false);
+  const[view,setView]=useState("list");     // list | settings
+  const ref=useRef(null);
+  const load=useCallback(()=>apiFetch("/api/bell").then(x=>{ setD(x); setErr(false); }).catch(()=>setErr(true)),[]);
+  useEffect(()=>{ load(); },[load]);
+  useEffect(()=>{ const t=setTimeout(()=>{ try{ ref.current&&ref.current.focus(); }catch{} },30);
+    const onDown=(e)=>{ if(ref.current&&!ref.current.contains(e.target)&&!(anchor&&anchor.current&&anchor.current.contains(e.target))) onClose(); };
+    const onKey=(e)=>{ if(e.key==="Escape"){ e.stopPropagation(); onClose(); } };
+    document.addEventListener("mousedown",onDown); document.addEventListener("keydown",onKey);
+    return ()=>{ clearTimeout(t); document.removeEventListener("mousedown",onDown); document.removeEventListener("keydown",onKey); };
+  },[]); // eslint-disable-line
+  const items=(d&&d.items)||[];
+  const fresh=items.filter(i=>!i.read_at), old=items.filter(i=>i.read_at);
+  const stamp=(pred)=>setD(x=>x&&({...x,items:x.items.map(i=>!i.read_at&&pred(i)?{...i,read_at:new Date().toISOString()}:i)}));
+  const readAll=()=>{ stamp(()=>true); sayPost("/api/bell/read",{all:true}).then(onCount).catch(()=>{}); };
+  const open=(it)=>{ if(!it.read_at){ stamp(i=>i.id===it.id); sayPost("/api/bell/read",{ids:[it.id]}).then(onCount).catch(()=>{}); }
+    if(it.link) onGo(it); };
+  const groups=(d&&d.groups)||[];
+  const toggle=(key)=>{ const next=groups.map(g=>g.key===key?{...g,on:!g.on}:g);
+    setD(x=>({...x,groups:next}));
+    const off=next.filter(g=>!g.on).map(g=>g.key);
+    apiPut("/api/me",{prefs:{notify_off:off}}).then(()=>onPrefs&&onPrefs(off)).catch(()=>load()); };
+  const row=(it)=>{ const I=bxIcon(it.kind), isNew=!it.read_at, who=bxWho(it);
+    return <button key={it.id} type="button" className={"bx-item"+(isNew?" new":"")+(it.link?"":" static")}
+      onClick={()=>open(it)} aria-label={(isNew?"Новое: ":"")+it.title}>
+      <span className="bx-ic"><I/></span>
+      <span className="bx-tx"><span className="bx-t">{it.title}</span>
+        <span className="bx-m">{[who,bxAgo(it.updated_at)].filter(Boolean).join(" · ")}</span></span>
+      {isNew&&<span className="bx-u" aria-hidden="true"/>}
+    </button>; };
+  return <div ref={ref} className="tk-pop bx-pop" role="dialog" aria-label="Уведомления" tabIndex={-1}>
+    <div className="tk-head">
+      {view==="settings"
+        ?<><button className="bx-ib" onClick={()=>setView("list")} aria-label="Назад к уведомлениям"><RvIChevL s={14}/></button>
+          <span className="tk-ttl">Что присылать</span></>
+        :<span className="tk-ttl">Уведомления{fresh.length>0&&<span className="bx-n">{fresh.length} {plural(fresh.length,"новое","новых","новых")}</span>}</span>}
+      {view==="list"&&fresh.length>0&&<button className="bx-all" onClick={readAll}>Прочитать все</button>}
+      {view==="list"&&<button className="bx-ib" onClick={()=>setView("settings")} aria-label="Настройки уведомлений" data-tip="что присылать"><IcBx.gear/></button>}
+      <button className="bx-ib" onClick={onClose} aria-label="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    {view==="settings"
+      ?<div className="bx-set"><p>Выключенное перестанет приходить сюда. Уже пришедшее останется в списке.</p>
+        {groups.map(g=><label key={g.key} className="bx-row">
+          <span className="l"><b>{g.label}</b><span>{BX_HINT[g.key]||""}</span></span>
+          <button type="button" role="switch" aria-checked={g.on} className="bx-sw" aria-label={g.label}
+            onClick={e=>{ e.preventDefault(); toggle(g.key); }}/>
+        </label>)}</div>
+      :<div className="bx-body">
+        {err&&!d?<div className="bx-empty">Список не загрузился. <button className="bx-all" onClick={load}>Повторить</button></div>
+        :!d?<div style={{padding:"10px"}}><Skel h={46}/><div style={{height:8}}/><Skel h={46}/></div>
+        :!items.length?<div className="bx-empty"><div className="ic"><IcBx.bell/></div><b>Пока тихо</b>
+          Сюда придёт, когда вас добавят в дело, коллега приобщит материалы, с вами поделятся отчётом или команда ответит на обращение.</div>
+        :<>{fresh.length>0&&<><div className="bx-grp">Новые</div>{fresh.map(row)}</>}
+          {old.length>0&&<><div className="bx-grp">Ранее</div>{old.map(row)}</>}</>}
+      </div>}
   </div>;
 }
 
@@ -11233,22 +11399,38 @@ function Shell(){
   _openCases=(id)=>{ setNavOpen(false); setCasesHub({caseId:id||null}); };
   _casesHubOpen=!!casesHub;
   const closeCases=()=>{ setCasesHub(null); loadCasesN(); try{ window.dispatchEvent(new Event("al-cases")); }catch{} };
-  // «Обратная связь»: окно, непрочитанные ответы команды, разовая заметка о новом ответе
+  // «Обратная связь»: окно и точка у строки меню, если команда ответила
   const[sayOpen,setSayOpen]=useState(null);           // null | "new" | "mine"
   const[sayInfo,setSayInfo]=useState({unread:0,last_at:null});
-  const[sayToast,setSayToast]=useState(false);
+  const[sayFocus,setSayFocus]=useState(null);         // обращение, открытое из колокольчика
   const sayRowRef=useRef(null);
-  const loadSay=useCallback(()=>apiFetch("/api/inbox/unread").then(d=>{ setSayInfo(d||{unread:0});
-    let seen=""; try{ seen=localStorage.getItem(SAY_TOAST)||""; }catch{}
-    if(d&&d.unread>0&&d.last_at&&d.last_at>seen) setSayToast(d.last_at); }).catch(()=>{}),[]);
-  useEffect(()=>{ loadSay();
-    const t=setInterval(()=>{ if(!document.hidden) loadSay(); },5*60*1000);
-    const onVis=()=>{ if(!document.hidden) loadSay(); };
+  // Колокольчик у карточки пользователя: один опрос на всё — точка, самое
+  // свежее для разовой заметки и ответы на обращения (точка «Обратной связи»)
+  const[bell,setBell]=useState({unread:0,last:null});
+  const[bellOpen,setBellOpen]=useState(false);
+  const[bellToast,setBellToast]=useState(null);
+  const bellRef=useRef(null);
+  const bellOpenRef=useRef(false); bellOpenRef.current=bellOpen;
+  const loadBell=useCallback(()=>apiFetch("/api/bell/unread").then(d=>{ if(!d) return;
+    setBell({unread:d.unread||0,last:d.last||null}); setSayInfo(d.inbox||{unread:0});
+    let seen=0; try{ seen=+(localStorage.getItem(BELL_SEEN)||0); }catch{}
+    if(d.last&&d.last.id>seen&&!bellOpenRef.current) setBellToast(d.last); }).catch(()=>{}),[]);
+  useEffect(()=>{ loadBell();
+    const t=setInterval(()=>{ if(!document.hidden) loadBell(); },2*60*1000);
+    const onVis=()=>{ if(!document.hidden) loadBell(); };
     document.addEventListener("visibilitychange",onVis);
     return ()=>{ clearInterval(t); document.removeEventListener("visibilitychange",onVis); };
-  },[loadSay]);
-  const sayToastDone=()=>{ try{ localStorage.setItem(SAY_TOAST,sayToast||new Date().toISOString()); }catch{} setSayToast(false); };
-  const openSay=(tab)=>{ setNavOpen(false); setSayOpen(o=>o?null:(tab||(sayInfo.unread?"mine":"new"))); if(sayToast) sayToastDone(); };
+  },[loadBell]);
+  const loadSay=loadBell;
+  const bellSeen=(id)=>{ try{ if(id) localStorage.setItem(BELL_SEEN,String(Math.max(id,+(localStorage.getItem(BELL_SEEN)||0)))); }catch{} setBellToast(null); };
+  const toggleBell=()=>{ setNavOpen(false); setSayOpen(null); setBellOpen(o=>!o); if(bell.last) bellSeen(bell.last.id); };
+  const closeBell=()=>{ setBellOpen(false); loadBell(); setTimeout(()=>{ try{ bellRef.current&&bellRef.current.focus(); }catch{} },0); };
+  const goBell=(it)=>{ setBellOpen(false); setBellToast(null); setNavOpen(false); loadBell();
+    const[k,id]=String(it.link||"").split(":");
+    if(k==="case") openCases(+id);
+    else if(k==="report"){ _pendingReport=+id; setPage("ai"); try{ window.dispatchEvent(new Event("al-open-report")); }catch{} }
+    else if(k==="inbox"){ setSayFocus(+id); setSayOpen("mine"); } };
+  const openSay=(tab)=>{ setNavOpen(false); setBellOpen(false); setSayFocus(null); setSayOpen(o=>o?null:(tab||(sayInfo.unread?"mine":"new"))); };
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
   const appInfo=useAppInfo();
@@ -11537,27 +11719,43 @@ function Shell(){
             <IcSay.row/><span>Обратная связь</span>{sayInfo.unread>0&&<span className="tk-dot" aria-label="есть ответ"/>}
           </button>
           <div className="tk-div"/>
-          <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title="Профиль и персонализация"
-                  onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}
-                  style={{width:"100%",textAlign:"left",transition:"background .14s"}}>
-            <div className="avatar">{me?initials(me.name):"А"}</div>
-            <div>
-              <div className="nm">{me?.name||"Аудитор"}</div>
-              <div className="role">Внутренний аудит</div>
-            </div>
-          </button>
+          <style>{BX_CSS}</style>
+          <div className="bx-me">
+            <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title={(me&&me.name?me.name+" — ":"")+"профиль и персонализация"}
+                    onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}
+                    style={{textAlign:"left",transition:"background .14s"}}>
+              <div className="avatar">{me?initials(me.name):"А"}</div>
+              <div style={{minWidth:0}}>
+                <div className="nm">{me?.name||"Аудитор"}</div>
+                <div className="role">Внутренний аудит</div>
+              </div>
+            </button>
+            <button ref={bellRef} type="button" className={"bx-btn"+(bellOpen?" on":"")+(bell.unread?" has":"")}
+              aria-haspopup="dialog" aria-expanded={bellOpen} onClick={toggleBell}
+              aria-label={bell.unread?`Уведомления: ${bell.unread} ${plural(bell.unread,"новое","новых","новых")}`:"Уведомления"}
+              data-tip={bell.unread?`${bell.unread} ${plural(bell.unread,"новое","новых","новых")} — дела, отчёты, ответы команды`:"Уведомления: дела, отчёты, ответы команды"}>
+              <IcBx.bell/>{bell.unread>0&&<span className="bx-dot" aria-hidden="true"/>}
+            </button>
+          </div>
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
       {casesHub&&<KbCases key={casesHub.caseId||"list"} initialCase={casesHub.caseId} onClose={closeCases}
         onOpenDoc={id=>{ closeCases(); location.hash=`#knowledge?doc=${id}`; }}/>}
-      {sayOpen&&ReactDOM.createPortal(<SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef}
-        onClose={()=>{ setSayOpen(null); loadSay(); setTimeout(()=>{ try{ sayRowRef.current&&sayRowRef.current.focus(); }catch{} },0); }}
+      {sayOpen&&ReactDOM.createPortal(<SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef} focus={sayFocus}
+        onClose={()=>{ setSayOpen(null); setSayFocus(null); loadSay(); setTimeout(()=>{ try{ sayRowRef.current&&sayRowRef.current.focus(); }catch{} },0); }}
         onUnread={loadSay}/>,document.body)}
-      {sayToast&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast" role="status">
-        <div className="t"><b>Команда AuditLens ответила</b> на ваше обращение.</div>
-        <div className="b"><button className="btn btn-primary btn-sm" onClick={()=>{ sayToastDone(); setSayOpen("mine"); }}>Открыть</button>
-          <button className="btn btn-sm" onClick={sayToastDone}>Позже</button></div></div>}
+      {bellOpen&&ReactDOM.createPortal(<BellPanel anchor={bellRef} me={me} onClose={closeBell} onGo={goBell} onCount={loadBell}
+        onPrefs={off=>setMe(m=>m?{...m,prefs:{...(m.prefs||{}),notify_off:off}}:m)}/>,document.body)}
+      {/* разовая заметка о новом уведомлении — у колокольчика, один раз на событие */}
+      {bellToast&&!bellOpen&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast bx-toast" role="status">
+        <div className="t"><span className="bx-ic">{React.createElement(bxIcon(bellToast.kind))}</span>
+          <span><b>{bellToast.title}</b><span className="m">{[bxWho(bellToast),
+            bell.unread>1?`ещё ${bell.unread-1} — в колокольчике у вашего имени`:""].filter(Boolean).join(" · ")}</span></span></div>
+        <div className="b">
+          {bellToast.link&&<button className="btn btn-primary btn-sm" onClick={()=>{ const t=bellToast; bellSeen(t.id);
+            sayPost("/api/bell/read",{ids:[t.id]}).then(loadBell).catch(()=>{}); goBell(t); }}>Открыть</button>}
+          <button className="btn btn-sm" onClick={()=>bellSeen(bellToast.id)}>{bellToast.link?"Позже":"Понятно"}</button></div></div>}
       {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
       {!renameSeen&&renamedFresh()&&<div className="ren-toast" role="status">
         <div className="t"><b>Меню обновлено.</b>{" "}
@@ -11571,7 +11769,8 @@ function Shell(){
       <div className="main">
         <div className="topbar">
           <div className="mobile-nav">
-            <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
+            <button className="icon-btn" aria-label={bell.unread?"меню — есть уведомления":"меню"} onClick={()=>setNavOpen(true)}><Ic.menu/>
+              {(bell.unread>0||sayInfo.unread>0)&&<span className="bx-dot" aria-hidden="true"/>}</button>
           </div>
           <div className="crumb">
             {idx && <><span className="crumb-idx">{idx} / {navOrder.length}</span>

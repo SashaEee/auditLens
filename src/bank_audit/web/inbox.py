@@ -338,7 +338,8 @@ def admin_update(ticket_id: int, admin: str, status: str | None = None,
                         {"t": ticket_id}).first()
         if not row:
             return None
-        if status and status in STATUSES and status != row[0]:
+        changed = bool(status and status in STATUSES and status != row[0])
+        if changed:
             s.execute(text("UPDATE user_ticket SET status = :s, confirmed = NULL WHERE ticket_id = :t"),
                       {"t": ticket_id, "s": status})
             s.execute(text("""INSERT INTO user_ticket_msg (ticket_id, author, role, body)
@@ -350,7 +351,10 @@ def admin_update(ticket_id: int, admin: str, status: str | None = None,
                       {"t": ticket_id, "a": admin, "b": reply.strip()[:MAX_MSG]})
         s.execute(text("""UPDATE user_ticket SET updated_at = now(), team_seen_at = now()
                           WHERE ticket_id = :t"""), {"t": ticket_id})
-    return admin_get(ticket_id, mark_seen_=False)
+    t = admin_get(ticket_id, mark_seen_=False)
+    if t is not None:
+        t["status_changed"] = changed
+    return t
 
 
 def brief() -> dict:

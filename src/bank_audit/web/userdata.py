@@ -320,6 +320,11 @@ def share_report(report_id: int, owner: str, shared_with: str | None) -> int | N
                        {"r": report_id, "o": owner, "w": shared_with}))
 
 
+def report_title(report_id: int) -> str:
+    return _scalar("SELECT COALESCE(NULLIF(title, ''), question) FROM report WHERE report_id = :r",
+                   {"r": report_id}) or "отчёт"
+
+
 def list_shared_with_me(username: str) -> list[dict]:
     return _rows("""
         SELECT DISTINCT ON (r.report_id)
@@ -1041,6 +1046,18 @@ def _display_name(username: str | None) -> str | None:
                    {"u": username}) or username
 
 
+def case_people(case_id: int) -> dict | None:
+    """Название, владелец и участники дела (и удалённого) — кому слать
+    уведомление. Без проверки доступа: зовётся после действия, которое её прошло."""
+    c = _one("SELECT title, username AS owner FROM audit_case WHERE case_id = :c", {"c": case_id})
+    if not c:
+        return None
+    c["members"] = [r["username"] for r in _rows(
+        "SELECT username FROM audit_case_member WHERE case_id = :c", {"c": case_id})]
+    c["everyone"] = [c["owner"], *c["members"]]
+    return c
+
+
 def case_members(case_id: int, username: str) -> list[dict] | None:
     """Владелец и участники с ролями. None — нет доступа к делу."""
     if not _may_read_case(case_id, username):
@@ -1170,15 +1187,21 @@ def add_case_items(case_id: int, username: str, items: list[dict]) -> int | None
             for it in items[:500] if it.get("url") or it.get("ref_id")]
     if not rows:
         return 0
+    # сколько добавилось на деле: повторы пропускаются, а уведомление коллегам
+    # «3 новых материала» должно считать только новые
+    cnt = "SELECT count(*) FROM audit_case_item WHERE case_id = :c"
     with db.session() as s:
+        before = s.execute(text(cnt), {"c": case_id}).scalar_one()
         s.execute(text("""
             INSERT INTO audit_case_item (case_id, kind, ref_id, url, title, note, added_by)
             VALUES (:c, :k, :r, :u, :t, :n, :by)
             ON CONFLICT DO NOTHING
         """), rows)
-        s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
-                  {"c": case_id})
-    return len(rows)
+        added = s.execute(text(cnt), {"c": case_id}).scalar_one() - before
+        if added:
+            s.execute(text("UPDATE audit_case SET updated_at = now() WHERE case_id = :c"),
+                      {"c": case_id})
+    return int(added)
 
 
 def remove_case_item(case_id: int, item_id: int, username: str) -> bool:
