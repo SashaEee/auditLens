@@ -34,7 +34,12 @@ PAPER, SURFACE, SOFT = "#F3F2EE", "#FFFFFF", "#F5F4F1"
 HAIR = "#E3E1DE"
 BRAND = LINK = "#1F4DFF"            # синий штрих знака
 MENTION_BG = "#EAEFFF"
-FONT = "'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif"
+# Шрифт: Segoe UI первым — Outlook на Windows берёт только первый в списке; system-ui —
+# системный на iPhone/Mac/Android. Без -apple-system и без кавычек: мобильный клиент
+# корпоративной почты, встретив -apple-system, выбрасывает font-family целиком и рисует
+# письмо с засечками (проверено тестовым письмом 03.10: строки с ним — с засечками,
+# остальные варианты — без).
+FONT = "Segoe UI, system-ui, Roboto, Helvetica Neue, Arial, sans-serif"
 
 # Точка у рубрики — семья события: обсуждение, доступ, само дело, отчёт, обращение
 TALK, ACCESS, CASE_C, REPORT, TICKET = BRAND, "#683EB6", "#374960", "#036EAE", "#9D6400"
@@ -466,7 +471,7 @@ def layout(*, preheader: str, title: str, body: str, reason: str, note: str = NO
 <meta name="format-detection" content="telephone=no,date=no,address=no,email=no">
 <title>{_e(title)}</title>
 <!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->
-<!--[if mso]><style>table,td,div,p,a,span,h1,b{{font-family:'Segoe UI',Arial,sans-serif !important}}</style><![endif]-->
+<!--[if mso]><style>table,td,div,p,a,span,h1,b{{font-family:"Segoe UI",Arial,sans-serif !important}}</style><![endif]-->
 <style>
   :root{{color-scheme:light only;supported-color-schemes:light only}}
   body{{margin:0;padding:0;background:{PAPER};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}}

@@ -31,6 +31,18 @@ def test_every_template_renders_both_parts_without_external_images(tpl):
     assert "Настроить уведомления" in m["html"] and "#open?bell=settings" in m["html"]
 
 
+@pytest.mark.parametrize("tpl", list(T.TEMPLATES))
+def test_font_stack_survives_strict_mail_clients(tpl):
+    """С -apple-system корпоративный мобильный клиент выбрасывал font-family целиком —
+    письмо выходило с засечками. Ни его, ни одинарных кавычек в шрифтах быть не должно."""
+    html_ = T.render(tpl, now=NOW)["html"]
+    stacks = set(re.findall(r"font-family:([^;\"]+)", html_))
+    assert stacks == {T.FONT}
+    assert "-apple-system" not in html_ and "BlinkMacSystemFont" not in html_
+    assert "'" not in T.FONT and not any(f.strip().startswith("-") for f in T.FONT.split(","))
+    assert T.FONT.startswith("Segoe UI,")                    # Outlook на Windows берёт первый
+
+
 def test_links_go_straight_to_the_object(monkeypatch):
     monkeypatch.setenv("APP_BASE_URL", "https://al.example/")
     assert T.link_for({"link": "case:12"}) == "https://al.example/#open?case=12"
