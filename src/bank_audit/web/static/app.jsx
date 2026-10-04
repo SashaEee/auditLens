@@ -2479,6 +2479,63 @@ function OvTariffs({tm}){
   </section>;
 }
 
+// «С прошлого визита» (волна 5 аудита 03.10, удержание активных): каждый
+// визит заканчивается находкой. Общий слой — из выпуска (работает у всех),
+// личный — подписки на сигналы и колокольчик. Через 14+ дней отсутствия —
+// «Пока вас не было» и необязательный вопрос, что помешало.
+function SinceStrip(){
+  const[d,setD]=useState(null);
+  const[open,setOpen]=useState(false);
+  const[why,setWhy]=useState("");
+  const[sent,setSent]=useState(false);
+  useEffect(()=>{apiFetch("/api/me/since").then(setD).catch(()=>{});},[]);
+  if(!d||d.first_visit)return null;
+  const N=(n,a,b,c)=>`${fmtNum(n)} ${plural(n,a,b,c)}`;
+  const it=[];
+  const iss=d.issues||{}, nw=d.news||{}, sg=d.signals||{}, tf=d.tariffs||{};
+  if(iss.n>=2)it.push({k:"iss",t:`${N(iss.n,"выпуск","выпуска","выпусков")}`,s:iss.latest?`свежий: «${iss.latest}»`:null});
+  if(sg.n)it.push({k:"sig",t:`${N(sg.n,"новый всплеск","новых всплеска","новых всплесков")} жалоб на Сбер`+(sg.mine?` · ${sg.mine} по вашим подпискам`:""),
+    list:(sg.top||[]).map(x=>({t:`${x.bank}${x.product?" · "+x.product:""} — ${x.label}${x.ratio?` ×${rvNum(x.ratio)}`:""}`,
+      href:fyRv({bank:x.bank,product:x.product||"",theme:x.issue}),mine:x.mine}))});
+  if(nw.n)it.push({k:"news",t:`${N(nw.n,"важная новость","важные новости","важных новостей")}`,
+    list:(nw.top||[]).map(x=>({t:x.title,href:x.url,ext:true}))});
+  if(tf.market)it.push({k:"tf",t:(tf.sber?`Сбер изменил ${N(tf.sber,"условие","условия","условий")} · `:"")+`на рынке ${N(tf.market,"изменение","изменения","изменений")} условий`,
+    href:"#market?view=changes"+(tf.sber?"&bank=sberbank":"")});
+  if(d.bell)it.push({k:"bell",t:`${N(d.bell,"непрочитанное событие","непрочитанных события","непрочитанных событий")} в делах и отчётах — в колокольчике`});
+  const away=d.gap_days>=14;
+  if(!it.length&&!away)return null;
+  const when=new Date(d.prev).toLocaleString("ru-RU",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"});
+  const head=away?`Пока вас не было ${N(d.gap_days,"день","дня","дней")}`:`С прошлого визита (${when})`;
+  const sendWhy=async()=>{ if(!why.trim())return;
+    try{await apiPost("/api/inbox",{kind:"other",section:"absence",section_label:"Пока вас не было",
+      body:why.trim(),context:{gap_days:d.gap_days}}); setSent(true);}catch{} };
+  return <section className={"ov-upd"+(open?" open":"")} aria-label="С прошлого визита">
+    <button type="button" className="ov-upd-bar" aria-expanded={open} onClick={()=>setOpen(v=>!v)}>
+      <span className="ov-upd-dot" aria-hidden="true"/>
+      <span className="ov-upd-h"><b>{head}</b>{it.length?" · "+it.map(x=>x.t).join(" · "):""}</span>
+      <span className="ov-upd-tg">{open?"Свернуть":"Показать"}</span>
+    </button>
+    {open&&<ul className="ov-upd-list">
+      {it.map(x=><li key={x.k} className="ov-upd-it">
+        {x.href?<a href={x.href}>{x.t}</a>:<span>{x.t}</span>}
+        {x.s&&<div className="t-cap">{x.s}</div>}
+        {(x.list||[]).map((y,i)=><div key={i} className="t-cap">
+          {y.mine?"★ ":""}<a href={y.href} target={y.ext?"_blank":undefined} rel={y.ext?"noopener noreferrer":undefined}>{y.t}</a></div>)}
+      </li>)}
+      {!sg.has_subs&&<li className="ov-upd-it t-cap">Подсказка: в «Аудите отзывов» выберите продукт Сбера из вашей зоны проверки и нажмите «Следить» — всплески по нему будут здесь первыми и придут в колокольчик.</li>}
+      {away&&<li className="ov-upd-it">
+        {sent?<span className="t-cap">Спасибо, передали команде.</span>:<>
+          <div className="t-cap">Что помешало заходить? Необязательно, ответ увидит только команда AuditLens.</div>
+          <div style={{display:"flex",gap:6,marginTop:4}}>
+            <input className="input" value={why} onChange={e=>setWhy(e.target.value)} maxLength={500}
+                   placeholder="например: не нашёл данных по своему банку" style={{flex:1}}/>
+            <button type="button" className="btn btn-sm" disabled={!why.trim()} onClick={sendWhy}>Отправить</button>
+          </div></>}
+      </li>}
+    </ul>}
+  </section>;
+}
+
 function OverviewPage(){
   const[dg,setDg]=useState(null);
   const[summary,setSummary]=useState(null);
@@ -2714,6 +2771,9 @@ function OverviewPage(){
             <OvWarnIc/><span><b>ИИ недоступен.</b> Заголовок и поводы собраны по правилам, без редакции модели.</span></div>}
         </>}
     </header>
+
+    {/* С прошлого визита: выпуски, новости, всплески, тарифы, дела (волна 5) */}
+    <SinceStrip/>
 
     {/* Дневное дополнение: что нового с утра. Утренний выпуск не меняется.
         Свёрнуто в одну строку: раньше блок в ~200 px стоял между заголовком
@@ -5276,7 +5336,7 @@ function ReviewsPage({params}){
       <div className="rv-hact">
         {sub!==null&&<button className={"rv-bell"+(sub?" on":"")} onClick={toggleSub} aria-label={sub?"Слежу за сигналами":"Следить за сигналами"}
           data-tip={sub?"Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться"
-                    :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — всплески будут в «Для вас»`}>
+                    :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
           <span className="rv-hact-l">{sub?"Слежу":"Следить"}</span></button>}
         <button className="rv-bell" onClick={()=>openCases()} aria-label="Аудит-дела"

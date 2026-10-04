@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 5df3e101005cad85a5a9d39ae8b8597c6d58c42ab77deb9349246de8833cf93a): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 0de8bd7fb10b1f458168c1a13da032f54829d324b4a66ea5f16189dce325734e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -4888,6 +4888,149 @@ function OvTariffs({
     className: "ovt-empty"
   }, "\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 \u0441\u0442\u0430\u0432\u043E\u043A \u0437\u0430 \u043D\u0435\u0434\u0435\u043B\u044E \u043D\u0435 \u0437\u0430\u0444\u0438\u043A\u0441\u0438\u0440\u043E\u0432\u0430\u043D\u043E \xB7 \u043F\u043E\u0434 \u043D\u0430\u0431\u043B\u044E\u0434\u0435\u043D\u0438\u0435\u043C ", fmtNum(tot.banks_tracked || 0), " ", plural(tot.banks_tracked || 0, "банк", "банка", "банков"), tot.last_ok_run && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0441\u0431\u043E\u0440 ", fmtDateMsk(tot.last_ok_run)))));
 }
+
+// «С прошлого визита» (волна 5 аудита 03.10, удержание активных): каждый
+// визит заканчивается находкой. Общий слой — из выпуска (работает у всех),
+// личный — подписки на сигналы и колокольчик. Через 14+ дней отсутствия —
+// «Пока вас не было» и необязательный вопрос, что помешало.
+function SinceStrip() {
+  const [d, setD] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [why, setWhy] = useState("");
+  const [sent, setSent] = useState(false);
+  useEffect(() => {
+    apiFetch("/api/me/since").then(setD).catch(() => {});
+  }, []);
+  if (!d || d.first_visit) return null;
+  const N = (n, a, b, c) => `${fmtNum(n)} ${plural(n, a, b, c)}`;
+  const it = [];
+  const iss = d.issues || {},
+    nw = d.news || {},
+    sg = d.signals || {},
+    tf = d.tariffs || {};
+  if (iss.n >= 2) it.push({
+    k: "iss",
+    t: `${N(iss.n, "выпуск", "выпуска", "выпусков")}`,
+    s: iss.latest ? `свежий: «${iss.latest}»` : null
+  });
+  if (sg.n) it.push({
+    k: "sig",
+    t: `${N(sg.n, "новый всплеск", "новых всплеска", "новых всплесков")} жалоб на Сбер` + (sg.mine ? ` · ${sg.mine} по вашим подпискам` : ""),
+    list: (sg.top || []).map(x => ({
+      t: `${x.bank}${x.product ? " · " + x.product : ""} — ${x.label}${x.ratio ? ` ×${rvNum(x.ratio)}` : ""}`,
+      href: fyRv({
+        bank: x.bank,
+        product: x.product || "",
+        theme: x.issue
+      }),
+      mine: x.mine
+    }))
+  });
+  if (nw.n) it.push({
+    k: "news",
+    t: `${N(nw.n, "важная новость", "важные новости", "важных новостей")}`,
+    list: (nw.top || []).map(x => ({
+      t: x.title,
+      href: x.url,
+      ext: true
+    }))
+  });
+  if (tf.market) it.push({
+    k: "tf",
+    t: (tf.sber ? `Сбер изменил ${N(tf.sber, "условие", "условия", "условий")} · ` : "") + `на рынке ${N(tf.market, "изменение", "изменения", "изменений")} условий`,
+    href: "#market?view=changes" + (tf.sber ? "&bank=sberbank" : "")
+  });
+  if (d.bell) it.push({
+    k: "bell",
+    t: `${N(d.bell, "непрочитанное событие", "непрочитанных события", "непрочитанных событий")} в делах и отчётах — в колокольчике`
+  });
+  const away = d.gap_days >= 14;
+  if (!it.length && !away) return null;
+  const when = new Date(d.prev).toLocaleString("ru-RU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Moscow"
+  });
+  const head = away ? `Пока вас не было ${N(d.gap_days, "день", "дня", "дней")}` : `С прошлого визита (${when})`;
+  const sendWhy = async () => {
+    if (!why.trim()) return;
+    try {
+      await apiPost("/api/inbox", {
+        kind: "other",
+        section: "absence",
+        section_label: "Пока вас не было",
+        body: why.trim(),
+        context: {
+          gap_days: d.gap_days
+        }
+      });
+      setSent(true);
+    } catch {}
+  };
+  return /*#__PURE__*/React.createElement("section", {
+    className: "ov-upd" + (open ? " open" : ""),
+    "aria-label": "\u0421 \u043F\u0440\u043E\u0448\u043B\u043E\u0433\u043E \u0432\u0438\u0437\u0438\u0442\u0430"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ov-upd-bar",
+    "aria-expanded": open,
+    onClick: () => setOpen(v => !v)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ov-upd-dot",
+    "aria-hidden": "true"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "ov-upd-h"
+  }, /*#__PURE__*/React.createElement("b", null, head), it.length ? " · " + it.map(x => x.t).join(" · ") : ""), /*#__PURE__*/React.createElement("span", {
+    className: "ov-upd-tg"
+  }, open ? "Свернуть" : "Показать")), open && /*#__PURE__*/React.createElement("ul", {
+    className: "ov-upd-list"
+  }, it.map(x => /*#__PURE__*/React.createElement("li", {
+    key: x.k,
+    className: "ov-upd-it"
+  }, x.href ? /*#__PURE__*/React.createElement("a", {
+    href: x.href
+  }, x.t) : /*#__PURE__*/React.createElement("span", null, x.t), x.s && /*#__PURE__*/React.createElement("div", {
+    className: "t-cap"
+  }, x.s), (x.list || []).map((y, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "t-cap"
+  }, y.mine ? "★ " : "", /*#__PURE__*/React.createElement("a", {
+    href: y.href,
+    target: y.ext ? "_blank" : undefined,
+    rel: y.ext ? "noopener noreferrer" : undefined
+  }, y.t))))), !sg.has_subs && /*#__PURE__*/React.createElement("li", {
+    className: "ov-upd-it t-cap"
+  }, "\u041F\u043E\u0434\u0441\u043A\u0430\u0437\u043A\u0430: \u0432 \xAB\u0410\u0443\u0434\u0438\u0442\u0435 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u0432\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043F\u0440\u043E\u0434\u0443\u043A\u0442 \u0421\u0431\u0435\u0440\u0430 \u0438\u0437 \u0432\u0430\u0448\u0435\u0439 \u0437\u043E\u043D\u044B \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0438 \u043D\u0430\u0436\u043C\u0438\u0442\u0435 \xAB\u0421\u043B\u0435\u0434\u0438\u0442\u044C\xBB \u2014 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u043F\u043E \u043D\u0435\u043C\u0443 \u0431\u0443\u0434\u0443\u0442 \u0437\u0434\u0435\u0441\u044C \u043F\u0435\u0440\u0432\u044B\u043C\u0438 \u0438 \u043F\u0440\u0438\u0434\u0443\u0442 \u0432 \u043A\u043E\u043B\u043E\u043A\u043E\u043B\u044C\u0447\u0438\u043A."), away && /*#__PURE__*/React.createElement("li", {
+    className: "ov-upd-it"
+  }, sent ? /*#__PURE__*/React.createElement("span", {
+    className: "t-cap"
+  }, "\u0421\u043F\u0430\u0441\u0438\u0431\u043E, \u043F\u0435\u0440\u0435\u0434\u0430\u043B\u0438 \u043A\u043E\u043C\u0430\u043D\u0434\u0435.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "t-cap"
+  }, "\u0427\u0442\u043E \u043F\u043E\u043C\u0435\u0448\u0430\u043B\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u0442\u044C? \u041D\u0435\u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E, \u043E\u0442\u0432\u0435\u0442 \u0443\u0432\u0438\u0434\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u043A\u043E\u043C\u0430\u043D\u0434\u0430 AuditLens."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      marginTop: 4
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: why,
+    onChange: e => setWhy(e.target.value),
+    maxLength: 500,
+    placeholder: "\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440: \u043D\u0435 \u043D\u0430\u0448\u0451\u043B \u0434\u0430\u043D\u043D\u044B\u0445 \u043F\u043E \u0441\u0432\u043E\u0435\u043C\u0443 \u0431\u0430\u043D\u043A\u0443",
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    disabled: !why.trim(),
+    onClick: sendWhy
+  }, "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C"))))));
+}
 function OverviewPage() {
   const [dg, setDg] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -5217,7 +5360,7 @@ function OverviewPage() {
   }, /*#__PURE__*/React.createElement(OvWarnIc, null), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u0432\u043E\u0434\u043A\u0430 \u0437\u0430 ", dmy(sec.headline.stale_from) || sec.headline.stale_from, "."), " \u0421\u0435\u0433\u043E\u0434\u043D\u044F\u0448\u043D\u0438\u0439 \u0432\u044B\u043F\u0443\u0441\u043A \u043D\u0435 \u0441\u043E\u0431\u0440\u0430\u043B\u0441\u044F \u2014 \u043F\u043E\u043A\u0430\u0437\u0430\u043D \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0443\u0434\u0430\u0447\u043D\u044B\u0439; \u0447\u0438\u0441\u043B\u0430 \u043F\u0443\u043B\u044C\u0441\u0430 \u043D\u0438\u0436\u0435 \u0436\u0438\u0432\u044B\u0435.")), ST("headline") === "degraded" && /*#__PURE__*/React.createElement("div", {
     className: "ov-note warn",
     role: "note"
-  }, /*#__PURE__*/React.createElement(OvWarnIc, null), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0418 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D."), " \u0417\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A \u0438 \u043F\u043E\u0432\u043E\u0434\u044B \u0441\u043E\u0431\u0440\u0430\u043D\u044B \u043F\u043E \u043F\u0440\u0430\u0432\u0438\u043B\u0430\u043C, \u0431\u0435\u0437 \u0440\u0435\u0434\u0430\u043A\u0446\u0438\u0438 \u043C\u043E\u0434\u0435\u043B\u0438.")))), (() => {
+  }, /*#__PURE__*/React.createElement(OvWarnIc, null), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0418 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D."), " \u0417\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A \u0438 \u043F\u043E\u0432\u043E\u0434\u044B \u0441\u043E\u0431\u0440\u0430\u043D\u044B \u043F\u043E \u043F\u0440\u0430\u0432\u0438\u043B\u0430\u043C, \u0431\u0435\u0437 \u0440\u0435\u0434\u0430\u043A\u0446\u0438\u0438 \u043C\u043E\u0434\u0435\u043B\u0438.")))), /*#__PURE__*/React.createElement(SinceStrip, null), (() => {
     const up = (sec.update || {}).payload || {};
     const its = up.items || [],
       sg = up.signals || [];
@@ -10212,7 +10355,7 @@ function ReviewsPage({
     className: "rv-bell" + (sub ? " on" : ""),
     onClick: toggleSub,
     "aria-label": sub ? "Слежу за сигналами" : "Следить за сигналами",
-    "data-tip": sub ? "Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться" : `Следить за сигналами: ${bank}${product ? " · " + product : " · все продукты"} — всплески будут в «Для вас»`
+    "data-tip": sub ? "Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться" : `Следить за сигналами: ${bank}${product ? " · " + product : " · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`
   }, /*#__PURE__*/React.createElement("svg", {
     width: "14",
     height: "14",

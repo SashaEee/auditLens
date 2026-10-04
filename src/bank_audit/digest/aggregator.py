@@ -51,6 +51,8 @@ async def reviews_pulse(day: date) -> dict:
             # журнал сигналов: всплески, попавшие в «Обзор», — эпизодом со снимком
             from ..rag import reviews_work
             reviews_work.record_signals(wk, bank, None, min_interval_s=0)
+            # и по подпискам аудиторов: новый всплеск уйдёт подписчикам в колокольчик
+            reviews_work.record_watched()
         except Exception as e:  # noqa: BLE001 — выпуск не зависит от журнала
             log.warning("журнал сигналов: %s", e)
         th = rd.themes(bank) or {}
