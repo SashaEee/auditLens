@@ -238,6 +238,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "name": row.get("display_name") or user.name,
         "timezone": row.get("timezone") or "Europe/Moscow",
         "prefs": row.get("prefs") or {},
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
         "interests": userdata.top_interests(user.username),
         "recommendations": userdata.recommend_topics(user.username),
         "profile_note": row.get("profile_note"),
@@ -263,7 +264,7 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
             body.prefs["mail_promo"] = "seen"
         if "mail" in body.prefs:                # письма: сразу о личном / утренняя сводка
             m = body.prefs["mail"] if isinstance(body.prefs["mail"], dict) else {}
-            body.prefs["mail"] = {k: bool(m[k]) for k in ("instant", "digest") if k in m}
+            body.prefs["mail"] = {k: bool(m[k]) for k in ("instant", "digest", "brief") if k in m}
         if "notify_off" in body.prefs:          # выключенные группы колокольчика
             from . import notices
             off = body.prefs["notify_off"] if isinstance(body.prefs["notify_off"], list) else []
@@ -474,6 +475,12 @@ _RISK_PHRASES = {
     "market": "тарифы и позиции конкурентов",
     "conduct": "качество продаж и жалобы клиентов",
 }
+# чип онбординга → продукт в разметке жалоб (review_codebook.PRODUCTS)
+_OB_REVIEW_PRODUCT = {"deposit": "Вклад", "ipoteka": "Ипотека", "credit_card": "Кредитная карта",
+                      "debit_card": "Дебетовая карта", "consumer_loan": "Потребительский кредит",
+                      "auto": "Автокредит", "savings": "Накопительный счёт",
+                      "transfers": "Переводы и платежи", "acquiring": "Бизнес: эквайринг",
+                      "rko": "Бизнес: счёт и РКО"}
 _OB_PRODUCTS = {"deposit", "ipoteka", "credit_card", "debit_card", "consumer_loan",
                 "auto", "rko", "savings", "acquiring", "premium", "transfers"}
 
@@ -496,6 +503,15 @@ async def me_onboarding(body: OnboardingIn,
         pinned=list(dict.fromkeys((cur.get("pinned") or []) + prods)),
         custom=list(dict.fromkeys((cur.get("custom") or []) + phrases)))
     userdata.update_prefs(user.username, {"onboarded": True})
+    # выбранные продукты — сразу подписки «Следить» по Сберу: новый всплеск жалоб
+    # по ним придёт в колокольчик и в «С прошлого визита» (волна 5)
+    try:
+        from ..rag import reviews_work
+        for k in prods:
+            if _OB_REVIEW_PRODUCT.get(k):
+                reviews_work.subs_add(user.username, "Сбербанк", _OB_REVIEW_PRODUCT[k])
+    except Exception:  # noqa: BLE001 — подписка не мешает собрать страницу
+        log.warning("onboarding: подписки не созданы", exc_info=True)
     from ..digest import personal
     p = await personal.build_foryou(user.username, force=True)
     return {"ok": True, "foryou": p}

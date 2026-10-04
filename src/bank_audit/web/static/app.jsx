@@ -1441,6 +1441,7 @@ const FB_CSS=`
 .fb-toast.on{opacity:1;transform:translate(-50%,0);}
 .fb-toast .sp{color:var(--accent);}
 .aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.ai-fb-top .aifb{margin:0 0 10px}
 .aifb-l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
@@ -1519,7 +1520,7 @@ function AiFbBar({q,text,sessionId,mode,fbMap,reportId}){
   const send=()=>{post(-1,{reasons:Object.keys(rs).filter(k=>rs[k]),comment:comment.slice(0,300)});
     setSent(true);setOpen(false);fbToast("Спасибо — команда разберёт этот ответ");};
   return <div className="aifb" onClick={e=>e.stopPropagation()}>
-    <span className="aifb-l">Оценить ответ</span>
+    <span className="aifb-l">{mode==="deep"?"Пригодился отчёт?":"Оценить ответ"}</span>
     <button className={"tb"+(v===1?" on":"")} title="Полезный ответ" onClick={like}><IcTUp/></button>
     <button className={"tb"+(v===-1?" on-neg":"")} title="Плохой ответ — команда разберёт" onClick={dislike}><IcTDn/></button>
     {sent&&v===-1&&<span className="aifb-done">отправлено — разберём ✓</span>}
@@ -2483,7 +2484,10 @@ function OvTariffs({tm}){
 // визит заканчивается находкой. Общий слой — из выпуска (работает у всех),
 // личный — подписки на сигналы и колокольчик. Через 14+ дней отсутствия —
 // «Пока вас не было» и необязательный вопрос, что помешало.
+let _bootFrom=null;     // {from:"mail"} — пришёл по ссылке из письма (см. внизу файла)
+
 function SinceStrip(){
+  const me=useMe();
   const[d,setD]=useState(null);
   const[open,setOpen]=useState(false);
   const[why,setWhy]=useState("");
@@ -2522,6 +2526,9 @@ function SinceStrip(){
         {(x.list||[]).map((y,i)=><div key={i} className="t-cap">
           {y.mine?"★ ":""}<a href={y.href} target={y.ext?"_blank":undefined} rel={y.ext?"noopener noreferrer":undefined}>{y.t}</a></div>)}
       </li>)}
+      {me&&!me.has_email&&<li className="ov-upd-it t-cap">Не хотите пропускать?{" "}
+        <button type="button" className="pu-link" onClick={()=>window.dispatchEvent(new CustomEvent("al-open-mail"))}>
+          Подключите почту</button> — если вы не зайдёте до 11:00, пришлём главное за день и всплески по вашим подпискам.</li>}
       {!sg.has_subs&&<li className="ov-upd-it t-cap">Подсказка: в «Аудите отзывов» выберите продукт Сбера из вашей зоны проверки и нажмите «Следить» — всплески по нему будут здесь первыми и придут в колокольчик.</li>}
       {away&&<li className="ov-upd-it">
         {sent?<span className="t-cap">Спасибо, передали команде.</span>:<>
@@ -7530,6 +7537,11 @@ function AIPage(){
                                      reportId={m.report_id} title={m.title}/>}
                   {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
                 </div>
+                {/* «Пригодился?» — вверху, сразу после прогона: в подвале после
+                    PDF и сверки до оценки не доходили, оценок не было с августа */}
+                {!streaming&&m.text&&m.text.length>200&&
+                  <div className="ai-fb-top"><AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep"
+                                                      fbMap={aiFb} reportId={m.report_id}/></div>}
                 <div className="chat-bubble chat-bubble-deep">
                   {/* Сводка завершённого прогона (collapsed bar над отчётом). */}
                   {m.phase==="done" && m.plan && m.plan.length>0 && <ResearchSummary m={m}/>}
@@ -7574,8 +7586,6 @@ function AIPage(){
                             Готовый отчёт для аудита · нумерация страниц, источники, A4
                           </span>
                         </div>}
-                      {!streaming&&m.text&&
-                        <AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep" fbMap={aiFb} reportId={m.report_id}/>}
                     </article>
                     {!hideRail && <DocRailSlot>
                       <SourcesRail sources={m.sources||[]} failed={m.sourcesFailed||0} activeN={activeCite}
@@ -10351,6 +10361,20 @@ function PuRetention({rt,onOpenUser}){
   if(!rt||!rt.segments)return null;
   const sg=rt.segments, pct=(a,b)=>b?Math.round(a*100/b)+"%":"—";
   const who=r=><button className="pu-link" onClick={()=>onOpenUser&&onOpenUser(r.username)}>{r.name}</button>;
+  // Вернуть лично: короткий текст от владельца по рабочему каналу — массово без
+  // согласия не пишем (волна 5). Ссылка с from=winback — видно, кто вернулся.
+  const winback=r=>{
+    const fn=(r.name||"").trim().split(/\s+/)[1]||(r.name||"").trim().split(/\s+/)[0]||"";
+    const txt=`${fn?fn+", добрый день!":"Добрый день!"} Вы заходили в AuditLens ${fmtDateMsk(r.last)}. `
+      +`С тех пор появилось: каждое утро — выпуск с главным по Сберу и рынку, сверху — «С прошлого визита» `
+      +`(что изменилось с вашего захода), а на продукты Сбера из вашей зоны можно подписаться — `
+      +`о новых всплесках жалоб сообщим в колокольчике и на почту. `
+      +`Если что-то мешало пользоваться — ответьте одной строкой, поправим. `
+      +`${location.origin}/?go=overview&from=mail&m=winback`;
+    try{navigator.clipboard.writeText(txt).then(()=>fbToast("Текст скопирован — отправьте его сами"));}catch{}
+  };
+  const wb=r=><button className="pu-link" title="Скопировать короткий личный текст для письма или мессенджера"
+    onClick={()=>winback(r)}>текст для письма</button>;
   const where=r=>AD_PAGE_RU[r.page]||r.page||"—";
   const gone=allGone?rt.churned:(rt.churned||[]).slice(0,8);
   return <div className="pu-card">
@@ -10362,7 +10386,7 @@ function PuRetention({rt,onOpenUser}){
         <div key={t} className="pu-kv" style={{flexDirection:"column",alignItems:"flex-start"}}>
           <b className="tnum" style={{fontSize:22,color:c}}>{v||0}</b><span>{t}<span className="sub">{sub}</span></span></div>)}
     </div>
-    <div className="pu-note">новых за 30 дн: {sg.new||0}</div>
+    <div className="pu-note">новых за 30 дн: {sg.new||0} · пришли по ссылке из письма за 7 дн: {rt.from_mail_7d||0}</div>
 
     {(rt.cohorts||[]).length>0&&<>
       <div className="h" style={{marginTop:12}}><span>Новички по неделям прихода</span><span>вернулись на 2-й · на 4-й неделе</span></div>
@@ -10379,14 +10403,14 @@ function PuRetention({rt,onOpenUser}){
       (rt.at_risk||[]).map(r=><div key={r.username} className="pu-qrow">
         {who(r)}<span className="md">нет {r.gap_days} дн.</span>
         <span className="md">{r.days_60} дн. за 60</span><span className="md">последний раздел — {where(r)}</span>
-        {r.ai?<span className="md">вопросов ИИ: {r.ai}</span>:null}</div>)}
+        {r.ai?<span className="md">вопросов ИИ: {r.ai}</span>:null}{wb(r)}</div>)}
 
     <div className="h" style={{marginTop:12}}><span>Ушли · {rt.churned_total||0}</span>
       <span>были активны 1–3 мес. назад</span></div>
     {gone.map(r=><div key={r.username} className="pu-qrow">
       {who(r)}<span className="md">последний раз {fmtDateMsk(r.last)}</span>
       <span className="md">{r.days_prev} дн. активности</span><span className="md">{where(r)}</span>
-      {r.ai?<span className="md">вопросов ИИ: {r.ai}</span>:null}</div>)}
+      {r.ai?<span className="md">вопросов ИИ: {r.ai}</span>:null}{wb(r)}</div>)}
     {(rt.churned||[]).length>8&&<button className="pu-link" onClick={()=>setAllGone(v=>!v)}>
       {allGone?"свернуть":`показать всех (${rt.churned.length})`}</button>}
   </div>;
@@ -12524,7 +12548,8 @@ const bxAt=(domains)=>domains&&domains[0]?` (@${domains[0]})`:"";
 const bxDel=(path)=>fetch(path,{method:"DELETE"}).then(r=>{ if(r.ok) return r.json();
   throw new Error("Не получилось. Попробуйте ещё раз"); });
 const BX_MAIL_PREFS=[["instant","Сразу — о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
-  ["digest","Утренняя сводка","В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"]];
+  ["digest","Утренняя сводка","В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"],
+  ["brief","Выпуск в 11:00","В рабочие дни, если вы ещё не заходили, — главное за день и новые всплески жалоб по вашим подпискам"]];
 
 function BxMail({me,onPrefs,onEmail,code0}){
   const[st,setSt]=useState(null);
@@ -12752,6 +12777,9 @@ function Shell(){
   const loadSay=loadBell;
   const bellSeen=(id)=>{ try{ if(id) localStorage.setItem(BELL_SEEN,String(Math.max(id,+(localStorage.getItem(BELL_SEEN)||0)))); }catch{} setBellToast(null); };
   const toggleBell=()=>{ setNavOpen(false); setSayOpen(null); setBellOpen(o=>!o); if(bell.last) bellSeen(bell.last.id); };
+  // «Подключите почту» из «С прошлого визита» — сразу в настройки писем
+  useEffect(()=>{ const on=()=>{ setNavOpen(false); setSayOpen(null); setBellView("settings"); setBellOpen(true); };
+    window.addEventListener("al-open-mail",on); return ()=>window.removeEventListener("al-open-mail",on); },[]); // eslint-disable-line
   const closeBell=()=>{ setBellOpen(false); loadBell(); setTimeout(()=>{ try{ bellRef.current&&bellRef.current.focus(); }catch{} },0); };
   const goBell=(it)=>{ setBellOpen(false); setBellToast(null); setNavOpen(false); loadBell();
     const[k,id,sub,msg]=String(it.link||"").split(":");
@@ -12880,7 +12908,8 @@ function Shell(){
       trk({kind:"page_leave",page:prev.page,dur_ms:trkDur(prev,now)});
     trkPage.current={page,t:now,acc:0};
     lastInput.current=now;                    // переход по разделу — тоже ввод
-    trk({kind:"page_view",page});
+    trk({kind:"page_view",page,...(_bootFrom?{payload:_bootFrom}:{})});
+    _bootFrom=null;
     const t=setTimeout(trkFlush,1500);
     return ()=>clearTimeout(t);
   },[page]); // eslint-disable-line
@@ -13113,9 +13142,10 @@ function Shell(){
         <div className="rail-foot">
           {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile" && !mailPromoShow;
             return showOnb ? <div className="onb-callout">
-              <div className="t">✦ <b>Новое:</b> настройте инструмент под себя — опишите, что проверяете, и получайте персональную подачу и сводки.</div>
+              <div className="t">✦ Выберите продукты и риски Сбера, которые вы проверяете, — 30 секунд, и «Для вас», подписки на всплески жалоб и сводки станут вашими.</div>
               <div className="b">
-                <button className="go" onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}>Настроить</button>
+                {/* на чипы «Для вас», а не в свободный текст профиля (аудит 03.10, sh-09) */}
+                <button className="go" onClick={()=>{setOnbSeen(true);setPage("foryou");setNavOpen(false);}}>Выбрать</button>
                 <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
               </div>
             </div> : null; })()}
@@ -13194,7 +13224,8 @@ function Shell(){
           </div>
         </div>; })()}
       {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
-      {!renameSeen&&renamedFresh()&&<div className="ren-toast" role="status">
+      {/* только тем, кто застал старое меню: новичку переименование ни о чём */}
+      {!renameSeen&&renamedFresh()&&me&&me.created_at&&me.created_at<"2026-10-01"&&<div className="ren-toast" role="status">
         <div className="t"><b>Меню обновлено.</b>{" "}
           {NAV.filter(n=>n.was).map(n=>`«${n.was}» → «${n.label}»`).join(", ")}.
           «Рынок · позиция» — переключатель в разделе «Новостные обзоры», справочные
@@ -13276,4 +13307,12 @@ function App(){
   return <ThemeProvider><PageBoundary name="shell" pageKey="shell"><Shell/></PageBoundary></ThemeProvider>;
 }
 
+// Ссылки из писем: цель — в ?go=, а не в #якоре (якорь теряется, если система
+// входа попросит войти заново). from=mail уходит с первым просмотром страницы —
+// «Пульс» видит, кого вернуло письмо (волна 5).
+try{
+  const sp=new URLSearchParams(location.search), go=sp.get("go");
+  if(sp.get("from")==="mail") _bootFrom={from:"mail",m:sp.get("m")||""};
+  if(go||_bootFrom) history.replaceState(null,"",location.pathname+(go?"#"+go.replace(/^#/,""):location.hash));
+}catch{}
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);

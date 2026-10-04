@@ -810,6 +810,71 @@ def render_digest(ns: list[dict], now=None, name: str = "", private: bool = Fals
             "thread": None}
 
 
+def go_url(target: str, src: str = "brief") -> str:
+    """Ссылка из письма: цель — в query (?go=), а не в #якоре: якорь теряется,
+    если по дороге система входа попросит войти заново (аудит 03.10, sh-11).
+    from=mail — чтобы в «Пульсе» видеть, кого вернуло письмо."""
+    from urllib.parse import quote
+    return f"{app_base()}/?go={quote(target, safe='')}&from=mail&m={src}"
+
+
+def render_brief(d: dict, now=None, name: str = "", private: bool = False) -> dict:
+    """Письмо-выпуск (волна 5): повод зайти, а не копия выпуска. Заголовок дня —
+    крючок; всплески — подписью проблемы без цифр; подробности, цифры и
+    источники — в AuditLens. Уходит, только если человек сегодня не заходил.
+    private — на личную почту: без банков, продуктов и тем."""
+    from urllib.parse import urlencode
+    now = now or datetime.now(timezone.utc)
+    day = day_title(now)
+    url = go_url("overview")
+    head = (d.get("headline") or "").strip()
+    sig, n_sig, mine, tf = d.get("signals") or [], int(d.get("n_signals") or 0), \
+        int(d.get("mine") or 0), int(d.get("tariffs") or 0)
+    fn = first_name(name)
+    hello = f"{fn}, доброе утро." if fn else "Доброе утро."
+    subject = (f"AuditLens: {_clip(head, 110)}" if head and not private
+               else f"AuditLens: выпуск за {day}")
+    body = (_eyebrow(f"Выпуск за {day}", BRAND)
+            + _h1(head if head and not private else "Вышел выпуск дня")
+            + _p(f"{_e(hello)} Коротко — что нового сегодня. Цифры, источники и разбор — в AuditLens.",
+                 top=12))
+    lines = [hello, "", head if head and not private else "Вышел выпуск дня", ""]
+    if n_sig:
+        what = (f"{n_sig} {_plural(n_sig, 'новый всплеск', 'новых всплеска', 'новых всплесков')} "
+                f"жалоб на Сбер" + (f", из них {mine} по вашим подпискам" if mine else ""))
+        body += (f'<div style="margin:28px 0 0;{_font(11, 16, INK3, 600, "letter-spacing:.08em;text-transform:uppercase")}">'
+                 f'Жалобы клиентов</div>' + _p(_e(what), top=6))
+        lines.append(what)
+        if not private:
+            for x in sig:
+                q = urlencode({k: v for k, v in (("tab", "complaints"), ("bank", x["bank"]),
+                                                  ("product", x.get("product") or ""),
+                                                  ("theme", x.get("issue"))) if v})
+                t = f"{x['bank']}{' · ' + x['product'] if x.get('product') else ''} — {x['label']}"
+                body += (f'<a href="{_e(go_url("reviews?" + q))}" target="_blank" style="display:block;'
+                         f'margin:8px 0 0;{_font(15, 21, LINK, 500, "text-decoration:none")}">'
+                         f'{"★ " if x.get("mine") else ""}{_e(t)}</a>')
+                lines.append(f"  — {t}")
+    if tf:
+        t = f"Сбер изменил {tf} {_plural(tf, 'условие', 'условия', 'условий')} тарифов за сутки"
+        body += _p(f'<a href="{_e(go_url("market?view=changes&bank=sberbank"))}" target="_blank" '
+                   f'style="color:{LINK};text-decoration:none">{_e(t)}</a>', top=20)
+        lines.append(t)
+    if private:
+        body += _p(_e(PRIVATE_NOTE), color=INK2, size=14, top=22)
+        lines += ["", PRIVATE_NOTE]
+    body += _btn("Открыть выпуск", url, top=32)
+    reason = ("Это письмо приходит в рабочие дни, только если вы не заходили в AuditLens "
+              "до 11:00. Отключить — в колокольчике, «Что присылать».")
+    pre = "Главное за день и всплески жалоб по вашей зоне — подробности в AuditLens"
+    return {"subject": subject, "preheader": pre, "url": url,
+            "html": layout(preheader=pre, title=subject, body=body, reason=reason,
+                           section=_weekday_title(now)),
+            "text": _text(f"Выпуск за {day}", head or "Вышел выпуск дня", lines, "Открыть выпуск", url,
+                          reason),
+            "thread": None}
+
+
 def render_welcome(name: str = "", private: bool = False) -> dict:
     """Первое письмо на подключённый адрес: что и когда приходит, как настроить.
     private — адрес не корпоративный: предупреждаем, что письма будут без подробностей."""
@@ -819,6 +884,8 @@ def render_welcome(name: str = "", private: bool = False) -> dict:
                             "поделились отчётом, команда ответила на обращение — одним письмом раз в 15\u00a0минут"),
             ("Утром", CASE_C, "в рабочие дни около 8:00 — сводка непрочитанного по вашим делам, "
                               "только если есть новое"),
+            ("В 11:00", BRAND, "в рабочие дни, если вы ещё не заходили, — главное за день и новые "
+                               "всплески жалоб по вашим подпискам"),
             ("Никогда", INK4, "то, что вы уже прочитали в AuditLens")]
     table = "".join(
         f'<tr><td width="112" valign="top" style="width:112px;padding:14px 0;border-top:1px solid {HAIR};'

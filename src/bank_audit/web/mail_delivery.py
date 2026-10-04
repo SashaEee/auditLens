@@ -54,6 +54,9 @@ INSTANT_DELAY = timedelta(minutes=int(os.getenv("MAIL_INSTANT_DELAY_MIN", "10"))
 INSTANT_WINDOW = timedelta(days=1)  # «сразу» о вчерашнем уже не сразу — это дело сводки
 DIGEST_WINDOW = timedelta(days=7)   # старый хвост непрочитанного в сводку не тащим
 DIGEST_HOUR = int(os.getenv("MAIL_DIGEST_HOUR_MSK", "8"))
+# Письмо-выпуск (волна 5): только тем, кто к этому часу сам не зашёл и не
+# получил сводку по делам, — повод зайти, а не замена выпуска
+BRIEF_HOUR = int(os.getenv("MAIL_BRIEF_HOUR_MSK", "11"))
 TICK_S = int(os.getenv("MAIL_TICK_S", "300"))
 
 
@@ -350,19 +353,91 @@ def _digest(r: dict, now: datetime) -> int:
     return 1
 
 
+def brief_data(username: str, now: datetime) -> dict:
+    """Что положить в письмо-выпуск: главное сегодняшнего выпуска (заголовок —
+    крючок, подробности — в продукте), новые всплески жалоб на Сбер за сутки
+    (подписки — первыми, чужой банк — только по подписке), изменения тарифов
+    Сбера за сутки."""
+    day = now.astimezone(MSK).date()
+    head = _scalar("""SELECT payload->>'headline' FROM daily_digest
+                       WHERE section = 'headline' AND digest_date = :d""", {"d": day})
+    subs = {(r["bank"], r["product"]) for r in _rows(
+        "SELECT bank, coalesce(product, '') AS product FROM review_subscription WHERE username = :u",
+        {"u": username})}
+    from ..rag import review_codebook as cb
+    sig = []
+    for r in _rows("""SELECT bank, product, issue, level FROM signal_journal
+                       WHERE first_seen > now() - interval '24 hours'
+                       ORDER BY (level = 'high') DESC, first_seen DESC LIMIT 60"""):
+        mine = (r["bank"], r["product"] or "") in subs or (r["bank"], "") in subs
+        if mine or r["bank"] == "Сбербанк":
+            sig.append({"bank": r["bank"], "product": r["product"] or "", "issue": r["issue"],
+                        "label": (cb.ISSUES.get(r["issue"]) or (r["issue"],))[0], "mine": mine})
+    sig.sort(key=lambda r: not r["mine"])
+    from ..normalizer.offers import (CTX_JOIN_SQL, REVERT_IDS_SQL, SAME_CTX_SQL,
+                                     SIGNIFICANT_CHANGE_SQL)
+    tariffs = int(_scalar(f"""
+        SELECT count(*) FROM change_history ch
+          JOIN product_offer o USING (offer_id) JOIN bank b USING (bank_id) {CTX_JOIN_SQL}
+         WHERE b.is_sber AND ch.changed_at > now() - interval '24 hours'
+           AND {SAME_CTX_SQL} AND {SIGNIFICANT_CHANGE_SQL}
+           AND ch.change_id NOT IN ({REVERT_IDS_SQL})""", {"rev_days": 2}) or 0)
+    return {"headline": head, "signals": sig[:4], "n_signals": len(sig),
+            "mine": sum(1 for x in sig if x["mine"]), "tariffs": tariffs}
+
+
+def _visited_today(username: str, now: datetime) -> bool:
+    start = datetime.combine(now.astimezone(MSK).date(), datetime.min.time(), MSK)
+    return bool(_scalar("""SELECT 1 FROM usage_event WHERE username = :u AND kind = 'page_view'
+                            AND created_at >= :t LIMIT 1""", {"u": username, "t": start}))
+
+
+def _brief(r: dict, now: datetime) -> int:
+    """Письмо-выпуск — раз в день, только если человек сегодня не заходил и
+    утренняя сводка по делам ему не уходила (не больше одного письма в день)."""
+    day = now.astimezone(MSK).date()
+    if _visited_today(r["username"], now):
+        return 0
+    if _scalar("""SELECT 1 FROM app_mail_log WHERE username = :u AND kind = 'digest'
+                   AND day = :d AND ok AND coalesce(n_items, 0) > 0""", {"u": r["username"], "d": day}):
+        return 0
+    slot = _scalar("""INSERT INTO app_mail_log (username, kind, to_addr, day, ok, error)
+                      VALUES (:u, 'brief', :e, :d, false, 'собирается')
+                      ON CONFLICT (username, day) WHERE kind = 'brief' DO NOTHING
+                      RETURNING id""", {"u": r["username"], "e": r["email"], "d": day})
+    if not slot:
+        return 0
+    data = brief_data(r["username"], now)
+    if not data["headline"] and not data["n_signals"] and not data["tariffs"]:
+        _exec("UPDATE app_mail_log SET ok = true, error = 'нечего отправлять' WHERE id = :id", {"id": slot})
+        return 0
+    mail = T.render_brief(data, now, r.get("display_name") or "", private=not is_corporate(r["email"]))
+    try:
+        deliver(r["username"], "brief", r["email"], mail, consented=r["source"] == "user", bulk=True,
+                log_row=False)
+    except Exception:
+        _exec("DELETE FROM app_mail_log WHERE id = :id", {"id": slot})     # следующий тик попробует снова
+        raise
+    _exec("UPDATE app_mail_log SET ok = true, error = NULL, n_items = :n, sent_at = now() WHERE id = :id",
+          {"n": data["n_signals"], "id": slot})
+    return 1
+
+
 def tick(now: datetime | None = None) -> dict:
     """Один проход рассылки по всем, кому можно писать."""
-    out = {"users": 0, "instant": 0, "digest": 0, "errors": 0}
+    out = {"users": 0, "instant": 0, "digest": 0, "brief": 0, "errors": 0}
     if not mailer.configured() or mailer.paused():
         return {**out, "skipped": True}
     now = now or _now()
     msk = now.astimezone(MSK)
     digest_due = _workday(msk.date()) and msk.hour >= DIGEST_HOUR
+    brief_due = _workday(msk.date()) and msk.hour >= BRIEF_HOUR
     for r in recipients():
         out["users"] += 1
         pm = (r.get("prefs") or {}).get("mail") or {}
         for kind, on, fn in (("instant", pm.get("instant", True), _instant),
-                             ("digest", digest_due and pm.get("digest", True), _digest)):
+                             ("digest", digest_due and pm.get("digest", True), _digest),
+                             ("brief", brief_due and pm.get("brief", True), _brief)):
             if not on:
                 continue
             try:

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 0de8bd7fb10b1f458168c1a13da032f54829d324b4a66ea5f16189dce325734e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 4ac17505c207809ba21444f531843fe08f0994202ab9f1f63eb8ecadc1f2948f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -2955,6 +2955,7 @@ const FB_CSS = `
 .fb-toast.on{opacity:1;transform:translate(-50%,0);}
 .fb-toast .sp{color:var(--accent);}
 .aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.ai-fb-top .aifb{margin:0 0 10px}
 .aifb-l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
@@ -3120,7 +3121,7 @@ function AiFbBar({
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("span", {
     className: "aifb-l"
-  }, "\u041E\u0446\u0435\u043D\u0438\u0442\u044C \u043E\u0442\u0432\u0435\u0442"), /*#__PURE__*/React.createElement("button", {
+  }, mode === "deep" ? "Пригодился отчёт?" : "Оценить ответ"), /*#__PURE__*/React.createElement("button", {
     className: "tb" + (v === 1 ? " on" : ""),
     title: "\u041F\u043E\u043B\u0435\u0437\u043D\u044B\u0439 \u043E\u0442\u0432\u0435\u0442",
     onClick: like
@@ -4893,7 +4894,10 @@ function OvTariffs({
 // визит заканчивается находкой. Общий слой — из выпуска (работает у всех),
 // личный — подписки на сигналы и колокольчик. Через 14+ дней отсутствия —
 // «Пока вас не было» и необязательный вопрос, что помешало.
+let _bootFrom = null; // {from:"mail"} — пришёл по ссылке из письма (см. внизу файла)
+
 function SinceStrip() {
+  const me = useMe();
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(false);
   const [why, setWhy] = useState("");
@@ -5001,7 +5005,13 @@ function SinceStrip() {
     href: y.href,
     target: y.ext ? "_blank" : undefined,
     rel: y.ext ? "noopener noreferrer" : undefined
-  }, y.t))))), !sg.has_subs && /*#__PURE__*/React.createElement("li", {
+  }, y.t))))), me && !me.has_email && /*#__PURE__*/React.createElement("li", {
+    className: "ov-upd-it t-cap"
+  }, "\u041D\u0435 \u0445\u043E\u0442\u0438\u0442\u0435 \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u0442\u044C?", " ", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "pu-link",
+    onClick: () => window.dispatchEvent(new CustomEvent("al-open-mail"))
+  }, "\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \u043F\u043E\u0447\u0442\u0443"), " \u2014 \u0435\u0441\u043B\u0438 \u0432\u044B \u043D\u0435 \u0437\u0430\u0439\u0434\u0451\u0442\u0435 \u0434\u043E 11:00, \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u0433\u043B\u0430\u0432\u043D\u043E\u0435 \u0437\u0430 \u0434\u0435\u043D\u044C \u0438 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u043F\u043E \u0432\u0430\u0448\u0438\u043C \u043F\u043E\u0434\u043F\u0438\u0441\u043A\u0430\u043C."), !sg.has_subs && /*#__PURE__*/React.createElement("li", {
     className: "ov-upd-it t-cap"
   }, "\u041F\u043E\u0434\u0441\u043A\u0430\u0437\u043A\u0430: \u0432 \xAB\u0410\u0443\u0434\u0438\u0442\u0435 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u0432\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043F\u0440\u043E\u0434\u0443\u043A\u0442 \u0421\u0431\u0435\u0440\u0430 \u0438\u0437 \u0432\u0430\u0448\u0435\u0439 \u0437\u043E\u043D\u044B \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0438 \u043D\u0430\u0436\u043C\u0438\u0442\u0435 \xAB\u0421\u043B\u0435\u0434\u0438\u0442\u044C\xBB \u2014 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u043F\u043E \u043D\u0435\u043C\u0443 \u0431\u0443\u0434\u0443\u0442 \u0437\u0434\u0435\u0441\u044C \u043F\u0435\u0440\u0432\u044B\u043C\u0438 \u0438 \u043F\u0440\u0438\u0434\u0443\u0442 \u0432 \u043A\u043E\u043B\u043E\u043A\u043E\u043B\u044C\u0447\u0438\u043A."), away && /*#__PURE__*/React.createElement("li", {
     className: "ov-upd-it"
@@ -13888,6 +13898,15 @@ function AIPage() {
         matrix: m.matrix,
         question: userQ,
         streaming: streaming
+      })), !streaming && m.text && m.text.length > 200 && /*#__PURE__*/React.createElement("div", {
+        className: "ai-fb-top"
+      }, /*#__PURE__*/React.createElement(AiFbBar, {
+        q: userQ,
+        text: m.text,
+        sessionId: sessionId,
+        mode: "deep",
+        fbMap: aiFb,
+        reportId: m.report_id
       })), /*#__PURE__*/React.createElement("div", {
         className: "chat-bubble chat-bubble-deep"
       }, m.phase === "done" && m.plan && m.plan.length > 0 && /*#__PURE__*/React.createElement(ResearchSummary, {
@@ -13964,14 +13983,7 @@ function AIPage() {
         streaming: false
       }), /*#__PURE__*/React.createElement("span", {
         className: "dr-doc-footer-hint"
-      }, "\u0413\u043E\u0442\u043E\u0432\u044B\u0439 \u043E\u0442\u0447\u0451\u0442 \u0434\u043B\u044F \u0430\u0443\u0434\u0438\u0442\u0430 \xB7 \u043D\u0443\u043C\u0435\u0440\u0430\u0446\u0438\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446, \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438, A4")), !streaming && m.text && /*#__PURE__*/React.createElement(AiFbBar, {
-        q: userQ,
-        text: m.text,
-        sessionId: sessionId,
-        mode: "deep",
-        fbMap: aiFb,
-        reportId: m.report_id
-      })), !hideRail && /*#__PURE__*/React.createElement(DocRailSlot, null, /*#__PURE__*/React.createElement(SourcesRail, {
+      }, "\u0413\u043E\u0442\u043E\u0432\u044B\u0439 \u043E\u0442\u0447\u0451\u0442 \u0434\u043B\u044F \u0430\u0443\u0434\u0438\u0442\u0430 \xB7 \u043D\u0443\u043C\u0435\u0440\u0430\u0446\u0438\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446, \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438, A4"))), !hideRail && /*#__PURE__*/React.createElement(DocRailSlot, null, /*#__PURE__*/React.createElement(SourcesRail, {
         sources: m.sources || [],
         failed: m.sourcesFailed || 0,
         activeN: activeCite,
@@ -19530,6 +19542,20 @@ function PuRetention({
     className: "pu-link",
     onClick: () => onOpenUser && onOpenUser(r.username)
   }, r.name);
+  // Вернуть лично: короткий текст от владельца по рабочему каналу — массово без
+  // согласия не пишем (волна 5). Ссылка с from=winback — видно, кто вернулся.
+  const winback = r => {
+    const fn = (r.name || "").trim().split(/\s+/)[1] || (r.name || "").trim().split(/\s+/)[0] || "";
+    const txt = `${fn ? fn + ", добрый день!" : "Добрый день!"} Вы заходили в AuditLens ${fmtDateMsk(r.last)}. ` + `С тех пор появилось: каждое утро — выпуск с главным по Сберу и рынку, сверху — «С прошлого визита» ` + `(что изменилось с вашего захода), а на продукты Сбера из вашей зоны можно подписаться — ` + `о новых всплесках жалоб сообщим в колокольчике и на почту. ` + `Если что-то мешало пользоваться — ответьте одной строкой, поправим. ` + `${location.origin}/?go=overview&from=mail&m=winback`;
+    try {
+      navigator.clipboard.writeText(txt).then(() => fbToast("Текст скопирован — отправьте его сами"));
+    } catch {}
+  };
+  const wb = r => /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    title: "\u0421\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u043B\u0438\u0447\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0434\u043B\u044F \u043F\u0438\u0441\u044C\u043C\u0430 \u0438\u043B\u0438 \u043C\u0435\u0441\u0441\u0435\u043D\u0434\u0436\u0435\u0440\u0430",
+    onClick: () => winback(r)
+  }, "\u0442\u0435\u043A\u0441\u0442 \u0434\u043B\u044F \u043F\u0438\u0441\u044C\u043C\u0430");
   const where = r => AD_PAGE_RU[r.page] || r.page || "—";
   const gone = allGone ? rt.churned : (rt.churned || []).slice(0, 8);
   return /*#__PURE__*/React.createElement("div", {
@@ -19561,7 +19587,7 @@ function PuRetention({
     className: "sub"
   }, sub))))), /*#__PURE__*/React.createElement("div", {
     className: "pu-note"
-  }, "\u043D\u043E\u0432\u044B\u0445 \u0437\u0430 30 \u0434\u043D: ", sg.new || 0), (rt.cohorts || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "\u043D\u043E\u0432\u044B\u0445 \u0437\u0430 30 \u0434\u043D: ", sg.new || 0, " \xB7 \u043F\u0440\u0438\u0448\u043B\u0438 \u043F\u043E \u0441\u0441\u044B\u043B\u043A\u0435 \u0438\u0437 \u043F\u0438\u0441\u044C\u043C\u0430 \u0437\u0430 7 \u0434\u043D: ", rt.from_mail_7d || 0), (rt.cohorts || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "h",
     style: {
       marginTop: 12
@@ -19598,7 +19624,7 @@ function PuRetention({
     className: "md"
   }, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043B \u2014 ", where(r)), r.ai ? /*#__PURE__*/React.createElement("span", {
     className: "md"
-  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null)), /*#__PURE__*/React.createElement("div", {
+  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null, wb(r))), /*#__PURE__*/React.createElement("div", {
     className: "h",
     style: {
       marginTop: 12
@@ -19614,7 +19640,7 @@ function PuRetention({
     className: "md"
   }, where(r)), r.ai ? /*#__PURE__*/React.createElement("span", {
     className: "md"
-  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null)), (rt.churned || []).length > 8 && /*#__PURE__*/React.createElement("button", {
+  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null, wb(r))), (rt.churned || []).length > 8 && /*#__PURE__*/React.createElement("button", {
     className: "pu-link",
     onClick: () => setAllGone(v => !v)
   }, allGone ? "свернуть" : `показать всех (${rt.churned.length})`));
@@ -24017,7 +24043,7 @@ const bxDel = path => fetch(path, {
   if (r.ok) return r.json();
   throw new Error("Не получилось. Попробуйте ещё раз");
 });
-const BX_MAIL_PREFS = [["instant", "Сразу — о личном", "Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"], ["digest", "Утренняя сводка", "В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"]];
+const BX_MAIL_PREFS = [["instant", "Сразу — о личном", "Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"], ["digest", "Утренняя сводка", "В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"], ["brief", "Выпуск в 11:00", "В рабочие дни, если вы ещё не заходили, — главное за день и новые всплески жалоб по вашим подпискам"]];
 function BxMail({
   me,
   onPrefs,
@@ -24633,6 +24659,17 @@ function Shell() {
     setBellOpen(o => !o);
     if (bell.last) bellSeen(bell.last.id);
   };
+  // «Подключите почту» из «С прошлого визита» — сразу в настройки писем
+  useEffect(() => {
+    const on = () => {
+      setNavOpen(false);
+      setSayOpen(null);
+      setBellView("settings");
+      setBellOpen(true);
+    };
+    window.addEventListener("al-open-mail", on);
+    return () => window.removeEventListener("al-open-mail", on);
+  }, []); // eslint-disable-line
   const closeBell = () => {
     setBellOpen(false);
     loadBell();
@@ -24967,8 +25004,12 @@ function Shell() {
     lastInput.current = now; // переход по разделу — тоже ввод
     trk({
       kind: "page_view",
-      page
+      page,
+      ...(_bootFrom ? {
+        payload: _bootFrom
+      } : {})
     });
+    _bootFrom = null;
     const t = setTimeout(trkFlush, 1500);
     return () => clearTimeout(t);
   }, [page]); // eslint-disable-line
@@ -25349,16 +25390,16 @@ function Shell() {
       className: "onb-callout"
     }, /*#__PURE__*/React.createElement("div", {
       className: "t"
-    }, "\u2726 ", /*#__PURE__*/React.createElement("b", null, "\u041D\u043E\u0432\u043E\u0435:"), " \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u0442\u0435 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u043F\u043E\u0434 \u0441\u0435\u0431\u044F \u2014 \u043E\u043F\u0438\u0448\u0438\u0442\u0435, \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442\u0435, \u0438 \u043F\u043E\u043B\u0443\u0447\u0430\u0439\u0442\u0435 \u043F\u0435\u0440\u0441\u043E\u043D\u0430\u043B\u044C\u043D\u0443\u044E \u043F\u043E\u0434\u0430\u0447\u0443 \u0438 \u0441\u0432\u043E\u0434\u043A\u0438."), /*#__PURE__*/React.createElement("div", {
+    }, "\u2726 \u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u044B \u0438 \u0440\u0438\u0441\u043A\u0438 \u0421\u0431\u0435\u0440\u0430, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0432\u044B \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442\u0435, \u2014 30 \u0441\u0435\u043A\u0443\u043D\u0434, \u0438 \xAB\u0414\u043B\u044F \u0432\u0430\u0441\xBB, \u043F\u043E\u0434\u043F\u0438\u0441\u043A\u0438 \u043D\u0430 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u0436\u0430\u043B\u043E\u0431 \u0438 \u0441\u0432\u043E\u0434\u043A\u0438 \u0441\u0442\u0430\u043D\u0443\u0442 \u0432\u0430\u0448\u0438\u043C\u0438."), /*#__PURE__*/React.createElement("div", {
       className: "b"
     }, /*#__PURE__*/React.createElement("button", {
       className: "go",
       onClick: () => {
         setOnbSeen(true);
-        setPage("profile");
+        setPage("foryou");
         setNavOpen(false);
       }
-    }, "\u041D\u0430\u0441\u0442\u0440\u043E\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
+    }, "\u0412\u044B\u0431\u0440\u0430\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
       className: "skip",
       onClick: () => {
         setOnbSeen(true);
@@ -25641,7 +25682,7 @@ function Shell() {
       className: "later",
       onClick: () => done("later")
     }, "\u041D\u0435 \u0441\u0435\u0439\u0447\u0430\u0441")));
-  })(), !renameSeen && renamedFresh() && /*#__PURE__*/React.createElement("div", {
+  })(), !renameSeen && renamedFresh() && me && me.created_at && me.created_at < "2026-10-01" && /*#__PURE__*/React.createElement("div", {
     className: "ren-toast",
     role: "status"
   }, /*#__PURE__*/React.createElement("div", {
@@ -25785,4 +25826,17 @@ function App() {
     pageKey: "shell"
   }, /*#__PURE__*/React.createElement(Shell, null)));
 }
+
+// Ссылки из писем: цель — в ?go=, а не в #якоре (якорь теряется, если система
+// входа попросит войти заново). from=mail уходит с первым просмотром страницы —
+// «Пульс» видит, кого вернуло письмо (волна 5).
+try {
+  const sp = new URLSearchParams(location.search),
+    go = sp.get("go");
+  if (sp.get("from") === "mail") _bootFrom = {
+    from: "mail",
+    m: sp.get("m") || ""
+  };
+  if (go || _bootFrom) history.replaceState(null, "", location.pathname + (go ? "#" + go.replace(/^#/, "") : location.hash));
+} catch {}
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(App, null));

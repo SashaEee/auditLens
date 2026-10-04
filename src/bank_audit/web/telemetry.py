@@ -323,7 +323,13 @@ def _retention(ex: list[str]) -> dict:
     names = {r["username"]: r["name"] for r in _rows(
         "SELECT username, display_name AS name FROM app_user WHERE display_name IS NOT NULL")}
     today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
-    return _retention_calc(daily, first, today, last_page=last_page, ai=ai, names=names)
+    out = _retention_calc(daily, first, today, last_page=last_page, ai=ai, names=names)
+    # кого вернуло письмо-выпуск: первый просмотр после перехода из письма
+    out["from_mail_7d"] = int(_scalar(f"""
+        SELECT count(DISTINCT username) FROM usage_event
+         WHERE kind = 'page_view' AND payload->>'from' = 'mail' AND {P}
+           AND created_at > now() - interval '7 days'""", p) or 0)
+    return out
 
 
 def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:

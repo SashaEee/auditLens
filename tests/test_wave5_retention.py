@@ -82,3 +82,46 @@ def test_watch_signal_notice_title():
     assert notices.title_of("watch_signal", {"bank": "Сбербанк", "product": "Переводы",
                                              "label": "Скрытые комиссии", "ratio": 2.4}) == \
         "Сбербанк · Переводы: всплеск жалоб «Скрытые комиссии» ×2,4"
+
+
+def test_brief_is_a_teaser_with_go_links():
+    """Письмо-выпуск — повод зайти: заголовок дня, всплески подписью без цифр,
+    ссылки через ?go= (якорь теряется при повторном входе) и from=mail."""
+    from datetime import datetime, timezone
+    from bank_audit.web import mail_templates as T
+    d = {"headline": "Жалобы на чарджбэк у Сбера держатся выше нормы", "n_signals": 2, "mine": 1,
+         "tariffs": 3, "signals": [
+             {"bank": "Сбербанк", "product": "Переводы и платежи", "issue": "fees",
+              "label": "Скрытые комиссии", "mine": True},
+             {"bank": "Сбербанк", "product": "", "issue": "fraud", "label": "Мошенничество", "mine": False}]}
+    m = T.render_brief(d, datetime(2026, 10, 5, 8, tzinfo=timezone.utc), "Иван Петров")
+    assert m["subject"].startswith("AuditLens: Жалобы на чарджбэк")
+    assert "?go=overview&from=mail" in m["url"] and "#" not in m["url"]
+    assert "Скрытые комиссии" in m["html"] and "★" in m["html"] and "до 11:00" in m["html"]
+    p = T.render_brief(d, datetime(2026, 10, 5, 8, tzinfo=timezone.utc), "", private=True)
+    assert "Скрытые комиссии" not in p["html"] and "чарджбэк" not in p["subject"]
+
+
+def test_brief_only_if_not_visited_and_no_digest(monkeypatch):
+    from datetime import datetime, timezone
+    from bank_audit.web import mail_delivery as M
+    now = datetime(2026, 10, 5, 9, tzinfo=timezone.utc)          # 12:00 МСК, понедельник
+    r = {"username": "u", "email": "u@corp.example", "source": "user", "display_name": ""}
+    sent = []
+    monkeypatch.setattr(M, "deliver", lambda *a, **k: sent.append(a[1]) or "id")
+    monkeypatch.setattr(M, "_exec", lambda *a, **k: 1)
+    monkeypatch.setattr(M, "brief_data", lambda u, n: {"headline": "Г", "signals": [], "n_signals": 0,
+                                                        "mine": 0, "tariffs": 0})
+    state = {"visited": True, "digest": False}
+    monkeypatch.setattr(M, "_visited_today", lambda u, n: state["visited"])
+
+    def scalar(sql, p=None):
+        if "kind = 'digest'" in sql:
+            return 1 if state["digest"] else None
+        return 7                                                    # слот дня занят нами
+    monkeypatch.setattr(M, "_scalar", scalar)
+    assert M._brief(r, now) == 0                                    # уже заходил сегодня
+    state.update(visited=False, digest=True)
+    assert M._brief(r, now) == 0                                    # получил сводку по делам
+    state.update(digest=False)
+    assert M._brief(r, now) == 1 and sent == ["brief"]
