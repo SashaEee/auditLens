@@ -382,8 +382,46 @@ def brief_data(username: str, now: datetime) -> dict:
          WHERE b.is_sber AND ch.changed_at > now() - interval '24 hours'
            AND {SAME_CTX_SQL} AND {SIGNIFICANT_CHANGE_SQL}
            AND ch.change_id NOT IN ({REVERT_IDS_SQL})""", {"rev_days": 2}) or 0)
-    return {"headline": head, "signals": sig[:4], "n_signals": len(sig),
-            "mine": sum(1 for x in sig if x["mine"]), "tariffs": tariffs}
+    out = {"headline": head, "signals": sig[:4], "n_signals": len(sig),
+           "mine": sum(1 for x in sig if x["mine"]), "tariffs": tariffs}
+    out.update(_brief_issue(day))
+    return out
+
+
+def _brief_issue(day: date) -> dict:
+    """Содержание сегодняшнего выпуска для письма: повод дня с пояснением,
+    пульс (те же числа, что плитки «Новостных обзоров»), до трёх поводов
+    «Что проверить» — заголовок и «почему важно», без доказательств и плана
+    проверки (за ними — в AuditLens), три новости дня."""
+    import json as _json
+    secs = {}
+    for sec, payload in _rows_raw("""SELECT section, payload::text FROM daily_digest
+                                      WHERE digest_date = :d""", {"d": day}):
+        try:
+            secs[sec] = _json.loads(payload) or {}
+        except Exception:  # noqa: BLE001
+            secs[sec] = {}
+    hl, rp, tm, nw = (secs.get(k) or {} for k in ("headline", "reviews_pulse", "tariff_moves", "news"))
+    ins = [{"severity": i.get("severity"), "title": i.get("title"), "so_what": i.get("so_what")}
+           for i in (hl.get("insights") or []) if i.get("title")][:3]
+    ov, kpi, tt = rp.get("overall") or {}, rp.get("kpi") or {}, tm.get("totals") or {}
+    news = []
+    for g in nw.get("groups") or []:
+        for it in g.get("items") or []:
+            if it.get("title"):
+                news.append({"title": it["title"], "source": it.get("source") or it.get("domain") or ""})
+    return {"issue": {"note": hl.get("quiet_note") or hl.get("market_note") or "",
+                      "insights": ins, "n_insights": len(hl.get("insights") or []),
+                      "risk": int((hl.get("stats") or {}).get("risk") or 0),
+                      "week": ov.get("week"), "baseline_week": ov.get("baseline_week"),
+                      "esc": kpi.get("escalation_pct"), "esc_market": kpi.get("market_escalation_pct"),
+                      "sber_changes_7d": tt.get("sber_changes_7d"),
+                      "news": news[:3], "n_news": len(news)}}
+
+
+def _rows_raw(sql: str, p: dict | None = None) -> list[tuple]:
+    with db.session() as s:
+        return [tuple(r) for r in s.execute(text(sql), p or {}).all()]
 
 
 def _visited_today(username: str, now: datetime) -> bool:

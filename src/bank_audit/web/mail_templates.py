@@ -818,32 +818,128 @@ def go_url(target: str, src: str = "brief") -> str:
     return f"{app_base()}/?go={quote(target, safe='')}&from=mail&m={src}"
 
 
+# Брифинг: засечки и красный курсив года — фирменная шапка «Новостных обзоров»
+# (Instrument Serif в почте не грузится — Georgia ближе всего по рисунку)
+SERIF = "Georgia, Times New Roman, serif"
+BRIEF_RED = "#B8322E"
+SEV = {"risk": ("#C8372D", "риск"), "watch": ("#B7791F", "следить"), "calm": ("#2E7D4F", "спокойно")}
+
+
+def _num(v, digits: int = 1) -> str:
+    if v is None:
+        return "—"
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return (f"{f:.{digits}f}".rstrip("0").rstrip(".") if f % 1 else f"{int(f)}").replace(".", ",")
+
+
+def _rubric(label: str, top: int = 32) -> str:
+    return (f'<div style="margin:{top}px 0 0;padding:0 0 8px;border-bottom:1px solid {HAIR};'
+            f'{_font(11, 16, INK3, 600, "letter-spacing:.08em;text-transform:uppercase")}">{_e(label)}</div>')
+
+
+def _tiles(items: list[tuple[str, str, str]]) -> str:
+    """Пульс плитками по две — как в «Новостных обзорах»: подпись, число, пояснение."""
+    rows = ""
+    for i in range(0, len(items), 2):
+        cells = ""
+        for j, (lab, val, sub) in enumerate(items[i:i + 2]):
+            cells += (f'<td width="50%" valign="top" style="padding:14px 16px;'
+                      f'{"border-left:1px solid " + HAIR + ";" if j else ""}'
+                      f'{"border-top:1px solid " + HAIR + ";" if i else ""}">'
+                      f'<div style="{_font(10, 14, INK3, 600, "letter-spacing:.08em;text-transform:uppercase")}">{_e(lab)}</div>'
+                      f'<div style="margin:6px 0 0;font-family:{SERIF};font-size:24px;line-height:28px;color:{INK}">{_e(val)}</div>'
+                      f'<div style="margin:3px 0 0;{_font(12, 16, INK3)}">{_e(sub)}</div></td>')
+        rows += f"<tr>{cells}</tr>"
+    return _tbl(rows, f"margin:18px 0 0;border:1px solid {HAIR};border-radius:12px;border-collapse:separate")
+
+
 def render_brief(d: dict, now=None, name: str = "", private: bool = False) -> dict:
-    """Письмо-выпуск (волна 5): повод зайти, а не копия выпуска. Заголовок дня —
-    крючок; всплески — подписью проблемы без цифр; подробности, цифры и
-    источники — в AuditLens. Уходит, только если человек сегодня не заходил.
-    private — на личную почту: без банков, продуктов и тем."""
+    """Утренний брифинг на почту (волна 5): тот же выпуск, что в «Новостных
+    обзорах», — шапка, повод дня, пульс, что проверить, новости, подписки.
+    В письме — что происходит и почему это важно; доказательства, жалобы
+    клиентов, план проверки, разбор ИИ — в AuditLens. Уходит, только если
+    человек сегодня ещё не заходил. private — личная почта: без текстов
+    поводов и новостей, только числа."""
     from urllib.parse import urlencode
     now = now or datetime.now(timezone.utc)
+    msk = now.astimezone(timezone(timedelta(hours=3)))
     day = day_title(now)
     url = go_url("overview")
+    iss = d.get("issue") or {}
     head = (d.get("headline") or "").strip()
     sig, n_sig, mine, tf = d.get("signals") or [], int(d.get("n_signals") or 0), \
         int(d.get("mine") or 0), int(d.get("tariffs") or 0)
     fn = first_name(name)
-    hello = f"{fn}, доброе утро." if fn else "Доброе утро."
-    subject = (f"AuditLens: {_clip(head, 110)}" if head and not private
-               else f"AuditLens: выпуск за {day}")
-    body = (_eyebrow(f"Выпуск за {day}", BRAND)
-            + _h1(head if head and not private else "Вышел выпуск дня")
-            + _p(f"{_e(hello)} Коротко — что нового сегодня. Цифры, источники и разбор — в AuditLens.",
-                 top=12))
-    lines = [hello, "", head if head and not private else "Вышел выпуск дня", ""]
+    no = msk.timetuple().tm_yday + 1          # «Брифинг № дня года», как в шапке выпуска
+    wd = _weekday_title(now)
+    date_ru = day_title(now)
+    subject = (f"Брифинг №{no} · {_clip(head, 90)}" if head and not private
+               else f"Брифинг №{no} · {date_ru}")
+    body = (f'<div style="{_font(11, 16, INK3, 600, "letter-spacing:.08em;text-transform:uppercase")}">'
+            f'Брифинг №{no} · {_e(_WEEKDAY[msk.weekday()])}, {_e(date_ru)} · розница</div>'
+            f'<h1 class="al-h1" style="margin:10px 0 0;font-family:{SERIF};font-weight:400;font-size:34px;'
+            f'line-height:38px;letter-spacing:-.01em;color:{INK}">Сводка за {_e(date_ru)} '
+            f'<i style="color:{BRIEF_RED}">{msk.year}&nbsp;г.</i></h1>')
+    hello = (f"{fn}, доброе утро." if fn else "Доброе утро.") + " Вы ещё не заходили сегодня — вот главное."
+    body += _p(_e(hello), color=INK3, size=14, top=10)
+    lines = [hello, ""]
+    if head and not private:
+        body += (f'<div style="margin:18px 0 0;padding:14px 18px;border-left:3px solid {BRIEF_RED};background:{SOFT};'
+                 f'border-radius:0 12px 12px 0;{_font(17, 24, INK, 600)}">{_e(head)}'
+                 + (f'<div style="margin:6px 0 0;{_font(13, 19, INK3, 400)}">{_e(iss["note"])}</div>'
+                    if iss.get("note") else "") + "</div>")
+        lines += [head, iss.get("note") or "", ""]
+    # пульс — те же плитки, что на главной
+    tiles = [("Проверить сегодня",
+              f'{iss.get("risk")} {_plural(int(iss.get("risk") or 0), "риск", "риска", "рисков")}' if iss.get("risk")
+              else ("Ничего срочного" if iss.get("n_insights") is not None else "—"),
+              f'{iss.get("n_insights") or 0} {_plural(int(iss.get("n_insights") or 0), "повод", "повода", "поводов")} в выпуске'),
+             ("Жалобы · 7 дней", _num(iss.get("week"), 0), f'норма {_num(iss.get("baseline_week"), 0)}'),
+             ("Эскалация в ЦБ, суд", f'{_num(iss.get("esc"))}%', f'рынок {_num(iss.get("esc_market"))}%'),
+             ("Меняли сами", _num(iss.get("sber_changes_7d"), 0), "изменений тарифов Сбера за 7 дней")]
+    if any(t[1] not in ("—", "—%") for t in tiles):
+        body += _tiles(tiles)
+        lines += [f"{a}: {b} ({c})" for a, b, c in tiles] + [""]
+    # что проверить — заголовок и «почему важно»; разбор и доказательства — в продукте
+    ins = iss.get("insights") or []
+    if ins and not private:
+        body += _rubric("Что проверить сегодня")
+        for i in ins:
+            col, lab = SEV.get(i.get("severity") or "", (INK3, ""))
+            body += (f'<a href="{_e(url)}" target="_blank" style="display:block;padding:14px 0;'
+                     f'border-bottom:1px solid {HAIR};text-decoration:none">'
+                     f'<div style="{_font(15, 21, INK, 600)}"><span style="color:{col};font-size:11px">&#9679;</span>'
+                     f'&nbsp;&nbsp;{_e(i["title"])}</div>'
+                     + (f'<div style="margin:4px 0 0 18px;{_font(14, 20, INK2)}">{_e(i["so_what"])}</div>'
+                        if i.get("so_what") else "")
+                     + f'<div style="margin:6px 0 0 18px;{_font(13, 18, LINK, 500)}">Разобрать в AuditLens &rarr;</div></a>')
+            lines += [f"• {i['title']}" + (f" ({lab})" if lab else ""), f"  {i.get('so_what') or ''}"]
+        body += _p("Жалобы клиентов, цифры по неделям и план проверки по каждому поводу — в AuditLens.",
+                   color=INK3, size=13, top=10)
+        lines.append("")
+    elif ins:
+        body += _p(f'В выпуске {len(ins)} {_plural(len(ins), "повод", "повода", "поводов")} проверить — подробности в AuditLens.',
+                   top=18)
+    # новости дня
+    news = iss.get("news") or []
+    if news and not private:
+        body += _rubric(f'Новости дня · {iss.get("n_news") or len(news)}')
+        for n in news:
+            body += (f'<a href="{_e(url)}" target="_blank" style="display:block;padding:10px 0;'
+                     f'border-bottom:1px solid {HAIR};text-decoration:none">'
+                     f'<span style="{_font(14, 20, INK)}">{_e(n["title"])}</span>'
+                     + (f'<span style="{_font(12, 20, INK3)}">&nbsp;&nbsp;·&nbsp;&nbsp;{_e(n["source"])}</span>'
+                        if n.get("source") else "") + "</a>")
+            lines.append(f"— {n['title']}")
+        lines.append("")
+    # подписки аудитора
     if n_sig:
         what = (f"{n_sig} {_plural(n_sig, 'новый всплеск', 'новых всплеска', 'новых всплесков')} "
-                f"жалоб на Сбер" + (f", из них {mine} по вашим подпискам" if mine else ""))
-        body += (f'<div style="margin:28px 0 0;{_font(11, 16, INK3, 600, "letter-spacing:.08em;text-transform:uppercase")}">'
-                 f'Жалобы клиентов</div>' + _p(_e(what), top=6))
+                f"жалоб на Сбер за сутки" + (f", из них {mine} по вашим подпискам" if mine else ""))
+        body += _rubric("Всплески жалоб") + _p(_e(what), top=10)
         lines.append(what)
         if not private:
             for x in sig:
@@ -852,25 +948,25 @@ def render_brief(d: dict, now=None, name: str = "", private: bool = False) -> di
                                                   ("theme", x.get("issue"))) if v})
                 t = f"{x['bank']}{' · ' + x['product'] if x.get('product') else ''} — {x['label']}"
                 body += (f'<a href="{_e(go_url("reviews?" + q))}" target="_blank" style="display:block;'
-                         f'margin:8px 0 0;{_font(15, 21, LINK, 500, "text-decoration:none")}">'
+                         f'margin:8px 0 0;{_font(14, 20, LINK, 500, "text-decoration:none")}">'
                          f'{"★ " if x.get("mine") else ""}{_e(t)}</a>')
                 lines.append(f"  — {t}")
-    if tf:
+    if tf and not iss.get("sber_changes_7d"):
         t = f"Сбер изменил {tf} {_plural(tf, 'условие', 'условия', 'условий')} тарифов за сутки"
         body += _p(f'<a href="{_e(go_url("market?view=changes&bank=sberbank"))}" target="_blank" '
-                   f'style="color:{LINK};text-decoration:none">{_e(t)}</a>', top=20)
+                   f'style="color:{LINK};text-decoration:none">{_e(t)}</a>', top=16)
         lines.append(t)
     if private:
         body += _p(_e(PRIVATE_NOTE), color=INK2, size=14, top=22)
         lines += ["", PRIVATE_NOTE]
-    body += _btn("Открыть выпуск", url, top=32)
-    reason = ("Это письмо приходит в рабочие дни, только если вы не заходили в AuditLens "
+    body += _btn("Открыть брифинг", url, top=30)
+    reason = ("Брифинг приходит на почту в рабочие дни, только если вы не заходили в AuditLens "
               "до 11:00. Отключить — в колокольчике, «Что присылать».")
-    pre = "Главное за день и всплески жалоб по вашей зоне — подробности в AuditLens"
+    pre = (_clip((iss.get("note") or head or "Главное за день по Сберу и рынку"), 140) if not private
+           else "Главное за день — подробности в AuditLens")
     return {"subject": subject, "preheader": pre, "url": url,
-            "html": layout(preheader=pre, title=subject, body=body, reason=reason,
-                           section=_weekday_title(now)),
-            "text": _text(f"Выпуск за {day}", head or "Вышел выпуск дня", lines, "Открыть выпуск", url,
+            "html": layout(preheader=pre, title=subject, body=body, reason=reason, section=wd),
+            "text": _text(f"Брифинг №{no}", head or f"Сводка за {date_ru}", lines, "Открыть брифинг", url,
                           reason),
             "thread": None}
 

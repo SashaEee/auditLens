@@ -84,21 +84,30 @@ def test_watch_signal_notice_title():
         "Сбербанк · Переводы: всплеск жалоб «Скрытые комиссии» ×2,4"
 
 
-def test_brief_is_a_teaser_with_go_links():
-    """Письмо-выпуск — повод зайти: заголовок дня, всплески подписью без цифр,
-    ссылки через ?go= (якорь теряется при повторном входе) и from=mail."""
+def test_brief_is_the_briefing_not_spam():
+    """Письмо — тот же брифинг: шапка с номером, повод дня, пульс, что проверить
+    с «почему важно» (разбор — в AuditLens), новости; ссылки через ?go= и
+    from=mail. На личную почту — без текстов поводов и новостей."""
     from datetime import datetime, timezone
     from bank_audit.web import mail_templates as T
-    d = {"headline": "Жалобы на чарджбэк у Сбера держатся выше нормы", "n_signals": 2, "mine": 1,
-         "tariffs": 3, "signals": [
-             {"bank": "Сбербанк", "product": "Переводы и платежи", "issue": "fees",
-              "label": "Скрытые комиссии", "mine": True},
-             {"bank": "Сбербанк", "product": "", "issue": "fraud", "label": "Мошенничество", "mine": False}]}
-    m = T.render_brief(d, datetime(2026, 10, 5, 8, tzinfo=timezone.utc), "Иван Петров")
-    assert m["subject"].startswith("AuditLens: Жалобы на чарджбэк")
+    d = {"headline": "Жалобы на чарджбэк у Сбера держатся выше нормы", "n_signals": 1, "mine": 1,
+         "tariffs": 0, "signals": [{"bank": "Сбербанк", "product": "Переводы и платежи", "issue": "fees",
+                                    "label": "Скрытые комиссии", "mine": True}],
+         "issue": {"note": "Остальное — в пределах нормы", "n_insights": 2, "risk": 1, "week": 177,
+                   "baseline_week": 157.9, "esc": 20.5, "esc_market": 20.0, "sber_changes_7d": 2,
+                   "insights": [{"severity": "risk", "title": "Чарджбэк: отказы",
+                                 "so_what": "Системный отказ без разбора"}],
+                   "news": [{"title": "Новость про мошенников", "source": "rbc.ru"}], "n_news": 6}}
+    now = datetime(2026, 10, 6, 8, tzinfo=timezone.utc)
+    m = T.render_brief(d, now, "Иванов Иван")
+    assert m["subject"].startswith("Брифинг №280 · Жалобы на чарджбэк")
     assert "?go=overview&from=mail" in m["url"] and "#" not in m["url"]
-    assert "Скрытые комиссии" in m["html"] and "★" in m["html"] and "до 11:00" in m["html"]
-    p = T.render_brief(d, datetime(2026, 10, 5, 8, tzinfo=timezone.utc), "", private=True)
+    for part in ("Сводка за 6 октября", "Проверить сегодня", "норма 158", "20,5%",
+                 "Чарджбэк: отказы", "Системный отказ без разбора", "Разобрать в AuditLens",
+                 "Новость про мошенников", "Скрытые комиссии", "до 11:00"):
+        assert part in m["html"], part
+    p = T.render_brief(d, now, "", private=True)
+    assert "Чарджбэк: отказы" not in p["html"] and "Новость про мошенников" not in p["html"]
     assert "Скрытые комиссии" not in p["html"] and "чарджбэк" not in p["subject"]
 
 
