@@ -866,7 +866,6 @@ def render_brief(d: dict, now=None, name: str = "", private: bool = False) -> di
     from urllib.parse import urlencode
     now = now or datetime.now(timezone.utc)
     msk = now.astimezone(timezone(timedelta(hours=3)))
-    day = day_title(now)
     url = go_url("overview")
     iss = d.get("issue") or {}
     head = (d.get("headline") or "").strip()
