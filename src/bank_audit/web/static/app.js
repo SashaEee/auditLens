@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 7e0347a6d0eda5187d515f03749375233af7f9d459532b4dd81ff4bc4039a57c): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 5df3e101005cad85a5a9d39ae8b8597c6d58c42ab77deb9349246de8833cf93a): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -19372,6 +19372,110 @@ function puDur(s) {
   s = Math.round(+s);
   return s < 90 ? `${s} с` : `${Math.round(s / 60)} мин`;
 }
+
+// Удержание: сегменты по дням активности, когорты новичков, кто под угрозой
+// ухода (из ядра и регулярных) и кто уже ушёл — с последним разделом.
+function PuRetention({
+  rt,
+  onOpenUser
+}) {
+  const [allGone, setAllGone] = useState(false);
+  if (!rt || !rt.segments) return null;
+  const sg = rt.segments,
+    pct = (a, b) => b ? Math.round(a * 100 / b) + "%" : "—";
+  const who = r => /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    onClick: () => onOpenUser && onOpenUser(r.username)
+  }, r.name);
+  const where = r => AD_PAGE_RU[r.page] || r.page || "—";
+  const gone = allGone ? rt.churned : (rt.churned || []).slice(0, 8);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0423\u0434\u0435\u0440\u0436\u0430\u043D\u0438\u0435 \xB7 30 \u0434\u043D"), /*#__PURE__*/React.createElement("span", null, "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0437\u0430 7 \u0434\u043D: ", rt.active_7d, " \xB7 \u043F\u0440\u043E\u0448\u043B\u044B\u0435 7: ", rt.active_prev_7d)), /*#__PURE__*/React.createElement("div", {
+    className: "pu-grid4",
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))",
+      gap: 8,
+      margin: "6px 0 10px"
+    }
+  }, [["ядро", "8 и больше дней", sg.core, "var(--pos)"], ["регулярные", "3–7 дней", sg.regular, "var(--accent)"], ["разовые", "1–2 дня", sg.once, "var(--ink-3)"], ["ушли", "были раньше, за 30 дн — нет", sg.churned, "var(--neg)"]].map(([t, sub, v, c]) => /*#__PURE__*/React.createElement("div", {
+    key: t,
+    className: "pu-kv",
+    style: {
+      flexDirection: "column",
+      alignItems: "flex-start"
+    }
+  }, /*#__PURE__*/React.createElement("b", {
+    className: "tnum",
+    style: {
+      fontSize: 22,
+      color: c
+    }
+  }, v || 0), /*#__PURE__*/React.createElement("span", null, t, /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, sub))))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "\u043D\u043E\u0432\u044B\u0445 \u0437\u0430 30 \u0434\u043D: ", sg.new || 0), (rt.cohorts || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "h",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\u041D\u043E\u0432\u0438\u0447\u043A\u0438 \u043F\u043E \u043D\u0435\u0434\u0435\u043B\u044F\u043C \u043F\u0440\u0438\u0445\u043E\u0434\u0430"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0435\u0440\u043D\u0443\u043B\u0438\u0441\u044C \u043D\u0430 2-\u0439 \xB7 \u043D\u0430 4-\u0439 \u043D\u0435\u0434\u0435\u043B\u0435")), (rt.cohorts || []).map(c => /*#__PURE__*/React.createElement("div", {
+    key: c.week,
+    className: "pu-bar-row"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "lb"
+  }, "\u0441 ", fmtDateMsk(c.week), " \xB7 ", c.n, " \u0447\u0435\u043B."), /*#__PURE__*/React.createElement("span", {
+    className: "tr"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "fl",
+    style: {
+      width: Math.max(3, c.w2_ready ? c.w2 * 100 / c.w2_ready : 0) + "%"
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "vv tnum"
+  }, c.w2_ready ? pct(c.w2, c.w2_ready) : "рано", " \xB7 ", c.w4_ready ? pct(c.w4, c.w4_ready) : "рано")))), /*#__PURE__*/React.createElement("div", {
+    className: "h",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0434 \u0443\u0433\u0440\u043E\u0437\u043E\u0439 \u0443\u0445\u043E\u0434\u0430 \xB7 ", (rt.at_risk || []).length), /*#__PURE__*/React.createElement("span", null, "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0440\u0435\u0433\u0443\u043B\u044F\u0440\u043D\u043E, \u0430 \u0442\u0435\u043F\u0435\u0440\u044C \u043D\u0435\u0442 7\u201329 \u0434\u043D")), (rt.at_risk || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u0412\u0441\u0435, \u043A\u0442\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u043B \u0440\u0435\u0433\u0443\u043B\u044F\u0440\u043D\u043E, \u0437\u0430\u0445\u043E\u0434\u044F\u0442 \u0438 \u0441\u0435\u0439\u0447\u0430\u0441.") : (rt.at_risk || []).map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.username,
+    className: "pu-qrow"
+  }, who(r), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u043D\u0435\u0442 ", r.gap_days, " \u0434\u043D."), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, r.days_60, " \u0434\u043D. \u0437\u0430 60"), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043B \u2014 ", where(r)), r.ai ? /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null)), /*#__PURE__*/React.createElement("div", {
+    className: "h",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\u0423\u0448\u043B\u0438 \xB7 ", rt.churned_total || 0), /*#__PURE__*/React.createElement("span", null, "\u0431\u044B\u043B\u0438 \u0430\u043A\u0442\u0438\u0432\u043D\u044B 1\u20133 \u043C\u0435\u0441. \u043D\u0430\u0437\u0430\u0434")), gone.map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.username,
+    className: "pu-qrow"
+  }, who(r), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0430\u0437 ", fmtDateMsk(r.last)), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, r.days_prev, " \u0434\u043D. \u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u0438"), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, where(r)), r.ai ? /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null)), (rt.churned || []).length > 8 && /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    onClick: () => setAllGone(v => !v)
+  }, allGone ? "свернуть" : `показать всех (${rt.churned.length})`));
+}
 function PuPersona({
   p
 }) {
@@ -21419,7 +21523,10 @@ function PulsePage() {
     "aria-labelledby": "pu-tab-" + tab,
     key: tab,
     className: "rv-panel"
-  }, tab === "people" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, tab === "people" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuRetention, {
+    rt: m.retention,
+    onOpenUser: setCard
+  }), /*#__PURE__*/React.createElement("div", {
     className: "pu-card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "h"

@@ -228,6 +228,104 @@ def _ppl(col: str = "username") -> str:
     return _PPL.format(col=col)
 
 
+def _retention_calc(daily: dict, first: dict, today, *, last_page: dict | None = None,
+                    ai: dict | None = None, names: dict | None = None) -> dict:
+    """Удержание по дням активности (аудит 03.10, ПУЛ-01): «38 активных»
+    скрывали, что половина заходила один день, а 63 человека ушли в августе.
+
+    daily: {логин: set(дат МСК с просмотром страниц)}; first: {логин: дата
+    первого захода}; today — дата МСК. Чистая функция — тестируется без БД."""
+    from datetime import timedelta
+    last_page, ai, names = last_page or {}, ai or {}, names or {}
+
+    def n_in(days, a, b):          # дней активности в окне [today-b, today-a]
+        lo, hi = today - timedelta(days=b), today - timedelta(days=a)
+        return sum(1 for d in days if lo <= d <= hi)
+    seg = {"core": 0, "regular": 0, "once": 0, "churned": 0, "new": 0}
+    at_risk, churned = [], []
+    w7 = w7prev = 0
+    for u, days in daily.items():
+        if not days:
+            continue
+        cur, prev = n_in(days, 0, 29), n_in(days, 30, 89)
+        last = max(days)
+        gap = (today - last).days
+        f = first.get(u) or min(days)
+        if (today - f).days <= 29:
+            seg["new"] += 1
+        if cur >= 8:
+            seg["core"] += 1
+        elif cur >= 3:
+            seg["regular"] += 1
+        elif cur >= 1:
+            seg["once"] += 1
+        elif prev:
+            seg["churned"] += 1
+        w7 += n_in(days, 0, 6) > 0
+        w7prev += n_in(days, 7, 13) > 0
+        row = {"username": u, "name": names.get(u) or u, "last": last.isoformat(),
+               "gap_days": gap, "days_60": n_in(days, 0, 59), "page": last_page.get(u),
+               "ai": int(ai.get(u) or 0)}
+        # под угрозой — те, кто заходил регулярно (≥3 дней за 60) и пропал на 7–29 дней
+        if 7 <= gap <= 29 and row["days_60"] >= 3:
+            at_risk.append(row)
+        elif cur == 0 and prev:
+            row["days_prev"] = prev
+            churned.append(row)
+    # недельные когорты новичков: вернулся ли на 2-й и на 4-й неделе
+    weeks: dict = {}
+    for u, f in first.items():
+        if (today - f).days > 70 or (today - f).days < 0:
+            continue
+        wk = f - timedelta(days=f.weekday())
+        days = daily.get(u) or set()
+        c = weeks.setdefault(wk, {"week": wk.isoformat(), "n": 0, "w2": 0, "w4": 0,
+                                  "w2_ready": 0, "w4_ready": 0})
+        c["n"] += 1
+        if (today - f).days >= 13:
+            c["w2_ready"] += 1
+            c["w2"] += any(7 <= (d - f).days <= 13 for d in days)
+        if (today - f).days >= 27:
+            c["w4_ready"] += 1
+            c["w4"] += any(21 <= (d - f).days <= 27 for d in days)
+    at_risk.sort(key=lambda r: (-r["days_60"], r["gap_days"]))
+    churned.sort(key=lambda r: (-r["days_prev"], r["last"]))
+    return {"segments": seg, "active_7d": w7, "active_prev_7d": w7prev,
+            "cohorts": [weeks[k] for k in sorted(weeks)],
+            "at_risk": at_risk[:30], "churned": churned[:40], "churned_total": len(churned)}
+
+
+def _retention(ex: list[str]) -> dict:
+    from datetime import datetime, timedelta, timezone
+    p = {"ex": ex}
+    P = _ppl()
+    daily: dict = {}
+    for r in _rows(f"""
+            SELECT username, (created_at AT TIME ZONE 'Europe/Moscow')::date AS d
+              FROM usage_event
+             WHERE kind = 'page_view' AND username IS NOT NULL AND {P}
+               AND created_at > now() - interval '100 days'
+             GROUP BY 1, 2""", p):
+        daily.setdefault(r["username"], set()).add(r["d"])
+    first = {r["username"]: r["f"] for r in _rows(f"""
+            SELECT username, min(created_at AT TIME ZONE 'Europe/Moscow')::date AS f
+              FROM usage_event WHERE kind = 'page_view' AND username IS NOT NULL AND {P}
+             GROUP BY 1""", p)}
+    last_page = {r["username"]: r["page"] for r in _rows(f"""
+            SELECT DISTINCT ON (username) username, page FROM usage_event
+             WHERE kind = 'page_view' AND username IS NOT NULL AND {P}
+               AND created_at > now() - interval '100 days'
+             ORDER BY username, created_at DESC""", p)}
+    ai = {r["username"]: r["n"] for r in _rows(f"""
+            SELECT username, count(*) AS n FROM user_event
+             WHERE kind = 'ai_query' AND {P} AND ts > now() - interval '100 days'
+             GROUP BY 1""", p)}
+    names = {r["username"]: r["name"] for r in _rows(
+        "SELECT username, display_name AS name FROM app_user WHERE display_name IS NOT NULL")}
+    today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
+    return _retention_calc(daily, first, today, last_page=last_page, ai=ai, names=names)
+
+
 def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
     """Всё для «Пульса» одним ответом: люди + продукт + техника. МСК-время в срезах.
 
@@ -468,6 +566,7 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
             "segments": segments,
             "ai_feedback": _ai_feedback(days, ex),
             "persona": _persona(ex),
+            "retention": _retention(ex),
             "proposals": _proposals(),
             "ingest": _ingest_health(days),
             "collect": _collect_health(days),

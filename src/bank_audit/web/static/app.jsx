@@ -10284,6 +10284,54 @@ function puLen(r){
 function puDur(s){ if(s==null)return "—"; s=Math.round(+s);
   return s<90?`${s} с`:`${Math.round(s/60)} мин`; }
 
+// Удержание: сегменты по дням активности, когорты новичков, кто под угрозой
+// ухода (из ядра и регулярных) и кто уже ушёл — с последним разделом.
+function PuRetention({rt,onOpenUser}){
+  const[allGone,setAllGone]=useState(false);
+  if(!rt||!rt.segments)return null;
+  const sg=rt.segments, pct=(a,b)=>b?Math.round(a*100/b)+"%":"—";
+  const who=r=><button className="pu-link" onClick={()=>onOpenUser&&onOpenUser(r.username)}>{r.name}</button>;
+  const where=r=>AD_PAGE_RU[r.page]||r.page||"—";
+  const gone=allGone?rt.churned:(rt.churned||[]).slice(0,8);
+  return <div className="pu-card">
+    <div className="h"><span>Удержание · 30 дн</span>
+      <span>заходили за 7 дн: {rt.active_7d} · прошлые 7: {rt.active_prev_7d}</span></div>
+    <div className="pu-grid4" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,margin:"6px 0 10px"}}>
+      {[["ядро","8 и больше дней",sg.core,"var(--pos)"],["регулярные","3–7 дней",sg.regular,"var(--accent)"],
+        ["разовые","1–2 дня",sg.once,"var(--ink-3)"],["ушли","были раньше, за 30 дн — нет",sg.churned,"var(--neg)"]].map(([t,sub,v,c])=>
+        <div key={t} className="pu-kv" style={{flexDirection:"column",alignItems:"flex-start"}}>
+          <b className="tnum" style={{fontSize:22,color:c}}>{v||0}</b><span>{t}<span className="sub">{sub}</span></span></div>)}
+    </div>
+    <div className="pu-note">новых за 30 дн: {sg.new||0}</div>
+
+    {(rt.cohorts||[]).length>0&&<>
+      <div className="h" style={{marginTop:12}}><span>Новички по неделям прихода</span><span>вернулись на 2-й · на 4-й неделе</span></div>
+      {(rt.cohorts||[]).map(c=><div key={c.week} className="pu-bar-row">
+        <span className="lb">с {fmtDateMsk(c.week)} · {c.n} чел.</span>
+        <span className="tr"><span className="fl" style={{width:Math.max(3,c.w2_ready?c.w2*100/c.w2_ready:0)+"%"}}/></span>
+        <span className="vv tnum">{c.w2_ready?pct(c.w2,c.w2_ready):"рано"} · {c.w4_ready?pct(c.w4,c.w4_ready):"рано"}</span>
+      </div>)}
+    </>}
+
+    <div className="h" style={{marginTop:12}}><span>Под угрозой ухода · {(rt.at_risk||[]).length}</span>
+      <span>заходили регулярно, а теперь нет 7–29 дн</span></div>
+    {(rt.at_risk||[]).length===0?<div className="pu-empty">Все, кто заходил регулярно, заходят и сейчас.</div>:
+      (rt.at_risk||[]).map(r=><div key={r.username} className="pu-qrow">
+        {who(r)}<span className="md">нет {r.gap_days} дн.</span>
+        <span className="md">{r.days_60} дн. за 60</span><span className="md">последний раздел — {where(r)}</span>
+        {r.ai?<span className="md">вопросов ИИ: {r.ai}</span>:null}</div>)}
+
+    <div className="h" style={{marginTop:12}}><span>Ушли · {rt.churned_total||0}</span>
+      <span>были активны 1–3 мес. назад</span></div>
+    {gone.map(r=><div key={r.username} className="pu-qrow">
+      {who(r)}<span className="md">последний раз {fmtDateMsk(r.last)}</span>
+      <span className="md">{r.days_prev} дн. активности</span><span className="md">{where(r)}</span>
+      {r.ai?<span className="md">вопросов ИИ: {r.ai}</span>:null}</div>)}
+    {(rt.churned||[]).length>8&&<button className="pu-link" onClick={()=>setAllGone(v=>!v)}>
+      {allGone?"свернуть":`показать всех (${rt.churned.length})`}</button>}
+  </div>;
+}
+
 function PuPersona({p}){
   const[all,setAll]=useState(false);
   const parts=p.parts||[];
@@ -11273,6 +11321,8 @@ function PulsePage(){
 
     <div id="pu-panel" role="tabpanel" aria-labelledby={"pu-tab-"+tab} key={tab} className="rv-panel">
     {tab==="people"&&<>
+        {/* ① удержание — главный вопрос продукта: приживается ли инструмент (ПУЛ-01) */}
+        <PuRetention rt={m.retention} onOpenUser={setCard}/>
         {/* ② аудитория */}
         <div className="pu-card">
           <div className="h"><span>Аудитория · человек в день</span>
