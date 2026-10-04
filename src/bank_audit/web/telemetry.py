@@ -312,6 +312,18 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
                count(*) FILTER (WHERE kind = 'report_open') AS report_opens
           FROM user_event WHERE {P} AND ts >= {_SINCE}""", p)
     ev = ev[0] if ev else {}
+    # итоги прогонов ИИ-помощника (событие ai_run_end с 04.10): заказ ≠ отчёт —
+    # сорванные и остановленные прогоны раньше не было видно нигде (ПУЛ-02)
+    runs = _rows(f"""
+        SELECT count(*) FILTER (WHERE payload->>'status' = 'ok') AS ok,
+               count(*) FILTER (WHERE payload->>'status' = 'failed') AS failed,
+               count(*) FILTER (WHERE payload->>'status' = 'stopped') AS stopped,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY (payload->>'elapsed_s')::numeric)
+                   FILTER (WHERE payload->>'status' = 'ok' AND payload->>'mode' = 'deep') AS deep_p50,
+               percentile_cont(0.95) WITHIN GROUP (ORDER BY (payload->>'elapsed_s')::numeric)
+                   FILTER (WHERE payload->>'status' = 'ok' AND payload->>'mode' = 'deep') AS deep_p95
+          FROM user_event WHERE kind = 'ai_run_end' AND {P} AND ts >= {_SINCE}""", p)
+    runs = runs[0] if runs else {}
     # когда последний раз хоть кто-то ставил оценку: с конца августа — никто,
     # и «жалоб нет» читалось как «всё хорошо»
     last_fb = _rows(f"""
@@ -324,6 +336,11 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
         "shares": int(ev.get("shares") or 0),
         "ai_total": int(ev.get("ai_total") or 0),
         "ai_deep": int(ev.get("ai_deep") or 0),
+        "runs_ok": int(runs.get("ok") or 0),
+        "runs_failed": int(runs.get("failed") or 0),
+        "runs_stopped": int(runs.get("stopped") or 0),
+        "deep_p50_s": round(float(runs["deep_p50"])) if runs.get("deep_p50") is not None else None,
+        "deep_p95_s": round(float(runs["deep_p95"])) if runs.get("deep_p95") is not None else None,
         "report_opens": int(ev.get("report_opens") or 0),
         "fb_likes": int(fb.get("fb_likes") or 0),
         "fb_dislikes": int(fb.get("fb_dislikes") or 0),
@@ -1107,6 +1124,9 @@ def user_card(username: str, days: int = 30) -> dict:
              ORDER BY m.created_at DESC LIMIT 60""", p),
         "reports": _rows("""
             SELECT report_id, question, title, COALESCE(payload->>'mode', 'deep') AS mode,
+                   payload->>'status' AS status,
+                   CASE WHEN payload->>'elapsed_s' ~ '^[0-9]+$'
+                        THEN (payload->>'elapsed_s')::int END AS elapsed_s,
                    to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
                    length(body) AS body_len
               FROM report WHERE username = :u
@@ -1167,6 +1187,9 @@ def reports_all(days: int = 30, limit: int = 200, q: str | None = None,
                r.question, r.title, r.banks,
                COALESCE(r.payload->>'mode', 'deep') AS mode,
                length(r.body) AS body_len,
+               r.payload->>'status' AS status,
+               CASE WHEN r.payload->>'elapsed_s' ~ '^[0-9]+$'
+                    THEN (r.payload->>'elapsed_s')::int END AS elapsed_s,
                to_char(r.created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
                COALESCE(fb.likes, 0) AS likes, COALESCE(fb.dislikes, 0) AS dislikes,
                fb.comment, fb.reasons,

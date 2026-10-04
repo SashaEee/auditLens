@@ -17,8 +17,7 @@ from ..config import Settings
 from ..ai.analyst import stream_analysis
 from ..ai.clarify import generate_clarifications, build_enriched_question
 from .demo_stream import is_demo_mode_active, find_demo_response, stream_demo_response
-from ..notifier.email import EmailNotifier
-from ..notifier.alerts import alerts_background_loop, run_once as alerts_run_once
+from ..notifier.alerts import alerts_background_loop
 from ..rag import cache as rag_cache
 from ..rag.indexer import ingest_document_from_url
 from ..rag.url_discovery import bootstrap_bank_profile, TOP_BANK_SITES
@@ -3439,39 +3438,45 @@ async def solve_captcha(idx: int, background_tasks: BackgroundTasks):
 
 @app.get("/api/alerts/status")
 def alerts_status():
-    n = EmailNotifier()
-    return {
-        "configured": n.is_configured(),
-        "smtp_host": n.smtp_host, "smtp_port": n.smtp_port,
-        "from": n.from_email, "to": n.default_to, "cc": n.default_cc,
-    }
+    """Эксплуатационные алерты: настроена ли почта, кому уходят, что сейчас
+    сломано (аудит 03.10, ПЛТ-01)."""
+    from . import mailer
+    from ..notifier import alerts
+    try:
+        events = [e["title"] for e in alerts.ops_events()]
+    except Exception as e:  # noqa: BLE001
+        events = [f"проверка не удалась: {type(e).__name__}"]
+    return {"configured": mailer.configured(), "to": ", ".join(alerts.recipients()),
+            "from": (os.getenv("SMTP_FROM") or os.getenv("SMTP_USER") or ""),
+            "events": events}
 
-@app.post("/api/alerts/test-login")
-def alerts_test_login():
-    """Проверка SMTP-логина без отправки писем."""
-    n = EmailNotifier()
-    if not (n.smtp_user and n.smtp_pwd):
-        raise HTTPException(400, "SMTP_USER/SMTP_PWD не заданы")
-    ok, err = n.test_login()
-    return {"ok": ok, "error": err}
 
 @app.post("/api/alerts/send-test")
 def alerts_send_test():
-    """Отправить тестовое письмо на ALERTS_TO."""
-    n = EmailNotifier()
-    if not n.is_configured():
-        raise HTTPException(400, "SMTP не сконфигурирован — заполните .env")
-    ok = n.send(
-        subject="[bank_audit] тестовое уведомление",
-        body="Это тестовое письмо от bank_audit_platform. SMTP настроен корректно.",
-    )
-    return {"ok": ok}
+    """Тестовое письмо получателям алертов."""
+    from . import mailer
+    from ..notifier import alerts
+    to = alerts.recipients()
+    if not (mailer.configured() and to):
+        raise HTTPException(400, "почта или получатели алертов не настроены (SMTP_*, ALERTS_TO или MAIL_TEST_TO)")
+    mail = {"subject": "AuditLens: тестовый алерт",
+            "text": "Это тестовое письмо эксплуатационных алертов AuditLens.",
+            "html": "<p>Это тестовое письмо эксплуатационных алертов AuditLens.</p>",
+            "thread": "ops-alerts"}
+    errors = []
+    for addr in to:
+        try:
+            mailer.send(addr, mail)
+        except mailer.MailError as e:
+            errors.append(f"{addr}: {e}")
+    return {"ok": not errors, "error": "; ".join(errors) or None}
+
 
 @app.post("/api/alerts/run-now")
 def alerts_run_now():
-    """Принудительный прогон проверки flag'ов и отправки письма."""
-    n = EmailNotifier()
-    return alerts_run_once(settings, n)
+    """Принудительный прогон: собрать сбои и отправить, даже если сегодня уже слали."""
+    from ..notifier import alerts
+    return alerts.run_once(force=True)
 
 
 # ── RAG / knowledge layer ────────────────────────────────────────────────────
@@ -4840,18 +4845,31 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     run_meta: Optional[dict] = None
     report_title: Optional[str] = None   # из брифа отчёта; у быстрых — составим после
     saved_title: Optional[str] = None
+    t0 = time.monotonic()
 
-    def _persist() -> int | None:
-        """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None."""
+    def _persist(finished: bool) -> int | None:
+        """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None.
+        finished — пришёл done; без него прогон остановлен или оборван.
+        Итог прогона (готов / остановлен / сорвался) и время пишутся в событие
+        ai_run_end — по нему «Пульс» видит сорванные отчёты (аудит 03.10, ПУЛ-02);
+        раньше сбой выглядел как обычный ответ, а «Ошибки» были пусты."""
         nonlocal saved_title
         body = replaced if replaced is not None else "".join(lead_parts) + "".join(parts)
+        elapsed = round(time.monotonic() - t0)
+        from ..research.gptr.stream import FAIL_PREFIXES
+        failed = bool(body and body.strip()) and (
+            body.strip().startswith(FAIL_PREFIXES) or (mode == "deep" and len(body.strip()) < 300))
+        status = ("failed" if failed or not (body and body.strip()) and finished
+                  else "ok" if finished else "stopped")
+        userdata.log_event(username, "ai_run_end",
+                           {"status": status, "mode": mode, "elapsed_s": elapsed,
+                            "session_id": session_id, "body_len": len((body or "").strip())})
         if not (body and body.strip()):
             return None
         try:
             banks = userdata.parse_query_signals(question).get("banks", [])
-            # сорванный прогон — сообщение в беседе, а не отчёт в истории
-            from ..research.gptr.stream import FAIL_PREFIXES
-            failed = body.strip().startswith(FAIL_PREFIXES) or (mode == "deep" and len(body.strip()) < 300)
+            # сорванный прогон — сообщение в беседе, а не отчёт в истории;
+            # остановленный — отчёт с пометкой (частичный результат не теряем)
             is_report = not failed and ((mode == "deep") or (len(body) > 800))
             report_id = None
             if is_report:
@@ -4863,6 +4881,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                              "viz": viz,
                              "verification": verification, "gaps": gaps,
                              "ranking": ranking, "insights": insights,
+                             "status": status, "elapsed_s": elapsed,
                              "payload_v": 2},
                     banks=banks, title=saved_title)
                 if report_title:
@@ -4879,7 +4898,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                         asyncio.create_task(generate_profile_note(username))
                 except Exception:
                     pass
-            meta = {"sources": sources, "mode": mode, "report_id": report_id}
+            meta = {"sources": sources, "mode": mode, "report_id": report_id,
+                    "status": status, "elapsed_s": elapsed}
             if engine:
                 meta["engine"] = engine
             if tools_used:
@@ -4946,7 +4966,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     # Персистим ДО done: клиент успевает получить report_id
                     # (кнопка «Поделиться» доступна сразу после прогона).
                     persisted = True
-                    rid = _persist()
+                    rid = _persist(True)
                     if rid:
                         yield json.dumps({"type": "report_saved", "report_id": rid,
                                           "title": saved_title},
@@ -4956,7 +4976,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             yield ev
     finally:
         if not persisted:      # обрыв соединения/стрима без done — не теряем ответ
-            _persist()
+            _persist(False)
 
 
 @app.post("/api/ai/analyze")
@@ -5227,6 +5247,28 @@ app.mount("/static/loophole", StaticFiles(directory=LOOPHOLE_STATIC_DIR), name="
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+_BUILT_SHA: dict = {}
+
+
+def _built_matches_jsx(built, jsx_path) -> str | None:
+    """sha256 app.jsx, если app.js собран именно из него (первая строка сборки),
+    иначе None. По времени файлов судить нельзя: при заливке app.jsx пишется
+    позже app.js, и свежая сборка выглядела устаревшей. Кэш — по размеру и
+    времени обоих файлов, чтобы не хешировать мегабайт на каждый заход."""
+    import hashlib
+    try:
+        sb, sj = built.stat(), jsx_path.stat()
+    except OSError:
+        return None
+    key = (sb.st_mtime_ns, sb.st_size, sj.st_mtime_ns, sj.st_size)
+    if _BUILT_SHA.get("key") != key:
+        sha = hashlib.sha256(jsx_path.read_bytes()).hexdigest()
+        with built.open(encoding="utf-8") as f:
+            head = f.readline()
+        _BUILT_SHA.update(key=key, sha=sha if f"sha256 {sha}" in head else None)
+    return _BUILT_SHA.get("sha")
+
+
 def _index_html_with_bust() -> str:
     """Подмешиваем cache-bust к src='/static/app.jsx' по mtime файла.
     Иначе браузер мог кэшировать старый JSX без PdfExportButton и других
@@ -5238,9 +5280,10 @@ def _index_html_with_bust() -> str:
     jsx_path = STATIC_DIR / "app.jsx"
     # Собранный заранее файл избавляет браузер от компиляции на лету: раньше
     # каждый заход стоил трёх секунд неотзывчивого интерфейса и трёх мегабайт
-    # компилятора. Если сборки нет — работаем по-старому, только медленнее.
-    if built.exists() and built.stat().st_mtime >= jsx_path.stat().st_mtime:
-        v = int(built.stat().st_mtime)
+    # компилятора. Сборка не совпала с исходником — работаем по-старому.
+    sha = _built_matches_jsx(built, jsx_path)
+    if sha:
+        v = sha[:12]
         html = re.sub(r'<script src="[^"]*babel[^"]*"></script>\s*', "", html)
         html = re.sub(r'<script type="text/babel" src="/static/app\.jsx[^"]*"></script>',
                       f'<script src="/static/app.js?v={v}"></script>', html)

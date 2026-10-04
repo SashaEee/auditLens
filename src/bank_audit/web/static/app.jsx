@@ -7353,7 +7353,7 @@ function AIPage(){
           const r=await apiFetch(`/api/reports/${m.report_id}`); const p=r.payload||{};
           Object.assign(m,{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
                            gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null,
-                           title:r.title||undefined});
+                           status:p.status||undefined,title:r.title||undefined});
         }catch{}
       }));
       setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
@@ -7375,7 +7375,7 @@ function AIPage(){
                 verification:p.verification||null,gaps:p.gaps||null,
                 ranking:p.ranking||null,insights:p.insights||null,
                 report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name,
-                title:r.title||undefined}]);
+                status:p.status||undefined,title:r.title||undefined}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
@@ -7498,6 +7498,8 @@ function AIPage(){
                       })()}
                       {m.ranking && <div className="dr-fade-in"><RankingWidget ranking={m.ranking}/></div>}
                       {m.insights && m.insights.length>0 && <div className="dr-fade-in"><InsightsWidget insights={m.insights}/></div>}
+                      {m.status==="stopped"&&!streaming&&<div className="t-cap" style={{margin:"8px 0"}}>
+                        ⏹ Отчёт остановлен до конца прогона — здесь то, что успело прийти.</div>}
                       {m.verification&&<VerificationBanner verification={m.verification}/>}
                       {showPdfBtn && !streaming &&
                         <div className="dr-doc-footer">
@@ -7795,51 +7797,47 @@ function BanksPage(){
 
 // ─── SOURCES PAGE ─────────────────────────────────────────────────────────────
 function AlertsStatusBar(){
+  // Эксплуатационные алерты владельцу (аудит 03.10, ПЛТ-01): почта, получатели
+  // и что сломано прямо сейчас — письмо об этом уходит раз в сутки на событие.
   const[s,setS]=useState(null);
   const[busy,setBusy]=useState("");
   const[msg,setMsg]=useState("");
   const load=()=>apiFetch("/api/alerts/status").then(setS).catch(()=>{});
   useEffect(()=>{load();},[]);
-  const testLogin=async()=>{
-    setBusy("login");setMsg("");
-    try{const r=await apiPost("/api/alerts/test-login",{});
-      setMsg(r.ok?"✓ SMTP-логин прошёл":`✗ ${r.error||"ошибка"}`);
-    }catch(e){setMsg("✗ "+(e.message||"network"));}
-    setBusy("");
-  };
   const sendTest=async()=>{
     setBusy("send");setMsg("");
     try{const r=await apiPost("/api/alerts/send-test",{});
-      setMsg(r.ok?"✓ Тестовое письмо отправлено":"✗ Ошибка отправки — см. серверные логи");
+      setMsg(r.ok?"✓ Тестовое письмо отправлено":`✗ ${r.error||"ошибка отправки"}`);
     }catch(e){setMsg("✗ "+(e.message||"network"));}
     setBusy("");
   };
   const runNow=async()=>{
     setBusy("run");setMsg("");
     try{const r=await apiPost("/api/alerts/run-now",{});
-      setMsg(`Прогон: sent=${r.sent}, ${r.skipped||r.error||"ok"}`);
+      setMsg(r.sent?`✓ Письмо отправлено: ${(r.events||[]).length} ${plural((r.events||[]).length,"сбой","сбоя","сбоев")}`
+        :`Письмо не ушло: ${r.skipped||r.error||"нечего слать"}`);
     }catch(e){setMsg("✗ "+(e.message||"network"));}
     setBusy("");
   };
   if(!s) return null;
+  const ev=s.events||[];
   return <div className="card" style={{padding:"12px 16px",marginBottom:12,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
     <div style={{minWidth:0}}>
-      <div style={{fontSize:12,textTransform:"uppercase",letterSpacing:.6,color:"var(--ink-2)"}}>Email-алерты</div>
+      <div style={{fontSize:12,textTransform:"uppercase",letterSpacing:.6,color:"var(--ink-2)"}}>Алерты о сбоях</div>
       <div style={{fontSize:13}}>
-        {s.configured?<span style={{color:"var(--pos)"}}>● настроено</span>
-                     :<span style={{color:"var(--ink-2)"}}>○ не настроено (заполните SMTP_* в .env)</span>}
-        {s.configured&&<span style={{color:"var(--ink-2)",marginLeft:8}}>{s.from} → {s.to}</span>}
+        {s.configured&&s.to?<span style={{color:"var(--pos)"}}>● письма уходят</span>
+                     :<span style={{color:"var(--ink-2)"}}>○ не настроено: нужны SMTP_* и ALERTS_TO (или MAIL_TEST_TO) в .env</span>}
+        {s.configured&&s.to&&<span style={{color:"var(--ink-2)",marginLeft:8}}>→ {s.to}</span>}
       </div>
+      <div style={{fontSize:12,color:ev.length?"var(--neg)":"var(--ink-3)",marginTop:2}}>
+        {ev.length?`Сейчас: ${ev.join(" · ")}`:"Сейчас сбоев нет"}</div>
     </div>
     <div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap"}}>
-      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured} onClick={testLogin}>
-        {busy==="login"?"…":"Проверить логин"}
-      </button>
-      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured} onClick={sendTest}>
+      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured||!s.to} onClick={sendTest}>
         {busy==="send"?"…":"Тестовое письмо"}
       </button>
-      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured} onClick={runNow}>
-        {busy==="run"?"…":"Запустить прогон"}
+      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured||!s.to||!ev.length} onClick={runNow}>
+        {busy==="run"?"…":"Отправить сейчас"}
       </button>
     </div>
     {msg&&<div style={{flexBasis:"100%",fontSize:12,color:"var(--ink-2)"}}>{msg}</div>}
@@ -10273,6 +10271,19 @@ function PuAiFeedback({fb,days,lastAt,onOpenReport,onOpenUser}){
 // короткие заголовки колонок: раньше брали первое слово подписи — выходило «5+ 3+ 5+ 3+»
 const PU_PERSONA_COL={desc:"описание",ratings:"оценки ленты",focus:"темы",queries:"вопросы ИИ",
   ai_ratings:"оценки ИИ",note:"нарратив"};
+// Объём отчёта: «1 тыс.» у сообщения об ошибке в 53 знака выдавало сорванный
+// отчёт за обычный (ПУЛ-02). Короткое тело и итог прогона — видны.
+function puLen(r){
+  const n=+r.body_len||0;
+  const txt=n<1000?`${n} зн.`:`${Math.round(n/1000)} тыс. зн.`;
+  const st=r.status==="stopped"?" · остановлен":r.status==="failed"?" · сорвался":"";
+  const bad=n<500||r.status==="failed";
+  return <span style={bad?{color:"var(--neg)"}:undefined}
+    title={r.elapsed_s?`строился ${puDur(r.elapsed_s)}`:undefined}>{txt}{st}</span>;
+}
+function puDur(s){ if(s==null)return "—"; s=Math.round(+s);
+  return s<90?`${s} с`:`${Math.round(s/60)} мин`; }
+
 function PuPersona({p}){
   const[all,setAll]=useState(false);
   const parts=p.parts||[];
@@ -10972,7 +10983,7 @@ function PuUserCard({username,days,onClose,onOpenReport,onOpenSession,onHidden})
             <span className="at">{r.at}</span>
             <span className="qq">{r.title||r.question}</span>
             <span className="md">{r.mode==="quick"?"быстрый ответ":"отчёт"}</span>
-            <span className="md">{Math.max(1,Math.round((+r.body_len||0)/1000))} тыс. зн.</span>
+            <span className="md">{puLen(r)}</span>
             <button className="pu-link" onClick={()=>onOpenReport(r.report_id)}>открыть →</button>
           </div>)}
           {(c.reports||[]).length===0&&<div className="pu-empty">Отчётов не строил.</div>}
@@ -11101,7 +11112,7 @@ function PuReports({days,withMe,rev,onOpenReport,onOpenUser}){
               {r.comment&&<em className="pu-cmt"> «{r.comment}»</em>}</td>
             <td style={{whiteSpace:"nowrap"}}>{r.mode==="quick"?"ответ":"отчёт"}</td>
             <td style={{whiteSpace:"nowrap"}}>{r.at}</td>
-            <td className="tnum" style={{whiteSpace:"nowrap"}}>{Math.max(1,Math.round((+r.body_len||0)/1000))} тыс.</td>
+            <td className="tnum" style={{whiteSpace:"nowrap"}}>{puLen(r)}</td>
             <td className="tnum">{+r.likes>0&&<span style={{color:"var(--pos)"}}>+{r.likes}</span>}
               {+r.dislikes>0&&<span style={{color:"var(--neg)"}}> −{r.dislikes}</span>}
               {!+r.likes&&!+r.dislikes&&"—"}</td>
@@ -11314,6 +11325,10 @@ function PulsePage(){
             <div className="pu-kv"><span>Вопросы ИИ-помощнику{f.ai_deep?<span className="sub">из них заказ отчёта — {f.ai_deep}</span>:null}</span>
               <b className="tnum">{f.ai_total||0}</b></div>
             <div className="pu-kv"><span>Отчёты</span><b className="tnum">{f.reports||0}</b></div>
+            {/* итоги прогонов: заказ ≠ отчёт — сорванные раньше не было видно (ПУЛ-02) */}
+            {(f.runs_ok||f.runs_failed||f.runs_stopped)?<div className="pu-kv"><span>Прогоны ИИ-помощника
+              <span className="sub">{f.deep_p50_s!=null?`отчёт строится: медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}`:"время отчёта появится после первых прогонов"}</span></span>
+              <b className="tnum">{f.runs_ok||0} готово{f.runs_failed?<span style={{color:"var(--neg)"}}> · {f.runs_failed} сорвалось</span>:null}{f.runs_stopped?<span style={{color:"var(--ink-3)"}}> · {f.runs_stopped} остановлено</span>:null}</b></div>:null}
             <div className="pu-kv"><span>Быстрые ответы сохранено</span><b className="tnum">{f.quick_saved||0}</b></div>
             <div className="pu-kv"><span>Открытий сохранённых отчётов</span><b className="tnum">{f.report_opens||0}</b></div>
             <div className="pu-kv"><span>Отправлено коллегам</span><b className="tnum">{f.shares||0}</b></div>

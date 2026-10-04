@@ -2,7 +2,13 @@
 // Раньше страница тянула 3 МБ Babel и компилировала 540 КБ исходника на месте —
 // главный поток стоял три секунды, и всё это время интерфейс не отвечал.
 // Babel берём тот же, что лежал в vendor: никаких новых зависимостей.
-const fs = require("fs"), path = require("path");
+//
+// Запуск после любой правки app.jsx:  node scripts/build_frontend.js
+// Собранный app.js лежит в репозитории; в первой строке — sha256 исходника.
+// Сервер отдаёт сборку, только если отпечаток совпадает с app.jsx (иначе —
+// старый путь с Babel в браузере), а тест test_app_js_is_built_from_current_jsx
+// падает, если JSX поменяли без пересборки.
+const fs = require("fs"), path = require("path"), crypto = require("crypto");
 const root = path.join(__dirname, "..", "src", "bank_audit", "web", "static");
 const Babel = require(path.join(root, "vendor", "babel.min.js"));
 const src = fs.readFileSync(path.join(root, "app.jsx"), "utf8");
@@ -21,5 +27,6 @@ if (missing.length) {
 
 const { code } = Babel.transform(src, { presets: ["react"], filename: "app.jsx", compact: false });
 const out = path.join(root, "app.js");
-fs.writeFileSync(out, "// Собрано из app.jsx: scripts/build_frontend.js. Правьте .jsx, не этот файл.\n" + code);
+const sha = crypto.createHash("sha256").update(src, "utf8").digest("hex");
+fs.writeFileSync(out, `// Собрано из app.jsx (sha256 ${sha}): scripts/build_frontend.js. Правьте .jsx, не этот файл.\n` + code + "\n");
 console.log(`собрано за ${Date.now() - t0} мс: ${(code.length / 1024).toFixed(0)} КБ → ${path.relative(process.cwd(), out)}`);
