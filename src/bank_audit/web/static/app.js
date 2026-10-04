@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 719034a63c6d557f5338b68b45ca4924ff3300ce494c4b4f9e6f2f9d287b1511): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 9855a5ef5e554aa251b3ca588c9d3ed3251d09e0e7cc588e3f0370d540a29c9e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -4990,47 +4990,46 @@ function SinceStrip() {
   }, /*#__PURE__*/React.createElement("b", null, head), it.length ? " · " + it.map(x => x.t).join(" · ") : ""), /*#__PURE__*/React.createElement("span", {
     className: "ov-upd-tg"
   }, open ? "Свернуть" : "Показать")), open && /*#__PURE__*/React.createElement("ul", {
-    className: "ov-upd-list"
+    className: "ov-upd-list ov-since-list"
   }, it.map(x => /*#__PURE__*/React.createElement("li", {
-    key: x.k,
-    className: "ov-upd-it"
+    key: x.k
   }, x.href ? /*#__PURE__*/React.createElement("a", {
+    className: "ov-since-h",
     href: x.href
-  }, x.t) : /*#__PURE__*/React.createElement("span", null, x.t), x.s && /*#__PURE__*/React.createElement("div", {
-    className: "t-cap"
-  }, x.s), (x.list || []).map((y, i) => /*#__PURE__*/React.createElement("div", {
+  }, x.t) : /*#__PURE__*/React.createElement("span", {
+    className: "ov-since-h"
+  }, x.t), x.s && /*#__PURE__*/React.createElement("span", {
+    className: "ov-since-sub"
+  }, x.s), (x.list || []).map((y, i) => /*#__PURE__*/React.createElement("a", {
     key: i,
-    className: "t-cap"
-  }, y.mine ? "★ " : "", /*#__PURE__*/React.createElement("a", {
+    className: "ov-since-sub",
     href: y.href,
     target: y.ext ? "_blank" : undefined,
     rel: y.ext ? "noopener noreferrer" : undefined
-  }, y.t))))), me && !me.has_email && /*#__PURE__*/React.createElement("li", {
-    className: "ov-upd-it t-cap"
+  }, y.mine ? "★ " : "", y.t)))), me && !me.has_email && /*#__PURE__*/React.createElement("li", {
+    className: "ov-since-tip"
   }, "\u041D\u0435 \u0445\u043E\u0442\u0438\u0442\u0435 \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u0442\u044C?", " ", /*#__PURE__*/React.createElement("button", {
     type: "button",
-    className: "pu-link",
+    className: "ov-since-lnk",
     onClick: () => window.dispatchEvent(new CustomEvent("al-open-mail"))
-  }, "\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \u043F\u043E\u0447\u0442\u0443"), " \u2014 \u0435\u0441\u043B\u0438 \u0432\u044B \u043D\u0435 \u0437\u0430\u0439\u0434\u0451\u0442\u0435 \u0434\u043E 11:00, \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u0433\u043B\u0430\u0432\u043D\u043E\u0435 \u0437\u0430 \u0434\u0435\u043D\u044C \u0438 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u043F\u043E \u0432\u0430\u0448\u0438\u043C \u043F\u043E\u0434\u043F\u0438\u0441\u043A\u0430\u043C."), !sg.has_subs && /*#__PURE__*/React.createElement("li", {
-    className: "ov-upd-it t-cap"
-  }, "\u041F\u043E\u0434\u0441\u043A\u0430\u0437\u043A\u0430: \u0432 \xAB\u0410\u0443\u0434\u0438\u0442\u0435 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u0432\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043F\u0440\u043E\u0434\u0443\u043A\u0442 \u0421\u0431\u0435\u0440\u0430 \u0438\u0437 \u0432\u0430\u0448\u0435\u0439 \u0437\u043E\u043D\u044B \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0438 \u043D\u0430\u0436\u043C\u0438\u0442\u0435 \xAB\u0421\u043B\u0435\u0434\u0438\u0442\u044C\xBB \u2014 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u043F\u043E \u043D\u0435\u043C\u0443 \u0431\u0443\u0434\u0443\u0442 \u0437\u0434\u0435\u0441\u044C \u043F\u0435\u0440\u0432\u044B\u043C\u0438 \u0438 \u043F\u0440\u0438\u0434\u0443\u0442 \u0432 \u043A\u043E\u043B\u043E\u043A\u043E\u043B\u044C\u0447\u0438\u043A."), away && /*#__PURE__*/React.createElement("li", {
-    className: "ov-upd-it"
-  }, sent ? /*#__PURE__*/React.createElement("span", {
-    className: "t-cap"
-  }, "\u0421\u043F\u0430\u0441\u0438\u0431\u043E, \u043F\u0435\u0440\u0435\u0434\u0430\u043B\u0438 \u043A\u043E\u043C\u0430\u043D\u0434\u0435.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "t-cap"
-  }, "\u0427\u0442\u043E \u043F\u043E\u043C\u0435\u0448\u0430\u043B\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u0442\u044C? \u041D\u0435\u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E, \u043E\u0442\u0432\u0435\u0442 \u0443\u0432\u0438\u0434\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u043A\u043E\u043C\u0430\u043D\u0434\u0430 AuditLens."), /*#__PURE__*/React.createElement("div", {
+  }, "\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \u043F\u043E\u0447\u0442\u0443"), " \u2014 \u0435\u0441\u043B\u0438 \u043D\u0435 \u0437\u0430\u0439\u0434\u0451\u0442\u0435 \u0434\u043E 11:00, \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u0433\u043B\u0430\u0432\u043D\u043E\u0435 \u0437\u0430 \u0434\u0435\u043D\u044C."), !sg.has_subs && /*#__PURE__*/React.createElement("li", {
+    className: "ov-since-tip"
+  }, "\u0421\u043E\u0432\u0435\u0442: \u043D\u0430\u0436\u043C\u0438\u0442\u0435 \xAB\u0421\u043B\u0435\u0434\u0438\u0442\u044C\xBB \u0443 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430 \u0421\u0431\u0435\u0440\u0430 \u0432 \xAB\u0410\u0443\u0434\u0438\u0442\u0435 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u2014 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u043F\u043E \u043D\u0435\u043C\u0443 \u043F\u043E\u044F\u0432\u044F\u0442\u0441\u044F \u0437\u0434\u0435\u0441\u044C."), away && /*#__PURE__*/React.createElement("li", null, sent ? /*#__PURE__*/React.createElement("span", {
+    className: "ov-since-tip"
+  }, "\u0421\u043F\u0430\u0441\u0438\u0431\u043E, \u043F\u0435\u0440\u0435\u0434\u0430\u043B\u0438 \u043A\u043E\u043C\u0430\u043D\u0434\u0435.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "ov-since-tip"
+  }, "\u0427\u0442\u043E \u043F\u043E\u043C\u0435\u0448\u0430\u043B\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u0442\u044C? \u041D\u0435\u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E \u2014 \u043E\u0442\u0432\u0435\u0442 \u0443\u0432\u0438\u0434\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u043A\u043E\u043C\u0430\u043D\u0434\u0430 AuditLens."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: 6,
-      marginTop: 4
+      marginTop: 6
     }
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
     value: why,
     onChange: e => setWhy(e.target.value),
     maxLength: 500,
-    placeholder: "\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440: \u043D\u0435 \u043D\u0430\u0448\u0451\u043B \u0434\u0430\u043D\u043D\u044B\u0445 \u043F\u043E \u0441\u0432\u043E\u0435\u043C\u0443 \u0431\u0430\u043D\u043A\u0443",
+    placeholder: "\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440: \u043D\u0435 \u043D\u0430\u0448\u0451\u043B \u0434\u0430\u043D\u043D\u044B\u0445 \u043F\u043E \u0441\u0432\u043E\u0435\u043C\u0443 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0443",
     style: {
       flex: 1
     }

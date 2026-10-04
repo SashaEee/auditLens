@@ -2519,23 +2519,23 @@ function SinceStrip(){
       <span className="ov-upd-h"><b>{head}</b>{it.length?" · "+it.map(x=>x.t).join(" · "):""}</span>
       <span className="ov-upd-tg">{open?"Свернуть":"Показать"}</span>
     </button>
-    {open&&<ul className="ov-upd-list">
-      {it.map(x=><li key={x.k} className="ov-upd-it">
-        {x.href?<a href={x.href}>{x.t}</a>:<span>{x.t}</span>}
-        {x.s&&<div className="t-cap">{x.s}</div>}
-        {(x.list||[]).map((y,i)=><div key={i} className="t-cap">
-          {y.mine?"★ ":""}<a href={y.href} target={y.ext?"_blank":undefined} rel={y.ext?"noopener noreferrer":undefined}>{y.t}</a></div>)}
+    {open&&<ul className="ov-upd-list ov-since-list">
+      {it.map(x=><li key={x.k}>
+        {x.href?<a className="ov-since-h" href={x.href}>{x.t}</a>:<span className="ov-since-h">{x.t}</span>}
+        {x.s&&<span className="ov-since-sub">{x.s}</span>}
+        {(x.list||[]).map((y,i)=><a key={i} className="ov-since-sub" href={y.href}
+          target={y.ext?"_blank":undefined} rel={y.ext?"noopener noreferrer":undefined}>{y.mine?"★ ":""}{y.t}</a>)}
       </li>)}
-      {me&&!me.has_email&&<li className="ov-upd-it t-cap">Не хотите пропускать?{" "}
-        <button type="button" className="pu-link" onClick={()=>window.dispatchEvent(new CustomEvent("al-open-mail"))}>
-          Подключите почту</button> — если вы не зайдёте до 11:00, пришлём главное за день и всплески по вашим подпискам.</li>}
-      {!sg.has_subs&&<li className="ov-upd-it t-cap">Подсказка: в «Аудите отзывов» выберите продукт Сбера из вашей зоны проверки и нажмите «Следить» — всплески по нему будут здесь первыми и придут в колокольчик.</li>}
-      {away&&<li className="ov-upd-it">
-        {sent?<span className="t-cap">Спасибо, передали команде.</span>:<>
-          <div className="t-cap">Что помешало заходить? Необязательно, ответ увидит только команда AuditLens.</div>
-          <div style={{display:"flex",gap:6,marginTop:4}}>
+      {me&&!me.has_email&&<li className="ov-since-tip">Не хотите пропускать?{" "}
+        <button type="button" className="ov-since-lnk" onClick={()=>window.dispatchEvent(new CustomEvent("al-open-mail"))}>
+          Подключите почту</button> — если не зайдёте до 11:00, пришлём главное за день.</li>}
+      {!sg.has_subs&&<li className="ov-since-tip">Совет: нажмите «Следить» у продукта Сбера в «Аудите отзывов» — всплески по нему появятся здесь.</li>}
+      {away&&<li>
+        {sent?<span className="ov-since-tip">Спасибо, передали команде.</span>:<>
+          <span className="ov-since-tip">Что помешало заходить? Необязательно — ответ увидит только команда AuditLens.</span>
+          <div style={{display:"flex",gap:6,marginTop:6}}>
             <input className="input" value={why} onChange={e=>setWhy(e.target.value)} maxLength={500}
-                   placeholder="например: не нашёл данных по своему банку" style={{flex:1}}/>
+                   placeholder="например: не нашёл данных по своему продукту" style={{flex:1}}/>
             <button type="button" className="btn btn-sm" disabled={!why.trim()} onClick={sendWhy}>Отправить</button>
           </div></>}
       </li>}
