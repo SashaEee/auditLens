@@ -12465,6 +12465,11 @@ const BX_CSS=`
 .bx-row .l{flex:1;min-width:0}
 .bx-row .l b{display:block;font-size:13px;font-weight:500;color:var(--ink)}
 .bx-row .l span{font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.bx-row-1{padding:7px 0}
+.bx-row-1 .l{display:flex;align-items:baseline;gap:8px;min-width:0}
+.bx-row-1 .l b{display:inline;flex:none}
+.bx-row-1 .l span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bx-addr-acts{margin-left:auto;font-size:12px;color:var(--ink-3);white-space:nowrap}
 .bx-sw{position:relative;flex:none;width:34px;height:20px;border-radius:999px;border:0;background:var(--hair-2);cursor:pointer;
   transition:background .16s;padding:0}
 .bx-sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;
@@ -12520,11 +12525,6 @@ const IcBx={
   mail:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></svg>,
   gear:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="2.6"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
 };
-const BX_HINT={mention:"Вас упомянули через @, ответили на ваше сообщение или прокомментировали ваш материал",
-  talk:"Новые сообщения в обсуждениях ваших дел — одной строкой на дело",
-  items:"Новые жалобы, документы и отчёты в общих делах, новый разбор ИИ",
-  access:"Добавление в дело, смена прав, передача, статус и архив дела, отчёт от коллеги",
-  inbox:"Ответ команды AuditLens или новый статус обращения"};
 const bxIcon=(k)=>k==="report_shared"?IcBx.report
   :(k==="ticket"||k==="case_msg"||k==="case_mention"||k==="case_reply")?IcSay.row
   :(k==="case_added"||k==="case_role"||k==="case_removed"||k==="case_left"||k==="case_owner")?IcBx.people:IcBx.case;
@@ -12547,9 +12547,14 @@ const bxCorp=(email,domains)=>{ const d=String(email||"").toLowerCase().split("@
 const bxAt=(domains)=>domains&&domains[0]?` (@${domains[0]})`:"";
 const bxDel=(path)=>fetch(path,{method:"DELETE"}).then(r=>{ if(r.ok) return r.json();
   throw new Error("Не получилось. Попробуйте ещё раз"); });
-const BX_MAIL_PREFS=[["instant","Сразу — о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
-  ["digest","Утренняя сводка","В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"],
-  ["brief","Выпуск в 11:00","В рабочие дни, если вы ещё не заходили, — главное за день и новые всплески жалоб по вашим подпискам"]];
+// Настройки сжаты (04.10): подпись + время мелко, подробности — в подсказке
+const BX_MAIL_PREFS=[["instant","Сразу","о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
+  ["digest","Сводка по делам","будни, 8:00","Непрочитанное по вашим делам — только если есть новое"],
+  ["brief","Выпуск дня","будни, 11:00","Если вы ещё не заходили: главное за день и всплески по вашим подпискам"]];
+// Группы колокольчика для человека: шесть служебных групп → три строки
+const BX_SET_GROUPS=[["Лично мне","упоминания, ответы, доступ к делам, ответы команды",["mention","access","inbox"]],
+  ["Дела","сообщения, новые материалы и разбор ИИ",["talk","items"]],
+  ["Подписки","всплески жалоб по продуктам Сбера",["watch"]]];
 
 function BxMail({me,onPrefs,onEmail,code0}){
   const[st,setSt]=useState(null);
@@ -12606,30 +12611,29 @@ function BxMail({me,onPrefs,onEmail,code0}){
   }
   if(st.email&&!editing) return <div className="bx-mail">
     <div className="bx-addr"><span className="a">{st.email}</span>
-      <span className={"bx-tag"+(st.corporate?" corp":"")}>{st.corporate?"Sigma":"личная"}</span></div>
-    {!st.active
-      ?<div className="bx-note">Адрес из учётной записи: письма начнут приходить, когда рассылку включат.</div>
-      :!st.corporate&&<div className="bx-note">На личную почту письма приходят без подробностей: что произошло и ссылка — без названий дел, имён и цитат.</div>}
-    {BX_MAIL_PREFS.map(([k,l,h])=>{ const on=prefs[k]!==false;
-      return <label key={k} className="bx-row">
-        <span className="l"><b>{l}</b><span>{h}</span></span>
-        <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={l}
+      <span className={"bx-tag"+(st.corporate?" corp":"")}
+        title={st.corporate?"Письма приходят целиком":"На личную почту — без подробностей: что произошло и ссылка, без названий дел, имён и цитат"}>
+        {st.corporate?"Sigma":"личная · кратко"}</span>
+      {sure
+        ?<span className="bx-addr-acts">отключить?{" "}
+          <button className="bx-lnk danger" disabled={busy} onClick={()=>drop(false)}>да</button>{" "}
+          <button className="bx-lnk" onClick={()=>setSure(false)}>нет</button></span>
+        :<span className="bx-addr-acts">
+          <button className="bx-lnk" onClick={()=>{ setEditing(true); setAddr(""); setErr(""); }}>изменить</button>{" · "}
+          <button className="bx-lnk" onClick={()=>setSure(true)}>отключить</button></span>}</div>
+    {!st.active&&<div className="bx-note">Письма начнут приходить, когда рассылку включат.</div>}
+    {BX_MAIL_PREFS.map(([k,l,when,h])=>{ const on=prefs[k]!==false;
+      return <label key={k} className="bx-row bx-row-1" title={h}>
+        <span className="l"><b>{l}</b><span>{when}</span></span>
+        <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={`${l}: ${h}`}
           onClick={e=>{ e.preventDefault(); const mail={...prefs,[k]:!on};
             onPrefs&&onPrefs(null,mail); apiPut("/api/me",{prefs:{mail}}).catch(()=>onPrefs&&onPrefs(null,prefs)); }}/>
       </label>; })}
-    <div className="bx-acts">{sure
-      ?<><span>Письма перестанут приходить.</span>
-        <button className="bx-lnk danger" disabled={busy} onClick={()=>drop(false)}>Отключить</button>
-        <button className="bx-lnk" onClick={()=>setSure(false)}>Отмена</button></>
-      :<><button className="bx-lnk" onClick={()=>{ setEditing(true); setAddr(""); setErr(""); }}>Другой адрес</button>
-        <button className="bx-lnk" onClick={()=>setSure(true)}>Отключить почту</button></>}</div>
     {err&&<div className="bx-err" role="alert">{err}</div>}
   </div>;
   const a=addr.trim(), okA=BX_MAIL_RE.test(a), omega=okA&&bxCorp(a,st.blocked_domains);
   return <div className="bx-mail">
-    <div className="bx-note">Личное — сразу, остальное — утренней сводкой. Укажите корпоративную почту
-      Sigma{bxAt(st.corp_domains)} или личную — пришлём код, чтобы подтвердить адрес. Почта
-      Omega{bxAt(st.blocked_domains)} не подойдёт: письма извне туда не доходят.</div>
+    <div className="bx-note">Почта Sigma{bxAt(st.corp_domains)} или личная — пришлём код для подтверждения.</div>
     <form className="bx-form" onSubmit={e=>{ e.preventDefault(); if(okA&&!omega&&!busy) send(a); }}>
       <input className="bx-in" type="email" inputMode="email" autoComplete="email" placeholder="Почта Sigma или личная"
         aria-label="Адрес почты" value={addr} autoFocus={editing} onChange={e=>{ setAddr(e.target.value); setErr(""); }}/>
@@ -12670,7 +12674,7 @@ function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,onEmail,initialView,m
   const open=(it)=>{ if(!it.read_at){ stamp(i=>i.id===it.id); sayPost("/api/bell/read",{ids:[it.id]}).then(onCount).catch(()=>{}); }
     if(it.link) onGo(it); };
   const groups=(d&&d.groups)||[];
-  const toggle=(key)=>{ const next=groups.map(g=>g.key===key?{...g,on:!g.on}:g);
+  const toggleMany=(keys,val)=>{ const next=groups.map(g=>keys.includes(g.key)?{...g,on:val}:g);
     setD(x=>({...x,groups:next}));
     const off=next.filter(g=>!g.on).map(g=>g.key);
     apiPut("/api/me",{prefs:{notify_off:off}}).then(()=>onPrefs&&onPrefs(off)).catch(()=>load()); };
@@ -12694,12 +12698,15 @@ function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,onEmail,initialView,m
       <button className="bx-ib" onClick={onClose} aria-label="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     {view==="settings"
-      ?<div className="bx-set"><p>Выключенное перестанет приходить сюда. Уже пришедшее останется в списке.</p>
-        {groups.map(g=><label key={g.key} className="bx-row">
-          <span className="l"><b>{g.label}</b><span>{BX_HINT[g.key]||""}</span></span>
-          <button type="button" role="switch" aria-checked={g.on} className="bx-sw" aria-label={g.label}
-            onClick={e=>{ e.preventDefault(); toggle(g.key); }}/>
-        </label>)}
+      ?<div className="bx-set"><p className="bx-mail-h" style={{marginTop:4}}>В колокольчике</p>
+        {BX_SET_GROUPS.map(([l,h,keys])=>{ const mine=groups.filter(g=>keys.includes(g.key));
+          if(!mine.length) return null;
+          const on=mine.every(g=>g.on);
+          return <label key={l} className="bx-row bx-row-1" title={h}>
+            <span className="l"><b>{l}</b><span>{h}</span></span>
+            <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={`${l}: ${h}`}
+              onClick={e=>{ e.preventDefault(); toggleMany(keys,!on); }}/>
+          </label>; })}
         <p className="bx-mail-h">На почту</p>
         <BxMail me={me} onPrefs={onPrefs} onEmail={onEmail} code0={mailCode}/></div>
       :<div className="bx-body">

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 4ac17505c207809ba21444f531843fe08f0994202ab9f1f63eb8ecadc1f2948f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 719034a63c6d557f5338b68b45ca4924ff3300ce494c4b4f9e6f2f9d287b1511): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -23855,6 +23855,11 @@ const BX_CSS = `
 .bx-row .l{flex:1;min-width:0}
 .bx-row .l b{display:block;font-size:13px;font-weight:500;color:var(--ink)}
 .bx-row .l span{font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.bx-row-1{padding:7px 0}
+.bx-row-1 .l{display:flex;align-items:baseline;gap:8px;min-width:0}
+.bx-row-1 .l b{display:inline;flex:none}
+.bx-row-1 .l span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bx-addr-acts{margin-left:auto;font-size:12px;color:var(--ink-3);white-space:nowrap}
 .bx-sw{position:relative;flex:none;width:34px;height:20px;border-radius:999px;border:0;background:var(--hair-2);cursor:pointer;
   transition:background .16s;padding:0}
 .bx-sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;
@@ -23996,13 +24001,6 @@ const IcBx = {
     d: "M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"
   }))
 };
-const BX_HINT = {
-  mention: "Вас упомянули через @, ответили на ваше сообщение или прокомментировали ваш материал",
-  talk: "Новые сообщения в обсуждениях ваших дел — одной строкой на дело",
-  items: "Новые жалобы, документы и отчёты в общих делах, новый разбор ИИ",
-  access: "Добавление в дело, смена прав, передача, статус и архив дела, отчёт от коллеги",
-  inbox: "Ответ команды AuditLens или новый статус обращения"
-};
 const bxIcon = k => k === "report_shared" ? IcBx.report : k === "ticket" || k === "case_msg" || k === "case_mention" || k === "case_reply" ? IcSay.row : k === "case_added" || k === "case_role" || k === "case_removed" || k === "case_left" || k === "case_owner" ? IcBx.people : IcBx.case;
 const bxSnip = it => it && it.ref && it.ref.snippet ? `«${it.ref.snippet}»` : "";
 // «только что · 5 мин · 2 ч · вчера · 3 окт» — свежесть важнее точного времени
@@ -24043,7 +24041,10 @@ const bxDel = path => fetch(path, {
   if (r.ok) return r.json();
   throw new Error("Не получилось. Попробуйте ещё раз");
 });
-const BX_MAIL_PREFS = [["instant", "Сразу — о личном", "Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"], ["digest", "Утренняя сводка", "В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"], ["brief", "Выпуск в 11:00", "В рабочие дни, если вы ещё не заходили, — главное за день и новые всплески жалоб по вашим подпискам"]];
+// Настройки сжаты (04.10): подпись + время мелко, подробности — в подсказке
+const BX_MAIL_PREFS = [["instant", "Сразу", "о личном", "Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"], ["digest", "Сводка по делам", "будни, 8:00", "Непрочитанное по вашим делам — только если есть новое"], ["brief", "Выпуск дня", "будни, 11:00", "Если вы ещё не заходили: главное за день и всплески по вашим подпискам"]];
+// Группы колокольчика для человека: шесть служебных групп → три строки
+const BX_SET_GROUPS = [["Лично мне", "упоминания, ответы, доступ к делам, ответы команды", ["mention", "access", "inbox"]], ["Дела", "сообщения, новые материалы и разбор ИИ", ["talk", "items"]], ["Подписки", "всплески жалоб по продуктам Сбера", ["watch"]]];
 function BxMail({
   me,
   onPrefs,
@@ -24193,24 +24194,45 @@ function BxMail({
   }, /*#__PURE__*/React.createElement("span", {
     className: "a"
   }, st.email), /*#__PURE__*/React.createElement("span", {
-    className: "bx-tag" + (st.corporate ? " corp" : "")
-  }, st.corporate ? "Sigma" : "личная")), !st.active ? /*#__PURE__*/React.createElement("div", {
+    className: "bx-tag" + (st.corporate ? " corp" : ""),
+    title: st.corporate ? "Письма приходят целиком" : "На личную почту — без подробностей: что произошло и ссылка, без названий дел, имён и цитат"
+  }, st.corporate ? "Sigma" : "личная · кратко"), sure ? /*#__PURE__*/React.createElement("span", {
+    className: "bx-addr-acts"
+  }, "\u043E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C?", " ", /*#__PURE__*/React.createElement("button", {
+    className: "bx-lnk danger",
+    disabled: busy,
+    onClick: () => drop(false)
+  }, "\u0434\u0430"), " ", /*#__PURE__*/React.createElement("button", {
+    className: "bx-lnk",
+    onClick: () => setSure(false)
+  }, "\u043D\u0435\u0442")) : /*#__PURE__*/React.createElement("span", {
+    className: "bx-addr-acts"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "bx-lnk",
+    onClick: () => {
+      setEditing(true);
+      setAddr("");
+      setErr("");
+    }
+  }, "\u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C"), " · ", /*#__PURE__*/React.createElement("button", {
+    className: "bx-lnk",
+    onClick: () => setSure(true)
+  }, "\u043E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C"))), !st.active && /*#__PURE__*/React.createElement("div", {
     className: "bx-note"
-  }, "\u0410\u0434\u0440\u0435\u0441 \u0438\u0437 \u0443\u0447\u0451\u0442\u043D\u043E\u0439 \u0437\u0430\u043F\u0438\u0441\u0438: \u043F\u0438\u0441\u044C\u043C\u0430 \u043D\u0430\u0447\u043D\u0443\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C, \u043A\u043E\u0433\u0434\u0430 \u0440\u0430\u0441\u0441\u044B\u043B\u043A\u0443 \u0432\u043A\u043B\u044E\u0447\u0430\u0442.") : !st.corporate && /*#__PURE__*/React.createElement("div", {
-    className: "bx-note"
-  }, "\u041D\u0430 \u043B\u0438\u0447\u043D\u0443\u044E \u043F\u043E\u0447\u0442\u0443 \u043F\u0438\u0441\u044C\u043C\u0430 \u043F\u0440\u0438\u0445\u043E\u0434\u044F\u0442 \u0431\u0435\u0437 \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0435\u0439: \u0447\u0442\u043E \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u043B\u043E \u0438 \u0441\u0441\u044B\u043B\u043A\u0430 \u2014 \u0431\u0435\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u0439 \u0434\u0435\u043B, \u0438\u043C\u0451\u043D \u0438 \u0446\u0438\u0442\u0430\u0442."), BX_MAIL_PREFS.map(([k, l, h]) => {
+  }, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043D\u0430\u0447\u043D\u0443\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C, \u043A\u043E\u0433\u0434\u0430 \u0440\u0430\u0441\u0441\u044B\u043B\u043A\u0443 \u0432\u043A\u043B\u044E\u0447\u0430\u0442."), BX_MAIL_PREFS.map(([k, l, when, h]) => {
     const on = prefs[k] !== false;
     return /*#__PURE__*/React.createElement("label", {
       key: k,
-      className: "bx-row"
+      className: "bx-row bx-row-1",
+      title: h
     }, /*#__PURE__*/React.createElement("span", {
       className: "l"
-    }, /*#__PURE__*/React.createElement("b", null, l), /*#__PURE__*/React.createElement("span", null, h)), /*#__PURE__*/React.createElement("button", {
+    }, /*#__PURE__*/React.createElement("b", null, l), /*#__PURE__*/React.createElement("span", null, when)), /*#__PURE__*/React.createElement("button", {
       type: "button",
       role: "switch",
       "aria-checked": on,
       className: "bx-sw",
-      "aria-label": l,
+      "aria-label": `${l}: ${h}`,
       onClick: e => {
         e.preventDefault();
         const mail = {
@@ -24225,26 +24247,7 @@ function BxMail({
         }).catch(() => onPrefs && onPrefs(null, prefs));
       }
     }));
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "bx-acts"
-  }, sure ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043F\u0435\u0440\u0435\u0441\u0442\u0430\u043D\u0443\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C."), /*#__PURE__*/React.createElement("button", {
-    className: "bx-lnk danger",
-    disabled: busy,
-    onClick: () => drop(false)
-  }, "\u041E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
-    className: "bx-lnk",
-    onClick: () => setSure(false)
-  }, "\u041E\u0442\u043C\u0435\u043D\u0430")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    className: "bx-lnk",
-    onClick: () => {
-      setEditing(true);
-      setAddr("");
-      setErr("");
-    }
-  }, "\u0414\u0440\u0443\u0433\u043E\u0439 \u0430\u0434\u0440\u0435\u0441"), /*#__PURE__*/React.createElement("button", {
-    className: "bx-lnk",
-    onClick: () => setSure(true)
-  }, "\u041E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043F\u043E\u0447\u0442\u0443"))), err && /*#__PURE__*/React.createElement("div", {
+  }), err && /*#__PURE__*/React.createElement("div", {
     className: "bx-err",
     role: "alert"
   }, err));
@@ -24255,7 +24258,7 @@ function BxMail({
     className: "bx-mail"
   }, /*#__PURE__*/React.createElement("div", {
     className: "bx-note"
-  }, "\u041B\u0438\u0447\u043D\u043E\u0435 \u2014 \u0441\u0440\u0430\u0437\u0443, \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u043E\u0435 \u2014 \u0443\u0442\u0440\u0435\u043D\u043D\u0435\u0439 \u0441\u0432\u043E\u0434\u043A\u043E\u0439. \u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u043A\u043E\u0440\u043F\u043E\u0440\u0430\u0442\u0438\u0432\u043D\u0443\u044E \u043F\u043E\u0447\u0442\u0443 Sigma", bxAt(st.corp_domains), " \u0438\u043B\u0438 \u043B\u0438\u0447\u043D\u0443\u044E \u2014 \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u043A\u043E\u0434, \u0447\u0442\u043E\u0431\u044B \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C \u0430\u0434\u0440\u0435\u0441. \u041F\u043E\u0447\u0442\u0430 Omega", bxAt(st.blocked_domains), " \u043D\u0435 \u043F\u043E\u0434\u043E\u0439\u0434\u0451\u0442: \u043F\u0438\u0441\u044C\u043C\u0430 \u0438\u0437\u0432\u043D\u0435 \u0442\u0443\u0434\u0430 \u043D\u0435 \u0434\u043E\u0445\u043E\u0434\u044F\u0442."), /*#__PURE__*/React.createElement("form", {
+  }, "\u041F\u043E\u0447\u0442\u0430 Sigma", bxAt(st.corp_domains), " \u0438\u043B\u0438 \u043B\u0438\u0447\u043D\u0430\u044F \u2014 \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u043A\u043E\u0434 \u0434\u043B\u044F \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F."), /*#__PURE__*/React.createElement("form", {
     className: "bx-form",
     onSubmit: e => {
       e.preventDefault();
@@ -24385,10 +24388,10 @@ function BellPanel({
     if (it.link) onGo(it);
   };
   const groups = d && d.groups || [];
-  const toggle = key => {
-    const next = groups.map(g => g.key === key ? {
+  const toggleMany = (keys, val) => {
+    const next = groups.map(g => keys.includes(g.key) ? {
       ...g,
-      on: !g.on
+      on: val
     } : g);
     setD(x => ({
       ...x,
@@ -24470,22 +24473,33 @@ function BellPanel({
     d: "M6 6l12 12M18 6L6 18"
   })))), view === "settings" ? /*#__PURE__*/React.createElement("div", {
     className: "bx-set"
-  }, /*#__PURE__*/React.createElement("p", null, "\u0412\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043D\u043E\u0435 \u043F\u0435\u0440\u0435\u0441\u0442\u0430\u043D\u0435\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C \u0441\u044E\u0434\u0430. \u0423\u0436\u0435 \u043F\u0440\u0438\u0448\u0435\u0434\u0448\u0435\u0435 \u043E\u0441\u0442\u0430\u043D\u0435\u0442\u0441\u044F \u0432 \u0441\u043F\u0438\u0441\u043A\u0435."), groups.map(g => /*#__PURE__*/React.createElement("label", {
-    key: g.key,
-    className: "bx-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "l"
-  }, /*#__PURE__*/React.createElement("b", null, g.label), /*#__PURE__*/React.createElement("span", null, BX_HINT[g.key] || "")), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    role: "switch",
-    "aria-checked": g.on,
-    className: "bx-sw",
-    "aria-label": g.label,
-    onClick: e => {
-      e.preventDefault();
-      toggle(g.key);
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "bx-mail-h",
+    style: {
+      marginTop: 4
     }
-  }))), /*#__PURE__*/React.createElement("p", {
+  }, "\u0412 \u043A\u043E\u043B\u043E\u043A\u043E\u043B\u044C\u0447\u0438\u043A\u0435"), BX_SET_GROUPS.map(([l, h, keys]) => {
+    const mine = groups.filter(g => keys.includes(g.key));
+    if (!mine.length) return null;
+    const on = mine.every(g => g.on);
+    return /*#__PURE__*/React.createElement("label", {
+      key: l,
+      className: "bx-row bx-row-1",
+      title: h
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "l"
+    }, /*#__PURE__*/React.createElement("b", null, l), /*#__PURE__*/React.createElement("span", null, h)), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      role: "switch",
+      "aria-checked": on,
+      className: "bx-sw",
+      "aria-label": `${l}: ${h}`,
+      onClick: e => {
+        e.preventDefault();
+        toggleMany(keys, !on);
+      }
+    }));
+  }), /*#__PURE__*/React.createElement("p", {
     className: "bx-mail-h"
   }, "\u041D\u0430 \u043F\u043E\u0447\u0442\u0443"), /*#__PURE__*/React.createElement(BxMail, {
     me: me,
