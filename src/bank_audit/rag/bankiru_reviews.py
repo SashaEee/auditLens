@@ -103,13 +103,19 @@ _ALIAS = {
     "атб": "Азиатско-Тихоокеанский банк (АТБ)",
     # раньше находились нечётким сравнением, которое сужено до целых слов (30.09)
     "новикомбанк": "НОВИКОМ", "контур": "Контур.Банк",
+    # нечёткое сравнение ужесточено 03.10 — эти имена справочника иначе не находятся
+    "ренессанс кредит": "Ренессанс Банк", "транскапиталбанк": "Банк ТКБ",
+    "ткб": "Банк ТКБ", "ткб банк": "Банк ТКБ", "бспб": "БСПБ",
+    "банк санкт петербург": "БСПБ",
+    "юнистрим денежные переводы": "Юнистрим",
+    "нб траст": "Траст", "национальный банк траст": "Траст",
 }
 
 
 def _norm(s: str) -> str:
     s = (s or "").lower().replace("ё", "е")
     s = unicodedata.normalize("NFKC", s)
-    s = re.sub(r"[«»\"'`’“”()\[\]]", " ", s)
+    s = re.sub(r"[«»\"'`’“”()\[\]|.!]", " ", s)        # «Просто|Банк», «ДОМ.РФ»
     s = re.sub(r"[-–—/]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
@@ -127,12 +133,50 @@ def _load_names() -> dict[str, str]:
         with eng.connect() as c:
             rows = c.execute(text('SELECT DISTINCT "bankName" FROM bankiru.reviews')).all()
         _names_cache = [r[0] for r in rows if r[0]]
-        _norm2name = {_norm(n): n for n in _names_cache}
+        _norm2name = _index_names(_names_cache)
         log.info("bankiru: загружено %d имён банков", len(_names_cache))
     except Exception as e:
         log.warning("bankiru: не удалось загрузить список банков: %s", e)
         _norm2name = {}
     return _norm2name
+
+
+_PAREN = re.compile(r"\(([^()]*)\)")
+
+
+def _name_variants(raw: str) -> tuple[list[str], list[str]]:
+    """([имя, имя без расшифровки в скобках], [расшифровки]): «МТС Деньги
+    (ЭКСИ-Банк)» — это и «МТС Деньги», и «ЭКСИ-Банк»."""
+    whole = [raw]
+    inner = [x.strip() for x in _PAREN.findall(raw or "") if _distinctive(x)]
+    if _PAREN.search(raw or ""):
+        base = _PAREN.sub(" ", raw).strip()
+        if _distinctive(base):
+            whole.append(base)
+    return whole, inner
+
+
+def _distinctive(v: str) -> bool:
+    """В варианте есть слово, отличающее банк: «(Россия)», «(ПАО)» — нет."""
+    return any(t not in _GENERIC_WORDS and t not in _SOFT_WORDS and not t.isdigit()
+               for t in _norm(v).split())
+
+
+def _index_names(names: list[str]) -> dict[str, str]:
+    """Нормализованное имя → имя корпуса; варианты без скобок и из скобок —
+    вторым приоритетом и только если однозначны."""
+    idx = {_norm(n): n for n in names}
+    alt: dict[str, set[str]] = {}
+    for n in names:
+        whole, inner = _name_variants(n)
+        for v in whole[1:] + inner:
+            k = _norm(v)
+            if len(k) >= 3:
+                alt.setdefault(k, set()).add(n)
+    for k, ns in alt.items():
+        if k not in idx and len(ns) == 1:
+            idx[k] = next(iter(ns))
+    return idx
 
 
 def _slug_to_ru(n: str, idx: dict) -> str:
@@ -165,43 +209,99 @@ def _slug_to_ru(n: str, idx: dict) -> str:
     return max(cyr or norm_trs, key=len)
 
 
+def _canon(name: str | None) -> str | None:
+    # импорт внутри: bankiru_fts импортирует этот модуль (кольцо)
+    from .bankiru_fts import canon_bank
+    return canon_bank(name)
+
+
+def corpus_names(canon: str | None) -> list[str]:
+    """Канон и его прежние имена на площадке: после переименования история
+    банка в корпусе лежит под старым именем («Банк «Санкт-Петербург»» → БСПБ)."""
+    if not canon:
+        return []
+    from .bankiru_fts import BANK_RENAMES
+    return [canon, *sorted(o for o, nw in BANK_RENAMES.items() if nw == canon)]
+
+
 def resolve_bank(name: str | None) -> str | None:
-    """Имя/слаг банка → каноническое имя в bankiru (или None)."""
+    """Имя/слаг банка → каноническое имя в bankiru (или None). Каждый ответ
+    проходит через переименования площадки (BANK_RENAMES). Имя с расшифровкой
+    в скобках пробуем целиком, затем без скобок, затем по расшифровке."""
     if not name:
         return None
+    whole, inner = _name_variants(name)
+    for v in whole:                        # целиком и без скобок
+        r = _resolve_one(v)
+        if r:
+            return r
+    # расшифровка в скобках — только точно: в скобках часто город, и
+    # «Экономбанк (Саратов)» иначе получал жалобы на «Банк «Саратов»»
+    idx = _load_names()
+    for v in inner:
+        k = _norm(v)
+        hit = _ALIAS.get(k) or idx.get(k)
+        if hit:
+            return _canon(hit)
+    return None
+
+
+def _resolve_one(name: str) -> str | None:
     n = _norm(name)
+    if not n:
+        return None
     if n in _ALIAS:
-        return _ALIAS[n]
+        return _canon(_ALIAS[n])
     idx = _load_names()
     if n in idx:
-        return idx[n]
+        return _canon(idx[n])
     n = _slug_to_ru(n, idx)        # sberbank/alfabank/… → русский синоним из корпуса
     if n in idx:
-        return idx[n]
+        return _canon(idx[n])
     for cand in (n + " банк", "банк " + n):
         if cand in idx:
-            return idx[cand]
+            return _canon(idx[cand])
     try:
         from rapidfuzz import process, fuzz
-        m = process.extractOne(n, list(idx.keys()), scorer=fuzz.WRatio)
-        if m and m[1] >= 88 and _fuzzy_ok(n, m[0]):
-            return idx[m[0]]
+        for k, score, _i in process.extract(n, list(idx.keys()), scorer=fuzz.WRatio, limit=5):
+            if score < 88:
+                break
+            if _fuzzy_ok(n, k):
+                return _canon(idx[k])
     except Exception:
         pass
     return None
 
 
+# Слова, которые не отличают один банк от другого
+_GENERIC_WORDS = frozenset({"банк", "bank", "коммерческий", "кб", "акб", "пао", "ао", "оао",
+                            "зао", "ооо", "нко", "рнко"})
+_SOFT_WORDS = frozenset({"россии", "россия", "рф"})        # «Сбербанк России», «ВТБ 24»
+
+
+def _core(s: str) -> list[str]:
+    toks = [t for t in s.split() if t not in _GENERIC_WORDS]
+    hard = [t for t in toks if t not in _SOFT_WORDS and not t.isdigit()]
+    return hard or toks                      # «Банк «РОССИЯ»» → ["россия"]
+
+
 def _fuzzy_ok(n: str, key: str) -> bool:
-    """WRatio засчитывает вхождение короткого имени в длинное: «т банк» внутри
-    «рост банк» давало Т-Банк, и сбор sravni 25–30.09 читал Т-Банк с карточки
-    «РОСТ БАНК» (30 отзывов 2016 года). Похоже целиком (опечатка) — годится;
-    вхождение — только целыми словами: «пао сбербанк» → «сбербанк» да,
-    «рост банк» → «т банк» нет."""
+    """Те же значимые слова; то же имя слитно («альфабанк» = «альфа банк»);
+    опечатка в длинном имени при том же числе слов.
+
+    Вхождения слов одного имени в другое больше недостаточно (аудит 03.10):
+    по нему «РИКОМ-ТРАСТ» и «БИЗНЕС-СЕРВИС-ТРАСТ» получали отзывы «Траста»,
+    «ИНГ Банк» — отзывы «Инго», а «Кетовский» — сразу три разных банка. Раньше
+    так же «т банк» внутри «рост банк» давало Т-Банк."""
     from rapidfuzz import fuzz
-    if fuzz.ratio(n, key) >= 88:
+    a, b = _core(n), _core(key)
+    if not a or not b:
+        return False
+    if a == b or n.replace(" ", "") == key.replace(" ", ""):
         return True
-    a, b = set(n.split()), set(key.split())
-    return a <= b or b <= a
+    ja, jb = " ".join(a), " ".join(b)
+    return (len(a) == len(b) and min(len(ja), len(jb)) >= 6
+            and ja[0] == jb[0] and fuzz.ratio(ja, jb) >= 92)
 
 
 # ── Семантический поиск жалоб ────────────────────────────────────────────────
@@ -265,8 +365,10 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
         # против 17642 уникальных). Банков крупнее окна всего 4 из 219.
         # 0 = без окна; env остаётся аварийным рубильником, а не режимом.
         cand_cap = int(os.getenv("BANKIRU_CAND_CAP", "0"))
-        params = {"bank": bank_canon, "product": product,
-                  "since_ts": since_ts, "limit": limit}
+        # банк — вместе с прежними именами на площадке: после переименования
+        # история лежит под старым именем (БСПБ, Точка), а фильтр был равенством
+        params = {"bank": bank_canon, "banks": corpus_names(bank_canon) or [bank_canon],
+                  "product": product, "since_ts": since_ts, "limit": limit}
         if cand_cap > 0:
             params["cand_cap"] = cand_cap
         # Срезы вкладки. Раньше list_reviews молча их выбрасывала при непустом
@@ -295,7 +397,7 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
                        r."datePublished" AS dt, r.url AS url, r."reviewBody" AS body,
                        r.location AS location, 0.0 AS dist
                 FROM bankiru.reviews r
-                WHERE r."bankName" = :bank
+                WHERE r."bankName" = ANY(:banks)
                   AND (CAST(:product AS text) IS NULL OR r."product" = :product)
                   AND (CAST(:since_ts AS timestamp) IS NULL OR r."datePublished" >= CAST(:since_ts AS timestamp))
                   AND length(r."reviewBody") >= 40{extra}
@@ -320,7 +422,7 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
                            r."reviewBody" AS body, r.location AS location, e.embedding AS emb
                     FROM bankiru.reviews r
                     JOIN bankiru.review_embeddings e ON e.review_id = r.id
-                    WHERE r."bankName" = :bank
+                    WHERE r."bankName" = ANY(:banks)
                       AND (CAST(:product AS text) IS NULL OR r."product" = :product)
                       AND (CAST(:since_ts AS timestamp) IS NULL OR r."datePublished" >= CAST(:since_ts AS timestamp))
                       AND length(r."reviewBody") >= 40{extra}
@@ -392,7 +494,7 @@ def search_reviews(query: str | None = None, *, bank: str | None = None,
         seen[key] = len(out)
         dt = r["dt"]
         out.append({
-            "bank": r["bank"],
+            "bank": _canon(r["bank"]),        # старое имя площадки → нынешнее
             "product": r["product"],
             "date": dt.date().isoformat() if dt else None,
             "city": (r["location"] or "").split(" (")[0],

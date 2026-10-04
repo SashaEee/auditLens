@@ -223,6 +223,11 @@ def update_content(
             {"raw": raw_text, "cs": content_status, "rlen": raw_text_len,
              "tr": truncated, "id": record_id},
         )
+        # отметка «не о банках» ставилась по прежнему тексту: без неё запись
+        # видна, а разметчик проверит её заново (аудит 03.10, УЯЗ-01)
+        if raw_text is not None:
+            s.execute(text("DELETE FROM loophole_record_topic WHERE record_id = :id"),
+                      {"id": record_id})
 
 
 _BACKFILL_WHERE = (
@@ -429,6 +434,80 @@ _CATALOG_SORTS = {
 }
 
 
+# ── Поиск по словам (аудит 03.10, УЯЗ-03) ────────────────────────────────────
+# Запрос искался ОДНОЙ подстрокой по заголовку и фрагменту: «кэшбэк СБП»
+# находил только точную фразу, а подсказка в поле предлагала именно такие
+# запросы. Теперь — каждое слово (И), с отсечением окончаний, ё/э → е, по
+# заголовку, фрагменту, заголовку модели и сути. Выражение склейки совпадает
+# буква в букву с индексом migrations/093 — иначе поиск уйдёт в полный скан.
+# свёрнуты так же, как слова запроса: «это» → «ето» (иначе стоп-слово
+# становилось обязательным «ето»)
+_STOP_WORDS = frozenset("и в во на по за с со к ко о об от до из у а но или для при без как "
+                        "что ето не же ли бы".split())
+_ENDINGS = tuple(sorted((
+    # существительные и прилагательные
+    "иями", "ями", "ами", "ией", "ого", "его", "ому", "ему", "ыми", "ими", "ия", "ий", "ой",
+    "ей", "ая", "яя", "ое", "ее", "ые", "ие", "ый", "ым", "им", "ом", "ем", "ую", "юю", "ах",
+    "ях", "ов", "ев", "ам", "ям", "а", "я", "о", "е", "ы", "и", "у", "ю", "ь", "й",
+    # глаголы: «не начисляют» должно найти «не начислили». Только однозначно
+    # глагольные окончания: «ат/ит/ла» срезали бы и существительные —
+    # «банкомат» искался бы как «банком», «кредит» как «кред».
+    "ировали", "ировать", "ывают", "ивают", "ают", "яют", "уют", "ют", "али", "или",
+    "ть", "ешь", "ете"), key=len, reverse=True))
+_WORD_RE = re.compile(r"[0-9a-zа-яё]+(?:-[0-9a-zа-яё]+)*")
+_DASHES = str.maketrans({c: "-" for c in "\u2010\u2011\u2012\u2013\u2014\u2015"})
+
+
+def _fold(value: str | None) -> str:
+    return (value or "").translate(_DASHES).lower().replace("ё", "е").replace("э", "е")
+
+
+def _stem(word: str) -> str:
+    if len(word) < 5 or not re.search("[а-я]", word):
+        return word
+    for ending in _ENDINGS:
+        if word.endswith(ending) and len(word) - len(ending) >= 4:
+            return word[: -len(ending)]
+    return word
+
+
+def search_terms(query_text: str | None) -> list[list[str]]:
+    """Слова запроса (как ввёл пользователь, в нижнем регистре) и их основы:
+    [[«кэшбэк», «кешбек»], [«сбп», «сбп»]]."""
+    out: list[list[str]] = []
+    seen: set[str] = set()
+    for word in _WORD_RE.findall((query_text or "").translate(_DASHES).lower()):
+        folded = _fold(word)
+        if folded in _STOP_WORDS or (len(folded) < 3 and not folded.isdigit()):
+            continue
+        term = _stem(folded)
+        if term in seen:
+            continue
+        seen.add(term)
+        out.append([word, term])
+    return out[:8]
+
+
+# Склейка полей поиска; без префикса record. — в индексе migrations/093
+_HAY_SQL = ("REPLACE(REPLACE(LOWER(COALESCE({p}title, '') || ' ' || COALESCE({p}snippet, '') "
+            "|| ' ' || COALESCE({p}headline, '') || ' ' || COALESCE({p}summary, '')), "
+            "'ё', 'е'), 'э', 'е')")
+_CATALOG_HAY = _HAY_SQL.format(p="record.")
+
+# ── Записи не о банках (аудит 03.10, УЯЗ-01) ─────────────────────────────────
+# Отметка хранится отдельной таблицей (migrations/092), а не колонкой: в
+# горячую таблицу пишет внешний сборщик, массовый UPDATE переписал бы все её
+# индексы. Скрываются только «не подтверждено» без ручного решения и не из
+# исследований: находки и решения экспертов не прячутся никогда.
+_OFFTOPIC_SQL = (
+    "(EXISTS (SELECT 1 FROM loophole_record_topic AS topic "
+    "WHERE topic.record_id = record.record_id AND topic.offtopic_reason IS NOT NULL) "
+    f"AND {_RECORD_TYPE_SQL} = 'not_confirmed' "
+    "AND COALESCE(record.verdict_model, '') <> 'manual' "
+    "AND NOT EXISTS (SELECT 1 FROM loophole_preliminary_import AS topic_import "
+    "WHERE topic_import.record_id = record.record_id))")
+
+
 def _catalog_where(
     *,
     bank_slugs: list[str] | None,
@@ -437,6 +516,7 @@ def _catalog_where(
     query_text: str | None,
     verification_status: str,
     classification: str,
+    topic: str = "bank",
 ) -> tuple[list[str], dict[str, Any]]:
     """Общие WHERE-условия общей базы для выборки записей и их подсчёта.
 
@@ -509,12 +589,25 @@ def _catalog_where(
     if period_to:
         clauses.append("record.published_at < :period_to")
         params["period_to"] = period_to + timedelta(days=1)
-    if query_text:
-        clauses.append(
-            "(LOWER(COALESCE(record.title, '')) LIKE :query "
-            "OR LOWER(COALESCE(record.snippet, '')) LIKE :query)"
-        )
-        params["query"] = f"%{query_text.lower()}%"
+    if topic not in {"bank", "offtopic", "all"}:
+        raise ValueError("Неизвестный отбор записей не о банках")
+    if topic == "bank":
+        clauses.append(f"NOT {_OFFTOPIC_SQL}")
+    elif topic == "offtopic":
+        clauses.append(_OFFTOPIC_SQL)
+    if query_text and query_text.strip():
+        terms = search_terms(query_text)
+        if terms:
+            for i, (_word, term) in enumerate(terms):
+                clauses.append(f"{_CATALOG_HAY} LIKE :qw{i}")
+                # дефис — любой символ: в текстах «Т‑Банк» с неразрывным дефисом
+                params[f"qw{i}"] = "%" + term.replace("-", "_") + "%"
+        else:
+            # одни короткие слова («по на») — ищем фразу целиком, как раньше
+            phrase = re.sub(r"[%_\\]", " ", _fold(query_text)).strip()
+            if phrase:
+                clauses.append(f"{_CATALOG_HAY} LIKE :query")
+                params["query"] = f"%{phrase}%"
     return clauses, params
 
 
@@ -529,6 +622,7 @@ def list_catalog_cases(
     limit: int = 50,
     offset: int = 0,
     sort: str = "new",
+    topic: str = "bank",
     session=None,
 ) -> list[dict]:
     """Общая база: типы находок независимо от статуса публикации.
@@ -543,6 +637,7 @@ def list_catalog_cases(
         query_text=query_text,
         verification_status=verification_status,
         classification=classification,
+        topic=topic,
     )
     if sort not in _CATALOG_SORTS:
         raise ValueError("Неизвестная сортировка")
@@ -560,6 +655,7 @@ def list_catalog_cases(
                 "record.verdict_confidence, record.verdict_reason, record.verdict_model, record.status, "
                 "record.published_at, record.collected_at, record.classified_at, "
                 "record.content_status, record.raw_text_len, imported.research_id AS provenance_research_id, "
+                f"CASE WHEN {_OFFTOPIC_SQL} THEN 1 ELSE 0 END AS offtopic, "
                 "imported.source_id AS provenance_source_id, imported.imported_at AS provenance_imported_at "
                 f"FROM {schema.T_RECORD} AS record "
                 "LEFT JOIN loophole_preliminary_import AS imported ON imported.record_id = record.record_id "
@@ -599,6 +695,7 @@ def count_catalog_cases(
     query_text: str | None = None,
     verification_status: str = "all",
     classification: str = "all",
+    topic: str = "bank",
     session=None,
 ) -> int:
     """Общее число записей общей базы по тем же фильтрам, что list_catalog_cases."""
@@ -609,6 +706,7 @@ def count_catalog_cases(
         query_text=query_text,
         verification_status=verification_status,
         classification=classification,
+        topic=topic,
     )
     with _session(session) as s:
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
@@ -634,6 +732,7 @@ def catalog_summary(
     query_text: str | None = None,
     verification_status: str = "all",
     classification: str = "confirmed",
+    topic: str = "bank",
     session=None,
 ) -> dict:
     """Сводка вкладки «Уязвимости».
@@ -650,7 +749,7 @@ def catalog_summary(
     since7, since14 = today - timedelta(days=7), today - timedelta(days=14)
     common = {
         "bank_slugs": bank_slugs, "period_from": period_from, "period_to": period_to,
-        "query_text": query_text,
+        "query_text": query_text, "topic": topic,
     }
     with _session(session) as s:
         row = s.execute(
@@ -668,7 +767,8 @@ def catalog_summary(
                 f"SUM(CASE WHEN {_POSITIVE_SQL} AND record.published_at >= :since7 "
                 "THEN 1 ELSE 0 END) AS new_7d, "
                 f"SUM(CASE WHEN {_POSITIVE_SQL} AND record.published_at >= :since14 "
-                "AND record.published_at < :since7 THEN 1 ELSE 0 END) AS new_prev_7d "
+                "AND record.published_at < :since7 THEN 1 ELSE 0 END) AS new_prev_7d, "
+                f"SUM(CASE WHEN {_OFFTOPIC_SQL} THEN 1 ELSE 0 END) AS offtopic "
                 f"FROM {schema.T_RECORD} AS record"
             ),
             {"since7": since7, "since14": since14},
@@ -720,7 +820,22 @@ def catalog_summary(
                 params,
             ).all()
         ]
-    return {"totals": totals, "facets": {"types": types, "awaiting": awaiting, "banks": banks}}
+        # Сколько записей «не о банках» скрыто в текущем срезе. Находки под
+        # правило не попадают никогда, поэтому при типе «уязвимости и схемы»
+        # счёт не нужен.
+        offtopic = offtopic_all = 0
+        if topic == "bank":
+            offtopic_all = _count(*_catalog_where(
+                **{**common, "topic": "offtopic"},
+                verification_status=verification_status, classification="all",
+            ))
+            if classification in {"all", "not_confirmed"}:
+                offtopic = offtopic_all
+    # offtopic_all — скрытые при любом типе: при «уязвимости и схемы» пустая
+    # выдача может прятать совпадения среди записей не о банках
+    return {"totals": totals,
+            "facets": {"types": types, "awaiting": awaiting, "banks": banks,
+                       "offtopic": offtopic, "offtopic_all": offtopic_all}}
 
 
 def get_record_detail(record_id: int, *, session=None) -> dict | None:

@@ -41,7 +41,7 @@ metadata:
 | `product_terms` | условия (SCD2) | offer_id, valid_from, **valid_to IS NULL = действуют**, rate_pct, rate_kind, psk_min/psk_max, amount_*, term_months_*, fee_open, fee_service, grace_days, cashback_pct, conditions, raw |
 | `change_history` | изменения условий | offer_id, changed_at, diff (jsonb: было/стало) |
 | `v_market_rub_offer` | витрина «Рынка» (рублёвые, действующие) | bank_name, is_sber, category, title, rate_pct, psk_min, term_bucket, segment, url |
-| `v_sber_vs_market` | Сбер против рынка по категориям | sber_max, sber_min, market_median, sber_vs_median_pp |
+| `v_sber_vs_market` | ⚠ устарела: максимум Сбера против медианы всех офферов, без методики «Рынка» — позицию брать из `market_position` | sber_max, sber_min, market_median, sber_vs_median_pp |
 | `cbr_key_rate` | ключевая ставка | rate_date, rate |
 | `document`, `document_chunk` | база знаний | document_id, bank_id, url, title, doc_type, content_text, fetched_at; chunk: idx, text |
 | `news_item` | лента новостей | ts, source, title, body, value (важность 0–10), s2 (jsonb: summary, sber, idea, request) |

@@ -341,6 +341,14 @@ CREATE TABLE loophole_record_decision (
     comment     TEXT,
     source      TEXT
 );
+
+-- 092: отметка «не о банках» отдельной таблицей (аудит 03.10, УЯЗ-01).
+CREATE TABLE loophole_record_topic (
+    record_id       INTEGER PRIMARY KEY,
+    offtopic_reason TEXT,
+    rule_version    INTEGER NOT NULL DEFAULT 1,
+    checked_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 

@@ -2,7 +2,8 @@
 
 Nginx перед приложением делает `auth_request` к Authentik-аутпосту
 (`/outpost.goauthentik.io/auth/nginx`) и прокидывает в приложение РОВНО два
-заголовка (см. `/etc/nginx/conf.d/auditlens.conf` на ВМ):
+заголовка (см. `/etc/nginx/conf.d/auditlens.conf` на ВМ) — и третий, почту,
+когда администраторы добавят `X-Authentik-Email` (читаем его заранее, см. clean_email):
 
     proxy_set_header X-Authentik-Username $authentik_username;
     proxy_set_header X-Authentik-Name     $authentik_name;
@@ -24,6 +25,7 @@ Nginx перед приложением делает `auth_request` к Authentik
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -37,6 +39,7 @@ class CurrentUser:
     username: str        # X-Authentik-Username — стабильный уникальный ключ
     name: str            # X-Authentik-Name — отображаемое имя
     authenticated: bool  # True, если identity реально пришла от Authentik
+    email: str | None = None  # X-Authentik-Email — корпоративная почта (когда nginx её передаёт)
 
     @property
     def is_anonymous(self) -> bool:
@@ -75,9 +78,19 @@ def _fix_header_encoding(s: str) -> str:
         return s
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s.]{2,}$")
+
+
+def clean_email(v: str | None) -> str | None:
+    """Почта из заголовка входа: строчными, только похожая на адрес."""
+    v = (v or "").strip().lower()
+    return v if _EMAIL_RE.match(v) else None
+
+
 def get_current_user(
     x_authentik_username: Annotated[str | None, Header()] = None,
     x_authentik_name: Annotated[str | None, Header()] = None,
+    x_authentik_email: Annotated[str | None, Header()] = None,
 ) -> CurrentUser:
     """FastAPI-зависимость: текущий пользователь из заголовков Authentik.
 
@@ -86,7 +99,8 @@ def get_current_user(
     username = (x_authentik_username or "").strip()
     if username:
         name = _fix_header_encoding((x_authentik_name or "").strip()) or username
-        return CurrentUser(username=username, name=name, authenticated=True)
+        return CurrentUser(username=username, name=name, authenticated=True,
+                           email=clean_email(x_authentik_email))
     # Заголовка нет → локалка или прямой доступ к :8000 в обход nginx. Dev-пользователь
     # авторизован по умолчанию; fail-closed включается явным LOOPHOLE_DEV_AUTH_ENABLED=0.
     return CurrentUser(

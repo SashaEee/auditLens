@@ -54,12 +54,10 @@ def _store_snapshot(s, page_id: int, run_id: int, fetched_at, http_status: int,
 
 def ingest(source_key: str, target_name: str | None = None,
            openclaw_job: str | None = None, force: bool = False) -> dict:
-    """force=True — разбирать контент, даже если он не изменился.
-
-    Обычно совпадение content_sha256 значит «нечего нормализовать». Но когда
-    меняется САМ ПАРСЕР (07.08.2026 — исправлены поля рейтингов banki.ru),
-    старый контент нужно перечитать заново: иначе исправление доедет до витрины
-    только когда источник сам что-нибудь поменяет."""
+    """Контент разбирается всегда, даже если не изменился (с 03.10 — ради
+    last_seen, см. ниже); force оставлен для совместимости вызовов: раньше
+    совпадение content_sha256 значило «нечего нормализовать», и после правки
+    парсера старый контент перечитывали только с force=True."""
     settings = Settings.load()
     db.init(settings)
     cls, cfg = load_adapter(source_key)
@@ -106,12 +104,14 @@ def ingest(source_key: str, target_name: str | None = None,
                     res.snapshot.http_status, res.snapshot.content_sha256,
                     res.snapshot.storage_path, res.snapshot.bytes,
                 )
-            if snap_id is None and not force:
-                # контент не изменился -> нормализация не нужна
-                with db.session() as s:
-                    _finish_run(s, run_id, "ok", 0, 0)
-                continue
-            if snap_id is None:        # force: берём уже сохранённый снапшот
+            # обход оборвался на середине — прогон частичный (см. FetchResult.complete)
+            run_status = "ok" if getattr(res, "complete", True) else "partial"
+            # Неизменный снимок (или возврат к уже виденному: A→B→A) тоже
+            # разбираем: только upsert продлевает last_seen, а без этого живые
+            # офферы стабильных выдач (НПФ, брокеры) гасли бы по календарю, а
+            # возврат к прежним условиям не записывался бы вовсе (аудит 03.10).
+            # Повтор с тем же дайджестом новых версий не пишет.
+            if snap_id is None:        # берём уже сохранённый снапшот
                 with db.session() as s:
                     snap_id = s.execute(text("""
                         SELECT snapshot_id FROM source_snapshot
@@ -135,7 +135,7 @@ def ingest(source_key: str, target_name: str | None = None,
             totals["items_seen"] += seen
             totals["items_written"] += written
             with db.session() as s:
-                _finish_run(s, run_id, "ok", seen, written)
+                _finish_run(s, run_id, run_status, seen, written)
         except Exception as e:
             with db.session() as s:
                 _finish_run(s, run_id, "failed", 0, 0, error=str(e)[:500])

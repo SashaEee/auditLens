@@ -91,7 +91,9 @@ _BRIEF_FORMAT = (
     "Выдай markdown-список (каждый пункт с «- »):\n"
     "1) 1–4 пункта по приоритету, только по сигналам из списка выше: «**[ВЫСОКИЙ/СРЕДНИЙ]** "
     "**<проблема, до 8 слов>** — что изменилось (с цифрой), пометь если *только у банка*/"
-    "*локально*/*ускоряется*; вероятная причина — ТОЛЬКО из жалоб этого сигнала. "
+    "*локально*/*ускоряется* — каждую пометку ТОЛЬКО если она есть в строке сигнала "
+    "(«ускоряется», «нарастает» при снижении к прошлой неделе — ошибка); вероятная "
+    "причина — ТОЛЬКО из жалоб этого сигнала. "
     "Аудитору: одно конкретное действие». Разбор — не длиннее 45 слов, действие — не "
     "длиннее 30.\n"
     "2) Для каждого сюжета из блока «НОВЫЕ СЮЖЕТЫ» — пункт «- **Новое:** **<название "
@@ -200,7 +202,8 @@ def _reach_of(url: str | None, bodies: dict[str, str] | None) -> str:
     return "ok" if bodies[u] else "unreachable"
 
 
-def _news_bodies(urls: list[str]) -> dict[str, str]:
+def _news_bodies(urls: list[str], max_chars: int | None = None,
+                 max_n: int | None = None) -> dict[str, str]:
     """Полные тексты статей финалистов: HTTP-only (без Playwright — дайджест не
     место для браузера), параллельно, каждая ошибка = просто нет текста.
     Рубричные страницы ЦБ («Решения Банка России…») без этого — пустые калории:
@@ -221,11 +224,14 @@ def _news_bodies(urls: list[str]) -> dict[str, str]:
                 return url, ""
             doc = parse_html(r.content, url)
             txt = " ".join((doc.text or "").split())
-            return url, txt[:_BODY_CHARS]
+            return url, txt[:cap]
         except Exception:  # noqa: BLE001
             return url, ""
 
-    urls = [u for u in urls if u and not u.startswith("https://t.me/")][:_FETCH_N]
+    # длину и число — параметрами: поток новостей ставил переменную окружения уже
+    # после импорта модуля, и читал 2000 знаков вместо 6000 (аудит 03.10, ОБЗ-03)
+    cap = max_chars or _BODY_CHARS
+    urls = [u for u in urls if u and not u.startswith("https://t.me/")][:max_n or _FETCH_N]
     if not urls:
         return {}
     with cf.ThreadPoolExecutor(max_workers=6) as ex:
@@ -728,7 +734,7 @@ def _sber_rating_move() -> dict | None:
                 WITH o AS (
                     SELECT o.offer_id FROM product_offer o JOIN product_terms t ON t.offer_id = o.offer_id
                     WHERE o.external_id LIKE 'banki_rating_%' AND o.title ILIKE '%— Сбербанк'
-                      AND t.valid_to IS NULL
+                      AND t.valid_to IS NULL AND o.is_active
                     ORDER BY (t.raw->>'total_reviews')::int DESC NULLS LAST LIMIT 1)
                 SELECT DISTINCT ON (t.valid_from::date) t.valid_from::date AS d,
                        (t.raw->>'place')::int AS place, (t.raw->>'solved_pct')::numeric AS solved
@@ -856,9 +862,15 @@ def _build_leads(secs: dict, prev_leads: set[str]) -> tuple[list[dict], list[str
     bg: list[str] = []
     kr = tm.get("key_rate") or {}
     if kr.get("current") is not None:
-        bg.append(f'ключевая ставка {kr["current"]}% (на {kr.get("as_of")})'
-                  + (f', спред макс. вклада Сбера к ключевой {tm["dep_spread_pp"]:+} пп'
-                     if tm.get("dep_spread_pp") is not None else ""))
+        # спред — на одном сроке у Сбера и у рынка, иначе максимум промо-вклада
+        # на 3 месяца читался как «Сбер платит на 5 п.п. выше ключевой»
+        spread = ""
+        if tm.get("dep_spread_pp") is not None and tm.get("dep_spread_term"):
+            spread = (f', вклад Сбера на срок {tm["dep_spread_term"]} к ключевой '
+                      f'{tm["dep_spread_pp"]:+} пп'
+                      + (f' (медиана рынка {tm["dep_spread_market_pp"]:+} пп)'
+                         if tm.get("dep_spread_market_pp") is not None else ""))
+        bg.append(f'ключевая ставка {kr["current"]}% (на {kr.get("as_of")}){spread}')
     for m in (tm.get("mass_updates") or [])[:2]:
         bg.append(f'{m["n_banks"]} банков изменили ставки «{_cat_ru(m["category"])}» за 48 ч')
     n = 0

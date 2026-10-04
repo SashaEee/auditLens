@@ -438,9 +438,15 @@ def list_catalog(
     limit: Annotated[int, Query(ge=1, le=50)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
     sort: str = "new",
+    topic: str = "bank",
     session=Depends(get_session),
 ):
     """Общая база: подтверждённые кейсы и предварительные подозрения.
+
+    ``topic``: ``bank`` (по умолчанию) скрывает «не подтверждено» без
+    банковской лексики, ``all`` показывает всё, ``offtopic`` — только их.
+    ``terms`` — слова запроса и их основы, по которым искал сервер: по ним
+    интерфейс подсвечивает совпадения.
 
     Ответ пагинирован: ``total`` — общее число записей по тем же фильтрам,
     ``count`` — размер текущей страницы (обратная совместимость).
@@ -457,6 +463,7 @@ def list_catalog(
         limit=limit,
         offset=offset,
         sort=sort,
+        topic=topic,
         session=session,
         )
         total = repo.count_catalog_cases(
@@ -466,11 +473,13 @@ def list_catalog(
         query_text=q,
         verification_status=verification_status,
         classification=classification,
+        topic=topic,
         session=session,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"records": records, "total": total, "limit": limit, "offset": offset, "count": len(records)}
+    return {"records": records, "total": total, "limit": limit, "offset": offset,
+            "count": len(records), "terms": repo.search_terms(q)}
 
 
 def _bank_list(bank_slugs: str | None) -> list[str] | None:
@@ -485,6 +494,7 @@ def catalog_summary(
     q: str | None = None,
     verification_status: str = "all",
     classification: str = "confirmed",
+    topic: str = "bank",
     user_id: str = Depends(get_user_id),
     session=Depends(get_session),
 ):
@@ -493,7 +503,7 @@ def catalog_summary(
         return repo.catalog_summary(
             bank_slugs=_bank_list(bank_slugs), period_from=period_from, period_to=period_to,
             query_text=q, verification_status=verification_status,
-            classification=classification, session=session,
+            classification=classification, topic=topic, session=session,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -510,6 +520,7 @@ class CatalogExportRequest(BaseModel):
     verification_status: str = "all"
     classification: str = "confirmed"
     sort: str = "new"
+    topic: str = "bank"
 
 
 @router.post("/export/catalog.xlsx")
@@ -532,7 +543,7 @@ def export_catalog_xlsx(
                 bank_slugs=body.bank_slugs or None, period_from=body.period_from,
                 period_to=body.period_to, query_text=body.q,
                 verification_status=body.verification_status,
-                classification=body.classification, session=session,
+                classification=body.classification, topic=body.topic, session=session,
             )
             total = repo.count_catalog_cases(**filters)
             if total > EXPORT_LIMIT:

@@ -26,6 +26,19 @@ _SYS = (
 )
 
 
+def clip_sentence(text_: str) -> str:
+    """Текст, оборванный на полуслове, — до конца последнего предложения
+    (или до последнего целого слова с многоточием, если предложение одно)."""
+    t = (text_ or "").strip()
+    if not t or t[-1] in ".!?…»)":
+        return t
+    cut = max(t.rfind(". "), t.rfind("! "), t.rfind("? "))
+    if cut > len(t) // 3:
+        return t[:cut + 1]
+    sp = t.rfind(" ")
+    return (t[:sp] if sp > 0 else t).rstrip(",;:—– ") + "…"
+
+
 def _client() -> AsyncOpenAI:
     base = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     key = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
@@ -66,9 +79,13 @@ async def generate_profile_note(username: str) -> str | None:
             messages=[{"role": "system", "content": _SYS},
                       {"role": "user", "content": user_msg}],
             temperature=0.3,
-            max_tokens=240,
+            max_tokens=360,
         )
         note = (r.choices[0].message.content or "").strip()
+        # упёрлись в лимит — обрываем по последнему законченному предложению:
+        # раньше в профиль ложилось «…задачи носят аналитико-расслед»
+        if getattr(r.choices[0], "finish_reason", None) == "length":
+            note = clip_sentence(note)
     except Exception:
         log.warning("[profile_ai] generate failed", exc_info=True)
         return None

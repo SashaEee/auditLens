@@ -746,11 +746,42 @@ const BF_KIND={
 // Этап 6 (05.08.2026): до этого платформа не знала, какие новости аудиторы
 // реально открывают — сигнала для оценки отбора не существовало.
 let _trkPush=null;
+// «Аудит-дела» — общая панель поверх любого раздела: открывается кнопкой в
+// верхней панели и из разделов (openCases), «в деле» обновляется событием al-cases
+let _openCases=null, _casesHubOpen=false;
+let _pendingReport=null;          // отчёт, который открыть в ИИ-помощнике (из колокольчика)
+// «В дело» отовсюду (этап 4): одна кнопка и одно меню на весь инструмент.
+// Активное дело — то, куда «В дело» кладёт одним нажатием (храним в профиле:
+// prefs.active_case). Пометки «в деле» — общий снимок /api/cases/refs.
+let _caseAdd=null, _casePickOpen=false;
+const _cs={refs:{},active:null,loaded:false};          // active: {case_id,title} | null
+const _csSubs=new Set();
+const _csEmit=()=>_csSubs.forEach(f=>{ try{ f({..._cs}); }catch{} });
+function loadCaseRefs(){ return apiFetch("/api/cases/refs").then(d=>{ _cs.refs=d.refs||{}; _cs.loaded=true; _csEmit(); }).catch(()=>{}); }
+function csSetActive(a){ const prev=_cs.active;
+  if((prev&&prev.case_id)===(a&&a.case_id)&&(prev&&prev.title)===(a&&a.title)) return; _cs.active=a; _csEmit(); }
+function useCaseState(){ const[s,setS]=useState(()=>({..._cs}));
+  useEffect(()=>{ _csSubs.add(setS); if(!_cs.loaded) loadCaseRefs(); return ()=>{ _csSubs.delete(setS); }; },[]);
+  return s; }
+// ключ материала в снимке: отчёт и продукт — по номеру, остальное — по адресу
+const caseKey=(it)=>!it?null:(it.kind==="report"||it.kind==="offer")&&it.ref_id?`${it.kind}:${it.ref_id}`
+  :it.kind==="answer"?`a:${(it.meta&&it.meta.question||"")}\n${(it.meta&&it.meta.text||"").slice(0,240)}`
+  :it.url?`u:${it.url}`:null;
+// ответ ИИ получает адрес-отпечаток на сервере — его пометку держим сами, до перезагрузки
+const _csAnswers={};
+function caseAdd(items,opt){ try{ if(_caseAdd) _caseAdd(Array.isArray(items)?items:[items],opt||{}); }catch{} }
+function openCases(caseId,opt){ try{ if(_openCases)_openCases(caseId||null,opt); }catch{} }
 function trkEvent(ev){ try{ if(_trkPush)_trkPush(ev); }catch{} }
+// «человек здесь»: ввод внутри встроенного модуля (фрейм «Аудита уязвимостей»)
+// до родительского окна не доходит — фрейм сообщает о нём сам через этот мост
+let _trkInput=null;
 
 function bfGoAI(prompt){
   try{sessionStorage.setItem("al-ai-prefill",prompt);}catch{}
   location.hash="ai";
+  // ИИ-помощник после первого визита не размонтируется — сообщаем ему явно,
+  // иначе вопрос подставлялся только при первом заходе (аудит 03.10, ДЕЛ-03)
+  try{ window.dispatchEvent(new Event("al-ai-prefill")); }catch{}
 }
 function bfGoDrill(drill){
   if(!drill)return;
@@ -871,6 +902,19 @@ function TipLayer(){
 // Аудитор не должен гадать, откуда взялось «×2.1»: показываем формулу словами,
 // как считалась норма, на какой выборке и из какого источника.
 // Числа «Обзора» по-русски: десятичная запятая, без хвостового «,0» — «3,4», «×4,4»
+// P(X ≥ k) для пуассоновского X со средним lam — тот же тест, что
+// reviews_dash.poisson_sf: вероятность увидеть столько жалоб в своей норме
+const poisSf=(k,lam)=>{
+  k=Math.round(+k);lam=+lam;
+  if(!(k>0))return 1;
+  if(!(lam>0))return 0;
+  let cdf=0;
+  for(let i=0;i<k;i++)cdf+=Math.exp(i*Math.log(lam)-lam-lgam(i+1));
+  return Math.max(0,Math.min(1,1-cdf));
+};
+// ln Γ(x) — Стирлинг с поправками, точности хватает для теста порога
+const lgam=x=>{if(x<7){let p=1;while(x<7){p*=x;x++;}return lgam(x)-Math.log(p);}
+  return (x-0.5)*Math.log(x)-x+0.9189385332+1/(12*x)-1/(360*x*x*x);};
 const ovN=(v,dg=1)=>{ if(v==null||v==="")return "—"; const n=parseFloat(v); if(isNaN(n))return String(v);
   return (Math.round(n*10**dg)/10**dg).toFixed(dg).replace(".",",").replace(/(,\d*?)0+$/,"$1").replace(/,$/,""); };
 const ovRaz=k=>{ const r=Math.round(k*10)/10; if(r!==Math.round(r))return "раза"; const n=Math.round(r);
@@ -962,7 +1006,10 @@ const xpDiverge=d=>[
   ["Рынок",d.market_ratio!=null
     ?`та же тема по всем банкам ×${ovN(d.market_ratio)} — мы растём в ${ovN(d.gap)} ${ovRaz(d.gap||0)} быстрее рынка`
     :"рыночный срез недоступен"],
-  ["Почему здесь","из 41 проблемы кодификатора показана та, где наш рост сильнее всего обгоняет рыночный"],
+  ["Почему здесь","сначала значимый сигнал недели, обгоняющий рынок; если его нет — проблема, где наш рост сильнее всего обгоняет рыночный"],
+  ...(d.confirmed!=null?[["Проверка",d.confirmed
+    ?"рост подтверждён статистикой: сигнал недели или вероятность случайности ниже порога с поправкой на число проблем"
+    :`вероятность увидеть ${ovJ(d.week)} при норме ${ovN(d.baseline_week)} случайно — ${ovN(100*poisSf(d.week,d.baseline_week),1)}%; на десятках проверенных проблем такое бывает каждую неделю — рост не подтверждён`]]:[]),
   ["Выборка","только Сбербанк · жалобы всех площадок, разметка ИИ"],
 ];
 const xpEscalation=(k,now)=>[
@@ -1190,15 +1237,22 @@ function bfParseBrief(md){
   return out;
 }
 
-function BfBrief({markdown,skip}){
+function BfBrief({markdown,skip,novel,onNovel}){
   const items=useMemo(()=>bfParseBrief(markdown).filter(it=>!(skip&&skip(it))),[markdown,skip]);
   // не распарсилось — показываем как было, хуже не станет
   if(!items.length)return <div className="bf-brief">{renderMD(markdown)}</div>;
   const cls=it=>it.isNew?"new":/высок/i.test(it.level||"")?"high"
     :/средн/i.test(it.level||"")?"mid":/низк/i.test(it.level||"")?"low":"mid";
   const lbl=it=>it.isNew?"новая тема":(it.level||"наблюдение").toLowerCase();
+  // «Новое» — наблюдения, а не всплески: отделяем их подписью и даём жалобы
+  // сюжета (k-й пункт «Новое» — k-й сюжет, в том порядке их видела модель)
+  const firstNew=items.findIndex(it=>it.isNew), hasSig=items.some(it=>!it.isNew);
+  let nk=-1;
   return <div className="bfb-list">
-    {items.map((it,i)=><article key={i} className={"bfb-item lvl-"+cls(it)}>
+    {items.map((it,i)=>{ const nc=it.isNew?(novel||[])[++nk]:null;
+      return <React.Fragment key={i}>
+      {i===firstNew&&hasSig&&<div className="bfb-sep">Наблюдения — новые сюжеты вне кодификатора, не всплески</div>}
+      <article className={"bfb-item lvl-"+cls(it)}>
       <div className="bfb-head">
         <span className="bfb-badge">{lbl(it)}</span>
         {it.title&&<h4 className="bfb-title">{it.title}</h4>}
@@ -1208,7 +1262,9 @@ function BfBrief({markdown,skip}){
         <span className="bfb-act-l">Аудитору</span>
         <span dangerouslySetInnerHTML={{__html:inlineHTML(it.action)}}/>
       </div>}
-    </article>)}
+      {nc&&onNovel&&(nc.urls||[]).length>0&&<button type="button" className="rv-more-l bfb-novel"
+        onClick={()=>onNovel(nc)}>Жалобы сюжета · {nc.n}<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+    </article></React.Fragment>;})}
   </div>;
 }
 
@@ -1570,7 +1626,7 @@ function ShareButton({reportId}){
               <span className="st">{s?"✓ доступ":"дать доступ"}</span>
             </button>; })}
       </div>
-      <div className="shr-foot">Коллеги найдут отчёт в истории (⌘K) → Отчёты → «Поделились со мной»</div>
+      <div className="shr-foot">Коллега получит уведомление, а отчёт останется в истории (⌘K) → Отчёты → «Поделились со мной»</div>
     </div>}
   </span>;
 }
@@ -1693,6 +1749,7 @@ const FY_CSS=`
 .fy-sg-dot{align-self:start;margin-top:7px;width:7px;height:7px;border-radius:50%;background:var(--warn)}
 .fy-sg-dot.high{background:var(--neg)}
 .fy-sg-dot.calm{background:var(--pos);opacity:.6}
+.fy-sg-dot.muted{background:var(--ink-3);opacity:.6}
 .fy-sg-b{min-width:0}
 .fy-sg-l{display:block;font-size:14px;font-weight:500;color:var(--ink)}
 .fy-sg-n{display:block;margin-top:1px;font-size:12px;line-height:1.45;color:var(--ink-3);font-variant-numeric:tabular-nums}
@@ -1819,6 +1876,7 @@ function FyNews({t,hero,wide,fb,onFb}){
       <span className="bf-fb" role="group" aria-label="Действия с новостью">
         <button className="bf-fb-b" aria-label="Разобрать с ИИ" data-tip="Разобрать с ИИ"
           onClick={()=>bfGoAI("Разбери подробно для внутреннего аудита Сбера: "+(t.title||""))}>✦</button>
+        {t.url&&<CaseAddBtn variant="fb" item={caNews({...t,summary:t.summary||t.reason},"foryou")} src="foryou"/>}
         <button className={"bf-fb-b"+(fb===1?" on":"")} aria-pressed={fb===1} aria-label="Интересно — больше такого"
           data-tip="Интересно — больше такого" onClick={()=>onFb(t,1)}><IcTUp s={13}/></button>
         <button className="bf-fb-b" aria-label="Не интересно — меньше такого"
@@ -1851,28 +1909,34 @@ function FyCheck({c,i,taken,fb,onTake,onFb}){
   </article>;
 }
 
-// Ставки Сбера на шкале рынка: диапазон Сбера (мин–макс) поверх рыночного
-// минимум–максимум с медианой. Раньше — «макс. Сбера против медианы рынка
-// +6,3 п.п.»: максимум сравнивался с медианой, разница выглядела как вывод.
+// Позиция Сбера на шкале рынка — по методике вкладки «Рынок»: лучшее значение
+// Сбера среди лучших офферов банков, шкала по 10–90-му перцентилю (выбросы
+// вроде «кредитка 138,7%» и «вклад 30%» шкалу больше не растягивают), метрика
+// категории — ПСК у кредитов, грейс у кредиток, плата у дебетовых карт.
 const FY_LOAN=new Set(["credit","mortgage","auto_loan","card_credit","microloan"]);
 function FyRange({r}){
   const lo=+r.market_min, hi=+r.market_max, span=hi-lo;
   const smax=+r.sber_max, smin=r.sber_min!=null?+r.sber_min:smax;
+  const u=r.metric_unit||"%", m=r.metric||"rate_pct";
+  const f=v=>String(u).trim()==="%"?`${ovN(v,2)}%`:mkMetric(v,m,u);
   const ok=isFinite(lo)&&isFinite(hi)&&span>0&&isFinite(smax);
   const pos=v=>Math.min(100,Math.max(0,(v-lo)/span*100));
-  const sb=smin!==smax?`${ovN(smin,2)}–${ovN(smax,2)}%`:`${ovN(smax,2)}%`;
+  const sb=smin!==smax?`${f(smin)}–${f(smax)}`:f(smax);
   const cat=CAT_LABELS[r.category]||r.category;
+  const lower=r.lower_is_better!=null?r.lower_is_better:FY_LOAN.has(r.category);
+  const place=r.rank!=null&&!r.degenerate?` · #${r.rank} из ${r.n_banks}`:"";
   return <div className="fy-rg-r">
     <div className="fy-rg-h"><b>{cat}</b>
-      <span>Сбер {sb}{r.market_median!=null&&<> · медиана рынка {ovN(r.market_median,2)}%</>}</span></div>
+      <span title={r.sber_title||""}>Сбер {sb}{place}{r.market_median!=null&&<> · медиана рынка {f(r.market_median)}</>}</span></div>
     {ok&&<div className="fy-rg-bar" role="img"
-        aria-label={`${cat}: ставки Сбера ${sb}, рынок от ${ovN(lo,2)} до ${ovN(hi,2)}%`
-          +(r.market_median!=null?`, медиана ${ovN(r.market_median,2)}%`:"")}>
-      <span className="s" style={{left:pos(smin)+"%",width:Math.max(0,pos(smax)-pos(smin))+"%"}}/>
+        aria-label={`${cat}: Сбер ${sb}, середина рынка от ${f(lo)} до ${f(hi)}`
+          +(r.market_median!=null?`, медиана ${f(r.market_median)}`:"")}>
+      <span className="s" style={smin===smax?{left:`calc(${pos(smax)}% - 2px)`}
+        :{left:pos(smin)+"%",width:Math.max(0,pos(smax)-pos(smin))+"%"}}/>
       {r.market_median!=null&&<span className="m" style={{left:`calc(${pos(+r.market_median)}% - 1px)`}}/>}
     </div>}
-    {ok&&<div className="fy-rg-sc"><span>{ovN(lo,2)}%</span>
-      <span>{FY_LOAN.has(r.category)?"выше — дороже клиенту":"выше — выгоднее вкладчику"}</span><span>{ovN(hi,2)}%</span></div>}
+    {ok&&<div className="fy-rg-sc"><span>{f(lo)}</span>
+      <span>{lower?"правее — дороже клиенту":"правее — выгоднее клиенту"} · 10–90% банков</span><span>{f(hi)}</span></div>}
   </div>;
 }
 
@@ -2072,11 +2136,12 @@ function ForYouPage(){
       <div className="fy-sgs">
         {signals.map(s=>{const mn=sgNote(s);
           return <a key={s.key} className="fy-sg" href={fyRv({theme:s.key})}>
-            <span className={"fy-sg-dot"+(s.level==="high"?" high":"")} aria-hidden="true"/>
+            <span className={"fy-sg-dot"+(s.confirmed===false?" muted":s.level==="high"?" high":"")} aria-hidden="true"/>
             <span className="fy-sg-b"><span className="fy-sg-l">{s.label}</span>
               <span className="fy-sg-n">{s.week!=null?ovJ(s.week)+" за 7 дней":""}
                 {s.baseline_week!=null?` · норма ${ovN(s.baseline_week)}`:""}
-                {s.ratio!=null?` · ×${ovN(s.ratio)}`:""}{mn?` · ${mn}`:""}</span></span>
+                {s.ratio!=null?` · ×${ovN(s.ratio)}`:""}{mn?` · ${mn}`:""}
+                {s.confirmed===false?" · быстрее рынка, но не сигнал: рост не подтверждён статистикой":""}</span></span>
             {s.why_you&&<span className="fy-sg-z">{s.why_you}</span>}
           </a>;})}
       </div>
@@ -2529,8 +2594,22 @@ function OverviewPage(){
     :kpi0;
   const esc=kpi.escalation_pct;
   const dlt=(dg&&dg.meta&&dg.meta.delta)||{};
-  const dv=(pulse.diverge||[]).find(d=>d.gap!=null&&d.gap>=1.15)||null;  // ведущее расхождение
-  const unc=pulse.unclassified||null;
+  // «Проверить сегодня»: сначала ЗНАЧИМЫЙ сигнал, обгоняющий рынок; иначе
+  // лидер расхождения — но красным он горит, только если рост подтверждён
+  // тестом Пуассона с поправкой на число проблем. Раньше плитка краснела по
+  // «Исполнительным документам» (9 при норме 4,0, P≈0,02 на 40 проблем), а
+  // лид рядом писал «остальное в пределах нормы» (аудит 03.10, согласовано).
+  const nTh=(pulse.checked&&pulse.checked.themes)||(head.stats&&head.stats.checked_themes)||40;
+  const dvAll=(pulse.diverge||[]).filter(d=>d.gap!=null&&d.gap>=1.15);
+  const gapOf=x=>x.gap!=null?x.gap:(x.ratio&&x.market_ratio?x.ratio/x.market_ratio:null);
+  const sigTop=(pulse.signals||[]).map(x=>({...x,...((pulse.diverge||[]).find(d=>d.key===x.key)||{}),
+      gap:gapOf((pulse.diverge||[]).find(d=>d.key===x.key)||x),confirmed:true}))
+    .find(x=>x.gap!=null&&x.gap>=1.15)||null;
+  const dv0=sigTop||dvAll[0]||null;
+  const dv=dv0&&{...dv0,confirmed:dv0.confirmed||(dv0.sig!=null?!!dv0.sig
+    :poisSf(dv0.week,dv0.baseline_week)<0.05/nTh)};
+  const unc0=pulse.unclassified||null;
+  const unc=unc0&&{...unc0,sig:unc0.sig!=null?!!unc0.sig:poisSf(unc0.week,unc0.baseline_week)<0.05};
   // «Растёт за квартал» — только значимо быстрее общего потока (как в «Отзывах»);
   // в снимках до 25.09 признака нет, и «каникулы +70%» при росте потока +17% шли сюда
   const up=(pulse.themes_up||[]).find(t=>t.delta_sig)||null;
@@ -2662,13 +2741,13 @@ function OverviewPage(){
             <span className="ov-upd-t">Всплеск «{x.label}»: {ovJ(x.week)} за 7 дней при норме {ovN(x.baseline_week)}</span>
             {mn(x)&&<span className="ov-upd-s">{mn(x)}</span>}
           </a></li>)}
-          {its.map((it,i)=><li key={"n"+i}><a className="ov-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
+          {its.map((it,i)=><li key={"n"+i} className="ca-hov"><a className="ov-upd-it" href={it.url} target="_blank" rel="noopener noreferrer"
               data-tip={it.idea&&it.idea.length>110?it.idea:undefined}
               onClick={()=>trkEvent({kind:"news_click",page:"overview",payload:{url:it.url,source:it.source,group:"update",title:it.title}})}>
             <span className="ov-upd-k">{fyTg(it.url)?"Telegram":it.domain}</span>
             <span className="ov-upd-t">{it.title}</span>
             {it.idea&&<span className="ov-upd-s">{it.idea}</span>}
-          </a></li>)}
+          </a><CaseAddBtn variant="icon" className="ca-float" item={caNews(it,"update")} src="news_update"/></li>)}
         </ul>}
       </section>;})()}
 
@@ -2689,11 +2768,13 @@ function OverviewPage(){
       <div className="bf-pulse">
         {/* ГЛАВНОЕ: тема с максимальным расхождением нашей динамики с рыночной.
             Живёт и в спокойный день — тогда честно говорит «ничего срочного» */}
-        <BfTile cls={" bf-t-hero"+(dv&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
+        <BfTile cls={" bf-t-hero"+(dv&&dv.confirmed&&dv.gap>=1.5?" alarm":dv&&dv.gap>=1.25?" attn":"")}
              href={dv?`#reviews?tab=complaints&theme=${dv.key}`:undefined}
              xp={dv?xpDiverge(dv):null} note="жалобы всех площадок · разметка ИИ" label="Проверить сегодня">
           <div className="bf-t-cap">Проверить сегодня
-            {dv&&dv.gap>=1.25&&<span className="bf-t-chip">сильнее рынка</span>}</div>
+            {dv&&dv.gap>=1.25&&(dv.confirmed
+              ?<span className="bf-t-chip">сильнее рынка</span>
+              :<span className="bf-t-chip" data-tip={`${dv.week} при норме ${ovN(dv.baseline_week)}: такое отклонение на ${nTh} проверенных проблемах случается и без причины`}>рост не подтверждён</span>)}</div>
           {dv?<>
             <Xp passive rows={xpDiverge(dv)} note="жалобы всех площадок · разметка ИИ">
               <span className="bf-t-val">{dv.short||dv.label}</span>
@@ -2746,7 +2827,7 @@ function OverviewPage(){
         </BfTile>
 
         {/* Слепая зона: чего классификатор не видит */}
-        <BfTile cls={unc&&unc.ratio>=1.3?" attn":""} href="#reviews?tab=complaints&theme=other"
+        <BfTile cls={unc&&unc.ratio>=1.3&&unc.sig?" attn":""} href="#reviews?tab=complaints&theme=other"
              xp={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ" label="Вне кодификатора">
           <div className="bf-t-cap">Вне кодификатора</div>
           <Xp passive rows={xpUnclassified(unc)} note="кодификатор жалоб · 41 проблема, разметка ИИ">
@@ -2754,7 +2835,8 @@ function OverviewPage(){
               {unc&&unc.pct!=null&&<small> · {unc.pct}%</small>}</span>
           </Xp>
           <div className="bf-t-sub">{unc&&unc.ratio!=null
-            ?(unc.ratio>=1.3?"выше обычного — возможен новый инцидент":"как обычно")
+            ?(unc.ratio>=1.3?(unc.sig?"выше обычного — возможен новый инцидент"
+              :"чуть выше обычного — в пределах колебаний"):"как обычно")
             :"жалобы без подходящего кода"}<BfDelta v={dlt.unclassified} invert/></div>
         </BfTile>
 
@@ -2817,8 +2899,8 @@ function OverviewPage(){
           const shown=newsGroups.map(g=>{const its=g.items.slice(0,Math.max(0,left)); left-=its.length; return {...g,items:its};}).filter(g=>g.items.length);
           return <>{shown.map(g=><div key={g.key}>
             <div className="bf-news-g">{g.title||g.key}</div>
-            {g.items.map((it,i)=>
-              <a key={i} className="bf-news-it" data-sev={it.severity} href={it.url}
+            {g.items.map((it,i)=><div key={i} className="ca-hov">
+              <a className="bf-news-it" data-sev={it.severity} href={it.url}
                  target="_blank" rel="noopener noreferrer"
                  onClick={()=>trkEvent({kind:"news_click",page:"overview",
                    payload:{url:it.url,source:it.source,group:g.key,severity:it.severity,
@@ -2840,7 +2922,9 @@ function OverviewPage(){
                   {it.continues&&<span className="bf-chip" data-tip={`Было ${dmy(it.continues.date)}: «${it.continues.title}»`+(it.new_fact?`\nНовое: ${it.new_fact}`:"")}>
                     продолжение · {dmy(it.continues.date)}</span>}
                   <Ic.ext/></div>
-              </a>)}
+              </a>
+              {/* «В дело» — значок в углу, только при наведении: лента не обрастает кнопками */}
+              <CaseAddBtn variant="icon" className="ca-float" item={caNews(it,g.key)} src="news"/></div>)}
           </div>)}
           {total>NEWS_N&&<button className="bf-news-more" onClick={()=>setNewsOpen(v=>!v)} aria-expanded={newsOpen}>
             {newsOpen?"Свернуть":`Ещё ${total-NEWS_N} ${plural(total-NEWS_N,"новость","новости","новостей")}`}</button>}</>;})():
@@ -2892,19 +2976,32 @@ function OverviewPage(){
 // al-mk-preset (bfGoDrill) конвертируется при маунте, URL приоритетнее.
 
 const MK_TERMS=[["0-3","до 3 мес"],["4-6","4–6 мес"],["7-12","7–12 мес"],["13+","от года"]];
-// значение сопоставимой метрики категории: ставка / ₽ в год / дни грейса
-const mkGap=(v,m)=>{
+// значение сопоставимой метрики категории: ставка / ₽ за период / дни грейса.
+// Единица цены — из описания категории: у карт ₽ в год, у РКО ₽ в месяц
+// (раньше «₽/год» стояло всегда, и тариф РКО выглядел в 12 раз дешевле; аудит 03.10)
+const mkFeeU=u=>(u&&String(u).includes("₽"))?String(u).trim():"₽/год";
+const mkGap=(v,m,u)=>{
   if(v==null)return "—";
   const n=parseFloat(v), sign=n>0?"+":(n<0?"−":"");
   const a=Math.abs(n);
-  if(m==="fee_service")return n===0?"наравне":sign+fmtNum(Math.round(a))+" ₽/год";
+  if(m==="fee_service")return n===0?"наравне":sign+fmtNum(Math.round(a))+" "+mkFeeU(u);
   if(m==="grace_days")return n===0?"наравне":sign+Math.round(a)+" дн";
   return n===0?"наравне":sign+a.toFixed(2).replace(".",",")+" п.п.";
 };
-const mkMetric=(v,m)=>{
+// значение метрики строки витрины по тем же правилам, что и ранг атласа:
+// ПСК ниже своей же ставки (больше чем на 0,3 п.п.) — числа источника не
+// согласованы, и в сравнении стоит ставка (аудит 03.10)
+const mkPskBad=r=>r&&r.psk_min!=null&&(r.rate_min??r.rate_pct)!=null
+  &&parseFloat(r.psk_min)<parseFloat(r.rate_min??r.rate_pct)-0.3;
+const mkVal=(r,m)=>{
+  if(!r)return null;
+  if(m==="psk_min"){const v=(r.psk_min==null||mkPskBad(r))?(r.rate_min??r.rate_pct):r.psk_min;return v==null?null:parseFloat(v);}
+  const v=r[m||"rate_pct"];return v==null?null:parseFloat(v);
+};
+const mkMetric=(v,m,u)=>{
   if(v==null)return "—";
   const n=parseFloat(v);
-  if(m==="fee_service")return n===0?"бесплатно":fmtNum(Math.round(n))+" ₽/год";
+  if(m==="fee_service")return n===0?"бесплатно":fmtNum(Math.round(n))+" "+mkFeeU(u);
   if(m==="grace_days")return Math.round(n)+" дн";
   return pct(n);
 };
@@ -2941,7 +3038,7 @@ const mkDiffOthers=(diff)=>{
 // через pct() и грейс выглядел как «120%»)
 function mkPointTitle(p,c){
   // подписи оставляем как есть: «ПСК» — аббревиатура, строчными читается плохо
-  const bits=[`${c.metric_label||"Значение"} ${mkMetric(p.rate,c.metric)}`];
+  const bits=[`${c.metric_label||"Значение"} ${mkMetric(p.rate,c.metric,c.metric_unit)}`];
   if(c.metric!=="rate_pct"&&p.rate_pct!=null)
     bits.push(`${c.rate_label||"Ставка"} ${pct(p.rate_pct)}`);
   if(c.secondary==="cashback_pct"&&p.secondary!=null)
@@ -2974,12 +3071,12 @@ function MkStrip({c,big}){
   const over=v=>v<lo||v>hi;
   const sb=(c.points||[]).find(p=>p.is_sber);
   return <div className={"mk-strip"+(big?" mk-strip-big":"")}
-              title={`${c.lower_is_better?"левее — хуже, правее — лучше":"правее — лучше"} · середина рынка ${mkMetric(c.p25,c.metric)} – ${mkMetric(c.p75,c.metric)}`}>
+              title={`${c.lower_is_better?"левее — хуже, правее — лучше":"правее — лучше"} · середина рынка ${mkMetric(c.p25,c.metric,c.metric_unit)} – ${mkMetric(c.p75,c.metric,c.metric_unit)}`}>
     <i className="mk-over" style={{left:0}}/>
     <i className="mk-over" style={{right:0}}/>
     <i className="mk-iqr" style={{left:Math.min(X(c.p25),X(c.p75))+"%",
          width:Math.max(Math.abs(X(c.p75)-X(c.p25)),.8)+"%"}}/>
-    <i className="mk-med" style={{left:X(c.median)+"%"}} title={`медиана ${mkMetric(c.median,c.metric)}`}/>
+    <i className="mk-med" style={{left:X(c.median)+"%"}} title={`медиана ${mkMetric(c.median,c.metric,c.metric_unit)}`}/>
     {(c.points||[]).map((p,i)=>
       <i key={i} className={"mk-dot"+(p.is_sber?" sber":"")+(over(p.rate)?" out":"")}
          style={{left:X(p.rate)+"%"}} title={mkPointTitle(p,c)}/>)}
@@ -3005,7 +3102,7 @@ function MkTraffic({cells,onPick}){
       onClick={()=>onPick&&onPick(c.category)}
       title={c.degenerate
         ? `${c.label} · ранг не показываем: на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`
-        : `${c.label} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
+        : `${c.label}${c.group_label&&c.group_label!=="массовые"?` (${c.group_label})`:""} · ${c.percentile!=null?c.percentile+"-й перцентиль":"нет метрики"} · место ${c.rank} из ${c.n_banks}`
         +(c.gap_median!=null?` · ${c.gap_median>0?"+":c.gap_median<0?"−":""}${ovN(Math.abs(c.gap_median),2)}${c.gap_unit||c.metric_unit||""} к медиане`:"")
         +(c.tied>1?` · наравне с ${c.tied} банками`:"")}>
       <span className="v serif">{c.degenerate?"–":(c.percentile!=null?c.percentile:"—")}</span>
@@ -3020,6 +3117,9 @@ function MkTrust({c}){
   if(c.degenerate) b.push([`ранг скрыт`,`на лучшем значении ${c.at_best} банков из ${c.n_banks} — метрика их не различает`]);
   else if(c.at_best>2) b.push([`наравне ${c.at_best}`,"метрика не различает банки на лучшем значении"]);
   if(c.teaser>0) b.push([`тизер ${c.teaser}`,"у стольких предложений полная стоимость выше заявленной ставки более чем на 5 п.п."]);
+  if(c.psk_mismatch>0) b.push([`ПСК ≠ ставке ${c.psk_mismatch}`,"у стольких предложений ПСК ниже их же ставки — числа источника не согласованы, в ранге берём ставку"]);
+  if(c.promo_period_excluded>0) b.push([`акции ${c.promo_period_excluded}`,"тарифы, бесплатные только первые месяцы, исключены из ранга: это акция, а не цена"]);
+  if(c.upper_bound_excluded>0) b.push([`«до» ${c.upper_bound_excluded}`,"ставки «до N%» — верхняя граница витрины агрегатора, а не ставка по договору; в ранг не идут"]);
   if(c.banks_dropped>0) b.push([`выбыло ${c.banks_dropped}`,"банков не попало в сравнение: нет метрики, не банк или льготная программа"]);
   if(c.no_metric>0) b.push([`нет метрики ${c.no_metric}`,"столько предложений вне сравнения — поле не заполнено источником"]);
   if(c.subsidized_excluded>0) b.push([`исключено ${c.subsidized_excluded}`,"льготные программы: ставка установлена государством и одинакова у всех"]);
@@ -3174,6 +3274,28 @@ function MkStep({series}){
   </div>;
 }
 
+// строка журнала изменений (и закреплённое изменение из ссылки)
+function MkChRow({ch,cat,hl,onPick,hlRef}){
+  const others=mkDiffOthers(ch.diff);
+  const big=ch.rate_delta!=null&&Math.abs(ch.rate_delta)>=0.05;
+  const showRateMove=ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!others.length);
+  return <button ref={hl?hlRef:null}
+    className={"mk-chrow"+(hl?" hl":"")+(big?" big":"")} onClick={()=>onPick(ch.offer_id)}>
+    <span className="mono mk-chdate">{fmtDateMsk(ch.changed_at)}</span>
+    <span className="mk-chbank">
+      <BankAvatar slug={ch.bank_slug} name={ch.bank_name} isSber={!!ch.is_sber}/>
+      <span>{ch.bank_name}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>{ch.title}{!cat?` · ${(CAT_LABELS[ch.category]||ch.category).toLowerCase()}`:""}</i></span>
+    </span>
+    <span className="mk-chmove mono tnum">
+      {showRateMove&&<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
+         {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2).replace(".",",")}</em>}</>}
+      {others.slice(0,3).map(o=><span key={o.k} className="mk-dv">
+        {o.label}: {mkFldVal(o.k,o.from)} → <b>{mkFldVal(o.k,o.to)}</b></span>)}
+      {others.length>3&&<span className="mk-dv mk-an">ещё {others.length-3}</span>}
+    </span>
+  </button>;
+}
+
 function MarketPage({params}){
   const P=params||{};
   // одноразовый легаси-пресет от bfGoDrill — только как фолбэк при пустом URL
@@ -3197,6 +3319,9 @@ function MarketPage({params}){
   const hlChange=useRef(P.change?parseInt(P.change):null);
   const[meta,setMeta]=useState(null);
   const[atlas,setAtlas]=useState(null);
+  // атлас по выбранному сроку: без него фильтр срока менял только список,
+  // а ранг и KPI оставались по смеси сроков («#1» на 3-месячном промо)
+  const[atlasT,setAtlasT]=useState(null);
   const[cov,setCov]=useState(null);        // карта покрытия: чего нет и почему
   const[verdict,setVerdict]=useState(null);
   const[sum,setSum]=useState(null);
@@ -3256,6 +3381,14 @@ function MarketPage({params}){
       .catch(e=>setErr(e.message));
   },[]);
 
+  useEffect(()=>{ // ранг по сроку
+    if(!term||!cat){setAtlasT(null);return;}
+    let live=true;
+    apiFetch("/api/market/atlas?term="+encodeURIComponent(term))
+      .then(a=>{if(live)setAtlasT({term,a});}).catch(()=>{if(live)setAtlasT(null);});
+    return()=>{live=false;};
+  },[term,cat]);
+
   useEffect(()=>{ // витрина
     if(!cat||view!=="vitrina")return;
     setOffers(null);
@@ -3267,15 +3400,37 @@ function MarketPage({params}){
     apiFetch("/api/market?"+sp).then(setOffers).catch(e=>setErr(e.message));
   },[cat,term,q,view,seg,sub]);
 
-  useEffect(()=>{ // журнал
-    if(view!=="changes")return;
-    setChanges(null);
-    const sp=new URLSearchParams({days:"7",limit:"120"});
-    if(cat)sp.set("category",cat);
+  // Журнал: страницы по 100 строк, общий журнал сворачивает РКО в строку
+  // (отдельный рынок бизнеса не вытесняет вклады и кредиты), откаты в течение
+  // суток скрыты тем же правилом, что в итогах выпуска (аудит 03.10, РЫН-05)
+  const chParams=off=>{const sp=new URLSearchParams({days:"7",limit:"100",v:"2",offset:String(off)});
+    if(cat)sp.set("category",cat); else if(!bank)sp.set("fold","rko");
     if(bank)sp.set("bank_slug",bank);
     if(noise)sp.set("significant","false");
-    apiFetch("/api/recent-changes?"+sp).then(setChanges).catch(e=>setErr(e.message));
-  },[cat,bank,noise,view]);
+    if(hlChange.current)sp.set("focus",String(hlChange.current));
+    return sp;};
+  const[chBusy,setChBusy]=useState(false);
+  const chGen=useRef(0);   // поколение журнала: ответ «ещё» от прежнего фильтра отбрасываем
+  useEffect(()=>{ // журнал
+    if(view!=="changes")return;
+    const g=++chGen.current;
+    setChanges(null); setChBusy(false);
+    apiFetch("/api/recent-changes?"+chParams(0))
+      .then(d=>{if(g===chGen.current)setChanges(d);}).catch(e=>setErr(e.message));
+  },[cat,bank,noise,view]); // eslint-disable-line
+  const moreChanges=()=>{ if(!changes||chBusy)return; setChBusy(true);
+    const g=chGen.current;
+    apiFetch("/api/recent-changes?"+chParams(changes.items.length))
+      .then(d=>{ if(g!==chGen.current)return;
+        setChanges(c=>{ if(!c)return c;
+          const have=new Set(c.items.map(x=>x.change_id));
+          const items=[...c.items,...(d.items||[]).filter(x=>!have.has(x.change_id))];
+          // total — из свежего ответа (между страницами сбор мог скрыть или
+          // добавить строки); страница без новых строк — дальше нечего
+          // показывать. _more: дозагрузка не прокручивает к подсвеченной строке
+          return {...c,_more:true,items,
+                  total:items.length>c.items.length?(d.total??c.total):items.length};}); })
+      .catch(()=>{}).finally(()=>{ if(g===chGen.current)setChBusy(false); }); };
 
   useEffect(()=>{ // досье оффера
     if(!drawer){setDossier(null);return;}
@@ -3285,7 +3440,7 @@ function MarketPage({params}){
   },[drawer]);
 
   const hlRef=useRef(null);
-  useEffect(()=>{if(changes&&hlRef.current)
+  useEffect(()=>{if(changes&&!changes._more&&hlRef.current)
     hlRef.current.scrollIntoView({block:"center",
       behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});},[changes]);
 
@@ -3296,7 +3451,10 @@ function MarketPage({params}){
   const segChips=((_mc&&_mc.segments)||[]).filter(x=>x.seg&&x.seg!=="mass"&&x.n>=3);
   const subChips=((_mc&&_mc.sub_segments)||[]).filter(x=>x.sub&&x.n>=3);
   const M=meta?Object.fromEntries(meta.map(m=>[m.id,m])):{};
-  const ac=cat?A[cat]:null;
+  const AT=atlasT&&atlasT.term===term&&atlasT.a
+    ?Object.fromEntries((atlasT.a.categories||[]).map(c=>[c.category,c])):null;
+  const ac=cat?((AT&&AT[cat])||A[cat]):null;
+  const termOn=!!(AT&&AT[cat]);
   // Ранг ВНУТРИ выбранного подвида. Иначе аудитор смотрит на 27 премиальных
   // карт, а место видит по всем 145 — «#1 из 145» рядом с премиальной полкой.
   const gsel=(()=>{
@@ -3322,8 +3480,20 @@ function MarketPage({params}){
 
   const lower=ac&&ac.lower_is_better;
   const sberIn=offers&&offers.some(o=>o.is_sber);
-  const bestRate=offers&&offers.length?parseFloat(offers[0].rate_pct):null;
   const mcat=cat?(M[cat]||{}):{};                 // семантика витрины категории
+  // «К лидеру» — от лидера СОПОСТАВИМОЙ выборки атласа (подвид или главная
+  // группа), по метрике категории. Раньше разрыв считался по ставке от первой
+  // строки списка, отсортированного по ПСК, со знаком «+» для всех, а при
+  // поиске «лидером» становилась первая найденная строка (аудит 03.10).
+  const refG=gsel||ac;
+  const leadV=refG&&refG.status!=="no_data"?(gsel?gsel.leader:(ac.leader&&ac.leader.rate)):null;
+  const leadSpan=refG&&leadV!=null?(lower?refG.max-leadV:leadV-refG.min):null;
+  // закреплённая строка Сбера — из выбранного подвида, а не из всей категории
+  const sbPin=gsel?(gsel.sber?{offer_id:gsel.sber.offer_id,title:gsel.sber.title,rate:gsel.sber.value,
+      rank:gsel.sber.rank,n:gsel.n_banks,where:"в подвиде"}:null)
+    :ac&&ac.sber?{offer_id:ac.sber.offer_id,title:ac.sber.title,rate:ac.sber.rate,rank:ac.sber.rank,
+      n:ac.n_banks,where:ac.main_group?`· ${ac.main_group.label}`:""}:null;
+  const degOf=g=>g&&g.n_banks>0&&g.at_best/g.n_banks>0.3;
   const showRateCol=mcat.show_rate!==false;
   const showBarCol=mcat.show_bar!==false&&showRateCol;
 
@@ -3341,10 +3511,12 @@ function MarketPage({params}){
         <button role="tab" aria-selected={!cat&&view!=="changes"} className={"ptab"+(!cat&&view!=="changes"?" on":"")}
           onClick={()=>{setCat(null);setView("vitrina");setDrawer(null);}}>Атлас</button>
         {(meta||[]).filter(m=>m.n>0).map(m=>{
-          const sb=A[m.id]&&A[m.id].sber;
+          const ca=A[m.id], sb=ca&&ca.sber;
+          // вырожденная метрика: «#1» при 119 банках на том же значении —
+          // не лидерство, ранг в бейдже не показываем
           return <button key={m.id} role="tab" aria-selected={cat===m.id} className={"ptab"+(cat===m.id?" on":"")} onClick={()=>{setCat(m.id);setBank(null);}}>
-            {m.label}{sb&&<span className={"ptab-n"+(sb.beats_share<0.5?" bad":"")}
-              data-tip={`Сбер — #${sb.rank} из ${A[m.id].n_banks} банков по лучшему офферу`}>#{sb.rank}</span>}
+            {m.label}{sb&&!ca.degenerate&&<span className={"ptab-n"+(sb.beats_share<0.5?" bad":"")}
+              data-tip={`Сбер — #${sb.rank} из ${ca.n_banks} банков по лучшему офферу${ca.main_group?` · ${ca.main_group.label}`:""}`}>#{sb.rank}</span>}
           </button>;})}
       </div>
       <div className="search-wrap">
@@ -3395,13 +3567,18 @@ function MarketPage({params}){
                 <b className={"serif"+(sb.percentile!=null&&sb.percentile<40?" bad":"")}
                    title={`перцентиль: доля рынка, которую мы опережаем. Место ${sb.rank} из ${c.n_banks}${sb.tied>1?`, наравне с ${sb.tied}`:""}`}>
                   {sb.percentile!=null?sb.percentile:"—"}<span className="pctl">‰</span></b>
-                <span className="mk-an" title={sb.title||""}>
-                  #{sb.rank} из {c.n_banks} · {mkMetric(sb.rate,c.metric)} · {mkGap(sb.gap_median,c.metric)} к медиане</span>
+                <span className="mk-an" title={(sb.title||"")+(c.overall?` · по всем видам: #${c.overall.rank} из ${c.overall.n_banks}`:"")}>
+                  {c.main_group&&c.main_group.label!=="массовые"?`${c.main_group.label} · `:""}#{sb.rank} из {c.n_banks} · {mkMetric(sb.rate,c.metric,c.metric_unit)} · {mkGap(sb.gap_median,c.metric,c.metric_unit)} к медиане</span>
                 <MkTrust c={c}/>
-                {(c.comparable||[]).length>0&&
-                  <span className="mk-comp" title="Позиция среди сопоставимых продуктов — честнее общей по категории">
-                    {c.comparable.slice(0,2).map((g,i)=>
-                      <i key={i}>{SUBSEG_RU[g.sub_segment]||g.segment&&SEG_RU[g.segment]||"свой вид"}: #{g.rank}/{g.n_banks}</i>)}
+                {(c.by_term||[]).some(t=>t.rank!=null)&&
+                  <span className="mk-comp" title="Место лучшего вклада Сбера в каждом окне срока: ставка на 3 месяца и на год — разные продукты">
+                    {c.by_term.filter(t=>t.rank!=null).map(t=>
+                      <i key={t.term}>{t.label}: #{t.rank}/{t.n_banks}</i>)}
+                  </span>}
+                {(c.comparable||[]).filter(g=>!g.main).length>0&&
+                  <span className="mk-comp" title="Позиция среди других видов продукта">
+                    {c.comparable.filter(g=>!g.main).slice(0,2).map((g,i)=>
+                      <i key={i}>{g.label||SUBSEG_RU[g.sub_segment]||"прочие"}: #{g.rank}/{g.n_banks}</i>)}
                   </span>}
               </>:c.status==="ok"?<span className="mk-an">Сбера нет в выборке</span>:null}
             </div>
@@ -3412,30 +3589,41 @@ function MarketPage({params}){
     {/* ── СЛОЙ 2 · КАТЕГОРИЯ (журнал доступен и без категории) ───────── */}
     {(cat||view==="changes")&&!err&&<>
       {ac&&ac.status==="ok"&&gsel&&<div className="mk-kpis">
-        {gsel.sber?<div className="surface mk-kpi bf-tip" data-tip={`место среди ${gsel.n_banks} банков этого подвида${gsel.sber.tied>1?`; наравне ${gsel.sber.tied}`:""}`}>
+        {gsel.sber&&degOf(gsel)?<div className="surface mk-kpi bf-tip" data-tip={`на лучшем значении ${gsel.at_best} банков из ${gsel.n_banks} — метрика их не различает, ранг не показываем`}>
+          <b>наравне<small> с {gsel.sber.tied}</small></b>
+          <span>ранг в подвиде скрыт</span></div>
+        :gsel.sber?<div className="surface mk-kpi bf-tip" data-tip={`место среди ${gsel.n_banks} банков этого подвида${gsel.sber.tied>1?`; наравне ${gsel.sber.tied}`:""}`}>
           <b className={gsel.sber.percentile<40?"bad":""}>#{gsel.sber.rank}<small> из {gsel.n_banks}</small></b>
           <span>ранг в подвиде{gsel.small_n?" · малая база":""}</span></div>
         :<div className="surface mk-kpi"><b>—</b><span>Сбера в этом подвиде нет</span></div>}
         {gsel.sber&&<div className="surface mk-kpi bf-tip" data-tip={gsel.sber.title||""}>
-          <b>{mkMetric(gsel.sber.value,ac.metric)}</b>
+          <b>{mkMetric(gsel.sber.value,ac.metric,ac.metric_unit)}</b>
           <span>{gsel.sber.title?String(gsel.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
-        <div className="surface mk-kpi bf-tip" data-tip={`медиана подвида · разброс ${mkMetric(gsel.min,ac.metric)}–${mkMetric(gsel.max,ac.metric)}`}>
-          <b>{mkMetric(gsel.median,ac.metric)}</b><span>медиана подвида</span></div>
+        <div className="surface mk-kpi bf-tip" data-tip={`медиана подвида · разброс ${mkMetric(gsel.min,ac.metric,ac.metric_unit)}–${mkMetric(gsel.max,ac.metric,ac.metric_unit)}`}>
+          <b>{mkMetric(gsel.median,ac.metric,ac.metric_unit)}</b><span>медиана подвида</span></div>
         {gsel.sber&&<div className="surface mk-kpi bf-tip" data-tip="разрыв с лучшим значением подвида">
-          <b className={Math.abs(gsel.sber.gap_leader)>=1?"bad":""}>{mkGap(gsel.sber.gap_leader,ac.metric)}</b>
+          <b className={Math.abs(gsel.sber.gap_leader)>=1?"bad":""}>{mkGap(gsel.sber.gap_leader,ac.metric,ac.metric_unit)}</b>
           <span>до лидера подвида</span></div>}
       </div>}
       {ac&&ac.status==="ok"&&!gsel&&<div className="mk-kpis">
-        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков${ac.sber.tied>1?`; ${ac.sber.tied} банков с тем же значением делят это место`:""}${ac.small_n?" · малая база!":""}`}>
+        {ac.sber&&ac.degenerate&&<div className="surface mk-kpi bf-tip" data-tip={`на лучшем значении ${ac.at_best} банков из ${ac.n_banks} — метрика их не различает, ранг не показываем`}>
+          <b>наравне<small> с {ac.sber.tied}</small></b>
+          <span>ранг скрыт · {ac.at_best} из {ac.n_banks} на одном значении</span></div>}
+        {ac.sber&&!ac.degenerate&&<div className="surface mk-kpi bf-tip" data-tip={`ранг лучшего оффера Сбера среди лучших офферов ${ac.n_banks} банков${ac.main_group?` (${ac.main_group.label})`:""}${ac.sber.tied>1?`; ${ac.sber.tied} банков с тем же значением делят это место`:""}${ac.overall?`; по всем видам — #${ac.overall.rank} из ${ac.overall.n_banks}`:""}${ac.small_n?" · малая база!":""}`}>
           <b className={ac.sber.beats_share<0.5?"bad":""}>#{ac.sber.rank}<small> из {ac.n_banks}</small></b>
-          <span>ранг Сбера{ac.sber.tied>1?` · ${ac.sber.tied} наравне`:""}{ac.small_n?" · малая база":""}</span></div>}
+          <span>ранг Сбера{ac.main_group&&ac.main_group.label!=="массовые"?` · ${ac.main_group.label}`:""}{termOn?` · ${(MK_TERMS.find(x=>x[0]===term)||[,""])[1]}`:""}{ac.sber.tied>1?` · ${ac.sber.tied} наравне`:""}{ac.small_n?" · малая база":""}</span></div>}
         {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.sber.title||""}>
-          <b>{mkMetric(ac.sber.rate,ac.metric)}</b><span>{ac.sber.title?String(ac.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
-        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={`лидер: ${ac.leader.name} · ${mkMetric(ac.leader.rate,ac.metric)} · «${ac.leader.title}»`}>
-          <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{mkGap(ac.sber.gap_leader,ac.metric)}</b>
-          <span>до лидера ({ac.leader.name})</span></div>}
-        <div className="surface mk-kpi bf-tip" data-tip={`медиана лучших офферов ${ac.n_banks} банков · разброс ${mkMetric(ac.min,ac.metric)}–${mkMetric(ac.max,ac.metric)}`}>
-          <b>{mkMetric(ac.median,ac.metric)}</b><span>медиана рынка</span></div>
+          <b>{mkMetric(ac.sber.rate,ac.metric,ac.metric_unit)}</b><span>{ac.sber.title?String(ac.sber.title).slice(0,28):"лучшее у Сбера"}</span></div>}
+        {/* при нескольких банках на лучшем значении «лидер» — случайный из них
+            (так лидером дебетовых карт стал сервис оплаты подписок); называем
+            имя только у единственного лидера */}
+        {ac.sber&&<div className="surface mk-kpi bf-tip" data-tip={ac.at_best>1
+            ?`лучшее значение ${mkMetric(ac.leader.rate,ac.metric,ac.metric_unit)} — у ${ac.at_best} банков`
+            :`лидер: ${ac.leader.name} · ${mkMetric(ac.leader.rate,ac.metric,ac.metric_unit)} · «${ac.leader.title}»`}>
+          <b className={Math.abs(ac.sber.gap_leader)>=1?"bad":""}>{mkGap(ac.sber.gap_leader,ac.metric,ac.metric_unit)}</b>
+          <span>{ac.at_best>1?`до лучшего значения (${ac.at_best} банков)`:`до лидера (${ac.leader.name})`}</span></div>}
+        <div className="surface mk-kpi bf-tip" data-tip={`медиана лучших офферов ${ac.n_banks} банков · разброс ${mkMetric(ac.min,ac.metric,ac.metric_unit)}–${mkMetric(ac.max,ac.metric,ac.metric_unit)}`}>
+          <b>{mkMetric(ac.median,ac.metric,ac.metric_unit)}</b><span>медиана рынка</span></div>
       </div>}
       {ac&&ac.status==="ok"&&<div className="surface" style={{padding:"14px 20px",marginBottom:14}}>
         <MkStrip c={ac} big/>
@@ -3469,7 +3657,7 @@ function MarketPage({params}){
               {SEG_RU[x.seg]||x.seg}<i>{x.n}</i></button>)}
           </div>}
         {view==="changes"&&<label className="mk-noise">
-          <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум
+          <input type="checkbox" checked={noise} onChange={e=>setNoise(e.target.checked)}/> показать микрошум и откаты
         </label>}
         {view==="changes"&&bank&&<button className="rv-achip" onClick={()=>setBank(null)} aria-label={`Снять фильтр по банку ${bank}`}>банк: {bank}<RvIX s={12}/></button>}
       </div>
@@ -3482,13 +3670,13 @@ function MarketPage({params}){
       {ac&&ac.subsidized_excluded>0&&<p className="mk-disc" style={{margin:"0 0 12px"}}>
         Из рыночного сравнения исключено программ с господдержкой: {ac.subsidized_excluded} — их ставку задаёт государство, она одинакова у всех банков. В витрине ниже они присутствуют.</p>}
       {view==="vitrina"&&<div className="surface" style={{overflow:"hidden"}}>
-        {ac&&ac.sber&&!sberIn&&offers&&<button className="mk-sber-pin" onClick={()=>setDrawer(ac.sber.offer_id)}>
+        {sbPin&&!sberIn&&offers&&<button className="mk-sber-pin" onClick={()=>setDrawer(sbPin.offer_id)}>
           <BankAvatar slug="sberbank" name="Сбербанк" isSber={true}/>
           <div style={{textAlign:"left"}}>
-            <div style={{fontWeight:500}}>Сбербанк · {ac.sber.title}</div>
-            <div className="mk-an">лучший оффер Сбера · #{ac.sber.rank} из {ac.n_banks} банков{term?" · фильтр срока может его скрывать":""}</div>
+            <div style={{fontWeight:500}}>Сбербанк · {sbPin.title}</div>
+            <div className="mk-an">лучший оффер Сбера {sbPin.where} · {degOf(gsel||ac)?"наравне с лучшими":`#${sbPin.rank} из ${sbPin.n} банков`}{q?" · поиск может его скрывать":""}</div>
           </div>
-          <div className="serif" style={{fontSize:18,marginLeft:"auto"}}>{mkMetric(ac.sber.rate,ac.metric)}</div>
+          <div className="serif" style={{fontSize:18,marginLeft:"auto"}}>{mkMetric(sbPin.rate,ac.metric,ac.metric_unit)}</div>
         </button>}
         {!offers?<div style={{padding:28}}><Skel h={40}/><div style={{height:10}}/><Skel h={40}/><div style={{height:10}}/><Skel h={40}/></div>:
          offers.length===0?<EmptyState text="Нет предложений под фильтры. Сбросьте срок или поиск."/>:
@@ -3499,14 +3687,16 @@ function MarketPage({params}){
             <th className="right">{mcat.metric_label||"Ставка"}</th>
             {showRateCol&&mcat.metric!=="rate_pct"&&<th className="right">{mcat.rate_label}</th>}
             {mcat.secondary&&<th className="right">Кешбэк</th>}
-            {showBarCol&&<th>К лидеру</th>}
+            {showBarCol&&<th title="разрыв с лучшим значением сопоставимой выборки атласа (без господдержки и сомнительных чисел)">К лидеру</th>}
             <th>Сумма</th><th>Срок</th>
           </tr></thead>
           <tbody>
             {offers.map((r,i)=>{
               const isSber=!!r.is_sber;
-              const rate=parseFloat(r.rate_pct);
-              const rel=bestRate&&rate?(lower?bestRate/rate:rate/bestRate):null;
+              const mv=mkVal(r,mcat.metric);
+              const gapL=mv!=null&&leadV!=null?mv-leadV:null;
+              const worse=gapL==null?null:(lower?gapL:-gapL);
+              const rel=worse==null?null:worse<=0?1:(leadSpan>0?Math.max(0,1-worse/leadSpan):0);
               return <tr key={r.offer_id||i} className={(isSber?"is-sber ":"")+"mk-click"} onClick={()=>setDrawer(r.offer_id)}>
                 <td className="right mono tnum" data-label="№" style={{color:"var(--ink-3)",fontSize:12}}>{String(i+1).padStart(2,"0")}</td>
                 <td className="m-primary" data-label="Банк"><div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -3522,7 +3712,9 @@ function MarketPage({params}){
                       стоял первой строкой рынка при реальных 10,5%. */}
                   {r.rate_kind==="max"&&(mcat.metric||"rate_pct")==="rate_pct"&&
                     <span className="mk-upto" title="верхняя граница по витрине агрегатора, а не ставка по договору">до </span>}
-                  {mkMetric(r[mcat.metric||"rate_pct"],mcat.metric)}</td>
+                  {mcat.metric==="psk_min"&&mkPskBad(r)&&
+                    <span className="mk-upto" title={`ПСК ${pct(r.psk_min)} ниже ставки ${pct(r.rate_min??r.rate_pct)} — числа источника не согласованы; в ранге стоит ставка`}>≠ </span>}
+                  {mkMetric(r[mcat.metric||"rate_pct"],mcat.metric,mcat.metric_unit)}</td>
                 {showRateCol&&mcat.metric!=="rate_pct"&&<td className="right mono tnum" data-label={mcat.rate_label} style={{color:"var(--ink-2)",fontSize:12}}>{r.rate_pct!=null?pct(r.rate_pct):"—"}</td>}
                 {mcat.secondary&&<td className="right mono tnum" data-label="Кешбэк" style={{color:"var(--ink-2)",fontSize:12}}>{r.cashback_pct!=null?pct(r.cashback_pct,1):"—"}</td>}
                 {showBarCol&&<td data-label="К лидеру">
@@ -3531,7 +3723,7 @@ function MarketPage({params}){
                       <i style={{width:`${Math.min(rel*100,100)}%`,background:isSber?"var(--sber)":"var(--ink-3)"}}/>
                     </div>
                     <span className="mono tnum" style={{fontSize:11,color:"var(--ink-3)"}}>
-                      {i===0?"лидер":`${(lower?"+":"−")}${Math.abs(rate-bestRate).toFixed(2).replace(".",",")} п.п.`}</span>
+                      {Math.abs(gapL)<1e-9?"лидер":mkGap(gapL,mcat.metric,mcat.metric_unit)}</span>
                   </div>:<span className="mono" style={{color:"var(--ink-3)"}}>—</span>}
                 </td>}
                 <td className="mono tnum" data-label="Сумма" style={{color:"var(--ink-2)",fontSize:12}}>{fmtAmount(r.amount_min,r.amount_max)}</td>
@@ -3587,31 +3779,36 @@ function MarketPage({params}){
       {/* ЖУРНАЛ ИЗМЕНЕНИЙ */}
       {view==="changes"&&<div className="surface" style={{overflow:"hidden"}}>
         <div style={{padding:"14px 20px",borderBottom:"1px solid var(--hair)"}}>
-          <div className="eyebrow" style={{marginBottom:2}}>Журнал изменений · 7 дней{noise?" · включая микрошум":" · только значимые"}</div>
-          <div className="t-cap">Значимое = изменение нестаточного условия или сдвиг ставки от 0.01 пп. Клик по строке — досье оффера.</div>
+          <div className="eyebrow" style={{marginBottom:2}}>Журнал изменений · 7 дней{noise?" · включая микрошум и откаты":" · только значимые"}
+            {changes&&changes.total!=null?` · ${fmtNum(changes.total)} ${plural(changes.total,"изменение","изменения","изменений")}`:""}</div>
+          <div className="t-cap">Значимое = изменение нестаточного условия или сдвиг ставки от 0,01 п.п.
+            {changes&&changes.hidden_reverts>0?` Скрыто откатов (условия вернулись к прежним в течение 3 суток): ${fmtNum(changes.hidden_reverts)}.`:""} Клик по строке — досье оффера.</div>
         </div>
+        {changes&&changes.focus&&changes.focus_status!=="outside_window"&&
+          !(changes.items||[]).some(x=>x.change_id===changes.focus.change_id)&&
+          <div className="mk-chfocus">
+            <div className="t-cap" style={{padding:"10px 20px 0"}}>Изменение из ссылки
+              {changes.focus_status==="reverted"?" — в течение 3 суток условия вернулись к прежним, поэтому в журнале оно скрыто как откат"
+               :changes.focus_status==="insignificant"?" — микрошум ставки, в журнале значимых его нет"
+               :changes.focus_status==="folded"?" — РКО в общем журнале свёрнуты в строку ниже":""}</div>
+            <MkChRow ch={changes.focus} cat={cat} hl onPick={setDrawer} hlRef={hlRef}/>
+          </div>}
+        {changes&&changes.focus_status==="outside_window"&&hlChange.current&&
+          <div className="t-cap" style={{padding:"10px 20px"}}>Изменение из ссылки старше 7 дней — откройте досье оффера.</div>}
+        {changes&&changes.focus_status==="filtered"&&hlChange.current&&
+          <div className="t-cap" style={{padding:"10px 20px"}}>Изменение из ссылки — в другой категории или банке: снимите фильтр, чтобы увидеть его.</div>}
         {!changes?<div style={{padding:28}}><Skel h={30}/><div style={{height:8}}/><Skel h={30}/><div style={{height:8}}/><Skel h={30}/></div>:
-         changes.length===0?<EmptyState text="За неделю изменений не зафиксировано."/>:
-         changes.map(ch=>{
-           const hl=hlChange.current&&ch.change_id===hlChange.current;
-           const others=mkDiffOthers(ch.diff);
-           const big=ch.rate_delta!=null&&Math.abs(ch.rate_delta)>=0.05;
-           const showRateMove=ch.rate_from!=null&&ch.rate_to!=null&&(Math.abs(ch.rate_delta||0)>=0.01||!others.length);
-           return <button key={ch.change_id} ref={hl?hlRef:null}
-             className={"mk-chrow"+(hl?" hl":"")+(big?" big":"")} onClick={()=>setDrawer(ch.offer_id)}>
-             <span className="mono mk-chdate">{fmtDateMsk(ch.changed_at)}</span>
-             <span className="mk-chbank">
-               <BankAvatar slug={ch.bank_slug} name={ch.bank_name} isSber={!!ch.is_sber}/>
-               <span>{ch.bank_name}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>{ch.title}{!cat?` · ${(CAT_LABELS[ch.category]||ch.category).toLowerCase()}`:""}</i></span>
-             </span>
-             <span className="mk-chmove mono tnum">
-               {showRateMove&&<>{pct(ch.rate_from)} → <b>{pct(ch.rate_to)}</b>
-                  {Math.abs(ch.rate_delta||0)>=0.01&&<em className={ch.rate_delta>0?"up":"dn"}>{ch.rate_delta>0?"▲":"▼"} {Math.abs(ch.rate_delta).toFixed(2).replace(".",",")}</em>}</>}
-               {others.slice(0,3).map(o=><span key={o.k} className="mk-dv">
-                 {o.label}: {mkFldVal(o.k,o.from)} → <b>{mkFldVal(o.k,o.to)}</b></span>)}
-               {others.length>3&&<span className="mk-dv mk-an">ещё {others.length-3}</span>}
-             </span>
-           </button>;})}
+         !(changes.items||[]).length&&!(changes.folded||[]).length?<EmptyState text="За неделю изменений не зафиксировано."/>:<>
+         {(changes.items||[]).map(ch=><MkChRow key={ch.change_id} ch={ch} cat={cat}
+           hl={!!(hlChange.current&&ch.change_id===hlChange.current)} onPick={setDrawer} hlRef={hlRef}/>)}
+         {(changes.folded||[]).map(f=><button key={f.category} className="mk-chrow mk-fold" onClick={()=>setCat(f.category)}>
+           <span className="mono mk-chdate">{fmtDateMsk(f.last_at)}</span>
+           <span className="mk-chbank"><span>{CAT_LABELS[f.category]||f.category}<i className="mk-an" style={{display:"block",fontStyle:"normal"}}>свёрнуто: отдельный рынок бизнеса</i></span></span>
+           <span className="mk-chmove tnum">{fmtNum(f.n)} {plural(f.n,"изменение","изменения","изменений")} у {fmtNum(f.n_banks)} {plural(f.n_banks,"банка","банков","банков")} ›</span>
+         </button>)}
+         {changes.total>(changes.items||[]).length&&<button className="btn btn-ghost mk-more" onClick={moreChanges} disabled={chBusy}>
+           {chBusy?"Загружаю…":`Показать ещё (${(changes.items||[]).length} из ${changes.total})`}</button>}
+        </>}
       </div>}
     </>}
 
@@ -3631,7 +3828,7 @@ function MarketPage({params}){
           {dossier.offer.replenishable!=null&&<div><span>Пополнение</span><b>{dossier.offer.replenishable?"да":"нет"}</b></div>}
           {dossier.offer.early_withdraw!=null&&<div><span>Досрочное</span><b>{dossier.offer.early_withdraw?"да":"нет"}</b></div>}
           {dossier.offer.grace_days!=null&&<div><span>Грейс-период</span><b className="tnum">{dossier.offer.grace_days} дн</b></div>}
-          {dossier.offer.fee_service!=null&&<div><span>Обслуживание</span><b className="tnum">{mkMetric(dossier.offer.fee_service,"fee_service")}</b></div>}
+          {dossier.offer.fee_service!=null&&<div><span>Обслуживание</span><b className="tnum">{mkMetric(dossier.offer.fee_service,"fee_service",(M[dossier.offer.category]||{}).metric_unit)}</b></div>}
           {dossier.offer.fee_open!=null&&parseFloat(dossier.offer.fee_open)>0&&<div><span>Выпуск (разово)</span><b className="tnum">{fmtNum(Math.round(dossier.offer.fee_open))} ₽</b></div>}
           {dossier.offer.cashback_pct!=null&&<div><span>Кешбэк до</span><b className="tnum">{pct(dossier.offer.cashback_pct,1)}</b></div>}
           <div><span>Версия условий с</span><b className="tnum">{fmtDate(dossier.offer.valid_from)}</b></div>
@@ -3661,6 +3858,8 @@ function MarketPage({params}){
         <div className="mk-dbtns">
           {dossier.offer.url&&<a className="btn btn-ghost btn-sm" href={dossier.offer.url} target="_blank" rel="noopener noreferrer">↗ Первоисточник</a>}
           <button className="btn btn-accent btn-sm" onClick={()=>openAI(dossier.offer)}>✦ Спросить ИИ</button>
+          {/* в дело — снимок условий на сегодня: витрина изменится, доказательство — нет */}
+          <CaseAddBtn variant="ghost" item={{kind:"offer",ref_id:dossier.offer.offer_id||drawer}} src="market"/>
         </div>
       </>}
     </RvModal>}
@@ -3728,6 +3927,18 @@ function RvSpark({vals,quarters}){
 // Сбой загрузки панели ≠ «данных нет» — для аудитора это важное различие.
 function RvNote({err}){return <div className="rv-note">{err?"⚠ Не удалось загрузить — обновите страницу":"Нет данных за выбранный период"}</div>;}
 
+// Блокировка прокрутки страницы под окнами — общий счётчик на все открытые окна.
+let _rvLocks=0, _rvLockPrev=null;
+function rvScrollLock(d){
+  const b=document.body;
+  if(d>0){ if(_rvLocks++===0){
+      const gap=window.innerWidth-document.documentElement.clientWidth;
+      _rvLockPrev={o:b.style.overflow,p:b.style.paddingRight};
+      b.style.overflow="hidden"; if(gap>0)b.style.paddingRight=`${gap}px`; } }
+  else if(_rvLocks>0&&--_rvLocks===0&&_rvLockPrev){
+    b.style.overflow=_rvLockPrev.o; b.style.paddingRight=_rvLockPrev.p; _rvLockPrev=null; }
+}
+
 // Переиспользуемый оверлей: центральный модал (полный текст) или правый драуэр
 // (drill-in по городу/месяцу). Закрытие по клику-вне, ✕ и Esc.
 function RvModal({onClose,title,sub,side,children,bare,wide,sheet,fit}){
@@ -3738,15 +3949,26 @@ function RvModal({onClose,title,sub,side,children,bare,wide,sheet,fit}){
   // Окно уходит тем же путём, каким пришло: центральное — сжимаясь на месте,
   // правая панель — вправо. Раньше оно появлялось с движением, а исчезало
   // мгновенно, и это читалось как сбой, а не как закрытие.
+  //
+  // Зависание 03.10: «Аудит-дела» — один и тот же RvModal для списка и для дела.
+  // Закрыли дело крестиком → onClose вернул список, а React оставил этот же
+  // экземпляр с closing=true: невидимый слой во весь экран ловил все клики,
+  // повторное закрытие игнорировалось, прокрутка оставалась заблокированной.
+  // Поэтому после ухода closing сбрасывается (если родитель окно не убрал — оно
+  // показывается снова), а onClose берётся из ref: свежий обработчик не
+  // пересоздаёт close и не перезапускает эффект ниже (раньше на каждую
+  // перерисовку родителя фокус прыгал на крестик — печатать в поле окна было нельзя).
   const [closing,setClosing]=useState(false);
+  const onCloseRef=useRef(onClose); onCloseRef.current=onClose;
+  const closingRef=useRef(false), alive=useRef(true);
+  useEffect(()=>()=>{ alive.current=false; },[]);
   const close=useCallback(()=>{
-    setClosing(c=>{
-      if(c)return c;
-      const ms=matchMedia("(prefers-reduced-motion: reduce)").matches?0:190;
-      setTimeout(onClose,ms);
-      return true;
-    });
-  },[onClose]);
+    if(closingRef.current)return;
+    closingRef.current=true; setClosing(true);
+    const ms=matchMedia("(prefers-reduced-motion: reduce)").matches?0:190;
+    setTimeout(()=>{ try{ onCloseRef.current&&onCloseRef.current(); }
+      finally{ closingRef.current=false; if(alive.current) setClosing(false); } },ms);
+  },[]);
   useEffect(()=>{
     // Куда вернуть фокус, когда окно закроется: человек должен оказаться там,
     // откуда ушёл, а не в начале страницы.
@@ -3769,16 +3991,17 @@ function RvModal({onClose,title,sub,side,children,bare,wide,sheet,fit}){
     };
     document.addEventListener("keydown",h);
     // Фон не скроллим, но и не даём странице дёрнуться на ширину полосы прокрутки.
-    const gap=window.innerWidth-document.documentElement.clientWidth;
-    const prev=document.body.style.overflow, prevPad=document.body.style.paddingRight;
-    document.body.style.overflow="hidden";
-    if(gap>0)document.body.style.paddingRight=`${gap}px`;
-    const t=setTimeout(()=>{const f=focusable(); (f[0]||cardRef.current)?.focus?.();},0);
+    // Счётчик, а не «запомнить и вернуть»: окна бывают стопкой и закрываются не
+    // по порядку — старая схема могла вернуть body overflow:hidden навсегда.
+    rvScrollLock(+1);
+    // фокус — внутрь окна, если он ещё не там (поле с autoFocus уже в фокусе)
+    const t=setTimeout(()=>{ if(cardRef.current&&cardRef.current.contains(document.activeElement))return;
+      const f=focusable(); (f[0]||cardRef.current)?.focus?.();},0);
     return ()=>{
       clearTimeout(t);
       document.removeEventListener("keydown",h);
-      document.body.style.overflow=prev; document.body.style.paddingRight=prevPad;
-      if(returnTo&&returnTo.focus)returnTo.focus();
+      rvScrollLock(-1);
+      if(returnTo&&returnTo.focus&&document.contains(returnTo))returnTo.focus();
     };
   },[close]);
   // ПОРТАЛ в body: у предка .fade-in есть transform (animation fill-mode both),
@@ -3974,7 +4197,7 @@ function RvCard({r,sel,read,inCase,showBank,onOpen,onCase,onTheme,q,cardRef}){
       </span>
       {inCase&&<span className="rv-c-in" data-tip={`в деле «${inCase}»`}><RvICase s={12}/>в деле</span>}
       <span className="rv-c-acts">
-        {!inCase&&onCase&&<button className="rv-c-add" onClick={e=>{e.stopPropagation();onCase();}}>В дело</button>}
+        {!inCase&&onCase&&<button className="rv-c-add" onClick={e=>{e.stopPropagation();onCase(e.currentTarget);}}>В дело</button>}
         <RvMenu items={[onCase&&{t:inCase?"Добавить в другое дело":"В аудит-дело",ic:<RvICase s={13}/>,on:onCase},
           r.url&&{t:"Открыть на площадке",ic:<RvIExt s={13}/>,href:r.url},
           r.url&&{t:"Скопировать ссылку",ic:<RvILink s={13}/>,on:()=>rvCopy(r.url)}]}/>
@@ -4040,7 +4263,7 @@ function RvReader({r,pos,total,ctx,onPrev,onNext,onClose,onCase,inCase,onOpenSim
         {total>1&&<span className="rv-rd-pos">{pos+1} из {total}{ctx?` · ${ctx}`:""}</span>}
       </div>
       <div className="rv-rd-acts">
-        {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={onCase}
+        {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={e=>onCase(e.currentTarget)}
           data-tip={inCase?`уже в деле «${inCase}» — можно добавить в другое`:"приобщить к аудит-делу · A"}>
           <RvICase s={14}/>{inCase?"В деле":"В дело"}</button>}
         {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer" data-tip="открыть на площадке">
@@ -4069,7 +4292,7 @@ function RvReader({r,pos,total,ctx,onPrev,onNext,onClose,onCase,inCase,onOpenSim
       </div>}
     </div>
     {!embedded&&(onCase||r.url)&&<div className="rv-rd-foot">
-      {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={onCase}>
+      {onCase&&<button className={"rv-bt"+(inCase?" done":" pri")} onClick={e=>onCase(e.currentTarget)}>
         <RvICase s={15}/>{inCase?"В деле":"В дело"}</button>}
       {r.url&&<a className="rv-bt" href={r.url} target="_blank" rel="noopener noreferrer">{rvHost(r.url)}<RvIExt s={13}/></a>}
     </div>}
@@ -4117,44 +4340,6 @@ const rvCaseSnap=r=>(((r.ann&&r.ann.summary)?r.ann.summary+"\n\n":"")+(r.text||"
 // Приобщение жалоб к серверному аудит-делу (то же, что в «Базе знаний»):
 // дело видит команда, к материалам пишут комментарии, выгружают в Excel и
 // Word. Раньше «дело» жило в браузере и пропадало вместе с ним.
-function RvCasePick({items,onClose,onDone}){
-  const[cases,setCases]=useState(null),[title,setTitle]=useState(""),[note,setNote]=useState("");
-  const[busy,setBusy]=useState(false),[err,setErr]=useState(null);
-  useEffect(()=>{apiFetch("/api/cases").then(d=>setCases(d.cases||[])).catch(()=>setCases([]));},[]);
-  const last=(()=>{try{return +localStorage.getItem("al-case-last")||0;}catch{return 0;}})();
-  const attach=async(c)=>{ setBusy(true);setErr(null);
-    try{
-      const payload=items.map(r=>({kind:"review",url:r.url,title:rvCaseSnap(r),note:note.trim()||null}));
-      if(payload.length===1)await apiPost(`/api/cases/${c.case_id}/items`,payload[0]);
-      else await apiPost(`/api/cases/${c.case_id}/items/bulk`,{items:payload});
-      try{localStorage.setItem("al-case-last",String(c.case_id));}catch{}
-      onDone&&onDone(c,items.length);
-    }catch{setErr("Не удалось приобщить: нет доступа к делу или сбой сети");setBusy(false);}
-  };
-  const create=async()=>{ if(!title.trim()||busy)return; setBusy(true);
-    try{const r=await apiPost("/api/cases",{title:title.trim()});await attach({case_id:r.case_id,title:title.trim()});}
-    catch{setErr("Не удалось создать дело");setBusy(false);} };
-  const list=(cases||[]).slice().sort((a,b)=>(b.case_id===last)-(a.case_id===last));
-  return <RvModal onClose={onClose} title={items.length>1?`В аудит-дело: ${items.length} жалоб`:"В аудит-дело"}
-      sub="дело видно вам и тем, кому вы его откроете">
-    <label className="rv-cp-note"><span>Комментарий <i>необязательно</i></span>
-      <input className="input" value={note} onChange={e=>setNote(e.target.value)}
-        placeholder="зачем приобщаете: «повышение ставки после отказа от подписки»"/></label>
-    {cases===null?<Skel h={60}/>:list.length>0&&<div className="rv-cp-list">
-      {list.map(c=><button key={c.case_id} className="rv-cp-case" disabled={busy} onClick={()=>attach(c)}>
-        <span className="rv-cp-t">{c.title}</span>
-        <span className="rv-cp-m">{c.items} матер.{c.shared?" · команда":""}{!c.mine?` · ${c.owner}`:""}{c.case_id===last?" · последнее":""}</span>
-      </button>)}</div>}
-    <div className="rv-cp-new">
-      <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
-        onKeyDown={e=>{if(e.key==="Enter")create();}}
-        placeholder={list.length?"…или новое дело: название":"Название нового дела"}/>
-      <button className="btn btn-primary btn-sm" disabled={!title.trim()||busy} onClick={create}>Создать и приобщить</button>
-    </div>
-    {err&&<div className="rv-cp-err">{err}</div>}
-  </RvModal>;
-}
-
 // Журнал сигналов: всплеск — эпизод со снимком жалоб, из которых он
 // сложился. Отметка «подтвердился / ложный» копит точность радара (видна в
 // «Пульсе»): без неё непонятно, можно ли сигналам доверять.
@@ -4326,8 +4511,6 @@ function ReviewsPage({params}){
   const[feedTot,setFeedTot]=useState(null);             // {total, pending} по фильтру ленты
   const[feedMoreBusy,setFeedMoreBusy]=useState(false);
   // рабочее место аудитора: дела, фильтры ленты, группы, журнал, подписка
-  const[pick,setPick]=useState(null);                   // жалобы для приобщения к делу
-  const[casesOpen,setCasesOpen]=useState(false);
   const[jrOpen,setJrOpen]=useState(false);
   // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
   const[fCity,setFCity]=useState(()=>P.city||(preset&&preset.city)||""),[fSrc,setFSrc]=useState("");
@@ -4356,6 +4539,7 @@ function ReviewsPage({params}){
   const[clsBusy,setClsBusy]=useState(false),[clsOn,setClsOn]=useState(false);
   const[thAll,setThAll]=useState(false);   // показать все темы риск-карты vs топ-12
   const[anom,setAnom]=useState(null),[anomBusy,setAnomBusy]=useState(false);  // радар аномалий
+  const[anomTry,setAnomTry]=useState(0);
   const[ix,setIx]=useState(null),[rf,setRf]=useState(null),[chg,setChg]=useState(null);
   const[flag,setFlag]=useState(P.flag||"");            // признак риска — фильтр ленты
   const[casesN,setCasesN]=useState(null);              // сколько дел видно пользователю
@@ -4367,7 +4551,7 @@ function ReviewsPage({params}){
   const[fine,setFine]=useState(()=>window.matchMedia("(hover: hover) and (min-width: 761px)").matches);
   useEffect(()=>{ const m=window.matchMedia("(hover: hover) and (min-width: 761px)");
     const h=()=>setFine(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
-  const loadCasesN=()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).length)).catch(()=>{});
+  const loadCasesN=()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).filter(c=>!c.deleted).length)).catch(()=>{});
   useEffect(()=>{loadCasesN();},[]);
   // состояние → адрес
   useEffect(()=>{ const sp=new URLSearchParams();
@@ -4477,24 +4661,27 @@ function ReviewsPage({params}){
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
   useEffect(()=>{ setAnomBusy(true);setAnom(null);
     apiFetch(`/api/reviews/anomalies?bank=${enc(bank)}${pq()}`)
-      .then(d=>{setAnom(d||{calm:true});setAnomBusy(false);})
-      .catch(()=>{setAnom({calm:true});setAnomBusy(false);});
-  },[bank,product]);
+      .then(d=>{setAnom(d||{error:"empty"});setAnomBusy(false);})
+      .catch(()=>{setAnom({error:"network"});setAnomBusy(false);});      // сбой — не «спокойно»
+  },[bank,product,anomTry]);
 
   // days попадает в ленту наравне с верхними панелями: раньше переключатель
   // периода их менял, а список обращений — нет, и в трёхмесячном срезе
   // оставались прошлогодние жалобы.
+  const feedNext=useRef(null);      // курсор ленты от сервера
   const feedQS=(off)=>`/api/reviews/feed?bank=${enc(bank)}${pq()}`
     +`${theme?`&theme=${theme}`:""}${q?`&q=${enc(q)}`:""}`
     +`&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`
     +`${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${fSrc}`:""}`
     +`${q?(sortBy==="date"?"&sort=date":""):(fOrder==="severity"?"&sort=severity":"")}`
-    +`&limit=20&offset=${off}`;
+    // лента без поиска листается курсором (next от сервера), поиск — по offset
+    +(q?`&limit=20&offset=${off}`:`&limit=20&cursor=${feedNext.current!=null&&off>0?feedNext.current:0}`);
 
   useEffect(()=>{ setFeedBusy(true);setClsOn(false);setFeedMore(false);
-    setRd(x=>x&&x.src==="feed"?null:x); setCur(-1);
+    setRd(x=>x&&x.src==="feed"?null:x); setCur(-1); feedNext.current=null;
     apiFetch(feedQS(0))
-      .then(d=>{setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
+      .then(d=>{feedNext.current=d.next!=null?d.next:null;
+                setFeed(d.items||[]);setFeedErr(d.error||null);setFeedMeta(d.search||null);
                 setFeedTot(d.total!=null?{total:d.total,pending:d.pending||0}:null);
                 setFeedMore(!!d.has_more);setFeedBusy(false);})
       .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedTot(null);setFeedBusy(false);});
@@ -4503,7 +4690,8 @@ function ReviewsPage({params}){
   const loadMoreFeed=()=>{
     setFeedMoreBusy(true);
     return apiFetch(feedQS((feed||[]).length))
-      .then(d=>{setFeed(f=>(f||[]).concat(d.items||[]));setFeedMore(!!d.has_more);
+      .then(d=>{feedNext.current=d.next!=null?d.next:feedNext.current;
+                setFeed(f=>(f||[]).concat(d.items||[]));setFeedMore(!!d.has_more);
                 setFeedMoreBusy(false);})
       .catch(()=>setFeedMoreBusy(false));
   };
@@ -4514,6 +4702,10 @@ function ReviewsPage({params}){
     const h=()=>setNarrow(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
   const loadCaseUrls=()=>apiFetch("/api/cases/review-urls").then(d=>setCaseUrls(d.urls||{})).catch(()=>{});
   useEffect(()=>{loadCaseUrls();},[]);
+  // панель «Аудит-дела» общая для всего приложения: после неё обновляем «в деле» и счётчик
+  useEffect(()=>{ const h=()=>{loadCaseUrls();loadCasesN();};
+    window.addEventListener("al-cases",h); window.addEventListener("al-case-items",h);
+    return ()=>{ window.removeEventListener("al-cases",h); window.removeEventListener("al-case-items",h); }; },[]); // eslint-disable-line
   const openReader=(list,idx,ctx,src)=>{ setRd({list,idx,ctx,src}); if(src==="feed")setCur(idx); };
   const rdList=rd?(rd.src==="feed"?(feed||[]):rd.list):[];
   const rdItem=rd?rdList[rd.idx]:null;
@@ -4548,9 +4740,10 @@ function ReviewsPage({params}){
     const h=e=>{
       if(e.defaultPrevented||e.metaKey||e.ctrlKey||e.altKey)return;
       const t=e.target; if(t&&t.closest&&t.closest("input,textarea,select,[contenteditable='true']"))return;
-      if(pick)return;
+      if(_casePickOpen)return;                  // открыто меню «В дело»
       const k=e.key.toLowerCase(), down=k==="j"||k==="о", up=k==="k"||k==="л", add=k==="a"||k==="ф";
-      const overlay=casesOpen||jrOpen||grp||drill;
+      if(_casesHubOpen)return;                 // поверх раздела открыта панель «Аудит-дела»
+      const overlay=jrOpen||grp||drill;
       if(k==="/"&&!overlay&&!(rd&&!split)){e.preventDefault();
         if(tab!=="complaints")goTab("complaints");
         setTimeout(()=>searchRef.current&&searchRef.current.focus(),30);return;}
@@ -4580,8 +4773,12 @@ function ReviewsPage({params}){
       .catch(()=>setClsBusy(false));
   };
 
-  const addCase=(r)=>setPick([r]);
-  const onPicked=(c,n)=>{setPick(null);loadCaseUrls();loadCasesN();fbToast(n>1?`${n} жалоб приобщено к делу «${c.title}»`:`Приобщено к делу «${c.title}»`,false);};
+  // «В дело» — общее меню и активное дело (этап 4): с активным делом жалоба
+  // уходит туда одним нажатием (и клавишей A в читалке), без окна посреди экрана
+  const rvItem=r=>({kind:"review",url:r.url,title:rvCaseSnap(r)});
+  const addCase=(r,anchor)=>{ const a=anchor&&(anchor.currentTarget||anchor), inC=caseUrls[r.url];
+    caseAdd([rvItem(r)],{anchor:a&&a.getBoundingClientRect?a:null,src:"reviews",
+      already:inC?(_cs.refs["u:"+r.url]||{title:inC}):null}); };
   const toggleSub=async()=>{
     const prev=sub; setSub(!prev);
     try{ if(prev)await apiDel(`/api/reviews/subscription?bank=${enc(bank)}${pq()}`);
@@ -4765,6 +4962,9 @@ function ReviewsPage({params}){
             data-tip="все всплески за полгода со снимком жалоб и отметкой «подтвердился / ложный»">журнал сигналов<span className="rv-ico-in"><RvIChevR s={12}/></span></button>
           {anomBusy?
             <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
+           :anom&&anom.error?
+            <div className="rv-radar-calm rv-radar-err" role="alert">Не удалось посчитать сигналы недели — о всплесках сейчас ничего не известно.
+              <button type="button" className="btn btn-sm" onClick={()=>setAnomTry(x=>x+1)}>Повторить</button></div>
            :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?
             <div className="rv-radar-calm"><span className="rv-radar-check"><IcoCheck/></span> Резких аномалий за неделю не выявлено</div>
            :(!anom.signals||!anom.signals.length)?
@@ -4796,7 +4996,8 @@ function ReviewsPage({params}){
                   </span>;
                 })}
               </div>}
-              {anom.summary?<><div className={"rv-radar-brief"+(radarAll?"":" clip")}><BfBrief markdown={anom.summary}/></div>
+              {anom.summary?<><div className={"rv-radar-brief"+(radarAll?"":" clip")}><BfBrief markdown={anom.summary}
+                  novel={anom.novel} onNovel={c=>openGroup({urls:c.urls,n:c.n,label:c.topic,first:c.first,last:c.last})}/></div>
                 <div className="rv-radar-links">
                   <button className="rv-more-l" onClick={()=>setRadarAll(v=>!v)}>{radarAll?"Свернуть разбор":"Весь разбор"}
                     <span className="rv-ico-in" style={radarAll?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>
@@ -4809,7 +5010,7 @@ function ReviewsPage({params}){
   const flagsCard=(rf&&!rf.__err&&rf.groups&&rf.groups.length>0?<div className="rv-card rv-flags">
       <div className="rv-ct"><div>
         <div className="rv-th"><h2 className="rv-ttl">Признаки риска</h2>
-          <RvInfo>Из разметки каждой жалобы: куда клиент грозит или уже обратился, уязвимые клиенты, практики и суммы. Цифры — доля у банка / у остальных банков, цветом — значимое отличие (поправка на число признаков). «Ввели в заблуждение» и суммы пока широкие: сумма бывает и ущербом, и суммой продукта. Клик — жалобы с признаком.</RvInfo></div>
+          <RvInfo>Из разметки каждой жалобы: куда клиент грозит или уже обратился, уязвимые клиенты, практики и суммы. Цифры — доля у банка / у остальных банков, цветом — значимое отличие (поправка на число признаков). Уязвимых сравниваем с тем, что ожидалось бы при продуктах банка: детские и пенсионные карты дают их сами по себе. «Ввели в заблуждение» и суммы пока широкие: сумма бывает и ущербом, и суммой продукта. Клик — жалобы с признаком.</RvInfo></div>
         <div className="rv-cap">доля в {fmtNum(rf.total)} жалобах на {bank} за {rf.days} дн · у остальных банков</div>
       </div>
         <div className="rv-flags-sum mono">обратились <b>{fmtNum(rf.filed)}</b> · грозят <b>{fmtNum(rf.threat)}</b></div>
@@ -4818,11 +5019,13 @@ function ReviewsPage({params}){
         {rf.groups.map(g=><div key={g.key} className="rv-fg">
           <div className="rv-fg-h">{g.label}</div>
           {g.items.map(it=>{
-            const hi=it.sig&&it.index>1, lo=it.sig&&it.index<1;
+            // уязвимые — против ожидания по продуктам (index_adj), остальное — против рынка
+            const ix=it.index_adj!=null?it.index_adj:it.index;
+            const hi=it.sig&&ix>1, lo=it.sig&&ix<1;
             return <div key={it.flag} className={"rv-fi"+(flag===it.flag?" sel":"")+(it.flag==="vuln:any"?" tot":"")}
               role="button" tabIndex={0} aria-pressed={flag===it.flag}
               onClick={()=>pickFlag(it.flag)} onKeyDown={onKey(()=>pickFlag(it.flag))}
-              data-tip={`${it.label}: ${fmtNum(it.n)} жалоб (${pct1(it.pct)})${it.filed!=null?`, из них уже обратились ${fmtNum(it.filed)}`:""} · у остальных банков ${pct1(it.market_pct)}${it.index!=null?` · ${rvX(it.index)}`:""}${it.caveat?` · ⚠ ${it.caveat}`:""}`}>
+              data-tip={`${it.label}: ${fmtNum(it.n)} жалоб (${pct1(it.pct)})${it.filed!=null?`, из них уже обратились ${fmtNum(it.filed)}`:""} · у остальных банков ${pct1(it.market_pct)}${it.index!=null?` · ${rvX(it.index)}`:""}${it.expected_pct!=null?` · с учётом продуктов ожидалось ${pct1(it.expected_pct)}`:""}${it.caveat?` · ⚠ ${it.caveat}`:""}`}>
               <span className="rv-fi-l">{it.label}{it.caveat&&<span className="rv-fi-cav" aria-label="есть оговорка">*</span>}</span>
               <span className="rv-fi-n mono">{fmtNum(it.n)}</span>
               <span className={"rv-fi-m mono"+(hi?" rv-up":lo?" rv-down":"")}>{pct1(it.pct)}<i> / {pct1(it.market_pct)}</i></span>
@@ -4836,7 +5039,12 @@ function ReviewsPage({params}){
   // объём, главное отличие от рынка, всплеск недели. Без модели.
   const leadText=(()=>{ if(!ov||ov.__err||ov.total==null)return null;
     const out=[], vol=chg&&chg.items&&chg.items.find(x=>x.kind==="volume");
-    if(vol)out.push(`Жалоб ${vol.dir==="up"?"больше":"меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за прошлые ${days} дн: ${fmtNum(ov.total)} против ${fmtNum(ov.prev)}.`);
+    // рост сравниваем с рынком: «+20%» при росте остальных банков на 12% — не «стало хуже на 20%»
+    if(vol){ const mk=ov.market_delta_pct, rel=ov.delta_vs_market_pct;
+      const mtxt=mk==null?"":`; у остальных банков ${rvSgn(Math.round(mk))}% — `+(vol.vs_market==="above"
+        ?`${bank} обгоняет рынок на ${Math.round(Math.abs(rel||0))}%`
+        :vol.vs_market==="below"?`у ${bank} лучше, чем у рынка`:`в целом вместе с рынком`);
+      out.push(`Жалоб ${ov.delta_pct>0?"больше":"меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за прошлые ${days} дн: ${fmtNum(ov.total)} против ${fmtNum(ov.prev)}${mtxt}.`); }
     // «без значимых изменений» рядом с чипами изменившихся тем читалось как
     // «ничего не изменилось» — говорим именно про общее число
     else if(ov.delta_partial||!chg)out.push(`${fmtNum(ov.total)} ${plural(ov.total,"жалоба","жалобы","жалоб")} за ${days} дн.`);
@@ -4849,10 +5057,13 @@ function ReviewsPage({params}){
   // Значимость объёма и «остаток» чипов: объём и всплеск недели уже в фразе
   // «Главного» — чипами дублировать их незачем (первый экран повторял
   // «×4,2» четыре раза)
-  const volSig=!!(chg&&chg.items&&chg.items.find(x=>x.kind==="volume"));
+  // цвет объёма — по сравнению с рынком: красный — обгоняем рынок, зелёный — отстаём
+  const volIt=chg&&chg.items&&chg.items.find(x=>x.kind==="volume");
+  const volSig=!!volIt;
   const leadSig=!!(anom&&anom.signals&&anom.signals[0]);
   const chgRest=chg&&!chg.partial&&chg.items?chg.items.filter(it=>it.kind!=="volume"&&!(it.kind==="signal"&&leadSig)):[];
   const vuln=rf&&rf.groups?((rf.groups.find(g=>g.key==="vuln")||{items:[]}).items.find(x=>x.flag==="vuln:any")||null):null;
+  const vulnUp=!!(vuln&&vuln.sig&&(vuln.index_adj!=null?vuln.index_adj>1:vuln.index>1));
   const srcShares=ov&&ov.by_source&&ov.by_source.length?rvSrcShares(ov.by_source):[];
   const pageInfo=<>
     <b>Жалобы</b> — отзывы со всех площадок, которые ИИ отнёс к претензиям; похвала, вопросы, мусор и копии исключены.
@@ -4920,9 +5131,9 @@ function ReviewsPage({params}){
             <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
         {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
         <a className="rv-export rv-export-a" download aria-label="Выгрузить жалобы в Excel"
-           href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`}
-           data-tip="Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака и периода — с разметкой ИИ и полным текстом, сводки (поиск в выгрузку не входит)"
-           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,days,esc:escOnly,flag}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">Excel</span></a>
+           href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}&days=${days}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${enc(fSrc)}`:""}`}
+           data-tip="Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака, города, площадки и периода — с разметкой ИИ и полным текстом, сводки (поиск в выгрузку не входит)"
+           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,days,esc:escOnly,flag,city:fCity||null,source:fSrc||null}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">Excel</span></a>
       </div>
       {/* Порядок выдачи. Показываем только при запросе: лента без него и так
           идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
@@ -5024,7 +5235,7 @@ function ReviewsPage({params}){
        feed.map((r,i)=><RvCard key={r.url||i} r={r} showBank q={q}
           sel={split?rd.idx===i:(!rd&&cur===i)} read={readSet.has(r.url)} inCase={caseUrls[r.url]}
           cardRef={el=>{cardRefs.current[i]=el;}}
-          onOpen={e=>vtOpen(e&&e.currentTarget,()=>openReader(null,i,null,"feed"))} onCase={()=>addCase(r)} onTheme={pickTheme}/>)}
+          onOpen={e=>vtOpen(e&&e.currentTarget,()=>openReader(null,i,null,"feed"))} onCase={a=>addCase(r,a)} onTheme={pickTheme}/>)}
        {feedMore&&!(fView==="groups"&&!q)&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
          disabled={feedMoreBusy}>
          {feedMoreBusy?"Загружаю…":`Показать ещё · показано ${(feed||[]).length}${feedTot&&!q?` из ${fmtNum(feedTot.total+feedTot.pending)}`:""}`}</button>}
@@ -5032,7 +5243,7 @@ function ReviewsPage({params}){
       {/* Читалка рядом со списком (от 1280 px): просмотр подряд без окон */}
       {split&&<aside className="rv-fw-rd" aria-label="Выбранная жалоба">
         <RvReader r={rdItem} {...rdNav} embedded showBank onClose={()=>setRd(null)}
-          onCase={()=>addCase(rdItem)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}/></aside>}
+          onCase={a=>addCase(rdItem,a)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}/></aside>}
       </div>
     </div>);
 
@@ -5068,8 +5279,8 @@ function ReviewsPage({params}){
                     :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — всплески будут в «Для вас»`}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
           <span className="rv-hact-l">{sub?"Слежу":"Следить"}</span></button>}
-        <button className="rv-bell" onClick={()=>setCasesOpen(true)} aria-label="Аудит-дела"
-          data-tip="подборки жалоб и документов под проверку — общие для команды">
+        <button className="rv-bell" onClick={()=>openCases()} aria-label="Аудит-дела"
+          data-tip="подборки доказательств под проверку — ваши и те, куда вас пригласили">
           <RvICase s={14}/><span className="rv-hact-l">Аудит-дела</span>{casesN?<span className="rv-hact-n">{casesN}</span>:null}</button>
       </div>
     </div>
@@ -5118,9 +5329,9 @@ function ReviewsPage({params}){
              onClick={()=>goTab("complaints")} onKeyDown={onKey(()=>goTab("complaints"))}>
           <div className="rv-kl">Жалоб за {days} дн</div>
           <div className="rv-kv">{busy&&!ov?<Skel w="55%" h={30}/>:(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
-          <div className="rv-ks">{ov&&ov.delta_partial?<span data-tip="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{volSig
-            ?(ov.delta_pct<0?<span className="rv-down">↓ {Math.round(Math.abs(ov.delta_pct))}%</span>:<span className="rv-up">↑ {Math.round(ov.delta_pct)}%</span>)
-            :<span className="rv-flat" data-tip="в пределах обычных колебаний — не значимо">{ov.delta_pct<0?"−":"+"}{Math.round(Math.abs(ov.delta_pct))}%</span>} к прошлому периоду{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
+          <div className="rv-ks">{ov&&ov.delta_partial?<span data-tip="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{volSig&&volIt.dir!=="flat"
+            ?<span className={volIt.dir==="up"?"rv-up":"rv-down"} data-tip={volIt.dir==="up"?"растёт быстрее, чем у остальных банков":"растёт медленнее, чем у остальных банков"}>{ov.delta_pct<0?"↓":"↑"} {Math.round(Math.abs(ov.delta_pct))}%</span>
+            :<span className="rv-flat" data-tip={volSig?"меняется вместе с остальными банками":"в пределах обычных колебаний — не значимо"}>{ov.delta_pct<0?"−":"+"}{Math.round(Math.abs(ov.delta_pct))}%</span>} к прошлому периоду{ov.market_delta_pct!=null?<span className="rv-lown"> · рынок {rvSgn(Math.round(ov.market_delta_pct))}%</span>:""}{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>:"—"}</div>
         </div>
         <div className={"rv-card rv-kpi rv-kpi-click"+(escOnly?" rv-kpi-on":"")} role="button" tabIndex={0}
              data-tip="жалобы, где клиент грозит или уже обратился в ЦБ, суд, прокуратуру, Роспотребнадзор, к финомбудсмену или в полицию"
@@ -5133,9 +5344,13 @@ function ReviewsPage({params}){
         <div className={"rv-card rv-kpi rv-kpi-click"+(flag==="vuln:any"?" rv-kpi-on":"")} role="button" tabIndex={0}
              data-tip="жалобы уязвимых клиентов: пенсионеры, низкий доход, участники СВО, несовершеннолетние, инвалиды, тяжелобольные"
              onClick={()=>pickFlag("vuln:any")} onKeyDown={onKey(()=>pickFlag("vuln:any"))}>
-          <div className="rv-kl">Уязвимые клиенты {vuln&&vuln.sig&&vuln.index>1&&<span className="rv-tag compliance">выше рынка</span>}</div>
-          <div className={"rv-kv"+(vuln&&vuln.sig&&vuln.index>1?" rv-up":"")}>{busy&&!rf?<Skel w="45%" h={30}/>:vuln?pct1(vuln.pct):"—"}</div>
-          <div className="rv-ks">{vuln?<>у остальных банков {pct1(vuln.market_pct)}<br/>{fmtNum(vuln.n)} {plural(vuln.n,"жалоба","жалобы","жалоб")}</>:""}</div>
+          {/* «выше рынка» — против ожидания по продуктам: детские и пенсионные
+              карты дают уязвимых сами по себе, и сырое сравнение со всем потоком
+              красило KPI составом продуктов (аудит 03.10, ОТЗ-10) */}
+          <div className="rv-kl">Уязвимые клиенты {vulnUp&&<span className="rv-tag compliance"
+            data-tip={`с учётом продуктов ожидалось ${pct1(vuln.expected_pct)} — у Сбера в ${ovN(vuln.index_adj,1)} раза больше`}>выше рынка</span>}</div>
+          <div className={"rv-kv"+(vulnUp?" rv-up":"")}>{busy&&!rf?<Skel w="45%" h={30}/>:vuln?pct1(vuln.pct):"—"}</div>
+          <div className="rv-ks">{vuln?<>{vuln.expected_pct!=null?`при продуктах Сбера ожидалось ${pct1(vuln.expected_pct)}`:`у остальных банков ${pct1(vuln.market_pct)}`}<br/>{fmtNum(vuln.n)} {plural(vuln.n,"жалоба","жалобы","жалоб")}</>:""}</div>
         </div>
       </div>
       {trendCard}
@@ -5161,12 +5376,11 @@ function ReviewsPage({params}){
     {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={`${grp.n} похожих жалоб`}
         sub={[grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
       <div className="rv-grp-acts"><button className="btn btn-sm btn-primary" disabled={!grpItems||!grpItems.length}
-        onClick={()=>setPick(grpItems)}>＋ всю группу в аудит-дело</button></div>
+        onClick={e=>caseAdd(grpItems.map(rvItem),{anchor:e.currentTarget,src:"reviews_group"})}>＋ всю группу в аудит-дело</button></div>
       {!grpItems?<Skel h={120}/>:<div className="rv-clist">{grpItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
         read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="group"&&rd.idx===i}
-        onOpen={()=>openReader(grpItems,i,`группа · ${grp.n}`,"group")} onCase={()=>addCase(r)}/>)}</div>}
+        onOpen={()=>openReader(grpItems,i,`группа · ${grp.n}`,"group")} onCase={a=>addCase(r,a)}/>)}</div>}
     </RvModal>}
-    {casesOpen&&<KbCases onClose={()=>setCasesOpen(false)}/>}
 
     {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
     {drill&&<RvModal side="right" onClose={()=>setDrill(null)} title={drill.label}
@@ -5201,15 +5415,14 @@ function ReviewsPage({params}){
          !drillItems||!drillItems.length?<RvNote/>:
          <div className="rv-clist">{drillItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
            read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="drill"&&rd.idx===i}
-           onOpen={()=>openReader(drillItems,i,drill.label,"drill")} onCase={()=>addCase(r)}/>)}</div>}
+           onOpen={()=>openReader(drillItems,i,drill.label,"drill")} onCase={a=>addCase(r,a)}/>)}</div>}
       </div>
     </RvModal>}
     {/* Читалка поверх — из групп, срезов, журнала, похожих и на узком экране */}
     {rd&&!split&&rdItem&&<RvModal side="right" wide sheet bare title="Жалоба" onClose={()=>setRd(null)}>
       {close=><RvReader r={rdItem} {...rdNav} showBank onClose={close}
-        onCase={()=>addCase(rdItem)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}
+        onCase={a=>addCase(rdItem,a)} inCase={caseUrls[rdItem.url]} onOpenSim={openSim}
         onBack={rd.back?()=>setRd(rd.back):null}/>}</RvModal>}
-    {pick&&<RvCasePick items={pick} onClose={()=>setPick(null)} onDone={onPicked}/>}
   </div>;
 }
 
@@ -5885,7 +6098,12 @@ function VerificationBanner({verification}){
       <div className="dr-verify dr-verify-ok">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flex:"none"}}><path d="M20 6L9 17l-5-5"/></svg>
-        Автопроверка достоверности пройдена — утверждений, требующих ручной сверки, не выявлено.
+        {/* Без слова «достоверность»: автоматически сверяются числа с фактами и
+            то, что источник [N] вообще говорит о том же, — но не смысл каждой
+            фразы. Прежняя плашка обещала больше, чем проверялось (аудит 03.10) */}
+        {verification.numeric_checked>0
+          ?`Числа сверены с источниками: ${verification.verified} из ${verification.numeric_checked}; ссылки [N] указывают на источники по теме фразы. Смысл выводов автоматически не проверяется.`
+          :"Ссылки [N] указывают на источники по теме фразы. Чисел для сверки в отчёте нет; смысл выводов автоматически не проверяется."}
       </div>
     </React.Fragment>;
   }
@@ -6420,6 +6638,7 @@ const CP_CSS=`
   background:oklch(20% 0.02 260 / .34);backdrop-filter:blur(4px) saturate(1.05);
   opacity:0;transition:opacity .17s ease;}
 .cp-ov.in{opacity:1;}
+.cp-ov:not(.in){pointer-events:none;}
 .cp{width:600px;max-width:100%;max-height:74vh;display:flex;flex-direction:column;
   background:var(--surface);border:1px solid var(--hair);border-radius:16px;overflow:hidden;
   box-shadow:0 24px 70px oklch(0% 0 0 / .22), 0 3px 10px oklch(0% 0 0 / .08);
@@ -6472,6 +6691,11 @@ const CP_CSS=`
 .cp-foot{display:flex;align-items:center;gap:18px;padding:10px 16px;border-top:1px solid var(--hair);
   font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .cp-foot span{display:inline-flex;align-items:center;gap:5px;}
+.cp-undo{justify-content:space-between;color:var(--ink-2);font-size:12.5px}
+.cp-undo span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.cp-undo button{flex:none;border:0;background:none;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink);cursor:pointer;
+  text-decoration:underline;text-underline-offset:3px;padding:4px 2px}
+.cp-undo .cp-undo-err{color:var(--accent-ink);white-space:normal}
 .cp-foot kbd{border:1px solid var(--hair);border-radius:4px;padding:1px 5px;color:var(--ink-3);
   min-width:16px;text-align:center;line-height:1.5;}
 /* вход в историю: пилюля рядом с «Новый запрос» и на welcome */
@@ -6559,8 +6783,25 @@ function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
     if(el)el.scrollIntoView({block:"nearest"});
   },[sel,tab]);
 
-  const delSession=async(e,sid)=>{ e.stopPropagation();
-    await apiDel(`/api/chat/sessions/${sid}`); setSessions(s=>s.filter(x=>x.session_id!==sid)); };
+  // Удаление — сразу из списка, а на сервер — через 8 секунд, если не отменили
+  // (раньше беседа стиралась одним касанием, а удалить отчёт было нельзя вовсе)
+  const[gone,setGone]=useState(null);           // {kind,id,title,err}
+  const goneT=useRef(null), goneRef=useRef(null);
+  const commitGone=useCallback(()=>{ clearTimeout(goneT.current); const g=goneRef.current; goneRef.current=null;
+    if(!g) return;
+    const path=g.kind==="chat"?`/api/chat/sessions/${g.id}`:`/api/reports/${g.id}`;
+    fetch(path,{method:"DELETE",keepalive:true}).then(async r=>{ if(r.ok) return;
+      let d=""; try{ d=(await r.json()).detail; }catch{}
+      setGone({...g,err:d||"Не удалось удалить — попробуйте ещё раз"}); reload(); }).catch(()=>reload()); },[reload]);
+  const delItem=(e,kind,id,title)=>{ e.stopPropagation(); commitGone();
+    const g={kind,id,title:title||"Без названия"}; goneRef.current=g; setGone(g);
+    if(kind==="chat") setSessions(s=>s.filter(x=>x.session_id!==id));
+    else setReports(r=>r.filter(x=>x.report_id!==id));
+    goneT.current=setTimeout(()=>{ commitGone(); setGone(x=>x&&!x.err?null:x); },8000); };
+  const undoGone=()=>{ clearTimeout(goneT.current); goneRef.current=null; setGone(null); reload(); };
+  useEffect(()=>{ if(!open) commitGone(); },[open,commitGone]);
+  useEffect(()=>()=>commitGone(),[]); // eslint-disable-line
+  const delSession=(e,sid)=>delItem(e,"chat",sid,(sessions.find(x=>x.session_id===sid)||{}).title);
   const pinSession=async(e,s)=>{ e.stopPropagation();
     await apiPost(`/api/chat/sessions/${s.session_id}/pin`,{pinned:!s.pinned}).catch(()=>{}); reload(); };
 
@@ -6603,6 +6844,8 @@ function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
       <div className="cp-meta">
         {(r.banks||[]).slice(0,2).length>0 && <div className="cp-banks">{(r.banks||[]).slice(0,2).map(b=><span key={b} className="cp-bank">{b}</span>)}</div>}
         <span className="cp-time">{fmtHistTime(r.created_at)}</span>
+        {!ownerName&&<div className="cp-acts">
+          <button onClick={(e)=>delItem(e,"report",r.report_id,r.title||r.question)} title="Удалить отчёт" aria-label="Удалить отчёт"><IcTrash/></button></div>}
       </div>
     </div>);
   let ri=-1;
@@ -6634,11 +6877,18 @@ function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
             </div>
           : (tab==="chats"?chatRows:reportRows)}
       </div>
-      <div className="cp-foot">
+      {gone
+        ?<div className="cp-foot cp-undo" role="status">
+          {gone.err?<span className="cp-undo-err">{gone.err}</span>
+            :<span>{gone.kind==="chat"?"Беседа":"Отчёт"} «{String(gone.title).slice(0,48)}» удалён{gone.kind==="chat"?"а":""}</span>}
+          {gone.err?<button type="button" onClick={()=>setGone(null)}>Понятно</button>
+            :<button type="button" onClick={undoGone}>Отменить</button>}
+        </div>
+        :<div className="cp-foot">
         <span><kbd>↑</kbd><kbd>↓</kbd> навигация</span>
         <span><kbd>↵</kbd> открыть</span>
         <span><kbd>esc</kbd> закрыть</span>
-      </div>
+      </div>}
     </div>
   </div>;
 }
@@ -6651,6 +6901,12 @@ function AIPage(){
   const[q,setQ]=useState("");
   const[loading,setLoading]=useState(false);
   const abortRef=useRef(null);          // текущий прогон — чтобы его можно было остановить
+  // «Остановить» у отчёта — в два касания: прогон идёт 5–10 минут, случайный клик жалко
+  const[stopArm,setStopArm]=useState(false);
+  const stopArmT=useRef(null);
+  const askStop=()=>{ clearTimeout(stopArmT.current);
+    if(stopArm){ setStopArm(false); abortRef.current?.abort(); return; }
+    setStopArm(true); stopArmT.current=setTimeout(()=>setStopArm(false),4000); };
   const[deepMode,setDeepMode]=useState(false);
   const[showKbd,setShowKbd]=useState(false);
   const[hoverCite,setHoverCite]=useState(null);          // {n, anchor} для tooltip
@@ -6707,11 +6963,14 @@ function AIPage(){
   // prefill из «Обзора» (✦ Спросить ИИ): композер заполняется, но НЕ отправляется —
   // пользователь видит и правит промпт (контроль + экономия токенов)
   useEffect(()=>{
-    try{
+    const take=()=>{ try{
       const p=sessionStorage.getItem("al-ai-prefill");
       if(p){sessionStorage.removeItem("al-ai-prefill");setQ(p);
         setTimeout(()=>{inputRef.current&&inputRef.current.focus();},50);}
-    }catch{}
+    }catch{} };
+    take();
+    window.addEventListener("al-ai-prefill",take);
+    return ()=>window.removeEventListener("al-ai-prefill",take);
   },[]);
   // авто-рост textarea как в современных мессенджерах: высота по контенту до max
   useEffect(()=>{const el=inputRef.current;if(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,160)+"px";}},[q]);
@@ -7094,7 +7353,7 @@ function AIPage(){
           const r=await apiFetch(`/api/reports/${m.report_id}`); const p=r.payload||{};
           Object.assign(m,{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
                            gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null,
-                           title:r.title||undefined});
+                           status:p.status||undefined,title:r.title||undefined});
         }catch{}
       }));
       setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
@@ -7116,11 +7375,23 @@ function AIPage(){
                 verification:p.verification||null,gaps:p.gaps||null,
                 ranking:p.ranking||null,insights:p.insights||null,
                 report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name,
-                title:r.title||undefined}]);
+                status:p.status||undefined,title:r.title||undefined}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
   };
+  // Отчёт по ссылке: из колокольчика («С вами поделились отчётом») или #ai?report=ID.
+  // Раньше параметр report никто не читал — ссылка открывала пустой экран.
+  const openReportRef=useRef(openReport); openReportRef.current=openReport;
+  useEffect(()=>{
+    const take=()=>{ let id=_pendingReport; _pendingReport=null;
+      if(!id){ const h=parseHash(); if(h.p==="ai"&&h.prm.report){ id=+h.prm.report;
+        try{ history.replaceState(null,"","#ai"); }catch{} } }
+      if(id) openReportRef.current(id); };
+    take();
+    window.addEventListener("al-open-report",take); window.addEventListener("hashchange",take);
+    return ()=>{ window.removeEventListener("al-open-report",take); window.removeEventListener("hashchange",take); };
+  },[]);
   // ⌘K / Ctrl+K — открыть/закрыть историю.
   useEffect(()=>{
     const onKey=(e)=>{ if((e.metaKey||e.ctrlKey)&&(e.key==="k"||e.key==="K")){e.preventDefault();setHistOpen(o=>!o);} };
@@ -7189,6 +7460,7 @@ function AIPage(){
                     <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
                   {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!streaming&&
                     <ShareButton reportId={m.report_id}/>}
+                  {m.report_id&&!streaming&&<CaseAddBtn item={{kind:"report",ref_id:m.report_id}} src="ai_report"/>}
                   {showPdfBtn &&
                     <PdfExportButton question={userQ} report={m.text}
                                      sources={m.sources||[]} verification={m.verification}
@@ -7226,6 +7498,8 @@ function AIPage(){
                       })()}
                       {m.ranking && <div className="dr-fade-in"><RankingWidget ranking={m.ranking}/></div>}
                       {m.insights && m.insights.length>0 && <div className="dr-fade-in"><InsightsWidget insights={m.insights}/></div>}
+                      {m.status==="stopped"&&!streaming&&<div className="t-cap" style={{margin:"8px 0"}}>
+                        ⏹ Отчёт остановлен до конца прогона — здесь то, что успело прийти.</div>}
                       {m.verification&&<VerificationBanner verification={m.verification}/>}
                       {showPdfBtn && !streaming &&
                         <div className="dr-doc-footer">
@@ -7294,8 +7568,13 @@ function AIPage(){
               </div>}
             {m.report_owner&&me&&m.report_owner!==me.username&&
               <div style={{marginTop:10}}><span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span></div>}
-            {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!(loading&&i===msgs.length-1)&&
-              <div style={{marginTop:10}}><ShareButton reportId={m.report_id}/></div>}
+            {m.text&&!(loading&&i===msgs.length-1)&&<div className="quick-acts">
+              {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&<ShareButton reportId={m.report_id}/>}
+              {/* ответ длиннее 800 знаков сохранён отчётом — приобщается им; короткий — как есть */}
+              <CaseAddBtn src="ai_answer" item={m.report_id?{kind:"report",ref_id:m.report_id}
+                :{kind:"answer",title:prevQ,meta:{question:prevQ,text:m.text,
+                  sources:(m.sources||[]).slice(0,12).map(x=>({n:x.n,url:x.url,title:x.bank_name||domainOf(x.url)}))}}}/>
+            </div>}
             {m.text&&!(loading&&i===msgs.length-1)&&
               <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb} reportId={m.report_id}/>}
           </div>;
@@ -7307,6 +7586,10 @@ function AIPage(){
           <span className="al-runbar-text">Идёт исследование — обычно 5–10 минут</span>
           <span className="al-runbar-el mono">{fmtEl(elapsed)}</span>
           <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current;if(el){stickRef.current=true;el.scrollTo({top:el.scrollHeight,behavior:"smooth"});}}}>Показать отчёт →</button>
+          {/* раньше остановить отчёт было нечем: поле ввода с кнопкой скрыто на время прогона */}
+          <button className={"al-runbar-btn al-runbar-stop"+(stopArm?" arm":"")} onClick={askStop}
+            aria-label={stopArm?"Подтвердить остановку отчёта":"Остановить отчёт"}>
+            {stopArm?"Точно остановить?":"Остановить"}</button>
         </div>}
       {showComposer &&
       <div className="composer-dock">
@@ -7399,8 +7682,9 @@ function BanksPage(){
   const dayMs=864e5, now=Date.now();
   const ratedAt=sorted.map(b=>b.rating_at?new Date(b.rating_at).getTime():0).filter(Boolean);
   const freshest=ratedAt.length?Math.max(...ratedAt):0;
+  // в «Аудит отзывов» — тот банк корпуса, чьи числа показаны в «У нас»
   const openReviews=(b)=>{ try{sessionStorage.setItem("al-rv-prefilter",
-      JSON.stringify({bank:b.name||""}));}catch{} location.hash="reviews"; };
+      JSON.stringify({bank:b.own_canon||b.name||""}));}catch{} location.hash="reviews"; };
 
   if(loading)return <LoadingPage/>;
   if(err)return <ErrState msg={err}/>;
@@ -7450,7 +7734,9 @@ function BanksPage(){
             const solved=parseFloat(b.solved_pct)||0;
             const score=parseFloat(b.rating_score)||0;
             const at=b.rating_at?new Date(b.rating_at).getTime():0;
-            const stale=at>0&&(now-at)>3*dayMs;
+            // устаревание считает сервер — от последней выдачи рейтинга, а не по
+            // часам браузера (ДАН-14); старая эвристика — для старого API
+            const stale=b.rating_stale!=null?!!b.rating_stale:(at>0&&(now-at)>3*dayMs);
             return <tr key={b.bank_id||b.slug} className={b.is_sber?"is-sber":""}
                        onClick={()=>b.own_reviews?openReviews(b):null}
                        style={b.own_reviews?{cursor:"pointer"}:null}
@@ -7472,7 +7758,8 @@ function BanksPage(){
               </td>
               <td data-label="БАЛЛ · МЕСТО" className="right mono tnum">
                 {score>0?<>{score.toFixed(1).replace(".",",")}
-                  {b.place?<span style={{color:"var(--ink-3)"}}> · №{b.place}</span>:null}</>
+                  {b.place?<span style={{color:"var(--ink-3)"}}> · №{b.place}</span>
+                    :b.place_last?<span style={{color:"var(--ink-3)"}} title="место на дату последнего появления в выдаче — сейчас его занимает другой банк"> · был №{b.place_last}</span>:null}</>
                   :<span style={{color:"var(--ink-3)"}}>—</span>}
               </td>
               <td data-label="СР. ОЦЕНКА" className="right">
@@ -7487,8 +7774,9 @@ function BanksPage(){
               </td>
               <td data-label="РЕШЕНО" className="right mono tnum" style={{color:"var(--ink-2)"}}>{solved>0?`${String(solved).replace(".",",")}%`:"—"}</td>
               <td data-label="У НАС" className="right mono tnum">
-                {b.own_reviews?<span style={{color:"var(--accent)"}} title={b.own_last_dt?`свежий отзыв ${fmtDateMsk(b.own_last_dt)}`:""}>
-                  {fmtNum(b.own_reviews)}</span>:<span style={{color:"var(--ink-3)"}}>—</span>}
+                {b.own_reviews?<span style={{color:"var(--accent)"}} title={[b.own_last_dt?`свежий отзыв ${fmtDateMsk(b.own_last_dt)}`:"",b.own_note||""].filter(Boolean).join(" · ")}>
+                  {fmtNum(b.own_reviews)}{b.own_note?" *":""}</span>
+                  :<span style={{color:"var(--ink-3)"}} title={b.own_shared_with?`отзывы этой организации учтены в строке «${b.own_shared_with}»`:""}>—</span>}
               </td>
             </tr>;
           })}
@@ -7509,51 +7797,47 @@ function BanksPage(){
 
 // ─── SOURCES PAGE ─────────────────────────────────────────────────────────────
 function AlertsStatusBar(){
+  // Эксплуатационные алерты владельцу (аудит 03.10, ПЛТ-01): почта, получатели
+  // и что сломано прямо сейчас — письмо об этом уходит раз в сутки на событие.
   const[s,setS]=useState(null);
   const[busy,setBusy]=useState("");
   const[msg,setMsg]=useState("");
   const load=()=>apiFetch("/api/alerts/status").then(setS).catch(()=>{});
   useEffect(()=>{load();},[]);
-  const testLogin=async()=>{
-    setBusy("login");setMsg("");
-    try{const r=await apiPost("/api/alerts/test-login",{});
-      setMsg(r.ok?"✓ SMTP-логин прошёл":`✗ ${r.error||"ошибка"}`);
-    }catch(e){setMsg("✗ "+(e.message||"network"));}
-    setBusy("");
-  };
   const sendTest=async()=>{
     setBusy("send");setMsg("");
     try{const r=await apiPost("/api/alerts/send-test",{});
-      setMsg(r.ok?"✓ Тестовое письмо отправлено":"✗ Ошибка отправки — см. серверные логи");
+      setMsg(r.ok?"✓ Тестовое письмо отправлено":`✗ ${r.error||"ошибка отправки"}`);
     }catch(e){setMsg("✗ "+(e.message||"network"));}
     setBusy("");
   };
   const runNow=async()=>{
     setBusy("run");setMsg("");
     try{const r=await apiPost("/api/alerts/run-now",{});
-      setMsg(`Прогон: sent=${r.sent}, ${r.skipped||r.error||"ok"}`);
+      setMsg(r.sent?`✓ Письмо отправлено: ${(r.events||[]).length} ${plural((r.events||[]).length,"сбой","сбоя","сбоев")}`
+        :`Письмо не ушло: ${r.skipped||r.error||"нечего слать"}`);
     }catch(e){setMsg("✗ "+(e.message||"network"));}
     setBusy("");
   };
   if(!s) return null;
+  const ev=s.events||[];
   return <div className="card" style={{padding:"12px 16px",marginBottom:12,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
     <div style={{minWidth:0}}>
-      <div style={{fontSize:12,textTransform:"uppercase",letterSpacing:.6,color:"var(--ink-2)"}}>Email-алерты</div>
+      <div style={{fontSize:12,textTransform:"uppercase",letterSpacing:.6,color:"var(--ink-2)"}}>Алерты о сбоях</div>
       <div style={{fontSize:13}}>
-        {s.configured?<span style={{color:"var(--pos)"}}>● настроено</span>
-                     :<span style={{color:"var(--ink-2)"}}>○ не настроено (заполните SMTP_* в .env)</span>}
-        {s.configured&&<span style={{color:"var(--ink-2)",marginLeft:8}}>{s.from} → {s.to}</span>}
+        {s.configured&&s.to?<span style={{color:"var(--pos)"}}>● письма уходят</span>
+                     :<span style={{color:"var(--ink-2)"}}>○ не настроено: нужны SMTP_* и ALERTS_TO (или MAIL_TEST_TO) в .env</span>}
+        {s.configured&&s.to&&<span style={{color:"var(--ink-2)",marginLeft:8}}>→ {s.to}</span>}
       </div>
+      <div style={{fontSize:12,color:ev.length?"var(--neg)":"var(--ink-3)",marginTop:2}}>
+        {ev.length?`Сейчас: ${ev.join(" · ")}`:"Сейчас сбоев нет"}</div>
     </div>
     <div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap"}}>
-      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured} onClick={testLogin}>
-        {busy==="login"?"…":"Проверить логин"}
-      </button>
-      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured} onClick={sendTest}>
+      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured||!s.to} onClick={sendTest}>
         {busy==="send"?"…":"Тестовое письмо"}
       </button>
-      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured} onClick={runNow}>
-        {busy==="run"?"…":"Запустить прогон"}
+      <button className="btn btn-ghost btn-sm" disabled={!!busy||!s.configured||!s.to||!ev.length} onClick={runNow}>
+        {busy==="run"?"…":"Отправить сейчас"}
       </button>
     </div>
     {msg&&<div style={{flexBasis:"100%",fontSize:12,color:"var(--ink-2)"}}>{msg}</div>}
@@ -7561,6 +7845,7 @@ function AlertsStatusBar(){
 }
 
 function SourcesTech({data:extData}){
+  const me=useMe(), canRun=!!(me&&me.can_ingest);   // ручной сбор — только владельцу
   const[data,setData]=useState(extData||{runs:[],captcha_pending:[],configured:[]});
   const[loading,setLoading]=useState(true);
   const[starting,setStarting]=useState({});
@@ -7572,7 +7857,9 @@ function SourcesTech({data:extData}){
     load();
     // Авто-обновление пока идут запуски: прогресс/капча появляются без ручного refresh.
     // Опрос каждые 3с — лёгкий, /api/sources читает только последние 50 запусков.
-    const id=setInterval(load,3000);
+    // Только пока вкладка браузера видна: свёрнутая страница опрашивала сервер
+    // часами и засоряла телеметрию.
+    const id=setInterval(()=>{ if(!document.hidden) load(); },3000);
     return ()=>clearInterval(id);
   },[]);
 
@@ -7649,22 +7936,26 @@ function SourcesTech({data:extData}){
     <AlertsStatusBar/>
 
     <div className="filter-row" style={{marginBottom:16}}>
+      {canRun?<>
       <button className="btn btn-sm" disabled={runningAll}
         onClick={startAll}
         style={{background:"var(--accent)",color:"#fff",borderColor:"var(--accent)"}}>
         <Ic.refresh/> {runningAll?"Запускаем…":"Запустить весь сбор"}
       </button>
-      {allSources.map(src=>(
-        <button key={src} className="btn btn-ghost btn-sm" disabled={!!starting[src]||runningAll}
-          onClick={()=>startIngest(src,null)} title={`Запустить только ${src}`}>
-          <Ic.refresh/> {src}{starting[src]?" …":""}
-        </button>
-      ))}
+      {allSources.map(src=>{ const c=configured.find(x=>x.name===src);
+        return c&&c.enabled===false
+          ?<span key={src} className="btn btn-ghost btn-sm" aria-disabled="true" style={{opacity:.55,cursor:"default"}}
+              data-tip="источник выключен: его сбор приписывал отзывы не тем банкам">{src} · выключен</span>
+          :<button key={src} className="btn btn-ghost btn-sm" disabled={!!starting[src]||runningAll}
+            onClick={()=>startIngest(src,null)} title={`Запустить только ${src}`}>
+            <Ic.refresh/> {src}{starting[src]?" …":""}
+          </button>; })}
+      </>:<span className="t-cap">Сбор идёт по расписанию; запускать его вручную может владелец инструмента.</span>}
       <button className="btn btn-ghost btn-sm" onClick={load} style={{marginLeft:"auto"}}>
         <Ic.refresh/> Обновить
       </button>
     </div>
-    {!runs.length&&allSources.length>0&&!loading&&<div className="alert" style={{marginBottom:16}}>
+    {canRun&&!runs.length&&allSources.length>0&&!loading&&<div className="alert" style={{marginBottom:16}}>
       <div className="a-icon"><Ic.alert/></div>
       <div style={{flex:1,minWidth:0}}>
         <h4 style={{marginBottom:4}}>Базы пусты — нет ни одного запуска</h4>
@@ -7704,11 +7995,12 @@ function SourcesTech({data:extData}){
               <td className="mono" style={{fontWeight:500,fontSize:12}}>{r.source}</td>
               <td className="mono" style={{color:"var(--ink-2)",fontSize:12}}>{r.target_name}</td>
               <td>
-                <span className={`badge ${r.status==="ok"?"pos":r.status==="error"||r.status==="failed"?"neg":r.status==="captcha"?"warn":""}`}>
+                <span className={`badge ${r.status==="ok"?"pos":r.status==="error"||r.status==="failed"?"neg":r.status==="captcha"||r.status==="partial"?"warn":""}`}
+                      title={r.status==="partial"?"часть страниц источника не прочитана: данные записаны, но протухание по этому прогону не считается":undefined}>
                   <span className="dot"/>
                   {r.status==="ok"?(empty?"снимок без изменений":idempotent?"без изменений":"новые данные")
                     :r.status==="error"||r.status==="failed"?"ошибка"
-                    :r.status==="captcha"?"капча":r.status||"в процессе"}
+                    :r.status==="captcha"?"капча":r.status==="partial"?"неполный обход":r.status||"в процессе"}
                 </span>
               </td>
               <td className="right mono tnum" style={{color:seen?undefined:"var(--ink-4)"}}>{seen||"—"}</td>
@@ -8005,7 +8297,11 @@ function KbDoc({g,onOpen}){
       <span className="kb-dom">{dom}</span>
       {kind&&<span>{kind}</span>}
       <span>обновлён {formatRelDate(g.fetched_at)}</span>
-      {g.duplicates>0&&<span title="тот же текст найден и по другим адресам">
+      {g.versions>0&&<span title="более ранние обходы этой же страницы">
+        ещё {g.versions} {plural(g.versions,"версия","версии","версий")}</span>}
+      {g.mirrors>0&&<span title="тот же текст по другим адресам">
+        ещё {g.mirrors} {plural(g.mirrors,"копия","копии","копий")}</span>}
+      {g.versions==null&&g.duplicates>0&&<span title="тот же текст найден и по другим адресам">
         ещё {g.duplicates} {plural(g.duplicates,"копия","копии","копий")}</span>}
     </div>
     <div className="kb-hits">
@@ -8087,49 +8383,6 @@ function KbRevisions({doc,revisions}){
   </div>;
 }
 
-function KbCasePicker({doc,onDone}){
-  const[cases,setCases]=useState(null);
-  const[title,setTitle]=useState("");
-  const[note,setNote]=useState("");
-  const[done,setDone]=useState(null);
-  const load=()=>apiFetch("/api/cases").then(d=>setCases(d.cases||[])).catch(()=>setCases([]));
-  // именно ()=>{load()}, а не useEffect(load,[]): load возвращает промис,
-  // и React принял бы его за функцию очистки — падение при уходе со страницы
-  useEffect(()=>{load();},[]);
-
-  const attach=async(caseId)=>{
-    await apiPost(`/api/cases/${caseId}/items`,{kind:"document",ref_id:doc.document_id,
-      url:doc.url,title:doc.title,note:note.trim()||null});
-    setDone(caseId);if(onDone)onDone();
-  };
-  const create=async()=>{
-    const r=await apiPost("/api/cases",{title:title.trim()});
-    await attach(r.case_id);
-  };
-
-  if(done)return <div className="kb-attached">Документ приобщён к делу.
-    {" "}<a href="#knowledge?cases=1">Открыть дела</a></div>;
-
-  const mine=(cases||[]).filter(c=>c.mine);
-  return <div className="kb-case-pick">
-    <label className="kb-case-note">
-      <span>Зачем приобщаете <i>необязательно</i></span>
-      <input className="input" value={note} onChange={e=>setNote(e.target.value)}
-             placeholder="напр.: подтверждает ставку на дату проверки"/>
-    </label>
-    {cases===null?<Skel h={40}/>:mine.length>0&&<div className="kb-case-list">
-      {mine.map(c=><button key={c.case_id} className="kb-case-btn"
-        onClick={()=>attach(c.case_id)}>{c.title}<i>{c.items}</i></button>)}
-    </div>}
-    <div className="kb-case-new">
-      <input className="input" value={title} onChange={e=>setTitle(e.target.value)}
-             placeholder="…или новое дело: название"/>
-      <button className="btn btn-primary btn-sm" disabled={!title.trim()}
-              onClick={create}>Создать и приобщить</button>
-    </div>
-  </div>;
-}
-
 function KbDocCard({documentId,onClose}){
   const[d,setD]=useState(null);
   const[err,setErr]=useState(null);
@@ -8176,15 +8429,22 @@ function KbDocCard({documentId,onClose}){
         {o.mine&&o.question&&<div className="kb-origin-q">«{o.question}»</div>}
         {!o.mine&&<div className="kb-origin-q">запрос коллеги</div>}
         {o.report_id&&o.mine&&<a href={`#ai?report=${o.report_id}`}>открыть отчёт</a>}
-        {o.skipped_reason&&<span className="kb-origin-skip">не проиндексирован: {o.skipped_reason}</span>}
+        {o.skipped_reason&&<span className="kb-origin-skip">{o.skipped_reason==="duplicate"
+          ?"перечитан, текст не изменился"
+          :KB_SKIP_RU[o.skipped_reason]?"не в поиске: "+KB_SKIP_RU[o.skipped_reason]
+          :"не прочитан: "+(KB_FAIL_RU[o.skipped_reason]||o.skipped_reason)}</span>}
       </div>)}
     </div>}
 
-    <a className="btn btn-sm kb-card-open" href={doc.url} target="_blank"
-       rel="noopener noreferrer">Открыть первоисточник ↗</a>
+    <div className="kb-card-acts">
+      <a className="btn btn-sm kb-card-open" href={doc.url} target="_blank"
+         rel="noopener noreferrer">Открыть первоисточник ↗</a>
+      {/* «В дело» — та же кнопка, что во всём инструменте (была отдельная вкладка) */}
+      <CaseAddBtn item={{kind:"document",ref_id:doc.document_id,url:doc.url,title:doc.title}} src="knowledge"/>
+    </div>
 
     <div className="ptabs kb-ptabs" role="tablist" aria-label="Документ">
-      {[["about","Текст"],["rev","История"],["case","В дело"]].map(([k,l])=>
+      {[["about","Текст"],["rev","История"]].map(([k,l])=>
         <button key={k} role="tab" aria-selected={tab===k} className={"ptab"+(tab===k?" on":"")}
                 onClick={()=>setTab(k)}>{l}
           {k==="rev"&&(d.revisions||[]).length>1&&
@@ -8222,7 +8482,6 @@ function KbDocCard({documentId,onClose}){
       </div>
     </div>}
     {tab==="rev"&&<KbRevisions doc={doc} revisions={d.revisions}/>}
-    {tab==="case"&&<KbCasePicker doc={doc}/>}
   </RvModal>;
 }
 
@@ -8234,48 +8493,58 @@ const KB_TOPIC_RU={deposits:"Вклады",credits:"Кредиты",mortgage:"И
   documents:"Документы и оферты",document:"Файлы (PDF, XLS)",support:"Поддержка",
   mobile_app:"Приложение",about:"О банке"};
 
+const KB_FAIL_RU={captcha:"капча",fetch_failed:"сайт не ответил",empty_after_parse:"пустая страница",antibot_stub:"заглушка антибота"};
+const KB_SKIP_RU={sponsored_or_low_trust:"реклама или низкое доверие",no_chunks:"нечего индексировать",error:"внутренняя ошибка"};
 function KbCoverage({onPick}){
   const[c,setC]=useState(null);
   useEffect(()=>{apiFetch("/api/knowledge/coverage").then(setC).catch(()=>{});},[]);
   if(!c)return <Skel h={180}/>;
 
-  const banks=(c.banks||[]).slice(0,10);
-  // показываем только темы, где хоть что-то есть — пустые столбцы это шум
-  const live=(c.topics||[]).filter(t=>(c.cells||[]).some(x=>x.topic===t.id));
-  const at=(slug,topic)=>{
-    const x=(c.cells||[]).find(y=>y.slug===slug&&y.topic===topic);
-    return x?x.n:0;
-  };
+  // первые 12 по числу страниц + банки, у которых есть только сбои (сайт
+  // целиком закрыт): бэкенд дописывает их в конец, и срез их отрезал
+  const banks=[...(c.banks||[]).slice(0,12),...(c.banks||[]).slice(12).filter(b=>!b.n)];
+  // показываем темы, где есть документы или хотя бы попытки — пустые столбцы шум
+  const live=(c.topics||[]).filter(t=>(c.cells||[]).some(x=>x.topic===t.id)
+    ||(c.failed_cells||[]).some(x=>x.topic===t.id));
+  const cell=(slug,topic)=>(c.cells||[]).find(y=>y.slug===slug&&y.topic===topic);
+  const fail=(slug,topic)=>(c.failed_cells||[]).find(y=>y.slug===slug&&y.topic===topic);
+  const bankFail=slug=>(c.failed_banks||[]).find(y=>y.slug===slug);
   const max=Math.max(1,...(c.cells||[]).map(x=>x.n));
+  const u=c.untagged_parts;
 
   return <section className="surface kb-panel">
     <div className="eyebrow">Карта покрытия — банк × тема</div>
     <p className="t-cap" style={{margin:"4px 0 12px"}}>
-      Насыщенность клетки — сколько документов собрано. Пустая клетка значит,
-      что по этой теме у банка доказательной базы нет: вывод инструмента там
-      опирается только на агрегаторы. Нажмите на клетку, чтобы искать в ней.
+      Число в клетке — сколько страниц собрано по теме (версии одной страницы
+      считаются один раз). Светлая клетка — только агрегаторы, без страниц самого
+      банка. «×» — пробовали собрать, но сайт не отдал страницу. Нажмите на клетку,
+      чтобы искать в ней.
     </p>
     <div className="kb-heat-wrap">
       <table className="kb-heat">
         <thead><tr><th></th>{live.map(t=>
           <th key={t.id}><span>{t.label}</span></th>)}</tr></thead>
-        <tbody>{banks.map(b=><tr key={b.slug}>
-          <th>{b.name}</th>
-          {live.map(t=>{const n=at(b.slug,t.id);
+        <tbody>{banks.map(b=>{const bf=bankFail(b.slug);
+          return <tr key={b.slug}>
+          <th>{b.name}{bf&&bf.blocked&&<span className="kb-bfail" title={Object.entries(bf.reasons||{}).map(([k,v])=>`${KB_FAIL_RU[k]||k}: ${v}`).join(", ")}> · сайт не отдаёт</span>}</th>
+          {live.map(t=>{const x=cell(b.slug,t.id),n=x?x.n:0,own=x?x.n_official:0,f=!n&&fail(b.slug,t.id);
             return <td key={t.id}>
-              <button className={"kb-cell"+(n?"":" nil")}
+              <button className={"kb-cell"+(n?(own?"":" agg"):f?" fail":" nil")}
                       style={n?{"--f":Math.min(1,0.18+n/max)}:null}
-                      title={n?`${b.name} · ${t.label}: ${n} док.`
+                      title={n?`${b.name} · ${t.label}: ${n} стр., с сайта банка ${own||0}`
+                              :f?`${b.name} · ${t.label}: пробовали ${f.n} раз — ${KB_FAIL_RU[f.reason]||f.reason}${f.last_at?`, последняя попытка ${fmtDate(f.last_at)}`:""}`
                               :`${b.name} · ${t.label}: документов нет`}
                       onClick={()=>onPick&&onPick(b,t,n)}>
-                {n||""}</button></td>;})}
-        </tr>)}</tbody>
+                {n||(f?"×":"")}</button></td>;})}
+        </tr>;})}</tbody>
       </table>
     </div>
-    {c.untagged>0&&<p className="t-cap" style={{marginTop:10}}>
-      Ещё {c.untagged} документов вне карты: это акты ЦБ, судебная практика и
-      новости — у них тема не определяется по адресу страницы. Поиск их находит.
-    </p>}
+    {u&&u.total>0?<p className="t-cap" style={{marginTop:10}}>
+      Ещё {fmtNum(u.total)} {plural(u.total,"страница","страницы","страниц")} без темы: {fmtNum(u.legal)} — акты регулятора,
+      правовые базы и госорганы, {fmtNum(u.press)} — СМИ, {fmtNum(u.rest)} — страницы банков и агрегаторов, где тему не
+      удалось определить ни по адресу, ни по заголовку. Поиск находит их все.</p>
+    :c.untagged>0&&<p className="t-cap" style={{marginTop:10}}>
+      Ещё {c.untagged} документов вне карты: тема по адресу и заголовку не определилась. Поиск их находит.</p>}
   </section>;
 }
 
@@ -8290,11 +8559,168 @@ const rvCaseCard=it=>{const r=it.review||{};
       vulnerable:r.vulnerable||[],no_consent:r.no_consent,amount:r.amount}:null,
     themes:r.issue_label?[{key:r.issue,label:r.issue_label,short:r.issue_label,risk:r.risk}]:[]};};
 
-function RvCaseItem({it,onDrop,onNote,onOpenDoc,onOpen}){
-  const[note,setNote]=useState(it.note||"");
+// ── «В дело»: кнопка, меню выбора дела, заметка «Добавлено» ─────────────────
+const IcCaseAdd=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M12 11v5M9.5 13.5h5"/></svg>;
+const IcCaseIn=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M9 13.5l2.2 2.2L15.5 11.5"/></svg>;
+
+// Кнопка «В дело». variant: bar — в панели отчёта и досье (как «Поделиться»),
+// icon — квадрат для новостей (виден при наведении на новость), ghost — в ряду кнопок.
+function CaseAddBtn({item,variant="bar",src,label="В дело",className,stop}){
+  const st=useCaseState();
+  const key=caseKey(item);
+  const inC=key?(st.refs[key]||_csAnswers[key]):null;
+  const tip=inC?`Уже в деле «${inC.title}» — нажмите, чтобы открыть или добавить в другое`
+    :st.active?`В дело «${st.active.title}» — одним нажатием`:"Приобщить к аудит-делу";
+  const click=(e)=>{ if(stop){ e.preventDefault(); e.stopPropagation(); }
+    caseAdd([item],{anchor:e.currentTarget,src,already:inC||null}); };
+  if(variant==="fb") return <button type="button" className={"bf-fb-b ca-fb"+(inC?" on":"")} aria-pressed={!!inC}
+    onClick={click} aria-label={inC?`В деле «${inC.title}»`:"В аудит-дело"} data-tip={tip}>{inC?<IcCaseIn s={13}/>:<IcCaseAdd s={13}/>}</button>;
+  if(variant==="icon") return <button type="button" className={"ca-ic"+(inC?" in":"")+(className?" "+className:"")}
+    onClick={click} aria-label={inC?`В деле «${inC.title}»`:"В аудит-дело"} data-tip={tip}>
+    {inC?<IcCaseIn s={15}/>:<IcCaseAdd s={15}/>}</button>;
+  return <button type="button" className={(variant==="ghost"?"btn btn-ghost btn-sm ca-gh":"ca-btn")+(inC?" in":"")+(className?" "+className:"")}
+    onClick={click} data-tip={tip}>{inC?<IcCaseIn s={14}/>:<IcCaseAdd s={14}/>}{inC?"В деле":label}</button>;
+}
+
+// Меню выбора дела — у кнопки, а не окном посреди экрана. Выбранное дело
+// становится активным: дальше «В дело» кладёт в него одним нажатием.
+function CasePickPop({pick,cases,activeId,onPick,onCreate,onClose,onOpenCase}){
+  const[q,setQ]=useState("");
+  const[idx,setIdx]=useState(0);
+  const[mk,setMk]=useState(false);             // «новое дело»: поле названия
+  const[title,setTitle]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const ref=useRef(null), qRef=useRef(null);
+  const mobile=typeof window!=="undefined"&&window.matchMedia("(max-width: 760px)").matches;
+  const list=(cases||[]).filter(c=>c.can_add&&!c.archived)
+    .sort((a,b)=>(b.case_id===activeId)-(a.case_id===activeId));
+  const ql=q.trim().toLowerCase();
+  const rows=list.filter(c=>!ql||(c.title||"").toLowerCase().includes(ql)||(c.owner_name||"").toLowerCase().includes(ql));
+  useEffect(()=>{ setIdx(0); },[q]);
+  useEffect(()=>{ const t=setTimeout(()=>{ try{ (qRef.current||ref.current)&&(qRef.current||ref.current).focus(); }catch{} },30);
+    const onDown=(e)=>{ if(ref.current&&!ref.current.contains(e.target)&&!(pick.anchor&&pick.anchor.contains&&pick.anchor.contains(e.target))) onClose(); };
+    const onKey=(e)=>{ if(e.key==="Escape"){ e.stopPropagation(); e.preventDefault(); onClose(); } };
+    document.addEventListener("mousedown",onDown); document.addEventListener("keydown",onKey,true);
+    return ()=>{ clearTimeout(t); document.removeEventListener("mousedown",onDown); document.removeEventListener("keydown",onKey,true); };
+  },[]); // eslint-disable-line
+  // место: под кнопкой, у правого края — влево; не влезает вниз — над кнопкой
+  const pos=useMemo(()=>{ if(mobile) return null;
+    const W=328, H=380, r=pick.rect;
+    if(!r) return {left:Math.max(12,(innerWidth-W)/2),top:Math.max(12,(innerHeight-H)/2)};
+    // кнопка в правой половине — меню выравнивается по её правому краю
+    let left=r.left>innerWidth/2?r.right-W:r.left;
+    left=Math.min(Math.max(12,left),innerWidth-W-12);
+    const below=innerHeight-r.bottom>H+16||r.top<H+16;
+    return below?{left,top:Math.min(r.bottom+6,innerHeight-H-12)}:{left,bottom:innerHeight-r.top+6}; },[]); // eslint-disable-line
+  const run=async(fn)=>{ setBusy(true); setErr(""); try{ await fn(); }catch(e){ setErr(e.message||"Не получилось"); setBusy(false); } };
+  const n=pick.items.length;
+  const what=n>1?`${n} ${plural(n,"материал","материала","материалов")}`:(CASE_KIND_RU[pick.items[0].kind]||"материал");
+  const onKey=(e)=>{ if(mk) return;
+    if(e.key==="ArrowDown"){ e.preventDefault(); setIdx(i=>Math.min(i+1,rows.length)); }
+    if(e.key==="ArrowUp"){ e.preventDefault(); setIdx(i=>Math.max(i-1,0)); }
+    if(e.key==="Enter"){ e.preventDefault(); if(idx<rows.length) run(()=>onPick(rows[idx])); else setMk(true); } };
+  return <div ref={ref} className={"ca-pop"+(mobile?" sheet":"")} style={pos||undefined} role="dialog"
+    aria-label="Выбрать аудит-дело" tabIndex={-1} onKeyDown={onKey}>
+    <div className="ca-pop-h"><span>В аудит-дело</span><span className="ca-pop-what">{what}</span></div>
+    {pick.already&&<div className="ca-pop-al"><IcCaseIn s={13}/><span>Уже в «{pick.already.title}»</span>
+      <button type="button" className="rv-cs-lnk" onClick={()=>onOpenCase(pick.already.case_id)}>Открыть</button></div>}
+    {list.length>5&&<input ref={qRef} className="ca-pop-q" value={q} onChange={e=>setQ(e.target.value)}
+      placeholder="Найти дело…" aria-label="Найти дело"/>}
+    <div className="ca-pop-list" role="listbox">
+      {rows.map((c,i)=><button key={c.case_id} type="button" role="option" aria-selected={i===idx}
+        className={"ca-pop-row"+(i===idx?" on":"")} disabled={busy}
+        onMouseEnter={()=>setIdx(i)} onClick={()=>run(()=>onPick(c))}>
+        <span className="t">{c.title}</span>
+        <span className="m">{c.case_id===activeId&&<b>активное · </b>}{c.items} матер.{c.mine?"":` · ведёт ${puShort(c.owner_name)}`}</span>
+      </button>)}
+      {!list.length&&<div className="ca-pop-empty">Дел пока нет — создайте первое: оно станет активным.</div>}
+      {list.length>0&&!rows.length&&<div className="ca-pop-empty">Не нашлось. Создайте новое.</div>}
+    </div>
+    {mk?<div className="ca-pop-new">
+      <input className="input" autoFocus value={title} onChange={e=>setTitle(e.target.value)} placeholder="Название проверки"
+        onKeyDown={e=>{ if(e.key==="Enter"&&title.trim()) run(()=>onCreate(title.trim())); if(e.key==="Escape"){ e.stopPropagation(); setMk(false); } }}/>
+      <button type="button" className="btn btn-primary btn-sm" disabled={busy||!title.trim()} onClick={()=>run(()=>onCreate(title.trim()))}>Создать</button>
+    </div>:<button type="button" className={"ca-pop-row new"+(idx===rows.length?" on":"")} onMouseEnter={()=>setIdx(rows.length)}
+      onClick={()=>{ setMk(true); setTitle(ql?q.trim():""); }}><span className="t">＋ Новое дело</span></button>}
+    {err&&<div className="ca-pop-err" role="alert">{err}</div>}
+    <div className="ca-pop-f">Выбранное дело станет активным — дальше «В дело» кладёт в него одним нажатием.</div>
+  </div>;
+}
+const caNews=(it,group)=>({kind:"news",url:it.url,title:it.title,
+  meta:{source:it.source,domain:it.domain||rvHost(it.url),ts:it.ts||null,summary:it.why||it.summary||it.idea||"",
+    tg:it.reach==="telegram"||fyTg(it.url),group:group||null}});
+const CASE_KIND_RU={review:"жалоба",document:"документ",report:"отчёт ИИ",answer:"ответ ИИ",news:"новость",offer:"продукт «Рынка»"};
+
+// Заметка после добавления: куда положили и «Отменить» — ошибочное нажатие
+// исправляется сразу, без похода в дело.
+function CaseAddToast({t,onUndo,onOther,onOpen,onClose}){
+  const[hover,setHover]=useState(false);
+  useEffect(()=>{ if(hover) return; const id=setTimeout(onClose,t.err?4200:6000); return ()=>clearTimeout(id); },[hover,t.id]); // eslint-disable-line
+  return <div className={"ca-toast"+(t.err?" err":"")} role="status" onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}>
+    <span className="ca-toast-ic">{t.err?"!":<IcCaseIn s={14}/>}</span>
+    <span className="ca-toast-t">{t.text}</span>
+    {!t.err&&t.ids&&t.ids.length>0&&<button type="button" onClick={onUndo}>Отменить</button>}
+    {!t.err&&t.items&&<button type="button" onClick={onOther}>Другое дело</button>}
+    {t.case_id&&<button type="button" onClick={onOpen}>Открыть</button>}
+  </div>;
+}
+
+// Карточки новых материалов дела. Отчёт — название, вопрос и короткий вывод;
+// полный текст открывается в ИИ-помощнике (в дело и выгрузку он не копируется).
+const caDay=iso=>iso?fmtDateMsk(iso).replace(/ \d\d:\d\d МСК$/,""):"";
+const caOfferTerms=m=>[
+  m.rate_pct!=null?`${(m.rate_label||"Ставка")} ${pct(m.rate_pct)}${/[а-яё]/i.test(m.rate_kind||"")?` · ${m.rate_kind}`:""}`:null,
+  m.psk_min!=null?`ПСК от ${pct(m.psk_min)}`:null,
+  (m.amount_min||m.amount_max)?fmtAmount(m.amount_min,m.amount_max):null,
+  (m.term_min||m.term_max)?fmtTerm(m.term_min,m.term_max):null,
+  m.fee_service!=null?`обслуживание ${Math.round(m.fee_service)} ₽`:null,
+  m.cashback_pct!=null?`кешбэк до ${pct(m.cashback_pct,1)}`:null,
+  m.grace_days!=null?`грейс ${Math.round(m.grace_days)} дн`:null].filter(Boolean);
+function CaseSrcCard({it,onOpenReport,onGo}){
+  const m=it.meta||{};
+  const[full,setFull]=useState(false);
+  if(it.kind==="report") return <div className="ca-card">
+    <div className="ca-card-k"><span className="ca-kind ai">Отчёт ИИ</span>
+      {[m.mode==="deep"?"Deep Research":"ответ ИИ",caDay(m.created_at),m.owner_name&&puShort(m.owner_name),
+        m.n_sources?`${m.n_sources} ${plural(m.n_sources,"источник","источника","источников")}`:null].filter(Boolean).join(" · ")}</div>
+    <button type="button" className="ca-card-t" disabled={!!it.report_gone} onClick={()=>onOpenReport(it.ref_id)}>{it.title}</button>
+    {m.question&&m.question!==it.title&&<div className="ca-card-q">{m.question}</div>}
+    {m.lead&&<div className="ca-card-s">{m.lead}</div>}
+    {it.report_gone?<div className="ca-card-f">Отчёт удалён автором — в деле осталась его карточка.</div>
+      :<button type="button" className="ca-card-lnk" onClick={()=>onOpenReport(it.ref_id)}>Открыть отчёт<RvIChevR s={12}/></button>}
+  </div>;
+  if(it.kind==="answer"){ const t=m.text||"", long=t.length>420;
+    return <div className="ca-card">
+      <div className="ca-card-k"><span className="ca-kind ai">Ответ ИИ</span>{caDay(it.added_at)}</div>
+      {m.question&&<div className="ca-card-t static">{m.question}</div>}
+      <div className={"ca-card-s ans"+(long&&!full?" clamp":"")}>{t}</div>
+      {long&&<button type="button" className="ca-card-lnk" onClick={()=>setFull(v=>!v)}>{full?"Свернуть":"Показать полностью"}</button>}
+      {(m.sources||[]).length>0&&<div className="ca-card-src">{m.sources.slice(0,4).map((x,i)=>
+        <a key={i} href={x.url} target="_blank" rel="noopener noreferrer">{x.title||rvHost(x.url)}</a>)}</div>}
+    </div>; }
+  if(it.kind==="news") return <div className="ca-card">
+    <div className="ca-card-k"><span className="ca-kind news">Новость</span>
+      {[m.tg?"Telegram":(m.domain||m.source),m.ts?caDay(m.ts):null].filter(Boolean).join(" · ")}</div>
+    <a className="ca-card-t" href={it.url} target="_blank" rel="noopener noreferrer">{it.title}<span className="rv-ico-in"><RvIExt s={11}/></span></a>
+    {m.summary&&<div className="ca-card-s">{m.summary}</div>}
+  </div>;
+  if(it.kind==="offer"){ const terms=caOfferTerms(m);
+    return <div className="ca-card">
+      <div className="ca-card-k"><span className="ca-kind mk">Рынок</span>
+        {[m.category_label,m.as_of?`условия на ${rvDate(m.as_of)}`:null].filter(Boolean).join(" · ")}</div>
+      <button type="button" className="ca-card-t" onClick={()=>onGo(`#market?offer=${it.ref_id}`)}>{it.title}</button>
+      {terms.length>0&&<div className="ca-terms">{terms.map((x,i)=><span key={i}>{x}</span>)}</div>}
+      <div className="ca-card-f">Снимок на дату приобщения{m.valid_from?` · версия условий с ${rvDate(m.valid_from)}`:""} — на «Рынке» условия могли измениться.</div>
+    </div>; }
+  return null;
+}
+
+function RvCaseItem({it,onDrop,onOpenDoc,onOpen,thread,onOpenReport,onGo}){
   const doc=it.kind!=="review";
-  return <div className="rv-ci">
-    {doc?<div className="kb-case-item">
+  const src=["report","answer","news","offer"].includes(it.kind);
+  return <div className="rv-ci" id={"cs-it-"+it.item_id}>
+    {src?<CaseSrcCard it={it} onOpenReport={onOpenReport} onGo={onGo}/>:doc?<div className="kb-case-item">
       <div className="kb-case-it-h">
         <button className="kb-case-it-t" onClick={()=>it.ref_id&&onOpenDoc&&onOpenDoc(it.ref_id)}>{it.title||it.url}</button>
       </div>
@@ -8305,22 +8731,573 @@ function RvCaseItem({it,onDrop,onNote,onOpenDoc,onOpen}){
         {it.url&&<a href={it.url} target="_blank" rel="noopener noreferrer" className="rv-lnk">{rvHost(it.url)}<span className="rv-ico-in"><RvIExt s={12}/></span></a>}
       </div></div>
      :<RvCard r={rvCaseCard(it)} showBank onOpen={onOpen}/>}
-    <div className="rv-ci-foot">
-      <textarea className="rv-ci-note" rows={note?2:1} value={note} placeholder="комментарий аудитора…"
-        onChange={e=>setNote(e.target.value)} onBlur={()=>onNote(note)}/>
+    <div className="rv-ci-by">
+      <span>{(it.added_by_name||it.added_by)?<>добавлено: {puShort(it.added_by_name||it.added_by)}
+        {it.added_at?` · ${fmtDateMsk(it.added_at).replace(/ \d\d:\d\d МСК$/,"")}`:""}</>:null}</span>
       {it.can_remove&&<button className="rv-ib" onClick={onDrop} aria-label="Убрать из дела" data-tip="убрать из дела"><RvIX s={14}/></button>}
     </div>
-    {it.added_by&&<div className="rv-ci-by">приобщил: {it.added_by}</div>}
+    {thread}
   </div>;
 }
 
-function KbCases({onClose,onOpenDoc}){
+// ── Совместная работа в деле (этап 3) ─────────────────────────────────────────
+// Вкладки дела: «Материалы · Обсуждение · Разбор · История». Обсуждение пишут
+// все участники, включая «только смотрит» (решение владельца инструмента):
+// @упоминания коллег по делу, ссылки на материалы [N], ответы. Комментарии к
+// материалу — та же лента, только привязанная к нему (раньше был один
+// комментарий без автора, и его молча переписывали). Статус и архив — владелец.
+const CASE_STATUS=[["collect","Сбор материалов"],["work","В работе"],["done","Завершено"]];
+const csReq=(method,path,body)=>fetch(path,{method,headers:{"Content-Type":"application/json"},
+  body:body===undefined?undefined:JSON.stringify(body)}).then(async r=>{ if(r.ok) return r.json();
+  let d=""; try{ d=(await r.json()).detail; }catch{}
+  throw new Error(typeof d==="string"&&d?d:"Не получилось. Попробуйте ещё раз"); });
+const csEsc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+// «12:30» сегодня, «вчера 12:30», иначе «3 окт 12:30» — по Москве, как всё в инструменте
+const csTime=(iso)=>{ try{ const d=new Date(iso); if(isNaN(d)) return "";
+  const o={timeZone:"Europe/Moscow"}, day=x=>x.toLocaleDateString("ru",o);
+  const t=d.toLocaleTimeString("ru",{...o,hour:"2-digit",minute:"2-digit"});
+  const now=new Date(), y=new Date(now.getTime()-864e5);
+  if(day(d)===day(now)) return t; if(day(d)===day(y)) return "вчера "+t;
+  return d.toLocaleDateString("ru",{...o,day:"numeric",month:"short"}).replace(".","")+" "+t; }catch{ return ""; } };
+const csDay=(iso)=>{ try{ const d=new Date(iso), o={timeZone:"Europe/Moscow"}, now=new Date();
+  const k=x=>x.toLocaleDateString("ru",o);
+  if(k(d)===k(now)) return "Сегодня"; if(k(d)===k(new Date(now.getTime()-864e5))) return "Вчера";
+  return d.toLocaleDateString("ru",{...o,day:"numeric",month:"long",year:d.getFullYear()===now.getFullYear()?undefined:"numeric"}); }catch{ return ""; } };
+const csFlash=(el)=>{ if(!el) return; el.classList.add("flash"); setTimeout(()=>{ try{ el.classList.remove("flash"); }catch{} },1600); };
+
+// Текст сообщения: @Имя — подсветка, [N] — ссылка на материал. Номер берётся
+// текущий: материал могли убрать, и номера сдвинулись, а ссылка хранит сам материал.
+function CaseMsgBody({m,items,onRef,inline}){
+  const nodes=useMemo(()=>{
+    const body=m.body||"";
+    const names=Object.values(m.mention_names||{}).filter(Boolean).sort((a,b)=>b.length-a.length);
+    const re=new RegExp([...names.map(n=>"@"+csEsc(n)),"\\[(\\d{1,4})\\]"].join("|"),"g");
+    const out=[]; let last=0, k=0;
+    for(const x of body.matchAll(re)){
+      if(x.index>last) out.push(body.slice(last,x.index));
+      if(x[0][0]==="@") out.push(<span key={k++} className="cs-mn">{x[0]}</span>);
+      else{ const iid=(m.refs||{})[x[1]], pos=iid?items.findIndex(i=>i.item_id===iid):-1;
+        if(pos>=0){ const it=items[pos];
+          out.push(<button key={k++} type="button" className="cs-ref" data-tip={(it.title||it.url||"").slice(0,140)}
+            onClick={()=>onRef&&onRef(iid)}>[{pos+1}]</button>); }
+        else if(iid) out.push(<span key={k++} className="cs-ref gone" data-tip="материал убран из дела">[{x[1]}]</span>);
+        else out.push(x[0]); }
+      last=x.index+x[0].length; }
+    if(last<body.length) out.push(body.slice(last));
+    return out; },[m.body,m.refs,m.mention_names,items]); // eslint-disable-line
+  // комментарий к материалу, который убрали из дела, переходит в обсуждение
+  const from=(m.refs||{})._from_item;
+  return <div className={"cs-mb"+(inline?" in":"")}>{from&&<span className="cs-from">к материалу «{String(from).slice(0,90)}» — убран из дела</span>}{nodes}</div>;
+}
+
+// Строка ввода: @ — подсказка коллег по делу, [ ] — список материалов для ссылки.
+// Enter — отправить, Shift+Enter — новая строка.
+function CaseComposer({people,items,meU,onSend,reply,onCancelReply,onCancel,placeholder,autoFocus,compact}){
+  const[text,setText]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const[ac,setAc]=useState(null);              // {q,start,idx} — подсказка @
+  const[refOpen,setRefOpen]=useState(false);
+  const picked=useRef(new Map());              // «Имя Фамилия» → логин
+  const ta=useRef(null);
+  useEffect(()=>{ if(autoFocus&&ta.current) ta.current.focus(); },[]); // eslint-disable-line
+  useEffect(()=>{ if(reply&&ta.current) ta.current.focus(); },[reply&&reply.msg_id]); // eslint-disable-line
+  useEffect(()=>{ const t=ta.current; if(!t) return; t.style.height="auto"; t.style.height=Math.min(220,t.scrollHeight+2)+"px"; },[text]);
+  const others=(people||[]).filter(p=>p.username!==meU);
+  const cand=ac?others.filter(p=>{ const q=ac.q.toLowerCase(), n=(p.name||p.username).toLowerCase();
+    return !q||n.startsWith(q)||n.split(/\s+/).some(w=>w.startsWith(q)); }).slice(0,6):[];
+  const detect=(v,pos)=>{ const mm=v.slice(0,pos).match(/(^|\s)@([^\s@]{0,30})$/);
+    setAc(mm?{q:mm[2],start:pos-mm[2].length-1,idx:0}:null); if(mm) setRefOpen(false); };
+  const put=(v,caret)=>{ setText(v); setTimeout(()=>{ const t=ta.current; if(!t) return;
+    try{ t.focus(); t.setSelectionRange(caret,caret); }catch{} },0); };
+  const pick=(p)=>{ const t=ta.current, pos=t?t.selectionStart:text.length, nm=p.name||p.username;
+    picked.current.set(nm,p.username); setAc(null);
+    put(text.slice(0,ac.start)+"@"+nm+" "+text.slice(pos), ac.start+nm.length+2); };
+  const insert=(s)=>{ const t=ta.current, pos=t?t.selectionStart:text.length;
+    const ins=(pos>0&&!/\s$/.test(text.slice(0,pos))?" ":"")+s;
+    put(text.slice(0,pos)+ins+text.slice(pos), pos+ins.length);
+    if(s==="@") setTimeout(()=>detect(text.slice(0,pos)+ins,pos+ins.length),0); };
+  const send=async()=>{ const body=text.trim(); if(!body||busy) return;
+    const mentions=[...picked.current.entries()].filter(([n])=>body.includes("@"+n)).map(([,u])=>u);
+    const refs={}; for(const x of body.matchAll(/\[(\d{1,4})\]/g)){ const it=items[+x[1]-1]; if(it) refs[x[1]]=it.item_id; }
+    setBusy(true); setErr("");
+    try{ await onSend({body,mentions,refs}); setText(""); picked.current=new Map(); }
+    catch(e){ setErr(e.message||"Не отправилось. Попробуйте ещё раз"); }
+    finally{ setBusy(false); } };
+  const onKey=(e)=>{
+    if(ac&&cand.length){
+      if(e.key==="ArrowDown"){ e.preventDefault(); setAc(a=>({...a,idx:(a.idx+1)%cand.length})); return; }
+      if(e.key==="ArrowUp"){ e.preventDefault(); setAc(a=>({...a,idx:(a.idx-1+cand.length)%cand.length})); return; }
+      if(e.key==="Enter"||e.key==="Tab"){ e.preventDefault(); pick(cand[ac.idx]||cand[0]); return; }
+    }
+    if(e.key==="Escape"){
+      // Esc закрывает подсказку, ответ или строку комментария — не окно дела
+      if(ac||refOpen){ e.preventDefault(); e.stopPropagation(); setAc(null); setRefOpen(false); return; }
+      if(reply&&onCancelReply){ e.stopPropagation(); onCancelReply(); return; }
+      if(onCancel&&!text.trim()){ e.stopPropagation(); onCancel(); return; }
+    }
+    if(e.key==="Enter"&&!e.shiftKey&&!(e.nativeEvent&&e.nativeEvent.isComposing)){ e.preventDefault(); send(); }
+  };
+  return <div className={"cs-cmp"+(compact?" compact":"")}>
+    {reply&&<div className="cs-cmp-re"><RvIReply s={12}/><span>Ответ {puShort(reply.name)}: «{(reply.body||"").replace(/\s+/g," ").slice(0,90)}»</span>
+      <button type="button" className="rv-ib" onClick={onCancelReply} aria-label="Отменить ответ"><RvIX s={12}/></button></div>}
+    <div className="cs-cmp-box">
+      <textarea ref={ta} rows={1} value={text} placeholder={placeholder} maxLength={4000} disabled={busy}
+        aria-label={placeholder}
+        onChange={e=>{ setText(e.target.value); detect(e.target.value,e.target.selectionStart); }}
+        onKeyDown={onKey} onClick={e=>detect(text,e.target.selectionStart)}
+        onBlur={()=>setTimeout(()=>setAc(null),150)}/>
+      <div className="cs-cmp-tools">
+        <button type="button" className="cs-cmp-ib" onMouseDown={e=>e.preventDefault()} onClick={()=>insert("@")}
+          aria-label="Упомянуть коллегу" data-tip="упомянуть коллегу по делу — придёт уведомление">@</button>
+        {items.length>0&&<button type="button" className={"cs-cmp-ib"+(refOpen?" on":"")} onMouseDown={e=>e.preventDefault()}
+          onClick={()=>{ setAc(null); setRefOpen(o=>!o); }} aria-label="Сослаться на материал" aria-expanded={refOpen}
+          data-tip="сослаться на материал дела — [N]">[N]</button>}
+        {onCancel&&<button type="button" className="btn btn-sm btn-ghost" onClick={onCancel}>Отмена</button>}
+        <button type="button" className="btn btn-primary btn-sm" disabled={busy||!text.trim()} onClick={send}>
+          {busy?"Отправляю…":"Отправить"}</button>
+      </div>
+      {ac&&cand.length>0&&<div className="cs-ac" role="listbox" aria-label="Коллеги по делу">{cand.map((p,i)=>
+        <button key={p.username} type="button" role="option" aria-selected={i===ac.idx}
+          className={"cs-ac-o"+(i===ac.idx?" on":"")} onMouseDown={e=>{ e.preventDefault(); pick(p); }}>
+          <span className="cs-av">{initials(p.name||p.username)}</span><span>{p.name||p.username}</span></button>)}</div>}
+      {ac&&!cand.length&&<div className="cs-ac"><div className="cs-ac-empty">{others.length
+        ?"Нет такого участника дела"
+        :"В деле пока только вы. Коллег добавляет владелец через «Доступ»."}</div></div>}
+      {refOpen&&<div className="cs-ac cs-ac-ref" role="listbox" aria-label="Материалы дела">{items.slice(0,80).map((it,i)=>
+        <button key={it.item_id} type="button" className="cs-ac-o" onMouseDown={e=>{ e.preventDefault(); insert(`[${i+1}] `); setRefOpen(false); }}>
+          <b>[{i+1}]</b><span>{(it.review&&it.review.summary)||it.title||it.url}</span></button>)}</div>}
+    </div>
+    {(err||!compact)&&<div className="cs-cmp-hint">{err?<span className="cs-cmp-err" role="alert">{err}</span>
+      :"Enter — отправить, Shift+Enter — новая строка"}</div>}
+  </div>;
+}
+
+// Обсуждение дела. Комментарии к материалам — в той же ленте с пометкой
+// «к материалу [N]»: всё, что сказано по делу, видно в одном месте.
+function CaseTalk({cid,cur,items,meU,focusMsg,onRef,onSeen,onCount}){
+  const[d,setD]=useState(null);
+  const[err,setErr]=useState(false);
+  const[reply,setReply]=useState(null);
+  const[edit,setEdit]=useState(null);         // {msg_id,text,busy,err}
+  const endRef=useRef(null), first=useRef(true);
+  const load=useCallback(()=>csReq("GET",`/api/cases/${cid}/talk`).then(x=>{ setD(x); setErr(false);
+    onCount&&onCount((x.messages||[]).filter(m=>!m.deleted).length);
+    if((x.messages||[]).some(m=>m.new)) csReq("POST",`/api/cases/${cid}/seen`,{}).then(()=>onSeen&&onSeen()).catch(()=>{});
+    return x; }).catch(()=>{ setErr(true); }),[cid]); // eslint-disable-line
+  useEffect(()=>{ load(); csReq("POST",`/api/cases/${cid}/seen`,{}).then(()=>onSeen&&onSeen()).catch(()=>{}); },[load]); // eslint-disable-line
+  // пока вкладка открыта — подтягиваем новые раз в 30 с
+  useEffect(()=>{ const t=setInterval(()=>{ if(!document.hidden) load(); },30000); return ()=>clearInterval(t); },[load]);
+  useEffect(()=>{ if(!d||!first.current) return; first.current=false;
+    setTimeout(()=>{ const ms=d.messages||[];
+      let el=focusMsg?document.getElementById("cs-m-"+focusMsg):null;
+      if(!el){ const nw=ms.find(m=>m.new); el=nw?document.getElementById("cs-m-"+nw.msg_id):null; }
+      if(el){ el.scrollIntoView({block:"center"}); if(focusMsg) csFlash(el); }
+      else if(endRef.current) endRef.current.scrollIntoView({block:"end"}); },60);
+  },[d]); // eslint-disable-line
+  const people=(d&&d.people)||(cur.members||[]).map(m=>({username:m.username,name:m.name}));
+  const send=(p)=>csReq("POST",`/api/cases/${cid}/talk`,{...p,reply_to:reply?reply.msg_id:null})
+    .then(()=>{ setReply(null); return load(); })
+    .then(()=>setTimeout(()=>endRef.current&&endRef.current.scrollIntoView({block:"end",behavior:"smooth"}),40));
+  const del=async(m)=>{ if(!window.confirm(m.mine?"Удалить сообщение?":`Удалить сообщение ${puShort(m.name)}?`)) return;
+    await csReq("DELETE",`/api/cases/${cid}/talk/${m.msg_id}`).catch(e=>window.alert(e.message)); load(); };
+  const saveEdit=async()=>{ if(!edit||!edit.text.trim()) return; setEdit(x=>({...x,busy:true,err:""}));
+    try{ await csReq("PATCH",`/api/cases/${cid}/talk/${edit.msg_id}`,{body:edit.text}); setEdit(null); load(); }
+    catch(e){ setEdit(x=>x&&({...x,busy:false,err:e.message})); } };
+  if(err&&!d) return <div className="kb-empty">Обсуждение не загрузилось. <button className="rv-cs-lnk" onClick={load}>Повторить</button></div>;
+  if(!d) return <Skel h={140}/>;
+  const ms=d.messages||[], byId=Object.fromEntries(ms.map(m=>[m.msg_id,m]));
+  const replied=new Set(ms.map(m=>m.reply_to).filter(Boolean));
+  const vis=ms.filter(m=>!m.deleted||replied.has(m.msg_id));
+  const goMsg=(id)=>{ const el=document.getElementById("cs-m-"+id); if(el){ el.scrollIntoView({block:"center",behavior:"smooth"}); csFlash(el); } };
+  return <div className="cs-talk">
+    {!vis.length&&<div className="cs-talk-empty">
+      <b>Обсуждения пока нет</b>
+      Здесь договариваются по делу: что проверить, кому что запросить, какие жалобы главные.
+      Упомяните коллегу через <span className="cs-mn">@</span> — придёт уведомление; сошлитесь на материал как <span className="cs-ref static">[1]</span>.
+    </div>}
+    {vis.map((m,i)=>{ const prev=vis[i-1];
+      const newDiv=m.new&&!(prev&&prev.new);
+      const it=m.item_id?items.find(x=>x.item_id===m.item_id):null, pos=it?items.indexOf(it)+1:0;
+      const par=m.reply_to?byId[m.reply_to]:null;
+      return <React.Fragment key={m.msg_id}>
+        {newDiv&&<div className="cs-new-div" role="separator"><span>новые</span></div>}
+        <div id={"cs-m-"+m.msg_id} className={"cs-m"+(m.mine?" mine":"")}>
+          <span className="cs-av">{initials(m.name)}</span>
+          <div className="cs-m-c">
+            <div className="cs-m-h"><b>{puShort(m.name)}</b><span>{csTime(m.created_at)}{m.edited_at?" · изменено":""}</span>
+              {it&&<button type="button" className="cs-m-on" onClick={()=>onRef(it.item_id)}>к материалу [{pos}]</button>}</div>
+            {par&&<button type="button" className="cs-m-q" onClick={()=>goMsg(par.msg_id)}>
+              {par.deleted?"сообщение удалено":<><b>{puShort(par.name)}:</b> {(par.body||"").replace(/\s+/g," ").slice(0,120)}</>}</button>}
+            {m.deleted?<div className="cs-mb del">сообщение удалено</div>
+              :edit&&edit.msg_id===m.msg_id?<div className="cs-edit">
+                <textarea className="input" value={edit.text} autoFocus rows={3} maxLength={4000} aria-label="Изменить сообщение"
+                  onChange={e=>setEdit(x=>({...x,text:e.target.value}))}
+                  onKeyDown={e=>{ if(e.key==="Escape"){ e.stopPropagation(); setEdit(null); }
+                    if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); saveEdit(); } }}/>
+                <div className="cs-edit-b"><button className="btn btn-primary btn-sm" disabled={edit.busy||!edit.text.trim()} onClick={saveEdit}>Сохранить</button>
+                  <button className="btn btn-sm btn-ghost" onClick={()=>setEdit(null)}>Отмена</button>
+                  {edit.err&&<span className="cs-cmp-err">{edit.err}</span>}</div></div>
+              :<CaseMsgBody m={m} items={items} onRef={onRef}/>}
+            {!m.deleted&&cur.can_talk&&!(edit&&edit.msg_id===m.msg_id)&&<div className="cs-m-a">
+              <button type="button" onClick={()=>setReply(m)}>Ответить</button>
+              {m.can_edit&&<button type="button" onClick={()=>setEdit({msg_id:m.msg_id,text:m.body})}>Изменить</button>}
+              {m.can_delete&&<button type="button" onClick={()=>del(m)}>Удалить</button>}
+            </div>}
+          </div>
+        </div></React.Fragment>; })}
+    <div ref={endRef}/>
+    <div className="cs-talk-cmp">
+      {cur.can_talk
+        ?<CaseComposer people={people} items={items} meU={meU} onSend={send} reply={reply}
+          onCancelReply={()=>setReply(null)} autoFocus={!focusMsg}
+          placeholder={reply?"Ваш ответ…":"Написать в обсуждение дела…"}/>
+        :<div className="cs-cmp-hint">Дело в архиве — обсуждение только для чтения.</div>}
+    </div>
+  </div>;
+}
+
+// Комментарии к материалу — лентой с авторами, последние два видны сразу.
+function CaseItemThread({it,cid,people,items,meU,canTalk,onPosted,onRef}){
+  const[open,setOpen]=useState(false);
+  const[all,setAll]=useState(false);
+  const cs=it.comments||[];
+  const vis=all?cs:cs.slice(-2);
+  if(!cs.length&&!canTalk) return null;
+  return <div className="cs-th">
+    {cs.length>2&&!all&&<button type="button" className="cs-th-more" onClick={()=>setAll(true)}>
+      ещё {cs.length-2} {plural(cs.length-2,"комментарий","комментария","комментариев")}</button>}
+    {vis.map(m=><div key={m.msg_id} className="cs-th-m"><b>{puShort(m.name)}</b>
+      <CaseMsgBody m={m} items={items} onRef={onRef} inline/>
+      <span className="t">{csTime(m.created_at)}{m.edited_at?" · изменено":""}</span></div>)}
+    {canTalk&&(open
+      ?<CaseComposer compact autoFocus people={people} items={items} meU={meU}
+        placeholder="Комментарий к материалу…" onCancel={()=>setOpen(false)}
+        onSend={p=>csReq("POST",`/api/cases/${cid}/talk`,{...p,item_id:it.item_id}).then(()=>{ setOpen(false); onPosted&&onPosted(); })}/>
+      :<button type="button" className="cs-th-add" onClick={()=>setOpen(true)}>
+        <RvIReply s={11}/>{cs.length?"Ответить":"Комментировать"}</button>)}
+  </div>;
+}
+
+// История дела: кто что добавил, убрал, кого пригласил, когда сменился статус.
+function CaseHistory({cid}){
+  const[ev,setEv]=useState(null);
+  useEffect(()=>{ csReq("GET",`/api/cases/${cid}/history`).then(d=>setEv(d.events||[])).catch(()=>setEv(false)); },[cid]);
+  if(ev===null) return <Skel h={140}/>;
+  if(ev===false) return <div className="kb-empty">История не загрузилась — обновите панель.</div>;
+  if(!ev.length) return <div className="kb-empty">История пока пуста.</div>;
+  let day="";
+  return <div className="cs-hist">{ev.map(e=>{ const d=csDay(e.created_at), head=d!==day; day=d;
+    return <React.Fragment key={e.event_id}>
+      {head&&<div className="cs-hist-day">{d}</div>}
+      <div className="cs-hist-row">
+        <span className="tm">{new Date(e.created_at).toLocaleTimeString("ru",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit"})}</span>
+        <span className="tx">{e.text}{e.who&&<span className="who">{e.who}</span>}</span>
+      </div></React.Fragment>; })}
+    <p className="t-cap" style={{marginTop:12}}>История ведётся с 03.10.2026; более раннее восстановлено по датам приобщения.</p>
+  </div>;
+}
+
+// Разбор ИИ: подпись «кто и когда», прошлые версии не пропадают.
+function CaseAnalysisTab({cid,cur,an,anBusy,anErr,runAn,goAI,stale,nRev,nItems,onCite,anView}){
+  const[ver,setVer]=useState(null);           // открытая прошлая версия
+  const vers=cur.analysis_versions||[];
+  useEffect(()=>{ csReq("POST","/api/bell/read",{link:`case:${cid}:analysis`}).catch(()=>{}); },[cid]);
+  const openVer=(v)=>csReq("GET",`/api/cases/${cid}/analysis/${v.analysis_id}`).then(setVer).catch(()=>{});
+  const top=vers[0];
+  if(!nItems) return <div className="kb-empty">Разбор появится, когда в деле будут материалы.</div>;
+  return <div className="rv-cs-an cs-an">
+    <div className="rv-cs-an-h">
+      <span>Разбор дела <i>ИИ по материалам, со ссылками [N]</i></span>
+      <span className="rv-cs-an-b">
+        {!an&&cur.can_add&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
+        {!an&&!cur.can_add&&<span className="t-cap">{cur.archived?"дело в архиве":"разбор запускают участники с правом добавлять"}</span>}
+        {an&&cur.can_add&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>{ setVer(null); runAn(true); }}>
+          {anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
+        {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-помощнику: нормы, практика, что запросить">продолжить в ИИ-помощнике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+      </span>
+    </div>
+    {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}
+    {ver&&<div className="cs-an-old" role="status">Прошлая версия: {fmtDateMsk(ver.created_at)}{ver.name?` · ${puShort(ver.name)}`:""}{ver.n_items?` · по ${ver.n_items} матер.`:""}
+      <button className="rv-cs-lnk" onClick={()=>setVer(null)}>к текущей</button></div>}
+    {/* [N] — материал дела: раньше ссылка вела на #src-N, приложение перезагружалось
+        и закрывало дело (аудит 03.10, ДЕЛ-02) */}
+    {(ver?ver.body:an)&&<div className="rv-explain" onClick={e=>{ const a=e.target.closest&&e.target.closest("a.cite-anchor");
+      if(!a) return; e.preventDefault(); onCite&&onCite(+a.dataset.cite); }}>{renderMD(ver?ver.body:(anView||an))}</div>}
+    {an&&!ver&&stale&&cur.analysis_item_ids&&<div className="t-cap" style={{marginTop:6}}>
+      Состав дела менялся после разбора: номера [N] приведены к текущему списку материалов.</div>}
+    {an&&!ver&&top&&<div className="cs-an-sig">Разбор: {top.name?puShort(top.name):"автор не записан"} · {fmtDateMsk(top.created_at)}
+      {top.n_items?` · по ${top.n_items} ${plural(top.n_items,"материалу","материалам","материалам")}`:""}</div>}
+    {vers.length>1&&<div className="cs-an-vers"><div className="t-cap" style={{marginBottom:4}}>Прошлые версии</div>
+      {vers.slice(1).map(v=><button key={v.analysis_id} type="button" className={"cs-an-ver"+(ver&&ver.analysis_id===v.analysis_id?" on":"")} onClick={()=>openVer(v)}>
+        <span>{fmtDateMsk(v.created_at)}</span><span className="t-cap">{v.name?puShort(v.name):"автор не записан"}{v.n_items?` · ${v.n_items} матер.`:""}</span></button>)}</div>}
+  </div>;
+}
+
+// ── «Доступ к делу»: коллеги поимённо и с ролью ───────────────────────────────
+// Раньше было «Открыть команде» — на деле всем 111 пользователям AuditLens, и
+// получивший доступ мог всё. Теперь владелец добавляет коллег по имени:
+// «может добавлять» (приобщает, убирает своё, запускает разбор) или «только
+// смотрит» (видит, выгружает). Доступа «всем» нет — решение владельца инструмента.
+const CASE_ROLES=[["editor","может добавлять","приобщает материалы, убирает своё, запускает разбор"],
+  ["viewer","только смотрит","видит дело и выгружает его, состав не меняет"]];
+const CASE_ROLE_RU={owner:"владелец",editor:"может добавлять",viewer:"только смотрит"};
+// о себе — во втором лице: «вы можете добавлять», а не «вы может добавлять»
+const CASE_ROLE_YOU={owner:"вы владелец",editor:"вы можете добавлять",viewer:"вы только смотрите"};
+// ── Команды: сохранённые группы коллег (этап 5) ───────────────────────────────
+// Команду ведёт её создатель и подключает к своим делам с ролью. Доступ
+// «живой»: новый участник команды сразу видит все её дела, а при удалении из
+// команды доступ пропадает (если в дело не добавили отдельно).
+const IcTeam=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0111 0"/><path d="M16 6.2a3 3 0 010 5.6M17.5 14.2A5.5 5.5 0 0120.5 19"/></svg>;
+function TeamEditor({team,users,prefill,backLabel,attach,onBack,onSaved,onDeleted}){
+  const me=useMe(), meU=me&&me.username;
+  const[name,setName]=useState(team?team.name:"");
+  const[mem,setMem]=useState(()=>team?team.members.map(m=>({username:m.username,name:m.name})):(prefill||[]));
+  const[q,setQ]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const has=new Set(mem.map(m=>m.username));
+  const ql=q.trim().toLowerCase();
+  const cand=(users||[]).filter(u=>u.username!==meU&&!has.has(u.username)&&(!ql||
+    (u.display_name||"").toLowerCase().includes(ql)||u.username.toLowerCase().includes(ql))).slice(0,ql?10:5);
+  const save=async()=>{ if(!name.trim()){ setErr("Назовите команду"); return; }
+    setBusy(true); setErr("");
+    try{
+      if(team){ const was=new Set(team.members.map(m=>m.username)), now=new Set(mem.map(m=>m.username));
+        await csReq("PATCH",`/api/teams/${team.team_id}`,{name:name.trim(),
+          add:[...now].filter(u=>!was.has(u)),remove:[...was].filter(u=>!now.has(u))});
+        onSaved&&onSaved(team.team_id,false); }
+      else{ const r=await csReq("POST","/api/teams",{name:name.trim(),members:mem.map(m=>m.username)});
+        onSaved&&onSaved(r.team_id,true); }
+    }catch(e){ setErr(e.message); setBusy(false); } };
+  const del=async()=>{ if(!window.confirm(`Удалить команду «${team.name}»?`+(team.cases?`\n\nОна подключена к ${team.cases} ${plural(team.cases,"делу","делам","делам")}: участники команды потеряют к ним доступ, если их не добавили отдельно.`:"")))return;
+    setBusy(true); setErr("");
+    try{ await csReq("DELETE",`/api/teams/${team.team_id}`); onDeleted&&onDeleted(); }
+    catch(e){ setErr(e.message); setBusy(false); } };
+  return <div className="cs-acc tm-ed">
+    <button className="rv-cs-back" onClick={onBack}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>{backLabel||"назад"}</button>
+    <label className="tm-lbl" htmlFor="tm-name">Название команды</label>
+    <input id="tm-name" className="input tm-name" value={name} maxLength={120} autoFocus={!team}
+      onChange={e=>setName(e.target.value)} placeholder="Например: проверка кредитных карт"/>
+    <div className="t-cap" style={{margin:"16px 0 6px"}}>Состав · {mem.length}</div>
+    <div className="cs-acc-list">
+      {mem.map(m=><div key={m.username} className="cs-acc-row">
+        <span className="cs-av">{initials(m.name)}</span><span className="nm">{m.name}</span>
+        <button type="button" className="rv-ib" disabled={busy} onClick={()=>setMem(x=>x.filter(y=>y.username!==m.username))}
+          aria-label={`Убрать из команды: ${m.name}`} data-tip="убрать из команды"><RvIX s={13}/></button></div>)}
+      {!mem.length&&<div className="t-cap">Пока никого — добавьте коллег ниже.</div>}
+    </div>
+    <input className="input tm-q" value={q} onChange={e=>setQ(e.target.value)} placeholder="Добавить коллегу по имени…"
+      aria-label="Добавить коллегу в команду"/>
+    {users===null?<Skel h={40}/>:<div className="cs-acc-list">
+      {cand.map(u=>{ const nm=u.display_name||u.username; return <button key={u.username} type="button" className="cs-acc-row add"
+        disabled={busy} onClick={()=>{ setMem(x=>[...x,{username:u.username,name:nm}]); setQ(""); }}>
+        <span className="cs-av">{initials(nm)}</span><span className="nm">{nm}</span><span className="st">+ в команду</span></button>; })}
+      {ql&&!cand.length&&<div className="t-cap">Никого не нашли. Коллега появится здесь после первого входа в AuditLens.</div>}
+    </div>}
+    {err&&<div className="rv-cp-err" role="alert">{err}</div>}
+    <div className="tm-acts">
+      <button type="button" className="btn btn-primary btn-sm" disabled={busy||!name.trim()} onClick={save}>
+        {team?"Сохранить":attach?"Создать и подключить":"Создать команду"}</button>
+      {team&&<button type="button" className="btn btn-sm btn-ghost rv-cs-del" disabled={busy} onClick={del}>Удалить команду</button>}
+    </div>
+    <p className="cs-acc-foot">{team&&team.cases
+      ?`Изменения состава сразу меняют доступ к делам команды (${team.cases}), коллеги получат уведомление.`
+      :"Команду подключают к своему делу одним выбором. Доступ «живой»: новый участник команды сразу видит все её дела, а при удалении из команды доступ пропадает."}</p>
+  </div>;
+}
+
+// «Мои команды» — из списка дел
+function TeamsHome({onBack}){
+  const[teams,setTeams]=useState(null);
+  const[users,setUsers]=useState(null);
+  const[ed,setEd]=useState(null);              // {team} | {create:true}
+  const load=()=>csReq("GET","/api/teams").then(d=>setTeams(d.teams||[])).catch(()=>setTeams([]));
+  useEffect(()=>{ load(); apiFetch("/api/users").then(d=>setUsers(d.users||[])).catch(()=>setUsers([])); },[]);
+  if(ed) return <TeamEditor team={ed.team||null} users={users} backLabel="мои команды" onBack={()=>setEd(null)}
+    onSaved={()=>{ setEd(null); load(); }} onDeleted={()=>{ setEd(null); load(); }}/>;
+  return <div className="cs-acc">
+    <button className="rv-cs-back" onClick={onBack}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
+    <p className="t-cap" style={{margin:"0 0 12px"}}>Сохранённые группы коллег: подключаются к делу одним выбором в «Доступе».
+      Новый участник команды сразу видит все её дела.</p>
+    {teams===null?<Skel h={80}/>:<div className="cs-acc-list">
+      {teams.map(t=><button key={t.team_id} type="button" className="cs-acc-row add" onClick={()=>setEd({team:t})}>
+        <span className="cs-av tm"><IcTeam/></span>
+        <span className="nm">{t.name}<span className="tm-n"> · {t.members.length} {plural(t.members.length,"человек","человека","человек")}
+          {t.cases?` · ${t.cases} ${plural(t.cases,"дело","дела","дел")}`:""}</span></span>
+        <span className="st">изменить</span></button>)}
+      {!teams.length&&<div className="t-cap" style={{padding:"4px 0 8px"}}>Команд пока нет.</div>}
+      <button type="button" className="cs-acc-row add tm-new" onClick={()=>setEd({create:true})}>
+        <span className="cs-av tm">＋</span><span className="nm">Новая команда</span></button>
+    </div>}
+  </div>;
+}
+
+// Выгрузка дела: Word или Excel, обсуждение и история — по выбору (запоминается)
+function CaseExportBtn({cur}){
+  const[open,setOpen]=useState(false);
+  const[o,setO]=useState(()=>{ try{ return {talk:true,hist:true,...(JSON.parse(localStorage.getItem("al-case-exp")||"{}")||{})}; }
+    catch{ return {talk:true,hist:true}; } });
+  const ref=useRef(null);
+  useEffect(()=>{ try{ localStorage.setItem("al-case-exp",JSON.stringify(o)); }catch{} },[o]);
+  useEffect(()=>{ if(!open) return;
+    const h=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    const k=e=>{ if(e.key==="Escape"){ e.stopPropagation(); setOpen(false); } };
+    document.addEventListener("mousedown",h); document.addEventListener("keydown",k,true);
+    return ()=>{ document.removeEventListener("mousedown",h); document.removeEventListener("keydown",k,true); }; },[open]);
+  const q=`?talk=${o.talk?1:0}&hist=${o.hist?1:0}`;
+  const nT=cur.talk_n||0, nR=(cur.items||[]).filter(i=>i.kind==="report").length;
+  const sw=(k,label,hint)=><div className="cs-exp-row">
+    <span className="l"><b>{label}</b>{hint&&<span>{hint}</span>}</span>
+    <button type="button" role="switch" aria-checked={!!o[k]} aria-label={label} className="bx-sw" onClick={()=>setO(x=>({...x,[k]:!x[k]}))}/></div>;
+  return <span className="cs-exp" ref={ref}>
+    <button type="button" className={"btn btn-sm btn-ghost cs-exp-btn"+(open?" on":"")} aria-expanded={open} aria-haspopup="dialog"
+      onClick={()=>setOpen(v=>!v)}>Выгрузить<span className="rv-ico-in" style={open?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>
+    {open&&<div className="cs-exp-pop" role="dialog" aria-label="Выгрузить дело">
+      <div className="cs-exp-h">Выгрузить дело</div>
+      {sw("talk","Обсуждение",nT?`${nT} ${plural(nT,"сообщение","сообщения","сообщений")} и комментарии к материалам`:"пока пусто")}
+      {sw("hist","История дела","кто что добавил, статусы, доступ")}
+      <p className="cs-exp-note">Всегда в выгрузке: материалы, разбор ИИ, участники и роли.
+        {nR>0&&` Отчёты ИИ (${nR}) — кратко: название, вывод и ссылка, без полного текста.`}</p>
+      <div className="cs-exp-b">
+        <a className="btn btn-sm btn-primary" href={`/api/cases/${cur.case_id}/export.docx${q}`} onClick={()=>setOpen(false)}
+          data-tip="Word в стиле AuditLens: обложка, разбор, карточки материалов; приложения — обсуждение и история">Word</a>
+        <a className="btn btn-sm" href={`/api/cases/${cur.case_id}/export.xlsx${q}`} onClick={()=>setOpen(false)}
+          data-tip="Excel: дело в цифрах, материалы с разметкой, участники; обсуждение и история — отдельными листами">Excel</a>
+      </div>
+    </div>}
+  </span>;
+}
+
+function CaseAccess({cur,onBack,onChanged,onTransferred}){
+  const me=useMe();
+  const[mem,setMem]=useState(cur.members||[]);
+  const[users,setUsers]=useState(null);
+  const[q,setQ]=useState("");
+  const[role,setRole]=useState("editor");
+  const[busy,setBusy]=useState("");
+  const[err,setErr]=useState("");
+  const[teams,setTeams]=useState(cur.teams||[]);       // команды, подключённые к делу
+  const[myTeams,setMyTeams]=useState(null);
+  const[ed,setEd]=useState(null);                      // {team} | {create:true}
+  const manage=!!cur.can_manage;
+  const loadMyTeams=()=>csReq("GET","/api/teams").then(d=>setMyTeams(d.teams||[])).catch(()=>setMyTeams([]));
+  useEffect(()=>{ if(manage){ apiFetch("/api/users").then(d=>setUsers(d.users||[])).catch(()=>setUsers([])); loadMyTeams(); } },[manage]); // eslint-disable-line
+  const inCase=new Set(mem.map(m=>m.username));
+  const ql=q.trim().toLowerCase();
+  const cand=(users||[]).filter(u=>!inCase.has(u.username)&&(!ql||
+    (u.display_name||"").toLowerCase().includes(ql)||u.username.toLowerCase().includes(ql))).slice(0,ql?12:6);
+  const call=async(key,fn)=>{ setBusy(key); setErr("");
+    try{ const r=await fn(); if(r&&r.members) setMem(r.members); if(r&&r.teams) setTeams(r.teams); onChanged&&onChanged(); return true; }
+    catch(e){ setErr(e.message||"Не получилось. Попробуйте ещё раз"); return false; }
+    finally{ setBusy(""); } };
+  const add=(u)=>call("add:"+u.username,()=>sayPost(`/api/cases/${cur.case_id}/members`,{username:u.username,role}))
+    .then(ok=>{ if(ok) setQ(""); });
+  const setR=(m,r)=>call("role:"+m.username,()=>sayPost(`/api/cases/${cur.case_id}/members`,{username:m.username,role:r}));
+  const drop=(m)=>call("drop:"+m.username,async()=>{
+    const r=await fetch(`/api/cases/${cur.case_id}/members/${encodeURIComponent(m.username)}`,{method:"DELETE"});
+    if(!r.ok) throw new Error("Не получилось убрать участника");
+    setMem(x=>x.filter(y=>y.username!==m.username)); });
+  const attach=(tid,r)=>call("team:"+tid,()=>csReq("POST",`/api/cases/${cur.case_id}/teams`,{team_id:tid,role:r}));
+  const detach=(t)=>{ if(!window.confirm(`Отключить команду «${t.name}» от дела?\n\nЕё участники потеряют доступ, если их не добавили отдельно.`))return;
+    call("team:"+t.team_id,()=>csReq("DELETE",`/api/cases/${cur.case_id}/teams/${t.team_id}`)); };
+  const give=async(m)=>{ if(!window.confirm(`Передать дело «${cur.title}» — ${m.name}?\n\nВы останетесь в деле с правом добавлять; доступом и удалением будет управлять ${m.name}.`))return;
+    const ok=await call("own:"+m.username,()=>sayPost(`/api/cases/${cur.case_id}/owner`,{username:m.username}));
+    if(ok) onTransferred&&onTransferred(); };
+  if(ed) return <TeamEditor team={ed.team||null} users={users} backLabel="к доступу" attach={!ed.team}
+    prefill={ed.create?mem.filter(m=>m.role!=="owner"&&!m.team_id).map(m=>({username:m.username,name:m.name})):null}
+    onBack={()=>setEd(null)}
+    onSaved={async(tid,created)=>{ setEd(null); await loadMyTeams(); if(created){ await attach(tid,role); return; }
+      const c=await apiFetch(`/api/cases/${cur.case_id}`).catch(()=>null);
+      if(c){ setMem(c.members||[]); setTeams(c.teams||[]); } onChanged&&onChanged(); }}
+    onDeleted={async()=>{ setEd(null); await loadMyTeams(); const c=await apiFetch(`/api/cases/${cur.case_id}`).catch(()=>null);
+      if(c){ setMem(c.members||[]); setTeams(c.teams||[]); } onChanged&&onChanged(); }}/>;
+  const freeTeams=(myTeams||[]).filter(t=>!teams.some(x=>x.team_id===t.team_id));
+  return <div className="cs-acc">
+    <button className="rv-cs-back" onClick={onBack}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>к делу</button>
+    {manage&&<>
+      <div className="cs-acc-add">
+        <input className="input" value={q} onChange={e=>setQ(e.target.value)} aria-label="Найти коллегу"
+          placeholder="Найти коллегу по имени…" autoFocus/>
+        <select className="input cs-acc-role" value={role} onChange={e=>setRole(e.target.value)} aria-label="С какими правами добавить"
+          title={(CASE_ROLES.find(r=>r[0]===role)||[])[2]}>
+          {CASE_ROLES.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+      </div>
+      <div className="cs-acc-hint">{(CASE_ROLES.find(r=>r[0]===role)||[])[2]}</div>
+      {users===null?<Skel h={60}/>:<div className="cs-acc-list">
+        {!ql&&cand.length>0&&<div className="t-cap" style={{margin:"2px 0 4px"}}>Недавно в AuditLens</div>}
+        {cand.map(u=>{ const nm=u.display_name||u.username; return <button key={u.username} type="button"
+          className="cs-acc-row add" disabled={!!busy} onClick={()=>add(u)}>
+          <span className="cs-av">{initials(nm)}</span><span className="nm">{nm}</span>
+          <span className="st">{busy==="add:"+u.username?"добавляю…":"+ добавить"}</span></button>; })}
+        {ql&&!cand.length&&<div className="t-cap">Никого не нашли. Коллега появится здесь после первого входа в AuditLens.</div>}
+      </div>}
+    </>}
+    <div className="t-cap" style={{margin:"16px 0 6px"}}>В деле</div>
+    <div className="cs-acc-list">
+      {mem.map(m=><div key={m.username} className="cs-acc-row">
+        <span className={"cs-av"+(m.role==="owner"?" own":"")}>{initials(m.name)}</span>
+        <span className="nm">{m.name}{me&&m.username===me.username?" (вы)":""}</span>
+        {m.role==="owner"||!manage||m.team_id
+          ?<span className="st" data-tip={m.team_id&&manage?"в деле через команду: права задаются у команды ниже":undefined}>
+            {CASE_ROLE_RU[m.role]||m.role}{m.team_name?<span className="tm-via"> · команда «{m.team_name}»</span>:null}</span>
+          :<span className="cs-acc-ctl">
+            <select className="input cs-acc-role" value={m.role} disabled={!!busy} aria-label={`Права: ${m.name}`}
+              onChange={e=>setR(m,e.target.value)}>{CASE_ROLES.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+            <button className="rv-cs-lnk" disabled={!!busy} onClick={()=>give(m)} data-tip="сделать владельцем дела">передать</button>
+            <button className="rv-ib" disabled={!!busy} onClick={()=>drop(m)} aria-label={`Убрать: ${m.name}`} data-tip="убрать из дела"><RvIX s={13}/></button>
+          </span>}
+      </div>)}
+    </div>
+    {(manage||teams.length>0)&&<>
+      <div className="t-cap" style={{margin:"18px 0 6px"}}>Команды</div>
+      <div className="cs-acc-list">
+        {teams.map(t=>{ const mine=(myTeams||[]).find(x=>x.team_id===t.team_id);
+          return <div key={t.team_id} className="cs-acc-row">
+            <span className="cs-av tm"><IcTeam/></span>
+            <span className="nm">{t.name}<span className="tm-n"> · {t.n} {plural(t.n,"человек","человека","человек")}</span></span>
+            {manage?<span className="cs-acc-ctl">
+              <select className="input cs-acc-role" value={t.role} disabled={!!busy} aria-label={`Права команды «${t.name}»`}
+                onChange={e=>attach(t.team_id,e.target.value)}>{CASE_ROLES.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+              {mine&&<button className="rv-cs-lnk" disabled={!!busy} onClick={()=>setEd({team:mine})} data-tip="изменить состав команды">состав</button>}
+              <button className="rv-ib" disabled={!!busy} onClick={()=>detach(t)} aria-label={`Отключить команду «${t.name}»`} data-tip="отключить от дела"><RvIX s={13}/></button>
+            </span>:<span className="st">{CASE_ROLE_RU[t.role]||t.role}</span>}
+          </div>; })}
+        {manage&&freeTeams.map(t=><button key={t.team_id} type="button" className="cs-acc-row add" disabled={!!busy}
+          onClick={()=>attach(t.team_id,role)} data-tip={`подключить с правами «${CASE_ROLE_RU[role]}» — права выбираются вверху`}>
+          <span className="cs-av tm"><IcTeam/></span>
+          <span className="nm">{t.name}<span className="tm-n"> · {t.members.length} {plural(t.members.length,"человек","человека","человек")}</span></span>
+          <span className="st">{busy==="team:"+t.team_id?"подключаю…":"+ подключить"}</span></button>)}
+        {manage&&<button type="button" className="cs-acc-row add tm-new" disabled={!!busy} onClick={()=>setEd({create:true})}
+          data-tip="сохранённая группа коллег: дальше подключается к любому вашему делу одним выбором">
+          <span className="cs-av tm">＋</span><span className="nm">Новая команда{mem.some(m=>m.role!=="owner"&&!m.team_id)?" — из участников дела":""}</span></button>}
+        {!teams.length&&!manage&&<div className="t-cap">Команд в деле нет.</div>}
+      </div>
+    </>}
+    {err&&<div className="rv-cp-err" role="alert">{err}</div>}
+    <p className="cs-acc-foot">{manage
+      ?"Коллега получит уведомление и увидит дело у себя: кнопка «Аудит-дела» в верхней панели любого раздела."
+      :`Добавлять коллег и менять права может владелец — ${cur.owner_name}.`}</p>
+  </div>;
+}
+
+function KbCases({onClose,onOpenDoc,initialCase,initialTab,initialMsg,activeId,onSetActive}){
+  const me=useMe(), meU=me&&me.username;
   const[list,setList]=useState(null);
-  const[open,setOpen]=useState(null);
+  const[open,setOpen]=useState(initialCase||null);
+  const[flt,setFlt]=useState("all");           // all | mine | shared
+  const[q,setQ]=useState("");                  // поиск по названию
+  const[showArch,setShowArch]=useState(false);
+  const[teamsOpen,setTeamsOpen]=useState(false);        // «Мои команды»
+  const[access,setAccess]=useState(false);     // окно «Доступ» внутри панели
+  const[gone,setGone]=useState(null);          // только что удалённое дело — «Вернуть»
   const[cur,setCur]=useState(null);
+  const[tab,setTab]=useState(initialTab||"items");
+  const[focusMsg,setFocusMsg]=useState(initialMsg||null);
   const[newT,setNewT]=useState("");
   const[an,setAn]=useState(null),[anBusy,setAnBusy]=useState(false),[anErr,setAnErr]=useState(null);
   const[ren,setRen]=useState(null);
+  const[stBusy,setStBusy]=useState(false),[stErr,setStErr]=useState("");
   const[crd,setCrd]=useState(null);           // читалка жалоб дела: {list, idx}
   // старое «дело» из браузера (до серверных дел во вкладке «Отзывы»)
   const[legacy,setLegacy]=useState(()=>{try{return JSON.parse(localStorage.getItem("al-case")||"[]");}catch{return [];}});
@@ -8328,12 +9305,30 @@ function KbCases({onClose,onOpenDoc}){
   // именно ()=>{load()}, а не useEffect(load,[]): load возвращает промис,
   // и React принял бы его за функцию очистки — падение при уходе со страницы
   useEffect(()=>{load();},[]);
-  const reload=()=>apiFetch(`/api/cases/${open}`).then(c=>{setCur(c);setAn(c.analysis||null);}).catch(()=>{});
-  useEffect(()=>{ if(open){setCur(null);setAn(null);setAnErr(null);setRen(null);reload();} },[open]);
+  // дело не открылось: удалено, нет доступа или сеть — раньше это была вечная загрузка
+  const[curErr,setCurErr]=useState(null);       // null | "gone" | "net"
+  const reload=()=>apiFetch(`/api/cases/${open}`).then(c=>{setCur(c);setAn(c.analysis||null);setCurErr(null);})
+    .catch(e=>setCurErr(/^(403|404)\b/.test(String(e&&e.message))?"gone":"net"));
+  const first=useRef(true);
+  useEffect(()=>{ if(open){setCur(null);setAn(null);setAnErr(null);setRen(null);setAccess(false);setStErr("");setCurErr(null);
+      if(!first.current){ setTab("items"); setFocusMsg(null); }
+      reload();}
+    first.current=false; },[open]); // eslint-disable-line
 
-  const drop=async(itemId)=>{ await apiDel(`/api/cases/${open}/items/${itemId}`); reload(); };
-  const saveNote=(it,v)=>{ if((it.note||"")===(v||""))return;
-    apiPatch(`/api/cases/${open}/items/${it.item_id}`,{note:v}).catch(()=>{}); };
+  // Убрать материал: сразу пропадает из списка, на сервер — через 10 секунд, если не
+  // отменили (раньше одним нажатием и навсегда, с комментариями коллег; аудит 03.10)
+  const[undo,setUndo]=useState(null);          // {cid, item, n}
+  const undoRef=useRef(null), undoT=useRef(null);
+  const commitDrop=()=>{ clearTimeout(undoT.current); const u=undoRef.current; undoRef.current=null;
+    if(!u) return Promise.resolve();
+    return fetch(`/api/cases/${u.cid}/items/${u.item.item_id}`,{method:"DELETE",keepalive:true})
+      .catch(()=>{}).finally(()=>{ if(u.cid===open) reload(); }); };
+  const drop=(itemId)=>{ commitDrop(); const it=(cur&&cur.items||[]).find(x=>x.item_id===itemId); if(!it) return;
+    const n=(it.comments||[]).length, u={cid:open,item:it,n}; undoRef.current=u; setUndo(u);
+    undoT.current=setTimeout(()=>{ commitDrop(); setUndo(null); },10000); };
+  const undoDrop=()=>{ clearTimeout(undoT.current); undoRef.current=null; setUndo(null); };
+  useEffect(()=>{ commitDrop(); setUndo(null); },[open]); // eslint-disable-line
+  useEffect(()=>()=>{ commitDrop(); },[]); // eslint-disable-line
   const create=async()=>{ if(!newT.trim())return;
     const r=await apiPost("/api/cases",{title:newT.trim()}).catch(()=>null);
     setNewT(""); await load(); if(r)setOpen(r.case_id); };
@@ -8344,15 +9339,28 @@ function KbCases({onClose,onOpenDoc}){
     try{localStorage.removeItem("al-case");}catch{}
     setLegacy([]); await load(); setOpen(r.case_id); };
   const runAn=async(force)=>{ setAnBusy(true);setAnErr(null);
-    try{const d=await apiPost(`/api/cases/${open}/analyze${force?"?force=1":""}`,{});setAn(d.analysis);}
+    try{const d=await apiPost(`/api/cases/${open}/analyze${force?"?force=1":""}`,{});setAn(d.analysis); if(!d.cached) reload();}
     catch{setAnErr("Модель не ответила — попробуйте ещё раз");}
     setAnBusy(false); };
-  const team=async()=>{ await apiPost(`/api/cases/${open}/team`,{shared:!cur.shared}).catch(()=>{}); reload(); load(); };
+  // выйти из чужого дела: доступ пропадает, материалы, которые вы приобщили, остаются
+  const leave=async()=>{ if(!window.confirm(`Выйти из дела «${cur.title}»? Вернуть доступ сможет владелец — ${cur.owner_name}.`))return;
+    await apiDel(`/api/cases/${open}/members/me`).catch(()=>{}); setOpen(null); setCur(null); load(); };
   const rename=async()=>{ if(ren&&ren.trim()&&ren.trim()!==cur.title)
       await apiPatch(`/api/cases/${open}`,{title:ren.trim()}).catch(()=>{});
     setRen(null); reload(); load(); };
-  const remove=async()=>{ if(!window.confirm(`Удалить дело «${cur.title}» со всеми материалами?`))return;
-    await apiDel(`/api/cases/${open}`); setOpen(null); setCur(null); load(); };
+  // удаление мягкое: 30 дней дело можно вернуть — его ведут несколько человек
+  const remove=async()=>{ const others=(cur.members||[]).filter(m=>m.role!=="owner").length;
+    if(!window.confirm(`Удалить дело «${cur.title}»?`+(others?`\n\nОно пропадёт и у участников (${others}).`:"")
+      +"\n\n30 дней его можно вернуть из списка дел."))return;
+    await apiDel(`/api/cases/${open}`).catch(()=>{}); setGone({case_id:open,title:cur.title}); setOpen(null); setCur(null); load(); };
+  const restore=async(id)=>{ await apiPost(`/api/cases/${id}/restore`,{}).catch(()=>{}); setGone(null); load(); };
+  // статус и архив — владелец; участники получают уведомление
+  const setStatus=async(body)=>{ setStBusy(true); setStErr("");
+    try{ await csReq("POST",`/api/cases/${open}/status`,body); await reload(); load(); }
+    catch(e){ setStErr(e.message); }
+    finally{ setStBusy(false); } };
+  const toggleMute=async()=>{ const m=!cur.muted; setCur(c=>({...c,muted:m}));
+    await csReq("POST",`/api/cases/${open}/mute`,{muted:m}).catch(()=>setCur(c=>({...c,muted:!m}))); };
   // «Продолжить в ИИ-аналитике»: в вопрос уходит состав дела — продукты и
   // проблемы жалоб, — а аналитик ищет нормы, практику и что запросить
   const goAI=()=>{
@@ -8360,11 +9368,20 @@ function KbCases({onClose,onOpenDoc}){
     const cnt=k=>{const m={};rv.forEach(x=>{if(x[k])m[x[k]]=(m[x[k]]||0)+1;});
       return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k2,v])=>`${k2} (${v})`).join(", ");};
     const banks=cnt("bank"), iss=cnt("issue_label"), prods=cnt("product");
+    onClose&&onClose();               // панель дела закрываем, как у «Открыть отчёт»
     bfGoAI(`По материалам аудит-дела «${cur.title}»: ${rv.length} жалоб клиентов`
       +(banks?`, банки: ${banks}`:"")+(prods?`; продукты: ${prods}`:"")+(iss?`; главные проблемы: ${iss}`:"")
       +". Какие требования Банка России и законодательства относятся к этим ситуациям, какова практика"
       +" регулятора и судов по похожим случаям и что запросить у подразделения для проверки?");
   };
+  // отчёт из дела — в ИИ-помощнике, продукт — в «Рынке»; панель дел закрывается
+  const openReportFromCase=(rid)=>{ _pendingReport=rid; onClose&&onClose();
+    if((location.hash||"").startsWith("#ai")) try{ window.dispatchEvent(new Event("al-open-report")); }catch{}
+    else location.hash="#ai"; };
+  const goFromCase=(hash)=>{ onClose&&onClose(); location.hash=hash; };
+  // ссылка [N] из обсуждения → материал на вкладке «Материалы»
+  const goItem=(iid)=>{ setTab("items");
+    setTimeout(()=>{ const el=document.getElementById("cs-it-"+iid); if(el){ el.scrollIntoView({block:"center",behavior:"smooth"}); csFlash(el); } },60); };
 
   // жалобы дела открываются в читалке со всем составом дела — J/K по порядку
   const openRev=async(it)=>{
@@ -8385,53 +9402,119 @@ function KbCases({onClose,onOpenDoc}){
       onNext={crd.idx<crd.list.length-1?()=>setCrd(x=>({...x,idx:x.idx+1})):null}
       onOpenSim={(list,i)=>setCrd({list,idx:i})}/>}</RvModal>;
 
-  if(open&&!cur)return <RvModal side="right" title="Аудит-дело" onClose={()=>setOpen(null)}><Skel h={200}/></RvModal>;
+  if(open&&!cur)return <RvModal side="right" wide title="Аудит-дело" onClose={()=>setOpen(null)}>
+    {curErr?<div className="kb-empty" role="alert">
+        {curErr==="gone"?"Дело удалено или у вас больше нет к нему доступа.":"Дело не загрузилось — проверьте связь и попробуйте ещё раз."}
+        <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12}}>
+          {curErr==="net"&&<button type="button" className="btn btn-sm" onClick={reload}>Повторить</button>}
+          <button type="button" className="btn btn-sm" onClick={()=>{ setOpen(null); load(); }}>Все дела</button></div></div>
+      :<Skel h={200}/>}</RvModal>;
   if(open&&cur){
-    const items=cur.items||[], nRev=items.filter(i=>i.kind==="review").length;
-    const stale=an&&cur.analysis_items&&cur.analysis_items!==items.length;
-    return <><RvModal side="right" title={cur.title}
-      sub={`${items.length} матер.${nRev?` · жалоб ${nRev}`:""}${cur.shared?" · открыто команде":""}${!cur.mine?` · ведёт ${cur.owner}`:""}`}
-      onClose={()=>{setOpen(null);setCur(null);load();}}>
-      <button className="rv-cs-back" onClick={()=>{setOpen(null);setCur(null);load();}}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
+    const items=(cur.items||[]).filter(i=>!(undo&&undo.cid===open&&undo.item.item_id===i.item_id)),
+      nRev=items.filter(i=>i.kind==="review").length;
+    // Свежесть разбора — по СОСТАВУ (сервер сравнивает список материалов), а не
+    // по числу: «убрали один, добавили другой» тоже новый состав (ДЕЛ-04).
+    // Материал, ждущий «Отменить», уже считается убранным.
+    const stale=an&&(cur.analysis_stale!=null
+      ?(cur.analysis_stale||items.length!==(cur.items||[]).length)
+      :(cur.analysis_items&&cur.analysis_items!==items.length));
+    // [N] разбора — номер на момент разбора; переводим в текущие номера списка
+    const anIds=cur.analysis_item_ids||null;
+    const anView=an&&anIds?an.replace(/\[(\d{1,3})\]/g,(m,k)=>{
+      const iid=anIds[+k-1]; if(iid==null)return m;
+      const p=items.findIndex(i=>i.item_id===iid);
+      return p>=0?`[${p+1}]`:"[материал удалён]";}):an;
+    if(access) return <RvModal side="right" title="Доступ к делу" sub={cur.title} onClose={()=>setAccess(false)}>
+      <CaseAccess cur={cur} onBack={()=>setAccess(false)} onChanged={()=>{reload();load();}}
+        onTransferred={()=>{setAccess(false);reload();load();}}/></RvModal>;
+    const mem=cur.members||[], others=mem.filter(m=>m.role!=="owner");
+    const people=mem.map(m=>({username:m.username,name:m.name}));
+    const back=()=>{setOpen(null);setCur(null);load();};
+    const TABS=[["items","Материалы",items.length],["talk","Обсуждение",cur.talk_n],["analysis","Разбор",null],["history","История",null]];
+    return <><RvModal side="right" wide title={cur.title}
+      sub={`${cur.status_label||"Сбор материалов"}${cur.archived?" · в архиве":""} · ${items.length} матер.${nRev?` · жалоб ${nRev}`:""} · ${cur.mine?"вы владелец":`ведёт ${cur.owner_name} · ${CASE_ROLE_YOU[cur.role]||""}`}`}
+      onClose={back}>
+      <button className="rv-cs-back" onClick={back}><span className="rv-ico-in" style={{marginLeft:0,marginRight:3}}><RvIChevL s={13}/></span>все дела</button>
+      <div className="cs-head">
+        {/* кто в деле: видно сразу, без открытия окна доступа */}
+        <button type="button" className="cs-people" onClick={()=>setAccess(true)}
+          data-tip={cur.can_manage?"Добавить коллег, сменить роли":"Кто в деле и с какими правами"}>
+          <span className="cs-avs">{mem.slice(0,5).map(m=><span key={m.username} className="cs-av"
+            title={`${m.name} — ${m.role_label}`}>{initials(m.name)}</span>)}
+            {mem.length>5&&<span className="cs-av more">+{mem.length-5}</span>}</span>
+          <span className="cs-people-t">{others.length?`${others.length} ${plural(others.length,"участник","участника","участников")}`:"только вы"}
+            {cur.can_manage?<b> · Доступ</b>:<b> · кто в деле</b>}</span>
+        </button>
+        {cur.can_manage&&!cur.archived
+          ?<div className="seg cs-st-seg" role="group" aria-label="Статус дела">{CASE_STATUS.map(([k,l])=>
+            <button key={k} type="button" className={"seg-btn"+(cur.status===k?" on":"")} aria-pressed={cur.status===k}
+              disabled={stBusy} onClick={()=>cur.status!==k&&setStatus({status:k})}>{l}</button>)}</div>
+          :<span className={"cs-st "+(cur.archived?"arch":cur.status)} data-tip="статус меняет владелец дела">
+            {cur.archived?"В архиве":cur.status_label}</span>}
+      </div>
+      {stErr&&<div className="rv-cp-err" role="alert">{stErr}</div>}
+      {cur.archived&&<div className="cs-arch" role="status"><span>Дело в архиве — только чтение: материалы, обсуждение и разбор не меняются.</span>
+        {cur.can_manage&&<button className="rv-cs-lnk" disabled={stBusy} onClick={()=>setStatus({archived:false})}>Вернуть из архива</button>}</div>}
       {cur.note&&<p className="t-cap">{cur.note}</p>}
       {ren!==null&&<div className="rv-cp-new"><input className="input" value={ren} autoFocus onChange={e=>setRen(e.target.value)}
-        onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape")setRen(null);}}/>
+        onKeyDown={e=>{if(e.key==="Enter")rename();if(e.key==="Escape"){e.stopPropagation();setRen(null);}}}/>
         <button className="btn btn-primary btn-sm" onClick={rename}>Сохранить</button></div>}
       <div className="rv-cs-acts">
-        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.xlsx`}
-           data-tip="Excel в стиле AuditLens: дело в цифрах, графики, материалы с разметкой и комментариями">Excel</a>
-        <a className="btn btn-sm btn-ghost" href={`/api/cases/${open}/export.docx`}
-           data-tip="Word в стиле AuditLens: обложка, разбор, графики и карточки материалов; шрифты встроены">Word</a>
-        {cur.mine&&<button className="btn btn-sm btn-ghost" onClick={team}
-          data-tip={cur.shared?"закрыть доступ коллегам":"коллеги увидят дело и смогут приобщать материалы и комментировать"}>
-          {cur.shared?"Закрыть для команды":"Открыть команде"}</button>}
+        <CaseExportBtn cur={cur}/>
+        <button className={"btn btn-sm btn-ghost cs-mute"+(cur.muted?" on":"")} onClick={toggleMute} aria-pressed={!!cur.muted}
+          data-tip={cur.muted?"Уведомления о материалах, сообщениях и статусе этого дела выключены — нажмите, чтобы снова получать. Упоминания и ответы вам приходят всё равно"
+            :"Не присылать уведомления о материалах, сообщениях и статусе этого дела. Упоминания и ответы вам придут всё равно"}>
+          {cur.muted?"✓ Не слежу":"Не следить"}</button>
+        {cur.can_add&&onSetActive&&<button className={"btn btn-sm btn-ghost cs-act"+(activeId===cur.case_id?" on":"")}
+          aria-pressed={activeId===cur.case_id} onClick={()=>onSetActive(activeId===cur.case_id?null:cur.case_id)}
+          data-tip={activeId===cur.case_id?"Активное дело: «В дело» по всему инструменту кладёт сюда одним нажатием. Нажмите, чтобы снять"
+            :"Сделать активным: «В дело» в новостях, отчётах, «Рынке» и жалобах будет класть сюда одним нажатием"}>
+          {activeId===cur.case_id?"✓ Собираю сюда":"Собирать сюда"}</button>}
         {cur.mine&&ren===null&&<button className="btn btn-sm btn-ghost" onClick={()=>setRen(cur.title)}>Переименовать</button>}
+        {cur.mine&&!cur.archived&&<button className="btn btn-sm btn-ghost" disabled={stBusy} onClick={()=>setStatus({archived:true})}
+          data-tip="дело уйдёт в «Архив» списка и станет только для чтения; вернуть можно в любой момент">В архив</button>}
         {cur.mine&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={remove}>Удалить</button>}
+        {!cur.mine&&!cur.my_team&&<button className="btn btn-sm btn-ghost rv-cs-del" onClick={leave}
+          data-tip="дело пропадёт из вашего списка; приобщённое вами останется в деле">Выйти из дела</button>}
+        {!cur.mine&&cur.my_team&&<span className="t-cap cs-via" data-tip="выйти можно, если владелец команды уберёт вас из неё">
+          вы в деле через команду «{cur.my_team}»</span>}
       </div>
-      {items.length>0&&<div className="rv-cs-an">
-        <div className="rv-cs-an-h">
-          <span>Разбор дела <i>ИИ по материалам, со ссылками [N]</i></span>
-          <span className="rv-cs-an-b">
-            {!an&&<button className="rv-explain-btn" disabled={anBusy} onClick={()=>runAn(false)}>{anBusy?"Читаю материалы…":"✦ Разобрать дело"}</button>}
-            {an&&<button className="rv-cs-lnk" disabled={anBusy} onClick={()=>runAn(true)}>{anBusy?"обновляю…":stale?"состав изменился — обновить":"обновить"}</button>}
-            {nRev>0&&<button className="rv-cs-lnk" onClick={goAI} data-tip="передать состав дела ИИ-помощнику: нормы, практика, что запросить">продолжить в ИИ-помощнике<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
-          </span>
-        </div>
-        {anErr&&<div className="rv-explain rv-explain-err">{anErr}</div>}
-        {an&&<div className="rv-explain">{renderMD(an)}</div>}
-      </div>}
-      {items.map((it,i)=><React.Fragment key={it.item_id}>
-        <div className="rv-ci-n mono">[{i+1}]</div>
-        <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onNote={v=>saveNote(it,v)} onOpenDoc={onOpenDoc}
-          onOpen={()=>openRev(it)}/>
-      </React.Fragment>)}
-      {!items.length&&<div className="kb-empty">
-        Дело пустое. Приобщайте жалобы кнопкой «В дело» в ленте раздела «Аудит отзывов» и документы — кнопкой «В дело» в «Базе знаний».</div>}
+      <div className="cs-tabs" role="tablist" aria-label="Разделы дела">{TABS.map(([k,l,n])=>
+        <button key={k} type="button" role="tab" aria-selected={tab===k} className={"cs-tab"+(tab===k?" on":"")}
+          onClick={()=>{ setTab(k); if(k!=="talk") setFocusMsg(null); }}>{l}
+          {n?<span className="cs-tab-n">{n}</span>:null}
+          {k==="talk"&&cur.talk_unread>0&&tab!=="talk"&&<span className="cs-tab-dot" aria-label={`новых: ${cur.talk_unread}`}/>}</button>)}</div>
+      {tab==="items"&&<>
+        {undo&&undo.cid===open&&<div className="cs-gone" role="status">Материал «{String(undo.item.title||undo.item.url||"").slice(0,60)}» убран
+          {undo.n?` — ${undo.n} ${plural(undo.n,"комментарий перейдёт","комментария перейдут","комментариев перейдут")} в обсуждение`:""}.
+          <button type="button" onClick={undoDrop}>Отменить</button></div>}
+        {items.map((it,i)=><React.Fragment key={it.item_id}>
+          <div className="rv-ci-n mono">[{i+1}]</div>
+          <RvCaseItem it={it} onDrop={()=>drop(it.item_id)} onOpenDoc={onOpenDoc} onOpen={()=>openRev(it)}
+            onOpenReport={openReportFromCase} onGo={goFromCase}
+            thread={<CaseItemThread it={it} cid={open} people={people} items={items} meU={meU} canTalk={cur.can_talk}
+              onPosted={reload} onRef={goItem}/>}/>
+        </React.Fragment>)}
+        {!items.length&&<div className="kb-empty">
+          {cur.can_add?<>Дело пустое. «В дело» есть у жалоб, отчётов и ответов ИИ-помощника, новостей выпуска,
+            продуктов «Рынка» и документов «Базы знаний».{activeId!==cur.case_id&&<> Нажмите «Собирать сюда» — и они будут
+            попадать в это дело одним нажатием.</>}</>
+            :"В деле пока нет материалов."}</div>}
+      </>}
+      {tab==="talk"&&<CaseTalk key={open} cid={open} cur={cur} items={items} meU={meU} focusMsg={focusMsg} onRef={goItem}
+        onCount={n=>setCur(c=>c&&c.talk_n!==n?{...c,talk_n:n}:c)}
+        onSeen={()=>{ setCur(c=>c&&({...c,talk_unread:0})); setList(l=>l&&l.map(c=>c.case_id===open?{...c,talk_unread:0}:c)); }}/>}
+      {tab==="analysis"&&<CaseAnalysisTab cid={open} cur={cur} an={an} anBusy={anBusy} anErr={anErr} runAn={runAn}
+        onCite={n=>{ const it=items[n-1]; if(it) goItem(it.item_id); }}
+        goAI={goAI} stale={stale} nRev={nRev} nItems={items.length} anView={anView}/>}
+      {tab==="history"&&<CaseHistory key={open+":"+(cur.updated_at||"")} cid={open}/>}
     </RvModal>{reader}</>;
   }
 
+  if(teamsOpen) return <RvModal side="right" title="Мои команды" sub="группы коллег для доступа к делам одним выбором"
+      onClose={()=>setTeamsOpen(false)}><TeamsHome onBack={()=>{ setTeamsOpen(false); load(); }}/></RvModal>;
   return <RvModal side="right" title="Аудит-дела"
-      sub="подборки жалоб и документов под проверку" onClose={onClose}>
+      sub="подборки доказательств под проверку — ваши и те, куда вас пригласили" onClose={onClose}>
     {legacy.length>0&&<div className="rv-cs-legacy">
       В этом браузере осталось старое аудит-дело: {legacy.length} {plural(legacy.length,"жалоба","жалобы","жалоб")}.
       Перенесите его на сервер — там его увидят коллеги и не потеряет браузер.
@@ -8441,16 +9524,48 @@ function KbCases({onClose,onOpenDoc}){
         onKeyDown={e=>{if(e.key==="Enter")create();}} placeholder="Новое дело: название проверки"/>
       <button className="btn btn-sm" disabled={!newT.trim()} onClick={create}>Создать</button>
     </div>
-    {list===null?<Skel h={120}/>:!list.length?<div className="kb-empty">
-      <b>Дел пока нет.</b>
-      <p>Дело — подборка доказательств под одну проверку: жалобы из раздела «Аудит отзывов» и
-        документы из «Базы знаний». Приобщили, прокомментировали, выгрузили в рабочий файл.</p></div>:
-      list.map(c=><button key={c.case_id} className="kb-case-row"
-          onClick={()=>setOpen(c.case_id)}>
-        <span className="kb-case-row-t">{c.title}</span>
+    {gone&&<div className="cs-gone" role="status">Дело «{gone.title}» удалено.
+      <button className="rv-cs-lnk" onClick={()=>restore(gone.case_id)}>Вернуть</button></div>}
+    {(()=>{ if(list===null) return <Skel h={120}/>;
+      const ql=q.trim().toLowerCase(), hit=c=>!ql||(c.title||"").toLowerCase().includes(ql)||(c.owner_name||"").toLowerCase().includes(ql);
+      const live=list.filter(c=>!c.deleted&&!c.archived), arch=list.filter(c=>!c.deleted&&c.archived), del=list.filter(c=>c.deleted);
+      const nMine=live.filter(c=>c.mine).length, nSh=live.length-nMine;
+      const rows=live.filter(c=>(flt==="all"||(flt==="mine")===!!c.mine)&&hit(c));
+      const archRows=arch.filter(hit);
+      const row=c=><button key={c.case_id} className={"kb-case-row"+(c.archived?" arch":"")} onClick={()=>setOpen(c.case_id)}>
+        <span className="kb-case-row-t">{c.case_id===activeId&&<span className="cs-row-act" data-tip="активное дело: «В дело» кладёт сюда" aria-label="активное дело"/>}
+          <span className="cs-row-ttl">{c.title}</span>
+          {!c.archived&&c.status&&c.status!=="collect"&&<span className={"cs-st sm "+c.status}>{c.status_label}</span>}
+          {c.talk_unread>0&&<span className="cs-row-new">{c.talk_unread} {plural(c.talk_unread,"новое","новых","новых")}</span>}</span>
         <span className="t-cap">{c.items} матер.{c.reviews?` · жалоб ${c.reviews}`:""} · {fmtDateMsk(c.updated_at)}
-          {c.shared?" · команда":""}{!c.mine?` · ${c.owner}`:""}</span>
-      </button>)}
+          {c.mine?(c.members?` · участников ${c.members}`:""):` · ведёт ${c.owner_name} · ${CASE_ROLE_YOU[c.role]||""}`}</span>
+      </button>;
+      return <>
+        {list.filter(c=>!c.deleted).length>5&&<input className="input cs-search" value={q} onChange={e=>setQ(e.target.value)}
+          placeholder="Найти дело по названию или владельцу…" aria-label="Найти дело"/>}
+        {live.length>0&&nSh>0&&<div className="seg cs-flt" role="group" aria-label="Какие дела показать">
+          {[["all","Все",live.length],["mine","Мои",nMine],["shared","Со мной поделились",nSh]].map(([k,l,n])=>
+            <button key={k} className={"seg-btn"+(flt===k?" on":"")} aria-pressed={flt===k} onClick={()=>setFlt(k)}>
+              {l} <span className="cs-n">{n}</span></button>)}</div>}
+        {!live.length&&!arch.length?<div className="kb-empty">
+          <b>Дел пока нет.</b>
+          <p>Дело — подборка доказательств под одну проверку: жалобы из раздела «Аудит отзывов» и
+            документы из «Базы знаний». Приобщили, обсудили с коллегами, выгрузили в рабочий файл.
+            Коллег в дело добавляет владелец — кнопкой «Доступ».</p></div>
+        :!rows.length?<div className="kb-empty">{ql?"Ничего не нашлось.":flt==="shared"?"С вами пока не делились делами.":flt==="mine"?"Своих дел пока нет.":"Все дела в архиве."}</div>
+        :rows.map(row)}
+        {arch.length>0&&<div className="cs-arch-list">
+          <button type="button" className="rail-fold cs-arch-fold" aria-expanded={showArch||!!ql} onClick={()=>setShowArch(v=>!v)}>
+            <svg className="rail-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+            Архив · {arch.length}</button>
+          {(showArch||!!ql)&&(archRows.length?archRows.map(row):<div className="t-cap">В архиве ничего не нашлось.</div>)}</div>}
+        <button type="button" className="cs-teams-lnk" onClick={()=>setTeamsOpen(true)}>
+          <IcTeam s={13}/>Мои команды<span className="t-cap">— коллеги для доступа к делам одним выбором</span></button>
+        {del.length>0&&<div className="cs-del">
+          <div className="t-cap" style={{margin:"14px 0 6px"}}>Недавно удалённые — можно вернуть 30 дней</div>
+          {del.map(c=><div key={c.case_id} className="cs-del-row"><span>{c.title}</span>
+            <button className="rv-cs-lnk" onClick={()=>restore(c.case_id)}>Вернуть</button></div>)}</div>}
+      </>; })()}
   </RvModal>;
 }
 
@@ -8475,6 +9590,9 @@ function KnowledgePage({params}){
     setDocId(Number(p.doc)||null);
     setCases(!!p.cases);
   },[(params||{}).doc,(params||{}).cases]);
+  // старые ссылки #knowledge?cases=1 открывают общую панель «Аудит-дела»
+  useEffect(()=>{ if(cases){ openCases(); setCases(false);
+    try{ history.replaceState(null,"","#knowledge"); }catch{} } },[cases]);
 
   // Формат именно #knowledge?doc=123, а не #knowledge/doc/123: разбор хэша
   // режет его только по «?», и путь с косыми не нашёлся бы среди страниц —
@@ -8515,10 +9633,9 @@ function KnowledgePage({params}){
 
   return <div className="fade-in">
     {docId&&<KbDocCard documentId={docId} onClose={closeDoc}/>}
-    {cases&&<KbCases onClose={()=>setCases(false)} onOpenDoc={id=>{setCases(false);openDoc(id);}}/>}
     <PageHead eyebrow="База знаний · доказательная база" title="Поиск по собранным документам"
       meta="Тарифы и условия с сайтов банков, акты и разъяснения ЦБ, нормативные документы. Ищет и по смыслу, и по точным формулировкам — можно спросить «сколько стоит вести счёт», а можно вставить «ПСК» или номер пункта договора."
-      actions={<button className="btn btn-sm" onClick={()=>setCases(true)}>Аудит-дела</button>}/>
+      actions={<button className="btn btn-sm" onClick={()=>openCases()}>Аудит-дела</button>}/>
 
     <div className="kb-bar">
       <div className="kb-input-wrap">
@@ -8623,12 +9740,23 @@ function KnowledgePage({params}){
 
     <details className="surface kb-tech" open={tech} onToggle={e=>setTech(e.target.open)}>
       <summary>Техническое состояние индекса</summary>
+      {/* Раньше: «пополняется автоматически при ночном сборе» — ночной сбор
+          тарифов архив не трогал (аудит 03.10, ДАН-02). Теперь текст из данных. */}
       <p className="t-cap" style={{margin:"6px 0 10px"}}>
         Поиск двухконтурный: векторный индекс (HNSW, косинус) и полнотекстовый
-        (русская морфология). Результаты сливаются ранговой суммой. Архив
-        пополняется автоматически при ночном сборе — ручной запуск не нужен.</p>
+        (русская морфология). Результаты сливаются ранговой суммой; сайт банка и
+        регулятор весят больше агрегатора, одна страница занимает одно место.
+        Архив пополняется сам: страница, которую ИИ-помощник прочитал для ответа
+        или отчёта, сохраняется здесь{ov&&ov.crawl&&ov.crawl.enabled?<>, а ключевые
+        страницы {ov.crawl.banks.length} крупных банков перечитываются раз в {ov.crawl.every_days} дн.
+        (Сбербанк — раз в {ov.crawl.sber_every_days} дн.)</>:null}. Ночной сбор тарифов архив не пополняет.</p>
       <div className="kb-tech-kv">
         <span>Последнее пополнение</span><b>{formatRelDate(st.last_fetch)}</b>
+        {(ov&&ov.growth||[]).map(g=><React.Fragment key={g.kind}>
+          <span>За 7 дней · {({report:"ИИ-помощник и отчёты",quick:"быстрые ответы",crawl:"обход сайтов банков",manual:"вручную",refresh:"перепроверка"})[g.kind]||g.kind}</span>
+          <b>новых {fmtNum(g.added||0)} · без изменений {fmtNum(g.confirmed||0)} · не удалось {fmtNum(g.failed||0)}</b></React.Fragment>)}
+        {ov&&ov.crawl&&ov.crawl.enabled&&<><span>Последний обход сайтов банков</span>
+          <b>{ov.crawl.last_run?formatRelDate(ov.crawl.last_run):"ещё не было"}</b></>}
         <span>Порог доверия для поиска</span><b>0.50</b>
         <span>Фрагментов в индексе</span><b>{st.fragments?fmtNum(st.fragments):"—"}</b>
       </div>
@@ -8638,10 +9766,21 @@ function KnowledgePage({params}){
 
 
 // ─── Loophole page (встраивает frontend модуля loophole) ─────────────────────
-function LoopholePage(){
+function LoopholePage({record}){
+  // #loophole?record=ID — открыть саму запись: модулю шлём сообщение и после
+  // загрузки фрейма, и при новой ссылке (фрейм не перезагружается)
+  const fr=useRef(null), want=useRef(null);
+  const send=()=>{ const w=fr.current&&fr.current.contentWindow; if(!w||!want.current) return;
+    try{ w.postMessage({type:"al-open-record",record_id:+want.current},location.origin); }catch{} };
+  useEffect(()=>{ want.current=record||null; send(); },[record]); // eslint-disable-line
   return <section className="surface loophole-page" style={{padding:0,overflow:"hidden"}}>
-    <iframe src="/static/loophole/loophole.html"
+    <iframe ref={fr} src="/static/loophole/loophole.html"
             title="Аудит уязвимостей"
+            onLoad={e=>{ try{ const w=e.currentTarget.contentWindow;
+              ["pointerdown","pointermove","keydown","wheel","scroll","touchstart"].forEach(n=>
+                w.addEventListener(n,()=>{ if(_trkInput)_trkInput(); },{passive:true,capture:true}));
+            }catch{}
+              setTimeout(send,600); }}
             style={{width:"100%",height:"100%",border:"none",display:"block"}}/>
   </section>;
 }
@@ -8649,7 +9788,11 @@ function LoopholePage(){
 // ─── SHELL ────────────────────────────────────────────────────────────────────
 // ─── «Пульс» — дашборд владельца: аудитория + продукт + техника в одном ───────
 const AD_CSS=`
-.pu-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 22px;}
+.pu-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:18px 0 16px;}
+@media(max-width:900px){.pu-tiles{grid-template-columns:repeat(6,minmax(0,1fr))}.pu-tiles>.pu-tile{grid-column:span 2}
+  .pu-tiles>.pu-tile:nth-child(n+4){grid-column:span 3}}
+@media(max-width:560px){.pu-tiles{grid-template-columns:1fr 1fr}.pu-tiles>.pu-tile,.pu-tiles>.pu-tile:nth-child(n+4){grid-column:auto}
+  .pu-tiles>.pu-tile:last-child:nth-child(odd){grid-column:1/-1}}
 .pu-tile{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px 12px;}
 .pu-tile .l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-3);margin-bottom:7px;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
@@ -8658,15 +9801,19 @@ const AD_CSS=`
 .pu-tile.neg .v{color:var(--neg);}
 .pu-live{width:6px;height:6px;border-radius:50%;background:var(--pos);animation:pulse 1.8s ease infinite;}
 .pu-sec{margin-top:24px;}
-.pu-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
+.pu-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-top:12px;}
+.pu-grid2.top{align-items:start}
+/* две широкие таблицы рядом не помещаются — до 1400px друг под другом */
+@media(max-width:1400px){.pu-grid2.wide{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:1000px){.pu-grid2{grid-template-columns:1fr;}}
-.pu-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;}
+.pu-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;min-width:0;}
 .pu-card .h{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}
+  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px 12px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.pu-x-scroll{overflow-x:auto;min-width:0}
 .pu-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px;}
-.pu-bar-row .lb{width:110px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pu-bar-row .lb{width:130px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .pu-bar-row .tr{flex:1;height:16px;background:var(--paper-2);border-radius:4px;overflow:hidden;}
-.pu-bar-row .fl{height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
+.pu-bar-row .fl{display:block;height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
   transition:width .5s ease;}
 .pu-bar-row .vv{width:100px;flex:none;text-align:right;font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pu-kv{display:flex;justify-content:space-between;align-items:baseline;padding:7px 2px;border-top:1px solid var(--hair);font-size:12.5px;}
@@ -8675,6 +9822,7 @@ const AD_CSS=`
 .pu-heat{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:12px;}
 .pu-heat .hl{font-family:inherit;font-size:11px;color:var(--ink-3);align-self:center;font-variant-numeric:tabular-nums}
 .pu-heat .c{aspect-ratio:1;border-radius:2.5px;background:var(--paper-2);min-width:0;}
+.pu-heat .hh{font-size:10px;color:var(--ink-3);font-variant-numeric:tabular-nums;min-width:0;overflow:visible;white-space:nowrap}
 .pu-tbl{width:100%;font-size:11.5px;border-collapse:collapse;}
 .pu-tbl th{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-3);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;font-variant-numeric:tabular-nums}
@@ -8707,7 +9855,7 @@ const AD_CSS=`
   border-radius:999px;padding:2px 7px;font-variant-numeric:tabular-nums}
 .pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
 .pu-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
-.pu-team td:first-child{max-width:260px;}
+.pu-team td:first-child{max-width:220px;}
 /* ── Люди: директория, карточка, отчёты, жалобы ─────────────────────────── */
 .pu-people-ctl{display:flex;align-items:center;gap:8px}
 .pu-search{font:inherit;font-size:11.5px;padding:3px 9px;border-radius:6px;
@@ -8726,11 +9874,20 @@ const AD_CSS=`
 .pu-badge.tod{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
 .pu-badge.off{color:var(--ink-3);border:0}
 .pu-badge.adm{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
-.pu-pages{color:var(--ink-3);font-size:12px;max-width:210px}
+.pu-badge.sig{color:var(--select);border-color:color-mix(in oklab,var(--select),transparent 60%)}
+.pu-mail .pu-badge{margin-left:0}
+.pu-mail td .pu-badge.off{margin-left:6px}
+.pu-mail-k{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:2px 0 14px}
+@media(max-width:900px){.pu-mail-k{grid-template-columns:1fr 1fr}}
+.pu-mail-a{margin-left:8px;color:var(--ink-3);font-size:12px}
+.pu-mail tr.pu-exrow td{opacity:.55}
+.pu-mail tr.pu-exrow:hover td{opacity:.85}
+.pu-pages{color:var(--ink-3);font-size:12px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pu-team tr.pu-exrow td{opacity:.55}
+.pu-team tr.pu-exrow:hover td{opacity:.85}
 .pu-deep{font-style:normal;color:var(--ink-3);font-size:11px;margin-left:2px}
 .pu-badrow{background:color-mix(in oklab,var(--neg),transparent 94%)}
 .pu-qcell{max-width:420px}
-.pu-empty{color:var(--ink-3);font-size:12px;padding:10px 0}
 .pu-link{background:none;border:0;padding:0;font:inherit;font-size:11px;color:var(--accent);
   cursor:pointer;white-space:nowrap}
 .pu-link:hover{text-decoration:underline}
@@ -8750,9 +9907,10 @@ const AD_CSS=`
 .pu-x{background:none;border:0;font-size:16px;color:var(--ink-3);cursor:pointer;padding:2px 6px}
 .pu-x:hover{color:var(--ink)}
 .pu-u .a.big{width:38px;height:38px;font-size:13px}
-.pu-drtiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:1px;
-  background:var(--hair);border-bottom:1px solid var(--hair)}
-.pu-drtiles>div{background:var(--paper);padding:11px 13px;display:flex;flex-direction:column;gap:1px}
+.pu-drtiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));
+  background:var(--paper);border-bottom:1px solid var(--hair)}
+.pu-drtiles>div{padding:11px 13px;display:flex;flex-direction:column;gap:1px;
+  box-shadow:inset -1px -1px 0 var(--hair)}
 .pu-drtiles b{font-size:17px;font-weight:500}
 .pu-drtiles span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
 .pu-drtiles .neg b{color:var(--neg)}
@@ -8774,7 +9932,7 @@ const AD_CSS=`
 .pu-vd{flex-shrink:0}
 .pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:inherit;font-variant-numeric:tabular-nums}
 .pu-trail .at{color:var(--ink-3)}
-.pu-trail .k{color:var(--ink-3);width:96px}
+.pu-trail .k{color:var(--ink-3);width:118px;flex:none}
 .pu-trail .p{color:var(--ink-2);flex:1}
 .pu-trail .d{color:var(--ink-3)}
 .pu-report{font-size:13px;line-height:1.6}
@@ -8803,12 +9961,25 @@ const AD_CSS=`
   display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;}
 .pu-guard.ok{background:color-mix(in oklab,var(--pos),transparent 93%);
   border-color:color-mix(in oklab,var(--pos),transparent 78%);color:var(--ink-2);}
+.pu-guard.warn{background:color-mix(in oklab,var(--warn),transparent 91%);
+  border-color:color-mix(in oklab,var(--warn),transparent 70%);}
 .pu-guard b{color:var(--neg);}
-.pu-guard-i{padding-left:10px;border-left:1px solid var(--hair-2);color:var(--ink-2);}
-.pu-guard-i:first-of-type{border-left:0;padding-left:0;}
+.pu-guard.warn b{color:var(--ink);}
+/* без вертикальных разделителей: при переносе строки они вставали в её начало */
+.pu-guard{column-gap:18px;row-gap:6px}
+.pu-guard-i{padding:0;border:0;background:none;font:inherit;
+  font-size:12.5px;color:var(--ink-2);cursor:pointer;text-align:left}
+@media(max-width:760px){.pu-guard{flex-direction:column;align-items:flex-start}}
+.pu-guard-i:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.pu-guard-i .lv{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:1px;background:var(--warn)}
+.pu-guard-i .lv.bad{background:var(--neg)}
+/* переход из сторожа: блок не прячется под липкой строкой вкладок */
+.pu-card[id],.pu-grid2[id]{scroll-margin-top:120px}
+.pu-flash{animation:puflash 1.4s ease-out}
+@keyframes puflash{0%{box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 40%)}100%{box-shadow:0 0 0 0 transparent}}
+.pu-me{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;white-space:nowrap}
+.pu-me input{accent-color:var(--accent)}
 
-.pu-tabs{display:flex;gap:4px;margin:0 0 16px;border-bottom:1px solid var(--hair);
-  padding-bottom:10px;}
 
 .pu-empty{padding:16px 18px;border:1px dashed var(--hair-2);border-radius:9px;
   font-size:12.5px;line-height:1.6;color:var(--ink-3);}
@@ -8853,43 +10024,55 @@ const AD_CSS=`
   display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;}
 .pu-todo-row:first-of-type{border-top:0;}
 
-.pu-kv{display:grid;grid-template-columns:repeat(4,auto);gap:5px 20px;
+.pu-kv4{display:grid;grid-template-columns:repeat(4,auto);gap:5px 20px;
   justify-content:start;font-size:12.5px;margin-bottom:4px;}
-.pu-kv span{color:var(--ink-3);}
-.pu-kv b{font-family:inherit;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
-.pu-kv b.neg{color:var(--neg);}
+.pu-kv4 span{color:var(--ink-3);}
+.pu-kv4 b{font-family:inherit;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.pu-kv4 b.neg{color:var(--neg);}
+@media(max-width:560px){.pu-kv4{grid-template-columns:auto auto}}
+.pu-kv .sub{color:var(--ink-3);font-size:11.5px;margin-left:6px;font-weight:400}
+.pu-err .n{font-size:11px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
+.pu-feed-row .w b{font-weight:500;color:var(--ink)}
+@media(max-width:760px){.pu-search{width:100%}.pu-people-ctl{flex-wrap:wrap;width:100%}
+  .pu-bar-row .lb{width:96px}.pu-bar-row .vv{width:84px}}
 .pu-kv-row{display:flex;justify-content:space-between;padding:5px 2px;
   border-top:1px solid var(--hair);font-size:12.5px;}
 .pu-kv-row b{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 
 `;
-const AD_PAGE_RU={overview:"Новостные обзоры",foryou:"Для вас",market:"Рынок",sber:"Сбер/Рынок",reviews:"Аудит отзывов",
+const AD_PAGE_RU={overview:"Новостные обзоры",foryou:"Для вас",market:"Рынок · позиция",sber:"Сбер/Рынок",reviews:"Аудит отзывов",
   ai:"ИИ-помощник",knowledge:"База знаний",loophole:"Аудит уязвимостей",banks:"Банки",sources:"Источники",
   quality:"Качество",profile:"Профиль",pulse:"Пульс"};
 const adFmtS=(s)=>{ s=Math.round(s||0); if(s<60)return s+"с";
   if(s<3600)return Math.round(s/60)+"м"; return (s/3600).toFixed(1).replace(".",",")+"ч"; };
 
-// area-график: users (заливка) + views (тонкая линия), даты по оси
-function AdArea({data,h=130}){
-  const w=640, vals=(data||[]);
+// area-график: люди в день, ось слева. Просмотры раньше шли второй линией в
+// своём масштабе без осей — пересечения линий ничего не значили; теперь
+// просмотры — в подсказке над точкой и в подписи под графиком
+function AdArea({data,h=140}){
+  const w=640, vals=(data||[]), L=26;
   if(vals.length<2) return <div style={{color:"var(--ink-3)",fontSize:12,padding:"20px 0"}}>Данные накапливаются — график появится после пары дней жизни телеметрии.</div>;
-  const maxU=Math.max(...vals.map(v=>v.users||0),1);
-  const maxV=Math.max(...vals.map(v=>v.views||0),1);
-  const px=(i)=>i/(vals.length-1)*(w-8)+4;
-  const pyU=(v)=>h-16-((v||0)/maxU)*(h-34);
-  const pyV=(v)=>h-16-((v||0)/maxV)*(h-34);
-  const dU=vals.map((v,i)=>(i?"L":"M")+px(i).toFixed(1)+","+pyU(v.users).toFixed(1)).join("");
-  const dV=vals.map((v,i)=>(i?"L":"M")+px(i).toFixed(1)+","+pyV(v.views).toFixed(1)).join("");
+  const maxRaw=Math.max(...vals.map(v=>+v.users||0),1);
+  const maxU=maxRaw<=4?4:Math.ceil(maxRaw/4)*4;          // круглая шкала: 4, 8, 12…
+  const px=(i)=>L+i/(vals.length-1)*(w-L-8);
+  const py=(v)=>h-18-((+v||0)/maxU)*(h-30);
+  const dU=vals.map((v,i)=>(i?"L":"M")+px(i).toFixed(1)+","+py(v.users).toFixed(1)).join("");
   const last=vals[vals.length-1];
   const dd=(s)=>(s||"").slice(8,10)+"."+(s||"").slice(5,7);
-  return <svg width="100%" viewBox={"0 0 "+w+" "+h} style={{display:"block"}}>
-    <path d={dU+"L"+(w-4)+","+(h-14)+"L4,"+(h-14)+"Z"} fill="var(--accent-soft)" opacity=".6"/>
-    <path d={dV} fill="none" stroke="var(--ink-4)" strokeWidth="1" opacity=".55" strokeDasharray="3 3"/>
+  const ticks=[0,maxU/2,maxU];
+  const F={fontSize:10,fill:"var(--ink-3)",fontFamily:"Geist, Inter, sans-serif"};
+  return <svg width="100%" viewBox={"0 0 "+w+" "+h} style={{display:"block"}} role="img"
+    aria-label={"Люди по дням: от "+Math.min(...vals.map(v=>+v.users||0))+" до "+maxRaw}>
+    {ticks.map(t=><g key={t}>
+      <line x1={L} x2={w-4} y1={py(t)} y2={py(t)} stroke="var(--hair)" strokeWidth="1"/>
+      <text x={L-6} y={py(t)+3} textAnchor="end" {...F}>{t}</text></g>)}
+    <path d={dU+"L"+px(vals.length-1)+","+(h-18)+"L"+L+","+(h-18)+"Z"} fill="var(--accent-soft)" opacity=".6"/>
     <path d={dU} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round"/>
-    <circle cx={px(vals.length-1)} cy={pyU(last.users)} r="2.6" fill="var(--accent)"/>
-    <text x="4" y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif">{dd(vals[0].d)}</text>
-    <text x={w-4} y={h-3} fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">{dd(last.d)}</text>
-    <text x={w-4} y="10" fontSize="10" fill="var(--ink-3)" fontFamily="Geist, Inter, sans-serif" textAnchor="end">макс {maxU} польз. · {maxV} просм.</text>
+    {vals.map((v,i)=><circle key={v.d} cx={px(i)} cy={py(v.users)} r={i===vals.length-1?2.8:2}
+      fill="var(--accent)" opacity={i===vals.length-1?1:.55}>
+      <title>{dd(v.d)}: {v.users} чел. · {v.views} {plural(+v.views||0,"просмотр","просмотра","просмотров")}</title></circle>)}
+    <text x={L} y={h-3} {...F}>{dd(vals[0].d)}</text>
+    <text x={w-4} y={h-3} textAnchor="end" {...F}>{dd(last.d)}</text>
   </svg>;
 }
 
@@ -8897,12 +10080,13 @@ function AdHeat({cells}){
   const map={}; let max=1;
   (cells||[]).forEach(c=>{ map[c.dow+"-"+c.hour]=c.n; if(c.n>max)max=c.n; });
   const days=["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
-  const out=[];
+  const out=[<span key="hx" className="hl"/>];
+  for(let hh=0;hh<24;hh++) out.push(<span key={"h"+hh} className="hh">{hh%3===0?hh:""}</span>);
   days.forEach((dl,di)=>{
     out.push(<span key={"l"+di} className="hl">{dl}</span>);
     for(let hh=0;hh<24;hh++){
       const n=map[(di+1)+"-"+hh]||0;
-      out.push(<span key={di+"-"+hh} className="c" title={dl+" "+hh+":00 · "+n+" событий"}
+      out.push(<span key={di+"-"+hh} className="c" title={dl+" "+hh+":00 · "+n+" "+plural(n,"открытие","открытия","открытий")+" страниц"}
         style={n?{background:"color-mix(in oklab,var(--accent),var(--paper-2) "+Math.round(88-(n/max)*78)+"%)"}:null}/>);
     }
   });
@@ -8967,37 +10151,75 @@ function AdCols({axis,a,b,h=118}){
 // что ждёт моего решения, доходит ли фоновая индексация, что не доехало в базу.
 
 // Сторож в шапке: всё плохое одной строкой. Раньше, чтобы понять «всё ли в
-// порядке», приходилось пролистать весь экран.
-function PuGuard({m}){
-  const t=m.today||{}, ing=(m.ingest||{}).queue||{}, dg=m.digest||{};
-  const fb=m.ai_feedback||{};
-  const bad=[];
-  if((t.errors||0)>0) bad.push({k:"err",s:`ошибок сегодня: ${t.errors}`,to:"tech"});
-  if((ing.dropped||0)>0) bad.push({k:"drop",s:`очередь переполнялась: ${ing.dropped}`,to:"data"});
-  if(ing.workers===0) bad.push({k:"wrk",s:"воркеры индексации не запущены",to:"data"});
-  if((dg.sections||[]).some(s=>s.status&&s.status!=="ok"))
-    bad.push({k:"dg",s:"дайджест собрался не полностью",to:"data"});
-  if((fb.dislikes||0)>0) bad.push({k:"fb",s:`жалоб на ответы ИИ: ${fb.dislikes}`,to:"ai"});
-  if(!bad.length) return <div className="pu-guard ok">Всё в порядке: ошибок нет,
-    фон работает, жалоб на ответы ИИ нет.</div>;
-  return <div className="pu-guard">
-    <b>Требует внимания:</b>
-    {bad.map(x=><span key={x.k} className="pu-guard-i">{x.s}</span>)}
+// порядке», приходилось пролистать весь экран. Аудит 03.10: сторож был слеп —
+// выпуск проверял по полю, которого нет (digest — массив), а площадки,
+// регрессионный набор и пропавшие оценки не смотрел вовсе; «жалоб нет»
+// горело зелёным, когда оценок не ставили больше месяца.
+const DG_SECTION_RU={headline:"заголовок",news:"новости",quality_ops:"качество данных",
+  reviews_brief:"сводка отзывов",reviews_pulse:"пульс отзывов",tariff_moves:"тарифы и ставка"};
+const mskToday=()=>{try{return new Date().toLocaleDateString("sv",{timeZone:"Europe/Moscow"});}catch{return "";}};
+const mskHour=()=>{try{return +new Date().toLocaleString("en-GB",{timeZone:"Europe/Moscow",hour:"2-digit",hour12:false});}catch{return 12;}};
+function puGuardItems(m){
+  const t=m.today||{}, ing=(m.ingest||{}).queue||{};
+  const dg=Array.isArray(m.digest)?m.digest:[];
+  const fb=m.ai_feedback||{}, f=m.features||{}, ev=m.eval||{};
+  const rs=(m.review_sources||{}).sources||[];
+  const nq=m.news_quality||{}, gw=(m.search||{}).gateway||{}, pr=m.proposals||{};
+  const num=x=>String(x).replace(".",",");
+  const out=[];
+  const add=(lv,s,to,id)=>out.push({lv,s,to,id});
+  if((t.errors||0)>0) add("bad",`ошибок сегодня: ${t.errors}`,"tech","pu-errors");
+  if((ing.dropped||0)>0) add("bad",`очередь индексации переполнялась: ${ing.dropped}`,"data","pu-ingest");
+  if(ing.workers===0) add("bad","воркеры индексации не запущены","data","pu-ingest");
+  const failed=dg.filter(x=>x.status&&x.status!=="ok");
+  if(failed.length) add("bad",`выпуск собрался не полностью: ${failed.map(x=>DG_SECTION_RU[x.section]||x.section).join(", ")}`,"tech","pu-digest");
+  const dgDate=(dg[0]||{}).d;
+  if(dgDate&&dgDate<mskToday()&&mskHour()>=8) add("bad",`сегодняшнего выпуска нет — последний ${rvDate(dgDate)}`,"tech","pu-digest");
+  const down=rs.filter(x=>x.status==="встал"||x.status==="просел");
+  if(down.length) add("bad",`площадки отзывов: ${down.map(x=>x.label+" — "+x.status).join(", ")}`,"data","pu-sources");
+  const surge=rs.filter(x=>x.status==="всплеск"&&x.norm>0);
+  if(surge.length) add("warn",`всплеск на площадке: ${surge.map(x=>`${x.label} ×${Math.round(x.week/x.norm)} к норме`).join(", ")} — наплыв жалоб или догрузка`,"data","pu-sources");
+  if(gw.breaker_open) add("bad",`поисковый шлюз отключён${gw.breaker_reason?": "+gw.breaker_reason:""}`,"data","pu-search");
+  if((fb.dislikes||0)>0) add("bad",`${plural(fb.dislikes,"жалоба","жалобы","жалоб")} на ответы ИИ: ${fb.dislikes}`,"ai","pu-aifb");
+  [["hermes","быстрого ответа"],["deep","отчёта"]].forEach(([k,nm])=>{const e=ev[k]; if(!e||e.score==null)return;
+    if(e.delta!=null&&e.delta<=-5) add("warn",`проверочный набор ${nm}: ${num(e.score)} из 100 (−${num(-e.delta)})`,"ai","pu-eval");
+    else if(e.score<75) add("warn",`проверочный набор ${nm}: ${num(e.score)} из 100`,"ai","pu-eval");
+    if(k==="hermes"&&e.age_days>8) add("warn",`проверочный набор не прогонялся ${e.age_days} дн`,"ai","pu-eval");});
+  const rl=(f.ratings_last||[])[0], ageR=rl?rl.age_days:null;
+  if(ageR==null||ageR>=14) add("warn",ageR==null?"оценок 👍/👎 не ставили ни разу — «жалоб нет» ничего не значит"
+    :`оценок 👍/👎 не ставили ${ageR} дн — «жалоб нет» ничего не значит`,"ai","pu-aifb");
+  const nerr=((nq.stream||{}).sources||[]).filter(x=>x.last_error);
+  if(nerr.length) add("warn",`ленты новостей с ошибкой: ${nerr.map(x=>x.label||x.source).join(", ")}`,"data","pu-news");
+  const ib=m.inbox||{};
+  if((ib.unread||0)>0) add("warn",`${ib.unread} ${plural(ib.unread,"обращение ждёт","обращения ждут","обращений ждут")} ответа${ib.oldest_new_days?` · старейшему ${ib.oldest_new_days} дн`:""}`,"inbox","pu-inbox");
+  if((pr.pending||0)>0) add("warn",`${pr.pending} ${plural(pr.pending,"заявка","заявки","заявок")} на источники ${pr.pending===1?"ждёт":"ждут"} решения · старейшей ${pr.oldest_days} дн`,"data","pu-proposals");
+  return out.sort((a,b)=>(a.lv==="bad"?0:1)-(b.lv==="bad"?0:1));
+}
+function PuGuard({m,onGo}){
+  const items=puGuardItems(m);
+  if(!items.length) return <div className="pu-guard ok" role="status">Всё в порядке: ошибок нет, выпуск собран,
+    площадки отзывов и фон работают, на ответы ИИ не жаловались.</div>;
+  const bad=items.some(x=>x.lv==="bad");
+  return <div className={"pu-guard"+(bad?"":" warn")} role="status">
+    <b>{bad?"Требует внимания:":"Обратить внимание:"}</b>
+    {items.map((x,i)=><button key={i} type="button" className="pu-guard-i" onClick={()=>onGo&&onGo(x.to,x.id)}
+      title="перейти к блоку"><span className={"lv"+(x.lv==="bad"?" bad":"")}/>{x.s}</button>)}
   </div>;
 }
 
 // ── Оценки ответов ИИ ───────────────────────────────────────────────────────
 // Проценты сознательно не показываем: на десятке оценок доля — генератор
 // ложных выводов. Абсолютные числа и сырой журнал честнее.
-function PuAiFeedback({fb,onOpenReport,onOpenUser}){
+function PuAiFeedback({fb,days,lastAt,onOpenReport,onOpenUser}){
   const[only,setOnly]=useState("all");
   const items=(fb.items||[]).filter(x=>only==="all"?true:x.verdict<0);
   const rated=(fb.likes||0)+(fb.dislikes||0);
+  const ans=fb.answers||0;
 
-  return <div className="pu-card">
+  return <div className="pu-card pu-sec" id="pu-aifb">
     <div className="h">
-      <span>Оценки ответов ИИ</span>
-      <span className="mono">👍 {fb.likes||0} · 👎 {fb.dislikes||0} · оценено {rated} из {fb.answers||0}</span>
+      <span>Оценки ответов ИИ · {days} дн</span>
+      <span className="mono">👍 {fb.likes||0} · 👎 {fb.dislikes||0} · оценено {rated} из {ans}</span>
     </div>
 
     {(fb.reasons||[]).length>0&&<div className="pu-reasons">
@@ -9006,10 +10228,10 @@ function PuAiFeedback({fb,onOpenReport,onOpenUser}){
 
     {rated===0
       ? <div className="pu-empty">
-          <b>Ответы ИИ пока никто не оценивал.</b>
-          <p>За период выдано {fb.answers||0} ответов. Кнопки 👍/👎 стоят под каждым
+          <b>За {days} дн ответы ИИ никто не оценивал{lastAt?` (последняя оценка — ${rvDate(lastAt)})`:""}.</b>
+          <p>За период — {ans} {plural(ans,"ответ","ответа","ответов")}. Кнопки 👍/👎 стоят под каждым
              ответом ИИ-помощника; при 👎 открывается выбор причины и поле комментария —
-             это и попадёт сюда.</p>
+             это и попадёт сюда. Пока оценок нет, «жалоб нет» ни о чём не говорит.</p>
         </div>
       : <>
         <div className="pu-fb-seg">
@@ -9025,10 +10247,10 @@ function PuAiFeedback({fb,onOpenReport,onOpenUser}){
             <b>{x.question||"без текста вопроса"}</b>
           </div>
           <div className="pu-fb-m">
-            <span>{initials(x.username||"?")}</span>
-            <span>{x.mode==="deep"?"глубокий разбор":"быстрый ответ"}</span>
+            <button className="pu-link" onClick={()=>onOpenUser&&onOpenUser(x.username)}>{x.name||x.username}</button>
+            <span>{x.mode==="deep"?"отчёт":"быстрый ответ"}</span>
             <span>{fmtDateMsk(x.created_at)}</span>
-            {x.report_id&&<a href={`#ai?report=${x.report_id}`}>отчёт #{x.report_id}</a>}
+            {x.report_id&&<button className="pu-link" onClick={()=>onOpenReport&&onOpenReport(x.report_id)}>открыть отчёт →</button>}
           </div>
           {x.reasons&&x.reasons.length>0&&<div className="pu-fb-r">
             {x.reasons.map((r,j)=><span key={j} className="pu-reason sm">{r}</span>)}
@@ -9046,30 +10268,54 @@ function PuAiFeedback({fb,onOpenReport,onOpenUser}){
 // ── Готовность к персонализации ─────────────────────────────────────────────
 // Не «заполнение профиля»: полям профиля соответствует половина баллов,
 // остальное — накопленное поведение (вопросы, оценки).
+// короткие заголовки колонок: раньше брали первое слово подписи — выходило «5+ 3+ 5+ 3+»
+const PU_PERSONA_COL={desc:"описание",ratings:"оценки ленты",focus:"темы",queries:"вопросы ИИ",
+  ai_ratings:"оценки ИИ",note:"нарратив"};
+// Объём отчёта: «1 тыс.» у сообщения об ошибке в 53 знака выдавало сорванный
+// отчёт за обычный (ПУЛ-02). Короткое тело и итог прогона — видны.
+function puLen(r){
+  const n=+r.body_len||0;
+  const txt=n<1000?`${n} зн.`:`${Math.round(n/1000)} тыс. зн.`;
+  const st=r.status==="stopped"?" · остановлен":r.status==="failed"?" · сорвался":"";
+  const bad=n<500||r.status==="failed";
+  return <span style={bad?{color:"var(--neg)"}:undefined}
+    title={r.elapsed_s?`строился ${puDur(r.elapsed_s)}`:undefined}>{txt}{st}</span>;
+}
+function puDur(s){ if(s==null)return "—"; s=Math.round(+s);
+  return s<90?`${s} с`:`${Math.round(s/60)} мин`; }
+
 function PuPersona({p}){
+  const[all,setAll]=useState(false);
   const parts=p.parts||[];
-  return <div className="pu-card">
-    <div className="h"><span>Готовность к персонализации</span>
+  const us=p.users||[];
+  // сервер сортирует: сначала заходившие за месяц, от пустых профилей к полным
+  const recent=us.filter(u=>u.recent);
+  const shown=all?us:recent.slice(0,25);
+  return <div className="pu-card pu-sec">
+    <div className="h"><span>Готовность к персонализации · накоплено за всё время</span>
       <span className="mono">медиана {p.median||0}%</span></div>
     <p className="t-cap" style={{margin:"0 0 12px"}}>
       Насколько инструмент знает, что проверяет каждый. Складывается из описания
       зоны ответственности, тем в фокусе, вопросов ИИ и оценок — по ним строится
-      лента «Для вас». Личные интересы и тексты вопросов здесь не показываются.
+      лента «Для вас». Сверху — кто заходил за месяц, от пустых профилей к полным.
+      Личные интересы и тексты вопросов здесь не показываются.
     </p>
-    <table className="pu-tbl">
+    <div className="pu-x-scroll"><table className="pu-tbl">
       <thead><tr><th>Аудитор</th><th>Готовность</th>
-        {parts.map(x=><th key={x.key} title={x.label}>{x.label.split(" ")[0]}</th>)}
+        {parts.map(x=><th key={x.key} title={x.label} className="pu-chk">{PU_PERSONA_COL[x.key]||x.label}</th>)}
       </tr></thead>
-      <tbody>{(p.users||[]).map(u=><tr key={u.username}>
-        <td>{u.name}{!u.personal_on&&<span className="pu-off" title="персонализация выключена пользователем"> выкл</span>}</td>
+      <tbody>{shown.map(u=><tr key={u.username}>
+        <td title={"@"+u.username}>{u.name}{!u.personal_on&&<span className="pu-off" title="персонализация выключена пользователем"> выкл</span>}</td>
         <td>
           <div className="pu-mini"><i style={{width:`${u.score}%`}}/></div>
           <span className="mono">{u.score}%</span>
         </td>
-        {parts.map(x=><td key={x.key} className="pu-chk">
+        {parts.map(x=><td key={x.key} className="pu-chk" title={x.label}>
           {u.parts[x.key]?<span className="yes">✓</span>:<span className="no">○</span>}</td>)}
       </tr>)}</tbody>
-    </table>
+    </table></div>
+    {us.length>shown.length||all?<button className="pu-link" style={{marginTop:10}} onClick={()=>setAll(!all)}>
+      {all?`Только заходившие за месяц (${recent.length})`:`Показать всех (${us.length})`}</button>:null}
     {(p.gaps||[]).length>0&&<p className="t-cap" style={{marginTop:10}}>
       Чаще всего не хватает: {p.gaps.map(g=>`${g.label.toLowerCase()} (${g.miss} чел.)`).join(" · ")}.
     </p>}
@@ -9079,43 +10325,78 @@ function PuPersona({p}){
 // ── Заявки на источники: очередь решений владельца ──────────────────────────
 function PuProposals({p}){
   if(!p||!p.pending) return null;
-  return <div className="pu-card pu-todo">
-    <div className="h"><span>Требует вашего решения</span>
-      <span className="mono">{p.pending} заявок · старейшей {p.oldest_days} дн</span></div>
+  return <div className="pu-card pu-todo" id="pu-proposals">
+    <div className="h"><span>Заявки на источники · ждут вашего решения</span>
+      <span className="mono">{p.pending} {plural(p.pending,"заявка","заявки","заявок")} · старейшей {p.oldest_days} дн</span></div>
     {(p.items||[]).map(x=><div key={x.proposal_id} className="pu-todo-row">
       <b>{x.domain}</b>
       <span className="t-cap">{x.title||""} · предложил {x.author} · {fmtDateMsk(x.created_at)}</span>
     </div>)}
-    <a className="btn btn-sm" href="#sources" style={{marginTop:10}}>Рассмотреть на «Источниках»</a>
+    <a className="btn btn-sm" href="#sources" style={{marginTop:10}}>Рассмотреть в разделе «Источники»</a>
   </div>;
 }
 
 // ── Фоновая индексация ──────────────────────────────────────────────────────
 // Персонализация по пользователям: сила профиля, просмотры/клики «Для вас»,
 // оценки (этап F, 05.08.2026). Владелец видит, у кого персонализация пустая.
-function PuPersonalization({pz}){
+// Своя почта для уведомлений (03.10): сколько и кто подключил, сколько писем ушло,
+// как сработало приглашение. Адреса приходят только владельцу.
+const PU_MAIL_KIND={sigma:["Sigma","sig"],private:["личная",""],sso:["из учётной записи","off"]};
+function PuMail({ml,days,onOpenUser}){
+  if(!ml||ml.connected==null) return null;
+  const ppl=ml.people||[], pr=ml.promo||{};
+  const share=ml.active?Math.round(ml.active_connected/ml.active*100):null;
+  return <div className="pu-card pu-sec pu-mail">
+    <div className="h"><span>Почта для уведомлений</span>
+      {ml.active>0&&<span className="pu-chip" title={`среди тех, кто открывал разделы за ${days} дн`}>
+        подключили {ml.active_connected} из {ml.active} активных · {share}%</span>}</div>
+    <div className="pu-mail-k">
+      <div className="pu-tile"><div className="l">Подключили почту</div><div className="v tnum">{ml.connected}</div>
+        <div className="s">Sigma — {ml.sigma} · личная — {ml.private}{ml.sso?` · из учётной записи — ${ml.sso}`:""}</div></div>
+      <div className="pu-tile"><div className="l">Ждут кода</div><div className="v tnum">{ml.pending}</div>
+        <div className="s">указали адрес, ещё не подтвердили</div></div>
+      <div className={"pu-tile"+(ml.failed?" neg":"")}><div className="l">Писем · {days} дн</div><div className="v tnum">{ml.sent}</div>
+        <div className="s">{ml.failed?`не ушло — ${ml.failed}`:"без сбоев"} · кодов — {ml.codes}</div></div>
+      <div className="pu-tile"><div className="l">Приглашение</div><div className="v tnum">{pr.shown||0}</div>
+        <div className="s">увидели · «Подключить» — {pr.connect||0}, «Не сейчас» — {pr.later||0}</div></div>
+    </div>
+    {ppl.length===0?<div className="pu-note">Пока никто не подключил почту.</div>
+      :<div className="pu-x-scroll"><table className="pu-tbl">
+        <thead><tr><th>кто</th><th>почта</th><th>подключил(а)</th><th>писем · {days} дн</th><th>последнее письмо</th></tr></thead>
+        <tbody>{ppl.map(u=>{ const [kl,kc]=PU_MAIL_KIND[u.kind]||[u.kind,""];
+          return <tr key={u.username} className={"pu-rowclick"+(u.excluded?" pu-exrow":"")} onClick={()=>onOpenUser&&onOpenUser(u.username)}>
+            <td title={"@"+u.username}>{u.name}{u.excluded&&<span className="pu-badge off">не в счёт</span>}</td>
+            <td><span className={"pu-badge "+kc}>{kl}</span>{u.email&&<span className="pu-mail-a">{u.email}</span>}</td>
+            <td>{u.since||"—"}</td>
+            <td>{u.sent}{u.failed?<span style={{color:"var(--neg)"}}> · не ушло {u.failed}</span>:null}</td>
+            <td>{u.last_mail||"—"}</td></tr>; })}</tbody></table></div>}
+  </div>;
+}
+
+function PuPersonalization({pz,days,onOpenUser}){
   const us=pz.users||[];
   return <div className="pu-card pu-sec">
-    <div className="h"><span>Персонализация «Для вас» · по людям</span>
-      {pz.ctr!=null&&<span className="pu-chip">CTR плиток {pz.ctr}%</span>}</div>
-    {us.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Данные копятся.</div>
-      :<table className="pu-tbl">
-        <thead><tr><th>кто</th><th>сила профиля</th><th>просмотры</th><th>клики</th><th>оценок</th></tr></thead>
-        <tbody>{us.map((u,i)=><tr key={i}>
-          <td>{u.username}</td>
+    <div className="h"><span>Персонализация «Для вас» · {days} дн</span>
+      {pz.ctr!=null&&<span className="pu-chip" title="клики по новостям на 100 открытий «Для вас»">кликов на 100 открытий: {String(pz.ctr).replace(".",",")}</span>}</div>
+    {us.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>За период никто не заходил.</div>
+      :<div className="pu-x-scroll"><table className="pu-tbl">
+        <thead><tr><th>кто</th><th>сила профиля</th><th>открытий «Для вас»</th><th>кликов в «Для вас»</th><th>кликов в выпуске</th><th>оценок</th></tr></thead>
+        <tbody>{us.map((u,i)=><tr key={i} className="pu-rowclick" onClick={()=>onOpenUser&&onOpenUser(u.username)}>
+          <td title={"@"+u.username}>{u.name||u.username}</td>
           <td style={u.score!=null&&u.score<40?{color:"var(--warn)"}:null}>{u.score!=null?u.score+"%":"—"}</td>
-          <td>{u.views}</td><td>{u.clicks}</td><td>{u.fb}</td>
-        </tr>)}</tbody></table>}
+          <td>{u.views}</td><td>{u.clicks}</td><td>{u.clicks_issue||0}</td><td>{u.fb}</td>
+        </tr>)}</tbody></table></div>}
   </div>;
 }
 
 // Качество новостного выпуска: ночной LLM-судья + клики (этап 6, 05.08.2026).
 // До этого качество отбора не измерялось — деградацию замечал только владелец.
-function PuNewsQuality({q}){
+const ddmm=d=>{const m=String(d||"").match(/^\d{4}-(\d{2})-(\d{2})/);return m?`${m[2]}.${m[1]}`:(d||"");};
+function PuNewsQuality({q,days}){
   const s=q.series||[], today=q.today, clicks=q.clicks||[];
   const nClicks=clicks.reduce((a,c)=>a+(c.n||0),0);
   const junkPct=(r)=>r&&r.n_items?Math.round(100*r.junk/r.n_items):null;
-  return <div className="pu-grid2 pu-sec">
+  return <div className="pu-grid2 top wide pu-sec" id="pu-news">
     <div className="pu-card">
       <div className="h"><span>Выпуск: независимый судья</span>
         {today&&today.head!=null&&<span className={"pu-chip "+(today.head<4?"bad":"ok")}>
@@ -9127,37 +10408,39 @@ function PuNewsQuality({q}){
       {s.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>
           Судья ещё не оценил ни одного выпуска (первый прогон — в {""}
           {String(8).padStart(2,"0")}:00 МСК).</div>
-        :<table className="pu-tbl">
+        :<div className="pu-x-scroll"><table className="pu-tbl">
           <thead><tr><th>дата</th><th>заголовок</th><th>новостей</th><th>сильных</th><th>фон</th><th>мусор</th><th>пропущено</th></tr></thead>
-          <tbody>{s.slice(-10).map((r,i)=><tr key={i}>
-            <td>{(r.d||"").slice(5)}</td><td>{r.head!=null?`${r.head}/5`:"—"}</td><td>{r.n_items}</td>
+          <tbody>{s.slice(-10).reverse().map((r,i)=><tr key={i}>
+            <td>{ddmm(r.d)}</td><td>{r.head!=null?`${r.head}/5`:"—"}</td><td>{r.n_items}</td>
             <td>{r.strong??"—"}</td><td>{r.borderline}</td>
             <td style={r.junk>0?{color:"var(--warn)"}:null}>{r.junk}{r.n_items?` (${junkPct(r)}%)`:""}</td>
             <td style={r.missed>0?{color:"var(--warn)"}:null}>{r.missed??"—"}</td>
-          </tr>)}</tbody></table>}
+          </tr>)}</tbody></table></div>}
     </div>
     <div className="pu-card">
       <div className="h"><span>Поток новостей · 24 ч</span>
-        <span className="pu-chip">{nClicks} кликов / 14 дн</span></div>
+        <span className="pu-chip">{nClicks} {plural(nClicks,"клик","клика","кликов")} за {days} дн</span></div>
       {q.stream&&<div style={{marginBottom:10}}>
         <div className="pu-kv"><span>материалов собрано</span><b className="tnum">{q.stream.items_24h}</b></div>
         <div className="pu-kv"><span>про розницу</span><b className="tnum">{q.stream.relevant_24h}</b></div>
         <div className="pu-kv"><span>сильных поводов (от 7)</span><b className="tnum">{q.stream.strong_24h}</b></div>
         {(q.stream.sources||[]).filter(x=>x.last_error).map((x,i)=><div key={i} className="pu-err">
-          <span className="k">{x.source}</span><span className="m">{x.last_error}</span></div>)}
+          <span className="k">{x.label||x.source}</span><span className="m">{x.last_error}</span></div>)}
       </div>}
-      {q.stream&&(q.stream.yield_14d||[]).length>0&&<table className="pu-tbl" style={{marginBottom:12}}
+      {q.stream&&(q.stream.yield_14d||[]).length>0&&<div className="pu-x-scroll"><table className="pu-tbl" style={{marginBottom:12}}
           title="Отдача источника: сильные — материалы событий с ценностью от 7; слабые источники исключаются по этим цифрам">
         <thead><tr><th>источник · 14 дн</th><th>собрано</th><th>про розницу</th><th>сильных</th><th>в выпуске</th></tr></thead>
         <tbody>{q.stream.yield_14d.map((r,i)=><tr key={i}>
-          <td>{r.source}</td><td>{r.items}</td><td>{r.relevant}</td>
+          <td title={r.source}>{r.label||r.source}</td><td>{r.items}</td><td>{r.relevant}</td>
           <td style={r.items>=20&&!r.strong?{color:"var(--warn)"}:null}>{r.strong}</td><td>{r.published}</td>
-        </tr>)}</tbody></table>}
+        </tr>)}</tbody></table></div>}
+      {(q.top_clicked||[]).length>0&&<div className="h" style={{marginTop:6}}><span>Что открывали чаще · {days} дн</span></div>}
       {(q.top_clicked||[]).length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>
           Кликов ещё нет — трекинг включён с 05.08.</div>
         :(q.top_clicked||[]).map((r,i)=><div key={i} className="pu-err">
           <span className="k">{r.n}×</span>
-          <span className="m" title={r.url||""}>{(r.url||"").replace(/^https?:\/\/(www\.)?/,"").slice(0,70)}</span>
+          <a className="m" href={r.url} target="_blank" rel="noopener noreferrer" title={r.url||""}
+            style={{color:"var(--ink-2)"}}>{r.title||(r.url||"").replace(/^https?:\/\/(www\.)?/,"").slice(0,70)}</a>
         </div>)}
     </div>
   </div>;
@@ -9171,8 +10454,13 @@ const PU_VERDICT={pass:["зачёт","ok"],partial:["частично",""],fail:
 const PU_MODEL={default:"по умолчанию",oss:"gpt-oss-120b",gpt54mini:"gpt-5.4-mini",gpt54:"gpt-5.4",
   sonnet:"claude-sonnet-4.6",haiku:"claude-haiku-4.5",dsflash:"DeepSeek-V4-Flash",dspro:"DeepSeek-V4-Pro"};
 const PU_TRIGGER={gate:"еженедельная проверка","gate-rollback":"после отката",compare:"сравнение моделей",
-  compare2:"сравнение моделей",admin:"вручную",cli:"консоль","baseline-rescored":"до переработки"};
+  compare2:"сравнение моделей",admin:"вручную",cli:"консоль","baseline-rescored":"до переработки",
+  after:"после переработки"};
+// в наборе вопросов (и в истории прогонов) разделы названы по-старому
+const PU_EVAL_TAB={"Обзор":"Новостные обзоры","Отзывы":"Аудит отзывов","Рынок":"Рынок · позиция",
+  "Уязвимости":"Аудит уязвимостей"};
 function PuAgentEval(){
+  const me=useMe();
   const[d,setD]=useState(null);
   const[busy,setBusy]=useState(false);
   const[open,setOpen]=useState(null);
@@ -9189,22 +10477,22 @@ function PuAgentEval(){
   const prev=last&&runs.slice(1).find(r=>r.model===last.model);
   const delta=last&&prev&&last.score!=null&&prev.score!=null?Math.round((last.score-prev.score)*10)/10:null;
   const num=x=>x==null?"—":String(x).replace(".",",");
-  return <div className="pu-card pu-sec">
-    <div className="h"><span>ИИ-помощник: регрессионный набор</span>
+  return <div className="pu-card pu-sec" id="pu-eval">
+    <div className="h"><span>ИИ-помощник: проверочный набор вопросов</span>
       <div className="seg" style={{marginLeft:12}}>
         {[["hermes","Быстрый ответ"],["deep","Отчёт"]].map(([k,l])=>
           <button key={k} className={"seg-btn"+(eng===k?" on":"")} onClick={()=>setEng(k)}>{l}</button>)}
       </div>
       {last&&<span className={"pu-chip "+(last.score>=75?"ok":last.score<50?"bad":"")}>
         {num(last.score)} из 100{delta!=null&&delta!==0?` · ${delta>0?"+":"−"}${num(Math.abs(delta))}`:""}</span>}
-      <button className="btn" style={{marginLeft:"auto"}} disabled={busy||d.running} onClick={start}>
-        {d.running?"Идёт прогон…":"Запустить прогон"}</button></div>
+      {(me&&me.is_admin)?<button className="btn btn-sm" style={{marginLeft:"auto"}} disabled={busy||d.running} onClick={start}>
+        {d.running?"Идёт прогон…":"Запустить прогон"}</button>:d.running?<span className="pu-chip" style={{marginLeft:"auto"}}>идёт прогон</span>:null}</div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
       Вопросы по всем вкладкам; эталон считается в момент прогона теми же функциями, что
       рисуют вкладки. Проверки: числа, темы, запреты (внутренние адреса, служебные ключи,
       заглушки) и судья-модель. Раз в неделю прогон проверяет самообучение агента:
       если качество упало, навыки откатываются.</p>
-    {runs.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Прогонов ещё не было.</div>:<>
+    {runs.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Прогонов ещё не было.</div>:<div className="pu-x-scroll">
       <table className="pu-tbl" style={{marginBottom:12}}>
         <thead><tr><th>когда</th><th>модель</th><th>запуск</th><th>итог</th><th>зачёт</th><th>частично</th><th>провал</th><th>медиана, с</th></tr></thead>
         <tbody>{runs.slice(0,10).map(r=><tr key={r.run_id}>
@@ -9220,7 +10508,7 @@ function PuAgentEval(){
           const iss=((c.judge||{}).issues||[]).slice(0,2);
           return <React.Fragment key={c.id}>
             <tr onClick={()=>setOpen(open===c.id?null:c.id)} style={{cursor:"pointer"}}>
-              <td>{c.id} · {c.title}</td><td>{c.tab}</td>
+              <td>{c.id} · {c.title}</td><td>{PU_EVAL_TAB[c.tab]||c.tab}</td>
               <td><span className={"pu-chip "+v[1]}>{v[0]}</span></td>
               <td>{num(c.seconds)}</td><td>{(c.judge||{}).score??"—"}</td>
               <td style={{fontSize:12,color:"var(--ink-3)"}}>{c.error||[...bad,...iss].join("; ")||"—"}</td>
@@ -9228,7 +10516,7 @@ function PuAgentEval(){
             {open===c.id&&c.answer&&<tr><td colSpan={6}>
               <div style={{fontSize:12,color:"var(--ink-3)",margin:"4px 0 6px"}}>{c.question}</div>
               <div className="chat-bubble" style={{maxWidth:"none"}}>{renderMD(c.answer)}</div></td></tr>}
-          </React.Fragment>;})}</tbody></table></>}
+          </React.Fragment>;})}</tbody></table></div>}
   </div>;
 }
 
@@ -9239,20 +10527,33 @@ function PuReviewSources({r}){
   if(r.error)return <div className="pu-card"><div className="h"><span>Площадки отзывов</span></div>
     <div style={{color:"var(--warn)",fontSize:12}}>{r.error}</div></div>;
   const tone=st=>st==="встал"||st==="просел"?"bad":st==="норма"?"ok":"";
-  return <div className="pu-card pu-sec">
+  const down=src.some(x=>x.status==="встал"||x.status==="просел");
+  const surge=src.some(x=>x.status==="всплеск");
+  return <div className="pu-card pu-sec" id="pu-sources">
     <div className="h"><span>Площадки отзывов · неделя по {rvDate(r.week_end)}</span>
-      {src.some(x=>x.status==="встал"||x.status==="просел")&&<span className="pu-chip bad">есть просадка</span>}</div>
-    <table className="pu-tbl">
-      <thead><tr><th>площадка</th><th>за 7 дн</th><th>норма</th><th>статус</th><th>последний сбор</th></tr></thead>
-      <tbody>{src.map(x=><tr key={x.source}>
-        <td>{x.label}</td><td>{x.week}</td><td>{String(x.norm).replace(".",",")}</td>
-        <td><span className={"pu-chip "+tone(x.status)}>{x.status}</span></td>
+      {down?<span className="pu-chip bad">есть просадка</span>:surge?<span className="pu-chip">есть всплеск</span>:null}</div>
+    <div className="pu-x-scroll"><table className="pu-tbl">
+      <thead><tr><th>площадка</th><th>за 7 дн</th><th>норма</th><th>статус</th><th>последний сбор</th><th>свежий отзыв</th></tr></thead>
+      <tbody>{src.map(x=><tr key={x.source} style={x.status==="выключен"?{opacity:.6}:null}>
+        <td>{x.label}</td><td>{x.week}</td><td>{x.norm}</td>
+        <td><span className={"pu-chip "+tone(x.status)}
+          title={x.status==="всплеск"?"неделя больше трёх норм: наплыв жалоб или догрузка после починки сборщика"
+            :x.status==="выключен"?"выключен в настройках сбора; собранное раньше остаётся в индексе":""}>
+          {x.status}{x.status==="всплеск"&&x.norm>0?` ×${Math.round(x.week/x.norm)}`:""}</span></td>
         <td title={x.last_error||""} style={x.last_run_status==="failed"?{color:"var(--warn)"}:null}>
-          {x.last_run?`${rvDate(x.last_run)} ${x.last_run.slice(11,16)}`:"—"}{x.last_run_status==="failed"?" · ошибка":""}</td>
-      </tr>)}</tbody></table>
-    {(r.gone_banks||[]).length>0&&<p className="t-cap" style={{margin:"10px 0 0"}}>
-      Пропали из корпуса (≥20 жалоб в месяц раньше, ни одной за 45 дней):{" "}
-      {r.gone_banks.map(g=>`${g.bank} (~${g.per_month}/мес, последняя ${rvDate(g.last)})`).join(", ")}</p>}
+          {x.external?"внешний корпус":x.last_run?`${rvDate(x.last_run)} ${x.last_run.slice(11,16)}`:"—"}{x.last_run_status==="failed"?" · ошибка":""}</td>
+        <td>{x.last_item?rvDate(x.last_item):"—"}</td>
+      </tr>)}</tbody></table></div>
+    {/* правило — от собственного потока банка: за дни тишины при его норме
+        ждали бы ≥10 жалоб (ПЛТ-14); известные слияния — пояснением, не тревогой */}
+    {(r.gone_banks||[]).filter(g=>!g.known).length>0&&<p className="t-cap" style={{margin:"10px 0 0"}}>
+      Пропали из корпуса (при их потоке за дни тишины ждали бы 10+ жалоб):{" "}
+      {r.gone_banks.filter(g=>!g.known).map(g=>`${g.bank} (~${g.per_month}/мес, последняя ${rvDate(g.last)}`
+        +(g.silent_days!=null?`, тишина ${g.silent_days} дн.`:"")
+        +((g.rename_candidates||[]).length?`; возможно, переименован в ${g.rename_candidates.join(" или ")}`:"")+")").join(", ")}</p>}
+    {(r.gone_banks||[]).filter(g=>g.known).length>0&&<p className="t-cap" style={{margin:"6px 0 0",color:"var(--ink-3)"}}>
+      Ушли с площадки по известной причине:{" "}
+      {r.gone_banks.filter(g=>g.known).map(g=>`${g.bank} — ${g.known}`).join("; ")}</p>}
   </div>;
 }
 
@@ -9277,15 +10578,15 @@ function PuSignalJournal({j}){
 function PuIngest({ing}){
   const q=ing.queue||{}, days=ing.per_day||[];
   const mx=Math.max(1,...days.map(d=>+d.n||0));
-  return <div className="pu-card">
+  return <div className="pu-card" id="pu-ingest">
     <div className="h"><span>Фоновая индексация</span>
       <span className="mono">воркеров {q.workers??"—"}</span></div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
-      Страницы, которые ИИ-помощник читает по дороге, попадают в базу знаний
-      фоном. Счётчики очереди обнуляются при перезапуске — пустая очередь не
-      означает, что фон не работает.
+      Страницы, которые быстрый ИИ-помощник читает по дороге, попадают в базу знаний
+      фоном (отчёты базу не пополняют). Счётчики очереди обнуляются при перезапуске —
+      пустая очередь не означает, что фон не работает.
     </p>
-    <div className="pu-kv">
+    <div className="pu-kv4">
       <span>В очереди</span><b>{q.depth??"—"}</b>
       <span>Обработано</span><b>{q.done??"—"}</b>
       <span>Отброшено</span><b className={q.dropped?"neg":""}>{q.dropped??"—"}</b>
@@ -9294,9 +10595,9 @@ function PuIngest({ing}){
     {days.length>0&&<>
       <div className="h" style={{marginTop:14}}><span>По дням</span><span>всего · пусто · p95</span></div>
       {days.slice(-10).map(d=><div key={d.d} className="pu-bar-row">
-        <span className="lb">{fmtDateMsk(d.d)}</span>
+        <span className="lb">{rvDate(d.d)}</span>
         <span className="tr"><i className="fl" style={{width:`${(d.n/mx)*100}%`}}/></span>
-        <span className="vv">{d.n} · {d.empty} · {d.p95||0} мс</span>
+        <span className="vv" style={{width:130}}>{d.n} · {d.empty} · {(+d.p95||0)>=1000?String(Math.round(+d.p95/100)/10).replace(".",",")+" с":(d.p95||0)+" мс"}</span>
       </div>)}
     </>}
   </div>;
@@ -9306,7 +10607,7 @@ function PuIngest({ing}){
 function PuCollect({c}){
   const total=(c.ok||0)+(c.hard||0)+(c.soft||0);
   if(!total) return null;
-  return <div className="pu-card">
+  return <div className="pu-card" id="pu-collect">
     <div className="h"><span>Что не доехало в базу знаний</span>
       <span className="mono">{c.hard||0} сбоев из {total}</span></div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
@@ -9337,7 +10638,7 @@ function PuSearch({s}){
     "web_search_chain:fleet":"Итог поиска — выручил запасной fleet",
     "web_search_chain:none":"Итог поиска — не нашёл никто",
     "web_read:yandex_copy":"Копии страниц · Яндекс"};
-  return <div className="pu-card">
+  return <div className="pu-card" id="pu-search">
     <div className="h"><span>Веб-поиск</span>
       <span className="mono">{gw.enabled?("основной: "+(gw.primary==="fleet"?"fleet":"Яндекс")):"шлюз не настроен"}
         {gw.breaker_open?" · шлюз отключён":""}</span></div>
@@ -9361,25 +10662,140 @@ function PuSearch({s}){
 }
 
 // ── Что проверяет отдел ─────────────────────────────────────────────────────
-function PuTopics({t}){
+function PuTopics({t,days}){
   const banks=(t||{}).banks||[];
   if(!banks.length) return null;
   const mx=Math.max(1,...banks.map(b=>+b.n||0));
   return <div className="pu-card">
-    <div className="h"><span>Что проверяет отдел</span><span>банки в отчётах</span></div>
+    <div className="h"><span>Что проверяет отдел · {days} дн</span><span>банки в отчётах и ответах</span></div>
     <p className="t-cap" style={{margin:"0 0 10px"}}>
       Агрегат по команде без имён: под какие темы затачивать инструмент.
     </p>
-    {banks.map(b=><div key={b.name} className="pu-bar-row">
-      <span className="lb">{b.name}</span>
+    {banks.map(b=><div key={b.slug||b.name} className="pu-bar-row">
+      <span className="lb" title={b.slug}>{BANK_RU[b.slug]||b.name}</span>
       <span className="tr"><i className="fl" style={{width:`${(b.n/mx)*100}%`}}/></span>
       <span className="vv">{b.n}</span>
     </div>)}
   </div>;
 }
 
+// ── Обращения из «Обратной связи» ───────────────────────────────────────────
+// Ответ и смена статуса приходят автору туда, где он писал: точкой у строки
+// меню и в «Моих обращениях». Непрочитанные (новые или с уточнением автора) — сверху.
+const PU_TK_FILTER=[["new","Новые"],["open","Открытые"],["all","Все"]];
+const PU_TK_TPL=[["Взяли в работу","Спасибо, взяли в работу. Напишем здесь, когда будет готово."],
+  ["Уточнить","Уточните, пожалуйста: в каком разделе и с какими фильтрами это видно?"],
+  ["Сделали","Сделали — обновите страницу и проверьте, пожалуйста."],
+  ["Уже есть","Это уже есть: "]];
+function PuInbox({rev,onOpenUser,onChanged}){
+  const[st,setSt]=useState("open");
+  const[kind,setKind]=useState("");
+  const[d,setD]=useState(null);
+  const[cur,setCur]=useState(null);
+  const[r2,setR2]=useState(0);
+  useEffect(()=>{ setD(null); const sp=new URLSearchParams({status:st}); if(kind) sp.set("kind",kind);
+    apiFetch("/api/admin/inbox?"+sp).then(setD).catch(()=>setD({tickets:[],error:true})); },[st,kind,rev,r2]);
+  const c=(d&&d.counts)||{};
+  return <div className="pu-card" id="pu-inbox">
+    <div className="h"><span>Обращения · ждут ответа {c.unread||0} · открытых {c.open||0} · всего {c.total||0}</span>
+      <span className="pu-people-ctl">
+        <div className="seg" role="group" aria-label="Статус">{PU_TK_FILTER.map(([k,l])=><button key={k}
+          className={"seg-btn"+(st===k?" on":"")} aria-pressed={st===k} onClick={()=>setSt(k)}>{l}</button>)}</div>
+        <select className="pu-sel" value={kind} onChange={e=>setKind(e.target.value)} aria-label="Тип обращения">
+          <option value="">все типы</option>
+          {Object.entries(SAY_KIND_RU).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+      </span></div>
+    <p className="t-cap" style={{margin:"-4px 0 10px"}}>Из строки «Обратная связь» внизу меню. Сверху — новые и те,
+      где автор что-то дописал. Ответ и статус автор увидит там же, где писал.</p>
+    {!d?<Skel h={120}/>:d.error?<div className="pu-empty">Не удалось загрузить обращения.</div>
+      :!d.tickets.length?<div className="pu-empty">{st==="new"?"Новых обращений нет.":"Обращений нет."}</div>
+      :<div className="pu-tblwrap"><table className="pu-tbl">
+        <thead><tr><th>обращение</th><th>автор</th><th>раздел</th><th>статус</th><th>обновлено</th></tr></thead>
+        <tbody>{d.tickets.map(t=><tr key={t.ticket_id} className="pu-rowclick" onClick={()=>setCur(t.ticket_id)}>
+          <td title={t.body} style={{maxWidth:300,fontWeight:t.unread?600:400}}>
+            {t.unread&&<span className="nav-dot" style={{display:"inline-block",marginRight:7,verticalAlign:1}} aria-label="ждёт ответа"/>}
+            <span style={{color:"var(--ink-3)",fontWeight:400}}>{t.kind_label} · </span>{t.body}</td>
+          <td><button className="pu-link" onClick={e=>{e.stopPropagation(); onOpenUser&&onOpenUser(t.username);}}>{t.name}</button></td>
+          <td style={{whiteSpace:"nowrap",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}} title={t.section_label||""}>{t.section_label||"—"}</td>
+          <td><span className={"tk-st "+t.status}>{t.status_label}</span></td>
+          <td style={{whiteSpace:"nowrap"}}>{sayDate(t.updated_at)}{+t.n_files>0?<span style={{color:"var(--ink-3)"}} title="есть снимки экрана"> · снимки</span>:null}</td>
+        </tr>)}</tbody></table></div>}
+    {cur&&ReactDOM.createPortal(<PuTicket tid={cur} onClose={()=>setCur(null)} onOpenUser={onOpenUser}
+      onChanged={()=>{ setR2(x=>x+1); onChanged&&onChanged(); }}/>,document.body)}
+  </div>;
+}
+
+function PuTicket({tid,onClose,onOpenUser,onChanged}){
+  const[t,setT]=useState(null);
+  const[st,setSt]=useState("");
+  const[reply,setReply]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  useEffect(()=>{ setT(null); apiFetch(`/api/admin/inbox/${tid}`).then(x=>{ setT(x); setSt(x.status); onChanged&&onChanged(); })
+    .catch(()=>setT({error:true})); },[tid]); // eslint-disable-line
+  useEffect(()=>{const k=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[onClose]);
+  const save=()=>{ if(busy) return; if(st===t.status&&!reply.trim()){ setErr("Выберите статус или напишите ответ"); return; }
+    setBusy(true); setErr("");
+    sayPost(`/api/admin/inbox/${tid}`,{status:st!==t.status?st:null,reply:reply.trim()||null})
+      .then(x=>{ setT(x); setSt(x.status); setReply(""); onChanged&&onChanged(); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  const c=(t&&t.context)||{};
+  const ctxRows=t&&!t.error?[["Страница",c.url],["Версия",c.version],["Браузер",c.browser],["Экран",c.screen],["Тема",c.theme],
+    ["Ошибки страницы",(c.errors||[]).join("\n")]].filter(x=>x[1]):[];
+  return <div className="pu-drawer" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div className="pu-dr" role="dialog" aria-label="Обращение">
+      <div className="pu-drhead">
+        <div><div className="pu-drname">Обращение № {tid}</div>
+          {t&&!t.error&&<div className="pu-drsub">{t.kind_label} · {t.section_label||"AuditLens"} · {fmtDateMsk(t.created_at)} ·{" "}
+            <button className="pu-link" onClick={()=>onOpenUser&&onOpenUser(t.username)}>{t.name}</button>
+            {t.confirmed===true&&<span className="pu-badge on">автор: работает</span>}
+            {t.confirmed===false&&<span className="pu-badge adm">автор: не работает</span>}</div>}</div>
+        <button className="pu-x" onClick={onClose} aria-label="Закрыть">✕</button>
+      </div>
+      {!t?<div style={{padding:24}}><Skel h={140}/></div>:t.error?<ErrState msg="Обращение не найдено."/>:<>
+        <div className="pu-drsec"><div className="tk-full" style={{fontSize:13.5,color:"var(--ink)"}}>{t.body}</div>
+          {(t.files||[]).length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8,marginTop:12}}>
+            {t.files.map(f=><a key={f.file_id} href={`/api/inbox/file/${f.file_id}`} target="_blank" rel="noopener noreferrer"
+              style={{display:"block",borderRadius:8,overflow:"hidden",border:"1px solid var(--hair)"}}>
+              <img src={`/api/inbox/file/${f.file_id}`} alt="Снимок экрана" style={{width:"100%",display:"block"}}/></a>)}</div>}
+        </div>
+        {ctxRows.length>0&&<div className="pu-drsec"><div className="pu-drh">Приложено автоматически</div>
+          <div className="tk-ctx" style={{marginTop:0}}><dl style={{marginTop:0}}>{ctxRows.map(([k,v])=><React.Fragment key={k}>
+            <dt>{k}</dt><dd style={{whiteSpace:"pre-line"}}>{k==="Страница"
+              ?<><a href={"/"+v} target="_blank" rel="noopener noreferrer">{v}</a> · открыть ту же страницу</>:v}</dd></React.Fragment>)}</dl></div></div>}
+        <div className="pu-drsec"><div className="pu-drh">Переписка</div>
+          {(t.messages||[]).length===0&&<div style={{fontSize:12,color:"var(--ink-3)"}}>Ответа ещё не было.</div>}
+          {(t.messages||[]).map((m,i)=>m.role==="system"
+            ? <div key={i} className="tk-sys">{m.body} · {sayDate(m.at)}</div>
+            : <div key={i} className={"tk-msg "+m.role}><div className="h">{m.role==="team"?"Команда":"Автор"} · {sayDate(m.at)}</div>{m.body}</div>)}
+        </div>
+        <div className="pu-drsec">
+          <div className="pu-drh">Ответ автору</div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+            <select className="pu-sel" value={st} onChange={e=>setSt(e.target.value)} aria-label="Статус">
+              {Object.entries(SAY_STATUS_RU).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+            {PU_TK_TPL.map(([l,x])=><button key={l} className="seg-btn" onClick={()=>setReply(r=>r?r+"\n"+x:x)}>{l}</button>)}
+          </div>
+          <textarea className="tk-ta" style={{minHeight:90}} value={reply} maxLength={2000}
+            placeholder="Ответ увидит только автор — у строки «Обратная связь» загорится точка"
+            onChange={e=>{setReply(e.target.value); if(err) setErr("");}}
+            onKeyDown={e=>{ if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); save(); } }}/>
+          {err&&<div className="tk-err" role="alert">{err}</div>}
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:10}}>
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={save}>
+              {busy?"Сохраняю…":reply.trim()?"Ответить":"Сохранить статус"}</button></div>
+        </div>
+      </>}
+    </div>
+  </div>;
+}
+
 const PU_TABS=[["people","Люди"],["reports","Отчёты"],["ai","Качество ИИ"],
-  ["data","Данные"],["tech","Техника"]];
+  ["inbox","Обращения"],["data","Данные"],["tech","Техника"]];
+// «Имя Фамилия» → «Имя Ф.»; логин остаётся логином
+const puShort=(n)=>{const p=String(n||"").trim().split(/\s+/);return p.length>=2?`${p[0]} ${p[1][0]}.`:(n||"");};
+const puNum=(n)=>(+n||0).toLocaleString("ru");
 
 
 // ══ ЛЮДИ: директория, карточка человека, отчёты и жалобы ═══════════════════
@@ -9388,15 +10804,23 @@ const PU_TABS=[["people","Люди"],["reports","Отчёты"],["ai","Каче�
 // служебный доступ владельца к чужим отчётам: иначе жалобу «отчёты плохие»
 // разобрать нечем.
 
-const PU_KIND_RU={ai_answer:"ответ ИИ",news:"новость",for_you:"«Для вас»",check:"проверка"};
+const PU_KIND_RU={ai_answer:"ответ ИИ",news:"новость",for_you:"«Для вас»",check:"проверка",
+  check_taken:"проверка взята",digest_card:"карточка выпуска"};
+// параметр «считать меня» для служебных запросов «Пульса»
+const puMe=(withMe)=>withMe===true?"&me=true":withMe===false?"&me=false":"";
+// профиль, оборванный лимитом модели на полуслове, — до конца предложения
+const puClip=(t)=>{t=String(t||"").trim(); if(!t||/[.!?…»)]$/.test(t))return t;
+  const c=Math.max(t.lastIndexOf(". "),t.lastIndexOf("! "),t.lastIndexOf("? "));
+  if(c>t.length/3)return t.slice(0,c+1);
+  const sp=t.lastIndexOf(" "); return (sp>0?t.slice(0,sp):t).replace(/[,;:—–\s]+$/,"")+"…";};
 
-function PuPeople({days,onOpenUser}){
+function PuPeople({days,withMe,rev,onOpenUser}){
   const[d,setD]=useState(null);
   const[qq,setQq]=useState("");
   const[sort,setSort]=useState("score");
   useEffect(()=>{setD(null);
-    apiFetch("/api/admin/users?days="+days).then(setD).catch(()=>setD({users:[]}));
-  },[days]);
+    apiFetch("/api/admin/users?days="+days+puMe(withMe)).then(setD).catch(()=>setD({users:[]}));
+  },[days,withMe,rev]);
   if(!d)return <div className="pu-card pu-sec"><Skel h={160}/></div>;
   const all=d.users||[];
   const ql=qq.trim().toLowerCase();
@@ -9405,25 +10829,17 @@ function PuPeople({days,onOpenUser}){
   const num=k=>(a,b)=>(+b[k]||0)-(+a[k]||0);
   if(sort!=="score")rows=[...rows].sort(sort==="last"
     ?(a,b)=>(a.last_seen_ago_s||1e12)-(b.last_seen_ago_s||1e12):num(sort));
-  const maxT=Math.max(...all.map(x=>+x.time_s||0),1);
-  return <>
-    <div className="pu-tiles pu-sec">
-      <div className="pu-tile"><div className="l"><span className="pu-live"/>Онлайн</div>
-        <div className="v tnum">{d.online||0}</div><div className="s">за 15 минут</div></div>
-      <div className="pu-tile"><div className="l">Заходили сегодня</div>
-        <div className="v tnum">{d.today||0}</div><div className="s">из {d.total||0} всего</div></div>
-      <div className="pu-tile"><div className="l">Всего людей</div>
-        <div className="v tnum">{d.total||0}</div><div className="s">заходили хоть раз</div></div>
-      <div className="pu-tile"><div className="l">Молчат</div>
-        <div className="v tnum">{d.silent||0}</div><div className="s">ни дня за {days} дн</div></div>
-    </div>
-    <div className="pu-card pu-sec">
+  // служебные и сам владелец — в конце списка: в итоги не входят
+  rows=[...rows.filter(u=>!u.excluded),...rows.filter(u=>u.excluded)];
+  const maxT=Math.max(...all.filter(x=>!x.excluded).map(x=>+x.time_s||0),1);
+  return <div className="pu-card pu-sec" id="pu-people">
       <div className="h">
-        <span>Все пользователи · {rows.length} из {all.length} · клик по строке — полная карточка</span>
+        <span>Люди · {d.total||0} · заходили за {days} дн: {d.active||0} · молчат: {d.silent||0}
+          {d.excluded?<> · не считаем: {d.excluded}</>:null}</span>
         <span className="pu-people-ctl">
-          <input className="pu-search" placeholder="поиск по ФИО или логину"
+          <input className="pu-search" placeholder="поиск по ФИО или логину" aria-label="Поиск по людям"
                  value={qq} onChange={e=>setQq(e.target.value)}/>
-          <select className="pu-sel" value={sort} onChange={e=>setSort(e.target.value)}>
+          <select className="pu-sel" value={sort} onChange={e=>setSort(e.target.value)} aria-label="Сортировка">
             <option value="score">по активности</option>
             <option value="last">по последнему визиту</option>
             <option value="views">по просмотрам</option>
@@ -9434,43 +10850,59 @@ function PuPeople({days,onOpenUser}){
           </select>
         </span>
       </div>
+      <p className="t-cap" style={{margin:"-4px 0 10px"}}>Клик по строке — полная карточка. Служебные учётки
+        помечаются в карточке и в итоги не входят.</p>
       <div className="pu-tblwrap">
         <table className="pu-tbl pu-team">
           <thead><tr>
-            <th>пользователь</th><th>статус</th><th>время</th><th>визитов</th><th>дней</th>
-            <th>просм.</th><th>ИИ</th><th>отчёты</th><th>оценки</th><th>разделы</th><th>был(а)</th>
+            <th>пользователь</th><th>статус</th>
+            <th title="активное время на страницах: с 03.10 без простоя дольше 5 мин, раньше — пока вкладка открыта">время</th>
+            <th>визитов</th><th>дней</th>
+            <th>просм.</th><th>ИИ</th><th title="отчёты; в скобках — сохранённые быстрые ответы">отчёты</th>
+            <th>оценки</th><th>разделы</th><th title="последнее действие в инструменте">был(а)</th>
           </tr></thead>
           <tbody>
-            {rows.map(u=><tr key={u.username} className="pu-rowclick"
+            {rows.map(u=><tr key={u.username} className={"pu-rowclick"+(u.excluded?" pu-exrow":"")}
                             onClick={()=>onOpenUser(u.username)}>
               <td><span className="pu-u"><span className="a">{initials(u.name)}</span>
                 <span><span className="pu-nm">{u.name}</span>
                   <span className="pu-login">@{u.username}</span></span></span></td>
-              <td>{u.online?<span className="pu-badge on">онлайн</span>
+              <td>{u.excluded?<span className="pu-badge off">{u.hidden?"служебная":"вы"}</span>
+                   :u.online?<span className="pu-badge on">онлайн</span>
                    :u.today?<span className="pu-badge tod">сегодня</span>
                    :<span className="pu-badge off">—</span>}</td>
               <td><span className="pu-tm"><span className="bar"
-                    style={{width:Math.max(4,(+u.time_s||0)/maxT*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
+                    style={{width:Math.max(4,Math.min(1,(+u.time_s||0)/maxT)*54)+"px"}}/>{adFmtS(u.time_s)}</span></td>
               <td className="tnum">{u.visits}</td><td className="tnum">{u.days_active}</td>
               <td className="tnum">{u.views}</td>
-              <td className="tnum">{u.ai}{+u.deep>0&&<i className="pu-deep" title="из них глубоких">·{u.deep}</i>}</td>
-              <td className="tnum">{u.reports}</td>
+              <td className="tnum">{u.ai}</td>
+              <td className="tnum">{u.reports}{+u.quick>0&&<i className="pu-deep" title="сохранённые быстрые ответы"> ({u.quick})</i>}</td>
               <td className="tnum">{+u.likes>0&&<span style={{color:"var(--pos)"}}>+{u.likes}</span>}
                 {+u.dislikes>0&&<span style={{color:"var(--neg)"}}> −{u.dislikes}</span>}
                 {!+u.likes&&!+u.dislikes&&"—"}</td>
-              <td className="pu-pages">{(u.top_pages||[]).map(x=>AD_PAGE_RU[x]||x).join(" · ")||"—"}</td>
+              <td className="pu-pages" title={(u.top_pages||[]).map(x=>AD_PAGE_RU[x]||x).join(" · ")}>
+                {(u.top_pages||[]).slice(0,2).map(x=>AD_PAGE_RU[x]||x).join(" · ")||"—"}</td>
               <td>{u.last_seen||"—"}</td>
             </tr>)}
           </tbody>
         </table>
       </div>
-    </div>
-  </>;
+    </div>;
 }
 
-function PuUserCard({username,days,onClose,onOpenReport,onOpenSession}){
+// хронология по-русски; «уход» пишется и при сворачивании вкладки
+const PU_TRAIL_RU={page_view:"открыт раздел",page_leave:"уход",news_click:"клик по новости",
+  client_error:"ошибка в браузере",api_error:"ошибка сервера",ui:"действие"};
+function PuUserCard({username,days,onClose,onOpenReport,onOpenSession,onHidden}){
+  const me=useMe();
   const[c,setC]=useState(null);
   const[tab,setTab]=useState("act");
+  const[hBusy,setHBusy]=useState(false);
+  // служебная учётка (разработка, админ входа) — не считать в «Пульсе»
+  const toggleHidden=()=>{ if(!c||!c.user)return; const h=!c.user.hidden; setHBusy(true);
+    apiPost(`/api/admin/users/${encodeURIComponent(username)}/hidden`,{hidden:h})
+      .then(()=>{setC(x=>({...x,user:{...x.user,hidden:h}})); onHidden&&onHidden();})
+      .catch(()=>{}).finally(()=>setHBusy(false)); };
   useEffect(()=>{setC(null);
     apiFetch(`/api/admin/users/${encodeURIComponent(username)}?days=${days}`)
       .then(setC).catch(()=>setC({error:true}));
@@ -9488,9 +10920,14 @@ function PuUserCard({username,days,onClose,onOpenReport,onOpenSession}){
             <div className="pu-drsub">@{username}
               {u.online?<span className="pu-badge on">онлайн</span>
                 :u.today?<span className="pu-badge tod">был сегодня</span>:null}
+              {u.hidden&&<span className="pu-badge off">служебная</span>}
               {u.first_seen&&<> · первый визит {u.first_seen}</>}
               {u.last_seen&&<> · последний {u.last_seen}</>}</div></div></div>
-        <button className="pu-x" onClick={onClose} aria-label="Закрыть">✕</button>
+        <div style={{display:"flex",alignItems:"center",gap:8,flex:"none"}}>
+          {c&&c.user&&me&&me.is_admin&&<button className="btn btn-sm" disabled={hBusy} onClick={toggleHidden}
+            title={u.hidden?"снова считать в метриках «Пульса»":"учётка разработки или администратора входа: в метриках про людей не считается"}>
+            {u.hidden?"Снять пометку «служебная»":"Пометить служебной"}</button>}
+          <button className="pu-x" onClick={onClose} aria-label="Закрыть">✕</button></div>
       </div>
       {!c?<div style={{padding:24}}><Skel h={120}/></div>:c.error?<ErrState msg="Не удалось загрузить карточку."/>:<>
         <div className="pu-drtiles">
@@ -9500,6 +10937,7 @@ function PuUserCard({username,days,onClose,onOpenReport,onOpenSession}){
           <div><b className="tnum">{u.views}</b><span>просмотров</span></div>
           <div><b className="tnum">{u.ai}</b><span>вопросов ИИ</span></div>
           <div><b className="tnum">{u.reports}</b><span>отчётов</span></div>
+          <div><b className="tnum">{u.quick||0}</b><span>быстрых ответов</span></div>
           <div><b className="tnum">{u.likes}/{u.dislikes}</b><span>оценок 👍/👎</span></div>
           <div className={+u.errors>0?"neg":""}><b className="tnum">{u.errors}</b><span>ошибок</span></div>
         </div>
@@ -9507,7 +10945,7 @@ function PuUserCard({username,days,onClose,onOpenReport,onOpenSession}){
           <div className="pu-drh">Профиль</div>
           {pr.role_desc&&<p className="pu-drp"><b>Зона ответственности:</b> {pr.role_desc}</p>}
           {pr.profile_note&&<p className="pu-drp"><b>Чем интересуется</b>
-            {pr.note_at?` (собрано ${pr.note_at})`:""}: {pr.profile_note}</p>}
+            {pr.note_at?` (собрано ${pr.note_at})`:""}: {puClip(pr.profile_note)}</p>}
         </div>}
         <div className="pu-drtabs">
           {[["act","Активность"],["q","Вопросы ИИ"],["r","Отчёты"],
@@ -9544,7 +10982,8 @@ function PuUserCard({username,days,onClose,onOpenReport,onOpenSession}){
           {(c.reports||[]).map(r=><div key={r.report_id} className="pu-qrow">
             <span className="at">{r.at}</span>
             <span className="qq">{r.title||r.question}</span>
-            <span className="md">{Math.round((+r.body_len||0)/1000)} тыс. знаков</span>
+            <span className="md">{r.mode==="quick"?"быстрый ответ":"отчёт"}</span>
+            <span className="md">{puLen(r)}</span>
             <button className="pu-link" onClick={()=>onOpenReport(r.report_id)}>открыть →</button>
           </div>)}
           {(c.reports||[]).length===0&&<div className="pu-empty">Отчётов не строил.</div>}
@@ -9563,17 +11002,18 @@ function PuUserCard({username,days,onClose,onOpenReport,onOpenSession}){
         </div>}
         {tab==="err"&&<div className="pu-drsec">
           {(c.errors||[]).map((x,i)=><div key={i} className="pu-qrow bad">
-            <span className="at">{x.at}</span><span className="md">{x.kind}</span>
-            <span className="qq">{AD_PAGE_RU[x.page]||x.page||"—"} {x.status?`· ${x.status}`:""} {x.message||""}</span>
+            <span className="at">{x.at}</span><span className="md">{x.kind==="client_error"?"браузер":"сервер"}</span>
+            <span className="qq">{AD_PAGE_RU[x.page]||x.page||"—"}{x.status?` · ${x.status}`:""}{x.message?` · ${x.message}`:""}</span>
           </div>)}
           {(c.errors||[]).length===0&&<div className="pu-empty">Ошибок не было.</div>}
         </div>}
         {tab==="trail"&&<div className="pu-drsec">
-          <div className="pu-drh">Последние действия · {(c.trail||[]).length}</div>
+          <div className="pu-drh">Последние действия · {(c.trail||[]).length} · без фоновых запросов к серверу</div>
           {(c.trail||[]).map((x,i)=><div key={i} className="pu-trail">
-            <span className="at">{x.at}</span><span className="k">{x.kind}</span>
+            <span className="at">{x.at}</span><span className="k">{PU_TRAIL_RU[x.kind]||x.kind}</span>
             <span className="p">{AD_PAGE_RU[x.page]||x.page||""}</span>
-            <span className="d">{x.dur_ms?adFmtS(x.dur_ms/1000):""}{x.status?` · ${x.status}`:""}</span>
+            <span className="d" title={x.kind==="page_leave"?"активное время на странице":""}>
+              {x.kind==="page_leave"&&x.dur_ms!=null?"активно "+adFmtS(x.dur_ms/1000):""}{x.status?` · ${x.status}`:""}</span>
           </div>)}
         </div>}
       </>}
@@ -9630,40 +11070,49 @@ function PuSessionView({sid,onClose}){
   </div>;
 }
 
-function PuReports({days,onOpenReport,onOpenUser}){
+function PuReports({days,withMe,rev,onOpenReport,onOpenUser}){
   const[d,setD]=useState(null);
   const[qq,setQq]=useState("");
   const[bad,setBad]=useState(false);
+  // отчёт (deep) и сохранённый быстрый ответ лежат в одной таблице — раньше
+  // смешивались в одно «88 отчётов»
+  const[mode,setMode]=useState("all");
   useEffect(()=>{setD(null);
-    const sp=new URLSearchParams({days:String(days),limit:"200"});
+    const sp=new URLSearchParams({days:String(days),limit:"300"});
     if(bad)sp.set("only_bad","true");
+    if(withMe!=null)sp.set("me",withMe?"true":"false");
     apiFetch("/api/admin/reports?"+sp).then(setD).catch(()=>setD({reports:[]}));
-  },[days,bad]);
+  },[days,bad,withMe,rev]);
   if(!d)return <div className="pu-card pu-sec"><Skel h={160}/></div>;
   const ql=qq.trim().toLowerCase();
-  const rows=(d.reports||[]).filter(r=>!ql||
-    (r.question||"").toLowerCase().includes(ql)||(r.name||"").toLowerCase().includes(ql));
+  const rows=(d.reports||[]).filter(r=>(mode==="all"||(mode==="quick")===(r.mode==="quick"))&&(!ql||
+    (r.question||"").toLowerCase().includes(ql)||(r.title||"").toLowerCase().includes(ql)||(r.name||"").toLowerCase().includes(ql)));
   return <div className="pu-card pu-sec">
     <div className="h">
-      <span>Отчёты всех пользователей · {rows.length} из {d.total||0}
+      <span>Отчёты и ответы · {days} дн · отчётов {d.deep||0} · быстрых ответов {d.quick||0}
         {d.bad>0?<> · с жалобами {d.bad}</>:""}</span>
       <span className="pu-people-ctl">
-        <input className="pu-search" placeholder="поиск по вопросу или автору"
+        <div className="seg" role="group" aria-label="Что показывать">
+          {[["all","все"],["deep","отчёты"],["quick","быстрые ответы"]].map(([k,l])=>
+            <button key={k} className={"seg-btn"+(mode===k?" on":"")} aria-pressed={mode===k} onClick={()=>setMode(k)}>{l}</button>)}
+        </div>
+        <input className="pu-search" placeholder="поиск по вопросу или автору" aria-label="Поиск по отчётам"
                value={qq} onChange={e=>setQq(e.target.value)}/>
-        <button className={"seg-btn"+(bad?" on":"")} onClick={()=>setBad(!bad)}>только с жалобами</button>
+        <button className={"seg-btn"+(bad?" on":"")} aria-pressed={bad} onClick={()=>setBad(!bad)}>только с жалобами</button>
       </span>
     </div>
     <div className="pu-tblwrap">
       <table className="pu-tbl">
-        <thead><tr><th>автор</th><th>вопрос</th><th>создан</th><th>объём</th>
+        <thead><tr><th>автор</th><th>вопрос</th><th>вид</th><th>создан</th><th title="тысяч знаков">объём</th>
           <th>оценки</th><th>открытий</th><th></th></tr></thead>
         <tbody>
           {rows.map(r=><tr key={r.report_id} className={+r.dislikes>0?"pu-badrow":""}>
             <td><button className="pu-link" onClick={()=>onOpenUser(r.username)}>{r.name}</button></td>
             <td className="pu-qcell">{r.title||r.question}
               {r.comment&&<em className="pu-cmt"> «{r.comment}»</em>}</td>
-            <td>{r.at}</td>
-            <td className="tnum">{Math.round((+r.body_len||0)/1000)}т</td>
+            <td style={{whiteSpace:"nowrap"}}>{r.mode==="quick"?"ответ":"отчёт"}</td>
+            <td style={{whiteSpace:"nowrap"}}>{r.at}</td>
+            <td className="tnum" style={{whiteSpace:"nowrap"}}>{puLen(r)}</td>
             <td className="tnum">{+r.likes>0&&<span style={{color:"var(--pos)"}}>+{r.likes}</span>}
               {+r.dislikes>0&&<span style={{color:"var(--neg)"}}> −{r.dislikes}</span>}
               {!+r.likes&&!+r.dislikes&&"—"}</td>
@@ -9672,22 +11121,24 @@ function PuReports({days,onOpenReport,onOpenUser}){
           </tr>)}
         </tbody>
       </table>
-      {rows.length===0&&<div className="pu-empty">Отчётов нет.</div>}
+      {rows.length===0&&<div className="pu-empty">Ничего не найдено.</div>}
     </div>
   </div>;
 }
 
-function PuComplaints({days,onOpenReport,onOpenUser,onOpenSession}){
+function PuComplaints({days,withMe,rev,onOpenReport,onOpenUser,onOpenSession}){
   const[d,setD]=useState(null);
   useEffect(()=>{setD(null);
-    apiFetch("/api/admin/complaints?days="+days).then(setD).catch(()=>setD({items:[]}));
-  },[days]);
+    apiFetch("/api/admin/complaints?days="+days+puMe(withMe)).then(setD).catch(()=>setD({items:[]}));
+  },[days,withMe,rev]);
   if(!d)return <div className="pu-card pu-sec"><Skel h={120}/></div>;
   const items=d.items||[];
-  return <div className="pu-card pu-sec">
+  const total=d.total!=null?d.total:items.length;
+  return <div className="pu-card pu-sec" id="pu-complaints">
     <div className="h"><span>Жалобы · кто и на что · {days} дн</span>
-      <span>{items.length} за период</span></div>
-    {items.length===0&&<div className="pu-empty">Никто не жаловался.</div>}
+      <span>{total} за период{total>items.length?` · показаны последние ${items.length}`:""}</span></div>
+    {items.length===0&&<div className="pu-empty">За период жалоб не было. Учтите: оценки 👍/👎 ставят редко —
+      сторож вверху страницы подскажет, если их давно нет.</div>}
     {items.map((x,i)=><div key={i} className="pu-cmp">
       <div className="pu-cmphead">
         <button className="pu-link strong" onClick={()=>onOpenUser(x.username)}>{x.name}</button>
@@ -9709,7 +11160,12 @@ function PulsePage(){
   const[days,setDays]=useState(14);
   // вкладка живёт в состоянии страницы: load() раз в 60 с меняет только m,
   // поэтому переключатель не сбрасывается под руками
-  const[tab,setTab]=useState("people");
+  const[tab,setTab]=useState(()=>{try{const t=localStorage.getItem("al-pulse-tab");
+    return PU_TABS.some(x=>x[0]===t)?t:"people";}catch{return "people";}});
+  // себя владелец по умолчанию не считает: 70% просмотров были его проверками
+  const[withMe,setWithMe]=useState(()=>{try{const v=localStorage.getItem("al-pulse-me");
+    return v==="1"?true:v==="0"?false:null;}catch{return null;}});
+  const[rev,setRev]=useState(0);             // служебная учётка помечена → пересчитать всё
   const[m,setM]=useState(null);
   const[err,setErr]=useState(false);
   const[ts,setTs]=useState(null);
@@ -9718,120 +11174,146 @@ function PulsePage(){
   const[card,setCard]=useState(null);
   const[rep,setRep]=useState(null);
   const[sess,setSess]=useState(null);
+  const lastLoad=useRef(0);
   const load=useCallback(()=>{
-    apiFetch("/api/admin/pulse?days="+days)
+    lastLoad.current=Date.now();
+    apiFetch("/api/admin/pulse?days="+days+puMe(withMe))
       .then(d=>{setM(d);setErr(false);setTs(new Date());})
       .catch(()=>setErr(true));
-  },[days]);
-  useEffect(()=>{ load(); const t=setInterval(load,60000); return ()=>clearInterval(t); },[load]);
+  },[days,withMe,rev]); // eslint-disable-line
+  // автообновление — только пока вкладка браузера видна: опрос свёрнутой
+  // вкладки держал владельца «онлайн» и был самым частым запросом к серверу
+  useEffect(()=>{ load();
+    const t=setInterval(()=>{ if(!document.hidden) load(); },60000);
+    const onVis=()=>{ if(!document.hidden&&Date.now()-lastLoad.current>30000) load(); };
+    document.addEventListener("visibilitychange",onVis);
+    return ()=>{clearInterval(t);document.removeEventListener("visibilitychange",onVis);};
+  },[load]);
+  const selTab=(k)=>{setTab(k);try{localStorage.setItem("al-pulse-tab",k);}catch{}};
+  const setMeOn=(v)=>{setWithMe(v);try{localStorage.setItem("al-pulse-me",v?"1":"0");}catch{}};
+  // переход из сторожа: вкладка → блок, блок коротко подсвечивается
+  const goTo=(k,id)=>{selTab(k); setTimeout(()=>{const el=id&&document.getElementById(id); if(!el)return;
+    el.scrollIntoView({block:"start",behavior:"smooth"}); el.classList.remove("pu-flash");
+    void el.offsetWidth; el.classList.add("pu-flash");},80);};
 
-  if(me&&!me.is_admin) return <div className="fade-in"><ErrState msg="Раздел доступен только владельцу инструмента."/></div>;
-  if(err) return <div className="fade-in"><ErrState msg="Не удалось загрузить метрики."/></div>;
+  if(me&&!me.is_admin&&!me.can_pulse) return <div className="fade-in"><ErrState msg="Раздел открыт владельцу инструмента и тем, кому он дал доступ."/></div>;
+  if(err&&!m) return <div className="fade-in"><ErrState msg="Не удалось загрузить метрики."/></div>;
   if(!m) return <LoadingPage/>;
 
   const t=m.today||{}, f=m.features||{}, sg=m.segments||{};
   const maxPage=Math.max(...(m.pages||[]).map(x=>x.views||0),1);
-  const nErr=(m.errors_recent||[]).length;
+  const errs=m.errors_recent||[];
+  const nErr=m.errors_total!=null?m.errors_total:errs.length;
   const tokSum=(m.tokens||[]).reduce((a,x)=>a+(+x.tin||0)+(+x.tout||0),0);
-  const team=m.users_table||[];
-  const maxT=Math.max(...team.map(x=>+x.time_s||0),1);
+  const dg=Array.isArray(m.digest)?m.digest:[];
+  const meOn=withMe!=null?withMe:m.with_me!==false;
+  const hiddenN=m.hidden_n!=null?m.hidden_n:Math.max(0,(m.excluded||0)-(meOn?0:1));
+  const viewsSum=(m.dau||[]).reduce((a,x)=>a+(+x.views||0),0);
+  const actDays=(m.dau||[]).reduce((a,x)=>a+(+x.users||0),0);
+  const newN=(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0);
+  const rl=(f.ratings_last||[]).find(x=>x.kind==="ai_answer");
+  const tabKey=(e,k)=>{const i=PU_TABS.findIndex(x=>x[0]===k);
+    const n={ArrowRight:i+1,ArrowLeft:i-1,Home:0,End:PU_TABS.length-1}[e.key];
+    if(n==null)return; e.preventDefault(); const nk=PU_TABS[(n+PU_TABS.length)%PU_TABS.length][0];
+    selTab(nk); setTimeout(()=>{const b=document.getElementById("pu-tab-"+nk); b&&b.focus();},0);};
+  const errText=(e)=>e.msg==="Script error."?"ошибка во внешнем скрипте — браузер не раскрывает текст":(e.msg||"");
+  const feedText=(e)=>{const pg=AD_PAGE_RU[e.page]||e.page||"";
+    return e.kind==="page_view"?"→ "+pg
+      :e.kind==="ai_query"?(e.deep?"заказ отчёта":"вопрос ИИ-помощнику")
+      :e.kind==="share"?"отправка отчёта коллеге"
+      :e.kind==="report_open"?"открытие сохранённого отчёта"
+      :e.kind==="client_error"?"⚠ ошибка в браузере · "+pg
+      :"⚠ ошибка сервера · "+(e.page||"")+(e.status?" · "+e.status:"");};
   return <div className="fade-in">
     <style>{AD_CSS}</style>
     <header style={{marginBottom:4}}>
       <div className="eyebrow-row">
-        <div className="eyebrow">Пульс инструмента · доступ: владелец · <span style={{color:"var(--accent)"}}>автообновление 60с</span></div>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          {ts&&<span className="bf-stamp">{ts.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>}
-          <div className="seg">{[7,14,30].map(d=><button key={d} className={"seg-btn"+(days===d?" on":"")}
-            onClick={()=>setDays(d)}>{d} дн</button>)}</div>
-        </div>
+        <div className="eyebrow">Пульс инструмента · доступ: владелец · <span style={{color:"var(--accent)"}}>автообновление раз в минуту</span></div>
+        {ts&&<span className="bf-stamp" title={err?"последнее обновление не удалось — показаны прежние данные":"время последнего обновления"}>
+          {err?"⚠ ":""}{ts.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>}
       </div>
       <h1 className="t-display" style={{maxWidth:"26ch",marginBottom:6}}>Как <em style={{fontStyle:"italic",color:"var(--accent)"}}>живёт</em> AuditLens</h1>
-      <p className="lede">Люди, качество ответов ИИ, состояние данных и техника — на четырёх вкладках.</p>
+      <p className="lede">Люди, отчёты, качество ИИ, обращения, данные и техника — по вкладкам ниже.</p>
+      <p className="t-cap" style={{margin:"4px 0 0"}}>
+        {meOn?"Считаются все, включая вас":"Считаются коллеги: без вас"}{hiddenN>0?`${meOn?", кроме":" и"} ${hiddenN} ${plural(hiddenN,"служебной учётки","служебных учёток","служебных учёток")}`:""}.
+        {" "}Ошибки, скорость и сбор данных — по всем.</p>
     </header>
 
     {/* ① сегодня */}
     <div className="pu-tiles">
       <div className="pu-tile"><div className="l"><span className="pu-live"/>Онлайн сейчас</div>
         <div className="v tnum">{t.online||0}</div><div className="s">за 15 минут</div></div>
-      <div className="pu-tile"><div className="l">Активных сегодня</div>
-        <div className="v tnum">{t.active||0}</div><div className="s">из {t.users_total||0} всего</div></div>
+      <div className="pu-tile"><div className="l">Заходили сегодня</div>
+        <div className="v tnum">{t.active||0}</div><div className="s">из {t.users_total||0}</div></div>
       <div className="pu-tile"><div className="l">Просмотров сегодня</div>
-        <div className="v tnum">{t.views||0}</div><div className="s">страниц</div></div>
+        <div className="v tnum">{t.views||0}</div><div className="s">открытий разделов</div></div>
       <div className="pu-tile"><div className="l">ИИ-запросов сегодня</div>
-        <div className="v tnum">{t.ai||0}</div><div className="s">quick + deep</div></div>
+        <div className="v tnum">{t.ai||0}</div><div className="s">ответы и отчёты</div></div>
       <div className={"pu-tile"+(t.errors>0?" neg":"")}><div className="l">Ошибок сегодня</div>
-        <div className="v tnum">{t.errors||0}</div><div className="s">{t.errors>0?"см. раздел техники ↓":"чисто ✓"}</div></div>
+        <div className="v tnum">{t.errors||0}</div><div className="s">{t.errors>0?"вкладка «Техника»":"чисто ✓"}</div></div>
     </div>
 
+    <PuGuard m={m} onGo={goTo}/>
 
-    <PuGuard m={m}/>
-    <PuProposals p={m.proposals}/>
-
-    {/* вкладки: 17 блоков одной лентой — свалка; переключатель тот же .seg */}
-    <div className="pu-tabs">
-      {PU_TABS.map(([k,l])=><button key={k} className={"seg-btn"+(tab===k?" on":"")}
-        onClick={()=>setTab(k)}>{l}</button>)}
+    {/* вкладки — общий компонент подвкладок; период и «со мной» — здесь же, под рукой при прокрутке */}
+    <div className="rv-tabs">
+      <div className="rv-tabs-l" role="tablist" aria-label="Разделы «Пульса»">
+        {PU_TABS.map(([k,l])=><button key={k} id={"pu-tab-"+k} role="tab" aria-selected={tab===k}
+          aria-controls="pu-panel" tabIndex={tab===k?0:-1} className={"rv-tab"+(tab===k?" on":"")}
+          onClick={()=>selTab(k)} onKeyDown={e=>tabKey(e,k)}>{l}
+          {k==="inbox"&&(m.inbox||{}).unread>0&&<span className="rv-tab-n">{m.inbox.unread}</span>}</button>)}
+      </div>
+      <span className="rv-tabs-r">
+        <label className="pu-me" title="считать ли ваши собственные действия в метриках про людей">
+          <input type="checkbox" checked={meOn} onChange={e=>setMeOn(e.target.checked)}/>со мной</label>
+        <div className="seg" role="group" aria-label="Период">{[7,14,30].map(d=><button key={d} className={"seg-btn"+(days===d?" on":"")}
+          aria-pressed={days===d} onClick={()=>setDays(d)}>{d} дн</button>)}</div>
+      </span>
     </div>
 
+    <div id="pu-panel" role="tabpanel" aria-labelledby={"pu-tab-"+tab} key={tab} className="rv-panel">
     {tab==="people"&&<>
         {/* ② аудитория */}
         <div className="pu-card">
-          <div className="h"><span>Аудитория · уникальные в день</span>
-            <span>— пользователи · ‥ просмотры · новых за период: {(m.new_users||[]).reduce((a,x)=>a+(+x.n||0),0)}</span></div>
+          <div className="h"><span>Аудитория · человек в день</span>
+            <span>новых за {m.days} дн: {newN}</span></div>
           <AdArea data={m.dau}/>
+          <div className="pu-note">просмотров за период: {puNum(viewsSum)}
+            {actDays?<> · в среднем {Math.round(viewsSum/actDays)} на человека в день</>:null} · наведите на точку — число просмотров за день</div>
         </div>
 
         {/* ②b сегменты аудитории + генерация по дням */}
         <div className="pu-grid2 pu-sec">
           <div className="pu-card">
             <div className="h"><span>Кто наша аудитория · {m.days} дн</span></div>
-            <AdDonut center={String(sg.active||0)} sub="активных"
+            <AdDonut center={String(sg.active||0)} sub="заходили"
               parts={[
-                {label:"исследователи · ИИ и отчёты",value:sg.researchers||0,color:"var(--accent)"},
-                {label:"читатели новостей",value:sg.readers||0,color:"var(--warn)"},
-                {label:"разовые визиты",value:sg.casual||0,color:"var(--ink-3)"},
-                {label:"спящие за период",value:sg.sleepers||0,color:"var(--hair-2)"},
+                {label:"задают вопросы ИИ",value:sg.researchers||0,color:"var(--accent)"},
+                {label:"только читают новости",value:sg.readers||0,color:"var(--warn)"},
+                {label:"смотрят разделы без ИИ",value:sg.casual||0,color:"var(--ink-3)"},
+                {label:"молчат за период",value:sg.sleepers||0,color:"var(--hair-2)"},
               ]}/>
             <div className="pu-note">
               {sg.readers>0
-                ? <><span className="acc">✦</span> {sg.readers} заход{sg.readers===1?"ит":"ят"} только почитать новости («Новостные обзоры» и «Для вас») — точка роста для ИИ-помощника</>
-                : "читатели ≥60% просмотров в разделе «Новостные обзоры» без единого ИИ-запроса"}
+                ? <><span className="acc">✦</span> {sg.readers} {plural(sg.readers,"человек заходит","человека заходят","человек заходят")} только почитать новости («Новостные обзоры» и «Для вас») — точка роста для ИИ-помощника</>
+                : "«только читают новости» — от 60% просмотров в «Новостных обзорах» без единого вопроса ИИ"}
             </div>
           </div>
           <div className="pu-card">
-            <div className="h"><span>Генерация · по дням</span>
-              <span><span style={{color:"var(--accent)"}}>■</span> ИИ-запросы · <span style={{color:"var(--ink-3)"}}>■</span> отчёты</span></div>
+            <div className="h"><span>Вопросы и отчёты · по дням</span>
+              <span><span style={{color:"var(--accent)"}}>■</span> вопросы ИИ · <span style={{color:"var(--ink-3)"}}>■</span> отчёты</span></div>
             <AdCols axis={m.dau} a={m.ai_per_day} b={m.reports_per_day}/>
-            <div className="pu-note">за период: {f.ai_total||0} запросов · {f.reports||0} отчётов создано · {f.report_opens||0} открытий сохранённых · {f.shares||0} шерингов</div>
+            <div className="pu-note">за период: {f.ai_total||0} {plural(f.ai_total||0,"вопрос","вопроса","вопросов")} ИИ
+              {f.ai_deep?<> (из них {f.ai_deep} — заказ отчёта)</>:null} · {f.reports||0} {plural(f.reports||0,"отчёт","отчёта","отчётов")}
+              {" "}· {f.quick_saved||0} {plural(f.quick_saved||0,"быстрый ответ сохранён","быстрых ответа сохранено","быстрых ответов сохранено")}</div>
           </div>
         </div>
 
-        {/* ②c все люди поимённо + карточка по клику */}
-        <PuPeople days={days} onOpenUser={setCard}/>
-        <PuComplaints days={days} onOpenReport={setRep} onOpenUser={setCard} onOpenSession={setSess}/>
-
-        {/* ④ тепловая карта */}
-        <div className="pu-card pu-sec">
-          <div className="h"><span>Когда пользуются · час × день недели (МСК)</span><span>{m.days} дн</span></div>
-          <AdHeat cells={m.heatmap}/>
-        </div>
-
-      <PuPersonalization pz={m.personalization||{}}/>
-    </>}
-
-    {tab==="reports"&&<PuReports days={days} onOpenReport={setRep} onOpenUser={setCard}/>}
-
-    {tab==="ai"&&<>
-      <PuAgentEval/>
-      <PuAiFeedback fb={m.ai_feedback||{}} onOpenReport={setRep} onOpenUser={setCard}/>
-      <PuPersona p={m.persona||{}}/>
-      <PuTopics t={m.topics}/>
-        {/* ③ вовлечённость + фичи */}
-        <div className="pu-grid2">
+        {/* ③ страницы и функции */}
+        <div className="pu-grid2 top pu-sec">
           <div className="pu-card">
-            <div className="h"><span>Страницы · {m.days} дн</span><span>просмотры · время</span></div>
-            {(m.pages||[]).length===0&&<div style={{color:"var(--ink-3)",fontSize:12}}>Пока пусто.</div>}
+            <div className="h"><span>Разделы · {m.days} дн</span><span>просмотры · время</span></div>
+            {(m.pages||[]).length===0&&<div style={{color:"var(--ink-3)",fontSize:12}}>За период никто не заходил.</div>}
             {(m.pages||[]).map(pg=><div key={pg.page} className="pu-bar-row">
               <span className="lb">{AD_PAGE_RU[pg.page]||pg.page}</span>
               <span className="tr"><span className="fl" style={{width:Math.max(3,(pg.views/maxPage)*100)+"%"}}/></span>
@@ -9840,87 +11322,126 @@ function PulsePage(){
           </div>
           <div className="pu-card">
             <div className="h"><span>Функции · {m.days} дн</span></div>
-            <div className="pu-kv"><span>ИИ-запросы</span><b className="tnum">{f.ai_total||0}</b></div>
-            <div className="pu-kv"><span>Аудит-отчёты создано</span><b className="tnum">{f.reports||0}</b></div>
-            <div className="pu-kv"><span>Шеринги отчётов</span><b className="tnum">{f.shares||0}</b></div>
-            <div className="pu-kv"><span>Оценки контента 👍/👎</span>
+            <div className="pu-kv"><span>Вопросы ИИ-помощнику{f.ai_deep?<span className="sub">из них заказ отчёта — {f.ai_deep}</span>:null}</span>
+              <b className="tnum">{f.ai_total||0}</b></div>
+            <div className="pu-kv"><span>Отчёты</span><b className="tnum">{f.reports||0}</b></div>
+            {/* итоги прогонов: заказ ≠ отчёт — сорванные раньше не было видно (ПУЛ-02) */}
+            {(f.runs_ok||f.runs_failed||f.runs_stopped)?<div className="pu-kv"><span>Прогоны ИИ-помощника
+              <span className="sub">{f.deep_p50_s!=null?`отчёт строится: медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}`:"время отчёта появится после первых прогонов"}</span></span>
+              <b className="tnum">{f.runs_ok||0} готово{f.runs_failed?<span style={{color:"var(--neg)"}}> · {f.runs_failed} сорвалось</span>:null}{f.runs_stopped?<span style={{color:"var(--ink-3)"}}> · {f.runs_stopped} остановлено</span>:null}</b></div>:null}
+            <div className="pu-kv"><span>Быстрые ответы сохранено</span><b className="tnum">{f.quick_saved||0}</b></div>
+            <div className="pu-kv"><span>Открытий сохранённых отчётов</span><b className="tnum">{f.report_opens||0}</b></div>
+            <div className="pu-kv"><span>Отправлено коллегам</span><b className="tnum">{f.shares||0}</b></div>
+            <div className="pu-kv"><span>Оценки новостей и проверок 👍/👎</span>
               <b className="tnum"><span style={{color:"var(--pos)"}}>{f.fb_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.fb_dislikes||0}</span></b></div>
             <div className="pu-kv"><span>Оценки ответов ИИ 👍/👎</span>
               <b className="tnum"><span style={{color:"var(--pos)"}}>{f.ai_likes||0}</span> / <span style={{color:"var(--neg)"}}>{f.ai_dislikes||0}</span></b></div>
-            <div className="pu-kv"><span>Профилей заполнено</span><b className="tnum">{f.profiles||0} из {t.users_total||0}</b></div>
+            <div className="pu-kv"><span>Профилей с описанием · за всё время</span><b className="tnum">{f.profiles||0} из {t.users_total||0}</b></div>
           </div>
         </div>
 
+        {/* ②c все люди поимённо + карточка по клику */}
+        <PuMail ml={m.mail} days={m.days} onOpenUser={setCard}/>
+        <PuPeople days={days} withMe={withMe} rev={rev} onOpenUser={setCard}/>
+        <PuComplaints days={days} withMe={withMe} rev={rev} onOpenReport={setRep} onOpenUser={setCard} onOpenSession={setSess}/>
+
+        {/* ④ тепловая карта */}
+        <div className="pu-card pu-sec">
+          <div className="h"><span>Когда пользуются · открытия разделов по часам (МСК)</span><span>{m.days} дн</span></div>
+          <AdHeat cells={m.heatmap}/>
+        </div>
+
+      <PuPersonalization pz={m.personalization||{}} days={m.days} onOpenUser={setCard}/>
+    </>}
+
+    {tab==="inbox"&&<PuInbox rev={rev} onOpenUser={setCard} onChanged={load}/>}
+
+    {tab==="reports"&&<>
+      <PuTopics t={m.topics} days={m.days}/>
+      <PuReports days={days} withMe={withMe} rev={rev} onOpenReport={setRep} onOpenUser={setCard}/>
+    </>}
+
+    {tab==="ai"&&<>
+      <PuAgentEval/>
+      <PuAiFeedback fb={m.ai_feedback||{}} days={m.days} lastAt={rl&&rl.d} onOpenReport={setRep} onOpenUser={setCard}/>
+      <PuPersona p={m.persona||{}}/>
     </>}
 
     {tab==="data"&&<>
-      <PuIngest ing={m.ingest||{}}/>
+      <PuProposals p={m.proposals}/>
       <PuReviewSources r={m.review_sources||{}}/>
       <PuSignalJournal j={m.signal_journal}/>
-      <PuCollect c={m.collect||{}}/>
-      <PuSearch s={m.search||{}}/>
-      <PuNewsQuality q={m.news_quality||{}}/>
+      <PuNewsQuality q={m.news_quality||{}} days={m.days}/>
+      <div className="pu-sec"><PuSearch s={m.search||{}}/></div>
+      <div className="pu-grid2 top pu-sec">
+        <PuIngest ing={m.ingest||{}}/>
+        <PuCollect c={m.collect||{}}/>
+      </div>
     </>}
 
     {tab==="tech"&&<>
         {/* ⑤ техника */}
-        <div className="pu-grid2 pu-sec">
+        <div className="pu-grid2 top">
           <div className="pu-card">
-            <div className="h"><span>Латентность API · 7 дн</span><span>мс</span></div>
+            <div className="h"><span>Скорость ответов сервера · 7 дн</span><span>мс</span></div>
             {(m.latency||[]).length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Накапливается.</div>
-              :<table className="pu-tbl"><thead><tr><th>endpoint</th><th>n</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
+              :<div className="pu-x-scroll"><table className="pu-tbl"><thead><tr><th>адрес</th><th>запросов</th><th>p50</th><th>p95</th><th>5xx</th></tr></thead>
                 <tbody>{(m.latency||[]).map((r,i)=><tr key={i}>
                   <td title={r.path}>{(r.path||"").replace("/api/","")}</td>
                   <td>{r.n}</td><td>{r.p50}</td>
                   <td style={r.p95>3000?{color:"var(--warn)"}:null}>{r.p95}</td>
                   <td style={r.errs>0?{color:"var(--neg)"}:null}>{r.errs||0}</td>
-                </tr>)}</tbody></table>}
+                </tr>)}</tbody></table></div>}
+            <div className="pu-note">служебные адреса «Пульса» не учитываются: это автообновление этой страницы</div>
           </div>
-          <div className="pu-card">
-            <div className="h"><span>Ошибки · последние</span>
-              <span className={"pu-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" в журнале":"чисто ✓"}</span></div>
-            {nErr===0?<div style={{color:"var(--ink-3)",fontSize:12}}>Ни одной ошибки в журнале — так держать.</div>
-              :(m.errors_recent||[]).slice(0,10).map((e,i)=><div key={i} className="pu-err">
-                <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"js":"api"}</span>
-                <span className="m" title={e.msg||""}>{e.page||"—"}{e.status?" · "+e.status:""}{e.msg?" · "+e.msg:""}</span>
+          <div className="pu-card" id="pu-errors">
+            <div className="h"><span>Ошибки · {m.days} дн</span>
+              <span className={"pu-chip "+(nErr?"bad":"ok")}>{nErr?nErr+" за период":"чисто ✓"}</span></div>
+            {errs.length===0?<div style={{color:"var(--ink-3)",fontSize:12}}>За период ни одной ошибки.</div>
+              :errs.slice(0,12).map((e,i)=><div key={i} className="pu-err">
+                <span className="t">{e.ts}</span><span className="k">{e.kind==="client_error"?"браузер":"сервер"}</span>
+                <span className="m" title={e.msg||""}>{AD_PAGE_RU[e.page]||e.page||"—"}{e.status?" · "+e.status:""}{errText(e)?" · "+errText(e):""}</span>
+                {+e.n>1&&<span className="n" title={`${e.n} раз, у ${e.users} ${plural(+e.users||0,"человека","человек","человек")}`}>×{e.n}</span>}
               </div>)}
           </div>
         </div>
 
-        <div className="pu-grid2 pu-sec">
-          <div className="pu-card">
-            <div className="h"><span>Дайджест · последний выпуск</span>
-              <span>LLM-токены за период: {tokSum.toLocaleString("ru")}</span></div>
+        <div className="pu-grid2 top pu-sec">
+          <div className="pu-card" id="pu-digest">
+            <div className="h"><span>Ежедневный выпуск{dg[0]&&dg[0].d?" · "+rvDate(dg[0].d):""}</span>
+              <span title="расход ИИ-помощника нигде не пишется — здесь только выпуск">токены выпуска за {m.days} дн: {puNum(tokSum)}</span></div>
             <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-              {(m.digest||[]).map(s=><span key={s.section}
+              {dg.map(s=><span key={s.section}
                 className={"pu-chip "+(s.status==="ok"?"ok":s.status==="failed"?"bad":"")}
-                title={(s.error||"")+(s.gen_ms?" · "+s.gen_ms+"мс":"")}>
-                {s.section} · {s.status}{s.at?" · "+s.at:""}</span>)}
+                title={(s.error||"")+(s.gen_ms?" · собран за "+String(Math.round(s.gen_ms/100)/10).replace(".",",")+" с":"")}>
+                {DG_SECTION_RU[s.section]||s.section} · {s.status==="ok"?"готов":s.status}{s.at?" · "+s.at:""}</span>)}
             </div>
           </div>
           <div className="pu-card">
-            <div className="h"><span>Живая лента</span><span>последние события</span></div>
+            <div className="h"><span>Живая лента</span><span>последние действия коллег</span></div>
+            {(m.feed||[]).length===0&&<div style={{color:"var(--ink-3)",fontSize:12}}>Пока тихо.</div>}
             {(m.feed||[]).map((e,i)=><div key={i} className="pu-feed-row">
-              <span className="t">{e.ts}</span>
-              <span className="a">{initials(e.username||"?")}</span>
-              <span className="w">{e.kind==="page_view"?"открыл "+(AD_PAGE_RU[e.page]||e.page)
-                :e.kind==="page_leave"?((AD_PAGE_RU[e.page]||e.page)+" · "+adFmtS((e.dur_ms||0)/1000))
-                :e.kind==="client_error"?"⚠ JS-ошибка на "+(AD_PAGE_RU[e.page]||e.page)
-                :"⚠ API "+(e.page||"")+(e.status?" · "+e.status:"")}</span>
+              <span className="t" style={{width:"auto",minWidth:34}}>{e.ts}</span>
+              <span className="w"><b>{puShort(e.name||e.username||"?")}</b> {feedText(e)}</span>
             </div>)}
           </div>
         </div>
     </>}
+    </div>
 
-
-    {card&&<PuUserCard username={card} days={days}
-      onClose={()=>setCard(null)} onOpenReport={setRep} onOpenSession={setSess}/>}
-    {rep&&<PuReportView rid={rep} onClose={()=>setRep(null)}/>}
-    {sess&&<PuSessionView sid={sess} onClose={()=>setSess(null)}/>}
+    {/* выдвижные панели — в body: внутри .fade-in (анимация оставляет transform)
+        position:fixed считался от страницы, и карточка, открытая внизу списка,
+        показывалась с середины */}
+    {card&&ReactDOM.createPortal(<PuUserCard username={card} days={days}
+      onClose={()=>setCard(null)} onOpenReport={setRep} onOpenSession={setSess}
+      onHidden={()=>setRev(x=>x+1)}/>,document.body)}
+    {rep&&ReactDOM.createPortal(<PuReportView rid={rep} onClose={()=>setRep(null)}/>,document.body)}
+    {sess&&ReactDOM.createPortal(<PuSessionView sid={sess} onClose={()=>setSess(null)}/>,document.body)}
 
     <div style={{marginTop:26,paddingTop:12,borderTop:"1px solid var(--hair)",
                  fontSize:11,color:"var(--ink-3)"}}>
-      телеметрия: page_view/page_leave с фронта · api_request/api_error из middleware · доступ по env ADMIN_USERS ·
+      телеметрия: открытия разделов и время на них — с фронта · запросы и ошибки API — с сервера ·
+      доступ — env ADMIN_USERS (владелец) и PULSE_USERS · служебные учётки помечаются в карточке человека ·
       открытие чужого отчёта пишется в журнал (admin_report_open)
     </div>
   </div>;
@@ -10044,6 +11565,7 @@ const PROFILE_CSS=`
 .pf-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;}
 .pf-about{margin:28px 2px 8px;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pf-saved{font-size:12px;color:var(--pos);font-family:inherit;font-variant-numeric:tabular-nums}
+.pf-saved.err{color:var(--accent-ink)}
 .pf-save{font-size:13px;color:var(--paper);background:var(--ink);border-radius:9px;height:34px;padding:0 16px;font-weight:500;
   transition:transform .1s,filter .14s;}
 .pf-save:hover{opacity:.88;}
@@ -10083,6 +11605,9 @@ function ProfilePage(){
   const[savedDesc,setSavedDesc]=useState(false);
   const[savedSet,setSavedSet]=useState(false);
   const[ps,setPs]=useState(null);              // «сила персонализации» из /api/me
+  // сбой сохранения и загрузки — честно, а не «Сохранено ✓» (аудит 03.10, КАР-03)
+  const[pfErr,setPfErr]=useState("");
+  const[loadErr,setLoadErr]=useState(false);
 
   const applyMe=(d)=>{ setData(d);
     const p=d.prefs||{}; setSelfDesc(p.self_description||"");
@@ -10093,14 +11618,17 @@ function ProfilePage(){
   useEffect(()=>{
     let dtz=""; try{dtz=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch{}
     setDetectedTz(dtz);
-    apiFetch("/api/me").then(d=>{applyMe(d); setTz(d.timezone||dtz||"Europe/Moscow");}).catch(()=>{});
+    loadMe(dtz);
     apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});
-  },[]);
+  },[]); // eslint-disable-line
+  function loadMe(dtz){ setLoadErr(false);
+    apiFetch("/api/me").then(d=>{applyMe(d); setTz(d.timezone||dtz||detectedTz||"Europe/Moscow");}).catch(()=>setLoadErr(true)); }
 
   const saveInterests=async(patch)=>{
-    const next={...interests,...patch}; setInterests(next);
+    const prev=interests, next={...interests,...patch}; setInterests(next); setPfErr("");
     try{ const r=await apiPut("/api/me/interests",{pinned:next.pinned,muted:next.muted,custom:next.custom});
-      if(r&&r.interests) setInterests(r.interests); }catch{}
+      if(r&&r.interests) setInterests(r.interests); }
+    catch{ setInterests(prev); setPfErr("Темы не сохранились — попробуйте ещё раз."); }
   };
   const mute=(t)=>saveInterests({muted:[...new Set([...(interests.muted||[]),t])],
                                  pinned:(interests.pinned||[]).filter(x=>x!==t),
@@ -10115,18 +11643,23 @@ function ProfilePage(){
     try{ const r=await apiPost("/api/me/profile/refresh",{}); if(r&&r.note) setData(d=>({...d,profile_note:r.note})); }catch{}
     setBusy(false); };
   const saveDesc=async()=>{
-    try{ await apiPut("/api/me",{prefs:{self_description:selfDesc.trim()}}); }catch{}
-    setSavedDesc(true); setTimeout(()=>setSavedDesc(false),1800);
+    try{ await apiPut("/api/me",{prefs:{self_description:selfDesc.trim()}}); }
+    catch{ setSavedDesc("err"); return; }
+    setSavedDesc("ok"); setTimeout(()=>setSavedDesc(false),1800);
     // подсказать пересбор нарратива в фоне
     apiPost("/api/me/profile/refresh",{}).then(r=>{ if(r&&r.note) setData(d=>({...d,profile_note:r.note})); }).catch(()=>{});
   };
   const saveSettings=async()=>{
     try{ await apiPut("/api/me",{timezone:tz||"Europe/Moscow",
-      prefs:{personal_digest:personalDigest,personal_band_home:bandHome,morning_hour:Number(morningHour)||7}}); }catch{}
-    setSavedSet(true); setTimeout(()=>setSavedSet(false),1800);
+      prefs:{personal_digest:personalDigest,personal_band_home:bandHome,morning_hour:Number(morningHour)||7}}); }
+    catch{ setSavedSet("err"); return; }
+    setSavedSet("ok"); setTimeout(()=>setSavedSet(false),1800);
   };
 
-  if(!data) return <LoadingPage/>;
+  if(!data) return loadErr
+    ?<div className="fade-in"><ErrState msg="Профиль не загрузился. Проверьте связь — или сессия входа истекла, тогда помогает обновление страницы."/>
+      <div style={{textAlign:"center",marginTop:12}}><button className="btn btn-sm" onClick={()=>loadMe()}>Повторить</button></div></div>
+    :<LoadingPage/>;
   const products=(interests.products||[]);
   const custom=(interests.custom||[]);
   const muted=(interests.muted||[]);
@@ -10136,6 +11669,7 @@ function ProfilePage(){
 
   return <div className="fade-in pf-wrap">
     <style>{PROFILE_CSS}</style>
+    {pfErr&&<div className="pf-saved err" role="alert" style={{marginBottom:12}}>{pfErr}</div>}
     <div className="pf-hero">
       <div className="pf-avatar">{initials(me&&me.name||data.name)}</div>
       <div>
@@ -10152,7 +11686,8 @@ function ProfilePage(){
       <textarea id="pf-desc" className="pf-ta" value={selfDesc} onChange={e=>setSelfDesc(e.target.value)}
         placeholder="Например: проверяю корректность начисления процентов по вкладам Сбера и комиссии по эквайрингу для ИП; слежу за ипотечными программами и жалобами по кредитным картам."/>
       <div className="pf-actions">
-        {savedDesc&&<span className="pf-saved">Сохранено · профиль пересобирается ✦</span>}
+        {savedDesc==="ok"&&<span className="pf-saved">Сохранено · профиль пересобирается ✦</span>}
+        {savedDesc==="err"&&<span className="pf-saved err" role="alert">Не сохранилось — попробуйте ещё раз</span>}
         <button className="pf-save" onClick={saveDesc}>Сохранить</button>
       </div>
     </div>
@@ -10266,7 +11801,7 @@ function ProfilePage(){
         <button className={"pf-toggle"+(personalDigest?" on":"")} onClick={()=>setPersonalDigest(v=>!v)} aria-label="переключить"><span/></button>
       </div>
       <div className="pf-row">
-        <div><div className="pf-row-t">Личная полоса в «Общем»</div><div className="pf-row-d">Краткая выжимка из «Для вас» над общим брифингом</div></div>
+        <div><div className="pf-row-t">Личная полоса в режиме «Выпуск дня»</div><div className="pf-row-d">Краткая выжимка из «Для вас» над общим брифингом</div></div>
         <button className={"pf-toggle"+(bandHome?" on":"")} onClick={()=>setBandHome(v=>!v)} aria-label="переключить"><span/></button>
       </div>
       <div className="pf-row">
@@ -10274,7 +11809,8 @@ function ProfilePage(){
         <input className="pf-input-sm" type="number" min="0" max="12" value={morningHour} onChange={e=>setMorningHour(e.target.value)}/>
       </div>
       <div className="pf-actions">
-        {savedSet&&<span className="pf-saved">Сохранено ✓</span>}
+        {savedSet==="ok"&&<span className="pf-saved">Сохранено ✓</span>}
+        {savedSet==="err"&&<span className="pf-saved err" role="alert">Не сохранилось — попробуйте ещё раз</span>}
         <button className="pf-save" onClick={saveSettings}>Сохранить</button>
       </div>
     </div>
@@ -10284,17 +11820,36 @@ function ProfilePage(){
 
 // Любая ошибка рендера страницы → заглушка с кнопкой вместо белого экрана,
 // ошибка уходит в журнал «Пульса» (kind=client_error) даже если трекер страницы мёртв.
+function journalRenderError(e,info,where){
+  try{
+    fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({events:[{kind:"client_error",page:(location.hash||"#").slice(1),
+        payload:{msg:String((e&&e.message)||e).slice(0,300),where:where||null,
+                 stack:String((info&&info.componentStack)||"").slice(0,400)}}]})}).catch(()=>{});
+  }catch{}
+}
+
+// Граница для выплывающих панелей (дела, колокольчик, обратная связь, «В дело»):
+// раньше ошибка в любой из них роняла всё приложение в белый экран (аудит 03.10)
+class OverlayBoundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(e){return{err:e};}
+  componentDidCatch(e,info){ journalRenderError(e,info,this.props.name||"overlay"); }
+  render(){
+    if(this.state.err) return ReactDOM.createPortal(<div className="tk-toast" role="alert">
+      <div className="t"><span><b>Окно не открылось из-за ошибки</b>
+        <span className="m">Ошибка записана. Чаще всего помогает обновление страницы.</span></span></div>
+      <div className="b"><button className="btn btn-primary btn-sm" onClick={()=>location.reload()}>Обновить</button>
+        <button className="btn btn-sm" onClick={()=>{ this.setState({err:null}); this.props.onClose&&this.props.onClose(); }}>Закрыть</button></div>
+    </div>,document.body);
+    return this.props.children;
+  }
+}
+
 class PageBoundary extends React.Component{
   constructor(p){super(p);this.state={err:null};}
   static getDerivedStateFromError(e){return{err:e};}
-  componentDidCatch(e,info){
-    try{
-      fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({events:[{kind:"client_error",page:(location.hash||"#").slice(1),
-          payload:{msg:String((e&&e.message)||e).slice(0,300),
-                   stack:String((info&&info.componentStack)||"").slice(0,400)}}]})}).catch(()=>{});
-    }catch{}
-  }
+  componentDidCatch(e,info){ journalRenderError(e,info,this.props.name||"page"); }
   componentDidUpdate(prev){ if(prev.pageKey!==this.props.pageKey&&this.state.err)this.setState({err:null}); }
   render(){
     if(this.state.err) return <div style={{padding:"64px 24px",textAlign:"center"}}>
@@ -10336,6 +11891,695 @@ function appAbout(info){
   return s;
 }
 
+// ─── «Обратная связь»: строка внизу меню → окно обращения → «Мои обращения» ──
+// Вход тихий, как пункт «Данных»: без рамки и подписи; точка загорается, только
+// когда команда ответила. Раздел подставляется сам, контекст (адрес с
+// фильтрами, версия, браузер, ошибки страницы) прикладывается сам и виден по
+// «показать». Ответ команды приходит сюда же. Классы tk-* и адреса /api/inbox:
+// слова feedback/ad/track режут блокировщики рекламы.
+const SAY_CSS=`
+.rail-foot{border-top:0;padding-top:6px}
+.tk-row{display:flex;align-items:center;gap:10px;width:100%;padding:6px 10px;border-radius:4px;border:0;background:none;
+  font:inherit;font-size:13px;font-weight:450;color:var(--ink-3);cursor:pointer;text-align:left;
+  transition:background .12s,color .12s}
+.tk-row:hover{background:var(--paper-2);color:var(--ink)}
+.tk-row.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+.tk-row svg{flex:none}
+.tk-row:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.tk-row .tk-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:-3px;flex:none}
+.tk-row.unread{color:var(--ink-2)}
+.tk-div{height:1px;background:var(--hair);margin:6px 2px}
+.tk-pop{position:fixed;left:calc(var(--rail) + 12px);bottom:14px;z-index:70;width:452px;max-height:calc(100dvh - 28px);
+  display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--hair);border-radius:14px;
+  box-shadow:0 1px 0 oklch(0% 0 0 / .04),0 18px 48px oklch(0% 0 0 / .14);transform-origin:0 100%;
+  animation:tkIn .2s cubic-bezier(.32,.72,0,1) both;font-size:13px;color:var(--ink)}
+@keyframes tkIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.tk-pop,.tk-toast{animation:none}}
+@media(pointer:coarse){.tk-kbd,.tk-hint{display:none}}
+.tk-head{display:flex;align-items:center;gap:10px;padding:14px 14px 10px 18px}
+.tk-ttl{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.tk-x{margin-left:auto;width:28px;height:28px;border-radius:7px;border:0;background:none;color:var(--ink-3);cursor:pointer;
+  display:grid;place-items:center}
+.tk-x:hover{background:var(--paper-2);color:var(--ink)}
+.tk-tabs{display:flex;gap:2px;padding:0 18px;border-bottom:1px solid var(--hair)}
+.tk-tab{border:0;background:none;font:inherit;font-size:12.5px;font-weight:500;color:var(--ink-3);padding:7px 2px 9px;
+  margin-right:14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;display:inline-flex;gap:6px;align-items:center}
+.tk-tab.on{color:var(--ink);border-bottom-color:var(--ink)}
+.tk-tab .n{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.tk-tab .tk-dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.tk-body{padding:14px 18px 6px;overflow-y:auto;min-height:0}
+.tk-lbl{font-size:12px;color:var(--ink-3);margin:0 0 7px}
+.tk-kinds{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px}
+.tk-kind{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--hair-2);
+  background:var(--surface);font:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+.tk-kind:hover{border-color:var(--ink-4);color:var(--ink)}
+.tk-kind.on{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 55%);color:var(--accent-ink)}
+.tk-kind:active{transform:scale(.97)}
+.tk-where{position:relative;margin-bottom:12px}
+.tk-where svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink-3);pointer-events:none}
+.tk-where select{width:100%;height:32px;padding:0 30px 0 30px;border-radius:8px;border:1px solid var(--hair-2);background:var(--surface);
+  font:inherit;font-size:12.5px;color:var(--ink);appearance:none;-webkit-appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center}
+.tk-where select:focus-visible,.tk-ta:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 82%)}
+.tk-ta{width:100%;min-height:112px;max-height:260px;resize:none;padding:10px 12px;border-radius:10px;border:1px solid var(--hair-2);
+  background:var(--surface);font:inherit;font-size:13.5px;line-height:1.55;color:var(--ink);display:block}
+.tk-ta::placeholder{color:var(--ink-4)}
+.tk-files{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.tk-thumb{position:relative;width:64px;height:44px;border-radius:7px;overflow:hidden;border:1px solid var(--hair);background:var(--paper-2)}
+.tk-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.tk-thumb button{position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;border:0;background:oklch(0% 0 0 / .6);
+  color:#fff;font-size:11px;line-height:18px;cursor:pointer;padding:0}
+.tk-add{height:44px;padding:0 12px;border-radius:7px;border:1px dashed var(--hair-2);background:none;font:inherit;font-size:12px;
+  color:var(--ink-3);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.tk-add:hover{border-color:var(--ink-4);color:var(--ink)}
+.tk-hint{font-size:11.5px;color:var(--ink-4)}
+.tk-note{margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--ink-3);text-wrap:pretty}
+.tk-ctx{margin-top:12px;font-size:11.5px;color:var(--ink-3);line-height:1.55}
+.tk-ctx button{border:0;background:none;padding:0;font:inherit;color:var(--ink-2);cursor:pointer;text-decoration:underline;
+  text-decoration-color:var(--hair-2);text-underline-offset:3px}
+.tk-ctx dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;margin:8px 0 0;padding:9px 11px;border-radius:8px;background:var(--paper-2)}
+.tk-ctx dt{color:var(--ink-3)}
+.tk-ctx dd{margin:0;color:var(--ink-2);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.tk-err{margin-top:10px;font-size:12px;color:var(--neg)}
+.tk-foot{display:flex;align-items:center;gap:10px;padding:12px 18px 14px;border-top:1px solid var(--hair);margin-top:8px}
+.tk-foot .who{font-size:11.5px;color:var(--ink-3);line-height:1.4}
+.tk-foot .btn{margin-left:auto}
+.tk-kbd{font-size:11px;opacity:.6;margin-left:2px}
+.tk-drop{position:absolute;inset:0;border-radius:14px;border:2px dashed var(--select);background:color-mix(in oklab,var(--surface),transparent 8%);
+  display:grid;place-items:center;font-size:13px;color:var(--ink);z-index:3;pointer-events:none}
+.tk-done{text-align:center;padding:26px 8px 18px}
+.tk-done .ic{width:44px;height:44px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);display:grid;place-items:center;margin:0 auto 12px}
+.tk-done h4{margin:0 0 6px;font-size:15px;font-weight:600}
+.tk-done p{margin:0 auto 16px;max-width:300px;font-size:12.5px;color:var(--ink-3);line-height:1.55}
+.tk-done .b{display:flex;gap:8px;justify-content:center}
+.tk-list{margin:-4px 0 6px}
+.tk-item{border-bottom:1px solid var(--hair)}
+.tk-item:last-child{border-bottom:0}
+.tk-ihead{display:flex;gap:10px;align-items:flex-start;width:100%;padding:11px 0;border:0;background:none;font:inherit;text-align:left;cursor:pointer;color:var(--ink)}
+.tk-ihead .k{color:var(--ink-3);margin-top:1px;flex:none}
+.tk-ihead .t{flex:1;min-width:0}
+.tk-ihead .q{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13px;line-height:1.45}
+.tk-ihead.unread .q{font-weight:600}
+.tk-ihead[aria-expanded="true"] .q{display:block;-webkit-line-clamp:unset;white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-ihead .m{font-size:11.5px;color:var(--ink-3);margin-top:3px;font-variant-numeric:tabular-nums}
+.tk-st{flex:none;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--hair-2);color:var(--ink-3);white-space:nowrap}
+.tk-st.accepted{color:var(--select);border-color:color-mix(in oklab,var(--select),transparent 60%)}
+.tk-st.in_progress{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 55%)}
+.tk-st.done{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 55%)}
+.tk-thread{padding:0 0 12px 26px}
+.tk-full{font-size:12.5px;line-height:1.55;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-msg{margin-top:10px;padding:9px 11px;border-radius:9px;background:var(--paper-2);font-size:12.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-msg.team{background:var(--accent-soft)}
+.tk-msg .h{font-size:11px;color:var(--ink-3);margin-bottom:3px;white-space:normal}
+.tk-msg.team .h{color:var(--accent-ink)}
+.tk-sys{margin-top:8px;font-size:11.5px;color:var(--ink-3);display:flex;gap:6px;align-items:center}
+.tk-sys::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ink-4)}
+.tk-ok{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:12.5px;color:var(--ink-2)}
+.tk-reply{display:flex;gap:8px;margin-top:10px;align-items:flex-end}
+.tk-reply textarea{flex:1;min-height:34px;max-height:140px;resize:none;padding:7px 10px;border-radius:8px;border:1px solid var(--hair-2);
+  background:var(--surface);font:inherit;font-size:12.5px;line-height:1.45;color:var(--ink)}
+.tk-empty{text-align:center;padding:30px 12px;color:var(--ink-3);font-size:12.5px;line-height:1.55}
+.tk-toast{position:fixed;left:calc(var(--rail) + 20px);bottom:20px;z-index:300;max-width:340px;background:var(--surface);
+  border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:tkIn .22s cubic-bezier(.32,.72,0,1) both}
+.tk-toast .t{font-size:12.5px;line-height:1.5;color:var(--ink-2);margin-bottom:10px}
+.tk-toast .t b{color:var(--ink);font-weight:600}
+.tk-toast .b{display:flex;gap:8px}
+@media(max-width:960px){
+  .tk-pop{left:0;right:0;bottom:0;width:auto;max-height:88dvh;border-radius:16px 16px 0 0;transform-origin:50% 100%;
+    padding-bottom:env(safe-area-inset-bottom)}
+  .tk-toast{left:16px;right:16px;bottom:16px;max-width:none}
+  .tk-kind,.tk-x{min-height:40px}
+}
+`;
+const IcSay={
+  row:p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M5 4.5h14A1.5 1.5 0 0120.5 6v9a1.5 1.5 0 01-1.5 1.5h-7l-4.5 3.5v-3.5H5A1.5 1.5 0 013.5 15V6A1.5 1.5 0 015 4.5z"/><path d="M8 9h8M8 12.2h5"/></svg>,
+  idea:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 00-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0012 3z"/></svg>,
+  bug:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="7.5" y="8" width="9" height="12" rx="4.5"/><path d="M9.5 8V7a2.5 2.5 0 015 0v1M12 12v8M4 13h3.5M16.5 13H20M5 7.5l3 2M19 7.5l-3 2M5 19l3-2M19 19l-3-2"/></svg>,
+  numbers:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3 20h18M6 16v-5M11 16V6M16 16v-7"/><path d="M19 4l2 2M21 4l-2 2"/></svg>,
+  howto:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 014.9.6c0 1.7-2.5 2.1-2.5 3.6M12 16.9v.1"/></svg>,
+  other:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" {...p}><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>,
+  pin:p=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 21s-6.5-5.7-6.5-11a6.5 6.5 0 0113 0c0 5.3-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.2"/></svg>,
+  image:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>,
+  x:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" {...p}><path d="M6 6l12 12M18 6L6 18"/></svg>,
+  check:p=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M20 6L9 17l-5-5"/></svg>,
+};
+const SAY_KINDS=[["idea","Идея"],["bug","Ошибка"],["numbers","Неверные цифры"],["howto","Вопрос"]];
+const SAY_KIND_RU={idea:"Идея",bug:"Ошибка",numbers:"Неверные цифры",howto:"Вопрос",other:"Другое"};
+const SAY_HINT={
+  "":"Расскажите, что улучшить или что пошло не так",
+  idea:"Чего не хватает и зачем. Например: «Фильтр по городу в жалобах — для проверки филиалов»",
+  bug:"Что делали и что пошло не так. Например: «После “Взять в работу” карточка осталась в очереди»",
+  numbers:"Где увидели число, каким оно должно быть и откуда это известно. Например: «В выпуске 120 жалоб на кредитки, в разделе “Аудит отзывов” — 96»",
+  howto:"Что хотите сделать — подскажем. Например: «Как сравнить вклады Сбера с рынком за прошлый месяц?»"};
+const SAY_STATUS_RU={new:"Новое",accepted:"Принято",in_progress:"В работе",done:"Сделано",wontfix:"Не будем делать",exists:"Уже есть"};
+const SAY_MODE={foryou:"Для вас",market:"Рынок · позиция"};
+const SAY_DRAFT="al-say-draft";
+// последние ошибки страницы — прикладываются к обращению (видно по «показать»)
+let _sayErrs=[];
+function sayRecordErr(msg){ try{ _sayErrs=[..._sayErrs.slice(-4),
+  {at:new Date().toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"}),msg:String(msg||"").slice(0,160)}]; }catch{} }
+const sayPost=(path,body)=>fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+  .then(async r=>{ if(r.ok) return r.json(); let d=""; try{ d=(await r.json()).detail; }catch{}
+    throw new Error(typeof d==="string"&&d?d:r.status===413?"Снимок слишком большой — уменьшите его":"Не получилось отправить. Попробуйте ещё раз"); });
+const sayMac=()=>/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent||"");
+function sayWhere(page){
+  const sec=SECTION_OF[page]||page||"overview";
+  const nav=NAV.find(n=>n.id===sec);
+  const name=nav?nav.label:sec==="pulse"?"Пульс":sec==="profile"?"Профиль":"AuditLens";
+  let sub=SAY_MODE[page]||null;
+  if(!sub&&sec==="reviews"){ const t=(parseHash().prm||{}).tab; const r=RV_TABS.find(x=>x[0]===t); if(r) sub=r[1]; }
+  return {section:sec,label:sub?`${name} › ${sub}`:name};
+}
+function sayBrowser(){ const u=navigator.userAgent||"";
+  const m=u.match(/(Edg|YaBrowser|OPR|Firefox|Chrome|Version)\/(\d+)/);
+  const nm=m?(({Edg:"Edge",YaBrowser:"Яндекс Браузер",OPR:"Opera",Version:"Safari"})[m[1]]||m[1])+" "+m[2]:"браузер";
+  const os=/Windows/.test(u)?"Windows":/Mac OS X/.test(u)?"macOS":/Android/.test(u)?"Android":/iPhone|iPad/.test(u)?"iOS":/Linux/.test(u)?"Linux":"";
+  return nm+(os?" · "+os:""); }
+function sayContext(appInfo){
+  const dark=document.documentElement.getAttribute("data-theme")==="dark"||
+    (!document.documentElement.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme: dark)").matches);
+  const c={url:location.hash||"#overview",version:(appInfo&&appInfo.version)||"",browser:sayBrowser(),
+    screen:`${innerWidth}×${innerHeight}${devicePixelRatio>1?` · ×${Math.round(devicePixelRatio*10)/10}`:""}`,
+    theme:dark?"тёмная":"светлая"};
+  if(_sayErrs.length) c.errors=_sayErrs.map(e=>`${e.at} ${e.msg}`);
+  return c;
+}
+// снимок → JPEG до ~650 КБ: прокси режет тела запросов больше мегабайта
+async function sayShrink(file){
+  const url=URL.createObjectURL(file);
+  const toData=(blob)=>new Promise((ok,no)=>{const r=new FileReader(); r.onload=()=>ok(r.result); r.onerror=no; r.readAsDataURL(blob);});
+  try{
+    const img=await new Promise((ok,no)=>{const i=new Image(); i.onload=()=>ok(i); i.onerror=no; i.src=url;});
+    const W=img.naturalWidth, H=img.naturalHeight;
+    if(file.size<=600*1024&&Math.max(W,H)<=2400&&/^image\/(png|jpeg|webp)$/.test(file.type))
+      return {data:await toData(file),w:W,h:H,url:URL.createObjectURL(file)};
+    for(const [side,q] of [[1920,.86],[1600,.8],[1280,.74],[1024,.68]]){
+      const k=Math.min(1,side/Math.max(W,H)), w=Math.round(W*k), h=Math.round(H*k);
+      const c=document.createElement("canvas"); c.width=w; c.height=h;
+      const g=c.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,w,h); g.drawImage(img,0,0,w,h);
+      const blob=await new Promise(ok=>c.toBlob(ok,"image/jpeg",q));
+      if(blob&&(blob.size<=650*1024||side===1024)) return {data:await toData(blob),w,h,url:URL.createObjectURL(blob)};
+    }
+  } finally { URL.revokeObjectURL(url); }
+  throw new Error("Снимок не читается");
+}
+const sayDate=(iso)=>{ try{ const d=new Date(iso); const today=new Date().toDateString()===d.toDateString();
+  return today?d.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"})
+    :d.toLocaleDateString("ru",{day:"numeric",month:"short"}).replace(".",""); }catch{ return ""; } };
+
+function SayPanel({page,appInfo,me,tab:tab0,onClose,anchor,onUnread,focus}){
+  const where=useMemo(()=>sayWhere(page),[page]);
+  const draft=useMemo(()=>{try{return JSON.parse(localStorage.getItem(SAY_DRAFT)||"{}")||{};}catch{return {};}},[]);
+  const[tab,setTab]=useState(tab0||"new");
+  const[kind,setKind]=useState(draft.kind||"");
+  const[section,setSection]=useState(where.section);
+  const[text,setText]=useState(draft.text||"");
+  const[files,setFiles]=useState([]);
+  const[showCtx,setShowCtx]=useState(false);
+  const[err,setErr]=useState("");
+  const[busy,setBusy]=useState("");
+  const[done,setDone]=useState(null);
+  const[drag,setDrag]=useState(false);
+  const[mine,setMine]=useState(null);
+  const ref=useRef(null), taRef=useRef(null), fileRef=useRef(null);
+  const ctx=useMemo(()=>sayContext(appInfo),[appInfo,tab]); // eslint-disable-line
+  const opts=useMemo(()=>{ const o=NAV.map(n=>[n.id,n.label]);
+    if(!o.some(x=>x[0]===where.section)) o.push([where.section,where.label.split(" › ")[0]]);
+    o.push(["profile","Профиль"],["general","Инструмент в целом"]);
+    return o.filter((x,i,a)=>a.findIndex(y=>y[0]===x[0])===i); },[where]);
+  const label=section===where.section?where.label:((opts.find(x=>x[0]===section)||[])[1]||section);
+  // черновик переживает случайное закрытие окна
+  useEffect(()=>{ try{ localStorage.setItem(SAY_DRAFT,JSON.stringify({kind,text})); }catch{} },[kind,text]);
+  // фокус в поле, Esc закрывает, клик мимо окна закрывает; фокус возвращается на строку меню
+  useEffect(()=>{ const t=setTimeout(()=>{ if(tab==="new"&&taRef.current) taRef.current.focus(); },60);
+    const onDown=(e)=>{ if(ref.current&&!ref.current.contains(e.target)&&!(anchor&&anchor.current&&anchor.current.contains(e.target))) onClose(); };
+    document.addEventListener("mousedown",onDown);
+    return ()=>{ clearTimeout(t); document.removeEventListener("mousedown",onDown); };
+  },[]); // eslint-disable-line
+  // поле растёт с текстом
+  useEffect(()=>{ const t=taRef.current; if(!t) return; t.style.height="auto"; t.style.height=Math.min(260,Math.max(112,t.scrollHeight+2))+"px"; },[text,tab,done]);
+  const loadMine=useCallback(()=>apiFetch("/api/inbox/mine").then(d=>{setMine(d);}).catch(()=>setMine({tickets:[],error:true})),[]);
+  useEffect(()=>{ if(tab==="mine") loadMine(); },[tab,loadMine]);
+  const addFiles=async(list)=>{ const imgs=[...list].filter(f=>/^image\//.test(f.type));
+    if(!imgs.length) return;
+    const room=3-files.length; if(room<=0){ setErr("Можно приложить до трёх снимков"); return; }
+    setErr("");
+    for(const f of imgs.slice(0,room)){
+      try{ const x=await sayShrink(f); setFiles(a=>a.length<3?[...a,{...x,id:Math.random().toString(36).slice(2)}]:a); }
+      catch(e){ setErr(e.message||"Снимок не читается"); } } };
+  const onPaste=(e)=>{ const items=[...((e.clipboardData&&e.clipboardData.items)||[])].filter(i=>i.kind==="file"&&/^image\//.test(i.type));
+    if(!items.length) return; e.preventDefault(); addFiles(items.map(i=>i.getAsFile()).filter(Boolean)); };
+  const send=async()=>{
+    if(busy) return;
+    const t=text.trim();
+    if(t.length<3){ setErr("Опишите, что случилось, — хотя бы одной фразой"); taRef.current&&taRef.current.focus(); return; }
+    setErr(""); setBusy("Отправляю…");
+    try{
+      const r=await sayPost("/api/inbox",{kind:kind||"other",section,section_label:label,body:t,context:ctx});
+      let failed=0;
+      for(let i=0;i<files.length;i++){
+        setBusy(`Снимок ${i+1} из ${files.length}…`);
+        try{ await sayPost(`/api/inbox/${r.ticket_id}/file`,{data:files[i].data,w:files[i].w,h:files[i].h}); }catch{ failed++; }
+      }
+      files.forEach(f=>{ try{URL.revokeObjectURL(f.url);}catch{} });
+      setDone({id:r.ticket_id,failed}); setText(""); setKind(""); setFiles([]); setShowCtx(false);
+      try{ localStorage.removeItem(SAY_DRAFT); }catch{}
+    }catch(e){ setErr(e.message); }
+    finally{ setBusy(""); }
+  };
+  const onKey=(e)=>{ if(e.key==="Escape"){ e.stopPropagation(); onClose(); return; }
+    if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)&&tab==="new"&&!done){ e.preventDefault(); send(); } };
+  const unread=(mine&&mine.unread)||0;
+  const ctxRows=[["Страница",ctx.url],["Раздел",label],["Версия",ctx.version||"—"],["Браузер",ctx.browser],
+    ["Экран",ctx.screen],["Ошибки страницы",ctx.errors?ctx.errors.join("\n"):"нет"]];
+  return <div className="tk-pop" ref={ref} role="dialog" aria-modal="false" aria-labelledby="tk-ttl"
+    onKeyDown={onKey} onPaste={tab==="new"&&!done?onPaste:undefined}
+    onDragOver={tab==="new"&&!done?(e=>{ if([...(e.dataTransfer.types||[])].includes("Files")){ e.preventDefault(); setDrag(true);} }):undefined}
+    onDragLeave={e=>{ if(!ref.current.contains(e.relatedTarget)) setDrag(false); }}
+    onDrop={tab==="new"&&!done?(e=>{ e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files||[]); }):undefined}>
+    {drag&&<div className="tk-drop">Отпустите, чтобы приложить снимок</div>}
+    <div className="tk-head">
+      <div className="tk-ttl" id="tk-ttl">Обратная связь</div>
+      <button className="tk-x" onClick={onClose} aria-label="Закрыть"><IcSay.x/></button>
+    </div>
+    <div className="tk-tabs" role="tablist">
+      <button role="tab" aria-selected={tab==="new"} className={"tk-tab"+(tab==="new"?" on":"")}
+        onClick={()=>{setTab("new");setDone(null);}}>Написать</button>
+      <button role="tab" aria-selected={tab==="mine"} className={"tk-tab"+(tab==="mine"?" on":"")} onClick={()=>setTab("mine")}>
+        Мои обращения{mine&&mine.tickets&&mine.tickets.length?<span className="n">{mine.tickets.length}</span>:null}
+        {(mine?unread:0)>0&&<span className="tk-dot" aria-label="есть ответ"/>}</button>
+    </div>
+    {tab==="new"&&(done
+      ? <div className="tk-body"><div className="tk-done" role="status">
+          <div className="ic"><IcSay.check/></div>
+          <h4>Обращение № {done.id} отправлено</h4>
+          <p>Команда ответит здесь же — у строки «Обратная связь» загорится точка.
+            {done.failed?` ${done.failed===1?"Один снимок":"Часть снимков"} не дошли — можно описать словами в ответе.`:""}</p>
+          <div className="b">
+            <button className="btn btn-sm" onClick={()=>{setDone(null);setTab("mine");}}>Мои обращения</button>
+            <button className="btn btn-sm" onClick={()=>setDone(null)}>Написать ещё</button>
+          </div></div></div>
+      : <>
+        <div className="tk-body">
+          <div className="tk-lbl" id="tk-kind-l">Что случилось</div>
+          <div className="tk-kinds" role="radiogroup" aria-labelledby="tk-kind-l">
+            {SAY_KINDS.map(([k,l])=>{ const I=IcSay[k]; return <button key={k} type="button" role="radio" aria-checked={kind===k}
+              className={"tk-kind"+(kind===k?" on":"")} onClick={()=>setKind(kind===k?"":k)}><I/>{l}</button>; })}
+          </div>
+          <div className="tk-lbl"><label htmlFor="tk-where">Где</label></div>
+          <div className="tk-where"><IcSay.pin/>
+            <select id="tk-where" value={section} onChange={e=>setSection(e.target.value)}>
+              {opts.map(([k,l])=><option key={k} value={k}>{k===where.section?where.label:l}</option>)}
+            </select></div>
+          <textarea ref={taRef} className="tk-ta" value={text} maxLength={4000} aria-label="Текст обращения"
+            placeholder={SAY_HINT[kind]||SAY_HINT[""]} onChange={e=>{setText(e.target.value); if(err) setErr("");}}/>
+          <div className="tk-files">
+            {files.map(f=><div key={f.id} className="tk-thumb"><img src={f.url} alt="Снимок экрана"/>
+              <button type="button" aria-label="Убрать снимок" onClick={()=>{ try{URL.revokeObjectURL(f.url);}catch{} setFiles(a=>a.filter(x=>x.id!==f.id)); }}>×</button></div>)}
+            {files.length<3&&<button type="button" className="tk-add" onClick={()=>fileRef.current&&fileRef.current.click()}>
+              <IcSay.image/>Снимок</button>}
+            {files.length===0&&<span className="tk-hint">или вставьте {sayMac()?"⌘V":"Ctrl+V"}</span>}
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden
+              onChange={e=>{ addFiles(e.target.files||[]); e.target.value=""; }}/>
+          </div>
+          {/* на рабочих устройствах снимки экрана запрещены на уровне системы —
+              иначе человек ищет, почему не работает Ctrl+V */}
+          {files.length===0&&<div className="tk-note">Снимок экрана можно приложить только с личного устройства:
+            на рабочих в домене Sigma снимки запрещены системой. С рабочего — опишите словами, что видно на экране.</div>}
+          <div className="tk-ctx">Приложим: страницу с фильтрами, версию, браузер{ctx.errors?" и ошибки страницы":""} ·{" "}
+            <button type="button" aria-expanded={showCtx} onClick={()=>setShowCtx(!showCtx)}>{showCtx?"скрыть":"показать"}</button>
+            {showCtx&&<dl>{ctxRows.map(([k,v])=><React.Fragment key={k}><dt>{k}</dt><dd style={{whiteSpace:"pre-line"}}>{v}</dd></React.Fragment>)}</dl>}
+          </div>
+          {err&&<div className="tk-err" role="alert">{err}</div>}
+        </div>
+        <div className="tk-foot">
+          <span className="who">Увидит команда AuditLens.<br/>Ответ придёт сюда же</span>
+          <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={send}>
+            {busy||<>Отправить <span className="tk-kbd">{sayMac()?"⌘↵":"Ctrl ↵"}</span></>}</button>
+        </div>
+      </>)}
+    {tab==="mine"&&<div className="tk-body" style={{paddingBottom:12}}>
+      {!mine?<Skel h={90}/>
+        :mine.error?<div className="tk-empty">Не удалось загрузить обращения. Попробуйте ещё раз чуть позже.</div>
+        :!mine.tickets.length?<div className="tk-empty">Здесь будут ваши обращения и ответы команды.<br/><br/>
+            <button className="btn btn-sm" onClick={()=>setTab("new")}>Написать</button></div>
+        :<div className="tk-list">{mine.tickets.map(t=><SayItem key={t.ticket_id} t={t} initOpen={t.ticket_id===focus} onChanged={()=>{loadMine();onUnread&&onUnread();}}/>)}</div>}
+    </div>}
+  </div>;
+}
+
+function SayItem({t,onChanged,initOpen}){
+  const[open,setOpen]=useState(!!initOpen);
+  const iref=useRef(null);
+  // открыто из колокольчика: прокрутить к нему и отметить ответ прочитанным
+  useEffect(()=>{ if(!initOpen) return;
+    try{ iref.current&&iref.current.scrollIntoView({block:"nearest"}); }catch{}
+    if(t.unread) sayPost(`/api/inbox/${t.ticket_id}/seen`,{}).then(onChanged).catch(()=>{}); },[]); // eslint-disable-line
+  const[reply,setReply]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const I=IcSay[t.kind]||IcSay.other;
+  const toggle=()=>{ const o=!open; setOpen(o);
+    if(o&&t.unread) sayPost(`/api/inbox/${t.ticket_id}/seen`,{}).then(onChanged).catch(()=>{}); };
+  const act=(p)=>{ setBusy(true); setErr(""); p.then(()=>{ setReply(""); onChanged&&onChanged(); })
+    .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  const closed=["done","wontfix","exists"].includes(t.status);
+  return <div className="tk-item" ref={iref}>
+    <button type="button" className={"tk-ihead"+(t.unread?" unread":"")} aria-expanded={open} onClick={toggle}>
+      <span className="k"><I/></span>
+      <span className="t"><span className="q">{t.body}</span>
+        <span className="m">№ {t.ticket_id} · {sayDate(t.created_at)} · {t.section_label||"AuditLens"}{t.unread?" · есть ответ":""}</span></span>
+      <span className={"tk-st "+t.status}>{t.status_label||SAY_STATUS_RU[t.status]||t.status}</span>
+    </button>
+    {open&&<div className="tk-thread">
+      {(t.files||[]).length>0&&<div className="tk-files" style={{marginTop:0}}>{t.files.map(f=><a key={f.file_id} className="tk-thumb"
+        href={`/api/inbox/file/${f.file_id}`} target="_blank" rel="noopener noreferrer" title="Открыть снимок">
+        <img src={`/api/inbox/file/${f.file_id}`} alt="Снимок экрана" loading="lazy"/></a>)}</div>}
+      {(t.messages||[]).map((m,i)=>m.role==="system"
+        ? <div key={i} className="tk-sys">{m.body} · {sayDate(m.at)}</div>
+        : <div key={i} className={"tk-msg "+m.role}><div className="h">{m.role==="team"?"Команда AuditLens":"Вы"} · {sayDate(m.at)}</div>{m.body}</div>)}
+      {t.status==="done"&&t.confirmed==null&&<div className="tk-ok">Работает?
+        <button className="btn btn-sm" disabled={busy} onClick={()=>act(sayPost(`/api/inbox/${t.ticket_id}/confirm`,{ok:true}))}>Да, работает</button>
+        <button className="btn btn-sm" disabled={busy} onClick={()=>act(sayPost(`/api/inbox/${t.ticket_id}/confirm`,{ok:false,comment:reply}))}>Нет</button></div>}
+      <div className="tk-reply">
+        <textarea rows={1} value={reply} maxLength={2000} placeholder={closed?"Дописать команде":"Уточнить или ответить команде"}
+          aria-label="Ответ команде" onChange={e=>{setReply(e.target.value); e.target.style.height="auto"; e.target.style.height=Math.min(140,e.target.scrollHeight+2)+"px";}}
+          onKeyDown={e=>{ if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)&&reply.trim()){ e.preventDefault(); act(sayPost(`/api/inbox/${t.ticket_id}/message`,{body:reply})); } }}/>
+        <button className="btn btn-sm" disabled={busy||!reply.trim()} onClick={()=>act(sayPost(`/api/inbox/${t.ticket_id}/message`,{body:reply}))}>Отправить</button>
+      </div>
+      {err&&<div className="tk-err" role="alert">{err}</div>}
+    </div>}
+  </div>;
+}
+
+// ── Уведомления: колокольчик рядом с карточкой пользователя внизу меню ──────
+// В верхнюю панель не кладём — там тема, «Аудит-дела» и поиск. Сюда сходятся
+// события, о которых иначе не узнать: добавили в дело, коллега приобщил
+// материалы, поделились отчётом, команда ответила на обращение (/api/bell —
+// слово notification режут блокировщики всплывающих окон).
+const BELL_SEEN="al-bell-seen";             // последнее уведомление, о котором была заметка
+const BX_CSS=`
+.bx-me{display:flex;align-items:center}
+.bx-me .user-chip{flex:1;min-width:0;padding-right:4px}
+.bx-me .user-chip .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bx-btn{position:relative;flex:none;width:32px;height:32px;border-radius:8px;border:0;background:none;color:var(--ink-3);cursor:pointer;
+  display:grid;place-items:center;transition:background .12s,color .12s}
+.bx-btn:hover{background:var(--paper-2);color:var(--ink)}
+.bx-btn.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+.bx-btn:active{transform:scale(.96)}
+.bx-btn:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.bx-btn.has svg{color:var(--ink-2)}
+.bx-dot{position:absolute;top:6px;right:7px;width:7px;height:7px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 2px var(--paper)}
+.bx-btn.on .bx-dot{box-shadow:0 0 0 2px var(--surface)}
+.mobile-nav .icon-btn{position:relative}
+.mobile-nav .bx-dot{top:8px;right:8px}
+.bx-pop{width:400px}
+.bx-pop .tk-head{padding:14px 10px 10px 18px;gap:4px}
+.bx-pop .tk-ttl{margin-right:auto}
+.bx-n{font-size:11.5px;color:var(--ink-3);font-weight:450;margin-left:8px;font-variant-numeric:tabular-nums}
+.bx-ib{width:28px;height:28px;border-radius:7px;border:0;background:none;color:var(--ink-3);cursor:pointer;display:grid;place-items:center}
+.bx-ib:hover{background:var(--paper-2);color:var(--ink)}
+.bx-ib.on{color:var(--ink);background:var(--paper-2)}
+.bx-all{border:0;background:none;font:inherit;font-size:12px;color:var(--ink-3);cursor:pointer;padding:5px 8px;border-radius:7px;margin-right:2px}
+.bx-all:hover{color:var(--ink);background:var(--paper-2)}
+.bx-body{overflow-y:auto;min-height:0;padding:2px 8px 10px}
+.bx-grp{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-4);padding:10px 10px 4px}
+.bx-item{display:flex;gap:11px;align-items:flex-start;width:100%;padding:9px 10px;border:0;background:none;border-radius:9px;
+  font:inherit;text-align:left;color:var(--ink);cursor:pointer;transition:background .12s}
+.bx-item:hover{background:var(--paper-2)}
+.bx-item:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.bx-item.static{cursor:default}
+.bx-item.static:hover{background:none}
+.bx-ic{flex:none;width:28px;height:28px;border-radius:8px;background:var(--paper-2);color:var(--ink-3);display:grid;place-items:center;margin-top:1px}
+.bx-item.new .bx-ic{background:var(--accent-soft);color:var(--accent-ink)}
+.bx-tx{flex:1;min-width:0}
+.bx-t{display:block;font-size:13px;line-height:1.42;color:var(--ink-2);text-wrap:pretty;overflow-wrap:anywhere}
+.bx-item.new .bx-t{color:var(--ink);font-weight:550}
+.bx-s{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12px;line-height:1.45;color:var(--ink-3);margin-top:2px;overflow-wrap:anywhere}
+.bx-m{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px;font-variant-numeric:tabular-nums}
+.bx-u{flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-top:8px}
+.bx-empty{text-align:center;padding:34px 18px 30px;color:var(--ink-3);font-size:12.5px;line-height:1.55}
+.bx-empty .ic{width:40px;height:40px;border-radius:50%;background:var(--paper-2);display:grid;place-items:center;margin:0 auto 12px;color:var(--ink-3)}
+.bx-empty b{display:block;color:var(--ink);font-size:13.5px;font-weight:600;margin-bottom:4px}
+.bx-set{padding:6px 18px 16px;overflow-y:auto;min-height:0;overscroll-behavior:contain}
+.bx-set p{margin:0 0 12px;font-size:12px;color:var(--ink-3);line-height:1.5}
+.bx-set p.bx-mail-h{margin:16px 0 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.bx-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--hair);cursor:pointer}
+.bx-row:first-of-type{border-top:0}
+.bx-row .l{flex:1;min-width:0}
+.bx-row .l b{display:block;font-size:13px;font-weight:500;color:var(--ink)}
+.bx-row .l span{font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.bx-sw{position:relative;flex:none;width:34px;height:20px;border-radius:999px;border:0;background:var(--hair-2);cursor:pointer;
+  transition:background .16s;padding:0}
+.bx-sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 2px oklch(0% 0 0 / .25);transition:transform .18s cubic-bezier(.2,0,0,1)}
+.bx-sw[aria-checked="true"]{background:var(--ink)}
+.bx-sw[aria-checked="true"]::after{transform:translateX(14px);background:var(--paper)}
+.bx-sw:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.bx-toast .t{display:flex;gap:10px;align-items:flex-start}
+.bx-toast .t .bx-ic{background:var(--accent-soft);color:var(--accent-ink)}
+.bx-toast .t .m{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.bx-mail{padding-top:2px}
+.bx-note{font-size:12px;line-height:1.5;color:var(--ink-3);margin-top:8px;text-wrap:pretty}
+.bx-note b{color:var(--ink);font-weight:550;overflow-wrap:anywhere}
+.bx-form{display:flex;gap:6px;margin-top:10px}
+.bx-in{flex:1;min-width:0;height:34px;padding:0 11px;border:1px solid var(--hair-2);border-radius:8px;background:var(--surface);
+  color:var(--ink);font:inherit;font-size:13px;transition:border-color .12s,box-shadow .12s}
+.bx-in::placeholder{color:var(--ink-4)}
+.bx-in:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px var(--select-soft)}
+.bx-in.code{flex:none;width:132px;text-align:center;font-size:16px;letter-spacing:.18em;font-variant-numeric:tabular-nums}
+.bx-go{flex:none;height:34px;padding:0 14px;border:0;border-radius:8px;background:var(--ink);color:var(--paper);font:inherit;
+  font-size:12.5px;font-weight:550;cursor:pointer;transition:transform .1s,opacity .12s}
+.bx-go:active:not(:disabled){transform:scale(.96)}
+.bx-go:disabled{opacity:.45;cursor:default}
+.bx-go:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.bx-addr{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:8px 0 2px}
+.bx-addr .a{font-size:13.5px;font-weight:550;color:var(--ink);overflow-wrap:anywhere}
+.bx-tag{font-size:11px;line-height:18px;padding:0 8px;border-radius:999px;background:var(--paper-2);color:var(--ink-3);white-space:nowrap}
+.bx-tag.corp{background:var(--select-soft);color:var(--select)}
+.bx-acts{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;margin-top:10px;font-size:12px;color:var(--ink-3)}
+.bx-lnk{position:relative;border:0;background:none;padding:2px 0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;
+  text-decoration:underline;text-decoration-color:var(--hair-2);text-underline-offset:3px}
+.bx-lnk:hover:not(:disabled){color:var(--ink);text-decoration-color:currentColor}
+.bx-lnk:disabled{color:var(--ink-4);cursor:default;text-decoration:none;font-variant-numeric:tabular-nums}
+.bx-lnk:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:3px}
+.bx-lnk.danger{color:var(--accent-ink)}
+.bx-err{font-size:12px;line-height:1.45;color:var(--accent-ink);margin-top:8px}
+.bx-mail .bx-row:first-of-type{border-top:1px solid var(--hair);margin-top:10px}
+.bx-foot{display:flex;align-items:center;gap:10px;width:100%;padding:11px 18px;border:0;border-top:1px solid var(--hair);
+  background:none;font:inherit;font-size:12.5px;color:var(--ink-2);text-align:left;cursor:pointer;transition:background .12s}
+.bx-foot:hover{background:var(--paper-2);color:var(--ink)}
+.bx-foot:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.bx-foot svg{flex:none;color:var(--ink-3)}
+.bx-foot .go{margin-left:auto;color:var(--ink-3)}
+@media(pointer:coarse){.bx-lnk::after{content:"";position:absolute;inset:-10px -6px}}
+@media(max-width:960px){.bx-pop{width:auto}.bx-btn{width:44px;height:44px}.bx-item{min-height:44px}}
+@media(prefers-reduced-motion:reduce){.bx-sw::after,.bx-sw{transition:none}}
+`;
+const IcBx={
+  bell:p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M6.5 16.5V11a5.5 5.5 0 1111 0v5.5l1.5 2h-14z"/><path d="M10 20.5a2.1 2.1 0 004 0"/></svg>,
+  case:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3.5 7.5A1.5 1.5 0 015 6h4.2l1.8 2H19a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5z"/></svg>,
+  people:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0111 0"/><path d="M16 6.2a3 3 0 010 5.6M17.5 14.2A5.5 5.5 0 0120.5 19"/></svg>,
+  report:p=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 3.5h7l4.5 4.5v11A1.5 1.5 0 0117 20.5H7A1.5 1.5 0 015.5 19V5A1.5 1.5 0 017 3.5z"/><path d="M13.5 3.5V8.5h5M9 13h6M9 16.5h4"/></svg>,
+  mail:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></svg>,
+  gear:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="2.6"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
+};
+const BX_HINT={mention:"Вас упомянули через @, ответили на ваше сообщение или прокомментировали ваш материал",
+  talk:"Новые сообщения в обсуждениях ваших дел — одной строкой на дело",
+  items:"Новые жалобы, документы и отчёты в общих делах, новый разбор ИИ",
+  access:"Добавление в дело, смена прав, передача, статус и архив дела, отчёт от коллеги",
+  inbox:"Ответ команды AuditLens или новый статус обращения"};
+const bxIcon=(k)=>k==="report_shared"?IcBx.report
+  :(k==="ticket"||k==="case_msg"||k==="case_mention"||k==="case_reply")?IcSay.row
+  :(k==="case_added"||k==="case_role"||k==="case_removed"||k==="case_left"||k==="case_owner")?IcBx.people:IcBx.case;
+const bxSnip=(it)=>it&&it.ref&&it.ref.snippet?`«${it.ref.snippet}»`:"";
+// «только что · 5 мин · 2 ч · вчера · 3 окт» — свежесть важнее точного времени
+const bxAgo=(iso)=>{ try{ const d=new Date(iso), s=(Date.now()-d.getTime())/1000;
+  if(s<60) return "только что"; if(s<3600) return Math.floor(s/60)+" мин назад";
+  const today=new Date(); if(d.toDateString()===today.toDateString()) return Math.floor(s/3600)+" ч назад";
+  const y=new Date(today); y.setDate(y.getDate()-1); if(d.toDateString()===y.toDateString()) return "вчера";
+  return d.toLocaleDateString("ru",{day:"numeric",month:"short"}).replace(".",""); }catch{ return ""; } };
+const bxWho=(it)=>it.actor_name?(it.kind==="ticket"?it.actor_name:puShort(it.actor_name)):"";
+
+// Своя почта для писем (web/mail_delivery.py): пока система входа не передаёт адрес,
+// его указывают здесь и подтверждают кодом из письма. Корпоративная почта — только Sigma
+// (MAIL_CORP_DOMAINS), она получает письма целиком; любая другая — без подробностей.
+// Почта Omega (MAIL_BLOCKED_DOMAINS) внешних писем не принимает — её не берём.
+const BX_MAIL_RE=/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const bxCorp=(email,domains)=>{ const d=String(email||"").toLowerCase().split("@")[1]||"";
+  return !!d&&(domains||[]).some(x=>d===x||d.endsWith("."+x)); };
+const bxAt=(domains)=>domains&&domains[0]?` (@${domains[0]})`:"";
+const bxDel=(path)=>fetch(path,{method:"DELETE"}).then(r=>{ if(r.ok) return r.json();
+  throw new Error("Не получилось. Попробуйте ещё раз"); });
+const BX_MAIL_PREFS=[["instant","Сразу — о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
+  ["digest","Утренняя сводка","В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"]];
+
+function BxMail({me,onPrefs,onEmail,code0}){
+  const[st,setSt]=useState(null);
+  const[loadErr,setLoadErr]=useState(false);
+  const[err,setErr]=useState("");
+  const[addr,setAddr]=useState("");
+  const[code,setCode]=useState("");
+  const[editing,setEditing]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[sure,setSure]=useState(false);
+  const[,setTick]=useState(0);
+  const gotAt=useRef(Date.now());
+  const autoDone=useRef(null);
+  const apply=(x)=>{ setSt(x); gotAt.current=Date.now(); setErr(""); onEmail&&onEmail(!!(x&&x.email&&x.active)); };
+  const load=useCallback(()=>apiFetch("/api/me/email").then(x=>{ setLoadErr(false); apply(x); })
+    .catch(()=>setLoadErr(true)),[]); // eslint-disable-line
+  useEffect(()=>{ load(); },[load]);
+  const p=st&&st.pending;
+  const left=p?Math.max(0,Math.ceil(p.resend_in-(Date.now()-gotAt.current)/1000)):0;
+  useEffect(()=>{ if(!left) return; const t=setTimeout(()=>setTick(x=>x+1),1000); return ()=>clearTimeout(t); });
+  const send=(email)=>{ setBusy(true); setErr("");
+    sayPost("/api/me/email",{email}).then(x=>{ apply(x); setEditing(false); setCode(""); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  const confirm=(c)=>{ setBusy(true); setErr("");
+    sayPost("/api/me/email/confirm",{code:String(c||"")}).then(x=>{ apply(x); setCode(""); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  const drop=(pendingOnly)=>{ setBusy(true); setErr("");
+    bxDel("/api/me/email"+(pendingOnly?"?pending=1":"")).then(x=>{ apply(x); setSure(false); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  // кнопка из письма с кодом: #open?bell=settings&mailcode=… — подтверждаем сами
+  useEffect(()=>{ if(!st||!code0||autoDone.current===code0) return; autoDone.current=code0;
+    if(st.pending){ setEditing(false); setCode(code0); confirm(code0); }
+    else if(!st.email) setErr("Код из письма уже не действует — запросите новый"); },[st,code0]); // eslint-disable-line
+  if(loadErr) return <div className="bx-mail"><div className="bx-err">Не загрузилось. <button className="bx-lnk" onClick={load}>Повторить</button></div></div>;
+  if(!st) return <div className="bx-mail" style={{paddingTop:8}}><Skel h={34}/></div>;
+  const prefs=(me&&me.prefs&&me.prefs.mail)||{};
+  if(p&&!editing){
+    const digits=code.replace(/\D/g,"");
+    return <div className="bx-mail">
+      <div className="bx-note">Код отправлен на <b>{p.email}</b>. Письмо идёт 2–5 минут — если его нет, загляните в «Спам».</div>
+      <form className="bx-form" onSubmit={e=>{ e.preventDefault(); if(digits.length===6) confirm(digits); }}>
+        <input className="bx-in code" inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="000000"
+          aria-label="Код из письма" value={code} autoFocus
+          onChange={e=>{ setCode(e.target.value.replace(/[^\d ]/g,"")); setErr(""); }}/>
+        <button className="bx-go" disabled={busy||digits.length!==6}>{busy?"Проверяю…":"Подтвердить"}</button>
+      </form>
+      {err&&<div className="bx-err" role="alert">{err}</div>}
+      <div className="bx-acts">
+        <button className="bx-lnk" disabled={left>0||busy} onClick={()=>send(p.email)}>{left>0?`Отправить ещё раз через ${left} с`:"Отправить ещё раз"}</button>
+        <button className="bx-lnk" onClick={()=>{ setEditing(true); setAddr(p.email); setErr(""); }}>Другой адрес</button>
+        {st.email&&<button className="bx-lnk" onClick={()=>drop(true)}>Оставить {st.email}</button>}
+      </div>
+    </div>;
+  }
+  if(st.email&&!editing) return <div className="bx-mail">
+    <div className="bx-addr"><span className="a">{st.email}</span>
+      <span className={"bx-tag"+(st.corporate?" corp":"")}>{st.corporate?"Sigma":"личная"}</span></div>
+    {!st.active
+      ?<div className="bx-note">Адрес из учётной записи: письма начнут приходить, когда рассылку включат.</div>
+      :!st.corporate&&<div className="bx-note">На личную почту письма приходят без подробностей: что произошло и ссылка — без названий дел, имён и цитат.</div>}
+    {BX_MAIL_PREFS.map(([k,l,h])=>{ const on=prefs[k]!==false;
+      return <label key={k} className="bx-row">
+        <span className="l"><b>{l}</b><span>{h}</span></span>
+        <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={l}
+          onClick={e=>{ e.preventDefault(); const mail={...prefs,[k]:!on};
+            onPrefs&&onPrefs(null,mail); apiPut("/api/me",{prefs:{mail}}).catch(()=>onPrefs&&onPrefs(null,prefs)); }}/>
+      </label>; })}
+    <div className="bx-acts">{sure
+      ?<><span>Письма перестанут приходить.</span>
+        <button className="bx-lnk danger" disabled={busy} onClick={()=>drop(false)}>Отключить</button>
+        <button className="bx-lnk" onClick={()=>setSure(false)}>Отмена</button></>
+      :<><button className="bx-lnk" onClick={()=>{ setEditing(true); setAddr(""); setErr(""); }}>Другой адрес</button>
+        <button className="bx-lnk" onClick={()=>setSure(true)}>Отключить почту</button></>}</div>
+    {err&&<div className="bx-err" role="alert">{err}</div>}
+  </div>;
+  const a=addr.trim(), okA=BX_MAIL_RE.test(a), omega=okA&&bxCorp(a,st.blocked_domains);
+  return <div className="bx-mail">
+    <div className="bx-note">Личное — сразу, остальное — утренней сводкой. Укажите корпоративную почту
+      Sigma{bxAt(st.corp_domains)} или личную — пришлём код, чтобы подтвердить адрес. Почта
+      Omega{bxAt(st.blocked_domains)} не подойдёт: письма извне туда не доходят.</div>
+    <form className="bx-form" onSubmit={e=>{ e.preventDefault(); if(okA&&!omega&&!busy) send(a); }}>
+      <input className="bx-in" type="email" inputMode="email" autoComplete="email" placeholder="Почта Sigma или личная"
+        aria-label="Адрес почты" value={addr} autoFocus={editing} onChange={e=>{ setAddr(e.target.value); setErr(""); }}/>
+      <button className="bx-go" disabled={busy||!okA||omega}>{busy?"Отправляю…":"Получить код"}</button>
+    </form>
+    {omega&&!err?<div className="bx-err" role="alert">Это почта Omega — письма извне туда не доходят. Укажите адрес Sigma или личную почту.</div>
+    :okA&&!err&&<div className="bx-note">{bxCorp(a,st.corp_domains)
+      ?"Почта Sigma — письма придут целиком."
+      :"Не корпоративная почта — письма придут без подробностей: без названий дел, имён и цитат."}</div>}
+    {err&&<div className="bx-err" role="alert">{err}</div>}
+    {editing&&<div className="bx-acts"><button className="bx-lnk" onClick={()=>{ setEditing(false); setErr(""); }}>Отмена</button></div>}
+  </div>;
+}
+
+function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,onEmail,initialView,mailCode}){
+  const[d,setD]=useState(null);
+  const[err,setErr]=useState(false);
+  const[view,setView]=useState(initialView==="settings"?"settings":"list");     // list | settings
+  // «Присылать на почту» внизу списка — пока почта не подключена и настройки ещё не открывали
+  const[mailHint,setMailHint]=useState(()=>{ try{ return !localStorage.getItem("al-bx-mail-seen"); }catch{ return true; } });
+  // ссылка из письма при уже открытой панели: #open?bell=settings&mailcode=…
+  useEffect(()=>{ if(initialView==="settings") setView("settings"); },[initialView,mailCode]);
+  useEffect(()=>{ if(view!=="settings") return; setMailHint(false);
+    try{ localStorage.setItem("al-bx-mail-seen","1"); }catch{} },[view]);
+  const ref=useRef(null);
+  const load=useCallback(()=>apiFetch("/api/bell").then(x=>{ setD(x); setErr(false); }).catch(()=>setErr(true)),[]);
+  useEffect(()=>{ load(); },[load]);
+  useEffect(()=>{ const t=setTimeout(()=>{ try{ ref.current&&ref.current.focus(); }catch{} },30);
+    const onDown=(e)=>{ if(ref.current&&!ref.current.contains(e.target)&&!(anchor&&anchor.current&&anchor.current.contains(e.target))) onClose(); };
+    const onKey=(e)=>{ if(e.key==="Escape"){ e.stopPropagation(); onClose(); } };
+    document.addEventListener("mousedown",onDown); document.addEventListener("keydown",onKey);
+    return ()=>{ clearTimeout(t); document.removeEventListener("mousedown",onDown); document.removeEventListener("keydown",onKey); };
+  },[]); // eslint-disable-line
+  const items=(d&&d.items)||[];
+  const fresh=items.filter(i=>!i.read_at), old=items.filter(i=>i.read_at);
+  const stamp=(pred)=>setD(x=>x&&({...x,items:x.items.map(i=>!i.read_at&&pred(i)?{...i,read_at:new Date().toISOString()}:i)}));
+  const readAll=()=>{ stamp(()=>true); sayPost("/api/bell/read",{all:true}).then(onCount).catch(()=>{}); };
+  const open=(it)=>{ if(!it.read_at){ stamp(i=>i.id===it.id); sayPost("/api/bell/read",{ids:[it.id]}).then(onCount).catch(()=>{}); }
+    if(it.link) onGo(it); };
+  const groups=(d&&d.groups)||[];
+  const toggle=(key)=>{ const next=groups.map(g=>g.key===key?{...g,on:!g.on}:g);
+    setD(x=>({...x,groups:next}));
+    const off=next.filter(g=>!g.on).map(g=>g.key);
+    apiPut("/api/me",{prefs:{notify_off:off}}).then(()=>onPrefs&&onPrefs(off)).catch(()=>load()); };
+  const row=(it)=>{ const I=bxIcon(it.kind), isNew=!it.read_at, who=bxWho(it);
+    return <button key={it.id} type="button" className={"bx-item"+(isNew?" new":"")+(it.link?"":" static")}
+      onClick={()=>open(it)} aria-label={(isNew?"Новое: ":"")+it.title}>
+      <span className="bx-ic"><I/></span>
+      <span className="bx-tx"><span className="bx-t">{it.title}</span>
+        {bxSnip(it)&&<span className="bx-s">{bxSnip(it)}</span>}
+        <span className="bx-m">{[who,bxAgo(it.updated_at)].filter(Boolean).join(" · ")}</span></span>
+      {isNew&&<span className="bx-u" aria-hidden="true"/>}
+    </button>; };
+  return <div ref={ref} className="tk-pop bx-pop" role="dialog" aria-label="Уведомления" tabIndex={-1}>
+    <div className="tk-head">
+      {view==="settings"
+        ?<><button className="bx-ib" onClick={()=>setView("list")} aria-label="Назад к уведомлениям"><RvIChevL s={14}/></button>
+          <span className="tk-ttl">Что присылать</span></>
+        :<span className="tk-ttl">Уведомления{fresh.length>0&&<span className="bx-n">{fresh.length} {plural(fresh.length,"новое","новых","новых")}</span>}</span>}
+      {view==="list"&&fresh.length>0&&<button className="bx-all" onClick={readAll}>Прочитать все</button>}
+      {view==="list"&&<button className="bx-ib" onClick={()=>setView("settings")} aria-label="Настройки уведомлений" data-tip="что присылать"><IcBx.gear/></button>}
+      <button className="bx-ib" onClick={onClose} aria-label="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    {view==="settings"
+      ?<div className="bx-set"><p>Выключенное перестанет приходить сюда. Уже пришедшее останется в списке.</p>
+        {groups.map(g=><label key={g.key} className="bx-row">
+          <span className="l"><b>{g.label}</b><span>{BX_HINT[g.key]||""}</span></span>
+          <button type="button" role="switch" aria-checked={g.on} className="bx-sw" aria-label={g.label}
+            onClick={e=>{ e.preventDefault(); toggle(g.key); }}/>
+        </label>)}
+        <p className="bx-mail-h">На почту</p>
+        <BxMail me={me} onPrefs={onPrefs} onEmail={onEmail} code0={mailCode}/></div>
+      :<div className="bx-body">
+        {err&&!d?<div className="bx-empty">Список не загрузился. <button className="bx-all" onClick={load}>Повторить</button></div>
+        :!d?<div style={{padding:"10px"}}><Skel h={46}/><div style={{height:8}}/><Skel h={46}/></div>
+        :!items.length?<div className="bx-empty"><div className="ic"><IcBx.bell/></div><b>Пока тихо</b>
+          Сюда придёт, когда вас добавят в дело, коллега приобщит материалы, с вами поделятся отчётом или команда ответит на обращение.</div>
+        :<>{fresh.length>0&&<><div className="bx-grp">Новые</div>{fresh.map(row)}</>}
+          {old.length>0&&<><div className="bx-grp">Ранее</div>{old.map(row)}</>}</>}
+      </div>}
+    {view==="list"&&mailHint&&me&&!me.has_email&&<button type="button" className="bx-foot" onClick={()=>setView("settings")}>
+      <IcBx.mail/>Присылать уведомления на почту<span className="go" aria-hidden="true">→</span></button>}
+  </div>;
+}
+
 function parseHash(){
   const h=(location.hash||"").slice(1);
   const qi=h.indexOf("?");
@@ -10348,7 +12592,7 @@ function parseHash(){
 
 function Shell(){
   const[page,setPage]=useState(()=>{ const h=parseHash().p;
-    if(h) return h;
+    if(h&&h!=="open") return h;
     try{ if(localStorage.getItem("al-ov-mode")==="foryou") return "foryou"; }catch{}
     return "overview"; });
   const[pageParams,setPageParams]=useState(()=>parseHash().prm);
@@ -10363,11 +12607,117 @@ function Shell(){
   const{theme,setTheme}=useTheme();
   const[banks,setBanks]=useState([]);
   const[hasCaptcha,setHasCaptcha]=useState(false);
+  // «Аудит-дела»: одна панель на всё приложение
+  const[casesHub,setCasesHub]=useState(null);         // null | {caseId}
+  const[casesN,setCasesN]=useState(0);
+  const[casesList,setCasesList]=useState(null);
+  const loadCasesN=useCallback(()=>apiFetch("/api/cases").then(d=>{ const l=d.cases||[];
+    setCasesList(l); setCasesN(l.filter(c=>!c.deleted).length); }).catch(()=>{}),[]);
+  useEffect(()=>{ loadCasesN(); },[loadCasesN]);
+  _openCases=(id,opt)=>{ setNavOpen(false); setCasesHub({caseId:id||null,tab:opt&&opt.tab,msg:opt&&opt.msg}); };
+  _casesHubOpen=!!casesHub;
+  const closeCases=()=>{ setCasesHub(null); loadCasesN(); loadCaseRefs(); try{ window.dispatchEvent(new Event("al-cases")); }catch{} };
+  // «Обратная связь»: окно и точка у строки меню, если команда ответила
+  const[sayOpen,setSayOpen]=useState(null);           // null | "new" | "mine"
+  const[sayInfo,setSayInfo]=useState({unread:0,last_at:null});
+  const[sayFocus,setSayFocus]=useState(null);         // обращение, открытое из колокольчика
+  const sayRowRef=useRef(null);
+  // Колокольчик у карточки пользователя: один опрос на всё — точка, самое
+  // свежее для разовой заметки и ответы на обращения (точка «Обратной связи»)
+  const[bell,setBell]=useState({unread:0,last:null});
+  const[bellOpen,setBellOpen]=useState(false);
+  const[bellToast,setBellToast]=useState(null);
+  const bellRef=useRef(null);
+  const bellOpenRef=useRef(false); bellOpenRef.current=bellOpen;
+  const loadBell=useCallback(()=>apiFetch("/api/bell/unread").then(d=>{ if(!d) return;
+    setBell({unread:d.unread||0,last:d.last||null}); setSayInfo(d.inbox||{unread:0});
+    let seen=0; try{ seen=+(localStorage.getItem(BELL_SEEN)||0); }catch{}
+    if(d.last&&d.last.id>seen&&!bellOpenRef.current) setBellToast(d.last); }).catch(()=>{}),[]);
+  useEffect(()=>{ loadBell();
+    const t=setInterval(()=>{ if(!document.hidden) loadBell(); },2*60*1000);
+    const onVis=()=>{ if(!document.hidden) loadBell(); };
+    document.addEventListener("visibilitychange",onVis);
+    return ()=>{ clearInterval(t); document.removeEventListener("visibilitychange",onVis); };
+  },[loadBell]);
+  const loadSay=loadBell;
+  const bellSeen=(id)=>{ try{ if(id) localStorage.setItem(BELL_SEEN,String(Math.max(id,+(localStorage.getItem(BELL_SEEN)||0)))); }catch{} setBellToast(null); };
+  const toggleBell=()=>{ setNavOpen(false); setSayOpen(null); setBellOpen(o=>!o); if(bell.last) bellSeen(bell.last.id); };
+  const closeBell=()=>{ setBellOpen(false); loadBell(); setTimeout(()=>{ try{ bellRef.current&&bellRef.current.focus(); }catch{} },0); };
+  const goBell=(it)=>{ setBellOpen(false); setBellToast(null); setNavOpen(false); loadBell();
+    const[k,id,sub,msg]=String(it.link||"").split(":");
+    if(k==="case") openCases(+id,sub?{tab:sub,msg:msg?+msg:null}:null);
+    else if(k==="report"){ _pendingReport=+id; setPage("ai"); try{ window.dispatchEvent(new Event("al-open-report")); }catch{} }
+    else if(k==="inbox"){ setSayFocus(+id); setSayOpen("mine"); } };
+  const openSay=(tab)=>{ setNavOpen(false); setBellOpen(false); setSayFocus(null); setSayOpen(o=>o?null:(tab||(sayInfo.unread?"mine":"new"))); };
+  // Ссылки из писем: #open?case=12&tab=talk&msg=55 · #open?inbox=7 · #open?bell=1|settings ·
+  // #open?report=45. Действие поверх текущего раздела; адрес возвращается к разделу.
+  const[bellView,setBellView]=useState(null);
+  const[bellCode,setBellCode]=useState(null);          // код подтверждения почты из письма
+  const openLinkRef=useRef(null); openLinkRef.current=(prm)=>{
+    try{ history.replaceState(null,"","#"+(pageCurRef.current||"overview")); }catch{}
+    if(prm.case) openCases(+prm.case,prm.tab?{tab:prm.tab,msg:prm.msg?+prm.msg:null}:null);
+    else if(prm.report){ _pendingReport=+prm.report; setPage("ai"); try{ window.dispatchEvent(new Event("al-open-report")); }catch{} }
+    else if(prm.inbox){ setBellOpen(false); setSayFocus(+prm.inbox); setSayOpen("mine"); }
+    else if(prm.bell){ setSayOpen(null); setBellView(prm.bell==="settings"?"settings":null);
+      setBellCode(/^\d{6}$/.test(prm.mailcode||"")?prm.mailcode:null); setBellOpen(true); }
+  };
+  useEffect(()=>{ const first=parseHash(); if(first.p==="open") setTimeout(()=>openLinkRef.current(first.prm),0);
+    const h=()=>{ const x=parseHash(); if(x.p==="open") openLinkRef.current(x.prm); };
+    window.addEventListener("hashchange",h); return ()=>window.removeEventListener("hashchange",h); },[]);
   const[navOpen,setNavOpen]=useState(false);
   const[me,setMe]=useState(null);
+  // «В дело» отовсюду: активное дело (одним нажатием), меню выбора, заметка «Добавлено»
+  const activeId=me&&me.prefs&&me.prefs.active_case||null;
+  const activeCase=(casesList||[]).find(c=>c.case_id===activeId&&c.can_add&&!c.archived&&!c.deleted)||null;
+  useEffect(()=>{ csSetActive(activeCase?{case_id:activeCase.case_id,title:activeCase.title}:null); },[activeCase&&activeCase.case_id,activeCase&&activeCase.title]); // eslint-disable-line
+  const[casePick,setCasePick]=useState(null);         // {items,rect,anchor,opt,already}
+  const[caseToast,setCaseToast]=useState(null);
+  const[caseBump,setCaseBump]=useState(0);
+  const setActiveCase=(id)=>{ setMe(m=>m?{...m,prefs:{...(m.prefs||{}),active_case:id}}:m);
+    apiPut("/api/me",{prefs:{active_case:id}}).catch(()=>{}); };
+  const caseAttach=async(c,items,opt)=>{
+    const one=items.length===1;
+    const r=await csReq("POST",one?`/api/cases/${c.case_id}/items`:`/api/cases/${c.case_id}/items/bulk`,one?items[0]:{items});
+    if(c.case_id!==activeId) setActiveCase(c.case_id);
+    items.forEach(it=>{ if(it.kind==="answer"){ const k=caseKey(it); if(k) _csAnswers[k]={case_id:c.case_id,title:c.title}; } });
+    loadCaseRefs(); loadCasesN(); setCaseBump(Date.now());
+    try{ window.dispatchEvent(new CustomEvent("al-case-items",{detail:{case_id:c.case_id}})); }catch{}
+    trkEvent({kind:"ui",page:pageCurRef.current,payload:{action:"case_add",src:(opt&&opt.src)||null,kind:items[0].kind,n:items.length,added:r.added}});
+    const nm=`«${c.title}»`;
+    setCaseToast({id:Date.now(),case_id:c.case_id,ids:r.item_ids||[],items,opt,
+      text:r.added?(items.length>1?`${r.added} ${plural(r.added,"материал","материала","материалов")} — в ${nm}`:`Добавлено в ${nm}`)
+        :(items.length>1?`Всё это уже лежит в ${nm}`:`Уже лежит в ${nm}`)});
+    if(opt&&opt.onDone) opt.onDone(c,r.added);
+  };
+  _casePickOpen=!!casePick;
+  _caseAdd=(items,opt)=>{
+    const anchor=opt.anchor&&opt.anchor.getBoundingClientRect?opt.anchor:null;
+    const rect=anchor?anchor.getBoundingClientRect():null;
+    if(activeCase&&!opt.pick&&!opt.already){
+      caseAttach(activeCase,items,opt).catch(e=>{ setCaseToast({id:Date.now(),err:true,text:e.message||"Не удалось добавить"});
+        setCasePick({items,rect,anchor,opt}); });
+      return; }
+    setCaseToast(null); setCasePick({items,rect,anchor,opt,already:opt.already||null});
+  };
+  const caseUndo=async(t)=>{ setCaseToast(null);
+    await Promise.all((t.ids||[]).map(id=>apiDel(`/api/cases/${t.case_id}/items/${id}`)));
+    (t.items||[]).forEach(it=>{ const k=caseKey(it); if(k&&_csAnswers[k]) delete _csAnswers[k]; });
+    loadCaseRefs(); loadCasesN();
+    try{ window.dispatchEvent(new CustomEvent("al-case-items",{detail:{case_id:t.case_id}})); }catch{} };
   const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
+  // Разовое приглашение «уведомления — теперь и на почте» для тех, у кого почты нет.
+  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе;
+  // «Не сейчас» запоминается на сервере — на другом компьютере не всплывёт снова.
+  const[mailPromoOff,setMailPromoOff]=useState(()=>{ try{ return localStorage.getItem("al-mail-promo")==="1"
+    ||localStorage.getItem("al-bx-mail-seen")==="1"; }catch{ return false; } });     // уже открывал настройки почты
+  const[mailPromoReady,setMailPromoReady]=useState(false);
+  useEffect(()=>{ const t=setTimeout(()=>setMailPromoReady(true),6000); return ()=>clearTimeout(t); },[]);
+  const mailPromoShown=useRef(false);
   const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001b")==="1";}catch{return false;}});
+  // приглашение важнее онбординга: пока оно на экране, заметка «настройте под себя» ждёт
+  const mailPromoShow=mailPromoReady&&!!me&&!me.has_email&&!mailPromoOff&&!(me.prefs&&me.prefs.mail_promo)
+    &&(renameSeen||!renamedFresh())&&!bellToast&&!bellOpen&&!sayOpen&&!casesHub;
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
@@ -10391,46 +12741,74 @@ function Shell(){
   useEffect(()=>{ if(page!=="profile") return; return loadMe; },[page]);
 
   // ── телеметрия: page_view / page_leave(время) / клиентские ошибки ──────────
-  const trkQ=useRef([]); const trkPage=useRef({page:null,t:Date.now()});
+  const trkQ=useRef([]); const trkPage=useRef({page:null,t:Date.now(),acc:0});
+  // Время на странице — АКТИВНОЕ: без ввода (мышь, клавиатура, прокрутка, касание)
+  // дольше 5 мин вкладка считается брошенной. Раньше открытая, но забытая
+  // вкладка набирала до 30 мин за заход, и «время в системе» раздувалось.
+  const IDLE_MS=5*60*1000;
+  const lastInput=useRef(Date.now());
+  const trkDur=(p,now)=>{ const end=Math.min(now,lastInput.current+IDLE_MS);
+    return Math.min(Math.max(0,(p.acc||0)+Math.max(0,end-p.t)),1800000); };
   const trkFlush=(beacon)=>{ const evs=trkQ.current.splice(0);
     if(!evs.length)return;
-    const body=JSON.stringify({events:evs});
+    // каждому событию — его возраст: сервер ставит время «сейчас минус возраст».
+    // Часам браузера не верим, а без возраста пачка из восьми событий получала
+    // одну метку на всех, и хронология в карточке человека путала порядок
+    const now=Date.now();
+    const body=JSON.stringify({events:evs.map(({at,...e})=>({...e,age_ms:Math.max(0,now-(at||now))}))});
     if(beacon&&navigator.sendBeacon){
       try{navigator.sendBeacon("/api/journal",new Blob([body],{type:"application/json"}));return;}catch{}
     }
     fetch("/api/journal",{method:"POST",headers:{"Content-Type":"application/json"},body}).catch(()=>{});
   };
-  const trk=(ev)=>{ trkQ.current.push(ev); if(trkQ.current.length>=8)trkFlush(); };
+  const trk=(ev)=>{ trkQ.current.push({...ev,at:Date.now()}); if(trkQ.current.length>=8)trkFlush(); };
   // мост для страниц (клики по новостям): шлём сразу — клик редок и ценен
   _trkPush=(ev)=>{trk(ev);trkFlush();};
   useEffect(()=>{
-    const prev=trkPage.current;
+    const prev=trkPage.current, now=Date.now();
     if(prev.page&&prev.page!==page)
-      trk({kind:"page_leave",page:prev.page,dur_ms:Math.min(Date.now()-prev.t,1800000)});
-    trkPage.current={page,t:Date.now()};
+      trk({kind:"page_leave",page:prev.page,dur_ms:trkDur(prev,now)});
+    trkPage.current={page,t:now,acc:0};
+    lastInput.current=now;                    // переход по разделу — тоже ввод
     trk({kind:"page_view",page});
     const t=setTimeout(trkFlush,1500);
     return ()=>clearTimeout(t);
   },[page]); // eslint-disable-line
   useEffect(()=>{
-    const onVis=()=>{ if(document.visibilityState==="hidden"){
+    const onVis=()=>{ const now=Date.now(); if(document.visibilityState==="hidden"){
         const p=trkPage.current;
-        if(p.page) trkQ.current.push({kind:"page_leave",page:p.page,dur_ms:Math.min(Date.now()-p.t,1800000)});
-        trkPage.current={...p,t:Date.now()};
+        if(p.page) trkQ.current.push({kind:"page_leave",page:p.page,dur_ms:trkDur(p,now),at:now});
+        trkPage.current={...p,t:now,acc:0};
         trkFlush(true);
-      } else { trkPage.current={...trkPage.current,t:Date.now()}; } };
-    const onErr=(e)=>trk({kind:"client_error",page:(location.hash||"#").slice(1),
-      payload:{msg:String((e&&(e.message||e.reason))||"").slice(0,300)}});
+      } else { trkPage.current={...trkPage.current,t:now,acc:0}; lastInput.current=now; } };
+    // вернулся после простоя: отрезок до простоя копим, отсчёт — заново
+    const onInput=()=>{ const now=Date.now(), p=trkPage.current;
+      if(now-lastInput.current>IDLE_MS){
+        p.acc=(p.acc||0)+Math.max(0,lastInput.current+IDLE_MS-p.t); p.t=now; }
+      lastInput.current=now; };
+    _trkInput=onInput;
+    const IN=["pointerdown","pointermove","keydown","wheel","scroll","touchstart"];
+    IN.forEach(e=>window.addEventListener(e,onInput,{passive:true,capture:true}));
+    const onErr=(e)=>{ const msg=String((e&&(e.message||e.reason))||"").slice(0,300);
+      sayRecordErr(msg);
+      trk({kind:"client_error",page:(location.hash||"#").slice(1),payload:{msg}}); };
     document.addEventListener("visibilitychange",onVis);
     window.addEventListener("error",onErr);
     window.addEventListener("unhandledrejection",onErr);
     return ()=>{document.removeEventListener("visibilitychange",onVis);
+      IN.forEach(e=>window.removeEventListener(e,onInput,{capture:true}));
+      _trkInput=null;
       window.removeEventListener("error",onErr);
       window.removeEventListener("unhandledrejection",onErr);};
   },[]); // eslint-disable-line
 
   useEffect(()=>{
-    const onHash=()=>{const{p,prm}=parseHash();setPage(p||"overview");setPageParams(prm);};
+    const onHash=()=>{const{p,prm}=parseHash(); if(p==="open") return;   // ссылки из писем — ниже
+      // #src-N — якорь сноски в тексте отчёта, а не раздел: раньше такой клик
+      // перезагружал приложение (аудит 03.10, ДЕЛ-02)
+      if(/^src-\d+$/.test(p)){ try{ history.replaceState(null,"","#"+(pageCurRef.current||"overview")); }catch{}
+        const el=document.getElementById(p); if(el) el.scrollIntoView({block:"center",behavior:"smooth"}); return; }
+      setPage(p||"overview");setPageParams(prm);};
     window.addEventListener("hashchange",onHash);
     return ()=>window.removeEventListener("hashchange",onHash);
   },[]);
@@ -10463,7 +12841,7 @@ function Shell(){
   const toggleData=()=>setDataOpen(v=>{ const nv=!v;
     try{localStorage.setItem("al-rail-data",nv?"1":"0");}catch{} return nv; });
   const groups=useMemo(()=>{
-    const items=(me&&me.is_admin)?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
+    const items=(me&&(me.is_admin||me.can_pulse))?[...NAV,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:NAV;
     const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
   // Страница есть на сервере, но неизвестна ЭТОМУ бандлу (вкладка держит старую
   // версию SPA — hash-переход её не перезагружает) → одно само-обновление.
@@ -10548,6 +12926,16 @@ function Shell(){
           font-weight:500;transition:transform .1s}
         .ren-toast .go:active{transform:scale(.96)}
         @media(max-width:960px){.ren-toast{left:16px;right:16px;bottom:16px;max-width:none}}
+        .mp-toast .mp-h{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+        .mp-toast .mp-h b{font-size:13px;font-weight:600;color:var(--ink)}
+        .mp-toast .mp-ic{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+          background:var(--select-soft);color:var(--select)}
+        .mp-toast .mp-b{display:flex;gap:8px}
+        .mp-toast .later{font-size:11.5px;padding:6px 12px;border-radius:8px;color:var(--ink-3);border:1px solid var(--hair);
+          transition:transform .1s,color .12s}
+        .mp-toast .later:hover{color:var(--ink)}
+        .mp-toast .later:active{transform:scale(.96)}
+        .mp-toast button:focus-visible{outline:2px solid var(--select);outline-offset:2px}
         .rail-foot{position:relative;}
         .onb-callout{position:absolute;left:6px;right:6px;bottom:64px;z-index:60;background:var(--surface);
           border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);padding:13px 15px;animation:fade-in .3s ease-out;}
@@ -10613,7 +13001,7 @@ function Shell(){
           </div>;
         })}
         <div className="rail-foot">
-          {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile";
+          {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile" && !mailPromoShow;
             return showOnb ? <div className="onb-callout">
               <div className="t">✦ <b>Новое:</b> настройте инструмент под себя — опишите, что проверяете, и получайте персональную подачу и сводки.</div>
               <div className="b">
@@ -10621,18 +13009,80 @@ function Shell(){
                 <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
               </div>
             </div> : null; })()}
-          <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title="Профиль и персонализация"
-                  onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}
-                  style={{width:"100%",textAlign:"left",transition:"background .14s"}}>
-            <div className="avatar">{me?initials(me.name):"А"}</div>
-            <div>
-              <div className="nm">{me?.name||"Аудитор"}</div>
-              <div className="role">Внутренний аудит</div>
-            </div>
+          <style>{SAY_CSS}</style>
+          <button ref={sayRowRef} type="button" className={"tk-row"+(sayOpen?" on":"")+(sayInfo.unread?" unread":"")}
+            aria-haspopup="dialog" aria-expanded={!!sayOpen} onClick={()=>openSay()}
+            data-tip={sayInfo.unread?"Команда ответила на ваше обращение":"Идея, ошибка или неверные цифры — команда ответит здесь же"}>
+            <IcSay.row/><span>Обратная связь</span>{sayInfo.unread>0&&<span className="tk-dot" aria-label="есть ответ"/>}
           </button>
+          <div className="tk-div"/>
+          <style>{BX_CSS}</style>
+          <div className="bx-me">
+            <button className={"user-chip"+(page==="profile"?" active":"")+(me&&!(me.prefs&&me.prefs.onboarded)&&!onbSeen&&page!=="profile"?" onb":"")} title={(me&&me.name?me.name+" — ":"")+"профиль и персонализация"}
+                    onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}
+                    style={{textAlign:"left",transition:"background .14s"}}>
+              <div className="avatar">{me?initials(me.name):"А"}</div>
+              <div style={{minWidth:0}}>
+                <div className="nm">{me?.name||"Аудитор"}</div>
+                <div className="role">Внутренний аудит</div>
+              </div>
+            </button>
+            <button ref={bellRef} type="button" className={"bx-btn"+(bellOpen?" on":"")+(bell.unread?" has":"")}
+              aria-haspopup="dialog" aria-expanded={bellOpen} onClick={toggleBell}
+              aria-label={bell.unread?`Уведомления: ${bell.unread} ${plural(bell.unread,"новое","новых","новых")}`:"Уведомления"}
+              data-tip={bell.unread?`${bell.unread} ${plural(bell.unread,"новое","новых","новых")} — дела, отчёты, ответы команды`:"Уведомления: дела, отчёты, ответы команды"}>
+              <IcBx.bell/>{bell.unread>0&&<span className="bx-dot" aria-hidden="true"/>}
+            </button>
+          </div>
         </div>
       </aside>
       {navOpen&&<div className="rail-backdrop" onClick={()=>setNavOpen(false)}/>}
+      {casePick&&ReactDOM.createPortal(<OverlayBoundary name="case-pick" onClose={()=>setCasePick(null)}><CasePickPop pick={casePick} cases={casesList} activeId={activeCase&&activeCase.case_id}
+        onClose={()=>setCasePick(null)}
+        onPick={async c=>{ await caseAttach(c,casePick.items,casePick.opt); setCasePick(null); }}
+        onCreate={async title=>{ const r=await csReq("POST","/api/cases",{title});
+          await caseAttach({case_id:r.case_id,title,can_add:true,items:0,mine:true},casePick.items,casePick.opt); setCasePick(null); }}
+        onOpenCase={id=>{ setCasePick(null); openCases(id); }}/></OverlayBoundary>,document.body)}
+      {caseToast&&ReactDOM.createPortal(<OverlayBoundary name="case-toast" onClose={()=>setCaseToast(null)}><CaseAddToast key={caseToast.id} t={caseToast} onClose={()=>setCaseToast(null)}
+        onUndo={()=>caseUndo(caseToast)}
+        onOther={async()=>{ const t=caseToast; await caseUndo(t); setCasePick({items:t.items,rect:null,anchor:null,opt:{...(t.opt||{}),pick:true}}); }}
+        onOpen={()=>{ const id=caseToast.case_id; setCaseToast(null); openCases(id); }}/></OverlayBoundary>,document.body)}
+      {casesHub&&<OverlayBoundary name="cases" onClose={closeCases}><KbCases key={[casesHub.caseId||"list",casesHub.tab||"",casesHub.msg||""].join(":")}
+        activeId={activeCase&&activeCase.case_id} onSetActive={setActiveCase}
+        initialCase={casesHub.caseId} initialTab={casesHub.tab} initialMsg={casesHub.msg} onClose={closeCases}
+        onOpenDoc={id=>{ closeCases(); location.hash=`#knowledge?doc=${id}`; }}/></OverlayBoundary>}
+      {sayOpen&&ReactDOM.createPortal(<OverlayBoundary name="say" onClose={()=>{ setSayOpen(null); setSayFocus(null); }}><SayPanel page={page} appInfo={appInfo} me={me} tab={sayOpen} anchor={sayRowRef} focus={sayFocus}
+        onClose={()=>{ setSayOpen(null); setSayFocus(null); loadSay(); setTimeout(()=>{ try{ sayRowRef.current&&sayRowRef.current.focus(); }catch{} },0); }}
+        onUnread={loadSay}/></OverlayBoundary>,document.body)}
+      {bellOpen&&ReactDOM.createPortal(<OverlayBoundary name="bell" onClose={()=>{ setBellView(null); setBellCode(null); closeBell(); }}><BellPanel anchor={bellRef} me={me} onClose={()=>{ setBellView(null); setBellCode(null); closeBell(); }} onGo={goBell} onCount={loadBell}
+        initialView={bellView} mailCode={bellCode} onEmail={(has)=>setMe(m=>m&&m.has_email!==has?{...m,has_email:has}:m)}
+        onPrefs={(off,mail)=>setMe(m=>m?{...m,prefs:{...(m.prefs||{}),...(off?{notify_off:off}:{}),...(mail?{mail}:{})}}:m)}/></OverlayBoundary>,document.body)}
+      {/* разовая заметка о новом уведомлении — у колокольчика, один раз на событие */}
+      {bellToast&&!bellOpen&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast bx-toast" role="status">
+        <div className="t"><span className="bx-ic">{React.createElement(bxIcon(bellToast.kind))}</span>
+          <span><b>{bellToast.title}</b>{bxSnip(bellToast)&&<span className="bx-s">{bxSnip(bellToast)}</span>}<span className="m">{[bxWho(bellToast),
+            bell.unread>1?`ещё ${bell.unread-1} — в колокольчике у вашего имени`:""].filter(Boolean).join(" · ")}</span></span></div>
+        <div className="b">
+          {bellToast.link&&<button className="btn btn-primary btn-sm" onClick={()=>{ const t=bellToast; bellSeen(t.id);
+            sayPost("/api/bell/read",{ids:[t.id]}).then(loadBell).catch(()=>{}); goBell(t); }}>Открыть</button>}
+          <button className="btn btn-sm" onClick={()=>bellSeen(bellToast.id)}>{bellToast.link?"Позже":"Понятно"}</button></div></div>}
+      {(()=>{ if(!mailPromoShow) return null;
+        const done=(step)=>{ setMailPromoOff(true); try{ localStorage.setItem("al-mail-promo","1"); }catch{}
+          trkEvent({kind:"ui",page,payload:{action:"mail_promo",step}});
+          setMe(m=>m?{...m,prefs:{...(m.prefs||{}),mail_promo:"seen"}}:m);
+          apiPut("/api/me",{prefs:{mail_promo:"seen"}}).catch(()=>{}); };
+        if(!mailPromoShown.current){ mailPromoShown.current=true;
+          setTimeout(()=>trkEvent({kind:"ui",page,payload:{action:"mail_promo",step:"shown"}}),0); }
+        return <div className="ren-toast mp-toast" role="status">
+          <div className="mp-h"><span className="mp-ic"><IcBx.mail/></span><b>Уведомления — теперь и на почте</b></div>
+          <div className="t">Упомянули, ответили, добавили в дело — письмом сразу, остальное — утренней сводкой.
+            Подойдёт почта Sigma или личная; на Omega письма не доходят.</div>
+          <div className="mp-b">
+            <button type="button" className="go" onClick={()=>{ done("connect"); setNavOpen(false); setSayOpen(null);
+              setBellView("settings"); setBellOpen(true); }}>Подключить почту</button>
+            <button type="button" className="later" onClick={()=>done("later")}>Не сейчас</button>
+          </div>
+        </div>; })()}
       {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
       {!renameSeen&&renamedFresh()&&<div className="ren-toast" role="status">
         <div className="t"><b>Меню обновлено.</b>{" "}
@@ -10646,7 +13096,8 @@ function Shell(){
       <div className="main">
         <div className="topbar">
           <div className="mobile-nav">
-            <button className="icon-btn" aria-label="меню" onClick={()=>setNavOpen(true)}><Ic.menu/></button>
+            <button className="icon-btn" aria-label={bell.unread?"меню — есть уведомления":"меню"} onClick={()=>setNavOpen(true)}><Ic.menu/>
+              {(bell.unread>0||sayInfo.unread>0)&&<span className="bx-dot" aria-hidden="true"/>}</button>
           </div>
           <div className="crumb">
             {idx && <><span className="crumb-idx">{idx} / {navOrder.length}</span>
@@ -10656,6 +13107,18 @@ function Shell(){
           {section==="overview"&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
+          <div className={"tb-cases-g"+(activeCase?" act":"")}>
+            <button type="button" className={"tb-cases"+(casesHub?" on":"")} aria-label="Аудит-дела" aria-haspopup="dialog"
+              aria-expanded={!!casesHub} onClick={()=>casesHub?closeCases():setCasesHub({caseId:null})}
+              data-tip="Подборки доказательств под проверку — ваши и те, куда вас пригласили. Под рукой в любом разделе">
+              <RvICase s={15}/><span className="tb-cases-l">Аудит-дела</span>{casesN?<span className="tb-cases-n">{casesN}</span>:null}
+              {activeCase&&<span className="tb-act-mdot" aria-hidden="true"/>}</button>
+            {/* активное дело: «В дело» по всему инструменту кладёт сюда одним нажатием */}
+            {activeCase&&<button type="button" key={caseBump} className={"tb-act"+(caseBump&&Date.now()-caseBump<1500?" bump":"")}
+              onClick={()=>openCases(activeCase.case_id)} aria-label={`Активное дело: ${activeCase.title}`}
+              data-tip={`Активное дело — «В дело» кладёт сюда одним нажатием. Сменить: выбрать другое в меню «В дело» или «Собирать сюда» в самом деле`}>
+              <span className="tb-act-dot" aria-hidden="true"/><span className="tb-act-t">{activeCase.title}</span></button>}
+          </div>
           <button className={"icon-btn th-tg"+(theme==="dark"?" dk":"")}
                   aria-label={theme==="dark"?"Включить светлую тему":"Включить тёмную тему"}
                   data-tip={theme==="dark"?"Светлая тема":"Тёмная тема"}
@@ -10665,7 +13128,7 @@ function Shell(){
         </div>
         <div className="content" ref={contentRef}>
           {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
-            <LoopholePage/>
+            <LoopholePage record={page==="loophole"&&pageParams&&/^\d+$/.test(pageParams.record||"")?pageParams.record:null}/>
           </div>}
           {/* ai-host--active: правило «без отступов» — только пока аналитик на экране.
               Раньше .content:has(.chat-shell) срабатывало и на скрытой, но смонтированной
@@ -10699,7 +13162,8 @@ function App(){
   useSlidingSegments();
   useNavMemory();
   useNumberShortcuts();
-  return <ThemeProvider><Shell/></ThemeProvider>;
+  // внешняя граница: сбой в оболочке — понятная страница с «Обновить», а не белый экран
+  return <ThemeProvider><PageBoundary name="shell" pageKey="shell"><Shell/></PageBoundary></ThemeProvider>;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);

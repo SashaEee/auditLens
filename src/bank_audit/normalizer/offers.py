@@ -27,6 +27,68 @@ SIGNIFICANT_CHANGE_SQL = """((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
                     OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
                          - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)"""
 
+# Откат: оффер вернулся к прежним условиям в течение 72 часов (условия «до»
+# изменения A совпадают — с допусками записи — с условиями «после» более
+# позднего изменения B того же оффера): A, B и всё между ними не изменения
+# условий, а сбой или мигание выдачи. Окно — как у детектора «пилы» «Обзора» (aggregator._FLAP_H): сбор
+# идёт раз в сутки, и возврат «туда-обратно» почти всегда разнесён по дням.
+# Одно определение для журнала «Рынка», итогов выпуска, ИИ-аналитика и меток на
+# графике жалоб — иначе экраны снова разойдутся в числах (аудит 03.10,
+# ПЛТ-02/РЫН-05). :rev_days — глубина окна целыми сутками МСК; начало цепочки
+# ищем ещё на 72 ч раньше, чтобы откат не обрезался на границе окна.
+REVERT_WINDOW_H = 72
+# Ключ изменения в журнале — время и номер одним числом: цепочка «до d»
+# не должна задевать изменение с тем же временем, записанное после d.
+_CH_KEY = ("(extract(epoch FROM {a}.changed_at)::numeric * 1000000 * 10000000000"
+           " + {a}.change_id)")
+# «Вернулось к прежнему» — те же поля и допуски, что у upsert_offer при
+# записи изменения (_num_eps): дрожь расчётной ставки в 4-м знаке и «тихие»
+# версии без строки журнала (поменялись только поля дайджеста из raw) не
+# мешают узнать возврат; текст условий — точно.
+_NEAR = "((tn.{f} IS NULL AND tp.{f} IS NULL) OR abs(tn.{f} - tp.{f}) < {e})"
+_SAME_TERMS_SQL = "(" + " AND ".join(
+    [_NEAR.format(f=f, e=e) for f, e in (("rate_pct", 0.01), ("amount_min", 1.0),
+                                          ("amount_max", 1.0), ("fee_open", 0.5),
+                                          ("fee_service", 0.5), ("cashback_pct", 0.05))]
+    + [f"tn.{f} IS NOT DISTINCT FROM tp.{f}" for f in
+       ("rate_kind", "currency", "term_months_min", "term_months_max", "grace_days",
+        "early_withdraw", "capitalization", "replenishable", "conditions")]) + ")"
+# Как считается: для каждого изменения c — самый поздний возврат d к условиям
+# «до c» в пределах 72 ч (end_k); изменение x скрыто, если какое-то c ≤ x
+# дотягивается до x (скользящий максимум end_k). Без разворачивания пар:
+# у мигающих офферов пар сотни тысяч (1,3 с на 90 днях). Весь рынок за неделю —
+# 14 мс, за 90 дней — 0,7 с: длинную историю считать по своим офферам
+# (revert_ids_sql с условием на c.offer_id).
+_REVERT_TMPL = """
+    SELECT z.change_id FROM (
+        SELECT e.change_id, e.k,
+               max(e.end_k) OVER (PARTITION BY e.offer_id ORDER BY e.k
+                                  ROWS UNBOUNDED PRECEDING) AS reach
+          FROM (SELECT c.change_id, c.offer_id, """ + _CH_KEY.format(a="c") + """ AS k,
+                       (SELECT max(""" + _CH_KEY.format(a="d") + """) FROM change_history d
+                          JOIN product_terms tn ON tn.terms_id = d.new_terms_id
+                         WHERE d.offer_id = c.offer_id
+                           AND (d.changed_at, d.change_id) > (c.changed_at, c.change_id)
+                           AND d.changed_at <= c.changed_at + interval '72 hours'
+                           AND """ + _SAME_TERMS_SQL + """) AS end_k
+                  FROM change_history c
+                  JOIN product_terms tp ON tp.terms_id = c.prev_terms_id
+                 WHERE c.changed_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Moscow')
+                                        - make_interval(days => CAST(:rev_days AS int)))
+                                       AT TIME ZONE 'Europe/Moscow' - interval '72 hours'
+                   /*SCOPE*/) e
+        ) z
+     WHERE z.reach >= z.k"""
+
+
+def revert_ids_sql(offer_scope: str = "") -> str:
+    """REVERT_IDS_SQL, суженный условием на c.offer_id (например,
+    «c.offer_id = :o») — для длинных окон по одному офферу или банку."""
+    return _REVERT_TMPL.replace("/*SCOPE*/", f"AND ({offer_scope})" if offer_scope else "")
+
+
+REVERT_IDS_SQL = revert_ids_sql()
+
 log = logging.getLogger(__name__)
 from ..models import OfferDraft
 from .rules import BANK_ALIASES, SBER_SLUGS, normalize_bank_key
@@ -247,7 +309,20 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
     именем: аудитор видел ссылку на banki.ru и подпись «источник sravni»,
     а происхождение числа доказать было нечем (аудит 11.08.2026)."""
     _fix_category(d)
-    bank_id = resolve_bank(session, d.bank_name_raw)
+    bank_id = None
+    if d.category == "other" and (d.external_id or "").startswith("banki_rating_"):
+        # Строка народного рейтинга несёт стабильный bankId площадки. Когда
+        # banki.ru меняет написание («ТОЧКА» → «Точка Банк»), поиск банка по
+        # имени заводил новую строку справочника, и банк расщеплялся надвое:
+        # у обеих строк одно место и одни отзывы (аудит 03.10, ДАН-01). Тот же
+        # bankId остаётся за тем банком, за которым уже числится.
+        bank_id = session.execute(text("""
+            SELECT bank_id FROM product_offer
+             WHERE category = 'other' AND external_id = :e
+             ORDER BY is_active DESC, last_seen DESC LIMIT 1"""),
+            {"e": d.external_id}).scalar()
+    if bank_id is None:
+        bank_id = resolve_bank(session, d.bank_name_raw)
     doubt = implausible(d, _key_rate())
     row = session.execute(text("""
         INSERT INTO product_offer(bank_id, category, external_id, primary_source, title, url)
@@ -381,24 +456,117 @@ def upsert_offer(session, d: OfferDraft, snapshot_id: int | None,
                    "d": json.dumps(diff, ensure_ascii=False)})
     return offer_id, True
 
-# Категории ежедневного sravni-сбора: только для них применимо протухание
-# (bank_rating/npf/invest_broker собираются другими источниками и редко)
+# Категории ежедневного сбора: для них применимо протухание по календарю.
+# savings_account, npf и invest_broker — те же ежедневные сборы sravni и
+# banki.ru (накопительный счёт — вклад с типом «накопительный»), а прежний
+# комментарий «собираются редко» устарел: их строки не гасли никогда
+# (аудит 03.10, ДАН-14). РКО и рейтинг — отдельными правилами ниже.
 _DAILY_CATEGORIES = ("deposit", "credit", "mortgage", "card_credit",
-                     "card_debit", "auto_loan", "metals", "microloan")
+                     "card_debit", "auto_loan", "metals", "microloan",
+                     "savings_account", "npf", "invest_broker")
+
+# Строки народного рейтинга banki.ru и тарифы РКО гаснут по ПРОГОНАМ своего
+# сборщика: карточка, которой не было в K последних ПОЛНЫХ прогонах. Сломанный
+# или оборванный сборщик (status 'partial', мало строк, неизменный снимок с
+# нулём строк) ничего не гасит. Предохранитель откладывает массовое гашение —
+# его разбирают руками.
+_RATING_SWEEPS = 3
+_RATING_MIN_ROWS = 200
+_BREAKER_SHARE, _BREAKER_MIN = 0.25, 10
+# (источник, категория, мин. строк в прогоне): РКО — переименованный тариф
+# заводит новую карточку (ключ по имени), старая без правила жила бы вечно
+_RUN_EXPIRY = (("banki_ratings", "other", _RATING_MIN_ROWS),
+               ("sravni_rko", "rko", 250))
+
+
+def _expire_by_runs(source: str, category: str, min_rows: int,
+                    dry_run: bool = False) -> dict:
+    with db.session() as s:
+        runs = s.execute(text("""
+            SELECT status, items_seen, started_at FROM extraction_run
+             WHERE source = :src AND started_at > now() - interval '30 days'
+             ORDER BY started_at DESC LIMIT :k"""), {"src": source, "k": _RATING_SWEEPS}).all()
+        if (len(runs) < _RATING_SWEEPS
+                or any(r[0] != "ok" or (r[1] or 0) < min_rows for r in runs)):
+            return {"status": "skip_incomplete_runs", "expired": 0}
+        cutoff = runs[-1][2]
+        active = s.execute(text(
+            "SELECT count(*) FROM product_offer WHERE category = CAST(:c AS product_category) "
+            "AND is_active"), {"c": category}).scalar() or 0
+        ids = [r[0] for r in s.execute(text("""
+            SELECT offer_id FROM product_offer
+             WHERE category = CAST(:cat AS product_category) AND is_active AND last_seen < :c"""),
+            {"cat": category, "c": cutoff}).all()]
+        if len(ids) > max(_BREAKER_MIN, _BREAKER_SHARE * active):
+            log.warning("[expire] %s: гасить %d из %d — предохранитель, разобрать руками",
+                        category, len(ids), active)
+            return {"status": "blocked", "would_expire": len(ids), "active": int(active)}
+        if ids and not dry_run:
+            s.execute(text("""UPDATE product_offer SET is_active = false
+                               WHERE offer_id = ANY(:ids) AND is_active AND last_seen < :c"""),
+                      {"ids": ids, "c": cutoff})
+    return {"status": "ok", "expired": len(ids), "dry_run": dry_run}
+
+
+def expire_rating_rows(dry_run: bool = False) -> dict:
+    """Протухание строк народного рейтинга (category='other'). 58 строк 03.10
+    держали места выпавших и переименованных банков, и 52 номера мест
+    повторялись дважды (ДАН-14)."""
+    return _expire_by_runs("banki_ratings", "other", _RATING_MIN_ROWS, dry_run)
+
+
+# Ежедневные категории: календарное правило «не видели 3 суток». Но если
+# разом пропала заметная доля категории, это скорее сломанный сборщик (антибот,
+# пропавший профиль браузера), чем рынок: гасим только то, чего нет уже
+# _STALE_HARD_D суток — витрина не пустеет за три ночи сбоя, а совсем
+# старые данные всё равно уходят.
+_STALE_HARD_D = 14
 
 
 def expire_stale_offers(days: int = 3) -> int:
     """Деактивирует офферы, пропавшие из выдачи источника (аудит 22.07.2026:
     394 «вечно живых» вклада и весь metals с данными от 10 июня висели в
     витрине как актуальные). Вернувшийся оффер оживает в upsert_offer."""
+    n = 0
     with db.session() as s:
-        n = s.execute(text("""
-            UPDATE product_offer SET is_active = false
-             WHERE is_active
-               AND category = ANY(CAST(:cats AS product_category[]))
-               AND last_seen < now() - make_interval(days => :d)
-        """), {"cats": list(_DAILY_CATEGORIES), "d": days}).rowcount
+        stats = s.execute(text("""
+            SELECT category::text, count(*) AS active,
+                   count(*) FILTER (WHERE last_seen < now() - make_interval(days => :d)) AS stale
+              FROM product_offer
+             WHERE is_active AND category = ANY(CAST(:cats AS product_category[]))
+             GROUP BY 1"""), {"cats": list(_DAILY_CATEGORIES), "d": days}).all()
+        for cat, active, stale in stats:
+            if not stale:
+                continue
+            d = days
+            if stale > max(_BREAKER_MIN, _BREAKER_SHARE * active):
+                log.warning("[expire] %s: не видели %d из %d — похоже на сбой сборщика, "
+                            "гасим только старше %d сут.", cat, stale, active, _STALE_HARD_D)
+                d = _STALE_HARD_D
+                # флаг качества — чтобы сбой сборщика увидели до того, как через
+                # две недели категория погаснет (раз в сутки на категорию)
+                s.execute(text("""
+                    INSERT INTO quality_flag (entity_type, entity_id, severity, code, detail)
+                    SELECT 'category', 0, 'warn', 'EXPIRE_BLOCKED',
+                           jsonb_build_object('category', CAST(:cat AS text),
+                                              'stale', :st, 'active', :ac)
+                     WHERE NOT EXISTS (SELECT 1 FROM quality_flag
+                                        WHERE code = 'EXPIRE_BLOCKED'
+                                          AND detail->>'category' = CAST(:cat AS text)
+                                          AND created_at > now() - interval '20 hours')"""),
+                          {"cat": cat, "st": int(stale), "ac": int(active)})
+            n += s.execute(text("""
+                UPDATE product_offer SET is_active = false
+                 WHERE is_active AND category = CAST(:cat AS product_category)
+                   AND last_seen < now() - make_interval(days => :d)
+            """), {"cat": cat, "d": d}).rowcount
     log.info("[expire] деактивировано протухших офферов: %d", n)
+    for src, cat, min_rows in _RUN_EXPIRY:
+        try:
+            log.info("[expire] %s по прогонам %s: %s", cat, src,
+                     _expire_by_runs(src, cat, min_rows))
+        except Exception as e:  # noqa: BLE001 — не роняет ночной цикл
+            log.warning("[expire] %s: %s", cat, e)
     return n
 
 
@@ -437,18 +605,48 @@ def validate_offer_urls(limit: int = 80) -> dict:
     return {"checked": checked, "dead": len(bad)}
 
 
+def _collapse_in_run(drafts: list[OfferDraft]) -> tuple[list[OfferDraft], dict]:
+    """Внутри прогона один ключ — одна версия.
+
+    upsert_offer пишет черновики подряд в ОДНОЙ транзакции: две строки с одним
+    ключом и разными условиями дают версию «туда» и версию «обратно» с одним
+    временем — так 03.10 выглядели 50 из 50 последних изменений рынка (РКО).
+    Адаптер РКО починен, но тот же класс ошибки возможен у любого источника
+    (коллизия ключа, повтор банка между страницами), поэтому страж общий.
+    Выбор не зависит от порядка выдачи: при разных условиях — вариант с
+    наименьшим дайджестом, при одинаковых — с наименьшими (заголовок, ссылка)."""
+    groups: dict[tuple, list[OfferDraft]] = {}
+    for d in drafts:
+        _fix_category(d)                  # категория может смениться (вклад → накопительный)
+        key = (normalize_bank_key(d.bank_name_raw or ""), d.category, d.external_id)
+        groups.setdefault(key, []).append(d)
+    out, st = [], {"dup_rows": 0, "dup_conflicts": 0}
+    for ds in groups.values():
+        if len(ds) == 1:
+            out.append(ds[0])
+            continue
+        st["dup_rows"] += len(ds) - 1
+        if len({_digest(d) for d in ds}) > 1:
+            st["dup_conflicts"] += 1
+        out.append(min(ds, key=lambda d: (_digest(d), d.title or "", d.url or "")))
+    return out, st
+
+
 def normalize_batch(drafts: Iterable[OfferDraft], snapshot_id: int | None,
                     source_page_id: int | None,
                     source_name: str = "sravni_aggregator") -> dict:
+    drafts = list(drafts)
+    uniq, st = _collapse_in_run(drafts)
+    if st["dup_rows"]:
+        log.warning("[normalize] %s: повторов ключа за прогон %d (с разными условиями %d) "
+                    "— записан один вариант", source_name, st["dup_rows"], st["dup_conflicts"])
     written = 0
-    seen = 0
     with db.session() as s:
-        for d in drafts:
-            seen += 1
+        for d in uniq:
             _, changed = upsert_offer(s, d, snapshot_id, source_page_id, source_name)
             if changed:
                 written += 1
-    return {"seen": seen, "written": written}
+    return {"seen": len(drafts), "written": written, **st}
 
 def dedup_active_offers(session=None) -> int:
     """Гасит повторы одного продукта (банк + название в категории), оставляя
@@ -456,17 +654,24 @@ def dedup_active_offers(session=None) -> int:
     и суммы), каждый срез даёт свой external_id — для сравнения это один и тот
     же продукт, а в витрине он занимал семь строк (аудит 11.08.2026: 1378
     лишних строк, 1177 из них во вкладах). Зовётся после каждого сбора."""
+    # У РКО одно название бывает у тарифа для ИП и для ООО, а «Оптимум» и
+    # «Оптимум+» — разные пакеты: там в разбиение входят форма бизнеса и «+»,
+    # иначе дедуп гасил бы настоящие тарифы (аудит 03.10, ПЛТ-02).
     sql = text("""
         WITH live AS (
             SELECT o.offer_id, o.bank_id, o.category,
-                   lower(regexp_replace(coalesce(o.title, ''), '[^[:alnum:]]', '', 'g')) AS k,
+                   CASE WHEN o.category = 'rko' THEN coalesce(o.sub_segment, '') ELSE '' END AS sub,
+                   lower(regexp_replace(
+                       CASE WHEN o.category = 'rko' THEN replace(coalesce(o.title, ''), '+', 'плюс')
+                            ELSE coalesce(o.title, '') END,
+                       '[^[:alnum:]]', '', 'g')) AS k,
                    t.valid_from
               FROM product_offer o
               JOIN product_terms t ON t.offer_id = o.offer_id AND t.valid_to IS NULL
              WHERE o.is_active
         ), ranked AS (
             SELECT offer_id,
-                   row_number() OVER (PARTITION BY bank_id, category, k
+                   row_number() OVER (PARTITION BY bank_id, category, sub, k
                                       ORDER BY valid_from DESC, offer_id DESC) AS rn
               FROM live WHERE k <> ''
         )

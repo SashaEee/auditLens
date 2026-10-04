@@ -336,13 +336,15 @@ def fetch_bodies(limit: int = 40) -> int:
     if not rows:
         return 0
     from .writer import _news_bodies
-    import os as _os
-    _os.environ.setdefault("DIGEST_NEWS_BODY_CHARS", str(BODY_CHARS))
-    bodies = _news_bodies([r[1] for r in rows])
+    bodies = _news_bodies([r[1] for r in rows], max_chars=BODY_CHARS, max_n=len(rows))
     payload = []
     for rid, url in rows:
+        if url not in bodies:           # не пробовали скачать — «полный текст» не ставим
+            continue
         b = (bodies.get(url) or "").strip()
         payload.append({"id": rid, "b": b[:BODY_CHARS] if len(b) > 200 else None})
+    if not payload:
+        return 0
     with db.session() as s:
         s.execute(text("""UPDATE news_item SET body = coalesce(:b, body), body_full = true
                           WHERE id = :id"""), payload)

@@ -70,14 +70,31 @@ def _org_name(org: dict) -> str | None:
     return name.get("short") or name.get("full")
 
 
-_RE_ALIAS_COPY = re.compile(r"-\d+$")
+_RE_NAME_JUNK = re.compile(r"[^0-9a-zа-я]+")
 
 
-def _base_alias(alias: Any) -> str | None:
-    """«modul-rko-aaa-2» → «modul-rko-aaa»: региональная копия того же тарифа."""
-    if not isinstance(alias, str) or not alias:
-        return None
-    return _RE_ALIAS_COPY.sub("", alias)
+def _name_key(name: Any) -> str:
+    """Регистр, «ё» и пунктуация тарифы не различают, а «+» различает:
+    «Оптимум» за 600 ₽ и «Оптимум+» за 1 200 ₽ — разные пакеты."""
+    s = str(name or "").lower().replace("ё", "е").replace("+", " плюс ")
+    return _RE_NAME_JUNK.sub("", s)
+
+
+def _orgs(it: dict) -> list[str]:
+    return sorted({str(x).lower() for x in (it.get("org_types") or [])})
+
+
+def _variant_order(it: dict) -> tuple:
+    """Какая из копий тарифа представляет его на витрине. Порядок выдачи
+    sravni — рекламный и меняется от прогона к прогону, поэтому выбор от него
+    не зависит: сначала самая новая редакция тарифа (date_from), среди копий
+    одной редакции — меньшая цена «от» (пустая цена — последней), затем id."""
+    p = _dec(it.get("price_month"))
+    try:
+        newer = -int(str(it.get("date_from") or "")[:10].replace("-", "") or 0)
+    except ValueError:
+        newer = 0
+    return (newer, p is None, p if p is not None else Decimal(0), str(it.get("id") or ""))
 
 
 class SravniRkoAdapter(SourceAdapter):
@@ -106,11 +123,13 @@ class SravniRkoAdapter(SourceAdapter):
         rows: list[dict] = []
         seen: set[str] = set()
         total = None
+        complete = True
         with httpx.Client(timeout=45, follow_redirects=True, headers=headers) as c:
             for offset in range(0, _MAX_OFFSET, _LIMIT):
                 r = c.post(API, json=self._body(offset))
                 if r.status_code != 200:
                     log.warning("sravni_rko: offset=%s → HTTP %s", offset, r.status_code)
+                    complete = False
                     break
                 data = r.json()
                 groups = data.get("items") or []
@@ -160,44 +179,57 @@ class SravniRkoAdapter(SourceAdapter):
             fetched_at=datetime.now(timezone.utc), http_status=200,
             content_sha256=digest, storage_path=path, bytes=n, category="rko",
         )
-        return FetchResult(snapshot=snap, html=payload)
+        return FetchResult(snapshot=snap, html=payload, complete=complete)
 
     def parse_offers(self, html: bytes, target: dict[str, Any]) -> Iterable[OfferDraft]:
+        """Одна карточка = (банк, название тарифа, форма бизнеса).
+
+        Прежний ключ брал алиас тарифа на sravni, а алиас общий у РАЗНЫХ
+        тарифов банка: «Мини», «Опти», «Макси» и «Профи» ПСБ лежат под одним
+        алиасом. Строки писались в одну карточку подряд, и каждую ночь журнал
+        получал «9900 → 690 → 1990 → 3500 → 9900» — 50 из 50 последних
+        изменений рынка были такими (аудит 03.10, ПЛТ-02). Теперь тарифы
+        различаются по имени, а региональные копии одного тарифа сводятся к
+        одному представителю (_variant_order); вилка цен — в raw."""
         data = json.loads(html.decode("utf-8"))
+        groups: dict[tuple, list[dict]] = {}
         for it in data.get("offers", []):
-            price = it.get("price_month")
+            if it.get("bank") and it.get("name"):
+                key = (it.get("bank_alias") or it["bank"], _name_key(it["name"]),
+                       tuple(_orgs(it)))
+                groups.setdefault(key, []).append(it)
+        for (bkey, nkey, orgs), rows in groups.items():
+            rows.sort(key=_variant_order)
+            it = rows[0]
+            prices = sorted({p for p in (_dec(r.get("price_month")) for r in rows)
+                             if p is not None})
             conditions = " · ".join(x for x in (it.get("adv_payment"),
                                                 it.get("adv_transfer"),
                                                 it.get("adv_opening")) if x) or None
+            raw = {k: it.get(k) for k in
+                   ("bank_alias", "alias", "price_month", "price_open", "price_year",
+                    "org_types", "cash_put_pct", "cash_take_pct", "date_from")}
+            raw.update(variants=len(rows),
+                       price_min=float(prices[0]) if prices else None,
+                       price_max=float(prices[-1]) if prices else None)
             yield OfferDraft(
                 bank_name_raw=it["bank"],
                 category="rko",
-                # НЕ id источника: один и тот же тариф приходит несколькими
-                # строками по регионам («Модуль РКО ААА» — трижды), и по id
-                # витрина показала бы один банк тремя точками рынка
-                # НЕ id и НЕ сырой алиас: один тариф приходит несколькими
-                # строками по регионам, отличаясь только суффиксом
-                # («modul-rko-aaa», «modul-rko-aaa-1», «modul-rko-aaa-2»), и
-                # витрина показала бы восемь тарифов Сбера двадцатью четырьмя
-                external_id="rko_" + stable_digest({
-                    "b": it.get("bank_alias") or it["bank"],
-                    "n": _base_alias(it.get("alias")) or it["name"],
-                    "t": sorted(it.get("org_types") or []),
-                })[:24],
+                external_id="rko2_" + stable_digest({"b": bkey, "n": nkey, "t": list(orgs)})[:24],
                 title=str(it["name"])[:200],
                 url=(f"https://www.sravni.ru/rko/{it['bank_alias']}/"
                      if it.get("bank_alias") else PAGE),
                 # ₽/МЕС, а не ₽/год: см. пояснение в шапке модуля
-                fee_service=_dec(price),
+                fee_service=_dec(it.get("price_month")),
                 fee_open=_dec(it.get("price_open")),
                 cashback_pct=_dec(it.get("cashback_pct")),
                 conditions=conditions,
-                raw={k: it.get(k) for k in
-                     ("bank_alias", "alias", "price_month", "price_open", "price_year",
-                      "org_types", "cash_put_pct", "cash_take_pct", "date_from")},
-                # цена и лимиты живут только в raw — без этого история замрёт
+                raw=raw,
+                # цена и лимиты живут только в raw — без этого история замрёт;
+                # вилка в дайджест не входит: выдача теряет строки от прогона к
+                # прогону, и границы дрожали бы без изменения тарифа
                 digest_extra={"p": it.get("price_month"), "o": it.get("price_open"),
-                              "t": it.get("org_types"), "d": it.get("date_from")},
+                              "t": list(orgs), "d": it.get("date_from")},
             )
 
     def parse_reviews(self, html: bytes, target: dict[str, Any]):

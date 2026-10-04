@@ -286,7 +286,9 @@ mark.lp-hl { background: var(--qhl); color: inherit; border-radius: 2px; padding
 
 /* ── Фильтры ─────────────────────────────────────────────────────────────── */
 .lp-fhead { padding: 16px 20px 14px; display: flex; flex-direction: column; gap: 12px; }
-.lp-srow { display: flex; gap: 8px; align-items: center; }
+.lp-srow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* что именно ищет сервер: слова запроса, а не фраза целиком (УЯЗ-03) */
+.lp-q-how { flex-basis: 100%; font-size: 12px; order: 1; }  /* под рядом поля и «Фильтров» */
 .lp-search {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 10px 0 12px;
   border: 1px solid var(--hair-2); border-radius: 8px; background: var(--paper-2); color: var(--ink-3);

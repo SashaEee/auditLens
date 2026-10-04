@@ -49,6 +49,16 @@ async def _tick(coro, snapshot):
 
 log = logging.getLogger(__name__)
 
+# Заглушки сорванного прогона: по ним сохранение отличает сбой от отчёта —
+# раньше «⚠ Не удалось построить план: module …» ложилось в историю отчётом
+# с красивым названием (аудит 03.10, ИИ-09)
+FAIL_PLAN = "⚠ **Не удалось построить план отчёта.**"
+FAIL_COLLECT = "⚠ **Сбор данных не удался.**"
+FAIL_REPORT = "⚠ **Отчёт не сформирован.**"
+FAIL_PREFIXES = (FAIL_PLAN, FAIL_COLLECT, FAIL_REPORT,
+                 "⚠ **Не удалось построить план:**", "⚠ **Сбор данных не удался:**",
+                 "⚠ **Отчёт не сформирован:**")
+
 # Отчёт отдаётся кусками, иначе UI получит его одним куском в конце и
 # индикатор прогресса замрёт на минуты.
 _CHUNK = 900
@@ -154,10 +164,11 @@ async def stream_deep_research_gptr(question: str,
             client,
             os.environ.get("LLM_MODEL_REASONING") or os.environ["LLM_MODEL_NAME"],
             question, history=history)
-    except Exception as e:
+    except Exception:
         log.exception("gptr: планирование")
+        # текст исключения пользователю не показываем — он в логе (аудит 03.10, ИИ-09)
         yield _evt({"type": "text",
-                    "chunk": f"\n\n⚠ **Не удалось построить план:** {e}\n"})
+                    "chunk": f"\n\n{FAIL_PLAN} Модель не ответила — повторите запрос через минуту.\n"})
         yield _evt({"type": "done"})
         return
 
@@ -239,11 +250,12 @@ async def stream_deep_research_gptr(question: str,
                 "facts": len(registry.facts),
                 "blocked": len(state.unreadable)}):
             yield ev
-    except Exception as e:
+    except Exception:
         collecting["on"] = False
         log.exception("gptr: сбор")
         yield _evt({"type": "text",
-                    "chunk": f"\n\n⚠ **Сбор данных не удался:** {e}\n"})
+                    "chunk": f"\n\n{FAIL_COLLECT} Поиск или чтение источников не ответили — "
+                             f"повторите запрос через минуту.\n"})
         yield _evt({"type": "done"})
         return
 
@@ -457,19 +469,20 @@ async def stream_deep_research_gptr(question: str,
                 lead_text = plain_keys(al_viz.restore_lead_markers(
                     lead_guard.feed(renum.feed(payload) + renum.finish()) + lead_guard.finish()))
                 yield _evt({"type": "lead", "chunk": lead_text})
-    except Exception as e:
+    except Exception:
         log.exception("gptr: написание")
         # Написанное НЕ выбрасываем. Одна перегрузка провайдера в середине
         # последнего раздела обнуляла двадцать минут работы: аудитор видел
         # «Отчёт не сформирован» вместо готовых разделов, источников и
         # проверок. Отдаём собранное с честной пометкой и идём дальше —
         # источники и сохранение отчёта отрабатывают как обычно.
-        note = (f"\n\n⚠ **Отчёт неполный:** написание прервано ({e}). "
-                f"Ниже — разделы, которые успели собраться; "
-                f"повторите запрос, чтобы получить отчёт целиком.\n")
+        note = ("\n\n⚠ **Отчёт неполный:** написание прервано. "
+                "Ниже — разделы, которые успели собраться; "
+                "повторите запрос, чтобы получить отчёт целиком.\n")
         if not "".join(body_parts).strip() and not lead_text.strip():
             yield _evt({"type": "text",
-                        "chunk": f"\n\n⚠ **Отчёт не сформирован:** {e}\n"})
+                        "chunk": f"\n\n{FAIL_REPORT} Модель прервала ответ — повторите запрос "
+                                 f"через минуту.\n"})
             yield _evt({"type": "done"})
             return
         body_parts.append(note)
@@ -481,8 +494,8 @@ async def stream_deep_research_gptr(question: str,
     report = lead_text + "".join(body_parts)
     if not report.strip():
         yield _evt({"type": "text", "chunk":
-                    "\n\n⚠ **Отчёт не сформирован:** модель вернула пустой "
-                    "ответ. Проверьте совместимость параметров модели.\n"})
+                    f"\n\n{FAIL_REPORT} Модель вернула пустой ответ — повторите запрос "
+                    f"через минуту.\n"})
         yield _evt({"type": "done"})
         return
 
@@ -535,6 +548,8 @@ async def stream_deep_research_gptr(question: str,
     verification.update({
         "фактов": len(registry.facts),
         "абзацев_без_якоря": al_cit.unanchored_claims(report_plain),
+        # якорь, чей источник не содержит ни слова фразы, — к ручной проверке
+        "якорь_не_тот": al_cit.anchor_mismatches(report_plain, cited_src),
         **cit_stats,
     })
     gap_lines = al_gaps.collect(plan, registry=registry, attributes=attributes,
@@ -557,8 +572,11 @@ async def stream_deep_research_gptr(question: str,
                 "verified": verification["verified"],
                 # Интерфейс и PDF ждут записи {claim, issue}; голые числа давали
                 # «4 утверждения требуют проверки» с пустыми «» (26.09).
-                "unverified": [_unverified_item(x) for x in verification["unverified"]],
-                "unverified_count": len(verification["unverified"]),
+                "unverified": ([_unverified_item(x) for x in verification["unverified"]]
+                               + verification["якорь_не_тот"]),
+                "unverified_count": (len(verification["unverified"])
+                                     + len(verification["якорь_не_тот"])),
+                "anchor_mismatch": len(verification["якорь_не_тот"]),
                 "facts_total": len(registry.facts),
                 "citations": cit_stats.get("цитирований", 0),
                 "critic": verdict.to_ui(),

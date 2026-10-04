@@ -116,7 +116,10 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_sber_vs_market",
-            "description": "Сравнение предложений Сбербанка с рынком по всем категориям. Показывает разницу в ставках (в п.п.).",
+            "description": ("Позиция Сбербанка на рынке по всем категориям — те же числа, что во "
+                            "вкладке «Рынок»: место среди лучших офферов банков в сопоставимой "
+                            "группе, перцентиль, разрыв с медианой по метрике категории (ПСК у "
+                            "кредитов, грейс у кредиток, плата у карт), оговорки о выборке."),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -320,8 +323,6 @@ TOOLS = [
                 "rate_pct, rate_kind, currency, amount_min, amount_max, term_months_min, "
                 "term_months_max, fee_open, fee_service, early_withdraw, capitalization, "
                 "replenishable, conditions, valid_from, url), "
-                "v_sber_vs_market(category, sber_max, sber_min, market_median, market_max, "
-                "market_min, sber_vs_median_pp), "
                 "v_offer_top_by_rate(bank_name, bank_slug, is_sber, category, title, rate_pct, "
                 "term_months_min, amount_min, rk), "
                 "v_review_topics(bank_slug, bank_name, topic, n, avg_rating), "
@@ -354,7 +355,9 @@ _ALLOWED_RELATIONS = {
     # застройщики. Из-за этого ИИ и вкладка «Рынок» отвечали РАЗНЫМИ числами на
     # один вопрос: по ипотеке витрина «Сбер 17,7 проц.», ИИ «Сбер 2,0-20,0».
     "v_market_rub_offer", "offer_enrichment",
-    "v_offer_current", "v_sber_vs_market", "v_offer_top_by_rate",
+    # v_sber_vs_market из белого списка убрана (аудит 03.10): максимум Сбера
+    # против медианы ВСЕХ офферов давал «+8 п.п. по кредитам» вопреки вкладке
+    "v_offer_current", "v_offer_top_by_rate",
     "v_review_topics", "v_review_sentiment_share", "v_bank_coverage",
     "bank", "review", "review_topic", "review_sentiment",
     "product_offer", "product_terms", "quality_flag", "extraction_run",
@@ -440,12 +443,19 @@ def _run_tool(name: str, args: dict) -> str:
             return json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str)
 
         if name == "get_sber_vs_market":
-            rows = s.execute(text("""
-                SELECT category, sber_max, sber_min, market_median,
-                       market_max, market_min, sber_vs_median_pp
-                  FROM v_sber_vs_market ORDER BY category
-            """)).mappings().all()
-            return json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str)
+            # тот же вердикт, что видит аудитор на вкладке «Рынок»: одна
+            # методика на экране и в ответе ИИ
+            from ..web.app import market_verdict
+            mv = market_verdict(None) or {}
+            keep = ("category", "label", "group_label", "rank", "n_banks", "percentile",
+                    "tied", "value", "title", "metric_label", "metric_unit", "gap_unit",
+                    "gap_median", "gap_leader", "lower_is_better", "degenerate",
+                    "small_n", "overall", "by_term", "comparable")
+            return json.dumps({"as_of": mv.get("as_of"), "lead": mv.get("lead"),
+                               "cells": [{k: c.get(k) for k in keep}
+                                         for c in mv.get("cells") or []],
+                               "caveats": mv.get("doubts")},
+                              ensure_ascii=False, default=str)
 
         if name == "get_reviews_analysis":
             slug = args["bank_slug"]
@@ -537,6 +547,7 @@ def _run_tool(name: str, args: dict) -> str:
                   FROM product_offer o JOIN bank b USING(bank_id)
                   JOIN product_terms t ON t.offer_id=o.offer_id AND t.valid_to IS NULL
                  WHERE o.category='other' AND t.rate_kind='avg_grade'
+                   AND o.is_active      -- выпавшие и переименованные не в рейтинге (ДАН-14)
                    AND (t.raw->>'total_reviews')::int > 0
                  ORDER BY (t.raw->>'total_reviews')::int DESC
                  LIMIT :n
@@ -546,16 +557,33 @@ def _run_tool(name: str, args: dict) -> str:
         if name == "get_change_history":
             slug = args.get("bank_slug", "all")
             bank_filter = "AND b.slug = :s" if slug and slug != "all" else ""
+            # те же правила, что у журнала «Рынка»: без смены выдачи агрегатора,
+            # микрошума и откатов (72 ч) — иначе ИИ на вопрос «что меняли»
+            # отдавал 20 последних откатов РКО (аудит 03.10)
+            from ..normalizer.offers import (CTX_JOIN_SQL, SAME_CTX_SQL,
+                                             SIGNIFICANT_CHANGE_SQL, revert_ids_sql)
+            # по банку — вся его история (откаты считаем по его офферам, это
+            # дёшево); по всему рынку — последние две недели: 20 последних
+            # изменений рынка всегда в них, а откаты всего рынка за 90 дней — 0,7 с
+            if bank_filter:
+                rev, rev_days, window = (revert_ids_sql(
+                    "c.offer_id IN (SELECT o2.offer_id FROM product_offer o2 "
+                    "JOIN bank b2 ON b2.bank_id = o2.bank_id WHERE b2.slug = :s)"), 3650, "")
+            else:
+                rev, rev_days = revert_ids_sql(), 14
+                window = "AND ch.changed_at > now() - interval '14 days'"
             rows = s.execute(text(f"""
                 SELECT b.name bank_name, o.category, o.title,
                        ch.changed_at, ch.diff
                   FROM change_history ch
                   JOIN product_offer o USING(offer_id)
                   JOIN bank b USING(bank_id)
-                 WHERE 1=1 {bank_filter}
-                 ORDER BY ch.changed_at DESC LIMIT :l
+                  {CTX_JOIN_SQL}
+                 WHERE 1=1 {bank_filter} {window} AND {SAME_CTX_SQL} AND {SIGNIFICANT_CHANGE_SQL}
+                   AND ch.change_id NOT IN ({rev})
+                 ORDER BY ch.changed_at DESC, ch.change_id DESC LIMIT :l
             """), {**({"s": slug} if slug and slug != "all" else {}),
-                   "l": args.get("limit", 20)}).mappings().all()
+                   "l": args.get("limit", 20), "rev_days": rev_days}).mappings().all()
             return json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str)
 
     if name == "run_sql":

@@ -651,7 +651,7 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
 def tool_run_sql(args: dict, bundle) -> str:
     """Read-only SELECT по предзаданным представлениям/таблицам.
 
-    Доступно: v_offer_current, v_sber_vs_market, v_review_topics,
+    Доступно: v_offer_current, v_market_rub_offer, v_review_topics,
     v_review_sentiment_share, v_bank_coverage, bank, review, review_topic,
     review_sentiment, product_offer, product_terms, quality_flag,
     change_history.
@@ -727,7 +727,13 @@ def tool_market_position(args: dict, bundle) -> str:
             "sample": {k: c.get(k) for k in
                        ("banks_total", "banks_dropped", "no_metric", "teaser",
                         "subsidized_excluded", "non_bank_excluded", "at_best",
-                        "psk_fallback", "small_n", "degenerate")},
+                        "psk_fallback", "small_n", "degenerate", "psk_mismatch",
+                        "promo_period_excluded", "upper_bound_excluded")},
+            # ранг считается внутри главной группы (вид продукта); слияние
+            # всех видов и окна срока — справкой
+            "main_group": (c.get("main_group") or {}).get("label"),
+            "overall": c.get("overall"),
+            "by_term": c.get("by_term"),
         }
         if sb:
             item["sber"] = {k: sb.get(k) for k in
@@ -740,6 +746,9 @@ def tool_market_position(args: dict, bundle) -> str:
             item["warning"] = ("метрика не различает банки: на лучшем значении "
                                f"{c.get('at_best')} из {c.get('n_banks')} — "
                                "ранг цитировать нельзя")
+        elif (c.get("at_best") or 0) > 1:
+            item["warning"] = (f"лучшее значение у {c.get('at_best')} банков — единственного "
+                               "лидера нет: называйте значение, а не банк")
         # разрезы: ответ «где мы среди новостроек» честнее общего по категории
         groups = c.get("groups") or []
         if segment or sub:
@@ -748,7 +757,7 @@ def tool_market_position(args: dict, bundle) -> str:
                       and (not sub or g.get("sub_segment") == sub)]
         if groups:
             item["groups"] = [
-                {k: g.get(k) for k in ("segment", "sub_segment", "n_banks",
+                {k: g.get(k) for k in ("segment", "sub_segment", "label", "n_banks",
                                        "median", "leader", "small_n", "sber")}
                 for g in groups[:6]]
         if c.get("free_split"):

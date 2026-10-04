@@ -15,6 +15,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import text
 
 from .. import db
+from ..normalizer.offers import CTX_JOIN_SQL, REVERT_IDS_SQL, SAME_CTX_SQL
 
 log = logging.getLogger(__name__)
 
@@ -190,14 +191,33 @@ async def tariff_moves(day: date) -> dict:
                             "changed_at": ts, "from": f, "to": t,
                             "bank": r["bank"], "title": r["title"]})
         flap, pending, flap_offers = rate_artifacts(seq)
+        # «Пила» по комиссиям (РКО меняет плату, а не ставку): тот же детектор по
+        # fee_service/fee_open. Берём только мигание — порог скачка рассчитан на
+        # п.п., к рублям он не применим (аудит 03.10, ПЛТ-02)
+        seq_fee = []
+        for r in rows:
+            d = _diff(r)
+            for fld in ("fee_service", "fee_open"):
+                v = d.get(fld) or {}
+                f, t = _fnum(v.get("from")), _fnum(v.get("to"))
+                if f is not None and t is not None:
+                    ts = r["changed_at"] if r["changed_at"].tzinfo else r["changed_at"].replace(tzinfo=timezone.utc)
+                    seq_fee.append({"change_id": r["change_id"], "offer_id": (r["offer_id"], fld),
+                                    "changed_at": ts, "from": f, "to": t,
+                                    "bank": r["bank"], "title": r["title"]})
+        flap_fee, _p, _o = rate_artifacts(seq_fee)
+        flap = flap | flap_fee
+        # откаты (возврат к прежним условиям за 72 ч) — по тому же правилу, что журнал «Рынка»
+        day_reverts = {int(x["change_id"]) for x in _q(
+            f"SELECT * FROM ({REVERT_IDS_SQL}) z", {"rev_days": 10})}
         week_ago = datetime.now(timezone.utc).timestamp() - 7 * 86400
         top, by_bank, cat_48h = [], {}, {}
         for r in rows:
             ts0 = r["changed_at"] if r["changed_at"].tzinfo else r["changed_at"].replace(tzinfo=timezone.utc)
             if ts0.timestamp() < week_ago:
                 continue                  # 10 дней — только для детекта мигания
-            if r["change_id"] in flap:
-                continue                  # сбой сбора, а не изменение условий
+            if r["change_id"] in flap or r["change_id"] in day_reverts:
+                continue                  # сбой сбора или откат, а не изменение условий
             diff = r.get("diff") or {}
             if isinstance(diff, str):
                 import json as _json
@@ -253,14 +273,7 @@ async def tariff_moves(day: date) -> dict:
         """)
         after_pause = bool(gap_days is not None and float(gap_days) > 3.0)
 
-        sber_gap = _q("SELECT * FROM v_sber_vs_market ORDER BY category")
-        for r in sber_gap:
-            for k, v in list(r.items()):
-                if v is not None and k != "category":
-                    try:
-                        r[k] = float(v)
-                    except (TypeError, ValueError):
-                        pass
+        sber_gap = market_position_rows()
 
         return {
             "top_changes": top,
@@ -270,6 +283,8 @@ async def tariff_moves(day: date) -> dict:
             "by_bank": sorted(by_bank.values(), key=lambda x: -x["n"])[:10],
             "mass_updates": mass,
             "after_pause": after_pause,
+            # методика счёта изменений: «w3» — без откатов (72 ч), смены выдачи и «пилы» комиссий
+            "method": "w3",
             "sber_gap": sber_gap,
             "totals": {
                 # СОБЫТИЯ, не строки: считаем офферы со значимым изменением
@@ -277,31 +292,43 @@ async def tariff_moves(day: date) -> dict:
                 # 3-4-го знака давал «14 тыс. изменений» — фидбек аналитиков)
                 "changes_7d": int(_scalar("""
                     SELECT count(DISTINCT ch.offer_id) FROM change_history ch
+                    """ + CTX_JOIN_SQL + """
                      WHERE ch.changed_at > now()-interval '7 days'
                        AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
                               WHERE k <> 'rate_pct') > 0
                             OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
                                  - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
-                    """) or 0),
+                       -- откаты (72 ч) и смена выдачи — не изменения (то же правило, что журнал)
+                       AND ch.change_id NOT IN (""" + REVERT_IDS_SQL + """)
+                       AND """ + SAME_CTX_SQL + """
+                    """, {"rev_days": 7}) or 0),
                 "banks_changed_7d": int(_scalar("""
                     SELECT count(DISTINCT b.bank_id) FROM change_history ch
                       JOIN product_offer o USING (offer_id) JOIN bank b USING (bank_id)
+                    """ + CTX_JOIN_SQL + """
                      WHERE ch.changed_at > now()-interval '7 days'
                        AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
                               WHERE k <> 'rate_pct') > 0
                             OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
                                  - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
-                    """) or 0),
+                       -- откаты (72 ч) и смена выдачи — не изменения (то же правило, что журнал)
+                       AND ch.change_id NOT IN (""" + REVERT_IDS_SQL + """)
+                       AND """ + SAME_CTX_SQL + """
+                    """, {"rev_days": 7}) or 0),
                 # изменения самого Сбера — для плитки пульса вместо «флагов качества»
                 "sber_changes_7d": int(_scalar("""
                     SELECT count(DISTINCT ch.offer_id) FROM change_history ch
                       JOIN product_offer o USING (offer_id) JOIN bank b USING (bank_id)
+                    """ + CTX_JOIN_SQL + """
                      WHERE b.is_sber AND ch.changed_at > now()-interval '7 days'
                        AND ((SELECT count(*) FROM jsonb_object_keys(ch.diff) k
                               WHERE k <> 'rate_pct') > 0
                             OR abs(coalesce((ch.diff->'rate_pct'->>'to')::numeric, 0)
                                  - coalesce((ch.diff->'rate_pct'->>'from')::numeric, 0)) >= 0.01)
-                    """) or 0),
+                       -- откаты (72 ч) и смена выдачи — не изменения (то же правило, что журнал)
+                       AND ch.change_id NOT IN (""" + REVERT_IDS_SQL + """)
+                       AND """ + SAME_CTX_SQL + """
+                    """, {"rev_days": 7}) or 0),
                 "banks_tracked": int(_scalar(
                     "SELECT count(DISTINCT bank_id) FROM product_offer WHERE is_active") or 0),
                 "last_change_at": (_scalar("SELECT max(changed_at) FROM change_history") or None),
@@ -334,15 +361,87 @@ async def tariff_moves(day: date) -> dict:
         log.info("key_rate fetch failed: %s", e)
         out["key_rate"] = None
 
-    # спред «макс. вклад Сбера − ключевая» (для пульса)
+    # Спред вклада Сбера к ключевой — на сопоставимом сроке, а не по максимуму.
+    # Максимумом был «Выгодный старт +» 19% на 3 месяца, и выпуск писал
+    # «спред максимального вклада Сбера к ключевой +5,0 пп» (аудит 03.10).
     try:
         kr = (out.get("key_rate") or {}).get("current")
-        dep = next((r for r in out["sber_gap"] if r.get("category") == "deposit"), None)
-        if kr is not None and dep and dep.get("sber_max") is not None:
-            out["dep_spread_pp"] = round(float(dep["sber_max"]) - float(kr), 2)
+        out.update(deposit_spread(out["sber_gap"], kr))
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+# окна срока вклада для спреда к ключевой: сначала «до года» — так принято
+# сравнивать вклад с ключевой, затем соседние окна
+_SPREAD_TERMS = ("7-12", "13+", "4-6")
+
+
+def deposit_spread(rows: list[dict], key_rate) -> dict:
+    """Спред вклада Сбера и медианы рынка к ключевой в одном окне срока."""
+    if key_rate is None:
+        return {}
+    dep = next((r for r in rows if r.get("category") == "deposit"), None)
+    terms = {t.get("term"): t for t in ((dep or {}).get("by_term") or [])}
+    t = next((terms[k] for k in _SPREAD_TERMS
+              if k in terms and terms[k].get("value") is not None), None)
+    if not t:
+        return {}
+    kr = float(key_rate)
+    return {"dep_spread_pp": round(float(t["value"]) - kr, 2),
+            "dep_spread_term": t.get("label"),
+            "dep_spread_market_pp": (round(float(t["median"]) - kr, 2)
+                                     if t.get("median") is not None else None)}
+
+
+def _quant(vals: list[float], p: float):
+    if not vals:
+        return None
+    i = (len(vals) - 1) * p
+    lo, hi = int(i), min(int(i) + 1, len(vals) - 1)
+    return round(vals[lo] + (vals[hi] - vals[lo]) * (i - lo), 2)
+
+
+def market_position_rows() -> list[dict]:
+    """«Сбер против рынка» по методике вкладки «Рынок».
+
+    Раньше выпуск, «Для вас» и ИИ читали v_sber_vs_market: максимум Сбера
+    минус медиана ВСЕХ офферов, без «лучший оффер банка», без сторожа и
+    господдержки, без направления «ниже = лучше». По кредитам выходило
+    «+8,1 п.п.» при том, что вкладка ставила Сбера в лучшую половину, а шкала
+    кредиток тянулась до 138,7% (аудит 03.10). Здесь — атлас вкладки: главная
+    группа категории, сопоставимая метрика, шкала по 10–90-му перцентилю.
+    Старые ключи (sber_max, market_min…) сохранены для совместимости.
+    """
+    try:
+        from ..web.app import market_atlas
+        atlas = market_atlas()
+    except Exception as e:  # noqa: BLE001 — выпуск не должен падать из-за витрины
+        log.info("market atlas for digest failed: %s", e)
+        return []
+    rows = []
+    for c in atlas.get("categories") or []:
+        sb = c.get("sber")
+        if c.get("status") != "ok" or not sb:
+            continue
+        vals = sorted(float(p["rate"]) for p in c.get("points") or [])
+        p10, p90 = _quant(vals, 0.1), _quant(vals, 0.9)
+        rows.append({
+            "category": c["category"], "label": c.get("label"),
+            "metric": c.get("metric"), "metric_label": c.get("metric_label"),
+            "metric_unit": c.get("metric_unit"), "lower_is_better": c.get("lower_is_better"),
+            "group_label": (c.get("main_group") or {}).get("label"),
+            "sber_value": sb.get("rate"), "sber_title": sb.get("title"),
+            "rank": sb.get("rank"), "n_banks": c.get("n_banks"),
+            "percentile": sb.get("percentile"), "degenerate": bool(c.get("degenerate")),
+            "market_median": c.get("median"), "market_p10": p10, "market_p90": p90,
+            "gap_median": sb.get("gap_median"), "by_term": c.get("by_term") or [],
+            # совместимость: прежние потребители читают эти имена
+            "sber_max": sb.get("rate"), "sber_min": sb.get("rate"),
+            "market_min": p10, "market_max": p90,
+            "sber_vs_median_pp": sb.get("gap_median"),
+        })
+    return rows
 
 
 # ── quality_ops ───────────────────────────────────────────────────────────────

@@ -458,25 +458,32 @@ def collect_loopholes(od: OwnData, plan, question: str) -> None:
            f"(с {_dm(st.get('collected_since'))}), найдено за 30 дней — "
            f"{_n(st.get('all_banks_found_last_30d'))}; с меткой «{bank}» — "
            f"{_n(st.get('this_bank_tagged_total'))}. Все оценки предварительные: "
-           f"человеком не проверены.")
+           f"экспертом не проверены — это возможные уязвимости, а не зафиксированные схемы.")
     od.page(s_url, "AuditLens · Уязвимости: сводка раздела", [txt], "loopholes")
     od.fact(subject=anchor, attribute="Лазейки: сводка раздела",
             value=_n(st.get("all_banks_total")), verbatim=txt, url=s_url, stance=LOOPHOLE)
     for r in own + other:
         url = r.get("url") or f"#loophole?record={r['record_id']}"
-        title = (r.get("title") or "").strip()
+        title = (r.get("headline") or r.get("title") or "").strip()
+        # подпись по типу и проверке: раньше каждая запись шла как «Схема: …» (аудит 03.10)
+        kind = ("Мошенническая схема" if r.get("type") == "мошенническая схема"
+                else "Возможная уязвимость")
+        state = ("проверено экспертом ЦК КС" if r.get("expert_checked")
+                 else "оценка модели, экспертом не проверена")
         lines = [x for x in (
-            f"Схема: {title}" if title else "",
+            f"{kind} ({state}): {title}" if title else "",
+            f"Суть: {r['summary']}" if r.get("summary") else "",
             f"Почему лазейка: {r['why_loophole']}" if r.get("why_loophole") else "",
+            f"Модель сомневается: {r['model_doubt']}" if r.get("model_doubt") else "",
             (r.get("text") or "").strip(),
             f"Источник: {r.get('source') or '—'}; опубликовано {_dm(r.get('published'))}; "
-            f"найдено системой {_dm(r.get('found'))}; статус: предварительная оценка модели.",
+            f"найдено системой {_dm(r.get('found'))}; статус: {state}.",
         ) if x]
         od.page(url, f"AuditLens · Уязвимости: {title[:80]}", lines, "loopholes")
         tag = r.get("bank_tag") or ""
         subj = anchor if r.get("about_bank") else (tag if tag in labels else "")
         od.fact(subject=subj, attribute="Лазейка", value=title[:200],
-                verbatim=f"Схема: {title}", url=url, stance=LOOPHOLE,
+                verbatim=f"{kind} ({state}): {title}", url=url, stance=LOOPHOLE,
                 date=str(r.get("found") or "")[:10])
         if r.get("why_loophole"):
             od.fact(subject=subj, attribute="Лазейка: почему", value=r["why_loophole"][:300],

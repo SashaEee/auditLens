@@ -25,6 +25,7 @@ from . import fetcher, embedder, chunker
 from .parsers import parse_auto, detect_doc_type
 from .trust import (
     domain_of, is_bank_official, detect_sponsored, compute_trust,
+    detect_invalid_content,
 )
 
 log = logging.getLogger(__name__)
@@ -171,6 +172,18 @@ def ingest_document_from_url(
                             trust_score=0.0, is_sponsored=False,
                             is_new=False, skipped_reason="empty_after_parse")
 
+    # Капча и заглушка антибота — сбой чтения, а не документ: раньше она
+    # вставлялась с доверием 0 (у заглушки Сбера случайный support ID — каждый
+    # раз новая строка) и не считалась ни в сбоях обхода, ни на карте покрытия
+    invalid, why = detect_invalid_content(parsed.text)
+    if invalid:
+        reason = ("captcha" if (why or "").startswith("captcha")
+                  else "antibot_stub" if why == "antibot_stub" else "empty_after_parse")
+        return IngestResult(document_id=None, url=url, bank_id=None,
+                            doc_type=parsed.doc_type, chunks_added=0,
+                            trust_score=0.0, is_sponsored=False,
+                            is_new=False, skipped_reason=reason)
+
     sponsored, _ = detect_sponsored(fr.final_url, parsed.text)
     sha = hashlib.sha256(parsed.text.encode("utf-8")).hexdigest()
 
@@ -179,28 +192,46 @@ def ingest_document_from_url(
         bank_id = _resolve_bank(s, fr.final_url, bank_slug_hint)
         trust = compute_trust(base_weight, fr.final_url, parsed.text)
 
+        # Тема раздела по пути URL — содержательная ось для карты покрытия.
+        # doc_type для этого не годится: это формат файла (html/pdf), а не
+        # предмет («вклады», «комиссии», «ипотека»).
+        # Если адрес темы не даёт (новость, PDF, /help/), — по заголовку и
+        # началу текста, детерминированно (rag/topics.py, ДАН-03).
+        try:
+            from .topics import classify_document
+            topics = classify_document(fr.final_url, parsed.title, parsed.text)[0] or None
+        except Exception:
+            topics = None
+
         # Idempotent insert
         existing = s.execute(text("""
-            SELECT document_id FROM document
-             WHERE url = :u AND content_sha256 = :sha
+            SELECT d.document_id, d.is_sponsored, d.trust_score,
+                   EXISTS (SELECT 1 FROM document_chunk c
+                            WHERE c.document_id = d.document_id) AS has_chunks
+              FROM document d
+             WHERE d.url = :u AND d.content_sha256 = :sha
         """), {"u": fr.final_url, "sha": sha}).first()
-        if existing:
+        # Тот же текст, но фрагментов у документа нет, а по нынешним правилам
+        # он годится в поиск: прежде считался рекламой (своя реклама банка с
+        # 03.10 — его условия) или упал эмбеддинг/процесс между вставкой и
+        # нарезкой. Дочитываем — иначе страница ждала бы правки текста банком
+        heal = bool(existing and not existing[3] and not sponsored and trust >= 0.05)
+        if existing and not heal:
             return IngestResult(document_id=existing[0], url=fr.final_url,
                                 bank_id=bank_id, doc_type=parsed.doc_type,
                                 chunks_added=0, trust_score=trust,
                                 is_sponsored=sponsored, is_new=False,
                                 skipped_reason="duplicate")
-
-        # Тема раздела по пути URL — содержательная ось для карты покрытия.
-        # doc_type для этого не годится: это формат файла (html/pdf), а не
-        # предмет («вклады», «комиссии», «ипотека»).
-        try:
-            from .url_discovery import classify_url
-            topics = classify_url(fr.final_url) or None
-        except Exception:
-            topics = None
-
-        doc_id = s.execute(text("""
+        if heal:
+            doc_id = existing[0]
+            s.execute(text("""UPDATE document SET is_sponsored = :sp, trust_score = :tr,
+                                     topics = COALESCE(:tp, topics)
+                               WHERE document_id = :d"""),
+                      {"sp": sponsored, "tr": trust, "tp": topics, "d": doc_id})
+            log.info("ingest %s: прежде реклама/недоверенный — дочитываем в поиск",
+                     fr.final_url[:80])
+        else:
+            doc_id = s.execute(text("""
             INSERT INTO document(
                 source_id, bank_id, url, doc_type, title,
                 headings_path, content_text, content_sha256,
@@ -217,7 +248,7 @@ def ingest_document_from_url(
             "ct": parsed.text[:1_000_000],
             "sha": sha, "tr": trust, "sp": sponsored,
             "bt": len(fr.content), "tp": topics,
-        }).scalar()
+            }).scalar()
 
         # Если sponsored или невалидный — chunks НЕ добавляем (нет смысла индексировать)
         if sponsored or trust < 0.05:
@@ -254,6 +285,20 @@ def ingest_document_from_url(
                 "hp": c.headings_path,
                 "e": str(vec),
             })
+
+    # Хвост «Элементы интерфейса» (меню, подписи кнопок) режется на фрагменты
+    # вместе с текстом, но в поиск идти не должен: он заполнял выдачу меню
+    # агрегаторов (ДАН-04). Отзывы JSON-LD идут после хвоста отдельной секцией
+    # и не задеваются. Исключение — отдельной таблицей, обратимо.
+    try:
+        with db.session() as s:
+            s.execute(text("""
+                INSERT INTO document_chunk_excluded (chunk_id, reason)
+                SELECT chunk_id, 'ui_tail' FROM document_chunk
+                 WHERE document_id = :d AND headings_path LIKE '%Элементы интерфейса (не условия продукта)%'
+                ON CONFLICT DO NOTHING"""), {"d": doc_id})
+    except Exception as e:  # noqa: BLE001 — таблицы может не быть до миграции
+        log.debug("ui_tail exclusion skipped: %s", e)
 
     log.info("ingest %s: doc=%s, chunks=%s, trust=%.2f, doc_type=%s",
              fr.final_url[:80], doc_id, len(chunks), trust, parsed.doc_type)

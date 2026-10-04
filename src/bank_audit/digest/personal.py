@@ -417,6 +417,11 @@ def _news_tiles(sections: dict, weights: dict, custom: list[str],
     if not pool:                        # payload до v-pool — падаем на элементы групп
         pool = [dict(it) for g in (news.get("groups") or [])
                 for it in (g.get("items") or [])]
+    # повторы выпуск сознательно не публикует («выходило 01.10») — и «Для вас» их
+    # не показывает: первая плитка 03.10 была повтором (аудит 03.10, ОБЗ-05)
+    rep_urls = {r.get("url") for r in (news.get("repeats") or []) if isinstance(r, dict) and r.get("url")}
+    if rep_urls:
+        pool = [it for it in pool if it.get("url") not in rep_urls]
     # проход 1: кандидаты и их тексты (векторизуем одним батчем)
     seen, cands = set(), []
     for it in pool:
@@ -516,9 +521,20 @@ def _my_signals(pvec: list[float] | None, dims: dict,
             return []
     cands: dict[str, dict] = {}
     for s_ in (ws.get("signals") or []):
-        cands[s_["key"]] = dict(s_)
+        cands[s_["key"]] = {**s_, "confirmed": True}
+    # Расхождение с рынком — не сигнал: тест всплеска его не подтвердил. Раньше
+    # оно шло в блок наравне с сигналами и при gap ≥ 1,5 проходило без связи с
+    # профилем (аудит 03.10). Теперь — только с подтверждением тестом Пуассона
+    # с поправкой на число проблем или при явной связи с зоной аудитора.
+    n_themes = int(((rp.get("checked") or {}).get("themes")) or 40)
     for d in (wp.get("diverge") or []):
-        cands.setdefault(d["key"], dict(d))
+        if d["key"] in cands:
+            continue
+        sig = d.get("sig")
+        if sig is None and d.get("week") is not None and d.get("baseline_week"):
+            from ..rag.reviews_dash import PULSE_ALPHA, poisson_sf
+            sig = poisson_sf(int(d["week"]), float(d["baseline_week"])) < PULSE_ALPHA / n_themes
+        cands[d["key"]] = {**d, "confirmed": bool(sig)}
     if not cands:
         return []
     items = list(cands.values())
@@ -544,9 +560,11 @@ def _my_signals(pvec: list[float] | None, dims: dict,
         t = _taste_of(prof, vecs[n] if vecs is not None else None)
         if t:
             score += 2 * t
+        if not c["confirmed"] and not why:
+            continue                       # не сигнал и не про зону аудитора
         if c.get("level") == "high":
             score += 1.0
-        if (c.get("gap") or 0) >= 1.5:
+        if c["confirmed"] and (c.get("gap") or 0) >= 1.5:
             score += 0.5
         if c.get("bank_specific"):
             score += 0.5
@@ -559,7 +577,8 @@ def _my_signals(pvec: list[float] | None, dims: dict,
         out.append({**{k2: c.get(k2) for k2 in
                        ("key", "label", "short", "risk", "week", "baseline_week",
                         "ratio", "gap", "level", "new", "accel", "bank_specific",
-                        "market_ratio", "market_note", "status", "since", "sustained")},
+                        "market_ratio", "market_note", "status", "since", "sustained",
+                        "confirmed")},
                     "why_you": " · ".join(dict.fromkeys(why))[:60] or None})
     return out
 
@@ -610,11 +629,16 @@ def _tariff_block(sections: dict, focus: list[str]) -> dict:
                               "bank_slug", "change_id", "offer_id")}, "slug": slug})
         if len(moves) >= 12:
             break
+    # позиция — по методике вкладки «Рынок» (aggregator.market_position_rows):
+    # шкала по 10–90-му перцентилю лучших офферов банков, без сомнительных чисел
     gap = [{"category": r.get("category"), "slug": _TARIFF_CAT_SLUG.get(str(r.get("category"))),
             "sber_max": r.get("sber_max"), "sber_min": r.get("sber_min"),
             "market_max": r.get("market_max"), "market_min": r.get("market_min"),
             "market_median": r.get("market_median"),
-            "sber_vs_median_pp": r.get("sber_vs_median_pp")}
+            "sber_vs_median_pp": r.get("sber_vs_median_pp"),
+            **{k: r.get(k) for k in ("metric", "metric_unit", "lower_is_better", "rank",
+                                     "n_banks", "percentile", "degenerate", "group_label",
+                                     "sber_title")}}
            for r in (tm.get("sber_gap") or [])
            if _TARIFF_CAT_SLUG.get(str(r.get("category"))) in fset
            and r.get("sber_max") is not None]
@@ -651,7 +675,12 @@ _PAGE_SYS = (
     "общего выпуска» и касается зоны аудитора — headline про него (своими словами), "
     "числа — ровно из контекста. Правило «вчера уже предлагалось» — только для "
     "checks, не для headline. Сигнал с пометкой «рынок растёт так же» не называй "
-    "аномалией Сбера."
+    "аномалией Сбера.\n"
+    "БЕЗ ДОГАДОК: не прогнозируй последствия («это создаст новую волну обращений») "
+    "и не связывай причиной события, связь между которыми в контексте не указана. "
+    "«Рынок не повторяет», «только у Сбера» — только для сигнала с пометкой "
+    "«только у банка»/«по рынку ровная»; «ускоряется», «нарастает» — только если "
+    "так написано у сигнала."
 )
 
 
@@ -673,6 +702,9 @@ def _signal_line(s: dict, lead_key: str | None = None) -> str:
             note = None
     if note:
         bits.append(str(note))
+    if s.get("confirmed") is False:
+        # расхождение с рынком, которое тест всплеска не подтвердил
+        bits.append("рост не подтверждён статистикой — не всплеск и не аномалия")
     line = "; ".join(bits)
     if lead_key and s.get("key") == lead_key:
         line += " — ГЛАВНОЕ ОБЩЕГО ВЫПУСКА"

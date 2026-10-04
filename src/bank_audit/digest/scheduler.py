@@ -226,6 +226,12 @@ def _run_ingest_all() -> None:
                 ingest(src, None)
             except Exception as e:  # noqa: BLE001
                 log.warning("daily ingest %s failed: %s", src, e)
+        try:    # протухание ДО проверок качества: иначе STALE_OFFER каждую ночь
+            # считал офферы, которые через минуту погаснут (аудит 03.10, ДАН-14)
+            from ..normalizer.offers import expire_stale_offers
+            expire_stale_offers()
+        except Exception as e:  # noqa: BLE001
+            log.warning("expire failed: %s", e)
         try:
             from ..quality.checks import run_quality
             res = run_quality()
@@ -251,13 +257,76 @@ def _run_ingest_all() -> None:
                          enrich(limit=int(_os.getenv("ENRICH_LIMIT", "150"))))
         except Exception as e:  # noqa: BLE001 — обогащение не валит цикл
             log.warning("обогащение не выполнено: %s", e)
-        try:    # протухание: пропавшие из выдачи офферы гаснут (is_active=false)
-            from ..normalizer.offers import expire_stale_offers
-            expire_stale_offers()
-        except Exception as e:  # noqa: BLE001
-            log.warning("expire failed: %s", e)
     finally:
         INGEST_MUTEX.release()
+
+
+# ── Ночной обход сайтов банков для базы знаний (аудит 03.10, ДАН-02) ─────────
+# В 03:10 МСК, до ночного сбора тарифов; свой замок, а не INGEST_MUTEX
+# (занятый мьютекс молча отменил бы ночной сбор). Перед каждым адресом —
+# проверка: идёт сбор или до него меньше 30 минут — стоп.
+KB_CRAWL_ENABLED = os.getenv("KB_CRAWL_ENABLED", "1") not in ("0", "false", "no")
+KB_CRAWL_HOUR = int(os.getenv("KB_CRAWL_HOUR_MSK", "3"))
+KB_CRAWL_BANKS = [x.strip() for x in os.getenv(
+    "KB_CRAWL_BANKS",
+    "sberbank,vtb,alfabank,tinkoff,gazprombank,psb,rshb,sovcombank,raiffeisen").split(",")
+    if x.strip()]
+KB_CRAWL_EVERY_D = int(os.getenv("KB_CRAWL_EVERY_D", "7"))
+KB_CRAWL_SBER_EVERY_D = int(os.getenv("KB_CRAWL_SBER_EVERY_D", "2"))
+KB_CRAWL_MAX_URLS = int(os.getenv("KB_CRAWL_MAX_URLS", "40"))
+_KB_CRAWL_LOCK = threading.Lock()
+
+
+def kb_crawl_status() -> dict:
+    last = None
+    try:
+        from ..rag.crawler import last_crawl_by_bank
+        lb = last_crawl_by_bank()
+        last = max(lb.values()).isoformat() if lb else None
+    except Exception:  # noqa: BLE001
+        pass
+    return {"enabled": KB_CRAWL_ENABLED, "banks": KB_CRAWL_BANKS,
+            "every_days": KB_CRAWL_EVERY_D, "sber_every_days": KB_CRAWL_SBER_EVERY_D,
+            "hour_msk": KB_CRAWL_HOUR, "last_run": last}
+
+
+def _kb_crawl_once() -> dict:
+    if not _KB_CRAWL_LOCK.acquire(blocking=False):
+        return {"skipped": "уже идёт"}
+    try:
+        stop_at = datetime.now(MSK).replace(hour=INGEST_HOUR, minute=0, second=0,
+                                            microsecond=0) - timedelta(minutes=30)
+
+        def should_stop() -> bool:
+            return INGEST_MUTEX.locked() or datetime.now(MSK) >= stop_at
+
+        from ..rag.crawler import crawl_nightly
+        return crawl_nightly(KB_CRAWL_BANKS, every_d=KB_CRAWL_EVERY_D,
+                             sber_every_d=KB_CRAWL_SBER_EVERY_D,
+                             max_urls=KB_CRAWL_MAX_URLS, should_stop=should_stop)
+    finally:
+        _KB_CRAWL_LOCK.release()
+
+
+async def kb_crawl_background_loop():
+    if not KB_CRAWL_ENABLED:
+        log.info("обход сайтов банков: выключен (KB_CRAWL_ENABLED=0)")
+        return
+    await asyncio.sleep(300)
+    while True:
+        try:
+            now = datetime.now(MSK)
+            nxt = now.replace(hour=KB_CRAWL_HOUR, minute=10, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            await asyncio.sleep((nxt - now).total_seconds())
+            res = await asyncio.to_thread(_kb_crawl_once)
+            log.info("обход сайтов банков: %s", res)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("обход сайтов банков: %s", e)
+            await asyncio.sleep(1800)
 
 
 async def ingest_background_loop():

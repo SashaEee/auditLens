@@ -8,6 +8,9 @@ from ..models import OfferDraft, ReviewDraft, RawSnapshot
 class FetchResult:
     snapshot: RawSnapshot
     html: bytes
+    # обход оборвался на середине (сбойная страница): прогон пишется как
+    # 'partial', и протухание не принимает его за полную выдачу (аудит 03.10)
+    complete: bool = True
 
 class SourceAdapter(ABC):
     """Базовый интерфейс источника. Адаптер делает три вещи:

@@ -165,7 +165,15 @@ _NEWS_RU = {
     "tg_minfin": "Минфин России",
     "tg_mintsifry": "Минцифры России",
     "tg_rospotreb": "Роспотребнадзор",
+    "vedomosti_fin": "Ведомости — финансы",
+    "vedomosti_econ": "Ведомости — экономика",
+    "kommersant_econ": "Коммерсантъ — экономика",
 }
+
+
+def news_source_label(key: str | None) -> str:
+    """Название ленты для людей («Пульс», витрина источников)."""
+    return _NEWS_RU.get(key or "", key or "")
 
 
 def _news_sources() -> list[dict]:
@@ -195,13 +203,20 @@ def _tariff_sources() -> list[dict]:
         cfg = {}
     rows = []
     with db.session() as s:
+        # Только тарифы, подтверждённые выдачей за 14 дней, без строк народного
+        # рейтинга (other) и реестра ЦБ (bank_rating): «830 офферов · 293 банков»
+        # у banki.ru считало рейтинг и выпавшие строки (аудит 03.10, ДАН-14).
+        # Домен нормализуется в SQL, чтобы банки www и без www считались одним
+        # множеством, а не максимумом двух.
         raw = s.execute(text("""
-            SELECT coalesce(substring(url from '^https?://([^/]+)/'), 'без ссылки') AS dom,
+            SELECT regexp_replace(lower(coalesce(substring(url from '^https?://([^/]+)/'),
+                                                 'без ссылки')), '^www[.]', '') AS dom,
                    count(*), count(DISTINCT bank_id)
-              FROM product_offer WHERE is_active GROUP BY 1 ORDER BY 2 DESC
+              FROM product_offer
+             WHERE is_active AND last_seen > now() - interval '14 days'
+               AND category NOT IN ('other', 'bank_rating')
+             GROUP BY 1 ORDER BY 2 DESC
         """)).all()
-    # нормализуем домены (в url бывает www.) — иначе дедуп «уже используется»
-    # не срабатывает: known_domains вернул бы www.sravni.ru против sravni.ru
     cov: dict[str, tuple[int, int]] = {}
     for dom_raw, n_off, n_banks in raw:
         d = normalize_domain(dom_raw) or dom_raw
@@ -225,15 +240,20 @@ def _tariff_sources() -> list[dict]:
         n_off, n_banks = cov.get(dom, (0, 0))
         rows.append({"domain": dom, "url": f"https://{dom}/", "title": name,
                      "role": "Витрина условий", "kind": "Сбор по расписанию",
-                     "coverage": f"{n_off} офферов · {n_banks} банков" if n_off else None})
+                     "coverage": _cov_label(n_off, n_banks) if n_off else None})
     for dom, (n_off, n_banks) in cov.items():
         if dom in seen or dom == "без ссылки" or n_off < 20 or dom.endswith("cbr.ru"):
             continue
         seen.add(dom)
         rows.append({"domain": dom, "url": f"https://{dom}/", "title": dom,
                      "role": "Витрина условий", "kind": "Сбор по расписанию",
-                     "coverage": f"{n_off} офферов · {n_banks} банков"})
+                     "coverage": _cov_label(n_off, n_banks)})
     return rows
+
+
+def _cov_label(n_off: int, n_banks: int) -> str:
+    return (f"{n_off} {_plural(n_off, 'оффер', 'оффера', 'офферов')} · "
+            f"{n_banks} {_plural(n_banks, 'банк', 'банка', 'банков')}")
 
 
 def _plural(n: int, one: str, few: str, many: str) -> str:

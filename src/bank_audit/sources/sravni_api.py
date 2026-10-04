@@ -164,6 +164,21 @@ def _parse_rate_display(display: str) -> Decimal | None:
     return _dec(m.group(1).replace(",", "."))
 
 
+def _rate_kind_display(display: str | None) -> str:
+    """Вид ставки по тексту карточки: «до 19%» — верхняя граница, не ставка.
+
+    Тот же разбор, что в sravni_aggregator._extract_rate: здесь его не было, и
+    всё приходило как 'effective' — верхняя граница вставала в ранг вкладов
+    наравне с настоящими ставками (аудит 03.10).
+    """
+    if not display:
+        return "effective"
+    m = re.search(r"(\d{1,2}[.,]\d{1,2}|\d{1,2})\s*%", display)
+    if not m:
+        return "effective"
+    return "max" if re.search(r"\bдо\s*$", display[:m.start()], re.I) else "effective"
+
+
 # Рекламные метки в партнёрской ссылке: они меняются от выдачи к выдаче,
 # поэтому один и тот же продукт выглядел бы каждый раз новым источником, а
 # аудитору в отчёте показывалась бы простыня из utm вместо адреса.
@@ -264,6 +279,7 @@ class SravniApiAdapter(SourceAdapter):
 
         pages: list[Any] = []
         first_status = 0
+        complete = True
 
         if strategy == "deposits_api":
             # seed для cookie
@@ -307,6 +323,7 @@ class SravniApiAdapter(SourceAdapter):
             # код продолжит идти пока не получит повторяющийся набор.
             prev_ids: list = []
             for page_idx in range(1, max_pages + 1):
+                complete = False      # пока страница не прочитана с организациями
                 page_url = base_url if page_idx == 1 else _add_query(base_url, "page", page_idx)
                 time.sleep(self.http.delay_s)
                 resp = client.get(page_url, headers={"Accept": "text/html,*/*", **_BROWSER_HEADERS})
@@ -316,6 +333,9 @@ class SravniApiAdapter(SourceAdapter):
                     log.warning("sravni_api SSR page %s → HTTP %s", page_idx, resp.status_code)
                     break
                 items, total = self._extract_ssr_page_meta(resp.content, category)
+                # блок или антибот-страница с кодом 200 — обход неполный: прогон
+                # 'partial', а не «ok 0/0» (зелёный «снимок без изменений»)
+                complete = bool(items) or page_idx > 1
                 cur_ids = [it.get("id") or it.get("_id") or it.get("alias") for it in items]
                 pages.append(resp.text)
                 log.info("sravni_api SSR %s page %s/%s: %s items (total=%s)",
@@ -355,7 +375,7 @@ class SravniApiAdapter(SourceAdapter):
             filter_context=FilterContext(**fc),
             category=category,
         )
-        return FetchResult(snapshot=snap, html=envelope)
+        return FetchResult(snapshot=snap, html=envelope, complete=complete)
 
     # ── Парсинг ────────────────────────────────────────────────────────────────
 
@@ -529,7 +549,7 @@ class SravniApiAdapter(SourceAdapter):
                 url=(_clean_link(prod.get("linkToProduct"))
                      or f"https://www.sravni.ru/bank/{bank_slug}/vklady/"),
                 rate_pct=rate,
-                rate_kind="effective",
+                rate_kind=_rate_kind_display(rate_str),
                 currency="RUB",
                 amount_min=amount_min_v,
                 amount_max=amount_max_v,

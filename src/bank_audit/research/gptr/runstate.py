@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import threading
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
@@ -34,6 +35,12 @@ class RunState:
     # Срез собственных данных (какие нужны: жалобы, лазейки, рынок) — по нему
     # отчёт выбирает порядок разделов под тип вопроса.
     own_scope: dict = field(default_factory=dict)
+    # Кто и ради какого вопроса читает — для журнала происхождения архива; и
+    # что из прочитанного уже отдано в архив базы знаний (ДАН-02). Метку
+    # снимаем при старте прогона: scrape() уходит в пул потоков без contextvars.
+    origin: dict = field(default_factory=dict)
+    archived: set = field(default_factory=set)
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def note_page(self, url: str, text: str) -> None:
         self.pages[url] = text
@@ -50,6 +57,11 @@ _current: ContextVar[RunState | None] = ContextVar("auditlens_run", default=None
 def new_run() -> RunState:
     """Начинает прогон и делает его состояние текущим."""
     state = RunState()
+    try:
+        from ...web.runctx import current_origin
+        state.origin = current_origin()
+    except Exception:  # noqa: BLE001
+        state.origin = {"kind": "report"}
     _current.set(state)
     return state
 

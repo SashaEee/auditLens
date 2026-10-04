@@ -17,6 +17,9 @@ CHECKS = [
                    jsonb_build_object('last_seen', o.last_seen) as detail
               FROM product_offer o
              WHERE o.is_active AND o.last_seen < now() - interval '14 days'
+               -- записи реестра ЦБ — справочник, а не предложения: 565 флагов
+               -- каждую ночь заглушали настоящие (аудит 03.10, ДАН-14)
+               AND o.category <> 'bank_rating'
         """,
     },
     {
@@ -27,8 +30,11 @@ CHECKS = [
                    jsonb_build_object('offer_id', t.offer_id) as detail
               FROM product_terms t
               JOIN product_offer o USING(offer_id)
-             WHERE t.valid_to IS NULL AND t.rate_pct IS NULL
-               AND o.category NOT IN ('card_credit', 'card_debit', 'other')
+             WHERE t.valid_to IS NULL AND t.rate_pct IS NULL AND o.is_active
+               -- у РКО ставки нет по природе: сравнение идёт по плате за пакет;
+               -- у брокеров и НПФ rate_pct — оценка организации, часто пустая
+               AND o.category NOT IN ('card_credit', 'card_debit', 'other', 'rko', 'bank_rating',
+                                      'npf', 'invest_broker')
         """,
     },
     {

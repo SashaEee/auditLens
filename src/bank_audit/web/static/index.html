@@ -177,6 +177,9 @@ input,select,textarea{font:inherit;color:inherit}
   font-size:12px;line-height:1.55;color:var(--ink-2);display:grid;grid-template-columns:78px 1fr;gap:10px;align-items:baseline}
 .bfb-act-l{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);font-variant-numeric:tabular-nums}
 @media(max-width:640px){.bfb-act{grid-template-columns:1fr;gap:2px}}
+/* наблюдения («Новое») отделены от всплесков подписью; у сюжета — его жалобы */
+.bfb-sep{margin:6px 0 -2px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.bfb-novel{margin-top:8px}
 .rv-radar-sub{font-size:11px;
   color:var(--ink-3);margin:2px 0 8px}
 .rv-radar-chip.lvl-watch{border-color:color-mix(in oklab,var(--warn),transparent 60%);color:var(--ink-2)}
@@ -809,6 +812,7 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 .al-runbar-text{font-size:13px;color:var(--ink-2)}
 .al-runbar-el{margin-left:auto;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .al-runbar-btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 14px;border-radius:6px;border:1px solid var(--hair-2);color:var(--ink-2);font-size:12px;font-weight:500;background:none;cursor:pointer;transition:border-color .12s,color .12s}
+.al-runbar-stop.arm{border-color:var(--accent-ink);color:var(--accent-ink)}
 .al-runbar-btn:hover{border-color:var(--ink-4);color:var(--ink)}
 @media (prefers-reduced-motion:reduce){.al-runbar-dot{animation:none}}
 
@@ -1305,6 +1309,10 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 .kb-cell:hover{outline-color:var(--ink-3);}
 .kb-cell.nil{background:var(--paper-2);cursor:default;}
 .kb-cell.nil:hover{outline-color:transparent;}
+/* клетки карты: только агрегаторы — светлее; «пробовали, не вышло» — пунктир (ДАН-03) */
+.kb-cell.agg{background:color-mix(in oklab,var(--ink-3),transparent 82%)}
+.kb-cell.fail{background:var(--paper-2);color:var(--neg);cursor:help;outline:1px dashed color-mix(in oklab,var(--neg),transparent 40%)}
+.kb-bfail{font-weight:400;font-size:11px;color:var(--neg)}
 
 /* ─── Knowledge page (устаревшее, осталось от инженерной консоли) ────── */
 .k-kpi-row{
@@ -1858,6 +1866,347 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .rv-cs-an-b .rv-explain-btn{width:auto;height:30px;padding:0 12px}
 .rv-cs-an .rv-explain{margin-top:10px}
 .rv-cs-lnk{border:0;background:none;padding:0;font-size:11px;color:var(--select);cursor:pointer}
+/* ── «Аудит-дела»: участники, доступ, кнопка в верхней панели (03.10) ── */
+.cs-people{display:flex;align-items:center;gap:10px;width:100%;margin:0 0 12px;padding:8px 10px;border:1px solid var(--hair);
+  border-radius:9px;background:var(--surface);font:inherit;text-align:left;cursor:pointer;transition:border-color .12s,background .12s}
+.cs-people:hover{border-color:var(--ink-4);background:var(--paper-2)}
+.cs-avs{display:inline-flex;padding-left:6px}
+.cs-av{width:24px;height:24px;border-radius:50%;display:inline-grid;place-items:center;flex:none;font-size:10px;font-weight:600;
+  background:var(--paper-2);color:var(--ink-2);border:2px solid var(--surface);margin-left:-6px}
+.cs-av.own{background:var(--accent-soft);color:var(--accent-ink)}
+.cs-avs .cs-av:first-child{background:var(--accent-soft);color:var(--accent-ink)}
+.cs-av.more{font-size:10px;color:var(--ink-3)}
+.cs-people-t{font-size:12px;color:var(--ink-3)}
+.cs-people-t b{font-weight:500;color:var(--ink)}
+.cs-flt{margin:0 0 10px}
+.cs-n{font-size:11px;color:var(--ink-3);margin-left:3px;font-variant-numeric:tabular-nums}
+.cs-gone{display:flex;align-items:center;gap:10px;margin:0 0 10px;padding:8px 10px;border-radius:8px;background:var(--paper-2);
+  font-size:12px;color:var(--ink-2)}
+.cs-del-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 2px;border-top:1px solid var(--hair);
+  font-size:12.5px;color:var(--ink-3)}
+.cs-acc-add{display:flex;gap:8px}
+.cs-acc-add .input:first-child{flex:1;min-width:0}
+.cs-acc-role{width:auto;height:32px;padding:0 8px;font-size:12px}
+.cs-acc-hint{font-size:11.5px;color:var(--ink-3);margin:6px 0 10px}
+.cs-acc-list{display:flex;flex-direction:column}
+.cs-acc-row{display:flex;align-items:center;gap:10px;width:100%;padding:7px 4px;border:0;border-top:1px solid var(--hair);background:none;
+  font:inherit;font-size:13px;color:var(--ink);text-align:left}
+.cs-acc-row:first-child{border-top:0}
+.cs-acc-row .cs-av{margin-left:0}
+.cs-acc-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-acc-row .st{font-size:12px;color:var(--ink-3);white-space:nowrap}
+.cs-acc-row.add{cursor:pointer;border-radius:6px}
+.cs-acc-row.add:hover{background:var(--paper-2)}
+.cs-acc-row.add .st{color:var(--select)}
+.cs-acc-ctl{display:inline-flex;align-items:center;gap:8px}
+.cs-acc-foot{font-size:11.5px;color:var(--ink-3);margin:14px 0 0;line-height:1.5}
+.rv-ci-note.ro{white-space:pre-wrap;cursor:default}
+.rv-ci-note.ro.empty{color:var(--ink-4);background:none;padding-left:0}
+/* Команды и выгрузка дела (этап 5) */
+.cs-av.tm{background:color-mix(in oklab,var(--select),transparent 88%);color:var(--select);font-size:13px}
+.tm-n{font-size:11.5px;font-weight:400;color:var(--ink-3)}
+.tm-via{color:var(--ink-3)}
+.cs-acc-row .st{min-width:0;max-width:62%;overflow:hidden;text-overflow:ellipsis}
+.cs-acc-row.tm-new .nm{color:var(--select);font-weight:500}
+.tm-lbl{display:block;font-size:12px;color:var(--ink-3);margin:0 0 6px}
+.tm-name{width:100%;font-size:14px;font-weight:500}
+.tm-q{width:100%;margin:10px 0 4px}
+.tm-acts{display:flex;align-items:center;gap:8px;margin-top:14px}
+.tm-acts .rv-cs-del{margin-left:auto}
+.cs-teams-lnk{display:flex;align-items:center;gap:7px;width:100%;margin:14px 0 0;padding:9px 10px;border:1px dashed var(--hair-2);border-radius:8px;
+  background:none;font:inherit;font-size:12.5px;font-weight:500;color:var(--ink-2);cursor:pointer;text-align:left;transition:border-color .12s,background .12s}
+.cs-teams-lnk:hover{border-color:var(--ink-4);background:var(--paper-2);color:var(--ink)}
+.cs-teams-lnk svg{color:var(--select);flex:none}
+.cs-teams-lnk .t-cap{font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-via{align-self:center;font-size:11.5px}
+.cs-exp{position:relative;display:inline-flex}
+.cs-exp-btn{display:inline-flex;align-items:center;gap:4px}
+.cs-exp-btn.on{background:var(--paper-2);color:var(--ink)}
+.cs-exp-btn .rv-ico-in{transition:transform .15s}
+.cs-exp-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:30;width:300px;padding:12px 14px;background:var(--surface);
+  border:1px solid var(--hair);border-radius:12px;box-shadow:var(--shadow-2);animation:caIn .16s cubic-bezier(.2,0,0,1) both}
+.cs-exp-h{font-size:13px;font-weight:600;margin-bottom:4px}
+.cs-exp-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--hair)}
+.cs-exp-row .l{flex:1;min-width:0}
+.cs-exp-row .l b{display:block;font-size:12.5px;font-weight:500;color:var(--ink)}
+.cs-exp-row .l span{font-size:11.5px;color:var(--ink-3)}
+.cs-exp-note{margin:10px 0 12px;font-size:11.5px;line-height:1.5;color:var(--ink-3)}
+.cs-exp-b{display:flex;gap:8px}
+.cs-exp-b .btn{flex:1;justify-content:center}
+@media(max-width:760px){.cs-exp-pop{position:fixed;left:12px;right:12px;top:auto;bottom:12px;width:auto}}
+/* «В дело» отовсюду (этап 4): кнопка, меню выбора дела, заметка, активное дело */
+.ca-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--hair);border-radius:8px;
+  background:var(--surface);font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;white-space:nowrap;
+  transition:color .12s,border-color .12s,background .12s}
+.ca-btn:hover{color:var(--ink);border-color:var(--ink-4)}
+.ca-btn:active,.ca-ic:active,.ca-pop-row:active{transform:scale(.97)}
+.ca-btn.in{color:var(--ink)}
+.ca-btn.in svg,.ca-gh.in svg,.ca-ic.in,.ca-fb.on{color:var(--pos)}
+.ca-btn:focus-visible,.ca-ic:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.ca-gh{display:inline-flex;align-items:center;gap:6px}
+.ca-ic{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--hair);border-radius:8px;background:var(--surface);
+  color:var(--ink-3);cursor:pointer;box-shadow:var(--shadow-1);transition:opacity .14s,color .12s,border-color .12s}
+.ca-ic:hover{color:var(--ink);border-color:var(--ink-4)}
+/* значок в углу новости: виден при наведении и когда новость уже в деле */
+.ca-hov{position:relative}
+.ca-float{position:absolute;top:7px;right:8px;z-index:2;opacity:0;pointer-events:none}
+.ca-hov:hover .ca-float,.ca-float:focus-visible,.ca-float.in{opacity:1;pointer-events:auto}
+.ca-float.in{box-shadow:none;border-color:transparent;background:transparent}
+.ca-hov:hover .ca-float.in{background:var(--surface);border-color:var(--hair);box-shadow:var(--shadow-1)}
+@media(hover:none){.ca-float{opacity:.6;pointer-events:auto;box-shadow:none}}
+.ca-hov .bf-news-it{padding-right:40px}
+.ca-hov .ov-upd-it{padding-right:44px}
+.quick-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.kb-card-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 16px}
+.kb-card-acts .kb-card-open{margin:0}
+/* меню выбора дела — у кнопки */
+.ca-pop{position:fixed;z-index:460;width:328px;max-height:min(420px,calc(100dvh - 24px));display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--hair);border-radius:12px;box-shadow:0 1px 0 oklch(0% 0 0 / .04),0 16px 40px oklch(0% 0 0 / .16);
+  padding:6px;animation:caIn .16s cubic-bezier(.2,0,0,1) both;font-size:13px;color:var(--ink)}
+.ca-pop:focus{outline:none}
+.ca-pop.sheet{left:0;right:0;bottom:0;width:auto;max-height:80dvh;border-radius:16px 16px 0 0;padding:10px 10px calc(10px + env(safe-area-inset-bottom))}
+@keyframes caIn{from{opacity:0;transform:translateY(4px) scale(.985)}to{opacity:1;transform:none}}
+.ca-pop-h{display:flex;align-items:baseline;gap:8px;padding:6px 8px 6px}
+.ca-pop-h span:first-child{font-size:13px;font-weight:600}
+.ca-pop-what{font-size:11.5px;color:var(--ink-3)}
+.ca-pop-al{display:flex;align-items:center;gap:6px;margin:0 4px 6px;padding:6px 8px;border-radius:8px;background:var(--paper-2);font-size:12px;color:var(--ink-2)}
+.ca-pop-al svg{color:var(--pos);flex:none}
+.ca-pop-al span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ca-pop-q{width:calc(100% - 8px);margin:0 4px 6px;height:32px;padding:0 10px;border:1px solid var(--hair-2);border-radius:8px;background:var(--surface);
+  font:inherit;font-size:12.5px;color:var(--ink)}
+.ca-pop-q:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 82%)}
+.ca-pop-list{overflow-y:auto;min-height:0;display:flex;flex-direction:column}
+.ca-pop-row{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;padding:7px 10px;border:0;border-radius:8px;background:none;
+  font:inherit;text-align:left;cursor:pointer;color:var(--ink)}
+.ca-pop-row .t{max-width:100%;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ca-pop-row .m{font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.ca-pop-row .m b{font-weight:600;color:var(--accent-ink)}
+.ca-pop-row.on{background:var(--paper-2)}
+.ca-pop-row.new{margin-top:2px;border-top:1px solid var(--hair);border-radius:0 0 8px 8px}
+.ca-pop-row.new .t{color:var(--select);font-weight:500}
+.ca-pop-new{display:flex;gap:6px;padding:6px 4px 2px;border-top:1px solid var(--hair);margin-top:2px}
+.ca-pop-new .input{flex:1;min-width:0;height:32px}
+.ca-pop-empty{padding:10px;font-size:12px;line-height:1.5;color:var(--ink-3)}
+.ca-pop-err{margin:6px 8px 0;font-size:12px;color:var(--neg)}
+.ca-pop-f{padding:8px 10px 4px;font-size:11px;line-height:1.45;color:var(--ink-4)}
+/* заметка «Добавлено в …» */
+.ca-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:470;display:flex;align-items:center;gap:4px;
+  max-width:min(92vw,560px);padding:6px 6px 6px 12px;background:var(--surface);border:1px solid var(--hair);border-radius:999px;
+  box-shadow:var(--shadow-2);font-size:12.5px;color:var(--ink);animation:caToast .22s cubic-bezier(.2,0,0,1) both}
+@keyframes caToast{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translateX(-50%)}}
+.ca-toast-ic{display:grid;place-items:center;width:22px;height:22px;flex:none;border-radius:50%;
+  background:color-mix(in oklab,var(--pos),transparent 86%);color:var(--pos);font-weight:700;font-size:12px}
+.ca-toast.err .ca-toast-ic{background:color-mix(in oklab,var(--neg),transparent 86%);color:var(--neg)}
+.ca-toast-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px 0 2px}
+.ca-toast button{flex:none;height:28px;padding:0 10px;border:0;border-radius:999px;background:none;font:inherit;font-size:12.5px;
+  font-weight:500;color:var(--select);cursor:pointer;white-space:nowrap}
+.ca-toast button:hover{background:var(--paper-2)}
+.ca-toast button:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+@media(max-width:760px){.ca-toast{left:12px;right:12px;bottom:12px;transform:none;max-width:none;flex-wrap:wrap;border-radius:14px}
+  @keyframes caToast{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .ca-toast-t{flex:1 1 60%;white-space:normal}}
+@media(prefers-reduced-motion:reduce){.ca-pop,.ca-toast,.tb-act.bump{animation:none}}
+/* активное дело в верхней панели: «Аудит-дела │ ● Название» */
+.tb-cases-g{display:inline-flex;align-items:stretch;min-width:0;flex-shrink:1}
+.tb-cases-g.act .tb-cases{border-top-right-radius:0;border-bottom-right-radius:0;flex:none}
+/* при активном деле — компактно: значок и число слева, название дела справа */
+.tb-cases-g.act .tb-cases-l{display:none}
+.tb-act{display:inline-flex;align-items:center;gap:7px;height:30px;min-width:34px;max-width:210px;flex-shrink:1;padding:0 11px 0 10px;margin-left:-1px;
+  border:1px solid var(--hair-2);border-radius:0 7px 7px 0;background:var(--surface);font:inherit;font-size:12.5px;font-weight:500;
+  color:var(--ink);cursor:pointer;transition:border-color .12s,background .12s}
+.tb-act:hover{border-color:var(--ink-4);background:var(--paper-2)}
+.tb-act:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.tb-act-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px color-mix(in oklab,var(--accent),transparent 84%)}
+.tb-act-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tb-act.bump{animation:tbBump .6s cubic-bezier(.2,0,0,1)}
+.tb-act.bump .tb-act-dot{animation:tbDot .9s ease-out}
+@keyframes tbBump{0%{transform:none}30%{transform:scale(1.04)}100%{transform:none}}
+@keyframes tbDot{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--accent),transparent 40%)}100%{box-shadow:0 0 0 9px transparent}}
+.tb-cases{position:relative}
+.tb-act-mdot{display:none}
+@media(max-width:760px){.tb-act{display:none}.tb-cases-g.act .tb-cases{border-radius:7px}
+  .tb-act-mdot{display:block;position:absolute;top:7px;left:20px;width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--surface)}}
+@media(min-width:761px){.topbar .crumb{flex-shrink:0;white-space:nowrap}}
+.cs-act.on{color:var(--ink);background:var(--paper-2)}
+.cs-row-act{width:6px;height:6px;flex:none;border-radius:50%;background:var(--accent)}
+/* карточки отчёта, ответа ИИ, новости и продукта в деле */
+.ca-card{padding:4px 0 2px 12px}
+.ca-card-k{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.ca-kind{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:600;letter-spacing:.02em;
+  background:var(--paper-2);color:var(--ink-2)}
+.ca-kind.ai{background:color-mix(in oklab,var(--select),transparent 88%);color:var(--select)}
+.ca-kind.mk{background:color-mix(in oklab,var(--warn),transparent 86%);color:var(--warn-ink,var(--ink-2))}
+.ca-card-t{display:block;max-width:100%;margin:5px 0 0;padding:0;border:0;background:none;font:inherit;font-size:14px;font-weight:600;
+  line-height:1.4;color:var(--ink);text-align:left;text-decoration:none;cursor:pointer;text-wrap:pretty}
+.ca-card-t:hover:not(.static):not(:disabled){text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
+.ca-card-t.static,.ca-card-t:disabled{cursor:default}
+.ca-card-t .rv-ico-in{margin-left:4px;color:var(--ink-4)}
+.ca-card-q{margin-top:3px;font-size:12px;line-height:1.5;color:var(--ink-3)}
+.ca-card-s{margin-top:5px;font-size:12.5px;line-height:1.6;color:var(--ink-2);text-wrap:pretty}
+.ca-card-s.ans{white-space:pre-wrap}
+.ca-card-s.clamp{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+.ca-card-lnk{display:inline-flex;align-items:center;gap:3px;margin-top:6px;padding:0;border:0;background:none;font:inherit;font-size:12px;
+  color:var(--select);cursor:pointer}
+.ca-card-lnk:hover{text-decoration:underline;text-underline-offset:3px}
+.ca-card-f{margin-top:6px;font-size:11.5px;line-height:1.45;color:var(--ink-3)}
+.ca-card-src{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px;font-size:11.5px}
+.ca-card-src a{color:var(--ink-3);text-decoration:underline;text-decoration-color:var(--hair-2);text-underline-offset:3px}
+.ca-terms{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.ca-terms span{display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid var(--hair-2);border-radius:999px;
+  font-size:11.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.ca-terms span:first-child{color:var(--ink);font-weight:600}
+/* Аудит-дело, этап 3: статус, вкладки, обсуждение, комментарии лентой, история */
+.cs-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+.cs-head .cs-people{margin:0;flex:1 1 240px;width:auto;min-width:0}
+.cs-st-seg .seg-btn{height:26px;padding:0 10px;font-size:11.5px}
+.cs-st{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;border:1px solid var(--hair-2);
+  font-size:11.5px;font-weight:500;color:var(--ink-2);white-space:nowrap;flex:none}
+.cs-st::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ink-4)}
+.cs-st.work::before{background:var(--warn)}
+.cs-st.done::before{background:var(--pos)}
+.cs-st.arch{color:var(--ink-3)}
+.cs-st.sm{height:18px;padding:0 7px;font-size:10.5px;gap:5px}
+.cs-st.sm::before{width:5px;height:5px}
+.cs-arch{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:9px 12px;border-radius:8px;
+  background:var(--paper-2);font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.cs-mute.on{color:var(--ink);background:var(--paper-2)}
+.cs-tabs{position:sticky;top:-16px;z-index:6;display:flex;gap:2px;margin:4px -16px 14px;padding:6px 16px 0;background:var(--surface);
+  border-bottom:1px solid var(--hair);overflow-x:auto;scrollbar-width:none}
+.cs-tabs::-webkit-scrollbar{display:none}
+.cs-tab{display:inline-flex;align-items:center;gap:6px;flex:none;border:0;background:none;font:inherit;font-size:13px;font-weight:500;
+  color:var(--ink-3);padding:8px 10px 10px;margin-bottom:-1px;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;
+  transition:color .12s,border-color .12s}
+.cs-tab:hover{color:var(--ink)}
+.cs-tab.on{color:var(--ink);border-bottom-color:var(--ink)}
+.cs-tab:focus-visible{outline:2px solid var(--select);outline-offset:-2px;border-radius:6px}
+.cs-tab-n{font-size:11px;font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.cs-tab-dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.rv-ci-by{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 0 12px;min-height:24px}
+.rv-ci,.cs-m{transition:background .5s}
+.rv-ci.flash,.cs-m.flash{background:var(--accent-soft)}
+/* лента обсуждения */
+.cs-talk{display:flex;flex-direction:column;gap:2px;min-height:160px}
+.cs-talk-empty{padding:22px 8px 10px;font-size:12.5px;line-height:1.6;color:var(--ink-3);text-align:center;text-wrap:pretty}
+.cs-talk-empty b{display:block;font-size:13.5px;color:var(--ink);font-weight:600;margin-bottom:4px}
+.cs-m{display:flex;gap:10px;padding:8px 8px;margin:0 -8px;border-radius:10px}
+.cs-m:hover{background:var(--paper-2)}
+.cs-m>.cs-av{margin-top:1px;margin-left:0}
+.cs-m-c{flex:1;min-width:0}
+.cs-m-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.cs-m-h b{font-size:13px;font-weight:600;color:var(--ink)}
+.cs-m-on{border:0;background:none;padding:0;font:inherit;font-size:11.5px;color:var(--select);cursor:pointer}
+.cs-m-on:hover{text-decoration:underline;text-underline-offset:3px}
+.cs-mb{font-size:13px;line-height:1.55;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:2px}
+.cs-mb.in{display:inline;margin:0}
+.cs-from{display:block;font-size:11.5px;color:var(--ink-3);font-style:italic;margin-bottom:2px;white-space:normal}
+.cs-mb.del{color:var(--ink-4);font-style:italic}
+.cs-mn{color:var(--select);font-weight:500;background:color-mix(in oklab,var(--select),transparent 90%);border-radius:4px;padding:0 2px}
+.cs-ref{display:inline;border:0;background:var(--paper-2);border-radius:4px;padding:0 4px;margin:0 1px;font:inherit;font-size:12px;
+  font-weight:600;color:var(--ink-2);cursor:pointer;font-variant-numeric:tabular-nums}
+.cs-m:hover .cs-ref{background:var(--surface)}
+.cs-ref:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--hair-2)}
+.cs-ref.gone{cursor:default;text-decoration:line-through;color:var(--ink-4)}
+.cs-ref.static{cursor:default}
+.cs-m-q{display:block;max-width:100%;margin:4px 0 2px;padding:2px 8px;border:0;border-left:2px solid var(--hair-2);background:none;
+  font:inherit;font-size:12px;color:var(--ink-3);text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cs-m-q b{font-weight:600;color:var(--ink-2)}
+/* действия — плавающей панелькой при наведении: скрытая строка не раздвигает ленту */
+.cs-m{position:relative}
+.cs-m-a{position:absolute;top:4px;right:6px;display:flex;gap:2px;padding:2px;border:1px solid var(--hair);border-radius:8px;
+  background:var(--surface);box-shadow:var(--shadow-1);opacity:0;pointer-events:none;transition:opacity .12s}
+.cs-m:hover .cs-m-a,.cs-m:focus-within .cs-m-a{opacity:1;pointer-events:auto}
+@media(hover:none){.cs-m-a{position:static;opacity:1;pointer-events:auto;border:0;box-shadow:none;background:none;padding:0;margin-top:2px;gap:14px}}
+.cs-m-a button{border:0;background:none;padding:3px 8px;border-radius:6px;font:inherit;font-size:11.5px;color:var(--ink-3);cursor:pointer}
+.cs-m-a button:hover{color:var(--ink);background:var(--paper-2)}
+.cs-m-a button:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:3px}
+.cs-new-div{display:flex;align-items:center;gap:10px;margin:8px 0 4px;font-size:10.5px;font-weight:600;color:var(--accent-ink);
+  text-transform:uppercase;letter-spacing:.06em}
+.cs-new-div::before,.cs-new-div::after{content:"";flex:1;height:1px;background:color-mix(in oklab,var(--accent),transparent 65%)}
+.cs-edit .input{width:100%;min-height:64px;resize:vertical;font-size:13px;line-height:1.5;padding:8px 10px;margin-top:4px}
+.cs-edit-b{display:flex;align-items:center;gap:8px;margin-top:6px}
+.cs-talk-cmp{position:sticky;bottom:-16px;z-index:5;margin:10px -16px -16px;padding:10px 16px 14px;background:var(--surface);
+  border-top:1px solid var(--hair)}
+/* строка ввода */
+.cs-cmp-box{position:relative;border:1px solid var(--hair-2);border-radius:10px;background:var(--surface);
+  transition:border-color .12s,box-shadow .12s}
+.cs-cmp-box:focus-within{border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 82%)}
+.cs-cmp-box textarea{display:block;width:100%;min-height:40px;max-height:220px;resize:none;border:0;background:none;
+  padding:10px 12px 4px;font:inherit;font-size:13px;line-height:1.5;color:var(--ink)}
+.cs-cmp-box textarea:focus{outline:none}
+.cs-cmp-box textarea::placeholder{color:var(--ink-4)}
+.cs-cmp-tools{display:flex;align-items:center;gap:4px;padding:2px 6px 6px 8px}
+.cs-cmp-tools .btn-primary{margin-left:auto}
+.cs-cmp-tools .btn-ghost{margin-left:auto}
+.cs-cmp-tools .btn-ghost+.btn-primary{margin-left:0}
+.cs-cmp-ib{height:26px;min-width:28px;padding:0 6px;border:0;border-radius:6px;background:none;font:inherit;font-size:12px;
+  font-weight:600;color:var(--ink-3);cursor:pointer;font-variant-numeric:tabular-nums}
+.cs-cmp-ib:hover,.cs-cmp-ib.on{background:var(--paper-2);color:var(--ink)}
+.cs-cmp-ib:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.cs-cmp-hint{font-size:11px;color:var(--ink-4);margin-top:5px}
+.cs-cmp-err{color:var(--neg);font-size:11.5px}
+.cs-cmp-re{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:12px;color:var(--ink-3)}
+.cs-cmp-re span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cs-ac{position:absolute;left:8px;bottom:calc(100% + 6px);z-index:20;min-width:260px;max-width:calc(100% - 16px);max-height:248px;
+  overflow-y:auto;background:var(--surface);border:1px solid var(--hair);border-radius:10px;box-shadow:var(--shadow-2);padding:4px}
+.cs-ac-o{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:7px;background:none;font:inherit;
+  font-size:12.5px;color:var(--ink);text-align:left;cursor:pointer}
+.cs-ac-o.on,.cs-ac-o:hover{background:var(--paper-2)}
+.cs-ac-o .cs-av{margin-left:0}
+.cs-ac-ref .cs-ac-o b{flex:none;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.cs-ac-ref .cs-ac-o span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+.cs-ac-empty{padding:8px 10px;font-size:12px;line-height:1.45;color:var(--ink-3)}
+/* комментарии к материалу */
+.cs-th{margin:6px 0 0 12px;padding-left:10px;border-left:2px solid var(--hair)}
+.cs-th-m{font-size:12.5px;line-height:1.5;color:var(--ink-2);padding:2px 0;overflow-wrap:anywhere}
+.cs-th-m>b{font-weight:600;color:var(--ink);margin-right:6px}
+.cs-th-m .cs-mb.in{font-size:12.5px;color:var(--ink-2)}
+.cs-th-m .t{font-size:11px;color:var(--ink-4);margin-left:6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cs-th-more,.cs-th-add{display:inline-flex;align-items:center;gap:5px;border:0;background:none;padding:3px 0;font:inherit;font-size:11.5px;
+  color:var(--ink-3);cursor:pointer}
+.cs-th-add:hover,.cs-th-more:hover{color:var(--ink)}
+.cs-cmp.compact{margin:6px 0 2px}
+.cs-cmp.compact .cs-cmp-box textarea{min-height:34px;font-size:12.5px;padding:8px 10px 2px}
+/* история */
+.cs-hist-day{font-size:10.5px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 4px}
+.cs-hist-day:first-child{margin-top:0}
+.cs-hist-row{display:grid;grid-template-columns:42px minmax(0,1fr);gap:10px;padding:7px 0;border-top:1px solid var(--hair);
+  font-size:12.5px;line-height:1.5}
+.cs-hist-day+.cs-hist-row{border-top:0}
+.cs-hist-row .tm{color:var(--ink-4);font-variant-numeric:tabular-nums}
+.cs-hist-row .tx{color:var(--ink);overflow-wrap:anywhere}
+.cs-hist-row .who{display:block;font-size:11.5px;color:var(--ink-3)}
+/* разбор: подпись и версии */
+.cs-an{margin-top:0}
+.cs-an-sig{font-size:11.5px;color:var(--ink-3);margin-top:10px}
+.cs-an-vers{margin-top:12px;border-top:1px solid var(--hair);padding-top:10px}
+.cs-an-ver{display:flex;align-items:baseline;gap:10px;width:100%;padding:5px 0;border:0;background:none;font:inherit;font-size:12px;
+  color:var(--ink-2);cursor:pointer;text-align:left;font-variant-numeric:tabular-nums}
+.cs-an-ver:hover,.cs-an-ver.on{color:var(--ink)}
+.cs-an-old{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 0;padding:8px 10px;border-radius:8px;
+  background:color-mix(in oklab,var(--warn),transparent 88%);font-size:12px;color:var(--ink-2)}
+/* список дел */
+.cs-search{width:100%;margin:0 0 10px}
+.kb-case-row-t{display:flex;align-items:center;gap:8px;min-width:0}
+.cs-row-ttl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-row-new{margin-left:auto;flex:none;font-size:11px;font-weight:600;color:var(--accent-ink);white-space:nowrap}
+.kb-case-row.arch .cs-row-ttl{color:var(--ink-2)}
+.cs-arch-list{margin-top:12px}
+.cs-arch-fold{margin:0 0 6px;padding:4px 0;border:0;background:none;cursor:pointer;font:inherit;font-size:11px;font-weight:600;
+  color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em}
+.cs-arch-fold:hover{color:var(--ink)}
+@media(max-width:760px){.cs-head .cs-people{flex-basis:100%}.cs-tab{padding:10px 10px 12px}}
+@media(hover:none){.cs-m-a button{padding:6px 0}}
+@media(prefers-reduced-motion:reduce){.rv-ci,.cs-m{transition:none}}
+/* кнопка «Аудит-дела» в верхней панели: дела — инструмент под рукой в любом разделе, а не отдельный раздел */
+.tb-cases{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 10px;border-radius:7px;border:1px solid var(--hair-2);
+  background:var(--surface);font:inherit;font-size:12.5px;font-weight:500;color:var(--ink-2);cursor:pointer;
+  transition:background .12s,border-color .12s,color .12s}
+.tb-cases:hover{color:var(--ink);border-color:var(--ink-4)}
+.tb-cases.on{color:var(--ink);border-color:var(--ink-3);box-shadow:var(--shadow-1)}
+.tb-cases:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.tb-cases-n{min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--paper-2);font-size:11px;
+  display:inline-grid;place-items:center;color:var(--ink-3);font-variant-numeric:tabular-nums}
+@media(max-width:760px){.tb-cases-l{display:none}.tb-cases{height:38px;padding:0 10px}}
 .rv-cs-lnk:disabled{opacity:.5}
 .rv-cs-legacy{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:12px;padding:12px;border-radius:8px;font-size:13px;line-height:1.45;color:var(--ink-2);background:color-mix(in oklab,var(--warn),transparent 92%);border:1px solid color-mix(in oklab,var(--warn),transparent 70%)}
 .rv-ci-n{font-size:11px;color:var(--ink-3);margin-top:10px}
@@ -2127,6 +2476,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 @keyframes rv-sweep{0%{background-position:-50% 0}100%{background-position:150% 0}}
 /* спокойно */
 .rv-radar-calm{font-size:13px;color:var(--ink-2);padding:6px 0;display:flex;align-items:center;gap:8px}
+.rv-radar-err{flex-wrap:wrap;color:var(--warn-ink)}
 .rv-radar-check{display:inline-flex;color:var(--pos)}
 /* чипы всплесков — цвет по приоритету (high/medium), не по risk */
 .rv-radar-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
@@ -2445,6 +2795,10 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 .mk-click{cursor:pointer}
 .mk-chrow{display:grid;grid-template-columns:130px 1fr 200px;gap:14px;align-items:center;width:100%;padding:10px 24px;border:0;border-bottom:1px solid var(--hair);background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
 .mk-chrow:hover{background:var(--surface)}
+/* свёрнутая категория журнала (РКО) и закреплённое изменение из ссылки */
+.mk-chrow.mk-fold{color:var(--ink-2)}
+.mk-chrow.mk-fold .mk-chmove{font-family:inherit;color:var(--select)}
+.mk-chfocus{border-bottom:1px solid var(--hair);background:var(--paper-2)}
 .mk-chrow:last-child{border-bottom:0}
 .mk-chrow.big .mk-chmove{font-weight:600}
 .mk-chrow.hl{box-shadow:inset 3px 0 0 var(--accent);background:var(--accent-soft,rgba(200,50,30,.05))}
@@ -2749,6 +3103,8 @@ a.bf-t:hover{background:var(--paper-2,var(--surface));filter:brightness(.985)}
 /* Закрытие — зеркало открытия: те же путь и кривая, только в обратную
    сторону. Окно, которое исчезает мгновенно, читается как сбой. */
 .rv-ovl.is-closing { animation: scrim-out var(--dur-quick) var(--ease-out) both; }
+/* уходящее окно кликов не ловит: страница под ним живая сразу, а не через 190 мс */
+.rv-ovl.is-closing { pointer-events: none; }
 @keyframes scrim-out { to { opacity: 0 } }
 .rv-ovl.is-closing .rv-ovl-card { animation: sheet-out var(--dur-quick) var(--ease-out) both; }
 @keyframes sheet-out {
