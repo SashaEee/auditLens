@@ -288,6 +288,7 @@ def record_signals(sig: dict | None, bank: str, product: str | None = None,
         _REC_AT[key] = time.time()
     import json
     n = 0
+    fresh: list[dict] = []
     for s_ in signals:
         stats = {k: s_.get(k) for k in ("week", "baseline_week", "ratio", "excess", "q_value",
                                         "market_ratio", "bank_specific", "new", "accel",
@@ -312,6 +313,7 @@ def record_signals(sig: dict | None, bank: str, product: str | None = None,
                 s.execute(text("""
                     INSERT INTO signal_journal (bank, product, issue, week_end, level, stats, urls)
                     VALUES (:b, :p, :k, CAST(:we AS date), :lvl, CAST(:st AS jsonb), :u)"""), p)
+                fresh.append(s_)
             elif peak:
                 s.execute(text("""
                     UPDATE signal_journal SET last_seen = now(), week_end = CAST(:we AS date),
@@ -321,6 +323,53 @@ def record_signals(sig: dict | None, bank: str, product: str | None = None,
                 s.execute(text("UPDATE signal_journal SET last_seen = now() WHERE signal_id = :id"),
                           {"id": cur[0]})
         n += 1
+    if fresh:
+        _notify_watchers(bank, product, fresh)
+    return n
+
+
+def _notify_watchers(bank: str, product: str | None, fresh: list[dict]) -> None:
+    """Новый всплеск — в колокольчик тем, кто следит за банком (все продукты)
+    или за этим продуктом (волна 5 аудита 03.10): раньше подписка показывала
+    состояние в «Для вас», но о новом всплеске никто не узнавал."""
+    try:
+        from ..web import notices
+        from . import review_codebook as cb
+        with db.session() as s:
+            users = [r[0] for r in s.execute(text("""
+                SELECT DISTINCT username FROM review_subscription
+                 WHERE bank = :b AND (product IS NULL OR product = '' OR product = :p
+                                      OR CAST(:p AS text) = '')"""),
+                {"b": bank, "p": product or ""}).all()]
+        if not users:
+            return
+        from urllib.parse import urlencode
+        for s_ in fresh:
+            link = "#reviews?" + urlencode({k: v for k, v in (
+                ("tab", "complaints"), ("bank", bank), ("product", product or ""),
+                ("theme", s_.get("key"))) if v})
+            notices.notify(users, "watch_signal", link=link, ref={
+                "bank": bank, "product": product or "", "issue": s_.get("key"),
+                "label": (cb.ISSUES.get(s_.get("key")) or (s_.get("label") or s_.get("key"),))[0],
+                "ratio": s_.get("ratio")})
+    except Exception as e:  # noqa: BLE001 — уведомление не мешает журналу
+        log.warning("подписки: уведомление не ушло: %s", e)
+
+
+def record_watched(limit: int = 60) -> int:
+    """Раз в день — сигналы по всем подпискам: всплеск по банку, который никто
+    не открывал, иначе не попал бы ни в журнал, ни в колокольчик."""
+    with db.session() as s:
+        pairs = s.execute(text("""
+            SELECT bank, coalesce(product, '') AS product, count(*) AS n FROM review_subscription
+             GROUP BY 1, 2 ORDER BY 3 DESC LIMIT :l"""), {"l": limit}).all()
+    n = 0
+    for bank, product, _n in pairs:
+        try:
+            n += record_signals(rd.weekly_signals(bank, product or None), bank, product or None,
+                                min_interval_s=0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("подписки: сигналы %s/%s: %s", bank, product, e)
     return n
 
 

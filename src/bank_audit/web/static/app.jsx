@@ -1441,6 +1441,7 @@ const FB_CSS=`
 .fb-toast.on{opacity:1;transform:translate(-50%,0);}
 .fb-toast .sp{color:var(--accent);}
 .aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.ai-fb-top .aifb{margin:0 0 10px}
 .aifb-l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
@@ -1519,7 +1520,7 @@ function AiFbBar({q,text,sessionId,mode,fbMap,reportId}){
   const send=()=>{post(-1,{reasons:Object.keys(rs).filter(k=>rs[k]),comment:comment.slice(0,300)});
     setSent(true);setOpen(false);fbToast("Спасибо — команда разберёт этот ответ");};
   return <div className="aifb" onClick={e=>e.stopPropagation()}>
-    <span className="aifb-l">Оценить ответ</span>
+    <span className="aifb-l">{mode==="deep"?"Пригодился отчёт?":"Оценить ответ"}</span>
     <button className={"tb"+(v===1?" on":"")} title="Полезный ответ" onClick={like}><IcTUp/></button>
     <button className={"tb"+(v===-1?" on-neg":"")} title="Плохой ответ — команда разберёт" onClick={dislike}><IcTDn/></button>
     {sent&&v===-1&&<span className="aifb-done">отправлено — разберём ✓</span>}
@@ -2479,6 +2480,69 @@ function OvTariffs({tm}){
   </section>;
 }
 
+// «С прошлого визита» (волна 5 аудита 03.10, удержание активных): каждый
+// визит заканчивается находкой. Общий слой — из выпуска (работает у всех),
+// личный — подписки на сигналы и колокольчик. Через 14+ дней отсутствия —
+// «Пока вас не было» и необязательный вопрос, что помешало.
+let _bootFrom=null;     // {from:"mail"} — пришёл по ссылке из письма (см. внизу файла)
+
+function SinceStrip(){
+  const me=useMe();
+  const[d,setD]=useState(null);
+  const[open,setOpen]=useState(false);
+  const[why,setWhy]=useState("");
+  const[sent,setSent]=useState(false);
+  useEffect(()=>{apiFetch("/api/me/since").then(setD).catch(()=>{});},[]);
+  if(!d||d.first_visit)return null;
+  const N=(n,a,b,c)=>`${fmtNum(n)} ${plural(n,a,b,c)}`;
+  const it=[];
+  const iss=d.issues||{}, nw=d.news||{}, sg=d.signals||{}, tf=d.tariffs||{};
+  if(iss.n>=2)it.push({k:"iss",t:`${N(iss.n,"выпуск","выпуска","выпусков")}`,s:iss.latest?`свежий: «${iss.latest}»`:null});
+  if(sg.n)it.push({k:"sig",t:`${N(sg.n,"новый всплеск","новых всплеска","новых всплесков")} жалоб на Сбер`+(sg.mine?` · ${sg.mine} по вашим подпискам`:""),
+    list:(sg.top||[]).map(x=>({t:`${x.bank}${x.product?" · "+x.product:""} — ${x.label}${x.ratio?` ×${rvNum(x.ratio)}`:""}`,
+      href:fyRv({bank:x.bank,product:x.product||"",theme:x.issue}),mine:x.mine}))});
+  if(nw.n)it.push({k:"news",t:`${N(nw.n,"важная новость","важные новости","важных новостей")}`,
+    list:(nw.top||[]).map(x=>({t:x.title,href:x.url,ext:true}))});
+  if(tf.market)it.push({k:"tf",t:(tf.sber?`Сбер изменил ${N(tf.sber,"условие","условия","условий")} · `:"")+`на рынке ${N(tf.market,"изменение","изменения","изменений")} условий`,
+    href:"#market?view=changes"+(tf.sber?"&bank=sberbank":"")});
+  if(d.bell)it.push({k:"bell",t:`${N(d.bell,"непрочитанное событие","непрочитанных события","непрочитанных событий")} в делах и отчётах — в колокольчике`});
+  const away=d.gap_days>=14;
+  if(!it.length&&!away)return null;
+  const when=new Date(d.prev).toLocaleString("ru-RU",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",timeZone:"Europe/Moscow"});
+  const head=away?`Пока вас не было ${N(d.gap_days,"день","дня","дней")}`:`С прошлого визита (${when})`;
+  const sendWhy=async()=>{ if(!why.trim())return;
+    try{await apiPost("/api/inbox",{kind:"other",section:"absence",section_label:"Пока вас не было",
+      body:why.trim(),context:{gap_days:d.gap_days}}); setSent(true);}catch{} };
+  return <section className={"ov-upd"+(open?" open":"")} aria-label="С прошлого визита">
+    <button type="button" className="ov-upd-bar" aria-expanded={open} onClick={()=>setOpen(v=>!v)}>
+      <span className="ov-upd-dot" aria-hidden="true"/>
+      <span className="ov-upd-h"><b>{head}</b>{it.length?" · "+it.map(x=>x.t).join(" · "):""}</span>
+      <span className="ov-upd-tg">{open?"Свернуть":"Показать"}</span>
+    </button>
+    {open&&<ul className="ov-upd-list ov-since-list">
+      {it.map(x=><li key={x.k}>
+        {x.href?<a className="ov-since-h" href={x.href}>{x.t}</a>:<span className="ov-since-h">{x.t}</span>}
+        {x.s&&<span className="ov-since-sub">{x.s}</span>}
+        {(x.list||[]).map((y,i)=><a key={i} className="ov-since-sub" href={y.href}
+          target={y.ext?"_blank":undefined} rel={y.ext?"noopener noreferrer":undefined}>{y.mine?"★ ":""}{y.t}</a>)}
+      </li>)}
+      {me&&!me.has_email&&<li className="ov-since-tip">Не хотите пропускать?{" "}
+        <button type="button" className="ov-since-lnk" onClick={()=>window.dispatchEvent(new CustomEvent("al-open-mail"))}>
+          Подключите почту</button> — если не зайдёте до 11:00, пришлём главное за день.</li>}
+      {!sg.has_subs&&<li className="ov-since-tip">Совет: нажмите «Следить» у продукта Сбера в «Аудите отзывов» — всплески по нему появятся здесь.</li>}
+      {away&&<li>
+        {sent?<span className="ov-since-tip">Спасибо, передали команде.</span>:<>
+          <span className="ov-since-tip">Что помешало заходить? Необязательно — ответ увидит только команда AuditLens.</span>
+          <div style={{display:"flex",gap:6,marginTop:6}}>
+            <input className="input" value={why} onChange={e=>setWhy(e.target.value)} maxLength={500}
+                   placeholder="например: не нашёл данных по своему продукту" style={{flex:1}}/>
+            <button type="button" className="btn btn-sm" disabled={!why.trim()} onClick={sendWhy}>Отправить</button>
+          </div></>}
+      </li>}
+    </ul>}
+  </section>;
+}
+
 function OverviewPage(){
   const[dg,setDg]=useState(null);
   const[summary,setSummary]=useState(null);
@@ -2714,6 +2778,9 @@ function OverviewPage(){
             <OvWarnIc/><span><b>ИИ недоступен.</b> Заголовок и поводы собраны по правилам, без редакции модели.</span></div>}
         </>}
     </header>
+
+    {/* С прошлого визита: выпуски, новости, всплески, тарифы, дела (волна 5) */}
+    <SinceStrip/>
 
     {/* Дневное дополнение: что нового с утра. Утренний выпуск не меняется.
         Свёрнуто в одну строку: раньше блок в ~200 px стоял между заголовком
@@ -5276,7 +5343,7 @@ function ReviewsPage({params}){
       <div className="rv-hact">
         {sub!==null&&<button className={"rv-bell"+(sub?" on":"")} onClick={toggleSub} aria-label={sub?"Слежу за сигналами":"Следить за сигналами"}
           data-tip={sub?"Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться"
-                    :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — всплески будут в «Для вас»`}>
+                    :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
           <span className="rv-hact-l">{sub?"Слежу":"Следить"}</span></button>}
         <button className="rv-bell" onClick={()=>openCases()} aria-label="Аудит-дела"
@@ -7470,6 +7537,11 @@ function AIPage(){
                                      reportId={m.report_id} title={m.title}/>}
                   {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
                 </div>
+                {/* «Пригодился?» — вверху, сразу после прогона: в подвале после
+                    PDF и сверки до оценки не доходили, оценок не было с августа */}
+                {!streaming&&m.text&&m.text.length>200&&
+                  <div className="ai-fb-top"><AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep"
+                                                      fbMap={aiFb} reportId={m.report_id}/></div>}
                 <div className="chat-bubble chat-bubble-deep">
                   {/* Сводка завершённого прогона (collapsed bar над отчётом). */}
                   {m.phase==="done" && m.plan && m.plan.length>0 && <ResearchSummary m={m}/>}
@@ -7514,8 +7586,6 @@ function AIPage(){
                             Готовый отчёт для аудита · нумерация страниц, источники, A4
                           </span>
                         </div>}
-                      {!streaming&&m.text&&
-                        <AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep" fbMap={aiFb} reportId={m.report_id}/>}
                     </article>
                     {!hideRail && <DocRailSlot>
                       <SourcesRail sources={m.sources||[]} failed={m.sourcesFailed||0} activeN={activeCite}
@@ -10284,6 +10354,68 @@ function puLen(r){
 function puDur(s){ if(s==null)return "—"; s=Math.round(+s);
   return s<90?`${s} с`:`${Math.round(s/60)} мин`; }
 
+// Удержание: сегменты по дням активности, когорты новичков, кто под угрозой
+// ухода (из ядра и регулярных) и кто уже ушёл — с последним разделом.
+function PuRetention({rt,onOpenUser}){
+  const[allGone,setAllGone]=useState(false);
+  if(!rt||!rt.segments)return null;
+  const sg=rt.segments, pct=(a,b)=>b?Math.round(a*100/b)+"%":"—";
+  const who=r=><button className="pu-link" onClick={()=>onOpenUser&&onOpenUser(r.username)}>{r.name}</button>;
+  // Вернуть лично: короткий текст от владельца по рабочему каналу — массово без
+  // согласия не пишем (волна 5). Ссылка с from=winback — видно, кто вернулся.
+  const winback=r=>{
+    const fn=(r.name||"").trim().split(/\s+/)[1]||(r.name||"").trim().split(/\s+/)[0]||"";
+    const txt=`${fn?fn+", добрый день!":"Добрый день!"} Вы заходили в AuditLens ${fmtDateMsk(r.last)}. `
+      +`С тех пор появилось: каждое утро — выпуск с главным по Сберу и рынку, сверху — «С прошлого визита» `
+      +`(что изменилось с вашего захода), а на продукты Сбера из вашей зоны можно подписаться — `
+      +`о новых всплесках жалоб сообщим в колокольчике и на почту. `
+      +`Если что-то мешало пользоваться — ответьте одной строкой, поправим. `
+      +`${location.origin}/?go=overview&from=mail&m=winback`;
+    try{navigator.clipboard.writeText(txt).then(()=>fbToast("Текст скопирован — отправьте его сами"));}catch{}
+  };
+  const wb=r=><button className="pu-link" title="Скопировать короткий личный текст для письма или мессенджера"
+    onClick={()=>winback(r)}>текст для письма</button>;
+  const where=r=>AD_PAGE_RU[r.page]||r.page||"—";
+  const gone=allGone?rt.churned:(rt.churned||[]).slice(0,8);
+  return <div className="pu-card">
+    <div className="h"><span>Удержание · 30 дн</span>
+      <span>заходили за 7 дн: {rt.active_7d} · прошлые 7: {rt.active_prev_7d}</span></div>
+    <div className="pu-grid4" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,margin:"6px 0 10px"}}>
+      {[["ядро","8 и больше дней",sg.core,"var(--pos)"],["регулярные","3–7 дней",sg.regular,"var(--accent)"],
+        ["разовые","1–2 дня",sg.once,"var(--ink-3)"],["ушли","были раньше, за 30 дн — нет",sg.churned,"var(--neg)"]].map(([t,sub,v,c])=>
+        <div key={t} className="pu-kv" style={{flexDirection:"column",alignItems:"flex-start"}}>
+          <b className="tnum" style={{fontSize:22,color:c}}>{v||0}</b><span>{t}<span className="sub">{sub}</span></span></div>)}
+    </div>
+    <div className="pu-note">новых за 30 дн: {sg.new||0} · пришли по ссылке из письма за 7 дн: {rt.from_mail_7d||0}</div>
+
+    {(rt.cohorts||[]).length>0&&<>
+      <div className="h" style={{marginTop:12}}><span>Новички по неделям прихода</span><span>вернулись на 2-й · на 4-й неделе</span></div>
+      {(rt.cohorts||[]).map(c=><div key={c.week} className="pu-bar-row">
+        <span className="lb">с {fmtDateMsk(c.week)} · {c.n} чел.</span>
+        <span className="tr"><span className="fl" style={{width:Math.max(3,c.w2_ready?c.w2*100/c.w2_ready:0)+"%"}}/></span>
+        <span className="vv tnum">{c.w2_ready?pct(c.w2,c.w2_ready):"рано"} · {c.w4_ready?pct(c.w4,c.w4_ready):"рано"}</span>
+      </div>)}
+    </>}
+
+    <div className="h" style={{marginTop:12}}><span>Под угрозой ухода · {(rt.at_risk||[]).length}</span>
+      <span>заходили регулярно, а теперь нет 7–29 дн</span></div>
+    {(rt.at_risk||[]).length===0?<div className="pu-empty">Все, кто заходил регулярно, заходят и сейчас.</div>:
+      (rt.at_risk||[]).map(r=><div key={r.username} className="pu-qrow">
+        {who(r)}<span className="md">нет {r.gap_days} дн.</span>
+        <span className="md">{r.days_60} дн. за 60</span><span className="md">последний раздел — {where(r)}</span>
+        {r.ai?<span className="md">вопросов ИИ: {r.ai}</span>:null}{wb(r)}</div>)}
+
+    <div className="h" style={{marginTop:12}}><span>Ушли · {rt.churned_total||0}</span>
+      <span>были активны 1–3 мес. назад</span></div>
+    {gone.map(r=><div key={r.username} className="pu-qrow">
+      {who(r)}<span className="md">последний раз {fmtDateMsk(r.last)}</span>
+      <span className="md">{r.days_prev} дн. активности</span><span className="md">{where(r)}</span>
+      {r.ai?<span className="md">вопросов ИИ: {r.ai}</span>:null}{wb(r)}</div>)}
+    {(rt.churned||[]).length>8&&<button className="pu-link" onClick={()=>setAllGone(v=>!v)}>
+      {allGone?"свернуть":`показать всех (${rt.churned.length})`}</button>}
+  </div>;
+}
+
 function PuPersona({p}){
   const[all,setAll]=useState(false);
   const parts=p.parts||[];
@@ -11273,6 +11405,8 @@ function PulsePage(){
 
     <div id="pu-panel" role="tabpanel" aria-labelledby={"pu-tab-"+tab} key={tab} className="rv-panel">
     {tab==="people"&&<>
+        {/* ① удержание — главный вопрос продукта: приживается ли инструмент (ПУЛ-01) */}
+        <PuRetention rt={m.retention} onOpenUser={setCard}/>
         {/* ② аудитория */}
         <div className="pu-card">
           <div className="h"><span>Аудитория · человек в день</span>
@@ -12331,6 +12465,11 @@ const BX_CSS=`
 .bx-row .l{flex:1;min-width:0}
 .bx-row .l b{display:block;font-size:13px;font-weight:500;color:var(--ink)}
 .bx-row .l span{font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.bx-row-1{padding:7px 0}
+.bx-row-1 .l{display:flex;align-items:baseline;gap:8px;min-width:0}
+.bx-row-1 .l b{display:inline;flex:none}
+.bx-row-1 .l span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bx-addr-acts{margin-left:auto;font-size:12px;color:var(--ink-3);white-space:nowrap}
 .bx-sw{position:relative;flex:none;width:34px;height:20px;border-radius:999px;border:0;background:var(--hair-2);cursor:pointer;
   transition:background .16s;padding:0}
 .bx-sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;
@@ -12386,11 +12525,6 @@ const IcBx={
   mail:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></svg>,
   gear:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="2.6"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
 };
-const BX_HINT={mention:"Вас упомянули через @, ответили на ваше сообщение или прокомментировали ваш материал",
-  talk:"Новые сообщения в обсуждениях ваших дел — одной строкой на дело",
-  items:"Новые жалобы, документы и отчёты в общих делах, новый разбор ИИ",
-  access:"Добавление в дело, смена прав, передача, статус и архив дела, отчёт от коллеги",
-  inbox:"Ответ команды AuditLens или новый статус обращения"};
 const bxIcon=(k)=>k==="report_shared"?IcBx.report
   :(k==="ticket"||k==="case_msg"||k==="case_mention"||k==="case_reply")?IcSay.row
   :(k==="case_added"||k==="case_role"||k==="case_removed"||k==="case_left"||k==="case_owner")?IcBx.people:IcBx.case;
@@ -12413,8 +12547,14 @@ const bxCorp=(email,domains)=>{ const d=String(email||"").toLowerCase().split("@
 const bxAt=(domains)=>domains&&domains[0]?` (@${domains[0]})`:"";
 const bxDel=(path)=>fetch(path,{method:"DELETE"}).then(r=>{ if(r.ok) return r.json();
   throw new Error("Не получилось. Попробуйте ещё раз"); });
-const BX_MAIL_PREFS=[["instant","Сразу — о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
-  ["digest","Утренняя сводка","В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"]];
+// Настройки сжаты (04.10): подпись + время мелко, подробности — в подсказке
+const BX_MAIL_PREFS=[["instant","Сразу","о личном","Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"],
+  ["digest","Сводка по делам","будни, 8:00","Непрочитанное по вашим делам — только если есть новое"],
+  ["brief","Выпуск дня","будни, 11:00","Если вы ещё не заходили: главное за день и всплески по вашим подпискам"]];
+// Группы колокольчика для человека: шесть служебных групп → три строки
+const BX_SET_GROUPS=[["Лично мне","упоминания, ответы, доступ к делам, ответы команды",["mention","access","inbox"]],
+  ["Дела","сообщения, новые материалы и разбор ИИ",["talk","items"]],
+  ["Подписки","всплески жалоб по продуктам Сбера",["watch"]]];
 
 function BxMail({me,onPrefs,onEmail,code0}){
   const[st,setSt]=useState(null);
@@ -12471,30 +12611,29 @@ function BxMail({me,onPrefs,onEmail,code0}){
   }
   if(st.email&&!editing) return <div className="bx-mail">
     <div className="bx-addr"><span className="a">{st.email}</span>
-      <span className={"bx-tag"+(st.corporate?" corp":"")}>{st.corporate?"Sigma":"личная"}</span></div>
-    {!st.active
-      ?<div className="bx-note">Адрес из учётной записи: письма начнут приходить, когда рассылку включат.</div>
-      :!st.corporate&&<div className="bx-note">На личную почту письма приходят без подробностей: что произошло и ссылка — без названий дел, имён и цитат.</div>}
-    {BX_MAIL_PREFS.map(([k,l,h])=>{ const on=prefs[k]!==false;
-      return <label key={k} className="bx-row">
-        <span className="l"><b>{l}</b><span>{h}</span></span>
-        <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={l}
+      <span className={"bx-tag"+(st.corporate?" corp":"")}
+        title={st.corporate?"Письма приходят целиком":"На личную почту — без подробностей: что произошло и ссылка, без названий дел, имён и цитат"}>
+        {st.corporate?"Sigma":"личная · кратко"}</span>
+      {sure
+        ?<span className="bx-addr-acts">отключить?{" "}
+          <button className="bx-lnk danger" disabled={busy} onClick={()=>drop(false)}>да</button>{" "}
+          <button className="bx-lnk" onClick={()=>setSure(false)}>нет</button></span>
+        :<span className="bx-addr-acts">
+          <button className="bx-lnk" onClick={()=>{ setEditing(true); setAddr(""); setErr(""); }}>изменить</button>{" · "}
+          <button className="bx-lnk" onClick={()=>setSure(true)}>отключить</button></span>}</div>
+    {!st.active&&<div className="bx-note">Письма начнут приходить, когда рассылку включат.</div>}
+    {BX_MAIL_PREFS.map(([k,l,when,h])=>{ const on=prefs[k]!==false;
+      return <label key={k} className="bx-row bx-row-1" title={h}>
+        <span className="l"><b>{l}</b><span>{when}</span></span>
+        <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={`${l}: ${h}`}
           onClick={e=>{ e.preventDefault(); const mail={...prefs,[k]:!on};
             onPrefs&&onPrefs(null,mail); apiPut("/api/me",{prefs:{mail}}).catch(()=>onPrefs&&onPrefs(null,prefs)); }}/>
       </label>; })}
-    <div className="bx-acts">{sure
-      ?<><span>Письма перестанут приходить.</span>
-        <button className="bx-lnk danger" disabled={busy} onClick={()=>drop(false)}>Отключить</button>
-        <button className="bx-lnk" onClick={()=>setSure(false)}>Отмена</button></>
-      :<><button className="bx-lnk" onClick={()=>{ setEditing(true); setAddr(""); setErr(""); }}>Другой адрес</button>
-        <button className="bx-lnk" onClick={()=>setSure(true)}>Отключить почту</button></>}</div>
     {err&&<div className="bx-err" role="alert">{err}</div>}
   </div>;
   const a=addr.trim(), okA=BX_MAIL_RE.test(a), omega=okA&&bxCorp(a,st.blocked_domains);
   return <div className="bx-mail">
-    <div className="bx-note">Личное — сразу, остальное — утренней сводкой. Укажите корпоративную почту
-      Sigma{bxAt(st.corp_domains)} или личную — пришлём код, чтобы подтвердить адрес. Почта
-      Omega{bxAt(st.blocked_domains)} не подойдёт: письма извне туда не доходят.</div>
+    <div className="bx-note">Почта Sigma{bxAt(st.corp_domains)} или личная — пришлём код для подтверждения.</div>
     <form className="bx-form" onSubmit={e=>{ e.preventDefault(); if(okA&&!omega&&!busy) send(a); }}>
       <input className="bx-in" type="email" inputMode="email" autoComplete="email" placeholder="Почта Sigma или личная"
         aria-label="Адрес почты" value={addr} autoFocus={editing} onChange={e=>{ setAddr(e.target.value); setErr(""); }}/>
@@ -12535,7 +12674,7 @@ function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,onEmail,initialView,m
   const open=(it)=>{ if(!it.read_at){ stamp(i=>i.id===it.id); sayPost("/api/bell/read",{ids:[it.id]}).then(onCount).catch(()=>{}); }
     if(it.link) onGo(it); };
   const groups=(d&&d.groups)||[];
-  const toggle=(key)=>{ const next=groups.map(g=>g.key===key?{...g,on:!g.on}:g);
+  const toggleMany=(keys,val)=>{ const next=groups.map(g=>keys.includes(g.key)?{...g,on:val}:g);
     setD(x=>({...x,groups:next}));
     const off=next.filter(g=>!g.on).map(g=>g.key);
     apiPut("/api/me",{prefs:{notify_off:off}}).then(()=>onPrefs&&onPrefs(off)).catch(()=>load()); };
@@ -12559,12 +12698,15 @@ function BellPanel({anchor,onClose,onGo,onCount,me,onPrefs,onEmail,initialView,m
       <button className="bx-ib" onClick={onClose} aria-label="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     {view==="settings"
-      ?<div className="bx-set"><p>Выключенное перестанет приходить сюда. Уже пришедшее останется в списке.</p>
-        {groups.map(g=><label key={g.key} className="bx-row">
-          <span className="l"><b>{g.label}</b><span>{BX_HINT[g.key]||""}</span></span>
-          <button type="button" role="switch" aria-checked={g.on} className="bx-sw" aria-label={g.label}
-            onClick={e=>{ e.preventDefault(); toggle(g.key); }}/>
-        </label>)}
+      ?<div className="bx-set"><p className="bx-mail-h" style={{marginTop:4}}>В колокольчике</p>
+        {BX_SET_GROUPS.map(([l,h,keys])=>{ const mine=groups.filter(g=>keys.includes(g.key));
+          if(!mine.length) return null;
+          const on=mine.every(g=>g.on);
+          return <label key={l} className="bx-row bx-row-1" title={h}>
+            <span className="l"><b>{l}</b><span>{h}</span></span>
+            <button type="button" role="switch" aria-checked={on} className="bx-sw" aria-label={`${l}: ${h}`}
+              onClick={e=>{ e.preventDefault(); toggleMany(keys,!on); }}/>
+          </label>; })}
         <p className="bx-mail-h">На почту</p>
         <BxMail me={me} onPrefs={onPrefs} onEmail={onEmail} code0={mailCode}/></div>
       :<div className="bx-body">
@@ -12642,6 +12784,9 @@ function Shell(){
   const loadSay=loadBell;
   const bellSeen=(id)=>{ try{ if(id) localStorage.setItem(BELL_SEEN,String(Math.max(id,+(localStorage.getItem(BELL_SEEN)||0)))); }catch{} setBellToast(null); };
   const toggleBell=()=>{ setNavOpen(false); setSayOpen(null); setBellOpen(o=>!o); if(bell.last) bellSeen(bell.last.id); };
+  // «Подключите почту» из «С прошлого визита» — сразу в настройки писем
+  useEffect(()=>{ const on=()=>{ setNavOpen(false); setSayOpen(null); setBellView("settings"); setBellOpen(true); };
+    window.addEventListener("al-open-mail",on); return ()=>window.removeEventListener("al-open-mail",on); },[]); // eslint-disable-line
   const closeBell=()=>{ setBellOpen(false); loadBell(); setTimeout(()=>{ try{ bellRef.current&&bellRef.current.focus(); }catch{} },0); };
   const goBell=(it)=>{ setBellOpen(false); setBellToast(null); setNavOpen(false); loadBell();
     const[k,id,sub,msg]=String(it.link||"").split(":");
@@ -12770,7 +12915,8 @@ function Shell(){
       trk({kind:"page_leave",page:prev.page,dur_ms:trkDur(prev,now)});
     trkPage.current={page,t:now,acc:0};
     lastInput.current=now;                    // переход по разделу — тоже ввод
-    trk({kind:"page_view",page});
+    trk({kind:"page_view",page,...(_bootFrom?{payload:_bootFrom}:{})});
+    _bootFrom=null;
     const t=setTimeout(trkFlush,1500);
     return ()=>clearTimeout(t);
   },[page]); // eslint-disable-line
@@ -13003,9 +13149,10 @@ function Shell(){
         <div className="rail-foot">
           {(()=>{ const showOnb = me && !(me.prefs&&me.prefs.onboarded) && !onbSeen && page!=="profile" && !mailPromoShow;
             return showOnb ? <div className="onb-callout">
-              <div className="t">✦ <b>Новое:</b> настройте инструмент под себя — опишите, что проверяете, и получайте персональную подачу и сводки.</div>
+              <div className="t">✦ Выберите продукты и риски Сбера, которые вы проверяете, — 30 секунд, и «Для вас», подписки на всплески жалоб и сводки станут вашими.</div>
               <div className="b">
-                <button className="go" onClick={()=>{setOnbSeen(true);setPage("profile");setNavOpen(false);}}>Настроить</button>
+                {/* на чипы «Для вас», а не в свободный текст профиля (аудит 03.10, sh-09) */}
+                <button className="go" onClick={()=>{setOnbSeen(true);setPage("foryou");setNavOpen(false);}}>Выбрать</button>
                 <button className="skip" onClick={()=>{setOnbSeen(true);apiPut("/api/me",{prefs:{onboarded:true}}).catch(()=>{});}}>Позже</button>
               </div>
             </div> : null; })()}
@@ -13084,7 +13231,8 @@ function Shell(){
           </div>
         </div>; })()}
       {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
-      {!renameSeen&&renamedFresh()&&<div className="ren-toast" role="status">
+      {/* только тем, кто застал старое меню: новичку переименование ни о чём */}
+      {!renameSeen&&renamedFresh()&&me&&me.created_at&&me.created_at<"2026-10-01"&&<div className="ren-toast" role="status">
         <div className="t"><b>Меню обновлено.</b>{" "}
           {NAV.filter(n=>n.was).map(n=>`«${n.was}» → «${n.label}»`).join(", ")}.
           «Рынок · позиция» — переключатель в разделе «Новостные обзоры», справочные
@@ -13166,4 +13314,12 @@ function App(){
   return <ThemeProvider><PageBoundary name="shell" pageKey="shell"><Shell/></PageBoundary></ThemeProvider>;
 }
 
+// Ссылки из писем: цель — в ?go=, а не в #якоре (якорь теряется, если система
+// входа попросит войти заново). from=mail уходит с первым просмотром страницы —
+// «Пульс» видит, кого вернуло письмо (волна 5).
+try{
+  const sp=new URLSearchParams(location.search), go=sp.get("go");
+  if(sp.get("from")==="mail") _bootFrom={from:"mail",m:sp.get("m")||""};
+  if(go||_bootFrom) history.replaceState(null,"",location.pathname+(go?"#"+go.replace(/^#/,""):location.hash));
+}catch{}
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);

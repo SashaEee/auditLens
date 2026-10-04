@@ -100,7 +100,8 @@ def test_mark_read_needs_a_target():
 
 def test_settings_reflect_prefs():
     st = {g["key"]: g["on"] for g in N.settings({"notify_off": ["items"]})}
-    assert st == {"mention": True, "talk": True, "items": False, "access": True, "inbox": True}
+    assert st == {"mention": True, "talk": True, "items": False, "access": True, "inbox": True,
+                  "watch": True}
     assert all(g["on"] for g in N.settings(None))
 
 

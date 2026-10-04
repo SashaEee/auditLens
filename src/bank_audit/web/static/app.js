@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 7e0347a6d0eda5187d515f03749375233af7f9d459532b4dd81ff4bc4039a57c): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 9855a5ef5e554aa251b3ca588c9d3ed3251d09e0e7cc588e3f0370d540a29c9e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -2955,6 +2955,7 @@ const FB_CSS = `
 .fb-toast.on{opacity:1;transform:translate(-50%,0);}
 .fb-toast .sp{color:var(--accent);}
 .aifb{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.ai-fb-top .aifb{margin:0 0 10px}
 .aifb-l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
@@ -3120,7 +3121,7 @@ function AiFbBar({
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("span", {
     className: "aifb-l"
-  }, "\u041E\u0446\u0435\u043D\u0438\u0442\u044C \u043E\u0442\u0432\u0435\u0442"), /*#__PURE__*/React.createElement("button", {
+  }, mode === "deep" ? "Пригодился отчёт?" : "Оценить ответ"), /*#__PURE__*/React.createElement("button", {
     className: "tb" + (v === 1 ? " on" : ""),
     title: "\u041F\u043E\u043B\u0435\u0437\u043D\u044B\u0439 \u043E\u0442\u0432\u0435\u0442",
     onClick: like
@@ -4888,6 +4889,157 @@ function OvTariffs({
     className: "ovt-empty"
   }, "\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 \u0441\u0442\u0430\u0432\u043E\u043A \u0437\u0430 \u043D\u0435\u0434\u0435\u043B\u044E \u043D\u0435 \u0437\u0430\u0444\u0438\u043A\u0441\u0438\u0440\u043E\u0432\u0430\u043D\u043E \xB7 \u043F\u043E\u0434 \u043D\u0430\u0431\u043B\u044E\u0434\u0435\u043D\u0438\u0435\u043C ", fmtNum(tot.banks_tracked || 0), " ", plural(tot.banks_tracked || 0, "банк", "банка", "банков"), tot.last_ok_run && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0441\u0431\u043E\u0440 ", fmtDateMsk(tot.last_ok_run)))));
 }
+
+// «С прошлого визита» (волна 5 аудита 03.10, удержание активных): каждый
+// визит заканчивается находкой. Общий слой — из выпуска (работает у всех),
+// личный — подписки на сигналы и колокольчик. Через 14+ дней отсутствия —
+// «Пока вас не было» и необязательный вопрос, что помешало.
+let _bootFrom = null; // {from:"mail"} — пришёл по ссылке из письма (см. внизу файла)
+
+function SinceStrip() {
+  const me = useMe();
+  const [d, setD] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [why, setWhy] = useState("");
+  const [sent, setSent] = useState(false);
+  useEffect(() => {
+    apiFetch("/api/me/since").then(setD).catch(() => {});
+  }, []);
+  if (!d || d.first_visit) return null;
+  const N = (n, a, b, c) => `${fmtNum(n)} ${plural(n, a, b, c)}`;
+  const it = [];
+  const iss = d.issues || {},
+    nw = d.news || {},
+    sg = d.signals || {},
+    tf = d.tariffs || {};
+  if (iss.n >= 2) it.push({
+    k: "iss",
+    t: `${N(iss.n, "выпуск", "выпуска", "выпусков")}`,
+    s: iss.latest ? `свежий: «${iss.latest}»` : null
+  });
+  if (sg.n) it.push({
+    k: "sig",
+    t: `${N(sg.n, "новый всплеск", "новых всплеска", "новых всплесков")} жалоб на Сбер` + (sg.mine ? ` · ${sg.mine} по вашим подпискам` : ""),
+    list: (sg.top || []).map(x => ({
+      t: `${x.bank}${x.product ? " · " + x.product : ""} — ${x.label}${x.ratio ? ` ×${rvNum(x.ratio)}` : ""}`,
+      href: fyRv({
+        bank: x.bank,
+        product: x.product || "",
+        theme: x.issue
+      }),
+      mine: x.mine
+    }))
+  });
+  if (nw.n) it.push({
+    k: "news",
+    t: `${N(nw.n, "важная новость", "важные новости", "важных новостей")}`,
+    list: (nw.top || []).map(x => ({
+      t: x.title,
+      href: x.url,
+      ext: true
+    }))
+  });
+  if (tf.market) it.push({
+    k: "tf",
+    t: (tf.sber ? `Сбер изменил ${N(tf.sber, "условие", "условия", "условий")} · ` : "") + `на рынке ${N(tf.market, "изменение", "изменения", "изменений")} условий`,
+    href: "#market?view=changes" + (tf.sber ? "&bank=sberbank" : "")
+  });
+  if (d.bell) it.push({
+    k: "bell",
+    t: `${N(d.bell, "непрочитанное событие", "непрочитанных события", "непрочитанных событий")} в делах и отчётах — в колокольчике`
+  });
+  const away = d.gap_days >= 14;
+  if (!it.length && !away) return null;
+  const when = new Date(d.prev).toLocaleString("ru-RU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Moscow"
+  });
+  const head = away ? `Пока вас не было ${N(d.gap_days, "день", "дня", "дней")}` : `С прошлого визита (${when})`;
+  const sendWhy = async () => {
+    if (!why.trim()) return;
+    try {
+      await apiPost("/api/inbox", {
+        kind: "other",
+        section: "absence",
+        section_label: "Пока вас не было",
+        body: why.trim(),
+        context: {
+          gap_days: d.gap_days
+        }
+      });
+      setSent(true);
+    } catch {}
+  };
+  return /*#__PURE__*/React.createElement("section", {
+    className: "ov-upd" + (open ? " open" : ""),
+    "aria-label": "\u0421 \u043F\u0440\u043E\u0448\u043B\u043E\u0433\u043E \u0432\u0438\u0437\u0438\u0442\u0430"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ov-upd-bar",
+    "aria-expanded": open,
+    onClick: () => setOpen(v => !v)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ov-upd-dot",
+    "aria-hidden": "true"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "ov-upd-h"
+  }, /*#__PURE__*/React.createElement("b", null, head), it.length ? " · " + it.map(x => x.t).join(" · ") : ""), /*#__PURE__*/React.createElement("span", {
+    className: "ov-upd-tg"
+  }, open ? "Свернуть" : "Показать")), open && /*#__PURE__*/React.createElement("ul", {
+    className: "ov-upd-list ov-since-list"
+  }, it.map(x => /*#__PURE__*/React.createElement("li", {
+    key: x.k
+  }, x.href ? /*#__PURE__*/React.createElement("a", {
+    className: "ov-since-h",
+    href: x.href
+  }, x.t) : /*#__PURE__*/React.createElement("span", {
+    className: "ov-since-h"
+  }, x.t), x.s && /*#__PURE__*/React.createElement("span", {
+    className: "ov-since-sub"
+  }, x.s), (x.list || []).map((y, i) => /*#__PURE__*/React.createElement("a", {
+    key: i,
+    className: "ov-since-sub",
+    href: y.href,
+    target: y.ext ? "_blank" : undefined,
+    rel: y.ext ? "noopener noreferrer" : undefined
+  }, y.mine ? "★ " : "", y.t)))), me && !me.has_email && /*#__PURE__*/React.createElement("li", {
+    className: "ov-since-tip"
+  }, "\u041D\u0435 \u0445\u043E\u0442\u0438\u0442\u0435 \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u0442\u044C?", " ", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ov-since-lnk",
+    onClick: () => window.dispatchEvent(new CustomEvent("al-open-mail"))
+  }, "\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \u043F\u043E\u0447\u0442\u0443"), " \u2014 \u0435\u0441\u043B\u0438 \u043D\u0435 \u0437\u0430\u0439\u0434\u0451\u0442\u0435 \u0434\u043E 11:00, \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u0433\u043B\u0430\u0432\u043D\u043E\u0435 \u0437\u0430 \u0434\u0435\u043D\u044C."), !sg.has_subs && /*#__PURE__*/React.createElement("li", {
+    className: "ov-since-tip"
+  }, "\u0421\u043E\u0432\u0435\u0442: \u043D\u0430\u0436\u043C\u0438\u0442\u0435 \xAB\u0421\u043B\u0435\u0434\u0438\u0442\u044C\xBB \u0443 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430 \u0421\u0431\u0435\u0440\u0430 \u0432 \xAB\u0410\u0443\u0434\u0438\u0442\u0435 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u2014 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u043F\u043E \u043D\u0435\u043C\u0443 \u043F\u043E\u044F\u0432\u044F\u0442\u0441\u044F \u0437\u0434\u0435\u0441\u044C."), away && /*#__PURE__*/React.createElement("li", null, sent ? /*#__PURE__*/React.createElement("span", {
+    className: "ov-since-tip"
+  }, "\u0421\u043F\u0430\u0441\u0438\u0431\u043E, \u043F\u0435\u0440\u0435\u0434\u0430\u043B\u0438 \u043A\u043E\u043C\u0430\u043D\u0434\u0435.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "ov-since-tip"
+  }, "\u0427\u0442\u043E \u043F\u043E\u043C\u0435\u0448\u0430\u043B\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u0442\u044C? \u041D\u0435\u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E \u2014 \u043E\u0442\u0432\u0435\u0442 \u0443\u0432\u0438\u0434\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u043A\u043E\u043C\u0430\u043D\u0434\u0430 AuditLens."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: why,
+    onChange: e => setWhy(e.target.value),
+    maxLength: 500,
+    placeholder: "\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440: \u043D\u0435 \u043D\u0430\u0448\u0451\u043B \u0434\u0430\u043D\u043D\u044B\u0445 \u043F\u043E \u0441\u0432\u043E\u0435\u043C\u0443 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0443",
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    disabled: !why.trim(),
+    onClick: sendWhy
+  }, "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C"))))));
+}
 function OverviewPage() {
   const [dg, setDg] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -5217,7 +5369,7 @@ function OverviewPage() {
   }, /*#__PURE__*/React.createElement(OvWarnIc, null), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u0432\u043E\u0434\u043A\u0430 \u0437\u0430 ", dmy(sec.headline.stale_from) || sec.headline.stale_from, "."), " \u0421\u0435\u0433\u043E\u0434\u043D\u044F\u0448\u043D\u0438\u0439 \u0432\u044B\u043F\u0443\u0441\u043A \u043D\u0435 \u0441\u043E\u0431\u0440\u0430\u043B\u0441\u044F \u2014 \u043F\u043E\u043A\u0430\u0437\u0430\u043D \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0443\u0434\u0430\u0447\u043D\u044B\u0439; \u0447\u0438\u0441\u043B\u0430 \u043F\u0443\u043B\u044C\u0441\u0430 \u043D\u0438\u0436\u0435 \u0436\u0438\u0432\u044B\u0435.")), ST("headline") === "degraded" && /*#__PURE__*/React.createElement("div", {
     className: "ov-note warn",
     role: "note"
-  }, /*#__PURE__*/React.createElement(OvWarnIc, null), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0418 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D."), " \u0417\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A \u0438 \u043F\u043E\u0432\u043E\u0434\u044B \u0441\u043E\u0431\u0440\u0430\u043D\u044B \u043F\u043E \u043F\u0440\u0430\u0432\u0438\u043B\u0430\u043C, \u0431\u0435\u0437 \u0440\u0435\u0434\u0430\u043A\u0446\u0438\u0438 \u043C\u043E\u0434\u0435\u043B\u0438.")))), (() => {
+  }, /*#__PURE__*/React.createElement(OvWarnIc, null), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0418 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D."), " \u0417\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A \u0438 \u043F\u043E\u0432\u043E\u0434\u044B \u0441\u043E\u0431\u0440\u0430\u043D\u044B \u043F\u043E \u043F\u0440\u0430\u0432\u0438\u043B\u0430\u043C, \u0431\u0435\u0437 \u0440\u0435\u0434\u0430\u043A\u0446\u0438\u0438 \u043C\u043E\u0434\u0435\u043B\u0438.")))), /*#__PURE__*/React.createElement(SinceStrip, null), (() => {
     const up = (sec.update || {}).payload || {};
     const its = up.items || [],
       sg = up.signals || [];
@@ -10212,7 +10364,7 @@ function ReviewsPage({
     className: "rv-bell" + (sub ? " on" : ""),
     onClick: toggleSub,
     "aria-label": sub ? "Слежу за сигналами" : "Следить за сигналами",
-    "data-tip": sub ? "Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться" : `Следить за сигналами: ${bank}${product ? " · " + product : " · все продукты"} — всплески будут в «Для вас»`
+    "data-tip": sub ? "Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться" : `Следить за сигналами: ${bank}${product ? " · " + product : " · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`
   }, /*#__PURE__*/React.createElement("svg", {
     width: "14",
     height: "14",
@@ -13745,6 +13897,15 @@ function AIPage() {
         matrix: m.matrix,
         question: userQ,
         streaming: streaming
+      })), !streaming && m.text && m.text.length > 200 && /*#__PURE__*/React.createElement("div", {
+        className: "ai-fb-top"
+      }, /*#__PURE__*/React.createElement(AiFbBar, {
+        q: userQ,
+        text: m.text,
+        sessionId: sessionId,
+        mode: "deep",
+        fbMap: aiFb,
+        reportId: m.report_id
       })), /*#__PURE__*/React.createElement("div", {
         className: "chat-bubble chat-bubble-deep"
       }, m.phase === "done" && m.plan && m.plan.length > 0 && /*#__PURE__*/React.createElement(ResearchSummary, {
@@ -13821,14 +13982,7 @@ function AIPage() {
         streaming: false
       }), /*#__PURE__*/React.createElement("span", {
         className: "dr-doc-footer-hint"
-      }, "\u0413\u043E\u0442\u043E\u0432\u044B\u0439 \u043E\u0442\u0447\u0451\u0442 \u0434\u043B\u044F \u0430\u0443\u0434\u0438\u0442\u0430 \xB7 \u043D\u0443\u043C\u0435\u0440\u0430\u0446\u0438\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446, \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438, A4")), !streaming && m.text && /*#__PURE__*/React.createElement(AiFbBar, {
-        q: userQ,
-        text: m.text,
-        sessionId: sessionId,
-        mode: "deep",
-        fbMap: aiFb,
-        reportId: m.report_id
-      })), !hideRail && /*#__PURE__*/React.createElement(DocRailSlot, null, /*#__PURE__*/React.createElement(SourcesRail, {
+      }, "\u0413\u043E\u0442\u043E\u0432\u044B\u0439 \u043E\u0442\u0447\u0451\u0442 \u0434\u043B\u044F \u0430\u0443\u0434\u0438\u0442\u0430 \xB7 \u043D\u0443\u043C\u0435\u0440\u0430\u0446\u0438\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446, \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438, A4"))), !hideRail && /*#__PURE__*/React.createElement(DocRailSlot, null, /*#__PURE__*/React.createElement(SourcesRail, {
         sources: m.sources || [],
         failed: m.sourcesFailed || 0,
         activeN: activeCite,
@@ -19372,6 +19526,124 @@ function puDur(s) {
   s = Math.round(+s);
   return s < 90 ? `${s} с` : `${Math.round(s / 60)} мин`;
 }
+
+// Удержание: сегменты по дням активности, когорты новичков, кто под угрозой
+// ухода (из ядра и регулярных) и кто уже ушёл — с последним разделом.
+function PuRetention({
+  rt,
+  onOpenUser
+}) {
+  const [allGone, setAllGone] = useState(false);
+  if (!rt || !rt.segments) return null;
+  const sg = rt.segments,
+    pct = (a, b) => b ? Math.round(a * 100 / b) + "%" : "—";
+  const who = r => /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    onClick: () => onOpenUser && onOpenUser(r.username)
+  }, r.name);
+  // Вернуть лично: короткий текст от владельца по рабочему каналу — массово без
+  // согласия не пишем (волна 5). Ссылка с from=winback — видно, кто вернулся.
+  const winback = r => {
+    const fn = (r.name || "").trim().split(/\s+/)[1] || (r.name || "").trim().split(/\s+/)[0] || "";
+    const txt = `${fn ? fn + ", добрый день!" : "Добрый день!"} Вы заходили в AuditLens ${fmtDateMsk(r.last)}. ` + `С тех пор появилось: каждое утро — выпуск с главным по Сберу и рынку, сверху — «С прошлого визита» ` + `(что изменилось с вашего захода), а на продукты Сбера из вашей зоны можно подписаться — ` + `о новых всплесках жалоб сообщим в колокольчике и на почту. ` + `Если что-то мешало пользоваться — ответьте одной строкой, поправим. ` + `${location.origin}/?go=overview&from=mail&m=winback`;
+    try {
+      navigator.clipboard.writeText(txt).then(() => fbToast("Текст скопирован — отправьте его сами"));
+    } catch {}
+  };
+  const wb = r => /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    title: "\u0421\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u043B\u0438\u0447\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0434\u043B\u044F \u043F\u0438\u0441\u044C\u043C\u0430 \u0438\u043B\u0438 \u043C\u0435\u0441\u0441\u0435\u043D\u0434\u0436\u0435\u0440\u0430",
+    onClick: () => winback(r)
+  }, "\u0442\u0435\u043A\u0441\u0442 \u0434\u043B\u044F \u043F\u0438\u0441\u044C\u043C\u0430");
+  const where = r => AD_PAGE_RU[r.page] || r.page || "—";
+  const gone = allGone ? rt.churned : (rt.churned || []).slice(0, 8);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0423\u0434\u0435\u0440\u0436\u0430\u043D\u0438\u0435 \xB7 30 \u0434\u043D"), /*#__PURE__*/React.createElement("span", null, "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0437\u0430 7 \u0434\u043D: ", rt.active_7d, " \xB7 \u043F\u0440\u043E\u0448\u043B\u044B\u0435 7: ", rt.active_prev_7d)), /*#__PURE__*/React.createElement("div", {
+    className: "pu-grid4",
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))",
+      gap: 8,
+      margin: "6px 0 10px"
+    }
+  }, [["ядро", "8 и больше дней", sg.core, "var(--pos)"], ["регулярные", "3–7 дней", sg.regular, "var(--accent)"], ["разовые", "1–2 дня", sg.once, "var(--ink-3)"], ["ушли", "были раньше, за 30 дн — нет", sg.churned, "var(--neg)"]].map(([t, sub, v, c]) => /*#__PURE__*/React.createElement("div", {
+    key: t,
+    className: "pu-kv",
+    style: {
+      flexDirection: "column",
+      alignItems: "flex-start"
+    }
+  }, /*#__PURE__*/React.createElement("b", {
+    className: "tnum",
+    style: {
+      fontSize: 22,
+      color: c
+    }
+  }, v || 0), /*#__PURE__*/React.createElement("span", null, t, /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, sub))))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "\u043D\u043E\u0432\u044B\u0445 \u0437\u0430 30 \u0434\u043D: ", sg.new || 0, " \xB7 \u043F\u0440\u0438\u0448\u043B\u0438 \u043F\u043E \u0441\u0441\u044B\u043B\u043A\u0435 \u0438\u0437 \u043F\u0438\u0441\u044C\u043C\u0430 \u0437\u0430 7 \u0434\u043D: ", rt.from_mail_7d || 0), (rt.cohorts || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "h",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\u041D\u043E\u0432\u0438\u0447\u043A\u0438 \u043F\u043E \u043D\u0435\u0434\u0435\u043B\u044F\u043C \u043F\u0440\u0438\u0445\u043E\u0434\u0430"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0435\u0440\u043D\u0443\u043B\u0438\u0441\u044C \u043D\u0430 2-\u0439 \xB7 \u043D\u0430 4-\u0439 \u043D\u0435\u0434\u0435\u043B\u0435")), (rt.cohorts || []).map(c => /*#__PURE__*/React.createElement("div", {
+    key: c.week,
+    className: "pu-bar-row"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "lb"
+  }, "\u0441 ", fmtDateMsk(c.week), " \xB7 ", c.n, " \u0447\u0435\u043B."), /*#__PURE__*/React.createElement("span", {
+    className: "tr"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "fl",
+    style: {
+      width: Math.max(3, c.w2_ready ? c.w2 * 100 / c.w2_ready : 0) + "%"
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "vv tnum"
+  }, c.w2_ready ? pct(c.w2, c.w2_ready) : "рано", " \xB7 ", c.w4_ready ? pct(c.w4, c.w4_ready) : "рано")))), /*#__PURE__*/React.createElement("div", {
+    className: "h",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0434 \u0443\u0433\u0440\u043E\u0437\u043E\u0439 \u0443\u0445\u043E\u0434\u0430 \xB7 ", (rt.at_risk || []).length), /*#__PURE__*/React.createElement("span", null, "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0440\u0435\u0433\u0443\u043B\u044F\u0440\u043D\u043E, \u0430 \u0442\u0435\u043F\u0435\u0440\u044C \u043D\u0435\u0442 7\u201329 \u0434\u043D")), (rt.at_risk || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u0412\u0441\u0435, \u043A\u0442\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u043B \u0440\u0435\u0433\u0443\u043B\u044F\u0440\u043D\u043E, \u0437\u0430\u0445\u043E\u0434\u044F\u0442 \u0438 \u0441\u0435\u0439\u0447\u0430\u0441.") : (rt.at_risk || []).map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.username,
+    className: "pu-qrow"
+  }, who(r), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u043D\u0435\u0442 ", r.gap_days, " \u0434\u043D."), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, r.days_60, " \u0434\u043D. \u0437\u0430 60"), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043B \u2014 ", where(r)), r.ai ? /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null, wb(r))), /*#__PURE__*/React.createElement("div", {
+    className: "h",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\u0423\u0448\u043B\u0438 \xB7 ", rt.churned_total || 0), /*#__PURE__*/React.createElement("span", null, "\u0431\u044B\u043B\u0438 \u0430\u043A\u0442\u0438\u0432\u043D\u044B 1\u20133 \u043C\u0435\u0441. \u043D\u0430\u0437\u0430\u0434")), gone.map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.username,
+    className: "pu-qrow"
+  }, who(r), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0430\u0437 ", fmtDateMsk(r.last)), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, r.days_prev, " \u0434\u043D. \u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u0438"), /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, where(r)), r.ai ? /*#__PURE__*/React.createElement("span", {
+    className: "md"
+  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null, wb(r))), (rt.churned || []).length > 8 && /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    onClick: () => setAllGone(v => !v)
+  }, allGone ? "свернуть" : `показать всех (${rt.churned.length})`));
+}
 function PuPersona({
   p
 }) {
@@ -21419,7 +21691,10 @@ function PulsePage() {
     "aria-labelledby": "pu-tab-" + tab,
     key: tab,
     className: "rv-panel"
-  }, tab === "people" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, tab === "people" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuRetention, {
+    rt: m.retention,
+    onOpenUser: setCard
+  }), /*#__PURE__*/React.createElement("div", {
     className: "pu-card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "h"
@@ -23579,6 +23854,11 @@ const BX_CSS = `
 .bx-row .l{flex:1;min-width:0}
 .bx-row .l b{display:block;font-size:13px;font-weight:500;color:var(--ink)}
 .bx-row .l span{font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.bx-row-1{padding:7px 0}
+.bx-row-1 .l{display:flex;align-items:baseline;gap:8px;min-width:0}
+.bx-row-1 .l b{display:inline;flex:none}
+.bx-row-1 .l span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bx-addr-acts{margin-left:auto;font-size:12px;color:var(--ink-3);white-space:nowrap}
 .bx-sw{position:relative;flex:none;width:34px;height:20px;border-radius:999px;border:0;background:var(--hair-2);cursor:pointer;
   transition:background .16s;padding:0}
 .bx-sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;
@@ -23720,13 +24000,6 @@ const IcBx = {
     d: "M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"
   }))
 };
-const BX_HINT = {
-  mention: "Вас упомянули через @, ответили на ваше сообщение или прокомментировали ваш материал",
-  talk: "Новые сообщения в обсуждениях ваших дел — одной строкой на дело",
-  items: "Новые жалобы, документы и отчёты в общих делах, новый разбор ИИ",
-  access: "Добавление в дело, смена прав, передача, статус и архив дела, отчёт от коллеги",
-  inbox: "Ответ команды AuditLens или новый статус обращения"
-};
 const bxIcon = k => k === "report_shared" ? IcBx.report : k === "ticket" || k === "case_msg" || k === "case_mention" || k === "case_reply" ? IcSay.row : k === "case_added" || k === "case_role" || k === "case_removed" || k === "case_left" || k === "case_owner" ? IcBx.people : IcBx.case;
 const bxSnip = it => it && it.ref && it.ref.snippet ? `«${it.ref.snippet}»` : "";
 // «только что · 5 мин · 2 ч · вчера · 3 окт» — свежесть важнее точного времени
@@ -23767,7 +24040,10 @@ const bxDel = path => fetch(path, {
   if (r.ok) return r.json();
   throw new Error("Не получилось. Попробуйте ещё раз");
 });
-const BX_MAIL_PREFS = [["instant", "Сразу — о личном", "Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"], ["digest", "Утренняя сводка", "В рабочие дни около 8:00 — непрочитанное по вашим делам, если есть новое"]];
+// Настройки сжаты (04.10): подпись + время мелко, подробности — в подсказке
+const BX_MAIL_PREFS = [["instant", "Сразу", "о личном", "Упомянули, ответили, добавили в дело, поделились отчётом — раз в 15 минут одним письмом"], ["digest", "Сводка по делам", "будни, 8:00", "Непрочитанное по вашим делам — только если есть новое"], ["brief", "Выпуск дня", "будни, 11:00", "Если вы ещё не заходили: главное за день и всплески по вашим подпискам"]];
+// Группы колокольчика для человека: шесть служебных групп → три строки
+const BX_SET_GROUPS = [["Лично мне", "упоминания, ответы, доступ к делам, ответы команды", ["mention", "access", "inbox"]], ["Дела", "сообщения, новые материалы и разбор ИИ", ["talk", "items"]], ["Подписки", "всплески жалоб по продуктам Сбера", ["watch"]]];
 function BxMail({
   me,
   onPrefs,
@@ -23917,24 +24193,45 @@ function BxMail({
   }, /*#__PURE__*/React.createElement("span", {
     className: "a"
   }, st.email), /*#__PURE__*/React.createElement("span", {
-    className: "bx-tag" + (st.corporate ? " corp" : "")
-  }, st.corporate ? "Sigma" : "личная")), !st.active ? /*#__PURE__*/React.createElement("div", {
+    className: "bx-tag" + (st.corporate ? " corp" : ""),
+    title: st.corporate ? "Письма приходят целиком" : "На личную почту — без подробностей: что произошло и ссылка, без названий дел, имён и цитат"
+  }, st.corporate ? "Sigma" : "личная · кратко"), sure ? /*#__PURE__*/React.createElement("span", {
+    className: "bx-addr-acts"
+  }, "\u043E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C?", " ", /*#__PURE__*/React.createElement("button", {
+    className: "bx-lnk danger",
+    disabled: busy,
+    onClick: () => drop(false)
+  }, "\u0434\u0430"), " ", /*#__PURE__*/React.createElement("button", {
+    className: "bx-lnk",
+    onClick: () => setSure(false)
+  }, "\u043D\u0435\u0442")) : /*#__PURE__*/React.createElement("span", {
+    className: "bx-addr-acts"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "bx-lnk",
+    onClick: () => {
+      setEditing(true);
+      setAddr("");
+      setErr("");
+    }
+  }, "\u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C"), " · ", /*#__PURE__*/React.createElement("button", {
+    className: "bx-lnk",
+    onClick: () => setSure(true)
+  }, "\u043E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C"))), !st.active && /*#__PURE__*/React.createElement("div", {
     className: "bx-note"
-  }, "\u0410\u0434\u0440\u0435\u0441 \u0438\u0437 \u0443\u0447\u0451\u0442\u043D\u043E\u0439 \u0437\u0430\u043F\u0438\u0441\u0438: \u043F\u0438\u0441\u044C\u043C\u0430 \u043D\u0430\u0447\u043D\u0443\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C, \u043A\u043E\u0433\u0434\u0430 \u0440\u0430\u0441\u0441\u044B\u043B\u043A\u0443 \u0432\u043A\u043B\u044E\u0447\u0430\u0442.") : !st.corporate && /*#__PURE__*/React.createElement("div", {
-    className: "bx-note"
-  }, "\u041D\u0430 \u043B\u0438\u0447\u043D\u0443\u044E \u043F\u043E\u0447\u0442\u0443 \u043F\u0438\u0441\u044C\u043C\u0430 \u043F\u0440\u0438\u0445\u043E\u0434\u044F\u0442 \u0431\u0435\u0437 \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0435\u0439: \u0447\u0442\u043E \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u043B\u043E \u0438 \u0441\u0441\u044B\u043B\u043A\u0430 \u2014 \u0431\u0435\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u0439 \u0434\u0435\u043B, \u0438\u043C\u0451\u043D \u0438 \u0446\u0438\u0442\u0430\u0442."), BX_MAIL_PREFS.map(([k, l, h]) => {
+  }, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043D\u0430\u0447\u043D\u0443\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C, \u043A\u043E\u0433\u0434\u0430 \u0440\u0430\u0441\u0441\u044B\u043B\u043A\u0443 \u0432\u043A\u043B\u044E\u0447\u0430\u0442."), BX_MAIL_PREFS.map(([k, l, when, h]) => {
     const on = prefs[k] !== false;
     return /*#__PURE__*/React.createElement("label", {
       key: k,
-      className: "bx-row"
+      className: "bx-row bx-row-1",
+      title: h
     }, /*#__PURE__*/React.createElement("span", {
       className: "l"
-    }, /*#__PURE__*/React.createElement("b", null, l), /*#__PURE__*/React.createElement("span", null, h)), /*#__PURE__*/React.createElement("button", {
+    }, /*#__PURE__*/React.createElement("b", null, l), /*#__PURE__*/React.createElement("span", null, when)), /*#__PURE__*/React.createElement("button", {
       type: "button",
       role: "switch",
       "aria-checked": on,
       className: "bx-sw",
-      "aria-label": l,
+      "aria-label": `${l}: ${h}`,
       onClick: e => {
         e.preventDefault();
         const mail = {
@@ -23949,26 +24246,7 @@ function BxMail({
         }).catch(() => onPrefs && onPrefs(null, prefs));
       }
     }));
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "bx-acts"
-  }, sure ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043F\u0435\u0440\u0435\u0441\u0442\u0430\u043D\u0443\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C."), /*#__PURE__*/React.createElement("button", {
-    className: "bx-lnk danger",
-    disabled: busy,
-    onClick: () => drop(false)
-  }, "\u041E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
-    className: "bx-lnk",
-    onClick: () => setSure(false)
-  }, "\u041E\u0442\u043C\u0435\u043D\u0430")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    className: "bx-lnk",
-    onClick: () => {
-      setEditing(true);
-      setAddr("");
-      setErr("");
-    }
-  }, "\u0414\u0440\u0443\u0433\u043E\u0439 \u0430\u0434\u0440\u0435\u0441"), /*#__PURE__*/React.createElement("button", {
-    className: "bx-lnk",
-    onClick: () => setSure(true)
-  }, "\u041E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043F\u043E\u0447\u0442\u0443"))), err && /*#__PURE__*/React.createElement("div", {
+  }), err && /*#__PURE__*/React.createElement("div", {
     className: "bx-err",
     role: "alert"
   }, err));
@@ -23979,7 +24257,7 @@ function BxMail({
     className: "bx-mail"
   }, /*#__PURE__*/React.createElement("div", {
     className: "bx-note"
-  }, "\u041B\u0438\u0447\u043D\u043E\u0435 \u2014 \u0441\u0440\u0430\u0437\u0443, \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u043E\u0435 \u2014 \u0443\u0442\u0440\u0435\u043D\u043D\u0435\u0439 \u0441\u0432\u043E\u0434\u043A\u043E\u0439. \u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u043A\u043E\u0440\u043F\u043E\u0440\u0430\u0442\u0438\u0432\u043D\u0443\u044E \u043F\u043E\u0447\u0442\u0443 Sigma", bxAt(st.corp_domains), " \u0438\u043B\u0438 \u043B\u0438\u0447\u043D\u0443\u044E \u2014 \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u043A\u043E\u0434, \u0447\u0442\u043E\u0431\u044B \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044C \u0430\u0434\u0440\u0435\u0441. \u041F\u043E\u0447\u0442\u0430 Omega", bxAt(st.blocked_domains), " \u043D\u0435 \u043F\u043E\u0434\u043E\u0439\u0434\u0451\u0442: \u043F\u0438\u0441\u044C\u043C\u0430 \u0438\u0437\u0432\u043D\u0435 \u0442\u0443\u0434\u0430 \u043D\u0435 \u0434\u043E\u0445\u043E\u0434\u044F\u0442."), /*#__PURE__*/React.createElement("form", {
+  }, "\u041F\u043E\u0447\u0442\u0430 Sigma", bxAt(st.corp_domains), " \u0438\u043B\u0438 \u043B\u0438\u0447\u043D\u0430\u044F \u2014 \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u043A\u043E\u0434 \u0434\u043B\u044F \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F."), /*#__PURE__*/React.createElement("form", {
     className: "bx-form",
     onSubmit: e => {
       e.preventDefault();
@@ -24109,10 +24387,10 @@ function BellPanel({
     if (it.link) onGo(it);
   };
   const groups = d && d.groups || [];
-  const toggle = key => {
-    const next = groups.map(g => g.key === key ? {
+  const toggleMany = (keys, val) => {
+    const next = groups.map(g => keys.includes(g.key) ? {
       ...g,
-      on: !g.on
+      on: val
     } : g);
     setD(x => ({
       ...x,
@@ -24194,22 +24472,33 @@ function BellPanel({
     d: "M6 6l12 12M18 6L6 18"
   })))), view === "settings" ? /*#__PURE__*/React.createElement("div", {
     className: "bx-set"
-  }, /*#__PURE__*/React.createElement("p", null, "\u0412\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043D\u043E\u0435 \u043F\u0435\u0440\u0435\u0441\u0442\u0430\u043D\u0435\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C \u0441\u044E\u0434\u0430. \u0423\u0436\u0435 \u043F\u0440\u0438\u0448\u0435\u0434\u0448\u0435\u0435 \u043E\u0441\u0442\u0430\u043D\u0435\u0442\u0441\u044F \u0432 \u0441\u043F\u0438\u0441\u043A\u0435."), groups.map(g => /*#__PURE__*/React.createElement("label", {
-    key: g.key,
-    className: "bx-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "l"
-  }, /*#__PURE__*/React.createElement("b", null, g.label), /*#__PURE__*/React.createElement("span", null, BX_HINT[g.key] || "")), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    role: "switch",
-    "aria-checked": g.on,
-    className: "bx-sw",
-    "aria-label": g.label,
-    onClick: e => {
-      e.preventDefault();
-      toggle(g.key);
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "bx-mail-h",
+    style: {
+      marginTop: 4
     }
-  }))), /*#__PURE__*/React.createElement("p", {
+  }, "\u0412 \u043A\u043E\u043B\u043E\u043A\u043E\u043B\u044C\u0447\u0438\u043A\u0435"), BX_SET_GROUPS.map(([l, h, keys]) => {
+    const mine = groups.filter(g => keys.includes(g.key));
+    if (!mine.length) return null;
+    const on = mine.every(g => g.on);
+    return /*#__PURE__*/React.createElement("label", {
+      key: l,
+      className: "bx-row bx-row-1",
+      title: h
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "l"
+    }, /*#__PURE__*/React.createElement("b", null, l), /*#__PURE__*/React.createElement("span", null, h)), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      role: "switch",
+      "aria-checked": on,
+      className: "bx-sw",
+      "aria-label": `${l}: ${h}`,
+      onClick: e => {
+        e.preventDefault();
+        toggleMany(keys, !on);
+      }
+    }));
+  }), /*#__PURE__*/React.createElement("p", {
     className: "bx-mail-h"
   }, "\u041D\u0430 \u043F\u043E\u0447\u0442\u0443"), /*#__PURE__*/React.createElement(BxMail, {
     me: me,
@@ -24383,6 +24672,17 @@ function Shell() {
     setBellOpen(o => !o);
     if (bell.last) bellSeen(bell.last.id);
   };
+  // «Подключите почту» из «С прошлого визита» — сразу в настройки писем
+  useEffect(() => {
+    const on = () => {
+      setNavOpen(false);
+      setSayOpen(null);
+      setBellView("settings");
+      setBellOpen(true);
+    };
+    window.addEventListener("al-open-mail", on);
+    return () => window.removeEventListener("al-open-mail", on);
+  }, []); // eslint-disable-line
   const closeBell = () => {
     setBellOpen(false);
     loadBell();
@@ -24717,8 +25017,12 @@ function Shell() {
     lastInput.current = now; // переход по разделу — тоже ввод
     trk({
       kind: "page_view",
-      page
+      page,
+      ...(_bootFrom ? {
+        payload: _bootFrom
+      } : {})
     });
+    _bootFrom = null;
     const t = setTimeout(trkFlush, 1500);
     return () => clearTimeout(t);
   }, [page]); // eslint-disable-line
@@ -25099,16 +25403,16 @@ function Shell() {
       className: "onb-callout"
     }, /*#__PURE__*/React.createElement("div", {
       className: "t"
-    }, "\u2726 ", /*#__PURE__*/React.createElement("b", null, "\u041D\u043E\u0432\u043E\u0435:"), " \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u0442\u0435 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u043F\u043E\u0434 \u0441\u0435\u0431\u044F \u2014 \u043E\u043F\u0438\u0448\u0438\u0442\u0435, \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442\u0435, \u0438 \u043F\u043E\u043B\u0443\u0447\u0430\u0439\u0442\u0435 \u043F\u0435\u0440\u0441\u043E\u043D\u0430\u043B\u044C\u043D\u0443\u044E \u043F\u043E\u0434\u0430\u0447\u0443 \u0438 \u0441\u0432\u043E\u0434\u043A\u0438."), /*#__PURE__*/React.createElement("div", {
+    }, "\u2726 \u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u044B \u0438 \u0440\u0438\u0441\u043A\u0438 \u0421\u0431\u0435\u0440\u0430, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0432\u044B \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442\u0435, \u2014 30 \u0441\u0435\u043A\u0443\u043D\u0434, \u0438 \xAB\u0414\u043B\u044F \u0432\u0430\u0441\xBB, \u043F\u043E\u0434\u043F\u0438\u0441\u043A\u0438 \u043D\u0430 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u0436\u0430\u043B\u043E\u0431 \u0438 \u0441\u0432\u043E\u0434\u043A\u0438 \u0441\u0442\u0430\u043D\u0443\u0442 \u0432\u0430\u0448\u0438\u043C\u0438."), /*#__PURE__*/React.createElement("div", {
       className: "b"
     }, /*#__PURE__*/React.createElement("button", {
       className: "go",
       onClick: () => {
         setOnbSeen(true);
-        setPage("profile");
+        setPage("foryou");
         setNavOpen(false);
       }
-    }, "\u041D\u0430\u0441\u0442\u0440\u043E\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
+    }, "\u0412\u044B\u0431\u0440\u0430\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
       className: "skip",
       onClick: () => {
         setOnbSeen(true);
@@ -25391,7 +25695,7 @@ function Shell() {
       className: "later",
       onClick: () => done("later")
     }, "\u041D\u0435 \u0441\u0435\u0439\u0447\u0430\u0441")));
-  })(), !renameSeen && renamedFresh() && /*#__PURE__*/React.createElement("div", {
+  })(), !renameSeen && renamedFresh() && me && me.created_at && me.created_at < "2026-10-01" && /*#__PURE__*/React.createElement("div", {
     className: "ren-toast",
     role: "status"
   }, /*#__PURE__*/React.createElement("div", {
@@ -25535,4 +25839,17 @@ function App() {
     pageKey: "shell"
   }, /*#__PURE__*/React.createElement(Shell, null)));
 }
+
+// Ссылки из писем: цель — в ?go=, а не в #якоре (якорь теряется, если система
+// входа попросит войти заново). from=mail уходит с первым просмотром страницы —
+// «Пульс» видит, кого вернуло письмо (волна 5).
+try {
+  const sp = new URLSearchParams(location.search),
+    go = sp.get("go");
+  if (sp.get("from") === "mail") _bootFrom = {
+    from: "mail",
+    m: sp.get("m") || ""
+  };
+  if (go || _bootFrom) history.replaceState(null, "", location.pathname + (go ? "#" + go.replace(/^#/, "") : location.hash));
+} catch {}
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(App, null));

@@ -238,6 +238,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "name": row.get("display_name") or user.name,
         "timezone": row.get("timezone") or "Europe/Moscow",
         "prefs": row.get("prefs") or {},
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
         "interests": userdata.top_interests(user.username),
         "recommendations": userdata.recommend_topics(user.username),
         "profile_note": row.get("profile_note"),
@@ -263,7 +264,7 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
             body.prefs["mail_promo"] = "seen"
         if "mail" in body.prefs:                # письма: сразу о личном / утренняя сводка
             m = body.prefs["mail"] if isinstance(body.prefs["mail"], dict) else {}
-            body.prefs["mail"] = {k: bool(m[k]) for k in ("instant", "digest") if k in m}
+            body.prefs["mail"] = {k: bool(m[k]) for k in ("instant", "digest", "brief") if k in m}
         if "notify_off" in body.prefs:          # выключенные группы колокольчика
             from . import notices
             off = body.prefs["notify_off"] if isinstance(body.prefs["notify_off"], list) else []
@@ -295,6 +296,92 @@ def _mail_user(fn, *args):
         return fn(*args)
     except mail_delivery.MailUserError as e:
         raise HTTPException(e.status, str(e))
+
+
+# ── С прошлого визита (волна 5 аудита 03.10: удержание активных) ─────────────
+# Каждый визит должен заканчиваться находкой, а не «всё то же». Общий слой —
+# из выпуска (работает у всех, без подписок), личный — подписки на сигналы и
+# колокольчик. «Прошлый визит» — последний просмотр страницы раньше чем за
+# 2 ч: текущий заход не считается.
+_SINCE_GAP_H = 2
+
+
+def since_last_visit(username: str) -> dict:
+    prev = scalar("""SELECT max(created_at) FROM usage_event
+                      WHERE username = :u AND kind = 'page_view'
+                        AND created_at < now() - make_interval(hours => :h)""",
+                  {"u": username, "h": _SINCE_GAP_H})
+    if not prev:
+        return {"first_visit": True}
+    p = {"u": username, "prev": prev}
+    out: dict = {"prev": prev.isoformat(), "first_visit": False,
+                 "gap_days": int(scalar("SELECT EXTRACT(day FROM now() - CAST(:prev AS timestamptz))",
+                                        p) or 0)}
+    # 1. выпуски, вышедшие после прошлого визита: заголовок свежего — повод открыть
+    try:
+        iss = q("""SELECT digest_date, payload->>'headline' AS headline
+                     FROM daily_digest WHERE section = 'headline' AND generated_at > :prev
+                    ORDER BY digest_date DESC LIMIT 7""", p)
+        out["issues"] = {"n": len(iss), "latest": iss[0]["headline"] if iss else None,
+                         "date": iss[0]["digest_date"].isoformat() if iss else None}
+    except Exception:  # noqa: BLE001
+        out["issues"] = {"n": 0}
+    # 2. важные новости потока (оценка повода для аудитора ≥ 6)
+    try:
+        nw = q("""SELECT coalesce(s2->>'headline', title) AS title, url, value
+                    FROM news_item
+                   WHERE first_seen > :prev AND value >= 6
+                     AND (event_id IS NULL OR s2 IS NOT NULL)
+                   ORDER BY value DESC, ts DESC NULLS LAST LIMIT 3""", p)
+        n_news = scalar("""SELECT count(*) FROM news_item
+                            WHERE first_seen > :prev AND value >= 6
+                              AND (event_id IS NULL OR s2 IS NOT NULL)""", p)
+        out["news"] = {"n": int(n_news or 0), "top": nw}
+    except Exception:  # noqa: BLE001
+        out["news"] = {"n": 0, "top": []}
+    # 3. новые всплески жалоб на Сбер — инструментом пользуются аудиторы Сбера:
+    # их зона — продукты и риски Сбера; чужой банк — только если на него
+    # подписались (для сравнения). Свои подписки — первыми.
+    try:
+        from ..rag import review_codebook as cb
+        subs = {(r["bank"], r["product"] or "") for r in q(
+            "SELECT bank, coalesce(product, '') AS product FROM review_subscription WHERE username = :u", p)}
+        sig = q("""SELECT bank, product, issue, level, (stats->>'ratio')::numeric AS ratio
+                     FROM signal_journal WHERE first_seen > :prev
+                    ORDER BY (level = 'high') DESC, first_seen DESC LIMIT 100""", p)
+        for r in sig:
+            r["label"] = (cb.ISSUES.get(r["issue"]) or (r["issue"],))[0]
+            r["mine"] = (r["bank"], r["product"] or "") in subs or (r["bank"], "") in subs
+        sig = [r for r in sig if r["mine"] or r["bank"] == "Сбербанк"]
+        sig.sort(key=lambda r: (not r["mine"], r["level"] != "high"))
+        out["signals"] = {"n": len(sig), "mine": sum(1 for r in sig if r["mine"]), "top": sig[:3],
+                          "has_subs": bool(subs)}
+    except Exception:  # noqa: BLE001
+        out["signals"] = {"n": 0, "mine": 0, "top": [], "has_subs": False}
+    # 4. тарифы: значимые изменения Сбера и рынка (без откатов и смены выдачи)
+    try:
+        rows = q(f"""SELECT b.is_sber, count(*) AS n FROM change_history ch
+                       JOIN product_offer o USING (offer_id) JOIN bank b USING (bank_id)
+                       {_CTX_JOIN_SQL}
+                      WHERE ch.changed_at > :prev AND {_SAME_CTX_SQL} AND {_SIGNIFICANT_CHANGE_SQL}
+                        AND ch.change_id NOT IN ({_REVERT_IDS_SQL})
+                      GROUP BY 1""", {**p, "rev_days": max(1, min(out["gap_days"] + 1, 90))})
+        out["tariffs"] = {"sber": sum(int(r["n"]) for r in rows if r["is_sber"]),
+                          "market": sum(int(r["n"]) for r in rows)}
+    except Exception:  # noqa: BLE001
+        out["tariffs"] = {"sber": 0, "market": 0}
+    # 5. дела, отчёты, обращения — непрочитанное в колокольчике
+    try:
+        from . import notices
+        out["bell"] = int(notices.unread(username).get("unread") or 0)
+    except Exception:  # noqa: BLE001
+        out["bell"] = 0
+    return out
+
+
+@app.get("/api/me/since")
+def me_since(user: CurrentUser = Depends(get_current_user)):
+    return since_last_visit(user.username)
 
 
 @app.get("/api/me/email")
@@ -388,6 +475,12 @@ _RISK_PHRASES = {
     "market": "тарифы и позиции конкурентов",
     "conduct": "качество продаж и жалобы клиентов",
 }
+# чип онбординга → продукт в разметке жалоб (review_codebook.PRODUCTS)
+_OB_REVIEW_PRODUCT = {"deposit": "Вклад", "ipoteka": "Ипотека", "credit_card": "Кредитная карта",
+                      "debit_card": "Дебетовая карта", "consumer_loan": "Потребительский кредит",
+                      "auto": "Автокредит", "savings": "Накопительный счёт",
+                      "transfers": "Переводы и платежи", "acquiring": "Бизнес: эквайринг",
+                      "rko": "Бизнес: счёт и РКО"}
 _OB_PRODUCTS = {"deposit", "ipoteka", "credit_card", "debit_card", "consumer_loan",
                 "auto", "rko", "savings", "acquiring", "premium", "transfers"}
 
@@ -410,6 +503,15 @@ async def me_onboarding(body: OnboardingIn,
         pinned=list(dict.fromkeys((cur.get("pinned") or []) + prods)),
         custom=list(dict.fromkeys((cur.get("custom") or []) + phrases)))
     userdata.update_prefs(user.username, {"onboarded": True})
+    # выбранные продукты — сразу подписки «Следить» по Сберу: новый всплеск жалоб
+    # по ним придёт в колокольчик и в «С прошлого визита» (волна 5)
+    try:
+        from ..rag import reviews_work
+        for k in prods:
+            if _OB_REVIEW_PRODUCT.get(k):
+                reviews_work.subs_add(user.username, "Сбербанк", _OB_REVIEW_PRODUCT[k])
+    except Exception:  # noqa: BLE001 — подписка не мешает собрать страницу
+        log.warning("onboarding: подписки не созданы", exc_info=True)
     from ..digest import personal
     p = await personal.build_foryou(user.username, force=True)
     return {"ok": True, "foryou": p}
