@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 9855a5ef5e554aa251b3ca588c9d3ed3251d09e0e7cc588e3f0370d540a29c9e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 bac0ba15c00e31bb9d5e4890c29c0d6b9a87acf244856ffcc3b67d754c5cfbc4): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21793,7 +21793,7 @@ function PulsePage() {
     className: "pu-kv"
   }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u043E\u0433\u043E\u043D\u044B \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0430", /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, f.deep_p50_s != null ? `отчёт строится: медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}` : "время отчёта появится после первых прогонов")), /*#__PURE__*/React.createElement("b", {
+  }, [f.quick_p50_s != null ? `быстрый ответ — медиана ${puDur(f.quick_p50_s)}` : null, f.deep_p50_s != null ? `отчёт — медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}` : f.deep_failed ? `отчёты: готово ${f.deep_ok || 0}, сорвалось ${f.deep_failed}` : null].filter(Boolean).join(" · ") || "время появится после первых прогонов")), /*#__PURE__*/React.createElement("b", {
     className: "tnum"
   }, f.runs_ok || 0, " \u0433\u043E\u0442\u043E\u0432\u043E", f.runs_failed ? /*#__PURE__*/React.createElement("span", {
     style: {

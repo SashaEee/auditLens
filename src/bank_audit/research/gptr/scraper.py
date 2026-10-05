@@ -276,7 +276,7 @@ def install() -> None:
         return
     original = _s.Scraper.get_scraper
 
-    def get_scraper(self, link):
+    def get_scraper(self, link, *_a, **_kw):     # новые параметры библиотеки не роняют чтение
         # PDF и arxiv оставляем их классам: у нас fetcher вернёт байты, которые
         # HTML-парсер не поймёт.
         path = link.split("?", 1)[0].lower()

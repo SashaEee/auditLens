@@ -36,6 +36,27 @@ _TOPIC_PRIORITY = ("deposits", "credits", "mortgage", "cards", "cards_credit", "
                    "mobile_app", "support", "about")
 
 
+def _key_pages_from_archive(bank_slug: str, per_topic: int = 3) -> dict[str, list[str]]:
+    """{тема: [адрес, …]} из архива: страницы официального сайта банка,
+    которые уже попадали в базу знаний, — свежие первыми, по теме адреса."""
+    with db.session() as s:
+        rows = s.execute(text("""
+            SELECT DISTINCT ON (d.url) d.url, d.topics, d.fetched_at
+              FROM document d
+              JOIN bank b ON b.bank_id = d.bank_id
+              JOIN source_trust st ON st.source_id = d.source_id
+             WHERE b.slug = :s AND st.kind = 'bank_official' AND d.trust_score >= 0.5
+               AND d.topics IS NOT NULL AND d.topics <> '{}'
+             ORDER BY d.url, d.fetched_at DESC"""), {"s": bank_slug}).all()
+    out: dict[str, list[str]] = {}
+    for url, topics, _at in sorted(rows, key=lambda r: r[2], reverse=True):
+        for t in topics or []:
+            lst = out.setdefault(t, [])
+            if len(lst) < per_topic and url not in lst:
+                lst.append(url)
+    return out
+
+
 def crawl_one_bank(bank_slug: str, max_urls: int = MAX_URLS_PER_BANK, *,
                    rotation: int = 0, record_kind: str | None = None,
                    should_stop: Callable[[], bool] | None = None) -> dict:
@@ -52,11 +73,13 @@ def crawl_one_bank(bank_slug: str, max_urls: int = MAX_URLS_PER_BANK, *,
               JOIN bank b USING(bank_id)
              WHERE b.slug = :s
         """), {"s": bank_slug}).first()
-    if not row:
-        return {"bank_slug": bank_slug, "error": "no bank_profile"}
-
-    key_pages, bank_id = row[0], row[1]
+    key_pages = row[0] if row else None
     if not key_pages or not isinstance(key_pages, dict):
+        # Профиль банка заводят руками (/api/rag/bootstrap), и на проде его не
+        # было ни у кого — ночной обход 05.10 не прочитал ни страницы. Запасной
+        # путь: ключевые страницы — уже собранные страницы сайта банка по темам
+        key_pages = _key_pages_from_archive(bank_slug)
+    if not key_pages:
         return {"bank_slug": bank_slug, "error": "no key_pages"}
 
     # Темы — в порядке важности для аудита, а не в порядке ключей jsonb (Postgres

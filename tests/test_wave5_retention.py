@@ -134,3 +134,57 @@ def test_brief_only_if_not_visited_and_no_digest(monkeypatch):
     assert M._brief(r, now) == 0                                    # получил сводку по делам
     state.update(digest=False)
     assert M._brief(r, now) == 1 and sent == ["brief"]
+
+
+def test_gptr_planner_patch_accepts_new_library_kwargs(monkeypatch):
+    """05.10: gpt-researcher 0.16.x начала передавать search_results в
+    plan_research — точная сигнатура подмены роняла каждый отчёт."""
+    import asyncio
+    import sys
+    import types
+    from bank_audit.research.gptr import planner, runstate
+
+    class RC:
+        async def plan_research(self, query, query_domains=None, search_results=None):
+            return ["library"]
+    mod = types.ModuleType("gpt_researcher.skills.researcher")
+    mod.ResearchConductor = RC
+    for name in ("gpt_researcher", "gpt_researcher.skills"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(sys.modules, "gpt_researcher.skills.researcher", mod)
+    monkeypatch.setattr(planner, "plan_to_subqueries", lambda plan, q, attributes=None: (["a", "b"], []))
+    runstate.new_run()
+    planner.install({}, "вопрос")
+    out = asyncio.run(RC().plan_research("q", [], search_results=[{"x": 1}], extra=True))
+    assert out == ["a", "b"]
+
+
+def test_crawl_falls_back_to_archived_bank_pages(monkeypatch):
+    """05.10: профилей банков на проде нет — обход берёт ключевые страницы из
+    уже собранных страниц официального сайта, по темам, свежие первыми."""
+    import types
+    from datetime import datetime
+    from bank_audit.rag import crawler as C
+
+    class S:
+        def execute(self, sql, p=None):
+            if "bank_profile" in str(sql):
+                return types.SimpleNamespace(first=lambda: None)
+            return types.SimpleNamespace(all=lambda: [
+                ("https://bank.ru/vklady/a", ["deposits"], datetime(2026, 10, 1)),
+                ("https://bank.ru/vklady/b", ["deposits"], datetime(2026, 10, 3)),
+                ("https://bank.ru/ipoteka", ["mortgage"], datetime(2026, 9, 1))])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setattr(C.db, "session", lambda: S())
+    monkeypatch.setattr(C.time, "sleep", lambda s: None)
+    read = []
+    monkeypatch.setattr(C.indexer, "ingest_document_from_url", lambda url, **k: (
+        read.append(url), types.SimpleNamespace(document_id=1, chunks_added=1, doc_type="html",
+                                                trust_score=.9, is_new=False, skipped_reason="duplicate"))[1])
+    r = C.crawl_one_bank("sberbank", max_urls=8)
+    assert r["urls_attempted"] == 2 and read == ["https://bank.ru/vklady/b", "https://bank.ru/ipoteka"]

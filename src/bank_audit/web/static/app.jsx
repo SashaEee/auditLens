@@ -11461,7 +11461,9 @@ function PulsePage(){
             <div className="pu-kv"><span>Отчёты</span><b className="tnum">{f.reports||0}</b></div>
             {/* итоги прогонов: заказ ≠ отчёт — сорванные раньше не было видно (ПУЛ-02) */}
             {(f.runs_ok||f.runs_failed||f.runs_stopped)?<div className="pu-kv"><span>Прогоны ИИ-помощника
-              <span className="sub">{f.deep_p50_s!=null?`отчёт строится: медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}`:"время отчёта появится после первых прогонов"}</span></span>
+              <span className="sub">{[f.quick_p50_s!=null?`быстрый ответ — медиана ${puDur(f.quick_p50_s)}`:null,
+                f.deep_p50_s!=null?`отчёт — медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}`
+                  :f.deep_failed?`отчёты: готово ${f.deep_ok||0}, сорвалось ${f.deep_failed}`:null].filter(Boolean).join(" · ")||"время появится после первых прогонов"}</span></span>
               <b className="tnum">{f.runs_ok||0} готово{f.runs_failed?<span style={{color:"var(--neg)"}}> · {f.runs_failed} сорвалось</span>:null}{f.runs_stopped?<span style={{color:"var(--ink-3)"}}> · {f.runs_stopped} остановлено</span>:null}</b></div>:null}
             <div className="pu-kv"><span>Быстрые ответы сохранено</span><b className="tnum">{f.quick_saved||0}</b></div>
             <div className="pu-kv"><span>Открытий сохранённых отчётов</span><b className="tnum">{f.report_opens||0}</b></div>
