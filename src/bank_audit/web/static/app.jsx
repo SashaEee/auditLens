@@ -5671,6 +5671,30 @@ function MatrixExportButton({matrix, question, streaming}){
   </span>;
 }
 
+// Файлы, которые ИИ-помощник отдал в ответе (ai/agent_files.py): агент вставляет
+// метку [[FILE:<id>]], сервер привязывает файл к спросившему, здесь — «Скачать».
+// В тексте метка становится названием файла; недописанная в стриме — прячется.
+const AGF_MARK=/\[\[FILE:([0-9a-f]{32})\]\]/g;
+function stripFileMarks(text,files){
+  if(!text||text.indexOf("[[F")<0) return text;
+  const names={}; (files||[]).forEach(f=>{names[f.id]=f.name;});
+  return text.replace(AGF_MARK,(_,id)=>names[id]?`**${names[id]}**`:"").replace(/\[\[F[^\]\n]*$/,"");
+}
+function AgentFiles({files}){
+  if(!files||!files.length) return null;
+  const size=b=>b>=1048576?(b/1048576).toFixed(1).replace(".",",")+" МБ":Math.max(1,Math.round((b||0)/1024))+" КБ";
+  return <div className="agf-list">{files.map(f=>{
+    const ext=((f.name||"").split(".").pop()||"").toLowerCase().slice(0,4);
+    return <a key={f.id} className="agf" href={`/api/agent-files/${f.id}`} download={f.name}
+              onClick={()=>trkEvent({kind:"ui",page:"ai",payload:{action:"agent_file_download",ext}})}>
+      <span className={"agf-ext agf-"+ext}>{ext.toUpperCase()}</span>
+      <span className="agf-t"><span className="agf-n" title={f.name}>{f.name}</span>
+        <span className="agf-s">{size(f.size)}</span></span>
+      <span className="agf-dl"><svg viewBox="0 0 16 16" fill="none"><path d="M8 1v9m0 0L4.5 6.5M8 10l3.5-3.5M2 11.5V13a1 1 0 001 1h10a1 1 0 001-1v-1.5"
+        stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>Скачать</span>
+    </a>;})}</div>;
+}
+
 function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps, reportId, title, kind}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
@@ -7193,6 +7217,8 @@ function AIPage(){
                 updateLast(last=>({tools:[...(last.tools||[]),data.name]}));
               }else if(data.type==="sources"&&Array.isArray(data.sources)){
                 updateLast(()=>({sources:data.sources,sourcesFailed:data.failed||0}));
+              }else if(data.type==="files"&&Array.isArray(data.files)){
+                updateLast(()=>({files:data.files}));
               }else if(data.type==="mode"){
                 updateLast(()=>({mode:data.value}));
               }else if(data.type==="phase"){
@@ -7411,7 +7437,8 @@ function AIPage(){
         if(m.role==="user") return {role:"user",text:m.content};
         const meta=m.meta||{};
         return {role:"ai",text:m.content,sources:meta.sources||[],report_id:meta.report_id||undefined,
-                mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined};
+                mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined,
+                files:meta.files||undefined};
       });
       // История хранит только текст и источники; визуализации, графики и
       // артефакты проверки живут в отчёте — дотягиваем их по report_id, иначе
@@ -7444,7 +7471,7 @@ function AIPage(){
                 verification:p.verification||null,gaps:p.gaps||null,
                 ranking:p.ranking||null,insights:p.insights||null,
                 report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name,
-                status:p.status||undefined,title:r.title||undefined}]);
+                status:p.status||undefined,title:r.title||undefined,files:p.files||undefined}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
@@ -7608,6 +7635,7 @@ function AIPage(){
           // Quick mode — ответ ИИ (редизайн: голый текст + tool-бокс + источники + апселл)
           const prevQ = (i>0 && msgs[i-1]?.role==="user") ? msgs[i-1].text : "";
           const thinking = !m.text && loading && i===msgs.length-1;
+          const qText = stripFileMarks(m.text, m.files);
           return <div key={i} className="chat-msg ai quick-msg">
             <div className="who">AuditLens AI{m.engine==="hermes"?" · Hermes ✦":""}</div>
             {m.tools&&m.tools.length>0 &&
@@ -7620,7 +7648,8 @@ function AIPage(){
               </div>}
             {thinking
               ? <PendingDots label="Думаю над ответом…"/>
-              : <div className="quick-answer chat-bubble">{renderMD(m.text, m.sources)}</div>}
+              : <div className="quick-answer chat-bubble">{renderMD(qText, m.sources)}</div>}
+            <AgentFiles files={m.files}/>
             {m.sources&&m.sources.length>0 &&
               <div className="quick-sources">
                 {m.sources.map((s,si)=>(
@@ -7644,11 +7673,11 @@ function AIPage(){
               {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&<ShareButton reportId={m.report_id}/>}
               {/* PDF и у быстрого ответа: раньше кнопка была только у отчёта, и тот, кому
                   ответ понравился, искал «Скачать PDF» и не находил (обращение 06.10) */}
-              {(m.text||"").length>=100&&<PdfExportButton question={prevQ} report={m.text} sources={m.sources||[]}
+              {(qText||"").length>=100&&<PdfExportButton question={prevQ} report={qText} sources={m.sources||[]}
                 streaming={false} reportId={m.report_id} title={m.title} kind="quick"/>}
               {/* ответ длиннее 800 знаков сохранён отчётом — приобщается им; короткий — как есть */}
               <CaseAddBtn src="ai_answer" item={m.report_id?{kind:"report",ref_id:m.report_id}
-                :{kind:"answer",title:prevQ,meta:{question:prevQ,text:m.text,
+                :{kind:"answer",title:prevQ,meta:{question:prevQ,text:qText,
                   sources:(m.sources||[]).slice(0,12).map(x=>({n:x.n,url:x.url,title:x.bank_name||domainOf(x.url)}))}}}/>
             </div>}
             {m.text&&!(loading&&i===msgs.length-1)&&

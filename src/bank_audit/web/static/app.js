@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 7c8f88326ad5c5ff86ff546fc74ecb0b08fb05d596077ccb99b5eb2b0a4ad52c): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 d3e725fbebe8e6e948c1485bdd1ded8b2de2f91b07f501fb9112415fdf307a47): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -10899,6 +10899,64 @@ function MatrixExportButton({
     title: "\u041F\u043E\u043B\u043D\u0430\u044F \u043C\u0430\u0442\u0440\u0438\u0446\u0430 \u0432 JSON"
   }, "JSON"));
 }
+
+// Файлы, которые ИИ-помощник отдал в ответе (ai/agent_files.py): агент вставляет
+// метку [[FILE:<id>]], сервер привязывает файл к спросившему, здесь — «Скачать».
+// В тексте метка становится названием файла; недописанная в стриме — прячется.
+const AGF_MARK = /\[\[FILE:([0-9a-f]{32})\]\]/g;
+function stripFileMarks(text, files) {
+  if (!text || text.indexOf("[[F") < 0) return text;
+  const names = {};
+  (files || []).forEach(f => {
+    names[f.id] = f.name;
+  });
+  return text.replace(AGF_MARK, (_, id) => names[id] ? `**${names[id]}**` : "").replace(/\[\[F[^\]\n]*$/, "");
+}
+function AgentFiles({
+  files
+}) {
+  if (!files || !files.length) return null;
+  const size = b => b >= 1048576 ? (b / 1048576).toFixed(1).replace(".", ",") + " МБ" : Math.max(1, Math.round((b || 0) / 1024)) + " КБ";
+  return /*#__PURE__*/React.createElement("div", {
+    className: "agf-list"
+  }, files.map(f => {
+    const ext = ((f.name || "").split(".").pop() || "").toLowerCase().slice(0, 4);
+    return /*#__PURE__*/React.createElement("a", {
+      key: f.id,
+      className: "agf",
+      href: `/api/agent-files/${f.id}`,
+      download: f.name,
+      onClick: () => trkEvent({
+        kind: "ui",
+        page: "ai",
+        payload: {
+          action: "agent_file_download",
+          ext
+        }
+      })
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "agf-ext agf-" + ext
+    }, ext.toUpperCase()), /*#__PURE__*/React.createElement("span", {
+      className: "agf-t"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "agf-n",
+      title: f.name
+    }, f.name), /*#__PURE__*/React.createElement("span", {
+      className: "agf-s"
+    }, size(f.size))), /*#__PURE__*/React.createElement("span", {
+      className: "agf-dl"
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 16 16",
+      fill: "none"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M8 1v9m0 0L4.5 6.5M8 10l3.5-3.5M2 11.5V13a1 1 0 001 1h10a1 1 0 001-1v-1.5",
+      stroke: "currentColor",
+      strokeWidth: "1.4",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    })), "\u0421\u043A\u0430\u0447\u0430\u0442\u044C"));
+  }));
+}
 function PdfExportButton({
   question,
   report,
@@ -13279,6 +13337,10 @@ function AIPage() {
                   sources: data.sources,
                   sourcesFailed: data.failed || 0
                 }));
+              } else if (data.type === "files" && Array.isArray(data.files)) {
+                updateLast(() => ({
+                  files: data.files
+                }));
               } else if (data.type === "mode") {
                 updateLast(() => ({
                   mode: data.value
@@ -13656,7 +13718,8 @@ function AIPage() {
           sources: meta.sources || [],
           report_id: meta.report_id || undefined,
           mode: meta.mode || undefined,
-          phase: meta.mode === "deep" ? "done" : undefined
+          phase: meta.mode === "deep" ? "done" : undefined,
+          files: meta.files || undefined
         };
       });
       // История хранит только текст и источники; визуализации, графики и
@@ -13717,7 +13780,8 @@ function AIPage() {
         report_owner: r.owner,
         owner_name: r.owner_name,
         status: p.status || undefined,
-        title: r.title || undefined
+        title: r.title || undefined,
+        files: p.files || undefined
       }]);
       setSessionId(r.session_id || null);
       setActiveCite(null);
@@ -14013,6 +14077,7 @@ function AIPage() {
     // Quick mode — ответ ИИ (редизайн: голый текст + tool-бокс + источники + апселл)
     const prevQ = i > 0 && msgs[i - 1]?.role === "user" ? msgs[i - 1].text : "";
     const thinking = !m.text && loading && i === msgs.length - 1;
+    const qText = stripFileMarks(m.text, m.files);
     return /*#__PURE__*/React.createElement("div", {
       key: i,
       className: "chat-msg ai quick-msg"
@@ -14038,7 +14103,9 @@ function AIPage() {
       label: "\u0414\u0443\u043C\u0430\u044E \u043D\u0430\u0434 \u043E\u0442\u0432\u0435\u0442\u043E\u043C\u2026"
     }) : /*#__PURE__*/React.createElement("div", {
       className: "quick-answer chat-bubble"
-    }, renderMD(m.text, m.sources)), m.sources && m.sources.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, renderMD(qText, m.sources)), /*#__PURE__*/React.createElement(AgentFiles, {
+      files: m.files
+    }), m.sources && m.sources.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "quick-sources"
     }, m.sources.map((s, si) => /*#__PURE__*/React.createElement("a", {
       key: si,
@@ -14078,9 +14145,9 @@ function AIPage() {
       className: "quick-acts"
     }, m.report_id && (!m.report_owner || me && m.report_owner === me.username) && /*#__PURE__*/React.createElement(ShareButton, {
       reportId: m.report_id
-    }), (m.text || "").length >= 100 && /*#__PURE__*/React.createElement(PdfExportButton, {
+    }), (qText || "").length >= 100 && /*#__PURE__*/React.createElement(PdfExportButton, {
       question: prevQ,
-      report: m.text,
+      report: qText,
       sources: m.sources || [],
       streaming: false,
       reportId: m.report_id,
@@ -14096,7 +14163,7 @@ function AIPage() {
         title: prevQ,
         meta: {
           question: prevQ,
-          text: m.text,
+          text: qText,
           sources: (m.sources || []).slice(0, 12).map(x => ({
             n: x.n,
             url: x.url,

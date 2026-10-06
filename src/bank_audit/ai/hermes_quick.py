@@ -268,7 +268,10 @@ def needs_legal_note(text: str) -> bool:
 def instructions(retry: bool = False) -> str:
     now = _dt.datetime.now(MSK)
     s = (f"Сегодня {now:%d.%m.%Y}, {now:%H:%M} МСК. Вопрос задан в чате ИИ-помощника "
-         "AuditLens; ответ увидит аудитор в этом же чате (markdown).")
+         "AuditLens; ответ увидит аудитор в этом же чате (markdown). Файлов в твоём "
+         "терминале он не видит: файл для него отдавай командой "
+         "`python3 /root/.hermes/bin/al-share <путь> \"<имя>\"` и вставляй в ответ "
+         "метку [[FILE:…]], которую она напечатает.")
     if retry:
         s += (" Предыдущая попытка закончилась без ответа. Ответь по данным, которые "
               "дают инструменты AuditLens, за несколько шагов; чего не хватило — "
@@ -441,6 +444,13 @@ async def stream_quick_hermes(question: str, history: list[dict],
 
     if shown and needs_legal_note("".join(said)):
         yield emit(LEGAL_NOTE)
+    # Файлы, которые агент отдал командой al-share: метки [[FILE:…]] в ответе.
+    # Обёртка стрима привяжет их к спросившему и покажет карточки «Скачать».
+    from .agent_files import marker_ids
+    ids = marker_ids("".join(said)) if shown else []
+    if ids:
+        trace["files"] = len(ids)
+        yield json.dumps({"type": "files", "ids": ids})
     trace["seconds"] = round(time.monotonic() - t0, 1)
     if usage:
         trace["usage"] = usage
