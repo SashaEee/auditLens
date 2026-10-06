@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 de28e99129918f5514c230c23d5c191aba8b764efa55d24a94c8d404ca655259): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 7c8f88326ad5c5ff86ff546fc74ecb0b08fb05d596077ccb99b5eb2b0a4ad52c): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -10912,7 +10912,8 @@ function PdfExportButton({
   insights,
   gaps,
   reportId,
-  title
+  title,
+  kind
 }) {
   const [busy, setBusy] = useState(false);
   const handle = async () => {
@@ -10933,6 +10934,8 @@ function PdfExportButton({
           // и проверяет доступ); название из потока — запас, пока отчёт не сохранён.
           report_id: reportId || null,
           title: title || null,
+          kind: kind || null,
+          // "quick" — быстрый ответ: компактный PDF без обложки
           sources: (sources || []).map(s => ({
             n: s.n,
             url: s.url,
@@ -13609,6 +13612,13 @@ function AIPage() {
   // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
   const runDeepFromQuick = srcQ => {
     if (loading || !srcQ) return;
+    trkEvent({
+      kind: "ui",
+      page: "ai",
+      payload: {
+        action: "quick_upsell"
+      }
+    });
     setDeepMode(true);
     setMsgs(m => [...m, {
       role: "user",
@@ -14068,6 +14078,14 @@ function AIPage() {
       className: "quick-acts"
     }, m.report_id && (!m.report_owner || me && m.report_owner === me.username) && /*#__PURE__*/React.createElement(ShareButton, {
       reportId: m.report_id
+    }), (m.text || "").length >= 100 && /*#__PURE__*/React.createElement(PdfExportButton, {
+      question: prevQ,
+      report: m.text,
+      sources: m.sources || [],
+      streaming: false,
+      reportId: m.report_id,
+      title: m.title,
+      kind: "quick"
     }), /*#__PURE__*/React.createElement(CaseAddBtn, {
       src: "ai_answer",
       item: m.report_id ? {

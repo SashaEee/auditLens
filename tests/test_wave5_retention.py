@@ -216,3 +216,40 @@ def test_rename_note_does_not_block_other_notes_for_newcomers():
     assert "(renameSeen||!renamedFresh())" not in jsx
     assert "&&!renameShow&&!bellToast" in jsx and "bellToast&&!bellOpen&&!sayOpen&&!renameShow" in jsx
     assert "Выпуск дня — письмом в 11:00" in jsx and "mailPromoDue(" in jsx
+
+
+def test_quick_answer_pdf_is_compact():
+    """PDF быстрого ответа: без обложки и оглавления, с пометкой «не сверялись»;
+    отчёт — как раньше, с обложкой."""
+    from bank_audit.web.pdf_export import build_pdf_html
+    md = "Главное: по жалобам за 2026 год тема «Банкоматы» набрала 116 жалоб [1]. " * 3
+    src = [{"n": 1, "url": "https://example.org/a", "bank_name": "banki.ru"}]
+    q = build_pdf_html(question="топ-5 тем", report_md=md, sources=src, kind="quick")
+    assert 'class="cover"' not in q and "Быстрый ответ" in q and "sources-inline" in q
+    assert "не сверялись" in q and 'class="toc-head"' not in q
+    r = build_pdf_html(question="топ-5 тем", report_md=md, sources=src)
+    assert 'class="cover"' in r and "Аналитический отчёт" in r
+
+
+def test_export_pdf_takes_quick_kind_from_saved_answer(monkeypatch):
+    """Сохранённый быстрый ответ выгружается компактным PDF, даже если клиент
+    не прислал kind; без сохранения — по полю kind."""
+    import asyncio
+    from bank_audit.web import app as A, pdf_export
+    from bank_audit.web.auth import CurrentUser
+    seen = []
+    monkeypatch.setattr(pdf_export, "export_report_to_pdf", lambda **kw: seen.append(kw["kind"]) or b"%PDF")
+    monkeypatch.setattr(A.userdata, "get_report",
+                        lambda rid, u: {"title": "T", "payload": {"mode": "quick"}, "created_at": None})
+    u = CurrentUser(username="u", name="u", authenticated=True)
+    md = "x" * 150
+    asyncio.run(A.ai_export_pdf(A.PdfExportRequest(question="q", report_md=md, report_id=5), u))
+    asyncio.run(A.ai_export_pdf(A.PdfExportRequest(question="q", report_md=md, kind="quick"), u))
+    asyncio.run(A.ai_export_pdf(A.PdfExportRequest(question="q", report_md=md), u))
+    assert seen == ["quick", "quick", "report"]
+
+
+def test_quick_answer_has_pdf_button():
+    from pathlib import Path
+    jsx = (Path(__file__).resolve().parents[1] / "src/bank_audit/web/static/app.jsx").read_text(encoding="utf8")
+    assert 'title={m.title} kind="quick"/>' in jsx and "kind: kind || null" in jsx

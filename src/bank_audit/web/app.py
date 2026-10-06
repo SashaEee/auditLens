@@ -5219,6 +5219,7 @@ class PdfExportRequest(BaseModel):
     # Название и дата — из сохранённого отчёта по report_id (сервер проверяет
     # доступ); поля с клиента — только запасной вариант для несохранённого.
     report_id: Optional[int] = None
+    kind: Optional[str] = None           # "quick" — быстрый ответ: компактный PDF без обложки
     title: Optional[str] = None
     report_date: Optional[str] = None
     author: Optional[str] = None
@@ -5251,6 +5252,7 @@ async def ai_export_pdf(req: PdfExportRequest, user: CurrentUser = Depends(get_c
     from urllib.parse import quote as _quote
     from .pdf_export import _doc_title, _report_day, export_report_to_pdf, pdf_filename
     title, rdate, author, rid = req.title, req.report_date, req.author, None
+    kind = "quick" if req.kind == "quick" else "report"
     if req.report_id:
         try:
             r = await asyncio.to_thread(userdata.get_report, int(req.report_id), user.username)
@@ -5258,6 +5260,8 @@ async def ai_export_pdf(req: PdfExportRequest, user: CurrentUser = Depends(get_c
             r = None
         if r:
             rid = int(req.report_id)
+            if ((r.get("payload") or {}).get("mode")) == "quick":
+                kind = "quick"
             title = r.get("title") or title
             rdate = r.get("created_at") or rdate
             author = r.get("owner_name") or r.get("owner") or author
@@ -5271,7 +5275,7 @@ async def ai_export_pdf(req: PdfExportRequest, user: CurrentUser = Depends(get_c
                 charts=req.charts or [], viz=_viz_clean(req.viz or []),
                 ranking=req.ranking, insights=req.insights or [],
                 gaps=req.gaps, claim_check=req.claim_check,
-                title=title, report_id=rid, report_date=rdate, author=author),
+                title=title, report_id=rid, report_date=rdate, author=author, kind=kind),
         ), timeout=120)
     except Exception as e:
         logging.getLogger(__name__).warning("PDF export failed: %s", e)

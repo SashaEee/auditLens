@@ -5671,7 +5671,7 @@ function MatrixExportButton({matrix, question, streaming}){
   </span>;
 }
 
-function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps, reportId, title}){
+function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps, reportId, title, kind}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
     if(busy || streaming) return;
@@ -5688,6 +5688,7 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           // и проверяет доступ); название из потока — запас, пока отчёт не сохранён.
           report_id: reportId || null,
           title: title || null,
+          kind: kind || null,          // "quick" — быстрый ответ: компактный PDF без обложки
           sources: (sources || []).map(s => ({
             n: s.n, url: s.url, bank_name: s.bank_name, title: s.title,
             source_kind: s.source_kind, trust_score: s.trust_score,
@@ -7385,6 +7386,7 @@ function AIPage(){
   // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
   const runDeepFromQuick=(srcQ)=>{
     if(loading||!srcQ)return;
+    trkEvent({kind:"ui",page:"ai",payload:{action:"quick_upsell"}});
     setDeepMode(true);
     setMsgs(m=>[...m,{role:"user",text:srcQ}]);
     runSend(srcQ,true);
@@ -7640,6 +7642,10 @@ function AIPage(){
               <div style={{marginTop:10}}><span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span></div>}
             {m.text&&!(loading&&i===msgs.length-1)&&<div className="quick-acts">
               {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&<ShareButton reportId={m.report_id}/>}
+              {/* PDF и у быстрого ответа: раньше кнопка была только у отчёта, и тот, кому
+                  ответ понравился, искал «Скачать PDF» и не находил (обращение 06.10) */}
+              {(m.text||"").length>=100&&<PdfExportButton question={prevQ} report={m.text} sources={m.sources||[]}
+                streaming={false} reportId={m.report_id} title={m.title} kind="quick"/>}
               {/* ответ длиннее 800 знаков сохранён отчётом — приобщается им; короткий — как есть */}
               <CaseAddBtn src="ai_answer" item={m.report_id?{kind:"report",ref_id:m.report_id}
                 :{kind:"answer",title:prevQ,meta:{question:prevQ,text:m.text,
