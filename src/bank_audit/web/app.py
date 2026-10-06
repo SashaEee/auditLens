@@ -260,8 +260,12 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
         if "active_case" in body.prefs:         # активное дело: «В дело» — одним нажатием
             v = body.prefs["active_case"]
             body.prefs["active_case"] = v if isinstance(v, int) and v > 0 else None
-        if "mail_promo" in body.prefs:          # заметка «можно подключить почту» — показана
-            body.prefs["mail_promo"] = "seen"
+        body.prefs.pop("mail_promo_at", None)  # дату ставит только сервер
+        if "mail_promo" in body.prefs:          # приглашение подключить почту закрыто
+            from zoneinfo import ZoneInfo
+            # seen — после первого показа (через неделю покажем ещё раз), again — после повтора
+            body.prefs["mail_promo"] = "again" if body.prefs["mail_promo"] == "again" else "seen"
+            body.prefs["mail_promo_at"] = datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat()
         if "mail" in body.prefs:                # письма: сразу о личном / утренняя сводка
             m = body.prefs["mail"] if isinstance(body.prefs["mail"], dict) else {}
             body.prefs["mail"] = {k: bool(m[k]) for k in ("instant", "digest", "brief") if k in m}

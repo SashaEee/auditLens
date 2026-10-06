@@ -11612,6 +11612,17 @@ const PAGE_LABELS={overview:"Новостные обзоры",foryou:"Для в�
 // до этой даты в меню показывается заметка о переименовании (пока её не закрыли)
 const RENAMED_UNTIL="2026-10-15";
 const renamedFresh=()=>new Date().toISOString().slice(0,10)<=RENAMED_UNTIL;
+// Когда показывать приглашение подключить почту: 1 — ещё не показывали, 2 — первый
+// раз закрыли «Не сейчас» неделю назад или раньше, 0 — не показывать. Даты отказа
+// у первых показов (до 06.10) нет — считаем от 06.10.
+const MAIL_PROMO_AGAIN_DAYS=7;
+const mailPromoDue=(prefs)=>{
+  const v=prefs&&prefs.mail_promo;
+  if(!v) return 1;
+  if(v!=="seen") return 0;
+  const at=Date.parse((prefs.mail_promo_at||"2026-10-06")+"T00:00:00");
+  return Date.now()-at>=MAIL_PROMO_AGAIN_DAYS*864e5 ? 2 : 0;
+};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
@@ -12853,18 +12864,24 @@ function Shell(){
     try{ window.dispatchEvent(new CustomEvent("al-case-items",{detail:{case_id:t.case_id}})); }catch{} };
   const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
-  // Разовое приглашение «уведомления — теперь и на почте» для тех, у кого почты нет.
-  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе;
-  // «Не сейчас» запоминается на сервере — на другом компьютере не всплывёт снова.
-  const[mailPromoOff,setMailPromoOff]=useState(()=>{ try{ return localStorage.getItem("al-mail-promo")==="1"
-    ||localStorage.getItem("al-bx-mail-seen")==="1"; }catch{ return false; } });     // уже открывал настройки почты
+  // Приглашение подключить почту (выпуск в 11:00) для тех, у кого её нет.
+  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе.
+  // Решает сервер: prefs.mail_promo — «seen» после первого показа, «again» после
+  // повтора; mail_promo_at — когда закрыли. Первый раз «Не сейчас» — через неделю
+  // покажем ещё раз, второй — больше никогда (на другом компьютере тоже).
+  const[mailPromoOff,setMailPromoOff]=useState(false);
   const[mailPromoReady,setMailPromoReady]=useState(false);
   useEffect(()=>{ const t=setTimeout(()=>setMailPromoReady(true),6000); return ()=>clearTimeout(t); },[]);
   const mailPromoShown=useRef(false);
   const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001b")==="1";}catch{return false;}});
+  // заметка о новом меню на экране — только у тех, кто застал старое меню. Раньше
+  // другие заметки ждали «renameSeen», а у новичков её нет вовсе: до 15.10 они не
+  // видели ни приглашения на почту, ни всплывающих уведомлений колокольчика.
+  const renameShow=!renameSeen&&renamedFresh()&&!!me&&!!me.created_at&&me.created_at<"2026-10-01";
+  const mailPromoRound=mailPromoDue(me&&me.prefs);   // 0 — не показывать, 1 — первый раз, 2 — повтор
   // приглашение важнее онбординга: пока оно на экране, заметка «настройте под себя» ждёт
-  const mailPromoShow=mailPromoReady&&!!me&&!me.has_email&&!mailPromoOff&&!(me.prefs&&me.prefs.mail_promo)
-    &&(renameSeen||!renamedFresh())&&!bellToast&&!bellOpen&&!sayOpen&&!casesHub;
+  const mailPromoShow=mailPromoReady&&!!me&&!me.has_email&&!mailPromoOff&&mailPromoRound>0
+    &&!renameShow&&!bellToast&&!bellOpen&&!sayOpen&&!casesHub;
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
@@ -13079,6 +13096,7 @@ function Shell(){
         .mp-toast .mp-ic{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
           background:var(--select-soft);color:var(--select)}
         .mp-toast .mp-b{display:flex;gap:8px}
+        .mp-toast .t.mp-note{margin-top:-5px;font-size:11.5px;color:var(--ink-3)}
         .mp-toast .later{font-size:11.5px;padding:6px 12px;border-radius:8px;color:var(--ink-3);border:1px solid var(--hair);
           transition:transform .1s,color .12s}
         .mp-toast .later:hover{color:var(--ink)}
@@ -13207,7 +13225,7 @@ function Shell(){
         initialView={bellView} mailCode={bellCode} onEmail={(has)=>setMe(m=>m&&m.has_email!==has?{...m,has_email:has}:m)}
         onPrefs={(off,mail)=>setMe(m=>m?{...m,prefs:{...(m.prefs||{}),...(off?{notify_off:off}:{}),...(mail?{mail}:{})}}:m)}/></OverlayBoundary>,document.body)}
       {/* разовая заметка о новом уведомлении — у колокольчика, один раз на событие */}
-      {bellToast&&!bellOpen&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast bx-toast" role="status">
+      {bellToast&&!bellOpen&&!sayOpen&&!renameShow&&<div className="tk-toast bx-toast" role="status">
         <div className="t"><span className="bx-ic">{React.createElement(bxIcon(bellToast.kind))}</span>
           <span><b>{bellToast.title}</b>{bxSnip(bellToast)&&<span className="bx-s">{bxSnip(bellToast)}</span>}<span className="m">{[bxWho(bellToast),
             bell.unread>1?`ещё ${bell.unread-1} — в колокольчике у вашего имени`:""].filter(Boolean).join(" · ")}</span></span></div>
@@ -13216,16 +13234,18 @@ function Shell(){
             sayPost("/api/bell/read",{ids:[t.id]}).then(loadBell).catch(()=>{}); goBell(t); }}>Открыть</button>}
           <button className="btn btn-sm" onClick={()=>bellSeen(bellToast.id)}>{bellToast.link?"Позже":"Понятно"}</button></div></div>}
       {(()=>{ if(!mailPromoShow) return null;
-        const done=(step)=>{ setMailPromoOff(true); try{ localStorage.setItem("al-mail-promo","1"); }catch{}
-          trkEvent({kind:"ui",page,payload:{action:"mail_promo",step}});
-          setMe(m=>m?{...m,prefs:{...(m.prefs||{}),mail_promo:"seen"}}:m);
-          apiPut("/api/me",{prefs:{mail_promo:"seen"}}).catch(()=>{}); };
+        const round=mailPromoRound, mark=round>1?"again":"seen";
+        const done=(step)=>{ setMailPromoOff(true);
+          trkEvent({kind:"ui",page,payload:{action:"mail_promo",step,round}});
+          setMe(m=>m?{...m,prefs:{...(m.prefs||{}),mail_promo:mark,mail_promo_at:new Date().toISOString().slice(0,10)}}:m);
+          apiPut("/api/me",{prefs:{mail_promo:mark}}).catch(()=>{}); };
         if(!mailPromoShown.current){ mailPromoShown.current=true;
-          setTimeout(()=>trkEvent({kind:"ui",page,payload:{action:"mail_promo",step:"shown"}}),0); }
+          setTimeout(()=>trkEvent({kind:"ui",page,payload:{action:"mail_promo",step:"shown",round}}),0); }
         return <div className="ren-toast mp-toast" role="status">
-          <div className="mp-h"><span className="mp-ic"><IcBx.mail/></span><b>Уведомления — теперь и на почте</b></div>
-          <div className="t">Упомянули, ответили, добавили в дело — письмом сразу, остальное — утренней сводкой.
-            Подойдёт почта Sigma или личная; на Omega письма не доходят.</div>
+          <div className="mp-h"><span className="mp-ic"><IcBx.mail/></span><b>Выпуск дня — письмом в 11:00</b></div>
+          <div className="t">Не успели зайти до 11 — пришлём главное: заголовок дня, пульс и что проверить.
+            Зашли сами — письма не будет. А если вас упомянут или добавят в дело, напишем сразу.</div>
+          <div className="t mp-note">Лучше рабочая почта Sigma: на личную письма приходят без подробностей.</div>
           <div className="mp-b">
             <button type="button" className="go" onClick={()=>{ done("connect"); setNavOpen(false); setSayOpen(null);
               setBellView("settings"); setBellOpen(true); }}>Подключить почту</button>
@@ -13234,7 +13254,7 @@ function Shell(){
         </div>; })()}
       {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
       {/* только тем, кто застал старое меню: новичку переименование ни о чём */}
-      {!renameSeen&&renamedFresh()&&me&&me.created_at&&me.created_at<"2026-10-01"&&<div className="ren-toast" role="status">
+      {renameShow&&<div className="ren-toast" role="status">
         <div className="t"><b>Меню обновлено.</b>{" "}
           {NAV.filter(n=>n.was).map(n=>`«${n.was}» → «${n.label}»`).join(", ")}.
           «Рынок · позиция» — переключатель в разделе «Новостные обзоры», справочные

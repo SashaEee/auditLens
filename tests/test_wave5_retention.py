@@ -188,3 +188,31 @@ def test_crawl_falls_back_to_archived_bank_pages(monkeypatch):
                                                 trust_score=.9, is_new=False, skipped_reason="duplicate"))[1])
     r = C.crawl_one_bank("sberbank", max_urls=8)
     assert r["urls_attempted"] == 2 and read == ["https://bank.ru/vklady/b", "https://bank.ru/ipoteka"]
+
+
+def test_mail_promo_mark_and_date_set_by_server(monkeypatch):
+    """Приглашение подключить почту: «seen» после первого показа, «again» после
+    повтора; дату закрытия ставит сервер, присланную клиентом — отбрасывает."""
+    from bank_audit.web import app as A
+    from bank_audit.web.auth import CurrentUser
+    saved = []
+    monkeypatch.setattr(A.userdata, "touch_user", lambda *a, **k: None)
+    monkeypatch.setattr(A.userdata, "update_prefs", lambda u, p: saved.append(dict(p)))
+    u = CurrentUser(username="u", name="u", authenticated=True)
+    A.put_me(A.MeUpdate(prefs={"mail_promo": "later", "mail_promo_at": "2020-01-01"}), u)
+    A.put_me(A.MeUpdate(prefs={"mail_promo": "again"}), u)
+    A.put_me(A.MeUpdate(prefs={"mail_promo_at": "2020-01-01"}), u)
+    assert saved[0]["mail_promo"] == "seen" and saved[0]["mail_promo_at"] != "2020-01-01"
+    assert len(saved[0]["mail_promo_at"]) == 10
+    assert saved[1]["mail_promo"] == "again"
+    assert "mail_promo_at" not in saved[2]
+
+
+def test_rename_note_does_not_block_other_notes_for_newcomers():
+    """Заметка о новом меню мешает другим, только пока она на экране: раньше
+    новички (без неё) до 15.10 не видели приглашения на почту и тостов колокольчика."""
+    from pathlib import Path
+    jsx = (Path(__file__).resolve().parents[1] / "src/bank_audit/web/static/app.jsx").read_text(encoding="utf8")
+    assert "(renameSeen||!renamedFresh())" not in jsx
+    assert "&&!renameShow&&!bellToast" in jsx and "bellToast&&!bellOpen&&!sayOpen&&!renameShow" in jsx
+    assert "Выпуск дня — письмом в 11:00" in jsx and "mailPromoDue(" in jsx

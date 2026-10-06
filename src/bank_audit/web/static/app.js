@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 bac0ba15c00e31bb9d5e4890c29c0d6b9a87acf244856ffcc3b67d754c5cfbc4): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 de28e99129918f5514c230c23d5c191aba8b764efa55d24a94c8d404ca655259): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -22114,6 +22114,17 @@ const PAGE_LABELS = {
 // до этой даты в меню показывается заметка о переименовании (пока её не закрыли)
 const RENAMED_UNTIL = "2026-10-15";
 const renamedFresh = () => new Date().toISOString().slice(0, 10) <= RENAMED_UNTIL;
+// Когда показывать приглашение подключить почту: 1 — ещё не показывали, 2 — первый
+// раз закрыли «Не сейчас» неделю назад или раньше, 0 — не показывать. Даты отказа
+// у первых показов (до 06.10) нет — считаем от 06.10.
+const MAIL_PROMO_AGAIN_DAYS = 7;
+const mailPromoDue = prefs => {
+  const v = prefs && prefs.mail_promo;
+  if (!v) return 1;
+  if (v !== "seen") return 0;
+  const at = Date.parse((prefs.mail_promo_at || "2026-10-06") + "T00:00:00");
+  return Date.now() - at >= MAIL_PROMO_AGAIN_DAYS * 864e5 ? 2 : 0;
+};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS = `
@@ -24880,16 +24891,12 @@ function Shell() {
   };
   const appInfo = useAppInfo();
   const [onbSeen, setOnbSeen] = useState(false);
-  // Разовое приглашение «уведомления — теперь и на почте» для тех, у кого почты нет.
-  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе;
-  // «Не сейчас» запоминается на сервере — на другом компьютере не всплывёт снова.
-  const [mailPromoOff, setMailPromoOff] = useState(() => {
-    try {
-      return localStorage.getItem("al-mail-promo") === "1" || localStorage.getItem("al-bx-mail-seen") === "1";
-    } catch {
-      return false;
-    }
-  }); // уже открывал настройки почты
+  // Приглашение подключить почту (выпуск в 11:00) для тех, у кого её нет.
+  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе.
+  // Решает сервер: prefs.mail_promo — «seen» после первого показа, «again» после
+  // повтора; mail_promo_at — когда закрыли. Первый раз «Не сейчас» — через неделю
+  // покажем ещё раз, второй — больше никогда (на другом компьютере тоже).
+  const [mailPromoOff, setMailPromoOff] = useState(false);
   const [mailPromoReady, setMailPromoReady] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setMailPromoReady(true), 6000);
@@ -24903,8 +24910,13 @@ function Shell() {
       return false;
     }
   });
+  // заметка о новом меню на экране — только у тех, кто застал старое меню. Раньше
+  // другие заметки ждали «renameSeen», а у новичков её нет вовсе: до 15.10 они не
+  // видели ни приглашения на почту, ни всплывающих уведомлений колокольчика.
+  const renameShow = !renameSeen && renamedFresh() && !!me && !!me.created_at && me.created_at < "2026-10-01";
+  const mailPromoRound = mailPromoDue(me && me.prefs); // 0 — не показывать, 1 — первый раз, 2 — повтор
   // приглашение важнее онбординга: пока оно на экране, заметка «настройте под себя» ждёт
-  const mailPromoShow = mailPromoReady && !!me && !me.has_email && !mailPromoOff && !(me.prefs && me.prefs.mail_promo) && (renameSeen || !renamedFresh()) && !bellToast && !bellOpen && !sayOpen && !casesHub;
+  const mailPromoShow = mailPromoReady && !!me && !me.has_email && !mailPromoOff && mailPromoRound > 0 && !renameShow && !bellToast && !bellOpen && !sayOpen && !casesHub;
   useEffect(() => {
     document.documentElement.classList.toggle("nav-lock", navOpen);
     return () => document.documentElement.classList.remove("nav-lock");
@@ -25280,6 +25292,7 @@ function Shell() {
         .mp-toast .mp-ic{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
           background:var(--select-soft);color:var(--select)}
         .mp-toast .mp-b{display:flex;gap:8px}
+        .mp-toast .t.mp-note{margin-top:-5px;font-size:11.5px;color:var(--ink-3)}
         .mp-toast .later{font-size:11.5px;padding:6px 12px;border-radius:8px;color:var(--ink-3);border:1px solid var(--hair);
           transition:transform .1s,color .12s}
         .mp-toast .later:hover{color:var(--ink)}
@@ -25604,7 +25617,7 @@ function Shell() {
         } : {})
       }
     } : m)
-  })), document.body), bellToast && !bellOpen && !sayOpen && (renameSeen || !renamedFresh()) && /*#__PURE__*/React.createElement("div", {
+  })), document.body), bellToast && !bellOpen && !sayOpen && !renameShow && /*#__PURE__*/React.createElement("div", {
     className: "tk-toast bx-toast",
     role: "status"
   }, /*#__PURE__*/React.createElement("div", {
@@ -25632,29 +25645,30 @@ function Shell() {
     onClick: () => bellSeen(bellToast.id)
   }, bellToast.link ? "Позже" : "Понятно"))), (() => {
     if (!mailPromoShow) return null;
+    const round = mailPromoRound,
+      mark = round > 1 ? "again" : "seen";
     const done = step => {
       setMailPromoOff(true);
-      try {
-        localStorage.setItem("al-mail-promo", "1");
-      } catch {}
       trkEvent({
         kind: "ui",
         page,
         payload: {
           action: "mail_promo",
-          step
+          step,
+          round
         }
       });
       setMe(m => m ? {
         ...m,
         prefs: {
           ...(m.prefs || {}),
-          mail_promo: "seen"
+          mail_promo: mark,
+          mail_promo_at: new Date().toISOString().slice(0, 10)
         }
       } : m);
       apiPut("/api/me", {
         prefs: {
-          mail_promo: "seen"
+          mail_promo: mark
         }
       }).catch(() => {});
     };
@@ -25665,7 +25679,8 @@ function Shell() {
         page,
         payload: {
           action: "mail_promo",
-          step: "shown"
+          step: "shown",
+          round
         }
       }), 0);
     }
@@ -25676,9 +25691,11 @@ function Shell() {
       className: "mp-h"
     }, /*#__PURE__*/React.createElement("span", {
       className: "mp-ic"
-    }, /*#__PURE__*/React.createElement(IcBx.mail, null)), /*#__PURE__*/React.createElement("b", null, "\u0423\u0432\u0435\u0434\u043E\u043C\u043B\u0435\u043D\u0438\u044F \u2014 \u0442\u0435\u043F\u0435\u0440\u044C \u0438 \u043D\u0430 \u043F\u043E\u0447\u0442\u0435")), /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement(IcBx.mail, null)), /*#__PURE__*/React.createElement("b", null, "\u0412\u044B\u043F\u0443\u0441\u043A \u0434\u043D\u044F \u2014 \u043F\u0438\u0441\u044C\u043C\u043E\u043C \u0432 11:00")), /*#__PURE__*/React.createElement("div", {
       className: "t"
-    }, "\u0423\u043F\u043E\u043C\u044F\u043D\u0443\u043B\u0438, \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0438, \u0434\u043E\u0431\u0430\u0432\u0438\u043B\u0438 \u0432 \u0434\u0435\u043B\u043E \u2014 \u043F\u0438\u0441\u044C\u043C\u043E\u043C \u0441\u0440\u0430\u0437\u0443, \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u043E\u0435 \u2014 \u0443\u0442\u0440\u0435\u043D\u043D\u0435\u0439 \u0441\u0432\u043E\u0434\u043A\u043E\u0439. \u041F\u043E\u0434\u043E\u0439\u0434\u0451\u0442 \u043F\u043E\u0447\u0442\u0430 Sigma \u0438\u043B\u0438 \u043B\u0438\u0447\u043D\u0430\u044F; \u043D\u0430 Omega \u043F\u0438\u0441\u044C\u043C\u0430 \u043D\u0435 \u0434\u043E\u0445\u043E\u0434\u044F\u0442."), /*#__PURE__*/React.createElement("div", {
+    }, "\u041D\u0435 \u0443\u0441\u043F\u0435\u043B\u0438 \u0437\u0430\u0439\u0442\u0438 \u0434\u043E 11 \u2014 \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u0433\u043B\u0430\u0432\u043D\u043E\u0435: \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A \u0434\u043D\u044F, \u043F\u0443\u043B\u044C\u0441 \u0438 \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C. \u0417\u0430\u0448\u043B\u0438 \u0441\u0430\u043C\u0438 \u2014 \u043F\u0438\u0441\u044C\u043C\u0430 \u043D\u0435 \u0431\u0443\u0434\u0435\u0442. \u0410 \u0435\u0441\u043B\u0438 \u0432\u0430\u0441 \u0443\u043F\u043E\u043C\u044F\u043D\u0443\u0442 \u0438\u043B\u0438 \u0434\u043E\u0431\u0430\u0432\u044F\u0442 \u0432 \u0434\u0435\u043B\u043E, \u043D\u0430\u043F\u0438\u0448\u0435\u043C \u0441\u0440\u0430\u0437\u0443."), /*#__PURE__*/React.createElement("div", {
+      className: "t mp-note"
+    }, "\u041B\u0443\u0447\u0448\u0435 \u0440\u0430\u0431\u043E\u0447\u0430\u044F \u043F\u043E\u0447\u0442\u0430 Sigma: \u043D\u0430 \u043B\u0438\u0447\u043D\u0443\u044E \u043F\u0438\u0441\u044C\u043C\u0430 \u043F\u0440\u0438\u0445\u043E\u0434\u044F\u0442 \u0431\u0435\u0437 \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0435\u0439."), /*#__PURE__*/React.createElement("div", {
       className: "mp-b"
     }, /*#__PURE__*/React.createElement("button", {
       type: "button",
@@ -25695,7 +25712,7 @@ function Shell() {
       className: "later",
       onClick: () => done("later")
     }, "\u041D\u0435 \u0441\u0435\u0439\u0447\u0430\u0441")));
-  })(), !renameSeen && renamedFresh() && me && me.created_at && me.created_at < "2026-10-01" && /*#__PURE__*/React.createElement("div", {
+  })(), renameShow && /*#__PURE__*/React.createElement("div", {
     className: "ren-toast",
     role: "status"
   }, /*#__PURE__*/React.createElement("div", {
