@@ -6,11 +6,14 @@
 (deploy/hermes-al/bin) на POST /agent-files — с ключом AGENT_MCP_KEY и только
 локально, как MCP, — и вставляет в ответ метку [[FILE:<id>]]. Обёртка стрима
 привязывает файлы из меток к спросившему (claim), интерфейс показывает
-карточки «Скачать»; скачать может только тот, кому файл выдан.
+карточки «Скачать». Скачать может тот, кому файл выдан, и те, кому открыт
+отчёт с этим файлом (поделились лично или всем, дело с этим отчётом) — те же
+правила, что у самого отчёта (userdata.report_access).
 Непривязанные файлы живут сутки (их чистит следующая загрузка).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
@@ -110,17 +113,23 @@ def claim(ids: list, username: str, session_id: int | None = None) -> list[dict]
 
 
 def get(file_id: str, username: str, is_admin: bool = False) -> dict | None:
-    """Файл для скачивания — только тому, кому выдан (и владельцу системы)."""
+    """Файл для скачивания: тому, кому выдан, владельцу системы и тем, кому
+    открыт отчёт с этим файлом (поделились или приобщили к общему делу)."""
     if not _ID_RE.fullmatch(file_id or ""):
         return None
     with db.session() as s:
         row = s.execute(text("""SELECT name, mime, data, username FROM agent_file
                                  WHERE file_id = :f"""), {"f": file_id}).mappings().first()
-    if not row or not row["username"]:
-        return None
-    if row["username"] != username and not is_admin:
-        return None
-    return dict(row)
+        if not row or not row["username"]:
+            return None
+        if row["username"] == username or is_admin:
+            return dict(row)
+        rids = [r[0] for r in s.execute(text("""
+            SELECT report_id FROM report
+             WHERE username = :o AND payload->'files' @> CAST(:j AS jsonb)"""),
+            {"o": row["username"], "j": json.dumps([{"id": file_id}])}).all()]
+    from ..web import userdata
+    return dict(row) if any(userdata.report_access(r, username) for r in rids) else None
 
 
 def replace_markers(answer: str, files: list[dict]) -> str:

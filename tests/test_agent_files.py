@@ -81,12 +81,15 @@ def pg(monkeypatch):
     eng = create_engine(PG, future=True)
     raw = eng.raw_connection()
     try:
-        raw.cursor().execute((ROOT / "migrations" / "096_agent_file.sql").read_text(encoding="utf-8"))
+        cur = raw.cursor()
+        for f in ("014_personalization", "096_agent_file"):
+            cur.execute((ROOT / "migrations" / f"{f}.sql").read_text(encoding="utf-8"))
         raw.commit()
     finally:
         raw.close()
     with eng.begin() as c:
-        c.execute(text("DELETE FROM agent_file"))
+        for t in ("agent_file", "report_share", "report"):
+            c.execute(text(f"DELETE FROM {t}"))
     monkeypatch.setattr(db, "_Session", sessionmaker(bind=eng, expire_on_commit=False, future=True))
     yield eng
     eng.dispose()
@@ -128,4 +131,28 @@ def test_persisting_stream_claims_and_saves(pg, monkeypatch):
     files_ev = next(e for e in evs if e["type"] == "files")
     assert files_ev["files"][0]["name"] == "выгрузка.csv"
     assert "«выгрузка.csv»" in saved["body"] and "[[FILE:" not in saved["body"]
+    assert saved["payload"]["files"][0]["id"] == f["id"]   # короткий ответ с файлом — тоже отчёт
     assert saved["meta"]["files"][0]["id"] == f["id"]
+
+
+def test_shared_report_opens_file_to_colleague(pg):
+    """Файл открывается тем, кому открыт отчёт с ним: поделились лично или всем;
+    постороннему — нет; после отзыва — нет."""
+    from sqlalchemy import text
+    f = AF.store("Жалобы.xlsx", b"PK\x03\x04")
+    AF.claim([f["id"]], "anna")
+    with pg.begin() as c:
+        rid = c.execute(text("""INSERT INTO report (username, question, body, payload)
+                                VALUES ('anna', 'q', 'b', CAST(:p AS jsonb)) RETURNING report_id"""),
+                        {"p": json.dumps({"mode": "quick", "files": [{"id": f["id"], "name": "Жалобы.xlsx"}]})}).scalar()
+    assert AF.get(f["id"], "pavel") is None
+    with pg.begin() as c:
+        c.execute(text("INSERT INTO report_share (report_id, owner, shared_with) VALUES (:r, 'anna', 'pavel')"),
+                  {"r": rid})
+    assert AF.get(f["id"], "pavel") is not None
+    assert AF.get(f["id"], "olga") is None
+    with pg.begin() as c:
+        c.execute(text("UPDATE report_share SET revoked_at = now() WHERE report_id = :r"), {"r": rid})
+        c.execute(text("INSERT INTO report_share (report_id, owner, shared_with) VALUES (:r, 'anna', NULL)"),
+                  {"r": rid})
+    assert AF.get(f["id"], "olga") is not None                 # поделились со всеми

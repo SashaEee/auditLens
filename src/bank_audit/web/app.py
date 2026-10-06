@@ -4980,7 +4980,9 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             banks = userdata.parse_query_signals(question).get("banks", [])
             # сорванный прогон — сообщение в беседе, а не отчёт в истории;
             # остановленный — отчёт с пометкой (частичный результат не теряем)
-            is_report = not failed and ((mode == "deep") or (len(body) > 800))
+            # ответ с файлом — всегда отчётом: им можно поделиться и приобщить к делу,
+            # а файл откроется тем, кому открыт отчёт (ai/agent_files.get)
+            is_report = not failed and ((mode == "deep") or (len(body) > 800) or bool(files))
             report_id = None
             if is_report:
                 from ..ai import report_title as _rt
