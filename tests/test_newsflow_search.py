@@ -92,3 +92,32 @@ def test_collect_search_keeps_only_fresh_sber_news(pg, monkeypatch):
     assert nf.collect_search() == {"skipped": "рано"}            # раз в SEARCH_EVERY_MIN
     again = nf.collect_search(force=True)
     assert again["added"] == 0                                    # уже виденное не качается и не дублируется
+
+
+def test_junk_tld_and_search_rel_cap(monkeypatch):
+    """Мусорные домены — мимо; не происшествие из поиска — rel не выше 4."""
+    assert nf._JUNK_TLD.search(nf._host_of("https://meshlink.mom/blog/x"))
+    assert not nf._JUNK_TLD.search(nf._host_of("https://realnoevremya.ru/news/1"))
+    import asyncio
+    from types import SimpleNamespace
+    rows = [(1, "web_sber", "Сбербанк изменил правила для всех", ""),
+            (2, "web_sber", "У Сбера похитили 60 млн", ""),
+            (3, "ria_novosti", "Сбербанк изменил тарифы", "")]
+    saved = []
+
+    class S:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, q, p=None):
+            if p is None or isinstance(p, dict):
+                return SimpleNamespace(all=lambda: rows)
+            saved.extend(p)
+    monkeypatch.setattr(nf.db, "session", lambda: S())
+
+    async def chat(*a, **k):
+        return ('{"items":[{"n":1,"rel":9,"type":"sber"},{"n":2,"rel":9,"type":"fraud"},'
+                '{"n":3,"rel":7,"type":"sber"}]}', 1, 1)
+    monkeypatch.setattr(nf, "_chat", chat)
+    asyncio.run(nf.stage1())
+    by = {p["id"]: p["rel"] for p in saved}
+    assert by == {1: 4, 2: 9, 3: 7}

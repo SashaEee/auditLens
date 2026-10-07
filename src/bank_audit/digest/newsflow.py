@@ -271,6 +271,13 @@ _SEARCH_SKIP = re.compile(
     r"sberbank\.(?:ru|com)|sber\.ru|sbersova\.ru|banki\.ru|sravni\.ru|finuslugi\.ru|"
     r"bankiros\.ru|vbr\.ru)$", re.I)
 _SBER_RE = re.compile(r"сбер", re.I)
+# Мусорные домены SEO-выдачи (на проде в первый же проход: meshlink.mom — «как снять деньги…»)
+_JUNK_TLD = re.compile(r"\.(?:mom|site|xyz|online|top|click|shop|store|fun|space|icu|buzz|website|pw)$", re.I)
+# Поиск отвечает только за ПРОИСШЕСТВИЯ: остальное с его выдачи — кликбейт «Сбербанк изменил
+# правила для всех» и советы, которые ступень 1 оценивала на 6–9. Не происшествие из поиска →
+# rel не выше 4: дальше по конвейеру не идёт (полный текст, склейка и ступень 2 — от 5–6).
+SEARCH_TYPES = ("fraud", "enforcement", "court", "incident", "data_leak")
+SEARCH_OTHER_REL_CAP = 4
 _OG_TITLE_RE = re.compile(r'<meta[^>]{0,200}?property="og:title"[^>]{0,200}?content="([^"]{10,300})"'
                           r'|<meta[^>]{0,200}?content="([^"]{10,300})"[^>]{0,200}?property="og:title"', re.I)
 
@@ -315,7 +322,9 @@ def collect_search(force: bool = False) -> dict:
             if not u or u in seen:
                 continue
             seen.add(u)
-            if _SEARCH_SKIP.search(_host_of(u)) or not _SBER_RE.search(it.get("title") or ""):
+            host = _host_of(u)
+            if _SEARCH_SKIP.search(host) or _JUNK_TLD.search(host) \
+                    or not _SBER_RE.search(it.get("title") or ""):
                 continue
             cands.append(it)
     if cands:                                   # уже виденные адреса не качаем
@@ -436,6 +445,8 @@ async def stage1(limit: int = 600) -> dict:
             except (TypeError, ValueError):
                 continue
             typ = it.get("type") if it.get("type") in _S1_TYPES else "other"
+            if r[1] == SEARCH_SRC["key"] and typ not in SEARCH_TYPES:
+                rel = min(rel, SEARCH_OTHER_REL_CAP)
             payload.append({"id": r[0], "rel": rel, "t": typ})
         if payload:
             with db.session() as s:
