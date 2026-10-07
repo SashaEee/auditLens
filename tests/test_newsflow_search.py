@@ -21,7 +21,7 @@ PG = os.getenv("NEWSFLOW_PG_TEST_URL")
 
 def test_filters_hosts_and_title():
     skip = lambda u: bool(nf._SEARCH_SKIP.search(nf._host_of(u)))  # noqa: E731
-    assert skip("https://dzen.ru/a/xyz") and skip("https://m.vk.ru/wall1") and skip("https://www.sberbank.ru/x")
+    assert skip("https://dzen.ru/a/xyz") and skip("https://m.vk.ru/wall1") and skip("https://www.sber.ru/x")
     assert skip("https://sudact.ru/regular/doc/1") and skip("https://www.banki.ru/news/lenta/?id=1")
     assert not skip("https://kam.business-gazeta.ru/news/1") and not skip("https://rt.rbc.ru/tatarstan/1")
     assert not skip("https://realnoevremya.ru/news/1")
