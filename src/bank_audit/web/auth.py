@@ -98,7 +98,11 @@ def get_current_user(
     """
     username = (x_authentik_username or "").strip()
     if username:
-        name = _fix_header_encoding((x_authentik_name or "").strip()) or username
+        # Сначала раскодировать, потом обрезать: в мохибейке последняя буква «х» (UTF-8
+        # D1 85) — это «Ñ» + U+0085 (NEL), а str.strip() считает NEL пробелом и срезает
+        # его. Без этого байта UTF-8 не собирается, и в базу уходил мохибейк целиком
+        # («Ð\x90Ð»ÐµÐºÑ…» вместо «Алексей Глухих», 08.10).
+        name = _fix_header_encoding(x_authentik_name or "").strip() or username
         return CurrentUser(username=username, name=name, authenticated=True,
                            email=clean_email(x_authentik_email))
     # Заголовка нет → локалка или прямой доступ к :8000 в обход nginx. Dev-пользователь
