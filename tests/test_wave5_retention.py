@@ -134,3 +134,122 @@ def test_brief_only_if_not_visited_and_no_digest(monkeypatch):
     assert M._brief(r, now) == 0                                    # получил сводку по делам
     state.update(digest=False)
     assert M._brief(r, now) == 1 and sent == ["brief"]
+
+
+def test_gptr_planner_patch_accepts_new_library_kwargs(monkeypatch):
+    """05.10: gpt-researcher 0.16.x начала передавать search_results в
+    plan_research — точная сигнатура подмены роняла каждый отчёт."""
+    import asyncio
+    import sys
+    import types
+    from bank_audit.research.gptr import planner, runstate
+
+    class RC:
+        async def plan_research(self, query, query_domains=None, search_results=None):
+            return ["library"]
+    mod = types.ModuleType("gpt_researcher.skills.researcher")
+    mod.ResearchConductor = RC
+    for name in ("gpt_researcher", "gpt_researcher.skills"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(sys.modules, "gpt_researcher.skills.researcher", mod)
+    monkeypatch.setattr(planner, "plan_to_subqueries", lambda plan, q, attributes=None: (["a", "b"], []))
+    runstate.new_run()
+    planner.install({}, "вопрос")
+    out = asyncio.run(RC().plan_research("q", [], search_results=[{"x": 1}], extra=True))
+    assert out == ["a", "b"]
+
+
+def test_crawl_falls_back_to_archived_bank_pages(monkeypatch):
+    """05.10: профилей банков на проде нет — обход берёт ключевые страницы из
+    уже собранных страниц официального сайта, по темам, свежие первыми."""
+    import types
+    from datetime import datetime
+    from bank_audit.rag import crawler as C
+
+    class S:
+        def execute(self, sql, p=None):
+            if "bank_profile" in str(sql):
+                return types.SimpleNamespace(first=lambda: None)
+            return types.SimpleNamespace(all=lambda: [
+                ("https://bank.ru/vklady/a", ["deposits"], datetime(2026, 10, 1)),
+                ("https://bank.ru/vklady/b", ["deposits"], datetime(2026, 10, 3)),
+                ("https://bank.ru/ipoteka", ["mortgage"], datetime(2026, 9, 1))])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setattr(C.db, "session", lambda: S())
+    monkeypatch.setattr(C.time, "sleep", lambda s: None)
+    read = []
+    monkeypatch.setattr(C.indexer, "ingest_document_from_url", lambda url, **k: (
+        read.append(url), types.SimpleNamespace(document_id=1, chunks_added=1, doc_type="html",
+                                                trust_score=.9, is_new=False, skipped_reason="duplicate"))[1])
+    r = C.crawl_one_bank("sberbank", max_urls=8)
+    assert r["urls_attempted"] == 2 and read == ["https://bank.ru/vklady/b", "https://bank.ru/ipoteka"]
+
+
+def test_mail_promo_mark_and_date_set_by_server(monkeypatch):
+    """Приглашение подключить почту: «seen» после первого показа, «again» после
+    повтора; дату закрытия ставит сервер, присланную клиентом — отбрасывает."""
+    from bank_audit.web import app as A
+    from bank_audit.web.auth import CurrentUser
+    saved = []
+    monkeypatch.setattr(A.userdata, "touch_user", lambda *a, **k: None)
+    monkeypatch.setattr(A.userdata, "update_prefs", lambda u, p: saved.append(dict(p)))
+    u = CurrentUser(username="u", name="u", authenticated=True)
+    A.put_me(A.MeUpdate(prefs={"mail_promo": "later", "mail_promo_at": "2020-01-01"}), u)
+    A.put_me(A.MeUpdate(prefs={"mail_promo": "again"}), u)
+    A.put_me(A.MeUpdate(prefs={"mail_promo_at": "2020-01-01"}), u)
+    assert saved[0]["mail_promo"] == "seen" and saved[0]["mail_promo_at"] != "2020-01-01"
+    assert len(saved[0]["mail_promo_at"]) == 10
+    assert saved[1]["mail_promo"] == "again"
+    assert "mail_promo_at" not in saved[2]
+
+
+def test_rename_note_does_not_block_other_notes_for_newcomers():
+    """Заметка о новом меню мешает другим, только пока она на экране: раньше
+    новички (без неё) до 15.10 не видели приглашения на почту и тостов колокольчика."""
+    from pathlib import Path
+    jsx = (Path(__file__).resolve().parents[1] / "src/bank_audit/web/static/app.jsx").read_text(encoding="utf8")
+    assert "(renameSeen||!renamedFresh())" not in jsx
+    assert "&&!renameShow&&!bellToast" in jsx and "bellToast&&!bellOpen&&!sayOpen&&!renameShow" in jsx
+    assert "Выпуск дня — письмом в 11:00" in jsx and "mailPromoDue(" in jsx
+
+
+def test_quick_answer_pdf_is_compact():
+    """PDF быстрого ответа: без обложки и оглавления, с пометкой «не сверялись»;
+    отчёт — как раньше, с обложкой."""
+    from bank_audit.web.pdf_export import build_pdf_html
+    md = "Главное: по жалобам за 2026 год тема «Банкоматы» набрала 116 жалоб [1]. " * 3
+    src = [{"n": 1, "url": "https://example.org/a", "bank_name": "banki.ru"}]
+    q = build_pdf_html(question="топ-5 тем", report_md=md, sources=src, kind="quick")
+    assert 'class="cover"' not in q and "Быстрый ответ" in q and "sources-inline" in q
+    assert "не сверялись" in q and 'class="toc-head"' not in q
+    r = build_pdf_html(question="топ-5 тем", report_md=md, sources=src)
+    assert 'class="cover"' in r and "Аналитический отчёт" in r
+
+
+def test_export_pdf_takes_quick_kind_from_saved_answer(monkeypatch):
+    """Сохранённый быстрый ответ выгружается компактным PDF, даже если клиент
+    не прислал kind; без сохранения — по полю kind."""
+    import asyncio
+    from bank_audit.web import app as A, pdf_export
+    from bank_audit.web.auth import CurrentUser
+    seen = []
+    monkeypatch.setattr(pdf_export, "export_report_to_pdf", lambda **kw: seen.append(kw["kind"]) or b"%PDF")
+    monkeypatch.setattr(A.userdata, "get_report",
+                        lambda rid, u: {"title": "T", "payload": {"mode": "quick"}, "created_at": None})
+    u = CurrentUser(username="u", name="u", authenticated=True)
+    md = "x" * 150
+    asyncio.run(A.ai_export_pdf(A.PdfExportRequest(question="q", report_md=md, report_id=5), u))
+    asyncio.run(A.ai_export_pdf(A.PdfExportRequest(question="q", report_md=md, kind="quick"), u))
+    asyncio.run(A.ai_export_pdf(A.PdfExportRequest(question="q", report_md=md), u))
+    assert seen == ["quick", "quick", "report"]
+
+
+def test_quick_answer_has_pdf_button():
+    from pathlib import Path
+    jsx = (Path(__file__).resolve().parents[1] / "src/bank_audit/web/static/app.jsx").read_text(encoding="utf8")
+    assert 'title={m.title} kind="quick"/>' in jsx and "kind: kind || null" in jsx

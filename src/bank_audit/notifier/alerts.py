@@ -54,6 +54,18 @@ def ops_events() -> list[dict]:
                         "detail": "Последний успешный прогон сборщика с данными — "
                                   f"{round(float(age))} ч назад. Витрина «Рынок» и позиция "
                                   "Сбера стареют. Проверьте «Источники»."})
+        # отчёты ИИ-помощника срываются подряд: 05.10 после обновления библиотеки
+        # движка падал каждый заказ отчёта, а заметили по «Пульсу» вручную
+        dr = s.execute(text("""
+            SELECT count(*) FILTER (WHERE payload->>'status' = 'failed'),
+                   count(*) FILTER (WHERE payload->>'status' = 'ok')
+              FROM user_event WHERE kind = 'ai_run_end' AND payload->>'mode' = 'deep'
+               AND ts > now() - interval '24 hours'""")).first()
+        if dr and int(dr[0] or 0) >= 2 and not int(dr[1] or 0):
+            out.append({"key": "deep_reports_failing",
+                        "title": f"Отчёты ИИ-помощника срываются: {int(dr[0])} подряд за сутки",
+                        "detail": "Ни один заказ отчёта за сутки не завершился. Смотрите журнал "
+                                  "контейнера по «gptr: сбор» и «Пульс» → «Отчёты»."})
         for cat, st, ac in s.execute(text("""
                 SELECT detail->>'category', max((detail->>'stale')::int), max((detail->>'active')::int)
                   FROM quality_flag

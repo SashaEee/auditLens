@@ -260,8 +260,12 @@ def put_me(body: MeUpdate, user: CurrentUser = Depends(get_current_user)):
         if "active_case" in body.prefs:         # активное дело: «В дело» — одним нажатием
             v = body.prefs["active_case"]
             body.prefs["active_case"] = v if isinstance(v, int) and v > 0 else None
-        if "mail_promo" in body.prefs:          # заметка «можно подключить почту» — показана
-            body.prefs["mail_promo"] = "seen"
+        body.prefs.pop("mail_promo_at", None)  # дату ставит только сервер
+        if "mail_promo" in body.prefs:          # приглашение подключить почту закрыто
+            from zoneinfo import ZoneInfo
+            # seen — после первого показа (через неделю покажем ещё раз), again — после повтора
+            body.prefs["mail_promo"] = "again" if body.prefs["mail_promo"] == "again" else "seen"
+            body.prefs["mail_promo_at"] = datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat()
         if "mail" in body.prefs:                # письма: сразу о личном / утренняя сводка
             m = body.prefs["mail"] if isinstance(body.prefs["mail"], dict) else {}
             body.prefs["mail"] = {k: bool(m[k]) for k in ("instant", "digest", "brief") if k in m}
@@ -4945,6 +4949,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     engine: Optional[str] = None
     tools_used: list[str] = []
     run_meta: Optional[dict] = None
+    files: list = []                     # файлы, которые агент отдал в ответе (ai/agent_files.py)
     report_title: Optional[str] = None   # из брифа отчёта; у быстрых — составим после
     saved_title: Optional[str] = None
     t0 = time.monotonic()
@@ -4957,6 +4962,9 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
         раньше сбой выглядел как обычный ответ, а «Ошибки» были пусты."""
         nonlocal saved_title
         body = replaced if replaced is not None else "".join(lead_parts) + "".join(parts)
+        if body and "[[FILE:" in body:   # метки файлов → «имя файла» (PDF, дело, история)
+            from ..ai import agent_files
+            body = agent_files.replace_markers(body, files)
         elapsed = round(time.monotonic() - t0)
         from ..research.gptr.stream import FAIL_PREFIXES
         failed = bool(body and body.strip()) and (
@@ -4972,7 +4980,9 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             banks = userdata.parse_query_signals(question).get("banks", [])
             # сорванный прогон — сообщение в беседе, а не отчёт в истории;
             # остановленный — отчёт с пометкой (частичный результат не теряем)
-            is_report = not failed and ((mode == "deep") or (len(body) > 800))
+            # ответ с файлом — всегда отчётом: им можно поделиться и приобщить к делу,
+            # а файл откроется тем, кому открыт отчёт (ai/agent_files.get)
+            is_report = not failed and ((mode == "deep") or (len(body) > 800) or bool(files))
             report_id = None
             if is_report:
                 from ..ai import report_title as _rt
@@ -4984,6 +4994,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                              "verification": verification, "gaps": gaps,
                              "ranking": ranking, "insights": insights,
                              "status": status, "elapsed_s": elapsed,
+                             "files": files or None,
                              "payload_v": 2},
                     banks=banks, title=saved_title)
                 if report_title:
@@ -5006,6 +5017,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                 meta["engine"] = engine
             if tools_used:
                 meta["tools"] = tools_used[:60]
+            if files:
+                meta["files"] = files
             if run_meta:
                 meta["run"] = run_meta
             userdata.add_message(session_id, "assistant", body, meta)
@@ -5064,6 +5077,13 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     tools_used.append(str(data["name"]))
                 elif t == "run_meta":
                     run_meta = {k: v for k, v in data.items() if k != "type"}
+                elif t == "files" and isinstance(data.get("ids"), list):
+                    # Агент вставил метки [[FILE:…]] — файлы становятся этого
+                    # пользователя; фронту — имена и размеры для карточек «Скачать».
+                    from ..ai import agent_files
+                    files = await asyncio.to_thread(agent_files.claim, data["ids"],
+                                                    username, session_id)
+                    ev = json.dumps({"type": "files", "files": files}, ensure_ascii=False)
                 elif t == "done" and not persisted:
                     # Персистим ДО done: клиент успевает получить report_id
                     # (кнопка «Поделиться» доступна сразу после прогона).
@@ -5215,6 +5235,7 @@ class PdfExportRequest(BaseModel):
     # Название и дата — из сохранённого отчёта по report_id (сервер проверяет
     # доступ); поля с клиента — только запасной вариант для несохранённого.
     report_id: Optional[int] = None
+    kind: Optional[str] = None           # "quick" — быстрый ответ: компактный PDF без обложки
     title: Optional[str] = None
     report_date: Optional[str] = None
     author: Optional[str] = None
@@ -5247,6 +5268,7 @@ async def ai_export_pdf(req: PdfExportRequest, user: CurrentUser = Depends(get_c
     from urllib.parse import quote as _quote
     from .pdf_export import _doc_title, _report_day, export_report_to_pdf, pdf_filename
     title, rdate, author, rid = req.title, req.report_date, req.author, None
+    kind = "quick" if req.kind == "quick" else "report"
     if req.report_id:
         try:
             r = await asyncio.to_thread(userdata.get_report, int(req.report_id), user.username)
@@ -5254,6 +5276,8 @@ async def ai_export_pdf(req: PdfExportRequest, user: CurrentUser = Depends(get_c
             r = None
         if r:
             rid = int(req.report_id)
+            if ((r.get("payload") or {}).get("mode")) == "quick":
+                kind = "quick"
             title = r.get("title") or title
             rdate = r.get("created_at") or rdate
             author = r.get("owner_name") or r.get("owner") or author
@@ -5267,7 +5291,7 @@ async def ai_export_pdf(req: PdfExportRequest, user: CurrentUser = Depends(get_c
                 charts=req.charts or [], viz=_viz_clean(req.viz or []),
                 ranking=req.ranking, insights=req.insights or [],
                 gaps=req.gaps, claim_check=req.claim_check,
-                title=title, report_id=rid, report_date=rdate, author=author),
+                title=title, report_id=rid, report_date=rdate, author=author, kind=kind),
         ), timeout=120)
     except Exception as e:
         logging.getLogger(__name__).warning("PDF export failed: %s", e)
@@ -5278,6 +5302,47 @@ async def ai_export_pdf(req: PdfExportRequest, user: CurrentUser = Depends(get_c
                     headers={"Content-Disposition":
                              f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{_quote(fname)}",
                              "Access-Control-Expose-Headers": "Content-Disposition"})
+
+
+# ── Файлы от ИИ-помощника (ai/agent_files.py) ──────────────────────────────────
+# Агент Hermes отдаёт файл командой al-share: тело запроса — сами байты, имя — в
+# X-Filename (URL-кодировано). Доступ как у /mcp/: ключ AGENT_MCP_KEY и только
+# прямой локальный запрос — снаружи (через nginx) адреса нет.
+@app.post("/agent-files")
+async def agent_file_upload(request: Request):
+    from urllib.parse import unquote
+    from ..ai import agent_files, mcp_server
+    st = mcp_server.access_status({k.lower(): v for k, v in request.headers.items()},
+                                  request.client.host if request.client else "")
+    if st != 200:
+        raise HTTPException(st, "not found" if st == 404 else "unauthorized")
+    try:
+        if int(request.headers.get("content-length") or 0) > agent_files.MAX_BYTES:
+            raise HTTPException(413, f"файл больше {agent_files.MAX_BYTES // (1024 * 1024)} МБ")
+    except ValueError:
+        pass
+    data = await request.body()
+    try:
+        f = await asyncio.to_thread(agent_files.store, unquote(request.headers.get("x-filename", "")), data)
+    except agent_files.FileError as e:
+        raise HTTPException(400, str(e))
+    log.info("[agent-files] принят %s (%d байт) → %s", f["name"], f["size"], f["id"])
+    return f
+
+
+@app.get("/api/agent-files/{file_id}")
+def agent_file_download(file_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Скачать файл, который ИИ-помощник выдал этому пользователю."""
+    from urllib.parse import quote as _quote
+    from ..ai import agent_files
+    f = agent_files.get(file_id, user.username, telemetry.is_admin(user.username))
+    if not f:
+        raise HTTPException(404, "файл не найден")
+    ext = agent_files.ext_of(f["name"]) or "bin"
+    return Response(content=bytes(f["data"]), media_type=f["mime"], headers={
+        "Content-Disposition": f"attachment; filename=\"auditlens.{ext}\"; "
+                               f"filename*=UTF-8''{_quote(f['name'])}",
+        "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})
 
 
 # ── health / readiness (для реверс-прокси и оркестратора контейнера) ─────────

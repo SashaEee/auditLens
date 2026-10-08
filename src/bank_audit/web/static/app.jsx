@@ -5671,7 +5671,31 @@ function MatrixExportButton({matrix, question, streaming}){
   </span>;
 }
 
-function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps, reportId, title}){
+// Файлы, которые ИИ-помощник отдал в ответе (ai/agent_files.py): агент вставляет
+// метку [[FILE:<id>]], сервер привязывает файл к спросившему, здесь — «Скачать».
+// В тексте метка становится названием файла; недописанная в стриме — прячется.
+const AGF_MARK=/\[\[FILE:([0-9a-f]{32})\]\]/g;
+function stripFileMarks(text,files){
+  if(!text||text.indexOf("[[F")<0) return text;
+  const names={}; (files||[]).forEach(f=>{names[f.id]=f.name;});
+  return text.replace(AGF_MARK,(_,id)=>names[id]?`**${names[id]}**`:"").replace(/\[\[F[^\]\n]*$/,"");
+}
+function AgentFiles({files}){
+  if(!files||!files.length) return null;
+  const size=b=>b>=1048576?(b/1048576).toFixed(1).replace(".",",")+" МБ":Math.max(1,Math.round((b||0)/1024))+" КБ";
+  return <div className="agf-list">{files.map(f=>{
+    const ext=((f.name||"").split(".").pop()||"").toLowerCase().slice(0,4);
+    return <a key={f.id} className="agf" href={`/api/agent-files/${f.id}`} download={f.name}
+              onClick={()=>trkEvent({kind:"ui",page:"ai",payload:{action:"agent_file_download",ext}})}>
+      <span className={"agf-ext agf-"+ext}>{ext.toUpperCase()}</span>
+      <span className="agf-t"><span className="agf-n" title={f.name}>{f.name}</span>
+        <span className="agf-s">{size(f.size)}</span></span>
+      <span className="agf-dl"><svg viewBox="0 0 16 16" fill="none"><path d="M8 1v9m0 0L4.5 6.5M8 10l3.5-3.5M2 11.5V13a1 1 0 001 1h10a1 1 0 001-1v-1.5"
+        stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>Скачать</span>
+    </a>;})}</div>;
+}
+
+function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps, reportId, title, kind}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
     if(busy || streaming) return;
@@ -5688,6 +5712,7 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
           // и проверяет доступ); название из потока — запас, пока отчёт не сохранён.
           report_id: reportId || null,
           title: title || null,
+          kind: kind || null,          // "quick" — быстрый ответ: компактный PDF без обложки
           sources: (sources || []).map(s => ({
             n: s.n, url: s.url, bank_name: s.bank_name, title: s.title,
             source_kind: s.source_kind, trust_score: s.trust_score,
@@ -7192,6 +7217,8 @@ function AIPage(){
                 updateLast(last=>({tools:[...(last.tools||[]),data.name]}));
               }else if(data.type==="sources"&&Array.isArray(data.sources)){
                 updateLast(()=>({sources:data.sources,sourcesFailed:data.failed||0}));
+              }else if(data.type==="files"&&Array.isArray(data.files)){
+                updateLast(()=>({files:data.files}));
               }else if(data.type==="mode"){
                 updateLast(()=>({mode:data.value}));
               }else if(data.type==="phase"){
@@ -7385,6 +7412,7 @@ function AIPage(){
   // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
   const runDeepFromQuick=(srcQ)=>{
     if(loading||!srcQ)return;
+    trkEvent({kind:"ui",page:"ai",payload:{action:"quick_upsell"}});
     setDeepMode(true);
     setMsgs(m=>[...m,{role:"user",text:srcQ}]);
     runSend(srcQ,true);
@@ -7409,7 +7437,8 @@ function AIPage(){
         if(m.role==="user") return {role:"user",text:m.content};
         const meta=m.meta||{};
         return {role:"ai",text:m.content,sources:meta.sources||[],report_id:meta.report_id||undefined,
-                mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined};
+                mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined,
+                files:meta.files||undefined};
       });
       // История хранит только текст и источники; визуализации, графики и
       // артефакты проверки живут в отчёте — дотягиваем их по report_id, иначе
@@ -7442,7 +7471,7 @@ function AIPage(){
                 verification:p.verification||null,gaps:p.gaps||null,
                 ranking:p.ranking||null,insights:p.insights||null,
                 report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name,
-                status:p.status||undefined,title:r.title||undefined}]);
+                status:p.status||undefined,title:r.title||undefined,files:p.files||undefined}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
     }catch{}
@@ -7606,6 +7635,7 @@ function AIPage(){
           // Quick mode — ответ ИИ (редизайн: голый текст + tool-бокс + источники + апселл)
           const prevQ = (i>0 && msgs[i-1]?.role==="user") ? msgs[i-1].text : "";
           const thinking = !m.text && loading && i===msgs.length-1;
+          const qText = stripFileMarks(m.text, m.files);
           return <div key={i} className="chat-msg ai quick-msg">
             <div className="who">AuditLens AI{m.engine==="hermes"?" · Hermes ✦":""}</div>
             {m.tools&&m.tools.length>0 &&
@@ -7618,7 +7648,8 @@ function AIPage(){
               </div>}
             {thinking
               ? <PendingDots label="Думаю над ответом…"/>
-              : <div className="quick-answer chat-bubble">{renderMD(m.text, m.sources)}</div>}
+              : <div className="quick-answer chat-bubble">{renderMD(qText, m.sources)}</div>}
+            <AgentFiles files={m.files}/>
             {m.sources&&m.sources.length>0 &&
               <div className="quick-sources">
                 {m.sources.map((s,si)=>(
@@ -7640,9 +7671,13 @@ function AIPage(){
               <div style={{marginTop:10}}><span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span></div>}
             {m.text&&!(loading&&i===msgs.length-1)&&<div className="quick-acts">
               {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&<ShareButton reportId={m.report_id}/>}
+              {/* PDF и у быстрого ответа: раньше кнопка была только у отчёта, и тот, кому
+                  ответ понравился, искал «Скачать PDF» и не находил (обращение 06.10) */}
+              {(qText||"").length>=100&&<PdfExportButton question={prevQ} report={qText} sources={m.sources||[]}
+                streaming={false} reportId={m.report_id} title={m.title} kind="quick"/>}
               {/* ответ длиннее 800 знаков сохранён отчётом — приобщается им; короткий — как есть */}
               <CaseAddBtn src="ai_answer" item={m.report_id?{kind:"report",ref_id:m.report_id}
-                :{kind:"answer",title:prevQ,meta:{question:prevQ,text:m.text,
+                :{kind:"answer",title:prevQ,meta:{question:prevQ,text:qText,
                   sources:(m.sources||[]).slice(0,12).map(x=>({n:x.n,url:x.url,title:x.bank_name||domainOf(x.url)}))}}}/>
             </div>}
             {m.text&&!(loading&&i===msgs.length-1)&&
@@ -11461,7 +11496,9 @@ function PulsePage(){
             <div className="pu-kv"><span>Отчёты</span><b className="tnum">{f.reports||0}</b></div>
             {/* итоги прогонов: заказ ≠ отчёт — сорванные раньше не было видно (ПУЛ-02) */}
             {(f.runs_ok||f.runs_failed||f.runs_stopped)?<div className="pu-kv"><span>Прогоны ИИ-помощника
-              <span className="sub">{f.deep_p50_s!=null?`отчёт строится: медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}`:"время отчёта появится после первых прогонов"}</span></span>
+              <span className="sub">{[f.quick_p50_s!=null?`быстрый ответ — медиана ${puDur(f.quick_p50_s)}`:null,
+                f.deep_p50_s!=null?`отчёт — медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}`
+                  :f.deep_failed?`отчёты: готово ${f.deep_ok||0}, сорвалось ${f.deep_failed}`:null].filter(Boolean).join(" · ")||"время появится после первых прогонов"}</span></span>
               <b className="tnum">{f.runs_ok||0} готово{f.runs_failed?<span style={{color:"var(--neg)"}}> · {f.runs_failed} сорвалось</span>:null}{f.runs_stopped?<span style={{color:"var(--ink-3)"}}> · {f.runs_stopped} остановлено</span>:null}</b></div>:null}
             <div className="pu-kv"><span>Быстрые ответы сохранено</span><b className="tnum">{f.quick_saved||0}</b></div>
             <div className="pu-kv"><span>Открытий сохранённых отчётов</span><b className="tnum">{f.report_opens||0}</b></div>
@@ -11610,6 +11647,17 @@ const PAGE_LABELS={overview:"Новостные обзоры",foryou:"Для в�
 // до этой даты в меню показывается заметка о переименовании (пока её не закрыли)
 const RENAMED_UNTIL="2026-10-15";
 const renamedFresh=()=>new Date().toISOString().slice(0,10)<=RENAMED_UNTIL;
+// Когда показывать приглашение подключить почту: 1 — ещё не показывали, 2 — первый
+// раз закрыли «Не сейчас» неделю назад или раньше, 0 — не показывать. Даты отказа
+// у первых показов (до 06.10) нет — считаем от 06.10.
+const MAIL_PROMO_AGAIN_DAYS=7;
+const mailPromoDue=(prefs)=>{
+  const v=prefs&&prefs.mail_promo;
+  if(!v) return 1;
+  if(v!=="seen") return 0;
+  const at=Date.parse((prefs.mail_promo_at||"2026-10-06")+"T00:00:00");
+  return Date.now()-at>=MAIL_PROMO_AGAIN_DAYS*864e5 ? 2 : 0;
+};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS=`
@@ -12851,18 +12899,24 @@ function Shell(){
     try{ window.dispatchEvent(new CustomEvent("al-case-items",{detail:{case_id:t.case_id}})); }catch{} };
   const appInfo=useAppInfo();
   const[onbSeen,setOnbSeen]=useState(false);
-  // Разовое приглашение «уведомления — теперь и на почте» для тех, у кого почты нет.
-  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе;
-  // «Не сейчас» запоминается на сервере — на другом компьютере не всплывёт снова.
-  const[mailPromoOff,setMailPromoOff]=useState(()=>{ try{ return localStorage.getItem("al-mail-promo")==="1"
-    ||localStorage.getItem("al-bx-mail-seen")==="1"; }catch{ return false; } });     // уже открывал настройки почты
+  // Приглашение подключить почту (выпуск в 11:00) для тех, у кого её нет.
+  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе.
+  // Решает сервер: prefs.mail_promo — «seen» после первого показа, «again» после
+  // повтора; mail_promo_at — когда закрыли. Первый раз «Не сейчас» — через неделю
+  // покажем ещё раз, второй — больше никогда (на другом компьютере тоже).
+  const[mailPromoOff,setMailPromoOff]=useState(false);
   const[mailPromoReady,setMailPromoReady]=useState(false);
   useEffect(()=>{ const t=setTimeout(()=>setMailPromoReady(true),6000); return ()=>clearTimeout(t); },[]);
   const mailPromoShown=useRef(false);
   const[renameSeen,setRenameSeen]=useState(()=>{try{return localStorage.getItem("al-rename-1001b")==="1";}catch{return false;}});
+  // заметка о новом меню на экране — только у тех, кто застал старое меню. Раньше
+  // другие заметки ждали «renameSeen», а у новичков её нет вовсе: до 15.10 они не
+  // видели ни приглашения на почту, ни всплывающих уведомлений колокольчика.
+  const renameShow=!renameSeen&&renamedFresh()&&!!me&&!!me.created_at&&me.created_at<"2026-10-01";
+  const mailPromoRound=mailPromoDue(me&&me.prefs);   // 0 — не показывать, 1 — первый раз, 2 — повтор
   // приглашение важнее онбординга: пока оно на экране, заметка «настройте под себя» ждёт
-  const mailPromoShow=mailPromoReady&&!!me&&!me.has_email&&!mailPromoOff&&!(me.prefs&&me.prefs.mail_promo)
-    &&(renameSeen||!renamedFresh())&&!bellToast&&!bellOpen&&!sayOpen&&!casesHub;
+  const mailPromoShow=mailPromoReady&&!!me&&!me.has_email&&!mailPromoOff&&mailPromoRound>0
+    &&!renameShow&&!bellToast&&!bellOpen&&!sayOpen&&!casesHub;
   useEffect(()=>{document.documentElement.classList.toggle("nav-lock",navOpen);return()=>document.documentElement.classList.remove("nav-lock");},[navOpen]);
 
   // Список банков (/api/banks, ~260 КБ) раньше грузился при каждом входе ради
@@ -13077,6 +13131,7 @@ function Shell(){
         .mp-toast .mp-ic{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
           background:var(--select-soft);color:var(--select)}
         .mp-toast .mp-b{display:flex;gap:8px}
+        .mp-toast .t.mp-note{margin-top:-5px;font-size:11.5px;color:var(--ink-3)}
         .mp-toast .later{font-size:11.5px;padding:6px 12px;border-radius:8px;color:var(--ink-3);border:1px solid var(--hair);
           transition:transform .1s,color .12s}
         .mp-toast .later:hover{color:var(--ink)}
@@ -13205,7 +13260,7 @@ function Shell(){
         initialView={bellView} mailCode={bellCode} onEmail={(has)=>setMe(m=>m&&m.has_email!==has?{...m,has_email:has}:m)}
         onPrefs={(off,mail)=>setMe(m=>m?{...m,prefs:{...(m.prefs||{}),...(off?{notify_off:off}:{}),...(mail?{mail}:{})}}:m)}/></OverlayBoundary>,document.body)}
       {/* разовая заметка о новом уведомлении — у колокольчика, один раз на событие */}
-      {bellToast&&!bellOpen&&!sayOpen&&(renameSeen||!renamedFresh())&&<div className="tk-toast bx-toast" role="status">
+      {bellToast&&!bellOpen&&!sayOpen&&!renameShow&&<div className="tk-toast bx-toast" role="status">
         <div className="t"><span className="bx-ic">{React.createElement(bxIcon(bellToast.kind))}</span>
           <span><b>{bellToast.title}</b>{bxSnip(bellToast)&&<span className="bx-s">{bxSnip(bellToast)}</span>}<span className="m">{[bxWho(bellToast),
             bell.unread>1?`ещё ${bell.unread-1} — в колокольчике у вашего имени`:""].filter(Boolean).join(" · ")}</span></span></div>
@@ -13214,16 +13269,18 @@ function Shell(){
             sayPost("/api/bell/read",{ids:[t.id]}).then(loadBell).catch(()=>{}); goBell(t); }}>Открыть</button>}
           <button className="btn btn-sm" onClick={()=>bellSeen(bellToast.id)}>{bellToast.link?"Позже":"Понятно"}</button></div></div>}
       {(()=>{ if(!mailPromoShow) return null;
-        const done=(step)=>{ setMailPromoOff(true); try{ localStorage.setItem("al-mail-promo","1"); }catch{}
-          trkEvent({kind:"ui",page,payload:{action:"mail_promo",step}});
-          setMe(m=>m?{...m,prefs:{...(m.prefs||{}),mail_promo:"seen"}}:m);
-          apiPut("/api/me",{prefs:{mail_promo:"seen"}}).catch(()=>{}); };
+        const round=mailPromoRound, mark=round>1?"again":"seen";
+        const done=(step)=>{ setMailPromoOff(true);
+          trkEvent({kind:"ui",page,payload:{action:"mail_promo",step,round}});
+          setMe(m=>m?{...m,prefs:{...(m.prefs||{}),mail_promo:mark,mail_promo_at:new Date().toISOString().slice(0,10)}}:m);
+          apiPut("/api/me",{prefs:{mail_promo:mark}}).catch(()=>{}); };
         if(!mailPromoShown.current){ mailPromoShown.current=true;
-          setTimeout(()=>trkEvent({kind:"ui",page,payload:{action:"mail_promo",step:"shown"}}),0); }
+          setTimeout(()=>trkEvent({kind:"ui",page,payload:{action:"mail_promo",step:"shown",round}}),0); }
         return <div className="ren-toast mp-toast" role="status">
-          <div className="mp-h"><span className="mp-ic"><IcBx.mail/></span><b>Уведомления — теперь и на почте</b></div>
-          <div className="t">Упомянули, ответили, добавили в дело — письмом сразу, остальное — утренней сводкой.
-            Подойдёт почта Sigma или личная; на Omega письма не доходят.</div>
+          <div className="mp-h"><span className="mp-ic"><IcBx.mail/></span><b>Выпуск дня — письмом в 11:00</b></div>
+          <div className="t">Не успели зайти до 11 — пришлём главное: заголовок дня, пульс и что проверить.
+            Зашли сами — письма не будет. А если вас упомянут или добавят в дело, напишем сразу.</div>
+          <div className="t mp-note">Лучше рабочая почта Sigma: на личную письма приходят без подробностей.</div>
           <div className="mp-b">
             <button type="button" className="go" onClick={()=>{ done("connect"); setNavOpen(false); setSayOpen(null);
               setBellView("settings"); setBellOpen(true); }}>Подключить почту</button>
@@ -13232,7 +13289,7 @@ function Shell(){
         </div>; })()}
       {/* разовая заметка о новом меню — рядом с меню, но не поверх его пунктов */}
       {/* только тем, кто застал старое меню: новичку переименование ни о чём */}
-      {!renameSeen&&renamedFresh()&&me&&me.created_at&&me.created_at<"2026-10-01"&&<div className="ren-toast" role="status">
+      {renameShow&&<div className="ren-toast" role="status">
         <div className="t"><b>Меню обновлено.</b>{" "}
           {NAV.filter(n=>n.was).map(n=>`«${n.was}» → «${n.label}»`).join(", ")}.
           «Рынок · позиция» — переключатель в разделе «Новостные обзоры», справочные

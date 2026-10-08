@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Отдать файл пользователю AuditLens.
+
+    python3 /root/.hermes/bin/al-share <путь к файлу> ["Имя для пользователя.xlsx"]
+
+Печатает метку [[FILE:…]] — вставь её в ответ отдельной строкой, как есть:
+на её месте пользователь увидит кнопку «Скачать». Форматы: xlsx, xls, csv, docx,
+doc, pptx, pdf, txt, md, json, png, jpg, zip; до 20 МБ.
+"""
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+URL = os.environ.get("AUDITLENS_FILES_URL", "http://127.0.0.1:8000/agent-files")
+
+
+def key() -> str:
+    k = os.environ.get("AGENT_MCP_KEY", "").strip()
+    if k:
+        return k
+    try:
+        for ln in open("/root/.hermes/.env", encoding="utf-8"):
+            if ln.startswith("AGENT_MCP_KEY="):
+                return ln.split("=", 1)[1].strip().strip("'\"")
+    except OSError:
+        pass
+    sys.exit("al-share: нет ключа AGENT_MCP_KEY")
+
+
+def main() -> None:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        sys.exit(__doc__)
+    path = sys.argv[1]
+    name = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].strip() else os.path.basename(path)
+    try:
+        data = open(path, "rb").read()
+    except OSError as e:
+        sys.exit(f"al-share: не открыть {path}: {e}")
+    req = urllib.request.Request(URL, data=data, method="POST", headers={
+        "Authorization": f"Bearer {key()}", "Content-Type": "application/octet-stream",
+        "X-Filename": urllib.parse.quote(name)})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            res = json.load(r)
+    except urllib.error.HTTPError as e:
+        sys.exit(f"al-share: {e.code} {e.read().decode('utf-8', 'replace')[:300]}")
+    except OSError as e:
+        sys.exit(f"al-share: AuditLens недоступен: {e}")
+    print(res["marker"])
+    print(f"# {res['name']} · {res['size']} байт — вставь метку в ответ отдельной строкой",
+          file=sys.stderr)
+
+
+main()

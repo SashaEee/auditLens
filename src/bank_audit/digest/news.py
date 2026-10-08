@@ -509,7 +509,7 @@ _AUTHORITY = {"cbr_press": 0, "cbr_news": 0, "tg_cbr": 1,
               "banki_news": 2, "frankmedia": 2, "vedomosti_fin": 2,
               "tg_frankmedia": 3, "tg_banksta": 3, "tg_cyberpolice": 3,
               "kommersant_econ": 4, "vedomosti_econ": 4,
-              "tg_rbc": 5, "ria_novosti": 5, "web_search": 6}
+              "tg_rbc": 5, "ria_novosti": 5, "web_search": 6, "web_sber": 6}
 
 
 def _sem_dedupe(items: list[dict]) -> list[dict]:

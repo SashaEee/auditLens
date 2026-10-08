@@ -940,8 +940,12 @@ def build_pdf_html(*, question: str, report_md: str,
                    report_id: int | None = None,
                    report_date: Any = None,
                    author: str | None = None,
-                   toc_pages: dict[str, int] | None = None) -> str:
-    """HTML документа для печати Chromium'ом."""
+                   toc_pages: dict[str, int] | None = None,
+                   kind: str = "report") -> str:
+    """HTML документа для печати Chromium'ом. kind="quick" — быстрый ответ:
+    без обложки и оглавления, шапка и текст на первой странице, источники
+    следом, пометка, что факты построчно не сверялись."""
+    quick = kind == "quick"
     sources = [s for s in (sources or []) if isinstance(s, dict)]
     sources_by_n = {s["n"]: s for s in sources if s.get("n") is not None}
     meta = meta or {}
@@ -996,7 +1000,7 @@ def build_pdf_html(*, question: str, report_md: str,
     show_q = q_plain and q_plain.lower().rstrip("?.! ") != doc_title.lower().rstrip("?.!… ")
     meta_bits = [_ru_date(day)]
     if report_id:
-        meta_bits.append(f"отчёт № {int(report_id)}")
+        meta_bits.append(f"{'ответ' if quick else 'отчёт'} № {int(report_id)}")
     if author:
         meta_bits.append(_esc(author))
     if meta.get("verified"):
@@ -1022,14 +1026,27 @@ def build_pdf_html(*, question: str, report_md: str,
     footer_title = _clip(doc_title, 70).replace("\\", "\\\\").replace('"', '\\"')
     css = (_CSS.replace("%FOOTER%", f"AuditLens · {footer_title} · {day.strftime('%d.%m.%Y')}")
            .replace("%FONTS%", _font_faces()))
-    sources_block = (f'<section class="sources-page" id="sec-sources"><h2>Источники</h2>'
+    if quick:
+        # Короткому ответу обложка с оглавлением из одного пункта ни к чему:
+        # шапка, вопрос и честная пометка — на первой странице, над текстом.
+        cover_html = (
+            '<section class="qhead">'
+            '<div class="brand"><span class="brand-mark">AuditLens</span>'
+            '<span class="brand-kind">Быстрый ответ</span></div>'
+            f'<h1 class="q-title">{_esc(doc_title)}</h1>'
+            + (f'<p class="cover-q"><span>Вопрос аудитора</span>{_esc(_clip(q_plain, 300))}</p>' if show_q else "")
+            + f'<p class="cover-meta">{" · ".join(meta_bits)}</p>'
+            '<p class="q-note">Быстрый ответ ИИ-помощника: в отличие от отчёта, факты не сверялись '
+            'построчно со страницами источников. Ключевые цифры проверьте по ссылкам.</p>'
+            '</section>')
+    sources_block = (f'<section class="sources-page{" sources-inline" if quick else ""}" id="sec-sources"><h2>Источники</h2>'
                      f'<p class="src-lede">Номер — тот же, что у ссылки в тексте; название '
                      f'открывает источник, дата — когда он прочитан.</p>{sources_html}</section>'
                      if sources_html else "")
     return (f'<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8">'
             f'<title>{_esc(doc_title)} · AuditLens</title><style>{css}</style></head><body>'
             f'{cover_html}<section class="body">{body_html}</section>'
-            f'{ranking_html}{insights_html}{charts_html}{claimcheck_html}{limits_html}'
+            f'{ranking_html}{insights_html}{charts_html}{claimcheck_html}{"" if quick else limits_html}'
             f'{sources_block}{charts_js}</body></html>')
 
 
@@ -1149,6 +1166,11 @@ a { color: inherit; }
 
 /* Источники: группы, две колонки, запись в одну-две строки */
 .sources-page { break-before: page; }
+.sources-inline { break-before: auto; margin-top: 10mm; }
+.qhead { margin: 0 0 7mm; padding-top: 2mm; }
+.q-title { font-size: 19pt; font-weight: 600; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 4mm; text-wrap: balance; }
+.q-note { font-family: 'Geist', system-ui, sans-serif; font-size: 8.5pt; line-height: 1.45; color: var(--ink-3);
+  border-left: 2px solid #d9d4ca; padding: 0.5mm 0 0.5mm 4mm; margin: 0; }
 .src-lede { font-family: 'Geist', system-ui, sans-serif; font-size: 8.5pt; color: var(--ink-3); margin: 0 0 3mm; }
 .sg h3 { font-family: 'Geist', system-ui, sans-serif; font-size: 8pt; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--ink-2); margin: 5mm 0 1.5mm; padding-bottom: 1mm; border-bottom: 1px solid var(--ink); break-after: avoid; }
@@ -1354,18 +1376,22 @@ def export_report_to_pdf(*, question: str, report_md: str,
                          title: str | None = None,
                          report_id: int | None = None,
                          report_date: Any = None,
-                         author: str | None = None) -> bytes:
+                         author: str | None = None,
+                         kind: str = "report") -> bytes:
     """PDF отчёта в два прохода: первый — узнать по закладкам страницы
-    разделов, второй — с номерами в оглавлении. Не вышло узнать — первый."""
+    разделов, второй — с номерами в оглавлении. Не вышло узнать — первый.
+    Быстрый ответ (kind="quick") — один проход: оглавления у него нет."""
     from playwright.sync_api import sync_playwright
     kw = dict(question=question, report_md=report_md, sources=sources, meta=meta,
               verification=verification, charts=charts, viz=viz, ranking=ranking,
               insights=insights, gaps=gaps, claim_check=claim_check, title=title,
-              report_id=report_id, report_date=report_date, author=author)
+              report_id=report_id, report_date=report_date, author=author, kind=kind)
     with sync_playwright() as p:
         browser = _browser(p)
         try:
             first = _print(browser, build_pdf_html(**kw))
+            if kind == "quick":
+                return first
             try:
                 pages = _heading_pages(first)
             except Exception as e:  # noqa: BLE001

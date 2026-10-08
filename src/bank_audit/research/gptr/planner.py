@@ -136,7 +136,10 @@ def install(plan, question: str, attributes=None) -> list[str]:
     runstate.current().subqueries = list(subqueries)
 
     if not getattr(ResearchConductor, "_auditlens_patched", False):
-        async def plan_research(self, query, query_domains=None):
+        # *args/**kwargs: библиотека добавляет параметры и в патч-версиях —
+        # 0.16.x стала передавать search_results, точная сигнатура падала
+        # TypeError, и КАЖДЫЙ заказ отчёта срывался на сборе (05.10)
+        async def plan_research(self, query, query_domains=None, *args, **kwargs):
             subs = list(runstate.current().subqueries)
             log.info("gptr-planner: %d подзапросов из плана Кондуктора",
                      len(subs))

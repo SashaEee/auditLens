@@ -62,6 +62,10 @@ for d in skills/*/; do
   run docker cp "skills/$n" "$C:$H/skills/$n"
 done
 run docker cp memories/MEMORY.md $C:$H/memories/MEMORY.md
+# al-share — отдать пользователю файл (Excel, CSV, Word, PDF): POST /agent-files приложения
+run docker exec $C mkdir -p $H/bin
+run docker cp bin/al-share $C:$H/bin/al-share
+run docker exec $C chmod 755 $H/bin/al-share
 
 echo "5) архив вредных навыков → skills/.archive/"
 run docker exec $C mkdir -p $H/skills/.archive
@@ -74,7 +78,7 @@ done
 
 echo "6) проверка: размеры файлов в контейнере совпадают с репо"
 bad=0
-for f in SOUL.md memories/MEMORY.md skills/*/SKILL.md; do
+for f in SOUL.md memories/MEMORY.md skills/*/SKILL.md bin/al-share; do
   a=$(wc -c < "$f"); b=$(docker exec $C sh -c "wc -c < $H/$f" 2>/dev/null || echo 0)
   [ "$a" = "$b" ] || { echo "   РАСХОЖДЕНИЕ $f: $a ≠ $b"; bad=1; }
 done

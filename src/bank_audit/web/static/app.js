@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 9855a5ef5e554aa251b3ca588c9d3ed3251d09e0e7cc588e3f0370d540a29c9e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 d3e725fbebe8e6e948c1485bdd1ded8b2de2f91b07f501fb9112415fdf307a47): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -10899,6 +10899,64 @@ function MatrixExportButton({
     title: "\u041F\u043E\u043B\u043D\u0430\u044F \u043C\u0430\u0442\u0440\u0438\u0446\u0430 \u0432 JSON"
   }, "JSON"));
 }
+
+// Файлы, которые ИИ-помощник отдал в ответе (ai/agent_files.py): агент вставляет
+// метку [[FILE:<id>]], сервер привязывает файл к спросившему, здесь — «Скачать».
+// В тексте метка становится названием файла; недописанная в стриме — прячется.
+const AGF_MARK = /\[\[FILE:([0-9a-f]{32})\]\]/g;
+function stripFileMarks(text, files) {
+  if (!text || text.indexOf("[[F") < 0) return text;
+  const names = {};
+  (files || []).forEach(f => {
+    names[f.id] = f.name;
+  });
+  return text.replace(AGF_MARK, (_, id) => names[id] ? `**${names[id]}**` : "").replace(/\[\[F[^\]\n]*$/, "");
+}
+function AgentFiles({
+  files
+}) {
+  if (!files || !files.length) return null;
+  const size = b => b >= 1048576 ? (b / 1048576).toFixed(1).replace(".", ",") + " МБ" : Math.max(1, Math.round((b || 0) / 1024)) + " КБ";
+  return /*#__PURE__*/React.createElement("div", {
+    className: "agf-list"
+  }, files.map(f => {
+    const ext = ((f.name || "").split(".").pop() || "").toLowerCase().slice(0, 4);
+    return /*#__PURE__*/React.createElement("a", {
+      key: f.id,
+      className: "agf",
+      href: `/api/agent-files/${f.id}`,
+      download: f.name,
+      onClick: () => trkEvent({
+        kind: "ui",
+        page: "ai",
+        payload: {
+          action: "agent_file_download",
+          ext
+        }
+      })
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "agf-ext agf-" + ext
+    }, ext.toUpperCase()), /*#__PURE__*/React.createElement("span", {
+      className: "agf-t"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "agf-n",
+      title: f.name
+    }, f.name), /*#__PURE__*/React.createElement("span", {
+      className: "agf-s"
+    }, size(f.size))), /*#__PURE__*/React.createElement("span", {
+      className: "agf-dl"
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 16 16",
+      fill: "none"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M8 1v9m0 0L4.5 6.5M8 10l3.5-3.5M2 11.5V13a1 1 0 001 1h10a1 1 0 001-1v-1.5",
+      stroke: "currentColor",
+      strokeWidth: "1.4",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    })), "\u0421\u043A\u0430\u0447\u0430\u0442\u044C"));
+  }));
+}
 function PdfExportButton({
   question,
   report,
@@ -10912,7 +10970,8 @@ function PdfExportButton({
   insights,
   gaps,
   reportId,
-  title
+  title,
+  kind
 }) {
   const [busy, setBusy] = useState(false);
   const handle = async () => {
@@ -10933,6 +10992,8 @@ function PdfExportButton({
           // и проверяет доступ); название из потока — запас, пока отчёт не сохранён.
           report_id: reportId || null,
           title: title || null,
+          kind: kind || null,
+          // "quick" — быстрый ответ: компактный PDF без обложки
           sources: (sources || []).map(s => ({
             n: s.n,
             url: s.url,
@@ -13276,6 +13337,10 @@ function AIPage() {
                   sources: data.sources,
                   sourcesFailed: data.failed || 0
                 }));
+              } else if (data.type === "files" && Array.isArray(data.files)) {
+                updateLast(() => ({
+                  files: data.files
+                }));
               } else if (data.type === "mode") {
                 updateLast(() => ({
                   mode: data.value
@@ -13609,6 +13674,13 @@ function AIPage() {
   // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
   const runDeepFromQuick = srcQ => {
     if (loading || !srcQ) return;
+    trkEvent({
+      kind: "ui",
+      page: "ai",
+      payload: {
+        action: "quick_upsell"
+      }
+    });
     setDeepMode(true);
     setMsgs(m => [...m, {
       role: "user",
@@ -13646,7 +13718,8 @@ function AIPage() {
           sources: meta.sources || [],
           report_id: meta.report_id || undefined,
           mode: meta.mode || undefined,
-          phase: meta.mode === "deep" ? "done" : undefined
+          phase: meta.mode === "deep" ? "done" : undefined,
+          files: meta.files || undefined
         };
       });
       // История хранит только текст и источники; визуализации, графики и
@@ -13707,7 +13780,8 @@ function AIPage() {
         report_owner: r.owner,
         owner_name: r.owner_name,
         status: p.status || undefined,
-        title: r.title || undefined
+        title: r.title || undefined,
+        files: p.files || undefined
       }]);
       setSessionId(r.session_id || null);
       setActiveCite(null);
@@ -14003,6 +14077,7 @@ function AIPage() {
     // Quick mode — ответ ИИ (редизайн: голый текст + tool-бокс + источники + апселл)
     const prevQ = i > 0 && msgs[i - 1]?.role === "user" ? msgs[i - 1].text : "";
     const thinking = !m.text && loading && i === msgs.length - 1;
+    const qText = stripFileMarks(m.text, m.files);
     return /*#__PURE__*/React.createElement("div", {
       key: i,
       className: "chat-msg ai quick-msg"
@@ -14028,7 +14103,9 @@ function AIPage() {
       label: "\u0414\u0443\u043C\u0430\u044E \u043D\u0430\u0434 \u043E\u0442\u0432\u0435\u0442\u043E\u043C\u2026"
     }) : /*#__PURE__*/React.createElement("div", {
       className: "quick-answer chat-bubble"
-    }, renderMD(m.text, m.sources)), m.sources && m.sources.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, renderMD(qText, m.sources)), /*#__PURE__*/React.createElement(AgentFiles, {
+      files: m.files
+    }), m.sources && m.sources.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "quick-sources"
     }, m.sources.map((s, si) => /*#__PURE__*/React.createElement("a", {
       key: si,
@@ -14068,6 +14145,14 @@ function AIPage() {
       className: "quick-acts"
     }, m.report_id && (!m.report_owner || me && m.report_owner === me.username) && /*#__PURE__*/React.createElement(ShareButton, {
       reportId: m.report_id
+    }), (qText || "").length >= 100 && /*#__PURE__*/React.createElement(PdfExportButton, {
+      question: prevQ,
+      report: qText,
+      sources: m.sources || [],
+      streaming: false,
+      reportId: m.report_id,
+      title: m.title,
+      kind: "quick"
     }), /*#__PURE__*/React.createElement(CaseAddBtn, {
       src: "ai_answer",
       item: m.report_id ? {
@@ -14078,7 +14163,7 @@ function AIPage() {
         title: prevQ,
         meta: {
           question: prevQ,
-          text: m.text,
+          text: qText,
           sources: (m.sources || []).slice(0, 12).map(x => ({
             n: x.n,
             url: x.url,
@@ -21793,7 +21878,7 @@ function PulsePage() {
     className: "pu-kv"
   }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u043E\u0433\u043E\u043D\u044B \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0430", /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, f.deep_p50_s != null ? `отчёт строится: медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}` : "время отчёта появится после первых прогонов")), /*#__PURE__*/React.createElement("b", {
+  }, [f.quick_p50_s != null ? `быстрый ответ — медиана ${puDur(f.quick_p50_s)}` : null, f.deep_p50_s != null ? `отчёт — медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}` : f.deep_failed ? `отчёты: готово ${f.deep_ok || 0}, сорвалось ${f.deep_failed}` : null].filter(Boolean).join(" · ") || "время появится после первых прогонов")), /*#__PURE__*/React.createElement("b", {
     className: "tnum"
   }, f.runs_ok || 0, " \u0433\u043E\u0442\u043E\u0432\u043E", f.runs_failed ? /*#__PURE__*/React.createElement("span", {
     style: {
@@ -22114,6 +22199,17 @@ const PAGE_LABELS = {
 // до этой даты в меню показывается заметка о переименовании (пока её не закрыли)
 const RENAMED_UNTIL = "2026-10-15";
 const renamedFresh = () => new Date().toISOString().slice(0, 10) <= RENAMED_UNTIL;
+// Когда показывать приглашение подключить почту: 1 — ещё не показывали, 2 — первый
+// раз закрыли «Не сейчас» неделю назад или раньше, 0 — не показывать. Даты отказа
+// у первых показов (до 06.10) нет — считаем от 06.10.
+const MAIL_PROMO_AGAIN_DAYS = 7;
+const mailPromoDue = prefs => {
+  const v = prefs && prefs.mail_promo;
+  if (!v) return 1;
+  if (v !== "seen") return 0;
+  const at = Date.parse((prefs.mail_promo_at || "2026-10-06") + "T00:00:00");
+  return Date.now() - at >= MAIL_PROMO_AGAIN_DAYS * 864e5 ? 2 : 0;
+};
 
 // ─── Профиль и персонализация (Фазы 2+4, AI-forward редизайн) ─────────────────
 const PROFILE_CSS = `
@@ -24880,16 +24976,12 @@ function Shell() {
   };
   const appInfo = useAppInfo();
   const [onbSeen, setOnbSeen] = useState(false);
-  // Разовое приглашение «уведомления — теперь и на почте» для тех, у кого почты нет.
-  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе;
-  // «Не сейчас» запоминается на сервере — на другом компьютере не всплывёт снова.
-  const [mailPromoOff, setMailPromoOff] = useState(() => {
-    try {
-      return localStorage.getItem("al-mail-promo") === "1" || localStorage.getItem("al-bx-mail-seen") === "1";
-    } catch {
-      return false;
-    }
-  }); // уже открывал настройки почты
+  // Приглашение подключить почту (выпуск в 11:00) для тех, у кого её нет.
+  // Не поверх других заметок (меню, онбординг, колокольчик) и не сразу при входе.
+  // Решает сервер: prefs.mail_promo — «seen» после первого показа, «again» после
+  // повтора; mail_promo_at — когда закрыли. Первый раз «Не сейчас» — через неделю
+  // покажем ещё раз, второй — больше никогда (на другом компьютере тоже).
+  const [mailPromoOff, setMailPromoOff] = useState(false);
   const [mailPromoReady, setMailPromoReady] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setMailPromoReady(true), 6000);
@@ -24903,8 +24995,13 @@ function Shell() {
       return false;
     }
   });
+  // заметка о новом меню на экране — только у тех, кто застал старое меню. Раньше
+  // другие заметки ждали «renameSeen», а у новичков её нет вовсе: до 15.10 они не
+  // видели ни приглашения на почту, ни всплывающих уведомлений колокольчика.
+  const renameShow = !renameSeen && renamedFresh() && !!me && !!me.created_at && me.created_at < "2026-10-01";
+  const mailPromoRound = mailPromoDue(me && me.prefs); // 0 — не показывать, 1 — первый раз, 2 — повтор
   // приглашение важнее онбординга: пока оно на экране, заметка «настройте под себя» ждёт
-  const mailPromoShow = mailPromoReady && !!me && !me.has_email && !mailPromoOff && !(me.prefs && me.prefs.mail_promo) && (renameSeen || !renamedFresh()) && !bellToast && !bellOpen && !sayOpen && !casesHub;
+  const mailPromoShow = mailPromoReady && !!me && !me.has_email && !mailPromoOff && mailPromoRound > 0 && !renameShow && !bellToast && !bellOpen && !sayOpen && !casesHub;
   useEffect(() => {
     document.documentElement.classList.toggle("nav-lock", navOpen);
     return () => document.documentElement.classList.remove("nav-lock");
@@ -25280,6 +25377,7 @@ function Shell() {
         .mp-toast .mp-ic{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
           background:var(--select-soft);color:var(--select)}
         .mp-toast .mp-b{display:flex;gap:8px}
+        .mp-toast .t.mp-note{margin-top:-5px;font-size:11.5px;color:var(--ink-3)}
         .mp-toast .later{font-size:11.5px;padding:6px 12px;border-radius:8px;color:var(--ink-3);border:1px solid var(--hair);
           transition:transform .1s,color .12s}
         .mp-toast .later:hover{color:var(--ink)}
@@ -25604,7 +25702,7 @@ function Shell() {
         } : {})
       }
     } : m)
-  })), document.body), bellToast && !bellOpen && !sayOpen && (renameSeen || !renamedFresh()) && /*#__PURE__*/React.createElement("div", {
+  })), document.body), bellToast && !bellOpen && !sayOpen && !renameShow && /*#__PURE__*/React.createElement("div", {
     className: "tk-toast bx-toast",
     role: "status"
   }, /*#__PURE__*/React.createElement("div", {
@@ -25632,29 +25730,30 @@ function Shell() {
     onClick: () => bellSeen(bellToast.id)
   }, bellToast.link ? "Позже" : "Понятно"))), (() => {
     if (!mailPromoShow) return null;
+    const round = mailPromoRound,
+      mark = round > 1 ? "again" : "seen";
     const done = step => {
       setMailPromoOff(true);
-      try {
-        localStorage.setItem("al-mail-promo", "1");
-      } catch {}
       trkEvent({
         kind: "ui",
         page,
         payload: {
           action: "mail_promo",
-          step
+          step,
+          round
         }
       });
       setMe(m => m ? {
         ...m,
         prefs: {
           ...(m.prefs || {}),
-          mail_promo: "seen"
+          mail_promo: mark,
+          mail_promo_at: new Date().toISOString().slice(0, 10)
         }
       } : m);
       apiPut("/api/me", {
         prefs: {
-          mail_promo: "seen"
+          mail_promo: mark
         }
       }).catch(() => {});
     };
@@ -25665,7 +25764,8 @@ function Shell() {
         page,
         payload: {
           action: "mail_promo",
-          step: "shown"
+          step: "shown",
+          round
         }
       }), 0);
     }
@@ -25676,9 +25776,11 @@ function Shell() {
       className: "mp-h"
     }, /*#__PURE__*/React.createElement("span", {
       className: "mp-ic"
-    }, /*#__PURE__*/React.createElement(IcBx.mail, null)), /*#__PURE__*/React.createElement("b", null, "\u0423\u0432\u0435\u0434\u043E\u043C\u043B\u0435\u043D\u0438\u044F \u2014 \u0442\u0435\u043F\u0435\u0440\u044C \u0438 \u043D\u0430 \u043F\u043E\u0447\u0442\u0435")), /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement(IcBx.mail, null)), /*#__PURE__*/React.createElement("b", null, "\u0412\u044B\u043F\u0443\u0441\u043A \u0434\u043D\u044F \u2014 \u043F\u0438\u0441\u044C\u043C\u043E\u043C \u0432 11:00")), /*#__PURE__*/React.createElement("div", {
       className: "t"
-    }, "\u0423\u043F\u043E\u043C\u044F\u043D\u0443\u043B\u0438, \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0438, \u0434\u043E\u0431\u0430\u0432\u0438\u043B\u0438 \u0432 \u0434\u0435\u043B\u043E \u2014 \u043F\u0438\u0441\u044C\u043C\u043E\u043C \u0441\u0440\u0430\u0437\u0443, \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u043E\u0435 \u2014 \u0443\u0442\u0440\u0435\u043D\u043D\u0435\u0439 \u0441\u0432\u043E\u0434\u043A\u043E\u0439. \u041F\u043E\u0434\u043E\u0439\u0434\u0451\u0442 \u043F\u043E\u0447\u0442\u0430 Sigma \u0438\u043B\u0438 \u043B\u0438\u0447\u043D\u0430\u044F; \u043D\u0430 Omega \u043F\u0438\u0441\u044C\u043C\u0430 \u043D\u0435 \u0434\u043E\u0445\u043E\u0434\u044F\u0442."), /*#__PURE__*/React.createElement("div", {
+    }, "\u041D\u0435 \u0443\u0441\u043F\u0435\u043B\u0438 \u0437\u0430\u0439\u0442\u0438 \u0434\u043E 11 \u2014 \u043F\u0440\u0438\u0448\u043B\u0451\u043C \u0433\u043B\u0430\u0432\u043D\u043E\u0435: \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A \u0434\u043D\u044F, \u043F\u0443\u043B\u044C\u0441 \u0438 \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C. \u0417\u0430\u0448\u043B\u0438 \u0441\u0430\u043C\u0438 \u2014 \u043F\u0438\u0441\u044C\u043C\u0430 \u043D\u0435 \u0431\u0443\u0434\u0435\u0442. \u0410 \u0435\u0441\u043B\u0438 \u0432\u0430\u0441 \u0443\u043F\u043E\u043C\u044F\u043D\u0443\u0442 \u0438\u043B\u0438 \u0434\u043E\u0431\u0430\u0432\u044F\u0442 \u0432 \u0434\u0435\u043B\u043E, \u043D\u0430\u043F\u0438\u0448\u0435\u043C \u0441\u0440\u0430\u0437\u0443."), /*#__PURE__*/React.createElement("div", {
+      className: "t mp-note"
+    }, "\u041B\u0443\u0447\u0448\u0435 \u0440\u0430\u0431\u043E\u0447\u0430\u044F \u043F\u043E\u0447\u0442\u0430 Sigma: \u043D\u0430 \u043B\u0438\u0447\u043D\u0443\u044E \u043F\u0438\u0441\u044C\u043C\u0430 \u043F\u0440\u0438\u0445\u043E\u0434\u044F\u0442 \u0431\u0435\u0437 \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0435\u0439."), /*#__PURE__*/React.createElement("div", {
       className: "mp-b"
     }, /*#__PURE__*/React.createElement("button", {
       type: "button",
@@ -25695,7 +25797,7 @@ function Shell() {
       className: "later",
       onClick: () => done("later")
     }, "\u041D\u0435 \u0441\u0435\u0439\u0447\u0430\u0441")));
-  })(), !renameSeen && renamedFresh() && me && me.created_at && me.created_at < "2026-10-01" && /*#__PURE__*/React.createElement("div", {
+  })(), renameShow && /*#__PURE__*/React.createElement("div", {
     className: "ren-toast",
     role: "status"
   }, /*#__PURE__*/React.createElement("div", {

@@ -168,6 +168,7 @@ _NEWS_RU = {
     "vedomosti_fin": "Ведомости — финансы",
     "vedomosti_econ": "Ведомости — экономика",
     "kommersant_econ": "Коммерсантъ — экономика",
+    "web_sber": "Поиск: происшествия со Сбером",
 }
 
 
@@ -191,6 +192,13 @@ def _news_sources() -> list[dict]:
             "role": tag_ru.get(s.get("tag"), s.get("tag") or ""),
             "kind": "RSS-лента" if s.get("kind") == "rss" else "Телеграм-канал",
         })
+    # региональные сюжеты о Сбере, которых нет в лентах (digest/newsflow.collect_search)
+    from urllib.parse import quote
+    from ..digest.newsflow import SEARCH_QUERIES
+    out.append({"domain": _NEWS_RU["web_sber"],
+                "url": "https://yandex.ru/search/?text=" + quote(SEARCH_QUERIES[0]),
+                "title": f"поиск Яндекса: {len(SEARCH_QUERIES)} запросов, новостные сайты, не старше 48 ч",
+                "role": tag_ru["incident"], "kind": "Поиск по теме"})
     return out
 
 

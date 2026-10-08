@@ -177,6 +177,19 @@ _INS = text("""
 """)
 
 
+_STATE_UPSERT = text("""
+    INSERT INTO news_source_state (source, last_ok_at, last_error, last_post, items_24h)
+    VALUES (:s, CASE WHEN CAST(:e AS text) IS NULL THEN now() END, CAST(:e AS text),
+            CAST(:lp AS bigint),
+            (SELECT count(*) FROM news_item WHERE source = :s AND ts > now() - interval '24 hours'))
+    ON CONFLICT (source) DO UPDATE SET
+        last_ok_at = coalesce(EXCLUDED.last_ok_at, news_source_state.last_ok_at),
+        last_error = EXCLUDED.last_error,
+        last_post = coalesce(EXCLUDED.last_post, news_source_state.last_post),
+        items_24h = EXCLUDED.items_24h
+""")
+
+
 def collect() -> dict:
     """Один проход сбора по всем источникам. Идемпотентен: уже виденное не
     дублируется. Сбой источника — запись в news_source_state, не падение."""
@@ -222,18 +235,137 @@ def collect() -> dict:
         added += n
         per[src["key"]] = {"new": n, "err": err}
         with db.session() as s:
-            s.execute(text("""
-                INSERT INTO news_source_state (source, last_ok_at, last_error, last_post, items_24h)
-                VALUES (:s, CASE WHEN CAST(:e AS text) IS NULL THEN now() END, CAST(:e AS text),
-                        CAST(:lp AS bigint),
-                        (SELECT count(*) FROM news_item WHERE source = :s AND ts > now() - interval '24 hours'))
-                ON CONFLICT (source) DO UPDATE SET
-                    last_ok_at = coalesce(EXCLUDED.last_ok_at, news_source_state.last_ok_at),
-                    last_error = EXCLUDED.last_error,
-                    last_post = coalesce(EXCLUDED.last_post, news_source_state.last_post),
-                    items_24h = EXCLUDED.items_24h
-            """), {"s": src["key"], "e": err, "lp": last_post})
+            s.execute(_STATE_UPSERT, {"s": src["key"], "e": err, "lp": last_post})
     return {"added": added, "sources": per}
+
+
+# ── Поиск по теме: происшествия со Сбером ─────────────────────────────────────
+# Ленты «Обзора» — федеральные издания и их рубрики. Региональные сюжеты о Сбере
+# (хищения в регионах, дела против сотрудников) в них не попадают:
+# «Татарстан, 60 млн через ипотеку» 05.10 вышла в восьми региональных изданиях и
+# прошла мимо выпуска. Замер на истории 24.09–07.10: два таких пропуска за две
+# недели, но сырая выдача на ~95% мусор (соцсети, справочники, советы, старьё с
+# новой датой изменения страницы). Отсюда фильтры: только новостные сайты, «Сбер»
+# в заголовке, дата публикации ИЗ РАЗМЕТКИ СТРАНИЦЫ не старше SEARCH_MAX_AGE_H —
+# дата выдачи Яндекса (modtime) пропустила бы статьи 2014 и 2019 годов.
+SEARCH_SRC = {"key": "web_sber", "tag": "incident", "dimension": "fraud", "cls": "bank"}
+SEARCH_EVERY_MIN = int(os.getenv("NEWSFLOW_SEARCH_EVERY_MIN", "120"))
+SEARCH_MAX_AGE_H = int(os.getenv("NEWSFLOW_SEARCH_MAX_AGE_H", "48"))
+SEARCH_MAX_FETCH = int(os.getenv("NEWSFLOW_SEARCH_MAX_FETCH", "40"))
+SEARCH_QUERIES = (
+    "Сбербанк хищение",
+    "у Сбербанка похитили",
+    "сотрудник Сбербанка задержан",
+    "Сбербанк уголовное дело",
+    "служба безопасности Сбербанка",
+    "Сбербанк мошенническая схема",
+    "Сбербанк обналичивание",
+)
+# не новости: соцсети и видео, мессенджеры, справочники и судебные базы, сайты
+# банков и агрегаторов (banki.ru и так в лентах), энциклопедии
+_SEARCH_SKIP = re.compile(
+    r"(?:^|\.)(?:dzen\.ru|vk\.(?:ru|com)|vkvideo\.ru|rutube\.ru|youtube\.com|youtu\.be|t\.me|"
+    r"max\.ru|ok\.ru|pikabu\.ru|otzovik\.com|irecommend\.ru|livejournal\.com|teletype\.in|"
+    r"tiktok\.com|sudact\.ru|garant\.ru|harant\.ru|consultant\.ru|zakonrf\.info|sudrf\.ru|"
+    r"kad\.arbitr\.ru|pravo\.gov\.ru|cyberleninka\.ru|wikipedia\.org|tadviser\.ru|"
+    r"sberbank\.(?:ru|com)|sber\.ru|sbersova\.ru|banki\.ru|sravni\.ru|finuslugi\.ru|"
+    r"bankiros\.ru|vbr\.ru)$", re.I)
+_SBER_RE = re.compile(r"сбер", re.I)
+# Мусорные домены SEO-выдачи (на проде в первый же проход: meshlink.mom — «как снять деньги…»)
+_JUNK_TLD = re.compile(r"\.(?:mom|site|xyz|online|top|click|shop|store|fun|space|icu|buzz|website|pw)$", re.I)
+# Поиск отвечает только за ПРОИСШЕСТВИЯ: остальное с его выдачи — кликбейт «Сбербанк изменил
+# правила для всех» и советы, которые ступень 1 оценивала на 6–9. Не происшествие из поиска →
+# rel не выше 4: дальше по конвейеру не идёт (полный текст, склейка и ступень 2 — от 5–6).
+SEARCH_TYPES = ("fraud", "enforcement", "court", "incident", "data_leak")
+SEARCH_OTHER_REL_CAP = 4
+_OG_TITLE_RE = re.compile(r'<meta[^>]{0,200}?property="og:title"[^>]{0,200}?content="([^"]{10,300})"'
+                          r'|<meta[^>]{0,200}?content="([^"]{10,300})"[^>]{0,200}?property="og:title"', re.I)
+
+
+def _host_of(url: str) -> str:
+    m = re.match(r"https?://([^/:?#]+)", url or "", re.I)
+    return (m.group(1).lower() if m else "").removeprefix("www.")
+
+
+def _og_title(page: str) -> str:
+    import html as _html
+    m = _OG_TITLE_RE.search(page or "")
+    return " ".join(_html.unescape(m.group(1) or m.group(2)).split()) if m else ""
+
+
+def _search_due() -> bool:
+    with db.session() as s:
+        last = s.execute(text("SELECT last_ok_at FROM news_source_state WHERE source = :s"),
+                         {"s": SEARCH_SRC["key"]}).scalar()
+    return not last or datetime.now(timezone.utc) - last >= timedelta(minutes=SEARCH_EVERY_MIN)
+
+
+def collect_search(force: bool = False) -> dict:
+    """Поиск по теме «происшествия со Сбером» раз в SEARCH_EVERY_MIN минут.
+    Найденное ложится в news_item как обычная запись (источник web_sber) и идёт
+    тем же конвейером: ступень 1, полный текст, склейка, ступень 2."""
+    from ..rag import search_gateway as sg
+    if not sg.enabled():
+        return {"skipped": "поиск не настроен"}
+    if not force and not _search_due():
+        return {"skipped": "рано"}
+    seen: set[str] = set()
+    cands: list[dict] = []
+    err = None
+    for q in SEARCH_QUERIES:
+        r = sg.yandex_search(q, fresh_hours=SEARCH_MAX_AGE_H, max_results=10, caller="newsflow")
+        if r.status not in ("ok", "empty"):
+            err = f"поиск {r.status}: {(r.detail or '')[:120]}"
+            continue
+        for it in r.items:
+            u = it.get("url") or ""
+            if not u or u in seen:
+                continue
+            seen.add(u)
+            host = _host_of(u)
+            if _SEARCH_SKIP.search(host) or _JUNK_TLD.search(host) \
+                    or not _SBER_RE.search(it.get("title") or ""):
+                continue
+            cands.append(it)
+    if cands:                                   # уже виденные адреса не качаем
+        with db.session() as s:
+            have = {r[0] for r in s.execute(text(
+                "SELECT url_hash FROM news_item WHERE url_hash = ANY(:h)"),
+                {"h": [nm._url_hash(c["url"]) for c in cands]}).all()}
+        cands = [c for c in cands if nm._url_hash(c["url"]) not in have]
+    now = datetime.now(timezone.utc)
+    rows, dropped = [], {"no_date": 0, "old": 0, "http": 0}
+    for c in cands[:SEARCH_MAX_FETCH]:
+        try:
+            r = nm._get(c["url"])
+            if r.status_code != 200:
+                dropped["http"] += 1
+                continue
+            page = r.text
+            ts = nm.date_from_html(page)
+        except Exception:  # noqa: BLE001 — одна страница, не весь проход
+            dropped["http"] += 1
+            continue
+        if not ts:
+            dropped["no_date"] += 1
+            continue
+        if ts < now - timedelta(hours=SEARCH_MAX_AGE_H) or ts > now + timedelta(hours=3):
+            dropped["old"] += 1
+            continue
+        title = _og_title(page) or clean_title(c.get("title") or "")
+        if not _SBER_RE.search(title):
+            title = clean_title(c.get("title") or "")
+        rows.append(_row(SEARCH_SRC, c["url"], ts, title, c.get("snippet") or ""))
+    n = 0
+    if rows:
+        with db.session() as s:
+            res = s.execute(_INS, rows)
+            n = res.rowcount if res.rowcount and res.rowcount > 0 else 0
+    with db.session() as s:
+        s.execute(_STATE_UPSERT, {"s": SEARCH_SRC["key"], "e": err, "lp": None})
+    out = {"queries": len(SEARCH_QUERIES), "candidates": len(cands), "added": n, "dropped": dropped}
+    log.info("newsflow.search: %s", out)
+    return out
 
 
 # ── Модель ───────────────────────────────────────────────────────────────────
@@ -313,6 +445,8 @@ async def stage1(limit: int = 600) -> dict:
             except (TypeError, ValueError):
                 continue
             typ = it.get("type") if it.get("type") in _S1_TYPES else "other"
+            if r[1] == SEARCH_SRC["key"] and typ not in SEARCH_TYPES:
+                rel = min(rel, SEARCH_OTHER_REL_CAP)
             payload.append({"id": r[0], "rel": rel, "t": typ})
         if payload:
             with db.session() as s:
@@ -639,6 +773,10 @@ async def tick() -> dict:
 
 async def _tick() -> dict:
     out = {"collect": await asyncio.to_thread(collect)}
+    try:
+        out["search"] = await asyncio.to_thread(collect_search)
+    except Exception as e:  # noqa: BLE001 — поиск не должен останавливать ленты
+        log.warning("newsflow.search: %s", e)
     out["stage1"] = await stage1()
     out["bodies"] = await asyncio.to_thread(fetch_bodies)
     out["cluster"] = await asyncio.to_thread(cluster)
@@ -975,5 +1113,20 @@ def health() -> dict:
             WHERE n.first_seen > now() - interval '14 days'
             GROUP BY 1 ORDER BY 4 DESC, 3 DESC
         """)).mappings().all()]
+        # Поиск по теме окупается событиями, которых в лентах НЕ было вовсе:
+        # событие из одних записей web_sber. Через две недели решаем по ним.
+        sch = s.execute(text("""
+            WITH ev AS (
+                SELECT event_id, bool_and(source = :k) AS only_search, bool_or(source = :k) AS any_search,
+                       max(value) AS v, bool_or(published_on IS NOT NULL) AS pub
+                  FROM news_item
+                 WHERE event_id IS NOT NULL AND first_seen > now() - interval '14 days'
+                 GROUP BY 1)
+            SELECT count(*) FILTER (WHERE any_search), count(*) FILTER (WHERE only_search),
+                   count(*) FILTER (WHERE only_search AND v >= 6),
+                   count(*) FILTER (WHERE only_search AND pub)
+              FROM ev"""), {"k": SEARCH_SRC["key"]}).one()
     return {"sources": src, "items_24h": int(agg[0]), "relevant_24h": int(agg[1]),
-            "strong_24h": int(agg[2]), "events_24h": int(agg[3]), "yield_14d": yld}
+            "strong_24h": int(agg[2]), "events_24h": int(agg[3]), "yield_14d": yld,
+            "search_14d": {"events": int(sch[0]), "only_search": int(sch[1]),
+                           "only_search_strong": int(sch[2]), "only_search_published": int(sch[3])}}

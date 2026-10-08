@@ -425,7 +425,11 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
                percentile_cont(0.5) WITHIN GROUP (ORDER BY (payload->>'elapsed_s')::numeric)
                    FILTER (WHERE payload->>'status' = 'ok' AND payload->>'mode' = 'deep') AS deep_p50,
                percentile_cont(0.95) WITHIN GROUP (ORDER BY (payload->>'elapsed_s')::numeric)
-                   FILTER (WHERE payload->>'status' = 'ok' AND payload->>'mode' = 'deep') AS deep_p95
+                   FILTER (WHERE payload->>'status' = 'ok' AND payload->>'mode' = 'deep') AS deep_p95,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY (payload->>'elapsed_s')::numeric)
+                   FILTER (WHERE payload->>'status' = 'ok' AND payload->>'mode' <> 'deep') AS quick_p50,
+               count(*) FILTER (WHERE payload->>'mode' = 'deep' AND payload->>'status' = 'ok') AS deep_ok,
+               count(*) FILTER (WHERE payload->>'mode' = 'deep' AND payload->>'status' = 'failed') AS deep_failed
           FROM user_event WHERE kind = 'ai_run_end' AND {P} AND ts >= {_SINCE}""", p)
     runs = runs[0] if runs else {}
     # когда последний раз хоть кто-то ставил оценку: с конца августа — никто,
@@ -445,6 +449,9 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
         "runs_stopped": int(runs.get("stopped") or 0),
         "deep_p50_s": round(float(runs["deep_p50"])) if runs.get("deep_p50") is not None else None,
         "deep_p95_s": round(float(runs["deep_p95"])) if runs.get("deep_p95") is not None else None,
+        "quick_p50_s": round(float(runs["quick_p50"])) if runs.get("quick_p50") is not None else None,
+        "deep_ok": int(runs.get("deep_ok") or 0),
+        "deep_failed": int(runs.get("deep_failed") or 0),
         "report_opens": int(ev.get("report_opens") or 0),
         "fb_likes": int(fb.get("fb_likes") or 0),
         "fb_dislikes": int(fb.get("fb_dislikes") or 0),

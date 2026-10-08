@@ -103,6 +103,18 @@ def build():
     return srv
 
 
+def access_status(headers: dict, client: str) -> int:
+    """200 — пускаем; 401 — неверный ключ; 404 — сервер выключен или запрос через
+    прокси. headers — с ключами в нижнем регистре. Тот же доступ у приёма файлов
+    агента (POST /agent-files)."""
+    proxied = "x-forwarded-for" in headers or "x-real-ip" in headers
+    if not MCP_KEY or proxied:
+        return 404
+    token = headers.get("authorization", "").removeprefix("Bearer ").strip()
+    ok = client in ("127.0.0.1", "::1") and hmac.compare_digest(token, MCP_KEY)
+    return 200 if ok else 401
+
+
 class Guard:
     """ASGI-обёртка: ключ + только прямые локальные запросы."""
 
@@ -115,12 +127,8 @@ class Guard:
         headers = {k.decode("latin-1").lower(): v.decode("latin-1")
                    for k, v in scope.get("headers") or []}
         client = (scope.get("client") or ("", 0))[0]
-        proxied = "x-forwarded-for" in headers or "x-real-ip" in headers
-        token = headers.get("authorization", "").removeprefix("Bearer ").strip()
-        ok = (bool(MCP_KEY) and not proxied and client in ("127.0.0.1", "::1")
-              and hmac.compare_digest(token, MCP_KEY))
-        if not ok:
-            status = 404 if not MCP_KEY or proxied else 401
+        status = access_status(headers, client)
+        if status != 200:
             await send({"type": "http.response.start", "status": status,
                         "headers": [(b"content-type", b"text/plain; charset=utf-8")]})
             await send({"type": "http.response.body", "body": b"not found" if status == 404
