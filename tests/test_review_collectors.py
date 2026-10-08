@@ -24,6 +24,53 @@ def test_nightly_sources_exclude_review_streams():
     assert not [s for s in tariffs if "review" in s]      # свежесть тарифов — не по отзывам
 
 
+def test_manual_run_before_slot_does_not_skip_nightly(monkeypatch):
+    """04.10: ручной прогон РКО в 02:24 засчитали как весь ночной сбор, и в 05:00
+    сбор пропустили. Теперь недостающие источники собираются в слот."""
+    nightly = scheduler.nightly_sources()
+    rko = "sravni_rko" if "sravni_rko" in nightly else nightly[-1]
+    monkeypatch.setattr(scheduler, "_nightly_today", lambda: ({rko}, False))
+    missing, busy = scheduler._missing_today()
+    assert rko not in missing and len(missing) == len(nightly) - 1 and not busy
+    assert scheduler._ingest_reason(at_slot=True, hour=5, missing=missing, busy=busy,
+                                    age_h=2.6, attempts=0) == "плановый слот"
+
+
+def test_missed_slot_caught_up_within_hour_not_after_26h():
+    """Рестарт в час сбора / пропуск слота: после слота досбираем сразу, хотя
+    данные ещё «свежие» по сторожу (не ждём 26 ч, как 01.10)."""
+    h = scheduler.INGEST_HOUR + 2
+    assert scheduler._ingest_reason(at_slot=False, hour=h, missing=["cbr_registry"],
+                                    busy=False, age_h=20.0, attempts=0) == "пропущенный слот"
+    # до слота — только при протухших данных
+    early = scheduler.INGEST_HOUR - 2
+    assert scheduler._ingest_reason(at_slot=False, hour=early, missing=["cbr_registry"],
+                                    busy=False, age_h=20.0, attempts=0) is None
+    assert scheduler._ingest_reason(at_slot=False, hour=early, missing=["cbr_registry"],
+                                    busy=False, age_h=30.0, attempts=0).startswith("данные устарели")
+
+
+@pytest.mark.parametrize("missing,busy,attempts", [
+    ([], False, 0),                                   # всё собрано
+    (["sravni_api"], True, 0),                        # сбор идёт — не мешаем
+    (["sravni_api"], False, scheduler.INGEST_MAX_ATTEMPTS),   # падает весь день — не дёргаем
+])
+def test_no_run_when_done_busy_or_out_of_attempts(missing, busy, attempts):
+    assert scheduler._ingest_reason(at_slot=True, hour=scheduler.INGEST_HOUR, missing=missing,
+                                    busy=busy, age_h=40.0, attempts=attempts) is None
+
+
+def test_failed_source_counts_as_missing(monkeypatch):
+    """Упавший или убитый деплоем прогон — не «собран»: его досберут. Сам критерий
+    живёт в SQL (БД в тестах нет) — проверяем его текстом, как миграции."""
+    import inspect
+    sql = inspect.getsource(scheduler._nightly_today)
+    assert "status IN ('ok', 'partial')" in sql and "finished_at IS NOT NULL" in sql
+    nightly = scheduler.nightly_sources()
+    monkeypatch.setattr(scheduler, "_nightly_today", lambda: (set(nightly[1:]), False))
+    assert scheduler._missing_today()[0] == nightly[:1]
+
+
 @pytest.mark.parametrize("n,key,ok", [
     ("рост банк", "т банк", False),          # WRatio 90 — было «Т-Банк»
     ("тинькоф банк", "т банк", False),
