@@ -272,6 +272,9 @@ def sync_local(batch: int = 400) -> dict:
               -- sravni без идентификатора банка (ранний сборщик писал отзывы витрины
               -- чужим банкам) — банк не проверить, в индекс не берём
               AND NOT (r.source = 'sravni_reviews' AND r.raw->>'review_object_id' IS NULL)
+              -- ранний HTML-сборщик banki.ru без номера отзыва подставлял номер
+              -- карточки («…/vtb/response/0/»): ссылка в никуда, текст — обрезок
+              AND NOT (r.source = 'banki_reviews' AND r.source_url !~ '/response/[0-9]{6,}')
               -- похвала 4–5★ в анализ жалоб не идёт, а разметка каждой стоит денег
               AND NOT (r.source IN ('banki_reviews', 'sravni_reviews') AND r.rating >= 4)
               -- banki.ru: негатив приходит во внешнем корпусе; свой сбор индексируем,
@@ -322,6 +325,8 @@ def sync_local(batch: int = 400) -> dict:
     # Свой отзыв banki.ru попадал в индекс, пока внешний корпус его не получил, и
     # оставался там и после: тот же отзыв считался дважды. Корпус — владелец текста,
     # его строка остаётся, наша уходит.
+    # Там же — строки раннего HTML-сборщика: без номера отзыва (номер карточки вместо
+    # него) и копии одного адреса, записанные со слешем на конце и без.
     with db.session() as s:
         dropped = s.execute(text("""
             DELETE FROM review_index o
@@ -331,8 +336,20 @@ def sync_local(batch: int = 400) -> dict:
                               AND c.url IN (:base || substring(o.url from '/response/([0-9]+)'),
                                             :base || substring(o.url from '/response/([0-9]+)') || '/'))
         """), {"base": _BANKI_RESP}).rowcount
+        dropped += s.execute(text("""
+            DELETE FROM review_index o
+             WHERE o.source = 'banki_reviews' AND o.url !~ '/response/[0-9]{6,}'
+        """)).rowcount
+        dropped += s.execute(text("""
+            DELETE FROM review_index o
+             WHERE o.source = 'banki_reviews'
+               AND EXISTS (SELECT 1 FROM review_index c
+                            WHERE c.source = 'banki_reviews' AND c.url <> o.url
+                              AND rtrim(c.url, '/') = rtrim(o.url, '/')
+                              AND c.review_id > o.review_id)
+        """)).rowcount
     if dropped:
-        log.info("review_index: убрано дублей с внешним корпусом: %d", dropped)
+        log.info("review_index: убрано дублей и строк без номера отзыва: %d", dropped)
 
     embedded = embed_missing()
     dt = time.time() - t0
