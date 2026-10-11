@@ -829,7 +829,7 @@ def apply_to_index(full: bool = False, chunk: int = 2000) -> dict:
     while True:
         with db.session() as s:
             rows = s.execute(text("""
-                SELECT url, status, kind, product, issue, issues2, esc, event_date, city,
+                SELECT url, status, kind, product, channels, issue, issues2, esc, event_date, city,
                        created_at
                 FROM review_annotation
                 WHERE schema_version = :v
@@ -848,6 +848,7 @@ def apply_to_index(full: bool = False, chunk: int = 2000) -> dict:
                 "issue": r["issue"] if ok else None,
                 "issues2": list(r["issues2"] or []) if ok else None,
                 "product": cb.product_label(r["product"]) if ok else None,
+                "ch": list(r["channels"] or []) if ok else None,      # срез «УС» (migrations/098)
                 "esc": bool(complaint and r["esc"] in ("threat", "filed")),
                 "ev": _ev(r["event_date"]) if ok else None,
                 "city": _city(r["city"]) if ok else None,
@@ -856,7 +857,7 @@ def apply_to_index(full: bool = False, chunk: int = 2000) -> dict:
         with db.session() as s:
             s.execute(text("""
                 UPDATE review_index SET kind = :kind, issue = :issue, issues2 = :issues2,
-                       product = :product, esc = :esc, ev_date = :ev,
+                       product = :product, channels = :ch, esc = :esc, ev_date = :ev,
                        city = coalesce(city, :city), ann_at = :at
                  WHERE url = :u"""), payload)
         done += len(payload)
