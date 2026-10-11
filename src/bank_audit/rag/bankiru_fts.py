@@ -346,7 +346,10 @@ def sync_local(batch: int = 400) -> dict:
                AND EXISTS (SELECT 1 FROM review_index c
                             WHERE c.source = 'banki_reviews' AND c.url <> o.url
                               AND rtrim(c.url, '/') = rtrim(o.url, '/')
-                              AND c.review_id > o.review_id)
+                              -- обычно это одна запись review, сменившая адрес: остаётся
+                              -- адрес со слешем — так пишет нынешний сборщик
+                              AND (c.review_id > o.review_id
+                                   OR (c.review_id = o.review_id AND c.url > o.url)))
         """)).rowcount
     if dropped:
         log.info("review_index: убрано дублей и строк без номера отзыва: %d", dropped)
