@@ -140,62 +140,103 @@ def _tariff_sources() -> list[str]:
             if "review" not in str((cfg.get(k) or {}).get("adapter", "")).lower()]
 
 
-def _nightly_today() -> tuple[set[str], bool]:
-    """Какие ночные источники сегодня (МСК) уже собраны и идёт ли сбор прямо сейчас.
+def nightly_targets() -> list[tuple[str, str]]:
+    """Цели ночного сбора (источник, цель) в порядке конфига. Журнал extraction_run
+    пишется по целям (у sravni_api их 72, у finuslugi — 12), и «собрано» тоже
+    считаем по целям: источник, у которого прошла одна цель из 72, не собран."""
+    from ..config import load_sources
+    cfg = load_sources()
+    return [(src, t["name"]) for src in nightly_sources()
+            for t in ((cfg.get(src) or {}).get("targets") or []) if t.get("name")]
 
-    Собран = есть завершённый прогон со статусом ok или partial. Упавший (failed)
-    и убитый деплоем (вечный running) — не собран. Идёт = незавершённый прогон
-    моложе 30 минут."""
+
+def _slot_at(now: datetime) -> datetime:
+    return now.astimezone(MSK).replace(hour=INGEST_HOUR, minute=0, second=0, microsecond=0)
+
+
+def _targets_today(now: datetime | None = None) -> tuple[dict, bool]:
+    """Цели ночного сбора за сегодня (МСК): {(источник, цель): {done, fails, last}} и
+    «идёт сбор». done — есть завершённый прогон ok/partial; fails — упавшие прогоны
+    ПОСЛЕ слота (ночной догон до слота лимит дня не тратит); last — последний старт.
+    Убитый деплоем прогон (вечный running) — не собран и не попытка: досберут.
+    Всё из журнала, а не из памяти процесса — рестарт счёт не сбрасывает."""
+    now = now or datetime.now(MSK)
     with db.session() as s:
         rows = s.execute(text("""
-            SELECT source,
-                   bool_or(finished_at IS NOT NULL AND status IN ('ok', 'partial')),
+            SELECT source, target_name,
+                   bool_or(finished_at IS NOT NULL AND status IN ('ok', 'partial')) AS done,
+                   count(*) FILTER (WHERE status = 'failed' AND started_at >= :slot) AS fails,
+                   max(started_at) AS last,
                    bool_or(finished_at IS NULL
-                           AND started_at > now() - interval '30 minutes')
+                           AND started_at > now() - interval '30 minutes') AS live
               FROM extraction_run
              WHERE started_at >= (now() AT TIME ZONE 'Europe/Moscow')::date
                                   AT TIME ZONE 'Europe/Moscow'
                AND source = ANY(:src)
-             GROUP BY source
-        """), {"src": nightly_sources()}).all()
-    return {r[0] for r in rows if r[1]}, any(r[2] for r in rows)
+             GROUP BY source, target_name
+        """), {"src": nightly_sources(), "slot": _slot_at(now)}).mappings().all()
+    return ({(r["source"], r["target_name"]): {"done": bool(r["done"]), "fails": int(r["fails"] or 0),
+                                                "last": r["last"]} for r in rows},
+            any(r["live"] for r in rows))
 
 
-def _missing_today() -> tuple[list[str], bool]:
-    """Ночные источники, которых сегодня ещё нет (в порядке конфига), и «идёт сбор».
+def _plan(*, at_slot: bool, now: datetime, targets: list[tuple[str, str]], today: dict,
+          busy: bool, age_h: float | None) -> tuple[str | None, list, list]:
+    """Что собирать сейчас: (причина или None, цели, исчерпавшие попытки).
+    Чистая функция — без БД и часов.
 
-    Раньше сбор считался выполненным, если сегодня завершился ХОТЬ ОДИН прогон
-    любого ночного источника. 04.10 после выкатки в 02:24 вручную прогнали РКО —
-    и в 05:00 весь ночной сбор пропустили: тарифы и finuslugi отстали почти на
-    сутки, пока не сработал сторож свежести."""
-    done, live = _nightly_today()
-    return [s for s in nightly_sources() if s not in done], live
-
-
-def _ingest_reason(*, at_slot: bool, hour: int, missing: list[str], busy: bool,
-                   age_h: float | None, attempts: int) -> str | None:
-    """Почему запускать сбор сейчас, или None. Чистая функция — без БД и часов.
-
-    - всё собрано, идёт сбор или исчерпаны попытки дня → не запускаем;
-    - наступил плановый слот → собираем недостающее;
-    - слот сегодня уже прошёл, а собрано не всё (рестарт в час сбора, ручной
-      прогон до слота, упавший источник) → досбор в течение часа, а не через
-      INGEST_MAX_STALE_H по сторожу;
-    - до слота — только если данные протухли (простой ВМ накануне)."""
-    if busy or not missing or attempts >= INGEST_MAX_ATTEMPTS:
-        return None
+    - идёт сбор или всё собрано → ничего;
+    - плановый слот → все несобранные цели, сколько бы раз они ни падали ночью;
+    - после слота → несобранные цели, упавшие после слота меньше INGEST_MAX_ATTEMPTS
+      раз (слот + досборы): падающий весь день сайт не дёргаем каждый час;
+    - до слота — только если данные протухли (простой ВМ накануне), и цель не
+      запускалась последние NIGHT_RETRY_H часов: ночной сбой сети не превращается
+      в ежечасный обход, а слот в 05:00 соберёт всё заново."""
+    if busy:
+        return None, [], []
+    missing = [t for t in targets if not (today.get(t) or {}).get("done")]
+    if not missing:
+        return None, [], []
     if at_slot:
-        return "плановый слот"
-    if hour >= INGEST_HOUR:
-        return "пропущенный слот"
+        return "плановый слот", missing, []
+    if now.hour >= INGEST_HOUR:
+        todo = [t for t in missing if (today.get(t) or {}).get("fails", 0) < INGEST_MAX_ATTEMPTS]
+        spent = [t for t in missing if t not in todo]
+        return ("пропущенный слот" if todo else None), todo, spent
     if age_h is None or age_h > INGEST_MAX_STALE_H:
-        return f"данные устарели ({age_h and round(age_h)} ч)"
-    return None
+        cut = now - timedelta(hours=NIGHT_RETRY_H)
+        todo = [t for t in missing
+                if not ((today.get(t) or {}).get("last") and today[t]["last"] > cut)]
+        return ((f"данные устарели ({age_h and round(age_h)} ч)" if todo else None), todo, [])
+    return None, [], []
 
 
-# Попытки сбора по дням (МСК): после рестарта счёт начинается заново — это
-# допустимо, цель лишь не дёргать падающий источник каждый час.
-_attempts: dict[date, int] = {}
+# Ночной догон до слота: одну цель — не чаще раза в N часов.
+NIGHT_RETRY_H = float(os.getenv("INGEST_NIGHT_RETRY_H", "3"))
+# Хвост сбора (протухание, проверки качества, ссылки, LLM-обогащение) — раз в сутки:
+# досбор одной цели не должен заново вставлять ~1 000 флагов качества и тратить
+# суточную порцию обогащения (проверка 72add4a, 08.10). Метка — в review_index_state.
+_TAIL_KEY = "ingest_tail_day"
+
+
+def _tail_due(day: date) -> bool:
+    try:
+        with db.session() as s:
+            v = s.execute(text("SELECT v FROM review_index_state WHERE k = :k"),
+                          {"k": _TAIL_KEY}).scalar()
+        return v != day.isoformat()
+    except Exception:  # noqa: BLE001 — нет метки → хвост лучше прогнать
+        return True
+
+
+def _tail_mark(day: date) -> None:
+    try:
+        with db.session() as s:
+            s.execute(text("""INSERT INTO review_index_state (k, v, updated_at) VALUES (:k, :v, now())
+                              ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_at = now()"""),
+                      {"k": _TAIL_KEY, "v": day.isoformat()})
+    except Exception:  # noqa: BLE001
+        log.warning("daily ingest: метка хвоста не записалась", exc_info=True)
 
 
 def last_ok_ingest_age_h() -> float | None:
@@ -224,7 +265,12 @@ def ingest_schedule() -> dict:
     tick_age = ((now - _watchdog_tick).total_seconds()
                 if _watchdog_tick else None)
     # до слота «не собрано» — норма, показываем только после него
-    missing = _missing_today()[0] if now.hour >= INGEST_HOUR else None
+    missing = spent = None
+    if now.hour >= INGEST_HOUR:
+        targets, today = nightly_targets(), _targets_today(now)[0]
+        miss = [t for t in targets if not (today.get(t) or {}).get("done")]
+        missing = {src: sum(1 for t in miss if t[0] == src) for src in dict.fromkeys(t[0] for t in miss)}
+        spent = [f"{a}/{b}" for a, b in miss if (today.get((a, b)) or {}).get("fails", 0) >= INGEST_MAX_ATTEMPTS]
     return {
         "enabled": INGEST_DAILY,
         # сторож считается живым, если тикал не позже двух интервалов назад
@@ -237,8 +283,8 @@ def ingest_schedule() -> dict:
         "next_run_msk": nxt.isoformat(),
         "last_ok_age_h": round(age, 1) if age is not None else None,
         "stale": bool(age is None or age > INGEST_MAX_STALE_H),
-        "today_missing": missing,
-        "today_attempts": _attempts.get(now.date(), 0),
+        "today_missing": missing,           # {источник: несобранных целей}
+        "today_exhausted": spent,           # цели, исчерпавшие попытки после слота
         "max_attempts": INGEST_MAX_ATTEMPTS,
     }
 
@@ -253,10 +299,13 @@ def _captcha_pending() -> bool:
         return False
 
 
-def _run_ingest_all(sources: list[str] | None = None) -> None:
-    """Источники последовательно (по умолчанию — все ночные) + quality-чеки.
-    Каждый источник пишет свой статус в extraction_run — упавший не валит
-    остальных. Досбор передаёт только недостающие."""
+def _run_ingest_all(sources: list[str] | None = None,
+                    targets: list[tuple[str, str]] | None = None) -> None:
+    """Цели последовательно (по умолчанию — все ночные) + хвост раз в сутки.
+    Каждая цель пишет свой статус в extraction_run — упавшая не валит остальные.
+    Досбор передаёт только несобранные цели; источник, у которого не хватает
+    всех целей, идёт одним прогоном. Хвост (протухание, качество, ссылки,
+    обогащение) — один раз за сутки (МСК) и только если сбор что-то собрал."""
     if _captcha_pending():
         log.info("daily ingest: пропуск — решается капча")
         return
@@ -267,13 +316,31 @@ def _run_ingest_all(sources: list[str] | None = None) -> None:
         from ..orchestrator.runner import ingest
         # enabled: false — источник заменён другим сбором (HTML-сборщики отзывов
         # banki.ru и sravni → sources/review_streams по JSON площадок)
-        sources = sources or nightly_sources()
-        log.info("daily ingest: старт, источники: %s", sources)
-        for src in sources:
+        allt = nightly_targets()
+        if targets is None:
+            want = set(sources or nightly_sources())
+            targets = [t for t in allt if t[0] in want]
+        day = datetime.now(MSK).date()
+        before = {t for t, v in _targets_today()[0].items() if v["done"]}
+        by_src: dict[str, list[str]] = {}
+        for src, name in targets:
+            by_src.setdefault(src, []).append(name)
+        log.info("daily ingest: старт, %s", ", ".join(
+            f"{src} ({len(n)} из {sum(1 for t in allt if t[0] == src)})" for src, n in by_src.items()))
+        for src, names in by_src.items():
+            whole = len(names) == sum(1 for t in allt if t[0] == src)
             try:
-                ingest(src, None)
+                ingest(src, None, target_names=None if whole else names)
             except Exception as e:  # noqa: BLE001
                 log.warning("daily ingest %s failed: %s", src, e)
+        after = {t for t, v in _targets_today()[0].items() if v["done"]}
+        if not (after - before):
+            log.info("daily ingest: новых собранных целей нет — хвост не нужен")
+            return
+        if not _tail_due(day):
+            log.info("daily ingest: хвост сегодня уже был — пропуск")
+            return
+        _tail_mark(day)
         try:    # протухание ДО проверок качества: иначе STALE_OFFER каждую ночь
             # считал офферы, которые через минуту погаснут (аудит 03.10, ДАН-14)
             from ..normalizer.offers import expire_stale_offers
@@ -390,27 +457,24 @@ async def ingest_background_loop():
     warned: set[date] = set()
 
     async def _tick(at_slot: bool) -> None:
-        """Один тик сторожа: решить по _ingest_reason и собрать недостающее."""
+        """Один тик сторожа: решить по _plan и собрать несобранные цели."""
         now = datetime.now(MSK)
-        day = now.date()
-        missing, busy = await asyncio.to_thread(_missing_today)
+        targets = await asyncio.to_thread(nightly_targets)
+        today, busy = await asyncio.to_thread(_targets_today, now)
         age = await asyncio.to_thread(last_ok_ingest_age_h)
-        attempts = _attempts.get(day, 0)
-        reason = _ingest_reason(at_slot=at_slot, hour=now.hour, missing=missing,
-                                busy=busy, age_h=age, attempts=attempts)
+        reason, todo, spent = _plan(at_slot=at_slot, now=now, targets=targets, today=today,
+                                    busy=busy, age_h=age)
+        if spent and now.date() not in warned:
+            warned.add(now.date())
+            log.warning("daily ingest: попытки после слота исчерпаны (%d), не собраны: %s",
+                        INGEST_MAX_ATTEMPTS, ", ".join(f"{a}/{b}" for a, b in spent[:20]))
         if reason is None:
-            if at_slot and not missing:
+            if at_slot and not busy:
                 log.info("daily ingest: плановый слот — сегодня всё уже собрано")
-            elif missing and attempts >= INGEST_MAX_ATTEMPTS and day not in warned:
-                warned.add(day)
-                log.warning("daily ingest: %d попыток за сутки исчерпаны, не собраны: %s",
-                            attempts, ", ".join(missing))
             return
-        _attempts[day] = attempts + 1
-        full = len(missing) == len(nightly_sources())
-        log.info("daily ingest: старт (%s, попытка %d из %d): %s", reason, attempts + 1,
-                 INGEST_MAX_ATTEMPTS, "все источники" if full else "досбор " + ", ".join(missing))
-        await asyncio.to_thread(_run_ingest_all, missing)
+        log.info("daily ingest: старт (%s): %s", reason,
+                 "все цели" if len(todo) == len(targets) else f"досбор {len(todo)} из {len(targets)} целей")
+        await asyncio.to_thread(_run_ingest_all, None, todo)
 
     global _watchdog_tick
     while True:
