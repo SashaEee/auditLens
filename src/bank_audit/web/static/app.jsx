@@ -12832,10 +12832,10 @@ function useTurbBanner(){
     return ()=>{ alive=false; clearInterval(t); }; },[]);
   return b;
 }
-const TurbCloud=({s=26})=><svg className="turb-ic" viewBox="0 0 32 32" width={s} height={s} aria-hidden="true">
-  <g className="turb-cl"><path d="M9.5 22h13.2a5.3 5.3 0 0 0 .6-10.56A7 7 0 0 0 9.9 11.1 5.5 5.5 0 0 0 9.5 22Z" fill="currentColor"/></g>
-  <g className="turb-wind" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" opacity=".75">
-    <path d="M5 26.5h9"/><path d="M17 26.5h4"/><path d="M1.5 18h3.5"/></g>
+// контурная, как остальные иконки интерфейса: штрих 1,5, currentColor
+const TurbCloud=({s=22})=><svg className="turb-ic" viewBox="0 0 24 24" width={s} height={s} aria-hidden="true"
+  fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <path d="M7.2 17.5h9.3a3.8 3.8 0 0 0 .4-7.58A5 5 0 0 0 7.5 9.1 4.2 4.2 0 0 0 7.2 17.5Z"/><path d="M4 20.5h6M13 20.5h3"/>
 </svg>;
 function TurbBanner({b,onAck}){
   const ref=useRef(null);
@@ -12846,7 +12846,6 @@ function TurbBanner({b,onAck}){
     set(); let ro=null; try{ ro=new ResizeObserver(set); ro.observe(el); }catch{}
     return ()=>{ try{ ro&&ro.disconnect(); }catch{} document.documentElement.style.setProperty("--turb-h","0px"); }; },[]);
   return <div className="turb" ref={ref} role="status">
-    <div className="turb-sky" aria-hidden="true"><i/><i/><i/></div>
     <div className="turb-in">
       <TurbCloud/>
       <div className="turb-tx">
@@ -13409,7 +13408,7 @@ function Shell(){
           {turb&&!turbOpen&&<button type="button" className="turb-chip" onClick={reopenTurb}
             aria-label="Возможны перебои в работе ИИ — показать подробности"
             data-tip="ИИ-помощник и утренний выпуск могут работать с перебоями — нажмите, чтобы прочитать">
-            <TurbCloud s={16}/><span className="turb-chip-l">{TURB_COPY.chip}</span></button>}
+            <TurbCloud s={15}/><span className="turb-chip-l">{TURB_COPY.chip}</span></button>}
           <div className={"tb-cases-g"+(activeCase?" act":"")}>
             <button type="button" className={"tb-cases"+(casesHub?" on":"")} aria-label="Аудит-дела" aria-haspopup="dialog"
               aria-expanded={!!casesHub} onClick={()=>casesHub?closeCases():setCasesHub({caseId:null})}

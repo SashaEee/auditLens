@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 6aa9b1003e20d11c1ba237697cafca64baf4a8a269498e21e5fa7e94e9b90902): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 012c7a320a4b87328f85b2b7e60bd030e9de841502f3522c7dc588fc8e32b1d5): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -24752,33 +24752,25 @@ function useTurbBanner() {
   }, []);
   return b;
 }
+// контурная, как остальные иконки интерфейса: штрих 1,5, currentColor
 const TurbCloud = ({
-  s = 26
+  s = 22
 }) => /*#__PURE__*/React.createElement("svg", {
   className: "turb-ic",
-  viewBox: "0 0 32 32",
+  viewBox: "0 0 24 24",
   width: s,
   height: s,
-  "aria-hidden": "true"
-}, /*#__PURE__*/React.createElement("g", {
-  className: "turb-cl"
-}, /*#__PURE__*/React.createElement("path", {
-  d: "M9.5 22h13.2a5.3 5.3 0 0 0 .6-10.56A7 7 0 0 0 9.9 11.1 5.5 5.5 0 0 0 9.5 22Z",
-  fill: "currentColor"
-})), /*#__PURE__*/React.createElement("g", {
-  className: "turb-wind",
+  "aria-hidden": "true",
   fill: "none",
   stroke: "currentColor",
-  strokeWidth: "1.7",
+  strokeWidth: "1.5",
   strokeLinecap: "round",
-  opacity: ".75"
+  strokeLinejoin: "round"
 }, /*#__PURE__*/React.createElement("path", {
-  d: "M5 26.5h9"
+  d: "M7.2 17.5h9.3a3.8 3.8 0 0 0 .4-7.58A5 5 0 0 0 7.5 9.1 4.2 4.2 0 0 0 7.2 17.5Z"
 }), /*#__PURE__*/React.createElement("path", {
-  d: "M17 26.5h4"
-}), /*#__PURE__*/React.createElement("path", {
-  d: "M1.5 18h3.5"
-})));
+  d: "M4 20.5h6M13 20.5h3"
+}));
 function TurbBanner({
   b,
   onAck
@@ -24808,9 +24800,6 @@ function TurbBanner({
     ref: ref,
     role: "status"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "turb-sky",
-    "aria-hidden": "true"
-  }, /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("i", null)), /*#__PURE__*/React.createElement("div", {
     className: "turb-in"
   }, /*#__PURE__*/React.createElement(TurbCloud, null), /*#__PURE__*/React.createElement("div", {
     className: "turb-tx"
@@ -26084,7 +26073,7 @@ function Shell() {
     "aria-label": "\u0412\u043E\u0437\u043C\u043E\u0436\u043D\u044B \u043F\u0435\u0440\u0435\u0431\u043E\u0438 \u0432 \u0440\u0430\u0431\u043E\u0442\u0435 \u0418\u0418 \u2014 \u043F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438",
     "data-tip": "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0438 \u0443\u0442\u0440\u0435\u043D\u043D\u0438\u0439 \u0432\u044B\u043F\u0443\u0441\u043A \u043C\u043E\u0433\u0443\u0442 \u0440\u0430\u0431\u043E\u0442\u0430\u0442\u044C \u0441 \u043F\u0435\u0440\u0435\u0431\u043E\u044F\u043C\u0438 \u2014 \u043D\u0430\u0436\u043C\u0438\u0442\u0435, \u0447\u0442\u043E\u0431\u044B \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C"
   }, /*#__PURE__*/React.createElement(TurbCloud, {
-    s: 16
+    s: 15
   }), /*#__PURE__*/React.createElement("span", {
     className: "turb-chip-l"
   }, TURB_COPY.chip)), /*#__PURE__*/React.createElement("div", {
