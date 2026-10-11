@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 d3e725fbebe8e6e948c1485bdd1ded8b2de2f91b07f501fb9112415fdf307a47): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 6aa9b1003e20d11c1ba237697cafca64baf4a8a269498e21e5fa7e94e9b90902): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21518,6 +21518,70 @@ function PuComplaints({
     className: "pu-cmpnote"
   }, "\xAB", x.comment, "\xBB"))));
 }
+
+// Плашка «В облаках турбулентность» для всех — включает и выключает только владелец
+function PuTurbCtl() {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    apiFetch("/api/admin/banner").then(setSt).catch(() => {});
+  }, []);
+  const save = (active, days) => {
+    setBusy(true);
+    setErr("");
+    apiFetch("/api/admin/banner", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        active,
+        days
+      })
+    }).then(setSt).catch(() => setErr("не сохранилось — попробуйте ещё раз")).finally(() => setBusy(false));
+  };
+  if (!st) return null;
+  const until = st.until ? new Date(st.until).toLocaleString("ru", {
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Moscow"
+  }) : null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu-turb" + (st.active ? " on" : "")
+  }, /*#__PURE__*/React.createElement(TurbCloud, {
+    s: 18
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "pu-turb-t"
+  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u0448\u043A\u0430 \xAB\u0412 \u043E\u0431\u043B\u0430\u043A\u0430\u0445 \u0442\u0443\u0440\u0431\u0443\u043B\u0435\u043D\u0442\u043D\u043E\u0441\u0442\u044C\xBB"), " — ", st.active ? until ? `видят все до ${until}` : "видят все, пока вы её не выключите" : st.on && st.until ? "срок вышел, плашка скрыта" : "выключена"), /*#__PURE__*/React.createElement("div", {
+    className: "pu-turb-b"
+  }, st.active ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    disabled: busy,
+    onClick: () => save(false, null)
+  }, "\u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    disabled: busy,
+    onClick: () => save(true, 3)
+  }, "\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043D\u0430 3 \u0434\u043D\u044F"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    disabled: busy,
+    onClick: () => save(true, 7)
+  }, "\u043D\u0430 \u043D\u0435\u0434\u0435\u043B\u044E"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    disabled: busy,
+    onClick: () => save(true, null)
+  }, "\u043F\u043E\u043A\u0430 \u043D\u0435 \u0432\u044B\u043A\u043B\u044E\u0447\u0443"))), err && /*#__PURE__*/React.createElement("span", {
+    className: "pu-turb-e",
+    role: "alert"
+  }, err));
+}
 function PulsePage() {
   const me = useMe();
   const [days, setDays] = useState(14);
@@ -21687,7 +21751,7 @@ function PulsePage() {
     style: {
       margin: "4px 0 0"
     }
-  }, meOn ? "Считаются все, включая вас" : "Считаются коллеги: без вас", hiddenN > 0 ? `${meOn ? ", кроме" : " и"} ${hiddenN} ${plural(hiddenN, "служебной учётки", "служебных учёток", "служебных учёток")}` : "", ".", " ", "\u041E\u0448\u0438\u0431\u043A\u0438, \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0438 \u0441\u0431\u043E\u0440 \u0434\u0430\u043D\u043D\u044B\u0445 \u2014 \u043F\u043E \u0432\u0441\u0435\u043C.")), /*#__PURE__*/React.createElement("div", {
+  }, meOn ? "Считаются все, включая вас" : "Считаются коллеги: без вас", hiddenN > 0 ? `${meOn ? ", кроме" : " и"} ${hiddenN} ${plural(hiddenN, "служебной учётки", "служебных учёток", "служебных учёток")}` : "", ".", " ", "\u041E\u0448\u0438\u0431\u043A\u0438, \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0438 \u0441\u0431\u043E\u0440 \u0434\u0430\u043D\u043D\u044B\u0445 \u2014 \u043F\u043E \u0432\u0441\u0435\u043C.")), me && me.is_admin && /*#__PURE__*/React.createElement(PuTurbCtl, null), /*#__PURE__*/React.createElement("div", {
     className: "pu-tiles"
   }, /*#__PURE__*/React.createElement("div", {
     className: "pu-tile"
@@ -24654,6 +24718,127 @@ function parseHash() {
     prm
   };
 }
+
+// ── плашка «В облаках турбулентность» (web/banner.py) ─────────────────────────
+// Перебои у облачных провайдеров: ИИ-помощник и утренний выпуск могут отвечать с
+// задержкой или обрываться. Включает и выключает владелец в «Пульсе», текст по
+// умолчанию — здесь. Крестик сворачивает плашку в значок в шапке до следующего
+// дня (МСК); по значку она раскрывается снова.
+const TURB_COPY = {
+  title: "В облаках",
+  em: "турбулентность",
+  body: "Над дата-центрами сейчас неспокойное небо, поэтому ИИ-помощник и утренний выпуск могут работать " + "с перебоями: ответ задержится или оборвётся на полуслове. Подождите пару минут и повторите.",
+  bodyX: "«Аудит отзывов», «Аудит уязвимостей» и данные рынка летят по расписанию.",
+  // на телефоне скрыта
+  chip: "Турбулентность"
+};
+const turbDay = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10); // сутки по МСК
+function useTurbBanner() {
+  const [b, setB] = useState(null);
+  // раз в 10 минут: выключение в «Пульсе» доходит без перезагрузки страницы
+  useEffect(() => {
+    let alive = true;
+    const load = () => apiFetch("/api/banner").then(d => {
+      if (alive) setB(d && d.banner || null);
+    }).catch(() => {});
+    load();
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, 600000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  return b;
+}
+const TurbCloud = ({
+  s = 26
+}) => /*#__PURE__*/React.createElement("svg", {
+  className: "turb-ic",
+  viewBox: "0 0 32 32",
+  width: s,
+  height: s,
+  "aria-hidden": "true"
+}, /*#__PURE__*/React.createElement("g", {
+  className: "turb-cl"
+}, /*#__PURE__*/React.createElement("path", {
+  d: "M9.5 22h13.2a5.3 5.3 0 0 0 .6-10.56A7 7 0 0 0 9.9 11.1 5.5 5.5 0 0 0 9.5 22Z",
+  fill: "currentColor"
+})), /*#__PURE__*/React.createElement("g", {
+  className: "turb-wind",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "1.7",
+  strokeLinecap: "round",
+  opacity: ".75"
+}, /*#__PURE__*/React.createElement("path", {
+  d: "M5 26.5h9"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M17 26.5h4"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M1.5 18h3.5"
+})));
+function TurbBanner({
+  b,
+  onAck
+}) {
+  const ref = useRef(null);
+  // ИИ-помощник занимает ровно экран (.chat-shell): без вычета высоты плашки
+  // поле ввода уезжало бы за нижний край
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const set = () => document.documentElement.style.setProperty("--turb-h", el.offsetHeight + "px");
+    set();
+    let ro = null;
+    try {
+      ro = new ResizeObserver(set);
+      ro.observe(el);
+    } catch {}
+    return () => {
+      try {
+        ro && ro.disconnect();
+      } catch {}
+      document.documentElement.style.setProperty("--turb-h", "0px");
+    };
+  }, []);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "turb",
+    ref: ref,
+    role: "status"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "turb-sky",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("i", null)), /*#__PURE__*/React.createElement("div", {
+    className: "turb-in"
+  }, /*#__PURE__*/React.createElement(TurbCloud, null), /*#__PURE__*/React.createElement("div", {
+    className: "turb-tx"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "turb-h"
+  }, b.title || /*#__PURE__*/React.createElement(React.Fragment, null, TURB_COPY.title, " ", /*#__PURE__*/React.createElement("em", null, TURB_COPY.em))), /*#__PURE__*/React.createElement("p", {
+    className: "turb-p"
+  }, b.body || /*#__PURE__*/React.createElement(React.Fragment, null, TURB_COPY.body, /*#__PURE__*/React.createElement("span", {
+    className: "turb-p-x"
+  }, " ", TURB_COPY.bodyX)))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "turb-x",
+    onClick: onAck,
+    "aria-label": "\u0421\u0432\u0435\u0440\u043D\u0443\u0442\u044C \u0434\u043E \u0437\u0430\u0432\u0442\u0440\u0430",
+    "data-tip": "\u0421\u0432\u0435\u0440\u043D\u0443\u0442\u044C \u0434\u043E \u0437\u0430\u0432\u0442\u0440\u0430 \u2014 \u0437\u043D\u0430\u0447\u043E\u043A \u043E\u0441\u0442\u0430\u043D\u0435\u0442\u0441\u044F \u0432 \u0448\u0430\u043F\u043A\u0435"
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 16 16",
+    width: "14",
+    height: "14",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M4 4l8 8M12 4l-8 8",
+    stroke: "currentColor",
+    strokeWidth: "1.6",
+    strokeLinecap: "round",
+    fill: "none"
+  })))));
+}
 function Shell() {
   const [page, setPage] = useState(() => {
     const h = parseHash().p;
@@ -24676,6 +24861,60 @@ function Shell() {
     theme,
     setTheme
   } = useTheme();
+  // плашка о перебоях: свёрнута сегодня (дата МСК в localStorage) → значок в шапке
+  const turb = useTurbBanner();
+  const turbKey = turb ? "al-turb:" + (turb.v || "") : null;
+  const [turbAck, setTurbAck] = useState(null);
+  useEffect(() => {
+    if (!turbKey) return;
+    try {
+      setTurbAck(localStorage.getItem(turbKey));
+    } catch {}
+  }, [turbKey]);
+  const turbOpen = !!turb && turbAck !== turbDay();
+  const turbShown = useRef(null);
+  useEffect(() => {
+    if (turbOpen && turbShown.current !== turbDay()) {
+      turbShown.current = turbDay();
+      trkEvent({
+        kind: "ui",
+        page,
+        payload: {
+          action: "turb_banner",
+          step: "shown"
+        }
+      });
+    }
+  }, [turbOpen]); // eslint-disable-line
+  const ackTurb = () => {
+    const d = turbDay();
+    setTurbAck(d);
+    try {
+      localStorage.setItem(turbKey, d);
+    } catch {}
+    trkEvent({
+      kind: "ui",
+      page,
+      payload: {
+        action: "turb_banner",
+        step: "ack"
+      }
+    });
+  };
+  const reopenTurb = () => {
+    setTurbAck(null);
+    try {
+      localStorage.removeItem(turbKey);
+    } catch {}
+    trkEvent({
+      kind: "ui",
+      page,
+      payload: {
+        action: "turb_banner",
+        step: "reopen"
+      }
+    });
+  };
   const [banks, setBanks] = useState([]);
   const [hasCaptcha, setHasCaptcha] = useState(false);
   // «Аудит-дела»: одна панель на всё приложение
@@ -25838,7 +26077,17 @@ function Shell() {
     page: page
   })), /*#__PURE__*/React.createElement("div", {
     className: "tb-spacer"
-  }), /*#__PURE__*/React.createElement("div", {
+  }), turb && !turbOpen && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "turb-chip",
+    onClick: reopenTurb,
+    "aria-label": "\u0412\u043E\u0437\u043C\u043E\u0436\u043D\u044B \u043F\u0435\u0440\u0435\u0431\u043E\u0438 \u0432 \u0440\u0430\u0431\u043E\u0442\u0435 \u0418\u0418 \u2014 \u043F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u043E\u0434\u0440\u043E\u0431\u043D\u043E\u0441\u0442\u0438",
+    "data-tip": "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0438 \u0443\u0442\u0440\u0435\u043D\u043D\u0438\u0439 \u0432\u044B\u043F\u0443\u0441\u043A \u043C\u043E\u0433\u0443\u0442 \u0440\u0430\u0431\u043E\u0442\u0430\u0442\u044C \u0441 \u043F\u0435\u0440\u0435\u0431\u043E\u044F\u043C\u0438 \u2014 \u043D\u0430\u0436\u043C\u0438\u0442\u0435, \u0447\u0442\u043E\u0431\u044B \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C"
+  }, /*#__PURE__*/React.createElement(TurbCloud, {
+    s: 16
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "turb-chip-l"
+  }, TURB_COPY.chip)), /*#__PURE__*/React.createElement("div", {
     className: "tb-cases-g" + (activeCase ? " act" : "")
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -25876,7 +26125,10 @@ function Shell() {
     "aria-label": theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему",
     "data-tip": theme === "dark" ? "Светлая тема" : "Тёмная тема",
     onClick: e => setTheme(theme === "dark" ? "light" : "dark", e.currentTarget)
-  }, /*#__PURE__*/React.createElement(ThemeIcon, null))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(ThemeIcon, null))), turbOpen && /*#__PURE__*/React.createElement(TurbBanner, {
+    b: turb,
+    onAck: ackTurb
+  }), /*#__PURE__*/React.createElement("div", {
     className: "content",
     ref: contentRef
   }, loopholeMounted && /*#__PURE__*/React.createElement("div", {

@@ -563,6 +563,42 @@ def quality_ai_feedback(user: CurrentUser = Depends(get_current_user)):
     return userdata.ai_feedback_stats()
 
 
+# ── плашка «В облаках турбулентность» (web/banner.py) ─────────────────────────
+
+@app.get("/api/banner")
+def banner_get(user: CurrentUser = Depends(get_current_user)):
+    """Плашка для всех: о перебоях у облачных провайдеров. Фронт спрашивает при
+    входе и раз в 10 минут — выключение в «Пульсе» доходит без перезагрузки."""
+    from . import banner
+    st = banner.state()
+    return {"banner": st if st["active"] else None}
+
+
+class BannerIn(BaseModel):
+    active: bool
+    days: Optional[int] = None          # None — пока не выключат
+    title: Optional[str] = None
+    body: Optional[str] = None
+
+
+@app.get("/api/admin/banner")
+def admin_banner_get(user: CurrentUser = Depends(get_current_user)):
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from . import banner
+    return banner.state()
+
+
+@app.post("/api/admin/banner")
+def admin_banner_set(req: BannerIn, user: CurrentUser = Depends(get_current_user)):
+    """Включить или выключить плашку — только владелец."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from . import banner
+    return banner.set_state(active=req.active, days=req.days, by=user.username,
+                            title=req.title, body=req.body)
+
+
 # ── телеметрия и дашборд «Пульс» (только владелец, env ADMIN_USERS) ───────────
 
 class TrackIn(BaseModel):

@@ -3905,6 +3905,78 @@ thead th{font-weight:600}
   .bf-t-btn{padding:10px 0}
 }
 .bf-t-btn{padding:1px 0}
+
+/* ── плашка «В облаках турбулентность» (app.jsx TurbBanner, web/banner.py) ──
+   Перебои у облачных провайдеров. Тёмная полоса «неба» под шапкой — заметна в обеих
+   темах; крестик сворачивает её в значок в шапке до следующего дня. */
+:root{--turb-h:0px}
+.turb{position:relative;overflow:hidden;color:oklch(97% 0.01 260);
+  background:linear-gradient(105deg,oklch(25% 0.055 268) 0%,oklch(30% 0.065 258) 55%,oklch(34% 0.06 248) 100%);
+  border-bottom:1px solid oklch(80% 0.13 78 / .55);animation:turb-in .45s cubic-bezier(.2,0,0,1) both}
+html.dark .turb{background:linear-gradient(105deg,oklch(31% 0.07 268) 0%,oklch(36% 0.08 258) 55%,oklch(40% 0.075 248) 100%);
+  border-bottom-color:oklch(82% 0.14 78 / .8);box-shadow:inset 0 1px 0 oklch(100% 0 0 / .06)}
+.turb-in{position:relative;display:flex;align-items:center;gap:16px;max-width:1480px;margin:0 auto;padding:13px 28px}
+.turb-ic{flex:none;display:block;overflow:visible;color:oklch(94% 0.02 255)}
+.turb .turb-ic{width:34px;height:34px}
+.turb-tx{flex:1;min-width:0}
+.turb-h{font-family:'Instrument Serif',Georgia,serif;font-size:22px;line-height:1.1;letter-spacing:-.01em;color:#fff}
+.turb-h em{font-style:italic;color:oklch(84% 0.14 78)}
+.turb-p{margin:3px 0 0;font-size:13px;line-height:1.5;color:oklch(87% 0.02 260);max-width:112ch;text-wrap:pretty}
+.turb-x{flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:999px;cursor:pointer;
+  color:oklch(86% 0.02 260);background:transparent;transition:background-color .15s,color .15s}
+.turb-x:hover{background:oklch(100% 0 0 / .12);color:#fff}
+.turb-x:focus-visible{outline:2px solid #fff;outline-offset:1px}
+.turb-sky{position:absolute;inset:0;pointer-events:none}
+.turb-sky i{position:absolute;top:-30%;width:260px;height:160%;border-radius:50%;
+  background:radial-gradient(closest-side,oklch(100% 0 0 / .09),transparent);filter:blur(6px)}
+.turb-sky i:nth-child(1){left:8%}
+.turb-sky i:nth-child(2){left:46%;top:-55%;width:340px}
+.turb-sky i:nth-child(3){left:78%;top:-10%;width:200px}
+.turb-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px 0 8px;border-radius:999px;cursor:pointer;
+  font:inherit;font-size:12px;font-weight:600;color:oklch(30% 0.06 262);background:oklch(93% 0.035 255);
+  border:1px solid oklch(84% 0.05 255);transition:background-color .15s}
+.turb-chip:hover{background:oklch(90% 0.05 255)}
+.turb-chip:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+html.dark .turb-chip{color:oklch(92% 0.03 255);background:oklch(32% 0.06 262);border-color:oklch(42% 0.07 262)}
+.turb-chip .turb-ic{color:currentColor}
+@keyframes turb-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@keyframes turb-shake{0%,72%,100%{transform:none}76%{transform:translate(-1px,1px) rotate(-4deg)}
+  80%{transform:translate(1.5px,-1px) rotate(3deg)}84%{transform:translate(-1px,0) rotate(-2deg)}
+  88%{transform:translate(.5px,.5px) rotate(1deg)}92%{transform:none}}
+@keyframes turb-wind{from{transform:translateX(3px);opacity:0}30%{opacity:.8}to{transform:translateX(-6px);opacity:0}}
+@keyframes turb-drift{from{transform:translateX(-120px)}to{transform:translateX(120px)}}
+@media (prefers-reduced-motion:no-preference){
+  .turb-cl{transform-box:fill-box;transform-origin:50% 60%;animation:turb-shake 5s ease-in-out infinite}
+  .turb-wind{animation:turb-wind 2.6s linear infinite}
+  .turb-sky i{animation:turb-drift 38s linear infinite alternate}
+  .turb-sky i:nth-child(2){animation-duration:52s;animation-delay:-14s}
+  .turb-sky i:nth-child(3){animation-duration:44s;animation-delay:-30s}
+}
+@media (prefers-reduced-motion:reduce){.turb{animation:none}}
+/* переключатель плашки в «Пульсе» (PuTurbCtl) — только владельцу */
+.pu-turb{display:flex;align-items:center;flex-wrap:wrap;gap:10px 12px;margin:14px 0 6px;padding:10px 14px;
+  border:1px solid var(--hair);border-radius:12px;background:var(--surface);font-size:12.5px;color:var(--ink-2)}
+.pu-turb.on{border-color:oklch(80% 0.13 78 / .7);background:color-mix(in oklab,oklch(85% 0.13 80) 10%,var(--surface))}
+.pu-turb .turb-ic{color:var(--ink-2)}
+.pu-turb .turb-cl,.pu-turb .turb-wind{animation:none}
+.pu-turb-t{flex:1;min-width:220px}
+.pu-turb-t b{color:var(--ink);font-weight:600}
+.pu-turb-b{display:flex;gap:6px;flex-wrap:wrap}
+.pu-turb-e{color:var(--neg);font-size:12px}
+/* ИИ-помощник занимает ровно экран — высоту плашки вычитаем (TurbBanner ставит --turb-h) */
+.chat-shell{height:calc(100vh - var(--topbar) - 56px - var(--turb-h))}
+@media(max-width:960px){
+  .turb-in{flex-wrap:wrap;align-items:flex-start;gap:8px 12px;padding:12px max(16px,env(safe-area-inset-right)) 13px max(16px,env(safe-area-inset-left))}
+  .turb .turb-ic{width:28px;height:28px;margin-top:-2px}
+  .turb-p-x{display:none}
+  .turb-h{font-size:19px}
+  .turb-tx{flex-basis:calc(100% - 44px)}
+  .turb-tx{padding-right:26px}
+  .turb-x{position:absolute;top:8px;right:max(8px,env(safe-area-inset-right))}
+  .turb-chip{padding:0 8px}
+  .turb-chip-l{display:none}
+  .chat-shell{height:calc(100dvh - var(--topbar) - var(--turb-h))}
+}
 </style>
 </head>
 <body>
