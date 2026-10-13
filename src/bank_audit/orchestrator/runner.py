@@ -53,7 +53,8 @@ def _store_snapshot(s, page_id: int, run_id: int, fetched_at, http_status: int,
     return row[0] if row else None
 
 def ingest(source_key: str, target_name: str | None = None,
-           openclaw_job: str | None = None, force: bool = False) -> dict:
+           openclaw_job: str | None = None, force: bool = False,
+           target_names: list[str] | None = None) -> dict:
     """Контент разбирается всегда, даже если не изменился (с 03.10 — ради
     last_seen, см. ниже); force оставлен для совместимости вызовов: раньше
     совпадение content_sha256 значило «нечего нормализовать», и после правки
@@ -76,6 +77,9 @@ def ingest(source_key: str, target_name: str | None = None,
         targets = [t for t in targets if t["name"] == target_name]
         if not targets:
             raise KeyError(f"target {target_name} not found in {source_key}")
+    if target_names is not None:        # досбор ночного сбора — только несобранные цели
+        want = set(target_names)
+        targets = [t for t in targets if t["name"] in want]
 
     totals = {"targets": 0, "snapshots_new": 0, "items_seen": 0, "items_written": 0}
     # Inter-target delay для browser collector — снижает шанс капчи

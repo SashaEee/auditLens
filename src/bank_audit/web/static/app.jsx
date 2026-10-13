@@ -11322,6 +11322,35 @@ function PuComplaints({days,withMe,rev,onOpenReport,onOpenUser,onOpenSession}){
   </div>;
 }
 
+// Плашка «В облаках турбулентность» для всех — включает и выключает только владелец
+function PuTurbCtl(){
+  const[st,setSt]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  useEffect(()=>{ apiFetch("/api/admin/banner").then(setSt).catch(()=>{}); },[]);
+  const save=(active,days)=>{ setBusy(true); setErr("");
+    apiFetch("/api/admin/banner",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({active,days})})
+      .then(setSt).catch(()=>setErr("не сохранилось — попробуйте ещё раз")).finally(()=>setBusy(false)); };
+  if(!st) return null;
+  const until=st.until?new Date(st.until).toLocaleString("ru",{day:"numeric",month:"long",hour:"2-digit",
+    minute:"2-digit",timeZone:"Europe/Moscow"}):null;
+  return <div className={"pu-turb"+(st.active?" on":"")}>
+    <TurbCloud s={18}/>
+    <div className="pu-turb-t"><b>Плашка «В облаках турбулентность»</b>{" — "}
+      {st.active?(until?`видят все до ${until}`:"видят все, пока вы её не выключите")
+        :(st.on&&st.until?"срок вышел, плашка скрыта":"выключена")}</div>
+    <div className="pu-turb-b">
+      {st.active
+        ?<button type="button" className="btn btn-sm" disabled={busy} onClick={()=>save(false,null)}>Выключить</button>
+        :<><button type="button" className="btn btn-sm" disabled={busy} onClick={()=>save(true,3)}>Включить на 3 дня</button>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={()=>save(true,7)}>на неделю</button>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={()=>save(true,null)}>пока не выключу</button></>}
+    </div>
+    {err&&<span className="pu-turb-e" role="alert">{err}</span>}
+  </div>;
+}
+
 function PulsePage(){
   const me=useMe();
   const[days,setDays]=useState(14);
@@ -11405,6 +11434,7 @@ function PulsePage(){
         {meOn?"Считаются все, включая вас":"Считаются коллеги: без вас"}{hiddenN>0?`${meOn?", кроме":" и"} ${hiddenN} ${plural(hiddenN,"служебной учётки","служебных учёток","служебных учёток")}`:""}.
         {" "}Ошибки, скорость и сбор данных — по всем.</p>
     </header>
+    {me&&me.is_admin&&<PuTurbCtl/>}
 
     {/* ① сегодня */}
     <div className="pu-tiles">
@@ -12780,6 +12810,56 @@ function parseHash(){
   return{p,prm};
 }
 
+// ── плашка «В облаках турбулентность» (web/banner.py) ─────────────────────────
+// Перебои у облачных провайдеров: ИИ-помощник и утренний выпуск могут отвечать с
+// задержкой или обрываться. Включает и выключает владелец в «Пульсе», текст по
+// умолчанию — здесь. Крестик сворачивает плашку в значок в шапке до следующего
+// дня (МСК); по значку она раскрывается снова.
+const TURB_COPY={
+  title:"В облаках", em:"турбулентность",
+  body:"Над дата-центрами сейчас неспокойное небо, поэтому ИИ-помощник и утренний выпуск могут работать "
+    +"с перебоями: ответ задержится или оборвётся на полуслове. Подождите пару минут и повторите.",
+  bodyX:"«Аудит отзывов», «Аудит уязвимостей» и данные рынка летят по расписанию.",   // на телефоне скрыта
+  chip:"Турбулентность",
+};
+const turbDay=()=>new Date(Date.now()+3*3600e3).toISOString().slice(0,10);   // сутки по МСК
+function useTurbBanner(){
+  const[b,setB]=useState(null);
+  // раз в 10 минут: выключение в «Пульсе» доходит без перезагрузки страницы
+  useEffect(()=>{ let alive=true;
+    const load=()=>apiFetch("/api/banner").then(d=>{ if(alive) setB((d&&d.banner)||null); }).catch(()=>{});
+    load(); const t=setInterval(()=>{ if(!document.hidden) load(); },600000);
+    return ()=>{ alive=false; clearInterval(t); }; },[]);
+  return b;
+}
+// контурная, как остальные иконки интерфейса: штрих 1,5, currentColor
+const TurbCloud=({s=22})=><svg className="turb-ic" viewBox="0 0 24 24" width={s} height={s} aria-hidden="true"
+  fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <path d="M7.2 17.5h9.3a3.8 3.8 0 0 0 .4-7.58A5 5 0 0 0 7.5 9.1 4.2 4.2 0 0 0 7.2 17.5Z"/><path d="M4 20.5h6M13 20.5h3"/>
+</svg>;
+function TurbBanner({b,onAck}){
+  const ref=useRef(null);
+  // ИИ-помощник занимает ровно экран (.chat-shell): без вычета высоты плашки
+  // поле ввода уезжало бы за нижний край
+  useEffect(()=>{ const el=ref.current; if(!el) return;
+    const set=()=>document.documentElement.style.setProperty("--turb-h",el.offsetHeight+"px");
+    set(); let ro=null; try{ ro=new ResizeObserver(set); ro.observe(el); }catch{}
+    return ()=>{ try{ ro&&ro.disconnect(); }catch{} document.documentElement.style.setProperty("--turb-h","0px"); }; },[]);
+  return <div className="turb" ref={ref} role="status">
+    <div className="turb-in">
+      <TurbCloud/>
+      <div className="turb-tx">
+        <div className="turb-h">{b.title||<>{TURB_COPY.title} <em>{TURB_COPY.em}</em></>}</div>
+        <p className="turb-p">{b.body||<>{TURB_COPY.body}<span className="turb-p-x"> {TURB_COPY.bodyX}</span></>}</p>
+      </div>
+      <button type="button" className="turb-x" onClick={onAck} aria-label="Свернуть до завтра"
+        data-tip="Свернуть до завтра — значок останется в шапке">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"
+          stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none"/></svg></button>
+    </div>
+  </div>;
+}
+
 function Shell(){
   const[page,setPage]=useState(()=>{ const h=parseHash().p;
     if(h&&h!=="open") return h;
@@ -12795,6 +12875,19 @@ function Shell(){
   const aiPrevRun=useRef(false);
   const pageCurRef=useRef(null);
   const{theme,setTheme}=useTheme();
+  // плашка о перебоях: свёрнута сегодня (дата МСК в localStorage) → значок в шапке
+  const turb=useTurbBanner();
+  const turbKey=turb?"al-turb:"+(turb.v||""):null;
+  const[turbAck,setTurbAck]=useState(null);
+  useEffect(()=>{ if(!turbKey) return; try{ setTurbAck(localStorage.getItem(turbKey)); }catch{} },[turbKey]);
+  const turbOpen=!!turb&&turbAck!==turbDay();
+  const turbShown=useRef(null);
+  useEffect(()=>{ if(turbOpen&&turbShown.current!==turbDay()){ turbShown.current=turbDay();
+    trkEvent({kind:"ui",page,payload:{action:"turb_banner",step:"shown"}}); } },[turbOpen]); // eslint-disable-line
+  const ackTurb=()=>{ const d=turbDay(); setTurbAck(d); try{ localStorage.setItem(turbKey,d); }catch{}
+    trkEvent({kind:"ui",page,payload:{action:"turb_banner",step:"ack"}}); };
+  const reopenTurb=()=>{ setTurbAck(null); try{ localStorage.removeItem(turbKey); }catch{}
+    trkEvent({kind:"ui",page,payload:{action:"turb_banner",step:"reopen"}}); };
   const[banks,setBanks]=useState([]);
   const[hasCaptcha,setHasCaptcha]=useState(false);
   // «Аудит-дела»: одна панель на всё приложение
@@ -13312,6 +13405,10 @@ function Shell(){
           {section==="overview"&&
             <div className="ovseg-wrap desk-only"><OvSeg page={page}/></div>}
           <div className="tb-spacer"/>
+          {turb&&!turbOpen&&<button type="button" className="turb-chip" onClick={reopenTurb}
+            aria-label="Возможны перебои в работе ИИ — показать подробности"
+            data-tip="ИИ-помощник и утренний выпуск могут работать с перебоями — нажмите, чтобы прочитать">
+            <TurbCloud s={15}/><span className="turb-chip-l">{TURB_COPY.chip}</span></button>}
           <div className={"tb-cases-g"+(activeCase?" act":"")}>
             <button type="button" className={"tb-cases"+(casesHub?" on":"")} aria-label="Аудит-дела" aria-haspopup="dialog"
               aria-expanded={!!casesHub} onClick={()=>casesHub?closeCases():setCasesHub({caseId:null})}
@@ -13331,6 +13428,7 @@ function Shell(){
             <ThemeIcon/>
           </button>
         </div>
+        {turbOpen&&<TurbBanner b={turb} onAck={ackTurb}/>}
         <div className="content" ref={contentRef}>
           {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
             <LoopholePage record={page==="loophole"&&pageParams&&/^\d+$/.test(pageParams.record||"")?pageParams.record:null}/>

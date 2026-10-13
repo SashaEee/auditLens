@@ -39,6 +39,30 @@ _OVERLAP = int(os.getenv("BANKIRU_FTS_OVERLAP", "5000"))
 # отсекает тестовый мусор краулера.
 _MIN_LEN = 40
 
+# Ранний HTML-сборщик banki.ru (18.06–25.09) забирал не отзыв, а карточку из ленты:
+# «Проблема решена», обрезанный текст «…», дату, счётчик и содержимое <style> —
+# в карточке жалобы вместо текста стояли куски CSS (обращение 09.10).
+_CSS_RULES = re.compile(r"\s*\.[a-z][a-z0-9]{6,10}\{[a-z-]+:.*\Z", re.S)
+_CARD_TAIL = re.compile(r"\s*\n\d{2}\.\d{2}\.\d{2,4}\s+\d{1,2}:\d{2}\s*(?:\n\s*\d{1,4}\s*)?\Z")
+_CARD_HEAD = re.compile(r"\A\s*Проблема (?:не )?решена\s*\n")
+_BANKI_RESP = "https://www.banki.ru/services/responses/bank/response/"
+
+
+def clean_body(t: str | None) -> str:
+    """Текст отзыва без обвязки карточки ленты: CSS, строка даты со счётчиком,
+    метка «Проблема решена». Обычный текст не меняется."""
+    t = (t or "").strip()
+    if not _CSS_RULES.search(t):
+        return t
+    t = _CSS_RULES.sub("", t)
+    t = _CARD_TAIL.sub("", t)
+    return _CARD_HEAD.sub("", t).strip()
+
+
+def banki_rid(url: str | None) -> str | None:
+    m = re.search(r"/response/(\d+)", url or "")
+    return m.group(1) if m else None
+
 _UPSERT = text("""
     INSERT INTO review_index (url, review_id, bank, product, dt, city, tsv, esc)
     VALUES (:url, :review_id, :bank, :product, :dt, :city,
@@ -248,6 +272,9 @@ def sync_local(batch: int = 400) -> dict:
               -- sravni без идентификатора банка (ранний сборщик писал отзывы витрины
               -- чужим банкам) — банк не проверить, в индекс не берём
               AND NOT (r.source = 'sravni_reviews' AND r.raw->>'review_object_id' IS NULL)
+              -- ранний HTML-сборщик banki.ru без номера отзыва подставлял номер
+              -- карточки («…/vtb/response/0/»): ссылка в никуда, текст — обрезок
+              AND NOT (r.source = 'banki_reviews' AND r.source_url !~ '/response/[0-9]{6,}')
               -- похвала 4–5★ в анализ жалоб не идёт, а разметка каждой стоит денег
               AND NOT (r.source IN ('banki_reviews', 'sravni_reviews') AND r.rating >= 4)
               -- banki.ru: негатив приходит во внешнем корпусе; свой сбор индексируем,
@@ -295,12 +322,88 @@ def sync_local(batch: int = 400) -> dict:
             """), payload)
         written += len(payload)
 
+    # Свой отзыв banki.ru попадал в индекс, пока внешний корпус его не получил, и
+    # оставался там и после: тот же отзыв считался дважды. Корпус — владелец текста,
+    # его строка остаётся, наша уходит.
+    # Там же — строки раннего HTML-сборщика: без номера отзыва (номер карточки вместо
+    # него) и копии одного адреса, записанные со слешем на конце и без.
+    with db.session() as s:
+        dropped = s.execute(text("""
+            DELETE FROM review_index o
+             WHERE o.source = 'banki_reviews'
+               AND EXISTS (SELECT 1 FROM review_index c
+                            WHERE c.source = 'bankiru'
+                              AND c.url IN (:base || substring(o.url from '/response/([0-9]+)'),
+                                            :base || substring(o.url from '/response/([0-9]+)') || '/'))
+        """), {"base": _BANKI_RESP}).rowcount
+        dropped += s.execute(text("""
+            DELETE FROM review_index o
+             WHERE o.source = 'banki_reviews' AND o.url !~ '/response/[0-9]{6,}'
+        """)).rowcount
+        dropped += s.execute(text("""
+            DELETE FROM review_index o
+             WHERE o.source = 'banki_reviews'
+               AND EXISTS (SELECT 1 FROM review_index c
+                            WHERE c.source = 'banki_reviews' AND c.url <> o.url
+                              AND rtrim(c.url, '/') = rtrim(o.url, '/')
+                              -- обычно это одна запись review, сменившая адрес: остаётся
+                              -- адрес со слешем — так пишет нынешний сборщик
+                              AND (c.review_id > o.review_id
+                                   OR (c.review_id = o.review_id AND c.url > o.url)))
+        """)).rowcount
+    if dropped:
+        log.info("review_index: убрано дублей и строк без номера отзыва: %d", dropped)
+
     embedded = embed_missing()
     dt = time.time() - t0
     log.info("review_index: локальных отзывов %d, векторов посчитано %d, %.1f с",
              written, embedded, dt)
-    return {"ok": True, "rows": written, "embedded": embedded,
+    return {"ok": True, "rows": written, "embedded": embedded, "dup_dropped": dropped,
             "banks": len(canon), "seconds": round(dt, 1)}
+
+
+def repair_card_bodies(dry: bool = True) -> dict:
+    """Разовая починка отзывов раннего HTML-сборщика banki.ru: вместо обрезанной
+    карточки с CSS — полный текст того же отзыва из внешнего корпуса (тот же
+    отзыв banki.ru, тот же автор); если корпус его не знает — карточка без
+    обвязки. Прежний текст — в review_text_bak_card (одна копия на review_id)."""
+    pat = r"\.[a-z][a-z0-9]{6,10}\{[a-z-]+:"
+    with db.session() as s:
+        rows = s.execute(text("""SELECT review_id, source_url, text FROM review
+                                  WHERE source = 'banki_reviews' AND text ~ :p"""), {"p": pat}).mappings().all()
+    rids = {r["review_id"]: banki_rid(r["source_url"]) for r in rows}
+    full: dict[str, str] = {}
+    eng = _source_engine()
+    if eng is not None and rids:
+        urls = [_BANKI_RESP + x for x in rids.values() if x]
+        with eng.connect() as c:
+            for x in c.execute(text('SELECT rtrim(url, \'/\') AS u, "reviewBody" AS b FROM bankiru.reviews'
+                                    ' WHERE rtrim(url, \'/\') = ANY(:u)'), {"u": urls}).mappings():
+                b = (x["b"] or "").strip()
+                rid = banki_rid(x["u"])
+                if rid and len(b) > len(full.get(rid, "")):      # в корпусе бывают копии — берём полную
+                    full[rid] = b
+    plan = []
+    for r in rows:
+        new = full.get(rids[r["review_id"]] or "")
+        how = "corpus"
+        if not new or len(new) < _MIN_LEN or _CSS_RULES.search(new):
+            new, how = clean_body(r["text"]), "stripped"
+        plan.append({"id": r["review_id"], "text": new, "how": how})
+    out = {"rows": len(rows), "from_corpus": sum(p["how"] == "corpus" for p in plan),
+           "stripped": sum(p["how"] == "stripped" for p in plan), "dry": dry}
+    if dry or not plan:
+        return out
+    with db.session() as s:
+        s.execute(text("""CREATE TABLE IF NOT EXISTS review_text_bak_card (
+                              review_id BIGINT PRIMARY KEY, text TEXT NOT NULL,
+                              saved_at TIMESTAMPTZ NOT NULL DEFAULT now())"""))
+        s.execute(text("""INSERT INTO review_text_bak_card (review_id, text)
+                          SELECT review_id, text FROM review WHERE review_id = ANY(:ids)
+                          ON CONFLICT (review_id) DO NOTHING"""), {"ids": [p["id"] for p in plan]})
+        s.execute(text("UPDATE review SET text = :text WHERE review_id = :id"),
+                  [{"id": p["id"], "text": p["text"]} for p in plan])
+    return out
 
 
 def embed_missing(limit: int = 2000, batch: int = 64) -> int:
@@ -436,7 +539,7 @@ def bodies_for(rows: list[dict]) -> dict[str, dict]:
                         ' r.location AS location FROM bankiru.reviews r'
                         ' WHERE r.id = ANY(:ids)'),
                             {"ids": [r["review_id"] for r in ext]}).mappings():
-                        out[x["url"]] = {"text": (x["body"] or "").strip(),
+                        out[x["url"]] = {"text": clean_body(x["body"]),
                                          "product": x["product"],
                                          "city": _city(x["location"])}
             except Exception as e:
@@ -448,7 +551,7 @@ def bodies_for(rows: list[dict]) -> dict[str, dict]:
                     SELECT r.source_url AS url, r.text, r.product_category::text AS product
                     FROM review r WHERE r.review_id = ANY(:ids)
                 """), {"ids": [r["review_id"] for r in loc]}).mappings():
-                    out[x["url"]] = {"text": (x["text"] or "").strip(),
+                    out[x["url"]] = {"text": clean_body(x["text"]),
                                      "product": x["product"], "city": None}
         except Exception as e:
             log.warning("review_index: тексты своих коллекторов не забрались (%s)", e)
@@ -476,7 +579,7 @@ def search_vectors_local(qvec: list[float], *, bank: str | None = None,
     if bank:
         clauses.append("i.bank = :bank"); p["bank"] = bank
     if product:
-        clauses.append("i.product = :product"); p["product"] = product
+        clauses.append("al_product_is(i.product, i.channels, i.issue, :product)"); p["product"] = product
     if city:
         clauses.append("i.city = :city"); p["city"] = city
     if month:
@@ -529,7 +632,7 @@ def search_fts(query: str, *, bank: str | None = None, product: str | None = Non
         clauses.append("f.bank = :bank")
         params["bank"] = bank
     if product:
-        clauses.append("f.product = :product")
+        clauses.append("al_product_is(f.product, f.channels, f.issue, :product)")
         params["product"] = product
     if city:
         clauses.append("f.city = :city")

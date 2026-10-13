@@ -121,7 +121,7 @@ def _clusters(bc, product, days, theme, flag, city, source, esc, limit) -> dict:
             FROM review_index i
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE i.bank = :bank AND {rd._CMP}
-              AND (CAST(:product AS text) IS NULL OR i.product = :product)
+              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
               AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
               AND coalesce(a.summary, '') <> ''{extra}
             ORDER BY i.dt DESC LIMIT :lim"""), p).mappings().all()]
