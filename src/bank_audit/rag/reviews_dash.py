@@ -173,16 +173,26 @@ _cache_lock = threading.Lock()
 _TTL = 3600.0
 
 
+_TTL_PARTIAL = 300.0
+
+
 def _cached(key: str, fn, ttl: float = _TTL):
+    """Кэш с TTL. Ответ «прошлый период ещё размечается» (delta_partial) живёт
+    5 минут, а не час: это бывает и на минуту — пока переиндексация вставляет
+    строки без разметки, — и час без сравнения из-за такой минуты слишком дорог."""
     now = time.time()
     with _cache_lock:
         hit = _cache.get(key)
-        if hit and now - hit[0] < ttl:
+        if hit and now - hit[0] < (_TTL_PARTIAL if _partial(hit[1]) else ttl):
             return hit[1]
     val = fn()
     with _cache_lock:
         _cache[key] = (now, val)
     return val
+
+
+def _partial(val) -> bool:
+    return isinstance(val, dict) and bool(val.get("delta_partial") or val.get("partial"))
 
 
 def _theme_sql(theme: dict, prefix: str) -> tuple[str, dict]:

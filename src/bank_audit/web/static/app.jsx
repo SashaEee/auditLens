@@ -3958,7 +3958,7 @@ const rvDelta=(d)=> d==null ? <span className="rv-flat">→</span>
   : <span className="rv-flat">→ {d>=0?"+":""}{d}%</span>;
 // Изменение темы со значимостью (Б4): цвет — только у изменений, значимо
 // отличающихся от общего потока жалоб; остальное серым, с интервалом в подсказке.
-const rvSgn=v=>(v>0?"+":"")+v;
+const rvSgn=v=>v>0?"+"+v:v<0?"−"+Math.abs(v):String(v);   // минус — типографский, как у KPI
 const rvX=v=>v==null?"—":"×"+String(v).replace(".",",");
 const rvDeltaSig=(t,th)=>{
   if(th.delta_partial)return <span className="rv-flat">·</span>;
@@ -4235,28 +4235,30 @@ function rvPerWords(per,info,today){
   if(sh.kind==="year")return{name:sh.partial?"С начала года":`${y} год`,za:`${y} год`,range:sh.partial?rvRangeWords(r.from,r.to,true):"",...r};
   return{name:"",za:rvRangeWords(r.from,r.to),range:rvRangeWords(r.from,r.to,true),...r};
 }
-// Сравнение словами из ответа сервера: k — «к августу», za — «чем за август», tip — подробности
+// Сравнение словами из ответа сервера: k — «к августу», za — «чем за август»,
+// gen — «на уровне августа», tip — подробности (даты, выравнивание, пересчёт на день)
+const RV_ROLL_GEN={"7d":"прошлых 7 дней","30d":"прошлых 30 дней","90d":"прошлых 3 месяцев","180d":"прошлых 6 месяцев","365d":"прошлых 12 месяцев"};
 function rvCmpWords(info,today){
   if(!info)return null;
   if(!info.cmp_from)return{none:true,k:info.cmp_note==="data"?"не с чем сравнить":"без сравнения",
     tip:info.cmp_note==="data"?`Сравнивать не с чем: жалобы собираются с ${rvDmy(RV_DATA_START)}, прошлый период почти целиком раньше.`:"Сравнение выключено в окне выбора периода."};
   const f=info.cmp_from,t=info.cmp_to,[y,m]=rvYMD(f),cy=+today.slice(0,4),Y=y!==cy?" "+y:"";
   const sh=rvShape(f,t,"0000-00-00");          // прошлый период всегда завершён
-  let k,za;
-  if(info.cmp==="yoy"){k=`к тому же периоду ${y} года`;za=`тот же период ${y} года`;}
-  else if(info.kind==="rolling"&&RV_ROLL[info.n+"d"]&&!info.aligned_to){k="к "+RV_ROLL[info.n+"d"][3];za=RV_ROLL[info.n+"d"][2];}
-  else if(sh.kind==="month"||(info.kind==="month"&&info.partial)){k=`к ${RV_MON_DAT[m-1]}${Y}`;za=RV_MON_FULL[m-1]+Y;
-    if(sh.kind!=="month"){k+=` (${rvRangeWords(f,t)})`;za+=` (${rvRangeWords(f,t)})`;}}
-  else if(sh.kind==="quarter"||(info.kind==="quarter"&&info.partial)){const q=RV_ROMAN[(m-1)/3|0];k=`к ${q} кварталу${Y}`;za=`${q} квартал${Y}`;
-    if(sh.kind!=="quarter"){k+=` (${rvRangeWords(f,t)})`;za+=` (${rvRangeWords(f,t)})`;}}
-  else if(sh.kind==="year"){k=`к ${y} году`;za=`${y} год`;}
-  else if(info.kind==="rolling"&&RV_ROLL[info.n+"d"]){k="к "+RV_ROLL[info.n+"d"][3];za=RV_ROLL[info.n+"d"][2];}
-  else{k=`к ${rvRangeWords(f,t)}`;za=rvRangeWords(f,t);}
+  const rw=rvRangeWords(f,t), roll=info.kind==="rolling"&&RV_ROLL[info.n+"d"];
+  let k,za,gen;
+  if(info.cmp==="yoy"){k=`к тому же периоду ${y} года`;za=`тот же период ${y} года`;gen=`того же периода ${y} года`;}
+  else if(roll){k="к "+roll[3];za=roll[2];gen=RV_ROLL_GEN[info.n+"d"];}
+  else if(sh.kind==="month"){k=`к ${RV_MON_DAT[m-1]}${Y}`;za=RV_MON_FULL[m-1]+Y;gen=RV_MON_GEN[m-1]+Y;}
+  else if(info.kind==="month"&&info.partial){k=`к ${RV_MON_DAT[m-1]}${Y} (${rw})`;za=rw;gen=rw;}
+  else if(sh.kind==="quarter"){const q=RV_ROMAN[(m-1)/3|0];k=`к ${q} кварталу${Y}`;za=`${q} квартал${Y}`;gen=`${q} квартала${Y}`;}
+  else if(info.kind==="quarter"&&info.partial){const q=RV_ROMAN[(m-1)/3|0];k=`к ${q} кварталу${Y} (${rw})`;za=rw;gen=rw;}
+  else if(sh.kind==="year"){k=`к ${y} году`;za=`${y} год`;gen=`${y} года`;}
+  else{k=`к ${rw}`;za=rw;gen=rw;}
   const tip=[`Сравниваем ${rvDmy(info.from)}–${rvDmy(info.aligned_to||info.to)} с ${rvDmy(f)}–${rvDmy(t)}.`];
   if(info.aligned_to)tip.push("Последние дни ещё собираются — в сравнение они не входят, и прошлый период взят такой же длины.");
   if(info.per_day)tip.push("Периоды разной длины — сравниваем в пересчёте на день.");
   if(info.cover!=null&&info.cover<0.995)tip.push(`Прошлый период покрыт данными на ${Math.round(info.cover*100)}%: жалобы собираются с ${rvDmy(RV_DATA_START)}.`);
-  return{k,za,tip:tip.join(" ")};
+  return{k,za,gen,tip:tip.join(" ")};
 }
 // Шаг ‹ › — тот же период назад или вперёд: месяц — к соседнему месяцу, квартал —
 // к кварталу, год — к году, остальное — на свою длину. null — дальше нельзя.
@@ -4691,6 +4693,8 @@ function RvPeriodPicker({per,cmp,info,bank,product,narrow,onChange}){
   const[daily,setDaily]=useState(null);
   const btnRef=useRef(null);
   useEffect(()=>{setDaily(null);},[bank,product]);
+  // период сменился не из окна («Назад» в браузере, ссылка) — черновик в окне устарел
+  useEffect(()=>{setOpen(false);},[rvPerKey(per),cmp,bank,product]);
   const ds=(daily&&daily.from)||(info&&info.from&&info.kind==="all"?info.from:RV_DATA_START);
   const w=rvPerWords(per,info,today);
   const prev=rvStep(per,-1,today,ds), next=rvStep(per,1,today,ds);
@@ -4782,7 +4786,9 @@ function RvPeriodPop({per,cmp,today,daily,ds,narrow,anchorRef,onClose,onApply}){
       ...(py>=+ds.slice(0,4)?[{per:{from:rvIso(py,1,1),to:rvIso(py,12,31)},l:`${py} год`}]:[]),
       {per:{p:"all"},l:"Всё время"}].filter(x=>{const r=rvResolve(x.per,today,ds);return r.to>=ds;})]];
   const curKey=rvPerKey(rvNormalize(cur.from,cur.to,today,ds));
-  const onPreset=x=>{ const r=rvResolve(x.per,today,ds); onApply(rvNormalize(r.from,r.to,today,ds),d.cmp&&d.cmp!==defCmp?d.cmp:"","preset"); };
+  // готовый период — со своим сравнением по умолчанию (стрелки ‹ › выбранное сохраняют):
+  // «год назад», выбранное для недели, у «12 месяцев» оставило бы вкладку без сравнения
+  const onPreset=x=>{ const r=rvResolve(x.per,today,ds); onApply(rvNormalize(r.from,r.to,today,ds),"","preset"); };
   // поля дат: дата — граница, слова — весь отрезок
   const commit=(which)=>{ const txt=which==="from"?ft:tt, r=rvParseWords(txt,today);
     if(!r){ if(txt.trim())setTerr("Не понял дату: нужен формат дд.мм.гггг или словами — «сентябрь», «3 кв», «2025»"); return; }
@@ -5600,12 +5606,12 @@ function ReviewsPage({params}){
     if(vol){ const mk=ov.market_delta_pct, rel=ov.delta_vs_market_pct;
       const mtxt=mk==null?"":`; у остальных банков ${rvSgn(Math.round(mk))}% — `+(vol.vs_market==="above"
         ?`${bank} обгоняет рынок на ${Math.round(Math.abs(rel||0))}%`
-        :vol.vs_market==="below"?`у ${bank} лучше, чем у рынка`:`в целом вместе с рынком`);
+        :vol.vs_market==="below"?`${bank} лучше рынка`:`в целом вместе с рынком`);
       out.push(`Жалоб ${ov.delta_pct>0?"больше":"меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за ${cw?cw.za:"прошлый период"}: ${fmtNum(ov.cmp_n!=null?ov.cmp_n:ov.total)} против ${fmtNum(ov.prev)}${perInfo&&perInfo.per_day?" (в пересчёте на день)":""}${mtxt}.`); }
     // «без значимых изменений» рядом с чипами изменившихся тем читалось как
     // «ничего не изменилось» — говорим именно про общее число
     else if(ov.delta_partial||!chg||chg.no_cmp||(cw&&cw.none))out.push(`${fmtNum(ov.total)} ${plural(ov.total,"жалоба","жалобы","жалоб")} за ${pw.za}.`);
-    else out.push(`Общее число жалоб — на уровне ${cw&&cw.za?"периода «"+cw.za+"»":"прошлого периода"}: ${fmtNum(ov.total)} за ${pw.za}.`);
+    else out.push(`${fmtNum(ov.total)} ${plural(ov.total,"жалоба","жалобы","жалоб")} за ${pw.za} — на уровне ${cw&&cw.gen?cw.gen:"прошлого периода"}.`);
     const w=ix&&ix.worse&&ix.worse[0];
     if(w)out.push(`Сильнее всего ${bank} отличается от рынка в теме «${w.label}»: ${pct1(w.pct)} жалоб против ${pct1(w.market_pct)} у остальных банков (${rvX(w.index)}).`);
     const sg=anom&&anom.signals&&anom.signals[0];
