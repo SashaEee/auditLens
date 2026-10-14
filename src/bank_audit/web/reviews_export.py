@@ -76,8 +76,9 @@ def describe_filters(f: dict) -> list[tuple[str, str]]:
            ("Признак", f.get("flag") or "—"),
            ("Площадка", SOURCE_LABEL.get(f.get("source") or "", f.get("source") or "все площадки")),
            ("Город", f.get("city") or "все города"),
-           ("Период", (f"{f['days']} дней" if f.get("days") else
-                       (_month_label(f["month"]) if f.get("month") else "всё время"))),
+           ("Период", (_month_label(f["month"]) if f.get("month") else
+                       f["period_label"] if f.get("period_label") else
+                       f"{f['days']} дней" if f.get("days") else "всё время")),
            ("Только эскалация", "да" if f.get("esc") else "нет")]
     return out
 

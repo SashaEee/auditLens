@@ -2735,12 +2735,36 @@ def _rd():
     from ..rag import reviews_dash
     return reviews_dash
 
+
+# Период вкладки: p=7d|30d|90d|180d|365d|mtd|qtd|ytd|all или from/to (даты
+# включительно), cmp=prev|yoy|none. Старый days=N — «последние N дней» (ссылки
+# с «Обзора», закладки, прежний фронт в кэше браузера). У срезов («Зарплатные
+# проекты» и др.) данные начинаются с их разметки — период и сравнение режутся по ней.
+def _review_period(product: Optional[str] = None, p: Optional[str] = None,
+                   date_from: Optional[str] = Query(None, alias="from"),
+                   date_to: Optional[str] = Query(None, alias="to"),
+                   cmp: Optional[str] = None, days: Optional[int] = None):
+    from ..rag import review_period
+    return review_period.from_request(p, date_from, date_to, cmp, days,
+                                      data_start=_rd().data_start_for(product or None))
+
+
+def _review_period_opt(product: Optional[str] = None, p: Optional[str] = None,
+                       date_from: Optional[str] = Query(None, alias="from"),
+                       date_to: Optional[str] = Query(None, alias="to"),
+                       cmp: Optional[str] = None, days: Optional[int] = None):
+    """То же для ленты и выгрузки: без параметров периода — весь корпус."""
+    if not (p or date_from or days):
+        return None
+    return _review_period(product, p, date_from, date_to, cmp, days)
+
 @app.get("/api/reviews/banks")
 def reviews_banks():
     return {"items": _rd().banks()}
 
 @app.get("/api/reviews/overview")
-def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90,
+def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = None,
+                     per=Depends(_review_period),
                      user: CurrentUser = Depends(get_current_user)):
     # выбор НЕдефолтного среза — сигнал интереса (этап A): дефолтный заход
     # (Сбербанк без продукта) профиль не двигает, якорь и так у всех
@@ -2748,39 +2772,51 @@ def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = No
         userdata.update_interests_from_signal(
             user.username, text_=f"{bank if bank != 'Сбербанк' else ''} {product or ''}",
             weight=0.3)
-    return _rd().overview(bank, product or None, days) or {}
+    return _rd().overview(bank, product or None, period=per) or {}
 
 @app.get("/api/reviews/trend")
-def reviews_trend(bank: str = "Сбербанк", product: Optional[str] = None, basis: str = "pub"):
-    # basis=event — по дате самого события, а не отзыва (режим динамики)
-    return _rd().trend(bank, product or None, basis="event" if basis == "event" else "pub") or {}
+def reviews_trend(bank: str = "Сбербанк", product: Optional[str] = None, basis: str = "pub",
+                  months: int = 14):
+    # basis=event — по дате самого события, а не отзыва (режим динамики);
+    # months — график расширяется, когда выбранный период старше 14 месяцев
+    return _rd().trend(bank, product or None, months=max(6, min(int(months), 36)),
+                       basis="event" if basis == "event" else "pub") or {}
 
 @app.get("/api/reviews/themes")
 def reviews_themes(bank: str = "Сбербанк", product: Optional[str] = None,
-                   days: int = 90):
+                   per=Depends(_review_period)):
     # Период приходит из того же переключателя, что и у KPI. Раньше эндпоинт
     # его не объявлял, панель считалась по зашитым 90 дням при любом выборе —
     # отсюда «за квартал, за год и за всё время выводится одно и то же».
-    return _rd().themes(bank, product or None, days) or {}
+    return _rd().themes(bank, product or None, period=per) or {}
 
 @app.get("/api/reviews/vs-market")
-def reviews_vs_market(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
-    return _rd().vs_market(bank, product or None, days) or {}
+def reviews_vs_market(bank: str = "Сбербанк", product: Optional[str] = None,
+                      per=Depends(_review_period)):
+    return _rd().vs_market(bank, product or None, period=per) or {}
 
 @app.get("/api/reviews/issue-index")
-def reviews_issue_index(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 180):
+def reviews_issue_index(bank: str = "Сбербанк", product: Optional[str] = None,
+                        per=Depends(_review_period)):
     """Где структура жалоб банка значимо отличается от остального рынка."""
-    return _rd().issue_index(bank, product or None, days) or {}
+    return _rd().issue_index(bank, product or None, period=per) or {}
 
 @app.get("/api/reviews/risk-flags")
-def reviews_risk_flags(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
+def reviews_risk_flags(bank: str = "Сбербанк", product: Optional[str] = None,
+                       per=Depends(_review_period)):
     """Признаки риска из разметки: адресаты эскалации, уязвимые клиенты, практики."""
-    return _rd().risk_flags(bank, product or None, days) or {}
+    return _rd().risk_flags(bank, product or None, period=per) or {}
 
 @app.get("/api/reviews/changes")
-def reviews_changes(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90):
-    """Шапка «что изменилось»: только значимые изменения к прошлому окну."""
-    return _rd().changes(bank, product or None, days) or {}
+def reviews_changes(bank: str = "Сбербанк", product: Optional[str] = None,
+                    per=Depends(_review_period)):
+    """Шапка «что изменилось»: только значимые изменения к прошлому периоду."""
+    return _rd().changes(bank, product or None, period=per) or {}
+
+@app.get("/api/reviews/daily")
+def reviews_daily(bank: str = "Сбербанк", product: Optional[str] = None):
+    """Жалобы по дням с начала данных — календарь выбора периода."""
+    return _rd().daily(bank, product or None) or {}
 
 def _rw():
     from ..rag import reviews_work
@@ -2788,12 +2824,13 @@ def _rw():
 
 
 @app.get("/api/reviews/clusters")
-def reviews_clusters(bank: str = "Сбербанк", product: Optional[str] = None, days: int = 90,
+def reviews_clusters(bank: str = "Сбербанк", product: Optional[str] = None,
+                     per=Depends(_review_period),
                      theme: Optional[str] = None, flag: Optional[str] = None,
                      city: Optional[str] = None, source: Optional[str] = None, esc: int = 0):
     """Похожие жалобы группами — с теми же фильтрами, что у ленты."""
-    return _rw().clusters(bank, product or None, days, theme or None, flag or None,
-                          city or None, source or None, bool(esc)) or {}
+    return _rw().clusters(bank, product or None, per.days, theme or None, flag or None,
+                          city or None, source or None, bool(esc), period=per) or {}
 
 
 class ReviewUrls(BaseModel):
@@ -2877,8 +2914,8 @@ def reviews_market_events(bank: str = "Сбербанк", product: Optional[str]
 
 @app.get("/api/reviews/geo")
 def reviews_geo(bank: str = "Сбербанк", product: Optional[str] = None,
-                days: int = 365, top: int = 8):
-    return _rd().geo(bank, product or None, days, top=max(1, min(int(top), 80))) or {}
+                per=Depends(_review_period), top: int = 8):
+    return _rd().geo(bank, product or None, top=max(1, min(int(top), 80)), period=per) or {}
 
 @app.get("/api/reviews/products")
 def reviews_products(bank: str = "Сбербанк", days: int = 365):
@@ -2903,7 +2940,7 @@ def reviews_theme_defs():
 def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  theme: Optional[str] = None, q: Optional[str] = None,
                  city: Optional[str] = None, month: Optional[str] = None,
-                 days: Optional[int] = None, esc: int = 0,
+                 per=Depends(_review_period_opt), esc: int = 0,
                  sort: str = "auto", limit: int = 20, offset: int = 0,
                  flag: Optional[str] = None, source: Optional[str] = None,
                  cursor: Optional[int] = None):
@@ -2911,7 +2948,7 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
     # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
     # 3 месяца, а в списке отзывы за прошлый год».
     res = _rd().list_reviews_ex(bank, product=product or None, theme=theme or None,
-                                q=q or None, days=days or None,
+                                q=q or None, period=per,
                                 city=city or None, month=month or None,
                                 limit=limit, offset=max(0, offset),
                                 esc=bool(esc), sort=sort, flag=flag or None,
@@ -2925,10 +2962,18 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
             "next": res.get("next"),      # курсор ленты: с какой строки продолжать
             "search": res.get("search") or None}
 
+def _period_slug(per) -> str:
+    """Период в имени файла выгрузки: «2026-07-18_2026-10-15» или «всё»."""
+    if per is None:
+        return "всё"
+    i = per.info()
+    return f"{i['from']}_{i['to']}"
+
+
 @app.get("/api/reviews/export.csv")
 def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None,
                    theme: Optional[str] = None, city: Optional[str] = None,
-                   month: Optional[str] = None, days: Optional[int] = None,
+                   month: Optional[str] = None, per=Depends(_review_period_opt),
                    esc: int = 0, limit: int = 10000, flag: Optional[str] = None,
                    source: Optional[str] = None):
     """Выгрузка жалоб с разметкой ИИ в CSV (UTF-8 с BOM — открывается в Excel)."""
@@ -2936,9 +2981,9 @@ def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None
     import io
     from urllib.parse import quote as _q
     rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
-                             days=days or None, city=city or None, month=month or None,
+                             city=city or None, month=month or None,
                              esc=bool(esc), limit=limit, flag=flag or None,
-                             source=source or None)
+                             source=source or None, period=per)
     if rows is None:
         raise HTTPException(404, "банк не найден")
     flag_name = _rd().flag_label(flag)
@@ -2950,7 +2995,7 @@ def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None
     # тексты отзывов чужие: «=», «+», «-», «@» в начале ячейки Excel исполнит как формулу
     w.writerows({k: ("'" + v if isinstance(v, str) and v[:1] in "=+-@" else v)
                  for k, v in r.items()} for r in rows)
-    name = f"жалобы_{bank}_{theme or flag_name or product or 'все'}_{days or 'всё'}дн.csv"
+    name = f"жалобы_{bank}_{theme or flag_name or product or 'все'}_{_period_slug(per)}.csv"
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
 
@@ -2958,7 +3003,7 @@ def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None
 @app.get("/api/reviews/export.xlsx")
 def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] = None,
                         theme: Optional[str] = None, city: Optional[str] = None,
-                        month: Optional[str] = None, days: Optional[int] = None,
+                        month: Optional[str] = None, per=Depends(_review_period_opt),
                         esc: int = 0, limit: int = 10000, flag: Optional[str] = None,
                         source: Optional[str] = None):
     """Выгрузка жалоб в Excel в стиле AuditLens: обзор с показателями и
@@ -2967,19 +3012,21 @@ def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] =
     from ..rag import review_codebook as _cb
     from . import reviews_export
     rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
-                             days=days or None, city=city or None, month=month or None,
+                             city=city or None, month=month or None,
                              esc=bool(esc), limit=limit, flag=flag or None,
-                             source=source or None)
+                             source=source or None, period=per)
     if rows is None:
         raise HTTPException(404, "банк не найден")
+    from ..rag import review_period as _rp
     theme_label = (_cb.ISSUES[theme][0] if theme and theme in _cb.ISSUES else theme) or None
     flag_name = _rd().flag_label(flag)
     body = reviews_export.to_xlsx(rows, {
         "bank": bank, "product": product or None, "theme": theme_label, "city": city or None,
-        "month": month or None, "days": days or None, "esc": bool(esc), "flag": flag_name,
+        "month": month or None, "days": per.days if per else None, "esc": bool(esc),
+        "period_label": _rp.label(per) if per else None, "flag": flag_name,
         "source": source or None}, limit=limit)
     name = (f"AuditLens_жалобы_{bank}_{theme_label or flag_name or product or 'все'}_"
-            f"{days or 'всё'}дн.xlsx")
+            f"{_period_slug(per)}.xlsx")
     return Response(content=body,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
@@ -2989,7 +3036,7 @@ def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] =
 async def reviews_feed_classified(bank: str = "Сбербанк", product: Optional[str] = None,
                                   theme: Optional[str] = None, q: Optional[str] = None,
                                   city: Optional[str] = None, month: Optional[str] = None,
-                                  days: Optional[int] = None,
+                                  per=Depends(_review_period_opt),
                                   limit: int = 20, offset: int = 0):
     """Прежняя кнопка «Уточнить темы»: модель на лету придумывала отзыву
     свободную тему, не совпадавшую ни с панелью, ни с фильтрами. Теперь каждый
@@ -3000,7 +3047,7 @@ async def reviews_feed_classified(bank: str = "Сбербанк", product: Optio
     res = await asyncio.to_thread(
         functools.partial(_rd().list_reviews_ex, bank,
                           product=product or None, theme=theme or None,
-                          q=q or None, days=days or None,
+                          q=q or None, period=per,
                           city=city or None, month=month or None,
                           limit=limit, offset=max(0, offset)))
     return {"items": res["items"], "count": len(res["items"]), "llm": False,
@@ -3062,30 +3109,32 @@ _EXPLAIN_CACHE: dict[str, tuple[float, dict]] = {}
 @app.get("/api/reviews/segment-profile")
 def reviews_segment_profile(bank: str = "Сбербанк", product: Optional[str] = None,
                             city: Optional[str] = None, month: Optional[str] = None,
-                            days: int = 90):
+                            per=Depends(_review_period)):
     """Чем город или месяц отличается от нормы — цифры для панели, без модели."""
-    return _rd().segment_profile(bank, product or None, city or None, month or None, days) or {}
+    return _rd().segment_profile(bank, product or None, city or None, month or None,
+                                 period=per) or {}
 
 
 @app.get("/api/reviews/explain")
 async def reviews_explain(bank: str = "Сбербанк", product: Optional[str] = None,
                           city: Optional[str] = None, month: Optional[str] = None,
-                          days: int = 90):
+                          per=Depends(_review_period)):
     """Разбор среза моделью (по кнопке): сначала цифры против нормы, потом
     тексты. Кэш на 6 часов — повторное открытие не ждёт модель 25 секунд."""
     import asyncio
+    import functools
     import time as _time
     from ..rag import reviews_llm
-    key = f"{bank}|{product}|{city}|{month}|{days}"
+    key = f"{bank}|{product}|{city}|{month}|{per.key}"
     hit = _EXPLAIN_CACHE.get(key)
     if hit and _time.time() - hit[0] < 6 * 3600:
         return hit[1]
-    seg = await asyncio.to_thread(_rd().segment_reviews, bank, product or None,
-                                  city or None, month or None)
+    seg = await asyncio.to_thread(functools.partial(
+        _rd().segment_reviews, bank, product or None, city or None, month or None, period=per))
     if not seg or not seg.get("n"):
         return {"summary": None, "themes": [], "samples": [], "n": 0}
-    prof = await asyncio.to_thread(_rd().segment_profile, bank, product or None,
-                                   city or None, month or None, days)
+    prof = await asyncio.to_thread(functools.partial(
+        _rd().segment_profile, bank, product or None, city or None, month or None, period=per))
     parts = []
     if city:
         parts.append(f"г. {city}")

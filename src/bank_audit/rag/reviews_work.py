@@ -85,7 +85,8 @@ _CL_ON_FLY = 160      # сколько векторов досчитать пр�
 
 def clusters(bank: str, product: str | None = None, days: int = 90,
              theme: str | None = None, flag: str | None = None, city: str | None = None,
-             source: str | None = None, esc: bool = False, limit: int = 2500) -> dict | None:
+             source: str | None = None, esc: bool = False, limit: int = 2500,
+             period=None) -> dict | None:
     """Похожие жалобы группами: число, главная проблема, пример и ссылки.
 
     Берутся последние `limit` жалоб с фильтрами ленты. Группа — жалобы, чьи
@@ -94,15 +95,17 @@ def clusters(bank: str, product: str | None = None, days: int = 90,
     bc = rd.resolve_bank(bank)
     if not bc:
         return None
-    key = f"cl:{bc}:{product}:{days}:{theme}:{flag}:{city}:{source}:{esc}:{limit}"
-    return rd._cached(key, lambda: _clusters(bc, product, days, theme, flag, city, source,
+    per = rd._per(period, days, product)
+    key = f"cl:{bc}:{product}:{per.key}:{theme}:{flag}:{city}:{source}:{esc}:{limit}"
+    return rd._cached(key, lambda: _clusters(bc, product, per, theme, flag, city, source,
                                              esc, limit), ttl=1800)
 
 
-def _clusters(bc, product, days, theme, flag, city, source, esc, limit) -> dict:
+def _clusters(bc, product, per, theme, flag, city, source, esc, limit) -> dict:
     import numpy as np
-    p: dict = {"bank": bc, "product": product, "d": days, "lim": limit, "sv": rd._ann_schema()}
+    p: dict = {"bank": bc, "product": product, "lim": limit, "sv": rd._ann_schema()}
     extra = rd._source_clause("i", source, p) or ""
+    extra += rd._win_clause("i", None, per, p)
     fcond = rd._flag_sql(flag)
     if fcond:
         extra += f" AND {fcond}"
@@ -122,7 +125,7 @@ def _clusters(bc, product, days, theme, flag, city, source, esc, limit) -> dict:
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE i.bank = :bank AND {rd._CMP}
               AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
-              AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+              AND i.dt <= now()
               AND coalesce(a.summary, '') <> ''{extra}
             ORDER BY i.dt DESC LIMIT :lim"""), p).mappings().all()]
     vecs = _vecs_for([r["url"] for r in rows])
@@ -140,7 +143,8 @@ def _clusters(bc, product, days, theme, flag, city, source, esc, limit) -> dict:
     # limited — упёрлись в limit: тогда «из N последних» в подписи честно, иначе
     # база та же, что у вкладки, и отдельное число только расходилось бы с ней
     out = {"total": len(rows), "no_vec": len(rows) - len(items), "clusters": [],
-           "clustered": 0, "days": days, "limited": len(rows) >= limit}
+           "clustered": 0, "days": per.days, "period": per.info(),
+           "limited": len(rows) >= limit}
     if len(items) < _CL_MIN:
         return out
     m = np.asarray([vecs[r["url"]] for r in items], dtype=np.float32)

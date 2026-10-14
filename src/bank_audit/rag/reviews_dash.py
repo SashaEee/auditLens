@@ -24,6 +24,7 @@ from sqlalchemy import text
 from .. import db
 from .bankiru_reviews import resolve_bank, search_reviews
 from . import review_codebook as cb
+from . import review_period as _rp
 
 log = logging.getLogger(__name__)
 
@@ -344,35 +345,56 @@ def flag_label(flag: str | None) -> str | None:
             "amount": "указана сумма", "amount:1m": "сумма от 1 млн ₽"}[flag]
 
 
-def _coverage(bank_canon: str | None, days: int) -> float | None:
-    """Доля отзывов окна, у которых уже есть разметка (в процентах)."""
+def _per(period, days, product: str | None = None) -> "_rp.Period":
+    """Период вызова: явный (вкладка — даты «с — по») или «последние N дней»
+    (выпуск, ИИ-инструменты, оповещения и старые ссылки зовут с числом дней)."""
+    if isinstance(period, _rp.Period):
+        return period
+    return _rp.rolling(int(days or 90), data_start_for(product))
+
+
+def data_start_for(product: str | None) -> "_dt.date":
+    """С какого дня есть данные: корпус — с начала 2025, срезы («Зарплатные
+    проекты», «УС», «Выездной сервис») — с начала своей разметки. Иначе прошлый
+    период среза был бы почти пуст, и «12 мес» показывали бы рост в разы."""
+    from . import review_slices as rs
+    if product and product in {lbl for lbl, _d in rs.SLICES.values()}:
+        return max(_rp.DATA_START, _dt.date.fromisoformat(rs.SINCE))
+    return _rp.DATA_START
+
+
+def _coverage(bank_canon: str | None, per) -> float | None:
+    """Доля отзывов окна (период вместе с прошлым), у которых уже есть разметка, %."""
+    per = _per(per, per)
     try:
         with db.session() as s:
             n, lab = s.execute(text(
                 "SELECT count(*), count(*) FILTER (WHERE i.kind IS NOT NULL) FROM review_index i"
                 " WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)"
-                " AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"),
-                {"bank": bank_canon, "d": days}).one()
+                " AND i.dt >= :lo AND i.dt < :t1 AND i.dt <= now()"),
+                {"bank": bank_canon, **per.binds()}).one()
         return round(100.0 * lab / n, 1) if n else None
     except Exception:  # noqa: BLE001
         return None
 
 
-def _prev_ready(bank_canon: str | None, days: int) -> bool:
-    """Размечено ли прошлое окно [2·days, days) целиком (≥97%).
+def _prev_ready(bank_canon: str | None, per) -> bool:
+    """Размечен ли прошлый период целиком (≥97%).
 
     Массовая разметка идёт от свежих отзывов к старым: пока прошлый период
     размечен наполовину, в нём «не хватает» жалоб, и сравнение даёт ложный
     рост (+170% вместо реальных единиц процентов). Такое сравнение не
-    показываем вовсе."""
+    показываем вовсе. Нет сравнения — нечего и проверять."""
+    per = _per(per, per)
+    if not per.has_cmp:
+        return False
     try:
         with db.session() as s:
             n, lab = s.execute(text(
                 "SELECT count(*), count(*) FILTER (WHERE i.kind IS NOT NULL) FROM review_index i"
                 " WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)"
-                " AND i.dt >= now() - make_interval(days => :d2)"
-                " AND i.dt <  now() - make_interval(days => :d)"),
-                {"bank": bank_canon, "d": days, "d2": days * 2}).one()
+                " AND i.dt >= :p0 AND i.dt < :p1"),
+                {"bank": bank_canon, **per.binds()}).one()
         return bool(n) and lab >= 0.97 * n
     except Exception:  # noqa: BLE001
         return False
@@ -453,83 +475,92 @@ def corpus_stats(bank: str | None = None) -> dict | None:
 
 
 @_safe(None)
-def overview(bank: str, product: str | None = None, days: int = 90) -> dict | None:
+def overview(bank: str, product: str | None = None, days: int = 90,
+             period: "_rp.Period | None" = None) -> dict | None:
     """KPI вкладки по жалобам из LLM-разметки.
 
     Жалоба — отзыв, который модель отнесла к жалобам (в т. ч. смешанный:
     претензия и похвала вместе). Похвала, вопросы, мусор и копии одного отзыва
     в счёт не идут — раньше они давали до трети «роста». Эскалация — признак
     разметки («грозит» или «уже обратился» в ЦБ, суд, прокуратуру и т. п.), а
-    не регулярка по словам «в суд»: та ошибалась в половине случаев."""
+    не регулярка по словам «в суд»: та ошибалась в половине случаев.
+
+    Изменение к прошлому периоду — по сравниваемой части (дни с полными
+    данными) и в пересчёте на день, если прошлый период другой длины или
+    частично раньше начала данных (review_period)."""
     bc = resolve_bank(bank)
     if not bc:
         return None
+    per = _per(period, days, product)
 
     def _compute():
         idx, ip = _idx_clause(bc, product)
+        B = per.binds()
+        cur_w = "i.dt >= :t0 AND i.dt < :t1"
+        cmp_w = "i.dt >= :t0 AND i.dt < :c1"
+        prev_w = "i.dt >= :p0 AND i.dt < :p1"
+        pq = " AND al_product_is(i.product, i.slices, :product)" if product else ""
+        pp = {"product": product} if product else {}
         with db.session() as s:
             cur = s.execute(text(f"""
-                SELECT count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d)),
-                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d2)
-                                          AND i.dt <  now() - make_interval(days => :d)),
-                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d) AND i.esc),
-                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d2)
-                                          AND i.dt <  now() - make_interval(days => :d) AND i.esc)
-                FROM review_index i WHERE {idx} AND {_CMP}
-            """), {**ip, "d": days, "d2": days * 2}).one()
+                SELECT count(*) FILTER (WHERE {cur_w}),
+                       count(*) FILTER (WHERE {prev_w}),
+                       count(*) FILTER (WHERE {cur_w} AND i.esc),
+                       count(*) FILTER (WHERE {prev_w} AND i.esc),
+                       count(*) FILTER (WHERE {cmp_w})
+                FROM review_index i WHERE {idx} AND {_CMP} AND i.dt >= :lo AND i.dt < :t1
+            """), {**ip, **B}).one()
             total_cur, total_prev, esc_cur = int(cur[0]), int(cur[1]), int(cur[2])
-            esc_prev = int(cur[3])
+            esc_prev, total_cmp = int(cur[3]), int(cur[4])
             filed = int(s.execute(text(f"""
                 SELECT count(*) FROM review_index i
                 JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
-                WHERE {idx} AND {_CMP} AND i.dt >= now() - make_interval(days => :d)
+                WHERE {idx} AND {_CMP} AND {cur_w}
                   AND a.esc = 'filed'
-            """), {**ip, "d": days, "sv": _ann_schema()}).scalar() or 0)
+            """), {**ip, **B, "sv": _ann_schema()}).scalar() or 0)
             mk = s.execute(text(
                 "SELECT i.bank, count(*) n FROM review_index i"
-                " WHERE i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
-                f" AND {_CMP}"
-                + (" AND al_product_is(i.product, i.slices, :product)" if product else "") +
-                " GROUP BY 1 ORDER BY 2 DESC"),
-                {"d": days, **({"product": product} if product else {})}).all()
+                f" WHERE {cur_w} AND i.dt <= now() AND {_CMP}" + pq +
+                " GROUP BY 1 ORDER BY 2 DESC"), {**B, **pp}).all()
             asof = s.execute(text(
                 f"SELECT max(i.dt) FROM review_index i WHERE {idx} AND {_CMP}"), ip).scalar()
             # эскалация у остальных банков — с чем сравнивать долю банка: порог
             # 12% у крупного банка пробит всегда, и плитка была красной постоянно
             # прошлое окно рынка — чтобы рост жалоб банка сравнивать с ростом площадок:
             # «+20%» при росте рынка на 12% — это не «стало хуже на 20%» (аудит 03.10)
-            m_n, m_esc, m_prev = s.execute(text(
-                f"SELECT count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d)),"
-                f" count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d) AND i.esc),"
-                f" count(*) FILTER (WHERE i.dt < now() - make_interval(days => :d))"
+            m_n, m_esc, m_prev, m_cmp = s.execute(text(
+                f"SELECT count(*) FILTER (WHERE {cur_w}),"
+                f" count(*) FILTER (WHERE {cur_w} AND i.esc),"
+                f" count(*) FILTER (WHERE {prev_w}),"
+                f" count(*) FILTER (WHERE {cmp_w})"
                 f" FROM review_index i WHERE i.bank <> :bank AND {_CMP}"
-                f" AND i.dt >= now() - make_interval(days => :d2) AND i.dt <= now()"
-                + (" AND al_product_is(i.product, i.slices, :product)" if product else "")),
-                {"bank": bc, "d": days, "d2": days * 2,
-                 **({"product": product} if product else {})}).one()
+                f" AND i.dt >= :lo AND i.dt < :t1 AND i.dt <= now()" + pq),
+                {"bank": bc, **B, **pp}).one()
             by_src = [{"source": r[0], "n": int(r[1])} for r in s.execute(text(
                 f"SELECT i.source, count(*) FROM review_index i WHERE {idx} AND {_CMP}"
-                f" AND i.dt >= now() - make_interval(days => :d)"
-                f" GROUP BY 1 ORDER BY 2 DESC"), {**ip, "d": days}).all()]
+                f" AND {cur_w} GROUP BY 1 ORDER BY 2 DESC"), {**ip, **B}).all()]
         total_market = sum(int(r[1]) for r in mk) or 1
-        m_n, m_esc, m_prev = int(m_n or 0), int(m_esc or 0), int(m_prev or 0)
+        m_n, m_esc = int(m_n or 0), int(m_esc or 0)
+        m_prev, m_cmp = int(m_prev or 0), int(m_cmp or 0)
         esc_sig = False
         if total_cur >= 30 and m_n >= 100:
             p1, p0 = esc_cur / total_cur, m_esc / m_n
-            pp = (esc_cur + m_esc) / (total_cur + m_n)
-            se = math.sqrt(pp * (1 - pp) * (1 / total_cur + 1 / m_n)) if 0 < pp < 1 else 0
+            pp_ = (esc_cur + m_esc) / (total_cur + m_n)
+            se = math.sqrt(pp_ * (1 - pp_) * (1 / total_cur + 1 / m_n)) if 0 < pp_ < 1 else 0
             esc_sig = bool(se and _p2((p1 - p0) / se) < 0.01 and p0 and p1 / p0 >= 1.2)
-        ready = _prev_ready(bc, days)
-        delta = (round(100.0 * (total_cur - total_prev) / total_prev, 1)
-                 if total_prev and ready else None)
-        vm = _vs_market(total_cur, total_prev, m_n, m_prev) if ready else {}
+        ready = _prev_ready(bc, per)
+        delta = per.delta_pct(total_cmp, total_prev) if ready else None
+        vm = _vs_market(total_cmp, total_prev, m_cmp, m_prev, per.k) if ready else {}
         return {
-            "bank": bc, "product": product, "days": days,
-            "total": total_cur, "prev": total_prev, "delta_pct": delta,
+            "bank": bc, "product": product, "days": per.days, "period": per.info(),
+            "total": total_cur, "prev": total_prev, "cmp_n": total_cmp,
+            "prev_expected": round(per.expected(total_prev)) if per.has_cmp else None,
+            "delta_pct": delta,
             "market_delta_pct": vm.get("market_delta_pct"), "vs_market": vm.get("vs_market"),
             "delta_vs_market_pct": vm.get("rel_pct"),
-            "delta_low_n": bool(total_prev and min(total_cur, total_prev) < 30),
-            "delta_partial": not ready,
+            "delta_low_n": bool(total_prev and min(total_cmp, total_prev) < 30),
+            # прошлый период ещё размечается (сравнения нет, но будет)
+            "delta_partial": per.has_cmp and not ready,
             "market_share_pct": round(100.0 * total_cur / total_market, 1),
             "market_rank": next((i + 1 for i, r in enumerate(mk) if r[0] == bc), None),
             "market_banks": len(mk),
@@ -540,9 +571,9 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
             "escalation_sig": esc_sig,
             "as_of": asof.date().isoformat() if asof else None,
             "by_source": by_src, "src": "annotation",
-            "coverage": _coverage(bc, days * 2),
+            "coverage": _coverage(bc, per),
         }
-    return _cached(f"ov:{bc}:{product}:{days}", _compute)
+    return _cached(f"ov:{bc}:{product}:{per.key}", _compute)
 
 
 def _lag_cdf() -> list[float]:
@@ -667,97 +698,109 @@ def _trend_event(bc: str, product: str | None, months: int) -> dict:
 
 
 @_safe(None)
-def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None:
+def themes(bank: str, product: str | None = None, days: int = 90,
+           period: "_rp.Period | None" = None) -> dict | None:
     """Риск-карта: распределение жалоб по ГЛАВНОЙ проблеме из LLM-разметки.
 
     У каждой жалобы ровно одна главная проблема, поэтому доли в сумме дают
     100%: прежняя векторная разметка давала отзыву до двух тем, вторая была
     неверна в половине случаев, и сумма долей переваливала за сотню. Где
-    проблема упомянута как дополнительная — отдельным числом «ещё в N»."""
+    проблема упомянута как дополнительная — отдельным числом «ещё в N».
+
+    n — жалобы за весь период (доли считаются по ним), cmp — за сравниваемую
+    часть периода (дни с полными данными): изменение к прошлому — по ней."""
     bc = resolve_bank(bank)
     if not bc:
         return None
+    per = _per(period, days, product)
 
     def _compute():
-        p = {"bank": bc, "product": product, "d": days, "d2": days * 2}
+        p = {"bank": bc, "product": product, **per.binds()}
         with db.session() as s:
             rows = s.execute(text(f"""
                 SELECT i.issue,
-                       count(*) FILTER (WHERE i.dt >= now() - make_interval(days => :d)) n,
-                       count(*) FILTER (WHERE i.dt <  now() - make_interval(days => :d)) p
+                       count(*) FILTER (WHERE i.dt >= :t0 AND i.dt < :t1) n,
+                       count(*) FILTER (WHERE i.dt >= :p0 AND i.dt < :p1) p,
+                       count(*) FILTER (WHERE i.dt >= :t0 AND i.dt < :c1) c
                 FROM review_index i
                 WHERE i.bank = :bank AND {_CMP}
-                  AND i.dt >= now() - make_interval(days => :d2) AND i.dt <= now()
+                  AND i.dt >= :lo AND i.dt < :t1 AND i.dt <= now()
                   AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                 GROUP BY 1"""), p).all()
             also = dict(s.execute(text(f"""
                 SELECT x, count(*) FROM review_index i, unnest(i.issues2) x
                 WHERE i.bank = :bank AND {_CMP}
-                  AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
+                  AND i.dt >= :t0 AND i.dt < :t1 AND i.dt <= now()
                   AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                 GROUP BY 1"""), p).all())
         total = sum(int(r[1]) for r in rows) or 1
         total_prev = sum(int(r[2]) for r in rows)
-        ready = _prev_ready(bc, days)
+        total_cmp = sum(int(r[3]) for r in rows)
+        ready = _prev_ready(bc, per)
         # Значимость изменения темы — против ОБЩЕГО потока: если жалоб в целом
         # стало на 30% больше, тема с +35% не «растёт», она идёт вместе со всеми.
         # Проверка: доля текущего окна в сумме двух окон у темы против той же
         # доли у всех жалоб (биномиальная, нормальное приближение), с поправкой
         # на число тем. Меньше 20 жалоб в двух окнах — «мало данных» (Б4).
-        share_cur = total / (total + total_prev) if total_prev else None
+        # Длина окон в этой проверке сокращается, поэтому она верна и для
+        # месяцев разной длины, и для прошлого периода, обрезанного началом данных.
+        share_cur = total_cmp / (total_cmp + total_prev) if total_prev and total_cmp else None
         pv: dict[str, float] = {}
         out = []
-        for code, n, prev in rows:
+        for code, n, prev, c in rows:
             o = cb.issue_obj(code)
             if not o or code == "no_issue":
                 continue
-            n, prev = int(n), int(prev)
+            n, prev, c = int(n), int(prev), int(c)
             if not n and not prev:
                 continue
-            row = {**o, "n": n, "prev": prev, "pct": round(100.0 * n / total, 1),
+            row = {**o, "n": n, "prev": prev, "cmp_n": c, "pct": round(100.0 * n / total, 1),
                    "n_also": int(also.get(code, 0)),
                    "delta_pct": (None if not ready else
-                                 round(100.0 * (n - prev) / prev) if prev else (None if n == 0 else 100))}
+                                 round(100.0 * (c / per.expected(prev) - 1)) if prev
+                                 else (None if c == 0 else 100))}
             if ready and share_cur is not None:
-                m = n + prev
+                m = c + prev
                 row["delta_low"] = m < 20 or prev < 5
                 if not row["delta_low"]:
-                    z = (n - m * share_cur) / math.sqrt(m * share_cur * (1 - share_cur))
+                    z = (c - m * share_cur) / math.sqrt(m * share_cur * (1 - share_cur))
                     pv[code] = _p2(z)
-                    ci = _rate_change(n, prev)
+                    ci = _rate_change(c, prev, per.k)
                     if ci:
                         row["delta_ci"] = [ci["lo"], ci["hi"]]
-                    row["excess"] = round(n - prev * total / total_prev)
+                    row["excess"] = round(c - prev * total_cmp / total_prev)
             out.append(row)
         qv = _bh(pv) if pv else {}
         for row in out:
             if row["key"] in qv:
                 row["delta_sig"] = qv[row["key"]] < 0.05
         out.sort(key=lambda x: (x["key"] == "other", -x["n"]))
-        return {"bank": bc, "product": product, "days": days, "total": total,
-                "total_prev": total_prev,
-                "overall_delta_pct": (round(100.0 * (total - total_prev) / total_prev)
-                                      if ready and total_prev else None),
-                "themes": out, "src": "annotation", "coverage": _coverage(bc, days * 2),
-                "delta_partial": not ready}
-    return _cached(f"th:{bc}:{product}:{days}", _compute)
+        return {"bank": bc, "product": product, "days": per.days, "period": per.info(),
+                "total": total, "total_prev": total_prev, "total_cmp": total_cmp,
+                "overall_delta_pct": (round(100.0 * (total_cmp / per.expected(total_prev) - 1))
+                                      if ready and total_prev and per.has_cmp else None),
+                "themes": out, "src": "annotation", "coverage": _coverage(bc, per),
+                "delta_partial": per.has_cmp and not ready}
+    return _cached(f"th:{bc}:{product}:{per.key}", _compute)
 
 
 @_safe(None)
-def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 8) -> dict | None:
+def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 8,
+              period: "_rp.Period | None" = None) -> dict | None:
     bc = resolve_bank(bank)
     if not bc:
         return None
+    per = _per(period, days, product)
 
     def _compute():
         with db.session() as s:
             rows = s.execute(text(
                 "SELECT i.bank, count(*) n FROM review_index i"
-                " WHERE i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
+                " WHERE i.dt >= :t0 AND i.dt < :t1 AND i.dt <= now()"
                 f" AND {_CMP}"
                 + (" AND al_product_is(i.product, i.slices, :product)" if product else "") +
                 " GROUP BY 1 ORDER BY 2 DESC"),
-                {"d": days, **({"product": product} if product else {})}).all()
+                {**per.binds(), **({"product": product} if product else {})}).all()
         total = sum(int(r[1]) for r in rows) or 1
         ranked = [{"bank": r[0], "n": int(r[1]), "pct": round(100.0 * int(r[1]) / total, 1),
                    "is_target": r[0] == bc} for r in rows]
@@ -766,12 +809,14 @@ def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 
             tgt = next((r for r in ranked if r["is_target"]), None)
             if tgt:
                 top_rows = top_rows[:top - 1] + [tgt]
-        return {"bank": bc, "product": product, "days": days, "rows": top_rows}
-    return _cached(f"vm:{bc}:{product}:{days}:{top}", _compute)
+        return {"bank": bc, "product": product, "days": per.days, "period": per.info(),
+                "rows": top_rows}
+    return _cached(f"vm:{bc}:{product}:{per.key}:{top}", _compute)
 
 
 @_safe(None)
-def issue_index(bank: str, product: str | None = None, days: int = 180) -> dict | None:
+def issue_index(bank: str, product: str | None = None, days: int = 180,
+                period: "_rp.Period | None" = None) -> dict | None:
     """Где структура жалоб банка отличается от рынка — по главной проблеме.
 
     Индекс = доля проблемы в жалобах банка / её доля в жалобах ОСТАЛЬНЫХ
@@ -781,37 +826,48 @@ def issue_index(bank: str, product: str | None = None, days: int = 180) -> dict 
     значимое отличие: 95% ДИ индекса, поправка на число проверенных проблем,
     от 10 жалоб у банка и 30 у рынка, и практический порог (от ×1,25 или до
     ×0,8). excess — сколько жалоб у банка сверх того, что было бы при
-    структуре рынка. Динамика — тот же индекс по четырём кварталам (90 дней).
-    Окно не короче 90 дней: на месяце почти все проблемы «мало данных»."""
+    структуре рынка. Динамика — тот же индекс по четырём кварталам (90 дней),
+    которые кончаются вместе с периодом. Окно не короче 90 дней: на месяце
+    почти все проблемы «мало данных», — короткий период расширяется назад от
+    своего конца, и ответ об этом говорит (window_from/window_to)."""
     bc = resolve_bank(bank)
     if not bc:
         return None
-    days = max(int(days or 180), 90)
+    per = _per(period, days, product)
+    t1 = per.t1
+    t0 = min(per.t0, t1 - _dt.timedelta(days=90))
+    ext = t0 < per.t0
 
     def _compute():
-        p = {"bank": bc, "product": product, "d": days}
+        nv = lambda t: t.replace(tzinfo=None)  # noqa: E731
+        p = {"bank": bc, "product": product, "w0": nv(t0), "w1": nv(t1),
+             "q0": nv(t1 - _dt.timedelta(days=360))}
         base = (f"{_CMP} AND i.bank IS NOT NULL"
                 " AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product)) AND i.dt <= now()")
         with db.session() as s:
             rows = s.execute(text(f"""
                 SELECT i.issue, (i.bank = :bank) AS own, count(*)
                 FROM review_index i
-                WHERE {base} AND i.dt >= now() - make_interval(days => :d)
+                WHERE {base} AND i.dt >= :w0 AND i.dt < :w1
                 GROUP BY 1, 2"""), p).all()
             qrows = s.execute(text(f"""
                 SELECT i.issue, (i.bank = :bank) AS own,
-                       floor(extract(epoch FROM now() - i.dt) / 7776000)::int AS q, count(*)
+                       floor(extract(epoch FROM CAST(:w1 AS timestamp) - i.dt) / 7776000)::int AS q,
+                       count(*)
                 FROM review_index i
-                WHERE {base} AND i.dt > now() - interval '360 days'
+                WHERE {base} AND i.dt >= :q0 AND i.dt < :w1
                 GROUP BY 1, 2, 3"""), p).all()
-            today = s.execute(text("SELECT current_date")).scalar()
+        today = (t1 - _rp.DAY).date()
+        win = {"days": max(per.days, 90), "period": per.info(),
+               "window_from": t0.date().isoformat(), "window_to": today.isoformat(),
+               "window_extended": ext}
         a_: dict[str, int] = {}
         c_: dict[str, int] = {}
         for code, own, n in rows:
             (a_ if own else c_)[code] = (a_ if own else c_).get(code, 0) + int(n)
         B, C = sum(a_.values()), sum(c_.values())
         if not B or not C:
-            return {"bank": bc, "product": product, "days": days, "bank_total": B,
+            return {"bank": bc, "product": product, **win, "bank_total": B,
                     "market_total": C, "worse": [], "better": [], "tested": 0}
         qa = [dict() for _ in range(4)]
         qc = [dict() for _ in range(4)]
@@ -855,15 +911,16 @@ def issue_index(bank: str, product: str | None = None, days: int = 180) -> dict 
                         key=lambda r: r["excess"])
         quarters = [{"from": (today - _dt.timedelta(days=90 * (k + 1))).isoformat(),
                      "to": (today - _dt.timedelta(days=90 * k)).isoformat()} for k in (3, 2, 1, 0)]
-        return {"bank": bc, "product": product, "days": days, "bank_total": B,
+        return {"bank": bc, "product": product, **win, "bank_total": B,
                 "market_total": C, "bank_share": round(100 * B / (B + C), 1),
                 "tested": len(pv), "worse": worse[:8], "better": better[:4],
                 "quarters": quarters}
-    return _cached(f"ii:{bc}:{product}:{days}", _compute)
+    return _cached(f"ii:{bc}:{product}:{t0:%Y%m%d}-{t1:%Y%m%d}", _compute)
 
 
 @_safe(None)
-def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) -> dict | None:
+def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8,
+        period: "_rp.Period | None" = None) -> dict | None:
     """География как индекс: доля банка в жалобах города против его доли в
     остальной стране (Б2). Население города больше не используется: на
     площадки пишет не население, и деление на него раздувало города, где
@@ -875,12 +932,13 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
     bc = resolve_bank(bank)
     if not bc:
         return None
+    per = _per(period, days, product)
 
     def _compute():
-        p = {"bank": bc, "product": product, "d": days}
+        p = {"bank": bc, "product": product, **per.binds()}
         win = (f"{_CMP} AND coalesce(i.city, '') <> '' AND i.bank IS NOT NULL"
                " AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))"
-               " AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()")
+               " AND i.dt >= :t0 AND i.dt < :t1 AND i.dt <= now()")
         with db.session() as s:
             rows = s.execute(text(f"""
                 SELECT i.city, count(*) FILTER (WHERE i.bank = :bank), count(*)
@@ -891,7 +949,8 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
         A = sum(int(r[1]) for r in rows)
         T = sum(int(r[2]) for r in rows)
         if not A or A == T:
-            return {"bank": bc, "product": product, "days": days, "cities": []}
+            return {"bank": bc, "product": product, "days": per.days, "period": per.info(),
+                    "cities": []}
         nat: dict[str, int] = {}
         by_city: dict[str, dict[str, int]] = {}
         for city, code, n in mix:
@@ -938,10 +997,10 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
         # more — сколько ещё городов с осмысленной базой (от 10 жалоб) не
         # показано: для «ещё N городов» на вкладке
         more = sum(1 for c in cities[top:] if c["n"] >= 10 and not c["anomaly"])
-        return {"bank": bc, "product": product, "days": days,
+        return {"bank": bc, "product": product, "days": per.days, "period": per.info(),
                 "national_share": round(100 * A / T, 1), "more": more,
                 "cities": shown + [dict(c, extra=True) for c in extra[:3]]}
-    return _cached(f"geo:{bc}:{product}:{days}:{top}", _compute)
+    return _cached(f"geo:{bc}:{product}:{per.key}:{top}", _compute)
 
 
 _FLAG_GROUPS = [
@@ -959,7 +1018,8 @@ _FLAG_GROUPS = [
 
 
 @_safe(None)
-def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | None:
+def risk_flags(bank: str, product: str | None = None, days: int = 90,
+               period: "_rp.Period | None" = None) -> dict | None:
     """Признаки риска из разметки: куда клиент грозит или уже обратился,
     уязвимые клиенты, «без согласия», «ввели в заблуждение», суммы. Для
     каждого — число и доля в жалобах банка против доли у остальных банков
@@ -967,6 +1027,7 @@ def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | 
     bc = resolve_bank(bank)
     if not bc:
         return None
+    per = _per(period, days, product)
 
     def _compute():
         codes = [f for _g, _l, items in _FLAG_GROUPS for f, _n, _c in items]
@@ -984,17 +1045,18 @@ def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | 
                 JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
                 WHERE {_CMP} AND i.bank IS NOT NULL
                   AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
-                  AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
-                GROUP BY 1"""), {"bank": bc, "product": product, "d": days,
+                  AND i.dt >= :t0 AND i.dt < :t1 AND i.dt <= now()
+                GROUP BY 1"""), {"bank": bc, "product": product, **per.binds(),
                                  "sv": _ann_schema()}).all()
         own = next((r for r in rows if r[0]), None)
         mkt = next((r for r in rows if not r[0]), None)
         if not own or not mkt or not own[1]:
-            return {"bank": bc, "product": product, "days": days, "total": 0, "groups": []}
+            return {"bank": bc, "product": product, "days": per.days, "period": per.info(),
+                    "total": 0, "groups": []}
         B, C = int(own[1]), int(mkt[1])
         vals = {f: (int(own[4 + j]), int(mkt[4 + j])) for j, f in enumerate(codes)}
         filed = {k: int(own[4 + len(codes) + j]) for j, k in enumerate(_ESC_TO)}
-        adj = _vuln_by_product(bc, product, days)
+        adj = _vuln_by_product(bc, product, per)
         pv = {}
         for f, (a, c) in vals.items():
             if f in adj and a >= 5:
@@ -1029,18 +1091,19 @@ def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | 
                     it["caveat"] = caveat
                 out.append(it)
             groups.append({"key": g, "label": label, "items": out})
-        return {"bank": bc, "product": product, "days": days, "total": B,
-                "filed": int(own[2]), "threat": int(own[3]), "groups": groups}
-    return _cached(f"rf:{bc}:{product}:{days}", _compute)
+        return {"bank": bc, "product": product, "days": per.days, "period": per.info(),
+                "total": B, "filed": int(own[2]), "threat": int(own[3]), "groups": groups}
+    return _cached(f"rf:{bc}:{product}:{per.key}", _compute)
 
 
-def _vuln_by_product(bc: str, product: str | None, days: int) -> dict:
+def _vuln_by_product(bc: str, product: str | None, per) -> dict:
     """Уязвимые клиенты против ожидания по продуктовому составу.
 
     expected = Σ по продуктам (жалоб банка на продукт × доля признака у
     остальных банков в этом продукте). «Все уязвимые 9,4% против 5,9%» у Сбера
     могло быть составом (детские карты, пенсионные продукты), а не обращением с
     уязвимыми (аудит 03.10, ОТЗ-10). p — двусторонний тест Пуассона."""
+    per = _per(per, per, product)
     vcodes = [f for _g, _l, items in _FLAG_GROUPS if _g == "vuln" for f, _n, _c in items]
     cols = ",\n".join(f"count(*) FILTER (WHERE {_flag_sql(f)})" for f in vcodes)
     with db.session() as s:
@@ -1050,8 +1113,8 @@ def _vuln_by_product(bc: str, product: str | None, days: int) -> dict:
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE {_CMP} AND i.bank IS NOT NULL
               AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
-              AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
-            GROUP BY 1, 2"""), {"bank": bc, "product": product, "d": days,
+              AND i.dt >= :t0 AND i.dt < :t1 AND i.dt <= now()
+            GROUP BY 1, 2"""), {"bank": bc, "product": product, **per.binds(),
                                 "sv": _ann_schema()}).all()
     own = {r[1]: r for r in rows if r[0]}
     mkt = {r[1]: r for r in rows if not r[0]}
@@ -1087,12 +1150,14 @@ def _pct_int(x) -> int:
 
 
 @_safe(None)
-def _vs_market(n: int, prev: int, m_n: int, m_prev: int) -> dict:
+def _vs_market(n: int, prev: int, m_n: int, m_prev: int, k: float = 1.0) -> dict:
     """Рост жалоб банка против роста остальных банков за те же окна.
 
     Сравниваем долю банка в общем потоке (двухвыборочный z-тест долей): растёт
     она — банк обгоняет рынок. rel_pct — на сколько процентов рост банка больше
-    роста рынка: (n/prev) / (m_n/m_prev) − 1. vs_market: above / below / same."""
+    роста рынка: (n/prev) / (m_n/m_prev) − 1. vs_market: above / below / same.
+    k — пересчёт прошлого окна на длину текущего (review_period): на доли и на
+    rel он не влияет, рост рынка без него врёт, если окна разной длины."""
     if not (n and prev and m_n and m_prev):
         return {}
     rel = (n / prev) / (m_n / m_prev) - 1
@@ -1100,27 +1165,47 @@ def _vs_market(n: int, prev: int, m_n: int, m_prev: int) -> dict:
     pp = (n + prev) / (n + m_n + prev + m_prev)
     se = math.sqrt(pp * (1 - pp) * (1 / (n + m_n) + 1 / (prev + m_prev))) if 0 < pp < 1 else 0
     sig = bool(se) and _p2((p1 - p0) / se) < 0.05 and abs(rel) >= 0.05
-    return {"market_delta_pct": round(100.0 * (m_n - m_prev) / m_prev, 1),
+    return {"market_delta_pct": round(100.0 * (m_n / (m_prev * k) - 1), 1),
             "rel_pct": round(100.0 * rel, 1),
             "vs_market": ("above" if rel > 0 else "below") if sig else "same"}
 
 
-def changes(bank: str, product: str | None = None, days: int = 90) -> dict | None:
+def _dm_range(a: str | None, b: str | None) -> str:
+    """«2026-04-19», «2026-07-16» → «19.04–16.07.2026» (год — один раз, если общий)."""
+    if not a or not b:
+        return ""
+    (y0, m0, d0), (y1, m1, d1) = a.split("-"), b.split("-")
+    return f"{d0}.{m0}{'' if y0 == y1 else '.' + y0}–{d1}.{m1}.{y1}"
+
+
+def changes(bank: str, product: str | None = None, days: int = 90,
+            period: "_rp.Period | None" = None) -> dict | None:
     """Шапка «что изменилось» для руководителя: только значимые изменения к
-    прошлому равному окну — объём, темы, опережающие общий поток, доля
+    прошлому периоду — объём, темы, опережающие общий поток, доля
     эскалации — и всплеск текущей недели. Всё детерминировано; если значимого
-    нет, так и пишем: «спокойно» — тоже вывод."""
+    нет, так и пишем: «спокойно» — тоже вывод. Сравнивать не с чем (период до
+    начала данных или сравнение выключено) — no_cmp, и «спокойно» не пишем."""
     bc = resolve_bank(bank)
     if not bc:
         return None
-    ov = overview(bc, product, days) or {}
+    per = _per(period, days, product)
+    head = {"days": per.days, "period": per.info()}
+    ov = overview(bc, product, days, period=per) or {}
     if ov.get("delta_partial"):
-        return {"days": days, "items": [], "partial": True}
+        return {**head, "items": [], "partial": True}
     items = []
-    n, prev = int(ov.get("total") or 0), int(ov.get("prev") or 0)
-    ch = _rate_change(n, prev)
+    if not per.has_cmp:
+        items += _week_signal_items(bc, product)
+        return {**head, "items": items, "partial": False, "no_cmp": True,
+                "overall_delta_pct": None}
+    # объём — по сравниваемой части периода (дни с полными данными)
+    n = int(ov["cmp_n"] if ov.get("cmp_n") is not None else ov.get("total") or 0)
+    prev = int(ov.get("prev") or 0)
+    pi = per.info()
+    when = _dm_range(pi.get("cmp_from"), pi.get("cmp_to"))
+    ch = _rate_change(n, prev, per.k)
     if ch and ch["p"] < 0.05 and abs(ov.get("delta_pct") or 0) >= 10:
-        up = n > prev
+        up = n > per.expected(prev)
         mk, vs = ov.get("market_delta_pct"), ov.get("vs_market")
         # Цвет — по сравнению с рынком, а не с собой: рост вместе с площадками
         # (новые сборщики, рост banki.ru) — не «стало хуже». dir: up — обгоняет
@@ -1130,22 +1215,25 @@ def changes(bank: str, product: str | None = None, days: int = 90) -> dict | Non
         items.append({"kind": "volume", "dir": dir_, "rise": up, "vs_market": vs,
                       "market_delta_pct": mk, "rel_pct": ov.get("delta_vs_market_pct"),
                       "text": f"Жалоб {'больше' if up else 'меньше'} на {abs(_pct_int(ov['delta_pct']))}%{mtxt}",
-                      "detail": f"{_int_sp(n)} против {_int_sp(prev)} за прошлые {days} дн, 95% ДИ {ch['lo']:+d}…{ch['hi']:+d}%"
+                      "detail": f"{_int_sp(n)} против {_int_sp(prev)} за {when}"
+                                + (" (в пересчёте на день)" if pi.get("per_day") else "")
+                                + f", 95% ДИ {ch['lo']:+d}…{ch['hi']:+d}%"
                                 + (f"; у остальных банков {'+' if mk >= 0 else '−'}{abs(_pct_int(mk))}%"
                                    if mk is not None else "")})
-    th = themes(bc, product, days) or {}
+    th = themes(bc, product, days, period=per) or {}
     rows = [t for t in th.get("themes") or [] if t.get("delta_sig") and t["key"] != "other"]
     ups = sorted([t for t in rows if (t.get("excess") or 0) > 0], key=lambda t: -t["excess"])[:2]
     downs = sorted([t for t in rows if (t.get("excess") or 0) < 0], key=lambda t: t["excess"])[:1]
     for t in ups + downs:
         up = t["excess"] > 0
         items.append({"kind": "theme", "dir": "up" if up else "down", "key": t["key"],
-                      "text": f"{t.get('short') or t['label']}: {t['prev']} → {t['n']}",
+                      "text": f"{t.get('short') or t['label']}: {t['prev']} → {t['cmp_n']}",
                       "detail": (f"{t['label']} — " + ("растёт быстрее общего потока жалоб"
                                                       if up else "снижается сильнее общего потока жалоб")
                                  + f" ({'+' if (ov.get('delta_pct') or 0) >= 0 else ''}"
                                  f"{_pct_int(ov.get('delta_pct'))}%)")})
     e1, e0 = int(ov.get("esc_n") or 0), int(ov.get("esc_prev_n") or 0)
+    n = int(ov.get("total") or 0)          # доля эскалации — по всему периоду
     if n and prev and (e1 + e0) >= 20:
         p1, p0 = e1 / n, e0 / prev
         pp = (e1 + e0) / (n + prev)
@@ -1155,19 +1243,68 @@ def changes(bank: str, product: str | None = None, days: int = 90) -> dict | Non
                           "text": (f"Эскалация {str(round(100 * p0, 1)).replace('.', ',')}% → "
                                    f"{str(round(100 * p1, 1)).replace('.', ',')}%"),
                           "detail": "доля жалоб с угрозой или обращением в ЦБ, суд, прокуратуру"})
+    items += _week_signal_items(bc, product)
+    return {**head, "items": items, "partial": False,
+            "overall_delta_pct": ov.get("delta_pct")}
+
+
+def _week_signal_items(bc: str, product: str | None) -> list[dict]:
+    """Всплеск текущей недели — от периода не зависит, поэтому и без сравнения."""
+    out = []
     wk = weekly_signals(bc, product) or {}
     for sgl in (wk.get("signals") or [])[:1]:
-        items.append({"kind": "signal", "dir": "up", "key": sgl["key"],
-                      "text": ((f"Держится с {_dm_iso(sgl.get('since'))}: "
-                                if sgl.get("status") == "continuing" else "Всплеск недели: ")
-                               + f"{sgl.get('short') or sgl['label']} "
-                               + ("— новое" if sgl.get("new") else
-                                  f"×{str(sgl.get('ratio')).replace('.', ',')}")),
-                      "detail": (f"{sgl['label']}: {sgl['week']} жалоб за 7 дней при норме "
-                                 f"~{str(sgl['baseline_week']).replace('.', ',')} в неделю"
-                                 + (f"; {signal_note(sgl)}" if signal_note(sgl) else ""))})
-    return {"days": days, "items": items, "partial": False,
-            "overall_delta_pct": ov.get("delta_pct")}
+        out.append({"kind": "signal", "dir": "up", "key": sgl["key"],
+                    "text": ((f"Держится с {_dm_iso(sgl.get('since'))}: "
+                              if sgl.get("status") == "continuing" else "Всплеск недели: ")
+                             + f"{sgl.get('short') or sgl['label']} "
+                             + ("— новое" if sgl.get("new") else
+                                f"×{str(sgl.get('ratio')).replace('.', ',')}")),
+                    "detail": (f"{sgl['label']}: {sgl['week']} жалоб за 7 дней при норме "
+                               f"~{str(sgl['baseline_week']).replace('.', ',')} в неделю"
+                               + (f"; {signal_note(sgl)}" if signal_note(sgl) else ""))})
+    return out
+
+
+@_safe(None)
+def daily(bank: str, product: str | None = None) -> dict | None:
+    """Жалобы по дням с начала данных — для календаря периода: тон дня по числу
+    жалоб, точка у дня со всплеском и живой счётчик «в периоде N жалоб» до
+    применения. ~650 чисел массивом от data_from, кэш на полчаса.
+
+    Всплеск дня — больше 1,8 медианы того же дня недели за 8 предыдущих недель
+    и на 8 жалоб больше неё: будни и выходные на площадках разные, поэтому
+    сравнение с соседними днями красило бы каждый понедельник."""
+    bc = resolve_bank(bank)
+    if not bc:
+        return None
+
+    def _compute():
+        start = data_start_for(product)
+        idx, ip = _idx_clause(bc, product)
+        with db.session() as s:
+            rows = s.execute(text(
+                f"SELECT i.dt::date, count(*) FROM review_index i WHERE {idx} AND {_CMP}"
+                " AND i.dt >= :s GROUP BY 1 ORDER BY 1"),
+                {**ip, "s": _dt.datetime.combine(start, _dt.time())}).all()
+        today = _dt.datetime.now(_rp.MSK).date()
+        n_days = (today - start).days + 1
+        counts = [0] * n_days
+        for d, n in rows:
+            k = (d - start).days
+            if 0 <= k < n_days:
+                counts[k] = int(n)
+        spikes = []
+        for k in range(56, n_days):
+            same = sorted(counts[k - 7 * j] for j in range(1, 9))
+            med = (same[3] + same[4]) / 2
+            if counts[k] >= 1.8 * med and counts[k] - med >= 8:
+                spikes.append(k)
+        h = _rp.data_horizon()
+        return {"bank": bc, "product": product, "from": start.isoformat(),
+                "to": today.isoformat(), "counts": counts, "spikes": spikes,
+                "full_to": (h - _rp.DAY).date().isoformat() if h else None,
+                "data_start": _rp.DATA_START.isoformat()}
+    return _cached(f"daily:{bc}:{product}", _compute, ttl=1800)
 
 
 # Срезы, которые аудиторы ищут в списке продуктов, хотя это не продукты договора
@@ -1219,11 +1356,25 @@ _SOURCE_LABEL = {"bankiru": "banki.ru", "banki_reviews": "banki.ru",
 _ESC_RU = {"none": "", "threat": "грозит", "filed": "обратился"}
 
 
+def _win_clause(alias: str, days: int | None, period, p: dict) -> str:
+    """Окно ленты, выгрузки и групп: период «с — по» или «последние N дней»;
+    ни того ни другого — без окна (весь корпус)."""
+    if isinstance(period, _rp.Period):
+        b = period.binds()
+        p["w0"], p["w1"] = b["t0"], b["t1"]
+        return f" AND {alias}.dt >= :w0 AND {alias}.dt < :w1"
+    if days:
+        p["d"] = days
+        return f" AND {alias}.dt >= now() - make_interval(days => :d)"
+    return ""
+
+
 def export_rows(bank: str, product: str | None = None, theme: str | None = None,
                 days: int | None = None, city: str | None = None,
                 month: str | None = None, esc: bool = False,
                 limit: int = 10000, flag: str | None = None,
-                source: str | None = None) -> list[dict] | None:
+                source: str | None = None,
+                period: "_rp.Period | None" = None) -> list[dict] | None:
     """Жалобы с разметкой для выгрузки в таблицу — те же фильтры, что у ленты
     (без поиска по смыслу: он возвращает топ-300 похожих, а выгрузка — это
     полный срез). Раньше такой срез собирали вручную по запросу коллег."""
@@ -1240,9 +1391,7 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
     extra = _source_clause("i", source, p)
     if extra is None:
         return []
-    if days:
-        extra += " AND i.dt >= now() - make_interval(days => :d)"
-        p["d"] = days
+    extra += _win_clause("i", days, period, p)
     if city:
         extra += " AND i.city = :city"
         p["city"] = city
@@ -1304,7 +1453,7 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
                      limit: int, offset: int = 0,
                      esc: bool = False, flag: str | None = None,
                      source: str | None = None, sort: str = "date",
-                     cursor: int | None = None) -> dict:
+                     cursor: int | None = None, period=None) -> dict:
     """Лента по ЕДИНОМУ индексу — все источники в одном списке.
 
     Показываются жалобы из разметки и ещё не размеченные свежие отзывы (они
@@ -1322,9 +1471,7 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     extra = _source_clause("i", source, p)
     if extra is None:
         return {"items": [], "mode": "feed", "error": "unknown_source"}
-    if days:
-        extra += " AND i.dt >= now() - make_interval(days => :d)"
-        p["d"] = days
+    extra += _win_clause("i", days, period, p)
     if city:
         extra += " AND i.city = :city"
         p["city"] = city
@@ -1603,14 +1750,14 @@ def _attach_themes(items: list[dict]) -> None:
 def list_reviews(bank: str, product: str | None = None, theme: str | None = None,
                  q: str | None = None, days: int | None = None,
                  city: str | None = None, month: str | None = None,
-                 limit: int = 20) -> list[dict]:
+                 limit: int = 20, period=None) -> list[dict]:
     """Лента доказательной базы. Тонкая обёртка над list_reviews_ex для тех
     вызывающих, кому нужен только список (сегменты, LLM-объяснения)."""
     # Только именованные: позиционный вызов уже однажды тихо съел период,
     # подставив None пятым аргументом, и любой новый параметр в середине
     # сигнатуры сдвинул бы весь хвост.
     return list_reviews_ex(bank, product=product, theme=theme, q=q, days=days,
-                           city=city, month=month, limit=limit)["items"]
+                           city=city, month=month, limit=limit, period=period)["items"]
 
 
 
@@ -1619,7 +1766,8 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
                     city: str | None = None, month: str | None = None,
                     limit: int = 20, offset: int = 0,
                     esc: bool = False, sort: str = "auto", flag: str | None = None,
-                    source: str | None = None, cursor: int | None = None) -> dict:
+                    source: str | None = None, cursor: int | None = None,
+                    period=None) -> dict:
     """Лента доказательной базы. q → поиск; иначе свежие с фильтрами
     тема/город/месяц. Дубли (массовые однотипные жалобы) не прячем, а считаем —
     массовость это аудит-сигнал → поле `similar`.
@@ -1644,12 +1792,20 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
         # при теме или продукте отбор после поиска узкий: берём широко, иначе
         # в первых десятках выдачи жалоб с нужной главной проблемой может не быть
         k = 300 if (theme or product) else min(400, want * 2)
+        # Поиск по корпусу знает только нижнюю границу («не старше N дней»):
+        # начало периода передаём ему, конец отбираем по дате выдачи ниже
+        since = days
+        lo_d = hi_d = None
+        if isinstance(period, _rp.Period):
+            since = max(1, math.ceil((_dt.datetime.now(_rp.MSK) - period.t0) / _rp.DAY))
+            lo_d = period.t0.date().isoformat()
+            hi_d = (period.t1 - _rp.DAY).date().isoformat()
         try:
             # Продукт тоже отбираем по нашей разметке: у внешнего корпуса своя
             # метка площадки («Обслуживание юридических лиц» у 180 тыс. строк),
             # и смысловая часть поиска с ней почти ничего не находила.
             # месяц события поиск по корпусу не знает — его отбирает _keep_urls
-            res = search_reviews(q, bank=bc, product=None, since_days=days,
+            res = search_reviews(q, bank=bc, product=None, since_days=since,
                                  theme_rx=None, city=city,
                                  month=None if (month or "").startswith("ev:") else month,
                                  k=k, strict=True, _meta=meta)
@@ -1660,6 +1816,8 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
                           product=product, flag=flag, source=source,
                           month=month if (month or "").startswith("ev:") else None)
         res = [r for r in res if r.get("url") in keep]
+        if lo_d:
+            res = [r for r in res if not r.get("date") or lo_d <= str(r["date"])[:10] <= hi_d]
         if sort == "date":
             res.sort(key=lambda r: (r.get("date") or ""), reverse=True)
         page = res[offset:offset + limit]
@@ -1670,15 +1828,17 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
         return {"items": [], "mode": "feed", "error": "unknown_bank"}
     return _feed_from_index(bc, product, theme, days, city, month, limit, offset, esc, flag,
                             source=source, sort="severity" if sort == "severity" else "date",
-                            cursor=cursor)
+                            cursor=cursor, period=period)
 
 
 @_safe(None)
 def segment_reviews(bank: str, product: str | None = None, city: str | None = None,
-                    month: str | None = None, limit: int = 40) -> dict | None:
+                    month: str | None = None, limit: int = 40, period=None) -> dict | None:
     """Сводка по срезу (город или месяц) для LLM-объяснения аномалии/пика:
-    распределение главных проблем по разметке + изложения и примеры со ссылками."""
-    revs = list_reviews(bank, product=product, city=city, month=month, limit=limit)
+    распределение главных проблем по разметке + изложения и примеры со ссылками.
+    Город — за период вкладки (у месяца окно задаёт сам месяц)."""
+    revs = list_reviews(bank, product=product, city=city, month=month, limit=limit,
+                        period=period if city and not month else None)
     if not revs:
         return {"n": 0, "themes": [], "samples": [], "texts": []}
     from collections import Counter
@@ -1859,7 +2019,8 @@ def classify_gone(stats, firsts, today, *, min_silent: int = 7, min_expected: fl
 
 @_safe(None)
 def segment_profile(bank: str, product: str | None = None, city: str | None = None,
-                    month: str | None = None, days: int = 90) -> dict | None:
+                    month: str | None = None, days: int = 90,
+                    period: "_rp.Period | None" = None) -> dict | None:
     """Чем срез (город или месяц) отличается от нормы — по главной проблеме.
 
     Город сравнивается со всей страной за тот же период, месяц — с шестью
@@ -1871,12 +2032,14 @@ def segment_profile(bank: str, product: str | None = None, city: str | None = No
     bc = resolve_bank(bank)
     if not bc or not (city or month):
         return None
-    p: dict = {"bank": bc, "product": product, "d": days, "city": city}
+    per = _per(period, days, product)
+    p: dict = {"bank": bc, "product": product, "city": city, **per.binds()}
     ev = bool(month and month.startswith("ev:"))
     if city:
-        seg = "i.city = :city AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
-        base = "i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
-        base_label = f"вся страна за те же {days} дн"
+        seg = "i.city = :city AND i.dt >= :t0 AND i.dt < :t1 AND i.dt <= now()"
+        base = "i.dt >= :t0 AND i.dt < :t1 AND i.dt <= now()"
+        pi = per.info()
+        base_label = f"вся страна за тот же период ({_dm_range(pi['from'], pi['to'])})"
     else:
         m = _MONTH_RX.match(month or "")
         if not m:
@@ -1914,7 +2077,7 @@ def segment_profile(bank: str, product: str | None = None, city: str | None = No
     out.sort(key=lambda r: -r["excess"])
     flagged = False
     if city:
-        g = geo(bank, product, days=days, top=40) or {}
+        g = geo(bank, product, days=days, top=40, period=per) or {}
         flagged = any(c["city"] == city and c.get("anomaly") for c in g.get("cities") or [])
     else:
         t = trend(bank, product, basis="event" if ev else "pub") or {}
@@ -2711,13 +2874,14 @@ def _ratio_ci(a: int, n1: int, c: int, n2: int) -> dict | None:
             "p": _p2(math.log(rr) / se) if se else 1.0}
 
 
-def _rate_change(n: int, prev: int) -> dict | None:
-    """Изменение счётчика к прошлому равному окну: 95% ДИ в процентах и p
-    (пуассоновское отношение интенсивностей)."""
+def _rate_change(n: int, prev: int, k: float = 1.0) -> dict | None:
+    """Изменение счётчика к прошлому окну: 95% ДИ в процентах и p
+    (пуассоновское отношение интенсивностей). k — во сколько раз текущее окно
+    длиннее прошлого (review_period.Period.k): ожидаемое «как раньше» = prev·k."""
     if n <= 0 or prev <= 0:
         return None
     se = math.sqrt(1 / n + 1 / prev)
-    lr = math.log(n / prev)
+    lr = math.log(n / (prev * k))
     return {"lo": round(100 * (math.exp(lr - 1.96 * se) - 1)),
             "hi": round(100 * (math.exp(lr + 1.96 * se) - 1)), "p": _p2(lr / se)}
 

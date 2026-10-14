@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 012c7a320a4b87328f85b2b7e60bd030e9de841502f3522c7dc588fc8e32b1d5): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 44151dda5f24b4c1c67e153a46187f573284b5e8468f348c890666b347c3c793): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -7278,7 +7278,6 @@ const SberPage = MarketPage; // вкладки объединены («Пози�
 
 // ─── REVIEWS PAGE — риск-радар голоса клиента (корпус banki.ru ~390к) ─────────
 const RV_BANKS = ["Сбербанк", "ВТБ", "Т-Банк", "Альфа-Банк", "Газпромбанк", "Совкомбанк", "Россельхозбанк", "Почта Банк", "Райффайзен Банк", "Ак Барс Банк", "Уралсиб", "ОТП Банк", "МТС Банк", "ПСБ", "Ozon Банк", "Яндекс Банк", "Московский кредитный банк (МКБ)", "Росбанк", "Банк «Открытие»", "Хоум Банк"];
-const RV_PERIODS = [[90, "3 мес"], [180, "6 мес"], [365, "12 мес"]];
 const RV_RISK = {
   compliance: "комплаенс",
   conduct: "практики",
@@ -7836,6 +7835,417 @@ const rvLongDate = d => {
   const m = String(d || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${+m[3]} ${RV_MON_GEN[+m[2] - 1]} ${m[1]}` : "";
 };
+
+// ── Период вкладки (15.10): готовые периоды и свои даты «с — по» ─────────────
+// Аудиторы думают календарём («за 2026 год», «в июле», «с 01.01.2025»), поэтому
+// период — отрезок дат по Москве. Готовые варианты передаются серверу словом
+// (p=90d, mtd, ytd…): ссылка «последние 30 дней» остаётся живой. С чем сравнивать
+// и какие дни входят в сравнение, решает сервер (rag/review_period.py) и
+// возвращает в period — подписи строятся из него, чтобы не разойтись с числами.
+const RV_ROLL = {
+  "7d": [7, "7 дней", "прошлые 7 дней", "прошлым 7 дням"],
+  "30d": [30, "30 дней", "прошлые 30 дней", "прошлым 30 дням"],
+  "90d": [90, "3 месяца", "прошлые 3 месяца", "прошлым 3 месяцам"],
+  "180d": [180, "6 месяцев", "прошлые 6 месяцев", "прошлым 6 месяцам"],
+  "365d": [365, "12 месяцев", "прошлые 12 месяцев", "прошлым 12 месяцам"]
+};
+const RV_REL = {
+  mtd: "Этот месяц",
+  qtd: "Этот квартал",
+  ytd: "С начала года",
+  all: "Всё время"
+};
+const RV_MON_DAT = ["январю", "февралю", "марту", "апрелю", "маю", "июню", "июлю", "августу", "сентябрю", "октябрю", "ноябрю", "декабрю"];
+const RV_ROMAN = ["I", "II", "III", "IV"];
+const RV_DATA_START = "2025-01-01";
+const rvPad = n => String(n).padStart(2, "0");
+const rvIso = (y, m, d) => {
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.toISOString().slice(0, 10);
+};
+const rvYMD = s => String(s).split("-").map(Number);
+const rvAddD = (s, n) => {
+  const [y, m, d] = rvYMD(s);
+  return rvIso(y, m, d + n);
+};
+const rvAddM = (s, n) => {
+  const [y, m] = rvYMD(s);
+  return rvIso(y, m + n, 1);
+}; // 1-е число месяца ±n
+const rvMonEnd = s => {
+  const [y, m] = rvYMD(s);
+  return rvIso(y, m + 1, 0);
+};
+const rvDiff = (a, b) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 864e5);
+const rvQ0 = s => {
+  const [y, m] = rvYMD(s);
+  return rvIso(y, 3 * Math.floor((m - 1) / 3) + 1, 1);
+};
+// «сегодня» по Москве — как у сервера, а не по часам браузера в Новосибирске
+const rvTodayMsk = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+const rvDmy = s => {
+  const [y, m, d] = rvYMD(s);
+  return `${rvPad(d)}.${rvPad(m)}.${y}`;
+};
+// Готовый период или даты → отрезок [from, to]
+function rvResolve(per, today, ds) {
+  ds = ds || RV_DATA_START;
+  if (per && per.from) return {
+    from: per.from < ds ? ds : per.from,
+    to: per.to > today ? today : per.to
+  };
+  const p = per && per.p,
+    r = RV_ROLL[p] || (/^\d+d$/.test(p || "") ? [parseInt(p)] : null);
+  if (r) {
+    const f = rvAddD(today, -(r[0] - 1));
+    return {
+      from: f < ds ? ds : f,
+      to: today
+    };
+  }
+  const [y, m] = rvYMD(today);
+  if (p === "mtd") return {
+    from: rvIso(y, m, 1),
+    to: today
+  };
+  if (p === "qtd") return {
+    from: rvQ0(today),
+    to: today
+  };
+  if (p === "ytd") return {
+    from: rvIso(y, 1, 1),
+    to: today
+  };
+  if (p === "all") return {
+    from: ds,
+    to: today
+  };
+  return rvResolve({
+    p: "90d"
+  }, today, ds);
+}
+// Чем является отрезок: месяц, квартал, год (partial — ещё идёт) или свой
+function rvShape(f, t, today) {
+  const [,, d0] = rvYMD(f),
+    m0 = rvYMD(f)[1];
+  if (d0 === 1) {
+    const me = rvMonEnd(f),
+      cur = e => f <= today && today <= e && t === today;
+    if (t === me || cur(me)) return {
+      kind: "month",
+      partial: t !== me
+    };
+    if ([1, 4, 7, 10].includes(m0)) {
+      const qe = rvAddD(rvAddM(f, 3), -1);
+      if (t === qe || cur(qe)) return {
+        kind: "quarter",
+        partial: t !== qe
+      };
+    }
+    if (m0 === 1) {
+      const ye = rvIso(rvYMD(f)[0], 12, 31);
+      if (t === ye || cur(ye)) return {
+        kind: "year",
+        partial: t !== ye
+      };
+    }
+  }
+  return {
+    kind: "range",
+    partial: false
+  };
+}
+// Даты обратно в готовый период, если совпали: ссылка остаётся живой
+function rvNormalize(f, t, today, ds) {
+  ds = ds || RV_DATA_START;
+  if (t === today) {
+    const n = rvDiff(f, t) + 1,
+      k = Object.keys(RV_ROLL).find(k => RV_ROLL[k][0] === n);
+    if (k) return {
+      p: k
+    };
+    const [y, m] = rvYMD(today);
+    if (f === rvIso(y, m, 1)) return {
+      p: "mtd"
+    };
+    if (f === rvQ0(today)) return {
+      p: "qtd"
+    };
+    if (f === rvIso(y, 1, 1)) return {
+      p: "ytd"
+    };
+    if (f === ds) return {
+      p: "all"
+    };
+  }
+  return {
+    from: f,
+    to: t
+  };
+}
+const rvPerKey = per => per.p || `${per.from}_${per.to}`;
+const rvPerQS = (per, cmp) => (per.p ? `&p=${per.p}` : `&from=${per.from}&to=${per.to}`) + (cmp ? `&cmp=${cmp}` : "");
+// Подписи. y — год показываем, только если он не текущий
+function rvRangeWords(f, t, short) {
+  const [y0, m0, d0] = rvYMD(f),
+    [y1, m1, d1] = rvYMD(t),
+    cy = +rvTodayMsk().slice(0, 4);
+  const M = short ? RV_MON : RV_MON_GEN,
+    Y = y => y !== cy ? " " + y : "";
+  if (f === t) return `${d0} ${M[m0 - 1]}${Y(y0)}`;
+  if (y0 === y1 && m0 === m1) return `${d0}–${d1} ${M[m1 - 1]}${Y(y1)}`;
+  if (y0 === y1) return `${d0} ${M[m0 - 1]} – ${d1} ${M[m1 - 1]}${Y(y1)}`;
+  return `${d0} ${M[m0 - 1]} ${y0} – ${d1} ${M[m1 - 1]} ${y1}`;
+}
+// Слова периода: name — на кнопке, za — «Главное за …»
+function rvPerWords(per, info, today) {
+  const r = info && info.from ? {
+    from: info.from,
+    to: info.to
+  } : rvResolve(per, today);
+  // «этот квартал» в первом его месяце по датам неотличим от «этого месяца» — слово важнее дат
+  const rel = {
+    mtd: "month",
+    qtd: "quarter",
+    ytd: "year"
+  }[per && per.p];
+  const sh = info && info.kind ? {
+    kind: info.kind === "ytd" ? "year" : info.kind,
+    partial: !!info.partial || info.kind === "ytd"
+  } : rel ? {
+    kind: rel,
+    partial: true
+  } : rvShape(r.from, r.to, today);
+  const [y, m] = rvYMD(r.from),
+    cy = +today.slice(0, 4),
+    Y = y !== cy ? " " + y : "";
+  const roll = per && RV_ROLL[per.p] || info && info.kind === "rolling" && RV_ROLL[info.n + "d"];
+  if (per && per.p === "all") return {
+    name: "Всё время",
+    za: "всё время",
+    range: rvRangeWords(r.from, r.to, true),
+    ...r
+  };
+  if (roll) return {
+    name: roll[1][0].toUpperCase() + roll[1].slice(1),
+    za: roll[1],
+    range: rvRangeWords(r.from, r.to, true),
+    ...r
+  };
+  if (per && per.p && /^\d+d$/.test(per.p)) {
+    const n = parseInt(per.p);
+    return {
+      name: `${n} ${plural(n, "день", "дня", "дней")}`,
+      za: `${n} ${plural(n, "день", "дня", "дней")}`,
+      range: rvRangeWords(r.from, r.to, true),
+      ...r
+    };
+  }
+  if (sh.kind === "month") {
+    const nm = RV_MON_FULL[m - 1];
+    return {
+      name: per && per.p === "mtd" ? "Этот месяц" : nm[0].toUpperCase() + nm.slice(1) + Y,
+      za: nm + Y,
+      range: sh.partial ? rvRangeWords(r.from, r.to, true) : "",
+      ...r
+    };
+  }
+  if (sh.kind === "quarter") {
+    const q = `${RV_ROMAN[(m - 1) / 3 | 0]} квартал${Y}`;
+    return {
+      name: per && per.p === "qtd" ? "Этот квартал" : q,
+      za: q,
+      range: sh.partial ? rvRangeWords(r.from, r.to, true) : "",
+      ...r
+    };
+  }
+  if (sh.kind === "year") return {
+    name: sh.partial ? "С начала года" : `${y} год`,
+    za: `${y} год`,
+    range: sh.partial ? rvRangeWords(r.from, r.to, true) : "",
+    ...r
+  };
+  return {
+    name: "",
+    za: rvRangeWords(r.from, r.to),
+    range: rvRangeWords(r.from, r.to, true),
+    ...r
+  };
+}
+// Сравнение словами из ответа сервера: k — «к августу», za — «чем за август», tip — подробности
+function rvCmpWords(info, today) {
+  if (!info) return null;
+  if (!info.cmp_from) return {
+    none: true,
+    k: info.cmp_note === "data" ? "не с чем сравнить" : "без сравнения",
+    tip: info.cmp_note === "data" ? `Сравнивать не с чем: жалобы собираются с ${rvDmy(RV_DATA_START)}, прошлый период почти целиком раньше.` : "Сравнение выключено в окне выбора периода."
+  };
+  const f = info.cmp_from,
+    t = info.cmp_to,
+    [y, m] = rvYMD(f),
+    cy = +today.slice(0, 4),
+    Y = y !== cy ? " " + y : "";
+  const sh = rvShape(f, t, "0000-00-00"); // прошлый период всегда завершён
+  let k, za;
+  if (info.cmp === "yoy") {
+    k = `к тому же периоду ${y} года`;
+    za = `тот же период ${y} года`;
+  } else if (info.kind === "rolling" && RV_ROLL[info.n + "d"] && !info.aligned_to) {
+    k = "к " + RV_ROLL[info.n + "d"][3];
+    za = RV_ROLL[info.n + "d"][2];
+  } else if (sh.kind === "month" || info.kind === "month" && info.partial) {
+    k = `к ${RV_MON_DAT[m - 1]}${Y}`;
+    za = RV_MON_FULL[m - 1] + Y;
+    if (sh.kind !== "month") {
+      k += ` (${rvRangeWords(f, t)})`;
+      za += ` (${rvRangeWords(f, t)})`;
+    }
+  } else if (sh.kind === "quarter" || info.kind === "quarter" && info.partial) {
+    const q = RV_ROMAN[(m - 1) / 3 | 0];
+    k = `к ${q} кварталу${Y}`;
+    za = `${q} квартал${Y}`;
+    if (sh.kind !== "quarter") {
+      k += ` (${rvRangeWords(f, t)})`;
+      za += ` (${rvRangeWords(f, t)})`;
+    }
+  } else if (sh.kind === "year") {
+    k = `к ${y} году`;
+    za = `${y} год`;
+  } else if (info.kind === "rolling" && RV_ROLL[info.n + "d"]) {
+    k = "к " + RV_ROLL[info.n + "d"][3];
+    za = RV_ROLL[info.n + "d"][2];
+  } else {
+    k = `к ${rvRangeWords(f, t)}`;
+    za = rvRangeWords(f, t);
+  }
+  const tip = [`Сравниваем ${rvDmy(info.from)}–${rvDmy(info.aligned_to || info.to)} с ${rvDmy(f)}–${rvDmy(t)}.`];
+  if (info.aligned_to) tip.push("Последние дни ещё собираются — в сравнение они не входят, и прошлый период взят такой же длины.");
+  if (info.per_day) tip.push("Периоды разной длины — сравниваем в пересчёте на день.");
+  if (info.cover != null && info.cover < 0.995) tip.push(`Прошлый период покрыт данными на ${Math.round(info.cover * 100)}%: жалобы собираются с ${rvDmy(RV_DATA_START)}.`);
+  return {
+    k,
+    za,
+    tip: tip.join(" ")
+  };
+}
+// Шаг ‹ › — тот же период назад или вперёд: месяц — к соседнему месяцу, квартал —
+// к кварталу, год — к году, остальное — на свою длину. null — дальше нельзя.
+function rvStep(per, dir, today, ds) {
+  ds = ds || RV_DATA_START;
+  if (per.p === "all") return null;
+  const r = rvResolve(per, today, ds),
+    sh = rvShape(r.from, r.to, today);
+  const live = (f, e, rel) => f <= today && today <= e ? {
+    p: rel
+  } : {
+    from: f,
+    to: e
+  };
+  if (sh.kind === "month") {
+    const f = rvAddM(r.from, dir),
+      e = rvMonEnd(f);
+    if (f > today || e < ds) return null;
+    return live(f, e, "mtd");
+  }
+  if (sh.kind === "quarter") {
+    const f = rvAddM(rvQ0(r.from), 3 * dir),
+      e = rvAddD(rvAddM(f, 3), -1);
+    if (f > today || e < ds) return null;
+    return live(f, e, "qtd");
+  }
+  if (sh.kind === "year") {
+    const y = rvYMD(r.from)[0] + dir,
+      f = rvIso(y, 1, 1),
+      e = rvIso(y, 12, 31);
+    if (f > today || e < ds) return null;
+    return live(f, e, "ytd");
+  }
+  const L = rvDiff(r.from, r.to) + 1,
+    f = rvAddD(r.from, dir * L),
+    e = rvAddD(r.to, dir * L);
+  if (dir > 0 && r.to >= today) return null;
+  if (e < ds) return null;
+  if (e >= today) return rvNormalize(rvAddD(today, -(L - 1)), today, today, ds);
+  return {
+    from: f < ds ? ds : f,
+    to: e
+  };
+}
+// Ввод словами в поле даты: «сентябрь», «сентябрь 2025», «3 кв», «III квартал 2025»,
+// «2025», «12.08», «12.08.2026», «1.8.26». Возвращает {from,to} или null.
+const RV_MON_RX = [/^янв/, /^фев/, /^мар/, /^апр/, /^ма[йя]/, /^июн/, /^июл/, /^авг/, /^сен/, /^окт/, /^ноя/, /^дек/];
+function rvParseWords(txt, today) {
+  const s = String(txt || "").trim().toLowerCase().replace(/ё/g, "е");
+  if (!s) return null;
+  const cy = +today.slice(0, 4);
+  let mm = s.match(/^(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?$/);
+  if (mm) {
+    let y = mm[3] ? +mm[3] : cy;
+    if (y < 100) y += 2000;
+    const d = rvIso(y, +mm[2], +mm[1]);
+    return rvYMD(d)[2] === +mm[1] ? {
+      from: d,
+      to: d,
+      date: true
+    } : null;
+  }
+  mm = s.match(/^(\d{4})(?:\s*г(?:од|\.)?)?$/);
+  if (mm) return {
+    from: rvIso(+mm[1], 1, 1),
+    to: rvIso(+mm[1], 12, 31)
+  };
+  mm = s.match(/^([1-4]|iv|i{1,3})\s*-?\s*(?:й\s*)?кв\w*\.?\s*(\d{4})?/);
+  if (mm) {
+    const q = {
+        i: 1,
+        ii: 2,
+        iii: 3,
+        iv: 4
+      }[mm[1]] || +mm[1],
+      y = mm[2] ? +mm[2] : cy,
+      f = rvIso(y, 3 * q - 2, 1);
+    return {
+      from: f,
+      to: rvAddD(rvAddM(f, 3), -1)
+    };
+  }
+  const mi = RV_MON_RX.findIndex(rx => rx.test(s));
+  if (mi >= 0) {
+    const ym = s.match(/(\d{4})/);
+    let y = ym ? +ym[1] : cy;
+    if (!ym && rvIso(y, mi + 1, 1) > today) y -= 1; // «декабрь» в октябре — прошлый декабрь
+    const f = rvIso(y, mi + 1, 1);
+    return {
+      from: f,
+      to: rvMonEnd(f)
+    };
+  }
+  return null;
+}
+// Сколько жалоб в отрезке — по дням из /api/reviews/daily (живой счётчик окна)
+function rvSumDaily(daily, f, t) {
+  if (!daily || !daily.counts) return null;
+  let a = rvDiff(daily.from, f),
+    b = rvDiff(daily.from, t),
+    s = 0;
+  a = Math.max(0, a);
+  b = Math.min(daily.counts.length - 1, b);
+  for (let i = a; i <= b; i++) s += daily.counts[i];
+  return s;
+}
+const RV_DAILY = {}; // кэш дней на вкладку: bank|product → {t, d}
+function rvLoadDaily(bank, product) {
+  const k = bank + "|" + (product || ""),
+    hit = RV_DAILY[k];
+  if (hit && Date.now() - hit.t < 15 * 60e3) return Promise.resolve(hit.d);
+  return apiFetch(`/api/reviews/daily?bank=${encodeURIComponent(bank)}${product ? `&product=${encodeURIComponent(product)}` : ""}`).then(d => {
+    RV_DAILY[k] = {
+      t: Date.now(),
+      d
+    };
+    return d;
+  });
+}
 const rvAmount = v => v == null ? "" : v >= 1e6 ? `${String(Math.round(v / 1e5) / 10).replace(".", ",")} млн ₽` : v >= 1e3 ? `${Math.round(v / 1e3)} тыс. ₽` : `${Math.round(v)} ₽`;
 const rvCap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 
@@ -8624,6 +9034,753 @@ function RvInfo({
 
 // Выбор банка с поиском: 60+ банков в системном списке приходилось листать.
 // На телефоне остаётся системный список — он там удобнее.
+// ── Выбор периода (15.10) ─────────────────────────────────────────────────────
+// Кнопка говорит словами и датами, что выбрано («3 месяца · 18 июл – 15 окт»);
+// стрелки ‹ › листают тот же период назад и вперёд (месяц за месяцем). Окно:
+// слева готовые периоды с числом жалоб, справа календарь — дни подкрашены
+// столбиком по числу жалоб, точка — день со всплеском, — поля дат (можно
+// словами: «сентябрь», «3 кв», «2025»), сравнение и живой счётчик до применения.
+const RvICal = p => /*#__PURE__*/React.createElement(RvIco, _extends({}, p, {
+  d: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "3",
+    y: "5",
+    width: "18",
+    height: "16",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M3 10h18"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M8 3v4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M16 3v4"
+  }))
+}));
+const RV_WD = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+const rvYearBack = s => {
+  const [y, m, d] = rvYMD(s);
+  return m === 2 && d === 29 ? rvIso(y - 1, 2, 28) : rvIso(y - 1, m, d);
+};
+// Прошлый период для окна — как его посчитает сервер (без выравнивания по полноте
+// данных, его сервер покажет уже в подписях): чтобы видеть сравнение до применения
+function rvCmpPreview(f, t, mode, today, ds) {
+  if (mode === "none") return null;
+  const sh = rvShape(f, t, today),
+    n = rvDiff(f, t);
+  let pf, pt;
+  if (mode === "yoy") {
+    pf = rvYearBack(f);
+    pt = rvYearBack(t);
+  } else if (sh.kind === "month") {
+    pf = rvAddM(f, -1);
+    pt = rvAddD(f, -1);
+    if (sh.partial && rvAddD(pf, n) < pt) pt = rvAddD(pf, n);
+  } else if (sh.kind === "quarter") {
+    pf = rvAddM(f, -3);
+    pt = rvAddD(f, -1);
+    if (sh.partial && rvAddD(pf, n) < pt) pt = rvAddD(pf, n);
+  } else if (sh.kind === "year") {
+    const y = rvYMD(f)[0] - 1;
+    pf = rvIso(y, 1, 1);
+    pt = rvIso(y, 12, 31);
+    if (sh.partial) pt = rvAddD(pf, n);
+  } else {
+    pf = rvAddD(f, -(n + 1));
+    pt = rvAddD(f, -1);
+  }
+  const cf = pf < ds ? ds : pf,
+    cov = pt < ds ? 0 : (rvDiff(cf, pt) + 1) / (rvDiff(pf, pt) + 1);
+  if (cov < 0.5) return {
+    none: true
+  };
+  return {
+    from: cf,
+    to: pt,
+    perDay: rvDiff(cf, pt) !== n,
+    cov
+  };
+}
+
+// Период при открытии вкладки: адрес → переход с «Обзора» → последний выбранный
+// в этом браузере готовый период → 3 месяца. Свои даты не запоминаем: через
+// месяц человек открыл бы вкладку и не понял, почему он смотрит июль.
+function rvPerInit(P, preset) {
+  const pr = preset || {},
+    iso = /^\d{4}-\d{2}-\d{2}$/,
+    ok = p => !!(RV_ROLL[p] || RV_REL[p] || /^\d{1,4}d$/.test(p || ""));
+  if (pr.from && iso.test(pr.from)) return {
+    from: pr.from,
+    to: iso.test(pr.to || "") ? pr.to : rvTodayMsk()
+  };
+  if (ok(pr.p)) return {
+    p: pr.p
+  };
+  if (+pr.days) return {
+    p: `${+pr.days}d`
+  };
+  if (P.from && iso.test(P.from)) return {
+    from: P.from,
+    to: iso.test(P.to || "") ? P.to : rvTodayMsk()
+  };
+  if (ok(P.p)) return {
+    p: P.p
+  };
+  if (+P.days) return {
+    p: `${+P.days}d`
+  };
+  try {
+    const v = localStorage.getItem("al-rv-period");
+    if (ok(v)) return {
+      p: v
+    };
+  } catch {}
+  return {
+    p: "90d"
+  };
+}
+function RvPeriodPicker({
+  per,
+  cmp,
+  info,
+  bank,
+  product,
+  narrow,
+  onChange
+}) {
+  const today = rvTodayMsk();
+  const [open, setOpen] = useState(false);
+  const [daily, setDaily] = useState(null);
+  const btnRef = useRef(null);
+  useEffect(() => {
+    setDaily(null);
+  }, [bank, product]);
+  const ds = daily && daily.from || (info && info.from && info.kind === "all" ? info.from : RV_DATA_START);
+  const w = rvPerWords(per, info, today);
+  const prev = rvStep(per, -1, today, ds),
+    next = rvStep(per, 1, today, ds);
+  const stepName = p => {
+    if (!p) return "";
+    const x = rvPerWords(p, null, today);
+    return x.name ? `${x.name}${x.range ? " (" + x.range + ")" : ""}` : x.range;
+  };
+  // календарь подгружаем заранее — при наведении, чтобы окно открылось уже с днями
+  const warm = () => {
+    rvLoadDaily(bank, product).then(setDaily).catch(() => {});
+  };
+  const close = back => {
+    setOpen(false);
+    if (back && btnRef.current) btnRef.current.focus();
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp" + (open ? " open" : "")
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "rv-pp-step",
+    disabled: !prev,
+    onClick: () => prev && onChange(prev, cmp, "step"),
+    "aria-label": prev ? `Предыдущий период: ${stepName(prev)}` : "Раньше данных нет",
+    "data-tip": prev ? `назад: ${stepName(prev)}` : `раньше данных нет — жалобы собираются с ${rvDmy(ds)}`
+  }, /*#__PURE__*/React.createElement(RvIChevL, {
+    s: 15
+  })), /*#__PURE__*/React.createElement("button", {
+    ref: btnRef,
+    className: "rv-pp-btn",
+    "aria-haspopup": "dialog",
+    "aria-expanded": open,
+    "aria-label": `Период: ${w.name ? w.name + (w.range ? ", " + w.range : "") : w.range}. Изменить`,
+    onPointerEnter: warm,
+    onFocus: warm,
+    onClick: () => {
+      warm();
+      setOpen(o => !o);
+    }
+  }, /*#__PURE__*/React.createElement(RvICal, {
+    s: 14
+  }), w.name && /*#__PURE__*/React.createElement("span", {
+    className: "rv-pp-name"
+  }, w.name), w.range && /*#__PURE__*/React.createElement("span", {
+    className: "rv-pp-range"
+  }, w.range), /*#__PURE__*/React.createElement(RvIChevD, {
+    s: 14
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "rv-pp-step",
+    disabled: !next,
+    onClick: () => next && onChange(next, cmp, "step"),
+    "aria-label": next ? `Следующий период: ${stepName(next)}` : "Это последний период",
+    "data-tip": next ? `вперёд: ${stepName(next)}` : "это самые свежие данные"
+  }, /*#__PURE__*/React.createElement(RvIChevR, {
+    s: 15
+  })), open && /*#__PURE__*/React.createElement(RvPeriodPop, {
+    per: per,
+    cmp: cmp,
+    today: today,
+    daily: daily,
+    ds: ds,
+    narrow: narrow,
+    anchorRef: btnRef,
+    onClose: close,
+    onApply: (p, c, via) => {
+      close(true);
+      onChange(p, c, via);
+    }
+  }));
+}
+function RvPeriodPop({
+  per,
+  cmp,
+  today,
+  daily,
+  ds,
+  narrow,
+  anchorRef,
+  onClose,
+  onApply
+}) {
+  const cur = rvResolve(per, today, ds);
+  const [d, setD] = useState({
+    from: cur.from,
+    to: cur.to,
+    cmp: cmp || ""
+  });
+  const [anchor, setAnchor] = useState(null); // начало, пока выбирают конец
+  const [hov, setHov] = useState(null);
+  const [view, setView] = useState(cur.to.slice(0, 8) + "01"); // правый (последний) месяц
+  const [focus, setFocus] = useState(cur.to);
+  const [ft, setFt] = useState(rvDmy(cur.from)),
+    [tt, setTt] = useState(rvDmy(cur.to)),
+    [terr, setTerr] = useState("");
+  const [shift, setShift] = useState(0);
+  const ref = useRef(null),
+    gridRef = useRef(null),
+    kbd = useRef(false);
+  const nMon = narrow ? 1 : 2;
+  const first = rvAddM(view, -(nMon - 1)),
+    dsM = ds.slice(0, 8) + "01",
+    nowM = today.slice(0, 8) + "01";
+  // окно не вылезает за правый край экрана
+  // (ширина — offsetWidth: в момент появления окно ещё сжато анимацией)
+  React.useLayoutEffect(() => {
+    if (narrow || !ref.current) return;
+    const r = ref.current.getBoundingClientRect(),
+      over = r.left + ref.current.offsetWidth - (document.documentElement.clientWidth - 16);
+    if (over > 0) setShift(-Math.min(over, r.left - 16));
+  }, [narrow]);
+  useEffect(() => {
+    const h = e => {
+      if (ref.current && !ref.current.contains(e.target) && !(anchorRef.current && anchorRef.current.contains(e.target))) onClose(false);
+    };
+    // Esc, пока фокус ещё на кнопке (окно только открылось); внутри окна его ловит popKey
+    const k = e => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose(true);
+      }
+    };
+    document.addEventListener("pointerdown", h);
+    document.addEventListener("keydown", k);
+    const t = setTimeout(() => {
+      const el = ref.current && (ref.current.querySelector(".rv-pp-o.on") || ref.current.querySelector(".rv-pp-d[tabindex='0']"));
+      if (el) el.focus();
+    }, 0);
+    return () => {
+      document.removeEventListener("pointerdown", h);
+      document.removeEventListener("keydown", k);
+      clearTimeout(t);
+    };
+  }, []);
+  // фокус клавиатуры следует за днём, месяц — за фокусом
+  useEffect(() => {
+    if (focus < first) setView(rvAddM(focus.slice(0, 8) + "01", nMon - 1));else if (focus > rvMonEnd(view)) setView(focus.slice(0, 8) + "01");
+  }, [focus]);
+  useEffect(() => {
+    if (!kbd.current || !gridRef.current) return;
+    const el = gridRef.current.querySelector(`[data-d="${focus}"]`);
+    if (el) {
+      kbd.current = false;
+      el.focus();
+    }
+  }, [focus, view]);
+  const setRange = (f, t) => {
+    if (f > t) [f, t] = [t, f];
+    if (f < ds) f = ds;
+    if (t > today) t = today;
+    if (f > today) f = today;
+    setD(x => ({
+      ...x,
+      from: f,
+      to: t
+    }));
+    setFt(rvDmy(f));
+    setTt(rvDmy(t));
+    setTerr("");
+  };
+  const pick = day => {
+    if (day < ds || day > today) return;
+    if (!anchor) {
+      setAnchor(day);
+      setRange(day, day);
+    } else {
+      setAnchor(null);
+      setHov(null);
+      setRange(anchor, day);
+    }
+    setFocus(day);
+  };
+  const a = anchor ? hov && hov < anchor ? hov : anchor : d.from,
+    b = anchor ? hov && hov > anchor ? hov : anchor : d.to;
+  // столбик дня: высота по числу жалоб относительно 95-го перцентиля дней
+  const scale = useMemo(() => {
+    if (!daily || !daily.counts) return 1;
+    const v = daily.counts.filter(x => x > 0).sort((x, y) => x - y);
+    return v.length ? v[Math.floor(v.length * 0.95)] || 1 : 1;
+  }, [daily]);
+  const spikes = useMemo(() => new Set(daily && daily.spikes ? daily.spikes.map(k => rvAddD(daily.from, k)) : []), [daily]);
+  const cnt = day => {
+    if (!daily || !daily.counts) return null;
+    const k = rvDiff(daily.from, day);
+    return k >= 0 && k < daily.counts.length ? daily.counts[k] : null;
+  };
+  const sh = rvShape(d.from, d.to, today);
+  const defCmp = d.from === ds && d.to === today ? "none" : sh.kind === "year" && sh.partial ? "yoy" : "prev";
+  const cmpMode = d.cmp || defCmp;
+  const cp = rvCmpPreview(d.from, d.to, cmpMode, today, ds);
+  const total = rvSumDaily(daily, d.from, d.to),
+    len = rvDiff(d.from, d.to) + 1;
+  const np = rvNormalize(d.from, d.to, today, ds),
+    nc = d.cmp && d.cmp !== defCmp ? d.cmp : "";
+  const same = rvPerKey(np) === rvPerKey(per) && nc === (cmp || "");
+  const apply = () => {
+    if (anchor || same) return;
+    onApply(np, nc, "calendar");
+  };
+  // готовые периоды
+  const cap = s => s[0].toUpperCase() + s.slice(1);
+  const pm = rvAddM(nowM, -1),
+    pq = rvAddM(rvQ0(today), -3),
+    py = +today.slice(0, 4) - 1,
+    cy = +today.slice(0, 4);
+  const Y = y => y !== cy ? " " + y : "";
+  const groups = [["Последние", Object.keys(RV_ROLL).map(k => ({
+    per: {
+      p: k
+    },
+    l: cap(RV_ROLL[k][1])
+  }))], ["Календарные", [{
+    per: {
+      p: "mtd"
+    },
+    l: "Этот месяц"
+  }, {
+    per: {
+      from: pm,
+      to: rvMonEnd(pm)
+    },
+    l: cap(RV_MON_FULL[rvYMD(pm)[1] - 1]) + Y(rvYMD(pm)[0])
+  }, {
+    per: {
+      p: "qtd"
+    },
+    l: "Этот квартал"
+  }, {
+    per: {
+      from: pq,
+      to: rvAddD(rvAddM(pq, 3), -1)
+    },
+    l: `${RV_ROMAN[(rvYMD(pq)[1] - 1) / 3 | 0]} квартал${Y(rvYMD(pq)[0])}`
+  }, {
+    per: {
+      p: "ytd"
+    },
+    l: "С начала года"
+  }, ...(py >= +ds.slice(0, 4) ? [{
+    per: {
+      from: rvIso(py, 1, 1),
+      to: rvIso(py, 12, 31)
+    },
+    l: `${py} год`
+  }] : []), {
+    per: {
+      p: "all"
+    },
+    l: "Всё время"
+  }].filter(x => {
+    const r = rvResolve(x.per, today, ds);
+    return r.to >= ds;
+  })]];
+  const curKey = rvPerKey(rvNormalize(cur.from, cur.to, today, ds));
+  const onPreset = x => {
+    const r = rvResolve(x.per, today, ds);
+    onApply(rvNormalize(r.from, r.to, today, ds), d.cmp && d.cmp !== defCmp ? d.cmp : "", "preset");
+  };
+  // поля дат: дата — граница, слова — весь отрезок
+  const commit = which => {
+    const txt = which === "from" ? ft : tt,
+      r = rvParseWords(txt, today);
+    if (!r) {
+      if (txt.trim()) setTerr("Не понял дату: нужен формат дд.мм.гггг или словами — «сентябрь», «3 кв», «2025»");
+      return;
+    }
+    if (!r.date) {
+      setAnchor(null);
+      setRange(r.from, r.to);
+      setFocus(r.to > today ? today : r.to);
+      return;
+    }
+    if (which === "from") setRange(r.from, d.to);else setRange(d.from, r.to);
+    setFocus(r.from > today ? today : r.from);
+  };
+  const gridKey = e => {
+    const step = {
+      ArrowLeft: -1,
+      ArrowRight: 1,
+      ArrowUp: -7,
+      ArrowDown: 7
+    }[e.key];
+    let nf = null;
+    if (step) nf = rvAddD(focus, step);else if (e.key === "PageUp" || e.key === "PageDown") {
+      const [y, m, dd] = rvYMD(focus),
+        k = e.key === "PageUp" ? -1 : 1,
+        e2 = rvMonEnd(rvIso(y, m + k, 1));
+      nf = rvIso(y, m + k, Math.min(dd, rvYMD(e2)[2]));
+    } else if (e.key === "Home" || e.key === "End") {
+      const wd = (new Date(focus + "T00:00:00Z").getUTCDay() + 6) % 7;
+      nf = rvAddD(focus, e.key === "Home" ? -wd : 6 - wd);
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      pick(focus);
+      return;
+    }
+    if (!nf) return;
+    e.preventDefault();
+    if (nf < ds) nf = ds;
+    if (nf > today) nf = today;
+    kbd.current = true;
+    setFocus(nf);
+    if (anchor) setHov(nf);
+  };
+  const popKey = e => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (anchor) {
+        setAnchor(null);
+        setHov(null);
+        setRange(cur.from, cur.to);
+      } else onClose(true);
+      return;
+    }
+    if (e.key === "Enter" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT" && !e.target.closest(".rv-pp-grid") && !e.target.closest(".rv-pp-o") && !e.target.closest("button")) {
+      e.preventDefault();
+      apply();
+      return;
+    }
+    if (e.key === "Tab" && ref.current) {
+      // фокус не уходит из окна
+      const f = [...ref.current.querySelectorAll("button:not(:disabled),input,select,[tabindex='0']")].filter(x => x.offsetParent !== null);
+      if (!f.length) return;
+      const i = f.indexOf(document.activeElement);
+      if (e.shiftKey && i <= 0) {
+        e.preventDefault();
+        f[f.length - 1].focus();
+      } else if (!e.shiftKey && i === f.length - 1) {
+        e.preventDefault();
+        f[0].focus();
+      }
+    }
+  };
+  const month = m0 => {
+    const [y, m] = rvYMD(m0),
+      lead = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7,
+      n = rvYMD(rvMonEnd(m0))[2];
+    const cells = [...Array(lead).fill(null), ...Array.from({
+      length: n
+    }, (_, i) => rvIso(y, m, i + 1))];
+    while (cells.length % 7) cells.push(null);
+    const rows = [];
+    for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
+    const mOk = rvMonEnd(m0) >= ds && m0 <= today,
+      mName = cap(RV_MON_FULL[m - 1]) + " " + y;
+    return /*#__PURE__*/React.createElement("div", {
+      className: "rv-pp-m",
+      key: m0
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "rv-pp-mh"
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "rv-pp-mt",
+      disabled: !mOk,
+      onClick: () => {
+        setAnchor(null);
+        setHov(null);
+        setRange(m0, rvMonEnd(m0));
+      },
+      "data-tip": "\u0432\u044B\u0431\u0440\u0430\u0442\u044C \u0432\u0435\u0441\u044C \u043C\u0435\u0441\u044F\u0446",
+      "aria-label": `Выбрать весь месяц: ${mName}`
+    }, mName)), /*#__PURE__*/React.createElement("div", {
+      className: "rv-pp-wd",
+      "aria-hidden": "true"
+    }, RV_WD.map(x => /*#__PURE__*/React.createElement("span", {
+      key: x
+    }, x))), /*#__PURE__*/React.createElement("div", {
+      role: "grid",
+      "aria-label": mName
+    }, rows.map((r, ri) => /*#__PURE__*/React.createElement("div", {
+      role: "row",
+      className: "rv-pp-row",
+      key: ri
+    }, r.map((day, ci) => {
+      if (!day) return /*#__PURE__*/React.createElement("span", {
+        key: ci,
+        role: "gridcell",
+        className: "rv-pp-d nil"
+      });
+      const dis = day < ds || day > today,
+        inR = !dis && day >= a && day <= b,
+        n = cnt(day),
+        sp = spikes.has(day);
+      const dn = +day.slice(8),
+        wd = RV_WD[ci];
+      const lbl = `${dn} ${RV_MON_GEN[m - 1]} ${y}, ${wd}${n != null && !dis ? `: ${fmtNum(n)} ${plural(n, "жалоба", "жалобы", "жалоб")}` : ""}${sp ? " — всплеск" : ""}${dis ? " — нет данных" : ""}`;
+      return /*#__PURE__*/React.createElement("span", {
+        role: "gridcell",
+        key: ci,
+        "aria-selected": inR,
+        className: "rv-pp-d" + (dis ? " dis" : "") + (inR ? " in" : "") + (inR && day === a ? " s" : "") + (inR && day === b ? " e" : "") + (day === today ? " now" : "")
+      }, /*#__PURE__*/React.createElement("button", {
+        "data-d": day,
+        tabIndex: day === focus ? 0 : -1,
+        disabled: dis,
+        "aria-label": lbl,
+        "data-tip": dis ? undefined : `${dn} ${RV_MON_GEN[m - 1]}, ${wd}${n != null ? ` · ${fmtNum(n)} ${plural(n, "жалоба", "жалобы", "жалоб")}` : ""}${sp ? " · всплеск" : ""}`,
+        onClick: () => pick(day),
+        onPointerEnter: () => anchor && setHov(day),
+        onFocus: () => setFocus(day)
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "dn"
+      }, dn), n > 0 && !dis && /*#__PURE__*/React.createElement("i", {
+        className: "rv-pp-h",
+        style: {
+          height: 2 + Math.round(5 * Math.min(1, n / scale)) + "px"
+        }
+      }), sp && !dis && /*#__PURE__*/React.createElement("b", {
+        className: "rv-pp-sp"
+      })));
+    })))));
+  };
+  const months = Array.from({
+    length: nMon
+  }, (_, i) => rvAddM(first, i));
+  // Вся история по месяцам под календарём: где был всплеск и что выбрано —
+  // клик берёт месяц целиком, протягивание — несколько месяцев
+  const hist = useMemo(() => {
+    if (!daily || !daily.counts) return [];
+    const out = [];
+    let cur = null;
+    daily.counts.forEach((n, k) => {
+      const day = rvAddD(daily.from, k),
+        ym = day.slice(0, 7);
+      if (!cur || cur.ym !== ym) {
+        cur = {
+          ym,
+          n: 0,
+          from: day
+        };
+        out.push(cur);
+      }
+      cur.n += n;
+      cur.to = day;
+    });
+    return out;
+  }, [daily]);
+  const hMax = Math.max(1, ...hist.map(x => x.n));
+  const tlRef = useRef(null),
+    tlDrag = useRef(null);
+  const tlAt = x => {
+    const el = tlRef.current;
+    if (!el || !hist.length) return 0;
+    const r = el.getBoundingClientRect();
+    return Math.max(0, Math.min(hist.length - 1, Math.floor((x - r.left) / r.width * hist.length)));
+  };
+  const tlSet = (i, j) => {
+    const a = Math.min(i, j),
+      b = Math.max(i, j);
+    setAnchor(null);
+    setHov(null);
+    setRange(hist[a].from, hist[b].to);
+    setFocus(hist[b].to);
+  };
+  const pop = /*#__PURE__*/React.createElement("div", {
+    ref: ref,
+    className: "rv-pp-pop" + (narrow ? " sheet" : ""),
+    role: "dialog",
+    "aria-label": "\u041F\u0435\u0440\u0438\u043E\u0434",
+    onKeyDown: popKey,
+    style: shift ? {
+      left: shift
+    } : undefined
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-side"
+  }, groups.map(([g, items]) => /*#__PURE__*/React.createElement("div", {
+    key: g,
+    className: "rv-pp-grp"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-g"
+  }, g), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-list"
+  }, items.map(x => {
+    const r = rvResolve(x.per, today, ds),
+      k = rvPerKey(rvNormalize(r.from, r.to, today, ds)),
+      n = rvSumDaily(daily, r.from, r.to);
+    return /*#__PURE__*/React.createElement("button", {
+      key: x.l,
+      className: "rv-pp-o" + (k === curKey ? " on" : ""),
+      "aria-pressed": k === curKey,
+      onClick: () => onPreset(x),
+      "aria-label": `${x.l}: ${rvRangeWords(r.from, r.to)}${n != null ? `, ${fmtNum(n)} ${plural(n, "жалоба", "жалобы", "жалоб")}` : ""}`
+    }, /*#__PURE__*/React.createElement("span", null, x.l), n != null && /*#__PURE__*/React.createElement("span", {
+      className: "n"
+    }, fmtNum(n)));
+  }))))), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-main"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-in"
+  }, /*#__PURE__*/React.createElement("label", null, "\u0441 ", /*#__PURE__*/React.createElement("input", {
+    value: ft,
+    inputMode: "text",
+    "aria-label": "\u041D\u0430\u0447\u0430\u043B\u043E \u043F\u0435\u0440\u0438\u043E\u0434\u0430",
+    placeholder: "\u0434\u0434.\u043C\u043C.\u0433\u0433\u0433\u0433",
+    onChange: e => {
+      setFt(e.target.value);
+      setTerr("");
+    },
+    onBlur: () => commit("from"),
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit("from");
+      }
+    }
+  })), /*#__PURE__*/React.createElement("label", null, "\u043F\u043E ", /*#__PURE__*/React.createElement("input", {
+    value: tt,
+    inputMode: "text",
+    "aria-label": "\u041A\u043E\u043D\u0435\u0446 \u043F\u0435\u0440\u0438\u043E\u0434\u0430",
+    placeholder: "\u0434\u0434.\u043C\u043C.\u0433\u0433\u0433\u0433",
+    onChange: e => {
+      setTt(e.target.value);
+      setTerr("");
+    },
+    onBlur: () => commit("to"),
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit("to");
+      }
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-hint" + (terr ? " rv-pp-err" : ""),
+    "aria-live": "polite"
+  }, terr || (anchor ? "Выберите последний день периода" : "Можно словами: «сентябрь», «3 кв», «2025»")), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-cal"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "rv-pp-nav l",
+    disabled: first <= dsM,
+    onClick: () => setView(rvAddM(view, -1)),
+    "aria-label": "\u041C\u0435\u0441\u044F\u0446 \u043D\u0430\u0437\u0430\u0434"
+  }, /*#__PURE__*/React.createElement(RvIChevL, {
+    s: 14
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "rv-pp-nav r",
+    disabled: view >= nowM,
+    onClick: () => setView(rvAddM(view, 1)),
+    "aria-label": "\u041C\u0435\u0441\u044F\u0446 \u0432\u043F\u0435\u0440\u0451\u0434"
+  }, /*#__PURE__*/React.createElement(RvIChevR, {
+    s: 14
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-grid",
+    ref: gridRef,
+    onKeyDown: gridKey,
+    onPointerLeave: () => setHov(null)
+  }, months.map(month))), hist.length > 2 && /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-tl",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-tlh"
+  }, "\u0412\u0441\u044F \u0438\u0441\u0442\u043E\u0440\u0438\u044F \u043F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C ", /*#__PURE__*/React.createElement("span", null, "\xB7 \u043A\u043B\u0438\u043A \u2014 \u043C\u0435\u0441\u044F\u0446, \u043F\u0440\u043E\u0442\u044F\u043D\u0438\u0442\u0435 \u2014 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u043E")), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-tlb",
+    ref: tlRef,
+    onPointerDown: e => {
+      if (e.button !== 0) return;
+      const i = tlAt(e.clientX);
+      tlDrag.current = i;
+      tlSet(i, i);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
+    },
+    onPointerMove: e => {
+      if (tlDrag.current == null) return;
+      tlSet(tlDrag.current, tlAt(e.clientX));
+    },
+    onPointerUp: () => {
+      tlDrag.current = null;
+    },
+    onPointerCancel: () => {
+      tlDrag.current = null;
+    }
+  }, hist.map(x => {
+    const on = x.to >= d.from && x.from <= d.to;
+    return /*#__PURE__*/React.createElement("span", {
+      key: x.ym,
+      className: "rv-pp-tlc" + (on ? " in" : ""),
+      "data-tip": `${rvYm(x.ym)}: ${fmtNum(x.n)} ${plural(x.n, "жалоба", "жалобы", "жалоб")}`
+    }, /*#__PURE__*/React.createElement("i", {
+      style: {
+        height: Math.max(2, Math.round(x.n / hMax * 100)) + "%"
+      }
+    }));
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-tll"
+  }, hist.map((x, i) => {
+    const m = +x.ym.slice(5);
+    return /*#__PURE__*/React.createElement("span", {
+      key: x.ym
+    }, m === 1 || i === 0 ? x.ym.slice(0, 4) : "");
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-foot"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-sum",
+    "aria-live": "polite"
+  }, /*#__PURE__*/React.createElement("b", null, rvRangeWords(d.from, d.to)), " \xB7 ", len, " ", plural(len, "день", "дня", "дней"), total != null && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", fmtNum(total), " ", plural(total, "жалоба", "жалобы", "жалоб")), total != null && total < 100 && /*#__PURE__*/React.createElement("span", {
+    className: "rv-pp-warn"
+  }, " \xB7 \u043C\u0430\u043B\u043E \u0434\u043B\u044F \u0432\u044B\u0432\u043E\u0434\u043E\u0432 \u043E \u0434\u043E\u043B\u044F\u0445")), /*#__PURE__*/React.createElement("label", {
+    className: "rv-pp-cmp"
+  }, "\u0421\u0440\u0430\u0432\u043D\u0438\u0442\u044C", /*#__PURE__*/React.createElement("select", {
+    value: cmpMode,
+    onChange: e => setD(x => ({
+      ...x,
+      cmp: e.target.value
+    })),
+    "aria-label": "\u0421 \u0447\u0435\u043C \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0442\u044C"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "prev"
+  }, "\u0441 \u043F\u0440\u043E\u0448\u043B\u044B\u043C \u043F\u0435\u0440\u0438\u043E\u0434\u043E\u043C"), /*#__PURE__*/React.createElement("option", {
+    value: "yoy"
+  }, "\u0441 \u0442\u0435\u043C \u0436\u0435 \u043F\u0435\u0440\u0438\u043E\u0434\u043E\u043C \u0433\u043E\u0434 \u043D\u0430\u0437\u0430\u0434"), /*#__PURE__*/React.createElement("option", {
+    value: "none"
+  }, "\u043D\u0435 \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0442\u044C")), /*#__PURE__*/React.createElement("span", {
+    className: "rv-pp-cmpd"
+  }, !cp ? "" : cp.none ? `не с чем: данные с ${rvDmy(ds)}` : `${rvRangeWords(cp.from, cp.to, true)}${cp.perDay ? " · на день" : ""}`)), /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-act"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: () => onClose(true)
+  }, "\u041E\u0442\u043C\u0435\u043D\u0430"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary btn-sm",
+    disabled: !!anchor || same,
+    onClick: apply
+  }, "\u041F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C"))));
+  return narrow ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "rv-pp-scrim",
+    onClick: () => onClose(true)
+  }), pop) : pop;
+}
 function RvBankPicker({
   bank,
   items,
@@ -8763,7 +9920,37 @@ function ReviewsPage({
   const [bankItems, setBankItems] = useState([]); // {bank,n,last} — жалобы за год
   const [product, setProduct] = useState(preset && preset.product || P.product || "");
   const firstBankRun = useRef(true); // не сбрасывать префилл продукта при монтировании
-  const [days, setDays] = useState(preset && preset.days || +P.days || 90);
+  // период: {p:"90d"|"mtd"|…} или {from,to}; cmp — "" (как решит сервер) | prev | yoy | none
+  const [per, setPer] = useState(() => rvPerInit(P, preset));
+  const [cmp, setCmp] = useState(() => ["prev", "yoy", "none"].includes(P.cmp) ? P.cmp : "");
+  const perKey = rvPerKey(per) + "|" + cmp,
+    perQ = rvPerQS(per, cmp);
+  // график динамики — 14 месяцев, но не короче выбранного периода
+  const trMonths = (() => {
+    const r = rvResolve(per, rvTodayMsk()),
+      [a, b] = rvYMD(r.from),
+      [c, d] = rvYMD(rvTodayMsk());
+    return Math.min(36, Math.max(14, (c - a) * 12 + (d - b) + 1));
+  })();
+  const onPeriod = (np, nc, via) => {
+    setPer(np);
+    setCmp(nc || "");
+    if (np.p) try {
+      localStorage.setItem("al-rv-period", np.p);
+    } catch {}
+    trkEvent({
+      kind: "ui",
+      page: "reviews",
+      payload: {
+        action: "reviews_period",
+        via,
+        p: np.p || null,
+        from: np.from || null,
+        to: np.to || null,
+        cmp: nc || null
+      }
+    });
+  };
   const [theme, setTheme] = useState(preset && preset.theme || P.theme || "");
   const [tab, setTab] = useState(() => RV_TABS.some(([k]) => k === P.tab) ? P.tab : preset && (preset.theme || preset.city || preset.esc) || P.theme || P.flag || P.q || P.esc || P.city ? "complaints" : "overview");
   const tabsRef = useRef(null);
@@ -8901,14 +10088,19 @@ function ReviewsPage({
     if (tab !== "overview") sp.set("tab", tab);
     if (bank !== "Сбербанк") sp.set("bank", bank);
     if (product) sp.set("product", product);
-    if (days !== 90) sp.set("days", String(days));
+    if (per.p && per.p !== "90d") sp.set("p", per.p);
+    if (per.from) {
+      sp.set("from", per.from);
+      sp.set("to", per.to);
+    }
+    if (cmp) sp.set("cmp", cmp);
     if (theme) sp.set("theme", theme);
     if (flag) sp.set("flag", flag);
     if (escOnly) sp.set("esc", "1");
     if (fCity) sp.set("city", fCity);
     const qs = sp.toString();
     history.replaceState(null, "", "#reviews" + (qs ? "?" + qs : ""));
-  }, [tab, bank, product, days, theme, flag, escOnly, fCity]);
+  }, [tab, bank, product, perKey, theme, flag, escOnly, fCity]);
   // адрес → состояние: ссылка #reviews?… при уже открытой странице (своё
   // зеркалирование идёт через replaceState и сюда не попадает)
   const paramsKey = JSON.stringify(P),
@@ -8920,15 +10112,17 @@ function ReviewsPage({
     }
     const b = P.bank || "Сбербанк",
       pr = P.product || "",
-      d = +P.days || 90,
       th = P.theme || "",
       fl = P.flag || "";
+    const np = rvPerInit(P, null),
+      nc = ["prev", "yoy", "none"].includes(P.cmp) ? P.cmp : "";
     if (b !== bank) {
       firstBankRun.current = true;
       setBank(b);
     }
     if (pr !== product) setProduct(pr);
-    if (d !== days) setDays(d);
+    if (rvPerKey(np) !== rvPerKey(per)) setPer(np);
+    if (nc !== cmp) setCmp(nc);
     if (th !== theme) setTheme(th);
     if (fl !== flag) setFlag(fl);
     if (P.esc === "1" !== escOnly) setEscOnly(P.esc === "1");
@@ -8938,6 +10132,11 @@ function ReviewsPage({
   }, [paramsKey]);
   const [trBasis, setTrBasis] = useState("pub"),
     [trBusy, setTrBusy] = useState(true);
+  // выбор месяцев протягиванием по графику динамики
+  const [brush, setBrush] = useState(null);
+  const barsRef = useRef(null),
+    dragRef = useRef(null),
+    draggedRef = useRef(false);
   const [trFocus, setTrFocus] = useState(null); // столбец графика с остановкой Tab
   const pickFlag = k => {
     if (flag === k && tab === "complaints") {
@@ -8968,13 +10167,13 @@ function ReviewsPage({
     setExplain(null);
     setExplainBusy(false);
     setDrillProf(null);
-    apiFetch(`/api/reviews/segment-profile?bank=${enc(bank)}${pq()}&${type === "city" ? "city" : "month"}=${enc(value)}&days=${days}`).then(setDrillProf).catch(() => setDrillProf(null));
+    apiFetch(`/api/reviews/segment-profile?bank=${enc(bank)}${pq()}&${type === "city" ? "city" : "month"}=${enc(value)}${perQ}`).then(setDrillProf).catch(() => setDrillProf(null));
     setDrillItems(null);
     setDrillBusy(true);
     // Клик по городу открывал жалобы за ВЕСЬ корпус (с 2010 года), хотя карта
     // построена по выбранному периоду: цифра в карточке и число строк в
     // раскрытии не сходились. У месяца окно задаёт сам месяц — там период не нужен.
-    const f = type === "city" ? `&city=${enc(value)}&days=${days}` : `&month=${enc(value)}`;
+    const f = type === "city" ? `&city=${enc(value)}${perQ}` : `&month=${enc(value)}`;
     apiFetch(`/api/reviews/feed?bank=${enc(bank)}${pq()}${f}&limit=40`).then(d => {
       setDrillItems(d.items || []);
       setDrillBusy(false);
@@ -8986,7 +10185,7 @@ function ReviewsPage({
   const runExplain = () => {
     if (!drill) return;
     setExplainBusy(true);
-    const f = drill.type === "city" ? `&city=${enc(drill.value)}&days=${days}` : `&month=${enc(drill.value)}`;
+    const f = drill.type === "city" ? `&city=${enc(drill.value)}${perQ}` : `&month=${enc(drill.value)}`;
     apiFetch(`/api/reviews/explain?bank=${enc(bank)}${pq()}${f}`).then(d => {
       setExplain(d && d.summary ? d.summary : "__none__");
       setExplainBusy(false);
@@ -9012,15 +10211,18 @@ function ReviewsPage({
   useEffect(() => {
     setBusy(true);
     // allSettled: падение одной панели не должно стирать остальные четыре.
-    Promise.allSettled([apiFetch(`/api/reviews/overview?bank=${enc(bank)}${pq()}&days=${days}`),
+    Promise.allSettled([apiFetch(`/api/reviews/overview?bank=${enc(bank)}${pq()}${perQ}`),
     // Период — тот же, что у KPI. Раньше темы и география считались по
     // своим зашитым окнам, и переключатель на них не влиял: аудиторы писали,
     // что «за квартал, за год и за всё время» показывается одно и то же.
-    apiFetch(`/api/reviews/themes?bank=${enc(bank)}${pq()}&days=${days}`), apiFetch(`/api/reviews/issue-index?bank=${enc(bank)}${pq()}&days=${days}`), apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}&days=${days}`), apiFetch(`/api/reviews/risk-flags?bank=${enc(bank)}${pq()}&days=${days}`)]).then(([o, h, x, g, f]) => {
+    apiFetch(`/api/reviews/themes?bank=${enc(bank)}${pq()}${perQ}`), apiFetch(`/api/reviews/issue-index?bank=${enc(bank)}${pq()}${perQ}`), apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}${perQ}`), apiFetch(`/api/reviews/risk-flags?bank=${enc(bank)}${pq()}${perQ}`)]).then(([o, h, x, g, f]) => {
       const V = s => s.status === "fulfilled" ? s.value : {
         __err: true
       };
-      setOv(V(o));
+      setOv({
+        ...V(o),
+        __pk: perKey
+      });
       setTh(V(h));
       setIx(V(x));
       setGe(V(g));
@@ -9030,13 +10232,15 @@ function ReviewsPage({
     });
     // «что изменилось» — отдельно: в нём всплеск недели, он считается дольше
     setChg(null);
-    apiFetch(`/api/reviews/changes?bank=${enc(bank)}${pq()}&days=${days}`).then(setChg).catch(() => setChg(null));
-  }, [bank, product, days]);
+    apiFetch(`/api/reviews/changes?bank=${enc(bank)}${pq()}${perQ}`).then(setChg).catch(() => setChg(null));
+  }, [bank, product, perKey]);
 
-  // динамика не зависит от периода, зато переключается между датой отзыва и события
+  // динамика — помесячно за 14 месяцев (или с начала выбранного периода, если он
+  // старше); период на ней — полосой, а не фильтром. Переключается между датой
+  // отзыва и события
   useEffect(() => {
     setTrBusy(true);
-    apiFetch(`/api/reviews/trend?bank=${enc(bank)}${pq()}${trBasis === "event" ? "&basis=event" : ""}`).then(d => {
+    apiFetch(`/api/reviews/trend?bank=${enc(bank)}${pq()}${trBasis === "event" ? "&basis=event" : ""}${trMonths !== 14 ? `&months=${trMonths}` : ""}`).then(d => {
       setTr(d);
       setTrBusy(false);
     }).catch(() => {
@@ -9045,7 +10249,7 @@ function ReviewsPage({
       });
       setTrBusy(false);
     });
-  }, [bank, product, trBasis]);
+  }, [bank, product, trBasis, trMonths]);
   useEffect(() => {
     if (firstBankRun.current) {
       firstBankRun.current = false;
@@ -9066,7 +10270,7 @@ function ReviewsPage({
   useEffect(() => {
     if (fView !== "groups") return;
     setClBusy(true);
-    apiFetch(`/api/reviews/clusters?bank=${enc(bank)}${pq()}&days=${days}${theme ? `&theme=${theme}` : ""}` + `${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${fSrc}` : ""}${escOnly ? "&esc=1" : ""}`).then(d => {
+    apiFetch(`/api/reviews/clusters?bank=${enc(bank)}${pq()}${perQ}${theme ? `&theme=${theme}` : ""}` + `${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${fSrc}` : ""}${escOnly ? "&esc=1" : ""}`).then(d => {
       setCl(d);
       setClBusy(false);
     }).catch(() => {
@@ -9075,7 +10279,7 @@ function ReviewsPage({
       });
       setClBusy(false);
     });
-  }, [fView, bank, product, days, theme, flag, fCity, fSrc, escOnly]);
+  }, [fView, bank, product, perKey, theme, flag, fCity, fSrc, escOnly]);
 
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
   useEffect(() => {
@@ -9098,7 +10302,7 @@ function ReviewsPage({
   // периода их менял, а список обращений — нет, и в трёхмесячном срезе
   // оставались прошлогодние жалобы.
   const feedNext = useRef(null); // курсор ленты от сервера
-  const feedQS = off => `/api/reviews/feed?bank=${enc(bank)}${pq()}` + `${theme ? `&theme=${theme}` : ""}${q ? `&q=${enc(q)}` : ""}` + `&days=${days}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}` + `${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${fSrc}` : ""}` + `${q ? sortBy === "date" ? "&sort=date" : "" : fOrder === "severity" ? "&sort=severity" : ""}`
+  const feedQS = off => `/api/reviews/feed?bank=${enc(bank)}${pq()}` + `${theme ? `&theme=${theme}` : ""}${q ? `&q=${enc(q)}` : ""}` + `${perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}` + `${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${fSrc}` : ""}` + `${q ? sortBy === "date" ? "&sort=date" : "" : fOrder === "severity" ? "&sort=severity" : ""}`
   // лента без поиска листается курсором (next от сервера), поиск — по offset
   + (q ? `&limit=20&offset=${off}` : `&limit=20&cursor=${feedNext.current != null && off > 0 ? feedNext.current : 0}`);
   useEffect(() => {
@@ -9126,7 +10330,7 @@ function ReviewsPage({
       setFeedTot(null);
       setFeedBusy(false);
     });
-  }, [bank, product, theme, q, days, escOnly, sortBy, flag, fCity, fSrc, fOrder]);
+  }, [bank, product, theme, q, perKey, escOnly, sortBy, flag, fCity, fSrc, fOrder]);
   const loadMoreFeed = () => {
     setFeedMoreBusy(true);
     return apiFetch(feedQS((feed || []).length)).then(d => {
@@ -9305,7 +10509,7 @@ function ReviewsPage({
     setClsBusy(true);
     const tq = theme ? `&theme=${theme}` : "",
       qq = q ? `&q=${enc(q)}` : "";
-    apiFetch(`/api/reviews/feed-classified?bank=${enc(bank)}${pq()}${tq}${qq}&days=${days}&limit=${feed.length || 20}`).then(d => {
+    apiFetch(`/api/reviews/feed-classified?bank=${enc(bank)}${pq()}${tq}${qq}${perQ}&limit=${feed.length || 20}`).then(d => {
       if (d && d.items) setFeed(d.items);
       if (d && d.search) setFeedMeta(d.search);
       setClsOn(!!(d && d.llm));
@@ -9357,6 +10561,12 @@ function ReviewsPage({
       fn();
     }
   };
+  // Период словами — из того, что посчитал сервер (ov.period), пока ответ не
+  // пришёл — из выбранного: «за сентябрь», «к августу», подсказка с датами сравнения
+  const todayM = rvTodayMsk();
+  const perInfo = ov && ov.__pk === perKey && ov.period ? ov.period : null;
+  const pw = rvPerWords(per, perInfo, todayM),
+    cw = rvCmpWords(perInfo, todayM);
   const themeLabel = theme && th && th.themes ? (th.themes.find(x => x.key === theme) || {}).label : "";
   const flagLabel = flag ? ((rf && rf.groups || []).flatMap(g => g.items).find(x => x.flag === flag) || {
     label: flag
@@ -9374,9 +10584,9 @@ function ReviewsPage({
     className: "rv-th"
   }, /*#__PURE__*/React.createElement("h2", {
     className: "rv-ttl"
-  }, "\u0414\u0438\u043D\u0430\u043C\u0438\u043A\u0430 \u0436\u0430\u043B\u043E\u0431"), /*#__PURE__*/React.createElement(RvInfo, null, trEv ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u041F\u043E \u0434\u0430\u0442\u0435 \u0441\u043E\u0431\u044B\u0442\u0438\u044F, \u043A\u043E\u0442\u043E\u0440\u0443\u044E \u043D\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u043A\u043B\u0438\u0435\u043D\u0442, \u2014 \u043E\u043D\u0430 \u0435\u0441\u0442\u044C \u0443 ", tr && tr.ev_share != null ? tr.ev_share + "%" : "части", " \u0436\u0430\u043B\u043E\u0431. \u041E \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0445 \u043C\u0435\u0441\u044F\u0446\u0430\u0445 \u0436\u0430\u043B\u043E\u0431\u044B \u0435\u0449\u0451 \u043F\u0440\u0438\u0445\u043E\u0434\u044F\u0442: \u043F\u0443\u043D\u043A\u0442\u0438\u0440 \u2014 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u0442\u0441\u044F \u043F\u043E \u043E\u043F\u044B\u0442\u0443. \u041A\u043B\u0438\u043A \u043F\u043E \u0441\u0442\u043E\u043B\u0431\u0446\u0443 \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u043E \u0441\u043E\u0431\u044B\u0442\u0438\u044F\u0445 \u043C\u0435\u0441\u044F\u0446\u0430.") : /*#__PURE__*/React.createElement(React.Fragment, null, "\u041F\u043E \u0434\u0430\u0442\u0435 \u043E\u0442\u0437\u044B\u0432\u0430, \u043F\u043E\u043C\u0435\u0441\u044F\u0447\u043D\u043E \u0437\u0430 14 \u043C\u0435\u0441\u044F\u0446\u0435\u0432; \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0430\u0442\u0435\u043B\u044C \u043F\u0435\u0440\u0438\u043E\u0434\u0430 \u043D\u0430 \u0433\u0440\u0430\u0444\u0438\u043A \u043D\u0435 \u0432\u043B\u0438\u044F\u0435\u0442. \u041F\u0438\u043A \u2014 \u043C\u0435\u0441\u044F\u0446 \u0432\u044B\u0448\u0435 \u043C\u0435\u0434\u0438\u0430\u043D\u044B + 2\xB7MAD \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0445 \u043C\u0435\u0441\u044F\u0446\u0435\u0432. \u041F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043C\u0435\u0441\u044F\u0446 \u043D\u0435\u043F\u043E\u043B\u043D\u044B\u0439 (\u0448\u0442\u0440\u0438\u0445\u043E\u0432\u043A\u0430). \u041A\u043B\u0438\u043A \u043F\u043E \u0441\u0442\u043E\u043B\u0431\u0446\u0443 \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u043C\u0435\u0441\u044F\u0446\u0430."))), /*#__PURE__*/React.createElement("div", {
+  }, "\u0414\u0438\u043D\u0430\u043C\u0438\u043A\u0430 \u0436\u0430\u043B\u043E\u0431"), /*#__PURE__*/React.createElement(RvInfo, null, trEv ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u041F\u043E \u0434\u0430\u0442\u0435 \u0441\u043E\u0431\u044B\u0442\u0438\u044F, \u043A\u043E\u0442\u043E\u0440\u0443\u044E \u043D\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u043A\u043B\u0438\u0435\u043D\u0442, \u2014 \u043E\u043D\u0430 \u0435\u0441\u0442\u044C \u0443 ", tr && tr.ev_share != null ? tr.ev_share + "%" : "части", " \u0436\u0430\u043B\u043E\u0431. \u041E \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0445 \u043C\u0435\u0441\u044F\u0446\u0430\u0445 \u0436\u0430\u043B\u043E\u0431\u044B \u0435\u0449\u0451 \u043F\u0440\u0438\u0445\u043E\u0434\u044F\u0442: \u043F\u0443\u043D\u043A\u0442\u0438\u0440 \u2014 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u0442\u0441\u044F \u043F\u043E \u043E\u043F\u044B\u0442\u0443. \u041A\u043B\u0438\u043A \u043F\u043E \u0441\u0442\u043E\u043B\u0431\u0446\u0443 \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u043E \u0441\u043E\u0431\u044B\u0442\u0438\u044F\u0445 \u043C\u0435\u0441\u044F\u0446\u0430.") : /*#__PURE__*/React.createElement(React.Fragment, null, "\u041F\u043E \u0434\u0430\u0442\u0435 \u043E\u0442\u0437\u044B\u0432\u0430, \u043F\u043E\u043C\u0435\u0441\u044F\u0447\u043D\u043E. \u0412\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0439 \u043F\u0435\u0440\u0438\u043E\u0434 \u2014 \u043F\u043E\u0434\u043B\u043E\u0436\u043A\u043E\u0439, \u043F\u0435\u0440\u0438\u043E\u0434 \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u044F \u2014 \u0448\u0442\u0440\u0438\u0445\u043E\u0432\u043A\u043E\u0439; \u043F\u0440\u043E\u0442\u044F\u043D\u0438\u0442\u0435 \u043F\u043E \u0441\u0442\u043E\u043B\u0431\u0446\u0430\u043C, \u0447\u0442\u043E\u0431\u044B \u0441\u0434\u0435\u043B\u0430\u0442\u044C \u043C\u0435\u0441\u044F\u0446\u044B \u043F\u0435\u0440\u0438\u043E\u0434\u043E\u043C \u0432\u0441\u0435\u0439 \u0432\u043A\u043B\u0430\u0434\u043A\u0438. \u041F\u0438\u043A \u2014 \u043C\u0435\u0441\u044F\u0446 \u0432\u044B\u0448\u0435 \u043C\u0435\u0434\u0438\u0430\u043D\u044B + 2\xB7MAD \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043D\u043D\u044B\u0445 \u043C\u0435\u0441\u044F\u0446\u0435\u0432. \u041F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043C\u0435\u0441\u044F\u0446 \u043D\u0435\u043F\u043E\u043B\u043D\u044B\u0439 (\u0448\u0442\u0440\u0438\u0445\u043E\u0432\u043A\u0430). \u041A\u043B\u0438\u043A \u043F\u043E \u0441\u0442\u043E\u043B\u0431\u0446\u0443 \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u043C\u0435\u0441\u044F\u0446\u0430."))), /*#__PURE__*/React.createElement("div", {
     className: "rv-cap"
-  }, trEv ? "по дате события · помесячно" : "помесячно за 14 месяцев")), /*#__PURE__*/React.createElement("div", {
+  }, trEv ? "по дате события · помесячно" : `помесячно за ${tr && tr.series ? tr.series.length : 14} мес`)), /*#__PURE__*/React.createElement("div", {
     className: "rv-chips rv-chips-sm",
     role: "group",
     "aria-label": "\u043F\u043E \u043A\u0430\u043A\u043E\u0439 \u0434\u0430\u0442\u0435 \u0441\u0447\u0438\u0442\u0430\u0442\u044C"
@@ -9398,6 +10608,38 @@ function ReviewsPage({
         });
         return k;
       })();
+    // полоса периода в столбце месяца: где в месяце начинается и сколько занимает
+    const perR = perInfo ? {
+      from: perInfo.from,
+      to: perInfo.to
+    } : rvResolve(per, todayM);
+    const cmpR = perInfo && perInfo.cmp_from ? {
+      from: perInfo.cmp_from,
+      to: perInfo.cmp_to
+    } : null;
+    const band = (ym, r) => {
+      if (!r) return null;
+      const m0 = ym + "-01",
+        m1 = rvMonEnd(m0);
+      if (r.to < m0 || r.from > m1) return null;
+      const n = rvYMD(m1)[2],
+        a = r.from > m0 ? rvYMD(r.from)[2] - 1 : 0,
+        b = r.to < m1 ? rvYMD(r.to)[2] : n;
+      return {
+        left: a === 0 ? "-2px" : a / n * 100 + "%",
+        right: b === n ? "-2px" : (n - b) / n * 100 + "%"
+      };
+    };
+    const colAt = x => {
+      const el = barsRef.current;
+      if (!el) return 0;
+      const r = el.getBoundingClientRect(),
+        n = tr.series.length;
+      return Math.max(0, Math.min(n - 1, Math.floor((x - r.left) / r.width * n)));
+    };
+    const bLo = brush ? Math.min(brush.a, brush.b) : -1,
+      bHi = brush ? Math.max(brush.a, brush.b) : -1;
+    const brushOn = !trEv;
     return /*#__PURE__*/React.createElement("div", {
       className: "rv-chart"
     }, /*#__PURE__*/React.createElement("div", {
@@ -9421,7 +10663,47 @@ function ReviewsPage({
         bottom: t / yMax * 100 + "%"
       }
     }))), /*#__PURE__*/React.createElement("div", {
-      className: "rv-bars"
+      className: "rv-bars" + (brush ? " brushing" : ""),
+      ref: barsRef,
+      onPointerDown: e => {
+        if (!brushOn || e.button !== 0 || e.pointerType === "touch") return;
+        dragRef.current = {
+          x: e.clientX,
+          i: colAt(e.clientX),
+          id: e.pointerId
+        };
+        draggedRef.current = false;
+      },
+      onPointerMove: e => {
+        const d = dragRef.current;
+        if (!d) return;
+        if (!draggedRef.current) {
+          if (Math.abs(e.clientX - d.x) < 8) return;
+          draggedRef.current = true;
+          try {
+            e.currentTarget.setPointerCapture(d.id);
+          } catch {}
+        }
+        setBrush({
+          a: d.i,
+          b: colAt(e.clientX)
+        });
+      },
+      onPointerUp: e => {
+        const d = dragRef.current;
+        dragRef.current = null;
+        setBrush(null);
+        if (!d || !draggedRef.current) return;
+        const i0 = Math.min(d.i, colAt(e.clientX)),
+          i1 = Math.max(d.i, colAt(e.clientX));
+        const f = tr.series[i0].ym + "-01",
+          t0 = rvMonEnd(tr.series[i1].ym + "-01");
+        onPeriod(rvNormalize(f, t0 > todayM ? todayM : t0, todayM), cmp, "chart");
+      },
+      onPointerCancel: () => {
+        dragRef.current = null;
+        setBrush(null);
+      }
     }, tr.series.map((s, i) => {
       const mv = (trEv ? "ev:" : "") + s.ym,
         ml = trEv ? `Жалобы о событиях: ${rvYm(s.ym)}` : `Жалобы за ${rvYm(s.ym)}`;
@@ -9457,9 +10739,34 @@ function ReviewsPage({
         "aria-label": tip,
         tabIndex: i === (trFocus != null && trFocus < tr.series.length ? trFocus : lastFull >= 0 ? lastFull : tr.series.length - 1) ? 0 : -1,
         onFocus: () => setTrFocus(i),
-        onClick: () => openDrill("month", mv, ml + (s.partial && !trEv ? " (неполный месяц)" : "")),
+        onClick: () => {
+          if (draggedRef.current) {
+            draggedRef.current = false;
+            return;
+          }
+          openDrill("month", mv, ml + (s.partial && !trEv ? " (неполный месяц)" : ""));
+        },
         onKeyDown: kb
-      }, /*#__PURE__*/React.createElement("div", {
+      }, brushOn && (() => {
+        const pb = band(s.ym, perR),
+          cb = band(s.ym, cmpR);
+        return /*#__PURE__*/React.createElement(React.Fragment, null, cb && /*#__PURE__*/React.createElement("i", {
+          className: "rv-pband cmp",
+          style: cb,
+          "aria-hidden": "true"
+        }), pb && !brush && /*#__PURE__*/React.createElement("i", {
+          className: "rv-pband",
+          style: pb,
+          "aria-hidden": "true"
+        }), brush && i >= bLo && i <= bHi && /*#__PURE__*/React.createElement("i", {
+          className: "rv-pband brush",
+          style: {
+            left: "-2px",
+            right: "-2px"
+          },
+          "aria-hidden": "true"
+        }));
+      })(), /*#__PURE__*/React.createElement("div", {
         className: "rv-bwrap"
       }, s.expected ? /*#__PURE__*/React.createElement("div", {
         className: "rv-bar rv-bar-exp",
@@ -9490,7 +10797,13 @@ function ReviewsPage({
         }, y));
       })());
     }))));
-  })(), !trEv && mev && mev.category && /*#__PURE__*/React.createElement("div", {
+  })(), !trEv && /*#__PURE__*/React.createElement("div", {
+    className: "rv-pleg"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", null), pw.name ? pw.name + (pw.range ? ` · ${pw.range}` : "") : pw.range), cw && !cw.none && /*#__PURE__*/React.createElement("span", {
+    "data-tip": cw.tip
+  }, /*#__PURE__*/React.createElement("i", {
+    className: "cmp"
+  }), "\u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435: ", perInfo ? rvRangeWords(perInfo.cmp_from, perInfo.cmp_to, true) : ""), fine && /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0442\u044F\u043D\u0438\u0442\u0435 \u043F\u043E \u0441\u0442\u043E\u043B\u0431\u0446\u0430\u043C \u2014 \u0432\u044B\u0431\u0440\u0430\u0442\u044C \u043C\u0435\u0441\u044F\u0446\u044B")), !trEv && mev && mev.category && /*#__PURE__*/React.createElement("div", {
     className: "rv-mev-note"
   }, /*#__PURE__*/React.createElement("span", {
     className: "rv-mev on"
@@ -9510,9 +10823,9 @@ function ReviewsPage({
     className: "rv-th"
   }, /*#__PURE__*/React.createElement("h2", {
     className: "rv-ttl"
-  }, "\u0422\u0435\u043C\u044B \u0436\u0430\u043B\u043E\u0431"), /*#__PURE__*/React.createElement(RvInfo, null, "\u041F\u043E \u0433\u043B\u0430\u0432\u043D\u043E\u0439 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u0438\u0437 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438 \u0418\u0418, \u0434\u043E\u043B\u0438 \u0434\u0430\u044E\u0442 100%. \u0421\u043F\u0440\u0430\u0432\u0430 \u2014 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u043A \u043F\u0440\u043E\u0448\u043B\u044B\u043C ", th && th.days || days, " \u0434\u043D: \u0446\u0432\u0435\u0442\u043E\u043C \u2014 \u0437\u043D\u0430\u0447\u0438\u043C\u043E \u043E\u0442\u043B\u0438\u0447\u0430\u0435\u0442\u0441\u044F \u043E\u0442 \u043E\u0431\u0449\u0435\u0433\u043E \u043F\u043E\u0442\u043E\u043A\u0430 \u0436\u0430\u043B\u043E\u0431", th && th.overall_delta_pct != null ? ` (${rvSgn(th.overall_delta_pct)}%)` : "", ", \u0441\u0435\u0440\u044B\u043C \u2014 \u0432 \u043F\u0440\u0435\u0434\u0435\u043B\u0430\u0445 \u043A\u043E\u043B\u0435\u0431\u0430\u043D\u0438\u0439. \u041A\u043B\u0438\u043A \u043F\u043E \u0442\u0435\u043C\u0435 \u2014 \u0435\u0451 \u0436\u0430\u043B\u043E\u0431\u044B.", th && th.delta_partial ? " Динамика появится после разметки прошлого периода." : "")), /*#__PURE__*/React.createElement("div", {
+  }, "\u0422\u0435\u043C\u044B \u0436\u0430\u043B\u043E\u0431"), /*#__PURE__*/React.createElement(RvInfo, null, "\u041F\u043E \u0433\u043B\u0430\u0432\u043D\u043E\u0439 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u0438\u0437 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438 \u0418\u0418, \u0434\u043E\u043B\u0438 \u0434\u0430\u044E\u0442 100%. ", cw && !cw.none ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u0421\u043F\u0440\u0430\u0432\u0430 \u2014 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 ", cw.k, ": \u0446\u0432\u0435\u0442\u043E\u043C \u2014 \u0437\u043D\u0430\u0447\u0438\u043C\u043E \u043E\u0442\u043B\u0438\u0447\u0430\u0435\u0442\u0441\u044F \u043E\u0442 \u043E\u0431\u0449\u0435\u0433\u043E \u043F\u043E\u0442\u043E\u043A\u0430 \u0436\u0430\u043B\u043E\u0431", th && th.overall_delta_pct != null ? ` (${rvSgn(th.overall_delta_pct)}%)` : "", ", \u0441\u0435\u0440\u044B\u043C \u2014 \u0432 \u043F\u0440\u0435\u0434\u0435\u043B\u0430\u0445 \u043A\u043E\u043B\u0435\u0431\u0430\u043D\u0438\u0439. ", cw.tip, " ") : cw && cw.none ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 \u043D\u0435\u0442: ", cw.tip, " ") : null, "\u041A\u043B\u0438\u043A \u043F\u043E \u0442\u0435\u043C\u0435 \u2014 \u0435\u0451 \u0436\u0430\u043B\u043E\u0431\u044B.", th && th.delta_partial ? " Динамика появится после разметки прошлого периода." : "")), /*#__PURE__*/React.createElement("div", {
     className: "rv-cap"
-  }, "\u0434\u043E\u043B\u044F \u043E\u0442 \u0436\u0430\u043B\u043E\u0431 \u0437\u0430 ", th && th.days || days, " \u0434\u043D \xB7 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u043A \u043F\u0440\u043E\u0448\u043B\u043E\u043C\u0443 \u043F\u0435\u0440\u0438\u043E\u0434\u0443"), busy && !th ? /*#__PURE__*/React.createElement(RvSkelRows, {
+  }, "\u0434\u043E\u043B\u044F \u043E\u0442 \u0436\u0430\u043B\u043E\u0431 \u0437\u0430 ", pw.za, cw ? cw.none ? ` · ${cw.k}` : ` · изменение ${cw.k}` : ""), busy && !th ? /*#__PURE__*/React.createElement(RvSkelRows, {
     n: 12,
     h: 38,
     gap: 10
@@ -9582,7 +10895,9 @@ function ReviewsPage({
     className: "rv-ttl"
   }, "\u0413\u0434\u0435 ", bank, " \u043E\u0442\u043B\u0438\u0447\u0430\u0435\u0442\u0441\u044F \u043E\u0442 \u0440\u044B\u043D\u043A\u0430"), /*#__PURE__*/React.createElement(RvInfo, null, "\u0418\u043D\u0434\u0435\u043A\u0441 \u2014 \u0434\u043E\u043B\u044F \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0432 \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u0431\u0430\u043D\u043A\u0430, \u0434\u0435\u043B\u0451\u043D\u043D\u0430\u044F \u043D\u0430 \u0435\u0451 \u0434\u043E\u043B\u044E \u0443 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0431\u0430\u043D\u043A\u043E\u0432. \u0421\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0435\u0442\u0441\u044F \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0430, \u0430 \u043D\u0435 \u043E\u0431\u044A\u0451\u043C, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0440\u0430\u0437\u043C\u0435\u0440 \u0431\u0430\u043D\u043A\u0430 \u0438 \u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u044C \u0435\u0433\u043E \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u043D\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430\u0445 \u043D\u0430 \u0438\u043D\u0434\u0435\u043A\u0441 \u043D\u0435 \u0432\u043B\u0438\u044F\u044E\u0442. \u041F\u043E\u043A\u0430\u0437\u0430\u043D\u044B \u0442\u043E\u043B\u044C\u043A\u043E \u0437\u043D\u0430\u0447\u0438\u043C\u044B\u0435 \u043E\u0442\u043B\u0438\u0447\u0438\u044F: 95% \u0434\u043E\u0432\u0435\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0439 \u0438\u043D\u0442\u0435\u0440\u0432\u0430\u043B, \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u0430 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0445 \u043F\u0440\u043E\u0431\u043B\u0435\u043C, \u043E\u0442 10 \u0436\u0430\u043B\u043E\u0431 \u0443 \u0431\u0430\u043D\u043A\u0430. \u0421\u043F\u0440\u0430\u0432\u0430 \u2014 \u0438\u043D\u0434\u0435\u043A\u0441 \u043F\u043E \u0447\u0435\u0442\u044B\u0440\u0451\u043C \u043A\u0432\u0430\u0440\u0442\u0430\u043B\u0430\u043C, \u043F\u0443\u043D\u043A\u0442\u0438\u0440 \u2014 \u0443\u0440\u043E\u0432\u0435\u043D\u044C \u0440\u044B\u043D\u043A\u0430. \u041A\u043B\u0438\u043A \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u044D\u0442\u043E\u0439 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B.")), /*#__PURE__*/React.createElement("div", {
     className: "rv-cap"
-  }, "\u0434\u043E\u043B\u044F \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0432 \u0436\u0430\u043B\u043E\u0431\u0430\u0445: ", bank, " \u043F\u0440\u043E\u0442\u0438\u0432 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0431\u0430\u043D\u043A\u043E\u0432 \xB7 ", ix && ix.days || Math.max(days, 90), " \u0434\u043D", product ? ` · ${product}` : ""), busy && !ix ? /*#__PURE__*/React.createElement(RvSkelRows, {
+  }, "\u0434\u043E\u043B\u044F \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0432 \u0436\u0430\u043B\u043E\u0431\u0430\u0445: ", bank, " \u043F\u0440\u043E\u0442\u0438\u0432 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0431\u0430\u043D\u043A\u043E\u0432 \xB7 ", ix && ix.window_extended ? /*#__PURE__*/React.createElement("span", {
+    "data-tip": "\u041D\u0430 \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u043C \u043F\u0435\u0440\u0438\u043E\u0434\u0435 \u043F\u043E\u0447\u0442\u0438 \u0432\u0441\u0435 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u2014 \xAB\u043C\u0430\u043B\u043E \u0434\u0430\u043D\u043D\u044B\u0445\xBB, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0438\u043D\u0434\u0435\u043A\u0441 \u0441\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044F \u043D\u0435 \u043C\u0435\u043D\u044C\u0448\u0435 \u0447\u0435\u043C \u0437\u0430 90 \u0434\u043D\u0435\u0439, \u0434\u043E \u043A\u043E\u043D\u0446\u0430 \u043F\u0435\u0440\u0438\u043E\u0434\u0430"
+  }, "\u0437\u0430 90 \u0434\u043D\u0435\u0439 \u043F\u043E ", rvDmy(ix.window_to)) : `за ${pw.za}`, product ? ` · ${product}` : ""), busy && !ix ? /*#__PURE__*/React.createElement(RvSkelRows, {
     n: full ? 10 : 5,
     h: 42,
     gap: 10
@@ -9637,7 +10952,7 @@ function ReviewsPage({
   // есть полоса показывала размер города, а вывод строился по индексу
   const geoRows = geFull && geFull.cities || ge && ge.cities || [];
   // ровно столько, сколько обещает кнопка: города от 10 жалоб идут первыми
-  const loadGeoAll = () => apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}&days=${days}&top=${Math.min(80, 8 + (ge && ge.more || 0))}`).then(d => {
+  const loadGeoAll = () => apiFetch(`/api/reviews/geo?bank=${enc(bank)}${pq()}${perQ}&top=${Math.min(80, 8 + (ge && ge.more || 0))}`).then(d => {
     if (d && d.cities) setGeFull(d);
   }).catch(() => {});
   const geoCard = /*#__PURE__*/React.createElement("div", {
@@ -9648,7 +10963,7 @@ function ReviewsPage({
     className: "rv-ttl"
   }, "\u0413\u0435\u043E\u0433\u0440\u0430\u0444\u0438\u044F"), /*#__PURE__*/React.createElement(RvInfo, null, "\u0418\u043D\u0434\u0435\u043A\u0441 \u2014 \u0434\u043E\u043B\u044F \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 ", bank, " \u0441\u0440\u0435\u0434\u0438 \u0436\u0430\u043B\u043E\u0431 \u0433\u043E\u0440\u043E\u0434\u0430 \u043F\u0440\u043E\u0442\u0438\u0432 \u0442\u0430\u043A\u043E\u0439 \u0436\u0435 \u0434\u043E\u043B\u0438 \u0432 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0433\u043E\u0440\u043E\u0434\u0430\u0445", ge && ge.national_share != null ? ` (по стране ${pct1(ge.national_share)})` : "", ". \u041F\u043E\u043B\u043E\u0441\u0430 \u2014 \u0438\u043D\u0434\u0435\u043A\u0441: \u0432\u043F\u0440\u0430\u0432\u043E \u043E\u0442 \xD71 \u2014 \u0432 \u0433\u043E\u0440\u043E\u0434\u0435 \u0436\u0430\u043B\u0443\u044E\u0442\u0441\u044F \u043D\u0430 \u0431\u0430\u043D\u043A \u0447\u0430\u0449\u0435, \u0447\u0435\u043C \u0432 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445, \u0432\u043B\u0435\u0432\u043E \u2014 \u0440\u0435\u0436\u0435; \u0446\u0432\u0435\u0442\u043E\u043C \u2014 \u0437\u043D\u0430\u0447\u0438\u043C\u043E (95%, \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u0430 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u0433\u043E\u0440\u043E\u0434\u043E\u0432, \u043E\u0442 \xD71,3 \u0438 30 \u0436\u0430\u043B\u043E\u0431). \u041D\u0430\u0441\u0435\u043B\u0435\u043D\u0438\u0435 \u043D\u0435 \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u0443\u0435\u0442\u0441\u044F: \u043D\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u043F\u0438\u0448\u0435\u0442 \u043D\u0435 \u043D\u0430\u0441\u0435\u043B\u0435\u043D\u0438\u0435. \xAB\u0427\u0430\u0449\u0435, \u0447\u0435\u043C \u043F\u043E \u0441\u0442\u0440\u0430\u043D\u0435\xBB \u2014 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u0430, \u043A\u043E\u0442\u043E\u0440\u043E\u0439 \u0432 \u0433\u043E\u0440\u043E\u0434\u0435 \u0443 \u0431\u0430\u043D\u043A\u0430 \u0437\u0430\u043C\u0435\u0442\u043D\u043E \u0431\u043E\u043B\u044C\u0448\u0435, \u0447\u0435\u043C \u0443 \u043D\u0435\u0433\u043E \u0436\u0435 \u043F\u043E \u0441\u0442\u0440\u0430\u043D\u0435. \u041A\u043B\u0438\u043A \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u0433\u043E\u0440\u043E\u0434\u0430.")), /*#__PURE__*/React.createElement("div", {
     className: "rv-cap"
-  }, "\u0434\u043E\u043B\u044F \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 ", bank, " \u0432 \u0433\u043E\u0440\u043E\u0434\u0435 \u043F\u0440\u043E\u0442\u0438\u0432 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0433\u043E\u0440\u043E\u0434\u043E\u0432 \xB7 ", ge && ge.days || days, " \u0434\u043D"), busy && !ge ? /*#__PURE__*/React.createElement(RvSkelRows, {
+  }, "\u0434\u043E\u043B\u044F \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 ", bank, " \u0432 \u0433\u043E\u0440\u043E\u0434\u0435 \u043F\u0440\u043E\u0442\u0438\u0432 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0433\u043E\u0440\u043E\u0434\u043E\u0432 \xB7 \u0437\u0430 ", pw.za), busy && !ge ? /*#__PURE__*/React.createElement(RvSkelRows, {
     n: 8,
     h: 44,
     gap: 8
@@ -9847,7 +11162,7 @@ function ReviewsPage({
     className: "rv-ttl"
   }, "\u041F\u0440\u0438\u0437\u043D\u0430\u043A\u0438 \u0440\u0438\u0441\u043A\u0430"), /*#__PURE__*/React.createElement(RvInfo, null, "\u0418\u0437 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438 \u043A\u0430\u0436\u0434\u043E\u0439 \u0436\u0430\u043B\u043E\u0431\u044B: \u043A\u0443\u0434\u0430 \u043A\u043B\u0438\u0435\u043D\u0442 \u0433\u0440\u043E\u0437\u0438\u0442 \u0438\u043B\u0438 \u0443\u0436\u0435 \u043E\u0431\u0440\u0430\u0442\u0438\u043B\u0441\u044F, \u0443\u044F\u0437\u0432\u0438\u043C\u044B\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u044B, \u043F\u0440\u0430\u043A\u0442\u0438\u043A\u0438 \u0438 \u0441\u0443\u043C\u043C\u044B. \u0426\u0438\u0444\u0440\u044B \u2014 \u0434\u043E\u043B\u044F \u0443 \u0431\u0430\u043D\u043A\u0430 / \u0443 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0431\u0430\u043D\u043A\u043E\u0432, \u0446\u0432\u0435\u0442\u043E\u043C \u2014 \u0437\u043D\u0430\u0447\u0438\u043C\u043E\u0435 \u043E\u0442\u043B\u0438\u0447\u0438\u0435 (\u043F\u043E\u043F\u0440\u0430\u0432\u043A\u0430 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u043E\u0432). \u0423\u044F\u0437\u0432\u0438\u043C\u044B\u0445 \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0435\u043C \u0441 \u0442\u0435\u043C, \u0447\u0442\u043E \u043E\u0436\u0438\u0434\u0430\u043B\u043E\u0441\u044C \u0431\u044B \u043F\u0440\u0438 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u0445 \u0431\u0430\u043D\u043A\u0430: \u0434\u0435\u0442\u0441\u043A\u0438\u0435 \u0438 \u043F\u0435\u043D\u0441\u0438\u043E\u043D\u043D\u044B\u0435 \u043A\u0430\u0440\u0442\u044B \u0434\u0430\u044E\u0442 \u0438\u0445 \u0441\u0430\u043C\u0438 \u043F\u043E \u0441\u0435\u0431\u0435. \xAB\u0412\u0432\u0435\u043B\u0438 \u0432 \u0437\u0430\u0431\u043B\u0443\u0436\u0434\u0435\u043D\u0438\u0435\xBB \u0438 \u0441\u0443\u043C\u043C\u044B \u043F\u043E\u043A\u0430 \u0448\u0438\u0440\u043E\u043A\u0438\u0435: \u0441\u0443\u043C\u043C\u0430 \u0431\u044B\u0432\u0430\u0435\u0442 \u0438 \u0443\u0449\u0435\u0440\u0431\u043E\u043C, \u0438 \u0441\u0443\u043C\u043C\u043E\u0439 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430. \u041A\u043B\u0438\u043A \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u0441 \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u043E\u043C.")), /*#__PURE__*/React.createElement("div", {
     className: "rv-cap"
-  }, "\u0434\u043E\u043B\u044F \u0432 ", fmtNum(rf.total), " \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u043D\u0430 ", bank, " \u0437\u0430 ", rf.days, " \u0434\u043D \xB7 \u0443 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0431\u0430\u043D\u043A\u043E\u0432")), /*#__PURE__*/React.createElement("div", {
+  }, "\u0434\u043E\u043B\u044F \u0432 ", fmtNum(rf.total), " \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u043D\u0430 ", bank, " \u0437\u0430 ", pw.za, " \xB7 \u0443 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0431\u0430\u043D\u043A\u043E\u0432")), /*#__PURE__*/React.createElement("div", {
     className: "rv-flags-sum mono"
   }, "\u043E\u0431\u0440\u0430\u0442\u0438\u043B\u0438\u0441\u044C ", /*#__PURE__*/React.createElement("b", null, fmtNum(rf.filed)), " \xB7 \u0433\u0440\u043E\u0437\u044F\u0442 ", /*#__PURE__*/React.createElement("b", null, fmtNum(rf.threat)))), /*#__PURE__*/React.createElement("div", {
     className: "rv-flags-g"
@@ -9895,11 +11210,11 @@ function ReviewsPage({
       const mk = ov.market_delta_pct,
         rel = ov.delta_vs_market_pct;
       const mtxt = mk == null ? "" : `; у остальных банков ${rvSgn(Math.round(mk))}% — ` + (vol.vs_market === "above" ? `${bank} обгоняет рынок на ${Math.round(Math.abs(rel || 0))}%` : vol.vs_market === "below" ? `у ${bank} лучше, чем у рынка` : `в целом вместе с рынком`);
-      out.push(`Жалоб ${ov.delta_pct > 0 ? "больше" : "меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за прошлые ${days} дн: ${fmtNum(ov.total)} против ${fmtNum(ov.prev)}${mtxt}.`);
+      out.push(`Жалоб ${ov.delta_pct > 0 ? "больше" : "меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за ${cw ? cw.za : "прошлый период"}: ${fmtNum(ov.cmp_n != null ? ov.cmp_n : ov.total)} против ${fmtNum(ov.prev)}${perInfo && perInfo.per_day ? " (в пересчёте на день)" : ""}${mtxt}.`);
     }
     // «без значимых изменений» рядом с чипами изменившихся тем читалось как
     // «ничего не изменилось» — говорим именно про общее число
-    else if (ov.delta_partial || !chg) out.push(`${fmtNum(ov.total)} ${plural(ov.total, "жалоба", "жалобы", "жалоб")} за ${days} дн.`);else out.push(`Общее число жалоб — на уровне прошлого периода: ${fmtNum(ov.total)} за ${days} дн.`);
+    else if (ov.delta_partial || !chg || chg.no_cmp || cw && cw.none) out.push(`${fmtNum(ov.total)} ${plural(ov.total, "жалоба", "жалобы", "жалоб")} за ${pw.za}.`);else out.push(`Общее число жалоб — на уровне ${cw && cw.za ? "периода «" + cw.za + "»" : "прошлого периода"}: ${fmtNum(ov.total)} за ${pw.za}.`);
     const w = ix && ix.worse && ix.worse[0];
     if (w) out.push(`Сильнее всего ${bank} отличается от рынка в теме «${w.label}»: ${pct1(w.pct)} жалоб против ${pct1(w.market_pct)} у остальных банков (${rvX(w.index)}).`);
     const sg = anom && anom.signals && anom.signals[0];
@@ -9919,7 +11234,7 @@ function ReviewsPage({
   }).items.find(x => x.flag === "vuln:any") || null : null;
   const vulnUp = !!(vuln && vuln.sig && (vuln.index_adj != null ? vuln.index_adj > 1 : vuln.index > 1));
   const srcShares = ov && ov.by_source && ov.by_source.length ? rvSrcShares(ov.by_source) : [];
-  const pageInfo = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, "\u0416\u0430\u043B\u043E\u0431\u044B"), " \u2014 \u043E\u0442\u0437\u044B\u0432\u044B \u0441\u043E \u0432\u0441\u0435\u0445 \u043F\u043B\u043E\u0449\u0430\u0434\u043E\u043A, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0418\u0418 \u043E\u0442\u043D\u0451\u0441 \u043A \u043F\u0440\u0435\u0442\u0435\u043D\u0437\u0438\u044F\u043C; \u043F\u043E\u0445\u0432\u0430\u043B\u0430, \u0432\u043E\u043F\u0440\u043E\u0441\u044B, \u043C\u0443\u0441\u043E\u0440 \u0438 \u043A\u043E\u043F\u0438\u0438 \u0438\u0441\u043A\u043B\u044E\u0447\u0435\u043D\u044B. \u041C\u0435\u0442\u0440\u0438\u043A\u0438 \u2014 \u0434\u0438\u043D\u0430\u043C\u0438\u043A\u0430 \u0438 \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0430 \u0432\u043D\u0443\u0442\u0440\u0438 \u0436\u0430\u043B\u043E\u0431, \u0430 \u043D\u0435 \u0434\u043E\u043B\u044F \u043D\u0435\u0434\u043E\u0432\u043E\u043B\u044C\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432.", srcShares.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u0437\u0430 ", days, " \u0434\u043D:"), " ", srcShares.map(x => `${x.k} ${x.p >= 1 ? Math.round(x.p) + "%" : fmtNum(x.n)}`).join(" · "), "."), corp && corp.corpus_total ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u041A\u043E\u0440\u043F\u0443\u0441 \u2014 ", fmtNum(corp.corpus_total), " ", plural(corp.corpus_total, "отзыв", "отзыва", "отзывов"), " \u043F\u043E ", corp.banks, " ", plural(corp.banks, "банку", "банкам", "банкам"), ".") : null, ov && ov.market_share_pct != null && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u0414\u043E\u043B\u044F \u0432 \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u043D\u0430 \u0432\u0441\u0435 \u0431\u0430\u043D\u043A\u0438"), " \u2014 ", pct1(ov.market_share_pct), ". \u041E\u043D\u0430 \u043D\u0435 \u043D\u043E\u0440\u043C\u0438\u0440\u043E\u0432\u0430\u043D\u0430 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432: \u0443 \u043A\u0440\u0443\u043F\u043D\u043E\u0433\u043E \u0431\u0430\u043D\u043A\u0430 \u043D\u0438\u0436\u0435, \u0447\u0435\u043C \u0443 \u043D\u0435\u0431\u043E\u043B\u044C\u0448\u043E\u0433\u043E, \u0447\u044C\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u0430\u043A\u0442\u0438\u0432\u043D\u0435\u0435 \u043F\u0438\u0448\u0443\u0442 \u043D\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430\u0445. \u0421 \u0440\u044B\u043D\u043A\u043E\u043C \u043A\u043E\u0440\u0440\u0435\u043A\u0442\u043D\u0435\u0435 \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0442\u044C \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0443 \u2014 \xAB\u0413\u0434\u0435 ", bank, " \u043E\u0442\u043B\u0438\u0447\u0430\u0435\u0442\u0441\u044F \u043E\u0442 \u0440\u044B\u043D\u043A\u0430\xBB."));
+  const pageInfo = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, "\u0416\u0430\u043B\u043E\u0431\u044B"), " \u2014 \u043E\u0442\u0437\u044B\u0432\u044B \u0441\u043E \u0432\u0441\u0435\u0445 \u043F\u043B\u043E\u0449\u0430\u0434\u043E\u043A, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0418\u0418 \u043E\u0442\u043D\u0451\u0441 \u043A \u043F\u0440\u0435\u0442\u0435\u043D\u0437\u0438\u044F\u043C; \u043F\u043E\u0445\u0432\u0430\u043B\u0430, \u0432\u043E\u043F\u0440\u043E\u0441\u044B, \u043C\u0443\u0441\u043E\u0440 \u0438 \u043A\u043E\u043F\u0438\u0438 \u0438\u0441\u043A\u043B\u044E\u0447\u0435\u043D\u044B. \u041C\u0435\u0442\u0440\u0438\u043A\u0438 \u2014 \u0434\u0438\u043D\u0430\u043C\u0438\u043A\u0430 \u0438 \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0430 \u0432\u043D\u0443\u0442\u0440\u0438 \u0436\u0430\u043B\u043E\u0431, \u0430 \u043D\u0435 \u0434\u043E\u043B\u044F \u043D\u0435\u0434\u043E\u0432\u043E\u043B\u044C\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432.", srcShares.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u0437\u0430 ", pw.za, ":"), " ", srcShares.map(x => `${x.k} ${x.p >= 1 ? Math.round(x.p) + "%" : fmtNum(x.n)}`).join(" · "), "."), corp && corp.corpus_total ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u041A\u043E\u0440\u043F\u0443\u0441 \u2014 ", fmtNum(corp.corpus_total), " ", plural(corp.corpus_total, "отзыв", "отзыва", "отзывов"), " \u043F\u043E ", corp.banks, " ", plural(corp.banks, "банку", "банкам", "банкам"), ".") : null, ov && ov.market_share_pct != null && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "\u0414\u043E\u043B\u044F \u0432 \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u043D\u0430 \u0432\u0441\u0435 \u0431\u0430\u043D\u043A\u0438"), " \u2014 ", pct1(ov.market_share_pct), ". \u041E\u043D\u0430 \u043D\u0435 \u043D\u043E\u0440\u043C\u0438\u0440\u043E\u0432\u0430\u043D\u0430 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432: \u0443 \u043A\u0440\u0443\u043F\u043D\u043E\u0433\u043E \u0431\u0430\u043D\u043A\u0430 \u043D\u0438\u0436\u0435, \u0447\u0435\u043C \u0443 \u043D\u0435\u0431\u043E\u043B\u044C\u0448\u043E\u0433\u043E, \u0447\u044C\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u0430\u043A\u0442\u0438\u0432\u043D\u0435\u0435 \u043F\u0438\u0448\u0443\u0442 \u043D\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430\u0445. \u0421 \u0440\u044B\u043D\u043A\u043E\u043C \u043A\u043E\u0440\u0440\u0435\u043A\u0442\u043D\u0435\u0435 \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0442\u044C \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0443 \u2014 \xAB\u0413\u0434\u0435 ", bank, " \u043E\u0442\u043B\u0438\u0447\u0430\u0435\u0442\u0441\u044F \u043E\u0442 \u0440\u044B\u043D\u043A\u0430\xBB."));
   const actives = [theme && {
     k: "theme",
     l: `Тема: ${themeLabel || theme}`,
@@ -10077,7 +11392,7 @@ function ReviewsPage({
     className: "rv-export rv-export-a",
     download: true,
     "aria-label": "\u0412\u044B\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0436\u0430\u043B\u043E\u0431\u044B \u0432 Excel",
-    href: `/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme ? `&theme=${enc(theme)}` : ""}&days=${days}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${enc(fSrc)}` : ""}`,
+    href: `/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme ? `&theme=${enc(theme)}` : ""}${perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${enc(fSrc)}` : ""}`,
     "data-tip": "Excel \u0432 \u0441\u0442\u0438\u043B\u0435 AuditLens: \u043E\u0431\u0437\u043E\u0440 \u0441 \u043F\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044F\u043C\u0438 \u0438 \u0433\u0440\u0430\u0444\u0438\u043A\u0430\u043C\u0438, \u0432\u0441\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u0441 \u0442\u0435\u043A\u0443\u0449\u0438\u043C\u0438 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0431\u0430\u043D\u043A\u0430, \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430, \u0442\u0435\u043C\u044B, \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0430, \u0433\u043E\u0440\u043E\u0434\u0430, \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u0438 \u043F\u0435\u0440\u0438\u043E\u0434\u0430 \u2014 \u0441 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u043E\u0439 \u0418\u0418 \u0438 \u043F\u043E\u043B\u043D\u044B\u043C \u0442\u0435\u043A\u0441\u0442\u043E\u043C, \u0441\u0432\u043E\u0434\u043A\u0438 (\u043F\u043E\u0438\u0441\u043A \u0432 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0443 \u043D\u0435 \u0432\u0445\u043E\u0434\u0438\u0442)",
     onClick: () => trkEvent({
       kind: "ui",
@@ -10087,7 +11402,8 @@ function ReviewsPage({
         bank,
         product,
         theme,
-        days,
+        period: rvPerKey(per),
+        cmp: cmp || null,
         esc: escOnly,
         flag,
         city: fCity || null,
@@ -10351,14 +11667,16 @@ function ReviewsPage({
     key: p.product,
     value: p.product
   }, p.product, " (", fmtNum(p.n), ")"))), /*#__PURE__*/React.createElement("div", {
-    className: "rv-chips rv-hper",
-    role: "group",
-    "aria-label": "\u041F\u0435\u0440\u0438\u043E\u0434"
-  }, RV_PERIODS.map(([d, l]) => /*#__PURE__*/React.createElement("button", {
-    key: d,
-    className: "rv-chip" + (days === d ? " on" : ""),
-    onClick: () => setDays(d)
-  }, l)))), /*#__PURE__*/React.createElement("div", {
+    className: "rv-hper"
+  }, /*#__PURE__*/React.createElement(RvPeriodPicker, {
+    per: per,
+    cmp: cmp,
+    info: perInfo,
+    bank: bank,
+    product: product,
+    narrow: narrow,
+    onChange: onPeriod
+  }))), /*#__PURE__*/React.createElement("div", {
     className: "rv-hact"
   }, sub !== null && /*#__PURE__*/React.createElement("button", {
     className: "rv-bell" + (sub ? " on" : ""),
@@ -10451,7 +11769,7 @@ function ReviewsPage({
     className: "rv-card rv-lead"
   }, /*#__PURE__*/React.createElement("h2", {
     className: "rv-kl"
-  }, "\u0413\u043B\u0430\u0432\u043D\u043E\u0435 \u0437\u0430 ", days, " \u0434\u043D"), /*#__PURE__*/React.createElement("div", {
+  }, "\u0413\u043B\u0430\u0432\u043D\u043E\u0435 \u0437\u0430 ", pw.za), /*#__PURE__*/React.createElement("div", {
     className: "rv-lead-t"
   }, busy && !leadText ? /*#__PURE__*/React.createElement(RvSkelRows, {
     n: 4,
@@ -10463,8 +11781,9 @@ function ReviewsPage({
     w: "55%",
     h: 28
   })), chgRest.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "rv-chg-l"
-  }, "\u0417\u0430\u043C\u0435\u0442\u043D\u043E \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C \u043A \u043F\u0440\u043E\u0448\u043B\u044B\u043C ", days, " \u0434\u043D"), chgRest.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rv-chg-l",
+    "data-tip": cw && cw.tip
+  }, "\u0417\u0430\u043C\u0435\u0442\u043D\u043E \u0438\u0437\u043C\u0435\u043D\u0438\u043B\u043E\u0441\u044C ", cw && !cw.none ? cw.k : "к прошлому периоду"), chgRest.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "rv-chg"
   }, chgRest.map((it, i) => /*#__PURE__*/React.createElement("span", {
     key: i,
@@ -10476,9 +11795,12 @@ function ReviewsPage({
     onKeyDown: it.key ? onKey(() => pickTheme(it.key)) : undefined
   }, /*#__PURE__*/React.createElement("b", {
     className: "rv-chg-ar"
-  }, it.dir === "up" ? "↑" : "↓"), it.text))), chg && !chg.partial && chg.items && !chgRest.length && !(chg.items || []).some(x => x.kind === "volume") && /*#__PURE__*/React.createElement("div", {
+  }, it.dir === "up" ? "↑" : "↓"), it.text))), chg && !chg.partial && !chg.no_cmp && chg.items && !chgRest.length && !(chg.items || []).some(x => x.kind === "volume") && /*#__PURE__*/React.createElement("div", {
     className: "rv-chg-calm"
-  }, "\u0421\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0430 \u0436\u0430\u043B\u043E\u0431 \u2014 \u0432 \u043F\u0440\u0435\u0434\u0435\u043B\u0430\u0445 \u043E\u0431\u044B\u0447\u043D\u044B\u0445 \u043A\u043E\u043B\u0435\u0431\u0430\u043D\u0438\u0439.")), radarCard), /*#__PURE__*/React.createElement("div", {
+  }, "\u0421\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0430 \u0436\u0430\u043B\u043E\u0431 \u2014 \u0432 \u043F\u0440\u0435\u0434\u0435\u043B\u0430\u0445 \u043E\u0431\u044B\u0447\u043D\u044B\u0445 \u043A\u043E\u043B\u0435\u0431\u0430\u043D\u0438\u0439."), chg && chg.no_cmp && !chgRest.length && /*#__PURE__*/React.createElement("div", {
+    className: "rv-chg-calm",
+    "data-tip": cw && cw.tip
+  }, perInfo && perInfo.cmp_note === "data" ? `Что изменилось, не считаем: прошлый период раньше начала данных (${rvDmy(RV_DATA_START)}).` : "Сравнение выключено — изменения не считаем.")), radarCard), /*#__PURE__*/React.createElement("div", {
     className: "rv-kpis rv-kpis3"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rv-card rv-kpi rv-kpi-click",
@@ -10489,7 +11811,7 @@ function ReviewsPage({
     onKeyDown: onKey(() => goTab("complaints"))
   }, /*#__PURE__*/React.createElement("div", {
     className: "rv-kl"
-  }, "\u0416\u0430\u043B\u043E\u0431 \u0437\u0430 ", days, " \u0434\u043D"), /*#__PURE__*/React.createElement("div", {
+  }, "\u0416\u0430\u043B\u043E\u0431 \u0437\u0430 ", pw.za), /*#__PURE__*/React.createElement("div", {
     className: "rv-kv"
   }, busy && !ov ? /*#__PURE__*/React.createElement(Skel, {
     w: "55%",
@@ -10504,11 +11826,17 @@ function ReviewsPage({
   }, ov.delta_pct < 0 ? "↓" : "↑", " ", Math.round(Math.abs(ov.delta_pct)), "%") : /*#__PURE__*/React.createElement("span", {
     className: "rv-flat",
     "data-tip": volSig ? "меняется вместе с остальными банками" : "в пределах обычных колебаний — не значимо"
-  }, ov.delta_pct < 0 ? "−" : "+", Math.round(Math.abs(ov.delta_pct)), "%"), " \u043A \u043F\u0440\u043E\u0448\u043B\u043E\u043C\u0443 \u043F\u0435\u0440\u0438\u043E\u0434\u0443", ov.market_delta_pct != null ? /*#__PURE__*/React.createElement("span", {
+  }, ov.delta_pct < 0 ? "−" : "+", Math.round(Math.abs(ov.delta_pct)), "%"), " ", /*#__PURE__*/React.createElement("span", {
+    className: "rv-cmpk",
+    "data-tip": cw && cw.tip
+  }, cw && !cw.none ? cw.k : "к прошлому периоду"), ov.market_delta_pct != null ? /*#__PURE__*/React.createElement("span", {
     className: "rv-lown"
   }, " \xB7 \u0440\u044B\u043D\u043E\u043A ", rvSgn(Math.round(ov.market_delta_pct)), "%") : "", ov.delta_low_n ? /*#__PURE__*/React.createElement("span", {
     className: "rv-lown"
-  }, " \xB7 \u043C\u0430\u043B\u0430\u044F \u0431\u0430\u0437\u0430") : "") : "—")), /*#__PURE__*/React.createElement("div", {
+  }, " \xB7 \u043C\u0430\u043B\u0430\u044F \u0431\u0430\u0437\u0430") : "") : cw && cw.none ? /*#__PURE__*/React.createElement("span", {
+    className: "rv-cmpk",
+    "data-tip": cw.tip
+  }, cw.k) : "—")), /*#__PURE__*/React.createElement("div", {
     className: "rv-card rv-kpi rv-kpi-click" + (escOnly ? " rv-kpi-on" : ""),
     role: "button",
     tabIndex: 0,
@@ -10616,11 +11944,24 @@ function ReviewsPage({
     }, "\xD7", String(r.index).replace(".", ","))))) : /*#__PURE__*/React.createElement("div", {
       className: "rv-prof-none"
     }, "\u0421\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0430 \u0436\u0430\u043B\u043E\u0431 \u0432 \u0441\u0440\u0435\u0437\u0435 \u2014 \u043A\u0430\u043A \u0432 \u043D\u043E\u0440\u043C\u0435.");
-  })()), /*#__PURE__*/React.createElement("button", {
+  })()), /*#__PURE__*/React.createElement("div", {
+    className: "rv-drill-acts"
+  }, /*#__PURE__*/React.createElement("button", {
     className: "rv-explain-btn",
     onClick: runExplain,
     disabled: explainBusy
-  }, explainBusy ? "Читаю жалобы…" : "✦ Разобрать с ИИ"), explain && explain !== "__none__" && /*#__PURE__*/React.createElement("div", {
+  }, explainBusy ? "Читаю жалобы…" : "✦ Разобрать с ИИ"), drill.type === "month" && !String(drill.value).startsWith("ev:") && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: () => {
+      const f = drill.value + "-01",
+        e = rvMonEnd(f);
+      onPeriod(rvNormalize(f, e > todayM ? todayM : e, todayM), cmp, "drill");
+      setDrill(null);
+    },
+    "data-tip": "\u0432\u0435\u0441\u044C \u0440\u0430\u0437\u0434\u0435\u043B \u2014 \u0442\u0435\u043C\u044B, \u0440\u044B\u043D\u043E\u043A, \u0433\u0435\u043E\u0433\u0440\u0430\u0444\u0438\u044F, \u043B\u0435\u043D\u0442\u0430 \u2014 \u0437\u0430 \u044D\u0442\u043E\u0442 \u043C\u0435\u0441\u044F\u0446"
+  }, /*#__PURE__*/React.createElement(RvICal, {
+    s: 13
+  }), "\u0412\u0435\u0441\u044C \u0440\u0430\u0437\u0434\u0435\u043B \u0437\u0430 ", rvYm(drill.value))), explain && explain !== "__none__" && /*#__PURE__*/React.createElement("div", {
     className: "rv-explain"
   }, renderMD(explain)), explain === "__none__" && /*#__PURE__*/React.createElement("div", {
     className: "rv-explain rv-explain-err"
