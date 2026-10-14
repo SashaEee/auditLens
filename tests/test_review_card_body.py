@@ -32,18 +32,22 @@ def test_banki_rid():
     assert F.banki_rid("https://www.sravni.ru/x") is None
 
 
-def test_us_pseudo_product_is_one_condition_everywhere():
-    """«УС» и «Выездной сервис» (обращения 08–09.10): названия одни в коде и в
-    SQL-функции, и все запросы вкладки фильтруют продукт через неё — иначе срез
-    разъедется между вкладками."""
+def test_slice_products_are_one_condition_everywhere():
+    """Срезы в списке продуктов (обращения 08–14.10): названия одни в коде и в
+    SQL-функции, и все запросы вкладки фильтруют продукт через неё по срезам из
+    LLM-разметки — иначе срез разъедется между вкладками."""
     import re
     from pathlib import Path
 
     from bank_audit.rag import reviews_dash as D
     root = Path(__file__).resolve().parents[1]
-    sql = (root / "migrations" / "098_review_index_channels.sql").read_text(encoding="utf-8")
+    sql = (root / "migrations" / "099_review_slices.sql").read_text(encoding="utf-8")
     for label in D.PSEUDO_PRODUCTS:
         assert f"'{label}'" in sql, label
+    assert "Зарплатные проекты" in D.PSEUDO_PRODUCTS
     for rel in ("rag/reviews_dash.py", "rag/reviews_work.py", "rag/bankiru_fts.py"):
         src = (root / "src" / "bank_audit" / rel).read_text(encoding="utf-8")
         assert not re.search(r"\b[a-z]\.product = :(product|pr)\b", src), rel
+        assert ".channels, " not in src.split("al_product_is", 1)[-1][:200] or "slices" in src, rel
+        for call in re.findall(r"al_product_is\(([^)]*)\)", src):
+            assert ".slices" in call, (rel, call)

@@ -217,7 +217,7 @@ def _idx_clause(bc: str, product: str | None, alias: str = "i") -> tuple[str, di
     cl = [f'{alias}.bank = :bank']
     p: dict = {"bank": bc}
     if product:
-        cl.append(f'al_product_is({alias}.product, {alias}.channels, {alias}.issue, :product)')
+        cl.append(f'al_product_is({alias}.product, {alias}.slices, :product)')
         p["product"] = product
     # дата из будущего — дефект источника, в статистике ей делать нечего
     cl.append(f'({alias}.dt IS NULL OR {alias}.dt <= now())')
@@ -489,7 +489,7 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
                 "SELECT i.bank, count(*) n FROM review_index i"
                 " WHERE i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
                 f" AND {_CMP}"
-                + (" AND al_product_is(i.product, i.channels, i.issue, :product)" if product else "") +
+                + (" AND al_product_is(i.product, i.slices, :product)" if product else "") +
                 " GROUP BY 1 ORDER BY 2 DESC"),
                 {"d": days, **({"product": product} if product else {})}).all()
             asof = s.execute(text(
@@ -504,7 +504,7 @@ def overview(bank: str, product: str | None = None, days: int = 90) -> dict | No
                 f" count(*) FILTER (WHERE i.dt < now() - make_interval(days => :d))"
                 f" FROM review_index i WHERE i.bank <> :bank AND {_CMP}"
                 f" AND i.dt >= now() - make_interval(days => :d2) AND i.dt <= now()"
-                + (" AND al_product_is(i.product, i.channels, i.issue, :product)" if product else "")),
+                + (" AND al_product_is(i.product, i.slices, :product)" if product else "")),
                 {"bank": bc, "d": days, "d2": days * 2,
                  **({"product": product} if product else {})}).one()
             by_src = [{"source": r[0], "n": int(r[1])} for r in s.execute(text(
@@ -688,13 +688,13 @@ def themes(bank: str, product: str | None = None, days: int = 90) -> dict | None
                 FROM review_index i
                 WHERE i.bank = :bank AND {_CMP}
                   AND i.dt >= now() - make_interval(days => :d2) AND i.dt <= now()
-                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                 GROUP BY 1"""), p).all()
             also = dict(s.execute(text(f"""
                 SELECT x, count(*) FROM review_index i, unnest(i.issues2) x
                 WHERE i.bank = :bank AND {_CMP}
                   AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
-                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                 GROUP BY 1"""), p).all())
         total = sum(int(r[1]) for r in rows) or 1
         total_prev = sum(int(r[2]) for r in rows)
@@ -755,7 +755,7 @@ def vs_market(bank: str, product: str | None = None, days: int = 90, top: int = 
                 "SELECT i.bank, count(*) n FROM review_index i"
                 " WHERE i.dt >= now() - make_interval(days => :d) AND i.dt <= now()"
                 f" AND {_CMP}"
-                + (" AND al_product_is(i.product, i.channels, i.issue, :product)" if product else "") +
+                + (" AND al_product_is(i.product, i.slices, :product)" if product else "") +
                 " GROUP BY 1 ORDER BY 2 DESC"),
                 {"d": days, **({"product": product} if product else {})}).all()
         total = sum(int(r[1]) for r in rows) or 1
@@ -791,7 +791,7 @@ def issue_index(bank: str, product: str | None = None, days: int = 180) -> dict 
     def _compute():
         p = {"bank": bc, "product": product, "d": days}
         base = (f"{_CMP} AND i.bank IS NOT NULL"
-                " AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product)) AND i.dt <= now()")
+                " AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product)) AND i.dt <= now()")
         with db.session() as s:
             rows = s.execute(text(f"""
                 SELECT i.issue, (i.bank = :bank) AS own, count(*)
@@ -879,7 +879,7 @@ def geo(bank: str, product: str | None = None, days: int = 365, top: int = 8) ->
     def _compute():
         p = {"bank": bc, "product": product, "d": days}
         win = (f"{_CMP} AND coalesce(i.city, '') <> '' AND i.bank IS NOT NULL"
-               " AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))"
+               " AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))"
                " AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()")
         with db.session() as s:
             rows = s.execute(text(f"""
@@ -983,7 +983,7 @@ def risk_flags(bank: str, product: str | None = None, days: int = 90) -> dict | 
                 FROM review_index i
                 JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
                 WHERE {_CMP} AND i.bank IS NOT NULL
-                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                   AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
                 GROUP BY 1"""), {"bank": bc, "product": product, "d": days,
                                  "sv": _ann_schema()}).all()
@@ -1049,7 +1049,7 @@ def _vuln_by_product(bc: str, product: str | None, days: int) -> dict:
             FROM review_index i
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE {_CMP} AND i.bank IS NOT NULL
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
               AND i.dt >= now() - make_interval(days => :d) AND i.dt <= now()
             GROUP BY 1, 2"""), {"bank": bc, "product": product, "d": days,
                                 "sv": _ann_schema()}).all()
@@ -1170,16 +1170,15 @@ def changes(bank: str, product: str | None = None, days: int = 90) -> dict | Non
             "overall_delta_pct": ov.get("delta_pct")}
 
 
-# Срезы, которые аудиторы ищут в списке продуктов, хотя это не продукты, а места,
-# где случилась проблема (обращения 08–09.10): «УС» — устройства самообслуживания,
-# канал «банкомат» в разметке или проблема «Наличные и банкоматы»; «Выездной
-# сервис» — курьерская доставка и выезд к клиенту. В списке они — псевдо-продукты;
-# условие во всех запросах — SQL-функция al_product_is (migrations/098), названия
-# в ней должны совпадать с ключами здесь.
-PSEUDO_PRODUCTS = {
-    "УС — банкоматы и терминалы": "('atm' = ANY(coalesce(i.channels, '{}')) OR i.issue = 'cash_atm')",
-    "Выездной сервис — курьеры и выезд": "'courier' = ANY(coalesce(i.channels, '{}'))",
-}
+# Срезы, которые аудиторы ищут в списке продуктов, хотя это не продукты договора
+# (обращения 08–14.10): «Зарплатные проекты», «УС — банкоматы и терминалы»,
+# «Выездной сервис». Флаги — отдельная LLM-разметка (rag/review_slices.py,
+# точность и полнота замерены слепым судьёй), в индексе — review_index.slices;
+# условие во всех запросах — SQL-функция al_product_is (migrations/099).
+from . import review_slices as _rs  # noqa: E402
+
+PSEUDO_PRODUCTS = {label: f"'{key}' = ANY(coalesce(i.slices, '{{}}'))"
+                   for key, (label, _definition) in _rs.SLICES.items()}
 
 
 @_safe(None)
@@ -1200,7 +1199,12 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
                                               " AND " + cond), p).scalar() or 0))
                      for lbl, cond in PSEUDO_PRODUCTS.items()]
         items = [{"product": r[0], "n": int(r[1])} for r in rows]
-        items += [{"product": lbl, "n": n} for lbl, n in extra if n]
+        try:        # срезы — только когда разметка догнала (иначе числа занижены)
+            ready = _rs.coverage(days)["ready"]
+        except Exception:  # noqa: BLE001
+            ready = False
+        if ready:
+            items += [{"product": lbl, "n": n} for lbl, n in extra if n]
         return {"bank": bc, "items": items}
     return _cached(f"pr:{bc}:{days}:{top}", _compute)
 
@@ -1260,7 +1264,7 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE i.bank = :bank AND {_CMP}
               AND (i.dt IS NULL OR i.dt <= now())
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product)){extra}
+              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product)){extra}
             ORDER BY i.dt DESC NULLS LAST
             LIMIT :lim
         """), p).mappings().all()]
@@ -1354,7 +1358,7 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     order = "sev DESC NULLS LAST, i.dt DESC NULLS LAST" if sev else "i.dt DESC NULLS LAST"
     where = f"""i.bank = :bank
                   AND (i.dt IS NULL OR i.dt <= now())
-                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product)){extra}"""
+                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product)){extra}"""
     if cursor is not None:
         return _feed_page(where, join, sev_col, order, p, limit, max(0, int(cursor)), sev)
     try:
@@ -1497,7 +1501,7 @@ def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None
         return list(s.execute(text(f"""
             SELECT f.url FROM review_index f
             WHERE f.issue = :key AND f.kind IN ('complaint', 'mixed') AND f.bank = :bank
-              AND (CAST(:product AS text) IS NULL OR al_product_is(f.product, f.channels, f.issue, :product)){extra}
+              AND (CAST(:product AS text) IS NULL OR al_product_is(f.product, f.slices, :product)){extra}
             ORDER BY f.dt DESC LIMIT :lim
         """), p).scalars().all())
 
@@ -1888,7 +1892,7 @@ def segment_profile(bank: str, product: str | None = None, city: str | None = No
             SELECT i.issue, count(*) FILTER (WHERE {seg}) AS n, count(*) FILTER (WHERE {base}) AS b
             FROM review_index i
             WHERE i.bank = :bank AND {_CMP}
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
               AND (({seg}) OR ({base}))
             GROUP BY 1"""), p).all()
     n_seg = sum(int(r[1]) for r in rows)
@@ -1961,7 +1965,7 @@ def _topic_week_counts(bank_canon: str | None, product: str | None,
                     FROM review_index i
                     WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)
                       AND (CAST(:ex AS text) IS NULL OR i.bank <> :ex)
-                      AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+                      AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                       AND {_CMP}
                       AND i.dt >= {_WEEK_END} - make_interval(days => 63) AND i.dt < {_WEEK_END}
                       AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60))
@@ -2006,7 +2010,7 @@ def top_topic(bank: str, product: str | None, days: int = 90) -> dict | None:
                    count(*) FILTER (WHERE i.dt <  now() - make_interval(days => :days)) AS p
             FROM review_index i
             WHERE i.bank = :bank AND {_CMP} AND i.issue NOT IN ('other', 'no_issue')
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
               AND i.dt >= now() - make_interval(days => :days * 2) AND i.dt <= now()
             GROUP BY 1 ORDER BY 2 DESC LIMIT 1
         """), {"bank": bc, "product": product, "days": days}).first()
@@ -2309,7 +2313,7 @@ def _topic_day_counts(bank_canon: str, product: str | None,
                        count(*)
                 FROM review_index i
                 WHERE i.bank = :bank
-                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                   AND {_CMP}
                   AND i.dt >= {_WEEK_END} - make_interval(days => :days) AND i.dt < {_WEEK_END}
                   AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)
@@ -2531,7 +2535,7 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
                     grows = s.execute(text(f"""
                         SELECT i.city, count(*) FROM review_index i
                         WHERE i.bank = :bank AND i.issue = :key AND {_CMP}
-                          AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+                          AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                           AND i.dt >= {_WEEK_END} - make_interval(days => 7) AND i.dt < {_WEEK_END}
                           AND coalesce(i.city, '') <> ''
                         GROUP BY 1 ORDER BY 2 DESC LIMIT 3
@@ -2600,7 +2604,7 @@ def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
     if esc:
         cond.append("i.esc")
     if product:
-        cond.append("al_product_is(i.product, i.channels, i.issue, :pr)")
+        cond.append("al_product_is(i.product, i.slices, :pr)")
         p["pr"] = product
     try:
         with db.session() as s:
@@ -2735,7 +2739,7 @@ def signal_evidence(bank: str, key: str, product: str | None = None, days: int =
             FROM review_index i
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE i.bank = :bank AND i.issue = :key AND {_CMP}
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
               AND i.dt >= {_WEEK_END} - make_interval(days => :d) AND i.dt < {_WEEK_END}
               AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)
             ORDER BY i.dt DESC LIMIT :lim
@@ -2867,7 +2871,7 @@ def novel_week(bank: str, product: str | None = None, days: int = 7, limit: int 
             FROM review_index i
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE i.bank = :bank AND {_CMP}
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.channels, i.issue, :product))
+              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
               AND i.dt >= {_WEEK_END} - make_interval(days => :d) AND i.dt < {_WEEK_END}
               AND (a.issue = 'other' OR a.code_fit = 'approx') AND a.new_topic IS NOT NULL
             ORDER BY i.dt DESC LIMIT :lim

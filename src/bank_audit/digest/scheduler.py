@@ -761,6 +761,16 @@ async def bankiru_fts_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("разметка отзывов: %s", e)
         try:
+            # Срезы вне справочника продуктов (зарплатные проекты, УС, выездной
+            # сервис) — после основной разметки: кандидатов отбирают и по её каналам
+            from ..rag import review_slices
+            r = await review_slices.run(limit=int(os.getenv("REVIEW_SLICES_TICK_LIMIT", "2000")), daily=True)
+            if r.get("done"):
+                log.info("срезы отзывов: %d за тик, %.1f ₽, остановка: %s", r["done"], r.get("rub") or 0, r.get("stop"))
+            await asyncio.to_thread(review_slices.apply_to_index)
+        except Exception as e:  # noqa: BLE001
+            log.warning("срезы отзывов: %s", e)
+        try:
             # Векторы изложений новых жалоб — для групп похожих в ленте;
             # ограничено по времени, недосчитанное доберёт следующий тик
             from ..rag import reviews_work

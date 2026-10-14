@@ -579,7 +579,7 @@ def search_vectors_local(qvec: list[float], *, bank: str | None = None,
     if bank:
         clauses.append("i.bank = :bank"); p["bank"] = bank
     if product:
-        clauses.append("al_product_is(i.product, i.channels, i.issue, :product)"); p["product"] = product
+        clauses.append("al_product_is(i.product, i.slices, :product)"); p["product"] = product
     if city:
         clauses.append("i.city = :city"); p["city"] = city
     if month:
@@ -632,7 +632,7 @@ def search_fts(query: str, *, bank: str | None = None, product: str | None = Non
         clauses.append("f.bank = :bank")
         params["bank"] = bank
     if product:
-        clauses.append("al_product_is(f.product, f.channels, f.issue, :product)")
+        clauses.append("al_product_is(f.product, f.slices, :product)")
         params["product"] = product
     if city:
         clauses.append("f.city = :city")
