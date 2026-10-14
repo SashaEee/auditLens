@@ -40,7 +40,7 @@ MODEL_ARB = os.getenv("REVIEW_SLICES_ARB", RA.MODEL_C2)
 BATCH = int(os.getenv("REVIEW_SLICES_BATCH", "10"))
 INFLIGHT = int(os.getenv("REVIEW_SLICES_INFLIGHT", "12"))
 CAP_RUB = float(os.getenv("REVIEW_SLICES_CAP_RUB", "15000"))
-DAILY_CAP_RUB = float(os.getenv("REVIEW_SLICES_DAILY_CAP_RUB", "1500"))
+DAILY_CAP_RUB = float(os.getenv("REVIEW_SLICES_DAILY_CAP_RUB", "2000"))    # доразметка за сутки (МСК)
 _LOCK_KEY = 710_022_402
 _MAX_CHARS = 3000
 
