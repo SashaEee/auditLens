@@ -66,6 +66,8 @@ def test_unit_labels(monkeypatch):
     assert OR.unit_label("-", "Управление") == "Центр"
     monkeypatch.setenv("ORG_UNIT_NAMES", '{"52": "Юг"}')
     assert OR.unit_label("52", "") == "Юг"
+    monkeypatch.setenv("ORG_UNIT_NAMES", "52=Юг,-=Центр управления")
+    assert OR.unit_label("52", "") == "Юг" and OR.unit_label("-", "") == "Центр управления"
 
 
 def test_roles():

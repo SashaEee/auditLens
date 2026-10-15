@@ -7,7 +7,7 @@
 логин заведён под другим номером). ФИО в базу не попадают: только ключ
 сопоставления — sha256 нормализованных «имя фамилия».
 
-Подписи подразделений — из env ORG_UNIT_NAMES ({"номер": "название"}), иначе
+Подписи подразделений — из env ORG_UNIT_NAMES («номер=название,…» или JSON), иначе
 сокращение из вышестоящего подразделения («… по НКБ» → «НКБ»), иначе номер.
 Уволенные (ORG_FIRED_STATUSES, по умолчанию F) в штат не входят.
 """
@@ -41,10 +41,15 @@ def _fired() -> set[str]:
 
 
 def _unit_names() -> dict:
-    try:
-        return json.loads(os.getenv("ORG_UNIT_NAMES", "") or "{}")
-    except ValueError:
+    """ORG_UNIT_NAMES: JSON {"номер": "название"} или «номер=название,номер=название»
+    (второй вид не ломается, если .env читает оболочка)."""
+    raw = os.getenv("ORG_UNIT_NAMES", "").strip()
+    if not raw:
         return {}
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {k.strip(): v.strip() for k, _, v in (p.partition("=") for p in raw.split(",")) if k.strip() and v.strip()}
 
 
 _HINT_RX = re.compile(r"\bпо\s+([А-ЯЁ][А-ЯЁа-яё]{0,5}Б)\b")
