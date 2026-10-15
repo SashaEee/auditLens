@@ -70,6 +70,13 @@ def test_unit_labels(monkeypatch):
     assert OR.unit_label("52", "") == "Юг" and OR.unit_label("-", "") == "Центр управления"
 
 
+def test_headcount_override(monkeypatch):
+    monkeypatch.setenv("ORG_UNIT_HEADCOUNT", "52=40, 55=39,bad=x,=3")
+    assert OR._headcount() == {"52": 40, "55": 39}
+    monkeypatch.delenv("ORG_UNIT_HEADCOUNT")
+    assert OR._headcount() == {}
+
+
 def test_roles():
     assert OR._role("Менеджер направления") == "Руководители"
     assert OR._role("Главный эксперт по технологиям") == "Эксперты и специалисты"

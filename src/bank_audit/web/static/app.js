@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 b38466997eaad69e571a06a6acbf95581c77ec46be05ac78c13279096b01c4ab): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 532a345fb900bddf633e70ca35c3828d0a08a4a3a056ae144284d6b59f7d789f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -23049,7 +23049,8 @@ function PuReach({
   }, /*#__PURE__*/React.createElement("td", {
     title: u.code && u.code !== "-" ? `номер ${u.code}` : "без номера"
   }, u.name), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
+    className: "tnum",
+    title: u.head_set ? `задано отдельно; по выгрузке — ${u.head_roster}` : undefined
   }, u.head), /*#__PURE__*/React.createElement("td", {
     className: "tnum"
   }, u.users), /*#__PURE__*/React.createElement("td", {
@@ -23109,7 +23110,7 @@ function PuReach({
     className: "vv"
   }, r.users, " \u0438\u0437 ", r.head, " \xB7 ", puPct(r.reach))))), /*#__PURE__*/React.createElement("div", {
     className: "pu-note"
-  }, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2014 \u0442\u0430\u0431\u0435\u043B\u044C\u043D\u044B\u0439 \u043D\u043E\u043C\u0435\u0440 \u0432 \u043B\u043E\u0433\u0438\u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B \u0441\u043E \u0448\u0442\u0430\u0442\u043E\u043C (", d.matched.tab, ") \u0438\u043B\u0438 \u0441\u043E\u0432\u043F\u0430\u043B\u0438 \u0438\u043C\u044F \u0438 \u0444\u0430\u043C\u0438\u043B\u0438\u044F (", d.matched.name, "). \u0428\u0442\u0430\u0442 \u2014 \u0431\u0435\u0437 \u0443\u0432\u043E\u043B\u0435\u043D\u043D\u044B\u0445. \u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F. \u0428\u0442\u0430\u0442 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D ", new Date(d.loaded_at).toLocaleDateString("ru"), ".")), /*#__PURE__*/React.createElement("div", {
+  }, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2014 \u0442\u0430\u0431\u0435\u043B\u044C\u043D\u044B\u0439 \u043D\u043E\u043C\u0435\u0440 \u0432 \u043B\u043E\u0433\u0438\u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B \u0441\u043E \u0448\u0442\u0430\u0442\u043E\u043C (", d.matched.tab, ") \u0438\u043B\u0438 \u0441\u043E\u0432\u043F\u0430\u043B\u0438 \u0438\u043C\u044F \u0438 \u0444\u0430\u043C\u0438\u043B\u0438\u044F (", d.matched.name, ").", d.head_set ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u0427\u0438\u0441\u043B\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u0448\u0442\u0430\u0442\u0430 ", d.head_set, " ", plural(d.head_set, "подразделения", "подразделений", "подразделений"), " \u0437\u0430\u0434\u0430\u043D\u0430 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u043E (\u043D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u2014 \u043F\u043E \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0435), \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u2014 \u043F\u043E \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0435 \u0431\u0435\u0437 \u0443\u0432\u043E\u043B\u0435\u043D\u043D\u044B\u0445.") : "Штат — без уволенных.", " \u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F. \u0428\u0442\u0430\u0442 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D ", new Date(d.loaded_at).toLocaleDateString("ru"), ".")), /*#__PURE__*/React.createElement("div", {
     className: "pu-reach-act"
   }, pick, msg && /*#__PURE__*/React.createElement("span", {
     className: "pu-note"

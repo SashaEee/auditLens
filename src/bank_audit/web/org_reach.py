@@ -9,7 +9,8 @@
 
 Подписи подразделений — из env ORG_UNIT_NAMES («номер=название,…» или JSON), иначе
 сокращение из вышестоящего подразделения («… по НКБ» → «НКБ»), иначе номер.
-Уволенные (ORG_FIRED_STATUSES, по умолчанию F) в штат не входят.
+Уволенные (ORG_FIRED_STATUSES, по умолчанию F) в штат не входят; численность
+штата подразделений можно задать из другого источника (ORG_UNIT_HEADCOUNT).
 """
 from __future__ import annotations
 
@@ -50,6 +51,17 @@ def _unit_names() -> dict:
         return json.loads(raw)
     except ValueError:
         return {k.strip(): v.strip() for k, _, v in (p.partition("=") for p in raw.split(",")) if k.strip() and v.strip()}
+
+
+def _headcount() -> dict[str, int]:
+    """ORG_UNIT_HEADCOUNT — численность штата подразделений из другого источника
+    («номер=число,…»): перекрывает посчитанную по выгрузке, пока выгрузка неполная."""
+    out = {}
+    for part in os.getenv("ORG_UNIT_HEADCOUNT", "").split(","):
+        k, _, v = part.partition("=")
+        if k.strip() and v.strip().isdigit():
+            out[k.strip()] = int(v.strip())
+    return out
 
 
 _HINT_RX = re.compile(r"\bпо\s+([А-ЯЁ][А-ЯЁа-яё]{0,5}Б)\b")
@@ -203,6 +215,12 @@ def report(viewer: str | None = None, with_me: bool | None = None) -> dict:
         rr = roles.setdefault(_role(m["position"]), {"head": 0, "users": 0, "ai": 0})
         rr["users"] += 1
         rr["ai"] += q
+    override = _headcount()
+    for k, u in units.items():
+        u["head_roster"] = u["head"]
+        if k in override:
+            u["head"] = override[k]
+            u["head_set"] = True
     rows = sorted(units.values(), key=lambda x: (-(x["users"] / x["head"]) if x["head"] else 0, -x["users"]))
     for r in rows:
         r["reach"] = round(r["users"] / r["head"], 4) if r["head"] else None
@@ -213,6 +231,7 @@ def report(viewer: str | None = None, with_me: bool | None = None) -> dict:
             "label": os.getenv("ORG_UNIT_LABEL", "Подразделение"),
             "head": head, "users": users_n, "reach": round(users_n / head, 4) if head else None,
             "active30": sum(r["active30"] for r in rows), "matched": matched, "other": other,
+            "head_set": sum(1 for r in rows if r.get("head_set")),
             "units": rows,
             "roles": [{"role": k, **v, "reach": round(v["users"] / v["head"], 4) if v["head"] else None}
                       for k, v in sorted(roles.items(), key=lambda kv: -kv[1]["users"])]}

@@ -11904,7 +11904,7 @@ function PuReach({isOwner,withMe}){
         <thead><tr><th>{lab}</th><th>Штат</th><th>Пользуются</th><th className="pu-reach-bar">Охват</th><th>Активны 30 дн</th><th>Вопросы ИИ</th><th>Постоянные</th><th>Часы</th></tr></thead>
         <tbody>{d.units.map(u=><tr key={u.code}>
           <td title={u.code&&u.code!=="-"?`номер ${u.code}`:"без номера"}>{u.name}</td>
-          <td className="tnum">{u.head}</td><td className="tnum">{u.users}</td>
+          <td className="tnum" title={u.head_set?`задано отдельно; по выгрузке — ${u.head_roster}`:undefined}>{u.head}</td><td className="tnum">{u.users}</td>
           <td className="pu-reach-bar"><span className="pu-rb"><i style={{width:Math.round((u.reach||0)/maxR*100)+"%"}}/></span><b className="tnum">{puPct(u.reach)}</b></td>
           <td className="tnum">{u.active30}</td><td className="tnum">{u.ai}</td><td className="tnum" title="заходили 5 и больше разных дней">{u.regular}</td><td className="tnum">{u.hours.toLocaleString("ru")}</td></tr>)}
           <tr className="pu-reach-tot"><td>Итого</td><td className="tnum">{d.head}</td><td className="tnum">{d.users}</td>
@@ -11917,7 +11917,7 @@ function PuReach({isOwner,withMe}){
           <span className="tr"><span className="fl" style={{width:Math.round((r.reach||0)*100)+"%"}}/></span>
           <span className="vv">{r.users} из {r.head} · {puPct(r.reach)}</span></div>)}</div>
         <div className="pu-note">Сотрудник подразделения — табельный номер в логине совпал со штатом ({d.matched.tab}) или совпали имя и фамилия ({d.matched.name}).
-          Штат — без уволенных. Служебные учётки не считаются. Штат загружен {new Date(d.loaded_at).toLocaleDateString("ru")}.</div>
+          {d.head_set?<>Численность штата {d.head_set} {plural(d.head_set,"подразделения","подразделений","подразделений")} задана отдельно (наведите на число — по выгрузке), остальных — по выгрузке без уволенных.</>:"Штат — без уволенных."} Служебные учётки не считаются. Штат загружен {new Date(d.loaded_at).toLocaleDateString("ru")}.</div>
       </div>
       <div className="pu-reach-act">{pick}{msg&&<span className="pu-note">{msg}</span>}</div>
     </div>
