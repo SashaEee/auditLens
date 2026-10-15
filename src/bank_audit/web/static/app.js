@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 c6bd06bd42352392d7715b0d0bb897960ea3fd2a35b3cc4c7131e081bdb8cb4f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 f057720b641b7bdc2b00a706ce616b4e93187749b409bbbc6121b031c4d20298): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -20281,6 +20281,26 @@ const AD_CSS = `
 .pu-sel{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:6px;
   border:1px solid var(--hair);background:var(--paper);color:var(--ink-2)}
 .pu-tblwrap{overflow-x:auto;max-height:560px;overflow-y:auto}
+.pu-tiles4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:900px){.pu-tiles4{grid-template-columns:1fr 1fr}.pu-tiles4>.pu-tile,.pu-tiles4>.pu-tile:nth-child(n+4){grid-column:auto}}
+.pu-reach td,.pu-reach th{text-align:right}
+.pu-reach td:first-child,.pu-reach th:first-child{text-align:left}
+.pu-reach .pu-reach-bar{text-align:left;min-width:150px}
+.pu-rb{display:inline-block;vertical-align:middle;width:90px;height:8px;margin-right:8px;border-radius:4px;background:var(--paper-2);overflow:hidden}
+.pu-rb i{display:block;height:100%;border-radius:4px;background:color-mix(in oklab,var(--select),transparent 25%)}
+.pu-reach-tot td{font-weight:600;border-top:1px solid var(--hair-2)}
+.pu-reach-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.pu-lim{position:relative;height:6px;margin-top:8px;border-radius:3px;background:var(--paper-2)}
+.pu-lim i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--select)}
+.pu-lim u{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;background:var(--warn);text-decoration:none}
+.pu-days{display:flex;align-items:flex-end;gap:2px;height:140px;padding-top:6px}
+.pu-dcol{flex:1 1 0;min-width:0;height:100%;display:flex;flex-direction:column;justify-content:flex-end;cursor:default}
+.pu-dcol .o{display:block;background:color-mix(in oklab,var(--ink-3),transparent 55%);border-radius:2px 2px 0 0}
+.pu-dcol .a{display:block;background:var(--select)}
+.pu-dcol.prev{opacity:.45}
+.pu-dcol:hover{opacity:1;filter:brightness(.92)}
+.pu-sw{display:inline-block;width:10px;height:10px;margin:0 5px 0 0;border-radius:2px;vertical-align:-1px}
+.pu-sw.a{background:var(--select)}.pu-sw.o{margin-left:10px;background:color-mix(in oklab,var(--ink-3),transparent 55%)}
 .pu-rowclick{cursor:pointer}
 .pu-rowclick:hover{background:var(--surface)}
 .pu-nm{display:block;font-weight:500}
@@ -22177,7 +22197,7 @@ function PuTicket({
     onClick: save
   }, busy ? "Сохраняю…" : reply.trim() ? "Ответить" : "Сохранить статус"))))));
 }
-const PU_TABS = [["people", "Люди"], ["reports", "Отчёты"], ["ai", "Качество ИИ"], ["inbox", "Обращения"], ["data", "Данные"], ["tech", "Техника"]];
+const PU_TABS = [["people", "Люди"], ["reach", "Охват и траты"], ["reports", "Отчёты"], ["ai", "Качество ИИ"], ["inbox", "Обращения"], ["data", "Данные"], ["tech", "Техника"]];
 // «Имя Фамилия» → «Имя Ф.»; логин остаётся логином
 const puShort = n => {
   const p = String(n || "").trim().split(/\s+/);
@@ -22882,6 +22902,378 @@ function PuComplaints({
 }
 
 // Плашка «В облаках турбулентность» для всех — включает и выключает только владелец
+// ══ ОХВАТ И ТРАТЫ: доля штата подразделений и траты на модели ══════════════
+// Для доклада руководству: сколько людей подразделения пользуется инструментом
+// (по загруженной кадровой выгрузке) и сколько стоят модели — против лимита отдела.
+const puRub = n => n == null ? "—" : Math.round(+n).toLocaleString("ru") + " ₽";
+const puPct = (x, d = 0) => x == null ? "—" : (Math.round(x * 100 * 10 ** d) / 10 ** d).toLocaleString("ru") + "%";
+const PU_MON = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+const puMonth = ym => {
+  const [y, m] = String(ym || "").split("-").map(Number);
+  return m ? `${PU_MON[m - 1]} ${y}` : ym;
+};
+function PuReach({
+  isOwner,
+  withMe
+}) {
+  const [d, setD] = useState(null),
+    [err, setErr] = useState(false);
+  const [busy, setBusy] = useState(false),
+    [msg, setMsg] = useState("");
+  const fileRef = useRef(null);
+  const load = () => apiFetch("/api/admin/pulse/reach?v=1" + puMe(withMe)).then(x => {
+    setD(x);
+    setErr(false);
+  }).catch(() => setErr(true));
+  useEffect(() => {
+    load();
+  }, [withMe]); // eslint-disable-line
+  const upload = f => {
+    if (!f) return;
+    setBusy(true);
+    setMsg("");
+    const rd = new FileReader();
+    rd.onload = () => {
+      const b64 = String(rd.result).split(",")[1] || "";
+      fetch("/api/admin/pulse/reach", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: f.name,
+          data: b64
+        })
+      }).then(async r => {
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.detail || "проверьте файл");
+        return j;
+      }).then(r => {
+        setMsg(`Загружено ${puNum(r.rows)} ${plural(r.rows, "запись", "записи", "записей")}, работают ${puNum(r.current)}.`);
+        load();
+      }).catch(e => setMsg("Не загрузилось: " + e.message)).finally(() => {
+        setBusy(false);
+        if (fileRef.current) fileRef.current.value = "";
+      });
+    };
+    rd.readAsDataURL(f);
+  };
+  const pick = isOwner && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+    ref: fileRef,
+    type: "file",
+    accept: ".xlsx",
+    hidden: true,
+    onChange: e => upload(e.target.files && e.target.files[0])
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    disabled: busy,
+    onClick: () => fileRef.current && fileRef.current.click()
+  }, busy ? "Загружаю…" : d && d.loaded ? "Обновить штат (.xlsx)" : "Загрузить штат (.xlsx)"));
+  if (err && !d) return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u043E\u0445\u0432\u0430\u0442. ", /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    onClick: load
+  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")));
+  if (!d) return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 160
+  }));
+  if (!d.loaded) return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0445\u0432\u0430\u0442 \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u0439")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u0428\u0442\u0430\u0442 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D. ", isOwner ? "Загрузите кадровую выгрузку (xlsx: табельный номер, статус, ФИО, должность, номер подразделения) — посчитаем, какая доля каждого подразделения пользуется AuditLens. ФИО не сохраняются." : "Его загружает владелец инструмента."), /*#__PURE__*/React.createElement("div", {
+    className: "pu-reach-act"
+  }, pick, msg && /*#__PURE__*/React.createElement("span", {
+    className: "pu-note"
+  }, msg)));
+  const lab = d.label || "Подразделение";
+  const maxR = Math.max(...d.units.map(u => u.reach || 0), 0.01);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "pu-tiles pu-tiles4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u041F\u043E\u043B\u044C\u0437\u0443\u044E\u0442\u0441\u044F \u0438\u0437 \u0448\u0442\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puNum(d.users)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, "\u0438\u0437 ", puNum(d.head), " \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0449\u0438\u0445 \xB7 ", puPct(d.reach))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u0410\u043A\u0442\u0438\u0432\u043D\u044B \u0437\u0430 30 \u0434\u043D\u0435\u0439"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puNum(d.active30)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, "\u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u043E\u0432 \u0438\u0437 \u0448\u0442\u0430\u0442\u0430")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u041D\u0435 \u0438\u0437 \u0448\u0442\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puNum(d.other.users)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, "\u0434\u0440\u0443\u0433\u0438\u0435 \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \xB7 ", puNum(d.other.active30), " \u0437\u0430 30 \u0434\u043D\u0435\u0439")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u0412\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418 \u043E\u0442 \u0448\u0442\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puNum(d.units.reduce((a, u) => a + u.ai, 0))), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, "\u0437\u0430\u0434\u0430\u0432\u0430\u043B\u0438 ", puNum(d.units.reduce((a, u) => a + u.ai_users, 0)), " \u0447\u0435\u043B."))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0445\u0432\u0430\u0442 \u043F\u043E \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u043C \xB7 \u0434\u043E\u043B\u044F \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0449\u0438\u0445 \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u043E\u0432, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043F\u043E\u043B\u044C\u0437\u0443\u044E\u0442\u0441\u044F"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0441\u0435\u0433\u043E \u0437\u0430 \u0432\u0441\u0451 \u0432\u0440\u0435\u043C\u044F")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tblwrap"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "pu-tbl pu-reach"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, lab), /*#__PURE__*/React.createElement("th", null, "\u0428\u0442\u0430\u0442"), /*#__PURE__*/React.createElement("th", null, "\u041F\u043E\u043B\u044C\u0437\u0443\u044E\u0442\u0441\u044F"), /*#__PURE__*/React.createElement("th", {
+    className: "pu-reach-bar"
+  }, "\u041E\u0445\u0432\u0430\u0442"), /*#__PURE__*/React.createElement("th", null, "\u0410\u043A\u0442\u0438\u0432\u043D\u044B 30 \u0434\u043D"), /*#__PURE__*/React.createElement("th", null, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418"), /*#__PURE__*/React.createElement("th", null, "\u041F\u043E\u0441\u0442\u043E\u044F\u043D\u043D\u044B\u0435"), /*#__PURE__*/React.createElement("th", null, "\u0427\u0430\u0441\u044B"))), /*#__PURE__*/React.createElement("tbody", null, d.units.map(u => /*#__PURE__*/React.createElement("tr", {
+    key: u.code
+  }, /*#__PURE__*/React.createElement("td", {
+    title: u.code && u.code !== "-" ? `номер ${u.code}` : "без номера"
+  }, u.name), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, u.head), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, u.users), /*#__PURE__*/React.createElement("td", {
+    className: "pu-reach-bar"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu-rb"
+  }, /*#__PURE__*/React.createElement("i", {
+    style: {
+      width: Math.round((u.reach || 0) / maxR * 100) + "%"
+    }
+  })), /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, puPct(u.reach))), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, u.active30), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, u.ai), /*#__PURE__*/React.createElement("td", {
+    className: "tnum",
+    title: "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 5 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435 \u0440\u0430\u0437\u043D\u044B\u0445 \u0434\u043D\u0435\u0439"
+  }, u.regular), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, u.hours.toLocaleString("ru")))), /*#__PURE__*/React.createElement("tr", {
+    className: "pu-reach-tot"
+  }, /*#__PURE__*/React.createElement("td", null, "\u0418\u0442\u043E\u0433\u043E"), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, d.head), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, d.users), /*#__PURE__*/React.createElement("td", {
+    className: "pu-reach-bar"
+  }, /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, puPct(d.reach))), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, d.active30), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, d.units.reduce((a, u) => a + u.ai, 0)), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, d.units.reduce((a, u) => a + u.regular, 0)), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, Math.round(d.units.reduce((a, u) => a + u.hours, 0)).toLocaleString("ru")))))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-grid2 top"
+  }, /*#__PURE__*/React.createElement("div", null, d.roles.map(r => /*#__PURE__*/React.createElement("div", {
+    className: "pu-bar-row",
+    key: r.role
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "lb"
+  }, r.role), /*#__PURE__*/React.createElement("span", {
+    className: "tr"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "fl",
+    style: {
+      width: Math.round((r.reach || 0) * 100) + "%"
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "vv"
+  }, r.users, " \u0438\u0437 ", r.head, " \xB7 ", puPct(r.reach))))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2014 \u0442\u0430\u0431\u0435\u043B\u044C\u043D\u044B\u0439 \u043D\u043E\u043C\u0435\u0440 \u0432 \u043B\u043E\u0433\u0438\u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B \u0441\u043E \u0448\u0442\u0430\u0442\u043E\u043C (", d.matched.tab, ") \u0438\u043B\u0438 \u0441\u043E\u0432\u043F\u0430\u043B\u0438 \u0438\u043C\u044F \u0438 \u0444\u0430\u043C\u0438\u043B\u0438\u044F (", d.matched.name, "). \u0428\u0442\u0430\u0442 \u2014 \u0431\u0435\u0437 \u0443\u0432\u043E\u043B\u0435\u043D\u043D\u044B\u0445. \u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F. \u0428\u0442\u0430\u0442 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D ", new Date(d.loaded_at).toLocaleDateString("ru"), ".")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-reach-act"
+  }, pick, msg && /*#__PURE__*/React.createElement("span", {
+    className: "pu-note"
+  }, msg))));
+}
+function PuCosts() {
+  const [d, setD] = useState(null),
+    [err, setErr] = useState(false);
+  const load = () => apiFetch("/api/admin/pulse/costs").then(x => {
+    setD(x);
+    setErr(false);
+  }).catch(() => setErr(true));
+  useEffect(() => {
+    load();
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, 600000);
+    return () => clearInterval(t);
+  }, []);
+  if (err && !d) return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u043B\u0443\u0447\u0438\u0442\u044C \u0442\u0440\u0430\u0442\u044B. ", /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    onClick: load
+  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")));
+  if (!d) return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 160
+  }));
+  if (!d.configured) return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0422\u0440\u0430\u0442\u044B \u043D\u0430 \u043C\u043E\u0434\u0435\u043B\u0438")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u0423\u0447\u0451\u0442 \u0442\u0440\u0430\u0442 \u043D\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0451\u043D: \u043D\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 \u043D\u0443\u0436\u043D\u044B \u0430\u0434\u0440\u0435\u0441 \u0441\u0435\u0440\u0432\u0438\u0441\u0430 \u0443\u0447\u0451\u0442\u0430 \u0440\u0430\u0441\u0445\u043E\u0434\u043E\u0432 \u043E\u0431\u043B\u0430\u043A\u0430 \u0438 \u0442\u043E\u043A\u0435\u043D \u043E\u0442\u0434\u0435\u043B\u0430 (\u043F\u0435\u0440\u0435\u043C\u0435\u043D\u043D\u044B\u0435 CLOUD_COSTS_*)."));
+  const mo = d.month,
+    mname = puMonth(mo.period);
+  const dmax = Math.max(...d.days.map(x => x.dept), 1);
+  const curM = mo.period;
+  const mmax = Math.max(...d.models.map(x => x.month), 1);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "pu-tiles pu-tiles4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u041E\u0442\u0434\u0435\u043B \xB7 ", mname), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puRub(mo.dept)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, mo.threshold ? /*#__PURE__*/React.createElement(React.Fragment, null, puPct(mo.util, 1), " \u043B\u0438\u043C\u0438\u0442\u0430 ", puRub(mo.threshold)) : "лимит не задан"), mo.threshold && /*#__PURE__*/React.createElement("div", {
+    className: "pu-lim",
+    title: `прогноз на месяц по темпу — ${puRub(mo.forecast)}`
+  }, /*#__PURE__*/React.createElement("i", {
+    style: {
+      width: Math.min(100, mo.util * 100) + "%"
+    }
+  }), /*#__PURE__*/React.createElement("u", {
+    style: {
+      left: Math.min(100, mo.util_forecast * 100) + "%"
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u041F\u0440\u043E\u0433\u043D\u043E\u0437 \u043E\u0442\u0434\u0435\u043B\u0430 \u043D\u0430 \u043C\u0435\u0441\u044F\u0446"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puRub(mo.forecast)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, mo.threshold ? /*#__PURE__*/React.createElement(React.Fragment, null, puPct(mo.util_forecast, 1), " \u043B\u0438\u043C\u0438\u0442\u0430 \u043F\u043E \u0442\u0435\u043C\u043F\u0443") : "по темпу трат")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "AuditLens \xB7 ", mname), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puRub(mo.app)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, puPct(mo.app_share), " \u0442\u0440\u0430\u0442 \u043E\u0442\u0434\u0435\u043B\u0430 \xB7 \u043F\u0440\u043E\u0433\u043D\u043E\u0437 ", puRub(mo.app_forecast))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "AuditLens \u0432 \u043E\u0431\u044B\u0447\u043D\u044B\u0439 \u0434\u0435\u043D\u044C"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puRub(mo.app_median_day)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, "\u043C\u0435\u0434\u0438\u0430\u043D\u0430 \u0437\u0430 4 \u043D\u0435\u0434\u0435\u043B\u0438 \u2014 \u0440\u0430\u0437\u043E\u0432\u044B\u0435 \u043F\u0440\u043E\u0433\u043E\u043D\u044B \u0435\u0451 \u043F\u043E\u0447\u0442\u0438 \u043D\u0435 \u0434\u0432\u0438\u0433\u0430\u044E\u0442"))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-grid2 top wide"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E \u0434\u043D\u044F\u043C \xB7 AuditLens \u0438 \u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430"), /*#__PURE__*/React.createElement("span", null, d.as_of ? `данные облака на ${new Date(d.as_of).toLocaleString("ru", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  })}` : "")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-days",
+    role: "img",
+    "aria-label": "\u0422\u0440\u0430\u0442\u044B \u043F\u043E \u0434\u043D\u044F\u043C: AuditLens \u0438 \u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430"
+  }, d.days.map(x => /*#__PURE__*/React.createElement("div", {
+    key: x.day,
+    className: "pu-dcol" + (x.day.startsWith(curM) ? "" : " prev"),
+    "data-tip": `${new Date(x.day + "T00:00:00").toLocaleDateString("ru", {
+      day: "numeric",
+      month: "long",
+      weekday: "short"
+    })}: отдел ${puRub(x.dept)}, AuditLens ${puRub(x.app)}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "o",
+    style: {
+      height: Math.max(0, (x.dept - x.app) / dmax * 100) + "%"
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "a",
+    style: {
+      height: x.app / dmax * 100 + "%"
+    }
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu-sw a"
+  }), "AuditLens ", /*#__PURE__*/React.createElement("span", {
+    className: "pu-sw o"
+  }), "\u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430 \xB7 \u0431\u043B\u0435\u0434\u043D\u0435\u0435 \u2014 \u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043C\u0435\u0441\u044F\u0446 \xB7 \u043D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0441\u0442\u043E\u043B\u0431\u0435\u0446")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041C\u043E\u0434\u0435\u043B\u0438 AuditLens \xB7 ", mname), /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043C\u0435\u0441\u044F\u0446")), d.models.length ? d.models.map(x => /*#__PURE__*/React.createElement("div", {
+    className: "pu-bar-row",
+    key: x.model
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "lb",
+    title: x.model
+  }, x.model), /*#__PURE__*/React.createElement("span", {
+    className: "tr"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "fl",
+    style: {
+      width: Math.round(x.month / mmax * 100) + "%"
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "vv"
+  }, puRub(x.month), " \xB7 ", puRub(x.prev)))) : /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u0412 \u044D\u0442\u043E\u043C \u043C\u0435\u0441\u044F\u0446\u0435 \u0442\u0440\u0430\u0442 AuditLens \u0435\u0449\u0451 \u043D\u0435\u0442."))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-card",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, "\u0438\u0441\u0442\u043E\u0440\u0438\u044F \u0441 ", d.months.length ? puMonth(d.months[0].month) : "—")), /*#__PURE__*/React.createElement("table", {
+    className: "pu-tbl"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041C\u0435\u0441\u044F\u0446"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0434\u0435\u043B"), /*#__PURE__*/React.createElement("th", null, "AuditLens"), /*#__PURE__*/React.createElement("th", null, "\u0414\u043E\u043B\u044F AuditLens"))), /*#__PURE__*/React.createElement("tbody", null, d.months.slice().reverse().map(x => /*#__PURE__*/React.createElement("tr", {
+    key: x.month
+  }, /*#__PURE__*/React.createElement("td", null, puMonth(x.month)), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, puRub(x.dept)), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, puRub(x.app)), /*#__PURE__*/React.createElement("td", {
+    className: "tnum"
+  }, x.dept ? puPct(x.app / x.dept) : "—"))))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "AuditLens \u2014 \u043A\u043B\u044E\u0447\u0438 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u0432 \u0443\u0447\u0451\u0442\u0435 \u0440\u0430\u0441\u0445\u043E\u0434\u043E\u0432 \u043E\u0431\u043B\u0430\u043A\u0430; \u0434\u043E \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430 \u043D\u0430 \u0441\u0432\u043E\u0439 \u043A\u043B\u044E\u0447 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0434\u0435\u043B\u0438\u043B\u043E \u043E\u0431\u0449\u0438\u0439 \u043A\u043B\u044E\u0447 \u043E\u0442\u0434\u0435\u043B\u0430, \u0438 \u0435\u0433\u043E \u0442\u0440\u0430\u0442\u044B \u0437\u0434\u0435\u0441\u044C \u043D\u0435 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u044B.")));
+}
 function PuTurbCtl() {
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -23384,7 +23776,14 @@ function PulsePage() {
     rev: rev,
     onOpenUser: setCard,
     onChanged: load
-  }), tab === "reports" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuTopics, {
+  }), tab === "reach" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuReach, {
+    isOwner: !!(me && me.is_admin),
+    withMe: withMe
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 16
+    }
+  }), /*#__PURE__*/React.createElement(PuCosts, null)), tab === "reports" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuTopics, {
     t: m.topics,
     days: m.days
   }), /*#__PURE__*/React.createElement(PuReports, {

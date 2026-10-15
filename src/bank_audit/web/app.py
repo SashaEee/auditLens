@@ -637,6 +637,52 @@ def admin_metrics(days: int = 14, me: Optional[bool] = None,
     return res
 
 
+@app.get("/api/admin/pulse/reach")
+def admin_pulse_reach(me: Optional[bool] = None, user: CurrentUser = Depends(get_current_user)):
+    """Охват подразделений по загруженному штату: какая доля пользуется инструментом."""
+    if not telemetry.can_pulse(user.username):
+        raise HTTPException(403, "admin only")
+    from . import org_reach
+    wm = me if me is not None else telemetry.with_me_default(user.username)
+    return org_reach.report(user.username, wm)
+
+
+class RosterIn(BaseModel):
+    name: str = ""
+    data: str                       # xlsx в base64
+
+
+@app.post("/api/admin/pulse/reach")
+def admin_pulse_reach_load(body: RosterIn, user: CurrentUser = Depends(get_current_user)):
+    """Загрузка штата (кадровой выгрузки xlsx) — только владелец. ФИО не сохраняются."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "owner only")
+    import base64
+    import binascii
+    from . import org_reach
+    try:
+        raw = base64.b64decode(body.data, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "файл не прочитался")
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(400, "файл больше 10 МБ")
+    try:
+        return org_reach.load_roster(raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception:  # noqa: BLE001 — битый xlsx и прочее
+        raise HTTPException(400, "не получилось разобрать выгрузку — нужен файл .xlsx")
+
+
+@app.get("/api/admin/pulse/costs")
+def admin_pulse_costs(user: CurrentUser = Depends(get_current_user)):
+    """Траты на модели: отдел против лимита, AuditLens, по дням, месяцам и моделям."""
+    if not telemetry.can_pulse(user.username):
+        raise HTTPException(403, "admin only")
+    from . import cloud_costs
+    return cloud_costs.summary()
+
+
 _EVAL_TASK: Optional[asyncio.Task] = None
 
 

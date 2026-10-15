@@ -10475,6 +10475,26 @@ const AD_CSS=`
 .pu-sel{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:6px;
   border:1px solid var(--hair);background:var(--paper);color:var(--ink-2)}
 .pu-tblwrap{overflow-x:auto;max-height:560px;overflow-y:auto}
+.pu-tiles4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:900px){.pu-tiles4{grid-template-columns:1fr 1fr}.pu-tiles4>.pu-tile,.pu-tiles4>.pu-tile:nth-child(n+4){grid-column:auto}}
+.pu-reach td,.pu-reach th{text-align:right}
+.pu-reach td:first-child,.pu-reach th:first-child{text-align:left}
+.pu-reach .pu-reach-bar{text-align:left;min-width:150px}
+.pu-rb{display:inline-block;vertical-align:middle;width:90px;height:8px;margin-right:8px;border-radius:4px;background:var(--paper-2);overflow:hidden}
+.pu-rb i{display:block;height:100%;border-radius:4px;background:color-mix(in oklab,var(--select),transparent 25%)}
+.pu-reach-tot td{font-weight:600;border-top:1px solid var(--hair-2)}
+.pu-reach-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.pu-lim{position:relative;height:6px;margin-top:8px;border-radius:3px;background:var(--paper-2)}
+.pu-lim i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--select)}
+.pu-lim u{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;background:var(--warn);text-decoration:none}
+.pu-days{display:flex;align-items:flex-end;gap:2px;height:140px;padding-top:6px}
+.pu-dcol{flex:1 1 0;min-width:0;height:100%;display:flex;flex-direction:column;justify-content:flex-end;cursor:default}
+.pu-dcol .o{display:block;background:color-mix(in oklab,var(--ink-3),transparent 55%);border-radius:2px 2px 0 0}
+.pu-dcol .a{display:block;background:var(--select)}
+.pu-dcol.prev{opacity:.45}
+.pu-dcol:hover{opacity:1;filter:brightness(.92)}
+.pu-sw{display:inline-block;width:10px;height:10px;margin:0 5px 0 0;border-radius:2px;vertical-align:-1px}
+.pu-sw.a{background:var(--select)}.pu-sw.o{margin-left:10px;background:color-mix(in oklab,var(--ink-3),transparent 55%)}
 .pu-rowclick{cursor:pointer}
 .pu-rowclick:hover{background:var(--surface)}
 .pu-nm{display:block;font-weight:500}
@@ -11464,7 +11484,7 @@ function PuTicket({tid,onClose,onOpenUser,onChanged}){
   </div>;
 }
 
-const PU_TABS=[["people","Люди"],["reports","Отчёты"],["ai","Качество ИИ"],
+const PU_TABS=[["people","Люди"],["reach","Охват и траты"],["reports","Отчёты"],["ai","Качество ИИ"],
   ["inbox","Обращения"],["data","Данные"],["tech","Техника"]];
 // «Имя Фамилия» → «Имя Ф.»; логин остаётся логином
 const puShort=(n)=>{const p=String(n||"").trim().split(/\s+/);return p.length>=2?`${p[0]} ${p[1][0]}.`:(n||"");};
@@ -11829,6 +11849,128 @@ function PuComplaints({days,withMe,rev,onOpenReport,onOpenUser,onOpenSession}){
 }
 
 // Плашка «В облаках турбулентность» для всех — включает и выключает только владелец
+// ══ ОХВАТ И ТРАТЫ: доля штата подразделений и траты на модели ══════════════
+// Для доклада руководству: сколько людей подразделения пользуется инструментом
+// (по загруженной кадровой выгрузке) и сколько стоят модели — против лимита отдела.
+const puRub=(n)=>n==null?"—":Math.round(+n).toLocaleString("ru")+" ₽";
+const puPct=(x,d=0)=>x==null?"—":(Math.round(x*100*10**d)/10**d).toLocaleString("ru")+"%";
+const PU_MON=["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+const puMonth=(ym)=>{const[y,m]=String(ym||"").split("-").map(Number);return m?`${PU_MON[m-1]} ${y}`:ym;};
+
+function PuReach({isOwner,withMe}){
+  const[d,setD]=useState(null),[err,setErr]=useState(false);
+  const[busy,setBusy]=useState(false),[msg,setMsg]=useState("");
+  const fileRef=useRef(null);
+  const load=()=>apiFetch("/api/admin/pulse/reach?v=1"+puMe(withMe)).then(x=>{setD(x);setErr(false);}).catch(()=>setErr(true));
+  useEffect(()=>{load();},[withMe]); // eslint-disable-line
+  const upload=f=>{ if(!f)return; setBusy(true); setMsg("");
+    const rd=new FileReader();
+    rd.onload=()=>{ const b64=String(rd.result).split(",")[1]||"";
+      fetch("/api/admin/pulse/reach",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:f.name,data:b64})})
+        .then(async r=>{const j=await r.json().catch(()=>({})); if(!r.ok)throw new Error(j.detail||"проверьте файл"); return j;})
+        .then(r=>{setMsg(`Загружено ${puNum(r.rows)} ${plural(r.rows,"запись","записи","записей")}, работают ${puNum(r.current)}.`);load();})
+        .catch(e=>setMsg("Не загрузилось: "+e.message))
+        .finally(()=>{setBusy(false); if(fileRef.current)fileRef.current.value="";}); };
+    rd.readAsDataURL(f); };
+  const pick=isOwner&&<><input ref={fileRef} type="file" accept=".xlsx" hidden onChange={e=>upload(e.target.files&&e.target.files[0])}/>
+    <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={()=>fileRef.current&&fileRef.current.click()}>
+      {busy?"Загружаю…":d&&d.loaded?"Обновить штат (.xlsx)":"Загрузить штат (.xlsx)"}</button></>;
+  if(err&&!d) return <div className="pu-card"><div className="pu-empty">Не удалось посчитать охват. <button className="pu-link" onClick={load}>Повторить</button></div></div>;
+  if(!d) return <div className="pu-card"><Skel h={160}/></div>;
+  if(!d.loaded) return <div className="pu-card">
+    <div className="h"><span>Охват подразделений</span></div>
+    <div className="pu-empty">Штат не загружен. {isOwner?"Загрузите кадровую выгрузку (xlsx: табельный номер, статус, ФИО, должность, номер подразделения) — посчитаем, какая доля каждого подразделения пользуется AuditLens. ФИО не сохраняются.":"Его загружает владелец инструмента."}</div>
+    <div className="pu-reach-act">{pick}{msg&&<span className="pu-note">{msg}</span>}</div></div>;
+  const lab=d.label||"Подразделение";
+  const maxR=Math.max(...d.units.map(u=>u.reach||0),0.01);
+  return <>
+    <div className="pu-tiles pu-tiles4">
+      <div className="pu-tile"><div className="l">Пользуются из штата</div><div className="v tnum">{puNum(d.users)}</div>
+        <div className="s">из {puNum(d.head)} работающих · {puPct(d.reach)}</div></div>
+      <div className="pu-tile"><div className="l">Активны за 30 дней</div><div className="v tnum">{puNum(d.active30)}</div>
+        <div className="s">сотрудников из штата</div></div>
+      <div className="pu-tile"><div className="l">Не из штата</div><div className="v tnum">{puNum(d.other.users)}</div>
+        <div className="s">другие подразделения · {puNum(d.other.active30)} за 30 дней</div></div>
+      <div className="pu-tile"><div className="l">Вопросов ИИ от штата</div><div className="v tnum">{puNum(d.units.reduce((a,u)=>a+u.ai,0))}</div>
+        <div className="s">задавали {puNum(d.units.reduce((a,u)=>a+u.ai_users,0))} чел.</div></div>
+    </div>
+    <div className="pu-card">
+      <div className="h"><span>Охват по подразделениям · доля работающих сотрудников, которые пользуются</span><span>всего за всё время</span></div>
+      <div className="pu-tblwrap"><table className="pu-tbl pu-reach">
+        <thead><tr><th>{lab}</th><th>Штат</th><th>Пользуются</th><th className="pu-reach-bar">Охват</th><th>Активны 30 дн</th><th>Вопросы ИИ</th><th>Постоянные</th><th>Часы</th></tr></thead>
+        <tbody>{d.units.map(u=><tr key={u.code}>
+          <td title={u.code&&u.code!=="-"?`номер ${u.code}`:"без номера"}>{u.name}</td>
+          <td className="tnum">{u.head}</td><td className="tnum">{u.users}</td>
+          <td className="pu-reach-bar"><span className="pu-rb"><i style={{width:Math.round((u.reach||0)/maxR*100)+"%"}}/></span><b className="tnum">{puPct(u.reach)}</b></td>
+          <td className="tnum">{u.active30}</td><td className="tnum">{u.ai}</td><td className="tnum" title="заходили 5 и больше разных дней">{u.regular}</td><td className="tnum">{u.hours.toLocaleString("ru")}</td></tr>)}
+          <tr className="pu-reach-tot"><td>Итого</td><td className="tnum">{d.head}</td><td className="tnum">{d.users}</td>
+            <td className="pu-reach-bar"><b className="tnum">{puPct(d.reach)}</b></td><td className="tnum">{d.active30}</td>
+            <td className="tnum">{d.units.reduce((a,u)=>a+u.ai,0)}</td><td className="tnum">{d.units.reduce((a,u)=>a+u.regular,0)}</td>
+            <td className="tnum">{Math.round(d.units.reduce((a,u)=>a+u.hours,0)).toLocaleString("ru")}</td></tr>
+        </tbody></table></div>
+      <div className="pu-grid2 top">
+        <div>{d.roles.map(r=><div className="pu-bar-row" key={r.role}><span className="lb">{r.role}</span>
+          <span className="tr"><span className="fl" style={{width:Math.round((r.reach||0)*100)+"%"}}/></span>
+          <span className="vv">{r.users} из {r.head} · {puPct(r.reach)}</span></div>)}</div>
+        <div className="pu-note">Сотрудник подразделения — табельный номер в логине совпал со штатом ({d.matched.tab}) или совпали имя и фамилия ({d.matched.name}).
+          Штат — без уволенных. Служебные учётки не считаются. Штат загружен {new Date(d.loaded_at).toLocaleDateString("ru")}.</div>
+      </div>
+      <div className="pu-reach-act">{pick}{msg&&<span className="pu-note">{msg}</span>}</div>
+    </div>
+  </>;
+}
+
+function PuCosts(){
+  const[d,setD]=useState(null),[err,setErr]=useState(false);
+  const load=()=>apiFetch("/api/admin/pulse/costs").then(x=>{setD(x);setErr(false);}).catch(()=>setErr(true));
+  useEffect(()=>{ load(); const t=setInterval(()=>{if(!document.hidden)load();},600000); return ()=>clearInterval(t); },[]);
+  if(err&&!d) return <div className="pu-card"><div className="pu-empty">Не удалось получить траты. <button className="pu-link" onClick={load}>Повторить</button></div></div>;
+  if(!d) return <div className="pu-card"><Skel h={160}/></div>;
+  if(!d.configured) return <div className="pu-card"><div className="h"><span>Траты на модели</span></div>
+    <div className="pu-empty">Учёт трат не подключён: на сервере нужны адрес сервиса учёта расходов облака и токен отдела (переменные CLOUD_COSTS_*).</div></div>;
+  const mo=d.month, mname=puMonth(mo.period);
+  const dmax=Math.max(...d.days.map(x=>x.dept),1);
+  const curM=mo.period;
+  const mmax=Math.max(...d.models.map(x=>x.month),1);
+  return <>
+    <div className="pu-tiles pu-tiles4">
+      <div className="pu-tile"><div className="l">Отдел · {mname}</div><div className="v tnum">{puRub(mo.dept)}</div>
+        <div className="s">{mo.threshold?<>{puPct(mo.util,1)} лимита {puRub(mo.threshold)}</>:"лимит не задан"}</div>
+        {mo.threshold&&<div className="pu-lim" title={`прогноз на месяц по темпу — ${puRub(mo.forecast)}`}><i style={{width:Math.min(100,mo.util*100)+"%"}}/><u style={{left:Math.min(100,mo.util_forecast*100)+"%"}}/></div>}</div>
+      <div className="pu-tile"><div className="l">Прогноз отдела на месяц</div><div className="v tnum">{puRub(mo.forecast)}</div>
+        <div className="s">{mo.threshold?<>{puPct(mo.util_forecast,1)} лимита по темпу</>:"по темпу трат"}</div></div>
+      <div className="pu-tile"><div className="l">AuditLens · {mname}</div><div className="v tnum">{puRub(mo.app)}</div>
+        <div className="s">{puPct(mo.app_share)} трат отдела · прогноз {puRub(mo.app_forecast)}</div></div>
+      <div className="pu-tile"><div className="l">AuditLens в обычный день</div><div className="v tnum">{puRub(mo.app_median_day)}</div>
+        <div className="s">медиана за 4 недели — разовые прогоны её почти не двигают</div></div>
+    </div>
+    <div className="pu-grid2 top wide">
+      <div className="pu-card">
+        <div className="h"><span>По дням · AuditLens и другие задачи отдела</span><span>{d.as_of?`данные облака на ${new Date(d.as_of).toLocaleString("ru",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}`:""}</span></div>
+        <div className="pu-days" role="img" aria-label="Траты по дням: AuditLens и другие задачи отдела">
+          {d.days.map(x=><div key={x.day} className={"pu-dcol"+(x.day.startsWith(curM)?"":" prev")}
+            data-tip={`${new Date(x.day+"T00:00:00").toLocaleDateString("ru",{day:"numeric",month:"long",weekday:"short"})}: отдел ${puRub(x.dept)}, AuditLens ${puRub(x.app)}`}>
+            <span className="o" style={{height:Math.max(0,(x.dept-x.app)/dmax*100)+"%"}}/><span className="a" style={{height:x.app/dmax*100+"%"}}/></div>)}
+        </div>
+        <div className="pu-note"><span className="pu-sw a"/>AuditLens <span className="pu-sw o"/>другие задачи отдела · бледнее — прошлый месяц · наведите на столбец</div>
+      </div>
+      <div className="pu-card">
+        <div className="h"><span>Модели AuditLens · {mname}</span><span>прошлый месяц</span></div>
+        {d.models.length?d.models.map(x=><div className="pu-bar-row" key={x.model}><span className="lb" title={x.model}>{x.model}</span>
+          <span className="tr"><span className="fl" style={{width:Math.round(x.month/mmax*100)+"%"}}/></span>
+          <span className="vv">{puRub(x.month)} · {puRub(x.prev)}</span></div>):<div className="pu-empty">В этом месяце трат AuditLens ещё нет.</div>}
+      </div>
+    </div>
+    <div className="pu-card" style={{marginTop:12}}>
+      <div className="h"><span>По месяцам</span><span>история с {d.months.length?puMonth(d.months[0].month):"—"}</span></div>
+      <table className="pu-tbl"><thead><tr><th>Месяц</th><th>Отдел</th><th>AuditLens</th><th>Доля AuditLens</th></tr></thead>
+        <tbody>{d.months.slice().reverse().map(x=><tr key={x.month}><td>{puMonth(x.month)}</td><td className="tnum">{puRub(x.dept)}</td>
+          <td className="tnum">{puRub(x.app)}</td><td className="tnum">{x.dept?puPct(x.app/x.dept):"—"}</td></tr>)}</tbody></table>
+      <div className="pu-note">AuditLens — ключи приложения в учёте расходов облака; до перехода на свой ключ приложение делило общий ключ отдела, и его траты здесь не выделены.</div>
+    </div>
+  </>;
+}
+
 function PuTurbCtl(){
   const[st,setSt]=useState(null);
   const[busy,setBusy]=useState(false);
@@ -12062,6 +12204,7 @@ function PulsePage(){
     </>}
 
     {tab==="inbox"&&<PuInbox rev={rev} onOpenUser={setCard} onChanged={load}/>}
+    {tab==="reach"&&<><PuReach isOwner={!!(me&&me.is_admin)} withMe={withMe}/><div style={{height:16}}/><PuCosts/></>}
 
     {tab==="reports"&&<>
       <PuTopics t={m.topics} days={m.days}/>
