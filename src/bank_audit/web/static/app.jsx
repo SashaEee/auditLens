@@ -10494,7 +10494,10 @@ const AD_CSS=`
 .pu-dcol.prev{opacity:.45}
 .pu-dcol:hover{opacity:1;filter:brightness(.92)}
 .pu-sw{display:inline-block;width:10px;height:10px;margin:0 5px 0 0;border-radius:2px;vertical-align:-1px}
-.pu-sw.a{background:var(--select)}.pu-sw.o{margin-left:10px;background:color-mix(in oklab,var(--ink-3),transparent 55%)}
+.pu-sw.a{background:var(--select)}
+.pu-bars-sel .pu-bar-row .fl{background:color-mix(in oklab,var(--select),transparent 25%)}
+.pu-bars-sel .pu-bar-row .lb{width:170px}
+.pu-models .pu-bar-row .vv{width:170px;white-space:nowrap}.pu-sw.o{margin-left:10px;background:color-mix(in oklab,var(--ink-3),transparent 55%)}
 .pu-rowclick{cursor:pointer}
 .pu-rowclick:hover{background:var(--surface)}
 .pu-nm{display:block;font-weight:500}
@@ -11855,6 +11858,7 @@ function PuComplaints({days,withMe,rev,onOpenReport,onOpenUser,onOpenSession}){
 const puRub=(n)=>n==null?"—":Math.round(+n).toLocaleString("ru")+" ₽";
 const puPct=(x,d=0)=>x==null?"—":(Math.round(x*100*10**d)/10**d).toLocaleString("ru")+"%";
 const PU_MON=["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+const PU_MON_GEN=["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
 const puMonth=(ym)=>{const[y,m]=String(ym||"").split("-").map(Number);return m?`${PU_MON[m-1]} ${y}`:ym;};
 
 function PuReach({isOwner,withMe}){
@@ -11909,7 +11913,7 @@ function PuReach({isOwner,withMe}){
             <td className="tnum">{Math.round(d.units.reduce((a,u)=>a+u.hours,0)).toLocaleString("ru")}</td></tr>
         </tbody></table></div>
       <div className="pu-grid2 top">
-        <div>{d.roles.map(r=><div className="pu-bar-row" key={r.role}><span className="lb">{r.role}</span>
+        <div className="pu-bars-sel">{d.roles.map(r=><div className="pu-bar-row" key={r.role}><span className="lb">{r.role}</span>
           <span className="tr"><span className="fl" style={{width:Math.round((r.reach||0)*100)+"%"}}/></span>
           <span className="vv">{r.users} из {r.head} · {puPct(r.reach)}</span></div>)}</div>
         <div className="pu-note">Сотрудник подразделения — табельный номер в логине совпал со штатом ({d.matched.tab}) или совпали имя и фамилия ({d.matched.name}).
@@ -11929,8 +11933,13 @@ function PuCosts(){
   if(!d.configured) return <div className="pu-card"><div className="h"><span>Траты на модели</span></div>
     <div className="pu-empty">Учёт трат не подключён: на сервере нужны адрес сервиса учёта расходов облака и токен отдела (переменные CLOUD_COSTS_*).</div></div>;
   const mo=d.month, mname=puMonth(mo.period);
-  const dmax=Math.max(...d.days.map(x=>x.dept),1);
   const curM=mo.period;
+  // текущий месяц в своём масштабе: разовый прогон прошлого месяца (разметка
+  // всего корпуса) сжимал бы его в полоски; в первые дни месяца — и конец прошлого
+  const cur=d.days.filter(x=>x.day.startsWith(curM));
+  const shown=cur.length>=10?cur:d.days.slice(-Math.max(cur.length,14));
+  const dmax=Math.max(...shown.map(x=>x.dept),1);
+  const firstApp=(d.months.find(x=>x.app>0)||{}).month;
   const mmax=Math.max(...d.models.map(x=>x.month),1);
   return <>
     <div className="pu-tiles pu-tiles4">
@@ -11948,24 +11957,26 @@ function PuCosts(){
       <div className="pu-card">
         <div className="h"><span>По дням · AuditLens и другие задачи отдела</span><span>{d.as_of?`данные облака на ${new Date(d.as_of).toLocaleString("ru",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}`:""}</span></div>
         <div className="pu-days" role="img" aria-label="Траты по дням: AuditLens и другие задачи отдела">
-          {d.days.map(x=><div key={x.day} className={"pu-dcol"+(x.day.startsWith(curM)?"":" prev")}
+          {shown.map(x=><div key={x.day} className={"pu-dcol"+(x.day.startsWith(curM)?"":" prev")}
             data-tip={`${new Date(x.day+"T00:00:00").toLocaleDateString("ru",{day:"numeric",month:"long",weekday:"short"})}: отдел ${puRub(x.dept)}, AuditLens ${puRub(x.app)}`}>
             <span className="o" style={{height:Math.max(0,(x.dept-x.app)/dmax*100)+"%"}}/><span className="a" style={{height:x.app/dmax*100+"%"}}/></div>)}
         </div>
-        <div className="pu-note"><span className="pu-sw a"/>AuditLens <span className="pu-sw o"/>другие задачи отдела · бледнее — прошлый месяц · наведите на столбец</div>
+        <div className="pu-note"><span className="pu-sw a"/>AuditLens <span className="pu-sw o"/>другие задачи отдела{shown.length>cur.length?" · бледнее — прошлый месяц":""} · наведите на столбец</div>
       </div>
       <div className="pu-card">
         <div className="h"><span>Модели AuditLens · {mname}</span><span>прошлый месяц</span></div>
-        {d.models.length?d.models.map(x=><div className="pu-bar-row" key={x.model}><span className="lb" title={x.model}>{x.model}</span>
+        {d.models.length?<div className="pu-bars-sel pu-models">{d.models.map(x=><div className="pu-bar-row" key={x.model}><span className="lb" title={x.model}>{x.model}</span>
           <span className="tr"><span className="fl" style={{width:Math.round(x.month/mmax*100)+"%"}}/></span>
-          <span className="vv">{puRub(x.month)} · {puRub(x.prev)}</span></div>):<div className="pu-empty">В этом месяце трат AuditLens ещё нет.</div>}
+          <span className="vv">{puRub(x.month)} · {puRub(x.prev)}</span></div>)}</div>:<div className="pu-empty">В этом месяце трат AuditLens ещё нет.</div>}
       </div>
     </div>
     <div className="pu-card" style={{marginTop:12}}>
-      <div className="h"><span>По месяцам</span><span>история с {d.months.length?puMonth(d.months[0].month):"—"}</span></div>
+      <div className="h"><span>По месяцам</span><span>{d.months.length?(()=>{const[y,m]=d.months[0].month.split("-").map(Number);return `история с ${PU_MON_GEN[m-1]} ${y}`;})():""}</span></div>
       <table className="pu-tbl"><thead><tr><th>Месяц</th><th>Отдел</th><th>AuditLens</th><th>Доля AuditLens</th></tr></thead>
-        <tbody>{d.months.slice().reverse().map(x=><tr key={x.month}><td>{puMonth(x.month)}</td><td className="tnum">{puRub(x.dept)}</td>
-          <td className="tnum">{puRub(x.app)}</td><td className="tnum">{x.dept?puPct(x.app/x.dept):"—"}</td></tr>)}</tbody></table>
+        <tbody>{d.months.slice().reverse().map(x=>{const shared=firstApp&&x.month<firstApp;
+          return <tr key={x.month}><td>{puMonth(x.month)}</td><td className="tnum">{puRub(x.dept)}</td>
+          <td className="tnum" title={shared?"приложение работало на общем ключе отдела — его траты не выделены":undefined}>{shared?"—":puRub(x.app)}</td>
+          <td className="tnum">{shared||!x.dept?"—":puPct(x.app/x.dept)}</td></tr>;})}</tbody></table>
       <div className="pu-note">AuditLens — ключи приложения в учёте расходов облака; до перехода на свой ключ приложение делило общий ключ отдела, и его траты здесь не выделены.</div>
     </div>
   </>;

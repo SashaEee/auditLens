@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 f057720b641b7bdc2b00a706ce616b4e93187749b409bbbc6121b031c4d20298): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 b38466997eaad69e571a06a6acbf95581c77ec46be05ac78c13279096b01c4ab): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -20300,7 +20300,10 @@ const AD_CSS = `
 .pu-dcol.prev{opacity:.45}
 .pu-dcol:hover{opacity:1;filter:brightness(.92)}
 .pu-sw{display:inline-block;width:10px;height:10px;margin:0 5px 0 0;border-radius:2px;vertical-align:-1px}
-.pu-sw.a{background:var(--select)}.pu-sw.o{margin-left:10px;background:color-mix(in oklab,var(--ink-3),transparent 55%)}
+.pu-sw.a{background:var(--select)}
+.pu-bars-sel .pu-bar-row .fl{background:color-mix(in oklab,var(--select),transparent 25%)}
+.pu-bars-sel .pu-bar-row .lb{width:170px}
+.pu-models .pu-bar-row .vv{width:170px;white-space:nowrap}.pu-sw.o{margin-left:10px;background:color-mix(in oklab,var(--ink-3),transparent 55%)}
 .pu-rowclick{cursor:pointer}
 .pu-rowclick:hover{background:var(--surface)}
 .pu-nm{display:block;font-weight:500}
@@ -22908,6 +22911,7 @@ function PuComplaints({
 const puRub = n => n == null ? "—" : Math.round(+n).toLocaleString("ru") + " ₽";
 const puPct = (x, d = 0) => x == null ? "—" : (Math.round(x * 100 * 10 ** d) / 10 ** d).toLocaleString("ru") + "%";
 const PU_MON = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+const PU_MON_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 const puMonth = ym => {
   const [y, m] = String(ym || "").split("-").map(Number);
   return m ? `${PU_MON[m - 1]} ${y}` : ym;
@@ -23087,7 +23091,9 @@ function PuReach({
     className: "tnum"
   }, Math.round(d.units.reduce((a, u) => a + u.hours, 0)).toLocaleString("ru")))))), /*#__PURE__*/React.createElement("div", {
     className: "pu-grid2 top"
-  }, /*#__PURE__*/React.createElement("div", null, d.roles.map(r => /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-bars-sel"
+  }, d.roles.map(r => /*#__PURE__*/React.createElement("div", {
     className: "pu-bar-row",
     key: r.role
   }, /*#__PURE__*/React.createElement("span", {
@@ -23145,8 +23151,13 @@ function PuCosts() {
   }, "\u0423\u0447\u0451\u0442 \u0442\u0440\u0430\u0442 \u043D\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0451\u043D: \u043D\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 \u043D\u0443\u0436\u043D\u044B \u0430\u0434\u0440\u0435\u0441 \u0441\u0435\u0440\u0432\u0438\u0441\u0430 \u0443\u0447\u0451\u0442\u0430 \u0440\u0430\u0441\u0445\u043E\u0434\u043E\u0432 \u043E\u0431\u043B\u0430\u043A\u0430 \u0438 \u0442\u043E\u043A\u0435\u043D \u043E\u0442\u0434\u0435\u043B\u0430 (\u043F\u0435\u0440\u0435\u043C\u0435\u043D\u043D\u044B\u0435 CLOUD_COSTS_*)."));
   const mo = d.month,
     mname = puMonth(mo.period);
-  const dmax = Math.max(...d.days.map(x => x.dept), 1);
   const curM = mo.period;
+  // текущий месяц в своём масштабе: разовый прогон прошлого месяца (разметка
+  // всего корпуса) сжимал бы его в полоски; в первые дни месяца — и конец прошлого
+  const cur = d.days.filter(x => x.day.startsWith(curM));
+  const shown = cur.length >= 10 ? cur : d.days.slice(-Math.max(cur.length, 14));
+  const dmax = Math.max(...shown.map(x => x.dept), 1);
+  const firstApp = (d.months.find(x => x.app > 0) || {}).month;
   const mmax = Math.max(...d.models.map(x => x.month), 1);
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "pu-tiles pu-tiles4"
@@ -23208,7 +23219,7 @@ function PuCosts() {
     className: "pu-days",
     role: "img",
     "aria-label": "\u0422\u0440\u0430\u0442\u044B \u043F\u043E \u0434\u043D\u044F\u043C: AuditLens \u0438 \u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430"
-  }, d.days.map(x => /*#__PURE__*/React.createElement("div", {
+  }, shown.map(x => /*#__PURE__*/React.createElement("div", {
     key: x.day,
     className: "pu-dcol" + (x.day.startsWith(curM) ? "" : " prev"),
     "data-tip": `${new Date(x.day + "T00:00:00").toLocaleDateString("ru", {
@@ -23232,11 +23243,13 @@ function PuCosts() {
     className: "pu-sw a"
   }), "AuditLens ", /*#__PURE__*/React.createElement("span", {
     className: "pu-sw o"
-  }), "\u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430 \xB7 \u0431\u043B\u0435\u0434\u043D\u0435\u0435 \u2014 \u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043C\u0435\u0441\u044F\u0446 \xB7 \u043D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0441\u0442\u043E\u043B\u0431\u0435\u0446")), /*#__PURE__*/React.createElement("div", {
+  }), "\u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430", shown.length > cur.length ? " · бледнее — прошлый месяц" : "", " \xB7 \u043D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0441\u0442\u043E\u043B\u0431\u0435\u0446")), /*#__PURE__*/React.createElement("div", {
     className: "pu-card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041C\u043E\u0434\u0435\u043B\u0438 AuditLens \xB7 ", mname), /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043C\u0435\u0441\u044F\u0446")), d.models.length ? d.models.map(x => /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "\u041C\u043E\u0434\u0435\u043B\u0438 AuditLens \xB7 ", mname), /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043C\u0435\u0441\u044F\u0446")), d.models.length ? /*#__PURE__*/React.createElement("div", {
+    className: "pu-bars-sel pu-models"
+  }, d.models.map(x => /*#__PURE__*/React.createElement("div", {
     className: "pu-bar-row",
     key: x.model
   }, /*#__PURE__*/React.createElement("span", {
@@ -23251,7 +23264,7 @@ function PuCosts() {
     }
   })), /*#__PURE__*/React.createElement("span", {
     className: "vv"
-  }, puRub(x.month), " \xB7 ", puRub(x.prev)))) : /*#__PURE__*/React.createElement("div", {
+  }, puRub(x.month), " \xB7 ", puRub(x.prev))))) : /*#__PURE__*/React.createElement("div", {
     className: "pu-empty"
   }, "\u0412 \u044D\u0442\u043E\u043C \u043C\u0435\u0441\u044F\u0446\u0435 \u0442\u0440\u0430\u0442 AuditLens \u0435\u0449\u0451 \u043D\u0435\u0442."))), /*#__PURE__*/React.createElement("div", {
     className: "pu-card",
@@ -23260,17 +23273,24 @@ function PuCosts() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, "\u0438\u0441\u0442\u043E\u0440\u0438\u044F \u0441 ", d.months.length ? puMonth(d.months[0].month) : "—")), /*#__PURE__*/React.createElement("table", {
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, d.months.length ? (() => {
+    const [y, m] = d.months[0].month.split("-").map(Number);
+    return `история с ${PU_MON_GEN[m - 1]} ${y}`;
+  })() : "")), /*#__PURE__*/React.createElement("table", {
     className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041C\u0435\u0441\u044F\u0446"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0434\u0435\u043B"), /*#__PURE__*/React.createElement("th", null, "AuditLens"), /*#__PURE__*/React.createElement("th", null, "\u0414\u043E\u043B\u044F AuditLens"))), /*#__PURE__*/React.createElement("tbody", null, d.months.slice().reverse().map(x => /*#__PURE__*/React.createElement("tr", {
-    key: x.month
-  }, /*#__PURE__*/React.createElement("td", null, puMonth(x.month)), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, puRub(x.dept)), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, puRub(x.app)), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, x.dept ? puPct(x.app / x.dept) : "—"))))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041C\u0435\u0441\u044F\u0446"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0434\u0435\u043B"), /*#__PURE__*/React.createElement("th", null, "AuditLens"), /*#__PURE__*/React.createElement("th", null, "\u0414\u043E\u043B\u044F AuditLens"))), /*#__PURE__*/React.createElement("tbody", null, d.months.slice().reverse().map(x => {
+    const shared = firstApp && x.month < firstApp;
+    return /*#__PURE__*/React.createElement("tr", {
+      key: x.month
+    }, /*#__PURE__*/React.createElement("td", null, puMonth(x.month)), /*#__PURE__*/React.createElement("td", {
+      className: "tnum"
+    }, puRub(x.dept)), /*#__PURE__*/React.createElement("td", {
+      className: "tnum",
+      title: shared ? "приложение работало на общем ключе отдела — его траты не выделены" : undefined
+    }, shared ? "—" : puRub(x.app)), /*#__PURE__*/React.createElement("td", {
+      className: "tnum"
+    }, shared || !x.dept ? "—" : puPct(x.app / x.dept)));
+  }))), /*#__PURE__*/React.createElement("div", {
     className: "pu-note"
   }, "AuditLens \u2014 \u043A\u043B\u044E\u0447\u0438 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u0432 \u0443\u0447\u0451\u0442\u0435 \u0440\u0430\u0441\u0445\u043E\u0434\u043E\u0432 \u043E\u0431\u043B\u0430\u043A\u0430; \u0434\u043E \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430 \u043D\u0430 \u0441\u0432\u043E\u0439 \u043A\u043B\u044E\u0447 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0434\u0435\u043B\u0438\u043B\u043E \u043E\u0431\u0449\u0438\u0439 \u043A\u043B\u044E\u0447 \u043E\u0442\u0434\u0435\u043B\u0430, \u0438 \u0435\u0433\u043E \u0442\u0440\u0430\u0442\u044B \u0437\u0434\u0435\u0441\u044C \u043D\u0435 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u044B.")));
 }
