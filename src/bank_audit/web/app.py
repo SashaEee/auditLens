@@ -89,6 +89,10 @@ async def lifespan(app: FastAPI):
         # ночной обход ключевых страниц сайтов банков → архив базы знаний (ДАН-02)
         asyncio.create_task(kb_crawl_background_loop()),
     ]
+    # «Пульс» → «Итоги»: ночная разметка новых запросов по направлениям аудита
+    if os.getenv("OUTCOMES_LABEL_ENABLED", "1") == "1":
+        from .outcomes import label_loop as outcomes_label_loop
+        tasks.append(asyncio.create_task(outcomes_label_loop()))
     # Планировщик парсеров «Лазеек»: по cron запускает сгенерированный код.
     # В самом модуле флаг PARSER_SCHEDULER_ENABLED по умолчанию ВКЛЮЧЁН —
     # на первую выкатку он гасится переменной окружения на проде, включаем
@@ -681,6 +685,49 @@ def admin_pulse_costs(user: CurrentUser = Depends(get_current_user)):
         raise HTTPException(403, "admin only")
     from . import cloud_costs
     return cloud_costs.summary()
+
+
+@app.get("/api/admin/pulse/outcomes")
+def admin_pulse_outcomes(days: int = 0, me: Optional[bool] = None,
+                         user: CurrentUser = Depends(get_current_user)):
+    """«Итоги»: запросы по направлениям аудита, их пригодность, путь от вопроса
+    к аудит-делу, обращения и заявки на источники. days=0 — за всё время."""
+    if not telemetry.can_pulse(user.username):
+        raise HTTPException(403, "admin only")
+    from . import outcomes
+    wm = me if me is not None else telemetry.with_me_default(user.username)
+    return outcomes.report(user.username, wm, days)
+
+
+@app.get("/api/admin/pulse/outcomes.xlsx")
+def admin_pulse_outcomes_xlsx(days: int = 0, me: Optional[bool] = None,
+                              user: CurrentUser = Depends(get_current_user)):
+    if not telemetry.can_pulse(user.username):
+        raise HTTPException(403, "admin only")
+    from urllib.parse import quote as _q
+    from . import outcomes
+    wm = me if me is not None else telemetry.with_me_default(user.username)
+    rep = outcomes.report(user.username, wm, days)
+    name = f"AuditLens_итоги_{'всё_время' if not rep['period']['days'] else str(rep['period']['days']) + '_дн'}.xlsx"
+    return Response(content=outcomes.to_xlsx(rep),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
+
+
+_OUTCOMES_TASK: Optional[asyncio.Task] = None
+
+
+@app.post("/api/admin/pulse/outcomes/label")
+async def admin_pulse_outcomes_label(user: CurrentUser = Depends(get_current_user)):
+    """Разметить новые запросы сейчас, не дожидаясь ночи — только владелец."""
+    global _OUTCOMES_TASK
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "owner only")
+    from . import outcomes
+    if _OUTCOMES_TASK and not _OUTCOMES_TASK.done():
+        return {"started": False, "running": True}
+    _OUTCOMES_TASK = asyncio.create_task(outcomes.label_new("manual"))
+    return {"started": True, "pending": await asyncio.to_thread(outcomes.pending_count)}
 
 
 _EVAL_TASK: Optional[asyncio.Task] = None

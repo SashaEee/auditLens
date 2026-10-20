@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 532a345fb900bddf633e70ca35c3828d0a08a4a3a056ae144284d6b59f7d789f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 70388298012236197050ef4ccac68e782163eb6dd90f5369620de936527be0f1): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -9972,6 +9972,29 @@ function ReviewsPage({
       }
     });
   };
+  // какой продукт смотрят — для «Пульса» → «Итоги» (до 21.10 не записывалось, и
+  // колонку «Аудит отзывов» в разрезе направлений считали косвенно). Одна
+  // запись на банк и продукт, пока они не сменились; пролистанное мимо (меньше
+  // 1,5 с) не считается
+  const prodSeen = useRef("");
+  useEffect(() => {
+    if (!product) return;
+    const k = bank + "|" + product;
+    if (prodSeen.current === k) return;
+    const t = setTimeout(() => {
+      prodSeen.current = k;
+      trkEvent({
+        kind: "ui",
+        page: "reviews",
+        payload: {
+          action: "reviews_product",
+          bank,
+          product
+        }
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [bank, product]);
   const [theme, setTheme] = useState(preset && preset.theme || P.theme || "");
   const [tab, setTab] = useState(() => RV_TABS.some(([k]) => k === P.tab) ? P.tab : preset && (preset.theme || preset.city || preset.esc) || P.theme || P.flag || P.q || P.esc || P.city ? "complaints" : "overview");
   const tabsRef = useRef(null);
@@ -20290,6 +20313,46 @@ const AD_CSS = `
 .pu-rb i{display:block;height:100%;border-radius:4px;background:color-mix(in oklab,var(--select),transparent 25%)}
 .pu-reach-tot td{font-weight:600;border-top:1px solid var(--hair-2)}
 .pu-reach-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+/* ── Итоги: направления, качество запросов, путь к результату ─────────────── */
+.oc-bar{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap;margin:4px 0 2px}
+.oc-bar .sp{flex:1}
+.oc-u{color:var(--ink-3);font-size:11px;margin-left:5px}
+.oc-tbl td b{font-weight:600;color:var(--ink)}
+.oc-tbl td.z{color:var(--hair-2)}
+.oc-tbl td.oc-ai{text-align:left;min-width:170px}
+.oc-tbl th.oc-ai{text-align:left}
+.oc-tbl tr.oc-oth td{color:var(--ink-3)}
+.oc-stack{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--paper-2);margin:8px 0 10px}
+.oc-stack i{display:block;height:100%}
+.oc-leg{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 14px;font-size:12px;color:var(--ink-2)}
+.oc-leg .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px}
+.oc-leg .n{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink)}
+.oc-leg .p{text-align:right;color:var(--ink-3);font-variant-numeric:tabular-nums;min-width:36px}
+.oc-leg .bad{color:var(--ink)}
+.oc-sec+.oc-sec{margin-top:16px;padding-top:14px;border-top:1px solid var(--hair)}
+.oc-sec h4{margin:0;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;gap:8px}
+.oc-sec h4 span{font-weight:400;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.oc-d{display:block;font-size:11px;color:var(--ink-3);margin-top:3px}
+.oc-d.good{color:var(--pos)}
+.oc-d.bad{color:var(--neg)}
+.oc-bad td{vertical-align:top;text-align:left}
+.oc-bad td.q{white-space:normal;color:var(--ink);min-width:260px}
+.oc-bad td.w{white-space:normal;color:var(--ink-3);min-width:140px}
+.oc-bad td.c{white-space:nowrap}
+.oc-bad th{text-align:left}
+.oc-flt{display:flex;gap:6px;flex-wrap:wrap}
+.oc-list{display:flex;flex-direction:column}
+.oc-li{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hair);font-size:12.5px}
+.oc-li:first-child{border-top:0}
+.oc-li .dt{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.oc-li .tx{color:var(--ink);overflow-wrap:anywhere}
+.oc-li .tx small{display:block;font-size:11px;color:var(--ink-3)}
+.oc-st{display:inline-block;font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-3);white-space:nowrap}
+.oc-st.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
+.oc-st.wait{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 55%)}
+.oc-fun .pu-kv .sub{display:block;margin:2px 0 0;line-height:1.45}
+.oc-kpis{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:var(--ink-3)}
+.oc-kpis b{display:block;font-family:'Source Serif 4',Georgia,serif;font-size:22px;font-weight:400;color:var(--ink);line-height:1.1}
 .pu-lim{position:relative;height:6px;margin-top:8px;border-radius:3px;background:var(--paper-2)}
 .pu-lim i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--select)}
 .pu-lim u{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;background:var(--warn);text-decoration:none}
@@ -22200,7 +22263,7 @@ function PuTicket({
     onClick: save
   }, busy ? "Сохраняю…" : reply.trim() ? "Ответить" : "Сохранить статус"))))));
 }
-const PU_TABS = [["people", "Люди"], ["reach", "Охват и траты"], ["reports", "Отчёты"], ["ai", "Качество ИИ"], ["inbox", "Обращения"], ["data", "Данные"], ["tech", "Техника"]];
+const PU_TABS = [["people", "Люди"], ["outcomes", "Итоги"], ["reach", "Охват и траты"], ["reports", "Отчёты"], ["ai", "Качество ИИ"], ["inbox", "Обращения"], ["data", "Данные"], ["tech", "Техника"]];
 // «Имя Фамилия» → «Имя Ф.»; логин остаётся логином
 const puShort = n => {
   const p = String(n || "").trim().split(/\s+/);
@@ -23295,6 +23358,407 @@ function PuCosts() {
     className: "pu-note"
   }, "AuditLens \u2014 \u043A\u043B\u044E\u0447\u0438 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u0432 \u0443\u0447\u0451\u0442\u0435 \u0440\u0430\u0441\u0445\u043E\u0434\u043E\u0432 \u043E\u0431\u043B\u0430\u043A\u0430; \u0434\u043E \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430 \u043D\u0430 \u0441\u0432\u043E\u0439 \u043A\u043B\u044E\u0447 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0434\u0435\u043B\u0438\u043B\u043E \u043E\u0431\u0449\u0438\u0439 \u043A\u043B\u044E\u0447 \u043E\u0442\u0434\u0435\u043B\u0430, \u0438 \u0435\u0433\u043E \u0442\u0440\u0430\u0442\u044B \u0437\u0434\u0435\u0441\u044C \u043D\u0435 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u044B.")));
 }
+
+// ══ ИТОГИ: пользуются ли по направлениям и доходит ли до результата ═════════
+// Ответ на вопросы руководства к отчётам: сколько
+// предложений и сколько сделано, какие запросы не могут дать результата,
+// запросы по направлениям аудита. Цифры живые; направление и пригодность
+// запроса размечает модель каждую ночь (web/outcomes.py).
+const OC_PER = [[0, "Всё время"], [90, "90 дн"], [30, "30 дн"], [7, "7 дн"]];
+const OC_Q = [["ok", "Годные", "var(--pos)"], ["followup", "Уточнения к ответу", "color-mix(in oklab,var(--pos),transparent 55%)"], ["reference", "Простые справки", "color-mix(in oklab,var(--ink-3),transparent 30%)"], ["template", "Готовые карточки (до 25.09)", "var(--hair-2)"], ["vague", "Слишком общие", "var(--warn)"], ["internal", "Нужны закрытые данные", "color-mix(in oklab,var(--warn),var(--neg))"], ["personal", "Персональные данные", "var(--neg)"], ["offtopic", "Вне темы", "color-mix(in oklab,var(--neg),transparent 45%)"], ["test", "Тест, случайный ввод", "color-mix(in oklab,var(--neg),transparent 70%)"]];
+const OC_QL = Object.fromEntries(OC_Q.map(([k, l]) => [k, l]));
+const OC_BAD = ["vague", "internal", "personal", "offtopic", "test"];
+const ocDate = s => s ? new Date(s).toLocaleDateString("ru", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "2-digit"
+}) : "";
+// изменение к прошлому такому же периоду; inv — рост это плохо
+const ocDelta = (cur, prev, days, pp, inv) => {
+  if (!days || prev == null || cur == null) return null;
+  const d = pp ? Math.round((cur - prev) * 1000) / 10 : cur - prev;
+  if (!d) return /*#__PURE__*/React.createElement("span", {
+    className: "oc-d"
+  }, "\u043A\u0430\u043A \u0432 \u043F\u0440\u043E\u0448\u043B\u044B\u0435 ", days, " \u0434\u043D");
+  const good = inv ? d < 0 : d > 0;
+  return /*#__PURE__*/React.createElement("span", {
+    className: "oc-d " + (good ? "good" : "bad")
+  }, d > 0 ? "+" : "−", pp ? Math.abs(d).toLocaleString("ru") + " п. п." : puNum(Math.abs(d)), " \u043A \u043F\u0440\u043E\u0448\u043B\u044B\u043C ", days, " \u0434\u043D");
+};
+function PuOutcomes({
+  isOwner,
+  withMe
+}) {
+  const [days, setDays] = useState(() => {
+    try {
+      const v = +localStorage.getItem("al-pu-oc-days");
+      return [0, 7, 30, 90].includes(v) ? v : 0;
+    } catch {
+      return 0;
+    }
+  });
+  const [d, setD] = useState(null),
+    [err, setErr] = useState(false);
+  const [busy, setBusy] = useState(false),
+    [msg, setMsg] = useState("");
+  const [badF, setBadF] = useState(""),
+    [allBad, setAllBad] = useState(false),
+    [allT, setAllT] = useState(false);
+  const load = () => apiFetch(`/api/admin/pulse/outcomes?days=${days}${puMe(withMe)}`).then(x => {
+    setD(x);
+    setErr(false);
+  }).catch(() => setErr(true));
+  useEffect(() => {
+    setD(null);
+    load();
+  }, [days, withMe]); // eslint-disable-line
+  const pick = v => {
+    setDays(v);
+    try {
+      localStorage.setItem("al-pu-oc-days", String(v));
+    } catch {}
+  };
+  const relabel = () => {
+    setBusy(true);
+    setMsg("");
+    apiFetch("/api/admin/pulse/outcomes/label", {
+      method: "POST"
+    }).then(r => {
+      setMsg(r.started ? `Разметка запущена: ${puNum(r.pending)} ${plural(r.pending, "запрос", "запроса", "запросов")} — обычно несколько минут, затем обновите вкладку.` : "Разметка уже идёт.");
+    }).catch(() => setMsg("Не запустилось — попробуйте ещё раз.")).finally(() => setBusy(false));
+  };
+  const bar = /*#__PURE__*/React.createElement("div", {
+    className: "oc-bar"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "seg",
+    role: "group",
+    "aria-label": "\u041F\u0435\u0440\u0438\u043E\u0434 \u0438\u0442\u043E\u0433\u043E\u0432"
+  }, OC_PER.map(([v, l]) => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    className: "seg-btn" + (days === v ? " on" : ""),
+    "aria-pressed": days === v,
+    onClick: () => pick(v)
+  }, l))), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost btn-sm",
+    href: `/api/admin/pulse/outcomes.xlsx?days=${days}${puMe(withMe)}`,
+    download: true
+  }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C Excel"), isOwner && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    disabled: busy,
+    onClick: relabel,
+    title: "\u0440\u0430\u0437\u043C\u0435\u0442\u0438\u0442\u044C \u043D\u043E\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \u0441\u0435\u0439\u0447\u0430\u0441, \u043D\u0435 \u0434\u043E\u0436\u0438\u0434\u0430\u044F\u0441\u044C \u043D\u043E\u0447\u0438"
+  }, busy ? "Запускаю…" : "Разметить новые"));
+  if (err && !d) return /*#__PURE__*/React.createElement(React.Fragment, null, bar, /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0442\u043E\u0433\u0438. ", /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    onClick: load
+  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C"))));
+  if (!d) return /*#__PURE__*/React.createElement(React.Fragment, null, bar, /*#__PURE__*/React.createElement("div", {
+    className: "pu-tiles pu-tiles4"
+  }, [0, 1, 2, 3].map(i => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 54
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 260
+  })));
+  const f = d.funnel,
+    qa = d.quality.ai,
+    qv = d.quality.vuln,
+    pv = d.prev || {},
+    perL = days ? `за ${days} дн` : "за всё время";
+  const items = f.case_reports + f.case_reviews + f.case_documents;
+  const maxAi = Math.max(...d.dirs.map(x => x.ai), 1);
+  const lab = d.labels || {},
+    lr = lab.last_run;
+  const bad = d.bad_examples.filter(b => !badF || b.quality === badF);
+  const badN = Object.fromEntries(OC_BAD.map(k => [k, d.bad_examples.filter(b => b.quality === k).length]));
+  const tk = d.tickets,
+    src = d.sources;
+  const revTip = p => [p.case && `жалобы в аудит-делах — ${p.case}`, p.view && `смотрели продукт — ${p.view}`, p.export && `выгрузки в Excel — ${p.export}`, p.sub && `подписки — ${p.sub}`].filter(Boolean).join(" · ") || undefined;
+  const qBlock = (name, q) => /*#__PURE__*/React.createElement("div", {
+    className: "oc-sec"
+  }, /*#__PURE__*/React.createElement("h4", null, name, /*#__PURE__*/React.createElement("span", null, puNum(q.total), " ", plural(q.total, "запрос", "запроса", "запросов"))), /*#__PURE__*/React.createElement("div", {
+    className: "oc-stack",
+    role: "img",
+    "aria-label": `${name}: годные ${puPct(q.good_share)}, не дают результата ${puPct(q.bad_share)}`
+  }, OC_Q.filter(([k]) => q.counts[k]).map(([k, l, c]) => /*#__PURE__*/React.createElement("i", {
+    key: k,
+    style: {
+      width: q.counts[k] / q.total * 100 + "%",
+      background: c
+    },
+    "data-tip": `${l}: ${q.counts[k]}`
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "oc-leg"
+  }, OC_Q.filter(([k]) => q.counts[k]).map(([k, l, c]) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: k
+  }, /*#__PURE__*/React.createElement("span", {
+    className: OC_BAD.includes(k) ? "bad" : ""
+  }, /*#__PURE__*/React.createElement("i", {
+    className: "sw",
+    style: {
+      background: c
+    }
+  }), l), /*#__PURE__*/React.createElement("span", {
+    className: "n"
+  }, puNum(q.counts[k])), /*#__PURE__*/React.createElement("span", {
+    className: "p"
+  }, puPct(q.counts[k] / q.total))))));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, bar, /*#__PURE__*/React.createElement("div", {
+    className: "pu-tiles pu-tiles4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puNum(f.questions)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, puNum(f.askers), " \u0447\u0435\u043B. \xB7 ", perL, ocDelta(f.questions, pv.questions, days))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u0417\u0430\u043F\u0440\u043E\u0441\u044B \u0432 \xAB\u0410\u0443\u0434\u0438\u0442\u0435 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0435\u0439\xBB"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puNum(f.vuln_queries)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, puNum(f.vuln_users), " \u0447\u0435\u043B. \xB7 \u0447\u0430\u0442 \u0438 \u043F\u043E\u0438\u0441\u043A \u0441\u0445\u0435\u043C", ocDelta(f.vuln_queries, pv.vuln_queries, days))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u0413\u043E\u0434\u043D\u044B\u0435 \u0432\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puPct(qa.good_share)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, "\u043D\u0435 \u0434\u0430\u044E\u0442 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \u2014 ", puPct(qa.bad_share), ocDelta(qa.good_share, pv.good_share, days, true))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tile"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "l"
+  }, "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430"), /*#__PURE__*/React.createElement("div", {
+    className: "v tnum"
+  }, puNum(f.cases)), /*#__PURE__*/React.createElement("div", {
+    className: "s"
+  }, puNum(f.case_owners), " ", plural(f.case_owners, "аудитор", "аудитора", "аудиторов"), " \xB7 ", puNum(items), " \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u043E\u0432", ocDelta(f.cases, pv.cases, days)))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0417\u0430\u043F\u0440\u043E\u0441\u044B \u043F\u043E \u043D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u044F\u043C \u0430\u0443\u0434\u0438\u0442\u0430 \xB7 ", perL), /*#__PURE__*/React.createElement("span", null, "\u0447\u0438\u0441\u043B\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \xB7 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0447\u0435\u043B\u043E\u0432\u0435\u043A")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tblwrap"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "pu-tbl oc-tbl"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("th", {
+    className: "oc-ai"
+  }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"), /*#__PURE__*/React.createElement("th", null, "\u0410\u0443\u0434\u0438\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432"), /*#__PURE__*/React.createElement("th", null, "\u0410\u0443\u0434\u0438\u0442 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0435\u0439"), /*#__PURE__*/React.createElement("th", null, "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430"))), /*#__PURE__*/React.createElement("tbody", null, d.dirs.map(x => /*#__PURE__*/React.createElement("tr", {
+    key: x.code,
+    className: x.code === "other" ? "oc-oth" : ""
+  }, /*#__PURE__*/React.createElement("td", {
+    title: x.name
+  }, x.name), /*#__PURE__*/React.createElement("td", {
+    className: "oc-ai"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu-rb"
+  }, /*#__PURE__*/React.createElement("i", {
+    style: {
+      width: Math.round(x.ai / maxAi * 100) + "%"
+    }
+  })), x.ai ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, puNum(x.ai)), /*#__PURE__*/React.createElement("span", {
+    className: "oc-u"
+  }, x.ai_users, " \u0447\u0435\u043B.")) : /*#__PURE__*/React.createElement("span", {
+    className: "z"
+  }, "0")), /*#__PURE__*/React.createElement("td", {
+    className: x.rev ? "" : "z",
+    "data-tip": revTip(x.rev_parts)
+  }, x.rev ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, puNum(x.rev)), /*#__PURE__*/React.createElement("span", {
+    className: "oc-u"
+  }, x.rev_users, " \u0447\u0435\u043B.")) : "0"), /*#__PURE__*/React.createElement("td", {
+    className: x.vuln ? "" : "z"
+  }, x.vuln ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, puNum(x.vuln)), /*#__PURE__*/React.createElement("span", {
+    className: "oc-u"
+  }, x.vuln_users, " \u0447\u0435\u043B.")) : "0"), /*#__PURE__*/React.createElement("td", {
+    className: x.cases ? "" : "z"
+  }, x.cases ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, x.cases), /*#__PURE__*/React.createElement("span", {
+    className: "oc-u"
+  }, x.cases_users, " \u0447\u0435\u043B.")) : "0")))))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "\u041D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u044F\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C \u043F\u043E \u0442\u0435\u043A\u0441\u0442\u0443; \u043E\u0434\u0438\u043D \u0437\u0430\u043F\u0440\u043E\u0441 \u043C\u043E\u0436\u0435\u0442 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u044C\u0441\u044F \u043A \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u043C \u043D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u044F\u043C. \xAB\u0410\u0443\u0434\u0438\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u2014 \u0436\u0430\u043B\u043E\u0431\u044B, \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0435 \u0432 \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430 (\u043D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u2014 \u043F\u043E \u0442\u0435\u043C\u0435 \u0434\u0435\u043B\u0430), \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0438 \u0432 Excel \u0438 \u043F\u043E\u0434\u043F\u0438\u0441\u043A\u0438 \u043D\u0430 \u0441\u0438\u0433\u043D\u0430\u043B\u044B \u0441 \u0443\u043A\u0430\u0437\u0430\u043D\u043D\u044B\u043C \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u043E\u043C", d.review_view_since ? /*#__PURE__*/React.createElement(React.Fragment, null, ", \u0430 \u0441 ", ocDate(d.review_view_since), " \u2014 \u0438 \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u044B \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430 \u0432 \u0444\u0438\u043B\u044C\u0442\u0440\u0435 \u0432\u043A\u043B\u0430\u0434\u043A\u0438 (\u043E\u0434\u0438\u043D \u0447\u0435\u043B\u043E\u0432\u0435\u043A \u0438 \u043F\u0440\u043E\u0434\u0443\u043A\u0442 \u2014 \u043E\u0434\u0438\u043D \u0440\u0430\u0437 \u0432 \u0434\u0435\u043D\u044C)") : /*#__PURE__*/React.createElement(React.Fragment, null, "; \u043A\u0430\u043A\u043E\u0439 \u043F\u0440\u043E\u0434\u0443\u043A\u0442 \u0432\u044B\u0431\u0438\u0440\u0430\u044E\u0442 \u0432 \u0444\u0438\u043B\u044C\u0442\u0440\u0435, \u043D\u0430\u0447\u043D\u0451\u0442 \u0441\u0447\u0438\u0442\u0430\u0442\u044C\u0441\u044F \u043F\u043E\u0441\u043B\u0435 \u0432\u044B\u043A\u0430\u0442\u043A\u0438 \u0437\u0430\u043F\u0438\u0441\u0438"), ". \u041D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u2014 \u0438\u0437 \u0447\u0435\u0433\u043E \u043E\u043D\u043E \u0441\u043A\u043B\u0430\u0434\u044B\u0432\u0430\u0435\u0442\u0441\u044F.", " ", "\xAB\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430\xBB \u2014 \u0434\u0435\u043B\u0430 \u043F\u043E \u0442\u0435\u043C\u0435 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F.")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-grid2 top pu-sec"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041A\u0430\u0447\u0435\u0441\u0442\u0432\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \xB7 ", perL), /*#__PURE__*/React.createElement("span", null, "\u0434\u0430\u0441\u0442 \u043B\u0438 \u0437\u0430\u043F\u0440\u043E\u0441 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442")), qBlock("ИИ-помощник", qa), qBlock("Аудит уязвимостей", qv), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "\u0413\u043E\u0434\u043D\u044B\u0435 \u2014 \u043F\u043E\u043D\u044F\u0442\u043D\u044B \u043F\u0440\u0435\u0434\u043C\u0435\u0442 \u0438 \u0446\u0435\u043B\u044C, \u043E\u0442\u0432\u0435\u0442 \u0435\u0441\u0442\u044C \u0432 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445; \u0443\u0442\u043E\u0447\u043D\u0435\u043D\u0438\u044F \u2014 \u043E\u0442\u0432\u0435\u0442 \u043D\u0430 \u0432\u043E\u043F\u0440\u043E\u0441 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0430. \u041D\u0435 \u0434\u0430\u044E\u0442 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \u2014 \u0441\u043B\u0438\u0448\u043A\u043E\u043C \u043E\u0431\u0449\u0438\u0435, \u043D\u0443\u0436\u043D\u044B \u0437\u0430\u043A\u0440\u044B\u0442\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435 \u0431\u0430\u043D\u043A\u0430, \u043F\u0435\u0440\u0441\u043E\u043D\u0430\u043B\u044C\u043D\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435, \u0432\u043D\u0435 \u0442\u0435\u043C\u044B, \u0442\u0435\u0441\u0442. \u0421\u043F\u043E\u0440\u043D\u044B\u0435 \u0441\u043B\u0443\u0447\u0430\u0438 \u043F\u0435\u0440\u0435\u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442 \u0432\u0442\u043E\u0440\u0430\u044F \u043C\u043E\u0434\u0435\u043B\u044C.")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-card oc-fun"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u043A \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0443 \xB7 ", perL)), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, puNum(f.askers), " \u0447\u0435\u043B. \xB7 \u0437\u0430\u043A\u0430\u0437\u043E\u0432 \u0433\u043B\u0443\u0431\u043E\u043A\u043E\u0433\u043E \u043E\u0442\u0447\u0451\u0442\u0430 \u2014 ", puNum(f.deep))), /*#__PURE__*/React.createElement("b", null, puNum(f.questions))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0432\u0435\u0442 \u043F\u043E\u043B\u0443\u0447\u0435\u043D", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, "\u0443\u0447\u0451\u0442 \u0441 05.10 \xB7 \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u043B\u0438 \u0441\u0430\u043C\u0438 \u2014 ", f.runs_stopped, ", \u0441\u0431\u043E\u0435\u0432 \u2014 ", f.runs_failed)), /*#__PURE__*/React.createElement("b", null, f.runs_ok + f.runs_failed + f.runs_stopped ? puPct(f.runs_ok / (f.runs_ok + f.runs_failed + f.runs_stopped)) : "—")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0421\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u043E \u043E\u0442\u0447\u0451\u0442\u043E\u0432", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, puNum(f.report_users), " \u0447\u0435\u043B.")), /*#__PURE__*/React.createElement("b", null, puNum(f.reports))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u0435\u0440\u043D\u0443\u043B\u0438\u0441\u044C \u043A \u043E\u0442\u0447\u0451\u0442\u0443", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, "\u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B\u0438 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u0439 \u043E\u0442\u0447\u0451\u0442 \u0435\u0449\u0451 \u0440\u0430\u0437")), /*#__PURE__*/React.createElement("b", null, puNum(f.reopened))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0435\u0440\u0435\u0441\u043B\u0430\u043B\u0438 \u043A\u043E\u043B\u043B\u0435\u0433\u0430\u043C", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, puNum(f.shares), " ", plural(f.shares, "пересылка", "пересылки", "пересылок"))), /*#__PURE__*/React.createElement("b", null, puNum(f.shared))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u044B \u0432 \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430\u0445", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, "\u043E\u0442\u0447\u0451\u0442\u044B \u0418\u0418 \u2014 ", f.case_reports, ", \u0436\u0430\u043B\u043E\u0431\u044B \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u2014 ", f.case_reviews, ", \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u044B \u2014 ", f.case_documents)), /*#__PURE__*/React.createElement("b", null, puNum(items))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, "\u0441\u0431\u043E\u0440 \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u043E\u0432 \u2014 ", f.cases_collect, ", \u0432 \u0440\u0430\u0431\u043E\u0442\u0435 \u2014 ", f.cases_work, ", \u0441 \u0438\u0442\u043E\u0433\u043E\u0432\u044B\u043C \u0430\u043D\u0430\u043B\u0438\u0437\u043E\u043C \u2014 ", f.cases_analysed, ", \u043F\u0443\u0441\u0442\u044B\u0445 \u2014 ", f.cases_empty)), /*#__PURE__*/React.createElement("b", null, puNum(f.cases))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u044B\u0433\u0440\u0443\u0437\u043A\u0438 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0432 Excel", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, puNum(f.export_users), " \u0447\u0435\u043B. \xB7 \u043F\u043E\u0434\u043F\u0438\u0441\u043E\u043A \u043D\u0430 \u0441\u0438\u0433\u043D\u0430\u043B\u044B \u2014 ", f.subs)), /*#__PURE__*/React.createElement("b", null, puNum(f.exports))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u043C\u0435\u0442\u043A\u0438 \u044D\u043A\u0441\u043F\u0435\u0440\u0442\u043E\u0432 \u043F\u043E \u0441\u0445\u0435\u043C\u0430\u043C", /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, "\xAB\u0410\u0443\u0434\u0438\u0442 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0435\u0439\xBB \xB7 \u0432\u044B\u0433\u0440\u0443\u0437\u043E\u043A \u2014 ", f.vuln_exports)), /*#__PURE__*/React.createElement("b", null, puNum(f.verdicts))), d.case_topics.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "\u0422\u0435\u043C\u044B \u0434\u0435\u043B \u0441 \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u0430\u043C\u0438: ", d.case_topics.map(c => `${c.title} (${c.items})`).join(" · "), "."), f.cases > 0 && f.cases_collect / f.cases > .8 && /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "acc"
+  }, "\u2726"), " \u041F\u043E\u0447\u0442\u0438 \u0432\u0441\u0435 \u0434\u0435\u043B\u0430 \u0432 \u0441\u0442\u0430\u0442\u0443\u0441\u0435 \xAB\u0441\u0431\u043E\u0440 \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u043E\u0432\xBB: \u0438\u0442\u043E\u0433 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 (\xAB\u0437\u0430\u043C\u0435\u0447\u0430\u043D\u0438\u0435\xBB, \xAB\u0440\u0438\u0441\u043A \u043F\u0440\u0438\u043D\u044F\u0442\xBB, \xAB\u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u043B\u043E\u0441\u044C\xBB) \u0432 \u0434\u0435\u043B\u0435 \u043F\u043E\u043A\u0430 \u043D\u0435 \u0444\u0438\u043A\u0441\u0438\u0440\u0443\u0435\u0442\u0441\u044F \u2014 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043F\u043E \u0434\u0435\u043B\u0443 \u043E\u0442\u0441\u044E\u0434\u0430 \u043D\u0435 \u0432\u0438\u0434\u0435\u043D."))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-card pu-sec"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0417\u0430\u043F\u0440\u043E\u0441\u044B, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043D\u0435 \u0434\u0430\u0434\u0443\u0442 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \xB7 ", perL), /*#__PURE__*/React.createElement("div", {
+    className: "oc-flt"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "seg",
+    role: "group",
+    "aria-label": "\u041A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u044F"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "seg-btn" + (!badF ? " on" : ""),
+    "aria-pressed": !badF,
+    onClick: () => setBadF("")
+  }, "\u0412\u0441\u0435 ", d.bad_examples.length), OC_BAD.filter(k => badN[k]).map(k => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: "seg-btn" + (badF === k ? " on" : ""),
+    "aria-pressed": badF === k,
+    onClick: () => setBadF(k)
+  }, OC_QL[k], " ", badN[k]))))), bad.length ? /*#__PURE__*/React.createElement("div", {
+    className: "pu-tblwrap"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "pu-tbl oc-bad"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0414\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("th", null, "\u0420\u0430\u0437\u0434\u0435\u043B"), /*#__PURE__*/React.createElement("th", null, "\u041A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u044F"), /*#__PURE__*/React.createElement("th", null, "\u0417\u0430\u043F\u0440\u043E\u0441"), /*#__PURE__*/React.createElement("th", null, "\u041F\u043E\u0447\u0435\u043C\u0443"))), /*#__PURE__*/React.createElement("tbody", null, (allBad ? bad : bad.slice(0, 15)).map((b, i) => /*#__PURE__*/React.createElement("tr", {
+    key: i
+  }, /*#__PURE__*/React.createElement("td", {
+    className: "c tnum"
+  }, ocDate(b.d)), /*#__PURE__*/React.createElement("td", {
+    className: "c"
+  }, b.section), /*#__PURE__*/React.createElement("td", {
+    className: "c"
+  }, OC_QL[b.quality]), /*#__PURE__*/React.createElement("td", {
+    className: "q"
+  }, b.text, b.n > 1 && /*#__PURE__*/React.createElement("span", {
+    className: "oc-u"
+  }, "\xD7", b.n)), /*#__PURE__*/React.createElement("td", {
+    className: "w"
+  }, b.why || "")))))) : /*#__PURE__*/React.createElement("div", {
+    className: "pu-empty"
+  }, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u0442\u0430\u043A\u0438\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043D\u0435\u0442."), bad.length > 15 && /*#__PURE__*/React.createElement("button", {
+    className: "pu-link strong",
+    style: {
+      marginTop: 10
+    },
+    onClick: () => setAllBad(!allBad)
+  }, allBad ? "Свернуть" : `Показать все ${bad.length}`), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "\u0418\u043C\u0435\u043D\u0430 \u0430\u0432\u0442\u043E\u0440\u043E\u0432 \u0437\u0434\u0435\u0441\u044C \u043D\u0435 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u044E\u0442\u0441\u044F. \u0421\u0430\u043C\u043E\u0435 \u0447\u0430\u0441\u0442\u043E\u0435 \u2014 \u0441\u043B\u0438\u0448\u043A\u043E\u043C \u043E\u0431\u0449\u0438\u0439 \u0437\u0430\u043F\u0440\u043E\u0441: \u043F\u043E\u043C\u043E\u0433\u0430\u044E\u0442 \u0448\u0430\u0431\u043B\u043E\u043D\u044B \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043F\u043E \u043D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u044F\u043C \u0438 \u043F\u0430\u043C\u044F\u0442\u043A\u0430 \xAB\u043A\u0430\u043A \u0441\u043F\u0440\u043E\u0441\u0438\u0442\u044C\xBB.")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-grid2 top pu-sec"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u043F\u043E \u0434\u043E\u0440\u0430\u0431\u043E\u0442\u043A\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, "\u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F \u0447\u0435\u0440\u0435\u0437 \xAB\u041E\u0431\u0440\u0430\u0442\u043D\u0443\u044E \u0441\u0432\u044F\u0437\u044C\xBB")), /*#__PURE__*/React.createElement("div", {
+    className: "oc-kpis"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, tk.total), "\u0432\u0441\u0435\u0433\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, tk.done), "\u0441\u0434\u0435\u043B\u0430\u043D\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, tk.counts["ждёт ответа"] || 0), "\u0436\u0434\u0443\u0442 \u043E\u0442\u0432\u0435\u0442\u0430"), days ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, tk.new_in_period), "\u043D\u043E\u0432\u044B\u0445 ", perL) : null), /*#__PURE__*/React.createElement("div", {
+    className: "oc-list"
+  }, (allT ? tk.items : tk.items.slice(0, 6)).map(t => /*#__PURE__*/React.createElement("div", {
+    className: "oc-li",
+    key: t.id
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt"
+  }, ocDate(t.d)), /*#__PURE__*/React.createElement("span", {
+    className: "tx"
+  }, t.body, /*#__PURE__*/React.createElement("small", null, t.section)), /*#__PURE__*/React.createElement("span", {
+    className: "oc-st" + (t.done ? " ok" : t.status === "ждёт ответа" ? " wait" : "")
+  }, t.status)))), tk.items.length > 6 && /*#__PURE__*/React.createElement("button", {
+    className: "pu-link strong",
+    style: {
+      marginTop: 8
+    },
+    onClick: () => setAllT(!allT)
+  }, allT ? "Свернуть" : `Все ${tk.items.length}`)), /*#__PURE__*/React.createElement("div", {
+    className: "pu-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u043F\u043E \u043D\u043E\u0432\u044B\u043C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, "\u0444\u043E\u0440\u043C\u0430 \xAB\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0438\u0442\u044C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\xBB")), /*#__PURE__*/React.createElement("div", {
+    className: "oc-kpis"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, src.total), "\u0432\u0441\u0435\u0433\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, src.approved), "\u043E\u0434\u043E\u0431\u0440\u0435\u043D\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, src.pending), "\u0436\u0434\u0443\u0442 \u0440\u0435\u0448\u0435\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, src.rejected), "\u043E\u0442\u043A\u043B\u043E\u043D\u0435\u043D\u043E")), /*#__PURE__*/React.createElement("div", {
+    className: "oc-list"
+  }, src.items.map(x => /*#__PURE__*/React.createElement("div", {
+    className: "oc-li",
+    key: x.id
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt"
+  }, ocDate(x.d)), /*#__PURE__*/React.createElement("span", {
+    className: "tx"
+  }, x.title || x.domain, /*#__PURE__*/React.createElement("small", null, x.domain, " \xB7 ", x.purpose)), /*#__PURE__*/React.createElement("span", {
+    className: "oc-st" + (x.status === "одобрен" ? " ok" : " wait")
+  }, x.status)))), src.pending > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "pu-note"
+  }, "\u0420\u0435\u0448\u0435\u043D\u0438\u0435 \u043F\u043E \u0437\u0430\u044F\u0432\u043A\u0435 \u2014 \u0432\u043E \u0432\u043A\u043B\u0430\u0434\u043A\u0435 \xAB\u0414\u0430\u043D\u043D\u044B\u0435\xBB \u2192 \xAB\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u043D\u044B\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438\xBB."))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-note",
+    style: {
+      marginTop: 16
+    }
+  }, "\u041A\u0430\u043A \u043E\u0431\u043D\u043E\u0432\u043B\u044F\u0435\u0442\u0441\u044F: \u0446\u0438\u0444\u0440\u044B \u043F\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u043F\u0440\u0438 \u043A\u0430\u0436\u0434\u043E\u043C \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0438 \u0432\u043A\u043B\u0430\u0434\u043A\u0438. \u041D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u0438 \u043F\u0440\u0438\u0433\u043E\u0434\u043D\u043E\u0441\u0442\u044C \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u044F\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C \u2014 \u043D\u043E\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \u043E\u043D\u0430 \u0440\u0430\u0437\u043C\u0435\u0447\u0430\u0435\u0442 \u043A\u0430\u0436\u0434\u0443\u044E \u043D\u043E\u0447\u044C \u0432 ", String(lab.hour_msk ?? 3).padStart(2, "0"), ":40 \u041C\u0421\u041A", lr ? /*#__PURE__*/React.createElement(React.Fragment, null, " (\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u044F\u044F \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0430 \u2014 ", new Date(lr.finished_at).toLocaleString("ru", {
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit"
+  }), lr.labeled != null ? `, ${puNum(lr.labeled)} ${plural(lr.labeled, "запрос", "запроса", "запросов")}` : "", ")") : null, lab.pending ? /*#__PURE__*/React.createElement(React.Fragment, null, "; \u0436\u0434\u0443\u0442 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438 \u2014 ", puNum(lab.pending), ", \u0432 \u0442\u0430\u0431\u043B\u0438\u0446\u0430\u0445 \u0438\u0445 \u043F\u043E\u043A\u0430 \u043D\u0435\u0442") : null, ".", " ", "\u041D\u0435\u0434\u0435\u043B\u044F \u043A \u043D\u0435\u0434\u0435\u043B\u0435 \u2014 \u0432\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \xAB7 \u0434\u043D\xBB: \u043F\u043E\u0434 \u0447\u0438\u0441\u043B\u0430\u043C\u0438 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u043A \u043F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0438\u043C 7 \u0434\u043D\u044F\u043C. \xAB\u0421\u043A\u0430\u0447\u0430\u0442\u044C Excel\xBB \u2014 \u0442\u0430 \u0436\u0435 \u0441\u0432\u043E\u0434\u043A\u0430 \u0444\u0430\u0439\u043B\u043E\u043C \u0434\u043B\u044F \u043F\u0438\u0441\u044C\u043C\u0430. \u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F.", msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6
+    }
+  }, msg)));
+}
 function PuTurbCtl() {
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -23600,7 +24064,7 @@ function PulsePage() {
     type: "checkbox",
     checked: meOn,
     onChange: e => setMeOn(e.target.checked)
-  }), "\u0441\u043E \u043C\u043D\u043E\u0439"), /*#__PURE__*/React.createElement("div", {
+  }), "\u0441\u043E \u043C\u043D\u043E\u0439"), tab !== "outcomes" && /*#__PURE__*/React.createElement("div", {
     className: "seg",
     role: "group",
     "aria-label": "\u041F\u0435\u0440\u0438\u043E\u0434"
@@ -23797,6 +24261,9 @@ function PulsePage() {
     rev: rev,
     onOpenUser: setCard,
     onChanged: load
+  }), tab === "outcomes" && /*#__PURE__*/React.createElement(PuOutcomes, {
+    isOwner: !!(me && me.is_admin),
+    withMe: withMe
   }), tab === "reach" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuReach, {
     isOwner: !!(me && me.is_admin),
     withMe: withMe

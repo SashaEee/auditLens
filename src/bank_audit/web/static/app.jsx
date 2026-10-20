@@ -4987,6 +4987,15 @@ function ReviewsPage({params}){
     if(np.p)try{localStorage.setItem("al-rv-period",np.p);}catch{}
     trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_period",via,p:np.p||null,
       from:np.from||null,to:np.to||null,cmp:nc||null}}); };
+  // какой продукт смотрят — для «Пульса» → «Итоги» (до 21.10 не записывалось, и
+  // колонку «Аудит отзывов» в разрезе направлений считали косвенно). Одна
+  // запись на банк и продукт, пока они не сменились; пролистанное мимо (меньше
+  // 1,5 с) не считается
+  const prodSeen=useRef("");
+  useEffect(()=>{ if(!product)return; const k=bank+"|"+product; if(prodSeen.current===k)return;
+    const t=setTimeout(()=>{ prodSeen.current=k;
+      trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_product",bank,product}}); },1500);
+    return ()=>clearTimeout(t); },[bank,product]);
   const[theme,setTheme]=useState((preset&&preset.theme)||P.theme||"");
   const[tab,setTab]=useState(()=>RV_TABS.some(([k])=>k===P.tab)?P.tab
     :(preset&&(preset.theme||preset.city||preset.esc))||P.theme||P.flag||P.q||P.esc||P.city?"complaints":"overview");
@@ -10484,6 +10493,46 @@ const AD_CSS=`
 .pu-rb i{display:block;height:100%;border-radius:4px;background:color-mix(in oklab,var(--select),transparent 25%)}
 .pu-reach-tot td{font-weight:600;border-top:1px solid var(--hair-2)}
 .pu-reach-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+/* ── Итоги: направления, качество запросов, путь к результату ─────────────── */
+.oc-bar{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap;margin:4px 0 2px}
+.oc-bar .sp{flex:1}
+.oc-u{color:var(--ink-3);font-size:11px;margin-left:5px}
+.oc-tbl td b{font-weight:600;color:var(--ink)}
+.oc-tbl td.z{color:var(--hair-2)}
+.oc-tbl td.oc-ai{text-align:left;min-width:170px}
+.oc-tbl th.oc-ai{text-align:left}
+.oc-tbl tr.oc-oth td{color:var(--ink-3)}
+.oc-stack{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--paper-2);margin:8px 0 10px}
+.oc-stack i{display:block;height:100%}
+.oc-leg{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 14px;font-size:12px;color:var(--ink-2)}
+.oc-leg .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px}
+.oc-leg .n{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink)}
+.oc-leg .p{text-align:right;color:var(--ink-3);font-variant-numeric:tabular-nums;min-width:36px}
+.oc-leg .bad{color:var(--ink)}
+.oc-sec+.oc-sec{margin-top:16px;padding-top:14px;border-top:1px solid var(--hair)}
+.oc-sec h4{margin:0;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;gap:8px}
+.oc-sec h4 span{font-weight:400;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.oc-d{display:block;font-size:11px;color:var(--ink-3);margin-top:3px}
+.oc-d.good{color:var(--pos)}
+.oc-d.bad{color:var(--neg)}
+.oc-bad td{vertical-align:top;text-align:left}
+.oc-bad td.q{white-space:normal;color:var(--ink);min-width:260px}
+.oc-bad td.w{white-space:normal;color:var(--ink-3);min-width:140px}
+.oc-bad td.c{white-space:nowrap}
+.oc-bad th{text-align:left}
+.oc-flt{display:flex;gap:6px;flex-wrap:wrap}
+.oc-list{display:flex;flex-direction:column}
+.oc-li{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hair);font-size:12.5px}
+.oc-li:first-child{border-top:0}
+.oc-li .dt{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.oc-li .tx{color:var(--ink);overflow-wrap:anywhere}
+.oc-li .tx small{display:block;font-size:11px;color:var(--ink-3)}
+.oc-st{display:inline-block;font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-3);white-space:nowrap}
+.oc-st.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
+.oc-st.wait{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 55%)}
+.oc-fun .pu-kv .sub{display:block;margin:2px 0 0;line-height:1.45}
+.oc-kpis{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:var(--ink-3)}
+.oc-kpis b{display:block;font-family:'Source Serif 4',Georgia,serif;font-size:22px;font-weight:400;color:var(--ink);line-height:1.1}
 .pu-lim{position:relative;height:6px;margin-top:8px;border-radius:3px;background:var(--paper-2)}
 .pu-lim i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--select)}
 .pu-lim u{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;background:var(--warn);text-decoration:none}
@@ -11487,7 +11536,7 @@ function PuTicket({tid,onClose,onOpenUser,onChanged}){
   </div>;
 }
 
-const PU_TABS=[["people","Люди"],["reach","Охват и траты"],["reports","Отчёты"],["ai","Качество ИИ"],
+const PU_TABS=[["people","Люди"],["outcomes","Итоги"],["reach","Охват и траты"],["reports","Отчёты"],["ai","Качество ИИ"],
   ["inbox","Обращения"],["data","Данные"],["tech","Техника"]];
 // «Имя Фамилия» → «Имя Ф.»; логин остаётся логином
 const puShort=(n)=>{const p=String(n||"").trim().split(/\s+/);return p.length>=2?`${p[0]} ${p[1][0]}.`:(n||"");};
@@ -11982,6 +12031,169 @@ function PuCosts(){
   </>;
 }
 
+// ══ ИТОГИ: пользуются ли по направлениям и доходит ли до результата ═════════
+// Ответ на вопросы руководства к отчётам: сколько
+// предложений и сколько сделано, какие запросы не могут дать результата,
+// запросы по направлениям аудита. Цифры живые; направление и пригодность
+// запроса размечает модель каждую ночь (web/outcomes.py).
+const OC_PER=[[0,"Всё время"],[90,"90 дн"],[30,"30 дн"],[7,"7 дн"]];
+const OC_Q=[["ok","Годные","var(--pos)"],["followup","Уточнения к ответу","color-mix(in oklab,var(--pos),transparent 55%)"],
+  ["reference","Простые справки","color-mix(in oklab,var(--ink-3),transparent 30%)"],["template","Готовые карточки (до 25.09)","var(--hair-2)"],
+  ["vague","Слишком общие","var(--warn)"],["internal","Нужны закрытые данные","color-mix(in oklab,var(--warn),var(--neg))"],
+  ["personal","Персональные данные","var(--neg)"],["offtopic","Вне темы","color-mix(in oklab,var(--neg),transparent 45%)"],
+  ["test","Тест, случайный ввод","color-mix(in oklab,var(--neg),transparent 70%)"]];
+const OC_QL=Object.fromEntries(OC_Q.map(([k,l])=>[k,l]));
+const OC_BAD=["vague","internal","personal","offtopic","test"];
+const ocDate=(s)=>s?new Date(s).toLocaleDateString("ru",{day:"2-digit",month:"2-digit",year:"2-digit"}):"";
+// изменение к прошлому такому же периоду; inv — рост это плохо
+const ocDelta=(cur,prev,days,pp,inv)=>{ if(!days||prev==null||cur==null)return null;
+  const d=pp?Math.round((cur-prev)*1000)/10:cur-prev; if(!d)return <span className="oc-d">как в прошлые {days} дн</span>;
+  const good=inv?d<0:d>0;
+  return <span className={"oc-d "+(good?"good":"bad")}>{d>0?"+":"−"}{pp?Math.abs(d).toLocaleString("ru")+" п. п.":puNum(Math.abs(d))} к прошлым {days} дн</span>;};
+
+function PuOutcomes({isOwner,withMe}){
+  const[days,setDays]=useState(()=>{try{const v=+localStorage.getItem("al-pu-oc-days");return [0,7,30,90].includes(v)?v:0;}catch{return 0;}});
+  const[d,setD]=useState(null),[err,setErr]=useState(false);
+  const[busy,setBusy]=useState(false),[msg,setMsg]=useState("");
+  const[badF,setBadF]=useState(""),[allBad,setAllBad]=useState(false),[allT,setAllT]=useState(false);
+  const load=()=>apiFetch(`/api/admin/pulse/outcomes?days=${days}${puMe(withMe)}`).then(x=>{setD(x);setErr(false);}).catch(()=>setErr(true));
+  useEffect(()=>{ setD(null); load(); },[days,withMe]); // eslint-disable-line
+  const pick=(v)=>{setDays(v);try{localStorage.setItem("al-pu-oc-days",String(v));}catch{}};
+  const relabel=()=>{ setBusy(true); setMsg("");
+    apiFetch("/api/admin/pulse/outcomes/label",{method:"POST"})
+      .then(r=>{setMsg(r.started?`Разметка запущена: ${puNum(r.pending)} ${plural(r.pending,"запрос","запроса","запросов")} — обычно несколько минут, затем обновите вкладку.`:"Разметка уже идёт.");})
+      .catch(()=>setMsg("Не запустилось — попробуйте ещё раз.")).finally(()=>setBusy(false)); };
+  const bar=<div className="oc-bar">
+    <div className="seg" role="group" aria-label="Период итогов">{OC_PER.map(([v,l])=><button key={v} className={"seg-btn"+(days===v?" on":"")}
+      aria-pressed={days===v} onClick={()=>pick(v)}>{l}</button>)}</div>
+    <span className="sp"/>
+    <a className="btn btn-ghost btn-sm" href={`/api/admin/pulse/outcomes.xlsx?days=${days}${puMe(withMe)}`} download>Скачать Excel</a>
+    {isOwner&&<button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={relabel}
+      title="разметить новые запросы сейчас, не дожидаясь ночи">{busy?"Запускаю…":"Разметить новые"}</button>}
+  </div>;
+  if(err&&!d) return <>{bar}<div className="pu-card"><div className="pu-empty">Не удалось посчитать итоги. <button className="pu-link" onClick={load}>Повторить</button></div></div></>;
+  if(!d) return <>{bar}<div className="pu-tiles pu-tiles4">{[0,1,2,3].map(i=><div key={i} className="pu-tile"><Skel h={54}/></div>)}</div><div className="pu-card"><Skel h={260}/></div></>;
+  const f=d.funnel, qa=d.quality.ai, qv=d.quality.vuln, pv=d.prev||{}, perL=days?`за ${days} дн`:"за всё время";
+  const items=f.case_reports+f.case_reviews+f.case_documents;
+  const maxAi=Math.max(...d.dirs.map(x=>x.ai),1);
+  const lab=d.labels||{}, lr=lab.last_run;
+  const bad=d.bad_examples.filter(b=>!badF||b.quality===badF);
+  const badN=Object.fromEntries(OC_BAD.map(k=>[k,d.bad_examples.filter(b=>b.quality===k).length]));
+  const tk=d.tickets, src=d.sources;
+  const revTip=(p)=>[p.case&&`жалобы в аудит-делах — ${p.case}`,p.view&&`смотрели продукт — ${p.view}`,
+    p.export&&`выгрузки в Excel — ${p.export}`,p.sub&&`подписки — ${p.sub}`].filter(Boolean).join(" · ")||undefined;
+  const qBlock=(name,q)=><div className="oc-sec">
+    <h4>{name}<span>{puNum(q.total)} {plural(q.total,"запрос","запроса","запросов")}</span></h4>
+    <div className="oc-stack" role="img" aria-label={`${name}: годные ${puPct(q.good_share)}, не дают результата ${puPct(q.bad_share)}`}>
+      {OC_Q.filter(([k])=>q.counts[k]).map(([k,l,c])=><i key={k} style={{width:(q.counts[k]/q.total*100)+"%",background:c}} data-tip={`${l}: ${q.counts[k]}`}/>)}</div>
+    <div className="oc-leg">{OC_Q.filter(([k])=>q.counts[k]).map(([k,l,c])=><React.Fragment key={k}>
+      <span className={OC_BAD.includes(k)?"bad":""}><i className="sw" style={{background:c}}/>{l}</span>
+      <span className="n">{puNum(q.counts[k])}</span><span className="p">{puPct(q.counts[k]/q.total)}</span></React.Fragment>)}</div>
+  </div>;
+  return <>
+    {bar}
+    <div className="pu-tiles pu-tiles4">
+      <div className="pu-tile"><div className="l">Вопросы ИИ-помощнику</div><div className="v tnum">{puNum(f.questions)}</div>
+        <div className="s">{puNum(f.askers)} чел. · {perL}{ocDelta(f.questions,pv.questions,days)}</div></div>
+      <div className="pu-tile"><div className="l">Запросы в «Аудите уязвимостей»</div><div className="v tnum">{puNum(f.vuln_queries)}</div>
+        <div className="s">{puNum(f.vuln_users)} чел. · чат и поиск схем{ocDelta(f.vuln_queries,pv.vuln_queries,days)}</div></div>
+      <div className="pu-tile"><div className="l">Годные вопросы ИИ</div><div className="v tnum">{puPct(qa.good_share)}</div>
+        <div className="s">не дают результата — {puPct(qa.bad_share)}{ocDelta(qa.good_share,pv.good_share,days,true)}</div></div>
+      <div className="pu-tile"><div className="l">Аудит-дела</div><div className="v tnum">{puNum(f.cases)}</div>
+        <div className="s">{puNum(f.case_owners)} {plural(f.case_owners,"аудитор","аудитора","аудиторов")} · {puNum(items)} материалов{ocDelta(f.cases,pv.cases,days)}</div></div>
+    </div>
+
+    <div className="pu-card">
+      <div className="h"><span>Запросы по направлениям аудита · {perL}</span><span>число запросов · сколько человек</span></div>
+      <div className="pu-tblwrap"><table className="pu-tbl oc-tbl">
+        <thead><tr><th>Направление</th><th className="oc-ai">ИИ-помощник</th><th>Аудит отзывов</th><th>Аудит уязвимостей</th><th>Аудит-дела</th></tr></thead>
+        <tbody>{d.dirs.map(x=><tr key={x.code} className={x.code==="other"?"oc-oth":""}>
+          <td title={x.name}>{x.name}</td>
+          <td className="oc-ai"><span className="pu-rb"><i style={{width:Math.round(x.ai/maxAi*100)+"%"}}/></span>{x.ai?<><b className="tnum">{puNum(x.ai)}</b><span className="oc-u">{x.ai_users} чел.</span></>:<span className="z">0</span>}</td>
+          <td className={x.rev?"":"z"} data-tip={revTip(x.rev_parts)}>{x.rev?<><b className="tnum">{puNum(x.rev)}</b><span className="oc-u">{x.rev_users} чел.</span></>:"0"}</td>
+          <td className={x.vuln?"":"z"}>{x.vuln?<><b className="tnum">{puNum(x.vuln)}</b><span className="oc-u">{x.vuln_users} чел.</span></>:"0"}</td>
+          <td className={x.cases?"":"z"}>{x.cases?<><b className="tnum">{x.cases}</b><span className="oc-u">{x.cases_users} чел.</span></>:"0"}</td>
+        </tr>)}</tbody></table></div>
+      <div className="pu-note">Направление запроса определяет модель по тексту; один запрос может относиться к нескольким направлениям.
+        «Аудит отзывов» — жалобы, добавленные в аудит-дела (направление — по теме дела), выгрузки в Excel и подписки на сигналы с указанным продуктом
+        {d.review_view_since?<>, а с {ocDate(d.review_view_since)} — и просмотры продукта в фильтре вкладки (один человек и продукт — один раз в день)</>:<>; какой продукт выбирают в фильтре, начнёт считаться после выкатки записи</>}. Наведите на число — из чего оно складывается.
+        {" "}«Аудит-дела» — дела по теме названия.</div>
+    </div>
+
+    <div className="pu-grid2 top pu-sec">
+      <div className="pu-card">
+        <div className="h"><span>Качество запросов · {perL}</span><span>даст ли запрос результат</span></div>
+        {qBlock("ИИ-помощник",qa)}
+        {qBlock("Аудит уязвимостей",qv)}
+        <div className="pu-note">Годные — понятны предмет и цель, ответ есть в открытых данных; уточнения — ответ на вопрос помощника.
+          Не дают результата — слишком общие, нужны закрытые данные банка, персональные данные, вне темы, тест. Спорные случаи перепроверяет вторая модель.</div>
+      </div>
+      <div className="pu-card oc-fun">
+        <div className="h"><span>От запроса к результату · {perL}</span></div>
+        <div className="pu-kv"><span>Вопросы ИИ-помощнику<span className="sub">{puNum(f.askers)} чел. · заказов глубокого отчёта — {puNum(f.deep)}</span></span><b>{puNum(f.questions)}</b></div>
+        <div className="pu-kv"><span>Ответ получен<span className="sub">учёт с 05.10 · остановили сами — {f.runs_stopped}, сбоев — {f.runs_failed}</span></span>
+          <b>{f.runs_ok+f.runs_failed+f.runs_stopped?puPct(f.runs_ok/(f.runs_ok+f.runs_failed+f.runs_stopped)):"—"}</b></div>
+        <div className="pu-kv"><span>Сохранено отчётов<span className="sub">{puNum(f.report_users)} чел.</span></span><b>{puNum(f.reports)}</b></div>
+        <div className="pu-kv"><span>Вернулись к отчёту<span className="sub">открывали сохранённый отчёт ещё раз</span></span><b>{puNum(f.reopened)}</b></div>
+        <div className="pu-kv"><span>Переслали коллегам<span className="sub">{puNum(f.shares)} {plural(f.shares,"пересылка","пересылки","пересылок")}</span></span><b>{puNum(f.shared)}</b></div>
+        <div className="pu-kv"><span>Материалы в аудит-делах<span className="sub">отчёты ИИ — {f.case_reports}, жалобы клиентов — {f.case_reviews}, документы — {f.case_documents}</span></span><b>{puNum(items)}</b></div>
+        <div className="pu-kv"><span>Аудит-дела<span className="sub">сбор материалов — {f.cases_collect}, в работе — {f.cases_work}, с итоговым анализом — {f.cases_analysed}, пустых — {f.cases_empty}</span></span><b>{puNum(f.cases)}</b></div>
+        <div className="pu-kv"><span>Выгрузки отзывов в Excel<span className="sub">{puNum(f.export_users)} чел. · подписок на сигналы — {f.subs}</span></span><b>{puNum(f.exports)}</b></div>
+        <div className="pu-kv"><span>Отметки экспертов по схемам<span className="sub">«Аудит уязвимостей» · выгрузок — {f.vuln_exports}</span></span><b>{puNum(f.verdicts)}</b></div>
+        {d.case_topics.length>0&&<div className="pu-note">Темы дел с материалами: {d.case_topics.map(c=>`${c.title} (${c.items})`).join(" · ")}.</div>}
+        {f.cases>0&&f.cases_collect/f.cases>.8&&<div className="pu-note"><span className="acc">✦</span> Почти все дела в статусе «сбор материалов»: итог проверки
+          («замечание», «риск принят», «не подтвердилось») в деле пока не фиксируется — результат по делу отсюда не виден.</div>}
+      </div>
+    </div>
+
+    <div className="pu-card pu-sec">
+      <div className="h"><span>Запросы, которые не дадут результата · {perL}</span>
+        <div className="oc-flt">
+          <div className="seg" role="group" aria-label="Категория">
+            <button className={"seg-btn"+(!badF?" on":"")} aria-pressed={!badF} onClick={()=>setBadF("")}>Все {d.bad_examples.length}</button>
+            {OC_BAD.filter(k=>badN[k]).map(k=><button key={k} className={"seg-btn"+(badF===k?" on":"")} aria-pressed={badF===k}
+              onClick={()=>setBadF(k)}>{OC_QL[k]} {badN[k]}</button>)}</div></div></div>
+      {bad.length?<div className="pu-tblwrap"><table className="pu-tbl oc-bad">
+        <thead><tr><th>Дата</th><th>Раздел</th><th>Категория</th><th>Запрос</th><th>Почему</th></tr></thead>
+        <tbody>{(allBad?bad:bad.slice(0,15)).map((b,i)=><tr key={i}>
+          <td className="c tnum">{ocDate(b.d)}</td><td className="c">{b.section}</td><td className="c">{OC_QL[b.quality]}</td>
+          <td className="q">{b.text}{b.n>1&&<span className="oc-u">×{b.n}</span>}</td><td className="w">{b.why||""}</td></tr>)}</tbody></table></div>
+        :<div className="pu-empty">За период таких запросов нет.</div>}
+      {bad.length>15&&<button className="pu-link strong" style={{marginTop:10}} onClick={()=>setAllBad(!allBad)}>{allBad?"Свернуть":`Показать все ${bad.length}`}</button>}
+      <div className="pu-note">Имена авторов здесь не показываются. Самое частое — слишком общий запрос: помогают шаблоны запросов по направлениям и памятка «как спросить».</div>
+    </div>
+
+    <div className="pu-grid2 top pu-sec">
+      <div className="pu-card">
+        <div className="h"><span>Предложения по доработкам</span><span>обращения через «Обратную связь»</span></div>
+        <div className="oc-kpis"><span><b>{tk.total}</b>всего</span><span><b>{tk.done}</b>сделано</span>
+          <span><b>{tk.counts["ждёт ответа"]||0}</b>ждут ответа</span>{days?<span><b>{tk.new_in_period}</b>новых {perL}</span>:null}</div>
+        <div className="oc-list">{(allT?tk.items:tk.items.slice(0,6)).map(t=><div className="oc-li" key={t.id}>
+          <span className="dt">{ocDate(t.d)}</span><span className="tx">{t.body}<small>{t.section}</small></span>
+          <span className={"oc-st"+(t.done?" ok":t.status==="ждёт ответа"?" wait":"")}>{t.status}</span></div>)}</div>
+        {tk.items.length>6&&<button className="pu-link strong" style={{marginTop:8}} onClick={()=>setAllT(!allT)}>{allT?"Свернуть":`Все ${tk.items.length}`}</button>}
+      </div>
+      <div className="pu-card">
+        <div className="h"><span>Предложения по новым источникам</span><span>форма «Предложить источник»</span></div>
+        <div className="oc-kpis"><span><b>{src.total}</b>всего</span><span><b>{src.approved}</b>одобрено</span>
+          <span><b>{src.pending}</b>ждут решения</span><span><b>{src.rejected}</b>отклонено</span></div>
+        <div className="oc-list">{src.items.map(x=><div className="oc-li" key={x.id}>
+          <span className="dt">{ocDate(x.d)}</span><span className="tx">{x.title||x.domain}<small>{x.domain} · {x.purpose}</small></span>
+          <span className={"oc-st"+(x.status==="одобрен"?" ok":" wait")}>{x.status}</span></div>)}</div>
+        {src.pending>0&&<div className="pu-note">Решение по заявке — во вкладке «Данные» → «Предложенные источники».</div>}
+      </div>
+    </div>
+
+    <div className="pu-note" style={{marginTop:16}}>
+      Как обновляется: цифры пересчитываются при каждом открытии вкладки. Направление и пригодность запроса определяет модель — новые запросы она размечает каждую ночь в {String(lab.hour_msk??3).padStart(2,"0")}:40 МСК
+      {lr?<> (последняя разметка — {new Date(lr.finished_at).toLocaleString("ru",{day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"})}{lr.labeled!=null?`, ${puNum(lr.labeled)} ${plural(lr.labeled,"запрос","запроса","запросов")}`:""})</>:null}
+      {lab.pending?<>; ждут разметки — {puNum(lab.pending)}, в таблицах их пока нет</>:null}.
+      {" "}Неделя к неделе — выберите «7 дн»: под числами изменение к предыдущим 7 дням. «Скачать Excel» — та же сводка файлом для письма. Служебные учётки не считаются.
+      {msg&&<div style={{marginTop:6}}>{msg}</div>}
+    </div>
+  </>;
+}
+
 function PuTurbCtl(){
   const[st,setSt]=useState(null);
   const[busy,setBusy]=useState(false);
@@ -12122,8 +12334,9 @@ function PulsePage(){
       <span className="rv-tabs-r">
         <label className="pu-me" title="считать ли ваши собственные действия в метриках про людей">
           <input type="checkbox" checked={meOn} onChange={e=>setMeOn(e.target.checked)}/>со мной</label>
-        <div className="seg" role="group" aria-label="Период">{[7,14,30].map(d=><button key={d} className={"seg-btn"+(days===d?" on":"")}
-          aria-pressed={days===d} onClick={()=>setDays(d)}>{d} дн</button>)}</div>
+        {/* у «Итогов» свой период — со «всё время» */}
+        {tab!=="outcomes"&&<div className="seg" role="group" aria-label="Период">{[7,14,30].map(d=><button key={d} className={"seg-btn"+(days===d?" on":"")}
+          aria-pressed={days===d} onClick={()=>setDays(d)}>{d} дн</button>)}</div>}
       </span>
     </div>
 
@@ -12215,6 +12428,7 @@ function PulsePage(){
     </>}
 
     {tab==="inbox"&&<PuInbox rev={rev} onOpenUser={setCard} onChanged={load}/>}
+    {tab==="outcomes"&&<PuOutcomes isOwner={!!(me&&me.is_admin)} withMe={withMe}/>}
     {tab==="reach"&&<><PuReach isOwner={!!(me&&me.is_admin)} withMe={withMe}/><div style={{height:16}}/><PuCosts/></>}
 
     {tab==="reports"&&<>
