@@ -200,3 +200,21 @@ def test_sense_check_reranker_orders_model_decides(monkeypatch):
     monkeypatch.setattr(RD, "_rerank", lambda q, texts: None)
     got, ok = RD._verify_sense("q", rows)
     assert not ok and len(got) == 25
+
+
+def test_word_matches_head_is_reranked(monkeypatch):
+    """Первые жалобы со словами — по реранкеру; не ответил — порядок прежний."""
+    head = [{"url": f"w{i}", "via": "слова", "date": "2026-10-01", "text": "x" * 50} for i in range(5)]
+    words = [{"url": f"w{i}", "date": "2026-10-01"} for i in range(5)]
+    _setup(monkeypatch, head, words)
+    _no_summaries(monkeypatch)
+    monkeypatch.setattr(RD, "_rerank", lambda q, texts: [0.1, 0.2, 0.9, 0.05, 0.5])
+    got = RD.search_set("q", "Сбербанк")
+    assert [r["url"] for r in got["rows"]][:5] == ["w2", "w4", "w1", "w0", "w3"] and got["meta"]["words_reranked"]
+    RD._SET_CACHE.clear()
+    monkeypatch.setattr(RD, "_rerank", lambda q, texts: None)
+    got = RD.search_set("q", "Сбербанк")
+    assert [r["url"] for r in got["rows"]][:5] == [f"w{i}" for i in range(5)] and not got["meta"]["words_reranked"]
+    RD._SET_CACHE.clear()
+    got = RD.search_set("q", "Сбербанк", sort="date")              # «по дате» реранкер не трогает
+    assert "words_reranked" not in got["meta"]

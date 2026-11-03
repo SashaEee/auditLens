@@ -1927,6 +1927,31 @@ def _rerank(query: str, texts: list[str]) -> list[float] | None:
         return None
 
 
+_RERANK_TOP = int(os.getenv("REVIEWS_RERANK_TOP", "50"))
+
+
+def _rerank_head(query: str, rows: list[dict]) -> tuple[list[dict], bool]:
+    """Первые _RERANK_TOP жалоб со словами запроса — по близости к ситуации, которую ищет
+    аудитор (реранкер, ~0,3 с), остальные — в прежнем порядке. Первую страницу читают
+    все, и раньше её порядок задавало слияние векторов и ключевых слов. Реранкер не
+    ответил — порядок прежний."""
+    head = rows[:_RERANK_TOP]
+    if len(head) < 3:
+        return rows, False
+    try:
+        with db.session() as s:
+            summ = dict(s.execute(text("""SELECT url, summary FROM review_annotation
+                                           WHERE schema_version = :sv AND url = ANY(:u)"""),
+                                  {"sv": _ann_schema(), "u": [r["url"] for r in head]}).all())
+    except Exception:  # noqa: BLE001
+        return rows, False
+    sc = _rerank(query, [(summ.get(r["url"]) or (r.get("text") or "")[:500] or "").strip() for r in head])
+    if sc is None:
+        return rows, False
+    order = sorted(range(len(head)), key=lambda k: (-sc[k], k))
+    return [head[k] for k in order] + rows[_RERANK_TOP:], True
+
+
 def _verify_sense(query: str, rows: list[dict]) -> tuple[list[dict], bool]:
     """Смысловые кандидаты → только относящиеся к запросу, от самых близких (сначала
     реранкер, затем лёгкая модель по сути жалобы из разметки). Без проверки «похожие
@@ -2098,6 +2123,7 @@ def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = 
         word_rows.sort(key=lambda r: (r.get("date") or ""), reverse=True)
     else:
         word_rows.sort(key=lambda r: r["_k"])
+        word_rows, meta["words_reranked"] = _rerank_head(pq["text"], word_rows)
     # 2) похожие по смыслу: ближайшие без слов запроса, проверенные моделью
     cands = []
     for r in head:
