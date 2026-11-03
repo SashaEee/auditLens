@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 from .. import categories as _cm
 from ..rag import review_codebook as _cb
+from ..rag import review_glossary as _gl
 
 log = logging.getLogger(__name__)
 
@@ -88,17 +89,114 @@ def today_msk() -> _dt.date:
 # ── ссылки на страницы AuditLens ─────────────────────────────────────────────
 # Фронт читает параметры из hash: #reviews?theme=…, #market?cat=…, #knowledge?doc=…
 
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# ключ фильтра «Площадка» во вкладке → как её называть человеку
+SOURCE_LABEL = {"banki": "banki.ru", "sravni": "sravni.ru", "bankiros": "bankiros.ru",
+                "finuslugi": "finuslugi.ru"}
+
+
+def _iso_day(d) -> str | None:
+    """Дата → «ГГГГ-ММ-ДД»; что на дату не похоже — None."""
+    if d is None or d == "":
+        return None
+    s = (d.isoformat() if isinstance(d, _dt.date) else str(d)).strip()[:10]
+    if not _ISO_DAY.match(s):
+        return None
+    try:
+        _dt.date.fromisoformat(s)
+    except ValueError:
+        return None
+    return s
+
+
+def source_key(source: str | None) -> str | None:
+    """Площадка → ключ фильтра вкладки (banki, sravni, bankiros, finuslugi).
+    Жалобы приходят с источником индекса («bankiru», «banki_reviews»,
+    «sravni_reviews») или доменом («banki.ru»); banki.ru — одна площадка, хоть
+    в индексе и два источника. Незнакомое — None."""
+    if not source:
+        return None
+    s = str(source).strip().lower().removeprefix("www.")
+    keys = _rd()._SOURCE_KEYS
+    if s in keys:
+        return s
+    for k, raw in keys.items():
+        if s in raw or s.split(".")[0] == k:
+            return k
+    return None
+
+
 def link_reviews(bank: str | None = SBER, product: str | None = None,
                  theme: str | None = None, days: int | None = None,
-                 city: str | None = None, q: str | None = None,
+                 city: str | None = None, q: str | None = None, *,
+                 flag: str | None = None, source: str | None = None,
+                 date_from=None, date_to=None, period=None, esc: bool = False,
                  week_end: str | None = None) -> str:
-    """week_end — ссылка на жалобы недели всплеска (те же, что в его числе), а не на «7 дней»."""
-    p = {"bank": bank if bank and bank != SBER else None, "product": product,
-         "theme": theme, "days": None if week_end else days, "city": city, "q": q,
-         "month": f"sig:{week_end}" if week_end else None,
-         "tab": "complaints" if (theme or q or city) else None}
+    """Ссылка на «Аудит отзывов» с тем же срезом, по которому посчитано число.
+
+    Параметры — как у вкладки (ReviewsPage в app.jsx): tab, bank, product, p или
+    from/to, theme, flag, esc, city, source, q. До 04.11.2026 ссылка теряла
+    признак, площадку и период «с — по»: аудитор открывал вкладку и видел не то
+    число, что назвал ИИ. Период пишется всегда, в том числе 90 дней: без него
+    вкладка берёт период, выбранный в этом браузере в прошлый раз.
+
+    period — review_period.Period, по которому считали (важнее дат); date_from и
+    date_to — «с — по» включительно; days — «последние N дней»; week_end — неделя
+    всплеска (month=sig:…: те же жалобы, что в его числе, с отсевом старых событий,
+    поэтому «с — по» здесь не годится). Неизвестные тема,
+    признак и площадка в ссылку не идут: вкладка показала бы ошибку вместо жалоб."""
+    rd = _rd()
+    per_p, d0, d1 = None, None, None
+    we = _iso_day(week_end)
+    if we:
+        pass
+    elif period is not None:
+        if period.kind == "rolling" and period.n:
+            per_p = f"{period.n}d"
+        elif period.kind == "all":
+            per_p = "all"
+        else:
+            info = period.info()
+            d0, d1 = info["from"], info["to"]
+    elif _iso_day(date_from):
+        d0, d1 = _iso_day(date_from), _iso_day(date_to)
+    elif days:
+        per_p = f"{max(1, int(days))}d"
+    theme = theme if theme in _cb.ISSUES else None
+    flag = flag if flag and rd._flag_sql(flag) else None
+    src = source_key(source)
+    p = {"tab": "complaints" if (theme or flag or esc or city or src or q) else None,
+         "bank": bank if bank and bank != SBER else None, "product": product,
+         "p": per_p, "from": d0, "to": d1 if d0 else None,
+         "theme": theme, "flag": flag, "esc": "1" if esc else None, "city": city,
+         "source": src, "q": q, "month": f"sig:{we}" if we else None}
     qs = urlencode({k: v for k, v in p.items() if v})
     return "#reviews" + ("?" + qs if qs else "")
+
+
+def _week_dates(week_end, days: int = 7) -> tuple[str | None, str | None]:
+    """Дни выборки недельного сигнала «с — по» включительно: она кончается днём
+    week_end (reviews_dash.week_end) и длится days дней."""
+    d1 = _iso_day(week_end)
+    if not d1:
+        return None, None
+    end = _dt.date.fromisoformat(d1)
+    return (end - _dt.timedelta(days=max(1, int(days)) - 1)).isoformat(), d1
+
+
+def _period(product: str | None, days: int, date_from: str | None = None,
+            date_to: str | None = None):
+    """Период инструмента — так же, как его строит вкладка (web/app._review_period):
+    «с — по» включительно или последние N дней; у особых срезов («Зарплатные
+    проекты» и др.) — своё начало данных. ValueError — даты не разобрать."""
+    from ..rag import review_period as rp
+    d0, d1 = _iso_day(date_from), _iso_day(date_to)
+    if (date_from and not d0) or (date_to and not d1):
+        raise ValueError("даты периода — в виде ГГГГ-ММ-ДД, например 2026-05-01")
+    if d1 and not d0:
+        raise ValueError("date_to задана без date_from: укажите начало периода")
+    return rp.from_request(None, d0, d1, None, None if d0 else days,
+                           data_start=_rd().data_start_for(product))
 
 
 def link_market(cat: str | None = None, q: str | None = None) -> str:
@@ -136,6 +234,8 @@ def _q(sql: str, params: dict | None = None) -> list[dict]:
 
 def _signal(s: dict, bank: str, product: str | None, week_end: str | None = None) -> dict:
     g = s.get("geo") or {}
+    # ссылка — на жалобы самой недели сигнала (month=sig:…), а не «последние 7 дней»
+    # от сегодня: неделя кончается последним полным днём данных
     return {"theme": s.get("key"), "label": s.get("label"), "week": s.get("week"),
             "prev_week": s.get("prev_week"), "norm_per_week": s.get("baseline_week"),
             "ratio": s.get("ratio"), "market_ratio": s.get("market_ratio"),
@@ -197,10 +297,11 @@ def tool_complaint_signals(bank: str = SBER, product: Product | None = None) -> 
     ws = rd.weekly_signals(bank, product) or {}
     wp = rd.week_pulse(bank, product) or {}
     ov = ws.get("overall") or {}
+    we = ws.get("week_end")
     keys = {s.get("key") for s in ws.get("signals") or []}
     sigs = []
     for i, s in enumerate(ws.get("signals") or []):
-        item = _signal(s, bank, product, ws.get("week_end"))
+        item = _signal(s, bank, product, we)
         if i < 3:
             # Жалобы, из которых сложился всплеск: причина почти всегда видна в
             # них самих (одно событие, продавец, сервис), а не в названии темы.
@@ -208,32 +309,45 @@ def tool_complaint_signals(bank: str = SBER, product: Product | None = None) -> 
             item["complaints"] = [{k: e.get(k) for k in ("date", "city", "summary", "quote",
                                                           "url")} for e in ev]
         sigs.append(item)
+    d0, d1 = _week_dates(we)
     return out({
-        "bank": bank, "product": product, "week_end": ws.get("week_end"),
+        "bank": bank, "product": product, "week_end": we,
         "overall": {"week": ov.get("week"), "norm_per_week": ov.get("baseline_week"),
                     "ratio": ov.get("ratio"), "market_ratio": ov.get("market_ratio")},
         "signals": sigs,
-        "watch_faster_than_market": [_signal(s, bank, product)
+        "watch_faster_than_market": [_signal(s, bank, product, we)
                                      for s in (wp.get("diverge") or [])[:6]
                                      if s.get("key") not in keys],
-        "link": link_reviews(bank, product)})
+        "counting": _gl.COMPLAINT_SHORT + "; неделя — по главной проблеме, события не "
+                    "старше 60 дней",
+        "link": link_reviews(bank, product, days=7, date_from=d0, date_to=d1)})
 
 
 def tool_complaint_theme(theme: Theme, bank: str = SBER, product: Product | None = None,
-                         days: int = 7) -> str:
+                         days: int = 7, date_from: str | None = None,
+                         date_to: str | None = None) -> str:
     rd, rw = _rd(), _rw()
     days = max(1, min(int(days or 7), 365))
+    dated = bool(date_from or date_to)
+    try:
+        per = _period(product, days, date_from, date_to)
+    except ValueError as e:
+        return out({"error": str(e)})
     ws = rd.weekly_signals(bank, product) or {}
+    we = ws.get("week_end")
     sig = next((s for s in ws.get("signals") or [] if s.get("key") == theme), None)
     if not sig:
         sig = next((s for s in (rd.week_pulse(bank, product) or {}).get("diverge") or []
                     if s.get("key") == theme), None)
     res: dict = {"theme": theme, "label": _cb.ISSUES[theme][0], "bank": bank,
-                 "product": product, "days": days, "week_end": ws.get("week_end"),
-                 "weekly_signal": _signal(sig, bank, product, ws.get("week_end")) if sig else None}
-    if days <= 7:
-        # ровно те жалобы, из которых сложился недельный счётчик
+                 "product": product, "days": per.days if dated else days, "week_end": we,
+                 "weekly_signal": _signal(sig, bank, product, we) if sig else None}
+    if days <= 7 and not dated:
+        # ровно те жалобы, из которых сложился недельный счётчик; сколько их всего —
+        # отдельным подсчётом: список обрезан 40 строками, и до 04.11.2026 модель
+        # называла числом жалоб темы его длину
         ev = rd.signal_evidence(bank, theme, product, days, 40) or []
+        total = rd.signal_evidence_total(bank, theme, product, days)
         cards = {c["url"]: c for c in (rw.reviews_by_urls([e["url"] for e in ev]) if ev else [])}
         items = []
         for e in ev:
@@ -242,15 +356,25 @@ def tool_complaint_theme(theme: Theme, bank: str = SBER, product: Product | None
                    "quote": e.get("quote"), "esc": e.get("esc")}
             items.append(_complaint({**c, "ann": ann, "date": e.get("date"),
                                      "city": e.get("city"), "url": e.get("url")}))
-        res["sample"] = "все жалобы недельного сигнала (главная проблема жалобы — эта тема)"
-        res["total"] = len(items)
+        what = ("жалоб недельной выборки темы (она — главная проблема жалобы; события не "
+                "старше 60 дней — как в числе всплеска)")
+        if days == 7 and we:          # неделя всплеска во вкладке — ровно эти жалобы
+            link = link_reviews(bank, product, theme, days, week_end=we)
+        else:
+            d0, d1 = _week_dates(we, days)
+            link = link_reviews(bank, product, theme, days, date_from=d0, date_to=d1)
+        cl = rw.clusters(bank, product, 7, theme) or {}
     else:
-        feed = rd.list_reviews_ex(bank, product=product, theme=theme, days=days,
+        feed = rd.list_reviews_ex(bank, product=product, theme=theme, period=per,
                                   limit=25, sort="date") or {}
         items = [_complaint(it, 500) for it in feed.get("items") or []]
-        res["sample"] = f"последние {len(items)} из {feed.get('total')} жалоб с этой темой"
-        res["total"] = feed.get("total")
-    cl = rw.clusters(bank, product, max(days, 7), theme, None, None, None, False) or {}
+        total = feed.get("total")
+        what = "последних жалоб, где эта тема — главная проблема"
+        link = link_reviews(bank, product, theme, period=per)
+        cl = rw.clusters(bank, product, per.days, theme, period=per) or {}
+    res["total"], res["shown"] = total, len(items)
+    res["sample"] = (f"показано {len(items)} из {total} {what}" if total is not None
+                     else f"показано {len(items)} {what}")
     urls = {i.get("url") for i in items}
     res["similar_groups"] = [{"n": g.get("n"), "in_sample": len(urls & set(g.get("urls") or [])),
                               "summary": g.get("summary"), "quote": g.get("quote"),
@@ -258,22 +382,45 @@ def tool_complaint_theme(theme: Theme, bank: str = SBER, product: Product | None
                               "cities": g.get("cities"), "escalation_threats": g.get("esc")}
                              for g in (cl.get("clusters") or [])[:6]]
     res["complaints"] = items
-    res["link"] = link_reviews(bank, product, theme, days)
+    res["counting"] = _gl.COMPLAINT_SHORT
+    res["glossary"] = _gl.terms("тема")
+    res["link"] = link
     return out(res)
 
 
+def _by_source(rows: list[dict] | None, bank: str, product: str | None, per) -> list[dict]:
+    """Площадки — как фильтр вкладки: banki.ru одной строкой (в индексе это два
+    источника — внешний корпус и наш сбор), со ссылкой на жалобы этой площадки."""
+    acc: dict[str, dict] = {}
+    for x in rows or []:
+        k = source_key(x.get("source"))
+        name = SOURCE_LABEL.get(k or "", x.get("source") or "—")
+        it = acc.setdefault(name, {"source": name, "n": 0,
+                                   "link": link_reviews(bank, product, source=k, period=per)
+                                   if k else None})
+        it["n"] += int(x.get("n") or 0)
+    return sorted(acc.values(), key=lambda x: -x["n"])
+
+
 def tool_complaints_overview(bank: str = SBER, product: Product | None = None,
-                             days: int = 90) -> str:
+                             days: int = 90, date_from: str | None = None,
+                             date_to: str | None = None) -> str:
     rd = _rd()
     days = max(7, min(int(days or 90), 730))
-    ov = rd.overview(bank, product, days) or {}
+    try:
+        per = _period(product, days, date_from, date_to)
+    except ValueError as e:
+        return out({"error": str(e)})
+    ov = rd.overview(bank, product, period=per) or {}
     if not ov:
         return out({"error": f"банк «{bank}» не найден в корпусе отзывов"})
-    th = rd.themes(bank, product, days) or {}
-    rf = rd.risk_flags(bank, product, days) or {}
-    geo = rd.geo(bank, product, days, 20) or {}
+    th = rd.themes(bank, product, period=per) or {}
+    rf = rd.risk_flags(bank, product, period=per) or {}
+    geo = rd.geo(bank, product, per.days, 20, period=per) or {}
+    info = per.info()
     return out({
-        "bank": ov.get("bank"), "product": product, "days": days, "as_of": ov.get("as_of"),
+        "bank": ov.get("bank"), "product": product, "days": per.days,
+        "period": {"from": info.get("from"), "to": info.get("to")}, "as_of": ov.get("as_of"),
         "complaints": ov.get("total"), "prev_period": ov.get("prev"),
         "change_pct": ov.get("delta_pct"), "last_window_incomplete": ov.get("delta_partial"),
         "share_of_all_bank_complaints_pct": ov.get("market_share_pct"),
@@ -285,37 +432,49 @@ def tool_complaints_overview(bank: str = SBER, product: Product | None = None,
         "themes": [{"theme": t["key"], "label": t["label"], "n": t["n"], "pct": t.get("pct"),
                     "prev": t.get("prev"), "change_pct": t.get("delta_pct"),
                     "change_significant": t.get("delta_sig"),
-                    "link": link_reviews(bank, product, t["key"], days)}
+                    "link": link_reviews(bank, product, t["key"], period=per)}
                    for t in (th.get("themes") or [])[:14]],
         "what_changed": [{"text": x.get("text"), "detail": x.get("detail")}
-                         for x in (rd.changes(bank, product, days) or {}).get("items") or []],
+                         for x in (rd.changes(bank, product, period=per) or {}).get("items")
+                         or []],
         "risk_flags": [{"group": g.get("label"), "flag": it.get("label"), "n": it.get("n"),
                         "pct": it.get("pct"), "market_pct": it.get("market_pct"),
-                        "index": it.get("index"), "significant": it.get("sig")}
+                        "index": it.get("index"), "significant": it.get("sig"),
+                        "link": link_reviews(bank, product, flag=it.get("flag"), period=per)}
                        for g in rf.get("groups") or [] for it in g.get("items") or []],
-        "banks_by_complaints": (rd.vs_market(bank, product, days) or {}).get("rows"),
+        "banks_by_complaints": (rd.vs_market(bank, product, period=per) or {}).get("rows"),
         "cities": [{"city": c["city"], "n": c["n"], "index": c.get("index"),
                     "above_normal": c.get("anomaly")} for c in (geo.get("cities") or [])[:10]],
-        "by_source": ov.get("by_source"),
-        "counting": "жалобы (1–2★ и смешанные) по LLM-разметке, все площадки",
-        "link": link_reviews(bank, product, days=days)})
+        "by_source": _by_source(ov.get("by_source"), bank, product, per),
+        "counting": _gl.COMPLAINT_SHORT,
+        "glossary": _gl.terms("тема", "срез"),
+        "link": link_reviews(bank, product, period=per)})
 
 
 def tool_complaint_search(query: str, bank: str = SBER, product: Product | None = None,
-                          theme: Theme | None = None, days: int = 90, limit: int = 10) -> str:
+                          theme: Theme | None = None, days: int = 90, limit: int = 10,
+                          date_from: str | None = None, date_to: str | None = None) -> str:
     rd = _rd()
     days = max(1, min(int(days or 90), 730))
-    res = rd.list_reviews_ex(bank, product=product, theme=theme, q=query, days=days,
+    try:
+        per = _period(product, days, date_from, date_to)
+    except ValueError as e:
+        return out({"error": str(e)})
+    # период — тем же объектом, что строит вкладка по ссылке ниже: набор поиска и
+    # его счётчики совпадают с тем, что аудитор увидит, открыв ссылку
+    res = rd.list_reviews_ex(bank, product=product, theme=theme, q=query, period=per,
                              limit=max(1, min(int(limit or 10), 25)), sort="auto") or {}
     sm = res.get("search") or {}
     return out({"query": query, "bank": bank, "product": product, "theme": theme,
-                "days": days, "total": res.get("total"), "error": res.get("error"),
+                "days": per.days, "total": res.get("total"), "error": res.get("error"),
                 # total = все жалобы, где слова запроса есть (by_words), плюс до 20
                 # похожих по смыслу без этих слов (by_sense) — то же число видит
                 # аудитор во вкладке; «нашлось N» говорить только по by_words
                 "by_words": sm.get("n_words"), "by_sense": sm.get("n_sense"),
+                "by_words_capped": sm.get("words_capped"),
+                "glossary": _gl.terms("со словами запроса", "по смыслу"),
                 "complaints": [_complaint(it, 500) for it in res.get("items") or []],
-                "link": link_reviews(bank, product, theme, days, q=query)})
+                "link": link_reviews(bank, product, theme, q=query, period=per)})
 
 
 _CELL_KEYS = ("category", "label", "rank", "n_banks", "percentile", "tied", "metric_label",
@@ -749,11 +908,29 @@ _LH_TYPE = {"vulnerability": "уязвимость", "fraud_scheme": "мошен
             "not_confirmed": "не подтверждено"}
 
 
+# Старая разметка жалоб: темы регулярками (review_topic, v_review_topics) и
+# тональность по словарю (review_sentiment, v_review_sentiment_share) — по небольшой
+# таблице review, сводка поверх них (review_summary) и векторная таксономия
+# (review_topic_def/_label/_state), которую в сентябре 2026 сменила LLM-разметка.
+# Числа из них не сходятся с «Аудитом отзывов», и модель приносила «топ тем»,
+# которых во вкладке нет (04.11.2026). Жалобы — только инструментами жалоб.
+STALE_REVIEW_RELATIONS = re.compile(
+    r"(?<![\w$])(review_topic(?:_def|_label|_state)?|v_review_topics|review_sentiment"
+    r"|v_review_sentiment_share|review_summary)(?![\w$])", re.I)
+
+
 def tool_sql(query: str) -> str:
     """SELECT к основной базе в транзакции только для чтения."""
     sql = (query or "").strip().rstrip(";").strip()
     if not re.match(r"^(select|with)\b", sql, re.I) or ";" in sql:
         return out({"error": "один запрос SELECT (или WITH … SELECT); запись — через alsql"})
+    stale = sorted({m.group(1).lower() for m in STALE_REVIEW_RELATIONS.finditer(sql)})
+    if stale:
+        return out({"error": f"{', '.join(stale)} — старая разметка жалоб, её числа не совпадают "
+                             "с разделом «Аудит отзывов». Жалобы, темы и признаки — инструментами "
+                             "complaints_overview, complaint_theme, complaint_search, "
+                             "complaint_signals.",
+                    "counting": _gl.COMPLAINT_SHORT})
     from sqlalchemy import text
     from .. import db
     with db.session() as s:
@@ -790,16 +967,24 @@ TOOLS: list[ToolSpec] = [
              "(пересказ, цитата, ссылка); плюс темы, растущие быстрее рынка ниже порога "
              "значимости. Полный разбор темы с текстами — complaint_theme."),
     ToolSpec("complaint_theme", "Разбор темы жалоб", tool_complaint_theme,
-             "Одна тема жалоб целиком: недельный сигнал, сами жалобы (дата, город, продукт, "
+             "Одна тема жалоб целиком: недельный сигнал, total — сколько всего жалоб, где тема "
+             "главная, shown — сколько из них в ответе, сами жалобы (дата, город, продукт, "
              "пересказ, цитата, эскалация, начало текста, ссылка) и группы похожих жалоб. "
-             "days=7 — ровно выборка недельного сигнала. Темы: " + THEMES_HELP),
+             "days=7 — ровно выборка недельного сигнала; date_from/date_to — период «с — по», "
+             "как во вкладке. Число жалоб темы — total, не длина списка. Темы: "
+             + THEMES_HELP),
     ToolSpec("complaints_overview", "Сводка жалоб", tool_complaints_overview,
-             "Жалобы на банк (или продукт) за период: число и изменение, доля и место среди "
-             "банков, эскалация против рынка, темы с изменением, что изменилось, признаки "
-             "риска против рынка, города, площадки."),
+             "Жалобы на банк (или продукт) за период — те же числа, что в разделе «Аудит "
+             "отзывов»: число и изменение, доля и место среди банков, эскалация против рынка, "
+             "темы с изменением, что изменилось, признаки риска против рынка, города, "
+             "площадки. Период — days или date_from/date_to («с — по»)."),
     ToolSpec("complaint_search", "Поиск жалоб", tool_complaint_search,
              "Поиск жалоб по словам и смыслу (сервис, схема, формулировка, событие) с "
-             "фильтрами банка, продукта, темы и периода; total — сколько всего нашлось."),
+             "фильтрами банка, продукта, темы и периода (days или date_from/date_to). "
+             "by_words — сколько всего жалоб со словами запроса (полный счёт: «нашлось N» — "
+             "это он); by_sense — ближайшие по смыслу жалобы без этих слов, их число "
+             "ограничено (примеры, не счёт); total — длина списка во вкладке, by_words + "
+             "by_sense. Точные формулировки — в поле glossary ответа."),
     ToolSpec("market_position", "Позиция на рынке", tool_market_position,
              "Место Сбера среди банков по категориям продуктов, как в «Рынке»: ранг, метрика "
              "категории, значение и продукт Сбера, разрыв с медианой и лидером, сегменты, "

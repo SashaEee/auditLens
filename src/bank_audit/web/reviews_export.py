@@ -17,6 +17,7 @@ import io
 from collections import Counter
 from datetime import date
 
+from ..rag import review_glossary as G
 from .export_brand import MONO, SANS, SERIF, STAMP, XL, C, banner_png, stamp_line
 
 SOURCE_LABEL = {"bankiru": "banki.ru", "banki_reviews": "banki.ru",
@@ -86,7 +87,29 @@ def describe_filters(f: dict) -> list[tuple[str, str]]:
                        f"{f['days']} дней" if f.get("days") else "всё время")),
            ("Только эскалация", "да" if f.get("esc") else "нет")]
     if f.get("q"):
-        out.insert(3, ("Поиск", f"«{f['q']}» — все жалобы со словами запроса и до 20 похожих по смыслу"))
+        out.insert(3, ("Поиск", f"«{f['q']}» — {G.search_scope()}"))
+    return out
+
+
+def method_lines(f: dict) -> list[str]:
+    """«Как считали» на листе «О выгрузке» — формулировками словаря вкладки
+    (rag/review_glossary), чтобы выгрузка, вкладка и ИИ называли одно и то же
+    одинаково. С поиском — что именно в него вошло: с 03.11.2026 выгружается ровно
+    найденный вкладкой список, а лист ещё писал, что поиск в выгрузку не входит."""
+    out = [f"{G.COMPLAINT} Разметку (тема, эскалация, признаки, пересказ, цитата) делает "
+           "модель по кодификатору AuditLens, цитата сверяется с текстом.",
+           G.THEME,
+           ("Площадки: banki.ru, sravni.ru, bankiros.ru, finuslugi.ru — тот же корпус, что в "
+            "разделе «Аудит отзывов».")]
+    if f.get("q"):
+        out += [f"Поиск «{f['q']}»: в выгрузке ровно тот список, что вкладка показала по "
+                "этому запросу, в том же порядке.", G.by_words(), G.by_sense()]
+    else:
+        out.append("Поиска нет: выгружены все жалобы по фильтрам выгрузки.")
+    if not (f.get("theme") or f.get("flag")):
+        out.append("Как и на экране, в списке есть свежие жалобы, которые ИИ ещё не разметил "
+                   "(столбец «Разметка» — «на разметке», обычно до часа после сбора).")
+    out.append(f"{STAMP}. Источник — раздел «Аудит отзывов».")
     return out
 
 
@@ -246,14 +269,16 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
     bar("Площадки", f"A{row}", color=C["ink2"])
     bar("Города", f"G{row}", color=C["sber"])
     row += 18
+    # Определение жалобы — из словаря вкладки (rag/review_glossary): до 04.11.2026
+    # здесь стояло «отзывы с оценкой 1–2★», а считаются жалобы по разметке ИИ
     note = ov.cell(row=row, column=1, value=(
         "Графики строятся по листу «Сводки» и пересчитываются, если изменить его. "
-        "Жалобы — отзывы с оценкой 1–2★ и смешанные, размеченные моделью; тема — по "
-        "кодификатору AuditLens, цитаты сверены с текстом отзыва."))
+        f"{G.COMPLAINT} Тема — главная проблема по кодификатору AuditLens, цитаты "
+        "сверены с текстом отзыва."))
     note.font = XL.font(8.5, color="ink3")
     note.alignment = Alignment(wrap_text=True, vertical="top")
     ov.merge_cells(start_row=row, start_column=1, end_row=row, end_column=12)
-    ov.row_dimensions[row].height = 30
+    ov.row_dimensions[row].height = 44
 
     # ── «Жалобы» ─────────────────────────────────────────────────────────
     ws = wb.create_sheet("Жалобы", 1)
@@ -326,19 +351,13 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
                  [[k, v] for k, v in COLUMN_HELP.items()], wrap={"Что это"}) + 1
     ab.auto_filter.ref = None
     r = XL.section(ab, r, "Как считали", eyebrow="Методика", span=2)
-    for line in (
-        ("Жалоба — отзыв с оценкой 1–2★ или смешанный; разметку (тема, эскалация, признаки, "
-         "пересказ, цитата) делает модель по кодификатору AuditLens, цитата сверяется с текстом."),
-        ("Площадки: banki.ru, sravni.ru, bankiros.ru, finuslugi.ru — тот же корпус, что в "
-         "разделе «Аудит отзывов»."),
-        "Поиск по смыслу в выгрузку не входит: выгружается полный срез по фильтрам.",
-        f"{STAMP}. Источник — раздел «Аудит отзывов».",
-    ):
+    for line in method_lines(filters):
         cell = ab.cell(row=r, column=1, value=line)
         cell.font = XL.font(10, color="ink2")
         cell.alignment = Alignment(wrap_text=True, vertical="top")
         ab.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
-        ab.row_dimensions[r].height = 30
+        # ≈100 знаков в строке объединённой ячейки при 10 пт — высота по длине текста
+        ab.row_dimensions[r].height = max(30, 15 * (len(line) // 100 + 1))
         r += 1
 
     # Книга открывается на «Обзоре»

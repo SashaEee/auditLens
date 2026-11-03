@@ -651,10 +651,13 @@ def tool_search_reviews_db(args: dict, bundle) -> str:
 def tool_run_sql(args: dict, bundle) -> str:
     """Read-only SELECT по предзаданным представлениям/таблицам.
 
-    Доступно: v_offer_current, v_market_rub_offer, v_review_topics,
-    v_review_sentiment_share, v_bank_coverage, bank, review, review_topic,
-    review_sentiment, product_offer, product_terms, quality_flag,
-    change_history.
+    Доступно: v_market_rub_offer, offer_enrichment, v_offer_current,
+    v_offer_top_by_rate, v_bank_coverage, bank, review, product_offer,
+    product_terms, quality_flag, extraction_run, change_history — белый список
+    ai/analyst._ALLOWED_RELATIONS. Темы жалоб регулярками (review_topic,
+    v_review_topics) и тональность по словарю (review_sentiment,
+    v_review_sentiment_share) закрыты 04.11.2026: их числа не совпадают с
+    разделом «Аудит отзывов».
 
     Запрещено: всё кроме SELECT/WITH. LIMIT обязателен.
     """

@@ -1,9 +1,10 @@
 """Аналитика отзывов для вкладки «Отзывы» (риск-радар голоса клиента).
 
-Агрегаты поверх корпуса banki.ru (БД `bankiru`, ~390к жалоб 1-2★, 2025-2026):
-KPI, помесячная динамика + детект спайков, таксономия тем с трендом и
-категорией риска, индекс «банк против рынка» по проблемам, география
-(индекс доли банка в городе), признаки риска, лента.
+Агрегаты поверх единого индекса отзывов всех площадок (review_index) с
+LLM-разметкой: KPI, помесячная динамика + детект спайков, таксономия тем с
+трендом и категорией риска, индекс «банк против рынка» по проблемам, география
+(индекс доли банка в городе), признаки риска, лента. Что считается жалобой —
+_CMP ниже; слова для людей и ИИ — rag/review_glossary.
 
 Все тяжёлые агрегаты bank-scoped (подмножество ≤50к строк) → быстро.
 Кэш на процесс с TTL (агрегаты считаются раз в ~час).
@@ -3176,13 +3177,22 @@ def _rate_change(n: int, prev: int, k: float = 1.0) -> dict | None:
             "hi": round(100 * (math.exp(lr + 1.96 * se) - 1)), "p": _p2(lr / se)}
 
 
+# Выборка недельного сигнала по теме: главная проблема, жалоба, последние :d дней
+# до конца недели сигнала, события не старше 60 дней — как в _topic_week_counts.
+_EVIDENCE_WHERE = f"""i.bank = :bank AND i.issue = :key AND {_CMP}
+              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
+              AND i.dt >= {_WEEK_END} - make_interval(days => :d) AND i.dt < {_WEEK_END}
+              AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)"""
+
+
 @_safe([])
 def signal_evidence(bank: str, key: str, product: str | None = None, days: int = 7,
                     limit: int = 30) -> list[dict]:
     """Жалобы, из которых сложился сигнал: та же выборка, что в его счётчике
     (главная проблема, жалоба, события не старше 60 дней). Именно их, а не
     «последние жалобы банка» читает модель, когда объясняет сигнал: 22.09
-    сводка взяла формулировку из отзыва другой темы."""
+    сводка взяла формулировку из отзыва другой темы. Сколько их всего — не
+    len() от этого списка (он обрезан limit), а signal_evidence_total."""
     bc = resolve_bank(bank)
     if not bc or key not in cb.ISSUES:
         return []
@@ -3192,10 +3202,7 @@ def signal_evidence(bank: str, key: str, product: str | None = None, days: int =
                    a.no_consent, a.misled, a.issues2
             FROM review_index i
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
-            WHERE i.bank = :bank AND i.issue = :key AND {_CMP}
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
-              AND i.dt >= {_WEEK_END} - make_interval(days => :d) AND i.dt < {_WEEK_END}
-              AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)
+            WHERE {_EVIDENCE_WHERE}
             ORDER BY i.dt DESC LIMIT :lim
         """), {"bank": bc, "key": key, "product": product, "d": days, "lim": limit,
                "sv": _ann_schema()}).mappings().all()
@@ -3204,6 +3211,22 @@ def signal_evidence(bank: str, key: str, product: str | None = None, days: int =
              "quote": r["quote"] if r["quote_ok"] else None,
              "esc": r["esc"], "no_consent": bool(r["no_consent"]), "misled": bool(r["misled"])}
             for r in rows]
+
+
+@_safe(None)
+def signal_evidence_total(bank: str, key: str, product: str | None = None,
+                          days: int = 7) -> int | None:
+    """Сколько жалоб в выборке сигнала — отдельным подсчётом по индексу, как
+    счётчик недели (_topic_week_counts) и риск-карта (themes). До 04.11.2026
+    инструмент ИИ называл числом жалоб темы длину выборки с потолком 40: на
+    неделе с большим всплеском модель писала «40», а вкладка — больше."""
+    bc = resolve_bank(bank)
+    if not bc or key not in cb.ISSUES:
+        return None
+    with db.session() as s:
+        n = s.execute(text(f"SELECT count(*) FROM review_index i WHERE {_EVIDENCE_WHERE}"),
+                      {"bank": bc, "key": key, "product": product, "d": days}).scalar()
+    return int(n or 0)
 
 
 @_safe([])

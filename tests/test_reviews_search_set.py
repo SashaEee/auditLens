@@ -158,5 +158,5 @@ def test_signal_week_filter():
     assert RD._month_clause("i", "sig:2026-10", {}) == " AND false"
     assert RD._month_clause("i", "2026-10", {"x": 1}).startswith(" AND date_trunc")
     from bank_audit.ai import agent_tools as T
-    link = T.link_reviews("Сбербанк", None, "card_block", 7, week_end="2026-10-31")
-    assert "month=sig%3A2026-10-31" in link and "days=" not in link and "theme=card_block" in link
+    link = T.link_reviews("Сбербанк", None, "chargeback", 7, week_end="2026-10-31")
+    assert "month=sig%3A2026-10-31" in link and "p=" not in link and "theme=chargeback" in link

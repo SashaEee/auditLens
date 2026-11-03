@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 29ae18daf8c23c3a008fa5de8bb0b787df6a786c8e439dfc423dc195ea82291d): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 f543cba5a71f0c297c9d199574a2ca2db3c8dd24ce8b78bca354437f426640e2): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -10080,7 +10080,7 @@ function ReviewsPage({
     return () => clearTimeout(t);
   }, [bank, product]);
   const [theme, setTheme] = useState(preset && preset.theme || P.theme || "");
-  const [tab, setTab] = useState(() => RV_TABS.some(([k]) => k === P.tab) ? P.tab : preset && (preset.theme || preset.city || preset.esc) || P.theme || P.flag || P.q || P.esc || P.city ? "complaints" : "overview");
+  const [tab, setTab] = useState(() => RV_TABS.some(([k]) => k === P.tab) ? P.tab : preset && (preset.theme || preset.city || preset.esc) || P.theme || P.flag || P.q || P.esc || P.city || P.source ? "complaints" : "overview");
   const tabsRef = useRef(null);
   // активная подвкладка — в поле зрения, когда полоса вкладок шире экрана
   useEffect(() => {
@@ -10155,8 +10155,10 @@ function ReviewsPage({
   // рабочее место аудитора: дела, фильтры ленты, группы, журнал, подписка
   const [jrOpen, setJrOpen] = useState(false);
   // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
+  // площадка — тоже из адреса: ссылка ИИ-помощника «жалобы с sravni.ru» до 04.11 её теряла
+  const rvSrcOk = s => RV_SOURCES.some(([k]) => k === s) ? s : "";
   const [fCity, setFCity] = useState(() => P.city || preset && preset.city || ""),
-    [fSrc, setFSrc] = useState("");
+    [fSrc, setFSrc] = useState(() => rvSrcOk(P.source));
   // неделя всплеска (month=sig:<последний день>): ровно жалобы, из которых сложилось число
   // сигнала, — из клика по всплеску и из уведомления по подписке
   const [fWeek, setFWeek] = useState(() => RV_SIG_RX.test(P.month || "") ? P.month : "");
@@ -10242,9 +10244,10 @@ function ReviewsPage({
     if (flag) sp.set("flag", flag);
     if (escOnly) sp.set("esc", "1");
     if (fCity) sp.set("city", fCity);
+    if (fSrc) sp.set("source", fSrc);
     const qs = sp.toString();
     history.replaceState(null, "", "#reviews" + (qs ? "?" + qs : ""));
-  }, [tab, bank, product, perKey, theme, flag, escOnly, fCity]);
+  }, [tab, bank, product, perKey, theme, flag, escOnly, fCity, fSrc]);
   // адрес → состояние: ссылка #reviews?… при уже открытой странице (своё
   // зеркалирование идёт через replaceState и сюда не попадает)
   const paramsKey = JSON.stringify(P),
@@ -10271,9 +10274,10 @@ function ReviewsPage({
     if (fl !== flag) setFlag(fl);
     if (P.esc === "1" !== escOnly) setEscOnly(P.esc === "1");
     if ((P.city || "") !== fCity) setFCity(P.city || "");
+    if (rvSrcOk(P.source) !== fSrc) setFSrc(rvSrcOk(P.source));
     const mw = RV_SIG_RX.test(P.month || "") ? P.month : "";
     if (mw !== fWeek) setFWeek(mw);
-    const t = RV_TABS.some(([k]) => k === P.tab) ? P.tab : th || fl || P.q || P.esc || P.city || mw ? "complaints" : "overview";
+    const t = RV_TABS.some(([k]) => k === P.tab) ? P.tab : th || fl || P.q || P.esc || P.city || P.source || mw ? "complaints" : "overview";
     if (t !== tab) goTab(t);
   }, [paramsKey]);
   const [trBasis, setTrBasis] = useState("pub"),
@@ -11576,7 +11580,7 @@ function ReviewsPage({
     download: true,
     "aria-label": "\u0412\u044B\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0436\u0430\u043B\u043E\u0431\u044B \u0432 Excel",
     href: `/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme ? `&theme=${enc(theme)}` : ""}${fWeek ? `&month=${enc(fWeek)}` : perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${enc(fSrc)}` : ""}${q ? `&q=${enc(q)}` : ""}`,
-    "data-tip": "Excel \u0432 \u0441\u0442\u0438\u043B\u0435 AuditLens: \u043E\u0431\u0437\u043E\u0440 \u0441 \u043F\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044F\u043C\u0438 \u0438 \u0433\u0440\u0430\u0444\u0438\u043A\u0430\u043C\u0438, \u0432\u0441\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u0441 \u0442\u0435\u043A\u0443\u0449\u0438\u043C\u0438 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0431\u0430\u043D\u043A\u0430, \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430, \u0442\u0435\u043C\u044B, \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0430, \u0433\u043E\u0440\u043E\u0434\u0430, \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u0438 \u043F\u0435\u0440\u0438\u043E\u0434\u0430 \u2014 \u0441 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u043E\u0439 \u0418\u0418 \u0438 \u043F\u043E\u043B\u043D\u044B\u043C \u0442\u0435\u043A\u0441\u0442\u043E\u043C, \u0441\u0432\u043E\u0434\u043A\u0438 (\u043F\u043E\u0438\u0441\u043A \u0432 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0443 \u043D\u0435 \u0432\u0445\u043E\u0434\u0438\u0442)",
+    "data-tip": "Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака, города, площадки и периода — с разметкой ИИ и полным текстом, сводки" + (q ? ". С поиском — ровно найденный список, в том же порядке" : ""),
     onClick: () => trkEvent({
       kind: "ui",
       page: "reviews",

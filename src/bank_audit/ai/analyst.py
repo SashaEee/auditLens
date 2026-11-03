@@ -131,7 +131,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_reviews_analysis",
-            "description": "Получить анализ отзывов: темы жалоб, sentiment, средний рейтинг для конкретного банка или всех банков.",
+            "description": (
+                "Жалобы на банк за 90 дней — те же числа, что в разделе «Аудит отзывов»: "
+                "число и изменение, доля и место среди банков, эскалация против рынка, "
+                "темы (главная проблема жалобы), признаки риска, города, площадки. "
+                "bank_slug='all' — банки по числу жалоб. Жалоба — отзыв, который ИИ "
+                "отнёс к претензиям, а не оценка 1–2★."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -209,13 +214,12 @@ TOOLS = [
         "function": {
             "name": "get_review_themes",
             "description": (
-                "Получить расширенный анализ отзывов конкретного банка: "
-                "топ-5 жалоб + топ-3 похвалы с примерами цитат, sentiment counts, "
-                "распределение по источникам (banki/sravni/bankiros). "
+                "Темы жалоб конкретного банка за период — как в разделе «Аудит отзывов»: "
+                "главные проблемы с числом и долей, изменение к прошлому периоду, признаки "
+                "риска, города, площадки (banki.ru, sravni.ru, bankiros.ru, finuslugi.ru). "
                 "Период: 'all' | 'last_30d' | 'last_90d'. "
                 "Используй для аудиторских вопросов вида 'основные проблемы Сбера за квартал'. "
-                "Возвращает структуру review_summary — это уже агрегированные данные, "
-                "не миллион сырых отзывов."
+                "Цитаты и сами жалобы — search_complaints."
             ),
             "parameters": {
                 "type": "object",
@@ -325,11 +329,11 @@ TOOLS = [
                 "replenishable, conditions, valid_from, url), "
                 "v_offer_top_by_rate(bank_name, bank_slug, is_sber, category, title, rate_pct, "
                 "term_months_min, amount_min, rk), "
-                "v_review_topics(bank_slug, bank_name, topic, n, avg_rating), "
-                "v_review_sentiment_share(bank_slug, bank_name, label, n, total, share), "
                 "v_bank_coverage. "
                 "Также можно SELECT из bank, review (text, rating, posted_at, status), "
-                "quality_flag (severity, code, detail, created_at), extraction_run, change_history."
+                "quality_flag (severity, code, detail, created_at), extraction_run, change_history. "
+                "Жалобы и их темы SQL не считай: числа — get_reviews_analysis / "
+                "get_review_themes, тексты — search_complaints."
             ),
             "parameters": {
                 "type": "object",
@@ -358,8 +362,12 @@ _ALLOWED_RELATIONS = {
     # v_sber_vs_market из белого списка убрана (аудит 03.10): максимум Сбера
     # против медианы ВСЕХ офферов давал «+8 п.п. по кредитам» вопреки вкладке
     "v_offer_current", "v_offer_top_by_rate",
-    "v_review_topics", "v_review_sentiment_share", "v_bank_coverage",
-    "bank", "review", "review_topic", "review_sentiment",
+    # Темы жалоб регулярками (review_topic, v_review_topics) и тональность по словарю
+    # (review_sentiment, v_review_sentiment_share) убраны 04.11.2026: это старая
+    # разметка небольшой таблицы review, а вкладка «Аудит отзывов» считает жалобы по
+    # LLM-разметке всего корпуса (rag/review_glossary). ИИ отвечал «топ тем», которых
+    # во вкладке нет, и долей «негатива», которую там никто не считает.
+    "v_bank_coverage", "bank", "review",
     "product_offer", "product_terms", "quality_flag", "extraction_run",
     "change_history",
 }
@@ -388,6 +396,11 @@ def _validate_sql(sql: str) -> str | None:
     refs = set(_re.findall(r"\b(?:from|join)\s+([a-z_][a-z0-9_]*)", low))
     forbidden_refs = refs - _ALLOWED_RELATIONS
     if forbidden_refs:
+        from .agent_tools import STALE_REVIEW_RELATIONS
+        if any(STALE_REVIEW_RELATIONS.fullmatch(r) for r in forbidden_refs):
+            return (f"Запрещённые таблицы/вьюхи: {', '.join(sorted(forbidden_refs))} — старая "
+                    "разметка жалоб, её числа не совпадают с разделом «Аудит отзывов». "
+                    "Жалобы и темы — get_reviews_analysis / get_review_themes.")
         return f"Запрещённые таблицы/вьюхи: {', '.join(sorted(forbidden_refs))}"
     # Принудительный LIMIT — если не указан, оборачиваем
     return None
@@ -456,30 +469,6 @@ def _run_tool(name: str, args: dict) -> str:
                                          for c in mv.get("cells") or []],
                                "caveats": mv.get("doubts")},
                               ensure_ascii=False, default=str)
-
-        if name == "get_reviews_analysis":
-            slug = args["bank_slug"]
-            bank_filter = "AND b.slug = :s" if slug != "all" else ""
-            topics = s.execute(text(f"""
-                SELECT b.name bank_name, rt.topic, count(*) n,
-                       round(avg(r.rating),2) avg_rating
-                  FROM review r JOIN bank b USING(bank_id)
-                  JOIN review_topic rt USING(review_id)
-                 WHERE 1=1 {bank_filter}
-                 GROUP BY b.name, rt.topic ORDER BY n DESC LIMIT 30
-            """), {"s": slug} if slug != "all" else {}).mappings().all()
-            sentiment = s.execute(text(f"""
-                SELECT b.name, rs.label, count(*) n,
-                       round(avg(r.rating),2) avg_r
-                  FROM review r JOIN bank b USING(bank_id)
-                  LEFT JOIN review_sentiment rs USING(review_id)
-                 WHERE 1=1 {bank_filter}
-                 GROUP BY b.name, rs.label ORDER BY b.name, n DESC
-            """), {"s": slug} if slug != "all" else {}).mappings().all()
-            return json.dumps({
-                "topics": [dict(r) for r in topics],
-                "sentiment": [dict(r) for r in sentiment]
-            }, ensure_ascii=False, default=str)
 
         if name == "search_complaints":
             from ..rag import bankiru_reviews as _br
@@ -589,8 +578,11 @@ def _run_tool(name: str, args: dict) -> str:
     if name == "run_sql":
         return _run_sql_safe(args.get("sql", ""))
 
+    if name == "get_reviews_analysis":
+        return _complaints_summary(args.get("bank_slug"), "last_90d")
+
     if name == "get_review_themes":
-        return _get_review_themes(args.get("bank_slug"), args.get("period", "all"))
+        return _complaints_summary(args.get("bank_slug"), args.get("period") or "all")
 
     if name == "get_bank_features":
         return _get_bank_features(args.get("bank_slug"),
@@ -632,68 +624,37 @@ async def _run_tool_async(name: str, args: dict) -> str:
         None, lambda: ctx.run(_run_tool, name, args))
 
 
-def _get_review_themes(bank_slug: str | None, period: str = "all") -> str:
-    """Читает review_summary. Если для данного банка/периода нет — на лету
-    генерит и записывает (на следующий запрос будет из кеша)."""
+_REVIEW_PERIOD_DAYS = {"last_30d": 30, "last_90d": 90}
+
+
+def _complaints_summary(bank_slug: str | None, period: str = "last_90d") -> str:
+    """Жалобы банка — тем же инструментом, что у агента Hermes (agent_tools), и теми
+    же числами, что в разделе «Аудит отзывов».
+
+    До 04.11.2026 get_reviews_analysis отдавал темы из review_topic (регулярки по
+    небольшой таблице review) и тональность по словарю, а get_review_themes — сводку
+    review_summary поверх них же. Вкладка считает жалобы по LLM-разметке всего
+    корпуса (rag/review_glossary), и ИИ называл темы и числа, которых там нет."""
+    from ..rag import review_glossary as G
+    from ..rag import reviews_dash as rd
+    from . import agent_tools as T
     if not bank_slug:
         return json.dumps({"error": "bank_slug обязателен"}, ensure_ascii=False)
-    period = period or "all"
     if period not in ("all", "last_30d", "last_90d"):
         return json.dumps({"error": f"unsupported period: {period}"}, ensure_ascii=False)
-
-    with db.session() as s:
-        row = s.execute(text("""
-            SELECT b.bank_id, b.name, b.is_sber FROM bank b WHERE b.slug = :s
-        """), {"s": bank_slug}).first()
-        if not row:
-            return json.dumps({"error": f"банк {bank_slug} не найден"},
-                              ensure_ascii=False)
-        bank_id, bank_name, is_sber = row[0], row[1], row[2]
-
-        summary = s.execute(text("""
-            SELECT total_reviews, avg_rating,
-                   sentiment_pos, sentiment_neg, sentiment_neu,
-                   top_complaints, top_praise, by_source, generated_at
-              FROM review_summary
-             WHERE bank_id = :b AND period = :p
-        """), {"b": bank_id, "p": period}).mappings().first()
-
-    if not summary:
-        # Lazy build на лету
-        try:
-            from ..rag.summarizer import rebuild_for_bank
-            rebuild_for_bank(bank_id, period)
-            with db.session() as s:
-                summary = s.execute(text("""
-                    SELECT total_reviews, avg_rating,
-                           sentiment_pos, sentiment_neg, sentiment_neu,
-                           top_complaints, top_praise, by_source, generated_at
-                      FROM review_summary
-                     WHERE bank_id = :b AND period = :p
-                """), {"b": bank_id, "p": period}).mappings().first()
-        except Exception as e:
-            return json.dumps({"error": f"summary build failed: {e}"},
-                              ensure_ascii=False)
-
-    if not summary:
-        return json.dumps({
-            "bank_slug": bank_slug, "bank_name": bank_name,
-            "period": period, "note": "Недостаточно отзывов (минимум 20)",
-        }, ensure_ascii=False)
-
-    return json.dumps({
-        "bank_slug": bank_slug, "bank_name": bank_name, "is_sber": is_sber,
-        "period": period,
-        "total_reviews":  summary["total_reviews"],
-        "avg_rating":     float(summary["avg_rating"]) if summary["avg_rating"] else None,
-        "sentiment":      {"pos": summary["sentiment_pos"],
-                           "neg": summary["sentiment_neg"],
-                           "neu": summary["sentiment_neu"]},
-        "top_complaints": summary["top_complaints"],
-        "top_praise":     summary["top_praise"],
-        "by_source":      summary["by_source"],
-        "generated_at":   summary["generated_at"].isoformat() if summary["generated_at"] else None,
-    }, ensure_ascii=False, default=str)
+    days = _REVIEW_PERIOD_DAYS.get(period, 90)
+    since = rd.data_start_for(None).isoformat() if period == "all" else None
+    if bank_slug != "all":
+        return T.tool_complaints_overview(bank_slug, None, days, date_from=since)
+    per = T._period(None, days, since)
+    vm = rd.vs_market(T.SBER, None, top=20, period=per) or {}
+    info = per.info()
+    return T.out({"period": {"from": info.get("from"), "to": info.get("to")},
+                  "days": per.days,
+                  "banks_by_complaints": [{"bank": r.get("bank"), "n": r.get("n"),
+                                           "pct": r.get("pct")} for r in vm.get("rows") or []],
+                  "counting": G.COMPLAINT_SHORT,
+                  "link": T.link_reviews(period=per)})
 
 
 def _get_bank_features(bank_slug: str | None, feature_key: str | None = None,

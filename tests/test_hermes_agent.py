@@ -180,7 +180,9 @@ def test_out_is_compact_clean_json():
 
 
 def test_links_to_pages():
-    assert T.link_reviews(theme="chargeback", days=7) == "#reviews?theme=chargeback&days=7&tab=complaints"
+    # параметры — как у вкладки: период в p (как в её адресе), признак, площадка, «с — по» —
+    # подробно в test_review_glossary
+    assert T.link_reviews(theme="chargeback", days=7) == "#reviews?tab=complaints&p=7d&theme=chargeback"
     assert T.link_reviews("ВТБ").startswith("#reviews?bank=")
     assert T.link_market("deposit") == "#market?cat=deposit"
     assert T.link_doc(12) == "#knowledge?doc=12"

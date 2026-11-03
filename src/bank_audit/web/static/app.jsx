@@ -5032,7 +5032,7 @@ function ReviewsPage({params}){
     return ()=>clearTimeout(t); },[bank,product]);
   const[theme,setTheme]=useState((preset&&preset.theme)||P.theme||"");
   const[tab,setTab]=useState(()=>RV_TABS.some(([k])=>k===P.tab)?P.tab
-    :(preset&&(preset.theme||preset.city||preset.esc))||P.theme||P.flag||P.q||P.esc||P.city?"complaints":"overview");
+    :(preset&&(preset.theme||preset.city||preset.esc))||P.theme||P.flag||P.q||P.esc||P.city||P.source?"complaints":"overview");
   const tabsRef=useRef(null);
   // активная подвкладка — в поле зрения, когда полоса вкладок шире экрана
   useEffect(()=>{ const el=tabsRef.current&&tabsRef.current.querySelector(".rv-tab.on");
@@ -5075,7 +5075,9 @@ function ReviewsPage({params}){
   // рабочее место аудитора: дела, фильтры ленты, группы, журнал, подписка
   const[jrOpen,setJrOpen]=useState(false);
   // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
-  const[fCity,setFCity]=useState(()=>P.city||(preset&&preset.city)||""),[fSrc,setFSrc]=useState("");
+  // площадка — тоже из адреса: ссылка ИИ-помощника «жалобы с sravni.ru» до 04.11 её теряла
+  const rvSrcOk=s=>RV_SOURCES.some(([k])=>k===s)?s:"";
+  const[fCity,setFCity]=useState(()=>P.city||(preset&&preset.city)||""),[fSrc,setFSrc]=useState(()=>rvSrcOk(P.source));
   // неделя всплеска (month=sig:<последний день>): ровно жалобы, из которых сложилось число
   // сигнала, — из клика по всплеску и из уведомления по подписке
   const[fWeek,setFWeek]=useState(()=>RV_SIG_RX.test(P.month||"")?P.month:"");
@@ -5125,8 +5127,8 @@ function ReviewsPage({params}){
     if(per.p&&per.p!=="90d")sp.set("p",per.p); if(per.from){sp.set("from",per.from);sp.set("to",per.to);}
     if(cmp)sp.set("cmp",cmp);
     if(theme)sp.set("theme",theme); if(flag)sp.set("flag",flag);
-    if(escOnly)sp.set("esc","1"); if(fCity)sp.set("city",fCity);
-    const qs=sp.toString(); history.replaceState(null,"","#reviews"+(qs?"?"+qs:"")); },[tab,bank,product,perKey,theme,flag,escOnly,fCity]);
+    if(escOnly)sp.set("esc","1"); if(fCity)sp.set("city",fCity); if(fSrc)sp.set("source",fSrc);
+    const qs=sp.toString(); history.replaceState(null,"","#reviews"+(qs?"?"+qs:"")); },[tab,bank,product,perKey,theme,flag,escOnly,fCity,fSrc]);
   // адрес → состояние: ссылка #reviews?… при уже открытой странице (своё
   // зеркалирование идёт через replaceState и сюда не попадает)
   const paramsKey=JSON.stringify(P), firstParams=useRef(true);
@@ -5137,8 +5139,9 @@ function ReviewsPage({params}){
     if(rvPerKey(np)!==rvPerKey(per))setPer(np); if(nc!==cmp)setCmp(nc);
     if(th!==theme)setTheme(th); if(fl!==flag)setFlag(fl);
     if((P.esc==="1")!==escOnly)setEscOnly(P.esc==="1"); if((P.city||"")!==fCity)setFCity(P.city||"");
+    if(rvSrcOk(P.source)!==fSrc)setFSrc(rvSrcOk(P.source));
     const mw=RV_SIG_RX.test(P.month||"")?P.month:""; if(mw!==fWeek)setFWeek(mw);
-    const t=RV_TABS.some(([k])=>k===P.tab)?P.tab:(th||fl||P.q||P.esc||P.city||mw?"complaints":"overview");
+    const t=RV_TABS.some(([k])=>k===P.tab)?P.tab:(th||fl||P.q||P.esc||P.city||P.source||mw?"complaints":"overview");
     if(t!==tab)goTab(t); },[paramsKey]);
   const[trBasis,setTrBasis]=useState("pub"),[trBusy,setTrBusy]=useState(true);
   // выбор месяцев протягиванием по графику динамики
@@ -5754,10 +5757,10 @@ function ReviewsPage({params}){
         </h2>
           <div className="rv-cap">{<span className="rv-legend"><span className="rv-lg-i"><i className="neg"/>обратился в ЦБ, суд и т. п.</span><span className="rv-lg-i"><i className="warn"/>грозит или уязвимый клиент</span>
             <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
-        {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
+        {/* срез с текущими фильтрами, а с поиском — ровно найденный список (с 03.11) */}
         <a className="rv-export rv-export-a" download aria-label="Выгрузить жалобы в Excel"
            href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}${fWeek?`&month=${enc(fWeek)}`:perQ}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${enc(fSrc)}`:""}${q?`&q=${enc(q)}`:""}`}
-           data-tip="Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака, города, площадки и периода — с разметкой ИИ и полным текстом, сводки (поиск в выгрузку не входит)"
+           data-tip={"Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака, города, площадки и периода — с разметкой ИИ и полным текстом, сводки"+(q?". С поиском — ровно найденный список, в том же порядке":"")}
            onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,period:rvPerKey(per),cmp:cmp||null,esc:escOnly,flag,city:fCity||null,source:fSrc||null,q:q||null}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">Excel</span></a>
       </div>
       {/* Порядок выдачи. Показываем только при запросе: лента без него и так

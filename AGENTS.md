@@ -62,7 +62,7 @@ src/bank_audit/
 │   └── tools/              #   tool_specs, web_tools, source_registry_helper
 ├── research/               # legacy-пайплайн v1 (orchestrator, query_planner, gap_filler…)
 ├── ai/                     # analyst.py (быстрый ответ), clarify.py, llm_utils.py (тиры, reasoning_effort)
-├── rag/                    # embedder, indexer, retriever, crawler, trust.py, отзывы (review_topics и пр.)
+├── rag/                    # embedder, indexer, retriever, crawler, trust.py, отзывы (reviews_dash, review_annotate, review_glossary и пр.)
 ├── digest/                 # «Новостные обзоры» — ежедневный брифинг (детерминированный SQL + 3 LLM-вызова/сутки)
 ├── loophole/               # «Лазейки» — nanobot-агент: chat/, parsers/, kb/, pii_mask.py,
 │   │                       #   repository.py, authorization.py (server-side RBAC, story 1.1)
