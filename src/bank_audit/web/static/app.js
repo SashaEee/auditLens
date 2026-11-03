@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 f543cba5a71f0c297c9d199574a2ca2db3c8dd24ce8b78bca354437f426640e2): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 8673cdb05ca96659a43e2105cace8e1f764b73e51c37d14501df5e0ce186c326): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -11276,7 +11276,7 @@ function ReviewsPage({
     className: "rv-radar-chip lvl-watch",
     role: "button",
     tabIndex: 0,
-    "data-tip": `${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`,
+    "data-tip": `${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}${d.market_note ? " · " + d.market_note : ""} (рост доли банка проверен против рынка с поправкой на число тем)`,
     onClick: () => pickTheme(d.key),
     onKeyDown: onKey(() => pickTheme(d.key))
   }, d.short || d.label, /*#__PURE__*/React.createElement("b", null, "\xD7", String(d.gap).replace(".", ","))))), rvNovel(anom.novel)) : /*#__PURE__*/React.createElement(React.Fragment, null, !(anom.signals.length === 1 && anom.summary) && /*#__PURE__*/React.createElement("div", {

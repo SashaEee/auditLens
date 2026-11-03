@@ -1343,6 +1343,7 @@ def daily(bank: str, product: str | None = None) -> dict | None:
 # точность и полнота замерены слепым судьёй), в индексе — review_index.slices;
 # условие во всех запросах — SQL-функция al_product_is (migrations/099).
 from . import review_slices as _rs  # noqa: E402
+from . import review_stats as _RS  # noqa: E402
 
 PSEUDO_PRODUCTS = {label: f"'{key}' = ANY(coalesce(i.slices, '{{}}'))"
                    for key, (label, _definition) in _rs.SLICES.items()}
@@ -2745,6 +2746,11 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
             mratio = (mw0 / mbw) if mbw >= 0.5 else None
         gap = (ratio / mratio) if mratio and mratio > 0 else None
         p = poisson_sf(w0, bw)
+        # «быстрее рынка» — точный условный тест доли банка (банк/рынок × неделя/база),
+        # а не отношение двух отношений: прежнее «×1,3 быстрее рынка» на малых числах
+        # было шумом. «По рынку мало данных» — отдельный вывод, не «рынок ровный».
+        v = (_RS.market_verdict(w0, int(mrow[f"{k}_w0"]), b, int(mrow[f"{k}_b"]), k=1 / BASE_W)
+             if mrow is not None else None)
         diverge.append({
             "key": k, "label": t["label"], "short": t["short"],
             "risk": t["risk"], "week": w0, "baseline_week": round(bw, 1),
@@ -2754,11 +2760,20 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
             "p": round(p, 5), "sig": p < PULSE_ALPHA / max(len(theme_defs), 1),
             "ratio": round(ratio, 2),
             "market_ratio": round(mratio, 2) if mratio else None,
-            "gap": round(gap, 2) if gap else None,
-            "market_flat": market_flat(mratio),
-            "market_note": market_phrase(ratio, mratio),
+            "gap": round(v["gap"], 2) if v and v.get("gap") else (round(gap, 2) if gap else None),
+            "gap_lo": round(v["gap_lo"], 2) if v and v.get("gap_lo") else None,
+            "market_claim": v["claim"] if v else "market_unknown",
+            "market_p": v["p"] if v else None,
+            "market_flat": bool(v and v["market_flat"]),
+            "market_note": _RS.market_note(v) if v else "по рынку данных мало для сравнения",
         })
-    diverge.sort(key=lambda d: ((d["gap"] or d["ratio"]), d["week"]), reverse=True)
+    # поправка на число проверенных проблем: «быстрее рынка» — только при q < 0,05
+    qv, _rej = _RS.bh({d["key"]: d["market_p"] for d in diverge if d["market_p"] is not None}, 0.05)
+    for d in diverge:
+        q = qv.get(d["key"]) if isinstance(qv, dict) else None
+        d["market_q"] = round(q, 5) if q is not None else None
+        d["faster_sig"] = bool(d["market_claim"] in ("only_bank", "faster") and q is not None and q <= 0.05)
+    diverge.sort(key=lambda d: (d["faster_sig"], (d["gap"] or d["ratio"]), d["week"]), reverse=True)
     tw0, tb = int(brow["_tw0"]), int(brow["_tb"])
     return {"diverge": diverge[:5], "week_total": tw0,
             "baseline_total": round(tb / BASE_W, 1), "src": "annotation"}

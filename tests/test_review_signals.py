@@ -167,3 +167,23 @@ def test_texts_call_continuing_signal_a_continuation():
     fresh = {**s, "status": "new", "sustained": False}
     assert rd.signal_note(fresh) is None
     assert writer._ai_prompt("review_spike", fresh).startswith("Разбери всплеск")
+
+
+def test_week_pulse_faster_than_market_needs_a_real_test(monkeypatch):
+    """«Растут быстрее рынка» — только значимый обгон по условному тесту доли с
+    поправкой; «по рынку мало данных» — не «рынок ровный» (п. 1.11 плана 04.11)."""
+    topics = [{"key": k, "label": k, "short": k, "risk": "ops", "group": "g"} for k in ("big", "noise", "thin")]
+    bank = {"big_w0": 40, "big_b": 70, "noise_w0": 13, "noise_b": 70, "thin_w0": 12, "thin_b": 35,
+            "_tw0": 65, "_tb": 175}
+    market = {"big_w0": 300, "big_b": 2100, "noise_w0": 300, "noise_b": 2100, "thin_w0": 2, "thin_b": 7,
+              "_tw0": 600, "_tb": 4200}
+
+    def week_counts(bank_, product, exclude_bank=None):
+        return topics, (market if exclude_bank else bank)
+    monkeypatch.setattr(rd, "resolve_bank", lambda b: "Сбербанк")
+    monkeypatch.setattr(rd, "_topic_week_counts", week_counts)
+    d = {x["key"]: x for x in rd.week_pulse("Сбербанк")["diverge"]}
+    assert d["big"]["faster_sig"] and d["big"]["market_claim"] == "only_bank" and d["big"]["market_flat"]
+    assert not d["noise"]["faster_sig"]                   # ×1,3 при ровном рынке — шум, не обгон
+    assert d["thin"]["market_claim"] == "market_unknown" and not d["thin"]["market_flat"]
+    assert not d["thin"]["faster_sig"] and "мало" in d["thin"]["market_note"]

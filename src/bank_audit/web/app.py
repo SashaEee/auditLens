@@ -3260,7 +3260,9 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
             log.warning("журнал сигналов: %s", e)
     if not signals:
         wp = await asyncio.to_thread(_rd().week_pulse, bank, product or None)
-        watch = [d for d in ((wp or {}).get("diverge") or []) if (d.get("gap") or 0) >= 1.15]
+        # «растут быстрее рынка» — только значимый обгон рынка (условный тест доли с
+        # поправкой BH, rag/review_stats); прежний порог «×1,15» показывал шум
+        watch = [d for d in ((wp or {}).get("diverge") or []) if d.get("faster_sig")]
         # «Новое» — новые сюжеты вне кодификатора, не всплески: до 04.11.2026 они
         # считались только в неделю со всплеском, и в спокойные недели их не было вовсе
         novel = await asyncio.to_thread(_rd().novel_clusters, bank, product or None)

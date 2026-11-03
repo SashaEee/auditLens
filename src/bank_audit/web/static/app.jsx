@@ -5601,7 +5601,7 @@ function ReviewsPage({params}){
               <div className="rv-radar-chips">
                 {(anom.watch||[]).map((d,i)=>
                   <span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
-                    data-tip={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`}
+                    data-tip={`${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}${d.market_note?" · "+d.market_note:""} (рост доли банка проверен против рынка с поправкой на число тем)`}
                     onClick={()=>pickTheme(d.key)} onKeyDown={onKey(()=>pickTheme(d.key))}>
                     {d.short||d.label}<b>×{String(d.gap).replace(".",",")}</b></span>)}
               </div>

@@ -316,7 +316,7 @@ def tool_complaint_signals(bank: str = SBER, product: Product | None = None) -> 
                     "ratio": ov.get("ratio"), "market_ratio": ov.get("market_ratio")},
         "signals": sigs,
         "watch_faster_than_market": [_signal(s, bank, product, we)
-                                     for s in (wp.get("diverge") or [])[:6]
+                                     for s in (wp.get("diverge") or [])[:6] if s.get("faster_sig")
                                      if s.get("key") not in keys],
         "counting": _gl.COMPLAINT_SHORT + "; неделя — по главной проблеме, события не "
                     "старше 60 дней",
