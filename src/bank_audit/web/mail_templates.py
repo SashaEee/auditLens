@@ -51,10 +51,12 @@ KIND = {
     "case_status": ("Статус дела", CASE_C), "case_analysis": ("Разбор ИИ", CASE_C),
     "case_deleted": ("Дело", CASE_C), "case_restored": ("Дело", CASE_C),
     "report_shared": ("Отчёт", REPORT), "ticket": ("Обращение", TICKET),
+    "team_ticket": ("Обращение пользователя", TICKET), "team_ai_minus": ("Оценка ответа ИИ", REPORT),
 }
 KIND_LABEL = {k: v[0] for k, v in KIND.items()}
 # личные события — уходят письмом сразу (раз в 15 минут пачкой); остальное — в сводку
-PERSONAL = {"case_mention", "case_reply", "case_added", "case_owner", "report_shared", "ticket"}
+PERSONAL = {"case_mention", "case_reply", "case_added", "case_owner", "report_shared", "ticket",
+            "team_ticket", "team_ai_minus"}
 TEAM = "Команда AuditLens"
 
 # что дают права — строкой под карточкой дела в письме «вас добавили»
@@ -242,6 +244,13 @@ def redact(n: dict) -> dict:
         tn = f" №\u00a0{ref['no']}" if ref.get("no") else ""
         t = (f"Команда AuditLens ответила на обращение{tn}" if ref.get("reply")
              else f"Новый статус обращения{tn}")
+    elif kind == "team_ticket":
+        tn = f" №\u00a0{ref['no']}" if ref.get("no") else ""
+        t = (f"Автор дописал в обращение{tn}" if ref.get("followup") and not ref.get("fresh")
+             else f"Новое обращение пользователя{tn}")
+    elif kind == "team_ai_minus":
+        t = ("Минус к ответу ИИ" if cnt <= 1
+             else f"{many('минус', 'минуса', 'минусов')} к ответам ИИ")
     else:
         t = "Новое событие в AuditLens"
     keep = {"on_item": ref.get("on_item"), "no": ref.get("no"), "reply": ref.get("reply"),

@@ -10493,6 +10493,8 @@ const AD_CSS=`
 .pu-rb i{display:block;height:100%;border-radius:4px;background:color-mix(in oklab,var(--select),transparent 25%)}
 .pu-reach-tot td{font-weight:600;border-top:1px solid var(--hair-2)}
 .pu-reach-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.pu-wait{display:inline-block;margin-left:8px;font-size:11px;font-weight:400;color:var(--ink-3);white-space:nowrap}
+.pu-wait.late{color:var(--neg)}
 /* ── Итоги: направления, качество запросов, путь к результату ─────────────── */
 .oc-bar{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap;margin:4px 0 2px}
 .oc-bar .sp{flex:1}
@@ -11432,17 +11434,20 @@ const PU_TK_TPL=[["Взяли в работу","Спасибо, взяли в р
   ["Уточнить","Уточните, пожалуйста: в каком разделе и с какими фильтрами это видно?"],
   ["Сделали","Сделали — обновите страницу и проверьте, пожалуйста."],
   ["Уже есть","Это уже есть: "]];
-function PuInbox({rev,onOpenUser,onChanged}){
+// сколько обращение ждёт ответа команды: «3 ч», «2 дн»
+const puWait=(iso)=>{ const h=(Date.now()-new Date(iso).getTime())/36e5;
+  return h<1?"меньше часа":h<48?`${Math.floor(h)} ч`:`${Math.floor(h/24)} дн`; };
+function PuInbox({rev,onOpenUser,onChanged,openTicket}){
   const[st,setSt]=useState("open");
   const[kind,setKind]=useState("");
   const[d,setD]=useState(null);
-  const[cur,setCur]=useState(null);
+  const[cur,setCur]=useState(openTicket||null);
   const[r2,setR2]=useState(0);
   useEffect(()=>{ setD(null); const sp=new URLSearchParams({status:st}); if(kind) sp.set("kind",kind);
     apiFetch("/api/admin/inbox?"+sp).then(setD).catch(()=>setD({tickets:[],error:true})); },[st,kind,rev,r2]);
   const c=(d&&d.counts)||{};
   return <div className="pu-card" id="pu-inbox">
-    <div className="h"><span>Обращения · ждут ответа {c.unread||0} · открытых {c.open||0} · всего {c.total||0}</span>
+    <div className="h"><span>Обращения · без ответа {c.unanswered||0}{c.unanswered?` (дольше всех — ${c.oldest_unanswered_h>=48?Math.floor(c.oldest_unanswered_h/24)+" дн":c.oldest_unanswered_h+" ч"})`:""} · открытых {c.open||0} · всего {c.total||0}{c.median_answer_h!=null?` · первый ответ за 30 дн — медиана ${c.median_answer_h>=48?Math.round(c.median_answer_h/24)+" дн":String(c.median_answer_h).replace(".",",")+" ч"}`:""}</span>
       <span className="pu-people-ctl">
         <div className="seg" role="group" aria-label="Статус">{PU_TK_FILTER.map(([k,l])=><button key={k}
           className={"seg-btn"+(st===k?" on":"")} aria-pressed={st===k} onClick={()=>setSt(k)}>{l}</button>)}</div>
@@ -11459,7 +11464,10 @@ function PuInbox({rev,onOpenUser,onChanged}){
         <tbody>{d.tickets.map(t=><tr key={t.ticket_id} className="pu-rowclick" onClick={()=>setCur(t.ticket_id)}>
           <td title={t.body} style={{maxWidth:300,fontWeight:t.unread?600:400}}>
             {t.unread&&<span className="nav-dot" style={{display:"inline-block",marginRight:7,verticalAlign:1}} aria-label="ждёт ответа"/>}
-            <span style={{color:"var(--ink-3)",fontWeight:400}}>{t.kind_label} · </span>{t.body}</td>
+            <span style={{color:"var(--ink-3)",fontWeight:400}}>{t.kind_label} · </span>{t.body}
+            {!t.answered_at&&["new","accepted","in_progress"].includes(t.status)&&
+              <span className={"pu-wait"+((Date.now()-new Date(t.created_at).getTime())>864e5?" late":"")}
+                title="команда ещё не ответила">без ответа {puWait(t.created_at)}</span>}</td>
           <td><button className="pu-link" onClick={e=>{e.stopPropagation(); onOpenUser&&onOpenUser(t.username);}}>{t.name}</button></td>
           <td style={{whiteSpace:"nowrap",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}} title={t.section_label||""}>{t.section_label||"—"}</td>
           <td><span className={"tk-st "+t.status}>{t.status_label}</span></td>
@@ -12222,13 +12230,17 @@ function PuTurbCtl(){
   </div>;
 }
 
-function PulsePage(){
+function PulsePage({params}){
   const me=useMe();
   const[days,setDays]=useState(14);
   // вкладка живёт в состоянии страницы: load() раз в 60 с меняет только m,
   // поэтому переключатель не сбрасывается под руками
-  const[tab,setTab]=useState(()=>{try{const t=localStorage.getItem("al-pulse-tab");
+  const[tab,setTab]=useState(()=>{ const pt=params&&params.tab; if(PU_TABS.some(x=>x[0]===pt)) return pt;
+    try{const t=localStorage.getItem("al-pulse-tab");
     return PU_TABS.some(x=>x[0]===t)?t:"people";}catch{return "people";}});
+  // переход из колокольчика, когда «Пульс» уже открыт: вкладка и обращение из адреса
+  const openTicket=params&&+params.ticket||null;
+  useEffect(()=>{ const pt=params&&params.tab; if(PU_TABS.some(x=>x[0]===pt)) setTab(pt); },[params&&params.tab,params&&params.ticket]); // eslint-disable-line
   // себя владелец по умолчанию не считает: 70% просмотров были его проверками
   const[withMe,setWithMe]=useState(()=>{try{const v=localStorage.getItem("al-pulse-me");
     return v==="1"?true:v==="0"?false:null;}catch{return null;}});
@@ -12427,7 +12439,7 @@ function PulsePage(){
       <PuPersonalization pz={m.personalization||{}} days={m.days} onOpenUser={setCard}/>
     </>}
 
-    {tab==="inbox"&&<PuInbox rev={rev} onOpenUser={setCard} onChanged={load}/>}
+    {tab==="inbox"&&<PuInbox key={openTicket||0} openTicket={openTicket} rev={rev} onOpenUser={setCard} onChanged={load}/>}
     {tab==="outcomes"&&<PuOutcomes isOwner={!!(me&&me.is_admin)} withMe={withMe}/>}
     {tab==="reach"&&<><PuReach isOwner={!!(me&&me.is_admin)} withMe={withMe}/><div style={{height:16}}/><PuCosts/></>}
 
@@ -13478,7 +13490,7 @@ const IcBx={
   gear:p=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="2.6"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
 };
 const bxIcon=(k)=>k==="report_shared"?IcBx.report
-  :(k==="ticket"||k==="case_msg"||k==="case_mention"||k==="case_reply")?IcSay.row
+  :(k==="ticket"||k==="team_ticket"||k==="team_ai_minus"||k==="case_msg"||k==="case_mention"||k==="case_reply")?IcSay.row
   :(k==="case_added"||k==="case_role"||k==="case_removed"||k==="case_left"||k==="case_owner")?IcBx.people:IcBx.case;
 const bxSnip=(it)=>it&&it.ref&&it.ref.snippet?`«${it.ref.snippet}»`:"";
 // «только что · 5 мин · 2 ч · вчера · 3 окт» — свежесть важнее точного времени

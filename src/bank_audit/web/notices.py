@@ -39,6 +39,7 @@ GROUPS = {
     "access": "Доступ, статус дел и отчёты",
     "inbox": "Ответы на обращения",
     "watch": "Всплески жалоб по вашим подпискам",
+    "team": "Обратная связь пользователей (команде)",
 }
 KIND_GROUP = {
     "case_mention": "mention", "case_reply": "mention",
@@ -49,12 +50,14 @@ KIND_GROUP = {
     "case_restored": "access", "case_status": "access", "report_shared": "access",
     "ticket": "inbox",
     "watch_signal": "watch",
+    "team_ticket": "team", "team_ai_minus": "team",
 }
 # «Не следить за делом» глушит эти; упоминания, ответы и доступ — нет
 CASE_MUTABLE = {"case_items", "case_msg", "case_status", "case_analysis"}
 # эти склеиваются, пока не прочитаны (остальные — по одной строке на событие)
-_MERGE = {"case_items", "case_msg", "case_status", "case_analysis", "ticket", "report_shared"}
-_COUNTED = {"case_items", "case_msg"}          # склейка копит число
+_MERGE = {"case_items", "case_msg", "case_status", "case_analysis", "ticket", "report_shared",
+          "team_ticket", "team_ai_minus"}
+_COUNTED = {"case_items", "case_msg", "team_ai_minus"}          # склейка копит число
 _SAME_ACTOR = {"case_items"}                   # склеиваются только от одного автора
 KEEP_DAYS = 90
 LIST_LIMIT = 60
@@ -127,6 +130,18 @@ def title_of(kind: str, ref: dict, count: int = 1) -> str:
         if ref.get("reply"):
             return f"Команда AuditLens ответила на обращение № {no}"
         return f"Обращение № {no}: {ref.get('status_label') or 'новый статус'}"
+    if kind == "team_ticket":
+        no = ref.get("no")
+        if ref.get("followup") and not ref.get("fresh"):
+            return f"Автор дописал в обращение № {no}"
+        what = " · ".join(_q(x) for x in (ref.get("kind_label"), ref.get("section")) if x)
+        return f"Новое обращение № {no}" + (f": {what}" if what else "")
+    if kind == "team_ai_minus":
+        if count > 1:
+            return f"{count} {_plural(count, 'минус', 'минуса', 'минусов')} к ответам ИИ"
+        what = "неверный факт в ответе ИИ" if ref.get("claim") else "минус к ответу ИИ"
+        return f"{what[0].upper() + what[1:]}: «{_q(ref.get('question'))}»" if ref.get("question") \
+            else what[0].upper() + what[1:]
     if kind == "watch_signal":
         what = _q(ref.get("bank")) + (f" · {_q(ref['product'])}" if ref.get("product") else "")
         ratio = f" ×{str(ref['ratio']).replace('.', ',')}" if ref.get("ratio") else ""
@@ -291,9 +306,11 @@ def mark_read(username: str, ids: list[int] | None = None, *, everything: bool =
         return 0
 
 
-def settings(prefs: dict | None) -> list[dict]:
+def settings(prefs: dict | None, team: bool = False) -> list[dict]:
+    """Группы для настроек колокольчика; «команде» — только тем, кому она приходит."""
     off = set((prefs or {}).get("notify_off") or [])
-    return [{"key": k, "label": v, "on": k not in off} for k, v in GROUPS.items()]
+    return [{"key": k, "label": v, "on": k not in off} for k, v in GROUPS.items()
+            if k != "team" or team]
 
 
 # ── письма (миграция 087): что ещё не отправлено и не прочитано ────────────────

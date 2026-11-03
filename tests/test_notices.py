@@ -159,3 +159,18 @@ def test_talk_targets_one_notice_per_person_most_personal_wins():
     assert N.talk_targets("me", ["me", "a"], [], reply_author="me", item_author="me") \
         == [("case_msg", ["a"], {})]
     assert N.talk_targets("me", ["me"], []) == []
+
+
+def test_team_feedback_titles_and_settings():
+    """Обращения и минусы ИИ — команде; группу «команде» видят только её члены."""
+    t = N.title_of("team_ticket", {"no": 12, "fresh": True, "kind_label": "Ошибка",
+                                   "section": "Аудит отзывов › Жалобы"})
+    assert t == "Новое обращение № 12: Ошибка · Аудит отзывов › Жалобы"
+    assert N.title_of("team_ticket", {"no": 12, "followup": True}) == "Автор дописал в обращение № 12"
+    # дописка, склеенная с ещё не прочитанным новым обращением, остаётся «новым»
+    assert N.title_of("team_ticket", {"no": 12, "fresh": True, "followup": True}).startswith("Новое обращение")
+    assert N.title_of("team_ai_minus", {"question": "ставки по вкладам", "claim": True}) == \
+        "Неверный факт в ответе ИИ: «ставки по вкладам»"
+    assert N.title_of("team_ai_minus", {}, 3) == "3 минуса к ответам ИИ"
+    assert "team" not in {g["key"] for g in N.settings(None)}
+    assert "team" in {g["key"] for g in N.settings(None, team=True)}

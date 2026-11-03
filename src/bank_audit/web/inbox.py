@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from typing import Any
 
 from sqlalchemy import text
@@ -38,6 +39,20 @@ PER_HOUR = 10
 
 class TicketError(ValueError):
     """Ошибка ввода — текст показывается человеку как есть."""
+
+
+def team_users() -> list[str]:
+    """Кому из команды приходят новые обращения и минусы к ответам ИИ —
+    TEAM_NOTIFY_USERS, по умолчанию владелец (ADMIN_USERS). До 03.11.2026
+    уведомления не было вовсе: обращения ждали ответа по 5–20 дней, потому что
+    о них можно было узнать, только открыв вкладку «Пульса»."""
+    raw = os.getenv("TEAM_NOTIFY_USERS") or os.getenv("ADMIN_USERS", "")
+    return [u.strip() for u in raw.split(",") if u.strip()]
+
+
+def notify_team(kind: str, *, actor: str | None, link: str, ref: dict) -> None:
+    from . import notices
+    notices.notify(team_users(), kind, actor=actor, link=link, ref=ref)
 
 
 def _rows(sql: str, params: dict | None = None) -> list[dict]:
@@ -135,6 +150,9 @@ def create(username: str, kind: str, section: str | None, section_label: str | N
             s.execute(text("""INSERT INTO user_ticket_file (ticket_id, mime, data, width, height)
                               VALUES (:t, :m, :d, :w, :h)"""),
                       {"t": tid, "m": mime, "d": data, "w": _int(w), "h": _int(h)})
+    notify_team("team_ticket", actor=username, link=f"#pulse?tab=inbox&ticket={int(tid)}",
+                ref={"no": int(tid), "fresh": True, "kind_label": KINDS[kind],
+                     "section": (section_label or "")[:120], "snippet": body[:160]})
     return {"ticket_id": int(tid)}
 
 
@@ -234,6 +252,8 @@ def user_message(username: str, ticket_id: int, body: str) -> None:
                           VALUES (:t, :u, 'user', :b)"""), {"t": ticket_id, "u": username, "b": body})
         s.execute(text("""UPDATE user_ticket SET updated_at = now(), user_seen_at = now()
                           WHERE ticket_id = :t"""), {"t": ticket_id})
+    notify_team("team_ticket", actor=username, link=f"#pulse?tab=inbox&ticket={int(ticket_id)}",
+                ref={"no": int(ticket_id), "followup": True, "snippet": body[:160]})
 
 
 def confirm(username: str, ticket_id: int, ok: bool, comment: str | None = None) -> None:
@@ -295,7 +315,9 @@ def admin_list(status: str = "open", kind: str | None = None, section: str | Non
                (SELECT count(*) FROM user_ticket_file f WHERE f.ticket_id = t.ticket_id) AS n_files,
                (SELECT count(*) FROM user_ticket_msg m WHERE m.ticket_id = t.ticket_id
                                                        AND m.role <> 'system') AS n_msgs,
-               {_TEAM_UNREAD} AS unread
+               {_TEAM_UNREAD} AS unread,
+               (SELECT min(m.created_at) FROM user_ticket_msg m
+                 WHERE m.ticket_id = t.ticket_id AND m.role = 'team') AS answered_at
           FROM user_ticket t
           LEFT JOIN app_user au ON au.username = t.username
           {where}
@@ -303,6 +325,7 @@ def admin_list(status: str = "open", kind: str | None = None, section: str | Non
     for r in rows:
         r["created_at"] = r["created_at"].isoformat()
         r["updated_at"] = r["updated_at"].isoformat()
+        r["answered_at"] = r["answered_at"].isoformat() if r["answered_at"] else None
         r["status_label"] = STATUSES.get(r["status"], r["status"])
         r["kind_label"] = KINDS.get(r["kind"], r["kind"])
     return {"tickets": rows, "counts": brief(), "kinds": KINDS, "statuses": STATUSES}
@@ -358,7 +381,8 @@ def admin_update(ticket_id: int, admin: str, status: str | None = None,
 
 
 def brief() -> dict:
-    """Счётчики для сторожа «Пульса» и подписи вкладки."""
+    """Счётчики для сторожа «Пульса» и подписи вкладки. «Без ответа» — открытые,
+    где команда ещё ничего не написала, даже если обращение уже открывали."""
     try:
         rows = _rows(f"""
             SELECT count(*) FILTER (WHERE t.status = 'new') AS new,
@@ -366,9 +390,23 @@ def brief() -> dict:
                    count(*) FILTER (WHERE {_TEAM_UNREAD}) AS unread,
                    count(*) AS total,
                    COALESCE(max(EXTRACT(day FROM now() - t.created_at))
-                              FILTER (WHERE t.status = 'new'), 0)::int AS oldest_new_days
-              FROM user_ticket t""", {"open": list(OPEN)})
-        return rows[0] if rows else {}
+                              FILTER (WHERE t.status = 'new'), 0)::int AS oldest_new_days,
+                   count(*) FILTER (WHERE t.status = ANY(:open) AND ans.at IS NULL) AS unanswered,
+                   COALESCE(max(EXTRACT(epoch FROM now() - t.created_at) / 3600)
+                              FILTER (WHERE t.status = ANY(:open) AND ans.at IS NULL), 0)::int
+                       AS oldest_unanswered_h,
+                   percentile_cont(0.5) WITHIN GROUP (
+                       ORDER BY EXTRACT(epoch FROM ans.at - t.created_at) / 3600)
+                       FILTER (WHERE ans.at IS NOT NULL AND t.created_at > now() - interval '30 days')
+                       AS median_answer_h
+              FROM user_ticket t
+              LEFT JOIN LATERAL (SELECT min(m.created_at) AS at FROM user_ticket_msg m
+                                  WHERE m.ticket_id = t.ticket_id AND m.role = 'team') ans ON TRUE
+            """, {"open": list(OPEN)})
+        r = rows[0] if rows else {}
+        if r.get("median_answer_h") is not None:
+            r["median_answer_h"] = round(float(r["median_answer_h"]), 1)
+        return r
     except Exception:  # noqa: BLE001 — таблицы ещё нет: «Пульс» не должен падать
         log.debug("[inbox] brief failed", exc_info=True)
         return {}

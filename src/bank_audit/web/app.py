@@ -536,6 +536,16 @@ def post_feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user
     res = userdata.save_feedback(user.username, body.kind, body.item_key[:500],
                                  body.verdict, topics=body.topics[:10],
                                  payload=body.payload)
+    # 👎 и «неверный факт» в ответе ИИ — сразу команде: раньше отметка ложилась
+    # в базу и никуда не шла (claim_feedback не читал ни один модуль)
+    if body.kind == "ai_answer" and res.get("verdict") == -1:
+        from . import inbox
+        pl = body.payload or {}
+        inbox.notify_team("team_ai_minus", actor=user.username, link="#pulse?tab=ai",
+                          ref={"question": str(pl.get("question") or "")[:200],
+                               "claim": bool(pl.get("claim_feedback")),
+                               "snippet": str(pl.get("quote") or pl.get("comment") or "")[:160],
+                               "report_id": pl.get("report_id")})
     # 👍 на ответ ИИ дополнительно усиливает темы вопроса в профиле интересов
     if body.kind == "ai_answer" and res.get("verdict") == 1:
         q = str((body.payload or {}).get("question") or "")
@@ -935,13 +945,18 @@ class BellReadIn(BaseModel):
     link: Optional[str] = None      # «case:12:analysis» — открыли вкладку, к которой оно ведёт
 
 
+def _inbox_team() -> set[str]:
+    from . import inbox
+    return set(inbox.team_users())
+
+
 @app.get("/api/bell")
 def bell_list(user: CurrentUser = Depends(get_current_user)):
     """Последние уведомления (новые и прочитанные) и настройки групп."""
     from . import notices
     u = userdata.get_user(user.username) or {}
     return {"items": notices.items(user.username),
-            "groups": notices.settings(u.get("prefs"))}
+            "groups": notices.settings(u.get("prefs"), team=user.username in _inbox_team())}
 
 
 @app.get("/api/bell/unread")
@@ -1715,7 +1730,9 @@ def _market_rows(category: str, limit: int, offset: int,
                   SELECT q2.detail->>'reason' AS reason
                     FROM quality_flag q2
                    WHERE q2.entity_type = 'offer' AND q2.entity_id = m.offer_id
-                     AND q2.severity = 'warn'
+                     AND q2.severity = 'warn' AND q2.detail ? 'reason'
+                     -- сомнение про ТЕКУЩУЮ версию условий (см. ниже _market_position)
+                     AND q2.created_at >= m.valid_from
                    ORDER BY q2.created_at DESC
                    LIMIT 1) qf ON true
              WHERE {' AND '.join(cond)}
@@ -2011,7 +2028,10 @@ def market_atlas(term: Optional[str] = None):
               SELECT q2.detail->>'reason' AS reason
                 FROM quality_flag q2
                WHERE q2.entity_type = 'offer' AND q2.entity_id = m.offer_id
-                 AND q2.severity = 'warn'
+                 AND q2.severity = 'warn' AND q2.detail ? 'reason'
+                 -- сомнение про ТЕКУЩУЮ версию условий: исправленная ставка не
+                 -- должна жить под отметкой, поставленной прошлой версии
+                 AND q2.created_at >= m.valid_from
                ORDER BY q2.created_at DESC
                LIMIT 1) qf ON true
          WHERE {cond}
@@ -5301,6 +5321,22 @@ async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_u
     if not os.getenv("LLM_API_KEY"):
         raise HTTPException(503, "LLM_API_KEY не задан в .env")
 
+    # Запрос о частном лице — не в модель и не в поиск, в базе — без ФИО и
+    # реквизитов (web/pd_guard.py). Ответ — объяснение в обычном потоке.
+    from . import pd_guard
+    pd_found = pd_guard.check(req.question)
+    if pd_found:
+        try:
+            userdata.touch_user(user.username, user.name)
+            userdata.log_event(user.username, "ai_query",
+                               {"question": pd_guard.mask(req.question), "blocked": "personal_data",
+                                "found": pd_found, "deep_requested": bool(req.force_deep)})
+        except Exception:
+            log.warning("[ai_analyze] blocked-query log failed", exc_info=True)
+        return EventSourceResponse(pd_guard.stream_refusal(pd_found), media_type="text/event-stream",
+                                   headers={"Cache-Control": "no-cache, no-transform",
+                                            "X-Accel-Buffering": "no", "Content-Encoding": "identity"})
+
     # Персонализация: заводим/продолжаем сессию истории, сохраняем вопрос,
     # обновляем профиль интересов, логируем событие (всё best-effort — не должно
     # уронить ответ, если БД недоступна).
@@ -5369,6 +5405,12 @@ async def ai_clarify(req: ClarifyRequest):
     # Demo-режим: воронку пропускаем — переписанный промпт сломал бы trigger_keywords.
     if is_demo_mode_active() and find_demo_response(req.question) is not None:
         return {"complete": True, "questions": [], "reason": "demo"}
+    # Запрос о частном лице в модель не отправляем и здесь: ответит отказом /analyze
+    from . import pd_guard
+    if pd_guard.check(req.question):
+        if req.answers is not None:
+            return {"enriched_question": req.question, "original": req.question}
+        return {"complete": True, "questions": [], "reason": "personal_data"}
     # Крышка по времени. Воронка НЕОБЯЗАТЕЛЬНА (fail-open → сразу research), а
     # экран всё это время показывает «Анализирую запрос…». 04.09 один вызов ушёл
     # на резервную модель и думал 4,5 минуты — со стороны это «зависло».

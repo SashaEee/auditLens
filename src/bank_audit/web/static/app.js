@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 fb325a75c6d8a29ea435cc57c5ccea7cf900ddb64a81ad034271487e1d78338f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 3e7341e9791c817866cc241890500cdbd3198c02da514439eb04ba34b786f3f7): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -20313,6 +20313,8 @@ const AD_CSS = `
 .pu-rb i{display:block;height:100%;border-radius:4px;background:color-mix(in oklab,var(--select),transparent 25%)}
 .pu-reach-tot td{font-weight:600;border-top:1px solid var(--hair-2)}
 .pu-reach-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.pu-wait{display:inline-block;margin-left:8px;font-size:11px;font-weight:400;color:var(--ink-3);white-space:nowrap}
+.pu-wait.late{color:var(--neg)}
 /* ── Итоги: направления, качество запросов, путь к результату ─────────────── */
 .oc-bar{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap;margin:4px 0 2px}
 .oc-bar .sp{flex:1}
@@ -21930,15 +21932,21 @@ function PuTopics({
 // меню и в «Моих обращениях». Непрочитанные (новые или с уточнением автора) — сверху.
 const PU_TK_FILTER = [["new", "Новые"], ["open", "Открытые"], ["all", "Все"]];
 const PU_TK_TPL = [["Взяли в работу", "Спасибо, взяли в работу. Напишем здесь, когда будет готово."], ["Уточнить", "Уточните, пожалуйста: в каком разделе и с какими фильтрами это видно?"], ["Сделали", "Сделали — обновите страницу и проверьте, пожалуйста."], ["Уже есть", "Это уже есть: "]];
+// сколько обращение ждёт ответа команды: «3 ч», «2 дн»
+const puWait = iso => {
+  const h = (Date.now() - new Date(iso).getTime()) / 36e5;
+  return h < 1 ? "меньше часа" : h < 48 ? `${Math.floor(h)} ч` : `${Math.floor(h / 24)} дн`;
+};
 function PuInbox({
   rev,
   onOpenUser,
-  onChanged
+  onChanged,
+  openTicket
 }) {
   const [st, setSt] = useState("open");
   const [kind, setKind] = useState("");
   const [d, setD] = useState(null);
-  const [cur, setCur] = useState(null);
+  const [cur, setCur] = useState(openTicket || null);
   const [r2, setR2] = useState(0);
   useEffect(() => {
     setD(null);
@@ -21957,7 +21965,7 @@ function PuInbox({
     id: "pu-inbox"
   }, /*#__PURE__*/React.createElement("div", {
     className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F \xB7 \u0436\u0434\u0443\u0442 \u043E\u0442\u0432\u0435\u0442\u0430 ", c.unread || 0, " \xB7 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0445 ", c.open || 0, " \xB7 \u0432\u0441\u0435\u0433\u043E ", c.total || 0), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F \xB7 \u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430 ", c.unanswered || 0, c.unanswered ? ` (дольше всех — ${c.oldest_unanswered_h >= 48 ? Math.floor(c.oldest_unanswered_h / 24) + " дн" : c.oldest_unanswered_h + " ч"})` : "", " \xB7 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0445 ", c.open || 0, " \xB7 \u0432\u0441\u0435\u0433\u043E ", c.total || 0, c.median_answer_h != null ? ` · первый ответ за 30 дн — медиана ${c.median_answer_h >= 48 ? Math.round(c.median_answer_h / 24) + " дн" : String(c.median_answer_h).replace(".", ",") + " ч"}` : ""), /*#__PURE__*/React.createElement("span", {
     className: "pu-people-ctl"
   }, /*#__PURE__*/React.createElement("div", {
     className: "seg",
@@ -22016,7 +22024,10 @@ function PuInbox({
       color: "var(--ink-3)",
       fontWeight: 400
     }
-  }, t.kind_label, " \xB7 "), t.body), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
+  }, t.kind_label, " \xB7 "), t.body, !t.answered_at && ["new", "accepted", "in_progress"].includes(t.status) && /*#__PURE__*/React.createElement("span", {
+    className: "pu-wait" + (Date.now() - new Date(t.created_at).getTime() > 864e5 ? " late" : ""),
+    title: "\u043A\u043E\u043C\u0430\u043D\u0434\u0430 \u0435\u0449\u0451 \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0430"
+  }, "\u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430 ", puWait(t.created_at))), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
     className: "pu-link",
     onClick: e => {
       e.stopPropagation();
@@ -23821,12 +23832,16 @@ function PuTurbCtl() {
     role: "alert"
   }, err));
 }
-function PulsePage() {
+function PulsePage({
+  params
+}) {
   const me = useMe();
   const [days, setDays] = useState(14);
   // вкладка живёт в состоянии страницы: load() раз в 60 с меняет только m,
   // поэтому переключатель не сбрасывается под руками
   const [tab, setTab] = useState(() => {
+    const pt = params && params.tab;
+    if (PU_TABS.some(x => x[0] === pt)) return pt;
     try {
       const t = localStorage.getItem("al-pulse-tab");
       return PU_TABS.some(x => x[0] === t) ? t : "people";
@@ -23834,6 +23849,12 @@ function PulsePage() {
       return "people";
     }
   });
+  // переход из колокольчика, когда «Пульс» уже открыт: вкладка и обращение из адреса
+  const openTicket = params && +params.ticket || null;
+  useEffect(() => {
+    const pt = params && params.tab;
+    if (PU_TABS.some(x => x[0] === pt)) setTab(pt);
+  }, [params && params.tab, params && params.ticket]); // eslint-disable-line
   // себя владелец по умолчанию не считает: 70% просмотров были его проверками
   const [withMe, setWithMe] = useState(() => {
     try {
@@ -24258,6 +24279,8 @@ function PulsePage() {
     days: m.days,
     onOpenUser: setCard
   })), tab === "inbox" && /*#__PURE__*/React.createElement(PuInbox, {
+    key: openTicket || 0,
+    openTicket: openTicket,
     rev: rev,
     onOpenUser: setCard,
     onChanged: load
@@ -26409,7 +26432,7 @@ const IcBx = {
     d: "M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3h-4.4l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"
   }))
 };
-const bxIcon = k => k === "report_shared" ? IcBx.report : k === "ticket" || k === "case_msg" || k === "case_mention" || k === "case_reply" ? IcSay.row : k === "case_added" || k === "case_role" || k === "case_removed" || k === "case_left" || k === "case_owner" ? IcBx.people : IcBx.case;
+const bxIcon = k => k === "report_shared" ? IcBx.report : k === "ticket" || k === "team_ticket" || k === "team_ai_minus" || k === "case_msg" || k === "case_mention" || k === "case_reply" ? IcSay.row : k === "case_added" || k === "case_role" || k === "case_removed" || k === "case_left" || k === "case_owner" ? IcBx.people : IcBx.case;
 const bxSnip = it => it && it.ref && it.ref.snippet ? `«${it.ref.snippet}»` : "";
 // «только что · 5 мин · 2 ч · вчера · 3 окт» — свежесть важнее точного времени
 const bxAgo = iso => {

@@ -2,6 +2,7 @@
    Результаты пишутся в quality_flag и в JSON-отчёт workspace/reports/quality_<ts>.json"""
 from __future__ import annotations
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy import text
@@ -153,8 +154,73 @@ CHECKS = [
     },
 ]
 
+# ── выбросы ставок: условная или устаревшая ставка, поданная как общая ────────
+# Сторож правдоподобия (normalizer/offers.implausible) сравнивает ставку только с
+# ключевой: «вклад выше ключевой на 5 п. п.». 03.11.2026 аудитор нашёл на витрине
+# «Выгодный старт +» Сбера под 19% при максимуме по факту 12,5% — ставка
+# агрегатора для отдельных клиентов. Так же выглядели ещё пять вкладов (пенсионный
+# «Юбилейный» 22%, «Зарплатный» 20%…): до ключевой+5 они не дотягивали, но
+# отрывались от своей же линейки банка на 4–9 п. п. В августе тот же класс
+# (ПСБ «Народный» 30%) закрыли абсолютным порогом — и класс остался.
+# Отметка пишется в quality_flag, поэтому витрина, позиция на рынке и
+# инструменты ИИ-помощника отсеивают такую ставку одинаково.
+OUTLIER_OWN_PP = float(os.getenv("RATE_OUTLIER_OWN_PP", "4"))        # выше медианы своей линейки банка
+OUTLIER_MARKET_PP = float(os.getenv("RATE_OUTLIER_MARKET_PP", "2"))  # выше 95-го перцентиля рынка
+OUTLIER_CATS = ("deposit", "savings_account")
+
+
+def _pp(x: float) -> str:
+    return f"{x:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def outlier_reason(rate: float, bank_med: float | None, bank_n: int, p95: float | None) -> str | None:
+    """Причина сомнения или None. Своя линейка — только если в ней от трёх продуктов."""
+    over_own = bank_med is not None and bank_n >= 3 and rate > bank_med + OUTLIER_OWN_PP
+    over_mkt = p95 is not None and rate > p95 + OUTLIER_MARKET_PP
+    if not (over_own or over_mkt):
+        return None
+    why = (f"ставка {_pp(rate)}% на {_pp(rate - bank_med)} п. п. выше остальных продуктов банка "
+           f"(медиана {_pp(bank_med)}%)" if over_own
+           else f"ставка {_pp(rate)}% выше 95% предложений рынка ({_pp(p95)}%)")
+    return why + " — похоже на условную (для отдельных клиентов) или устаревшую; сверьте с сайтом банка"
+
+
+def flag_rate_outliers() -> int:
+    """Пересчитать отметки выбросов: старые снять, текущие поставить."""
+    with db.session() as s:
+        rows = s.execute(text("""
+            WITH d AS (
+              SELECT m.offer_id, m.bank_name, m.category, m.rate_pct::float AS rate
+                FROM v_market_rub_offer m
+               WHERE m.category = ANY(:cats) AND m.rate_pct > 0.01),
+            b AS (SELECT category, bank_name, count(*) AS n,
+                         percentile_cont(0.5) WITHIN GROUP (ORDER BY rate) AS med
+                    FROM d GROUP BY 1, 2),
+            mk AS (SELECT category, percentile_cont(0.95) WITHIN GROUP (ORDER BY rate) AS p95
+                     FROM d GROUP BY 1)
+            SELECT d.offer_id, d.rate, b.med, b.n, mk.p95
+              FROM d JOIN b USING (category, bank_name) JOIN mk USING (category)"""),
+            {"cats": list(OUTLIER_CATS)}).all()
+        s.execute(text("DELETE FROM quality_flag WHERE entity_type = 'offer' AND code = 'RATE_OUTLIER'"))
+        n = 0
+        for oid, rate, med, bn, p95 in rows:
+            why = outlier_reason(float(rate), float(med) if med is not None else None, int(bn),
+                                 float(p95) if p95 is not None else None)
+            if why:
+                s.execute(text("""INSERT INTO quality_flag(entity_type, entity_id, severity, code, detail)
+                                  VALUES ('offer', :e, 'warn', 'RATE_OUTLIER', CAST(:d AS jsonb))"""),
+                          {"e": oid, "d": json.dumps({"reason": why}, ensure_ascii=False)})
+                n += 1
+    return n
+
+
 def run_quality() -> dict:
     summary: dict[str, int] = {}
+    try:
+        summary["RATE_OUTLIER"] = flag_rate_outliers()
+    except Exception:  # noqa: BLE001 — остальные проверки не должны пострадать
+        import logging
+        logging.getLogger(__name__).warning("flag_rate_outliers failed", exc_info=True)
     settings = Settings.load()
     settings.reports_dir.mkdir(parents=True, exist_ok=True)
     flags = []

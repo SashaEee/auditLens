@@ -341,19 +341,24 @@ async def label_new(trigger: str = "night", limit: int | None = None) -> dict:
         usage, n, err = _Usage(), 0, None
         try:
             rows = await asyncio.to_thread(pending, limit or LABEL_MAX)
+            from . import pd_guard
             for r in rows:
                 q = (r["q"] or "").strip(" \t\r\n")[:2000]
-                r["question"] = q
+                # «[ФИО]» — вопрос, который ИИ-помощник уже отклонил и сохранил замаскированным
+                r["personal"] = r["src"] != "case_title" and (bool(pd_guard.check(q)) or "[ФИО]" in q)
+                r["question"] = pd_guard.mask(q)       # в «Итогах» — без ФИО и реквизитов
                 r["text_hash"] = _hash(q)
                 r["prompt"] = f"Название аудит-дела: {q}" if r["src"] == "case_title" else q
             known = await asyncio.to_thread(_known, sorted({r["text_hash"] for r in rows
                                                              if r["src"] != "case_title"}))
-            todo = sorted({r["prompt"] for r in rows
-                           if r["src"] == "case_title" or r["text_hash"] not in known})
+            todo = sorted({r["prompt"] for r in rows if not r["personal"]
+                           and (r["src"] == "case_title" or r["text_hash"] not in known)})
             labels = await _label_texts(todo, usage) if todo else {}
             out = []
             for r in rows:
-                lab = (labels.get(r["prompt"]) if r["src"] == "case_title" or r["text_hash"] not in known
+                lab = ({"dirs": [], "quality": "personal", "why": "поиск сведений о частном лице",
+                        "model": "pd_guard"} if r["personal"]
+                       else labels.get(r["prompt"]) if r["src"] == "case_title" or r["text_hash"] not in known
                        else known[r["text_hash"]])
                 if not lab:
                     continue

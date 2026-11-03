@@ -248,3 +248,12 @@ def test_closed_contour_address_is_refused_before_any_mail(monkeypatch):
     assert MD.is_blocked("a.ivanov@closed.example.ru") and not MD.is_blocked("a@example.org")
     with pytest.raises(MD.MailUserError, match="Omega"):
         MD.start("u1", "A.Ivanov@Closed.Example.RU")
+
+
+def test_team_feedback_mail_is_personal_and_redacted():
+    """Новое обращение и минус к ответу ИИ — письмом сразу; на личную почту без текста."""
+    assert {"team_ticket", "team_ai_minus"} <= T.PERSONAL
+    r = T.redact({"kind": "team_ticket", "ref": {"no": 7, "fresh": True, "snippet": "секрет"}, "count": 1})
+    assert r["title"] == "Новое обращение пользователя № 7" and "секрет" not in str(r)
+    r = T.redact({"kind": "team_ai_minus", "ref": {"question": "вклады"}, "count": 2})
+    assert r["title"] == "2 минуса к ответам ИИ" and "вклады" not in str(r)

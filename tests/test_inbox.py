@@ -94,3 +94,22 @@ def test_create_unknown_kind_becomes_other_and_rate_limit(monkeypatch):
     monkeypatch.setattr(I.db, "session", lambda: _S(recent=I.PER_HOUR))
     with pytest.raises(I.TicketError):
         I.create("u1", "idea", None, None, "Ещё одна мысль")
+
+
+def test_new_ticket_and_followup_reach_the_team(monkeypatch):
+    """До 03.11.2026 о новом обращении никто не узнавал, пока не откроет «Пульс»."""
+    monkeypatch.setenv("ADMIN_USERS", "owner-1")
+    monkeypatch.delenv("TEAM_NOTIFY_USERS", raising=False)
+    assert I.team_users() == ["owner-1"]
+    monkeypatch.setenv("TEAM_NOTIFY_USERS", "a, b")
+    assert I.team_users() == ["a", "b"]
+    sent = []
+    monkeypatch.setattr(I, "notify_team", lambda kind, **kw: sent.append((kind, kw)))
+    monkeypatch.setattr(I.db, "session", lambda: _S())
+    I.create("u1", "bug", "reviews", "Аудит отзывов", "Не грузится лента")
+    kind, kw = sent[-1]
+    assert kind == "team_ticket" and kw["actor"] == "u1" and kw["ref"]["no"] == 17
+    assert kw["link"] == "#pulse?tab=inbox&ticket=17" and kw["ref"]["fresh"]
+    monkeypatch.setattr(I, "_own_status", lambda s, u, t: "new")
+    I.user_message("u1", 17, "Дополняю: на ноутбуке")
+    assert sent[-1][0] == "team_ticket" and sent[-1][1]["ref"]["followup"]
