@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 c435e970ae3df22f19103b511c275cb79b017509afbc158a5413e57ef619cb38): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 e2a9d11694341f113f281d727b9da90a6a17dee53c3c999ac8905ed554d5d1e0): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21836,6 +21836,52 @@ function PuAgentEval() {
 
 // Полнота площадок отзывов: без неё падение сборщика видно только в ручном
 // аудите (к сентябрю 2026 наши сборщики принесли <1% потока, и никто не знал)
+// Срезы «Аудита отзывов» (rag/review_slices.py): какая версия разметки в ходу, догнала ли
+// она кандидатов (срез в списке продуктов — только при готовности ≥97%), что показал
+// эталон и сколько отметок «не относится» ждёт решения
+function PuSlices() {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    apiFetch("/api/admin/pulse/slices").then(setD).catch(() => setD({
+      err: 1
+    }));
+  }, []);
+  if (!d) return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card pu-sec"
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 90
+  }));
+  if (d.err) return null;
+  const pc = v => v == null ? "—" : String(v).replace(".", ",");
+  const sp = Object.entries(d.spend || {}).map(([k, v]) => `${k}: ${fmtNum(v.rows)} жалоб, ${fmtNum(v.rub)} ₽`).join(" · ");
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card pu-sec",
+    id: "pu-slices"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0421\u0440\u0435\u0437\u044B \xAB\u0410\u0443\u0434\u0438\u0442\u0430 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB"), d.keys.some(k => !k.ready) ? /*#__PURE__*/React.createElement("span", {
+    className: "pu-chip"
+  }, "\u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0430 \u0434\u043E\u0433\u043E\u043D\u044F\u0435\u0442") : null), /*#__PURE__*/React.createElement("div", {
+    className: "pu-x-scroll"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "pu-tbl"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0441\u0440\u0435\u0437"), /*#__PURE__*/React.createElement("th", null, "\u0432\u0435\u0440\u0441\u0438\u044F"), /*#__PURE__*/React.createElement("th", null, "\u0440\u0430\u0437\u043C\u0435\u0447\u0435\u043D\u043E \u043A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u043E\u0432"), /*#__PURE__*/React.createElement("th", null, "\u0442\u043E\u0447\u043D\u043E\u0441\u0442\u044C / \u043F\u043E\u043B\u043D\u043E\u0442\u0430 (\u044D\u0442\u0430\u043B\u043E\u043D)"), /*#__PURE__*/React.createElement("th", null, "\u0431\u044B\u043B\u043E (s6)"), /*#__PURE__*/React.createElement("th", null, "\xAB\u043D\u0435 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u0441\u044F\xBB"))), /*#__PURE__*/React.createElement("tbody", null, d.keys.map(k => /*#__PURE__*/React.createElement("tr", {
+    key: k.key
+  }, /*#__PURE__*/React.createElement("td", {
+    title: k.note || ""
+  }, k.label), /*#__PURE__*/React.createElement("td", null, k.schema, k.switched_at ? /*#__PURE__*/React.createElement("span", {
+    className: "t-cap"
+  }, " \xB7 \u0441 ", rvDate(k.switched_at)) : null), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
+    className: "pu-chip " + (k.ready ? "ok" : "")
+  }, k.share != null ? Math.round(k.share * 100) + "%" : "—"), /*#__PURE__*/React.createElement("span", {
+    className: "t-cap"
+  }, " ", fmtNum(k.tagged || 0), " \u0438\u0437 ", fmtNum(k.candidates || 0))), /*#__PURE__*/React.createElement("td", null, k.gold ? `${pc(k.gold.precision)} / ${pc(k.gold.recall)}` : "—"), /*#__PURE__*/React.createElement("td", null, k.gold && k.gold.precision_s6 != null ? pc(k.gold.precision_s6) : "—"), /*#__PURE__*/React.createElement("td", null, k.open_flags || "—")))))), /*#__PURE__*/React.createElement("p", {
+    className: "t-cap",
+    style: {
+      margin: "8px 0 0"
+    }
+  }, "\u042D\u0442\u0430\u043B\u043E\u043D 04.11: 260 \u0436\u0430\u043B\u043E\u0431, \u0434\u0432\u0430 \u0441\u043B\u0435\u043F\u044B\u0445 \u0440\u0430\u0437\u043C\u0435\u0442\u0447\u0438\u043A\u0430 \u0438 \u0430\u0440\u0431\u0438\u0442\u0440. \u0422\u0440\u0430\u0442\u044B \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438: ", sp || "—", "."));
+}
 function PuReviewSources({
   r
 }) {
@@ -24564,7 +24610,7 @@ function PulsePage({
     p: m.proposals
   }), /*#__PURE__*/React.createElement(PuReviewSources, {
     r: m.review_sources || {}
-  }), /*#__PURE__*/React.createElement(PuSignalJournal, {
+  }), /*#__PURE__*/React.createElement(PuSlices, null), /*#__PURE__*/React.createElement(PuSignalJournal, {
     j: m.signal_journal
   }), /*#__PURE__*/React.createElement(PuNewsQuality, {
     q: m.news_quality || {},

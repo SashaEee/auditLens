@@ -181,3 +181,14 @@ def test_coverage_per_key(pg):
     assert cov["keys"]["field"]["ready"] is False and cov["keys"]["selfemp"]["ready"] is True
     assert cov["keys"]["youth"] == {"candidates": 0, "tagged": 0, "share": 1.0, "ready": True, "schema": "s7"}
     assert cov["ready"] is False
+
+
+def test_status_for_pulse(pg):
+    _sql("INSERT INTO review_index (url, kind, dt, tsv) VALUES ('s1', 'complaint', now(), to_tsvector('russian', 'курьер'))")
+    _slice("s1", "s6", ["field"])
+    RS.flag("s1", "field", "auditor1")
+    st = RS.status()
+    by = {k["key"]: k for k in st["keys"]}
+    assert set(by) == set(RS.KEYS) and by["field"]["schema"] == "s6" and by["field"]["open_flags"] == 1
+    assert by["field"]["gold"]["precision"] == RS.GOLD_0411["field"][0] and by["field"]["candidates"] == 1
+    assert st["spend"]["s6"]["rows"] == 1

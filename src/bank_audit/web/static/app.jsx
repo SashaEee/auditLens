@@ -11341,6 +11341,34 @@ function PuAgentEval(){
 
 // Полнота площадок отзывов: без неё падение сборщика видно только в ручном
 // аудите (к сентябрю 2026 наши сборщики принесли <1% потока, и никто не знал)
+// Срезы «Аудита отзывов» (rag/review_slices.py): какая версия разметки в ходу, догнала ли
+// она кандидатов (срез в списке продуктов — только при готовности ≥97%), что показал
+// эталон и сколько отметок «не относится» ждёт решения
+function PuSlices(){
+  const[d,setD]=useState(null);
+  useEffect(()=>{apiFetch("/api/admin/pulse/slices").then(setD).catch(()=>setD({err:1}));},[]);
+  if(!d)return <div className="pu-card pu-sec"><Skel h={90}/></div>;
+  if(d.err)return null;
+  const pc=v=>v==null?"—":String(v).replace(".",",");
+  const sp=Object.entries(d.spend||{}).map(([k,v])=>`${k}: ${fmtNum(v.rows)} жалоб, ${fmtNum(v.rub)} ₽`).join(" · ");
+  return <div className="pu-card pu-sec" id="pu-slices">
+    <div className="h"><span>Срезы «Аудита отзывов»</span>
+      {d.keys.some(k=>!k.ready)?<span className="pu-chip">разметка догоняет</span>:null}</div>
+    <div className="pu-x-scroll"><table className="pu-tbl">
+      <thead><tr><th>срез</th><th>версия</th><th>размечено кандидатов</th><th>точность / полнота (эталон)</th><th>было (s6)</th><th>«не относится»</th></tr></thead>
+      <tbody>{d.keys.map(k=><tr key={k.key}>
+        <td title={k.note||""}>{k.label}</td>
+        <td>{k.schema}{k.switched_at?<span className="t-cap"> · с {rvDate(k.switched_at)}</span>:null}</td>
+        <td><span className={"pu-chip "+(k.ready?"ok":"")}>{k.share!=null?Math.round(k.share*100)+"%":"—"}</span>
+          <span className="t-cap"> {fmtNum(k.tagged||0)} из {fmtNum(k.candidates||0)}</span></td>
+        <td>{k.gold?`${pc(k.gold.precision)} / ${pc(k.gold.recall)}`:"—"}</td>
+        <td>{k.gold&&k.gold.precision_s6!=null?pc(k.gold.precision_s6):"—"}</td>
+        <td>{k.open_flags||"—"}</td>
+      </tr>)}</tbody></table></div>
+    <p className="t-cap" style={{margin:"8px 0 0"}}>Эталон 04.11: 260 жалоб, два слепых разметчика и арбитр. Траты разметки: {sp||"—"}.</p>
+  </div>;
+}
+
 function PuReviewSources({r}){
   const src=r.sources||[];
   if(r.error)return <div className="pu-card"><div className="h"><span>Площадки отзывов</span></div>
@@ -12562,6 +12590,7 @@ function PulsePage({params}){
     {tab==="data"&&<>
       <PuProposals p={m.proposals}/>
       <PuReviewSources r={m.review_sources||{}}/>
+      <PuSlices/>
       <PuSignalJournal j={m.signal_journal}/>
       <PuNewsQuality q={m.news_quality||{}} days={m.days}/>
       <div className="pu-sec"><PuSearch s={m.search||{}}/></div>

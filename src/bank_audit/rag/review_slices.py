@@ -639,3 +639,36 @@ def decide_flag(fid: int, decision: str, by: str) -> dict | None:
     apply_to_index(urls=[row["url"]])
     return {"url": row["url"], "key": row["key"], "decision": decision}
 
+
+# Замер на эталоне 04.11.2026: 260 жалоб (100 положительных s6 и 160 отвергнутых
+# кандидатов), два слепых разметчика и арбитр (согласие 98,8%); field переразмечен
+# вслепую по окончательному определению. (точность, полнота) s7; s6 — точность.
+GOLD_0411 = {"payroll": (0.92, 0.96, 0.73), "us": (0.95, 0.90, 0.60), "field": (0.85, 0.97, 0.73),
+             "selfemp": (0.94, 1.0, None), "youth": (1.0, 1.0, None), "svo": (1.0, 0.85, None)}
+
+
+def status() -> dict:
+    """Состояние срезов для «Пульса»: активная версия, готовность разметки, траты,
+    отметки «не относится» и замер на эталоне."""
+    cov = coverage()
+    with db.session() as s:
+        spend = {r[0]: (int(r[1]), float(r[2] or 0)) for r in s.execute(text(
+            "SELECT schema, count(*), sum(cost_rub) FROM review_slice GROUP BY 1")).all()}
+        act = {r[0]: (r[1], r[2], r[3]) for r in s.execute(text(
+            "SELECT key, schema, switched_at, note FROM review_slice_active")).all()}
+        flags = dict(s.execute(text("""SELECT key, count(*) FROM review_slice_feedback
+                                        WHERE decision IS NULL GROUP BY 1""")).all())
+    keys = []
+    for k in KEYS:
+        c = cov["keys"].get(k) or {}
+        g = GOLD_0411.get(k)
+        sch, at, note = act.get(k, (SCHEMA, None, None))
+        keys.append({"key": k, "label": LABELS[k], "schema": sch,
+                     "switched_at": at.isoformat() if at else None, "note": note,
+                     "candidates": c.get("candidates"), "tagged": c.get("tagged"),
+                     "share": c.get("share"), "ready": c.get("ready"),
+                     "open_flags": int(flags.get(k, 0)),
+                     "gold": {"precision": g[0], "recall": g[1], "precision_s6": g[2]} if g else None})
+    return {"keys": keys, "spend": {k: {"rows": v[0], "rub": round(v[1])} for k, v in spend.items()},
+            "schema": SCHEMA}
+

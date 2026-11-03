@@ -656,6 +656,15 @@ def admin_metrics(days: int = 14, me: Optional[bool] = None,
     return res
 
 
+@app.get("/api/admin/pulse/slices")
+def admin_pulse_slices(user: CurrentUser = Depends(get_current_user)):
+    """Срезы «Аудита отзывов»: версия, готовность разметки, траты, отметки, эталон."""
+    if not telemetry.can_pulse(user.username):
+        raise HTTPException(403, "admin only")
+    from ..rag import review_slices as rs
+    return rs.status()
+
+
 @app.get("/api/admin/pulse/reach")
 def admin_pulse_reach(me: Optional[bool] = None, user: CurrentUser = Depends(get_current_user)):
     """Охват подразделений по загруженному штату: какая доля пользуется инструментом."""
