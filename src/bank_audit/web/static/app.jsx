@@ -5058,6 +5058,7 @@ function ReviewsPage({params}){
   const[qInput,setQInput]=useState(P.q||"");
   const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
   const[ge,setGe]=useState(null),[prods,setProds]=useState([]);
+  const[sliceNotes,setSliceNotes]=useState({});           // «срез стал строже: было N, стало M»
   const[geFull,setGeFull]=useState(null);               // «ещё N городов» — полный список
   const[feed,setFeed]=useState(null);
   const[feedErr,setFeedErr]=useState(null);                // упал поиск ≠ ничего не нашлось
@@ -5220,7 +5221,8 @@ function ReviewsPage({params}){
   },[bank,product,trBasis,trMonths]);
 
   useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");setFCity("");setFWeek("");}
-    apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>setProds(d.items||[])).catch(()=>setProds([]));
+    apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>{setProds(d.items||[]);setSliceNotes(d.slice_notes||{});})
+      .catch(()=>{setProds([]);setSliceNotes({});});
   },[bank]);
 
   useEffect(()=>{ setSub(null);
@@ -5924,6 +5926,8 @@ function ReviewsPage({params}){
           <RvICase s={14}/><span className="rv-hact-l">Аудит-дела</span>{casesN?<span className="rv-hact-n">{casesN}</span>:null}</button>
       </div>
     </div>
+
+    {product&&sliceNotes[product]&&<div className="rv-slice-note" role="note">{sliceNotes[product]}</div>}
 
     {/* ПОДВКЛАДКИ — липкие, на полупрозрачном материале */}
     <div className="rv-tabs" ref={tabsRef}>

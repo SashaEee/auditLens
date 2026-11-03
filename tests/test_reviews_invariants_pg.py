@@ -113,3 +113,11 @@ def test_slice_product_counts_agree(pg):
     feed = RD.list_reviews_ex(B, product=FIELD, period=RP.parse("365d"), limit=5)
     rows = RD.export_rows(B, product=FIELD, period=RP.parse("365d"))
     assert feed["total"] == 3 and len([r for r in rows if r["разметка"] == ""]) == 3
+    # заметка «срез стал строже» — только своя («Срез…») и свежая
+    assert got["slice_notes"] == {}
+    from sqlalchemy import text
+    with db.session() as s:
+        s.execute(text("UPDATE review_slice_active SET note = 'Срез стал строже', switched_at = now() WHERE key = 'field'"))
+        s.execute(text("UPDATE review_slice_active SET note = 'Срез давний', switched_at = now() - interval '90 days' "
+                       "WHERE key = 'us'"))
+    assert RD.products(B, 365, top=60)["slice_notes"] == {FIELD: "Срез стал строже"}

@@ -1375,7 +1375,18 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
             ready = {}
         key_of = {lbl: k for k, (lbl, _d) in _rs.SLICES.items()}
         items += [{"product": lbl, "n": n} for lbl, n in extra if n and ready.get(key_of.get(lbl))]
-        return {"bank": bc, "items": items}
+        # что поменялось в срезе за последние 45 дней (переход на новую версию, новый срез) —
+        # строка под фильтром: иначе аудитор видит, что жалоб в срезе вдруг стало меньше
+        notes: dict[str, str] = {}
+        try:
+            with db.session() as s:
+                for key, note in s.execute(text("""SELECT key, note FROM review_slice_active
+                        WHERE note LIKE 'Срез%' AND switched_at > now() - interval '45 days'""")).all():
+                    if key in _rs.LABELS:
+                        notes[_rs.LABELS[key]] = note
+        except Exception:  # noqa: BLE001 — без таблицы реестра заметок нет
+            pass
+        return {"bank": bc, "items": items, "slice_notes": notes}
     return _cached(f"pr:{bc}:{days}:{top}", _compute)
 
 

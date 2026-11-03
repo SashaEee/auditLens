@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 8673cdb05ca96659a43e2105cace8e1f764b73e51c37d14501df5e0ce186c326): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 c435e970ae3df22f19103b511c275cb79b017509afbc158a5413e57ef619cb38): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -10137,6 +10137,7 @@ function ReviewsPage({
     [th, setTh] = useState(null);
   const [ge, setGe] = useState(null),
     [prods, setProds] = useState([]);
+  const [sliceNotes, setSliceNotes] = useState({}); // «срез стал строже: было N, стало M»
   const [geFull, setGeFull] = useState(null); // «ещё N городов» — полный список
   const [feed, setFeed] = useState(null);
   const [feedErr, setFeedErr] = useState(null); // упал поиск ≠ ничего не нашлось
@@ -10408,7 +10409,13 @@ function ReviewsPage({
       setFCity("");
       setFWeek("");
     }
-    apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d => setProds(d.items || [])).catch(() => setProds([]));
+    apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d => {
+      setProds(d.items || []);
+      setSliceNotes(d.slice_notes || {});
+    }).catch(() => {
+      setProds([]);
+      setSliceNotes({});
+    });
   }, [bank]);
   useEffect(() => {
     setSub(null);
@@ -11905,7 +11912,10 @@ function ReviewsPage({
     className: "rv-hact-l"
   }, "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430"), casesN ? /*#__PURE__*/React.createElement("span", {
     className: "rv-hact-n"
-  }, casesN) : null))), /*#__PURE__*/React.createElement("div", {
+  }, casesN) : null))), product && sliceNotes[product] && /*#__PURE__*/React.createElement("div", {
+    className: "rv-slice-note",
+    role: "note"
+  }, sliceNotes[product]), /*#__PURE__*/React.createElement("div", {
     className: "rv-tabs",
     ref: tabsRef
   }, /*#__PURE__*/React.createElement("div", {
