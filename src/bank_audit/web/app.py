@@ -3118,16 +3118,17 @@ def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] =
                         theme: Optional[str] = None, city: Optional[str] = None,
                         month: Optional[str] = None, per=Depends(_review_period_opt),
                         esc: int = 0, limit: int = 10000, flag: Optional[str] = None,
-                        source: Optional[str] = None):
+                        source: Optional[str] = None, q: Optional[str] = None):
     """Выгрузка жалоб в Excel в стиле AuditLens: обзор с показателями и
-    графиками, полный срез с разметкой ИИ, сводки, описание выгрузки."""
+    графиками, полный срез с разметкой ИИ, сводки, описание выгрузки.
+    q — поиск: выгружается ровно то, что вкладка показывает по этому запросу."""
     from urllib.parse import quote as _q
     from ..rag import review_codebook as _cb
     from . import reviews_export
     rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
                              city=city or None, month=month or None,
                              esc=bool(esc), limit=limit, flag=flag or None,
-                             source=source or None, period=per)
+                             source=source or None, period=per, q=(q or "").strip() or None)
     if rows is None:
         raise HTTPException(404, "банк не найден")
     from ..rag import review_period as _rp
@@ -3137,7 +3138,7 @@ def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] =
         "bank": bank, "product": product or None, "theme": theme_label, "city": city or None,
         "month": month or None, "days": per.days if per else None, "esc": bool(esc),
         "period_label": _rp.label(per) if per else None, "flag": flag_name,
-        "source": source or None}, limit=limit)
+        "source": source or None, "q": (q or "").strip() or None}, limit=limit)
     name = (f"AuditLens_жалобы_{bank}_{theme_label or flag_name or product or 'все'}_"
             f"{_period_slug(per)}.xlsx")
     return Response(content=body,

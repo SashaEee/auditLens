@@ -37,6 +37,28 @@ def _match_slug(bank_name: str, name_to_slug: dict[str, str]) -> str:
     return ""
 
 
+def _period():
+    """Период из вопроса прогона (rag/question_period) или None."""
+    try:
+        from ...rag.question_period import extract
+        from ...web.runctx import current_origin
+        return extract((current_origin() or {}).get("question") or "")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _since_days() -> int:
+    """Глубина поиска жалоб: начало периода вопроса, иначе полтора года.
+    Раньше всегда 540 дней — «за полгода» отдавало жалобы прошлого года."""
+    p = _period()
+    return p.days_back if p else int(os.getenv("GPTR_REVIEWS_SINCE_DAYS", "540"))
+
+
+def _in_period(d: str) -> bool:
+    p = _period()
+    return not p or not d or str(d)[:10] <= p.d1.isoformat()
+
+
 def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
     """Жалобы по каждому объекту исследования из корпуса.
 
@@ -67,8 +89,7 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
         # давности как актуальную практику. Полтора года — компромисс между
         # свежестью и наполнением по редким продуктам.
         found = br.search_reviews_multi(
-            query, banks=list(name_to_slug), k_per=per_subject,
-            since_days=int(os.getenv("GPTR_REVIEWS_SINCE_DAYS", "540")))
+            query, banks=list(name_to_slug), k_per=per_subject, since_days=_since_days())
     except Exception as e:
         log.info("корпус отзывов: %s", type(e).__name__)
         return []
@@ -81,7 +102,7 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
         slug = name_to_slug.get(bank_name) or _match_slug(bank_name, name_to_slug)
         for it in (items or []):
             text = (it.get("text") or "").strip()
-            if not text:
+            if not text or not _in_period(it.get("date")):
                 continue
             out.append({"bank": bank_name, "subject": slug or "",
                         "url": it.get("url") or "",
@@ -99,15 +120,14 @@ def collect(plan, contract, *, per_subject: int = _PER_SUBJECT) -> list[dict]:
             continue
         try:
             extra = br.search_reviews(" ".join(x for x in (label, query) if x),
-                                      k=per_subject * 3,
-                                      since_days=int(os.getenv("GPTR_REVIEWS_SINCE_DAYS", "540")))
+                                      k=per_subject * 3, since_days=_since_days())
         except Exception as e:
             log.info("корпус отзывов, поиск по названию «%s»: %s", label, type(e).__name__)
             continue
         added = 0
         for it in (extra or []):
             text = (it.get("text") or "").strip()
-            if not text or label.lower() not in text.lower():
+            if not text or label.lower() not in text.lower() or not _in_period(it.get("date")):
                 continue
             out.append({"bank": label, "subject": slug,
                         "url": it.get("url") or "",

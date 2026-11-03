@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 3e7341e9791c817866cc241890500cdbd3198c02da514439eb04ba34b786f3f7): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 1c8a5b4629ba0e522fe336784a7cfce77933e8d73b0cab0cefed92001e42abca): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -11436,7 +11436,7 @@ function ReviewsPage({
     className: "rv-export rv-export-a",
     download: true,
     "aria-label": "\u0412\u044B\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0436\u0430\u043B\u043E\u0431\u044B \u0432 Excel",
-    href: `/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme ? `&theme=${enc(theme)}` : ""}${perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${enc(fSrc)}` : ""}`,
+    href: `/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme ? `&theme=${enc(theme)}` : ""}${perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${enc(fSrc)}` : ""}${q ? `&q=${enc(q)}` : ""}`,
     "data-tip": "Excel \u0432 \u0441\u0442\u0438\u043B\u0435 AuditLens: \u043E\u0431\u0437\u043E\u0440 \u0441 \u043F\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044F\u043C\u0438 \u0438 \u0433\u0440\u0430\u0444\u0438\u043A\u0430\u043C\u0438, \u0432\u0441\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u0441 \u0442\u0435\u043A\u0443\u0449\u0438\u043C\u0438 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0431\u0430\u043D\u043A\u0430, \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430, \u0442\u0435\u043C\u044B, \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0430, \u0433\u043E\u0440\u043E\u0434\u0430, \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u0438 \u043F\u0435\u0440\u0438\u043E\u0434\u0430 \u2014 \u0441 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u043E\u0439 \u0418\u0418 \u0438 \u043F\u043E\u043B\u043D\u044B\u043C \u0442\u0435\u043A\u0441\u0442\u043E\u043C, \u0441\u0432\u043E\u0434\u043A\u0438 (\u043F\u043E\u0438\u0441\u043A \u0432 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0443 \u043D\u0435 \u0432\u0445\u043E\u0434\u0438\u0442)",
     onClick: () => trkEvent({
       kind: "ui",
@@ -11451,7 +11451,8 @@ function ReviewsPage({
         esc: escOnly,
         flag,
         city: fCity || null,
-        source: fSrc || null
+        source: fSrc || null,
+        q: q || null
       }
     })
   }, /*#__PURE__*/React.createElement(RvIco, {
@@ -11578,8 +11579,9 @@ function ReviewsPage({
     className: "rv-sum-x",
     "data-tip": "\u044D\u0442\u0438 \u0441\u043B\u043E\u0432\u0430 \u0432\u0441\u0442\u0440\u0435\u0447\u0430\u044E\u0442\u0441\u044F \u043F\u043E\u0447\u0442\u0438 \u0432 \u043A\u0430\u0436\u0434\u043E\u0439 \u0436\u0430\u043B\u043E\u0431\u0435 \u0438 \u0442\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437\u043C\u044B\u0432\u0430\u044E\u0442 \u0432\u044B\u0434\u0430\u0447\u0443"
   }, "\u043D\u0435 \u0443\u0447\u0438\u0442\u044B\u0432\u0430\u043B\u0438: ", feedMeta.common.join(" · ")), /*#__PURE__*/React.createElement("span", {
-    className: "rv-sum-x"
-  }, "\u0434\u043E\u0441\u043B\u043E\u0432\u043D\u044B\u0445 ", feedMeta.n_words || 0, ", \u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443 ", feedMeta.n_sense || 0)), !feedBusy && !feedErr && q && feedMeta && feedMeta.n_words === 0 && feed && feed.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rv-sum-x",
+    "data-tip": `Со словами запроса — все такие жалобы по фильтрам вкладки${feedMeta.words_capped ? " (показаны первые 3000)" : ""}. По смыслу — не больше ${feedMeta.sense_cap || 20} ближайших жалоб, где этих слов нет. Выгрузка в Excel отдаёт ровно этот список.`
+  }, "\u0441\u043E \u0441\u043B\u043E\u0432\u0430\u043C\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 ", fmtNum(feedMeta.n_words || 0), feedMeta.words_capped ? "+" : "", ", \u043F\u043E\u0445\u043E\u0436\u0438\u0445 \u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443 ", feedMeta.n_sense || 0)), !feedBusy && !feedErr && q && feedMeta && feedMeta.n_words === 0 && feed && feed.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "rv-warn"
   }, "\u0421\u043B\u043E\u0432 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u0432 \u0442\u0435\u043A\u0441\u0442\u0430\u0445 \u043D\u0435\u0442 \u2014 \u0432\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u043D\u0438\u0436\u0435 \u043F\u043E\u0434\u043E\u0431\u0440\u0430\u043D\u044B \u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443. \u042D\u0442\u043E \u043D\u0435 \u0437\u043D\u0430\u0447\u0438\u0442, \u0447\u0442\u043E \u0436\u0430\u043B\u043E\u0431 \u043F\u043E \u0442\u0435\u043C\u0435 \u043D\u0435 \u0431\u044B\u043B\u043E: \u0432\u043E\u0437\u043C\u043E\u0436\u043D\u043E, \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u043D\u0430\u0437\u044B\u0432\u0430\u044E\u0442 \u0435\u0451 \u0438\u043D\u0430\u0447\u0435."), /*#__PURE__*/React.createElement("div", {
     className: "rv-sr",

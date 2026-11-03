@@ -304,8 +304,13 @@ def tool_complaint_search(query: str, bank: str = SBER, product: Product | None 
     days = max(1, min(int(days or 90), 730))
     res = rd.list_reviews_ex(bank, product=product, theme=theme, q=query, days=days,
                              limit=max(1, min(int(limit or 10), 25)), sort="auto") or {}
+    sm = res.get("search") or {}
     return out({"query": query, "bank": bank, "product": product, "theme": theme,
                 "days": days, "total": res.get("total"), "error": res.get("error"),
+                # total = все жалобы, где слова запроса есть (by_words), плюс до 20
+                # похожих по смыслу без этих слов (by_sense) — то же число видит
+                # аудитор во вкладке; «нашлось N» говорить только по by_words
+                "by_words": sm.get("n_words"), "by_sense": sm.get("n_sense"),
                 "complaints": [_complaint(it, 500) for it in res.get("items") or []],
                 "link": link_reviews(bank, product, theme, days, q=query)})
 

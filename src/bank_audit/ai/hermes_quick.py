@@ -265,13 +265,17 @@ def needs_legal_note(text: str) -> bool:
 
 # ── прогон ───────────────────────────────────────────────────────────────────
 
-def instructions(retry: bool = False) -> str:
+def instructions(retry: bool = False, question: str | None = None) -> str:
     now = _dt.datetime.now(MSK)
     s = (f"Сегодня {now:%d.%m.%Y}, {now:%H:%M} МСК. Вопрос задан в чате ИИ-помощника "
          "AuditLens; ответ увидит аудитор в этом же чате (markdown). Файлов в твоём "
          "терминале он не видит: файл для него отдавай командой "
          "`python3 /root/.hermes/bin/al-share <путь> \"<имя>\"` и вставляй в ответ "
          "метку [[FILE:…]], которую она напечатает.")
+    from ..rag.question_period import anchor
+    per = anchor(question)
+    if per:
+        s += " " + per
     if retry:
         s += (" Предыдущая попытка закончилась без ответа. Ответь по данным, которые "
               "дают инструменты AuditLens, за несколько шагов; чего не хватило — "
@@ -300,7 +304,7 @@ async def _one_run(question: str, history: list[dict], headers: dict, model: str
                    retry: bool, deadline: float, trace: dict) -> AsyncIterator[dict]:
     """Один прогон Hermes. Отдаёт события: {"tool": name} | {"delta": text} |
     {"final": text, "usage": …}. Останавливает прогон, если его бросили."""
-    body: dict = {"input": question, "instructions": instructions(retry)}
+    body: dict = {"input": question, "instructions": instructions(retry, question)}
     if model:
         body["model"] = model
     hist = [{"role": m.get("role"), "content": str(m.get("content") or "")}

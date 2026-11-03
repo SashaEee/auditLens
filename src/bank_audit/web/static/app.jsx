@@ -5703,9 +5703,9 @@ function ReviewsPage({params}){
             <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
         {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
         <a className="rv-export rv-export-a" download aria-label="Выгрузить жалобы в Excel"
-           href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}${perQ}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${enc(fSrc)}`:""}`}
+           href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}${perQ}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${enc(fSrc)}`:""}${q?`&q=${enc(q)}`:""}`}
            data-tip="Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака, города, площадки и периода — с разметкой ИИ и полным текстом, сводки (поиск в выгрузку не входит)"
-           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,period:rvPerKey(per),cmp:cmp||null,esc:escOnly,flag,city:fCity||null,source:fSrc||null}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">Excel</span></a>
+           onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,period:rvPerKey(per),cmp:cmp||null,esc:escOnly,flag,city:fCity||null,source:fSrc||null,q:q||null}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">Excel</span></a>
       </div>
       {/* Порядок выдачи. Показываем только при запросе: лента без него и так
           идёт по датам. Релевантность остаётся отбором — по дате мы сортируем
@@ -5766,7 +5766,8 @@ function ReviewsPage({params}){
         {feedMeta.common&&feedMeta.common.length>0&&
           <span className="rv-sum-x" data-tip="эти слова встречаются почти в каждой жалобе и только размывают выдачу">
             не учитывали: {feedMeta.common.join(" · ")}</span>}
-        <span className="rv-sum-x">дословных {feedMeta.n_words||0}, по смыслу {feedMeta.n_sense||0}</span>
+        <span className="rv-sum-x" data-tip={`Со словами запроса — все такие жалобы по фильтрам вкладки${feedMeta.words_capped?" (показаны первые 3000)":""}. По смыслу — не больше ${feedMeta.sense_cap||20} ближайших жалоб, где этих слов нет. Выгрузка в Excel отдаёт ровно этот список.`}>
+          со словами запроса {fmtNum(feedMeta.n_words||0)}{feedMeta.words_capped?"+":""}, похожих по смыслу {feedMeta.n_sense||0}</span>
       </div>}
       {!feedBusy&&!feedErr&&q&&feedMeta&&feedMeta.n_words===0&&feed&&feed.length>0&&
         <div className="rv-warn">Слов запроса в текстах нет — все отзывы ниже подобраны по смыслу.

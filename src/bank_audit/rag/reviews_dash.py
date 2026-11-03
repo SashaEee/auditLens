@@ -1384,10 +1384,12 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
                 month: str | None = None, esc: bool = False,
                 limit: int = 10000, flag: str | None = None,
                 source: str | None = None,
-                period: "_rp.Period | None" = None) -> list[dict] | None:
-    """Жалобы с разметкой для выгрузки в таблицу — те же фильтры, что у ленты
-    (без поиска по смыслу: он возвращает топ-300 похожих, а выгрузка — это
-    полный срез). Раньше такой срез собирали вручную по запросу коллег."""
+                period: "_rp.Period | None" = None,
+                q: str | None = None) -> list[dict] | None:
+    """Жалобы с разметкой для выгрузки в таблицу — те же фильтры, что у ленты.
+    С поиском (q) — ровно тот набор, что во вкладке (search_set): все словесные
+    попадания и до SENSE_CAP похожих по смыслу, в том же порядке. До 03.11.2026
+    выгрузка поиск игнорировала и отдавала весь срез."""
     bc = resolve_bank(bank)
     if not bc:
         return None
@@ -1413,6 +1415,13 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
         p["tkey"] = theme
     if fcond:
         extra += f" AND {fcond}"
+    order = None
+    if q and q.strip():
+        got = search_set(q, bc, theme=theme, esc=esc, product=product, flag=flag, source=source,
+                         city=city, month=month, days=days, period=period)
+        order = [r["url"] for r in got["rows"]][:p["lim"]]
+        extra += " AND i.url = ANY(:urls)"
+        p["urls"] = order or ["-"]
     with db.session() as s:
         rows = [dict(r) for r in s.execute(text(f"""
             SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt, i.city, i.rating,
@@ -1427,6 +1436,9 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
             ORDER BY i.dt DESC NULLS LAST
             LIMIT :lim
         """), p).mappings().all()]
+    if order is not None:
+        pos = {u: k for k, u in enumerate(order)}
+        rows.sort(key=lambda r: pos.get(r["url"], len(pos)))
     from . import bankiru_fts
     bodies = {}
     for j in range(0, len(rows), 1000):
@@ -1771,6 +1783,117 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
 
 
 
+# ── Поиск по жалобам: один набор результатов для ленты, счётчика и выгрузки ────
+# До 03.11.2026 выдача была «топ-k похожих»: k росло с каждой страницей
+# (min(400, 2·(offset+limit+1))), счётчик «дословных N, по смыслу M» считался по
+# первой порции из 42 строк, смысловая часть конца не имела, а выгрузка поиск не
+# учитывала вовсе. Аудитор видел «38 + 4» и листал до 140+. Теперь набор
+# определён: ВСЕ отзывы, где слова запроса (с раскрытием сокращений) есть, с теми
+# же фильтрами, что во вкладке, плюс не больше SENSE_CAP ближайших по смыслу без
+# этих слов. Порог по косинусу не годится (замер: мусор бывает «ближе» верного),
+# поэтому смысловая часть ограничена числом, а не расстоянием.
+SENSE_CAP = int(os.getenv("REVIEWS_SEARCH_SENSE_CAP", "20"))
+WORDS_CAP = int(os.getenv("REVIEWS_SEARCH_WORDS_CAP", "3000"))
+_SET_TTL = 600
+_SET_CACHE: dict[tuple, tuple[float, dict]] = {}
+
+
+def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = False,
+               product: str | None = None, flag: str | None = None, source: str | None = None,
+               city: str | None = None, month: str | None = None, days: int | None = None,
+               period=None, sort: str = "auto") -> dict:
+    """{rows, meta}: упорядоченный конечный набор (у словесных попаданий из хвоста
+    текста ещё нет — его подставляет _fill_page для показанной страницы) и
+    meta с точными n_words / n_sense / total."""
+    import time as _time
+    pkey = period.key if isinstance(period, _rp.Period) else None
+    key = (q.strip().lower(), bc, theme, esc, product, flag, source, city, month, days, pkey, sort)
+    hit = _SET_CACHE.get(key)
+    if hit and _time.time() - hit[0] < _SET_TTL:
+        return hit[1]
+    meta: dict = {}
+    since = days
+    lo_d = hi_d = None
+    if isinstance(period, _rp.Period):
+        since = max(1, math.ceil((_dt.datetime.now(_rp.MSK) - period.t0) / _rp.DAY))
+        lo_d = period.t0.date().isoformat()
+        hi_d = (period.t1 - _rp.DAY).date().isoformat()
+    ev_month = month if (month or "").startswith("ev:") else None
+    plain_month = None if ev_month else month
+    # голова: слияние слов и смысла (RRF) — лучшее сверху, как и было
+    head = search_reviews(q, bank=bc, product=None, since_days=since, theme_rx=None, city=city,
+                          month=plain_month, k=60, strict=True, _meta=meta)
+    # полный словесный набор — тем же раскрытым запросом
+    from . import bankiru_fts
+    words: list[dict] = []
+    if bankiru_fts.is_ready():
+        since_ts = (_dt.datetime.now() - _dt.timedelta(days=since)) if since else None
+        words = bankiru_fts.search_fts(meta.get("tsquery") or q, bank=bc, city=city,
+                                       month=plain_month, since_ts=since_ts, k=WORDS_CAP)
+    wset = {w["url"] for w in words}
+    urls = list(dict.fromkeys([r.get("url") for r in head if r.get("url")] + [w["url"] for w in words]))
+    keep = _keep_urls(urls, theme=theme, esc=esc, product=product, flag=flag, source=source,
+                      month=ev_month)
+
+    def ok(r) -> bool:
+        d = str(r.get("date") or "")[:10]
+        return r.get("url") in keep and (not lo_d or not d or lo_d <= d <= hi_d)
+    rows: list[dict] = []
+    seen: set[str] = set()
+    n_sense = 0
+    for r in head:
+        u = r.get("url")
+        if not u or u in seen or not ok(r):
+            continue
+        if r.get("via") == "смысл" and u in wset:
+            r["via"] = "слова и смысл"      # слова есть, просто дальше верхушки словесной ноги
+        if r.get("via") == "смысл":
+            if n_sense >= SENSE_CAP:
+                continue
+            n_sense += 1
+        seen.add(u)
+        rows.append(r)
+    for w in words:
+        if w["url"] in seen or not ok(w):
+            continue
+        seen.add(w["url"])
+        rows.append({"bank": w.get("bank"), "product": w.get("product"), "date": w.get("date"),
+                     "city": w.get("city"), "url": w["url"], "review_id": w.get("review_id"),
+                     "source": w.get("source") or "bankiru", "similar": 0, "text": None,
+                     "via": "слова", "terms": w.get("terms") or []})
+    if sort == "date":
+        rows.sort(key=lambda r: (r.get("date") or ""), reverse=True)
+    n_words = len(rows) - n_sense
+    meta.update({"n_words": n_words, "n_sense": n_sense, "total": len(rows),
+                 "words_capped": len(words) >= WORDS_CAP, "sense_cap": SENSE_CAP})
+    res = {"rows": rows, "meta": meta}
+    if len(_SET_CACHE) > 200:
+        _SET_CACHE.clear()
+    _SET_CACHE[key] = (_time.time(), res)
+    return res
+
+
+def _fill_page(rows: list[dict], tsquery: str | None) -> list[dict]:
+    """Тексты и подсветка — только для показанной страницы."""
+    from . import bankiru_fts
+    need = [r for r in rows if not r.get("text")]
+    if need:
+        bodies = bankiru_fts.bodies_for(need)
+        for r in need:
+            b = bodies.get(r["url"]) or {}
+            r["text"] = (b.get("text") or "").strip()
+            r["product"] = r.get("product") or b.get("product")
+            r["city"] = r.get("city") or b.get("city")
+    page = [dict(r) for r in rows if len((r.get("text") or "").strip()) >= 40]
+    if tsquery and page and any(not r.get("marked") for r in page):
+        try:
+            for r, m in zip(page, bankiru_fts.headline([r["text"] for r in page], tsquery)):
+                r.setdefault("marked", m)
+        except Exception:  # noqa: BLE001 — без подсветки выдача остаётся выдачей
+            pass
+    return page
+
+
 def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = None,
                     q: str | None = None, days: int | None = None,
                     city: str | None = None, month: str | None = None,
@@ -1794,46 +1917,17 @@ def list_reviews_ex(bank: str, product: str | None = None, theme: str | None = N
     if q and q.strip():
         if bank and not bc:
             return {"items": [], "mode": "search", "error": "unknown_bank"}
-        meta: dict = {}
-        # Тема и отбор жалоб применяются к выдаче поиска по нашей разметке:
-        # поиск идёт и по внешнему корпусу, где разметки нет. Поэтому берём с
-        # запасом — иначе после отбора страница пустела бы.
-        want = limit + offset + 1
-        # при теме или продукте отбор после поиска узкий: берём широко, иначе
-        # в первых десятках выдачи жалоб с нужной главной проблемой может не быть
-        k = 300 if (theme or product) else min(400, want * 2)
-        # Поиск по корпусу знает только нижнюю границу («не старше N дней»):
-        # начало периода передаём ему, конец отбираем по дате выдачи ниже
-        since = days
-        lo_d = hi_d = None
-        if isinstance(period, _rp.Period):
-            since = max(1, math.ceil((_dt.datetime.now(_rp.MSK) - period.t0) / _rp.DAY))
-            lo_d = period.t0.date().isoformat()
-            hi_d = (period.t1 - _rp.DAY).date().isoformat()
         try:
-            # Продукт тоже отбираем по нашей разметке: у внешнего корпуса своя
-            # метка площадки («Обслуживание юридических лиц» у 180 тыс. строк),
-            # и смысловая часть поиска с ней почти ничего не находила.
-            # месяц события поиск по корпусу не знает — его отбирает _keep_urls
-            res = search_reviews(q, bank=bc, product=None, since_days=since,
-                                 theme_rx=None, city=city,
-                                 month=None if (month or "").startswith("ev:") else month,
-                                 k=k, strict=True, _meta=meta)
+            got = search_set(q, bc, theme=theme, esc=esc, product=product, flag=flag,
+                             source=source, city=city, month=month, days=days, period=period,
+                             sort=sort)
         except Exception as e:
             log.warning("reviews_dash: поиск по %r упал: %s", q, e)
             return {"items": [], "mode": "search", "error": "search_failed"}
-        keep = _keep_urls([r.get("url") for r in res if r.get("url")], theme=theme, esc=esc,
-                          product=product, flag=flag, source=source,
-                          month=month if (month or "").startswith("ev:") else None)
-        res = [r for r in res if r.get("url") in keep]
-        if lo_d:
-            res = [r for r in res if not r.get("date") or lo_d <= str(r["date"])[:10] <= hi_d]
-        if sort == "date":
-            res.sort(key=lambda r: (r.get("date") or ""), reverse=True)
-        page = res[offset:offset + limit]
+        page = _fill_page(got["rows"][offset:offset + limit], got["meta"].get("tsquery"))
         _attach_themes(page)
-        return {"items": page, "mode": "search", "error": None, "search": meta,
-                "has_more": len(res) > offset + limit}
+        return {"items": page, "mode": "search", "error": None, "search": got["meta"],
+                "total": got["meta"]["total"], "has_more": len(got["rows"]) > offset + limit}
     if not bc:
         return {"items": [], "mode": "feed", "error": "unknown_bank"}
     return _feed_from_index(bc, product, theme, days, city, month, limit, offset, esc, flag,

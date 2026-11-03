@@ -628,6 +628,9 @@ def _fuse_with_words(vec: list[dict], query: str, *, k: int, bank: str | None,
             "common": qx.get("common") or [],
             "dropped": qx.get("dropped") or [],
             "source": qx["source"],
+            # раскрытый запрос — по нему считается полный набор словесных
+            # попаданий (reviews_dash.search_set), а не только верхушка выдачи
+            "tsquery": qx["tsquery"],
             "n_words": sum(1 for r in out if r["via"] != "смысл"),
             "n_sense": sum(1 for r in out if r["via"] == "смысл"),
         })

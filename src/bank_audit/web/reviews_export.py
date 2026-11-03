@@ -80,6 +80,8 @@ def describe_filters(f: dict) -> list[tuple[str, str]]:
                        f["period_label"] if f.get("period_label") else
                        f"{f['days']} дней" if f.get("days") else "всё время")),
            ("Только эскалация", "да" if f.get("esc") else "нет")]
+    if f.get("q"):
+        out.insert(3, ("Поиск", f"«{f['q']}» — все жалобы со словами запроса и до 20 похожих по смыслу"))
     return out
 
 
