@@ -1867,44 +1867,101 @@ def _excluded(urls: list[str], words: list[str]) -> set[str]:
                              {"u": urls, "tq": tq}).scalars().all())
 
 
+# Проверка «похожих по смыслу» (04.11.2026). Раньше — одна быстрая модель на все 40
+# кандидатов с таймаутом 20 с и повтором: DeepSeek-V4-Flash сначала рассуждает и в 20 с
+# не укладывался, поиск ждал 40 с и показывал кандидатов без проверки (замер на проде:
+# 40,5 с на любом запросе). Теперь в два шага:
+#   1) реранкер Qwen3 (облако, /rerank, ~0,3 с на 40 жалоб) упорядочивает кандидатов и
+#      отсекает явно чужие — порядок «по смыслу» теперь от самого близкого;
+#   2) лёгкая модель (gemini-3.1-flash-lite: 1,4 с на 10 жалоб) отвечает «та ли это
+#      ситуация» — пакетами по 10 параллельно, с жёстким таймаутом без повторов.
+# Реранкер один различает тему, а не ситуацию (на «не зачисляют выручку по эквайрингу»
+# поднимает и сломанные терминалы), поэтому решает модель; не ответила — решает порог
+# реранкера; не ответили оба — кандидаты как есть, с пометкой «не проверено».
+_RERANK_MODEL = os.getenv("REVIEWS_RERANK_MODEL", "Qwen/Qwen3-Reranker-0.6B")
+_SENSE_MODEL = os.getenv("REVIEWS_SENSE_MODEL", "google/gemini-3.1-flash-lite")
+_SENSE_RR_MIN = float(os.getenv("REVIEWS_SENSE_RR_MIN", "0.05"))     # ниже — точно чужая
+_SENSE_RR_KEEP = float(os.getenv("REVIEWS_SENSE_RR_KEEP", "0.5"))    # порог, если модель молчит
+_SENSE_BATCH = 10
+_RR_PRE = ('<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and '
+           'the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>\n<|im_start|>user\n')
+_RR_INS = "Given an auditor's search query, judge whether the bank customer complaint describes the same situation"
+_RR_SUF = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+
+
+def _rerank(query: str, texts: list[str]) -> list[float] | None:
+    """Оценки реранкера 0..1 по порядку texts (шаблон Qwen3-Reranker: без него оценки
+    плоские). None — реранкер недоступен."""
+    from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL
+    if not LLM_API_KEY or not LLM_BASE_URL or not texts:
+        return None
+    try:
+        import httpx
+        r = httpx.post(LLM_BASE_URL.rstrip("/") + "/rerank", timeout=float(os.getenv("REVIEWS_RERANK_TIMEOUT_S", "6")),
+                       headers={"Authorization": "Bearer " + LLM_API_KEY},
+                       json={"model": _RERANK_MODEL,
+                             "query": _RR_PRE + f"<Instruct>: {_RR_INS}\n<Query>: {query}\n<Document>: ",
+                             "documents": [t[:1500] + _RR_SUF for t in texts]})
+        r.raise_for_status()
+        sc = {int(x["index"]): float(x["relevance_score"]) for x in r.json().get("results") or []}
+        if len(sc) < len(texts):
+            return None
+        return [sc[k] for k in range(len(texts))]
+    except Exception as e:  # noqa: BLE001
+        log.info("reviews_dash: реранкер недоступен (%s)", type(e).__name__)
+        return None
+
+
 def _verify_sense(query: str, rows: list[dict]) -> tuple[list[dict], bool]:
-    """Смысловые кандидаты → только относящиеся к запросу (быстрая модель по сути
-    жалобы из разметки). Без проверки «похожие по смыслу» на «переводы самому себе»
-    давали «перевод из ВТБ не дошёл». Осечка модели — кандидаты как есть, с пометкой."""
+    """Смысловые кандидаты → только относящиеся к запросу, от самых близких (сначала
+    реранкер, затем лёгкая модель по сути жалобы из разметки). Без проверки «похожие
+    по смыслу» на «переводы самому себе» давали «перевод из ВТБ не дошёл»."""
+    if not rows:
+        return [], True
+    with db.session() as s:
+        summ = dict(s.execute(text("""SELECT url, summary FROM review_annotation
+                                       WHERE schema_version = :sv AND url = ANY(:u)"""),
+                              {"sv": _ann_schema(), "u": [r["url"] for r in rows]}).all())
+    txt = {r["url"]: (summ.get(r["url"]) or (r.get("text") or "")[:500]).strip() for r in rows}
+    sc = _rerank(query, [txt[r["url"]] for r in rows])
+    if sc is not None:
+        order = sorted(range(len(rows)), key=lambda k: -sc[k])
+        rows = [dict(rows[k], sense_score=round(sc[k], 3)) for k in order if sc[k] >= _SENSE_RR_MIN]
     todo = [r for r in rows if (query, r["url"]) not in _SENSE_OK]
     ok_model = True
     if todo:
-        with db.session() as s:
-            summ = dict(s.execute(text("""SELECT url, summary FROM review_annotation
-                                           WHERE schema_version = :sv AND url = ANY(:u)"""),
-                                  {"sv": _ann_schema(), "u": [r["url"] for r in todo]}).all())
-        items = [(r["url"], (summ.get(r["url"]) or (r.get("text") or "")[:500]).strip()) for r in todo]
-        verdict = _ask_relevance(query, [t for _, t in items])
-        if verdict is None:
-            ok_model = False
-        else:
-            for (u, _), v in zip(items, verdict):
-                _SENSE_OK[(query, u)] = v
+        parts = [todo[k:k + _SENSE_BATCH] for k in range(0, len(todo), _SENSE_BATCH)]
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(parts)) as ex:
+            got = list(ex.map(lambda part: _ask_relevance(query, [txt[r["url"]] for r in part]), parts))
+        for part, verdict in zip(parts, got):
+            if verdict is None:
+                ok_model = False
+                continue
+            for r, v in zip(part, verdict):
+                _SENSE_OK[(query, r["url"])] = v
     if len(_SENSE_OK) > 20000:
         _SENSE_OK.clear()
-    if not ok_model:
-        return rows, False
-    return [r for r in rows if _SENSE_OK.get((query, r["url"]))], True
+    if ok_model:
+        return [r for r in rows if _SENSE_OK.get((query, r["url"]))], True
+    if sc is not None:                     # модель не ответила — решает порог реранкера
+        return [r for r in rows if r.get("sense_score", 0) >= _SENSE_RR_KEEP], True
+    return rows, False
 
 
 def _ask_relevance(query: str, texts: list[str]) -> list[bool] | None:
-    from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL, fast_model
+    from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL
     from ..ai.llm_utils import _loose_json_loads
     if not LLM_API_KEY or not texts:
         return None
     try:
         from openai import OpenAI
-        c = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, max_retries=1,
-                   timeout=float(os.getenv("REVIEWS_SENSE_TIMEOUT_S", "20")))
+        c = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, max_retries=0,
+                   timeout=float(os.getenv("REVIEWS_SENSE_TIMEOUT_S", "12")))
         user = (f"Запрос аудитора: «{query}»\n\n"
                 + "\n".join(f"[{k}] {t[:500]}" for k, t in enumerate(texts, 1)))
         r = c.chat.completions.create(
-            model=fast_model(), temperature=0, max_tokens=1500,
+            model=_SENSE_MODEL, temperature=0, max_tokens=800,
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": (
                 "Ты отбираешь жалобы клиентов банка к запросу аудитора. Жалоба относится к запросу, "

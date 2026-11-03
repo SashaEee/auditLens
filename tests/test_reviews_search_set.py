@@ -160,3 +160,43 @@ def test_signal_week_filter():
     from bank_audit.ai import agent_tools as T
     link = T.link_reviews("Сбербанк", None, "chargeback", 7, week_end="2026-10-31")
     assert "month=sig%3A2026-10-31" in link and "p=" not in link and "theme=chargeback" in link
+
+
+def _no_summaries(monkeypatch):
+    class R:
+        def all(self): return []
+
+    class S:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, *a, **k): return R()
+    monkeypatch.setattr(RD.db, "session", lambda: S())
+
+
+def test_sense_check_reranker_orders_model_decides(monkeypatch):
+    """Реранкер упорядочивает и отсекает явно чужие, модель решает «та ли ситуация»
+    пакетами по 10; модель молчит — порог реранкера; молчат оба — «не проверено»."""
+    _no_summaries(monkeypatch)
+    RD._SENSE_OK.clear()
+    rows = [{"url": f"u{i}", "text": f"жалоба {i}"} for i in range(25)]
+    scores = [i / 25 for i in range(25)]                    # u24 — ближе всех, u0 — 0
+    monkeypatch.setattr(RD, "_rerank", lambda q, texts: list(scores))
+    asked = []
+
+    def model(q, texts):
+        asked.append(len(texts))
+        return [int(t.split()[-1]) % 2 == 0 for t in texts]      # чётные — та ситуация
+    monkeypatch.setattr(RD, "_ask_relevance", model)
+    got, ok = RD._verify_sense("q", rows)
+    assert ok and sorted(asked) == [3, 10, 10]                 # u0 (0 < 0,05) отсечён реранкером
+    assert [r["url"] for r in got][:3] == ["u24", "u22", "u20"] and all(int(r["url"][1:]) % 2 == 0 for r in got)
+    assert "u0" not in {r["url"] for r in got}
+    # модель не ответила — порог реранкера, порядок тот же
+    RD._SENSE_OK.clear()
+    monkeypatch.setattr(RD, "_ask_relevance", lambda q, texts: None)
+    got, ok = RD._verify_sense("q", rows)
+    assert ok and [r["url"] for r in got] == [f"u{i}" for i in range(24, 12, -1)]   # ≥ 0,5
+    # не ответили оба — кандидаты как есть, с пометкой
+    monkeypatch.setattr(RD, "_rerank", lambda q, texts: None)
+    got, ok = RD._verify_sense("q", rows)
+    assert not ok and len(got) == 25
