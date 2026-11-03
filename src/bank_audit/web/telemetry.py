@@ -584,6 +584,7 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
             "ingest": _ingest_health(days),
             "collect": _collect_health(days),
             "search": _search_health(days),
+            "reviews_search": _reviews_search_health(days, ex),
             "news_quality": _news_quality(days, ex),
             "review_sources": _review_sources(),
             "signal_journal": _signal_journal(),
@@ -971,6 +972,33 @@ def _ingest_health(days: int) -> dict:
            AND created_at > now() - (:days || ' days')::interval
          GROUP BY 1 ORDER BY 1""", {"days": days})
     return {"queue": q, "per_day": [{**r, "d": str(r["d"])} for r in hist]}
+
+
+def _reviews_search_health(days: int, ex) -> dict:
+    """Поиск по жалобам во вкладке «Аудит отзывов» (событие reviews_search, с 04.11.2026):
+    сколько запросов, сколько ждали, у какой доли нет ни одного совпадения по словам и
+    сколько раз поиск не отработал. Запросы без совпадений — текстом, без авторов: из
+    них набираются эталонные запросы для замеров поиска."""
+    try:
+        r = _rows("""
+            SELECT count(*) AS n, count(DISTINCT username) AS users,
+                   round(percentile_cont(0.5) WITHIN GROUP (ORDER BY (payload->>'ms')::int)) AS p50,
+                   round(percentile_cont(0.9) WITHIN GROUP (ORDER BY (payload->>'ms')::int)) AS p90,
+                   count(*) FILTER (WHERE coalesce((payload->>'n_words')::int, 0) = 0) AS no_words,
+                   count(*) FILTER (WHERE payload->>'words_failed' = 'true' OR payload->>'failed' IS NOT NULL
+                                       OR payload->>'error' IS NOT NULL) AS failed,
+                   count(*) FILTER (WHERE payload->>'sense_checked' = 'false') AS unchecked
+              FROM user_event
+             WHERE kind = 'reviews_search' AND ts > now() - make_interval(days => :d)
+               AND NOT (username = ANY(:ex))""", {"d": days, "ex": list(ex or [])})[0]
+        zero = [x["q"] for x in _rows("""
+            SELECT payload->>'q' AS q, max(ts) AS at FROM user_event
+             WHERE kind = 'reviews_search' AND ts > now() - make_interval(days => :d)
+               AND coalesce((payload->>'n_words')::int, 0) = 0 AND NOT (username = ANY(:ex))
+             GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", {"d": days, "ex": list(ex or [])})]
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+    return {**{k: (int(v) if v is not None else None) for k, v in r.items()}, "zero_queries": zero}
 
 
 def _search_health(days: int) -> dict:

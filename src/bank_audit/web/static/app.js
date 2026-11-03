@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 e2a9d11694341f113f281d727b9da90a6a17dee53c3c999ac8905ed554d5d1e0): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 eee4e0da4b44735929ff99cdd980b63e1c882fc634f30ca0c05460edc2f61252): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -22046,6 +22046,47 @@ function PuCollect({
 }
 
 // ── Веб-поиск и копии страниц ───────────────────────────────────────────────
+// Поиск по жалобам во вкладке «Аудит отзывов» (журнал reviews_search, с 04.11.2026):
+// сколько ждут, у какой доли нет совпадений по словам, сбои; запросы без совпадений — без
+// авторов, из них набираются эталонные запросы для замеров поиска
+function PuReviewSearch({
+  r
+}) {
+  if (!r || r.error || !r.n) return null;
+  const pct = v => r.n ? Math.round(100 * (v || 0) / r.n) + "%" : "—";
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card",
+    id: "pu-rsearch"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0436\u0430\u043B\u043E\u0431\u0430\u043C"), /*#__PURE__*/React.createElement("span", {
+    className: "mono"
+  }, fmtNum(r.n), " \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \xB7 ", fmtNum(r.users), " \u0447\u0435\u043B.")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0416\u0434\u0430\u043B\u0438 (\u043C\u0435\u0434\u0438\u0430\u043D\u0430 \xB7 90%)"), /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, r.p50 != null ? (r.p50 / 1000).toFixed(1).replace(".", ",") : "—", " \u0441 \xB7 ", r.p90 != null ? (r.p90 / 1000).toFixed(1).replace(".", ",") : "—", " \u0441")), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041D\u0435\u0442 \u0441\u043E\u0432\u043F\u0430\u0434\u0435\u043D\u0438\u0439 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C"), /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, pct(r.no_words))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0438\u0441\u043A \u043D\u0435 \u043E\u0442\u0440\u0430\u0431\u043E\u0442\u0430\u043B"), /*#__PURE__*/React.createElement("b", {
+    className: "tnum",
+    style: r.failed ? {
+      color: "var(--warn)"
+    } : null
+  }, fmtNum(r.failed || 0))), /*#__PURE__*/React.createElement("div", {
+    className: "pu-kv"
+  }, /*#__PURE__*/React.createElement("span", null, "\xAB\u041F\u043E \u0441\u043C\u044B\u0441\u043B\u0443\xBB \u0431\u0435\u0437 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"), /*#__PURE__*/React.createElement("b", {
+    className: "tnum"
+  }, fmtNum(r.unchecked || 0))), (r.zero_queries || []).length > 0 && /*#__PURE__*/React.createElement("p", {
+    className: "t-cap",
+    style: {
+      margin: "10px 0 0"
+    }
+  }, "\u0411\u0435\u0437 \u0441\u043E\u0432\u043F\u0430\u0434\u0435\u043D\u0438\u0439 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C: ", r.zero_queries.map(q => `«${q}»`).join(", ")));
+}
 function PuSearch({
   s
 }) {
@@ -24616,6 +24657,10 @@ function PulsePage({
     q: m.news_quality || {},
     days: m.days
   }), /*#__PURE__*/React.createElement("div", {
+    className: "pu-sec"
+  }, /*#__PURE__*/React.createElement(PuReviewSearch, {
+    r: m.reviews_search
+  })), /*#__PURE__*/React.createElement("div", {
     className: "pu-sec"
   }, /*#__PURE__*/React.createElement(PuSearch, {
     s: m.search || {}

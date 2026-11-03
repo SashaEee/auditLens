@@ -11476,6 +11476,22 @@ function PuCollect({c}){
 }
 
 // ── Веб-поиск и копии страниц ───────────────────────────────────────────────
+// Поиск по жалобам во вкладке «Аудит отзывов» (журнал reviews_search, с 04.11.2026):
+// сколько ждут, у какой доли нет совпадений по словам, сбои; запросы без совпадений — без
+// авторов, из них набираются эталонные запросы для замеров поиска
+function PuReviewSearch({r}){
+  if(!r||r.error||!r.n)return null;
+  const pct=v=>r.n?Math.round(100*(v||0)/r.n)+"%":"—";
+  return <div className="pu-card" id="pu-rsearch">
+    <div className="h"><span>Поиск по жалобам</span><span className="mono">{fmtNum(r.n)} запросов · {fmtNum(r.users)} чел.</span></div>
+    <div className="pu-kv"><span>Ждали (медиана · 90%)</span><b className="tnum">{r.p50!=null?(r.p50/1000).toFixed(1).replace(".",","):"—"} с · {r.p90!=null?(r.p90/1000).toFixed(1).replace(".",","):"—"} с</b></div>
+    <div className="pu-kv"><span>Нет совпадений по словам</span><b className="tnum">{pct(r.no_words)}</b></div>
+    <div className="pu-kv"><span>Поиск не отработал</span><b className="tnum" style={r.failed?{color:"var(--warn)"}:null}>{fmtNum(r.failed||0)}</b></div>
+    <div className="pu-kv"><span>«По смыслу» без проверки</span><b className="tnum">{fmtNum(r.unchecked||0)}</b></div>
+    {(r.zero_queries||[]).length>0&&<p className="t-cap" style={{margin:"10px 0 0"}}>Без совпадений по словам: {r.zero_queries.map(q=>`«${q}»`).join(", ")}</p>}
+  </div>;
+}
+
 function PuSearch({s}){
   const rows=(s||{}).backends||[], gw=(s||{}).gateway||{};
   if(!rows.length&&!gw.enabled) return null;
@@ -12593,6 +12609,7 @@ function PulsePage({params}){
       <PuSlices/>
       <PuSignalJournal j={m.signal_journal}/>
       <PuNewsQuality q={m.news_quality||{}} days={m.days}/>
+      <div className="pu-sec"><PuReviewSearch r={m.reviews_search}/></div>
       <div className="pu-sec"><PuSearch s={m.search||{}}/></div>
       <div className="pu-grid2 top pu-sec">
         <PuIngest ing={m.ingest||{}}/>
