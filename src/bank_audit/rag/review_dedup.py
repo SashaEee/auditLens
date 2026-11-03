@@ -63,6 +63,10 @@ SINCE_DAYS = int(os.getenv("REVIEW_DEDUP_SINCE_DAYS", "30"))
 SINCE = os.getenv("REVIEW_DEDUP_SINCE", "2025-01-01")
 EVERY_S = int(os.getenv("REVIEW_DEDUP_EVERY_S", str(6 * 3600)))
 FULL_EVERY_S = int(os.getenv("REVIEW_DEDUP_FULL_EVERY_S", str(7 * 86400)))   # 0 — без полных
+# Только между разными площадками: два почти одинаковых отзыва на одной площадке —
+# обычно разные люди по одному шаблону (массовая жалоба — сигнал для аудита, его
+# нельзя схлопывать); одинаковые копии одной площадки и так отсекает разметка (dup)
+CROSS_ONLY = os.getenv("REVIEW_DEDUP_CROSS_ONLY", "1") != "0"
 CHUNK = 1000
 
 SHINGLE = 5                 # слов в шингле
@@ -551,7 +555,7 @@ def _bank_pass(bank: str, *, since: datetime, lo: datetime, window_days: int, th
 
 
 def run(since_days: int | None = SINCE_DAYS, *, window_days: int = WINDOW_DAYS,
-        threshold: float = THRESHOLD, cross_source_only: bool = False, dry: bool = False,
+        threshold: float = THRESHOLD, cross_source_only: bool = CROSS_ONLY, dry: bool = False,
         chunk: int = CHUNK, now: datetime | None = None, examples: int = 20) -> dict:
     """Пакетный проход по review_index: помечает копии (dup_of = адрес канонической).
 
@@ -668,7 +672,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--since-days", type=int, default=SINCE_DAYS)
     p.add_argument("--window-days", type=int, default=WINDOW_DAYS)
     p.add_argument("--threshold", type=float, default=THRESHOLD)
-    p.add_argument("--cross-source-only", action="store_true")
+    p.add_argument("--cross-source-only", action=argparse.BooleanOptionalAction, default=CROSS_ONLY)
     p.add_argument("--dry", action="store_true", help="посчитать без записи")
     p.add_argument("--examples", type=int, default=20)
     a = p.parse_args(argv)

@@ -259,7 +259,10 @@ def _bank_clause(bank_canon, product):
 # (rag/review_annotate): отзыв, который модель отнесла к жалобам, в т. ч.
 # смешанный. Неразмеченное (kind IS NULL), похвала, вопросы, мусор и копии
 # одного отзыва в счёт не входят.
-_CMP = "i.kind IN ('complaint', 'mixed')"
+# Жалоба = отзыв, который разметка отнесла к претензиям, и не копия другого отзыва:
+# автор пишет одну историю на нескольких площадках — это одна жалоба (rag/review_dedup,
+# review_index.dup_of; с 04.11.2026, до того копии между площадками считались дважды)
+_CMP = "(i.kind IN ('complaint', 'mixed') AND i.dup_of IS NULL)"
 
 
 def _ann_schema() -> str:
@@ -1697,7 +1700,7 @@ def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None
     with db.session() as s:
         return list(s.execute(text(f"""
             SELECT f.url FROM review_index f
-            WHERE f.issue = :key AND f.kind IN ('complaint', 'mixed') AND f.bank = :bank
+            WHERE f.issue = :key AND f.kind IN ('complaint', 'mixed') AND f.dup_of IS NULL AND f.bank = :bank
               AND (CAST(:product AS text) IS NULL OR al_product_is(f.product, f.slices, :product)){extra}
             ORDER BY f.dt DESC LIMIT :lim
         """), p).scalars().all())

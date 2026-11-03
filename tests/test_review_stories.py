@@ -512,7 +512,7 @@ def lite(tmp_path, monkeypatch):
     try:
         raw.driver_connection.executescript(_sqlite_ddl() + """
             CREATE TABLE review_index (url TEXT PRIMARY KEY, bank TEXT, kind TEXT, issue TEXT,
-                                       dt TIMESTAMP, city TEXT);
+                                       dt TIMESTAMP, city TEXT, dup_of TEXT);
             CREATE TABLE review_summary_vec (url TEXT PRIMARY KEY, vec TEXT NOT NULL);
             CREATE TABLE review_annotation (url TEXT, schema_version TEXT, summary TEXT,
                                             PRIMARY KEY (url, schema_version));
@@ -527,7 +527,7 @@ def lite(tmp_path, monkeypatch):
         from bank_audit.rag import reviews_dash as rd
         with eng.begin() as c:
             for url, bank, kind, issue, dt, vec, summary, city in rows:
-                c.execute(text("INSERT OR REPLACE INTO review_index "
+                c.execute(text("INSERT OR REPLACE INTO review_index (url, bank, kind, issue, dt, city) "
                                "VALUES (:u, :b, :k, :i, :d, :c)"),
                           {"u": url, "b": bank, "k": kind, "i": issue, "d": _ts(dt), "c": city})
                 if vec is not None:

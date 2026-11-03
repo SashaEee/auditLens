@@ -761,6 +761,16 @@ async def bankiru_fts_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("разметка отзывов: %s", e)
         try:
+            # Копии одного отзыва на разных площадках (review_index.dup_of): счётчики
+            # жалоб берут только канонические строки. Сам решает, пора ли (раз в 6 ч,
+            # полный проход раз в неделю)
+            from ..rag import review_dedup
+            r = await asyncio.to_thread(review_dedup.tick)
+            if r.get("dups") or r.get("changed"):
+                log.info("склейка копий отзывов: %s", {k: r.get(k) for k in ("rows", "dups", "changed", "seconds")})
+        except Exception as e:  # noqa: BLE001
+            log.warning("склейка копий отзывов: %s", e)
+        try:
             # Срезы вне справочника продуктов (зарплатные проекты, УС, выездной
             # сервис) — после основной разметки: кандидатов отбирают и по её каналам
             from ..rag import review_slices
