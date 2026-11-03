@@ -31,12 +31,22 @@ from ..rag import review_glossary as _gl
 
 log = logging.getLogger(__name__)
 
+
+def _rs_labels() -> tuple[str, ...]:
+    from ..rag import review_slices
+    return tuple(review_slices.LABELS.values())
+
+
 MSK = ZoneInfo("Europe/Moscow")
 SBER = "Сбербанк"
 
 # Перечни допустимых значений — модель видит их в схеме инструмента.
 THEME_KEYS = tuple(k for k in _cb.ISSUES if k != "no_issue")
-PRODUCT_LABELS = tuple(v for v in _cb.PRODUCTS.values() if v)
+# продукты кодификатора и особые срезы «Аудита отзывов» (зарплатные проекты, УС, выездной
+# сервис, самозанятые и «Своё дело», дети и молодёжь, участники СВО): без срезов модель на
+# вопрос о «Своём деле» искала по продукту «Бизнес» и приносила жалобы на СберБизнес
+PRODUCT_LABELS = (tuple(v for v in _cb.PRODUCTS.values() if v)
+                  + tuple(lbl for lbl in _rs_labels() if lbl not in _cb.PRODUCTS.values()))
 CATEGORY_IDS = tuple(c["id"] for c in _cm.CATEGORIES)
 Theme = Literal[THEME_KEYS]            # type: ignore[valid-type]
 Product = Literal[PRODUCT_LABELS]      # type: ignore[valid-type]

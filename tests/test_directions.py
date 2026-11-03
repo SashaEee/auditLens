@@ -45,3 +45,12 @@ def test_review_maps_cover_slice_labels():
     prod, sl, vul = D.review_maps()
     assert prod["Зарплатные проекты"] == "payroll" and prod["Ипотека"] == "mortgage"
     assert sl["us"] == "atm" and vul["minor"] == "youth"
+
+
+def test_ai_tools_can_filter_by_every_slice():
+    """Инструменты ИИ видят срезы в перечне продуктов: вопрос о «Своём деле» без среза
+    уходил в продукт «Бизнес» и приносил жалобы на СберБизнес (03.11.2026)."""
+    from bank_audit.ai import agent_tools as T
+    for label in RS.LABELS.values():
+        assert label in T.PRODUCT_LABELS, label
+    assert len(set(T.PRODUCT_LABELS)) == len(T.PRODUCT_LABELS)
