@@ -943,6 +943,31 @@ def run_all(since_days: int = 90, *, min_items: int = 30, now: datetime | None =
     return out
 
 
+_TICK_KEY = "review_stories_at"
+TICK_EVERY_S = int(__import__("os").getenv("REVIEW_STORIES_EVERY_S", str(20 * 3600)))
+
+
+def tick(now: float | None = None) -> dict:
+    """Для фонового цикла индекса отзывов: проход по всем банкам не чаще раза в
+    REVIEW_STORIES_EVERY_S (сутки с запасом). Без модели — составы и журнал событий;
+    на проде 04.11.2026 проход по 39 банкам занял 12 с."""
+    at = time.time() if now is None else now
+    with db.session() as s:
+        row = s.execute(text("SELECT v FROM review_index_state WHERE k = :k"), {"k": _TICK_KEY}).first()
+    try:
+        last = float(row[0]) if row else 0.0
+    except (TypeError, ValueError):
+        last = 0.0
+    if at - last < TICK_EVERY_S:
+        return {"skipped": "not_due"}
+    res = run_all()
+    with db.session() as s:
+        s.execute(text("""INSERT INTO review_index_state (k, v, updated_at) VALUES (:k, :v, CURRENT_TIMESTAMP)
+                          ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_at = CURRENT_TIMESTAMP"""),
+                  {"k": _TICK_KEY, "v": f"{at:.0f}"})
+    return {"banks": len(res), "errors": sum(1 for r in res if r.get("error"))}
+
+
 # ── Шаг названий: подготовка и запись ───────────────────────────────────────
 
 def _summaries(s, sid: int, k: int) -> list[str]:

@@ -771,6 +771,15 @@ async def bankiru_fts_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("склейка копий отзывов: %s", e)
         try:
+            # Сюжеты — группы похожих жалоб с постоянным id и журналом событий
+            # (появился, вырос, слился…); раз в сутки, без модели
+            from ..rag import review_stories
+            r = await asyncio.to_thread(review_stories.tick)
+            if r.get("banks"):
+                log.info("сюжеты отзывов: банков %d, ошибок %d", r["banks"], r["errors"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("сюжеты отзывов: %s", e)
+        try:
             # Срезы вне справочника продуктов (зарплатные проекты, УС, выездной
             # сервис) — после основной разметки: кандидатов отбирают и по её каналам
             from ..rag import review_slices

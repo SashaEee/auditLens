@@ -708,3 +708,25 @@ def test_new_stories(lite):
     assert RS.new_stories(BANK, now=NOW) == [ids["block_115"]]
     assert RS.new_stories(BANK, now=NOW, min_hits=3) == sorted(ids.values())
     assert RS.new_stories(BANK, now=NOW + timedelta(days=30)) == []    # уже не молоды
+
+
+def test_tick_runs_once_per_period(monkeypatch):
+    calls = []
+    state = {}
+
+    class R:
+        def __init__(self, v): self.v = v
+        def first(self): return self.v
+
+    class Sess:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, p=None):
+            if "SELECT v FROM review_index_state" in str(sql):
+                return R((state["v"],) if "v" in state else None)
+            state["v"] = p["v"]
+    monkeypatch.setattr(RS.db, "session", lambda: Sess())
+    monkeypatch.setattr(RS, "run_all", lambda: calls.append(1) or [{"bank": "Б"}])
+    assert RS.tick(now=1_000_000.0) == {"banks": 1, "errors": 0}
+    assert RS.tick(now=1_000_000.0 + 3600)["skipped"] == "not_due" and len(calls) == 1
+    assert RS.tick(now=1_000_000.0 + RS.TICK_EVERY_S + 1)["banks"] == 1 and len(calls) == 2
